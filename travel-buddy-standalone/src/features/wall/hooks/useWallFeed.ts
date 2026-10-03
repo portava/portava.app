@@ -24,7 +24,7 @@ import {
   revalidateFirstPageCache,
   writeFirstPageCache,
 } from '../services/wallPrefetch.ts';
-import type { WallMode, WallProjection } from '../types/wallProjection.ts';
+import type { WallLane, WallMode, WallProjection } from '../types/wallProjection.ts';
 
 const PAGE_LIMIT = 12;
 
@@ -42,6 +42,13 @@ export interface UseWallFeedResult {
   error: string | null;
   /** True when the Wall is disabled / unconfigured → safe empty feed. */
   degraded: boolean;
+  /**
+   * The FEED's lanes the server could not read for this session's pages
+   * (census-wall §19; the response's `degraded`, minus the header strips,
+   * which report on their own). Empty means every page so far was complete.
+   * Non-empty with no items is an outage, never "nothing here yet".
+   */
+  failedLanes: WallLane[];
   /** Following only: viewer reached the end of eligible content (spec §27). */
   caughtUp: boolean;
   /**
@@ -80,6 +87,17 @@ function dedupe(
   return out;
 }
 
+/**
+ * The lanes of a page's `degraded` that are the FEED's. The Live For You strip
+ * and the Quick Media row are header surfaces with their own requests and their
+ * own (ignorable, render-nothing) failure behaviour; their failure says nothing
+ * about whether the feed below is complete.
+ */
+const HEADER_LANES: ReadonlySet<WallLane> = new Set<WallLane>(['live', 'quick_media']);
+function feedLanesOf(degraded: readonly WallLane[] | undefined): WallLane[] {
+  return (degraded ?? []).filter((l) => !HEADER_LANES.has(l));
+}
+
 export function useWallFeed(
   mode: WallMode,
   sessionIntent?: string | null,
@@ -90,6 +108,7 @@ export function useWallFeed(
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [degraded, setDegraded] = useState(false);
+  const [failedLanes, setFailedLanes] = useState<WallLane[]>([]);
   const [caughtUp, setCaughtUp] = useState(false);
   const [stale, setStale] = useState(false);
   const [cachedAt, setCachedAt] = useState<number | null>(null);
@@ -145,6 +164,13 @@ export function useWallFeed(
           cursorRef.current = res.data.nextCursor ?? null;
           setHasMore(!!res.data.nextCursor);
           setCaughtUp(!!res.data.caughtUp);
+          const pageFailed = feedLanesOf(res.data.degraded);
+          // A new session starts from this page's report; a later page can
+          // only ADD to what is missing from the session (its earlier pages
+          // stay on screen as they were).
+          setFailedLanes((prev) =>
+            reset ? pageFailed : [...prev, ...pageFailed.filter((l) => !prev.includes(l))],
+          );
           if (reset) {
             seenRef.current = new Set();
             const first = dedupe(res.data.items, seenRef.current, hiddenRef.current);
@@ -254,6 +280,7 @@ export function useWallFeed(
     loadingMore,
     error,
     degraded,
+    failedLanes,
     caughtUp,
     stale,
     cachedAt,

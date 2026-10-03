@@ -10,25 +10,40 @@
 
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { CheckCircle2, RefreshCw } from 'lucide-react-native';
+import { CheckCircle2, CloudOff, RefreshCw } from 'lucide-react-native';
 import { color, space, radius, type as t, icon } from '../../../theme/tokens.ts';
 
 export function CaughtUpState({
   variant = 'caught_up',
   onRefresh,
 }: {
-  /** 'caught_up' = reached end of Following; 'empty' = nothing to show yet. */
-  variant?: 'caught_up' | 'empty';
+  /**
+   * 'caught_up' = reached end of Following; 'empty' = nothing to show yet;
+   * 'unavailable' = the Wall could not be read (census-wall §19) — which is
+   * not the same as there being nothing to show, and must not look like it.
+   */
+  variant?: 'caught_up' | 'empty' | 'unavailable';
   onRefresh?: () => void;
 }) {
-  const title = variant === 'caught_up' ? "You're all caught up" : 'Nothing here yet';
+  const title =
+    variant === 'caught_up'
+      ? "You're all caught up"
+      : variant === 'unavailable'
+        ? "Couldn't load the Wall"
+        : 'Nothing here yet';
   const subtitle =
     variant === 'caught_up'
       ? 'You have seen every new post from people you follow.'
-      : 'When there is something to see, it will show up here.';
+      : variant === 'unavailable'
+        ? "This isn't the same as nothing new. Check your connection and try again."
+        : 'When there is something to see, it will show up here.';
   return (
     <View style={s.container} testID={`wall-caught-up-${variant}`}>
-      <CheckCircle2 size={icon.s26} color={color.success} />
+      {variant === 'unavailable' ? (
+        <CloudOff size={icon.s26} color={color.mute} />
+      ) : (
+        <CheckCircle2 size={icon.s26} color={color.success} />
+      )}
       <Text style={s.title}>{title}</Text>
       <Text style={s.subtitle}>{subtitle}</Text>
       {onRefresh ? (
