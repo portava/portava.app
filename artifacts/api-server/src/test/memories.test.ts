@@ -653,34 +653,13 @@ describe("POST /api/trips/:tripId/memory", () => {
   });
 
   it("creates memory from trip for owner", async () => {
-    // FIXTURE CORRECTED 2026-10-03 (lane highlights), assertions unchanged:
-    // baseState's MEM_ID is already this owner's live Memory for TRIP_ID, and
-    // since census-highlights-memories §AB a trip has ONE live trip Memory, so
-    // "create" is only a create when the trip has none. Unlink it here; the
-    // existing-Memory answer has its own case below.
-    const state = baseState();
-    state.memories[0].trip_id = null;
-    const app = await startApp(state);
+    const app = await startApp((() => { const st = baseState(); st.memories[0].trip_id = null; return st; })()); // FIXTURE CORRECTED 2026-10-03 (census-highlights-memories §AB, TM-HL-D1), assertions unchanged: baseState's MEM_ID is already this owner's live trip Memory, so unlink it to make this a create; the existing-Memory answer is pinned at the foot of this file
     try {
       const { status, body } = await post(app.baseUrl, `/api/trips/${TRIP_ID}/memory`, auth("owner-tok"));
       assert.equal(status, 201);
       assert.ok(body?.memory?.tripId === TRIP_ID);
       assert.ok(body?.memory?.state === "draft");
       assert.ok(typeof body?.taggedCount === "number");
-    } finally { await app.close(); }
-  });
-
-  it("answers the trip's existing live Memory instead of writing a second one", async () => {
-    const state = baseState();
-    const before = state.memories.length;
-    const app = await startApp(state);
-    try {
-      const { status, body } = await post(app.baseUrl, `/api/trips/${TRIP_ID}/memory`, auth("owner-tok"));
-      assert.equal(status, 200);
-      assert.equal(body?.memory?.id, MEM_ID);
-      assert.equal(body?.existing, true);
-      assert.equal(body?.taggedCount, 0);
-      assert.equal(state.memories.length, before, "no second trip Memory may be written");
     } finally { await app.close(); }
   });
 
@@ -1145,5 +1124,23 @@ describe("§10 person visibility ladder — GET /api/memories/:id/tags", () => {
     } finally {
       await app.close();
     }
+  });
+});
+
+// ── One live trip Memory per trip (census-highlights-memories §AB, TM-HL-D1) ──
+// Appended at the foot so no line the census cites in this file moves.
+describe("POST /api/trips/:tripId/memory — the trip's existing Memory", () => {
+  it("answers the trip's existing live Memory instead of writing a second one", async () => {
+    const state = baseState();
+    const before = state.memories.length;
+    const app = await startApp(state);
+    try {
+      const { status, body } = await post(app.baseUrl, `/api/trips/${TRIP_ID}/memory`, auth("owner-tok"));
+      assert.equal(status, 200);
+      assert.equal(body?.memory?.id, MEM_ID);
+      assert.equal(body?.existing, true);
+      assert.equal(body?.taggedCount, 0);
+      assert.equal(state.memories.length, before, "no second trip Memory may be written");
+    } finally { await app.close(); }
   });
 });
