@@ -3312,3 +3312,118 @@ Cited in this section, graded by no row of this census:
 - NOT-GRADED: artifacts/api-server/src/lib/eventWaitlistSweeper.ts — §30.6 names it as the second promoter the eligibility gate now covers; waitlist seating is graded by no row of this census.
 - NOT-GRADED: artifacts/api-server/src/test/eventWaitlistSweeper.test.ts — §30.10 names it only because its double was taught the new eligibility reads; no Trust verdict moves on it.
 - NOT-GRADED: docs/architecture/mobile-reachability-ledger.json — §30.9 cites its `DEAD ENDPOINT` classification of the safety summary as a reachability fact; it is a generated ledger, not a Trust surface.
+
+## §31 (moderation lane) — 2026-10-03 · Bans and suspensions are one state, `user_account_states`, and every gate reads it. **NO ROW MOVES.**
+
+**The owner's decision (2026-10-03).** `user_account_states` is the canonical source for moderation
+bans and suspensions. `profiles.account_status` cannot hold either value: `profiles_account_status_check`
+admits `active | deactivated | pending_deletion | deleted`, verified read-only on the testing database and
+on portava-ci. So `POST /admin/users/:id/ban` and `/suspend` failed 23514 on every call before their
+`user_account_states` upsert ran, the PATCH moderation-action path folded the same failure into a 200,
+and every auth gate compared `account_status` with values no row can carry. A ban could not be applied,
+and if one had been, no gate would have read it. The CHECK is **not** widened, because a second ban state
+is exactly what the decision rules out.
+
+### §31.1 The contract (confirmed against the schema, not assumed)
+
+The table comes from `0063_interaction_foundation.sql` (:155) plus `0130` (`updated_at`). The fields:
+
+- **Key.** One row per `(user_id, state)`, so writers upsert on that key.
+- **`user_id`.** A foreign key to `profiles`, `ON DELETE CASCADE`, named `user_account_states_user_id_fkey`
+  on the baseline, the testing database and portava-ci.
+- **`state`.** Text, with no CHECK.
+- **In force.** A `banned` or `suspended` row is in force while `expires_at` is NULL or in the future.
+- **Revocation.** An unban sets `expires_at` to the revocation instant and keeps the row, including
+  `reason`, `set_by` and `created_at`. `moderation_actions` records who lifted it and why. This needs no
+  new column, and the expiry-aware readers (`circleAccessGuard`, `CompassNotificationEngine`) honour an
+  unban unchanged.
+- **RLS.** A signed-in user may SELECT their own rows and has no write policy, so a banned user cannot
+  lift their own ban through PostgREST. `service_role` writes.
+
+No migration was needed. The testing database holds 0 rows.
+
+### §31.2 One read path, every gate
+
+`resolveAccountRestriction` (`lib/accountStateGate.ts`) makes one `profiles` read with
+`user_account_states` embedded through that foreign key. It returns `ok` (the account status plus a
+restriction of `none`, `banned` or `suspended` with its end) or `unavailable`.
+
+The same answers apply on every path: `requireUser`, `optionalUser`, `requireUserFromToken` (Telegraph
+SSE) and the six files of hand-rolled optional-auth sites PR #580 routed.
+
+| Account state | Answer |
+|---|---|
+| In-force ban | 403 `forbidden`, `reason: account_banned` |
+| In-force suspension | 403 `forbidden`, `reason: account_suspended`; the message names the end |
+| GoTrue banned refusal | 403 `forbidden`, `reason: account_restricted`, never 401 |
+| Unreadable state | 503 `degraded_unavailable`, retryable |
+
+On an optional-auth route a restricted caller is now **refused, not served as anonymous**. This reverses
+PR #580's mapping, by the owner's ruling. The deleted, deactivated and pending_deletion behaviour is
+unchanged.
+
+TV-4b's cited `requireUser` lines in `lib/http.ts` still hold the statements they quote,
+now driven by the user_account_states read. The anchors in that row are therefore still true. What
+changed is what feeds them.
+
+### §31.3 Writers
+
+`artifacts/api-server/src/lib/accountModeration.ts` is the only writer, used by `/ban`, `/suspend`, `/restore` and PATCH
+moderation-action.
+
+- **Ban.** Upserts the row with no end.
+- **Suspend.** Upserts the row with an `expires_at`, which must be in the future. Otherwise the route
+  answers 400 before any audit row is written.
+- **Restore.** Revokes the in-force rows. It no longer DELETEs them, and no longer writes `account_status`,
+  which used to reactivate a deactivated account.
+
+The audit row comes first, as before. Every write's error is checked: a failed restriction write is 500
+with "nothing is in force", and a failed unlock is 502. The trust charge now runs only after the restriction
+lands.
+
+Each restriction also does two more things:
+
+- **Session lock.** It sets the GoTrue session lock (`ban_duration`), so refresh and sign-in stop and the
+  direct PostgREST, Realtime and Storage paths close within one access-token lifetime. The testing database
+  has 227 tables with a client write policy. The gate never reads this lock, and a lift clears it.
+- **Telegraph streams.** It closes the user's open Telegraph streams.
+
+### §31.4 Surfaces beyond the HTTP gates
+
+| Surface | How it is enforced |
+|---|---|
+| `GET /telegraph/stream` | Gated at connect. The writer terminates open streams, and the 30-minute max age forces re-auth. |
+| `GET /me/notifications/stream` | Re-reads the state every 60 s (`watchAccountRestriction`) and ends with `access.revoked`. |
+| Compass ask SSE | Per request, gated by `requireUser`. |
+| Websocket upgrades | None exist. |
+| `delayedPostPublisher` (publishes on the author's behalf) | Holds a restricted or unreadable author's post until the restriction ends. |
+| `profileVisibility` and `interactionPermissions` | Now honour `expires_at` and revocation. Both had ignored them, and `maybeSingle` turned a revoked ban beside a deactivated row into an error. |
+
+### §31.5 Tests and mutations
+
+- **`artifacts/api-server/src/test/moderationAccountState.test.ts`** (61 tests, registered) covers:
+  - permanent ban, suspension, expiry and revocation;
+  - a token issued before the ban;
+  - the GoTrue refusal and unreadable state;
+  - deleted, pending_deletion and deactivated controls;
+  - the admin writers with an audit row and with write errors;
+  - the notification stream, the publisher, profile visibility and interaction permissions.
+- **Red before.** Each fixed file, reverted alone to its pre-change source, turns its tests red.
+- **`artifacts/api-server/src/test/db/userAccountStatesContract.db.test.ts`** pins the real table's CHECK refusal, key, foreign
+  key name, revocation SQL and RLS.
+- **Mutations.** 58 mutants, each applied alone and restored byte-identically: 57 killed, 1 equivalent (profileVisibility's non-array guard, whose `.some` on null throws into the catch that already answers `unavailable`).
+
+### §31.6 Rows
+
+- **TV-4a stays W.** Its act criterion concerns `moderation_reports`, untouched here. The user-level
+  suspend and ban actions now land.
+- **TV-4b stays W.** Middleware on auth is now real rather than nominal. Banned users are locked out of
+  refresh by the session lock but are not shown a signed-out state. Suspended users get no read-only state
+  and no appeal contact. Owner decision **D-SUSPENSION-UX** stands.
+
+Cited in this section, graded by no row of this census:
+
+- NOT-GRADED: artifacts/api-server/src/lib/accountStateGate.ts — §31.2's single read path and refusals; the gate TV-4b grades is requireUser, whose cited lines stay where they were.
+- NOT-GRADED: artifacts/api-server/src/lib/accountModeration.ts — §31.3's writer for the admin routes TV-4a names; no verdict moves on it.
+- NOT-GRADED: artifacts/api-server/src/test/moderationAccountState.test.ts — §31.5's controlled evidence; no Trust verdict moves on it.
+- NOT-GRADED: artifacts/api-server/src/test/db/userAccountStatesContract.db.test.ts — §31.5's database evidence for the table contract; no Trust verdict moves on it.
