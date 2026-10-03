@@ -48,7 +48,7 @@ jest.mock('../../../src/context/SessionContext', () => ({
   useSession: () => ({ isAuthed: true, configured: true, userId: 'u1' }),
 }));
 
-// Location is available, so Near Me can be asked.
+// NOTE: intentionally exhaustive — location is available, so Near Me can be asked; the hook is all the tab reads.
 jest.mock('../../../src/context/LocationContext', () => ({
   useLocationContext: () => ({ locationState: { coords: { lat: 38.72, lng: -9.14 } }, requestLocation: jest.fn() }),
 }));
