@@ -14,7 +14,6 @@
   "artifacts/api-server/src/lib/calls/callSignaling.ts::S2": 2,
   "artifacts/api-server/src/lib/discoveryPlaceAggregates.ts::S2": 1,
   "artifacts/api-server/src/lib/entryRequirements.ts::S2": 4,
-  "artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts::S4": 1,
   "artifacts/api-server/src/lib/mediaAccess.ts::S2": 1,
   "artifacts/api-server/src/lib/stamps/composition/identities.ts::S2": 1,
   "artifacts/api-server/src/routes/adminCompass.ts::S2": 2,
