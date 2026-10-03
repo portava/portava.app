@@ -2499,7 +2499,7 @@ router.get("/events/:id", async (req, res) => {
     avatarUrl: hp.avatar_url ?? null,
   } : null;
 
-  const myRole = (ev as any).host_id === user.id ? "host" : ((roleResult as any).data?.role ?? null);
+  const myRole = (ev as any).host_id === user.id ? "host" : ((roleResult as any).data?.role ?? null); const detailSaved = await viewerSavedEventIds(sc, user.id, [id]);  // census-discovery §122 (DV-83 round 23, SW30): the viewer's own saved state, measured or named
 
   // Use the explicit AuthorizedEventView serializer — field gates for coords,
   // priceUrl, and safetyNotes are applied server-side, not client-side.
@@ -2507,8 +2507,8 @@ router.get("/events/:id", async (req, res) => {
     ...toAuthorizedEventView({ ...(ev as any), going_count: counts.going ?? (ev as any).going_count }, user.id, { goingRsvp: isParticipant }),  // census-discovery §118 (DV-83 round 21): `goingCount` is the live count beside counts.going, never the cached counter (the cached one only over a failed read, named)
     host,
     counts,
-    waitlistCount, ...(goingFailed || allRsvpsErr || waitlistErr || profilesFailed ? { failedSources: [...(goingFailed || allRsvpsErr ? ["event_rsvps"] : []), ...(waitlistErr ? ["event_waitlist"] : []), ...(profilesFailed ? ["profiles"] : [])] } : {}),  // §116 (SW10); §117 (B19): profiles too
-    myRsvp: (rsvpResult as any).data?.status ?? null,
+    waitlistCount, ...(goingFailed || allRsvpsErr || waitlistErr || profilesFailed || !detailSaved ? { failedSources: [...(goingFailed || allRsvpsErr ? ["event_rsvps"] : []), ...(waitlistErr ? ["event_waitlist"] : []), ...(profilesFailed ? ["profiles"] : []), ...(!detailSaved ? ["event_saves"] : [])] } : {}),  // §116 (SW10); §117 (B19): profiles too
+    myRsvp: (rsvpResult as any).data?.status ?? null, isSaved: detailSaved ? detailSaved.has(id) : null,  // §122 (SW30)
     myJoinRequestStatus: (joinReqResult as any).data?.status ?? null,
     myWaitlistPosition: (waitlistResult as any).data?.position ?? null,
     myWaitlistOfferExpiresAt: (waitlistResult as any).data?.offer_expires_at ?? null,
