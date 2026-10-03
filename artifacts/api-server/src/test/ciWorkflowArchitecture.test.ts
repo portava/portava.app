@@ -768,6 +768,40 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
     assert.ok(waits.every((w) => w <= 5), `no single sleep may exceed the budget: ${JSON.stringify(waits)}`);
   });
 
+  /**
+   * Measured 2026-10-03 on run 37117788717 (#564): 135 polls over 2710s, every
+   * one of them `the run listing is empty`, no 403 body anywhere, no holder
+   * ever named, and `Actions: read` present in the token's permissions. A
+   * listing that omits the asking run cannot be true while that run is in
+   * progress — and the error still called it a queue backlog and advised a
+   * re-run.
+   */
+  it("says so when no poll ever named a holder, instead of calling it a backlog", () => {
+    const r = runSlotScript({
+      role: "queue",
+      runId: "37117788717",
+      listing: "",
+      timeoutSeconds: 3,
+    });
+    assert.equal(r.code, 75, `still fail-closed. Got ${r.code}:\n${r.out}`);
+    assert.match(
+      r.out, /NOT ONE named a holder/,
+      "the error must say the job never established a queue position",
+    );
+    assert.match(
+      r.out, /NOT a queue backlog/,
+      "it must not advise re-running when a drained queue would change nothing",
+    );
+    assert.doesNotMatch(
+      r.out, /re-run it when the queue drains/,
+      "that is the one piece of advice this failure cannot support",
+    );
+    assert.match(
+      r.emitted, /live_db_slot_undecided=[1-9]/,
+      "the undecidable-poll count must reach the telemetry",
+    );
+  });
+
   it("does not blame the API when the API answered and the queue was the wait", () => {
     // The mixed case, which is what both measured runs actually were: real
     // queue wait behind a named holder, and a refusal only at the end.

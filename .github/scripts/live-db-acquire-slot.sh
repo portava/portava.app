@@ -184,6 +184,15 @@ POLLS=0
 # timeout that names them says "I queued behind these runs"; one that names
 # none says "I never saw a queue", and the two want different responses.
 HOLDERS_SEEN=""
+# Polls where the decider could not reach a verdict at all (exit 3): an empty
+# listing, or one that does not contain this run. Counted apart from the API
+# refusals above, because the two have different remedies and NEITHER of them
+# is "re-run when the queue drains". Measured 2026-10-03 on run 37117788717,
+# which polled 135 times over 2710s and got `the run listing is empty` every
+# single time, with no 403 body and no holder ever named: a listing that omits
+# the asking run cannot be true while that run is in progress, and the old
+# timeout error called it a queue backlog anyway.
+UNDECIDED=0
 
 # ── CLAIM ANNOTATION ─────────────────────────────────────────────────────────
 #
@@ -308,11 +317,15 @@ while :; do
       # Never once got an answer. Saying "the queue is long" here would be a
       # guess, and the guess cost three sessions a morning.
       echo "::error::live-db slot: the Actions API refused ALL ${POLLS} run-listing requests over ${ELAPSED}s (most recently: ${WHY:-unknown}). This job never learned who holds the shared database, so it has certified NOTHING and is failing closed. This is NOT a queue backlog and re-running will not shorten it — the request budget is the shared resource that ran out. Reduce the number of live-DB lanes running at once, or wait for the rate limit to reset."
-    elif [ "$API_REFUSALS" -gt 0 ]; then
+    elif [ -z "$HOLDERS_SEEN" ]; then
+      # Polls happened, none of them ever produced a queue position. Whatever
+      # went wrong, a backlog is not it, and re-running changes nothing.
+      echo "::error::live-db slot: ${POLLS} polls over ${ELAPSED}s and NOT ONE named a holder, so this job never established a queue position and has certified NOTHING. ${API_REFUSALS} refused by the Actions API (${WHY:-n/a}), ${UNDECIDED} returned a listing that did not account for this run — which cannot be true while this job is running. This is NOT a queue backlog; re-running it will not shorten anything. Treat it as an Actions API fault and check the request budget for this repository."
+    elif [ "$API_REFUSALS" -gt 0 ] || [ "$UNDECIDED" -gt 0 ]; then
       # The mixed case, which is what every run measured on 2026-10-03 actually
       # was. Give BOTH numbers, so nobody has to read 554 log lines to find out
       # which phase the budget went on.
-      echo "::error::live-db slot: waited ${ELAPSED}s without acquiring the shared database, and this run has certified NOTHING. ${POLLS} polls: $(( POLLS - API_REFUSALS )) queued behind ${HOLDERS_SEEN:-no named holder}, then ${API_REFUSALS} refused by the Actions API (${WHY:-unknown}). Part queue, part request budget — re-running helps only the first part."
+      echo "::error::live-db slot: waited ${ELAPSED}s without acquiring the shared database, and this run has certified NOTHING. ${POLLS} polls: $(( POLLS - API_REFUSALS - UNDECIDED )) queued behind ${HOLDERS_SEEN}, ${API_REFUSALS} refused by the Actions API (${WHY:-n/a}), ${UNDECIDED} answered with a listing that did not account for this run. Part queue, part Actions API — re-running helps only the first part."
     elif [ "$ROLE" = "verify" ]; then
       echo "::error::live-db slot: this job waited ${ELAPSED}s and could NOT prove that run ${GITHUB_RUN_ID} attempt ${ATTEMPT} holds the shared database. It has certified NOTHING and is failing rather than running against a database another run is mutating. If this is a partial re-run (\`gh run rerun --failed\`), re-run the whole workflow instead — a re-run does not re-execute the queue job, so the attempt starts at the BACK of the queue."
     else
@@ -333,6 +346,7 @@ while :; do
     # long" from "the API never answered", which the wait duration alone cannot.
     emit "live_db_slot_api_refusals=${API_REFUSALS}/${POLLS}"
     emit "live_db_slot_holders=${HOLDERS_SEEN}"
+    emit "live_db_slot_undecided=${UNDECIDED}"
     exit 75
   fi
 
@@ -448,7 +462,8 @@ while :; do
     3)
       # We are in-progress ourselves, so an unusable list means the API is not
       # telling us the truth. Do not treat "I cannot see" as "nobody is there".
-      echo "live-db slot [${ROLE}]: the listing parsed but was empty or unusable while this run is in progress — retrying in ${SLEEP_FOR}s"
+      UNDECIDED=$(( UNDECIDED + 1 ))
+      echo "live-db slot [${ROLE}]: the listing parsed but does not account for this run, which cannot be true while this job is running — the API answered, and its answer is wrong. Retrying in ${SLEEP_FOR}s"
       printf '%s\n' "$DECISION" | sed 's/^/  /'
       ;;
     *)
