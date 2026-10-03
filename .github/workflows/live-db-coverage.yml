@@ -152,6 +152,96 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # ─────────────────────────────────────────────────────────────────────
+      # REFUSE TO START WITHOUT THE BUDGET THIS PASS NEEDS.
+      #
+      # The Actions API limit is 1000 requests/hour PER REPOSITORY for the
+      # default token, not per workflow, so this pass shares one pool with
+      # every concurrent live-db-acquire-slot.sh poller and everything else
+      # in the repository. Measured 2026-10-03: that poller paginates all
+      # ~2894 runs of live-db.yml on EVERY 20-second poll, so a single
+      # waiting job can drain the pool on its own, and a run of live-db.yml
+      # then spends ~940s receiving nothing but 403s.
+      #
+      # Without this step, a drained pool reaches the assert script as a
+      # mid-pass 403. It fails closed, which is correct, but it fails having
+      # already spent requests the repository did not have, and the reader
+      # is sent to fix an `actions: read` scope that was never wrong. So:
+      # establish the budget BEFORE spending any of it, and when it is not
+      # there, refuse cheaply and say exactly why.
+      #
+      # `GET /rate_limit` is documented as not counting against the core
+      # quota, so asking is free. That is GitHub's documented behaviour
+      # rather than something measured here; if it ever changes, this step
+      # costs one request, which is still the cheapest thing in the pass.
+      #
+      # THIS STEP FAILS. It does not skip and it does not warn. A pass that
+      # cannot establish the budget cannot establish coverage either, and a
+      # check that did not run must never read as a pass — which is the
+      # whole premise of this workflow. The error text below is written so
+      # that this red is not mistaken for a coverage finding, because it is
+      # not one: no PR is implicated when this fires.
+      # ─────────────────────────────────────────────────────────────────────
+      - name: Refuse to start without the API budget this pass needs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Worst case for this pass is `4 + 2N` requests at N open PRs
+          # (see .github/scripts/assert-live-db-coverage.sh): 60 at the
+          # N = 28 measured on 2026-10-03. N is not known until the PR
+          # listing is fetched, which costs a request, so this floor is
+          # deliberately STATIC and sized with headroom for the pass, the
+          # verdict job, and a concurrent poller's next few polls. Raise it
+          # if the open-PR count grows well past 28.
+          MIN_BUDGET: ${{ vars.LIVE_DB_COVERAGE_MIN_BUDGET || '150' }}
+        run: |
+          set -uo pipefail
+
+          if ! printf '%s' "${MIN_BUDGET}" | grep -Eq '^[0-9]+$'; then
+            echo "::error::live-DB coverage: MIN_BUDGET '${MIN_BUDGET}' is not a number. Refusing to guess a floor."
+            exit 1
+          fi
+
+          BODY="$(gh api rate_limit 2>&1)"
+          RC=$?
+          if [ "$RC" -ne 0 ]; then
+            echo "${BODY}"
+            echo "::error::live-DB coverage: could not read GET /rate_limit (gh exit ${RC}). An unestablished budget is not a budget, so this pass refuses to start rather than spending requests it cannot account for. This is NOT a coverage finding: no pull request is implicated."
+            exit 1
+          fi
+
+          REMAINING="$(printf '%s' "${BODY}" | jq -r '.resources.core.remaining // empty' 2>/dev/null)"
+          LIMIT="$(printf '%s' "${BODY}" | jq -r '.resources.core.limit // empty' 2>/dev/null)"
+          RESET="$(printf '%s' "${BODY}" | jq -r '.resources.core.reset // empty' 2>/dev/null)"
+
+          for pair in "remaining:${REMAINING}" "limit:${LIMIT}" "reset:${RESET}"; do
+            name="${pair%%:*}"; value="${pair#*:}"
+            if ! printf '%s' "${value}" | grep -Eq '^[0-9]+$'; then
+              echo "::error::live-DB coverage: /rate_limit answered but .resources.core.${name} was not a number ('${value}'). Refusing to decide the budget from a response that did not parse. This is NOT a coverage finding."
+              exit 1
+            fi
+          done
+
+          RESET_UTC="$(date -u -d "@${RESET}" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "epoch ${RESET}")"
+
+          {
+            echo "### live-DB coverage · API budget"
+            echo ""
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| core remaining | ${REMAINING} |"
+            echo "| core limit | ${LIMIT} |"
+            echo "| floor for this pass | ${MIN_BUDGET} |"
+            echo "| window resets | ${RESET_UTC} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${REMAINING}" -lt "${MIN_BUDGET}" ]; then
+            echo "::error::live-DB coverage: REFUSED TO START — the repository's Actions API budget is ${REMAINING} of ${LIMIT}, below the floor of ${MIN_BUDGET} this pass needs (worst case 4 + 2N requests). The window resets at ${RESET_UTC}; this pass will run on its next trigger. THIS IS NOT A COVERAGE FINDING: no pull request is implicated and nothing was checked. The usual drain is a concurrent 'CI (live DB)' run whose live-db-acquire-slot.sh poller paginates every run of that workflow on each poll."
+            exit 1
+          fi
+
+          echo "live-DB coverage: budget ${REMAINING}/${LIMIT} is at or above the floor of ${MIN_BUDGET}; proceeding. Window resets ${RESET_UTC}."
+
       - name: Every open PR head SHA must have a CI (live DB) run
         shell: bash
         env:
