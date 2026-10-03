@@ -4683,6 +4683,9 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/hooks/useCityPulse.ts",  // §117 grades the Pulse city feed's unread mark (SW17)
     "travel-buddy-standalone/src/components/ExploreTodaySection.tsx",  // §117 grades Explore Today over an unread feed (SW17)
     "travel-buddy-standalone/app/(tabs)/index.tsx",  // §117 grades Pulse's "Fits your time" over an unread feed (SW17)
+    // census-discovery §118 (lane W11-X2, round 21): the files §118 grades.
+    "artifacts/api-server/src/compass/CompassTools.ts",  // §118 grades the group tool's capacity statement over an unread count (B22)
+    "artifacts/api-server/src/routes/pulse.ts",  // §118 grades GET /pulse and /pulse/live's going counts and capacity (B22)
     "travel-buddy-standalone/src/hooks/__tests__/useMapEntities.unreadOptional.component.test.tsx",
     "travel-buddy-standalone/src/hooks/__tests__/useMapEntities.legacyGemsCut.component.test.tsx",
     "travel-buddy-standalone/app/map/__tests__/mapScreen.unreadLayers.component.test.tsx",
