@@ -1874,6 +1874,11 @@ function sendEventShareRefusal(res: any, reason: string): void {
     case "not_attending":
       sendError(res, "forbidden", "This event Passport is only for people at the event");
       return;
+    case "unavailable":
+      // A read or write FAILED. Retryable, and never a 403/404: "we could not
+      // check" is not "you are not at this event" or "that does not exist".
+      sendError(res, "db_error", "Event Passport is temporarily unavailable — please try again");
+      return;
     default:
       sendError(res, "not_found", "Share not found");
   }
@@ -1886,7 +1891,7 @@ router.post("/passport/event-share", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const sc = getServiceClient();
-  if (!sc) { sendError(res, "not_found", "Unavailable"); return; }
+  if (!sc) { sendError(res, "server_not_configured", "Unavailable"); return; }
 
   const parsed = EventShareCreateSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", "eventId must be a uuid"); return; }
@@ -1913,7 +1918,7 @@ router.post("/passport/event-share/:eventId/revoke", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const sc = getServiceClient();
-  if (!sc) { sendError(res, "not_found", "Unavailable"); return; }
+  if (!sc) { sendError(res, "server_not_configured", "Unavailable"); return; }
 
   const eventId = String(req.params.eventId ?? "");
   if (!/^[0-9a-f-]{36}$/i.test(eventId)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
@@ -1935,7 +1940,7 @@ router.get("/passport/event-share/:eventId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const sc = getServiceClient();
-  if (!sc) { sendError(res, "not_found", "Unavailable"); return; }
+  if (!sc) { sendError(res, "server_not_configured", "Unavailable"); return; }
 
   const eventId = String(req.params.eventId ?? "");
   if (!/^[0-9a-f-]{36}$/i.test(eventId)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
@@ -1965,7 +1970,7 @@ router.get("/passport/event-passport/:token", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const sc = getServiceClient();
-  if (!sc) { sendError(res, "not_found", "Unavailable"); return; }
+  if (!sc) { sendError(res, "server_not_configured", "Unavailable"); return; }
 
   try {
     const out = await resolveEventPassport(sc, String(req.params.token ?? ""), auth.user.id);
