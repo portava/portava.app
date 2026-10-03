@@ -59,7 +59,7 @@ function client(t: Row[], between: (page: number, t: Row[]) => void, o: { ignore
         in: (c: string, v: string[]) => { preds.push((r: any) => v.includes(r[c])); return q; },
         eq: (c: string, v: string) => { preds.push((r: any) => r[c] === v); return q; },
         gt: (c: string, v: string) => { if (!o.ignoreCursor) preds.push((r: any) => r[c] > v); return q; },
-        or: (expr: string) => { const p = logicFilter(o.inclusive ? expr.replace(/\.gt\./g, ".gte.") : expr); assert.ok(p, `unmodelled .or(${expr})`); if (!o.ignoreCursor) preds.push(p as any); return q; },
+        or: (expr: string) => { const p = logicFilter(o.inclusive ? expr.replace(/user_id\.gt\./g, "user_id.gte.") : expr); assert.ok(p, `unmodelled .or(${expr})`); if (!o.ignoreCursor) preds.push(p as any); return q; },
         order: (col: string, opts?: { ascending?: boolean }) => { orders.push({ col, asc: opts?.ascending !== false }); return q; },
         range: (a: number, b: number) => { rng = [a, b]; return q; },
         then(res: any, rej: any) {
