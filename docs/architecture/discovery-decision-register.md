@@ -3356,3 +3356,57 @@ No APPROVAL REQUIRED entry is added. Arming the stop (D-W10-O-3) and gate 2 (D-W
 
 - **Swept and sound.** Every `?? 0` or `?? false` over a count, capacity or own-state value on the events, pulse, discovery, wishlist and Compass surfaces: each reads a value recounted live, or one already named unread (the list recounts, /pulse/live's counts), a stored counter stated as stored (`savedCount` from `discovery_places`), or a field never served (GET /pulse's `__plan`, `__event`). `TagPreviewSheet` reads the user preview's `isFollowing ?? false`, but the user card draws no follow state; the hashtag card says "Can't check follow" over an unread follow (D-W11X2-137). Every server list that over-fetches a pool on these surfaces: GET /events' rank pool and /search mark a cut pool; compassHome marks its own (§110). Every keyed read: the three momentum reads are pinned against a swapped key (MW2, MW3, G11).
 - **Left for their owners.** GET /pulse shows a post the viewer hid when its `post_hides` read fails (best-effort; it shows more, never says there is less; census-media and census-trust). GET /admin's events list, POST/DELETE /posts/:id/save's `count ?? 0` and `cityConfidenceWindowedReads` (flag seeded FALSE) as D-W11X2-172 records.
+
+### D-W11X2-180 — GET /pulse fails closed over a failed hide read and names it; D-W11X2-179 corrected: `post_hides` is inside DV-83 and was a safety fail-open (§119.16 B40)
+
+- **Corrected.** D-W11X2-179 left GET /pulse's `post_hides` read "for its owners" as best-effort ("it shows more, never says there is less"). The round-22 verifier rules it inside DV-83: a failed read taken as complete ("you hid nothing") on a graded Discovery surface is the criterion's first clause, and showing the viewer a post they hid is a safety fail-open, not a defence. Round 14 placed the Compass mute fail-open outside DV-83 because it was a fallback path; this is the route's own filter read.
+- **Decision.** The hide read's error is bound and a thrown read is caught as a failure; either answers `posts: []`, `failedSources: ["post_hides"]`, as the block read does. The client already says such a body as a feed it could not load.
+- **Tests.** `pulseHidesUnread` PH1, PH2 (the verifier's PH1, red first); PH0, PH3 controls.
+
+### D-W11X2-181 — the events tab's bookmarks are each list's measured `isSaved`, measured from the store the bookmark writes; D-W11X2-176 corrected for the bookmarks (§119.16 B35, X19)
+
+- **Corrected.** D-W11X2-176's "the saved bookmarks keep their last answer: clearing them would say every event is unsaved" is false: on a first load there was no last answer, and the answer was only ever page 1 of GET /events/saved, so a failed read or a 21st save drew "not saved". GET /events' measured `isSaved` read only the viewer's event collections, not `event_saves`, the store the bookmark writes, and /following, /circles and /me served none.
+- **Decision.** `isSaved` on an events list means the viewer saved the event with the bookmark (`event_saves`) or put it in one of their collections. GET /events counts both; /following, /circles and /me serve it from both and answer 503 when either read fails, as they do over the viewer's own RSVP; /saved marks every event it lists saved. The tab draws each card's `isSaved`, keeps only the viewer's own taps beside it (reverted when the write fails), draws a card with no measured state as "Couldn't check if saved" (not a toggle), and says a failed saved read ("Couldn't load your saved events.").
+- **Tests.** `eventsListsSavedState` (every case, red first); `Events.savedState` BK1, BK2, BK4, BK5 (red first), BK0, BK3, BK6, SV9 (the verifier's fixture for X19).
+
+### D-W11X2-182 — the viewer's own saved state is never served over a failed read on GET /pulse, GET /discovery/community or GET /hidden-gems/:id; D-W11X2-177 and -179 corrected, D-W11X2-128's exclusion withdrawn (§119.16 B36)
+
+- **Corrected.** D-W11X2-177 ruled the viewer's saved state "the viewer's own state" and D-W11X2-179 said every `?? false` over own state on the events, pulse and discovery surfaces was swept and sound; GET /discovery/community's `isSaved` and GET /pulse's `savedByMe` were served `false` over an unbound failed read, and GET /hidden-gems/:id's `savedByMe` likewise (D-W11X2-128 had left it as "not a Discovery result", which -177 contradicts).
+- **Decision.** Each read is bound and a thrown one caught; the field is `null` and the read is named in the body's `failedSources` (`post_saves`; `collections` or `collection_items`; `hidden_gem_saves`, or `viewer` when a token resolved no viewer). The rows are served: saved state decides nothing that is shown. The client keeps a Pulse feed that names only `post_saves`, carries the null, and draws the bookmark as unknown (SaveButton `savedUnknown`; the gem screen), never as a toggle; the viewer's own save ends the unknown state.
+- **Tests.** `pulseSavedUnread` PS1, PS2; `discoveryCommunitySavedUnread` CSU1–CSU3; `hiddenGemDetailSavedUnread` GS1, GS4; client `pulseSavedUnread` PSC0, PSC2, `SaveButton.savedUnknown` SU0, SU1, SU4, SU5, `PulseFeedCard.savedUnknown` PC0, `gemDetailSavedUnknown` GD0–GD2 (red first, SU5 written against the fixed code); controls PS0, PS3, CS0, CS4, GS0, GS2, GS3, PSC1, PSC3, SU2, SU3, PC1, PC2, GD0c, GD2c.
+
+### D-W11X2-183 — GET /compass/telegraph counts every name that can withhold a card; D-W11X2-174 corrected for Telegraph (§119.16 B37)
+
+- **Corrected.** D-W11X2-174 has the hydrator name `event_rsvps` "so no caller serves or caches it as complete"; GET /compass/telegraph kept only `TELEGRAPH_CARD_SOURCES`, dropped the name, and the tray said it found nothing. A regression made by round 22's own fix.
+- **Decision.** `event_rsvps` is a card source: B34's capacity gate can withhold an event card over it. Every other consumer of `compassHydrationFailedSources` counts every name; Compass Sense's signal list is the only other name filter over failed sources and is untouched; the tray branches on the refusal whatever it names.
+- **Tests.** `compassTelegraphCapacityUnread` TE1 (the verifier's, red first); TE0 control.
+
+### D-W11X2-184 — every events list refuses or marks a read it could not make, near-trip and the city alias and /nearby included; D-W11X2-177 corrected (§119.16 B38; sweep SW28)
+
+- **Corrected.** D-W11X2-177's "every events list refuses or names a read it could not make" was false for GET /events/near-trip/:tripId, whose `trip_members` and `trips` errors were unbound (403 "Must be a trip member", 200 `events: []`), and for near-trip, GET /events/city/:city and GET /events/nearby, which withheld an event over a failed block, friendship or eligibility read and served the rest as the whole list (§118 B28's class).
+- **Decision.** Near-trip answers 503 `degraded_unavailable` over either read. The three lists read the block pair with `readBlockBetween`, bind the friendship error and keep an unread eligibility verdict, and answer `truncated: true`.
+- **Tests.** `eventsNearTripAndAliasesUnread` NT1, NT2 (the verifier's, red first) and WB, WF, WE on each list (red first); NT0, NT3 and WC on each, controls.
+
+### D-W11X2-185 — no hook keeps another context's items over a failed read; D-W11X2-177 corrected for the rail (§119.16 B39; sweep SW31)
+
+- **Corrected.** D-W11X2-177's "a failed read keeps no earlier camera's items" held for the NOW map's card, not for the home tab's Live Pulse rail (whose collapsed header said the previous city's "1 tonight"), nor for the For You feed, which drew the previous city's posts above its error footer.
+- **Decision.** `useLivePulse` and `usePulseFeed` keep their items while a new context's read is in flight and clear them (and their unread names, place cards and session) when that read fails or rejects; a failed refresh of the same context keeps them. The rail's collapsed header says "Couldn't load live plans" whenever the latest read failed.
+- **Tests.** `LivePulseRail.staleContext` LR1–LR3 (red first), LR0, LR4, LR5; `usePulseFeed.staleCity` PF1 (red first), PF3, PF0, PF2.
+
+### D-W11X2-186 — the verifier's five non-equivalent survivors are pinned; the shared keyset double orders NULL keys as PostgreSQL does (X1–X3, X7, X19)
+
+- **Corrected.** `sortByOrders` sorted NULL first ascending, so no lane world could model an undated event behind a dated one and the events cursor's undated arms (SW24, D-W11X2-177) were unpinned; the NOW map card's rejected-read arm and the tab's failed saved read in its failure line were unpinned too.
+- **Decision.** The helper takes supabase-js's `nullsFirst` and defaults it as PostgreSQL does; `eventsPoolCut`'s double passes it through. The verifier's UD0/UD1, MT1 and SV9 are registered. X10 stays equivalent as the verifier ruled.
+- **Tests.** `postgrestKeysetNullOrder` NK0–NK4 and `eventsUndatedPaging` UD0, UD1 (red against the old helper); `mapScreen.pulseCardThrown` MT1; `Events.savedState` SV9. X1, X2, X3, X7 and X19 are killed.
+
+### D-W11X2-187 — the sweep: search and the event screen state no own state over a failed read (SW29, SW30, SW32)
+
+- **Found.** Discovery search's event results served `isAttending: false` over a failed RSVP read (SW29), and its traveller and buddy results `isFollowing` / `isRequestSent: false` over a failed follow or pending-request read (SW32); the event screen drew its bookmark from `!!body.isSaved`, a field GET /events/:id never served (SW30).
+- **Decision.** Search keeps its privacy rules as they are (a failed RSVP read keeps the venue hidden; a failed follow read keeps a private account locked) and serves `actionState: null`; the result card draws "View", which opens the item and acts on nothing. GET /events/:id serves `isSaved` through the lists' read, `null` with `event_saves` named over a failure; the screen says "Couldn't check if saved" and does not toggle.
+- **Tests.** `searchEventsAttendingUnread` SE1, `discoverySearchSafetyContracts` SF1, SF2 (appended at its foot), `eventDetailSavedState` ED0–ED2, client `SearchResultCard.eventAttendanceUnknown` SR0, SR3, SR4 and `EventDetail.savedState` ES0–ES2 (red first); SE0, SE2, SF0, SF3, SR1, SR2, SR5 controls.
+
+### D-W11X2-188 — recorded: the verifier's scope rulings, and what is left for other owners
+
+- **Ruled (the round-22 verifier).** `post_hides` is inside DV-83 and a safety fail-open (closed, D-W11X2-180). GET /admin's events list is outside (the admin console). POST/DELETE /posts/:id/save's `count ?? 0` is outside (census-media's counter write, the class D-W11X2-178 rules a ranking counter); not a safety fail-open. `cityConfidenceWindowedReads` is outside while its flag is seeded FALSE. The co-host picker's refusal whenever `event_rsvps` or `profiles` is named is a fail-closed over-refusal, not a break.
+- **Swept and sound.** The remaining silent sites in the graded routes are ranking signals, notifications, the featured badge and Pulse's place cards; every other keyset cursor on these surfaces pages by a key column or one already restricted to non-null; every other consumer of failed-source names counts every name.
+- **Left for their owners.** GET /users/search (`app/discover.tsx`'s people search, lane tm-people, §106) serves `isFollowing` over an unbound follows read; this lane was told not to touch it. The media feeds' own state (`routes/posts.ts`, `routes/memories.ts`, `routes/highlights.ts`, the gems feed hook) is census-media's. GET /discovery/community's unresolved viewer served as anonymous (§94.11, D-W11X2-15) is unchanged.

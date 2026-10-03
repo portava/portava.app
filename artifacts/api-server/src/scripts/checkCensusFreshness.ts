@@ -4696,6 +4696,12 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/components/map/LivePulseCard.tsx",  // §119 grades the NOW map card's line over an unread section (B31)
     "travel-buddy-standalone/src/features/map/pulse/pulseCardAnswer.ts",  // §119 grades what the map keeps from a /pulse/live answer (B31)
     "travel-buddy-standalone/src/services/pulse.ts",  // §119 grades how getPulseData reads a named failed read (SW27)
+    // census-discovery §122 (lane W11-X2, round 23): the files §122 grades that this census did not watch.
+    "travel-buddy-standalone/src/components/SaveButton.tsx",  // §122 grades the bookmark over an unread saved state (B36)
+    "travel-buddy-standalone/src/components/cards/EventCard.tsx",  // §122 grades the events card's bookmark over an unknown saved state (B35)
+    "travel-buddy-standalone/src/components/search/SearchResultCard.tsx",  // §122 grades a search result's action over an unread own state (SW29, SW32)
+    "travel-buddy-standalone/src/hooks/usePulseFeed.ts",  // §122 grades the For You feed over a failed read for a new city (SW31)
+    "travel-buddy-standalone/app/gems/[id].tsx",  // §122 grades the gem screen's bookmark over an unread saved state (B36)
     "travel-buddy-standalone/src/hooks/__tests__/useMapEntities.unreadOptional.component.test.tsx",
     "travel-buddy-standalone/src/hooks/__tests__/useMapEntities.legacyGemsCut.component.test.tsx",
     "travel-buddy-standalone/app/map/__tests__/mapScreen.unreadLayers.component.test.tsx",

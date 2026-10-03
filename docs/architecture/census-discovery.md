@@ -10501,7 +10501,7 @@ This section moves ONE row: `DC-15` W → C. The other three are restated at W w
 - `:176`, beside `sent`: `const dismissKeys = useRef(new Map<string, string>());`.
 - `:231` `reportDismiss`: `const key = dismissKeys.current.get(itemId) ?? newClientEventId(); dismissKeys.current.set(itemId, key);`, then pass `key` as `outcomeBody`'s sixth argument. At `:243`: `if (res.ok) { dismissKeys.current.delete(itemId); invalidateDiscoveryCaches(); }`. The person's retry after a failure then carries the SAME key, so a first attempt that landed is answered `duplicate`, which is `res.ok`, and the card goes once.
 - `travel-buddy-standalone/src/services/rankEvents.ts:43#export async function recordOutcome(`: after the line that sets `session_id`, add `body.client_event_id = newClientEventId();`.
-- The call sites these cover: `PlaceCard.tsx:80` and `:531` (tap, save, dismiss), `PlaceDetailSheet.tsx:56`, `DiscoveryEventPostsRail.tsx:61`, `LivePulseCard.tsx:230`, `PlanPickerController.tsx:133`, `SaveButton.tsx:120` and `:165`, `useEventRsvp.ts:112` and `:195`.
+- The call sites these cover: `PlaceCard.tsx:80` and `:531` (tap, save, dismiss), `PlaceDetailSheet.tsx:56`, `DiscoveryEventPostsRail.tsx:61`, `LivePulseCard.tsx:230`, `PlanPickerController.tsx:133`, `SaveButton.tsx:127` and `:177`, `useEventRsvp.ts:112` and `:195`.
 
 **H2 — permission engine (census-trust's file; DV-76 P4).** `artifacts/api-server/src/services/interactionPermissions.ts:810-818`, replacing the `switch (whoCanTag)` body:
 ```ts
@@ -20142,6 +20142,113 @@ The code is final at `b2d0f1bba` (the silent-reads baseline lowered for SW27's s
 
 Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. CORRECT is 100 / 188 = 53.2 %, and CONSTRUCTED is 186 / 188 = 98.9 %.
 
+## §122 — DV-83 round 23 (lane W11-X2)
+
+### 122.1 Round 23: what this lane did
+
+*Written 2026-10-03 by lane W11-X2 (round 23) on `disc-w11-x2-r23`, from `e09cbf42f` (PR #530's head: round 22) and §119.16. §120 is #549's and §121 is the creator ledger; neither is DV-83. It closes §119.16's six break groups (B35–B40), B40 (a safety fail-open) first, each with the verifier's probes adapted into registered tests and seen red first; registers the verifier's fixtures for its five non-equivalent survivors (X1–X3, X7, X19) and corrects the shared test helper that hid three of them; corrects D-W11X2-174, -176, -177 and -179 in D-W11X2-180 to -188; records the verifier's scope rulings; and sweeps once more, closing five more paths (SW28–SW32).*
+
+*No migration and no new flag. Every change alters what is said only when a read failed or was answered for a context no longer shown, with one declared exception: the events lists now serve the viewer's own saved state measured (`isSaved` on GET /events/following, /circles, /me, /saved and GET /events/:id, and GET /events counting `event_saves` beside the event collections it already read), because the events tab's bookmark is drawn from it (§122.2). Server bodies otherwise gain keys only on a failed arm: `failedSources` (`post_hides`, `post_saves`, `collections`, `collection_items`, `hidden_gem_saves`, `viewer`, `event_saves`), `truncated` on three events lists, a `null` own-state field.*
+
+*All evidence is controlled: node suites over the real routes, services and loaders and PostgREST-shaped doubles, and jest over the real services, hooks, components and screens. None of it is production evidence, and no client build carrying the change has shipped.*
+
+### 122.2 B40 first: GET /pulse never serves a post the viewer hid over a failed hide read (D-W11X2-180)
+
+GET /pulse (`artifacts/api-server/src/routes/pulse.ts`) read `post_hides` with no error bound inside a best-effort catch and took the empty set as the viewer's whole hide list. A failed or thrown hide read now fails closed exactly as the block read does: `posts: []` and `failedSources: ["post_hides"]`, which the client already says as a feed it could not load. **A safety fail-open, closed. D-W11X2-179's "left for their owners" is corrected: `post_hides` is inside DV-83.**
+
+### 122.3 B35: the events tab's bookmarks are each list's measured `isSaved` (D-W11X2-181)
+
+The tab (`travel-buddy-standalone/app/(tabs)/events.tsx`) drew every bookmark from page 1 of GET /events/saved, kept over a failed read. It now draws each card's own `isSaved`; only the viewer's own taps sit beside it, reverted when the write fails; a card with no measured state is "Couldn't check if saved" and is not a toggle (`travel-buddy-standalone/src/components/cards/EventCard.tsx`); a failed saved read is said ("Couldn't load your saved events."). The lists had to measure it from the store the bookmark writes: GET /events read only event collections, and /following, /circles and /me served no saved state. `viewerSavedEventIds` (`artifacts/api-server/src/routes/events.ts`, at its foot) reads `event_saves` and the viewer's event collections; /following, /circles and /me serve `isSaved` from it and answer 503 when either read fails, as they do over the viewer's own RSVP; /saved marks its events saved; GET /events counts `event_saves` beside its collections. **D-W11X2-176's bookmark sentence is corrected.**
+
+### 122.4 B36: the viewer's own saved state is never served over a failed read (D-W11X2-182)
+
+- **GET /pulse** serves `savedByMe: null` on every post and names `post_saves` when the save read fails or throws; the posts are served. The client keeps such a feed (an own-state source alone is not a failed feed, `travel-buddy-standalone/src/services/pulse.ts`), carries the null, and PulseFeedCard hands every bookmark `savedUnknown`, which `travel-buddy-standalone/src/components/SaveButton.tsx` draws as "Couldn't check if saved", not a toggle; the viewer's own save (the cache, or a collection picked from the long press) ends it.
+- **GET /discovery/community** (`artifacts/api-server/src/routes/discovery.ts`) serves `isSaved: null` and names `collections` or `collection_items`.
+- **GET /hidden-gems/:id** (`artifacts/api-server/src/routes/hiddenGems.ts`) serves `savedByMe: null` and names `hidden_gem_saves`, or `viewer` when a token was presented and no viewer resolved; the gem screen (`travel-buddy-standalone/app/gems/[id].tsx`) says "Couldn't check if saved" and does not toggle. **D-W11X2-128's exclusion and D-W11X2-179's own-state sweep are corrected.**
+
+### 122.5 B37: Telegraph says a capped event it withheld over an unread count (D-W11X2-183)
+
+`TELEGRAPH_CARD_SOURCES` (`artifacts/api-server/src/routes/compass.ts`) gains `event_rsvps`: B34's `capacity_could_not_be_checked` can withhold an event card, so the name round 22's hydrator adds reaches the tray's refusal. **The audit.** Every other consumer of `compassHydrationFailedSources` counts every name (the feed, the sections, recommendations, the front-load, compassHome); the only other name filter over failed sources is Compass Sense's signal list, which this lane does not touch; the client tray branches on the refusal, whatever it names. **D-W11X2-174 is corrected for Telegraph.**
+
+### 122.6 B38 and SW28: the events lists that still answered a failed read as a fact (D-W11X2-184)
+
+GET /events/near-trip/:tripId binds its `trip_members` and `trips` errors and answers 503 `degraded_unavailable` (it answered 403 "Must be a trip member" and 200 `events: []`). **SW28.** Near-trip, GET /events/city/:city and GET /events/nearby withheld an event over a failed block, friendship or eligibility read and served the rest as the whole list; they now read the block pair with `readBlockBetween`, bind the friendship error and keep an unread eligibility verdict, and answer `truncated: true`, as /search, /following and /circles do (§118 B28).
+
+### 122.7 B39 and SW31: no hook keeps another context's items over a failed read (D-W11X2-185)
+
+`useLivePulse` (`travel-buddy-standalone/src/hooks/useLivePulse.ts`) keeps its cards while a new context's read is in flight and clears them, their unread names and their session when that read fails; a failed refresh of the same context keeps them. The rail's collapsed header (`travel-buddy-standalone/src/components/LivePulseRail.tsx`) says "Couldn't load live plans" whenever the latest read failed. **SW31.** `usePulseFeed` (`travel-buddy-standalone/src/hooks/usePulseFeed.ts`), the home tab's For You feed, kept a previous city's posts above its error footer on a failed or rejected read; it now clears them the same way.
+
+### 122.8 The verifier's survivors, pinned (D-W11X2-186)
+
+- **X1–X3, and the helper.** `sortByOrders` (`artifacts/api-server/src/test/helpers/postgrestKeyset.ts`) sorted NULL first ascending, so no lane world could hold an undated event behind a dated one. It now takes supabase-js's `nullsFirst` and defaults it as PostgreSQL does (NULLS LAST ascending, NULLS FIRST descending); `eventsPoolCut`'s double passes the option through. The verifier's UD0/UD1 are registered over it (`eventsUndatedPaging`); `postgrestKeysetNullOrder` pins the helper.
+- **X7.** The verifier's MT1 is registered (`mapScreen.pulseCardThrown`): a rejected /pulse/live read is said.
+- **X19.** The verifier's SV9 is registered (`Events.savedState`).
+- **X10** stands as the verifier ruled it (equivalent).
+
+### 122.9 The sweep (SW28–SW32; D-W11X2-187)
+
+Every own-state field on a Discovery-adjacent route served over an unbound error, every coverage or source allow-list, every client hook that keeps items across a context change, and every cursor arm that can skip a NULL key were read again:
+
+- **SW28** — §122.6. **SW31** — §122.7.
+- **SW29.** Discovery search's event results (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts`) served `isAttending: false` over a failed RSVP read. The row is still served with its venue gate closed (the search safety contract), with `actionState: null`; `travel-buddy-standalone/src/components/search/SearchResultCard.tsx` draws it "View" and never RSVPs from it.
+- **SW30.** The event screen (`travel-buddy-standalone/app/event/[id].tsx`) drew its bookmark from `!!body.isSaved`, a field GET /events/:id never served: every saved event was "not saved" on its own screen. The route serves it through `viewerSavedEventIds`, `null` with `event_saves` named over a failed read; the screen says "Couldn't check if saved" and does not toggle.
+- **SW32.** Discovery search's traveller and buddy results served `isFollowing` / `isRequestSent` false over a failed follow or pending-request read. The privacy rule is unchanged (a failed follow read still locks a private account); `actionState` is `null` and the card draws "View".
+- **Swept and sound.** The remaining silent sites in the graded routes are ranking signals (follows and interests boosts), notifications, the featured badge and Pulse's place cards. Every keyset cursor on these surfaces other than the events cursor pages by a column the query already restricts to non-null (`served_at` under `.gte`) or a key column. The allow-list audit is §122.5.
+- **Left for their owners** — D-W11X2-188.
+
+### 122.10 Tests, seen red, and mutations
+
+**Seen red first**, against the code before each fix (the lane's `r23/red.log`):
+
+| Area | Red | Controls, green |
+|---|---|---|
+| B40 hidden posts | PH1, PH2 | PH0, PH3 |
+| B36 GET /pulse saved state | PS1, PS2; PSC0, PSC2, SU0, SU1, SU4, PC0 | PS0, PS3; PSC1, PSC3, SU2, SU3, PC1, PC2 |
+| B36 community, hidden gem | CSU1–CSU3; GS1, GS4; GD0, GD1, GD2 | CS0, CS4; GS0, GS2, GS3; GD0c, GD2c |
+| B37 Telegraph | TE1 | TE0 |
+| B38, SW28 events lists | NT1, NT2; WB, WF, WE on near-trip, the city alias and /nearby | NT0, NT3; WC on each |
+| B39 the rail | LR1, LR2, LR3 | LR0, LR4, LR5 |
+| B35 the bookmarks | every `eventsListsSavedState` case; BK1, BK2, BK4, BK5 | BK0, BK3, BK6, SV9 |
+| X1–X3 the helper | NK0–NK3, UD0, UD1 | NK4 |
+| SW29, SW32 search | SE1, SR0; SF1, SF2, SR3, SR4 | SE0, SE2, SR1, SR2; SF0, SF3, SR5 |
+| SW30 the event screen | ED0–ED2, ES0–ES2 | — |
+| SW31 the For You feed | PF1 | PF0, PF2, PF3 |
+
+**Mutations.** Each was applied alone, its pin group run, and the file restored byte-identically; each PRE sha256 was written to the lane's progress notes before the mutation was applied and each restore was checked against it (the lane's `r23/mut.py`, `r23/muts/`, `r23/mut-summary.txt`).
+
+- **102 mutations on the final code:** B40 ×4 (M1–M4); B36 ×27 (M5–M29, M30b, M32); B37 ×1 (M33); B38 and SW28 ×14 (M34–M47); B39 ×6 (M48b–M51c, M52); B35 ×23 (M53–M75); the helper ×2 (M76, M77); SW29 ×4 (M78–M81); SW30 ×6 (M82–M87); SW31 ×4 (M88–M91); SW32 ×6 (M92–M97); the verifier's X1, X2, X3, X7, X19 re-applied over the registered fixtures.
+- **Result: 101 killed, 1 equivalent, 0 non-equivalent survivors** on DV-83 lines. **M21 is equivalent:** it drops GET /discovery/community's `viewerId && !commSc` arm, which the route never reaches (it refuses `community_service_unavailable` when `getServiceClient()` is null, before any read). **Survivors on a first run, each closed:** M30/M31 (two redundant guards on the gem screen's bookmark; one removed, M30b kills the other) and M51c (LR5 written). Six earlier mutations (M30, M31, M48–M51) ran against code later changed and are superseded by M30b and M48b–M51c. No guard line changed this round.
+- *Naming.* B35–B40, X1–X19 and the probe ids PH, PS, CSU, TE, NT, LR, BK, SV, UD, MT are the verifier's, kept; SW28–SW32 are the sweep; M1–M97 the mutations.
+
+### 122.11 Checks
+
+- **Line-neutral in every cited file:** lines changed in place, new code at a file's foot (`viewerSavedEventIds`) or in a new module; census-media's two anchors on the hide read follow its new text. `check:doc-citations`, `check:citation-targets` and `check:citation-symbols` are clean.
+- **Suites.** The new api-server suites are on the `test` line; the new client suites are jest component suites.
+- **Silent reads.** `check:silent-supabase-reads` reports no new site; baseline counts were lowered for the sites this round fixed (`routes/pulse.ts` S2 8 → 6 and S4 2 → 1, `routes/discovery.ts` S2 2 → 1, `lib/inputAssistance/searchCandidates.ts` S4 1 → 0, its entry removed); none was raised, none added.
+
+### 122.12 DV-83, restated
+
+§119.16's six break groups are closed, each with the verifier's probes adapted into registered tests, red first and green now; its five non-equivalent survivors are killed by its fixtures, registered, over a helper that now orders NULL keys as PostgreSQL does. The sweep closed five more paths. Every clause of DV-83's criterion holds on every path this lane examined:
+
+1. **Producers send the refusal envelope or a named failure.** GET /pulse names a hide or save read it could not make; the community list, the gem detail and the event detail name the viewer's own saved state; Telegraph names an unread going count; the events lists refuse or mark a read they could not make.
+2. **Nothing refused or partial is cached as complete.** Unchanged; no new cache.
+3. **Nothing refused is rendered as empty, as complete, or over the wrong rows.** No bookmark says "not saved", no search result "Follow", "Request" or "Join", over a read that failed; no rail, card or feed draws another context's items over a failed read.
+4. **A Compass tool never states a failed or partial read to the model as a fact.** Unchanged since §119.13; the Telegraph tray now says the event it withheld.
+5. **Consumers branch on coverage**, and the static guard is unchanged.
+
+| ID | from | **to** | evidence |
+|---|---|---|---|
+| DV-83 | W | **C** | **§119.16's six break groups are closed, each with its verifier probes adapted and red first; the verifier's five non-equivalent survivors are killed by its fixtures, registered; the sweep closed five more paths (SW28–SW32); 102 mutations: 101 killed, 1 equivalent, 0 non-equivalent survivors (§122.10). CONTROLLED EVIDENCE ONLY — this row awaits independent re-verification.** **A hidden post is never served over a failed hide read** (`artifacts/api-server/src/routes/pulse.ts`; PH1, PH2). **The viewer's own saved state is measured or said unknown** (`artifacts/api-server/src/routes/pulse.ts`, `artifacts/api-server/src/routes/discovery.ts`, `artifacts/api-server/src/routes/hiddenGems.ts`, `artifacts/api-server/src/routes/events.ts`, `travel-buddy-standalone/src/components/SaveButton.tsx`, `travel-buddy-standalone/app/(tabs)/events.tsx`, `travel-buddy-standalone/app/event/[id].tsx`; PS1, CSU1–CSU3, GS1, GS4, BK1, BK2, BK4, ED1, ES1). **Telegraph says a withheld event** (`artifacts/api-server/src/routes/compass.ts`; TE1). **Every events list refuses or marks a read it could not make** (`artifacts/api-server/src/routes/events.ts`; NT1, NT2, WB, WF, WE). **No hook keeps another context's items over a failed read** (`travel-buddy-standalone/src/hooks/useLivePulse.ts`, `travel-buddy-standalone/src/hooks/usePulseFeed.ts`; LR1–LR3, PF1, PF3). **Undated events past the first page are read** (`artifacts/api-server/src/routes/events.ts`; UD0, UD1). **Search states no own state over a failed read** (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts`; SE1, SF1, SF2). |
+
+**Headline.** DV-83 moves W → C. `check:census-integrity` counts **C 101 / W 85 / N 2 / X 0** over 188: CONSTRUCTED 186 / 188 = **98.9 %**, CORRECT 101 / 188 = **53.7 %**. The denominator is unchanged. The move is on controlled evidence and awaits independent re-verification.
+
+### 122.13 Left open, and what would turn this red
+
+- **The verifier's scope rulings, recorded (D-W11X2-188).** `post_hides` is inside DV-83 and was a safety fail-open (closed, §122.2); GET /admin's events list is outside (the admin console); POST/DELETE /posts/:id/save's `count ?? 0` is outside (census-media's counter write); `cityConfidenceWindowedReads` is outside while its flag is seeded FALSE; the co-host picker fails closed and is not a break.
+- **Left for their owners (D-W11X2-188).** GET /users/search, the people search of `app/discover.tsx` (lane tm-people, §106; this lane was told not to touch it), serves `isFollowing` from a follows read whose error it does not bind. The media feeds' own state (`routes/posts.ts`, `routes/memories.ts`, `routes/highlights.ts`, the gems feed hook) is census-media's. The known unresolved-viewer path on GET /discovery/community (§94.11, D-W11X2-15) is unchanged.
+- **Product effect, stated.** GET /events/following, /circles and /me answer 503 when the viewer's saved state cannot be read, as they do over the viewer's own RSVP; near-trip answers 503 over a failed trip or membership read; the city alias, /nearby and near-trip may answer `truncated`; GET /pulse may answer an empty feed naming `post_hides`; bookmarks may say "Couldn't check if saved"; search results may say "View".
+- **What would turn DV-83 red again:** a hidden post served over a failed hide read (PH1, PH2); an own saved, attending or following state served or drawn as measured over a failed read (PS1, PS2, PSC0, PSC2, SU0, SU1, SU4, PC0, CSU1–CSU3, GS1, GS4, GD0–GD2, BK1, BK2, BK4–BK6, ED1, ES1, SE1, SR0, SF1, SF2, SR3, SR4); Telegraph withholding an event unsaid (TE1); a list answering a failed read as a fact or a withheld event as the whole list (NT1, NT2, WB, WF, WE); another context's items drawn over a failed read (LR1–LR3, PF1, PF3); an undated event never read (UD0, UD1); any path §119.14 lists.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/test/helpers/postgrestKeyset.ts — §118.2 names it only as the shared test machinery that lets a PostgREST-shaped double answer a keyset page (the `.or()` cursor and every `.order()`); no verdict rests on it, and the suites that use it are watched.
@@ -20160,7 +20267,6 @@ Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. COR
 - NOT-GRADED: artifacts/api-server/src/compass/CompassLiveConstraints.ts — §57.4 cites its environment gate to show the Compass serve points' only safety is Compass's own; census-compass and census-sensing S66 grade it, and no §57 verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/src/services/rankEvents.ts — §62.7 H1 names it as a place the client lane adds `client_event_id`; no §62 verdict rests on it, and nothing in the tree calls `recordOutcome` today.
 - NOT-GRADED: travel-buddy-standalone/src/components/PlanPickerController.tsx — §62.7 H1 lists it as an outcome call site the client hunk covers; DV-79 and DC-09 grade its trip_add report, and §62 grades nothing in it.
-- NOT-GRADED: travel-buddy-standalone/src/components/SaveButton.tsx — §62.7 H1 lists it as a Pulse outcome call site the client hunk covers; no Discovery verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/lib/placeIdBridge.ts — §62.3 cites it only to show that a `db/` uuid names one of two tables, which is why the debug sample writes no `content_id` for it; no verdict rests on the bridge.
 - NOT-GRADED: artifacts/api-server/src/routes/messaging.ts — §62.4 names it as one of five callers of `processTagging`, each passing the service client; the finding is about `tags`' writers, and census-telegraph grades this route.
 - NOT-GRADED: travel-buddy-standalone/src/hooks/useEventRsvp.ts — §62.7 H1 lists its rsvp and join reports as outcome call sites the client hunk covers; they report on the events surface, and no Discovery verdict rests on them.
@@ -20206,3 +20312,5 @@ Headline at this head, from the rows: **C 100 / W 86 / N 2 / X 0** over 188. COR
 - NOT-GRADED: travel-buddy-standalone/app/close-friends.tsx — §106 cites the exact-handle match (D-TMP-4); Close Friends is not a Discovery surface.
 - NOT-GRADED: travel-buddy-standalone/app/__tests__/discover.searchFailureHonesty.component.test.tsx — §106's client evidence for a surface no Discovery row grades.
 - NOT-GRADED: artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts — §112.1 and §112.2 name it only as the subject of the round-14 verifier's S1 (the fallback feed ignores mutes), handed to the safety lane (census-compass §35) and not edited here; no Discovery verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/memories.ts — §122.13 names its own-state fields (`likedByMe`, `savedByMe`) only as census-media's, left for that owner; no Discovery verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/highlights.ts — §122.13 names its `likedByMe` only as census-media's, left for that owner; no Discovery verdict rests on it.
