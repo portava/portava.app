@@ -535,11 +535,11 @@ export const INPUT_TELEMETRY_RETENTION_DAYS = 90;
  * them is windowed, so deleting rows past 90 days changes no answer
  * `scripts/reportInputMetrics.ts` can give inside its own window.
  *
- * ── AND IT IS A NO-OP TODAY, WHICH IS THE POINT ──────────────────────────────
- * 2950 is unapplied to production and to portava-ci, so the table does not exist
- * and this pass reports `error` rather than a purge. On the day the migration
- * lands the bound is ALREADY enforced, rather than being one more thing someone
- * has to remember to turn on afterwards.
+ * ── IT WAS WRITTEN AHEAD OF ITS TABLE, WHICH WAS THE POINT ───────────────────
+ * When this was written 2950 was unapplied and the pass reported `error` rather
+ * than a purge. 2950 is now applied in hosted (census-input-intelligence §31,
+ * re-probed §35), so the bound has been enforced from the table's first row —
+ * not one more thing someone had to remember to turn on afterwards.
  */
 export async function runInputTelemetryRetentionSweep(
   opts: { client?: any; now?: Date } = {},
