@@ -280,8 +280,26 @@ export interface WallResponse {
   nextCursor?: string;
   /** Following only: true when the viewer has reached the end of eligible content. */
   caughtUp?: boolean;
+  /**
+   * Lanes whose read FAILED on the server for this page (spec §34; the server's
+   * `WallResponse.degraded`). ABSENT means every lane answered, so `items: []`
+   * without it is an honestly empty feed and WITH it is an outage.
+   */
+  degraded?: WallLane[];
   generatedAt: string;
 }
+
+/** A source of Wall content the server names when its read failed (server `WallLane`). */
+export type WallLane =
+  | 'follow_graph'
+  | 'spine'
+  | 'postcards'
+  | 'media'
+  | 'moments'
+  | 'opportunities'
+  | 'projection'
+  | 'live'
+  | 'quick_media';
 
 // ── Stories / Quick Media (spec §18) ─────────────────────────────────────────
 

@@ -27,6 +27,7 @@ import type {
   QuickMediaItem,
   StructuredIntent,
   WallMode,
+  WallLane,
   WallProjection,
   WallResponse,
 } from '../types/wallProjection.ts';
@@ -90,8 +91,18 @@ function normalizeWallResponse(mode: WallMode, body: Partial<WallResponse>): Wal
     items: Array.isArray(body.items) ? (body.items as WallProjection[]) : [],
     nextCursor: typeof body.nextCursor === 'string' ? body.nextCursor : undefined,
     caughtUp: body.caughtUp === true,
+    // census-wall §19: the one member that tells an outage from a quiet feed.
+    // Dropping it made a failed read render as "Nothing here yet".
+    degraded: normalizeDegraded(body.degraded),
     generatedAt: typeof body.generatedAt === 'string' ? body.generatedAt : new Date().toISOString(),
   };
+}
+
+/** The server's failed-lane list, names only; absent when nothing failed. */
+function normalizeDegraded(raw: unknown): WallLane[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const lanes = raw.filter((x): x is WallLane => typeof x === 'string' && x.length > 0);
+  return lanes.length > 0 ? lanes : undefined;
 }
 
 async function readErrorCode(res: Response): Promise<string> {
