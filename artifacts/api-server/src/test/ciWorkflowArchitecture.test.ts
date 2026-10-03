@@ -490,6 +490,9 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
     /** Ceiling for the refusal backoff, so a test does not really sleep for
      *  the production default. */
     pollMaxSeconds?: number;
+    /** Serve the fixture listing for BOTH status queries, reproducing a run
+     *  that moved queued -> in_progress between the two calls. */
+    bothStatuses?: boolean;
   }) => {
     const dir = mkdtempSync(join(tmpdir(), "portava-slot-"));
     writeFileSync(join(dir, "listing.txt"), opts.listing ?? "");
@@ -503,10 +506,19 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
       );
     }
     const calls = JSON.stringify(join(dir, "listing-calls"));
+    const asked = JSON.stringify(join(dir, "asked-urls"));
     writeFileSync(
       join(dir, "gh"),
       "#!/usr/bin/env bash\n" +
+        `printf '%s\\n' "$*" >> ${asked}\n` +
         // `gh api .../actions/workflows/<id>/runs...` -> the listing.
+        // The script asks per status, so the stub answers per status: the
+        // fixture listing stands in for the in-progress runs, and `queued`
+        // comes back empty, as it would for a queue of running jobs.
+        'if [[ "$*" == *"status=queued"* ]]; then\n' +
+        (opts.bothStatuses ? `  cat ${JSON.stringify(join(dir, "listing.txt"))}\n` : "") +
+        "  exit 0\n" +
+        "fi\n" +
         'if [[ "$*" == *"/actions/workflows/"* ]]; then\n' +
         `  n=$(cat ${calls} 2>/dev/null || echo 0); n=$((n + 1)); echo $n > ${calls}\n` +
         `  if [ "$n" -le ${opts.apiRefusals ?? 0} ]; then\n` +
@@ -550,8 +562,14 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
     } catch {
       emitted = "";
     }
+    let askedUrls: string[] = [];
+    try {
+      askedUrls = readFileSync(join(dir, "asked-urls"), "utf8").split("\n").filter(Boolean);
+    } catch {
+      askedUrls = [];
+    }
     rmSync(dir, { recursive: true, force: true });
-    return { code: r.status, out: `${r.stdout}${r.stderr}`, emitted };
+    return { code: r.status, out: `${r.stdout}${r.stderr}`, emitted, askedUrls };
   };
 
   it("EXECUTES fail-closed: a verify that cannot prove the slot exits 75", () => {
@@ -618,6 +636,72 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
    * a morning on queue arithmetic because of that sentence. The refusal has to
    * name itself.
    */
+  /**
+   * The request budget, which is the resource that actually ran out on
+   * 2026-10-03. The listing used to `--paginate` the workflow's whole run
+   * history and filter client-side: `--jq` filters each page without stopping
+   * the walk, so one poll cost ceil(2919/100) = 30 requests, every 20s, from
+   * every waiting lane, against a per-REPOSITORY budget. No amount of backoff
+   * fixes that, because the budget is gone before the first 403 arrives.
+   */
+  it("asks the API to filter by status instead of walking the whole run history", () => {
+    const r = runSlotScript({
+      role: "verify",
+      runId: "33967153487",
+      listing: "2026-09-05T12:49:56Z 33967153487\n",
+    });
+    assert.equal(r.code, 0, `the oldest active run must still be let through. Got ${r.code}:\n${r.out}`);
+
+    const listings = r.askedUrls.filter((u) => u.includes("/actions/workflows/"));
+    assert.ok(listings.length > 0, "the script asked for no run listing at all");
+    for (const url of listings) {
+      assert.match(
+        url, /[?&]status=(in_progress|queued)\b/,
+        `an unfiltered run listing paginates the entire workflow history (2919 runs = 30 requests ` +
+          `per poll). Ask the API to filter: ${url}`,
+      );
+    }
+    // Both statuses, or the queue is only half visible.
+    assert.ok(
+      listings.some((u) => u.includes("status=in_progress")) && listings.some((u) => u.includes("status=queued")),
+      `both in_progress and queued must be asked for, got: ${JSON.stringify(listings)}`,
+    );
+
+    // Two calls are not one atomic snapshot, and the order decides whether a
+    // run can fall through the gap between them. Runs only move queued ->
+    // in_progress, so `queued` must be asked FIRST: a run queued at the first
+    // call is seen there, one already running is seen by the second. Reversed,
+    // a run that starts between the calls is listed by NEITHER — and a missed
+    // run is how this script concludes a held database is free.
+    const firstQueued = listings.findIndex((u) => u.includes("status=queued"));
+    const firstRunning = listings.findIndex((u) => u.includes("status=in_progress"));
+    assert.ok(
+      firstQueued < firstRunning,
+      `queued must be asked before in_progress, or a run starting mid-poll is listed by neither: ` +
+        `${JSON.stringify(listings)}`,
+    );
+  });
+
+  it("de-duplicates a run that the two status calls both returned", () => {
+    // The price of the safe order: a run that starts between the calls appears
+    // twice. It cannot make the slot look free — the oldest is still the
+    // oldest — but it inflates `active=`, and humans read that number when
+    // deciding whether to push another branch.
+    const r = runSlotScript({
+      role: "queue",
+      runId: "37113934334",
+      // The stub serves this listing for BOTH statuses, so every run is
+      // returned twice, exactly as a mid-poll transition would.
+      listing: "2026-10-03T09:42:05Z 37113934334\n2026-10-03T09:18:27Z 37112598597\n",
+      bothStatuses: true,
+      timeoutSeconds: 2,
+    });
+    assert.match(
+      r.out, /holder=37112598597, 2 active/,
+      `two distinct runs must count as 2 active, not 4. Got:\n${r.out}`,
+    );
+  });
+
   it("EXECUTES fail-closed on a refused API, and names the 403 instead of blaming the queue", () => {
     const r = runSlotScript({
       role: "verify",

@@ -180,6 +180,10 @@ POLL_MAX="${LIVE_DB_SLOT_POLL_MAX_SECONDS:-300}"
 SLEEP_FOR="$POLL"
 API_REFUSALS=0
 POLLS=0
+# Distinct holders seen across the parsed polls, oldest sighting first. A
+# timeout that names them says "I queued behind these runs"; one that names
+# none says "I never saw a queue", and the two want different responses.
+HOLDERS_SEEN=""
 
 # ── CLAIM ANNOTATION ─────────────────────────────────────────────────────────
 #
@@ -304,6 +308,11 @@ while :; do
       # Never once got an answer. Saying "the queue is long" here would be a
       # guess, and the guess cost three sessions a morning.
       echo "::error::live-db slot: the Actions API refused ALL ${POLLS} run-listing requests over ${ELAPSED}s (most recently: ${WHY:-unknown}). This job never learned who holds the shared database, so it has certified NOTHING and is failing closed. This is NOT a queue backlog and re-running will not shorten it — the request budget is the shared resource that ran out. Reduce the number of live-DB lanes running at once, or wait for the rate limit to reset."
+    elif [ "$API_REFUSALS" -gt 0 ]; then
+      # The mixed case, which is what every run measured on 2026-10-03 actually
+      # was. Give BOTH numbers, so nobody has to read 554 log lines to find out
+      # which phase the budget went on.
+      echo "::error::live-db slot: waited ${ELAPSED}s without acquiring the shared database, and this run has certified NOTHING. ${POLLS} polls: $(( POLLS - API_REFUSALS )) queued behind ${HOLDERS_SEEN:-no named holder}, then ${API_REFUSALS} refused by the Actions API (${WHY:-unknown}). Part queue, part request budget — re-running helps only the first part."
     elif [ "$ROLE" = "verify" ]; then
       echo "::error::live-db slot: this job waited ${ELAPSED}s and could NOT prove that run ${GITHUB_RUN_ID} attempt ${ATTEMPT} holds the shared database. It has certified NOTHING and is failing rather than running against a database another run is mutating. If this is a partial re-run (\`gh run rerun --failed\`), re-run the whole workflow instead — a re-run does not re-execute the queue job, so the attempt starts at the BACK of the queue."
     else
@@ -323,17 +332,60 @@ while :; do
     # the same three keys they always did. This one separates "the queue was
     # long" from "the API never answered", which the wait duration alone cannot.
     emit "live_db_slot_api_refusals=${API_REFUSALS}/${POLLS}"
+    emit "live_db_slot_holders=${HOLDERS_SEEN}"
     exit 75
   fi
 
   # Every in-progress/queued run of this workflow, `<started> <id>` per line.
+  #
+  # ASK THE SERVER TO FILTER. This used to walk the workflow's ENTIRE run
+  # history with `--paginate` and select the active ones client-side, which is
+  # what exhausted the request budget in the first place: `--jq` filters each
+  # page without stopping the walk, so one poll cost ceil(total/100) requests.
+  # Measured 2026-10-03: live-db.yml has 2919 runs, so that was 30 requests per
+  # poll, every 20s, from every waiting lane, against a budget that is per
+  # REPOSITORY. The backoff below cannot prevent that — exhaustion arrives
+  # before the first 403 does.
+  #
+  # `?status=` is applied by the API across all runs, so this is strictly more
+  # precise than the walk it replaces, not a bounded approximation of it: it
+  # CANNOT miss an older holder, however long that holder has been running.
+  # Measured the same day: status=in_progress returned total_count 8 and
+  # status=queued returned 4 — the whole queue, in two requests instead of 30.
+  #
+  # ORDER MATTERS, and it is the one way two calls can be worse than one. The
+  # calls are not a single atomic snapshot, so a run that changes status
+  # between them could fall through the gap — and a MISSED run is how this
+  # script concludes a database is free when it is not. Runs only ever move
+  # queued -> in_progress, so asking for `queued` FIRST makes a miss
+  # impossible: a run queued at the first call is seen there, and one already
+  # in progress by then is seen by the second. The reverse order has a real
+  # hole (queued at call one's instant, in progress by call two's, listed by
+  # neither). The cost of this order is that a run transitioning mid-poll can
+  # appear TWICE, which is why the ids are de-duplicated below — a double
+  # listing cannot make the slot look free, but it does inflate `active=`, and
+  # that number is read by humans deciding whether to push.
+  #
   # No `|| echo ""` here: that discarded gh's exit status, which is the one
-  # unambiguous signal that the API refused us rather than answered us.
-  RAW_RUNS="$(gh api --paginate \
-            "repos/${GITHUB_REPOSITORY}/actions/workflows/${WF_ID}/runs?per_page=100" \
-            --jq '.workflow_runs[] | select(.status == "in_progress" or .status == "queued") | "\(.run_started_at // .created_at) \(.id)"' \
-          2>/dev/null)"
-  GH_RC=$?
+  # unambiguous signal that the API refused us rather than answered us. Each
+  # status keeps `--paginate` because correctness needs every page OF THE
+  # FILTERED SET, which is the queue depth, not the run history.
+  RAW_RUNS=""
+  GH_RC=0
+  for RUN_STATUS in queued in_progress; do
+    STATUS_PAGE="$(gh api --paginate \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/${WF_ID}/runs?status=${RUN_STATUS}&per_page=100" \
+              --jq '.workflow_runs[] | "\(.run_started_at // .created_at) \(.id)"' \
+            2>/dev/null)"
+    STATUS_RC=$?
+    # Either call failing means we do not have the queue. Fail closed: keep the
+    # non-zero status so the refusal branch below owns this poll.
+    [ "$STATUS_RC" -ne 0 ] && GH_RC="$STATUS_RC"
+    RAW_RUNS="${RAW_RUNS}${STATUS_PAGE}"$'\n'
+  done
+  # First sighting of each run id wins. Lines that do not parse are passed
+  # through untouched, because the decider must still refuse them.
+  RAW_RUNS="$(printf '%s\n' "$RAW_RUNS" | awk 'NF == 0 { next } NF < 2 { print; next } !seen[$2]++')"
   POLLS=$(( POLLS + 1 ))
   ASKED=1
 
@@ -385,6 +437,12 @@ while :; do
       HOLDER="$(printf '%s\n' "$DECISION" | sed -n 's/^holder=//p')"
       ACTIVE="$(printf '%s\n' "$DECISION" | sed -n 's/^active=//p')"
       FORF="$(printf '%s\n' "$DECISION" | sed -n 's/^forfeited=//p')"
+      if [ -n "$HOLDER" ]; then
+        case ",${HOLDERS_SEEN}," in
+          *",${HOLDER},"*) : ;;
+          *) HOLDERS_SEEN="${HOLDERS_SEEN:+${HOLDERS_SEEN},}${HOLDER}" ;;
+        esac
+      fi
       echo "live-db slot [${ROLE}]: waiting ${ELAPSED}s/${TIMEOUT}s — holder=${HOLDER:-?}, ${ACTIVE:-?} active, ${FORF:-0} forfeited"
       ;;
     3)
