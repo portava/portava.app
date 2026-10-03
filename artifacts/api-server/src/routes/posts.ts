@@ -39,7 +39,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { awardStamp } from "../services/passport/StampAwardEngine.js";
 import { evaluateAndAwardCriteria } from "../lib/stamps/criteria/index.js";
 import { getServiceClient } from "../lib/supabase";
-import { stampEntity, unstampEntity } from "../services/stamps/ContentStampService.js"; import { recountPostCounter } from "../lib/postCounters.js"; // census-media §47: counters recounted exactly, never stamped over a failed read
+import { stampEntity, unstampEntity } from "../services/stamps/ContentStampService.js"; import { recountPostCounter, loadPostEngagement, UNKNOWN_POST_ENGAGEMENT, type PostEngagement } from "../lib/postCounters.js"; import { FailedSources, readWhole, readWholeColumn, afterKey, asResult } from "../lib/feedReads.js"; // census-media §47: counts exact, never stamped or served over a failed read
 import { stampOverlayCol, feedVariantCol } from "../lib/postMediaOverlay";
 import { checkRateLimit } from "../lib/rateLimit";
 import { writePulseGeoTag } from "../services/location/PulseGeoTagService";
@@ -1168,16 +1168,16 @@ router.get("/posts", async (req, res) => {
     if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
     // Step 1: who does this user follow?
-    const { data: followRows, error: followErr } = await sc
-      .from("user_follows")
-      .select("following_id")
-      .eq("follower_id", user.id);
+    // census-media §47: the WHOLE follow graph, read by key — one unbounded read
+    // was cut at PostgREST's 1,000 rows, and the creators past it never appeared.
+    const followRead = await readWholeColumn(sc, "user_follows", "following_id", (q: any) => q.eq("follower_id", user.id));
+    const followErr = followRead.ok ? null : followRead.error;
     if (followErr) {
       req.log.error({ err: followErr }, "Failed to load following list for feed");
       sendError(res, "db_error", followErr.message);
       return;
     }
-    const rawFollowingIds: string[] = (followRows ?? []).map((r: any) => r.following_id);
+    const rawFollowingIds: string[] = followRead.ok ? followRead.value : [];
     if (rawFollowingIds.length === 0) {
       res.status(200).json({ posts: [], feed: "following" });
       return;
@@ -1240,14 +1240,14 @@ router.get("/posts", async (req, res) => {
 
     // Step 1b: fetch caller's hidden post IDs before the main LIMIT query so
     // the DB returns exactly `limit` visible posts (no premature end-of-feed).
-    const followingHiddenIds: string[] = [];
-    try {
-      const { data: hiddenRows } = await sc
+    const followingHiddenIds: string[] = []; const followingFailed = new FailedSources(req.log, "following feed"); // census-media §47: every read this feed could not make is named in failedSources
+    const followingHiddenRead = await readWhole<any>((after, size) => afterKey(
+      sc
         .from("post_hides")
-        .select("post_id")
-        .eq("user_id", user.id);
-      for (const r of hiddenRows ?? []) followingHiddenIds.push((r as any).post_id);
-    } catch { /* best-effort */ }
+        .select("post_id", { count: "exact" })
+        .eq("user_id", user.id).order("post_id", { ascending: true }).limit(size), "post_id", after), (r) => String(r.post_id));
+    if (followingHiddenRead.ok) for (const r of followingHiddenRead.value) followingHiddenIds.push(r.post_id); else followingFailed.note("post_hides", followingHiddenRead.error);
+    // ^ census-media §47: the WHOLE hide list, by key; an unread one is NAMED (the page is still served) — never "nothing hidden".
 
     // Step 2: public standalone active published posts from followed users only.
     let q = sc
@@ -1275,43 +1275,32 @@ router.get("/posts", async (req, res) => {
     const authorIds = [...new Set(posts.map((p) => p.author_id))];
     let profileMap: Record<string, any> = {};
     if (authorIds.length > 0) {
-      const { data: profiles } = await sc
+      const { data: profiles, error: profilesErr } = await sc
         .from("profiles")
         .select("id, handle, name, username, full_name, avatar_url, is_official")
         .in("id", authorIds);
-      const allowedNames = await nameVisibilitySet(sc, authorIds);
+      const allowedNames = await nameVisibilitySet(sc, authorIds); if (profilesErr) followingFailed.note("profiles", profilesErr); // §47: an unread author is named, not shown as no author
       for (const p of profiles ?? []) profileMap[p.id] = sanitizeIdentity(p as any, allowedNames, user.id);
     }
 
     // Step 4: batch-fetch engagement counts + likedByMe + savedByMe + stampCount + isStampedByViewer.
     const postIds = posts.map((p) => p.id);
-    const engMap: Record<string, { likeCount: number; commentCount: number; likedByMe: boolean; saveCount: number; savedByMe: boolean; stampCount: number; isStampedByViewer: boolean }> = {};
-    if (postIds.length > 0) {
-      const [{ data: engData }, { data: savedData }, { data: allStampData }, { data: myStampData }] = await Promise.all([
-        sc.from("posts").select("id, like_count, comment_count, save_count").in("id", postIds),
-        sc.from("post_saves").select("post_id").eq("user_id", user.id).in("post_id", postIds),
-        sc.from("content_stamps").select("entity_id").eq("entity_type", "post").in("entity_id", postIds),
-        sc.from("content_stamps").select("entity_id").eq("user_id", user.id).eq("entity_type", "post").in("entity_id", postIds),
-      ]);
-      const savedSet = new Set<string>((savedData ?? []).map((r: any) => r.post_id));
-      const stampCountMap: Record<string, number> = {};
-      for (const r of (allStampData ?? []) as any[]) stampCountMap[r.entity_id] = (stampCountMap[r.entity_id] ?? 0) + 1;
-      // likedByMe derives from content_stamps (unified write path since Task 3047).
-      const myStampSet = new Set<string>((myStampData ?? []).map((r: any) => r.entity_id as string));
-      for (const r of engData ?? []) {
-        engMap[r.id] = {
-          // likeCount derives from content_stamps so it stays consistent with
-          // compat like writes — posts.like_count is no longer updated.
-          likeCount: stampCountMap[r.id] ?? 0,
-          commentCount: r.comment_count ?? 0,
-          likedByMe: myStampSet.has(r.id),
-          saveCount: r.save_count ?? 0,
-          savedByMe: savedSet.has(r.id),
-          stampCount: stampCountMap[r.id] ?? 0,
-          isStampedByViewer: myStampSet.has(r.id),
-        };
-      }
-    }
+    // census-media §47 — the DV-83 verifiers' finding (census-discovery §118.13). This block read the cached
+    // like/comment/save columns and the viewer's own rows in one Promise.all and looked at none of the errors:
+    // supabase-js RESOLVES { data: null, error }, so an unreadable post_saves made every post read
+    // savedByMe:false, an unreadable content_stamps made every count 0, and nothing said so. It also counted
+    // stamps by reading one row per stamp — an unbounded read PostgREST cuts at 1,000 rows, so a busy page was
+    // undercounted in silence. Now lib/postCounters.loadPostEngagement:
+    //   - likeCount / stampCount: exact, from content_stamps read WHOLE, by key;
+    //   - commentCount: exact and live (non-deleted posts_comments), not the cached comment_count;
+    //   - saveCount: exact and live (post_saves), not the cached save_count, which
+    //     POST /media/:id/save never maintained;
+    //   - likedByMe / isStampedByViewer / savedByMe: the viewer's own rows;
+    // and a read that fails leaves ITS fields null on every post and names its table in failedSources —
+    // never 0, never false — while the reads that worked still answer.
+    const engMap = await loadPostEngagement(sc, postIds, user.id, followingFailed);
+    // Every post on the page has an entry; UNKNOWN_POST_ENGAGEMENT below is only a guard.
+    // The global and trip feeds and GET /posts/:postId read the same way (one helper, one rule).
 
     // Step 5: enrich with positioned @mention + #hashtag spans.
     const followingSpansMap = posts.length > 0
@@ -1320,19 +1309,30 @@ router.get("/posts", async (req, res) => {
 
     // Step 5.5: batch-fetch structured media for posts that carry video/images.
     const followingMediaByPost: Record<string, any[]> = {};
+    // census-media §47: an unread post_media is NAMED in failedSources and each post's `media` is null
+    // (unknown) — not [] ("this post has no media"). A missing media list still never breaks the feed.
+    let followingMediaUnread = false;
     if (postIds.length > 0) {
       try {
-        const { data: mediaRows } = await sc
+        const { data: mediaRows, error: mediaErr } = await sc
           .from("post_media")
           .select(POST_MEDIA_FEED_COLUMNS + (await stampOverlayCol(sc)) + (await feedVariantCol(sc)))
           .in("post_id", postIds)
           .eq("processing_status", "ready")
           .neq("moderation_status", "rejected");
+        if (mediaErr) {
+          followingMediaUnread = true;
+          followingFailed.note("post_media", mediaErr);
+        }
         for (const m of (mediaRows ?? []) as any[]) {
           if (!followingMediaByPost[m.post_id]) followingMediaByPost[m.post_id] = [];
           followingMediaByPost[m.post_id].push(m);
         }
-      } catch { /* fail-open: missing media must not break the feed */ }
+      } catch (err) {
+        // A THROWN client fault (a network reset); a resolved error is handled above.
+        followingMediaUnread = true;
+        followingFailed.note("post_media", err);
+      }
     }
 
     // Step 6: merge author + engagement + spans + media into each post.
@@ -1342,7 +1342,7 @@ router.get("/posts", async (req, res) => {
     const merged = posts.map((p) => {
       const safe = gemProtectPost(mapPublicPost(p), followingGemCtx, user.id);
       const pr = profileMap[p.author_id];
-      const eng = engMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false, saveCount: 0, savedByMe: false, stampCount: 0, isStampedByViewer: false };
+      const eng = engMap.get(p.id) ?? UNKNOWN_POST_ENGAGEMENT; // census-media §47: null is "could not be read", never 0/false
       const spans = (followingSpansMap as any)[p.id] ?? { tags: [], hashtagUsages: [] };
       return {
         ...safe,
@@ -1368,11 +1368,11 @@ router.get("/posts", async (req, res) => {
         canShare: true,
         tags: spans.tags,
         hashtagUsages: spans.hashtagUsages,
-        media: filterPostMedia(followingMediaByPost[p.id] ?? []),
+        media: followingMediaUnread ? null : filterPostMedia(followingMediaByPost[p.id] ?? []),
       };
     });
 
-    res.status(200).json({ posts: merged, feed: "following" });
+    res.status(200).json({ posts: merged, feed: "following", ...followingFailed.body() });
     return;
   }
 
@@ -1382,14 +1382,14 @@ router.get("/posts", async (req, res) => {
 
   // Pre-fetch IDs to exclude before the LIMIT query so the DB returns exactly
   // `limit` visible posts without premature end-of-feed.
-  const globalHiddenIds: string[] = [];
-  try {
-    const { data: hiddenRows } = await svc
+  const globalHiddenIds: string[] = []; const globalFailed = new FailedSources(req.log, "global feed"); // census-media §47: every read this feed could not make is named in failedSources
+  const globalHiddenRead = await readWhole<any>((after, size) => afterKey(
+    svc
       .from("post_hides")
-      .select("post_id")
-      .eq("user_id", user.id);
-    for (const r of hiddenRows ?? []) globalHiddenIds.push((r as any).post_id);
-  } catch { /* best-effort */ }
+      .select("post_id", { count: "exact" })
+      .eq("user_id", user.id).order("post_id", { ascending: true }).limit(size), "post_id", after), (r) => String(r.post_id));
+  if (globalHiddenRead.ok) for (const r of globalHiddenRead.value) globalHiddenIds.push(r.post_id); else globalFailed.note("post_hides", globalHiddenRead.error);
+  // ^ census-media §47: the WHOLE hide list, by key; an unread one is NAMED (the page is still served) — never "nothing hidden".
 
   // Exclude posts from private-profile authors. The global feed is shown to all
   // authenticated users; private accounts' content must not surface to non-followers.
@@ -1401,10 +1401,10 @@ router.get("/posts", async (req, res) => {
   {
     let lookupFailure: unknown = null;
     try {
-      const [profRes, settingsRes] = await Promise.all([
-        svc.from("profiles").select("id").or("is_private.eq.true,passport_visibility.eq.private"),
-        svc.from("profile_privacy_settings").select("user_id").eq("profile_visibility", "private"),
-      ]);
+      const [profRead, settingsRead] = await Promise.all([ // census-media §47: both lists read WHOLE, by key — one unbounded read was cut at 1,000 rows, and the 1,001st private account's posts reached this feed
+        readWhole<any>((after, size) => afterKey(svc.from("profiles").select("id", { count: "exact" }).or("is_private.eq.true,passport_visibility.eq.private").order("id", { ascending: true }).limit(size), "id", after), (r) => String(r.id)),
+        readWhole<any>((after, size) => afterKey(svc.from("profile_privacy_settings").select("user_id", { count: "exact" }).eq("profile_visibility", "private").order("user_id", { ascending: true }).limit(size), "user_id", after), (r) => String(r.user_id)),
+      ]); const profRes = asResult(profRead); const settingsRes = asResult(settingsRead); // a cut read is an error here, so the branch below fails CLOSED on it too
       // An empty set means "no private accounts exist"; a failed query means
       // "we could not find out". Both used to produce the same empty exclusion
       // list, and the second one published every private account's posts to the
@@ -1468,42 +1468,22 @@ router.get("/posts", async (req, res) => {
   // Batch-fetch authors
   let globalProfileMap: Record<string, any> = {};
   if (globalAuthorIds.length > 0) {
-    const { data: profiles } = await svc
+    const { data: profiles, error: profilesErr } = await svc
       .from("profiles")
       .select("id, handle, name, avatar_url, is_official")
       .in("id", globalAuthorIds);
-    const allowedNames = await nameVisibilitySet(svc, globalAuthorIds);
+    const allowedNames = await nameVisibilitySet(svc, globalAuthorIds); if (profilesErr) globalFailed.note("profiles", profilesErr); // §47: an unread author is named, not shown as no author
     for (const p of profiles ?? []) globalProfileMap[p.id] = sanitizeIdentity(p as any, allowedNames, user.id);
   }
 
   // Batch-fetch engagement + likedByMe + savedByMe + stampCount + isStampedByViewer
-  const globalEngMap: Record<string, { likeCount: number; commentCount: number; likedByMe: boolean; saveCount: number; savedByMe: boolean; stampCount: number; isStampedByViewer: boolean }> = {};
-  if (globalPostIds.length > 0) {
-    const [{ data: engData }, { data: savedData }, { data: allStampData }, { data: myStampData }] = await Promise.all([
-      svc.from("posts").select("id, like_count, comment_count, save_count").in("id", globalPostIds),
-      svc.from("post_saves").select("post_id").eq("user_id", user.id).in("post_id", globalPostIds),
-      svc.from("content_stamps").select("entity_id").eq("entity_type", "post").in("entity_id", globalPostIds),
-      svc.from("content_stamps").select("entity_id").eq("user_id", user.id).eq("entity_type", "post").in("entity_id", globalPostIds),
-    ]);
-    const savedSet = new Set<string>((savedData ?? []).map((r: any) => r.post_id));
-    const stampCountMap: Record<string, number> = {};
-    for (const r of (allStampData ?? []) as any[]) stampCountMap[r.entity_id] = (stampCountMap[r.entity_id] ?? 0) + 1;
-    // likedByMe derives from content_stamps (unified write path since Task 3047).
-    const myStampSet = new Set<string>((myStampData ?? []).map((r: any) => r.entity_id as string));
-    for (const r of engData ?? []) {
-      globalEngMap[r.id] = {
-        // likeCount derives from content_stamps so it stays consistent with
-        // compat like writes — posts.like_count is no longer updated.
-        likeCount: stampCountMap[r.id] ?? 0,
-        commentCount: r.comment_count ?? 0,
-        likedByMe: myStampSet.has(r.id),
-        saveCount: r.save_count ?? 0,
-        savedByMe: savedSet.has(r.id),
-        stampCount: stampCountMap[r.id] ?? 0,
-        isStampedByViewer: myStampSet.has(r.id),
-      };
-    }
-  }
+  // census-media §47 — the same defect and the same rule as the following feed above. The old block read the
+  // cached like/comment/save columns and the viewer's rows in one Promise.all with every error discarded, so a
+  // failed read served 0 counts and savedByMe/likedByMe false as if measured, and it counted stamps from an
+  // unbounded row read PostgREST cuts at 1,000 rows. lib/postCounters.loadPostEngagement reads stamps,
+  // comments and saves WHOLE and live (never the cached columns) plus the viewer's own rows; a read that fails
+  // leaves its fields null on every post and names its table in failedSources.
+  const globalEngMap = await loadPostEngagement(svc, globalPostIds, user.id, globalFailed);
 
   // Enrich with positioned @mention + #hashtag spans
   const globalSpansMap = globalPosts.length > 0
@@ -1512,19 +1492,30 @@ router.get("/posts", async (req, res) => {
 
   // Batch-fetch structured media for global feed posts (fail-open)
   const globalMediaByPost: Record<string, any[]> = {};
+  // census-media §47: an unread post_media is NAMED in failedSources and each post's `media` is null
+  // (unknown) — not [] ("this post has no media"). A missing media list still never breaks the feed.
+  let globalMediaUnread = false;
   if (globalPostIds.length > 0) {
     try {
-      const { data: mediaRows } = await svc
+      const { data: mediaRows, error: mediaErr } = await svc
         .from("post_media")
         .select(POST_MEDIA_FEED_COLUMNS + (await stampOverlayCol(svc)) + (await feedVariantCol(svc)))
         .in("post_id", globalPostIds)
         .eq("processing_status", "ready")
         .neq("moderation_status", "rejected");
+      if (mediaErr) {
+        globalMediaUnread = true;
+        globalFailed.note("post_media", mediaErr);
+      }
       for (const m of (mediaRows ?? []) as any[]) {
         if (!globalMediaByPost[m.post_id]) globalMediaByPost[m.post_id] = [];
         globalMediaByPost[m.post_id].push(m);
       }
-    } catch { /* fail-open */ }
+    } catch (err) {
+      // A THROWN client fault (a network reset); a resolved error is handled above.
+      globalMediaUnread = true;
+      globalFailed.note("post_media", err);
+    }
   }
 
   // Hidden-Gem location protection (fail-closed).
@@ -1532,7 +1523,7 @@ router.get("/posts", async (req, res) => {
   const mergedGlobal = globalPosts.map((p) => {
     const safe = gemProtectPost(mapPublicPost(p), globalGemCtx, user.id);
     const pr = globalProfileMap[p.author_id];
-    const eng = globalEngMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false, saveCount: 0, savedByMe: false, stampCount: 0, isStampedByViewer: false };
+    const eng = globalEngMap.get(p.id) ?? UNKNOWN_POST_ENGAGEMENT; // census-media §47: null is "could not be read", never 0/false
     const spans = (globalSpansMap as any)[p.id] ?? { tags: [], hashtagUsages: [] };
     return {
       ...safe,
@@ -1549,7 +1540,7 @@ router.get("/posts", async (req, res) => {
       canShare: true,
       tags: spans.tags,
       hashtagUsages: spans.hashtagUsages,
-      media: filterPostMedia(globalMediaByPost[p.id] ?? []),
+      media: globalMediaUnread ? null : filterPostMedia(globalMediaByPost[p.id] ?? []),
     };
   });
 
@@ -1560,22 +1551,24 @@ router.get("/posts", async (req, res) => {
   const boostedPostIds = new Set<string>();
   try {
     if (globalPostIds.length > 0) {
-      const { data: followedRows } = await svc
+      const { data: followedRows, error: followedErr } = await svc
         .from("user_hashtag_follows")
         .select("hashtag_id")
         .eq("user_id", user.id);
+      if (followedErr) globalFailed.note("user_hashtag_follows", followedErr); // census-media §47: the page is served unboosted, and that is said
       const followedHashtagIds = (followedRows ?? []).map((r: any) => r.hashtag_id as string);
       if (followedHashtagIds.length > 0) {
-        const { data: matchRows } = await svc
+        const { data: matchRows, error: matchErr } = await svc
           .from("hashtag_usage")
           .select("source_id")
           .eq("source_type", "post")
           .in("source_id", globalPostIds)
           .in("hashtag_id", followedHashtagIds);
+        if (matchErr) globalFailed.note("hashtag_usage", matchErr); // §47: as above — no boost, said
         for (const r of matchRows ?? []) boostedPostIds.add((r as any).source_id as string);
       }
     }
-  } catch { /* non-fatal — serve feed without boost on error */ }
+  } catch (err) { globalFailed.note("hashtag_usage", err); /* non-fatal — the feed is served without the boost, and that is said */ }
 
   const finalPosts = boostedPostIds.size === 0
     ? mergedGlobal
@@ -1584,7 +1577,7 @@ router.get("/posts", async (req, res) => {
         ...mergedGlobal.filter((p) => !boostedPostIds.has(p.id)),
       ];
 
-  res.status(200).json({ posts: finalPosts, feed: "global" });
+  res.status(200).json({ posts: finalPosts, feed: "global", ...globalFailed.body() });
 });
 
 /* ===========================================================================
@@ -1661,33 +1654,29 @@ router.get("/trips/:tripId/posts", async (req, res) => {
   const tripPostIds = tripPosts.map((p) => p.id);
   const tripAuthorIds = [...new Set(tripPosts.map((p) => p.author_id))];
 
-  const tripSvc = getServiceClient();
+  const tripSvc = getServiceClient(); const tripFailed = new FailedSources(req.log, "trip feed"); // census-media §47: every read this feed could not make is named in failedSources
   let tripProfileMap: Record<string, any> = {};
   if (tripSvc && tripAuthorIds.length > 0) {
-    const { data: profiles } = await tripSvc
+    const { data: profiles, error: profilesErr } = await tripSvc
       .from("profiles").select("id, handle, name, avatar_url, is_official").in("id", tripAuthorIds);
-    const allowedNames = await nameVisibilitySet(tripSvc, tripAuthorIds);
+    const allowedNames = await nameVisibilitySet(tripSvc, tripAuthorIds); if (profilesErr) tripFailed.note("profiles", profilesErr); // §47: an unread author is named
     for (const p of profiles ?? []) tripProfileMap[p.id] = sanitizeIdentity(p as any, allowedNames, user.id);
   }
 
-  const tripEngMap: Record<string, { likeCount: number; commentCount: number; likedByMe: boolean; saveCount: number; savedByMe: boolean; stampCount: number; isStampedByViewer: boolean }> = {};
-  if (tripSvc && tripPostIds.length > 0) {
-    const [{ data: engData }, { data: savedData }, { data: allStampData }, { data: myStampData }] = await Promise.all([
-      tripSvc.from("posts").select("id, like_count, comment_count, save_count").in("id", tripPostIds),
-      tripSvc.from("post_saves").select("post_id").eq("user_id", user.id).in("post_id", tripPostIds),
-      tripSvc.from("content_stamps").select("entity_id").eq("entity_type", "post").in("entity_id", tripPostIds),
-      tripSvc.from("content_stamps").select("entity_id").eq("user_id", user.id).eq("entity_type", "post").in("entity_id", tripPostIds),
-    ]);
-    const savedSet = new Set<string>((savedData ?? []).map((r: any) => r.post_id));
-    const stampCountMap: Record<string, number> = {};
-    for (const r of (allStampData ?? []) as any[]) stampCountMap[r.entity_id] = (stampCountMap[r.entity_id] ?? 0) + 1;
-    // likedByMe derives from content_stamps (unified write path since Task 3047).
-    const myStampSet = new Set<string>((myStampData ?? []).map((r: any) => r.entity_id as string));
-    for (const r of engData ?? []) {
-      // likeCount derives from content_stamps — posts.like_count no longer updated by compat writes.
-      tripEngMap[r.id] = { likeCount: stampCountMap[r.id] ?? 0, commentCount: r.comment_count ?? 0, likedByMe: myStampSet.has(r.id), saveCount: r.save_count ?? 0, savedByMe: savedSet.has(r.id), stampCount: stampCountMap[r.id] ?? 0, isStampedByViewer: myStampSet.has(r.id) };
-    }
-  }
+  // census-media §47 — the same defect and the same rule as GET /posts above. The old block read the cached
+  // like/comment/save columns and the viewer's rows in one Promise.all with every error discarded (so a failed
+  // read served 0 counts and savedByMe/likedByMe false as if measured) and counted stamps from an unbounded row
+  // read PostgREST cuts at 1,000 rows — this feed serves up to 100 posts, so a busy trip was undercounted.
+  // lib/postCounters.loadPostEngagement reads stamps, comments and saves WHOLE and live, plus the viewer's own
+  // rows; a read that fails leaves its fields null on every post and names its table in failedSources.
+  // Without a service client nothing can be read: every value is unknown, and that is named too.
+  if (!tripSvc && tripPosts.length > 0) tripFailed.note("service_client", new Error("service client unavailable"));
+  const tripEngMap: Map<string, PostEngagement> = tripSvc
+    ? await loadPostEngagement(tripSvc, tripPostIds, user.id, tripFailed)
+    : new Map();
+  // Every post has an entry when the client exists; UNKNOWN_POST_ENGAGEMENT below covers the rest.
+  // Nothing here widens what a viewer is served — the membership read above still decides trip_only —
+  // it only stops an unread value being served as a measured one.
 
   // Enrich with positioned @mention + #hashtag spans
   const tripSpansMap = (tripSvc && tripPosts.length > 0)
@@ -1696,24 +1685,35 @@ router.get("/trips/:tripId/posts", async (req, res) => {
 
   // Batch-fetch structured media for trip posts (fail-open)
   const tripMediaByPost: Record<string, any[]> = {};
+  // census-media §47: an unread post_media is NAMED in failedSources and each post's `media` is null
+  // (unknown) — not [] ("this post has no media"). A missing media list still never breaks the feed.
+  let tripMediaUnread = false;
   if (tripSvc && tripPostIds.length > 0) {
     try {
-      const { data: mediaRows } = await tripSvc
+      const { data: mediaRows, error: mediaErr } = await tripSvc
         .from("post_media")
         .select(POST_MEDIA_FEED_COLUMNS + (await stampOverlayCol(tripSvc)) + (await feedVariantCol(tripSvc)))
         .in("post_id", tripPostIds)
         .eq("processing_status", "ready")
         .neq("moderation_status", "rejected");
+      if (mediaErr) {
+        tripMediaUnread = true;
+        tripFailed.note("post_media", mediaErr);
+      }
       for (const m of (mediaRows ?? []) as any[]) {
         if (!tripMediaByPost[m.post_id]) tripMediaByPost[m.post_id] = [];
         tripMediaByPost[m.post_id].push(m);
       }
-    } catch { /* fail-open */ }
+    } catch (err) {
+      // A THROWN client fault (a network reset); a resolved error is handled above.
+      tripMediaUnread = true;
+      tripFailed.note("post_media", err);
+    }
   }
 
   const mergedTrip = tripPosts.map((p) => {
     const pr = tripProfileMap[p.author_id];
-    const eng = tripEngMap[p.id] ?? { likeCount: 0, commentCount: 0, likedByMe: false, saveCount: 0, savedByMe: false, stampCount: 0, isStampedByViewer: false };
+    const eng = tripEngMap.get(p.id) ?? UNKNOWN_POST_ENGAGEMENT; // census-media §47: null is "could not be read", never 0/false
     const spans = (tripSpansMap as any)[p.id] ?? { tags: [], hashtagUsages: [] };
     // public: any authenticated user; trip_only: accepted members only; private: no public engagement
     const canEngage = p.visibility === "public" || (p.visibility === "trip_only" && accepted);
@@ -1732,11 +1732,11 @@ router.get("/trips/:tripId/posts", async (req, res) => {
       canShare: canEngage,
       tags: spans.tags,
       hashtagUsages: spans.hashtagUsages,
-      media: filterPostMedia(tripMediaByPost[p.id] ?? []),
+      media: tripMediaUnread ? null : filterPostMedia(tripMediaByPost[p.id] ?? []),
     };
   });
 
-  res.status(200).json({ posts: mergedTrip, isMember: accepted });
+  res.status(200).json({ posts: mergedTrip, isMember: accepted, ...tripFailed.body() });
 });
 
 /* ===========================================================================
@@ -1913,15 +1913,15 @@ router.get("/posts/:postId", async (req, res) => {
   // under the viewer's own RLS rather than bypassed.
   const viewerIsFollower = needsFollowerCheck(post, user.id)
     ? await (async () => {
-        const { data: followRow } = await client
+        const { data: followRow, error: followErr } = await client
           .from("user_follows")
           .select("follower_id")
           .eq("follower_id", user.id)
           .eq("following_id", post.author_id)
           .maybeSingle();
-        return !!followRow;
+        return followErr ? null : !!followRow; // census-media §47: unread is not "not a follower"
       })()
-    : false;
+    : false; if (viewerIsFollower === null) { sendError(res, "degraded_unavailable", "Could not check whether you follow this author. Please try again."); return; }
 
   const decision = decidePostReadable(post, user.id, viewerIsTripMember, viewerIsFollower);
   if (!decision.readable) {
@@ -1933,7 +1933,7 @@ router.get("/posts/:postId", async (req, res) => {
     return;
   }
 
-  const [{ data: savedRow }, { data: rawMedia }, { count: postStampCount }, { count: liveCommentCount }, { data: myStampRow }, { data: featuredRow }, { data: authorProfile }, allowedNames] = await Promise.all([
+  const [savedRes, mediaRes, stampCountRes, commentCountRes, myStampRes, featuredRes, authorRes, allowedNames, saveCountRes] = await Promise.all([
     sc.from("post_saves").select("post_id").eq("post_id", postId).eq("user_id", user.id).maybeSingle(),
     sc.from("post_media")
       .select("id, media_type, public_url, thumbnail_url, duration_seconds, width, height, sort_order, processing_status, moderation_status" + (await stampOverlayCol(sc)) + (await feedVariantCol(sc)))
@@ -1951,14 +1951,14 @@ router.get("/posts/:postId", async (req, res) => {
       .limit(1)
       .maybeSingle(),
     sc.from("profiles").select("id, handle, name, avatar_url, is_official").eq("id", post.author_id).maybeSingle(),
-    nameVisibilitySet(sc, [post.author_id]),
-  ]);
-
+    nameVisibilitySet(sc, [post.author_id]), sc.from("post_saves").select("post_id", { count: "exact", head: true }).eq("post_id", postId), // census-media §47: the LIVE save count
+  ]); const singleFailed = new FailedSources(req.log, "post read"); const unread = (r: { error?: unknown }, source: string) => (r.error ? (singleFailed.note(source, r.error), true) : false); // census-media §47: a failed read below is null and NAMED — never 0, never false
+  const rawMedia = unread(mediaRes, "post_media") ? null : mediaRes.data; const featuredRow = unread(featuredRes, "portava_featured") ? null : featuredRes.data; const authorProfile = unread(authorRes, "profiles") ? null : authorRes.data;
   // Filter out moderated items; preserve backward-compat mediaUrls field on the base object
-  // `feed_url` mirrors filterPostMedia() — see the contract note there. Detail
-  // views load the ORIGINAL, so this is projected for shape-consistency with the
-  // feed endpoints rather than because this surface should render it.
-  const media = ((rawMedia ?? []) as any[])
+  // `feed_url` mirrors filterPostMedia() — see the contract note there. Detail views load the ORIGINAL, so
+  // this is projected for shape-consistency with the feed endpoints rather than because this surface should
+  // render it. An unread post_media is `media: null` (unknown), never [] (census-media §47).
+  const media = rawMedia === null ? null : ((rawMedia ?? []) as any[])
     .filter((m: any) => m.moderation_status !== "rejected" && m.moderation_status !== "flagged")
     .map((m: any) => ({
       id:                m.id,
@@ -1996,20 +1996,20 @@ router.get("/posts/:postId", async (req, res) => {
     author,
     // likeCount derives from content_stamps so it stays consistent with compat
     // like writes — posts.like_count is no longer updated in this write path.
-    likeCount: postStampCount ?? 0,
+    likeCount: unread(stampCountRes, "content_stamps") ? null : (stampCountRes.count ?? null),
     // Read the live comments table rather than relying on the cached posts
     // counter; older comments can exist while that denormalized value is stale.
-    commentCount: liveCommentCount ?? 0,
-    saveCount: post.save_count ?? 0,
-    likedByMe: !!myStampRow,
-    savedByMe: !!savedRow,
-    stampCount: postStampCount ?? 0,
-    isStampedByViewer: !!myStampRow,
+    commentCount: unread(commentCountRes, "posts_comments") ? null : (commentCountRes.count ?? null),
+    saveCount: unread(saveCountRes, "post_saves") ? null : (saveCountRes.count ?? null), // census-media §47: live, as commentCount — not the cached save_count
+    likedByMe: unread(myStampRes, "content_stamps") ? null : !!myStampRes.data,
+    savedByMe: unread(savedRes, "post_saves") ? null : !!savedRes.data,
+    stampCount: stampCountRes.error ? null : (stampCountRes.count ?? null),
+    isStampedByViewer: myStampRes.error ? null : !!myStampRes.data,
     media,
     canLike: true,
     canComment: true,
     canShare: true,
-    featuredByPortava,
+    featuredByPortava, ...singleFailed.body(), // census-media §47: last, so every unread() above has run
   });
 });
 

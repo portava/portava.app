@@ -102,6 +102,11 @@ export class FailedSources {
   }
 }
 
+/** Narrow one keyed page to the rows after `after`; the first page (`after === null`) is left as it is. */
+export function afterKey<Q>(q: Q, column: string, after: string | null): Q {
+  return after === null ? q : (q as any).gt(column, after);
+}
+
 /** One page of a keyed read: up to `pageSize` rows whose key sorts after `after` (all rows when `after` is null). */
 export type KeyedPage = (
   after: string | null,
@@ -256,6 +261,11 @@ export async function exactCount(
   if (res?.error) return { ok: false, error: issue(res.error) };
   if (typeof res?.count !== "number") return { ok: false, error: { message: "the count read answered without a count" } };
   return { ok: true, value: res.count };
+}
+
+/** A Read in the `{ data, error }` shape PostgREST callers already branch on. */
+export function asResult<T>(read: Read<T>): { data: T | null; error: ReadIssue | null } {
+  return read.ok ? { data: read.value, error: null } : { data: null, error: read.error };
 }
 
 /**

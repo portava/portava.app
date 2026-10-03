@@ -21,7 +21,7 @@
  * cache write is logged at error level — the measured count is still the
  * honest answer to the client, so it is not a failed SOURCE of this response.
  */
-import { FailedSources, exactCount, known, type FeedReadLog } from "./feedReads.js";
+import { FailedSources, exactCount, known, countRowsPerId, viewerRowIds, type FeedReadLog } from "./feedReads.js";
 
 export type PostCounterKind = "save" | "comment";
 
@@ -71,4 +71,67 @@ export async function recountPostCounter(
     }
   }
   return { count, failed };
+}
+
+/** What every post feed attaches to a post. `null` is "could not be read" — never 0 or false. */
+export interface PostEngagement {
+  /** Stamps on the post (content_stamps, entity_type 'post') — the unified like. */
+  likeCount: number | null;
+  stampCount: number | null;
+  /** Live, non-deleted comments — never the cached comment_count. */
+  commentCount: number | null;
+  /** Live saves — never the cached save_count, which POST /media/:id/save never maintained. */
+  saveCount: number | null;
+  likedByMe: boolean | null;
+  isStampedByViewer: boolean | null;
+  savedByMe: boolean | null;
+}
+
+/** The engagement of a post no read answered for. */
+export const UNKNOWN_POST_ENGAGEMENT: Readonly<PostEngagement> = Object.freeze({
+  likeCount: null, stampCount: null, commentCount: null, saveCount: null,
+  likedByMe: null, isStampedByViewer: null, savedByMe: null,
+});
+
+/**
+ * The engagement for one page of posts: exact counts read whole (so a page
+ * past PostgREST's row cap is not undercounted) and the viewer's own stamps and
+ * saves. Every id gets an entry. A read that fails leaves its fields `null` on
+ * every post and names its table in `failed`; the reads that worked still
+ * answer.
+ */
+export async function loadPostEngagement(
+  sc: any,
+  postIds: readonly string[],
+  viewerId: string,
+  failed: FailedSources,
+): Promise<Map<string, PostEngagement>> {
+  const ids = [...new Set(postIds)];
+  const out = new Map<string, PostEngagement>();
+  if (ids.length === 0) return out;
+  const [stamps, comments, saves, myStamps, mySaves] = await Promise.all([
+    countRowsPerId(sc, "content_stamps", "entity_id", ids, (q) => q.eq("entity_type", "post")),
+    countRowsPerId(sc, "posts_comments", "post_id", ids, (q) => q.is("deleted_at", null)),
+    countRowsPerId(sc, "post_saves", "post_id", ids),
+    viewerRowIds(sc, "content_stamps", "entity_id", ids, (q) => q.eq("user_id", viewerId).eq("entity_type", "post")),
+    viewerRowIds(sc, "post_saves", "post_id", ids, (q) => q.eq("user_id", viewerId)),
+  ]);
+  const stampCounts = known(stamps, failed, "content_stamps");
+  const commentCounts = known(comments, failed, "posts_comments");
+  const saveCounts = known(saves, failed, "post_saves");
+  const stampedByViewer = known(myStamps, failed, "content_stamps");
+  const savedByViewer = known(mySaves, failed, "post_saves");
+  for (const id of ids) {
+    const stamp = stampCounts ? (stampCounts.get(id) ?? 0) : null;
+    out.set(id, {
+      likeCount: stamp,
+      stampCount: stamp,
+      commentCount: commentCounts ? (commentCounts.get(id) ?? 0) : null,
+      saveCount: saveCounts ? (saveCounts.get(id) ?? 0) : null,
+      likedByMe: stampedByViewer ? stampedByViewer.has(id) : null,
+      isStampedByViewer: stampedByViewer ? stampedByViewer.has(id) : null,
+      savedByMe: savedByViewer ? savedByViewer.has(id) : null,
+    });
+  }
+  return out;
 }
