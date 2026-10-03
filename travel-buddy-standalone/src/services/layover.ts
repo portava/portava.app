@@ -825,16 +825,42 @@ export type LayoverToolName =
 
 // ── API calls ─────────────────────────────────────────────────────────────────
 
-export async function searchAirports(query: string): Promise<AirportProfile[]> {
+/**
+ * census-layover L294 (C2) — a search, or a stated failure to search.
+ *
+ * `ok: true` is the route's answer: `airports` (possibly empty — a MEASURED
+ * "nothing matches"), whether the mode is on at all (`featureEnabled: false`
+ * is the route's answer when `airport_mode_enabled` is off), and `degraded`
+ * when the curated table could not be read and the static set was served.
+ * `ok: false` means no answer arrived. This used to return `[]` for every one
+ * of those, so a failed search read as "no airport matches" on the first
+ * screen of the feature.
+ */
+export type AirportSearchResult =
+  | { ok: true; airports: AirportProfile[]; featureEnabled: boolean; degraded: boolean }
+  | { ok: false; message: string };
+
+const SEARCH_UNREACHABLE = "Airport search couldn't be reached. Check your connection and try again.";
+
+export async function searchAirports(query: string): Promise<AirportSearchResult> {
+  let res: Response;
   try {
-    const res = await authedFetch(airportUrl(`search?q=${encodeURIComponent(query)}`));
-    if (!res.ok) return [];
-    const json = await res.json();
-    return json.airports ?? [];
+    res = await authedFetch(airportUrl(`search?q=${encodeURIComponent(query)}`));
   } catch (err) {
     console.warn('[layover] searchAirports failed:', err);
-    return [];
+    return { ok: false, message: SEARCH_UNREACHABLE };
   }
+  let json: Record<string, any> = {};
+  try { json = await res.json(); } catch { /* falls through to the status check */ }
+  if (!res.ok) {
+    return { ok: false, message: typeof json.message === 'string' ? json.message : SEARCH_UNREACHABLE };
+  }
+  return {
+    ok: true,
+    airports: Array.isArray(json.airports) ? (json.airports as AirportProfile[]) : [],
+    featureEnabled: json.featureEnabled !== false,
+    degraded: json.degraded === true,
+  };
 }
 
 export async function resolveAirportByIata(iata: string): Promise<AirportProfile | null> {
@@ -849,17 +875,51 @@ export async function resolveAirportByIata(iata: string): Promise<AirportProfile
   }
 }
 
-export async function createLayoverSession(payload: CreateSessionPayload): Promise<{
-  session: LayoverSession;
-  safeReturnSuggested: boolean;
-  safeReturnReasons: string[];
-}> {
-  const res = await authedFetch(airportUrl('sessions'), {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) throw new Error(`Failed to create layover session: ${res.status}`);
-  return res.json();
+/**
+ * census-layover L294 (C2) — the session, or the server's refusal WITH its code.
+ *
+ * `POST /airport/sessions` refuses in sentences written for a traveller ("This
+ * layover has already departed — set a departure time in the future", "A
+ * layover window cannot exceed 48 hours", "Airport details could not be
+ * loaded. Please try again."), under codes that say whether a retry can help.
+ * This used to THROW `Failed to create layover session: <status>`, discarding
+ * the code and the sentence, so the sheet told every refusal to "try again" —
+ * including the ones a retry cannot fix — and its `feature_disabled` branch
+ * matched a string that could never contain the code. `retryable` is the
+ * server's own flag; `code: null` means no server answered at all.
+ */
+export type CreateLayoverOutcome =
+  | { ok: true; session: LayoverSession; safeReturnSuggested: boolean; safeReturnReasons: string[] }
+  | { ok: false; code: string | null; message: string; retryable: boolean };
+
+const CREATE_UNREACHABLE = "We couldn't reach Portava. Check your connection and try again.";
+
+export async function createLayoverSession(payload: CreateSessionPayload): Promise<CreateLayoverOutcome> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions'), {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    return { ok: false, code: null, message: CREATE_UNREACHABLE, retryable: true };
+  }
+  let json: Record<string, any> = {};
+  try { json = await res.json(); } catch { /* falls through to the status check */ }
+  if (!res.ok || !json.session) {
+    return {
+      ok: false,
+      code: typeof json.error === 'string' ? json.error : null,
+      message: typeof json.message === 'string' ? json.message : 'Could not start your layover. Please try again.',
+      retryable: json.retryable === true,
+    };
+  }
+  return {
+    ok: true,
+    session: json.session as LayoverSession,
+    safeReturnSuggested: json.safeReturnSuggested === true,
+    safeReturnReasons: Array.isArray(json.safeReturnReasons) ? (json.safeReturnReasons as string[]) : [],
+  };
 }
 
 /**
