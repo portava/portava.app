@@ -329,26 +329,51 @@ export const ALLOWLIST: readonly AllowEntry[] = [
   {
     key: 'lib/intelCoverageScheduler.ts::runIntelCoveragePass::intel_observations.gte("observed_at")',
     kind: "known_defect",
-    requires: ["OBS_WINDOW_MS"],
+    requires: ["OBS_WINDOW_MS", "MISSION_DEMAND_WINDOW_MS"],
     reason:
-      "UNCLASSIFIED: a 24-hour window (OBS_WINDOW_MS) on the observations that feed each coverage snapshot, with " +
-      "no watermark. Observations inside a gap longer than a day are never counted toward any snapshot. Whether " +
-      "that loses anything depends on what the pass's durable output is used for: the snapshots carry " +
-      "SNAPSHOT_TTL_MS and are recomputed, which self-heals, but `missionsCreated` writes rows per pass and that " +
-      "is the part this note cannot settle. To classify: decide whether a mission that would have been created " +
-      "from an observation inside the gap is still created by a later pass.",
+      "LOSES-DATA: promoted from UNCLASSIFIED on 2026-10-03, because its open question is now answered. " +
+      "The 24-hour bound this " +
+      "check can see (OBS_WINDOW_MS) is the lesser half: snapshots carry SNAPSHOT_TTL_MS, are rewritten every " +
+      "pass, and are pruned by an absolute predicate, so a gap leaves them stale and then correct again. The " +
+      "answer to the old question — is a mission that would have been created from work inside the gap still " +
+      "created by a later pass — is NO, and the deciding window is one this check CANNOT SEE: " +
+      "MISSION_DEMAND_WINDOW_MS is 6 hours and is applied in memory at intelCoverageScheduler.ts:182, " +
+      "`saves.filter((s) => Date.parse(s.saved_at) >= missionWindowMs)`, not as a table bound. The only " +
+      "mission-creating path requires `demand6h >= MISSION_TRIGGER_THRESHOLDS.minDemandEvents6h` (10) as a hard " +
+      "conjunct, so once a demand spike ages past six hours the mission is forfeited permanently — saves never " +
+      "get newer. Grace period is therefore about six hours of continuous suspension: the fifteen-minute idle " +
+      "suspend cannot reach it, the 54-hour stall of 2026-09-30 would have. It is ledgered rather than fixed " +
+      "because `intel_coverage` is false in production (read 2026-10-03), but note that the second switch the " +
+      "file's header leans on, `intel_missions`, is already TRUE there, so flipping one flag arms this in one " +
+      "motion. See the DOES NOT COVER line: an in-memory window is this check's blind spot, named there.",
   },
   {
     key: 'lib/sensingPublicationScheduler.ts::runSensingPublicationPass::SENSING_TABLE.gte("time_bucket")',
     kind: "known_defect",
     requires: ["SENSING_PUBLICATION_LOOKBACK_BUCKETS"],
     reason:
-      "UNCLASSIFIED: the lookback is `(SENSING_PUBLICATION_LOOKBACK_BUCKETS - 1)` time buckets, i.e. ONE bucket " +
-      "of PRIVACY_THRESHOLD_V1.timeBucketMinutes = 30 minutes — shorter than the fifteen-minute idle suspend can " +
-      "produce on any quiet evening. An unexpired cohort whose bucket is older than the lookback is listed by no " +
-      "later pass, so its aggregate is never published. The checker reports this as unresolved rather than bare " +
-      "because the bound is `sensingTimeBucket(nowMs - …)`, an imported function it will not look inside. To " +
-      "classify: confirm sensingTimeBucket only floors to a bucket boundary and adds no slack.",
+      "LOSES-DATA: promoted from UNCLASSIFIED on 2026-10-03. The classification question is settled — " +
+      "sensingTimeBucket (lib/sensingAnonStore.ts:256) only floors, `Math.floor(atMs / width) * width`, with no " +
+      "clamp and no slack — and the number this entry used to carry was wrong in the direction that understates " +
+      "the hazard. It said ONE bucket, 30 minutes. MEASURED: a cohort in bucket B is selected for 60 contiguous " +
+      "minutes, [B, B+60min), because the floor is applied AFTER the subtraction and `time_bucket` is itself " +
+      "already floored, so `B >= floor(now - 30min)` holds for twice the bucket width. Same error shape as the " +
+      "trip reminder's 28-hour band: reading the bounds is not measuring the window. " +
+      "The loss is routine rather than outage-scale, and worse than 'a gap wider than the window': the only " +
+      "writer of SENSING_TABLE is the HTTP ingest route, so a quiet period BEGINS with the last contribution " +
+      "and the host suspends fifteen idle minutes later. That leaves only [observedAt+10min, observedAt+15min) " +
+      "for a fifteen-minute tick to publish the evening's last cohort, which two thirds of tick phases miss. " +
+      "NOT FIXED, and deliberately not by this lane, because a catch-up is a PRIVACY decision and not a bug " +
+      "fix: (a) the only reader asks for the current and previous bucket only (CompassSensingPresenceProducer " +
+      "bucketsBack = 1), so a late publication is served to nobody unless the consumer is widened too; (b) " +
+      "3110's TTL CHECK measures expires_at from published_at, not from time_bucket, so publishing a cohort G " +
+      "minutes late makes its record outlive its window by G — and 3110 calls that TTL a privacy bound; (c) " +
+      "appending a late point to a closed cohort's published series extends the anti-differencing control into " +
+      "the region where rows have been revoked or expired. Also note this caller would be the first one the " +
+      "watermark module's own safety premise does not cover: recordPublishedAggregate is an append-only INSERT " +
+      "and evaluateDifferencing publishes at delta 0, so re-scanning a span writes another row instead of being " +
+      "idempotent. Whoever lands a fix must delete this entry in the same change, or the guard fails on it as " +
+      "stale — which is the intended coupling, not an obstacle.",
   },
   {
     key: 'server/trips/projectionWorkers/tripReminderScheduler.ts::runOnce::trips.gte("start_date")',
@@ -1635,7 +1660,12 @@ export function main(argv: readonly string[]): number {
       "  watermarked, entity-scoped, wider than the plausible gap, or named in ALLOWLIST with a reason.\n" +
       "  DOES NOT COVER: whether any job RUNS; windows inside SQL functions reached through .rpc(); windows\n" +
       "  assembled in another file than the one that filters on them; whether a `wider-than-gap` window really\n" +
-      "  is wide enough; and whether an entity-scoped read's entity list was itself chosen by a relative window.",
+      "  is wide enough; whether an entity-scoped read's entity list was itself chosen by a relative window;\n" +
+      "  and — the gap most likely to matter — a window applied IN MEMORY rather than in the query, as in\n" +
+      "  `rows.filter((r) => Date.parse(r.saved_at) >= nowMs - CONST)`. This check reads table-access bounds,\n" +
+      "  so such a filter is invisible to it however lossy it is. lib/intelCoverageScheduler.ts:182 is the\n" +
+      "  worked example and the reason this sentence exists: its PostgREST bound is 24h and allowlisted, while\n" +
+      "  the predicate that actually forfeits work is a 6h in-memory filter this check never sees.",
   );
   console.log("RESULT clean");
   return 0;

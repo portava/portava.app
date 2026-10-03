@@ -149,8 +149,8 @@ app.listen(port, (err) => {
   // row here is already invisible (its only reader filters expires_at) and 72h
   // is a structural CHECK, so a flag would only add a way to retain expired
   // personal data. It is gated on the SCHEMA instead — the sweep probes for the
-  // table and never calls the RPC where 2315 is not applied, which today means
-  // production, where this is an inert heartbeat.
+  // table and never calls the RPC where 2315 is not applied. CORRECTED 2026-10-03, on these three lines so no cited line below moves: this used to continue "which today means production, where this is an inert heartbeat", and that is no longer true. 2315 IS applied to production — read-only catalog query on 2026-10-03: table present, RLS on, one policy, zero rows — so the sweep calls the RPC there and the schema gate protects nothing.
+  // Zero rows is a fact about traffic, not a gate.
   startSensingRetentionScheduler();
   // The publisher census-sensing §21.4 named as S39/S24's blocker #2: the one
   // caller of publishThroughDifferencingGate outside tests. Three gates, in
