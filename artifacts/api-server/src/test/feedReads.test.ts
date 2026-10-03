@@ -84,10 +84,12 @@ describe("readWhole (census-media §47)", () => {
     if (!r.ok) assert.equal(r.error.code, WHOLE_READ_CUT);
   });
 
-  it("FR4 — a page that repeats a key already read is a cut read", async () => {
-    const r = await readWhole(async () => ({ data: [{ id: pad(1) }], error: null, count: 5 }), (x: any) => x.id, { pageSize: 1 });
+  it("FR4 — a page that repeats a key already read is a cut read, caught on that page", async () => {
+    let pages = 0;
+    const r = await readWhole(async () => { pages++; return { data: [{ id: pad(1) }], error: null, count: 5 }; }, (x: any) => x.id, { pageSize: 1 });
     assert.equal(r.ok, false);
     if (!r.ok) assert.equal(r.error.code, WHOLE_READ_CUT);
+    assert.equal(pages, 2, "the repeat is refused on the page that repeats, not 100,000 rows later");
   });
 
   it("FR5 — a read past maxRows is a cut read, not the rows so far", async () => {
@@ -271,10 +273,14 @@ describe("readWhole with a plain first read (census-media §47)", () => {
     assert.equal(full.ok ? full.value.length : -1, 1_200);
   });
 
-  it("FR14 — an error on the first read fails the read", async () => {
+  it("FR14 — an error on the first read fails the read, reported as that error", async () => {
     const r = await readWhole(async () => ({ data: [], error: null, count: 0 }), (x: any) => x.id, {
-      first: async () => ({ data: null, error: { message: "boom" } }),
+      first: async () => ({ data: null, error: { message: "boom", code: "57014" } }),
     });
     assert.equal(r.ok, false);
+    if (!r.ok) {
+      assert.equal(r.error.message, "boom", "the PostgREST error itself — not a cut");
+      assert.equal(r.error.code, "57014");
+    }
   });
 });

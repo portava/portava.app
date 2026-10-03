@@ -26,6 +26,12 @@
  *   PF8  single post, healthy: saveCount live, not the cached column
  *   PF9  global: post_hides unread → the page is served and the hide list NAMED
  *   PF10 global: a private account past the first 1,000 is still excluded
+ *   PF11 single post, followers_only: an unread follow row is a 503, never "not found"
+ *   PF12 global: post_media unread → each post's media is null (unknown), named
+ *   PF13 global: the hashtag-boost reads unread → named (the page is served unboosted)
+ *   PF14 following: a creator followed past the viewer's first 1,000 follows is still in the feed
+ *   PF15 following: post_hides unread → the page is served and the hide list is named
+ *   PF16 global: author profiles unread → named, never shown as "no author"
  *
  * Run: node --import tsx/esm --test src/test/postFeedsHonest.test.ts
  */
@@ -252,5 +258,63 @@ describe("GET /posts/:postId (census-media §47)", () => {
     assert.equal(r.body.likeCount, 3);
     assert.equal(r.body.likedByMe, true);
     assert.equal(r.body.failedSources, undefined);
+  });
+});
+
+describe("more of the same rule (census-media §47)", () => {
+  it("PF11 — followers_only post, follow row unread: 503, never 'Post not found'", async () => {
+    const spec = seed({ failReads: { user_follows: true } });
+    spec.tables.posts = [post(P1, { visibility: "followers_only" })];
+    use(spec);
+    const r = await get(`/posts/${P1}`);
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+    assert.equal(r.body.error, "degraded_unavailable");
+  });
+
+  it("PF12 — global: post_media unread → media null on every post, and named", async () => {
+    use(seed({ failReads: { post_media: (r: any) => r.select.includes("media_type") } }));
+    const r = await get("/posts");
+    assert.equal(r.status, 200);
+    for (const p of r.body.posts) assert.equal(p.media, null, "unknown is not 'this post has no media'");
+    assert.ok(r.body.failedSources.includes("post_media"));
+  });
+
+  it("PF13 — global: the hashtag-boost reads unread → named, page still served", async () => {
+    use(seed({ failReads: { user_hashtag_follows: true } }));
+    const r = await get("/posts");
+    assert.equal(r.status, 200);
+    assert.equal(r.body.posts.length, 3);
+    assert.ok(r.body.failedSources.includes("user_hashtag_follows"));
+  });
+
+  it("PF14 — following: a creator followed past the first 1,000 follows still appears", async () => {
+    const spec = seed();
+    const LATE = "ffffffff-0000-4000-a000-0000000000ff";
+    spec.tables.user_follows = Array.from({ length: 1_100 }, (_, i) => ({
+      follower_id: VIEWER, following_id: `eeeeeeee-0000-4000-a000-${String(i).padStart(12, "0")}`,
+    }));
+    spec.tables.user_follows.push({ follower_id: VIEWER, following_id: LATE });
+    spec.tables.profiles.push({ id: LATE, handle: "late", is_private: false, passport_visibility: "public", account_status: "active" });
+    spec.tables.posts = [post(P1, { author_id: LATE })];
+    use(spec);
+    const r = await get("/posts?feed=following");
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body.posts.map((p: any) => p.id), [P1], "the 1,101st follow must not be cut");
+  });
+});
+
+describe("hides and authors (census-media §47)", () => {
+  it("PF15 — following: post_hides unread → served, and named", async () => {
+    use(seed({ failReads: { post_hides: true } }));
+    const r = await get("/posts?feed=following");
+    assert.equal(r.status, 200);
+    assert.ok((r.body.failedSources ?? []).includes("post_hides"), JSON.stringify(r.body.failedSources));
+  });
+
+  it("PF16 — global: author profiles unread → named", async () => {
+    use(seed({ failReads: { profiles: (q: any) => q.select.includes("avatar_url") } }));
+    const r = await get("/posts");
+    assert.equal(r.status, 200);
+    assert.ok((r.body.failedSources ?? []).includes("profiles"), JSON.stringify(r.body.failedSources));
   });
 });

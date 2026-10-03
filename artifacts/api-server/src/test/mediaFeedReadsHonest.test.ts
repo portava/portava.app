@@ -47,6 +47,34 @@
  *   MA2  POST /media/:id/save keeps posts.save_count in step and answers the count
  *   MA3  POST /media/:id/view: the posts read fails → db_error, never 404
  *   MA4  PATCH /media/:id: the posts read fails → db_error, never 404
+ *   MA5  POST /media/:id/save: the block read fails → 503, never 404
+ *   MA6  DELETE /media/:id: the posts read fails → db_error, never 404
+ * Gates and ranking
+ *   MW8  user_mutes unread → the page is served and the mute gate is NAMED as off
+ *   MW9  portava_featured unread → named (the badge is omitted, and that is said)
+ *   MW10 post_hides unread → the page is served and the hide gate is NAMED as off
+ *   MG6  Gems: blocks unread → an empty page that NAMES blocks
+ *   EL1  a creator blocked past the viewer's first 1,000 blocks is still filtered out
+ *   EL2  the suspended/banned gate unread → an empty page that NAMES profiles
+ *   RK1  ranking on: a post with no stamps ranks with no social proof — never the cached like_count
+ *   RK2  ranking on, content_stamps unread: no like term at all — never the cached like_count
+ * Further arms
+ *   MA7  POST /media/:gem/save keeps hidden_gems.save_count in step and answers the count
+ *   MA8  POST /media/:gem/save with the count unread: saveCount null, named, cache KEPT
+ *   MA9  a private post with the follow read failing: 503, never 404
+ *   MA10 a gem id with the hidden_gems read failing: 503, never 404
+ *   MA11 DELETE /media/:id on a gem with the hidden_gems read failing: db_error
+ *   MD4  grid: blocks unread → an empty grid that NAMES blocks
+ *   MD5  grid: user_mutes unread → served, and named
+ *   MG7  Gems: submitter profiles unread → named
+ *   MW11 following: a creator followed past the first 1,000 follows is still in the Watch feed
+ *   MW12 ranking-time featured boost unread → named
+ *   MW13 session fatigue read unread → named
+ *   MW14 a linked trip unread → named
+ *   MW15 posts_comments unread → commentCount null, named
+ *   EL3  a creator muted past the viewer's first 1,000 mutes is still filtered out
+ *   EL4  a post hidden past the viewer's first 1,000 hides is still filtered out
+ *   EL5  filterEligibleMediaCandidates names WHICH gate failed, and which fail-soft gates were off
  *
  * Run: node --import tsx/esm --test src/test/mediaFeedReadsHonest.test.ts
  */
@@ -57,6 +85,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import mediaFeedRouter from "../routes/mediaFeed.js";
 import { makeFeedDb, type FakeFeedDb, type FakeFeedDbSpec } from "./helpers/fakeFeedDb.js";
+import { filterEligibleMediaCandidates } from "../lib/mediaEligibility.js";
 
 const VIEWER = "aaaaaaaa-0000-4000-a000-000000000001";
 const CREATOR = "bbbbbbbb-0000-4000-a000-000000000002";
@@ -274,6 +303,7 @@ describe("Single item (census-media §47)", () => {
     const r = await get(`/media/${P1}`);
     assert.equal(r.status, 200);
     assert.equal(r.body.item.viewerState.isFollowingCreator, null);
+    assert.equal(r.body.item.creator.relationshipStatus, "unknown", "never 'none' on a guess");
     assert.ok(r.body.failedSources.includes("user_follows"));
   });
 
@@ -410,5 +440,255 @@ describe("Item actions (census-media §47)", () => {
     const r = await call("PATCH", `/media/${P1}`, { visibility: "private" });
     assert.equal(r.status, 500, JSON.stringify(r.body));
     assert.equal(r.body.error, "db_error");
+  });
+});
+
+describe("Gates, more actions, and ranking (census-media §47)", () => {
+  it("MA5 — POST /media/:id/save with the block read failing: 503, never 404", async () => {
+    use(seed({ failReads: { blocks: true } }));
+    const r = await call("POST", `/media/${P1}/save`);
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+  });
+
+  it("MA6 — DELETE /media/:id with the posts read failing: db_error, never 404", async () => {
+    use(seed({ failReads: { posts: true } }));
+    const r = await call("DELETE", `/media/${P1}`);
+    assert.equal(r.status, 500, JSON.stringify(r.body));
+    assert.equal(r.body.error, "db_error");
+  });
+
+  it("MW8 — user_mutes unread: the page is served and the mute gate is named as off", async () => {
+    use(seed({ failReads: { user_mutes: true } }));
+    const r = await get(WATCH);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.items.length, 2);
+    assert.ok(r.body.failedSources.includes("user_mutes"), JSON.stringify(r.body.failedSources));
+  });
+
+  it("MW9 — portava_featured unread: named", async () => {
+    use(seed({ failReads: { portava_featured: true } }));
+    const r = await get(WATCH);
+    assert.equal(r.status, 200);
+    assert.ok(r.body.failedSources.includes("portava_featured"));
+  });
+
+  it("MW10 — post_hides unread: the page is served and the hide gate is named as off", async () => {
+    use(seed({ failReads: { post_hides: true } }));
+    const r = await get(WATCH);
+    assert.equal(r.status, 200);
+    assert.ok(r.body.failedSources.includes("post_hides"));
+  });
+
+  it("MG6 — Gems: blocks unread → an empty page that names blocks", async () => {
+    use(seed({ failReads: { blocks: true } }));
+    const r = await get("/media/gems-feed");
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.items, []);
+    assert.ok(r.body.failedSources.includes("blocks"));
+  });
+
+  it("EL1 — a creator blocked past the viewer's first 1,000 blocks is still filtered out", async () => {
+    const spec = seed();
+    spec.tables.blocks = Array.from({ length: 1_000 }, (_, i) => ({ blocker_id: VIEWER, blocked_id: `0aaaaaaa-0000-4000-a000-${n12(i)}` }));
+    spec.tables.blocks.push({ blocker_id: VIEWER, blocked_id: CREATOR });
+    use(spec);
+    const r = await get(WATCH);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.items, [], "the 1,001st block must not be cut — CREATOR is blocked");
+  });
+
+  it("EL2 — the suspended/banned gate unread → an empty page that names profiles", async () => {
+    use(seed({ failReads: { profiles: (q: any) => q.filters.some((f: string) => f.startsWith("account_status=in.")) } }));
+    const r = await get(WATCH);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.items, []);
+    assert.deepEqual(r.body.failedSources, ["profiles"]);
+  });
+
+  /** The impression rows the Watch feed logs after answering (fire-and-forget), by item id. */
+  async function loggedFeatures(): Promise<Map<string, any>> {
+    for (let i = 0; i < 50; i++) {
+      const w = db.writes.find((x) => x.table === "rank_events" && x.op === "insert");
+      if (w) return new Map((w.payload as any[]).map((row) => [row.item_id, row.features]));
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    throw new Error("no impression rows were logged");
+  }
+  const P3 = "11111111-0000-4000-a000-000000000003";
+  function rankedSeed(over: Partial<FakeFeedDbSpec> = {}) {
+    const spec = seed(over);
+    spec.tables.feature_flags.push({ flag: "MEDIA_RANKING_ENABLED", enabled: true });
+    spec.tables.posts.push(videoPost(P3, { like_count: 5_000 }));
+    return spec;
+  }
+
+  it("RK1 — ranking on: a post with no stamps ranks with no social proof, never the cached like_count", async () => {
+    use(rankedSeed());
+    const r = await get(WATCH);
+    assert.equal(r.status, 200);
+    const f = await loggedFeatures();
+    assert.equal(f.get(P3)?.socialProof ?? 0, 0, "0 stamps is 0 — the cached like_count (5,000) is not a count");
+    assert.ok((f.get(P1)?.socialProof ?? 0) > 0, "control: 1,700 real stamps do carry social proof");
+  });
+
+  it("RK2 — ranking on, content_stamps unread: no like term, never the cached like_count", async () => {
+    use(rankedSeed({ failReads: { content_stamps: true } }));
+    const r = await get(WATCH);
+    assert.equal(r.status, 200);
+    assert.ok(r.body.failedSources.includes("content_stamps"));
+    const f = await loggedFeatures();
+    assert.equal(f.get(P3)?.socialProof ?? 0, 0);
+  });
+});
+
+describe("further arms (census-media §47)", () => {
+  it("MA7 — POST /media/:gem/save keeps hidden_gems.save_count in step and answers the count", async () => {
+    use(seed());
+    const r = await call("POST", `/media/${GEM}/save`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.saveCount, 1, "one hidden_gem_saves row (the viewer's, idempotent)");
+    assert.equal(db.tables.hidden_gems.find((g) => g.id === GEM)!.save_count, 1, "the cached 50 follows the write");
+  });
+
+  it("MA8 — POST /media/:gem/save with the count unread: saveCount null, named, cache kept", async () => {
+    use(seed({ failReads: { hidden_gem_saves: (q: any) => q.head === true } }));
+    const r = await call("POST", `/media/${GEM}/save`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.saveCount, null);
+    assert.deepEqual(r.body.failedSources, ["hidden_gem_saves"]);
+    assert.equal(db.tables.hidden_gems.find((g) => g.id === GEM)!.save_count, 50);
+  });
+
+  it("MA9 — a private post with the follow read failing: 503, never 404", async () => {
+    const spec = seed({ failReads: { user_follows: true } });
+    spec.tables.posts = [videoPost(P1, { visibility: "private" })];
+    use(spec);
+    const r = await call("POST", `/media/${P1}/save`);
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+  });
+
+  it("MA10 — a gem id with the hidden_gems read failing: 503, never 404", async () => {
+    use(seed({ failReads: { hidden_gems: true } }));
+    const r = await call("POST", `/media/${GEM}/save`);
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+  });
+
+  it("MA11 — DELETE /media/:id on a gem with the hidden_gems read failing: db_error", async () => {
+    use(seed({ failReads: { hidden_gems: true } }));
+    const r = await call("DELETE", `/media/${GEM}`);
+    assert.equal(r.status, 500, JSON.stringify(r.body));
+    assert.equal(r.body.error, "db_error");
+  });
+
+  it("MD4 — grid: blocks unread → an empty grid that names blocks", async () => {
+    use(seed({ failReads: { blocks: true } }));
+    const r = await get("/media/feed?mode=grid");
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.items, []);
+    assert.deepEqual(r.body.failedSources, ["blocks"]);
+  });
+
+  it("MD5 — grid: user_mutes unread → served, and named", async () => {
+    use(seed({ failReads: { user_mutes: true } }));
+    const r = await get("/media/feed?mode=grid");
+    assert.equal(r.status, 200);
+    assert.ok((r.body.failedSources ?? []).includes("user_mutes"));
+  });
+
+  it("MG7 — Gems: submitter profiles unread → named", async () => {
+    use(seed({ failReads: { profiles: (q: any) => q.select.includes("show_profile_picture_publicly") } }));
+    const r = await get("/media/gems-feed");
+    assert.equal(r.status, 200);
+    assert.ok((r.body.failedSources ?? []).includes("profiles"), JSON.stringify(r.body.failedSources));
+  });
+
+  it("MW11 — following: a creator followed past the first 1,000 follows is still in the Watch feed", async () => {
+    const spec = seed();
+    spec.tables.user_follows = Array.from({ length: 1_000 }, (_, i) => ({ follower_id: VIEWER, following_id: `0bbbbbbb-0000-4000-a000-${n12(i)}` }));
+    spec.tables.user_follows.push({ follower_id: VIEWER, following_id: CREATOR });
+    use(spec);
+    const r = await get(`${WATCH}&feedType=following`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.items.length, 2, "CREATOR is the 1,001st follow and must not be cut");
+  });
+
+  it("MW12 — ranking-time featured boost unread → named", async () => {
+    const spec = seed({ failReads: { portava_featured: (q: any) => q.select.includes("featured_at") } });
+    spec.tables.feature_flags.push({ flag: "PORTAVA_FEATURED_BOOST_ENABLED", enabled: true });
+    use(spec);
+    const r = await get(WATCH);
+    assert.equal(r.status, 200);
+    assert.ok((r.body.failedSources ?? []).includes("portava_featured"), JSON.stringify(r.body.failedSources));
+  });
+
+  it("MW13 — session fatigue read unread → named", async () => {
+    const spec = seed({ failReads: { rank_events: (q: any) => q.filters.some((f: string) => f.startsWith("session_id=")) } });
+    spec.tables.feature_flags.push({ flag: "MEDIA_CREATOR_FATIGUE_ENABLED", enabled: true });
+    use(spec);
+    const r = await get(`${WATCH}&sessionId=sess-1`);
+    assert.equal(r.status, 200);
+    assert.ok((r.body.failedSources ?? []).includes("rank_events"), JSON.stringify(r.body.failedSources));
+  });
+
+  it("MW14 — a linked trip unread → named", async () => {
+    const spec = seed({ failReads: { trips: true } });
+    spec.tables.posts = [videoPost(P1, { trip_id: TRIP })];
+    use(spec);
+    const r = await get(WATCH);
+    assert.equal(r.status, 200);
+    assert.ok((r.body.failedSources ?? []).includes("trips"), JSON.stringify(r.body.failedSources));
+  });
+
+  it("MW15 — posts_comments unread → commentCount null, named", async () => {
+    use(seed({ failReads: { posts_comments: true } }));
+    const r = await get(WATCH);
+    assert.equal(r.status, 200);
+    for (const i of r.body.items) assert.equal(i.stats.commentCount, null);
+    assert.ok(r.body.failedSources.includes("posts_comments"));
+  });
+
+  it("EL3 — a creator muted past the viewer's first 1,000 mutes is still filtered out", async () => {
+    const spec = seed();
+    spec.tables.user_mutes = Array.from({ length: 1_000 }, (_, i) => ({ muter_id: VIEWER, muted_id: `0ccccccc-0000-4000-a000-${n12(i)}` }));
+    spec.tables.user_mutes.push({ muter_id: VIEWER, muted_id: CREATOR });
+    use(spec);
+    const r = await get(WATCH);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.items, [], "the 1,001st mute must not be cut — CREATOR is muted");
+  });
+
+  it("EL4 — a post hidden past the viewer's first 1,000 hides is still filtered out", async () => {
+    const spec = seed();
+    spec.tables.post_hides = Array.from({ length: 1_000 }, (_, i) => ({ user_id: VIEWER, post_id: `0ddddddd-0000-4000-a000-${n12(i)}` }));
+    spec.tables.post_hides.push({ user_id: VIEWER, post_id: P1 });
+    use(spec);
+    const r = await get(WATCH);
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.items.map((i: any) => i.id), [P2], "P1 is the 1,001st hide and must stay hidden");
+  });
+});
+
+describe("lib/mediaEligibility names what it could not check (census-media §47)", () => {
+  const ctx = { viewerUserId: VIEWER, feedType: "for_you" as const, followedCreatorIds: new Set<string>() };
+  const candidates = () => [videoPost(P1) as any];
+
+  it("EL5 — blocks unread: failedSource 'blocks'; account status unread: 'profiles'; mutes/hides unread: soft", async () => {
+    const blocks = await filterEligibleMediaCandidates(candidates(), ctx, makeFeedDb(seed({ failReads: { blocks: true } })).client, null);
+    assert.equal(blocks.blockFetchFailed, true);
+    assert.equal(blocks.failedSource, "blocks");
+    const status = await filterEligibleMediaCandidates(
+      candidates(), ctx,
+      makeFeedDb(seed({ failReads: { profiles: (q: any) => q.filters.some((f: string) => f.startsWith("account_status=in.")) } })).client,
+      null,
+    );
+    assert.equal(status.blockFetchFailed, true);
+    assert.equal(status.failedSource, "profiles");
+    const soft = await filterEligibleMediaCandidates(candidates(), ctx, makeFeedDb(seed({ failReads: { user_mutes: true, post_hides: true } })).client, null);
+    assert.equal(soft.blockFetchFailed, false);
+    assert.deepEqual(soft.softFailedSources, ["user_mutes", "post_hides"]);
+    assert.equal(soft.eligible.length, 1, "fail-soft: the page is still served");
+    const healthy = await filterEligibleMediaCandidates(candidates(), ctx, makeFeedDb(seed()).client, null);
+    assert.equal(healthy.failedSource, undefined);
+    assert.equal(healthy.softFailedSources, undefined, "a healthy result is unchanged");
   });
 });
