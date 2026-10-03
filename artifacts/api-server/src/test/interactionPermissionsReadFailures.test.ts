@@ -58,7 +58,7 @@ type Errors = Record<string, { code: string; message: string }>;
  * the fixtures are matched by the same keys the engine computes, rather than
  * being waved through by a no-op filter.
  */
-function makeClient(rows: Rows = {}, errors: Errors = {}) {
+function makeClient(rows: Rows = {}, errors: Errors = {}, throwsOn: Record<string, unknown> = {}) {
   const db: Rows = {
     profiles: [], blocks: [], trust_restrictions: [], moderation_actions: [],
     user_account_states: [], user_privacy_settings: [], profile_privacy_settings: [],
@@ -87,6 +87,9 @@ function makeClient(rows: Rows = {}, errors: Errors = {}) {
 
     const err = errors[table] ?? null;
     const fail = () => ({ data: null, error: err });
+    // A REJECTED read (fetch failure, aborted socket): supabase-js resolves on a
+    // database error but a transport failure still rejects the awaited promise.
+    const thrown = table in throwsOn;
 
     const matched = (): any[] => {
       let src = (db[table] ?? []).filter((r) => filters.every((f) => f(r)));
@@ -123,13 +126,15 @@ function makeClient(rows: Rows = {}, errors: Errors = {}) {
         if (ms.length > 0) filters.push((r: any) => ms.some((f) => f(r)));
         return b;
       },
-      async maybeSingle() { return err ? fail() : { data: matched()[0] ?? null, error: null }; },
+      async maybeSingle() { if (thrown) throw throwsOn[table]; return err ? fail() : { data: matched()[0] ?? null, error: null }; },
       async single() {
+        if (thrown) throw throwsOn[table];
         if (err) return fail();
         const m = matched();
         return m.length ? { data: m[0], error: null } : { data: null, error: { message: "not found" } };
       },
       then(onF: any, onR: any) {
+        if (thrown) return Promise.reject(throwsOn[table]).then(onF, onR);
         return Promise.resolve(err ? fail() : { data: matched(), error: null }).then(onF, onR);
       },
     };
@@ -466,6 +471,47 @@ describe("census-trust §31: user_interaction_cooldowns unreadable → the coold
     const p = ran(await resolve(baseRows(), { user_interaction_cooldowns: TABLE_MISSING }));
     assert.equal(p.canFollow, true);
     assert.equal(p.canAddFriend, true);
+    assert.notEqual(p.degraded, true);
+  });
+});
+
+// ===========================================================================
+// A REJECTED read is an unread state, never "table not migrated"
+// ===========================================================================
+//
+// The engine's `Promise.allSettled` turned a rejection with no `.code` into a
+// synthetic `{ code: "42P01" }` — the one code `isAbsentTableError` reads as
+// "this Phase 2 table was never created". So a transport failure on a DENY
+// table (a fetch that rejects: DNS, reset socket, aborted request) answered
+// exactly as an unmigrated table does: no restriction, no cooldown, nothing
+// degraded. A rejection is now an unread state, like any database error.
+
+const TRANSPORT = new TypeError("fetch failed");
+
+describe("a REJECTED read on a DENY table is unread, not an absent table", () => {
+  it("user_restrictions rejects → assumed restricted AND degraded", async () => {
+    const p = ran(await resolveInteractionPermissions(makeClient(baseRows(), {}, { user_restrictions: TRANSPORT }), VIEWER, TARGET));
+    assert.equal(p.context.readReceiptsHidden, true, "a rejected restriction read must not report 'not restricted'");
+    assert.equal(p.degraded, true);
+    assert.ok(p.degradedReads?.includes("user_restrictions"), JSON.stringify(p.degradedReads));
+  });
+
+  it("user_interaction_cooldowns rejects → follow and friend request refused, and DEGRADED", async () => {
+    const p = ran(await resolveInteractionPermissions(makeClient(baseRows(), {}, { user_interaction_cooldowns: TRANSPORT }), VIEWER, TARGET));
+    assert.equal(p.canFollow, false, "a rejected follow-cooldown read must not admit a follow");
+    assert.equal(p.canAddFriend, false, "a rejected friend-request-cooldown read must not admit a request");
+    assert.equal(p.degraded, true);
+  });
+
+  it("a rejection carrying its own code keeps it (XX000 stays a database error)", async () => {
+    const p = ran(await resolveInteractionPermissions(makeClient(baseRows(), {}, { user_restrictions: { ...DB_ERROR } }), VIEWER, TARGET));
+    assert.equal(p.context.readReceiptsHidden, true);
+    assert.equal(p.degraded, true);
+  });
+
+  it("PAIR — a resolved 42P01 on the same table is still the Phase-2 'no restriction', NOT degraded", async () => {
+    const p = ran(await resolve(baseRows(), { user_restrictions: TABLE_MISSING }));
+    assert.equal(p.context.readReceiptsHidden, false);
     assert.notEqual(p.degraded, true);
   });
 });
