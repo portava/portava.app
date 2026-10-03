@@ -251,6 +251,43 @@
 --     'backfill', which isComparableChecksum() excludes from comparison
 --     (:115-117), so its bytes are not pinned by any checksum.
 --
+--     FOR WHOEVER PREPARES 2332'S PRODUCTION APPLY — a window that closes, and
+--     what it actually costs. Today only portava-ci pins 2332's bytes;
+--     production has NO ledger row for it (read 2026-10-03). The applier writes
+--     the row inside the migration's own transaction, hashing whatever the file
+--     holds at that moment, so once 2332 applies to production BOTH databases
+--     pin it and the recorded rollback is frozen as written. Fixing the block in
+--     the same change that applies 2332 is therefore the last cheap moment for
+--     the production half.
+--
+--     IT IS NOT FREE FOR THE CI HALF, AND IT IS WORSE THAN A FAILED CHECK.
+--     Measured by reading the applier rather than assumed: for a file whose
+--     ledger row proves an apply, it hashes the bytes on disk and compares
+--     (scripts/src/apply-migrations.ts:932-947). Equal → `skipped`. NOT equal →
+--     `drifted`, and drift is not a skip: the applier prints "the SQL that ran
+--     and the SQL in this commit are not the same text ... Reconcile by hand"
+--     and calls process.exit(1) (:1345-1366). The schema-drift job runs that
+--     applier against portava-ci on every live-DB run, so an edited 2332 would
+--     not merely fail check:migration-ledger — it would block EVERY apply run
+--     on the shared CI database, for every lane, until someone UPDATEd that row
+--     by hand. Nothing in this tree does that, and a hand-written ledger UPDATE
+--     on a shared database is an owner's call, not a PR's. The applier's own
+--     note adds the reason to be slow about it: a backfill that used a different
+--     digest looks exactly like a real edit.
+--
+--     So the three options, stated rather than implied: (a) leave 2332's bytes
+--     alone and keep this note as the record, which is where it stands; (b) fix
+--     the block in the applying change AND hand-update portava-ci's row in the
+--     same operation, which closes it everywhere at the cost of one manual write
+--     to a shared database; (c) fix it in a later migration-numbered successor
+--     that supersedes the rollback the way 2332 supersedes 2160, which needs no
+--     manual write at all. This lane's recommendation is (c) if the block is ever
+--     worth changing in place, because it is the only one that leaves every
+--     checksum reconcilable by the tooling that exists. (a) and (c) are both
+--     safe today; (b) is the one that stops the project's CI until a human
+--     finishes it, so it should not be bundled into an apply under time
+--     pressure, which is exactly when it would be proposed.
+--
 -- A LIVE CLIENT PATH, so the revoke is not safe to assert:
 --   * generated_visuals — travel-buddy-standalone/src/hooks/useVisualStatusChannel.ts:125
 --     subscribes the ANON-KEY client to Supabase Realtime `postgres_changes` on
