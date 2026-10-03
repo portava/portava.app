@@ -39,7 +39,7 @@
  * collapses with the recommendations, the map and the people — the certified
  * posture decides whether exploration is the default answer, not this card.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Gem, RefreshCw } from 'lucide-react-native';
 import { color, radius, space, type as t } from '../../theme/tokens.ts';
@@ -59,19 +59,19 @@ interface Props {
 type LoadState = { kind: 'loading' } | { kind: 'idle' } | { kind: 'done'; read: LayoverDiscoveryRead };
 
 export function LayoverDiscoveryCard({ availableMinutes, city, refreshKey = 0 }: Props) {
-  const [load, setLoad] = useState<LoadState>({ kind: 'loading' });
+  const [load, setLoad] = useState<LoadState>({ kind: 'loading' }); const runSeq = useRef(0);  // census-discovery §118 (SW23): only the latest read is drawn
 
   const run = useCallback(async () => {
     // A window that does not exist is not a window of zero minutes. The route
     // rejects `availableMinutes < 1` as `invalid_payload`, so asking anyway
     // would turn a certified "you cannot leave the airport" into a 400 and then
     // into a refusal sentence about a database — which is not what happened.
-    if (!Number.isFinite(availableMinutes) || availableMinutes < 1) {
+    const seq = ++runSeq.current; if (!Number.isFinite(availableMinutes) || availableMinutes < 1) {
       setLoad({ kind: 'idle' });
       return;
     }
     setLoad({ kind: 'loading' });
-    setLoad({ kind: 'done', read: await getLayoverDiscovery(availableMinutes, city) });
+    const read = await getLayoverDiscovery(availableMinutes, city); if (seq === runSeq.current) setLoad({ kind: 'done', read });  // §118 (SW23): an answer for a window or city no longer shown is never drawn
   }, [availableMinutes, city]);
 
   useEffect(() => { void run(); }, [run, refreshKey]);

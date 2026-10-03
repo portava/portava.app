@@ -12,7 +12,7 @@
  * screen (spec §51). Empty sections hide; if everything is empty the page
  * says so honestly and offers Discover.
  */
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, RefreshControl,
 } from 'react-native';
@@ -48,37 +48,37 @@ export default function Destination() {
 
   const [gems, setGems] = useState<SectionState<HiddenGem>>({ status: 'loading', items: [] });
   const [events, setEvents] = useState<SectionState<EventListItem>>({ status: 'loading', items: [] });
-  const [posts, setPosts] = useState<SectionState<PulsePost>>({ status: 'loading', items: [] });
+  const [posts, setPosts] = useState<SectionState<PulsePost>>({ status: 'loading', items: [] }); const loadSeq = useRef({ gems: 0, events: 0, posts: 0 });  // census-discovery §118 (SW23): only a section's latest load is drawn
 
   const loadGems = useCallback(async () => {
-    setGems({ status: 'loading', items: [] });
+    setGems({ status: 'loading', items: [] }); const seq = ++loadSeq.current.gems;
     try {
-      const items = await listGems({ city: cityName, limit: 10 });
+      const items = await listGems({ city: cityName, limit: 10 }); if (seq !== loadSeq.current.gems) return;  // §118 (SW23): an answer for a city no longer on screen is never drawn
       setGems({ status: 'ready', items: items ?? [], cut: gemListCut(items) });
     } catch {
-      setGems({ status: 'error', items: [] });
+      if (seq === loadSeq.current.gems) setGems({ status: 'error', items: [] });
     }
   }, [cityName]);
 
   const loadEvents = useCallback(async () => {
-    setEvents({ status: 'loading', items: [] });
+    setEvents({ status: 'loading', items: [] }); const seq = ++loadSeq.current.events;
     try {
-      const res = await listEvents({ city: cityName, limit: 10 });
+      const res = await listEvents({ city: cityName, limit: 10 }); if (seq !== loadSeq.current.events) return;  // §118 (SW23)
       if (res.ok && res.data) setEvents({ status: 'ready', items: res.data.events ?? [], cut: eventListNotWhole(res.data) });  // §117 (SW17): GET /events said it is not whole
       else setEvents({ status: 'error', items: [] });
     } catch {
-      setEvents({ status: 'error', items: [] });
+      if (seq === loadSeq.current.events) setEvents({ status: 'error', items: [] });
     }
   }, [cityName]);
 
   const loadPosts = useCallback(async () => {
-    setPosts({ status: 'loading', items: [] });
+    setPosts({ status: 'loading', items: [] }); const seq = ++loadSeq.current.posts;
     try {
-      const res = await getPulseData({ city: cityName, limit: 12 });
+      const res = await getPulseData({ city: cityName, limit: 12 }); if (seq !== loadSeq.current.posts) return;  // §118 (SW23)
       if (res.ok) setPosts({ status: 'ready', items: res.data.posts ?? [] });
       else setPosts({ status: 'error', items: [] });
     } catch {
-      setPosts({ status: 'error', items: [] });
+      if (seq === loadSeq.current.posts) setPosts({ status: 'error', items: [] });
     }
   }, [cityName]);
 
