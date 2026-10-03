@@ -325,7 +325,7 @@ describe("GET /api/me/trip-invites/pending", () => {
     const { port, close } = await startServer(s);
     const r = await get(port, "/api/me/trip-invites/pending", "bob-tok");
     assert.equal(r.status, 200);
-    assert.equal(r.body.invites[0].memberCount, 4, "owner + two co-hosts + member; the member who left is not crew");
+    assert.equal((r.body as { invites: Array<{ memberCount: number | null }> }).invites[0].memberCount, 4, "owner + two co-hosts + member; the member who left is not crew");
     await close();
   });
 
