@@ -129,7 +129,7 @@ record of a CLOSED defect, kept because the resolution direction it argued is th
 taken.** MEASURED at this head, not inferred: `platformFeePct = 0.15` occurs **0** times in
 `artifacts/api-server/src/routes/rentABuddy.ts`, and `DEFAULT_PLATFORM_FEE_PERCENT` and
 `defaultFeePercent` occur **0** times outside comments and tests. The take rate is resolved in ONE
-place, `artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:289#export async function resolveFeeSchedule(`,
+place, `artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:294#export async function resolveFeeSchedule(`,
 which returns a three-state result (`resolved` / `no_such_level` / `read_failed`) and has **no
 numeric fallback arm at all** — precisely because, as that module's header puts it, the deleted
 literals "were not defaults, they were guesses wearing a default's clothes". The earnings summary

@@ -135,7 +135,7 @@ shape, and each one is a reason section 5 chooses double-entry instead:
    the earnings summary hard-coded **0.15**. The last of these is exactly the defect
    `docs/rent-buddy-audit.md:401-405` filed against "Task #1701 / #1703". **CLOSED, verified 2026-09-22:**
    all three literals are gone and one resolver reads `rent_buddy_fee_rules`
-   (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:289#export async function resolveFeeSchedule(`),
+   (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:294#export async function resolveFeeSchedule(`),
    with no numeric fallback arm. See `08` §2.3's 2026-09-22 correction for the measurement.
 4. **Aggregates are computed in the API process over an unbounded select.**
    `routes/rentABuddy.ts:6229-6268` and `routes/rentABuddyMarketplace.ts:2149-2196` pull booking

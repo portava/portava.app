@@ -129,7 +129,7 @@ vocabulary admits three of `09` §3's eight states and can never produce `payabl
 | `lib/creatorRuleEvaluation.ts` | refuses `{}` rule params rather than defaulting (`artifacts/api-server/src/lib/creatorRuleEvaluation.ts:68#p))`) | reachable |
 | `lib/creatorAttributionScheduler.ts` | hourly tick, started at `artifacts/api-server/src/index.ts:293#startPlaceCooccurrenceRebuildScheduler();` | reachable, **inert**: one flag read per tick |
 | `lib/rentBuddyEarningsLedger.ts` | writes the legacy estimate summary row | reachable |
-| `lib/rentBuddyFeeSchedule.ts` | the single fee resolver (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:80#FEE_SCHEDULE_TABLE`, `:289#resolveFeeSchedule(`) | reachable |
+| `lib/rentBuddyFeeSchedule.ts` | the single fee resolver (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:85#FEE_SCHEDULE_TABLE`, `:294#resolveFeeSchedule(`) | reachable |
 | `lib/rentBuddyKycGate.ts` | hard-blocks booking creation (§1.4) | **reachable and closed** |
 | `services/creators/CreatorAttributionService.ts` | the only writer of all three tables | reachable |
 | `services/creators/CreatorAttributionProducers.ts` | the one production attribution producer | reachable, flag-gated |
@@ -279,7 +279,7 @@ decision; nothing implements it.**
 > the claims they carried were true when written.
 
 - **Commission exists, configurably, but not at 10 %.** The schedule of record is a per-level table
-  read through one resolver (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:80#FEE_SCHEDULE_TABLE`),
+  read through one resolver (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:85#FEE_SCHEDULE_TABLE`),
   seeded 25 / 22 / 15 / 12 / 12 % by buddy level
   (`artifacts/api-server/migrations/0134_rent_buddy_schema_rebuild.sql:1208#traveler_service_fee_pct)`).
   **`10` / `0.10` as a fee percentage has zero hits in the tree.** The column is `integer`, so a
