@@ -68,6 +68,30 @@ function ok(r: { status: number; stderr: string }, what: string) {
   assert.equal(r.status, 0, `${what} failed:\n${r.stderr}`);
 }
 
+/**
+ * Read one `TAG=value` line out of psql's stdout.
+ *
+ * `localDb.psql` runs with `-At` — unaligned, TUPLES ONLY — so a bare
+ * `SELECT count(*)` prints `1` and nothing else: no header, no padding and no
+ * surrounding blank lines. A regex like /\n\s*1\s*\n/ therefore never matches
+ * even when the answer is right, which is how S1 and S4 first failed while the
+ * migration was behaving correctly. Tagging the value and comparing it exactly
+ * is both unambiguous and immune to the output format.
+ */
+function tagged(stdout: string, tag: string): string {
+  const line = stdout.split("\n").map((s) => s.trim()).find((s) => s.startsWith(`${tag}=`));
+  assert.ok(line !== undefined, `no "${tag}=" line in psql output:\n${stdout}`);
+  return line.slice(tag.length + 1);
+}
+
+/**
+ * `RAISE NOTICE` goes to STDERR, not stdout — psql writes server messages there.
+ * Asserting a migration's own NOTICE against stdout silently never matches.
+ */
+function noticeCount(stderr: string, needle: string): number {
+  return stderr.split("\n").filter((l) => l.includes(needle)).length;
+}
+
 describe("3521: the 'standard' level is priced at the approved flat rate", { skip: !HAVE_DB && "no LOCAL_DB_URL" }, () => {
   it("S0: after 3520 + 3521, 'standard' carries 1000 basis points and no approval", () => {
     const r = psql(
@@ -94,17 +118,26 @@ describe("3521: the 'standard' level is priced at the approved flat rate", { ski
   it("S1: IDEMPOTENT — three runs in one transaction leave exactly one row", () => {
     const r = psql(
       `BEGIN;\n${B3520}\n${B3521}\n${B3521}\n${B3521}\n` +
-      `SELECT count(*) AS n FROM public.rent_buddy_fee_rules WHERE buddy_level='standard';\n` +
+      `SELECT 'STANDARD_ROWS=' || count(*)::text FROM public.rent_buddy_fee_rules WHERE buddy_level='standard';\n` +
       `ROLLBACK;\n`,
     );
     ok(r, "3521 x3");
-    assert.match(
-      r.stdout, /\n\s*1\s*\n/,
-      `three applies must leave one row, not three:\n${r.stdout}`,
+    assert.equal(
+      tagged(r.stdout, "STANDARD_ROWS"), "1",
+      "three applies must leave exactly one row — ON CONFLICT DO NOTHING is what makes the " +
+      "second and third applies no-ops rather than duplicates",
     );
-    // And the second and third runs must say so rather than pretending to seed.
-    const noops = (r.stdout.match(/3521 OK \(no-op\)/g) ?? []).length;
-    assert.equal(noops, 2, `expected 2 no-op notices, got ${noops}:\n${r.stdout}`);
+    // And the second and third runs must SAY they did nothing, rather than
+    // reporting a seed. The notice is on stderr.
+    assert.equal(
+      noticeCount(r.stderr, "3521 OK (no-op)"), 2,
+      `expected 2 no-op notices from the 2nd and 3rd applies:\n${r.stderr}`,
+    );
+    assert.equal(
+      noticeCount(r.stderr, "''standard'' seeded at 1000") +
+      noticeCount(r.stderr, "'standard' seeded at 1000"), 1,
+      `exactly one apply may report an actual seed:\n${r.stderr}`,
+    );
   });
 
   it("S2: AN OPERATOR'S LATER EDIT IS NOT OVERWRITTEN BY A RE-RUN", () => {
@@ -119,15 +152,22 @@ describe("3521: the 'standard' level is priced at the approved flat rate", { ski
       `       commission_override_approval = 'owner ruling 2026-11-01 (fixture)' ` +
       ` WHERE buddy_level = 'standard';\n` +
       `${B3521}\n` +
-      `SELECT platform_fee_basis_points, platform_fee_percent, commission_override_approval ` +
+      `SELECT 'AFTER=' || platform_fee_basis_points || '|' || platform_fee_percent || '|' || ` +
+      `       coalesce(commission_override_approval, '<null>') ` +
       `  FROM public.rent_buddy_fee_rules WHERE buddy_level='standard';\n` +
       `ROLLBACK;\n`,
     );
     ok(r, "seed over an operator edit");
-    assert.match(r.stdout, /1500/, `the operator's rate was reverted:\n${r.stdout}`);
-    assert.match(r.stdout, /owner ruling 2026-11-01 \(fixture\)/, "the approval was discarded");
-    assert.ok(!/\b1000\s*\|\s*10\s*\|/.test(r.stdout), "the seed reset the operator's rate to the flat rate");
-    assert.match(r.stdout, /3521 OK \(no-op\)/, "the re-run must report itself as a no-op");
+    assert.equal(
+      tagged(r.stdout, "AFTER"), "1500|15|owner ruling 2026-11-01 (fixture)",
+      "the operator's rate, mirror and approval must all survive the re-run EXACTLY. " +
+      "A migration that reverts live pricing on re-run is a money defect.",
+    );
+    // The notice is on stderr, and it must say no-op rather than claim a seed.
+    assert.equal(
+      noticeCount(r.stderr, "3521 OK (no-op)"), 1,
+      `the re-run must report itself as a no-op:\n${r.stderr}`,
+    );
   });
 
   it("S3: no other level is re-rated, and none is deleted", () => {
@@ -140,27 +180,36 @@ describe("3521: the 'standard' level is priced at the approved flat rate", { ski
       `VALUES ('fixture_level', 2200, 22, 'fixture approval', 5) ` +
       `ON CONFLICT ON CONSTRAINT rent_buddy_fee_rules_buddy_level_key DO NOTHING;\n` +
       `${B3521}\n` +
-      `SELECT platform_fee_basis_points, platform_fee_percent, commission_override_approval, traveler_service_fee_pct ` +
+      `SELECT 'OTHER=' || platform_fee_basis_points || '|' || platform_fee_percent || '|' || ` +
+      `       coalesce(commission_override_approval, '<null>') || '|' || traveler_service_fee_pct ` +
       `  FROM public.rent_buddy_fee_rules WHERE buddy_level='fixture_level';\n` +
+      `SELECT 'LEVELS=' || count(*)::text FROM public.rent_buddy_fee_rules;\n` +
       `ROLLBACK;\n`,
     );
     ok(r, "seed beside another level");
-    assert.match(r.stdout, /2200/, `the other level's rate moved:\n${r.stdout}`);
-    assert.match(r.stdout, /fixture approval/, "the other level's approval was touched");
-    assert.ok(
-      /\|\s*5\.00\s*$|\|\s*5\.00\s*\n|\|\s*5\.00\s*\|/m.test(r.stdout) || /5\.00/.test(r.stdout),
-      `the other level's traveller fee moved:\n${r.stdout}`,
+    assert.equal(
+      tagged(r.stdout, "OTHER"), "2200|22|fixture approval|5.00",
+      "the other level's rate, mirror, approval and traveller fee must all be untouched — " +
+      "3521 seeds 'standard' and nothing else",
     );
+    assert.equal(tagged(r.stdout, "LEVELS"), "2", "exactly the fixture level and 'standard' exist");
   });
 
   it("S4: the seed writes no commission_override_approval", () => {
     const r = psql(
       `BEGIN;\n${CHAIN}\n` +
-      `SELECT count(*) AS n FROM public.rent_buddy_fee_rules WHERE commission_override_approval IS NOT NULL;\n` +
+      `SELECT 'APPROVALS=' || count(*)::text FROM public.rent_buddy_fee_rules WHERE commission_override_approval IS NOT NULL;\n` +
+      `SELECT 'STANDARD_APPROVAL=' || coalesce(commission_override_approval, '<null>') ` +
+      `  FROM public.rent_buddy_fee_rules WHERE buddy_level='standard';\n` +
       `ROLLBACK;\n`,
     );
     ok(r, "approval check");
-    assert.match(r.stdout, /\n\s*0\s*\n/, `an approval was written:\n${r.stdout}`);
+    assert.equal(
+      tagged(r.stdout, "APPROVALS"), "0",
+      "no row may carry an approval after the seed — 1000 is the approved flat rate and " +
+      "needs none, and a seed must never be the thing that approves an override",
+    );
+    assert.equal(tagged(r.stdout, "STANDARD_APPROVAL"), "<null>");
   });
 
   it("S5: the flat-rate CHECK is intact and still refuses an unapproved off-flat rate", () => {
