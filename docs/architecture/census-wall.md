@@ -115,7 +115,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| W1 | The Wall is a primary social surface that stays a social feed | C | `components/WallScreen.tsx:115-143` composes header→mode→feed; `components/WallFeed.tsx:138` renders projections through a `FlatList` whose header (live strip, quick media) is an optional `ListHeaderComponent` — the feed has no dependency on any intelligence surface. |
+| W1 | The Wall is a primary social surface that stays a social feed | C | `components/WallScreen.tsx:115-143` composes header→mode→feed; `components/WallFeed.tsx:162` renders projections through a `FlatList` whose header (live strip, quick media) is an optional `ListHeaderComponent` — the feed has no dependency on any intelligence surface. |
 
 ### §2 Wall Jobs
 
@@ -391,12 +391,12 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| W127 | Cache the first For You page for fast reopen, but revalidate eligibility | C | **Now built**, contrary to the 2026-09-04 certification: `services/wallPrefetch.ts:47-56` (version, 10-min TTL, 24-h max age, 12-item cap); `hooks/useWallFeed.ts:153-160` writes the first page and `:145-147` treats the live page as authoritative on arrival. |
-| W128 | Following may cache recent projections but must not display deleted/blocked content after revalidation | C | The cache is per-mode keyed (`wallPrefetch.ts:58-60`) and is only ever *displayed* when the live fetch fails (`useWallFeed.ts:168-186`); a successful fetch replaces it wholesale, so a revoked object cannot survive a successful revalidation. |
-| W129 | Prefetch media for the next small number of visible objects only | C | `services/wallPrefetch.ts:55` `DEFAULT_PREFETCH_COUNT = 4`; `prefetchWallMedia` signs through `hydrateMediaUrls` then warms `expo-image`; called at `hooks/useWallFeed.ts:219`. |
+| W127 | Cache the first For You page for fast reopen, but revalidate eligibility | C | **Now built**, contrary to the 2026-09-04 certification: `services/wallPrefetch.ts:47-56` (version, 10-min TTL, 24-h max age, 12-item cap); `hooks/useWallFeed.ts:179-186` writes the first page and `:164-166` treats the live page as authoritative on arrival. |
+| W128 | Following may cache recent projections but must not display deleted/blocked content after revalidation | C | The cache is per-mode keyed (`wallPrefetch.ts:58-60`) and is only ever *displayed* when the live fetch fails (`useWallFeed.ts:194-212`); a successful fetch replaces it wholesale, so a revoked object cannot survive a successful revalidation. |
+| W129 | Prefetch media for the next small number of visible objects only | C | `services/wallPrefetch.ts:55` `DEFAULT_PREFETCH_COUNT = 4`; `prefetchWallMedia` signs through `hydrateMediaUrls` then warms `expo-image`; called at `hooks/useWallFeed.ts:260`. |
 | W130 | Live For You short TTL, visibly degrading when stale | C | `hooks/useLiveForYou.ts` TTL + validity check; `components/LiveForYouStrip.tsx` renders text state labels, not a fabricated live claim. |
 | W131 | Do not cache exact/private location beyond the owning feature's policy | C | Nothing cacheable carries a coordinate: the persisted page is `WallProjection[]`, whose `PublicPlaceRef` is populated without lat/lng by the Wall's own loaders. |
-| W132 | Offline mode may show cached social content; live-state UI removed or marked stale | C | `useWallFeed.ts:168-186` serves the cached page with `stale: true` + `cachedAt` on an initial-load failure and never restores a typed-intent session; tests `hooks/__tests__/useWallFeed.offlineCache.component.test.tsx:66,76,90`. |
+| W132 | Offline mode may show cached social content; live-state UI removed or marked stale | C | `useWallFeed.ts:194-212` serves the cached page with `stale: true` + `cachedAt` on an initial-load failure and never restores a typed-intent session; tests `hooks/__tests__/useWallFeed.offlineCache.component.test.tsx:66,76,90`. |
 
 ### §32 Analytics
 
@@ -420,10 +420,10 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | W145 | Cached Wall first paint: immediate skeleton/content where available | C | `services/wallPrefetch.ts` first-page cache seeds the initial paint; `components/WallFeed.tsx` renders a loading state rather than a blank screen. |
-| W146 | First server page < 500 ms backend | **?** | **The 500 ms target is still not measured against Postgres. What was previously unmeasured and now is not: whether the page's STRUCTURE can meet it at all.** The pre-existing bound was right about its own limits — `test/wallPerformance.test.ts:365#result.p50 <= FIRST_PAGE_P50_CEILING_MS` and `artifacts/api-server/src/test/wallPerformance.test.ts:370#result.p95 <= FIRST_PAGE_P95_CEILING_MS` run against a zero-latency in-memory fake (`artifacts/api-server/src/test/wallPerformance.test.ts:234#function corpusClient()`), so they bound OUR CPU work and the read count, and cannot fail because the page got slow against a database. That bound has NOT been relabelled. What is new is a latency MODEL that can: every fake query is given a known artificial delay and the first page is timed at two non-zero delays, so the constant per-timer overhead cancels and the difference is the number of database round trips the page WAITS FOR IN SINGLE FILE (`artifacts/api-server/src/test/wallPerformance.test.ts:526#const depth = (atHigh - atLow) / (SLOPE_HIGH_MS - SLOPE_LOW_MS);`). **Measured: 92–93 serialized round trips, reproducibly — across three full 89-file suite runs and three runs of the file alone**, ratcheted at `artifacts/api-server/src/test/wallPerformance.test.ts:489#const ROUND_TRIP_DEPTH_RATCHET = 110;`, with the same run also stated in milliseconds at a 4 ms modelled round trip (`artifacts/api-server/src/test/wallPerformance.test.ts:563#modelledMs <= FIRST_PAGE_TARGET_MS` — ~380 ms against the spec's 500). The millisecond figure is DERIVED from the slope and the CPU baseline, not read off a stopwatch: an absolute timing at 4 ms/round-trip was measured to read 600 ms inside the full suite purely because a busy runner stretched each 4 ms timer to ~6.8 ms, which is a property of the runner and not of the Wall. The slope is taken at 8 ms and 16 ms so that overhead cancels. **That number is the finding.** At depth ~92 the first page clears 500 ms only if the average round trip lands inside ~5.4 ms: achievable in-region, not achievable across a region boundary or through a saturated pooler. The 343-read ratchet says the page does a lot of work; this says how much of it is serialized, which is the half that becomes milliseconds. **WHAT WOULD TURN THIS RED (or green):** the SAME harness pointed at a real Postgres — `_setTestClient` replaced by a supabase-js client against a local `supabase start` stack or the staging project, seeded with the same 150-post corpus, Wall flags on, p50/p95 of `GET /wall?mode=for_you` read off the wire. That needs a database in CI, which this tree does not have; it needs no new Wall code. Anyone who runs it should move this row and keep the depth ratchet, which is what stops the answer rotting between runs. |
+| W146 | First server page < 500 ms backend | **?** | **The 500 ms target is still not measured against Postgres. What was previously unmeasured and now is not: whether the page's STRUCTURE can meet it at all.** The pre-existing bound was right about its own limits — `test/wallPerformance.test.ts:371#result.p50 <= FIRST_PAGE_P50_CEILING_MS` and `artifacts/api-server/src/test/wallPerformance.test.ts:376#result.p95 <= FIRST_PAGE_P95_CEILING_MS` run against a zero-latency in-memory fake (`artifacts/api-server/src/test/wallPerformance.test.ts:240#function corpusClient()`), so they bound OUR CPU work and the read count, and cannot fail because the page got slow against a database. That bound has NOT been relabelled. What is new is a latency MODEL that can: every fake query is HELD and released one round at a time once the event loop has gone quiet, so the number of releases is the number of database round trips the page WAITS FOR IN SINGLE FILE (`artifacts/api-server/src/test/wallPerformance.test.ts:587#const depth = counted.rounds;`). **Counted (§19, 2026-10-03): 91 serialized round trips, the same integer in every run including three concurrent runs at load average ~11; the earlier TIMED slope read 92–93 on an idle machine and wandered 74–109 on a loaded one**, ratcheted at `artifacts/api-server/src/test/wallPerformance.test.ts:507#const ROUND_TRIP_DEPTH_RATCHET = 110;`, with the same run also stated in milliseconds at a 4 ms modelled round trip (`artifacts/api-server/src/test/wallPerformance.test.ts:636#modelledMs <= FIRST_PAGE_TARGET_MS` — ~380 ms against the spec's 500). The millisecond figure is DERIVED from the counted depth and the CPU baseline, not read off a stopwatch: an absolute timing at 4 ms/round-trip was measured to read 600 ms inside the full suite purely because a busy runner stretched each 4 ms timer to ~6.8 ms, which is a property of the runner and not of the Wall — and the differenced slope that replaced it still flaked under load, which is why §19 replaced timing with counting. **That number is the finding.** At depth ~92 the first page clears 500 ms only if the average round trip lands inside ~5.4 ms: achievable in-region, not achievable across a region boundary or through a saturated pooler. The 343-read ratchet says the page does a lot of work; this says how much of it is serialized, which is the half that becomes milliseconds. **WHAT WOULD TURN THIS RED (or green):** the SAME harness pointed at a real Postgres — `_setTestClient` replaced by a supabase-js client against a local `supabase start` stack or the staging project, seeded with the same 150-post corpus, Wall flags on, p50/p95 of `GET /wall?mode=for_you` read off the wire. That needs a database in CI, which this tree does not have; it needs no new Wall code. Anyone who runs it should move this row and keep the depth ratchet, which is what stops the answer rotting between runs. |
 | W147 | Mode switch reuses a cached mode if fresh, else progressive load | C | Per-mode cache key (`wallPrefetch.ts:58-60`) plus `useWallFeed`'s generation-guarded refetch on mode change. |
 | W148 | Live strip refreshes independently and never blocks feed render | C | Separate hook and endpoint; `routes/wall.ts:848#async function buildLiveStrip(` still defers the entire candidate assembly behind a thunk, so an OFF flag costs nothing (`routes/wall.ts:856#if (!liveEnabled) return { items: [], failed: false };` — the thunk is never called) and any failure degrades to an empty strip (`routes/wall.ts:864#logger.warn({ err }, "wall: live strip build failed — degrading to empty");`). *(§15: the helper's return type became `{ items, failed }`. Measured: the ITEMS half is unchanged in both branches — empty on an OFF flag, empty on a throw — so the strip still cannot block or break the feed render. A flag that is off is deliberately NOT reported as a failure.)* |
-| W149 | 60 fps scroll on supported devices | **?** | **Frame time needs a device and nothing here claims otherwise. One real gap in the surrounding evidence is closed.** `components/WallFeed.tsx:151` declares four windowing numbers, and until now only ONE of them was observable from a test: `initialNumToRender` decides the first mount, which `components/__tests__/WallFeed.renderCost.component.test.tsx` bounds. The other three — `maxToRenderPerBatch`, `updateCellsBatchingPeriod`, `windowSize` — only act while SCROLLING, and RN's `VirtualizedList` never scrolls under jest because no layout events arrive. **Measured: widening `windowSize` from 7 to 21 — which triples the cells retained around the viewport on a device — changed no test in this repository.** It now fails `travel-buddy-standalone/src/features/wall/components/__tests__/WallFeed.renderCost.component.test.tsx:191#the declared scroll-windowing budget has not been silently widened`. That is a budget pin, not a frame-rate measurement. **WHAT WOULD TURN THIS RED:** a frame-time capture on a named device — a Perfetto/`systrace` trace or Flipper's frame graph on a mid-tier Android (the supported floor, e.g. a Pixel 6a) scrolling a 60-item For You feed with video, reporting the share of frames over 16.7 ms. That needs hardware or an instrumented emulator and a person to drive it; it needs no Wall code. |
+| W149 | 60 fps scroll on supported devices | **?** | **Frame time needs a device and nothing here claims otherwise. One real gap in the surrounding evidence is closed.** `components/WallFeed.tsx:175` declares four windowing numbers, and until now only ONE of them was observable from a test: `initialNumToRender` decides the first mount, which `components/__tests__/WallFeed.renderCost.component.test.tsx` bounds. The other three — `maxToRenderPerBatch`, `updateCellsBatchingPeriod`, `windowSize` — only act while SCROLLING, and RN's `VirtualizedList` never scrolls under jest because no layout events arrive. **Measured: widening `windowSize` from 7 to 21 — which triples the cells retained around the viewport on a device — changed no test in this repository.** It now fails `travel-buddy-standalone/src/features/wall/components/__tests__/WallFeed.renderCost.component.test.tsx:191#the declared scroll-windowing budget has not been silently widened`. That is a budget pin, not a frame-rate measurement. **WHAT WOULD TURN THIS RED:** a frame-time capture on a named device — a Perfetto/`systrace` trace or Flipper's frame graph on a mid-tier Android (the supported floor, e.g. a Pixel 6a) scrolling a 60-item For You feed with video, reporting the share of frames over 16.7 ms. That needs hardware or an instrumented emulator and a person to drive it; it needs no Wall code. |
 | W150 | Video lazy load, only near viewport | C | `components/objects/VideoWallItem.tsx:53-58` lazy-mounts the player only once the item enters the viewport. |
 | W151 | Images: responsive variants + CDN/cache | C | `routes/posts.ts` builds a `feedUrl` feed-sized derivative; client renders through `CachedImage` → `expo-image` disk/memory cache, warmed by `prefetchWallMedia`. |
 
@@ -437,14 +437,14 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | W155 | Compass unavailable → remove the action, do not block the post | C | The action is added only behind its flag (`services/wall/WallProjectionService.ts:275#if (viewer.compassHandoffEnabled) {`); the client tolerates a missing route (`services/wallCompass.ts:63-73`). |
 | W156 | RAB unavailable → remove Buddy context only | C | `routes/wall.ts:1079#mode === "for_you" && rabEnabled` — the opportunity loader is skipped outright when RAB is off, and caught to an empty load when it throws (`routes/wall.ts:1082#return failedLoad();`); `ContextThreadService.readBuddyCandidate` is fail-closed on both flags. *(§15: `failedLoad()` is `emptyLoad()` plus a `failed: true` marker — `routes/wall.ts:1065#const failedLoad = (): LoadedWallCandidates => ({ ...emptyLoad(), failed: true });` — so the CANDIDATE set the feed receives is byte-identical to the old empty load. Only Buddy context is removed, and only Buddy context was ever removed.)* |
 | W157 | Media processing pending → placeholder without breaking the feed | C | `DisplayMedia.processing` (`lib/wallProjection.ts:111`); `VideoWallItem.tsx:69` falls back to the poster when `media?.processing`. |
-| W158 | Network offline → cached social feed, no fake live states | C | `useWallFeed.ts:168-186` serves the cached page labelled stale; nothing fabricates a live item (the strip is server-only and simply absent). |
+| W158 | Network offline → cached social feed, no fake live states | C | `useWallFeed.ts:194-212` serves the cached page labelled stale; nothing fabricates a live item (the strip is server-only and simply absent). |
 
 ### §35 Design System Rules
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | W159 | Clean social-media density, generous whitespace | **?** | **"Generous" is a judgement and stays one. The half this row's evidence ASSERTED — "spacing tokens are applied consistently" — was never checked, and now is.** `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:181#no Wall style sets an in-scale-band spacing value that is not a token` scans every non-test Wall source and refuses any padding/margin/gap literal inside the token band (4–48) that is not one of `space`'s seven steps. Sub-band optical nudges (0–3) and the one list inset (`paddingBottom: 120`) sit outside the band by construction, so the rule needs no escape hatch; mutating one `space.md` to `14` turns it red. **WHAT WOULD TURN THIS RED:** a named designer's sign-off (or refusal) against a screenshot set of the five object renderers at the supported width range, recorded in this census with a date. There is no measurement that substitutes for it, and there never will be — this row needs a person, not a tool. |
-| W160 | One primary content object at a time in the vertical scroll | C | `components/WallFeed.tsx:138` `FlatList` renders one projection per row; no grid layout exists in the tree. |
+| W160 | One primary content object at a time in the vertical scroll | C | `components/WallFeed.tsx:162` `FlatList` renders one projection per row; no grid layout exists in the tree. |
 | W161 | Live For You compact and horizontally browsable | C | `components/LiveForYouStrip.tsx:81-82` horizontal `ScrollView`, ≤4 items. |
 | W162 | For You / Following switch simple and persistent near feed start | C | `components/WallScreen.tsx:127` renders `FeedModeSwitcher` unconditionally, directly above the feed. |
 | W163 | Postcards visibly break the normal feed language | C | `components/objects/PostcardWallItem.tsx` — distinct paper frame, rotation, date stamp. |
@@ -473,7 +473,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | W176 | Rate-limit impression/action mutation endpoints | C | `routes/wall.ts:117#export const WALL_RATE_LIMITS = {`, applied at `routes/wall.ts:1352#const { id, limit: rlLimit, windowMs } = WALL_RATE_LIMITS.sessionIntent;`, `routes/wall.ts:1406#const { id, limit: rlLimit, windowMs } = WALL_RATE_LIMITS.impression;`, `routes/wall.ts:1455#const { id, limit: rlLimit, windowMs } = WALL_RATE_LIMITS.action;` and `routes/wall.ts:1581#const { id, limit: rlLimit, windowMs } = WALL_RATE_LIMITS.revalidate;`. Test: `test/wallRateLimits.test.ts`. *(Four sites, not three — the revalidate endpoint acquired one after this row was written. All four pointers were stale by §9; verdict unchanged and strengthened.)* |
 | W177 | Prevent ranking manipulation through keyword stuffing or repeated self-engagement | C | No free-text term feeds the ranker (`WallRankSignals`, `WallRankingService.ts:69-88`, is tags/category/counts only), so keyword stuffing has no lever; and Wall telemetry rows are written with `outcome: "analytics"` precisely so they "never collide with the impression-finding query" (`routes/wall.ts:138-166`), so flooding your own object through `POST /wall/impression` cannot move ranking. Rate limits bound the flood regardless. |
 | W178 | Paid/promoted content, if introduced later, is explicitly labeled and separated from factual live confidence | C | The premise of the old N verdict was wrong, not just its score. `sponsored` and `imported_owned` are two of the eight members of `lib/intelContracts.ts:44#SOURCE_CLASSES`, are accepted by the live read path, and already reach the Wall's producers — so the rule was not holding vacuously, it was holding HALFWAY. **Separated, yes**: `lib/wallProjection.ts:202#deriveWallTruthClass` maps both to `inferred`, which is in `NON_OBSERVATION_TRUTH_CLASSES`, so no coverage can promote a paid claim to an observation. **Labelled, no**: nothing said the word. Now: `lib/wallProjection.ts:257#PROMOTIONAL_SOURCE_CLASSES` and `:289#promotionLabelFor` (the canonical `SOURCE_CLASS_LABELS` strings, agreement pinned by test), derived from the SAME `sourceClass` expression as the truth class at `services/wall/LiveForYouService.ts:313#promotionLabelFor` and `ContextThreadService.ts:356#promotionLabelFor`, so label and downgrade cannot disagree. Rendered by `components/LiveForYouStrip.tsx:128#cardPromotion` and `components/ContextThreadView.tsx:125#wall-context-promotion-`, in each case BEFORE the state word and inside the accessibility label. The set is deliberately narrower than `NON_INDEPENDENT_SOURCE_CLASSES`: an `official_signed` transit alert is self-asserted but is not paid, and calling it Sponsored would be false. **Moved N→C in the §6 recensus.** |
-| W179 | Moderation takedowns propagate to cached Wall projections | C | Server-side propagation was always real (`WallProjectionService.ts:202#passesEligibility` drops `removed`/`takedown`/`moderated` on every request). The client cache now propagates too: `services/wallPrefetch.ts:211#revalidateFirstPageCache` re-asks the SERVER which cached ids the viewer may still be shown (`services/wallApi.ts:328#revalidateCachedObjects`) and drops the rest from both the screen and the persisted page. Nothing client-side re-derives eligibility — there is no client moderation predicate to drift. Wired on the one path that could paint a taken-down object, the offline first open, at `hooks/useWallFeed.ts:191#revalidateFirstPageCache`; an unreachable server returns null and the cache is left intact, because offline is not a takedown. **Moved W→C in the §6 recensus.** |
+| W179 | Moderation takedowns propagate to cached Wall projections | C | Server-side propagation was always real (`WallProjectionService.ts:202#passesEligibility` drops `removed`/`takedown`/`moderated` on every request). The client cache now propagates too: `services/wallPrefetch.ts:211#revalidateFirstPageCache` re-asks the SERVER which cached ids the viewer may still be shown (`services/wallApi.ts:339#revalidateCachedObjects`) and drops the rest from both the screen and the persisted page. Nothing client-side re-derives eligibility — there is no client moderation predicate to drift. Wired on the one path that could paint a taken-down object, the offline first open, at `hooks/useWallFeed.ts:217#revalidateFirstPageCache`; an unreachable server returns null and the cache is left intact, because offline is not a takedown. **Moved W→C in the §6 recensus.** |
 | W180 | Impersonation, blocked-user and private-account rules apply before social proof is constructed | C | The block read is bidirectional and fail-closed (`WallProjectionService.ts:152-181`) and runs before projection; social presence is built only from already-visible public posts by followed accounts. |
 
 ### §38 Testing Matrix
@@ -565,7 +565,7 @@ called PARTIAL are now built too**, so at its own grain the honest count is
 | --- | --- | --- | --- |
 | §16 Two clocks | PARTIAL — "no producer assigns `experienceAt`" | **Built** | `WallCandidateLoaders.loadCapturedAtByEntity:201` + assignments at `:469`/`:721`, fed by the `captured_at` writer added at `artifacts/api-server/src/routes/posts.ts:145#sniffed.kind === "image" ? capturedAtFromImageBytes(rawBody) : null;` and `artifacts/api-server/src/routes/posts.ts:272#capturedAt,`. The certification's own completion condition ("a legitimate source assigns `experienceAt` … with tests proving `publishedAt` and `experienceAt` can differ") is met — `test/mediaCapturedAtWriter.test.ts` is that test. |
 | §19 / Phase 6 | PARTIAL — "`contextual_opportunity` has no candidate producer; 1 of 7 object types unreachable" | **Built** | `loadContextualOpportunityCandidates` exists and is wired at `routes/wall.ts:856`, behind `isWallRabEnabled` + `checkBookingKycGate` + the consolidated `enforceBookingCreationGates`. All 7 object types are now server-emittable. Tests: `test/wallOpportunityLoader.test.ts`, `test/wallOpportunityRoute.test.ts`. |
-| §31 Caching & prefetch | PARTIAL — "`wallPrefetch.ts` … does not exist; zero hits for `prefetch`" | **Built** | `services/wallPrefetch.ts` (264 lines) implements both halves — first-page cache with two horizons and a media prefetch with `DEFAULT_PREFETCH_COUNT = 4` — and `hooks/useWallFeed.ts:219` calls it. Test: `services/__tests__/wallPrefetch.component.test.ts` (12 cases). |
+| §31 Caching & prefetch | PARTIAL — "`wallPrefetch.ts` … does not exist; zero hits for `prefetch`" | **Built** | `services/wallPrefetch.ts` (264 lines) implements both halves — first-page cache with two horizons and a media prefetch with `DEFAULT_PREFETCH_COUNT = 4` — and `hooks/useWallFeed.ts:260` calls it. Test: `services/__tests__/wallPrefetch.component.test.ts` (12 cases). |
 
 The remaining 38 I also find built at section grain, with these **corrections to
 its evidence**, none of which change a section verdict:
@@ -771,7 +771,7 @@ portfolio decision, and it is cheaper to make once than to keep re-measuring.
 | id | what it needs | how far away it is |
 |---|---|---|
 | W170 (video controls remain screen-reader accessible) | **ONE TEST RUN.** See §7.3 — the code and the test both already exist. | Closest. **Done in §9; row is now `C`.** |
-| W146 (first server page < 500 ms backend) | A benchmark against real Postgres. `artifacts/api-server/src/test/wallPerformance.test.ts:234#function corpusClient()` bounds read count and slope against an in-memory fake, which is the right thing to pin in CI and cannot produce a wall-clock number. | Needs the DB harness. **Still true in §9 — but the page's serialized round-trip DEPTH is now measured, which says what latency the target implies.** |
+| W146 (first server page < 500 ms backend) | A benchmark against real Postgres. `artifacts/api-server/src/test/wallPerformance.test.ts:240#function corpusClient()` bounds read count and slope against an in-memory fake, which is the right thing to pin in CI and cannot produce a wall-clock number. | Needs the DB harness. **Still true in §9 — but the page's serialized round-trip DEPTH is now measured, which says what latency the target implies.** |
 | W149 (60 fps scroll) | A device or an instrumented emulator. | Needs hardware. |
 | W173 (postcard typography stays readable) | A rendered screen and a real screen reader. | Needs hardware + a human — **for the aesthetic half only. §9 shows contrast, size and tree-presence were decidable all along; row is now `C`.** |
 
@@ -1149,7 +1149,7 @@ and confirmed the pin each row rests on is still at the line it claims.
 | id | the pin the row rests on | still there? |
 |---|---|---|
 | W71 | `artifacts/api-server/src/test/wallSessionIntent.test.ts:203#a misspelling typed into the Wall reaches the database ALREADY typo-normalized` | yes |
-| W146 | `artifacts/api-server/src/test/wallPerformance.test.ts:489#const ROUND_TRIP_DEPTH_RATCHET = 110;` and `artifacts/api-server/src/test/wallPerformance.test.ts:468#const FIRST_PAGE_TARGET_MS = 500;` | yes |
+| W146 | `artifacts/api-server/src/test/wallPerformance.test.ts:507#const ROUND_TRIP_DEPTH_RATCHET = 110;` and `artifacts/api-server/src/test/wallPerformance.test.ts:485#const FIRST_PAGE_TARGET_MS = 500;` | yes |
 | W149 | `travel-buddy-standalone/src/features/wall/components/__tests__/WallFeed.renderCost.component.test.tsx:191#the declared scroll-windowing budget has not been silently widened` | yes |
 | W159 | `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:181#no Wall style sets an in-scale-band spacing value that is not a token` | yes |
 | W167 | `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:231#nothing in the Wall lays content out in a grid` and `travel-buddy-standalone/src/features/wall/components/__tests__/WallDesignSystem.component.test.tsx:261#an object with many actions renders at most THREE chips` | yes |
@@ -1302,7 +1302,7 @@ The whole of `routes/wall.ts`'s diff is one line replaced in place at 1274, so *
 this census's forty-odd `routes/wall.ts` pointers moved** — the commit says it kept the edit
 line-neutral above every cited line, and that is checkable rather than taken on trust.
 `wallApi.ts` appends its new declarations *below the last pre-existing export* for the same
-reason, and `wallApi.ts:328#export async function revalidateCachedObjects(` still reads `export async function revalidateCachedObjects(`
+reason, and `wallApi.ts:339#export async function revalidateCachedObjects(` still reads `export async function revalidateCachedObjects(`
 at both commits. Evidence run at this tree:
 `artifacts/api-server/src/test/wallIntentResolutionTruthfulness.test.ts` 8/8,
 `wallSessionIntent` 9/9, `wallRouteDegradation` 6/6, and the client
@@ -1409,7 +1409,7 @@ their own fixture users and rows against the sanctioned CI project
 `.github/scripts/run-live-suite.sh` scores a live suite red when it skips. A first-page benchmark
 would be the same shape: the fake corpus of `artifacts/api-server/src/test/wallPerformance.test.ts:123#const POSTS = 150;` seeded
 under a namespaced fixture author set, the real router over loopback with the real client
-(`artifacts/api-server/src/test/wallPerformance.test.ts:314#_setTestClient(corpusClient(), true);` with the fake replaced), p50/p95 read
+(`artifacts/api-server/src/test/wallPerformance.test.ts:320#_setTestClient(corpusClient(), true);` with the fake replaced), p50/p95 read
 off the wire, everything deleted in `after`. What stops it being written in this pass is not
 ownership but verification: this environment holds no live credentials, so a suite written here
 would ship unexecuted against real constraints on `posts`, `profiles`, `user_follows` and
@@ -2005,3 +2005,162 @@ Attention Engine's placement is obeyed on the client — SILENT and IGNORE are n
 
 - NOT-GRADED: artifacts/api-server/src/routes/wallMoments.ts — §18.1 cites the one line it fixed (a failed current read refused `error`); no Wall row grades the moments route
 - NOT-GRADED: artifacts/api-server/src/test/tmLiveSurfaces.test.ts — §18.2's route suite for that fix; controlled evidence for built work, no Wall verdict rests on it
+
+---
+
+## §19 — 2026-10-03: the DV-83 defect classes swept through the Wall's reads, and the round-trip depth counted instead of timed (WALL lane)
+
+Lane `claude/lane-wall-20261003`, cut from `main` at `db657b73b`. `head_commit` is **NOT** re-declared:
+the commits carrying this work are not on `main`, and this census has twice had to move that row for
+exactly that reason (see the Headline). The counted files this section changes are named, with this
+argument, in the census-wall entry of `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`.
+**Controlled evidence only:** every test below runs against an in-memory double. No hosted database was
+read or written, no flag was touched, no migration was added, nothing was deployed.
+
+### 19.1 The non-C rows, classified — none is code-actionable from inside the repository
+
+| id | V | class | what would move it |
+| --- | --- | --- | --- |
+| W71 | ? | owner-gated | a speech producer: the voice native module is an owner decision (§14.2 priced it); the Wall's half is pinned |
+| W146 | ? | awaits production | production p50/p95 of `GET /wall?mode=for_you`; the real-PostgreSQL harness half is met (§14.1) |
+| W149 | ? | external | a frame capture on a named device by an operator (§14.3) |
+| W159 | ? | owner-gated | a designer's dated sign-off (§14.3) |
+| W167 | ? | owner-gated | the same sign-off, on "excessive" (§14.3) |
+| W168 | ? | external | a comprehension study with 5–8 people (§14.3) |
+
+**This census disagrees with itself, and this pass records it rather than resolving it.** §14.5 and
+§15.4 state a headline of 200 C / 1 W / 0 N / 4 ?, because §14.4 moved W146 `?`→C and W71 `?`→W. Neither
+move reached §2: both rows still read `?` there, the Headline table still reads 199 / 0 / 0 / 6, and
+`check:census-integrity` counts the rows. The rows govern. This pass does not apply §14.4's moves: the
+brief it ran under records W146's live p50/p95 and W71's producer as unverifiable without production
+and owner action, and §15.2 itself said "W146 stays `?`". Whoever owns the census should either carry
+§14.4 into §2 with its own argument, or strike §14.5 and §15.4 as superseded. Nothing below depends on
+which.
+
+### 19.2 What was swept, what was found, and what was fixed
+
+The sweep read every Wall read path (`routes/wall.ts`, `routes/wallMoments.ts`, `routes/wallTelemetry.ts`,
+`services/wall/**` outside the two files in PR #530's zone, `lib/wallMoments.ts`, `lib/wallMomentRead.ts`)
+and the Wall client (`features/wall/hooks/**`, `services/wallApi.ts`, `components/**`) for the four classes
+the DV-83 rounds kept finding. Each fix below has a test that was seen red on `main` and green after.
+
+| # | class | defect | fix | test (red → green) |
+| --- | --- | --- | --- | --- |
+| F1 | 1,000-row cut | `loadViewerContext` read `user_follows` with no range; PostgREST's `db-max-rows` cut a 1,234-follow graph to 1,000 and `followGraphKnown` stayed true | keyset-paged on `following_id` (`artifacts/api-server/src/routes/wall.ts:256#const { data, error } = await readWholeFollowGraph(sc, viewerId);`); past 5,000 follows, or on a later-page failure, what was read is served and the graph is reported NOT known, so Following withholds `caughtUp` | `artifacts/api-server/src/test/wallFollowGraphWhole.test.ts:110#a viewer following 1,234 people gets all 1,234` and five siblings |
+| F2 | partial read as complete | the Following spine read posts `.in("author_id", followed.slice(0, 500))` and derived `followingReachedEnd` from that one read: authors 501+ never reached Following, and `caughtUp` was claimed over them | the same query per ≤500-author chunk, concurrently, merged newest-first (`artifacts/api-server/src/routes/wall.ts:616#const spine = await readFollowedSpine(followed, spineChunk); const primary = spine.rows;`); the end is claimed only when no chunk came back full, the merge cut nothing, and no author past 2,000 went unread; one failed chunk fails the spine | `artifacts/api-server/src/test/wallFollowGraphWhole.test.ts:215#a post by followed author #650 reaches Following` and four siblings |
+| F3 | supabase-js error discarded | `POST /wall/revalidate`'s author-status read was `const { data } = await …` inside a `try`: an unreadable `profiles` left every status absent, absence reads as `active`, and a DEACTIVATED author's object was re-admitted — on the outage the endpoint's own contract says re-admits nothing | binds `error`, and an unreadable status re-admits nothing (`artifacts/api-server/src/routes/wall.ts:1640#if (error) throw error;`) | `artifacts/api-server/src/test/wallTakedownRevalidate.test.ts:294#an unreadable author-status read re-admits nothing` |
+| F4 | arbitrary cut | `loadViewerSuppressions` capped at 500 with no order, so past the cap the planner chose which hides survived — a hide made a minute ago could be the one dropped | newest first (`artifacts/api-server/src/routes/wall.ts:449#.order("served_at", { ascending: false }).limit(MAX_SUPPRESSIONS);`) | `artifacts/api-server/src/test/wallEngagementLoop.test.ts:183#past the cap, the NEWEST hides are the ones read back` |
+| F5 | failed read as empty | the client rebuilt `GET /wall`'s body member by member and dropped `degraded` (§15's whole point), and never rendered the feed hook's `error`: an outage of the post spine, or a first open with no network and no saved page, rendered "Nothing here yet — when there is something to see, it will show up here" with a success tick | `degraded` kept (`travel-buddy-standalone/src/features/wall/services/wallApi.ts:96#degraded: normalizeDegraded(body.degraded),`), carried per session as `failedLanes` (header strips' lanes excluded), and the empty state is "Couldn't load the Wall — this isn't the same as nothing new" whenever the last read failed (`travel-buddy-standalone/src/features/wall/components/WallFeed.tsx:147#const couldNotLoad = error != null || failedLanes.length > 0;`) | `travel-buddy-standalone/src/features/wall/components/__tests__/WallScreen.failedRead.component.test.tsx:78#a request that FAILED, with no saved page` and five siblings; `wallApi.degradedLanes` (3); `useWallFeed.failedLanes` (3) |
+| F6 | partial read as complete | a page with posts but a failed lane (postcards, media, moments, …) was presented as the whole feed | a "Some posts couldn't be loaded · Pull to refresh" notice above the posts it has (`travel-buddy-standalone/src/features/wall/components/WallFeed.tsx:137#const partialBanner =`) | `WallScreen.failedRead`: "a page that loaded but is MISSING a lane says so" |
+| F7 | stale-response race | `WallMomentsStrip.run` set whichever answer finished LAST; the Live strip refreshes on its own clock, so a slow answer about places no longer shown overwrote the current one | a generation guard (`travel-buddy-standalone/src/features/wall/components/WallMomentsStrip.tsx:56#if (mine !== generation.current) return;`) | `travel-buddy-standalone/src/features/wall/components/__tests__/WallMomentsStrip.staleResponse.component.test.tsx:47#a slow answer for the PREVIOUS places` |
+| F8 | stale-response race | `useWallSessionIntent.setIntent` applied every answer: "tokyo" then "bangkok" could leave a Tokyo chip over a Bangkok-steered feed; a clear could be undone by an answer in flight; the first answer to land cleared `pending` for a later request | a generation guard; `clearIntent` invalidates in-flight answers and clears `pending` | `travel-buddy-standalone/src/features/wall/hooks/__tests__/useWallSessionIntent.staleResponse.component.test.tsx:55#an OLDER answer that lands last` and two siblings |
+
+**Line-neutral where it is cited.** Every edit to `routes/wall.ts` above its tail replaces the same
+number of lines it removes; the new helpers (`readWholeFollowGraph`, `readFollowedSpine`) are appended at
+the tail, the convention census-media §43 started there. No anchored citation into that file moved.
+
+**Serialized depth is unchanged.** The spine's chunks run concurrently and the graph's pages are
+sequential only past 1,000 follows; the counted first-page depth (19.3) is 91 before and after F1–F4, and
+the read count is 345 before and after.
+
+### 19.3 W146's depth guard: counted, not timed
+
+`artifacts/api-server/src/test/wallPerformance.test.ts` read the first page's serialized round-trip depth
+off the difference of two wall-clock runs with `setTimeout`-injected latency. On this shared machine that
+difference wandered from 74 to 109 for an unchanged tree against a ratchet of 110 — one busy second from a
+red build, and just as able to hide a regression. Every fake query is now HELD and the whole held set is
+released at once — one round trip — only after the event loop has gone quiet (`setImmediate` and 0 ms
+timer passes, which order after every microtask and every ≤1 ms timer the page queued). Event-loop order
+does not depend on load, so the depth is an exact integer: **91**, identical in five runs including three
+concurrent runs at load average ~11. The test counts the page twice and asserts the two counts agree. The
+ratchet is unchanged at 110 and was not touched.
+
+Mutation, the one the ratchet was sized against: one awaited read per feed item in `routes/wall.ts` → **111,
+red**; the 375-read ratchet (365) and the 9-per-item slope ratchet (8.3) both still PASS it, so this guard is
+still the only one in the file that catches it. Mutation: the fake never holds → 0 rounds, the vacuity guard
+is red.
+
+**W146 stays `?`.** Its row's text is updated to describe the counted depth; the verdict rests, as §14 and
+§15 said, on production p50/p95, which nothing here measures.
+
+### 19.4 Mutations, each applied alone, PRE sha256 recorded, restored byte-identically
+
+| id | mutation | killed by |
+| --- | --- | --- |
+| M-FG-1 | the follow graph stops after its first page | `wallFollowGraphWhole` (3) |
+| M-FG-2 | no bound on the graph read | "a graph LARGER than the bounded read" |
+| M-FG-3 | a partial graph serves nothing (`} else {` restored) | "a LATER page that fails", "LARGER than the bounded read" |
+| M-FG-4 | the keyset `gt` dropped (every page re-reads page 1) | `wallFollowGraphWhole` (3) |
+| M-SP-1 | the merge cut no longer withholds the end | "two chunks that are each short" |
+| M-SP-2 | authors past the bound counted as read | "larger than the spine's bound" |
+| M-SP-3 | only the first chunk is read | "#650", "two chunks", "one failed chunk" |
+| M-SP-4 | the merge is not sorted newest-first | "two chunks that are each short" |
+| M-RV-1 | the revalidate author-status `error` ignored | "an unreadable author-status read" |
+| M-RV-2 | the revalidate catch falls through | the same |
+| M-SU-1 | the suppression read unordered | "past the cap, the NEWEST hides" |
+| MC-1, MC-2 | `degraded` dropped / not filtered to names | `wallApi.degradedLanes` |
+| MC-3 … MC-5 | `failedLanes` never set / header lanes counted / a later page replaces instead of adding | `WallScreen.failedRead`, `useWallFeed.failedLanes` |
+| MC-6 … MC-10 | `error` ignored / `failedLanes` ignored / partial notice off / old empty-state copy / prop not wired | `WallScreen.failedRead` |
+| MC-11, MC-12 | moments strip generation check removed / never advanced | `WallMomentsStrip.staleResponse` |
+| MC-13 … MC-16 | session-intent check removed / `pending` unguarded / clear does not invalidate / clear leaves `pending` | `useWallSessionIntent.staleResponse` |
+| M-DEPTH-1, -2 | (19.3) | `wallPerformance` |
+
+31 mutations, 31 killed. MC-5 survived its first run (the test then had a later page add a lane to a
+complete session, which a replace also satisfies); the test was strengthened so the first page also
+misses a lane, and MC-5 was re-run and killed.
+
+### 19.5 Found and NOT fixed here
+
+- **`lib/wallMomentRead.ts` — per-type history starvation.** `readPreviousReadings` caps the read at
+  `PREVIOUS_READINGS_PER_TYPE * claimTypes.length` rows ordered by `generated_at` across ALL claim types, so a
+  frequently-versioned type can fill the whole window and leave a quieter type with no previous reading: its
+  transition is then never detected and the subject reports `refusal: null` — "looked, nothing changed".
+  Fixing it needs that file, which the security lane is changing for its over-broad "does not exist"
+  classifier; recorded for the orchestrator rather than edited.
+- **Author-status reads fail OPEN on the feed path.** The five feed loaders read absence of a profile status
+  as `active` (`passesEligibility`), so a failed `profiles` batch read admits posts by deactivated and
+  pending-deletion authors for that request. §2 documents this as the loaders' fail-soft default; F3 closed
+  it only on `/wall/revalidate`, whose own contract is fail-closed. The sites are `loadCandidates` in
+  `routes/wall.ts` and four loaders in `services/wall/WallCandidateLoaders.ts`; changing the default would
+  empty a feed on a `profiles` outage, which is a §23-versus-§34 trade an owner of §23 should make.
+- **Other `slice(0, 500)` follow reads.** The postcard lane (`WallCandidateLoaders.ts`, `user_id` and
+  `author_id` filters) and Quick Media's follow read (`.limit(500)`, unordered) consult at most 500 followed
+  people. Neither carries a completeness claim (`caughtUp` rests on the spine, which F2 fixed; an empty Quick
+  Media row renders nothing), so they are recorded, not fixed.
+- **`useLiveForYou`** swallows a refetch requested while one is in flight; after an `enabled`/`limit` change
+  mid-flight the strip waits for the next 60 s tick. Not a stale-response race (the generation guard holds);
+  not fixed.
+
+### 19.6 Rows
+
+**No verdict moved.** W5, W110, W158 and W179 cite code this pass changed; each was re-read:
+- **W5** (strict chronological Following): order is untouched; F2 widens WHICH followed authors are read and
+  narrows WHEN the end is claimed. C stands.
+- **W110** (`WallResponse`): the server contract is unchanged; the client type gains the optional
+  `degraded` the server already sent. C stands.
+- **W158** (offline → cached feed, no fake live states): the cached-page path is unchanged; its pointers are
+  repointed to the shifted cached-page branch. F5 adds that an offline first open with NO cached page now says it
+  could not load. C stands.
+- **W179** (takedowns reach cached projections): F3 closes a fail-open on exactly that path. C stands.
+- **W146**: row text updated for 19.3; `?` stands.
+
+Pointers repaired, verdicts untouched: `WallFeed.tsx` (W1, W149, W167's neighbours at lines 118, 426, 447),
+`useWallFeed.ts` (lines 394–399, 440, 568), the `wallPerformance.test.ts` and `wallApi.ts` anchors at lines
+423, 476, 774, 1152, 1305 and 1412, and the `WallFeed.tsx` windowing anchor in `wall-certification-packet.md`.
+
+### 19.7 Headline after §19
+
+**Unchanged: 205 requirements · 199 BUILT-AND-CORRECT · 0 BUILT-BUT-WRONG · 0 NOT-BUILT · 6 CANNOT-VERIFY**,
+counted from the rows in §2. 199 + 0 + 0 + 6 = 205. (See 19.1 for the §14.5 / §15.4 figures that disagree.)
+
+| BUILT-AND-CORRECT | **199** |
+|---|---|
+| BUILT-BUT-WRONG | **0** |
+| NOT-BUILT | **0** |
+| CANNOT-VERIFY | **6** |
+
+This block restates the headline from the rows so that the last headline in the document is the one the
+rows support; `check:census-integrity` reads the LAST such block, which until this pass was §14.5's.
+
+- NOT-GRADED: artifacts/api-server/src/lib/wallMomentRead.ts — §19.2 swept it and §19.5 records a finding in it that the security lane's file ownership keeps this lane from fixing; no Wall row grades the previous-readings read
+- NOT-GRADED: artifacts/api-server/src/lib/wallMoments.ts — §19.2 names it among the read paths swept; nothing was found or changed there and no Wall row grades moment building

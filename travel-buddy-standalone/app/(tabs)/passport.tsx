@@ -293,7 +293,7 @@ export default function PassportScreen() {
         insets={insets}
         hasHighlights={hasOwnHighlights}
         allHighlightsViewed={allOwnHighlightsViewed}
-        highlights={ownRingState?.highlights ?? []}
+        highlights={ownRingState?.highlights ?? []} highlightsUnreadable={ownRingState?.unreadable === true} onRetryHighlights={() => setHighlightRefreshKey((k) => k + 1)}
         onHighlightRingPress={handleOwnRingPress}
         onNewHighlightPress={handleCameraPress}
         onDirectAddHighlight={openHighlightComposer}
@@ -376,7 +376,7 @@ function PassportContent({
   menuOpen, setMenuOpen,
   openSettings, actions, handleEditProfile, handleViewAsPublic,
   reload, stampsTotal, loadingMoreStamps, loadMoreStamps,
-  lastLoadedAt, insets, hasHighlights, allHighlightsViewed, highlights,
+  lastLoadedAt, insets, hasHighlights, allHighlightsViewed, highlights, highlightsUnreadable, onRetryHighlights,
   onHighlightRingPress, onNewHighlightPress, onDirectAddHighlight, onHighlightBubblePress, onAddPostcard,
   stampsViewOpen, setStampsViewOpen, verificationLevels, noSafetyFlags, cardRef, share, sharing,
   sectionOrder, onArrangeSections, tabOrder, onArrangeTabs,
@@ -415,7 +415,7 @@ function PassportContent({
   insets: { top: number; bottom: number };
   hasHighlights?: boolean;
   allHighlightsViewed?: boolean;
-  highlights: any[];
+  highlights: any[]; /** §28.11: the owner's own read FAILED, not 'no highlights'. */ highlightsUnreadable?: boolean; onRetryHighlights?: () => void;
   onHighlightRingPress?: () => void;
   onNewHighlightPress?: () => void;
   /** Direct path to the highlight composer — used by the highlights strip "+" button. */
@@ -858,7 +858,7 @@ function PassportContent({
         {/* ── Highlights ── */}
         <PassportDivider label="HIGHLIGHTS" />
         <PassportHighlightsStrip
-          highlights={highlights}
+          highlights={highlights} unreadable={highlightsUnreadable} onRetry={onRetryHighlights}
           hasActive={hasHighlights ?? false}
           allViewed={allHighlightsViewed ?? false}
           isOwner

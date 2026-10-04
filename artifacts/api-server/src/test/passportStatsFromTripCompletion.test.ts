@@ -127,6 +127,8 @@ function makeFakeClient(db: FakeDB) {
       delete()      { return chain; },
       eq(col: string, val: any)   { _filters.push((r) => r[col] === val); return chain; },
       neq(col: string, val: any)  { _filters.push((r) => r[col] !== val); return chain; },
+      // buildStats walks user_stamps by keyset (`gt` the last id seen).
+      gt(col: string, val: any)   { _filters.push((r) => String(r[col]) > String(val)); return chain; },
       in(col: string, vals: any[]){ _filters.push((r) => vals.includes(r[col])); return chain; },
       not(col: string, op: string, val: any) {
         if (op === "eq" || op === "is") _filters.push((r) => r[col] !== val);

@@ -477,11 +477,15 @@ router.post("/trips/:tripId/crew/live-share/start", async (req, res) => {
   // Gated on START only, never on STOP — a restricted user must always be able
   // to stop sharing.
   //
-  // No degraded branch, for the reason stated on the private-plan gate in
-  // routes/trips.ts: this type fails OPEN inside getRestrictionState by design,
-  // so canJoinLocationPlans is `true` on an unreadable read and the gate cannot
-  // fire on one.
+  // census-trust §31: an UNREAD restriction state no longer leaves this type
+  // OPEN ("low-risk") — it would start a location broadcast on a read that never
+  // answered. A degraded read refuses retryably, BEFORE the restriction message,
+  // because an outage is not a restriction on this person.
   const locTrust = await getRestrictionState(sc, user.id);
+  if (locTrust.degradedReason === "fail_closed") {
+    sendError(res, "degraded_unavailable", "We could not verify your permissions right now. Please try again shortly.");
+    return;
+  }
   if (!locTrust.canJoinLocationPlans) {
     res.status(403).json({
       error: "trust_restriction",

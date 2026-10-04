@@ -53,6 +53,8 @@ interface World {
   rankEvents: any[];
   follows: any[];
   errorTables: Set<string>;
+  /** Tables whose BATCH reads (`.in(...)`) fail, leaving single-row reads healthy. */
+  errorBatchTables: Set<string>;
 }
 
 function livePost(over: Record<string, unknown> = {}) {
@@ -78,6 +80,7 @@ function freshWorld(): World {
     rankEvents: [],
     follows: [],
     errorTables: new Set<string>(),
+    errorBatchTables: new Set<string>(),
   };
 }
 
@@ -92,6 +95,7 @@ function fakeClient() {
   function builder(table: string) {
     const eqs: Record<string, unknown> = {};
     let single = false;
+    let batch = false;
     const rowsFor = (): any[] => {
       switch (table) {
         case "posts":
@@ -112,7 +116,7 @@ function fakeClient() {
       if (table === "feature_flags") {
         return { data: { enabled: String(eqs.flag) === "wall_enabled" }, error: null };
       }
-      if (world.errorTables.has(table)) {
+      if (world.errorTables.has(table) || (batch && world.errorBatchTables.has(table))) {
         return { data: null, error: { code: "PGRST100", message: "boom" } };
       }
       const rows = rowsFor();
@@ -124,7 +128,11 @@ function fakeClient() {
         eqs[c] = v;
         return b;
       },
-      in: () => b, is: () => b, or: () => b, ilike: () => b,
+      in: () => {
+        batch = true;
+        return b;
+      },
+      is: () => b, or: () => b, ilike: () => b,
       gte: () => b, lte: () => b, gt: () => b, lt: () => b,
       order: () => b, limit: () => b,
       insert: () => Promise.resolve({ error: null }),
@@ -277,6 +285,24 @@ describe("POST /wall/revalidate — takedowns reach the cached page (§31/§37)"
   it("an unreadable blocks table re-admits nothing (the block gate fails closed)", async () => {
     world.errorTables.add("blocks");
     assert.deepEqual((await revalidate(["post-1"])).json.eligibleObjectIds, []);
+  });
+
+  // census-wall §19. The author-status read discarded its `error`, so an
+  // unreadable `profiles` left every status absent, absence reads as 'active',
+  // and a DEACTIVATED author's object was re-admitted — on exactly the outage
+  // this endpoint's own contract says re-admits nothing.
+  it("an unreadable author-status read re-admits nothing (a deactivated author cannot slip back in)", async () => {
+    world.profiles = [{ id: AUTHOR, account_status: "deactivated" }];
+    // Only the batch author-status read fails; the caller's own auth read is healthy.
+    world.errorBatchTables.add("profiles");
+    const res = await revalidate(["post-1"]);
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.json.eligibleObjectIds, []);
+  });
+
+  it("CONTROL: the same page with a readable, active author IS re-admitted", async () => {
+    world.profiles = [{ id: AUTHOR, account_status: "active" }];
+    assert.deepEqual((await revalidate(["post-1"])).json.eligibleObjectIds, ["post-1"]);
   });
 
   // ── Mixed pages keep the survivors ────────────────────────────────────────

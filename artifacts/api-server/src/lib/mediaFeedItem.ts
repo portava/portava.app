@@ -28,7 +28,9 @@ export type RelationshipStatus =
   | "self"
   | "following"
   | "pending_follow"
-  | "none";
+  | "none"
+  /** census-media §47: the follow graph or the follow requests could not be read. Never "none" on a guess. */
+  | "unknown";
 
 export interface MediaFeedCreator {
   id: string;
@@ -74,13 +76,18 @@ export interface MediaFeedMediaItem {
   provenanceLabel?: "illustrative" | null;
 }
 
+/**
+ * census-media §47: a count is the measured number or `null` — "could not be
+ * read", with its table named in the response's `failedSources`. Never a 0
+ * standing in for a failed read, never a cached counter standing in for a count.
+ */
 export interface MediaFeedStats {
   viewCount: number;
-  likeCount: number;
-  saveCount: number;
-  commentCount: number;
+  likeCount: number | null;
+  saveCount: number | null;
+  commentCount: number | null;
   /** Number of distinct viewers who triggered a Stamp It reaction on this post. */
-  stampItCount: number;
+  stampItCount: number | null;
 }
 
 /**
@@ -110,11 +117,16 @@ export interface MediaFeedLocation {
   lng?: number | null;
 }
 
+/**
+ * census-media §47: the viewer's own state, or `null` when its read failed —
+ * "we could not check", never "no" (the DV-83 verifiers' finding: an unread
+ * save read as `false`). The failed table is named in `failedSources`.
+ */
 export interface MediaFeedViewerState {
-  hasLiked: boolean;
-  hasSaved: boolean;
-  isFollowingCreator: boolean;
-  hasFollowRequestPending: boolean;
+  hasLiked: boolean | null;
+  hasSaved: boolean | null;
+  isFollowingCreator: boolean | null;
+  hasFollowRequestPending: boolean | null;
 }
 
 export interface MediaFeedPrivacy {
@@ -179,14 +191,16 @@ export interface HydrateInput {
   viewerUserId: string;
   /** Set of author ids that have opted in to showing their real name. */
   allowedRealNameIds: Set<string>;
-  /** Set of post ids the viewer has saved. */
-  savedPostIds: Set<string>;
-  /** Set of post ids the viewer has liked (reactions). */
-  likedPostIds: Set<string>;
+  /** Set of post ids the viewer has saved; `null` when the read failed (census-media §47). */
+  savedPostIds: Set<string> | null;
+  /** Set of post ids the viewer has liked (stamped); `null` when the read failed. */
+  likedPostIds: Set<string> | null;
   /** Set of creator ids the viewer follows. */
   followedCreatorIds: Set<string>;
-  /** Set of creator ids the viewer has a pending follow request for. */
-  pendingFollowRequestIds: Set<string>;
+  /** True when the follow graph could not be read: isFollowingCreator is then `null` (census-media §47). */
+  followStateUnknown?: boolean;
+  /** Set of creator ids the viewer has a pending follow request for; `null` when the read failed. */
+  pendingFollowRequestIds: Set<string> | null;
   /** media_assets rows pre-fetched for the post (post_media child rows). */
   postMedia: any[];
   /**
@@ -307,10 +321,17 @@ export interface HydrateGemInput {
   viewerUserId: string;
   /** Set of author ids that have opted in to showing their real name. */
   allowedRealNameIds: Set<string>;
-  /** Set of gem ids the viewer has saved. */
-  savedGemIds: Set<string>;
+  /** Set of gem ids the viewer has saved; `null` when the read failed (census-media §47). */
+  savedGemIds: Set<string> | null;
   /** Set of creator ids the viewer follows. */
   followedCreatorIds: Set<string>;
+  /** True when the follow graph could not be read: isFollowingCreator is then `null`. */
+  followStateUnknown?: boolean;
+  /**
+   * The gem's LIVE save count (hidden_gem_saves), or `null` when it could not be
+   * read. Absent: the legacy cached hidden_gems.save_count (census-media §47).
+   */
+  saveCount?: number | null;
   /** Submitter's profile row (pre-fetched). */
   submitterProfile: any;
   /** Coordinates already resolved via HiddenGemPrivacyGuard for this viewer. */
@@ -326,6 +347,8 @@ export function hydrateGemFeedItem(input: HydrateGemInput): MediaFeedItem {
 
   const creatorId: string = gem.submitted_by ?? "";
   const isOwnItem = creatorId === viewerUserId;
+  // An unread follow graph is not "not following" (census-media §47). The privacy
+  // gates below still read it as not following — they fail CLOSED on it.
   const isFollowing = followedCreatorIds.has(creatorId);
   const creatorIsPrivate = Boolean(submitterProfile?.is_private);
 
@@ -336,9 +359,11 @@ export function hydrateGemFeedItem(input: HydrateGemInput): MediaFeedItem {
 
   const relationshipStatus: RelationshipStatus = isOwnItem
     ? "self"
-    : isFollowing
-      ? "following"
-      : "none";
+    : input.followStateUnknown
+      ? "unknown"
+      : isFollowing
+        ? "following"
+        : "none";
 
   // Avatar gate (mirrors toPublicProfilePreview). This feed runs NO upstream
   // private-author exclusion, so a private submitter the viewer doesn't follow
@@ -391,7 +416,9 @@ export function hydrateGemFeedItem(input: HydrateGemInput): MediaFeedItem {
   const stats: MediaFeedStats = {
     viewCount: gem.visit_count ?? 0,
     likeCount: 0,
-    saveCount: gem.save_count ?? 0,
+    // census-media §47: the live count when the caller read one (null = unread),
+    // the legacy cached column only when no count was read at all.
+    saveCount: input.saveCount !== undefined ? input.saveCount : (gem.save_count ?? 0),
     commentCount: 0,
     stampItCount: 0,
   };
@@ -409,8 +436,8 @@ export function hydrateGemFeedItem(input: HydrateGemInput): MediaFeedItem {
 
   const viewerState: MediaFeedViewerState = {
     hasLiked: false,
-    hasSaved: savedGemIds.has(gem.id),
-    isFollowingCreator: isFollowing || isOwnItem,
+    hasSaved: savedGemIds ? savedGemIds.has(gem.id) : null,
+    isFollowingCreator: isOwnItem ? true : input.followStateUnknown ? null : isFollowing,
     hasFollowRequestPending: false,
   };
 
@@ -634,15 +661,21 @@ export function hydrateMediaFeedItem(input: HydrateInput): MediaFeedItem {
   const profile = Array.isArray(row.profiles) ? row.profiles[0] : row.profiles;
   const creatorId: string = row.author_id ?? row.owner_id ?? "";
   const isOwnPost = creatorId === viewerUserId;
+  // census-media §47: unread follow state / follow requests are not "no". The
+  // privacy gates below still read them as false — they fail CLOSED on them.
   const isFollowing = followedCreatorIds.has(creatorId);
-  const hasPendingFollow = pendingFollowRequestIds.has(creatorId);
+  const hasPendingFollow = pendingFollowRequestIds ? pendingFollowRequestIds.has(creatorId) : false;
   const creatorIsPrivate = Boolean(profile?.is_private);
 
   // Relationship status
   const relationshipStatus: RelationshipStatus = isOwnPost
     ? "self"
+    : input.followStateUnknown
+    ? "unknown"
     : isFollowing
     ? "following"
+    : pendingFollowRequestIds === null
+    ? "unknown"
     : hasPendingFollow
     ? "pending_follow"
     : "none";
@@ -731,10 +764,13 @@ export function hydrateMediaFeedItem(input: HydrateInput): MediaFeedItem {
     viewCount: row.view_count ?? row.qualified_view_count ?? 0,
     // stamp_like_count is derived from content_stamps (unified write path since Task 3047).
     // Falls back to posts.like_count only if the stamp count field is absent.
-    likeCount: row.stamp_like_count ?? row.like_count ?? row.reaction_count ?? 0,
-    saveCount: row.save_count ?? 0,
-    commentCount: row.comment_count ?? 0,
-    stampItCount: row.stamp_it_count ?? 0,
+    // census-media §47: a count the caller READ is used as given — a number, or
+    // null for "could not be read" — and is never replaced by a cached column.
+    // Only a caller that read no count at all gets the legacy row fields.
+    likeCount: "stamp_like_count" in row ? row.stamp_like_count : (row.like_count ?? row.reaction_count ?? 0),
+    saveCount: row.save_count === null ? null : (row.save_count ?? 0),
+    commentCount: row.comment_count === null ? null : (row.comment_count ?? 0),
+    stampItCount: "stamp_it_count" in row ? row.stamp_it_count : 0,
   };
 
   // ── Location ───────────────────────────────────────────────────────────────
@@ -764,10 +800,10 @@ export function hydrateMediaFeedItem(input: HydrateInput): MediaFeedItem {
   // ── Viewer state ───────────────────────────────────────────────────────────
   const itemId: string = row.id;
   const viewerState: MediaFeedViewerState = {
-    hasLiked: likedPostIds.has(itemId),
-    hasSaved: savedPostIds.has(itemId),
-    isFollowingCreator: isFollowing || isOwnPost,
-    hasFollowRequestPending: hasPendingFollow,
+    hasLiked: likedPostIds ? likedPostIds.has(itemId) : null,
+    hasSaved: savedPostIds ? savedPostIds.has(itemId) : null,
+    isFollowingCreator: isOwnPost ? true : input.followStateUnknown ? null : isFollowing,
+    hasFollowRequestPending: pendingFollowRequestIds ? hasPendingFollow : null,
   };
 
   // ── Privacy & moderation ───────────────────────────────────────────────────

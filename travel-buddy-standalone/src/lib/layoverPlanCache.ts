@@ -47,14 +47,14 @@
  *   L153 flight/gate   `flightStatus: unavailable("no_flight_feed")`; the
  *                      traveller's own typed schedule is not a confirmed
  *                      flight status and must not be dressed up as one.
- *   L154 crew point    the server still answers `no_crew_storage` on the
- *                      bundle; `crewMeetingPoint` is typed for the day it does.
+ *   (L154 crew point   CACHED since census-layover §48 — see
+ *                      `CachedLayoverPlan.crewMeetingPoint`.)
  *   L155 phrases       `no_phrase_catalogue` — there is nothing to cache.
  * Each of those is a server-side absence, not a client decision, and none is
  * papered over here.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import type { LayoverOfflineBundle, LayoverSafeEnvelope } from '../services/layover.ts';
+import type { LayoverOfflineBundle, LayoverSafeEnvelope, OfflineCapability } from '../services/layover.ts';
 
 /**
  * Bumped whenever the stored SHAPE changes. A record written by another version
@@ -131,6 +131,16 @@ export interface CachedLayoverPlan {
   envelope: CachedPlanEnvelope | null;
   /** `null` when the overview did not state one; the replan rule then refuses. */
   schedule: CachedPlanSchedule | null;
+  /**
+   * §16 L154 — the traveller's own crew meeting point as the bundle answered
+   * it: the label, or the server's reason there is none (`crew_unreadable` is a
+   * failed read and stays one). `null` = this record holds no answer at all —
+   * a record written before the field existed, which is still served whole.
+   * ADDITIVE, so `CACHED_PLAN_VERSION` is not bumped: an older record lacking
+   * it reads as the true "nothing is saved", and discarding the rest of an
+   * offline traveller's plan for a field it never had would be worse.
+   */
+  crewMeetingPoint: OfflineCapability<string> | null;
   /** DEVICE instant of the write. For support only — never a freshness input. */
   cachedAt: string;
 }
@@ -141,6 +151,20 @@ function isNonEmptyString(v: unknown): v is string {
 
 function num(v: unknown): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+}
+
+/**
+ * L154 — a crew meeting point as stored. A blank label is NO label (the same
+ * rule `describeCrewMeetingPoint` applies), and anything that is not the
+ * capability's shape is no answer rather than a guessed one.
+ */
+function normaliseCrewPoint(raw: unknown): OfflineCapability<string> | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const cap = raw as Record<string, unknown>;
+  const label = typeof cap.value === 'string' ? cap.value.trim() : '';
+  if (cap.available === true && label) return { available: true, value: label, reason: null };
+  const reason = isNonEmptyString(cap.reason) ? (cap.reason as OfflineCapability<string>['reason']) : null;
+  return { available: false, value: null, reason };
 }
 
 function normaliseStops(raw: unknown): CachedPlanStop[] {
@@ -221,6 +245,7 @@ export async function cacheCertifiedPlan(
             boardingTime: isNonEmptyString(schedule.boardingTime) ? schedule.boardingTime : null,
           }
         : null,
+    crewMeetingPoint: normaliseCrewPoint(bundle.crewMeetingPoint),
     cachedAt: new Date().toISOString(),
   };
 
@@ -300,6 +325,7 @@ export async function readCachedPlan(sessionId: string): Promise<CachedLayoverPl
             boardingTime: isNonEmptyString(sched.boardingTime) ? sched.boardingTime : null,
           }
         : null,
+    crewMeetingPoint: normaliseCrewPoint(rec.crewMeetingPoint),
     cachedAt: isNonEmptyString(rec.cachedAt) ? rec.cachedAt : rec.certifiedAt,
   };
 }

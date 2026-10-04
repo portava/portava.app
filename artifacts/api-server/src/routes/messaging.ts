@@ -93,7 +93,7 @@ import { recordTrustEvent } from '../services/trust/TrustEventService.js';
 import { getRestrictionState, DegradedPermissionCheckError } from '../services/trust/TrustRestrictionService.js';
 import { processTagging } from '../services/tagging/TaggingService.js';
 import { enrichSpans } from '../lib/enrichSpans';
-import { circleThreadTitle } from '../lib/displayName';
+import { circleThreadTitle } from '../lib/displayName'; import { readRecentMessages, readRosterPaged, selectByIdsChunked, asSupabaseResult, asPageResult, sortByActivityDesc, nameVisibilitySetChunked, catchUpInbox, readNewestVisibleMessage, mapLimit, INBOX_CATCHUP_CONCURRENCY } from '../services/telegraph/inboxReads.js'; // past db-max-rows (TELEGRAPH lane 2026-10-03)
 import { NotificationService } from '../services/notifications/NotificationService.js';
 import { NotificationRouter } from '../services/notifications/NotificationRouter.js';
 import { readBlockExclusions, isExcluded } from '../lib/exclusionSet.js';
@@ -1417,12 +1417,12 @@ router.get('/me/unread-counts', async (req, res) => {
       .map((t: any) => t.id as string);
 
     if (potentiallyUnreadThreadIds.length > 0) {
-      const { data: lastMsgs, error: lmErr } = await sc
-        .from('messages')
-        .select('thread_id, sender_id, created_at')
-        .in('thread_id', potentiallyUnreadThreadIds)
-        .is('deleted_at', null)
-        .order('created_at', { ascending: false });
+      // Bounded and complete past db-max-rows: the newest-first page, then a direct read for any
+      // thread a FULL page did not reach (services/telegraph/inboxReads.ts). Was range-less: cut at 1,000.
+      const pageRead = await readRecentMessages(sc, potentiallyUnreadThreadIds, 'thread_id, sender_id, created_at');
+      const lastMsgs = pageRead.ok ? pageRead.value.rows : null;
+      const lmErr: any = pageRead.ok ? null : pageRead.error;
+      const truncatedPage = pageRead.ok && pageRead.value.truncated;
 
       if (lmErr) {
         req.log.error({ err: lmErr }, 'unread-counts messages query failed');
@@ -1432,18 +1432,18 @@ router.get('/me/unread-counts', async (req, res) => {
 
       const lastMsgByThread: Record<string, any> = {};
       for (const m of lastMsgs ?? []) {
-        // §14.3: a message outside the caller's window for its thread is not
-        // theirs to count as unread. No-op while the flag is OFF.
-        // Q6: the caller's own earlier messages are theirs to see. This loop
-        // then skips them for the COUNT anyway (`sender_id === user.id`, five
-        // lines down) — a person's own message is never unread. The exception
-        // is passed regardless so the badge and the preview agree on one set.
+        // §14.3 window per thread (no-op while the flag is OFF). Q6 is passed so the badge and the preview agree on
+        // one set; the count below skips the caller's own messages anyway — a person's own message is never unread.
         if (!withinWindow((m as any).created_at, visibleFromByThread[(m as any).thread_id] ?? null,
                           { senderId: (m as any).sender_id, viewerId: user.id })) continue;
-        if (!lastMsgByThread[(m as any).thread_id]) {
-          lastMsgByThread[(m as any).thread_id] = m;
-        }
+        if (!lastMsgByThread[(m as any).thread_id]) lastMsgByThread[(m as any).thread_id] = m;
       }
+      const missing = truncatedPage ? potentiallyUnreadThreadIds.filter((id) => !lastMsgByThread[id]) : [];
+      const caught = await mapLimit(missing, INBOX_CATCHUP_CONCURRENCY, (threadId) => readNewestVisibleMessage(sc,
+        { threadId, columns: 'thread_id, sender_id, created_at', viewerId: user.id, visibleFrom: visibleFromByThread[threadId] ?? null }));
+      const caughtErr = caught.find((c) => !c.ok);
+      if (caughtErr && !caughtErr.ok) { req.log.error({ err: caughtErr.error }, 'unread-counts catch-up read failed'); sendError(res, 'db_error', 'messages unreadable'); return; }
+      caught.forEach((c, i) => { if (c.ok && c.value) lastMsgByThread[missing[i]!] = c.value; });
 
       for (const threadId of potentiallyUnreadThreadIds) {
         const lm = lastMsgByThread[threadId];
@@ -1478,13 +1478,13 @@ router.get('/me/unread-counts', async (req, res) => {
   if (inboxViewedAt) anQ = anQ.gt('created_at', inboxViewedAt);
 
   // Upcoming confirmed meetups where user RSVP'd going/maybe — runs in parallel
-  const meetupCountPromise = (async (): Promise<number> => {
+  const meetupCountPromise = (async (): Promise<number | null> => {
     const now = new Date().toISOString();
     // T344: an unreadable `meetups` used to report "no upcoming meetups", which
-    // is a number a person acts on. It is logged and reported as zero-by-
-    // failure rather than zero-by-fact; the badge under-reports, exactly as the
-    // block-set read below already chooses to, and the log is the difference
-    // between a known gap and a silent one.
+    // is a number a person acts on. It is logged and returned as UNKNOWN (null);
+    // the field still says 0 for an older client, and `degraded` names it so a
+    // newer one keeps what it last measured rather than drawing a false zero.
+    // (TELEGRAPH lane 2026-10-03; it used to be reported as a plain zero.)
     const { data: upcoming, error: upcomingErr } = await sc
       .from('meetups')
       .select('id')
@@ -1492,17 +1492,17 @@ router.get('/me/unread-counts', async (req, res) => {
       .gt('starts_at', now);
     if (upcomingErr) {
       req.log.warn({ err: upcomingErr }, 'unread-counts: meetups unreadable — badge under-reports');
-      return 0;
+      return null;
     }
     const ids = (upcoming ?? []).map((m: any) => m.id as string);
     if (ids.length === 0) return 0;
-    const { count } = await (sc as any)
+    const { count, error: inviteErr } = await (sc as any)
       .from('meetup_invites')
       .select('meetup_id', { count: 'exact', head: true })
       .eq('user_id', user.id)
       .in('status', ['going', 'maybe'])
       .in('meetup_id', ids);
-    return count ?? 0;
+    if (inviteErr) { req.log.warn({ err: inviteErr }, 'unread-counts: meetup invites unreadable — named in degraded'); return null; } return count ?? 0;
   })();
 
   const [frResult, ciResult, tiResult, mrResult, anResult] = await Promise.all([
@@ -1513,14 +1513,14 @@ router.get('/me/unread-counts', async (req, res) => {
     anQ as Promise<{ count: number | null; error: any }>,
   ]);
 
-  const meetups = await meetupCountPromise.catch(() => 0);
+  const meetupsRaw = await meetupCountPromise.catch(() => null); const meetups = meetupsRaw ?? 0;
 
-  const notifCount =
-    (frResult.count ?? 0) +
-    (ciResult.count ?? 0) +
-    (tiResult.count ?? 0) +
-    (mrResult.count ?? 0) +
-    (anResult.count ?? 0);
+  // A count that could not be read is not a zero: it is left out of the sum AND named in `degraded`, so a client
+  // can keep what it last measured instead of drawing a false "nothing new" (TELEGRAPH lane 2026-10-03).
+  const countParts = [frResult, ciResult, tiResult, mrResult, anResult]; const degraded: string[] = [];
+  if (countParts.some((r) => r.error || typeof r.count !== 'number')) { degraded.push('notifications'); req.log.warn({ errs: countParts.map((r) => r.error?.message ?? null) }, 'unread-counts: a notification count was unreadable — named in degraded'); }
+  const notifCount = countParts.reduce((n, r) => n + (r.error ? 0 : (r.count ?? 0)), 0);
+  if (meetupsRaw === null) degraded.push('meetups');
 
   // ── New highlights count ──────────────────────────────────────────────────
   // Count active highlights from users in the caller's circle that were posted
@@ -1545,7 +1545,7 @@ router.get('/me/unread-counts', async (req, res) => {
       req.log.warn(
         { reason: blockSet.reason },
         'unread-counts: block list unreadable — newHighlights reported as 0',
-      );
+      ); degraded.push('newHighlights');
     }
 
     // 2. Get IDs of users in the caller's circle.
@@ -1556,7 +1556,7 @@ router.get('/me/unread-counts', async (req, res) => {
       .select('other_id')
       .eq('user_id', user.id);
     if (circleErr) {
-      req.log.warn({ err: circleErr }, 'unread-counts: circle membership unreadable — newHighlights reported as 0');
+      req.log.warn({ err: circleErr }, 'unread-counts: circle membership unreadable — newHighlights reported as 0'); degraded.push('newHighlights');
     }
     const circleIds = (circleRows ?? [])
       .map((r: any) => r.other_id as string)
@@ -1575,13 +1575,13 @@ router.get('/me/unread-counts', async (req, res) => {
         q = q.gt('created_at', highlightsViewedAt);
       }
       const { count: hCount, error: hCountErr } = await q; // T344: the last unbound read in this block; its two neighbours above already log.
-      if (hCountErr) req.log.warn({ err: hCountErr }, 'unread-counts: highlights count unreadable — newHighlights reported as 0'); else newHighlights = hCount ?? 0;
+      if (hCountErr) req.log.warn({ err: hCountErr }, 'unread-counts: highlights count unreadable — newHighlights reported as 0'); else newHighlights = hCount ?? 0; if (hCountErr) degraded.push('newHighlights');
     }
   } catch (e) {
-    req.log.warn({ err: e }, 'unread-counts newHighlights query failed — defaulting to 0');
+    req.log.warn({ err: e }, 'unread-counts newHighlights query failed — defaulting to 0'); degraded.push('newHighlights');
   }
 
-  res.status(200).json({ messages: messageCount, notifications: notifCount, meetups, newHighlights });
+  res.status(200).json({ messages: messageCount, notifications: notifCount, meetups, newHighlights, ...(degraded.length > 0 ? { degraded: [...new Set(degraded)] } : {}) });
 });
 
 /* ---------------------------------------------------------------------------
@@ -1958,24 +1958,24 @@ router.get('/me/threads', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
+  // Bounded and complete past PostgREST's db-max-rows (services/telegraph/inboxReads.ts): these
+  // three reads were range-less, so past 1,000 rows a thread's preview, its unread count and its
+  // other person silently fell off. Threads are read in id chunks and re-sorted (activity first),
+  // messages as ONE bounded newest-first page that states its own truncation (caught up below),
+  // and the roster paged to the end. A failure in any of them is still the refusal below.
   const [threadsRes, lastMsgRes, allMembersRes] = await Promise.all([
-    sc
-      .from('message_threads')
-      .select('id, thread_type, trip_id, circle_owner_id, title, created_at, updated_at, last_message_at, status')
-      .in('id', threadIds)
-      .order('last_message_at', { ascending: false, nullsFirst: false }),
+    selectByIdsChunked(
+      sc, 'message_threads',
+      'id, thread_type, trip_id, circle_owner_id, title, created_at, updated_at, last_message_at, status',
+      'id', threadIds,
+    ).then((r) => asSupabaseResult(r.ok ? { ok: true as const, value: sortByActivityDesc(r.value) } : r)),
 
-    sc
-      .from('messages')
-      .select('id, thread_id, body, sender_id, created_at, deleted_at, original_language, msg_type, subtype')
-      .in('thread_id', threadIds)
-      .is('deleted_at', null)
-      .order('created_at', { ascending: false }),
+    readRecentMessages(
+      sc, threadIds,
+      'id, thread_id, body, sender_id, created_at, deleted_at, original_language, msg_type, subtype',
+    ).then(asPageResult),
 
-    sc
-      .from('message_thread_members')
-      .select('user_id, thread_id')
-      .in('thread_id', threadIds),
+    readRosterPaged(sc, threadIds, 'user_id, thread_id').then(asSupabaseResult),
   ]);
 
   /*
@@ -2023,10 +2023,10 @@ router.get('/me/threads', async (req, res) => {
     const memberUserIds = Array.from(new Set(memberRows.map((m: any) => m.user_id).filter(Boolean)));
     let profilesById: Record<string, any> = {};
     if (memberUserIds.length > 0) {
-      const { data: profileRows, error: profileErr } = await sc
-        .from('profiles')
-        .select(PROFILE_PUBLIC)
-        .in('id', memberUserIds);
+      const profileRead = await selectByIdsChunked(sc, 'profiles', PROFILE_PUBLIC, 'id', memberUserIds);
+      // In id chunks: one `.in()` over every member of every thread was cut at 1,000 profiles.
+      const profileRows = profileRead.ok ? profileRead.value : null;
+      const profileErr: any = profileRead.ok ? null : profileRead.error;
       if (profileErr) {
         req.log.error({ err: profileErr }, 'me/threads: member profiles unreadable — refusing rather than returning an anonymous inbox');
         sendError(res, 'db_error', profileErr.message);
@@ -2034,7 +2034,7 @@ router.get('/me/threads', async (req, res) => {
       }
       for (const p of (profileRows ?? []) as any[]) profilesById[p.id] = p;
     }
-    const allowedMemberNames = await nameVisibilitySet(sc, memberUserIds);
+    const allowedMemberNames = await nameVisibilitySetChunked(sc, memberUserIds);
     for (const m of memberRows) {
       const p = profilesById[m.user_id];
       m.profile = p ? sanitizeIdentity(p, allowedMemberNames, user.id) : null;
@@ -2049,20 +2049,20 @@ router.get('/me/threads', async (req, res) => {
   for (const m of memberships ?? []) {
     visibleFromByThread[(m as any).thread_id] = visibleFromOf(m as any, boundOn);
   }
-  // Q6: the caller's OWN earlier messages are theirs to preview. The exception
-  // is sender-scoped, so the preview a rejoined member sees can become their
-  // own old message but can never become ANOTHER sender's pre-window one.
+  // Q6: the caller's OWN earlier messages are theirs to preview — sender-scoped, so never ANOTHER sender's pre-window row.
   const windowedMsgs = ((lastMsgRes.data ?? []) as any[]).filter((m) =>
-    withinWindow(m.created_at, visibleFromByThread[m.thread_id] ?? null,
-                 { senderId: m.sender_id, viewerId: user.id }),
-  );
-
-  // Last message per thread.
+    withinWindow(m.created_at, visibleFromByThread[m.thread_id] ?? null, { senderId: m.sender_id, viewerId: user.id }));
+  // Last message per thread — from the page, then (for a FULL page) read directly for the threads it did not reach,
+  // with an exact unread count wherever a thread's unread set reaches past the page's cutoff.
   const lastMsgByThread: Record<string, any> = {};
-  for (const m of windowedMsgs) {
-    if (!lastMsgByThread[m.thread_id]) lastMsgByThread[m.thread_id] = m;
-  }
-
+  for (const m of windowedMsgs) if (!lastMsgByThread[m.thread_id]) lastMsgByThread[m.thread_id] = m;
+  const catchUp = await catchUpInbox(sc, {
+    page: (lastMsgRes as any).page, threadIds, viewerId: user.id, visibleFromByThread, lastMsgByThread,
+    columns: 'id, thread_id, body, sender_id, created_at, deleted_at, original_language, msg_type, subtype',
+    lastReadByThread: Object.fromEntries((memberships ?? []).map((m: any) => [m.thread_id, m.last_read_at ?? null])),
+    lastMessageAtByThread: Object.fromEntries(((threadsRes.data ?? []) as any[]).map((t) => [t.id, t.last_message_at ?? null])) });
+  if (!catchUp.ok) { req.log.error({ err: catchUp.error }, 'me/threads: catch-up read failed — refusing rather than showing a thread empty or read');
+    sendError(res, 'db_error', (catchUp.error as any)?.message ?? 'messages unreadable'); return; }
   // Fetch translations for last messages (for recipient preview).
   const lastMsgIds = Object.values(lastMsgByThread)
     .filter((m) => m.sender_id !== user.id)
@@ -2185,8 +2185,8 @@ router.get('/me/threads', async (req, res) => {
 
     // Unread count: messages newer than last_read_at not sent by the user.
     const threadMsgs = msgsByThread[t.id] ?? [];
-    let unreadCount = 0;
-    if (lastReadAt) {
+    let unreadCount = catchUp.value.exactUnread[t.id] ?? 0; // exact, read directly, where the page could not answer
+    if (catchUp.value.exactUnread[t.id] !== undefined) { /* see catchUpInbox */ } else if (lastReadAt) {
       const lastReadTs = new Date(lastReadAt).getTime();
       unreadCount = threadMsgs.filter(
         (m) => m.sender_id !== user.id && new Date(m.created_at).getTime() > lastReadTs

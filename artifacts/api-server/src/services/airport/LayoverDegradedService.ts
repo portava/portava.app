@@ -65,7 +65,7 @@ export type UnavailableReason =
   | "no_routing_provider"
   | "no_envelope_geometry"
   | "no_flight_feed"
-  | "no_crew_storage"
+  | "not_in_crew" | "no_meeting_point_set" | "crew_unreadable" | "crew_not_read" // §48 L154 — was "no_crew_storage", false since 2984
   | "no_phrase_catalogue";
 
 export interface OfflineCapability<T> {
@@ -118,8 +118,8 @@ export interface LayoverOfflineBundle {
   route: OfflineCapability<never>;
   /** L153 — no operational feed; the traveller's own schedule is not one. */
   flightStatus: OfflineCapability<never>;
-  /** L154 — no crew storage. */
-  crewMeetingPoint: OfflineCapability<never>;
+  /** L154 — the traveller's OWN crew's meeting point, or why not (§48). */
+  crewMeetingPoint: OfflineCapability<string>;
   /** L155 — no phrase catalogue keyed on the active plan. */
   translationPhrases: OfflineCapability<never>;
   /** The plan the traveller can still read while offline. */
@@ -138,7 +138,7 @@ export function buildOfflineBundle(input: {
   airport: AirportProfile;
   record: LayoverFeasibilityRecord;
   hardReturnLocal?: string | null;
-  stops?: Array<{ title: string; durationMin: number; travelMin: number; insideAirport: boolean }>;
+  stops?: Array<{ title: string; durationMin: number; travelMin: number; insideAirport: boolean }>; /** §48 L154: `activeCrewForUser`'s answer for the session owner. Omitted = not read. */ crew?: import("../layover/LayoverCrewStore.js").CrewRead<{ crew: { meetingPointLabel: string | null } } | null>;
 }): LayoverOfflineBundle {
   const { session, airport, record } = input;
   const certifiedAtMs = record.inputs.nowMs;
@@ -168,7 +168,7 @@ export function buildOfflineBundle(input: {
     mapGeometry: unavailable("no_envelope_geometry"),
     route: unavailable("no_routing_provider"),
     flightStatus: unavailable("no_flight_feed"),
-    crewMeetingPoint: unavailable("no_crew_storage"),
+    crewMeetingPoint: crewMeetingPointOf(input.crew),
     translationPhrases: unavailable("no_phrase_catalogue"),
     stops: input.stops ?? [],
   };
@@ -338,4 +338,22 @@ export function sensingPolicy(input: {
     continuousGpsPermitted: false,
     reason: "moving landside, well before the deadline — low frequency",
   };
+}
+
+/**
+ * §16 L154 — the crew meeting point a device may cache, from the session
+ * owner's own crew read (census-layover §48). Only the traveller's OWN crew is
+ * ever read here, so another crew meeting in the same city is never cached.
+ *
+ * Each "no" is a different fact and is said as one: no crew, a crew with no
+ * meeting point, a crew read that FAILED (which is not "no crew" — a traveller
+ * told that offline walks away from people who are waiting for them), and a
+ * caller that never read it. A blank label is no label.
+ */
+function crewMeetingPointOf(crew: import("../layover/LayoverCrewStore.js").CrewRead<{ crew: { meetingPointLabel: string | null } } | null> | undefined): OfflineCapability<string> {
+  if (crew === undefined) return unavailable("crew_not_read");
+  if (!crew.ok) return unavailable("crew_unreadable");
+  if (!crew.value) return unavailable("not_in_crew");
+  const label = (crew.value.crew.meetingPointLabel ?? "").trim();
+  return label ? available(label) : unavailable("no_meeting_point_set");
 }

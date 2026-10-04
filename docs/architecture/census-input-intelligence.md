@@ -21,21 +21,21 @@ Backend paths are relative to `artifacts/api-server/src/`, client paths to
 | Measure | Value |
 | --- | --- |
 | **Denominator — testable requirements** | **373** |
-| BUILT-AND-CORRECT | **287** |
-| BUILT-BUT-WRONG | **44** |
-| NOT-BUILT | **38** |
+| BUILT-AND-CORRECT | **294** |
+| BUILT-BUT-WRONG | **48** |
+| NOT-BUILT | **27** |
 | CANNOT-VERIFY | **4** |
-| **CONSTRUCTED%** = (C+W)/373 | **331 / 373 = 88.7 %** |
-| **CORRECT%** (raw) = C/373 | **287 / 373 = 76.9 %** |
-| **THE GAP** = W/373 | **44 / 373 = 11.8 %** |
+| **CONSTRUCTED%** = (C+W)/373 | **342 / 373 = 91.7 %** |
+| **CORRECT%** (raw) = C/373 | **294 / 373 = 78.8 %** |
+| **THE GAP** = W/373 | **48 / 373 = 12.9 %** |
 | CANNOT-VERIFY share | **4 / 373 = 1.1 %** |
 
-> **RESTATED 2026-09-21 BY §31**, from the last stated headline (§30.8's
-> `281 / 47 / 41 / 4`) plus §31.3's eight moves: five `W → C`, one `N → C`, two
-> `N → W`. The spec-attributable line is DROPPED rather than guessed — it needs
-> the `ᵖ` count re-derived across all 373 rows, which this pass did not do, and
-> a stale derived figure printed beside fresh ones is the precise failure the
-> note below is about.
+> **RESTATED 2026-10-03 BY §35**, from the last stated headline (§34.3's
+> `294 / 47 / 28 / 4`, which this block had not been brought up to) plus §35's
+> one move, G373 `N → W`. The spec-attributable line stays DROPPED rather than
+> guessed — it needs the `ᵖ` count re-derived across all 373 rows, which no pass
+> since §31 has done, and a stale derived figure printed beside fresh ones is the
+> precise failure the note below is about.
 
 > **THIS TABLE WAS STALE AND IS NOW RESTATED FROM THE ROWS (§11).** It read
 > `230 / 69 / 70 / 4` — the original count — through two later passes that moved
@@ -5363,3 +5363,126 @@ path; a client that renders a review from an answer without `mutated: false`;
 the "meet at" fragment widened to the whole message; a Trip stop read that
 answers "none" on an error; a microphone that hides itself or returns a
 placeholder transcript; the input layer's client URLs losing `/api` again.
+
+## §35 — The input-intelligence lane, 2026-10-03: G373's last line, and five reasons that stopped being true
+
+Written by the input-intelligence lane of the 2026-10-03 parallel wave. **All
+code evidence below is CONTROLLED (fixtures, fakes, the local harness database);
+none of it is production evidence.** Production facts are read-only `SELECT`s
+against `ajrurzioarfkagpuxfnb` taken 2026-10-03, by OBJECT PROBE (§31.2's rule:
+ledger absence is not evidence of non-application), and say so where they appear.
+
+The lane's brief described this census as covering intel capture, observations,
+contributor identity, claims, attribution and rewards. It does not: those are
+census-sensing's rows. The lane's intel-capture work (the projection pass, the
+trail read, the aggregator's cohort reads, and the capture screens' consent and
+review states) moves no row here and is reported to the integration owner as
+proposed census-sensing text, because census-sensing.md is in another open PR.
+
+### §35.1 What was built
+
+**G373 — the ingest admits `degraded`, and the metric is computed.** The client
+has emitted `suggestion_request_completed { count, degraded: true }` from the
+unavailable arm since §33.3
+(`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:455#degraded: true`).
+The ingest rebuilds every event from its allow-list and dropped the flag. It now
+names it
+(`artifacts/api-server/src/lib/inputAssistance/telemetry.ts:175#degraded: 'bool'`),
+a literal bool only, and none of 2950's thirteen refused keys. No migration is
+needed: the event name is already in `iate_event_name_known`. The reader is
+`offlineCompletionRate`
+(`artifacts/api-server/src/lib/inputAssistance/metrics.ts:344#offlineCompletionRate: rate(completedDegraded, degradedEpisodes)`).
+It is the share of degraded episodes with a `suggestion_selected` AFTER their
+first degraded serve
+(`artifacts/api-server/src/lib/inputAssistance/metrics.ts:311#const firstDegraded`).
+A degraded row is kept out of G372's latency even if it carries a round trip
+(`artifacts/api-server/src/lib/inputAssistance/metrics.ts:325#if (r.props.degraded === true) continue;`),
+which is the hazard §33.3 named. Three of §57's nine stay refused: G368, G370
+and G371.
+
+Tests: `artifacts/api-server/src/test/inputAssistanceMetrics.test.ts:399#is completed-degraded episodes over degraded episodes`
+and `artifacts/api-server/src/test/inputAssistanceCertification.test.ts:825#G373`.
+Six cases were red on the base tree and are green after. The case that pinned
+the refusal is restated as "0/0 is null with no blocker". Mutations M1–M5 are
+all red: the allow-list entry dropped, degraded rows admitted to latency,
+pre-outage selections counted, truthy coerced to degraded, and the degraded
+guard removed.
+
+### §35.2 Row moves
+
+| ID | from | **to** | evidence |
+| --- | --- | --- | --- |
+| G373 | N | **W** | IMPLEMENTATION-COMPLETE; awaits: a number. The producer (§33.3), the ingest entry and the reader all exist, and §35.1 proves them under control. 2950 is applied in hosted, and `input_assistance_telemetry_events` held **0 rows** on 2026-10-03 (object probe). So no build has yet sent the event anywhere it is kept, and §14.3's rule holds: a computable definition is `W` until there is a measurement. |
+
+### §35.3 Reasons that stopped being true — no verdict moves
+
+Each of these is corrected here rather than in its cell, as §31 did, so that
+no citation inside the cells moves.
+
+* **G75 (`W`, stays).** The cell says *"the table is ABSENT and the RPC is
+  ABSENT"* (re-measured 2026-09-21). That is **false**. On 2026-10-03 hosted has
+  the `input_selection_history` table and the `input_record_selection` function
+  (object probe; ledger 2258 dated 2026-09-21). The cell's own red-criterion has
+  two halves, and the first, "the migration applied to production", is met.
+  Under control, on the local harness, the RPC's round trip holds: two calls
+  give `selection_count = 2`, the label survives a `NULL` second call,
+  `authenticated` holds neither SELECT nor EXECUTE, and deleting the auth user
+  cascades to 0 rows. That probe ran inside a transaction that was rolled back.
+  The second half is not met: hosted `input_selection_history` holds **0 rows**,
+  so no recorded selection has been read back there. Restated:
+  **IMPLEMENTATION-COMPLETE; awaits: a recorded selection read back as a recent
+  in hosted.**
+* **G213 (`C`, stays), and the `☠prod` on G45, G189, G223 and G286.** §32.3
+  wrote *"☠prod stays: `input_selection_history` is still absent from
+  production"*. The table is present, so these rows are no longer inert for want
+  of STORAGE. They are inert for want of DATA (0 rows). No verdict here rested
+  on `☠prod`, so none moves.
+* **G190 (`W`, stays).** The §15.3 cell says *"`lib/protectedLocations.ts` is
+  still consulted by nothing in `lib/inputAssistance/`"* and *"`protected_zones`
+  is absent from production"*. **Both are false.** The gateway runs every
+  request's candidates through the §24 pass
+  (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:1031#export async function protectGatewayCandidates`),
+  which census-discovery §46/§80 built. `artifacts/api-server/src/test/db/discoverySearchProtectionGateway.db.test.ts`
+  proves it over a real Postgres: this lane re-ran it on its harness database
+  after replaying 3366, and got 4/4. In hosted, 2217 is applied and
+  `protected_zones` holds 0 rows. The pass's own flag,
+  `discovery_search_protected_zones_enabled` (3366), has **no row** there (object
+  probe), so the pass is off by absence, and its flip is the owner's. Restated:
+  **IMPLEMENTATION-COMPLETE; awaits: 3366 applied in hosted, the owner's flag
+  flip, and a registered zone.**
+* **G138 (`C`, stays).** *"☠prod (flag absent from production)"* — the
+  `compass_ai_writing_enabled` row now EXISTS in hosted, `enabled = false`. The
+  row is still inert in production, now because the flag is off rather than
+  absent.
+* **G194, G221 and G287 (`C`, stay).** *"☠prod (zero intel rows)"* was
+  re-measured and is still true: `intel_claims = 0` and
+  `intel_observations = 0`, even though `intel_capture_quick_signal` is ON in
+  hosted.
+
+- NOT-GRADED: artifacts/api-server/src/test/db/discoverySearchProtectionGateway.db.test.ts — census-discovery §80's evidence for the §24 pass, re-run here only to confirm a stale sentence is stale; G190's verdict does not rest on it and does not move.
+
+### §35.4 Headline, restated from the rows
+
+One N → W (G373) against §34.3's 294 C / 47 W / 28 N / 4 X.
+
+| Measure | Value |
+| --- | --- |
+| **Denominator — testable requirements** | **373** |
+| BUILT-AND-CORRECT | **294** |
+| BUILT-BUT-WRONG | **48** |
+| NOT-BUILT | **27** |
+| CANNOT-VERIFY | **4** |
+| **CONSTRUCTED%** = (C+W)/373 | **342 / 373 = 91.7 %** |
+| **CORRECT%** (raw) = C/373 | **294 / 373 = 78.8 %** |
+| **THE GAP** = W/373 | **48 / 373 = 12.9 %** |
+| CANNOT-VERIFY share | **4 / 373 = 1.1 %** |
+
+### §35.5 What would turn this red
+
+Any of the following would turn this section red:
+
+* An ingest allow-list that drops `degraded` again.
+* A metric that counts a degraded serve's round trip as latency.
+* An offline rate whose denominator includes episodes that were never degraded.
+* A future cell that cites `input_selection_history` or `protected_zones` as
+  absent from hosted without a fresh object probe.

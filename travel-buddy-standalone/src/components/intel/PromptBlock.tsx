@@ -26,6 +26,7 @@ import {
   type ObservationEnvelope,
 } from '../../services/intelCapture.ts';
 import type { PromptQuestion, Visibility, PartySizeBucket, CommercialDisclosure } from '../../lib/intel/contracts.ts';
+import { intelWriteErrorCopy } from '../../lib/intel/captureErrors.ts';
 
 export interface PromptBlockProps {
   subjectId: string;
@@ -89,13 +90,9 @@ export function PromptBlock({ subjectId, question, visibility, zoneId, partySize
         onSent?.(question, option, res.observation);
       } else {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error).catch(() => {});
-        setError(
-          res.code === 'feature_disabled'
-            ? 'Capture is turned off right now.'
-            : res.error === 'not_configured'
-              ? 'Not connected.'
-              : 'Could not send — tap to retry.',
-        );
+        // A consent refusal or a refused shape is not fixed by tapping again;
+        // only a transient failure says "try again" (lib/intel/captureErrors).
+        setError(intelWriteErrorCopy(res, 'send').message);
       }
     },
     [question, subjectId, visibility, zoneId, partySize, commercialDisclosure, onSent],

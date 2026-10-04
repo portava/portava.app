@@ -41,7 +41,7 @@ import {
   buildMapPayload,
   buildStats,
 } from "../services/passport/PassportMapService.js";
-import { countContentStampsReceived } from "../services/stamps/ContentStampService.js";
+import { measureStampsEarned } from "../services/stamps/ContentStampService.js";
 import { countUserTrips } from "../domain/trips/services/tripCounts.js";
 import { recordContribution } from "../services/passport/PassportContributionService.js";
 import type { VisibilityTier, CallerContext } from "../services/passport/PassportPrivacyGuard.js";
@@ -526,16 +526,10 @@ router.get("/me/passport/stats", async (req, res) => {
     client.from("user_follows").select("follower_id", { count: "exact", head: true }).eq("following_id", user.id),
     client.from("user_follows").select("following_id", { count: "exact", head: true }).eq("follower_id", user.id),
     // Lifetime stamps earned: passport milestone stamps + content stamps received on
-    // this user's posts. Both fail silently so a table-absence or DB error returns 0.
-    sc
-      ? Promise.all([
-          sc.from("user_stamps").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("is_revoked", false).then(
-            (r: any) => r,
-            () => ({ count: 0 }),
-          ),
-          countContentStampsReceived(sc, user.id),
-        ]).then(([milestones, content]) => ({ count: ((milestones as any).count ?? 0) + (content as number) }))
-      : Promise.resolve({ count: 0 }),
+    // this user's posts. Either half unreadable makes the TOTAL unavailable — the
+    // route still answers, with `stampsEarned: null` and the flag, never a sum
+    // that silently dropped a failed half (passport lane, 2026-10-03).
+    measureStampsEarned(sc, user.id),
     // Milestone history from stamp_milestones. Fails silently when table is absent.
     sc
       ? sc.from("stamp_milestones").select("milestone_level, celebrated_at").eq("user_id", user.id).then(
@@ -546,9 +540,9 @@ router.get("/me/passport/stats", async (req, res) => {
   ]);
 
   // stampsEarnedResult already combines the passport milestone-award count with
-  // content stamps received (via countContentStampsReceived, paginated so it's
-  // exact for high-post-count users) — do not add it again here.
-  const stampsEarned = (stampsEarnedResult as any).count ?? 0;
+  // content stamps received (via measureContentStampsReceived, keyset-paged so
+  // it is exact for high-post-count users) — do not add it again here.
+  const stampsEarned = stampsEarnedResult.count;
   const milestones: Array<{ level: number; celebratedAt: string }> =
     ((milestonesResult as any).data ?? []).map((m: any) => ({
       level: m.milestone_level as number,
@@ -561,6 +555,7 @@ router.get("/me/passport/stats", async (req, res) => {
     followersCount: followersResult.count ?? 0,
     followingCount: followingResult.count ?? 0,
     stampsEarned,
+    ...(stampsEarnedResult.unavailable ? { stampsEarnedUnavailable: true } : {}),
     milestones,
   });
 });

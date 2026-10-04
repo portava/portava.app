@@ -11,7 +11,7 @@ import { saveMedia, unsaveMedia } from '../services/mediaInteractions.ts';
 
 export interface MediaSaveState {
   /** Pre-seed from feed items — skips items already tracked. */
-  seed: (items: ReadonlyArray<{ id: string; savedByMe: boolean }>) => void;
+  seed: (items: ReadonlyArray<{ id: string; savedByMe: boolean | null }>) => void; // null (unread, §47) is not stored
   /** Toggle save for the given item id. */
   toggleSave: (id: string) => Promise<void>;
   isSaved: (id: string) => boolean;
@@ -24,12 +24,12 @@ export function useMediaSave(): MediaSaveState {
   const inFlightRef = useRef(new Set<string>());
 
   const seed = useCallback(
-    (items: ReadonlyArray<{ id: string; savedByMe: boolean }>) => {
+    (items: ReadonlyArray<{ id: string; savedByMe: boolean | null }>) => {
       setSavedSet((prev) => {
         const next = { ...prev };
         let changed = false;
         for (const item of items) {
-          if (!(item.id in next)) {
+          if (!(item.id in next) && item.savedByMe !== null) {
             next[item.id] = item.savedByMe;
             changed = true;
           }

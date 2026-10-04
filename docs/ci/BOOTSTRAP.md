@@ -9,7 +9,7 @@ and none of them should be automated behind a green checkmark.
 | **Production** — never a target of CI | `ajrurzioarfkagpuxfnb` |
 | **CI (non-production), currently EMPTY** | `hwokxgbmezheskbzskfr` |
 
-The production ref is pinned at `.github/workflows/live-db.yml:150` as
+The production ref is pinned at `.github/workflows/live-db.yml:212#KNOWN_PROD_PROJECT_REF` as
 `KNOWN_PROD_PROJECT_REF` and matches `.replit:145,148`. The CI ref is what you will
 set as `CI_SUPABASE_PROJECT_REF`.
 
@@ -699,11 +699,11 @@ the set that had been identified as of 2026-08-10; of them, one is read.
   `SUPABASE_SERVICE_ROLE_KEY`, `EXPO_PUBLIC_SUPABASE_ANON_KEY` — all from the **CI**
   project.
 
-`KNOWN_PROD_PROJECT_REF` is already correct at `live-db.yml:150`; leave that line
+`KNOWN_PROD_PROJECT_REF` is already correct at `live-db.yml:212#KNOWN_PROD_PROJECT_REF`; leave that line
 alone. `assert-nonprod-supabase.sh:62` hard-fails if it is empty or malformed, by
 design.
 
-**But note what `live-db.yml:150` is and is not.** It is the workflow's top-level
+**But note what `live-db.yml:212#KNOWN_PROD_PROJECT_REF` is and is not.** It is the workflow's top-level
 `env:` block. It configures **GitHub Actions runners only**. It puts nothing in your
 shell. Both `KNOWN_PROD_PROJECT_REF` and `CI_SUPABASE_PROJECT_REF` must *also* be
 exported locally before any guarded script will run on your machine — see §5.2, which
@@ -894,7 +894,7 @@ script hard-fails on an unset `KNOWN_PROD_PROJECT_REF` (`:62`) and on an unset
 nothing** — including both negative controls in §5.3, which is the entire "do not
 trust a green run" mechanism.
 
-Step 7's `KNOWN_PROD_PROJECT_REF` at `live-db.yml:150` does not help here: that is a
+Step 7's `KNOWN_PROD_PROJECT_REF` at `live-db.yml:212#KNOWN_PROD_PROJECT_REF` does not help here: that is a
 workflow `env:` block, read by GitHub Actions runners. It is not your shell.
 
 From `artifacts/api-server`:
@@ -1186,9 +1186,19 @@ meaningless `check:media-objects`.
   design — and it must never reuse `scripts/pre-release-check.sh`, which soft-skips
   the audit to exit 0 when no token is present. `check:rank-events-surfaces` and the
   three RLS suites are **not** in that list and cannot be: they write.
-- **Any commit whose run was evicted.** Global concurrency plus non-queueing eviction
-  means a commit can have no live-DB verdict at all (`:104`–`:126`). Cancelled never
-  reads as success, but absence of red is not presence of green.
+- **Any commit whose run was superseded.** Concurrency is keyed per PR
+  (`.github/workflows/live-db.yml:192#group`), so a newer commit cancels only its own
+  PR's obsolete run and nothing another branch does can take a verdict away — but the
+  superseded commit still ends with no live-DB verdict. Cancelled never reads as
+  success, and absence of red is not presence of green. The earlier wording here said
+  "global concurrency plus non-queueing eviction", which the per-PR group replaced.
+- **Every commit on a CONFLICTED pull request.** A PR whose `mergeable_state` is
+  `dirty` gets no `pull_request` event, because GitHub cannot build the merge ref the
+  workflow runs against, and feature-branch pushes no longer start a DB run. The run
+  is therefore never created rather than cancelled — nothing is rendered at all, so
+  this one does not even leave a grey check. Measured 2026-10-03 on four open PRs; see
+  `docs/ci/README.md` § *The hole the narrowing left: a conflicted PR gets no run at
+  all*.
 
 ### The one-sentence version
 

@@ -36,7 +36,7 @@ import {
 import { Avatar } from '../ui/Avatar.tsx';
 import { recordMediaShare, mediaSignalRecorder } from '../../services/mediaInteractions.ts'; import { emitMediaSignal, emitMediaNorthStar } from '../../features/media/telemetry/mediaTelemetry.ts';
 import { ShareSheet } from '../ShareSheet.tsx';
-import { formatCompactCount } from '../../lib/counterFormat.ts';
+import { formatCompactCount } from '../../lib/counterFormat.ts'; import { UNREAD_COUNT_MARK, unreadCountLabel } from '../../lib/unreadCount.ts';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSafeAreaInsets } from 'react-native-safe-area-context'; import { useLayoverAwareBottomInset } from '../../hooks/useBottomInset.ts'; import { getOverlayHeaderTotalHeight } from '../ui/AppHeader.tsx'; // census-media §40.11: the rail's vertical budget
 import { router } from 'expo-router';
@@ -110,7 +110,7 @@ function FollowButton({ userId, currentUserId }: { userId: string; currentUserId
 
 interface ActionBtnProps {
   icon: React.ReactNode;
-  count?: number;
+  count?: number | null; // null = the server could not read it (census-media §47): drawn as the mark
   onPress: () => void;
   onLongPress?: () => void;
   active?: boolean;
@@ -130,7 +130,7 @@ function ActionBtn({ icon, count, onPress, onLongPress, label }: ActionBtnProps)
       hitSlop={6}
     >
       {icon}
-      {count !== undefined && count > 0 ? (
+      {count === null ? <Text style={s.actionCount} accessibilityLabel={unreadCountLabel(label)}>{UNREAD_COUNT_MARK}</Text> : count !== undefined && count > 0 ? (
         <Text style={s.actionCount}>{formatCompactCount(count)}</Text>
       ) : null}
     </Pressable>
@@ -155,7 +155,7 @@ export interface WatchItemOverlayProps {
    */
   stampGroupRef: React.RefObject<View | null>;
   stampVisualIsStamped: boolean;
-  stampVisualCount: number;
+  stampVisualCount: number | null;
   stampButtonStyle: unknown;
   onStampPress: () => void;
 }

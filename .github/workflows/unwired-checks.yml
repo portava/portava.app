@@ -249,6 +249,36 @@ jobs:
         shell: bash
         run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:api-prefix
 
+      # Wired 2026-10-03. It is a generator: the plain form REWRITES
+      # docs/architecture/telegraph-phase0-inventory.md and `--check` (the form
+      # below, via the package script) exits 1 when the committed file no longer
+      # matches the tree. Credential-free; it reads only the tree.
+      #
+      # WHY IT BELONGS IN A CREDENTIAL-FREE JOB. Its only existing invocation is
+      # artifacts/api-server's `check:all`, and ci.yml:95 states that check:all is
+      # deliberately NOT invoked in the credential-free api-server job. In CI it
+      # therefore runs in exactly one place: live-db.yml's
+      # `api-server · check:all + live_pulse gate (needs credentials)`, behind the
+      # shared-database slot. A job that needs secrets and a slot does not run on
+      # a fork PR, and is skipped when the slot or an upstream gate starves it —
+      # and a skipped job scores as a successful one.
+      #
+      # MEASURED on main at 0fa752ece, and NOT YET EXPLAINED: the committed
+      # inventory read `25 of 681 migration files` while that same tree held 682,
+      # and `check:telegraph-inventory` exits 1 on that state when run from a
+      # clone of it. CI's check:all step on that commit reported
+      # `PASSED — 209 inventory lines re-derived and identical`
+      # (run 37081798369). Those two results disagree. Running the check here,
+      # where nothing is gated on credentials or a slot, is what makes its
+      # verdict attributable to a commit; the disagreement itself is still open.
+      #
+      # It goes stale on EVERY merge that adds a migration, so a standing lane is
+      # the right home rather than a one-off fix.
+      - name: 'api-server: check:telegraph-inventory'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh artifacts/api-server @workspace/api-server check:telegraph-inventory
+
       # @workspace/scripts is a real workspace member with 9 node:test suites
       # and a contract check, and NO check:all. Only test:cross-tree-paths is
       # referenced anywhere (a .replit workflow). The rest have never run

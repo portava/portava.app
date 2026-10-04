@@ -68,27 +68,41 @@ export interface ResolvedEventPassport {
 /**
  * Every call answers with one of these. `enabled === false` means the
  * capability is off server-side — not a failure, and not something to retry.
+ *
+ * A failure says WHICH kind it is. `outage: true` — a 5xx, a 408/429, a network
+ * error or an unreadable body — means "the server could not check"; a caller
+ * shows a retryable error, never the refusal it would show for a 4xx. Folding
+ * the two together told an attendee "not available" (or hid the card) because
+ * the database blipped.
  */
 export type EventPassportResult<T> =
   | { ok: true; enabled: true; data: T }
   | { ok: true; enabled: false; data: null }
-  | { ok: false; enabled: true; data: null; message: string };
+  | { ok: false; enabled: true; data: null; message: string; outage: boolean };
 
 function disabled<T>(): EventPassportResult<T> {
   return { ok: true, enabled: false, data: null };
 }
-function failed<T>(message: string): EventPassportResult<T> {
-  return { ok: false, enabled: true, data: null, message };
+function failed<T>(message: string, outage: boolean): EventPassportResult<T> {
+  return { ok: false, enabled: true, data: null, message, outage };
 }
+
+/** A server status that means "could not check", not "no". */
+export function isOutageStatus(status: number): boolean {
+  return status >= 500 || status === 408 || status === 429;
+}
+
+/** What a `pick` returns: the value, or BAD_SHAPE for a body it cannot read. */
+const BAD_SHAPE = Symbol('bad-shape');
 
 async function call<T>(
   path: string,
   init: { method: 'GET' | 'POST'; body?: unknown },
-  pick: (body: any) => T | null,
+  pick: (body: any) => T | typeof BAD_SHAPE,
 ): Promise<EventPassportResult<T>> {
   if (!isSupabaseConfigured || !apiBase()) return disabled<T>();
   const token = await freshApiToken();
-  if (!token) return failed<T>('Not signed in');
+  if (!token) return failed<T>('Not signed in', false);
   try {
     const headers: Record<string, string> = { Authorization: `Bearer ${token}` };
     if (init.body !== undefined) headers['Content-Type'] = 'application/json';
@@ -98,20 +112,20 @@ async function call<T>(
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
     });
     const body = await res.json().catch(() => null);
-    if (!res.ok) return failed<T>(body?.message ?? `API ${res.status}`);
+    if (!res.ok) return failed<T>(body?.message ?? `API ${res.status}`, isOutageStatus(res.status));
     // The server's explicit "capability is off" envelope.
     if (body && body.enabled === false) return disabled<T>();
     const data = pick(body);
-    if (data === null) return failed<T>('Unexpected response');
+    if (data === BAD_SHAPE) return failed<T>('Unexpected response', true);
     return { ok: true, enabled: true, data };
   } catch (e) {
-    return failed<T>(e instanceof Error ? e.message : 'Network error');
+    return failed<T>(e instanceof Error ? e.message : 'Network error', true);
   }
 }
 
-function pickShare(body: any): EventPassportShare | null {
+function pickShare(body: any): EventPassportShare | typeof BAD_SHAPE {
   const s = body?.share;
-  if (!s || typeof s.token !== 'string' || typeof s.expiresAt !== 'string') return null;
+  if (!s || typeof s.token !== 'string' || typeof s.expiresAt !== 'string') return BAD_SHAPE;
   return { token: s.token, eventId: String(s.eventId ?? ''), expiresAt: s.expiresAt };
 }
 
@@ -133,7 +147,7 @@ export async function revokeEventPassportShare(
   return call(
     `/api/passport/event-share/${encodeURIComponent(eventId)}/revoke`,
     { method: 'POST' },
-    (body) => (typeof body?.revoked === 'boolean' ? { revoked: body.revoked } : null),
+    (body) => (typeof body?.revoked === 'boolean' ? { revoked: body.revoked } : BAD_SHAPE),
   );
 }
 
@@ -148,7 +162,10 @@ export async function getMyEventPassportShare(
   return call<EventPassportShare | null>(
     `/api/passport/event-share/${encodeURIComponent(eventId)}`,
     { method: 'GET' },
-    (body) => ('share' in (body ?? {}) ? pickShare(body) : null),
+    // `share: null` is the normal "no live share" answer. It used to fall
+    // through pickShare's null into "Unexpected response" — every owner who
+    // was not yet sharing got a FAILURE back.
+    (body) => (body && 'share' in body ? (body.share === null ? null : pickShare(body)) : BAD_SHAPE),
   );
 }
 
@@ -162,7 +179,7 @@ export async function resolveEventPassport(
     (body) => {
       const p = body?.passport;
       const s = body?.share;
-      if (!p || p.variant !== 'event' || !s || typeof s.expiresAt !== 'string') return null;
+      if (!p || p.variant !== 'event' || !s || typeof s.expiresAt !== 'string') return BAD_SHAPE;
       return { share: { eventId: String(s.eventId ?? ''), expiresAt: s.expiresAt }, passport: p };
     },
   );

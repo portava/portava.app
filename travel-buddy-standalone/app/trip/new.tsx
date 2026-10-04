@@ -281,25 +281,41 @@ export default function NewTrip() {
       // The primary trip fields (destination_city/country) hold a copy for legacy
       // single-destination display; the canonical ordered list lives in trip_destinations
       // so edit-screen hydration via listDestinations() returns all stops.
+      //
+      // The trip EXISTS from here on (census-trips §79). A stop that did not
+      // save — refused (null) or thrown — is named once the trip is open; it
+      // must never reach the catch below, which would call a created trip a
+      // failure and invite a second tap (a duplicate trip).
+      const unsavedStops: string[] = [];
       if (multiCity) {
         const active = destinations.filter((d) => !d.removed && d.city);
         for (let i = 0; i < active.length; i++) {
           const d = active[i];
-          await addDestination(trip.id, {
-            city: d.city,
-            country: d.country,
-            lat: d.lat,
-            lng: d.lng,
-            placeId: d.placeId,
-            arrivalDate: d.arrivalDate,
-            departureDate: d.departureDate,
-            position: i + 1,
-          });
+          let saved = false;
+          try {
+            saved = (await addDestination(trip.id, {
+              city: d.city,
+              country: d.country,
+              lat: d.lat,
+              lng: d.lng,
+              placeId: d.placeId,
+              arrivalDate: d.arrivalDate,
+              departureDate: d.departureDate,
+              position: i + 1,
+            })) !== null;
+          } catch { saved = false; }
+          if (!saved) unsavedStops.push(d.city);
         }
       }
 
       checkForNewStamps(2000);
       router.replace(`/trip/${trip.id}`);
+      if (unsavedStops.length > 0) {
+        Alert.alert(
+          'Some stops were not saved',
+          `Your trip was created, but ${unsavedStops.join(', ')} could not be added. Add ${unsavedStops.length === 1 ? 'it' : 'them'} from Edit trip.`,
+        );
+      }
     } catch (e: any) {
       setError(e?.message ?? 'Something went wrong.');
     } finally {

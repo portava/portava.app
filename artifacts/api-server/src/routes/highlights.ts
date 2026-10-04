@@ -2867,12 +2867,12 @@ router.get("/highlights/following-feed", async (req, res) => {
     .neq("visibility", "private")
     .order("created_at", { ascending: true });
 
-  if (feedLimit != null) {
-    // Over-fetch, because the visibility filter in step 5 runs after this query
-    // and would otherwise shrink the page — the same defect the memories
-    // discovery feed had. `slice(0, feedLimit)` below trims the FILTERED set.
-    (feedQuery as any) = (feedQuery as any).limit(feedLimit * 5);
-  }
+  // Over-fetch: the raw WINDOW this request examines. The visibility filter in
+  // step 5 runs after this query and would otherwise shrink the page — the same
+  // defect the memories discovery feed had. `slice(0, feedLimit)` below trims the
+  // FILTERED set, and the window decides whether a short page ends the feed.
+  const feedWindow = feedLimit != null ? feedLimit * 5 : null;
+  if (feedWindow != null) (feedQuery as any) = (feedQuery as any).limit(feedWindow);
   if (feedCursor) {
     (feedQuery as any) = (feedQuery as any).gt("created_at", feedCursor);
   }
@@ -2961,12 +2961,29 @@ router.get("/highlights/following-feed", async (req, res) => {
   );
 
   const visible = feedLimit != null ? consented.slice(0, feedLimit) : consented;
-  const nextCursor = feedLimit != null && visible.length === feedLimit
-    ? (visible[visible.length - 1]?.created_at ?? null)
-    : null;
+  // Where the NEXT page starts. A full cut page continues after its own last
+  // row (rows the cut left behind are re-read next time). A page that came out
+  // SHORT is the end of the feed only if the raw window was short too: when the
+  // window was full, filtering — not the data — made the page short, and rows
+  // after the window are still unread. The feed then continues after the last
+  // row this request EXAMINED; every row before it was either served or is one
+  // this viewer may not see, so nothing is skipped. It used to end with `null`
+  // here (and with no cursor at all when filtering emptied the window), which
+  // told a cursor-following client the feed was complete while visible
+  // highlights lay beyond the window.
+  const windowFull = feedWindow != null && allHighlights.length >= feedWindow;
+  const nextCursor = feedLimit == null
+    ? null
+    : visible.length === feedLimit
+      ? (visible[visible.length - 1]?.created_at ?? null)
+      : windowFull
+        ? (allHighlights[allHighlights.length - 1]?.created_at ?? null)
+        : null;
 
   if (visible.length === 0) {
-    res.status(200).json({ users: [] });
+    // Nothing on this page for this viewer — but a full window still has a
+    // next page, and an empty page must say where it is.
+    res.status(200).json(nextCursor ? { users: [], nextCursor } : { users: [] });
     return;
   }
 
