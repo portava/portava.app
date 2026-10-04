@@ -308,8 +308,36 @@ describe("the seed is a seed, not a reset (structural; executable proof is the .
 
   it("refuses rather than skips when 3520 has not run", () => {
     // A precondition that is not met must be a REFUSAL. Silently doing nothing
-    // would leave 'standard' unpriced on a database an operator believes was seeded.
-    assert.match(seedStatements, /platform_fee_basis_points[\s\S]*RAISE\s+EXCEPTION/i);
+    // would leave 'standard' unpriced on a database an operator believes was
+    // seeded — the fee routes would still refuse, with nothing saying why.
+    //
+    // SCOPED TO THE PRECONDITION BLOCK. A whole-file search for
+    // /platform_fee_basis_points[\s\S]*RAISE EXCEPTION/ also matches the
+    // postconditions at the far end of the file, and SURVIVES the precondition
+    // being replaced by a bare RETURN — that mutation was run against the loose
+    // form and lived. Hence the narrowing.
+    const blocks = seedStatements.match(/DO \$\$[\s\S]*?END \$\$;/g) ?? [];
+    assert.ok(blocks.length >= 2, `expected a precondition and a postcondition block, found ${blocks.length}`);
+
+    const pre = blocks.find((b) => /platform_fee_basis_points[\s\S]*does not exist/.test(b));
+    assert.ok(pre, "no precondition block checks for 3520's basis-point column");
+
+    // The guard on the column's absence must END IN A RAISE, with no control
+    // flow in it that could carry the apply past the missing column.
+    const guard = pre.match(
+      /IF NOT EXISTS \([\s\S]*?platform_fee_basis_points[\s\S]*?\) THEN([\s\S]*?)END IF;/,
+    );
+    assert.ok(guard, "the basis-point check is not an IF NOT EXISTS … THEN … END IF guard");
+    assert.match(
+      guard[1]!, /RAISE\s+EXCEPTION/i,
+      "the precondition must RAISE when 3520 has not run; a RETURN or a NOTICE would let the " +
+      "apply report success having seeded nothing",
+    );
+    assert.ok(
+      !/\bRETURN\b/i.test(guard[1]!),
+      "a RETURN inside the guard turns the refusal into a silent skip",
+    );
+    assert.match(guard[1]!, /3520/, "the refusal must name the file an operator has to apply first");
     assert.match(seedText, /PRECONDITION FAILED/);
   });
 
@@ -501,6 +529,34 @@ describe("an unreadable fee rule refuses — never 1000, never 0", () => {
     ["the rate is not a number", { feeRow: { ...seed.row, platform_fee_basis_points: "ten percent" } }],
     ["the rate is a fractional basis point", { feeRow: { ...seed.row, platform_fee_basis_points: 1000.5 } }],
     ["the rate is out of range", { feeRow: { ...seed.row, platform_fee_basis_points: 10001 } }],
+    // ── THE CASE AN APPROVAL WOULD OTHERWISE EXCUSE ─────────────────────────
+    // Found by mutation: making the rate normaliser return 0 instead of null
+    // for an unusable value SURVIVED every case above, because 0 is not the
+    // flat rate and the off-flat/no-approval refusal caught it on the way past.
+    // On a row that DOES carry an approval, that second refusal does not fire —
+    // so the unreadable rate would resolve as a deliberate 0 %, and the booking
+    // would be priced at no commission at all. The rate being unreadable has to
+    // refuse on its own, not as a side effect of another rule.
+    [
+      "the rate is NULL on a row that carries an approval",
+      {
+        feeRow: {
+          ...seed.row,
+          platform_fee_basis_points: null,
+          commission_override_approval: "owner ruling (fixture)",
+        },
+      },
+    ],
+    [
+      "the rate is unparseable on a row that carries an approval",
+      {
+        feeRow: {
+          ...seed.row,
+          platform_fee_basis_points: "zero",
+          commission_override_approval: "owner ruling (fixture)",
+        },
+      },
+    ],
   ];
 
   for (const [name, opts] of unreadable) {
