@@ -44,7 +44,7 @@ import {
   isOneOf, BUDDY_ACCEPT_WINDOW_HOURS,
 } from "../lib/rentBuddyBookingStatus.js";
 import { runBuddyRequestSweep } from "../lib/rentBuddyRequestSweeper.js";
-import { createEarningsLedgerEntry, sendBookingLedgerRefusal, withdrawUnledgeredBooking } from "../lib/rentBuddyEarningsLedger.js"; import { CASH_CONFIRMATION_RPC, LEDGER_POSTING_RPC, LEDGER_WRITE_FAILED, callMoneyRpc, postBookingTip, type MoneyRpcFailure } from "../lib/rentBuddyLedgerPosting.js"; // one line: docs cite this file by line
+import { beginIdempotentCreation, sendBookingLedgerRefusal, settleBookingLedger } from "../lib/rentBuddyEarningsLedger.js"; import { CASH_CONFIRMATION_RPC, LEDGER_POSTING_RPC, LEDGER_WRITE_FAILED, callMoneyRpc, postBookingTip, quotePricedBooking, sendBookingQuoteFailure, type MoneyRpcFailure } from "../lib/rentBuddyLedgerPosting.js"; // one line: docs cite this file by line
 import { readSlotFit, type SlotFit } from "../domain/trips/services/TripFreedomConsumers.js";
 // The ONE reader of rent_buddy_fee_rules. The earnings-summary route used to
 // carry its own level-blind 0.15; see lib/rentBuddyFeeSchedule.ts for why a
@@ -1991,7 +1991,7 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
   const nowMs = Date.now();
   const serviceClient = sc(auth.client);
 
-  if (!await requireRentBuddyEnabled(serviceClient, res)) return;
+  if (!await requireRentBuddyEnabled(serviceClient, res)) return; const creation = await beginIdempotentCreation(req, res, serviceClient, user.id, `book:${String(req.body?.buddyId ?? "")}`, (b) => ({ booking: mapBooking(b), policyText: POLICY_TEXT })); if (creation.done) return; // a create retried with the same Idempotency-Key returns the ORIGINAL booking (3824 rbb_creation_key_once)
 
   // KYC gate (audit P1 item 8): no working identity verification means no new
   // bookings between strangers. Fails closed and is independent of the
@@ -2158,9 +2158,9 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
   }
 
   const rateUsd = buddyProfile.hourly_rate_usd ? Number(buddyProfile.hourly_rate_usd) : 0;
-  const totalUsd = Math.round(rateUsd * durationH * 100) / 100;
-  const depositUsd = paymentMode === "deposit_plus_cash" ? Math.round(totalUsd * 0.3 * 100) / 100 : totalUsd;
-  const cashBalanceUsd = paymentMode === "deposit_plus_cash" ? Math.round((totalUsd - depositUsd) * 100) / 100 : 0;
+  // The price (rate × hours), the commission and the payment terms come from ONE SQL function (rb_quote_booking, 3824): the API multiplies nothing (PAY-055), and no deposit is stored unless the owner's switch `rent_buddy_global_controls.deposits_enabled` is on (ruling 2026-10-04 — it is seeded off).
+  const terms = await quotePricedBooking(serviceClient, { buddyProfileId: buddyId, category, unitPriceUsd: rateUsd, quantity: Number(durationH), paymentMode }); if (terms.status !== "ok") return sendBookingQuoteFailure(res, terms);
+  const totalUsd = terms.quote.totalUsd, depositUsd = terms.quote.depositUsd, cashBalanceUsd = terms.quote.cashBalanceUsd;
 
   // Availability exception / vacation-mode block — check before insert
   const blockingException = await findBlockingAvailabilityException(serviceClient, buddyId, bookingDate);
@@ -2212,7 +2212,7 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
       cash_balance_usd: cashBalanceUsd,
       is_test_booking: !!(req.body?.is_test_booking),
       expires_at: new Date(nowMs + BUDDY_ACCEPT_WINDOW_HOURS * 3600 * 1000).toISOString(),
-      status: "requested",
+      status: "requested", creation_key: creation.key,
       safety_status: "normal",
       route_plan: [],
       updated_at: new Date(nowMs).toISOString(),
@@ -2220,14 +2220,14 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
     .select()
     .maybeSingle();
 
-  if (error) return sendError(res, "db_error", error.message);
+  if (error) { if (await creation.replayOnConflict(error)) return; return sendError(res, "db_error", error.message); }
 
   if (booking) {
-    // The booking's earnings ledger — entries and summary in ONE transaction (rb_post_booking_ledger, 3824) — is posted FIRST, and its result is no longer swallowed: a booking that cannot be ledgered is withdrawn and refused by name before any event or notification names it (PAY-050).
-    const ledger = await createEarningsLedgerEntry(serviceClient, booking, buddyId);
-    if (ledger.status !== "written") {
-      await withdrawUnledgeredBooking(serviceClient, (booking as any).id);
-      return sendBookingLedgerRefusal(res, ledger);
+    // The booking's earnings ledger — entries and summary in ONE transaction (rb_post_booking_ledger, 3824) — is posted FIRST. An unanswered call is CONFIRMED by re-posting (idempotent) before anything is withdrawn; only a booking whose row is really gone is refused, and a booking that could not be withdrawn exists and is returned (PAY-050).
+    const settled = await settleBookingLedger(serviceClient, booking, buddyId);
+    if (settled.outcome === "withdrawn") {
+      // The row is gone and nothing names it yet: a NAMED refusal — 4xx for a permanent one, 503 for an outage.
+      return sendBookingLedgerRefusal(res, settled.ledger);
     }
 
     recordBookingEvent(serviceClient, req.log, {
@@ -7993,7 +7993,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => {
   if (!await requireBookingKyc(serviceClient, res)) return;
 
   const { bookingId } = req.params;
-  const { bookingDate, startTime, durationH, groupSize } = req.body ?? {};
+  const { bookingDate, startTime, durationH, groupSize } = req.body ?? {}; const creation = await beginIdempotentCreation(req, res, serviceClient, auth.user.id, `rebook:${bookingId}`, (b) => ({ bookingId: b?.id, booking: b })); if (creation.done) return; const rebookAt = new Date(); // a rebook retried with the same Idempotency-Key returns the ORIGINAL new booking · ONE clock read for the row's timestamps
 
   if (!bookingDate) {
     return res.status(400).json({ error: "invalid_payload", message: "bookingDate is required to rebook." });
@@ -8086,7 +8086,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => {
     : (original as any).group_size != null ? Number((original as any).group_size)
     : null;
   const rateUsd = (buddyProfile as any).hourly_rate_usd ? Number((buddyProfile as any).hourly_rate_usd) : 0;
-  const totalUsd = newDurationH != null ? Math.round(rateUsd * newDurationH * 100) / 100 : 0;
+  const terms = await quotePricedBooking(serviceClient, { buddyProfileId, category: (original as any).category, unitPriceUsd: newDurationH ? rateUsd : 0, quantity: newDurationH ? newDurationH : 1, paymentMode: "full_in_app" }); if (terms.status !== "ok") return sendBookingQuoteFailure(res, terms); const totalUsd = terms.quote.totalUsd; // rate × hours, in SQL (rb_quote_booking); no duration, or a duration of 0, ⇒ a price of 0, as before
 
   const { data: newBooking, error } = await serviceClient
     .from("rent_buddy_bookings")
@@ -8104,18 +8104,18 @@ router.post("/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => {
       category: (original as any).category,
       notes: (original as any).notes ?? null,
       total_usd: totalUsd,
-      deposit_usd: totalUsd,
-      cash_balance_usd: 0,
+      deposit_usd: terms.quote.depositUsd,
+      cash_balance_usd: terms.quote.cashBalanceUsd,
       payment_mode: "full_in_app",
-      status: "pending",
+      status: "pending", creation_key: creation.key, expires_at: new Date(rebookAt.getTime() + BUDDY_ACCEPT_WINDOW_HOURS * 3600 * 1000).toISOString(), // the buddy must accept again, inside the same 24 h window a first request gets
       safety_status: "normal",
       route_plan: [],
-      updated_at: new Date().toISOString(),
+      updated_at: rebookAt.toISOString(),
     })
     .select()
     .maybeSingle();
 
-  if (error) return sendError(res, "db_error", error.message);
+  if (error) { if (await creation.replayOnConflict(error)) return; return sendError(res, "db_error", error.message); }
 
   // Same shared estimated-ledger write as the canonical route — see above.
   // The booking event goes in the SAME guard: now that the insert is actually
@@ -8124,7 +8124,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => {
   // back empty. An event about a booking that does not exist is not an audit
   // row worth attempting.
   if (newBooking) {
-    const ledger = await createEarningsLedgerEntry(serviceClient, newBooking, buddyProfileId); if (ledger.status !== "written") { await withdrawUnledgeredBooking(serviceClient, (newBooking as any).id); return sendBookingLedgerRefusal(res, ledger); } // PAY-050: posted first, result checked — an unledgered booking is withdrawn and refused by name
+    const settled = await settleBookingLedger(serviceClient, newBooking, buddyProfileId); if (settled.outcome === "withdrawn") return sendBookingLedgerRefusal(res, settled.ledger); // PAY-050: posted first; an unanswered call is confirmed by re-posting, and only a booking whose row is gone is refused by name
 
     recordBookingEvent(serviceClient, req.log, {
       booking_id: (newBooking as any).id,

@@ -692,6 +692,72 @@ describe("M8 — a tip that cannot be applied FAILS THE REQUEST", () => {
     assert.deepEqual(db.tips, {});
     assert.deepEqual(tipRpcCalls, []);
   });
+
+  // Independent verification of PR #603. NaN compares false against everything,
+  // so `Number(x) <= 0` let it through; in PostgreSQL NaN and an amount at or
+  // above 10^8 then failed as an EXCEPTION, which the route reported as a 503
+  // "try again" — a retry loop on a request that can never succeed.
+  it("NaN, ±Infinity and an amount no money column can hold are a 400 VALIDATION error — never a 503, and never sent to the database", async () => {
+    const db = seedTipDb();
+    _setTestServiceClient(tipClient(db));
+    for (const amountUsd of ["NaN", "Infinity", "-Infinity", 100_000_000, 1e300, "1e9", [5], { v: 5 }, true]) {
+      const res = await request("POST", TIP_PATH, { amountUsd });
+      assert.equal(res.status, 400, `${JSON.stringify(amountUsd)} → ${res.status} ${JSON.stringify(res.body)}`);
+      assert.equal(res.body.error, "invalid_payload");
+      assert.equal(res.body.retryable, undefined);
+    }
+    assert.deepEqual(tipRpcCalls, [], "an amount that is not a chargeable number reached the posting function");
+    assert.deepEqual(db.tips, {});
+    assert.equal(db.entries.length, 0);
+  });
+
+  it("the database refuses the same amounts by NAME (`invalid_amount`) if a caller reaches it anyway", async () => {
+    const db = seedTipDb();
+    for (const amount_usd of [Number.NaN, Number.POSITIVE_INFINITY, 100_000_000, 0.004]) {
+      const r = await fakeLedgerRpc(db)("rb_post_booking_ledger", {
+        p_booking_id: BOOKING_ID, p_event: "tip", p_event_key: "direct-1", p_args: { traveler_id: USER_ID, amount_usd, note: null },
+      });
+      assert.deepEqual([r.error, r.data.ok, r.data.refusal], [null, false, "invalid_amount"], String(amount_usd));
+    }
+    assert.equal(db.entries.length, 0);
+  });
+
+  // `carried-over` is the transaction a pre-3824 tips row is carried into the
+  // entries under. A client that sent it as its key, on a booking with such a
+  // row, collided with that transaction: the new tip was DROPPED (ON CONFLICT DO
+  // NOTHING) and the call still answered ok.
+  it("the reserved key `carried-over` is refused (400) in any case — the tip is not silently dropped", async () => {
+    const db = seedTipDb();
+    db.tips[BOOKING_ID] = { id: "legacy", booking_id: BOOKING_ID, traveler_id: USER_ID, buddy_user_id: REAL_BUDDY_USER, amount_usd: 7, note: null };
+    _setTestServiceClient(tipClient(db));
+    for (const key of ["carried-over", "CARRIED-OVER", "Carried-Over"]) {
+      const header = await request("POST", TIP_PATH, { amountUsd: 5 }, { "Idempotency-Key": key });
+      assert.equal(header.status, 400, `${key} → ${JSON.stringify(header.body)}`);
+      assert.match(header.body.message, /reserved/);
+      const body = await request("POST", TIP_PATH, { amountUsd: 5, idempotencyKey: key });
+      assert.equal(body.status, 400, `${key} (body) → ${JSON.stringify(body.body)}`);
+    }
+    assert.deepEqual(tipRpcCalls, [], "the reserved key reached the posting function");
+    assert.equal(db.tips[BOOKING_ID].amount_usd, 7, "the legacy tip is untouched");
+
+    // …and the function refuses it too, by name, writing nothing.
+    const direct = await fakeLedgerRpc(db)("rb_post_booking_ledger", {
+      p_booking_id: BOOKING_ID, p_event: "tip", p_event_key: "carried-over", p_args: { traveler_id: USER_ID, amount_usd: 5, note: null },
+    });
+    assert.deepEqual([direct.data.ok, direct.data.refusal], [false, "event_key_reserved"]);
+    assert.equal(db.entries.length, 0);
+  });
+
+  it("a PERMANENT refusal the route has no older status for is a 4xx `ledger_refused`, retryable:false — not a 503", async () => {
+    const db = seedTipDb();
+    delete db.buddyProfiles[REAL_BUDDY_PROFILE];      // the booking has no payee
+    _setTestServiceClient(tipClient(db));
+    const res = await request("POST", TIP_PATH, { amountUsd: 10 });
+    assert.equal(res.status, 404, JSON.stringify(res.body));
+    assert.deepEqual([res.body.error, res.body.refusal, res.body.retryable], ["ledger_refused", "buddy_not_found", false]);
+    assert.match(res.body.message, /Nothing was charged/);
+    assert.deepEqual(db.tips, {});
+  });
 });
 
 // ═════════════════════════════════════════════════════════════════════════════

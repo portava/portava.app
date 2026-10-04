@@ -830,6 +830,26 @@ describe("M3 — payout hold/release are compare-and-swap", () => {
     assert.equal(stored().status, "released");
   });
 
+  // Independent verification of PR #603: the hold refused only `on_hold` and
+  // `released`, so a payout that had been PAID could be put on hold and then
+  // "released" again — paid → on_hold → released, a second release of money
+  // that had already left. The legal machine is pending → on_hold → released.
+  for (const status of ["paid", "processing", "failed", "cancelled", "released", "anything-else"]) {
+    it(`refuses to hold a payout that is ${status}: only a PENDING payout can be held`, async () => {
+      stored().status = status;
+      const before_ = JSON.stringify(stored());
+      const r = await post(HOLD, { reason: "too late" });
+      assert.equal(r.status, 409, JSON.stringify(r.body));
+      assert.equal(r.body.currentStatus, status);
+      assert.equal(JSON.stringify(stored()), before_, "a refused hold changed the payout");
+      assert.equal(payoutDb.adminActions.length, 0, "a refused transition writes no admin action");
+      // …and so it cannot be "released" a second time either.
+      const release = await post(RELEASE, { reason: "again" });
+      assert.equal(release.status, 409, JSON.stringify(release.body));
+      assert.equal(stored().status, status);
+    });
+  }
+
   it("still returns 404 for a payout that does not exist — a malformed id and a well-formed unknown one alike", async () => {
     const malformed = await post("/api/rent-a-buddy/admin/payouts/no-such-payout/hold", {});
     assert.equal(malformed.status, 404, JSON.stringify(malformed.body));

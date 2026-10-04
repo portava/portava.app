@@ -315,8 +315,13 @@ describe("one take rate, one reader — read as text", () => {
     const end = sql.indexOf("$_$;", start);
     assert.notEqual(end, -1);
     const body = sql.slice(start, end);
-    assert.match(body, new RegExp(`FROM ${FEE_SCHEDULE_TABLE} `),
-      "the SQL resolver must read the schedule of record, not a second table");
+    // Schema-qualified: with `search_path` leaving pg_temp first, an unqualified
+    // name resolved to a session's TEMPORARY table of the same name (it priced a
+    // booking at 0 %). Every relation in 3824 is `public.`-qualified.
+    assert.match(body, new RegExp(`FROM public\\.${FEE_SCHEDULE_TABLE} `),
+      "the SQL resolver must read the schedule of record — public.rent_buddy_fee_rules, not a second table and not a temp table");
+    assert.equal(new RegExp(`(FROM|JOIN) ${FEE_SCHEDULE_TABLE}\\b`).test(body), false, "an unqualified read of the fee schedule");
+    assert.match(body, /SET search_path TO pg_catalog, public, pg_temp/);
     assert.match(body, /platform_fee_percent/);
     assert.match(body, /'owner_default'/, "a missing row must be NAMED as the default, never returned as if configured");
   });

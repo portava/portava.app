@@ -76,7 +76,7 @@ import { Router } from "express"; import { randomUUID } from "node:crypto";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
-import { createEarningsLedgerEntry, sendBookingLedgerRefusal, withdrawUnledgeredBooking } from "../lib/rentBuddyEarningsLedger.js";
+import { beginIdempotentCreation, sendBookingLedgerRefusal, settleBookingLedger } from "../lib/rentBuddyEarningsLedger.js";
 // The commission is no longer resolved or applied in this file: the earnings
 // summary reads it, and every money total, from SQL (migration 3824) through
 // lib/rentBuddyLedgerPosting.ts. The dashboard once carried its own
@@ -84,7 +84,7 @@ import { createEarningsLedgerEntry, sendBookingLedgerRefusal, withdrawUnledgered
 // lib/rentBuddyFeeSchedule.ts; both are gone from here (M1 / M10, PAY-055).
 // (This import block is the length it was: docs cite this file by line, so
 // edits here keep every line below where it stood.)
-import { LEDGER_REVERSED_NOTE_PREFIX, readBuddyLedgerTotals, resolvePlatformFeePercent, sendMoneyRpcFailure, type MoneyRpcFailure } from "../lib/rentBuddyLedgerPosting.js";
+import { LEDGER_REVERSED_NOTE_PREFIX, RESERVED_TIP_EVENT_KEY, depositColumns, isPositiveMoneyAmount, postBookingAddons, quoteBooking, quotePricedBooking, readBuddyLedgerTotals, sendBookingQuoteFailure, sendLedgerRefusal, sendMoneyRpcFailure, type AddonsPostResult, type MoneyRpcFailure } from "../lib/rentBuddyLedgerPosting.js";
 import { isNonNumericCoord } from "../lib/coords.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
@@ -104,7 +104,7 @@ import {
 } from "../services/rentBuddy/CompatibilityScoreService.js";
 import { NotificationPreferenceService } from "../services/notifications/NotificationPreferenceService.js";
 import { syncFavoritesCount } from "../services/rentBuddy/ReliabilityCounters.js";
-import { ADDON_ALLOWED_STATUSES, UPCOMING_STATUSES } from "../lib/rentBuddyBookingStatus.js";
+import { ADDON_ALLOWED_STATUSES, BUDDY_ACCEPT_WINDOW_HOURS, UPCOMING_STATUSES } from "../lib/rentBuddyBookingStatus.js";
 import {
   getPricingSuggestion,
   calculateDeposit,
@@ -1083,13 +1083,13 @@ router.post("/rent-a-buddy/requests/:requestId/offers", async (req, res) => {
   if (req_.traveler_id === user.id) return sendError(res, 'invalid_payload', "Cannot offer on your own request.");
 
   const {
-    proposedPriceUsd, depositAmountUsd, cashBalanceDue,
+    proposedPriceUsd, // `depositAmountUsd` / `cashBalanceDue` are no longer read from the request: a client does not name the deposit (PAY-055)
     proposedStart, proposedEnd, meetupLocation, message,
     includedServices, addonsOffered, paymentMode, expiresInHours,
   } = req.body ?? {};
 
   if (!proposedPriceUsd) return sendError(res, 'invalid_payload', "proposedPriceUsd is required.");
-
+  const terms = await quotePricedBooking(svc, { buddyProfileId: buddyProfile.id, category: req_.category, unitPriceUsd: Number(proposedPriceUsd), quantity: 1, paymentMode: paymentMode ?? "full_in_app" }); if (terms.status !== "ok") return sendBookingQuoteFailure(res, terms, "offer"); // the offer's terms are the ones the booking made from it will carry (rb_quote_booking, 3824): no deposit unless the owner's switch `rent_buddy_global_controls.deposits_enabled` is on
   const expiresAt = new Date(
     Date.now() + (expiresInHours ?? 12) * 60 * 60 * 1000
   ).toISOString();
@@ -1100,16 +1100,16 @@ router.post("/rent-a-buddy/requests/:requestId/offers", async (req, res) => {
       request_id: requestId,
       buddy_profile_id: buddyProfile.id,
       buddy_user_id: user.id,
-      proposed_price_usd: proposedPriceUsd,
-      deposit_amount_usd: depositAmountUsd ?? 0,
-      cash_balance_usd: cashBalanceDue ?? 0,
+      proposed_price_usd: terms.quote.totalUsd,
+      deposit_amount_usd: terms.quote.depositUsd,
+      cash_balance_usd: terms.quote.cashBalanceUsd,
       proposed_start: proposedStart ?? null,
       proposed_end: proposedEnd ?? null,
       meetup_location: meetupLocation ?? null,
       message: message ?? null,
       included_services: includedServices ?? [],
       addons_offered: addonsOffered ?? [],
-      payment_mode: paymentMode ?? "full_in_app",
+      payment_mode: terms.quote.paymentMode,
       expires_at: expiresAt,
       status: "pending",
     })
@@ -1205,7 +1205,7 @@ router.post("/rent-a-buddy/offers/:offerId/accept", async (req, res) => {
       || await isKillSwitchEngaged(svc, 'disable_rab_bookings')) {
     return res.status(404).json({ error: 'feature_disabled', gate: await engagedRabBookingKillSwitch(svc), message: 'Rent-a-Buddy bookings are temporarily disabled' });
   }
-
+  const creation = await beginIdempotentCreation(req, res, svc, user.id, `offer:${req.params.offerId}`, (b) => ({ booking: b, bookingId: b?.id })); if (creation.done) return; // an accept retried with the same Idempotency-Key returns the ORIGINAL booking, whatever the offer's status has become (3824 rbb_creation_key_once)
   const { offerId } = req.params;
   const { data: offer, error: offerErr } = await svc
     .from("rent_buddy_offers")
@@ -1274,7 +1274,7 @@ router.post("/rent-a-buddy/offers/:offerId/accept", async (req, res) => {
     if (expireErr) logger.error({ err: expireErr, offerId }, "offer expire status write failed (best-effort)");
     return sendError(res, 'invalid_payload', "Offer has expired.");
   }
-
+  const terms = await quotePricedBooking(svc, { buddyProfileId: o.buddy_profile_id, category: o.request.category, unitPriceUsd: Number(o.proposed_price_usd), quantity: 1, paymentMode: o.payment_mode }); if (terms.status !== "ok") return sendBookingQuoteFailure(res, terms); // priced BEFORE the claim, at accept time: a booking that cannot be priced leaves the offer pending, and an offer stored with a deposit before the ruling is not booked with one
   // Atomically CLAIM the offer (pending -> accepted) BEFORE creating the booking.
   // The status read-check above is only a fast path; without this compare-and-set
   // two concurrent accepts both passed the read-check and both INSERTed a booking
@@ -1307,18 +1307,18 @@ router.post("/rent-a-buddy/offers/:offerId/accept", async (req, res) => {
       country_code: acceptCountry,
       category: o.request.category,
       notes: o.message,
-      payment_mode: o.payment_mode,
-      total_usd: o.proposed_price_usd,
-      deposit_usd: o.deposit_amount_usd,
-      cash_balance_usd: o.cash_balance_usd,
-      status: "pending",
+      payment_mode: terms.quote.paymentMode,
+      total_usd: terms.quote.totalUsd,
+      deposit_usd: terms.quote.depositUsd,
+      cash_balance_usd: terms.quote.cashBalanceUsd,
+      status: "pending", creation_key: creation.key, expires_at: new Date(new Date(now).getTime() + BUDDY_ACCEPT_WINDOW_HOURS * 3600 * 1000).toISOString(), ...depositColumns(terms.quote), // `pending` awaits the buddy: the same 24 h window the canonical route gives, from this handler's one `now`
       offer_id: offerId,
       request_id: o.request_id,
     })
     .select()
     .single();
 
-  if (bkErr) {
+  if (bkErr) { if (await creation.replayOnConflict(bkErr)) return; // a retry with the same key already made the booking: answer with it and leave the claim it holds
     // The offer was already claimed (accepted) above; the booking insert failed,
     // so release the claim back to pending rather than strand an accepted offer
     // with no booking.
@@ -1326,7 +1326,7 @@ router.post("/rent-a-buddy/offers/:offerId/accept", async (req, res) => {
     return sendError(res, 'db_error', bkErr.message);
   }
 
-  const bk = booking as any; const ledger = await createEarningsLedgerEntry(svc, bk, o.buddy_profile_id); if (ledger.status !== "written") { await withdrawUnledgeredBooking(svc, bk.id); await releaseOfferClaim(svc, offerId); return sendBookingLedgerRefusal(res, ledger); } // PAY-050: the ledger is posted FIRST, before the offer is linked or its siblings declined; if it cannot be written the booking is withdrawn and the claim released, exactly as for a failed insert above
+  const bk = booking as any; const settled = await settleBookingLedger(svc, bk, o.buddy_profile_id); if (settled.outcome === "withdrawn") { await releaseOfferClaim(svc, offerId); return sendBookingLedgerRefusal(res, settled.ledger); } // PAY-050: the ledger is posted FIRST; an unanswered call is CONFIRMED by re-posting before anything is withdrawn. The claim is released ONLY when the booking row is really gone — a booking that could not be withdrawn exists, keeps the claim and is returned, so one offer cannot make two bookings
 
   // Offer is already status=accepted (claimed above); record the booking link + decline others.
   const { error: acceptErr } = await svc.from("rent_buddy_offers").update({ accepted_booking_id: bk.id, updated_at: now }).eq("id", offerId);
@@ -1528,7 +1528,7 @@ router.post("/rent-a-buddy/packages/:packageId/book", async (req, res) => {
       || await isKillSwitchEngaged(svc, 'disable_rab_bookings')) {
     return res.status(404).json({ error: 'feature_disabled', gate: await engagedRabBookingKillSwitch(svc), message: 'Rent-a-Buddy bookings are temporarily disabled' });
   }
-
+  const creation = await beginIdempotentCreation(req, res, svc, user.id, `package:${req.params.packageId}`, (b) => ({ booking: b })); if (creation.done) return; // a package booking retried with the same Idempotency-Key returns the ORIGINAL booking
   const { data: pkg } = await svc
     .from("rent_buddy_packages")
     .select("*, buddy:rent_buddy_profiles(*)")
@@ -1627,9 +1627,9 @@ router.post("/rent-a-buddy/packages/:packageId/book", async (req, res) => {
     disableDepositCash: buddy.disable_deposit_cash ?? false,
     buddyCashBalanceAccepted: buddy.cash_balance_accepted ?? true,
     riskHold: buddy.risk_hold ?? false,
-    totalUsd: Number(p.price_usd),
+    // no amount: this is POLICY (which mode, which percentage); the money is rb_quote_booking's
   });
-
+  const terms = await quotePricedBooking(svc, { buddyProfileId: buddy.id, category: p.category, unitPriceUsd: Number(p.price_usd), quantity: 1, paymentMode: depositResult.paymentMode, depositPercent: depositResult.depositPercent }); if (terms.status !== "ok") return sendBookingQuoteFailure(res, terms); // price, commission and terms from ONE SQL function; no deposit unless the owner's switch is on
   const expiresAt = getBookingExpiresAt(bookingDate ?? new Date().toISOString().slice(0, 10), buddy.available_now ?? false);
 
   const { data: booking, error: bkErr } = await svc
@@ -1645,14 +1645,14 @@ router.post("/rent-a-buddy/packages/:packageId/book", async (req, res) => {
       country_code: packageCountry,
       category: p.category,
       notes: notes ?? null,
-      payment_mode: depositResult.paymentMode,
-      total_usd: p.price_usd,
-      deposit_usd: depositResult.depositUsd,
-      cash_balance_usd: depositResult.cashBalanceDue,
+      payment_mode: terms.quote.paymentMode,
+      total_usd: terms.quote.totalUsd,
+      deposit_usd: terms.quote.depositUsd,
+      cash_balance_usd: terms.quote.cashBalanceUsd,
       pricing_type: "package",
-      deposit_rule_applied: depositResult.depositRuleApplied,
-      deposit_percent: depositResult.depositPercent,
-      deposit_reason: depositResult.depositReason,
+      // deposit_percent / deposit_rule_applied / deposit_reason: 0 and 'no_deposit' while the owner's
+      // switch is off; the policy's own rule and reason only when it is on.
+      ...depositColumns(terms.quote, { rule: depositResult.depositRuleApplied, reason: depositResult.depositReason }), creation_key: creation.key,
       is_group_booking: groupSize > 1,
       expires_at: expiresAt.toISOString(),
       status: "pending",
@@ -1660,8 +1660,8 @@ router.post("/rent-a-buddy/packages/:packageId/book", async (req, res) => {
     .select()
     .single();
 
-  if (bkErr) return sendError(res, 'db_error', bkErr.message);
-  const ledger = await createEarningsLedgerEntry(svc, booking as any, buddy.id); if (ledger.status !== "written") { await withdrawUnledgeredBooking(svc, (booking as any).id); return sendBookingLedgerRefusal(res, ledger); } // PAY-050: posted first, result checked — an unledgered booking is withdrawn and refused by name
+  if (bkErr) { if (await creation.replayOnConflict(bkErr)) return; return sendError(res, 'db_error', bkErr.message); }
+  const settled = await settleBookingLedger(svc, booking as any, buddy.id); if (settled.outcome === "withdrawn") return sendBookingLedgerRefusal(res, settled.ledger); // PAY-050: posted first; an unanswered call is confirmed by re-posting, and only a booking whose row is gone is refused by name
   emitAnalyticsEvent(svc, "booking", { userId: user.id, buddyId: buddy.id, city: buddy.city, category: p.category, amountUsd: Number(p.price_usd) });
 
   res.status(201).json({ booking });
@@ -1780,46 +1780,46 @@ router.post("/rent-a-buddy/bookings/:bookingId/addons", async (req, res) => {
   const { addonIds } = req.body ?? {};
   if (!Array.isArray(addonIds) || addonIds.length === 0) return sendError(res, 'invalid_payload', "addonIds array required.");
 
-  // Load addons
-  const { data: addons } = await svc
-    .from("rent_buddy_addons")
-    .select("*")
-    .in("id", addonIds)
-    .eq("is_active", true);
-
-  let addonRows = (addons ?? []) as any[];
-  if (addonRows.length === 0) return sendError(res, 'invalid_payload', "No valid add-ons found.");
-
-  // Idempotency: skip add-ons already attached to this booking so a retry (or a
-  // double-tap) does not double-INSERT the join rows AND double-CHARGE the
-  // deposit/total. Only newly-attached add-ons are inserted and priced in.
-  const { data: existingAddons } = await svc
-    .from("rent_buddy_booking_addons")
-    .select("addon_id")
-    .eq("booking_id", bookingId);
-  const alreadyAttached = new Set(((existingAddons ?? []) as any[]).map((r) => r.addon_id));
-  addonRows = addonRows.filter((a) => !alreadyAttached.has(a.id));
-  if (addonRows.length === 0) {
-    return res.json({
-      ok: true, alreadyAttached: true,
-      totalUsd: Number(bk.total_usd), depositUsd: Number(bk.deposit_usd), cashBalanceUsd: Number(bk.cash_balance_usd),
-    });
-  }
-
-  const addonsTotal = addonRows.reduce((sum: number, a: any) => sum + Number(a.price_usd ?? 0), 0);
-
-  // Insert booking addons
-  const inserts = addonRows.map((a: any) => ({
-    booking_id: bookingId,
-    addon_id: a.id,
-    title: a.title,
-    price_usd: a.price_usd,
-  }));
-  const { error: addonInsErr } = await svc.from("rent_buddy_booking_addons").insert(inserts);
-  if (addonInsErr) return sendError(res, 'db_error', addonInsErr.message);
-
-  // Recalculate total + deposit
-  const newTotal = Number(bk.total_usd) + addonsTotal;
+  // ── ONE call attaches, re-totals and LEDGERS the add-ons (PAY-T12) ─────────
+  //
+  // THE DEFECTS THIS REPLACES. This handler used to (1) load the add-ons, (2)
+  // read which were already attached, (3) sum their prices in JavaScript
+  // floats, (4) INSERT the join rows, (5) recompute a deposit split in
+  // JavaScript floats and (6) UPDATE the booking's total — separate
+  // statements, no transaction, and NO ledger write. So:
+  //   • the booking's total went 100 → 150 while its ledger kept gross 100.
+  //     The commission and the buddy's earnings silently excluded every
+  //     add-on: re-posting `booking_created` is a replay and changes nothing;
+  //   • two concurrent attaches both passed the "already attached" read and
+  //     both priced the same add-on in;
+  //   • a failure between (4) and (6) left join rows the total did not
+  //     include, and a retry then skipped them as "already attached".
+  //
+  // NOW rb_post_booking_ledger(event 'addons') (migration 3824) does all of it
+  // in one transaction under the booking's row lock:
+  //   • attaches only add-ons that are active and not yet attached. It is
+  //     idempotent BY STATE, so a retry or a double-tap attaches and charges
+  //     nothing twice;
+  //   • adds their prices to the booking's total in numeric SQL;
+  //   • re-derives the payment terms (rb_booking_payment_terms: no deposit
+  //     while `rent_buddy_global_controls.deposits_enabled` is off);
+  //   • appends ADJUSTMENT entries so the ledger's fold equals the new total:
+  //     gross += the add-ons, commission += the commission on them, at the
+  //     rate THE BOOKING WAS LEDGERED AT.
+  //
+  // THE COMMISSION COVERS ADD-ONS. The owner's ruling (2026-10-04) is "a 10%
+  // platform commission on the pre-tax service price"; an add-on is part of
+  // the price of the service, and docs/rent-buddy-product.md carves add-ons
+  // out nowhere. Excluding them would be a second fee rule nobody ruled.
+  //
+  // The traveller, status and payee checks are repeated in the function, under
+  // the lock; the ones above are the fast path with the familiar messages.
+  //
+  // What stays here is POLICY, not money: which payment mode and which
+  // percentage WOULD apply if the owner turns deposits on. calculateDeposit
+  // returns no amount, and nothing below adds, multiplies or rounds one.
+  // (As before, the policy is re-run when add-ons are attached, so it may
+  // re-choose the booking's payment mode; that behaviour is unchanged.)
   const { data: limits } = await svc.from("rent_buddy_user_limits").select("*").eq("user_id", user.id).maybeSingle();
   const { data: buddyRow } = await svc.from("rent_buddy_profiles").select("*").eq("id", bk.buddy_id).maybeSingle();
 
@@ -1845,28 +1845,28 @@ router.post("/rent-a-buddy/bookings/:bookingId/addons", async (req, res) => {
     disableDepositCash: (buddyRow as any)?.disable_deposit_cash ?? false,
     buddyCashBalanceAccepted: (buddyRow as any)?.cash_balance_accepted ?? true,
     riskHold: (buddyRow as any)?.risk_hold ?? false,
-    totalUsd: newTotal,
+    // no amount: see above
   });
 
-  const { error: totalsErr } = await svc
-    .from("rent_buddy_bookings")
-    .update({
-      total_usd: newTotal,
-      deposit_usd: depositResult.depositUsd,
-      cash_balance_usd: depositResult.cashBalanceDue,
-      addons_total_usd: (Number(bk.addons_total_usd ?? 0) + addonsTotal),
-      payment_mode: depositResult.paymentMode,
-      deposit_rule_applied: depositResult.depositRuleApplied,
-      deposit_percent: depositResult.depositPercent,
-      deposit_reason: depositResult.depositReason,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", bookingId);
-  if (totalsErr) return sendError(res, 'db_error', totalsErr.message);
+  const attached = await postBookingAddons(svc, {
+    bookingId,
+    travelerId: user.id,
+    addonIds,
+    allowedStatuses: ADDON_ALLOWED_STATUSES,
+    paymentMode: depositResult.paymentMode,
+    depositPercent: depositResult.depositPercent,
+    depositRule: depositResult.depositRuleApplied,
+    depositReason: depositResult.depositReason,
+  });
+  // NOT a fallback site: add-ons that were not attached are answered by NAME.
+  if (attached.status !== "attached") return answerAddonsNotApplied(res, attached, { bookingId, userId: user.id });
+  const after = attached.booking;
+  // Every add-on asked for was already attached: nothing was written or priced.
+  if (attached.addonsAdded === 0) return res.json({ ok: true, alreadyAttached: true, totalUsd: after.totalUsd, depositUsd: after.depositUsd, cashBalanceUsd: after.cashBalanceUsd });
 
-  emitAnalyticsEvent(svc, "addon_attached", { userId: user.id, city: bk.city, category: bk.category, amountUsd: addonsTotal });
+  emitAnalyticsEvent(svc, "addon_attached", { userId: user.id, city: bk.city, category: bk.category, amountUsd: after.addedUsd });
 
-  res.json({ ok: true, newTotal, depositUsd: depositResult.depositUsd, cashBalanceDue: depositResult.cashBalanceDue, addonsAdded: addonRows.length });
+  res.json({ ok: true, newTotal: after.totalUsd, depositUsd: after.depositUsd, cashBalanceDue: after.cashBalanceUsd, addonsAdded: attached.addonsAdded });
 });
 
 // ── Tips ──────────────────────────────────────────────────────────────────────
@@ -1891,7 +1891,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/tip", async (req, res) => {
   if (bk.status !== "completed") return sendError(res, 'invalid_payload', "Tips are only allowed after a completed booking.");
 
   const { amountUsd, note } = req.body ?? {};
-  if (!amountUsd || Number(amountUsd) <= 0) return sendError(res, 'invalid_payload', "amountUsd must be positive.");
+  if ((typeof amountUsd !== "number" && typeof amountUsd !== "string") || !isPositiveMoneyAmount(Number(amountUsd))) return sendError(res, 'invalid_payload', "amountUsd must be positive."); // a number or a numeric string; NaN, ±Infinity and anything a money column cannot hold are a 400 here, never a 503 from the database
   if (![5, 10, 20].includes(Number(amountUsd)) && Number(amountUsd) > 200) {
     return sendError(res, 'invalid_payload', "Maximum tip amount is $200.");
   }
@@ -2193,12 +2193,12 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
     // a money column from them.
     fetchAllBuddyBookingRows(svc, buddyProfile.id, EARNINGS_DASHBOARD_BOOKING_COLUMNS),
     // The commission that applies to this buddy's NEXT booking, from the same
-    // SQL function the ledger prices with. Market-level only here: a category
-    // override (if an operator sets one) is quoted per booking at checkout.
-    resolvePlatformFeePercent(svc, {
-      buddyLevel: buddyProfile.buddy_level,
-      countryCode: deriveServiceCountry(buddyProfile),
-      city: buddyProfile.city ?? null,
+    // SQL function checkout quotes and the ledger prices with (rb_quote_booking:
+    // the MARKET is the buddy's own, resolved in SQL — not a city passed from
+    // here). Rate only: no price is sent, so nothing is priced. Market-level
+    // only: a category override is quoted per booking at checkout.
+    quoteBooking(svc, {
+      buddyProfileId: buddyProfile.id,
       category: null,
     }),
     // Through the canonical seam (census-trust A17).
@@ -2214,10 +2214,10 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
   }
   if (feeRes.status !== "ok") {
     logger.error(
-      { userId: auth.user.id, buddyProfileId: buddyProfile.id, error: feeRes.error, rpc: feeRes.rpc, detail: feeRes.detail },
+      { userId: auth.user.id, buddyProfileId: buddyProfile.id, quote: feeRes },
       "earnings summary refused: the commission could not be resolved",
     );
-    return sendMoneyRpcFailure(res, feeRes, "Earnings could not be totalled. Please try again.");
+    return feeRes.status === "refused" ? sendLedgerRefusal(res, feeRes.refusal, "Earnings could not be totalled: the commission for your market could not be resolved.") : sendMoneyRpcFailure(res, feeRes, "Earnings could not be totalled. Please try again.");
   }
 
   // A partial list is worse than no list on a buddy's own money screen: the
@@ -2281,8 +2281,8 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
     // from (a market override, the fee schedule for their level, or the owner
     // default). The per-booking rate actually charged is on each ledger row.
     buddyLevel: buddyProfile.buddy_level ?? null,
-    platformFeePercent: feeRes.feePercent,
-    platformFeeSource: feeRes.feeSource,
+    platformFeePercent: feeRes.quote.feePercent,
+    platformFeeSource: feeRes.quote.feeSource,
     // No platform commission is charged on tips (owner ruling 2026-10-04).
     tipCommissionPercent: 0,
     estimatedPlatformFeeUsd: totals.estimatedPlatformFeeUsd,
@@ -2790,7 +2790,7 @@ export const EARNINGS_NOT_COLLECTED_WARNING =
 
 /** An event key rb_post_booking_ledger accepts (3824): 1-120 of [A-Za-z0-9_.:-]. */
 const TIP_KEY_RE = /^[A-Za-z0-9_.:-]{1,120}$/;
-const TIP_KEY_MESSAGE = "Idempotency-Key must be 1-120 characters of letters, digits, '_', '.', ':' or '-'.";
+const TIP_KEY_MESSAGE = "Idempotency-Key must be 1-120 characters of letters, digits, '_', '.', ':' or '-', and must not be the reserved key 'carried-over'.";
 
 /**
  * The event key for one tip: the caller's `Idempotency-Key` header or
@@ -2799,11 +2799,18 @@ const TIP_KEY_MESSAGE = "Idempotency-Key must be 1-120 characters of letters, di
  * Returns `null` for a key that WAS sent and is not usable. It is refused
  * rather than silently replaced: a caller that sent a key believes its retry is
  * safe, and a key quietly thrown away here would make that belief false.
+ *
+ * `carried-over` (any case) is RESERVED: it is the transaction the posting
+ * function carries a pre-3824 tips row into the entries under. A client that
+ * sent it on a booking with such a row collided with that transaction — the
+ * new tip was dropped while the call answered ok. It is refused here, and
+ * again in SQL (`event_key_reserved`).
  */
 function readTipEventKey(req: any): string | null {
   const supplied = req.get?.("Idempotency-Key") ?? req.body?.idempotencyKey;
   if (supplied === undefined || supplied === null) return randomUUID();
-  return typeof supplied === "string" && TIP_KEY_RE.test(supplied) ? supplied : null;
+  if (typeof supplied !== "string" || !TIP_KEY_RE.test(supplied)) return null;
+  return supplied.toLowerCase() === RESERVED_TIP_EVENT_KEY ? null : supplied;
 }
 
 /**
@@ -2835,17 +2842,58 @@ function answerTipNotApplied(
     case "invalid_arguments":
     case "event_key_required":
       sendError(res, 'invalid_payload', "amountUsd must be positive."); return;
+    case "event_key_reserved":
+      sendError(res, 'invalid_payload', TIP_KEY_MESSAGE); return;
     default:
-      res.status(409).json({ error: "tip_refused", refusal: tip.refusal, message: "The tip could not be recorded for this booking." });
+      // booking_reversed, buddy_not_found, … — permanent for this request.
+      sendLedgerRefusal(res, tip.refusal, "The tip could not be recorded for this booking. Nothing was charged."); return;
   }
 }
 
 /**
- * Give an offer's claim back after the booking made from it was withdrawn
- * (its ledger could not be posted). Mirrors the release on a failed insert in
- * the accept handler: an accepted offer must not be left with no booking. A
- * failed release is logged with the offer id — it is the one way that state can
- * still occur, and an operator must be able to find it.
+ * Answer add-ons that were NOT attached. Never a fallback: `unavailable` /
+ * `failed` are a 503 with the named error — nothing was attached, priced or
+ * ledgered, because the function is one transaction. A refusal is the
+ * database's own verdict: the ones this route has always had keep their status
+ * and message; any other is a 4xx `ledger_refused` with `retryable: false`.
+ */
+function answerAddonsNotApplied(
+  res: any,
+  result: Exclude<AddonsPostResult, { status: "attached" }>,
+  ctx: { bookingId: string; userId: string },
+): void {
+  if (result.status === "unavailable" || result.status === "failed") {
+    logger.error({ ...ctx, error: result.error, rpc: result.rpc, detail: result.detail }, "add-ons could not be attached");
+    sendMoneyRpcFailure(res, result, "The add-ons could not be added. Nothing was changed or charged. Please try again.");
+    return;
+  }
+  logger.warn({ ...ctx, refusal: result.refusal, detail: result.detail }, "add-ons refused by the ledger");
+  switch (result.refusal) {
+    case "not_traveler":
+      sendError(res, 'forbidden', "Only the traveler can attach add-ons."); return;
+    case "booking_not_found":
+      sendError(res, 'not_found', "Booking not found."); return;
+    case "booking_not_open":
+      sendError(res, 'invalid_payload', "Add-ons can only be attached to a booking that has not started yet."); return;
+    case "no_valid_addons":
+      sendError(res, 'invalid_payload', "No valid add-ons found."); return;
+    case "invalid_arguments":
+      sendError(res, 'invalid_payload', "addonIds must be a list of add-on ids."); return;
+    default:
+      // booking_reversed, booking_not_ledgerable, buddy_not_found, invalid_total, …
+      sendLedgerRefusal(res, result.refusal, "The add-ons could not be added to this booking. Nothing was changed or charged."); return;
+  }
+}
+
+/**
+ * Give an offer's claim back after the booking made from it was WITHDRAWN —
+ * its row is gone (its ledger could not be posted and the DELETE succeeded).
+ * It is NOT called when the booking could not be withdrawn: that booking
+ * exists, so the claim is the thing that stops a second accept making a second
+ * booking from the one offer. Mirrors the release on a failed insert in the
+ * accept handler: an accepted offer must not be left with no booking. A failed
+ * release is logged with the offer id — it is the one way that state can still
+ * occur, and an operator must be able to find it.
  */
 async function releaseOfferClaim(svc: any, offerId: string): Promise<void> {
   const { error } = await svc.from("rent_buddy_offers")
@@ -2862,15 +2910,22 @@ async function releaseOfferClaim(svc: any, offerId: string): Promise<void> {
 //
 // GET /api/rent-a-buddy/buddies/:buddyId/commission?category=<category>
 //
-// The rate the checkout screen shows. It is read from
-// rb_resolve_platform_fee_percent — the SAME function rb_post_booking_ledger
-// prices the booking with — so what the traveller is shown and what the ledger
-// records cannot be two different numbers. The figure is CONFIGURATION (a market
-// override, the fee schedule for the buddy's level, or the owner default of
-// 10); this route computes nothing and applies it to nothing.
+// The rate the checkout screen shows. It is rb_quote_booking's answer (3824),
+// and that function resolves the MARKET itself, from the buddy's profile
+// (rb_booking_market) — the same row rb_post_booking_ledger prices the booking
+// on. This route used to resolve the rate for the buddy's profile city while
+// the posting resolved it for the city on the booking row, which the canonical
+// route takes from the request: a market override could make the rate shown
+// and the rate charged two different numbers. There is now ONE definition of
+// the market, in SQL, and neither side passes a city.
 //
-// A rate that cannot be read is a 503 with a named error. The screen then says
-// so and offers a retry; it does not show a guessed percentage.
+// The figure is CONFIGURATION (a market override, the fee schedule for the
+// buddy's level, or the owner default of 10); this route computes nothing and
+// applies it to nothing.
+//
+// A rate that cannot be read is a 503 with a named error; a buddy the database
+// cannot place is a 4xx. The screen then says so; it does not show a guessed
+// percentage.
 router.get("/rent-a-buddy/buddies/:buddyId/commission", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -2879,7 +2934,7 @@ router.get("/rent-a-buddy/buddies/:buddyId/commission", async (req, res) => {
 
   const { data: buddyRow, error: buddyErr } = await svc
     .from("rent_buddy_profiles")
-    .select("id, buddy_level, city, country, status")
+    .select("id, status")
     .eq("id", req.params.buddyId)
     .maybeSingle();
   if (buddyErr) {
@@ -2894,32 +2949,31 @@ router.get("/rent-a-buddy/buddies/:buddyId/commission", async (req, res) => {
     ? req.query.category.trim()
     : null;
 
-  const fee = await resolvePlatformFeePercent(svc, {
-    buddyLevel: (buddyRow as any).buddy_level,
-    // The market is the BUDDY's, exactly as the booking snapshots it
-    // (deriveServiceCountry) — never a value the client sends.
-    countryCode: deriveServiceCountry(buddyRow),
-    city: (buddyRow as any).city ?? null,
-    category,
-  });
-  if (fee.status !== "ok") {
+  // Rate only: no price is sent. The market is NOT sent either.
+  const quoted = await quoteBooking(svc, { buddyProfileId: (buddyRow as any).id, category });
+  if (quoted.status !== "ok") {
     logger.error(
-      { buddyId: req.params.buddyId, error: fee.error, rpc: fee.rpc, detail: fee.detail },
+      { buddyId: req.params.buddyId, quote: quoted },
       "commission quote refused: the commission could not be resolved",
     );
-    return sendMoneyRpcFailure(res, fee, "The platform commission could not be loaded. Please try again.");
+    if (quoted.status === "refused") {
+      return sendLedgerRefusal(res, quoted.refusal, "The platform commission could not be worked out for this Buddy, so a booking can't be requested.");
+    }
+    return sendMoneyRpcFailure(res, quoted, "The platform commission could not be loaded. Please try again.");
   }
 
   res.json({
-    platformFeePercent: fee.feePercent,
-    feeSource: fee.feeSource,
+    platformFeePercent: quoted.quote.feePercent,
+    feeSource: quoted.quote.feeSource,
     // What the percentage is OF, and who bears it: the commission is taken from
-    // the buddy's earnings on the service price; nothing is added to the price
-    // the traveller sees.
+    // the buddy's earnings on the service price (add-ons included); nothing is
+    // added to the price the traveller sees.
     basis: "pre_tax_service_price",
     deductedFrom: "buddy_earnings",
     tipCommissionPercent: 0,
-    depositRequired: false,
+    // The owner's ONE deposit switch (`rent_buddy_global_controls.deposits_enabled`, false by default:
+    // off). While it is off every booking is created with a deposit of 0.
+    depositRequired: quoted.quote.depositEnabled === true,
     // No in-app payment exists: pay-deposit / pay-full answer 503.
     chargedInApp: false,
   });

@@ -16,7 +16,7 @@ import { checkRentBuddyAccess } from "./rentABuddyRollout.js";
 import { loadTravelerIdentity } from "../lib/travelerVerification.js";
 import { isPrivateLocation } from "../lib/rentaBuddyScanner.js";
 import { normalizeLaunchControlKey, upsertLaunchControlRow } from "../lib/rentBuddyLaunchControls.js";
-import { createEarningsLedgerEntry, sendBookingLedgerRefusal, withdrawUnledgeredBooking } from "../lib/rentBuddyEarningsLedger.js"; import { sendMoneyRpcFailure, transitionPayout, type PayoutAction } from "../lib/rentBuddyLedgerPosting.js"; // one line: docs cite this file by line
+import { beginIdempotentCreation, sendBookingLedgerRefusal, settleBookingLedger } from "../lib/rentBuddyEarningsLedger.js"; import { sendMoneyRpcFailure, transitionPayout, type PayoutAction } from "../lib/rentBuddyLedgerPosting.js"; import { BUDDY_ACCEPT_WINDOW_HOURS } from "../lib/rentBuddyBookingStatus.js"; // one line: docs cite this file by line
 import { isBlockedBetween } from "../lib/blockGuard.js";
 import { affectedRows } from "../lib/affectedRows.js";
 
@@ -671,7 +671,7 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
   const blocking = await findBlockingAvailabilityException(serviceClient, buddyId, bookingDate);
   if (blocking) return sendBuddyUnavailable(res, blocking.exception_type);
 
-  const now = new Date().toISOString();
+  const now = new Date().toISOString(); const creation = await beginIdempotentCreation(req, res, serviceClient, auth.user.id, `request:${buddyId}`, (b) => ({ booking: b })); if (creation.done) return; // a request retried with the same Idempotency-Key returns the ORIGINAL booking
   const { data, error } = await serviceClient
     .from("rent_buddy_bookings")
     .insert({
@@ -687,18 +687,18 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
       route_plan: [],
       total_usd: 0,
       deposit_usd: 0,
-      status: "pending",
+      status: "pending", creation_key: creation.key, expires_at: new Date(new Date(now).getTime() + BUDDY_ACCEPT_WINDOW_HOURS * 3600 * 1000).toISOString(), // awaiting the buddy: the same 24 h window as the canonical route, from the row's own `now`
       created_at: now,
       updated_at: now,
     })
     .select()
     .single();
 
-  if (error) return sendError(res, "db_error", error.message);
+  if (error) { if (await creation.replayOnConflict(error)) return; return sendError(res, "db_error", error.message); }
 
-  // The booking's earnings ledger, entries and summary in one transaction. Not best-effort (PAY-050): a booking
-  // whose ledger cannot be written is withdrawn and the request refused by name. See lib/rentBuddyEarningsLedger.ts.
-  if (data) { const ledger = await createEarningsLedgerEntry(serviceClient, data, buddyId); if (ledger.status !== "written") { await withdrawUnledgeredBooking(serviceClient, (data as any).id); return sendBookingLedgerRefusal(res, ledger); } }
+  // The booking's earnings ledger, entries and summary in one transaction. Not best-effort (PAY-050): an unanswered call is confirmed by re-posting, and
+  // only a booking whose row is really gone is refused by name; one that could not be withdrawn exists and is returned. See lib/rentBuddyEarningsLedger.ts.
+  if (data) { const settled = await settleBookingLedger(serviceClient, data, buddyId); if (settled.outcome === "withdrawn") return sendBookingLedgerRefusal(res, settled.ledger); }
 
   return res.status(201).json({ booking: data });
 }));
