@@ -223,8 +223,8 @@ export function paymentsStartupSummary(env: NodeJS.ProcessEnv = process.env): Pa
  */
 export function mockIdentityPermitted(env: NodeJS.ProcessEnv = process.env): boolean {
   if (env["NODE_ENV"] === "production") return false;
-  const deployment = env["REPLIT_DEPLOYMENT"];
-  if (typeof deployment === "string" && deployment.length > 0) return false;
+  const deployment = env["REPLIT_DEPLOYMENT"]; // PRESENT counts, even empty — see "REPLIT_DEPLOYMENT, present but empty" at the foot
+  if (deployment !== undefined) return false;
   if (env["NODE_ENV"] === "development" || env["NODE_ENV"] === "test") return true;
   const testContext = env["NODE_TEST_CONTEXT"];
   return typeof testContext === "string" && testContext.length > 0;
@@ -278,9 +278,19 @@ export const PAYMENT_KEY_ENV: Record<KeyedPaymentProvider, string> = {
   stripe: "STRIPE_SECRET_KEY",
 };
 
-/** The env var holding each payment provider's webhook signing secret. */
+/** The env var holding the signing secret of each payment provider's PLATFORM webhook endpoint. */
 export const PAYMENT_WEBHOOK_SECRET_ENV: Record<KeyedPaymentProvider, string> = {
   stripe: "STRIPE_WEBHOOK_SECRET",
+};
+
+/**
+ * The env var holding the signing secret of each payment provider's CONNECT
+ * webhook endpoint — the one that receives events about recipients' (connected)
+ * accounts. It is a different endpoint with a different secret; under direct
+ * charges it is where a payment's own events arrive.
+ */
+export const PAYMENT_CONNECT_WEBHOOK_SECRET_ENV: Record<KeyedPaymentProvider, string> = {
+  stripe: "STRIPE_CONNECT_WEBHOOK_SECRET",
 };
 
 export function isKeyedPaymentProvider(name: string): name is KeyedPaymentProvider {
@@ -333,3 +343,23 @@ export function webhookLivemodeRefused(livemode: unknown, env: NodeJS.ProcessEnv
 export function fakePaymentProviderPermitted(env: NodeJS.ProcessEnv = process.env): boolean {
   return mockIdentityPermitted(env);
 }
+
+// ── REPLIT_DEPLOYMENT, present but empty ─────────────────────────────────────
+//
+// `mockIdentityPermitted` used to treat REPLIT_DEPLOYMENT="" as unset. It now
+// treats ANY defined value, the empty string included, as a hosted deployment.
+//
+// Replit's own convention is set-versus-unset: "Set to 1 if the code is running
+// in a published project, unset otherwise" (docs.replit.com, Secrets → predefined
+// environment variables). Replit therefore never produces an empty value; one
+// can only come from configuration someone wrote (`REPLIT_DEPLOYMENT=` in an
+// env file, a blanked Secret). The rule above is fail-closed and asks for
+// POSITIVE evidence of a local run, and a deployment marker that has been
+// blanked is not that: reading it as "not a deployment" would let one blank
+// line re-admit the unsigned mock identity provider and the fake payment
+// provider on a hosted app. A local machine does not define the variable at
+// all, so nothing local changes; the fix for a local run that does define it is
+// to remove the line.
+//
+// One function decides this for identity (mock provider, unsigned webhook) and
+// payments (fake payment and tax providers) alike.
