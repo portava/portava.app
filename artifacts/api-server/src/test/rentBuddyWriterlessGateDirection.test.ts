@@ -130,9 +130,6 @@ function defaultBuddy(): BuddyScoringData {
     city: "Miami",
     categories: ["city", "nightlife", "arrival"],
     languages: ["en"],
-    hourlyRateUsd: 30,
-    halfDayRateUsd: null,
-    fullDayRateUsd: null,
     vibeTagsList: [],
     energyType: null,
     buddyLevel: "elite",           // deliberately NOT "new": promotion must not matter

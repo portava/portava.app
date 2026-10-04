@@ -88,6 +88,9 @@ const CLEAN: Record<string, string> = {
 };
 const config = (over: Partial<Config> = {}): Config => ({ scope: ONE_OF_EACH, allowlist: [], outOfScope: [], ...over });
 
+/** The file the owner's 2026-10-04 price-in-ranking ruling concerned. */
+const SCORER = "services/rentBuddy/CompatibilityScoreService.ts";
+
 describe("check:no-money-in-ranking", () => {
   it("K1. the vocabulary matches whole words of an identifier, never substrings", () => {
     assert.deepEqual(wordsOf("hourly_rate_usd"), ["hourly", "rate", "usd"]);
@@ -109,8 +112,23 @@ describe("check:no-money-in-ranking", () => {
     }
   });
 
-  it("K2. the tree as committed carries no finding but the recorded open decision, and the scan reads every group", () => {
+  it("K2. the tree as committed carries no finding and no open decision, and the scan reads every group", () => {
     const r = runCheck(REAL_SRC);
+    // The buddy scorer carries NO price identifier, by any route. The owner ruled on
+    // 2026-10-04 that a buddy's list price must not influence the compatibility score
+    // or the default order, so the ifNot branch was taken: the terms were removed and
+    // the OPEN_DECISIONS entry deleted. It is neither open (the state before the
+    // ruling) nor allowlisted (the branch the owner did NOT take — asserted below).
+    //
+    // These two name the file deliberately, and sit ABOVE the whole-tree assertion
+    // that follows: `assert.deepEqual` is declared `asserts actual is T`, so that
+    // line narrows `r.findings` to `never[]` and a per-file filter after it would be
+    // unreachable rather than true. Kept because they still carry the ruling if the
+    // whole-tree assertion is ever relaxed to admit a finding elsewhere.
+    assert.deepEqual(r.findings.filter((f) => f.file === SCORER), [],
+      "a money identifier is back in the buddy scorer");
+    assert.deepEqual(r.open.filter((f) => f.file === SCORER), [],
+      "the buddy scorer is still reported as an open decision after it was answered");
     assert.deepEqual(r.findings, [], "a money identifier is read by a ranker, a feature vector, a graph builder or a feed payload");
     // Nothing is wrong EXCEPT what OPEN_DECISIONS records — and that is recorded exactly: each entry's
     // identifiers are all still in its file, and no hit is counted open that an entry does not name.
@@ -138,10 +156,8 @@ describe("check:no-money-in-ranking", () => {
     assert.deepEqual(allowedIn("compass/CompassDiversityEngine.ts"), ["PAID_NIGHTLIFE_CAP_RATIO", "applyNightlifePaidCap", "isNightlifeOrPaid", "isPaid"]);
     assert.deepEqual(allowedIn("compass/CompassScoringEngine.ts"), ["promoted"]);
     assert.deepEqual(allowedIn("compass/types.ts"), ["hasOffAppPaymentSignal"]);
-    // The buddy scorer's price inputs are NOT allowlisted: they are the open decision.
-    assert.deepEqual(allowedIn("services/rentBuddy/CompatibilityScoreService.ts"), []);
-    assert.ok(r.open.some((f) => f.file === "services/rentBuddy/CompatibilityScoreService.ts" && f.identifier === "hourlyRateUsd"),
-      "the buddy scorer's read of a list price is no longer reported");
+    assert.deepEqual(allowedIn(SCORER), [],
+      "the scorer's price inputs were allowlisted — that is the branch the owner did NOT take");
     // Every allowlist entry is in use and carries a real reason (staleAllow/unjustified are empty above); say how many.
     assert.equal(new Set(r.allowed.map((a) => `${a.file}:${a.identifier}`)).size, ALLOWLIST.length);
     assert.ok(SCOPE.every((e) => filesOf(REAL_SRC, e).length > 0));
@@ -344,8 +360,15 @@ describe("check:no-money-in-ranking", () => {
     const thin = runCheck(tree({ ...CLEAN, [scorer]: reads }), config({ scope, openDecisions: [{ ...decision, question: "ok?" }] }));
     assert.deepEqual(thin.unjustified, [`OPEN_DECISIONS ${scorer}`]);
 
-    // The real entry: the buddy scorer, the five identifiers, and both ways out written down.
-    assert.deepEqual(OPEN_DECISIONS.map((d) => d.file), ["services/rentBuddy/CompatibilityScoreService.ts"]);
-    assert.deepEqual([...OPEN_DECISIONS[0]!.identifiers].sort(), ["budgetMaxUsd", "budgetMinUsd", "fullDayRateUsd", "halfDayRateUsd", "hourlyRateUsd"]);
+    // THE LIVE LIST IS EMPTY, and that is the ruling, not an omission. Every
+    // assertion above uses a FIXTURE decision on purpose: the machinery must keep
+    // working for the next question even though none is open today. The one real
+    // entry — the buddy scorer's five price identifiers — was answered on
+    // 2026-10-04 (a list price may NOT order buddies), the terms were removed and
+    // the entry deleted, which is what this file's own staleOpen rule demands once
+    // the identifiers leave the file. Allowlisting it would have been the other
+    // branch and is asserted against in K2.
+    assert.deepEqual(OPEN_DECISIONS.map((d) => d.file), [],
+      "an open decision is recorded again — if that is deliberate, this assertion is the place to say so");
   });
 });

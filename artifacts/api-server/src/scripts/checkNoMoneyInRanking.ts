@@ -183,7 +183,7 @@ export const SCOPE: readonly ScopeEntry[] = [
   { path: "compass/CompassActiveUserRewardEngine.ts", group: "ranker", why: "raises an active contributor's items; a paid reward here would be bought ranking" },
   // ── scores other rankers read, and the marketplace's own ranker ──────────────
   { path: "lib/creatorActivityScoreScheduler.ts", group: "ranker", why: "recomputes the creator activity scores the Discovery boost reads" },
-  { path: "services/rentBuddy/CompatibilityScoreService.ts", group: "ranker", why: "scores and orders buddies for a traveller's match (POST /rent-a-buddy/match). It reads the buddy's list price: see OPEN_DECISIONS" },
+  { path: "services/rentBuddy/CompatibilityScoreService.ts", group: "ranker", why: "scores and orders buddies for a traveller's match (POST /rent-a-buddy/match). It reads NO price: the owner ruled on 2026-10-04 that a buddy's list price must not influence the score or the default order, and the rate fields were removed from its input types" },
   // ── feature vectors: what the ranker is fed, and what is stored as its input ──
   { path: "lib/discoverySequenceFeatures.ts", group: "feature-vector", why: "sequence features of the viewer's session" },
   { path: "lib/mediaRankingSignals.ts", group: "feature-vector", why: "the media ranking signal vector" },
@@ -288,16 +288,17 @@ export interface OpenDecision {
   ifNot: string;
 }
 
-export const OPEN_DECISIONS: readonly OpenDecision[] = [
-  {
-    file: "services/rentBuddy/CompatibilityScoreService.ts",
-    identifiers: ["budgetMinUsd", "budgetMaxUsd", "hourlyRateUsd", "halfDayRateUsd", "fullDayRateUsd"],
-    what: "calculateCompatibilityScore scores a buddy's hourly rate against the traveller's stated budget (weight 10 of 100: inside the range 100, cheaper 60, dearer falling to 10) and reads whether a half-day or full-day rate exists for the booking-length match (weight 2). The result orders POST /rent-a-buddy/match.",
-    question: "May a buddy's list price be an input to the order in which buddies are shown to a traveller? `09` §10 says no money field belongs in a ranking feature vector; `08` §6.1's reason is that position must not be purchasable — and here nobody pays Portava for position, the traveller's own budget is being honoured. The two documents do not settle it between them.",
-    ifAllowed: "move this entry's identifiers to ALLOWLIST, each citing the owner's ruling, and delete the entry",
-    ifNot: "remove the budget term (and the rate-presence test) from calculateCompatibilityScore — make budget an eligibility filter or a label, not a score input — and delete the entry",
-  },
-];
+// ANSWERED 2026-10-04, so this list is empty rather than absent.
+//
+// It held one question — may a buddy's list price order the buddies a traveller
+// is shown — and the owner ruled it may NOT. The ifNot branch was taken: the
+// budget term (weight 10) and the rate-presence test (weight 2) are gone from
+// calculateCompatibilityScore, and so are the rate fields themselves, so the
+// scorer is no longer given a price at all. Price stays visible in the
+// response; an existing traveller-selected filter or sort is a separate
+// surface. The entry is deleted rather than allowlisted, which is what this
+// file's own staleOpen rule requires once the identifiers leave the file.
+export const OPEN_DECISIONS: readonly OpenDecision[] = [];
 
 // ── the scan ──────────────────────────────────────────────────────────────────
 
