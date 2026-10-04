@@ -101,11 +101,20 @@ registered, `PAYMENT_PROVIDER=stripe` answers `provider_not_registered` and
 payments stay off; setting the variables below early is harmless and lets the
 startup line confirm the key is a test key.
 
+**For testers, plainly:** the hosted testing app is a Replit deployment, and the
+fake provider is refused there. So **nothing in this seam can be exercised by a
+tester yet.** A payment can be made on the hosted app only once BOTH a Stripe
+test-mode adapter (PAY-T04) and a tax provider are registered, the adapter has
+been certified by a sandbox run, and at least one market is enabled. Until then
+every payment operation answers a refusal and the app shows payments as
+unavailable. The fake works in a local run and in the automated suites only.
+
 | Secret | Value | Notes |
 |---|---|---|
-| `PAYMENT_PROVIDER` | **leave unset** today (means `none`); `stripe` once PAY-T04 is merged | `fake` works only in a local run — it is refused in production, whenever `REPLIT_DEPLOYMENT` is set, and without `NODE_ENV=development`/`test`. |
+| `PAYMENT_PROVIDER` | **leave unset** today (means `none`); `stripe` once PAY-T04 is merged | `fake` works only in a local run — it is refused in production, whenever `REPLIT_DEPLOYMENT` is defined (even empty), and without `NODE_ENV=development`/`test`. A value that is not a known provider name is reported as `unrecognised value`, never echoed. |
 | `STRIPE_SECRET_KEY` | `sk_test_…`, or better a restricted `rk_test_…` | Developers → API keys with **Test mode on** (or a Sandbox). A different variable from `STRIPE_IDENTITY_SECRET_KEY`. A standard test secret key can serve both; a restricted key needs the payment and Connect permissions PAY-T04 will list. A `sk_live_`/`rk_live_` key is refused before any request; anything else (`pk_…`, `whsec_…`, upper case, a leading space) is refused as unrecognised and `PAYMENTS_ALLOW_LIVE` does not rescue it. |
-| `STRIPE_WEBHOOK_SECRET` | `whsec_…` | The signing secret of the **payments** webhook endpoint (a separate endpoint from the identity one, so a separate secret). The route itself is PAY-T19; add the endpoint when it exists. For direct charges the endpoint must listen to **connected accounts'** events. |
+| `STRIPE_WEBHOOK_SECRET` | `whsec_…` | The signing secret of the **platform** payments webhook endpoint — events about the platform's own account (a separate endpoint from the identity one, so a separate secret). The route itself is PAY-T19; add the endpoint when it exists. |
+| `STRIPE_CONNECT_WEBHOOK_SECRET` | `whsec_…` | The signing secret of the **Connect** webhook endpoint — the one set to listen to events on **connected accounts**. Under direct charges a payment's own events arrive here. It is a second endpoint in the Stripe Dashboard with its own secret; the two are not interchangeable. |
 | `PAYMENTS_ENABLED_MARKETS` | comma-separated ISO country codes, e.g. `US` | The markets the platform has enabled payments in. Empty (the default) enables none. A market also needs the provider to support it and tax to be configured for it. |
 | `TAX_PROVIDER` | **leave unset** (means `none`) | No real tax provider exists yet. With `none`, tax is configured for no market and checkout refuses. `fake` is local-run only. |
 | `PAYMENTS_ALLOW_LIVE` | **leave unset** | As above: only the exact string `true` lets a live key or a `livemode: true` event through. |
@@ -117,5 +126,14 @@ it. Do not create it unless PAY-T04 asks for it.
 The server logs a second startup line, `startup: payment provider readiness`, with
 `paymentProvider`, `operational`, `keyMode`, `keyRefused`, `liveAllowed`,
 `taxProvider`, `taxConfigured`, `enabledMarkets` and the first `reason` payments
-are not operational. It never logs a key. Today it reads `paymentProvider: "none"`,
-`operational: false`.
+are not operational. It never logs a key, and it never echoes configuration text:
+a provider name it does not know is logged as `unrecognised value`, and invalid
+`PAYMENTS_ENABLED_MARKETS` entries are counted, not quoted. Today it reads
+`paymentProvider: "none"`, `operational: false`.
+
+One rule changed for identity and payments together: `REPLIT_DEPLOYMENT` now
+counts as a hosted deployment whenever it is **defined, even as an empty string**.
+Replit sets it to `1` in a published app and leaves it unset otherwise, so nothing
+changes on the deployment or on a normal local machine; what changes is that
+blanking the variable can no longer re-admit the unsigned mock identity provider
+or the fake payment provider on a hosted app.
