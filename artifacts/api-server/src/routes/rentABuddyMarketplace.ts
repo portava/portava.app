@@ -292,9 +292,6 @@ function toBuddyScoringData(row: any, trustScore: number): BuddyScoringData {
     city: row.city,
     categories: row.categories ?? [],
     languages: row.languages ?? [],
-    hourlyRateUsd: row.hourly_rate_usd ? Number(row.hourly_rate_usd) : null,
-    halfDayRateUsd: row.half_day_rate_usd ? Number(row.half_day_rate_usd) : null,
-    fullDayRateUsd: row.full_day_rate_usd ? Number(row.full_day_rate_usd) : null,
     vibeTagsList: row.vibe_tags ?? [],
     energyType: row.energy_type ?? null,
     buddyLevel: row.buddy_level ?? 'new',
@@ -391,8 +388,10 @@ router.post("/rent-a-buddy/match", async (req, res) => {
     vibe: prefOverride?.vibe ?? (storedPrefs as any)?.vibe,
     energy: prefOverride?.energy ?? (storedPrefs as any)?.energy,
     language: prefOverride?.language ?? (storedPrefs as any)?.language,
-    budgetMinUsd: prefOverride?.budgetMinUsd ?? (storedPrefs as any)?.budget_min_usd,
-    budgetMaxUsd: prefOverride?.budgetMaxUsd ?? (storedPrefs as any)?.budget_max_usd,
+    // budgetMinUsd / budgetMaxUsd deliberately NOT passed: the owner ruled on
+    // 2026-10-04 that a buddy's list price must not influence the compatibility
+    // score or the default order. The traveller's stated budget is still stored
+    // and still theirs to filter or sort by on a separate surface.
     bookingLength: prefOverride?.bookingLength ?? (storedPrefs as any)?.booking_length,
     safetyPrefs: prefOverride?.safetyPrefs ?? (storedPrefs as any)?.safety_prefs ?? {},
     groupSize: prefOverride?.groupSize ?? (storedPrefs as any)?.group_size ?? 1,

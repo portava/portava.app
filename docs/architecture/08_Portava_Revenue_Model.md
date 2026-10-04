@@ -26,7 +26,7 @@ line named in product discussion is unbuilt.
 |---|---|---|---|
 | 1 | **Marketplace commission** on Rent-a-Buddy bookings | % of a booking's `total_usd`, by buddy level | **Modelled, computed, never charged.** Fee schedule in `rent_buddy_fee_rules`; per-booking estimate written by `lib/rentBuddyEarningsLedger.ts` |
 | 2 | **Traveller-side service fee** on the same bookings | flat USD and/or % added to the traveller | **Schema + admin editor exist; structurally always 0** — see §2.4 |
-| 3 | **Tips** | traveller → buddy, post-completion | **Built** (`routes/rentABuddyMarketplace.ts:1866`), **and Portava takes none of it** — see §2.2 |
+| 3 | **Tips** | traveller → buddy, post-completion | **Built** (`routes/rentABuddyMarketplace.ts:1865`), **and Portava takes none of it** — see §2.2 |
 | 4 | **Event ticketing** | selling admission to events with capacity | **Deliberately not built.** `priceType` is `"free" \| "external"` only (`routes/events.ts:486`), ticket links must point off-platform to an allowlisted host (`:3813`) — see §3.5 |
 | 5 | **Subscriptions / paid tiers** | recurring consumer or buddy plans | **Not built.** No plan, subscription or entitlement table; no billing processor; no paywall — see §4 |
 | 6 | **Paid placement / promoted listings** | selling rank or feed position | **Refused by design**, with the refusal enforced in code in four places — see §6 |
@@ -112,7 +112,7 @@ The same commission is expressed as three different constants in three files:
 |---|---|---|
 | **per-level 25/22/15/12/12** | `rent_buddy_fee_rules` seed | the ledger writer, per booking |
 | **22 %** | `DEFAULT_PLATFORM_FEE_PERCENT` (`lib/rentBuddyEarningsLedger.ts:37`) | fallback when the buddy's level has no fee row |
-| **22 %** | `defaultFeePercent` (`routes/rentABuddyMarketplace.ts:2192`) | the buddy dashboard's fee estimate when the ledger is empty |
+| **22 %** | `defaultFeePercent` (`routes/rentABuddyMarketplace.ts:2191`) | the buddy dashboard's fee estimate when the ledger is empty |
 | **15 %** | `platformFeePct = 0.15`, level-blind — **REMOVED FROM THE TREE; see the correction below** | `GET /rent-a-buddy/dashboard/earnings/summary` — **for every buddy, at every level** |
 
 So a `new` buddy is quoted **15 %** by the earnings-summary screen, has **25 %** written to their
@@ -152,7 +152,7 @@ The ledger reads `traveler_service_fee_usd` (`lib/rentBuddyEarningsLedger.ts:67`
 populate only `traveler_service_fee_pct` (`0048_rent_buddy_marketplace.sql:418`,
 `0134:1208`), leaving `traveler_service_fee_usd` at its column default of `0`
 (`0048:402`). **No code anywhere reads `traveler_service_fee_pct`** — the only non-type,
-non-test references are the admin write (`routes/rentABuddyMarketplace.ts:2579`) and the admin
+non-test references are the admin write (`routes/rentABuddyMarketplace.ts:2578`) and the admin
 screen (`travel-buddy-standalone/app/(rent-a-buddy)/admin/fee-rules.tsx:89`).
 
 So `traveler_service_fee_amount` is 0 on every ledger row unless an admin has hand-set the USD
@@ -167,7 +167,7 @@ writers:
 - `PATCH /rent-a-buddy/admin/buddies/:buddyId/level` — which validates against
   `['standard', 'pro', 'elite']` (`routes/rentABuddy.ts:4605`), and
 - `POST /rent-a-buddy/admin/profiles/:id/city-ambassador` — which sets
-  `city_ambassador` or `elite` (`routes/rentABuddyMarketplace.ts:2465`).
+  `city_ambassador` or `elite` (`routes/rentABuddyMarketplace.ts:2464`).
 
 Cross-referencing against the fee schedule:
 
@@ -241,7 +241,7 @@ The `0.3` is a literal. `rent_buddy_launch_controls.min_deposit_pct` exists, def
 (`0134:1345`) and is **write-only** — an admin can set it (`routes/rentABuddy.ts:5428`, `:5445`)
 and nothing reads it. Meanwhile the marketplace booking paths (offer-accept, package-book) call a
 *different* engine, `calculateDeposit`, which applies risk rules
-(`routes/rentABuddyMarketplace.ts:1610`, `:1828`). **Two booking paths, two deposit policies.**
+(`routes/rentABuddyMarketplace.ts:1609`, `:1827`). **Two booking paths, two deposit policies.**
 Reconciling them is `09_Payment_Architecture.md`'s work; recorded here because the split
 determines how much of a booking is ever collectible in-app, and therefore how much of the take
 rate is enforceable rather than trust-based.
@@ -262,8 +262,8 @@ Both payment endpoints return **503** and refuse to mark anything paid:
 The comment above them states the reason: return 503 "so no booking is ever marked 'paid' and no
 false milestone notification is sent to the traveler" (`:1687-1688`). The buddy dashboard says the
 same to the buddy: "All figures are estimates. Cash balance is tracked but not charged. **Payout
-system not connected.**" (`routes/rentABuddyMarketplace.ts:2199`), and each ledger row carries
-"Estimated — payout not processed" (`:2266`).
+system not connected.**" (`routes/rentABuddyMarketplace.ts:2198`), and each ledger row carries
+"Estimated — payout not processed" (`:2265`).
 
 There is **no payment processor in the tree at all**. The only Stripe references are Stripe
 *Identity* (KYC) adapters, and they are stubs whose every method throws
