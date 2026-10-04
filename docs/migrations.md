@@ -3735,3 +3735,34 @@ So every migration changed here is unapplied everywhere.
     cd artifacts/api-server
     grep -c 'DO \$pre\$' src/migrations/336[2-5]_*.sql src/migrations/342[12]_*.sql   # 1 each
     grep -c 'schema_migration_ledger' ../../db/rollback/2026-09-2?-33[3-5][0-9]-*-rollback.sql   # >= 2 each
+
+## 2026-10-04 — Correction: `2160_portava_featured_write_boundary.sql` is SUPERSEDED by 2332 (recorded here, not in the file)
+
+**Do not apply 2160, and never after `2332_money_grant_boundary.sql`.** 2160 ends with `anon` and
+`authenticated` holding SELECT on `public.portava_featured`. 2332 ends with them holding nothing. Applied
+in prefix order the result is 2332's. Applied the other way round, which only a hand-apply can do, 2160
+re-grants the SELECT 2332 revoked, and 2160's own postcondition still reports PASSED, because
+`anon=SELECT` is the state it was written to demand.
+
+This warning was first written into 2160's header by PR #566 (`1a87c51d0`). The integration of #566
+restored 2160 to its previous bytes (sha256 `4b14124d77ed…`) and moved the warning here and into
+`3504_client_table_privilege_boundary.sql`'s header, for the reason "An applied migration file is a
+historical artifact: do not annotate it" gives above: once a file has been applied anywhere its bytes are
+frozen, and a correction is written in this document, keyed by filename.
+
+What #566 measured, read-only, on 2026-10-03, and what follows from it:
+
+- Both databases carry a ledger row for 2160 with `applied_by='backfill'` and the literal `backfill` in
+  place of a checksum. The applier therefore never runs the file on either database, and no checksum
+  pins its bytes today. That is why #566's edit did not turn `db:apply-migrations:dry-run` red.
+- It is still an applied file. 3504's header records that on `portava-ci` `portava_featured` had
+  already been reduced to SELECT by 2160 before 2332 took the rest. A `backfill` row can also be upgraded
+  to a real checksum later (`--apply-unproven`), and from that moment an annotated file and the bytes
+  that ran would differ.
+- On the testing database (`ajrurzioarfkagpuxfnb`) the object state says neither 2160 nor 2332 has run
+  (`anon=arwd`). The remedy there is 2332 alone.
+
+### Re-establish independently
+
+    sha256sum artifacts/api-server/src/migrations/2160_portava_featured_write_boundary.sql   # 4b14124d77ed…
+    git diff --stat f71cfb85f -- artifacts/api-server/src/migrations/2160_portava_featured_write_boundary.sql   # empty
