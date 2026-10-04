@@ -3630,3 +3630,85 @@ Cited in this section, graded by no row of this census:
 - NOT-GRADED: artifacts/api-server/src/lib/accountModeration.ts — §32.3's writer for the admin routes TV-4a names; no verdict moves on it.
 - NOT-GRADED: artifacts/api-server/src/test/moderationAccountState.test.ts — §32.5's controlled evidence; no Trust verdict moves on it.
 - NOT-GRADED: artifacts/api-server/src/test/db/userAccountStatesContract.db.test.ts — §32.5's database evidence for the table contract; no Trust verdict moves on it.
+
+## §33 (trust lane, PR #580 taken over) — 2026-10-04 · The independent verifier's findings on §32, fixed test-first; the red database job; a missing moderation table is unread. **NO ROW MOVES.**
+
+§32 was verified independently at `9dd3aafc2` and **failed**. Its scenario checks passed; nine things it found did
+not. This section records what each was, what closes it, and what a reader of §32 must now read differently.
+Nothing here re-grades a row: the lead re-grades after another independent verification.
+
+### §33.1 Fail-open — four findings
+
+- **Four hand-rolled bearer sites still served a banned token.** `routes/discovery.ts` (GET /discovery,
+  /discovery/feed, /discovery/community) and `routes/hiddenGems.ts` (`resolveCallerId`) called
+  `sc.auth.getUser` themselves; §32.2's "six files of hand-rolled optional-auth sites" did not include them,
+  and `handRolledAuthAccountState.test.ts` pinned them as "known open". They now go through `getGatedUser` /
+  `optionalUserFromToken`, their catches hand the gate's refusal to `rethrowAccountGateRefusal`, and
+  /discovery/community resolves a presented token before it serves (the lookup was lazy, so a banned caller
+  whose request never needed a viewer id was served). The pin has **no exemption** any more.
+- **A catch that swallowed the refusal.** The same search found `routes/og.ts`'s image route answering a
+  banned viewer with the generic card. A source scan now fails on any call that can throw the gate's refusal
+  inside a `try` whose `catch` does not rethrow it. (`uncheckedSupabaseReads.test.ts` asserted that
+  `routes/discovery.ts` calls `auth.getUser` itself and asked to be revisited if that stopped being true; it
+  now asserts the opposite, and points its non-coverage note at the gate.)
+- **Suspending an already-banned user shortened the session lock.** `applyAccountRestriction` set GoTrue's
+  `ban_duration` from the row it had just written. The lock is now computed from every in-force row of that
+  user (`lockForRowsInForce`): permanent if any has no end, otherwise the latest end. If those rows cannot be
+  read back the lock is left alone and reported `failed`.
+- **`routes/follows.ts` served a banned user's passport.** GET /users/:userId and /users/by-handle/:handle
+  guarded on `profiles.account_status`, which cannot hold `banned` or `suspended`. Both now read the target
+  through `resolveAccountRestriction`: in force → the unavailable sentinel those routes already send;
+  unreadable → 503.
+- **A profile row with no restriction embed read as "no ban".** For every client `getServiceClient` builds
+  (`lib/supabase.ts` records them) a row without the `user_account_states` key is now `unavailable`: PostgREST
+  always returns the key of an embed a select names. Only an injected test double that models the status
+  column alone still reads as no rows, and a source scan pins that no other file builds a client.
+
+### §33.2 Wrong answer, integrity and test gaps
+
+- **`routes/passport.ts` answered a confirmed ban, and an unreadable state, as 500 `db_error`** on four
+  routes whose catch-all caught the gate's refusal. They now answer the gate's 403 / 503.
+- **`/suspend` accepted `"2099"`** (a date to `Date.parse`, not a timestamp to PostgreSQL) and failed after
+  the audit row. `parseRestrictionEnd` now requires a full ISO-8601 instant with an offset, in the future,
+  and stores it normalised; the writer applies the same rule to every caller.
+- **A failed restriction write left an audit row that looked landed.** The routes audit first, so the row
+  stays; a second row, `<action>_not_applied`, now names it and carries the write's error. If even that cannot
+  be written, the refusal says so.
+- **Test gaps closed:** a suspended author in the post publisher (held; published once the suspension is
+  lifted) and the GoTrue `user_banned` code check (the code alone decides; other codes at HTTP 403 are 401).
+
+### §33.3 What §32 said that is no longer the whole truth
+
+- **§32.2's table** gains one field: every 403 for a restricted account also carries
+  `restriction: { kind, until }` (absent for the auth service's own refusal, which names neither). That is the
+  server contract TV-4b's client would need to tell a restricted account from a connection fault; it decides
+  nothing about D-SUSPENSION-UX.
+- **§32.4's last row.** `profileVisibility` and `interactionPermissions` no longer exempt a **missing**
+  `user_account_states`: both now treat it as unread (profile withheld; the resolution refuses). §31's
+  absent-table rule was written for Phase-2 tables that may not exist yet. This table stopped being one when it
+  became the one moderation state, so "missing" means every ban is unread, not that nobody is banned. Three
+  tests that pinned the old answer were changed to pin the stricter one, and say so in place.
+- **§32.5's count.** `moderationAccountState.test.ts` is 87 tests and `handRolledAuthAccountState.test.ts` 136, the
+  second now driving every optional-viewer route over HTTP rather than two representatives.
+
+### §33.4 The red database job
+
+`api-server · kernel SQL executed on a throwaway database` failed on `9dd3aafc2` because the three database
+doubles (`trailPostgrestBridge`, `discoveryVerifyBridge`, `creatorLedgerPsqlClient`) threw on any embedded
+select, so the gate's read of `profiles` failed and the gate answered 503. They now translate one level of
+FK-hinted embedding against the real foreign key, and answer PGRST200 when the hinted constraint does not link
+the two tables. A new database suite pins the gate's read through all three. No assertion in any suite changed.
+
+### §33.5 Rows
+
+- **TV-4a stays W.** No route acts on a `moderation_reports` row; that criterion is untouched.
+- **TV-4b stays W.** The middleware is stricter and its refusal is machine-readable. A suspended user still
+  gets no read-only state and no appeal contact, and the client still has no branch for either state:
+  D-SUSPENSION-UX stands. One fact for that decision: while the session lock is in place the auth service
+  refuses the restricted user's token, so the API cannot identify them and no authenticated appeal route can
+  be reached by the people it exists for.
+
+Cited in this section, graded by no row of this census:
+
+- NOT-GRADED: artifacts/api-server/src/routes/og.ts — §33.1's one further site where a catch swallowed the gate's refusal; no Trust row grades the share-image route.
+- NOT-GRADED: artifacts/api-server/src/test/handRolledAuthAccountState.test.ts — §33.1 and §33.2's controlled evidence for the route-level refusals and the three source scans; no Trust verdict moves on it.
