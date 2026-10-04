@@ -1216,21 +1216,21 @@ router.get("/events", async (req, res) => {
   // Batch-fetch saved state for this user across these events
   let savedEventIds = new Set<string>();
   if (eventIds.length > 0) {
-    try { const { data: evSaves, error: evSavesErr } = await sc.from("event_saves").select("event_id").eq("user_id", user.id).in("event_id", eventIds); if (evSavesErr) throw evSavesErr; for (const s of (evSaves ?? []) as any[]) savedEventIds.add(s.event_id as string);  // census-discovery §122 (DV-83 round 23, B35): the store the events bookmark writes counts too
-      const { data: userCols, error: userColsErr } = await sc
-        .from("collections")
-        .select("id")
-        .eq("owner_id", user.id); if (userColsErr) throw userColsErr;  // §119 (B33)
-      const colIds = ((userCols ?? []) as any[]).map((c) => c.id as string);
-      if (colIds.length > 0) {
-        const { data: savedItems, error: savedItemsErr } = await sc
-          .from("collection_items")
-          .select("entity_id")
-          .eq("entity_type", "event")
-          .in("collection_id", colIds)
-          .in("entity_id", eventIds); if (savedItemsErr) throw savedItemsErr;  // §119 (B33)
-        for (const s of (savedItems ?? []) as any[]) savedEventIds.add(s.entity_id as string);
-      }
+    try {
+      // census-discovery §123 (DV-83 round 24, B44): ONE reader for every events answer.
+      //
+      // This list kept its own copy of the saved read: `event_saves` (§122, B35), then the viewer's
+      // `collections` and the `collection_items` of those collections (§119, B33). The copy read
+      // `collections` and `collection_items` unbounded, so past PostgREST's 1000-row cap an event
+      // saved in a later collection was served `isSaved: false` as measured.
+      //
+      // `viewerSavedEventIds` (at the foot of this file) reads both stores whole, by key, and answers
+      // null when either cannot be read whole. This list refuses over that exactly as it refused over
+      // a failed read (§119, B33). This comment stands where the copy stood, so no cited line moves.
+      //
+      const listSaved = await viewerSavedEventIds(sc, user.id, eventIds);
+      if (!listSaved) throw new Error("the viewer's saved events could not be read whole");
+      savedEventIds = listSaved;
     } catch (err) {
       req.log?.error({ err }, "list events: the viewer's saved events read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return;  // census-discovery §119 (DV-83 round 22, B33): never isSaved false on every card over a failed read
     }
@@ -7171,18 +7171,19 @@ async function viewerSavedEventIds(sc: any, userId: string, eventIds: readonly s
   const saved = new Set<string>();
   if (ids.length === 0) return saved;
   try {
-    const { data: saves, error: savesErr } = await sc.from("event_saves").select("event_id").eq("user_id", userId).in("event_id", ids);
-    if (savesErr) return null;
-    for (const r of (saves ?? []) as any[]) saved.add(String(r.event_id));
-    const { data: cols, error: colsErr } = await sc.from("collections").select("id").eq("owner_id", userId);
-    if (colsErr) return null;
-    const colIds = ((cols ?? []) as any[]).map((c) => String(c.id));
-    if (colIds.length === 0) return saved;
-    const { data: items, error: itemsErr } = await sc.from("collection_items").select("entity_id").eq("entity_type", "event").in("collection_id", colIds).in("entity_id", ids);
-    if (itemsErr) return null;
-    for (const r of (items ?? []) as any[]) saved.add(String(r.entity_id));
+    // §123 (DV-83 round 24, B44): both stores WHOLE. `event_saves` is unique on (user_id, event_id), so `event_id` keys
+    // the viewer's rows; the collections and their items are read by `viewerCollectionSavedIds`. A read that failed,
+    // threw, or was cut at PostgREST's row cap and could not be read on answers null here, never a prefix of the set.
+    const savesBase = () => sc.from("event_saves").select("event_id", { count: "exact" }).eq("user_id", userId).in("event_id", ids);
+    const saves = await readWhole<{ event_id: unknown }>((after, size) => afterKey(savesBase().order("event_id", { ascending: true }).limit(size), "event_id", after), (r) => String(r.event_id), { first: savesBase });
+    if (!saves.ok) return null;
+    for (const r of saves.value) saved.add(String(r.event_id));
+    const inCollections = await viewerCollectionSavedIds(sc, userId, "event", ids);
+    if (!inCollections.ok) return null;
+    for (const id of inCollections.ids) saved.add(id);
     return saved;
   } catch {
     return null;
   }
 }
+import { readWhole, afterKey } from "../lib/feedReads.js"; import { viewerCollectionSavedIds } from "../lib/viewerSavedReads.js";  // census-discovery §123 (B44): at the foot so no cited line above moves; ESM hoists imports

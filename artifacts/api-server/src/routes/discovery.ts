@@ -2897,7 +2897,7 @@ router.get("/discovery/community", async (req, res) => {
   //
   // The PROMISE is memoised, not the value, so concurrent callers share the one
   // in-flight lookup rather than racing to start a second.
-  let communityViewerId: string | null = null;
+  let communityViewerId: string | null = null; let communityViewerUnresolved = false;  // census-discovery §123 (DV-83 round 24, B42): a token was presented and nobody evaluated it
   let commViewerPromise: Promise<string | null> | null = null;
   function resolveCommunityViewer(): Promise<string | null> {
     if (!commViewerPromise) {
@@ -2907,9 +2907,9 @@ router.get("/discovery/community", async (req, res) => {
         const authSc = getServiceClient();
         if (!authSc) return null;
         try {
-          const { data: authData } = await authSc.auth.getUser(authHeader.slice(7).trim());
-          communityViewerId = (authData?.user?.id as string | undefined) ?? null;
-        } catch { /* degrade gracefully — an unresolved viewer is not an error here */ }
+          const { data: authData, error: authErr } = await authSc.auth.getUser(authHeader.slice(7).trim());
+          communityViewerId = (authData?.user?.id as string | undefined) ?? null; if (!communityViewerId && authErr && authServiceUnreachable(authErr)) communityViewerUnresolved = true;  // §123 (B42): a REJECTED token is an anonymous caller; a lookup Auth did not answer leaves the viewer unresolved (D-W11X2-21's one classifier)
+        } catch { communityViewerUnresolved = true; }  // §123 (B42): a lookup that threw evaluated nothing — the viewer is unresolved, never anonymous
         return communityViewerId;
       })();
     }
@@ -2931,7 +2931,7 @@ router.get("/discovery/community", async (req, res) => {
       if (gate.state === "ok") commCallerAge = gate.age;
       else commCallerAdultUnconfirmed = true;
     }
-    if (commCallerAge === null && !commCallerAdultUnconfirmed) commCallerDobMissing = true;
+    if (communityViewerUnresolved) commCallerAdultUnconfirmed = true; if (commCallerAge === null && !commCallerAdultUnconfirmed) commCallerDobMissing = true;  // §123 (B42): an unresolved viewer's age is unknown, not missing — only places open to everyone, and the answer says the viewer was not resolved
   }
 
   function communityAgeBounds(): { min: number | null; max: number | null } | null {
@@ -3045,7 +3045,7 @@ router.get("/discovery/community", async (req, res) => {
     let rows = rawRows; let authorsUncheckedComm = false;  // census-discovery §102 (DV-83, D-W11X2-37): authored rows withheld because the viewer's block/mute set could not be read
     if (rawRows.length > 0) {
       const viewerId = await resolveCommunityViewer();
-      const blocked  = viewerId ? await withMutedAuthors(sc, viewerId, await fetchBlockedSet(sc, viewerId)) : new Set<string>(); const inactive = inactiveSubmittersFromEmbed(rawRows);  // census-discovery §47: mutes join blocks (fail-closed), and a submitter whose account is not `active` loses both the pick and the byline — the standing is read from the byline embed above, no second round trip.
+      const blocked  = viewerId ? await withMutedAuthors(sc, viewerId, await fetchBlockedSet(sc, viewerId)) : communityViewerUnresolved ? null : new Set<string>(); const inactive = inactiveSubmittersFromEmbed(rawRows);  // census-discovery §47: mutes join blocks (fail-closed), and a submitter whose account is not `active` loses both the pick and the byline — the standing is read from the byline embed above, no second round trip.
       rows = rawRows.filter((row: any) => submitterIsVisible(row.submitted_by, blocked) && submitterInGoodStanding(row.submitted_by, inactive)); authorsUncheckedComm = blocked === null && rawRows.some((row: any) => Boolean(row.submitted_by));
     }
 
@@ -3128,21 +3128,21 @@ router.get("/discovery/community", async (req, res) => {
         try {
           const commSc   = getServiceClient();
           const viewerId = placeIds.length > 0 ? await resolveCommunityViewer() : null;
-          if (viewerId && !commSc) savedReadFailed = "collections"; if (viewerId && commSc) {
-            const { data: userCols, error: userColsErr } = await commSc
-              .from("collections")
-              .select("id")
-              .eq("owner_id", viewerId); if (userColsErr) savedReadFailed = "collections";
-            const colIds = ((userCols ?? []) as any[]).map((c) => c.id as string);
-            if (colIds.length > 0) {
-              const { data: savedItems, error: savedItemsErr } = await commSc
-                .from("collection_items")
-                .select("entity_id")
-                .eq("entity_type", "place")
-                .in("collection_id", colIds)
-                .in("entity_id", placeIds); if (savedItemsErr) savedReadFailed = "collection_items";
-              for (const s of (savedItems ?? []) as any[]) savedPlaceIds.add((s as any).entity_id as string);
-            }
+          if (viewerId && !commSc) savedReadFailed = "collections"; if (!viewerId && communityViewerUnresolved) savedReadFailed = DISCOVERY_VIEWER_SOURCE; if (viewerId && commSc) {
+            // census-discovery §123 (DV-83 round 24, B44): the viewer's collections and their items, read WHOLE
+            // (`viewerCollectionSavedIds`, lib/viewerSavedReads.ts).
+            //
+            // The two reads that stood here were unbounded. PostgREST cuts a response at db-max-rows (1000 on this
+            // deployment) and reports nothing, so for a viewer with more than 1000 collections a place saved in a
+            // later one was served `isSaved: false` as measured; the item read could be cut the same way.
+            //
+            // A read that failed, threw, or could not be read whole is named exactly as before (`collections` or
+            // `collection_items`), and every card's `isSaved` is then null (§122, B36). This comment stands where
+            // the two reads stood, so no cited line below moves.
+            //
+            const savedRead = await viewerCollectionSavedIds(commSc, viewerId, "place", placeIds);
+            if (!savedRead.ok) savedReadFailed = savedRead.source;
+            else for (const id of savedRead.ids) savedPlaceIds.add(id);
           }
         } catch { savedReadFailed = savedReadFailed ?? "collections"; }  // §122 (B36): a thrown read is unknown, never "not saved"
       })(),
@@ -3166,7 +3166,7 @@ router.get("/discovery/community", async (req, res) => {
         callerAgeState:    ageFilterComm === "open_to_me" ? describeCallerAgeState(commCallerAgeState) : null,
         bounds:            communityAgeBounds(),
       }, ...(layoverGate?.summary ? { layover: layoverGate.summary } : {}),
-    });
+    }, communityViewerUnresolved && (authorsUncheckedComm || ageFilterComm === "open_to_me"));  // §123 (B42): rows withheld from a viewer nobody resolved
 
     // Serve point 10 — ruling D4=C: the baseline must describe everything users
     // receive, not only what the flag will govern. This route returned items and
@@ -3436,15 +3436,15 @@ router.get("/discovery/community/saved-ids", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendDiscoveryRefusal(res, { ids: [] }, discoveryRefusal("upstream_unavailable", "saved_ids_service_unavailable", "GET /discovery/community/saved-ids")); return; }  // §101 (D-W11X2-35): an unread save table is not "you saved nothing"
   try {
-    const { data, error } = await sc
-      .from("discovery_place_saves")
-      .select("place_id")
-      .eq("user_id", user.id);
+    const savedRead = await viewerSavedPlaceIds(sc, user.id);  // census-discovery §123 (DV-83 round 24, B44): the WHOLE saved list, by key (lib/viewerSavedReads.ts).
+    // The read that stood here was unbounded: a viewer with more than 1000 saved places (PostgREST's row cap) was told
+    // the first 1000 were all of them, and the client drew every later place "not saved". A list that failed or could
+    // not be read whole takes the refusal below, never a shorter list.
     // D11 / `11` §9. `{ ids: [] }` is what a user who has saved nothing gets, and
     // it was also what a user got when the save table could not be read. The
     // mobile client uses this list to pre-fill the bookmark state, so the two
     // answers differ by exactly "every bookmark you own silently disappears".
-    if (error) {
+    if (!savedRead.ok) {
       sendDiscoveryRefusal(
         res,
         { ids: [] },
@@ -3452,7 +3452,7 @@ router.get("/discovery/community/saved-ids", async (req, res) => {
       );
       return;
     }
-    res.json({ ids: (data ?? []).map((r: { place_id: string }) => r.place_id) });
+    res.json({ ids: savedRead.ids });
   } catch {
     sendDiscoveryRefusal(
       res,
@@ -4693,9 +4693,9 @@ function authorsUnchecked(page: unknown): boolean {
 function sendCommunityBody<T extends { items: readonly unknown[] }>(
   res: Parameters<typeof sendDiscoveryRefusal>[0],
   authorsWithheld: boolean,
-  body: T,
+  body: T, viewerWithheld = false,  // §123 (B42)
 ): void {
-  if (!authorsWithheld) { res.json(body); return; }
+  if (viewerWithheld) { sendDiscoveryRefusal(res, body, communityViewerRefusal(body.items.length)); return; } if (!authorsWithheld) { res.json(body); return; }
   sendDiscoveryRefusal(res, body, discoveryRefusal(
     "transient_db", "community_blocks_unreadable", "GET /discovery/community",
     body.items.length > 0 ? "partial" : "nothing", [DISCOVERY_AUTHOR_SET_SOURCE],
@@ -4732,3 +4732,25 @@ async function communitySaversCount(sc: NonNullable<ReturnType<typeof getService
   if (error) return { ok: false, count: null };
   return { ok: true, count: typeof count === "number" ? count : null };
 }
+
+// ── census-discovery §123 (DV-83 round 24, lane DISC-DV83; the round-23 verifier's B42) ───────────────────────────────
+//
+// GET /discovery/community resolved its optional viewer with the lookup's error unread, inside a comment-only catch. A
+// lookup that threw, or that Supabase Auth did not answer, left the viewer id null exactly as for a caller with no
+// token, and the signed-in viewer was served as anonymous: their blocks and mutes were not applied (a place submitted by
+// someone they blocked was served, byline and all) and every card said `isSaved: false`. §94.11 recorded the path; the
+// round-23 verifier ruled it inside DV-83, its blocked-submitter case a safety fail-open.
+// The classifier is the one D-W11X2-21 names (`authServiceUnreachable`): a token Auth REJECTED is an anonymous caller,
+// as before; a token nobody evaluated leaves the viewer unresolved. For an unresolved viewer the author set is unknown,
+// so authored rows are withheld (fail-closed, the posture over an unreadable block set, §102); `open_to_me` narrows to
+// places open to everyone and never says a date of birth is missing; every served card's `isSaved` is null and the body
+// names `viewer`. When that withholding cost the list rows, the answer is the D11 envelope, `partial` or `nothing`.
+/** The name a Discovery answer gives a viewer it could not resolve, on `failedSources` (routes/hiddenGems.ts names it the same). */
+const DISCOVERY_VIEWER_SOURCE = "viewer";
+
+function communityViewerRefusal(served: number) {
+  return discoveryRefusal("upstream_unavailable", "community_viewer_unresolved", "GET /discovery/community", served > 0 ? "partial" : "nothing", [DISCOVERY_VIEWER_SOURCE]);
+}
+
+// census-discovery §123 (DV-83 round 24, B44): the viewer's saved state, read whole. At the foot so no cited line moves; ESM hoists imports.
+import { viewerCollectionSavedIds, viewerSavedPlaceIds } from "../lib/viewerSavedReads.js";
