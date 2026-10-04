@@ -126,11 +126,11 @@ shape, and each one is a reason section 5 chooses double-entry instead:
 2. **It never settles.** `is_estimated: true` and `cash_balance_confirmed: false` are written at
    creation (`lib/rentBuddyEarningsLedger.ts:89-90`) and no writer ever changes them —
    `createEarningsLedgerEntry` is the only writer in the tree; every other reference is a SELECT
-   (`routes/rentABuddyMarketplace.ts:1905`, `:2156`, `:2279`). The `is_estimated` flag the read
-   path branches on (`routes/rentABuddyMarketplace.ts:2266`) can therefore never be false.
+   (`routes/rentABuddyMarketplace.ts:1904`, `:2155`, `:2278`). The `is_estimated` flag the read
+   path branches on (`routes/rentABuddyMarketplace.ts:2265`) can therefore never be false.
 3. **Three call sites compute net earnings three different ways, from two different fee
    constants.** `lib/rentBuddyEarningsLedger.ts:37,66` reads `rent_buddy_fee_rules` with a default
-   of **22 %**; `routes/rentABuddyMarketplace.ts:2191-2195` takes `ledger[0].platform_fee_percent`
+   of **22 %**; `routes/rentABuddyMarketplace.ts:2190-2194` takes `ledger[0].platform_fee_percent`
    — an arbitrary row's rate — and applies it to *every* completed booking, defaulting to 22 %;
    the earnings summary hard-coded **0.15**. The last of these is exactly the defect
    `docs/rent-buddy-audit.md:401-405` filed against "Task #1701 / #1703". **CLOSED, verified 2026-09-22:**
@@ -138,12 +138,12 @@ shape, and each one is a reason section 5 chooses double-entry instead:
    (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:104#export async function resolveFeeSchedule(`),
    with no numeric fallback arm. See `08` §2.3's 2026-09-22 correction for the measurement.
 4. **Aggregates are computed in the API process over an unbounded select.**
-   `routes/rentABuddy.ts:6229-6268` and `routes/rentABuddyMarketplace.ts:2149-2196` pull booking
+   `routes/rentABuddy.ts:6229-6268` and `routes/rentABuddyMarketplace.ts:2148-2195` pull booking
    rows and sum them in JavaScript with no pagination — PostgREST's default row cap silently
    truncates the sum for any buddy past it. That is the read-side twin of the counter problem in
    `.agents/memory/counter-update-atomicity.md`.
 
-The tip path shows the same shape at write time: `routes/rentABuddyMarketplace.ts:1891-1912`
+The tip path shows the same shape at write time: `routes/rentABuddyMarketplace.ts:1890-1911`
 performs **three unrelated writes** — an upsert into `rent_buddy_tips` keyed on `booking_id`, an
 UPDATE of the ledger's `tip_usd`, and an UPDATE of the booking's `tip_usd` — with no transaction
 and with the last two explicitly best-effort. The upsert also **replaces** rather than accumulates,

@@ -460,22 +460,22 @@ async function loadTier2(
   }
   items.push({ type: 'top_events', tier: 2, cachedAt: now, data: topEvents });
 
-  // 2. Top available buddy profiles
-  //    Per-item authz: exclude buddies the user has blocked or who have blocked them.
+  // 2. Top available buddy profiles. Per-item authz: exclude buddies the user has blocked or who have blocked them.
+  //    PAY-074: the item is a CLOSED projection with no money field (topBuddyItem, at the end of this file).
   let topBuddies: unknown[] = [];
   if (db) {
     try {
       const blockedSet = new Set(profile.blockedUserIds ?? []);
       const { data: raw } = await db
         .from("buddy_profiles")
-        .select("user_id, display_name, tagline, city, hourly_rate_usd, average_rating")
+        .select("user_id, display_name, tagline, city, average_rating")
         .eq("status", "active")
         .eq("verified", true)
         .order("average_rating", { ascending: false })
         .limit(10);
       topBuddies = ((raw as any[]) ?? [])
         .filter((b: any) => !blockedSet.has(b.user_id as string))
-        .slice(0, 3);
+        .slice(0, 3).map(topBuddyItem);
     } catch { /* non-fatal */ }
   }
   items.push({ type: 'top_buddies', tier: 2, cachedAt: now, data: topBuddies });
@@ -727,4 +727,29 @@ export async function recordNavigationEvent(
   if (upsertError) {
     logger.warn({ err: upsertError, userId, screenName }, "navigation pattern upsert failed (non-fatal)");
   }
+}
+
+// ── top_buddies: a closed projection, with no money field (PAY-074) ───────────
+//
+// docs/architecture/09_Payment_Architecture.md §10: no money field appears in a
+// graph node, a feed payload or a ranking feature vector. This item used to
+// select `hourly_rate_usd` and pass the selected rows through whole, so a
+// buddy's list price rode the Compass front-load payload. No client reads it:
+// the app keeps the front-load response only for `compassEnabled`
+// (travel-buddy-standalone/src/hooks/compass/useCompassFrontload.ts), and no
+// screen names `top_buddies`. A buddy's price is shown where the traveller has
+// asked to see buddies, by the Rent-a-Buddy search and profile routes.
+//
+// The item is BUILT from named fields rather than passed through, so a column
+// added to the select above, or a wider row handed back by the database, cannot
+// widen the payload. scripts/checkNoMoneyInRanking.ts reads this file as a
+// feed-payload builder and fails if a money identifier returns.
+function topBuddyItem(row: Record<string, unknown>): Record<"user_id" | "display_name" | "tagline" | "city" | "average_rating", unknown> {
+  return {
+    user_id:        row["user_id"],
+    display_name:   row["display_name"],
+    tagline:        row["tagline"],
+    city:           row["city"],
+    average_rating: row["average_rating"],
+  };
 }
