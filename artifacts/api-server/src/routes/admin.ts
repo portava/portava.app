@@ -36,7 +36,7 @@ import { executeAccountDeletion } from "../services/accountDeletion/AccountDelet
 import { runSchemaDriftCheck, getCachedSchemaDriftResult } from "../lib/schemaDriftCheck";
 import { logAdminAccess, accessReason } from "../lib/adminAudit.js";
 import { resolveStoragePath } from "../lib/storagePath.js";
-import { logModerationAction, auditReportAction } from "../lib/moderationAudit.js"; import { applyAccountRestriction, revokeAccountRestrictions } from "../lib/accountModeration.js"; // same line: admin.ts is cited by line
+import { logModerationAction, auditReportAction } from "../lib/moderationAudit.js"; import { applyAccountRestriction, revokeAccountRestrictions, parseRestrictionEnd, recordModerationNotApplied, notAppliedAuditNote } from "../lib/accountModeration.js"; // same line: admin.ts is cited by line
 
 import { requireAdmin } from "../lib/requireAdmin.js"; import { computeAttemptsPerVerifiedUser } from "../services/identityVerification/attemptMetrics.js"; // same line on purpose: a new import line shifts every anchored citation into this file
 import { listRestrictionsForAudit } from "../services/trust/TrustRestrictionService.js";
@@ -1194,7 +1194,7 @@ const MODERATION_ACTION_TYPES = [
 const moderationActionSchema = z.object({
   action_type:  z.enum(MODERATION_ACTION_TYPES),
   reason:       z.string().max(1000).optional().nullable(),
-  expires_at:   z.string().datetime().refine((v) => Date.parse(v) > Date.now(), "expires_at must be in the future").optional().nullable(), // for temporary_suspension: its END
+  expires_at:   z.string().datetime().refine((v) => parseRestrictionEnd(v, new Date()).ok, "expires_at must be a real timestamp in the future").optional().nullable(), // for temporary_suspension: its END — the writer's own rule (lib/accountModeration.ts), so nothing it would refuse is audited first
   target_ref_id: z.string().uuid().optional().nullable(),   // for report_resolved / content/event/circle/booking actions
 });
 
@@ -1253,8 +1253,8 @@ router.patch("/admin/users/:userId/moderation-action", async (req, res) => {
     if (!applied.ok) {
       // The audit row above is recorded; the restriction is NOT in force. Refuse rather than answer 200
       // with an "error" side effect an admin client can read past.
-      req.log?.error?.({ err: applied.error, userId, action_type }, "moderation-action: restriction write failed");
-      sendError(res, "db_error", `Restriction write failed: ${applied.error}. Nothing is in force — retry.`, { exposeDetail: true });
+      req.log?.error?.({ err: applied.error, userId, action_type }, "moderation-action: restriction write failed"); const voided = await recordModerationNotApplied(sc, { userId, actorId: adminUserId, actionType: action_type, auditId: (auditRow as any)?.id, error: applied.error });
+      sendError(res, "db_error", `Restriction write failed: ${applied.error}. Nothing is in force — retry.${notAppliedAuditNote(voided)}`, { exposeDetail: true });
       return;
     }
     sideEffects.accountState = kind;
@@ -1714,7 +1714,7 @@ router.post("/admin/users/:userId/restrict", async (req, res) => {
 
   const { error: stateErr } = await sc.from("user_account_states")
     .upsert({ user_id: userId, state: "restricted", reason, set_by: adminUserId, created_at: new Date().toISOString() }, { onConflict: "user_id,state" });
-  if (stateErr) { sendError(res, "db_error", stateErr.message); return; }
+  if (stateErr) { await recordModerationNotApplied(sc, { userId, actorId: adminUserId, actionType: "message_limit", auditId: auditR.id, error: stateErr.message }); sendError(res, "db_error", stateErr.message); return; }
 
   res.json({ ok: true, restricted: true });
 });
@@ -1726,9 +1726,9 @@ router.post("/admin/users/:userId/suspend", async (req, res) => {
   const { sc, userId: adminUserId } = admin;
   const { userId } = req.params;
   const reason: string | null = (req.body as any)?.reason ?? null;
-  const expiresAt: string | null = (req.body as any)?.expires_at ?? null;
-  const now = new Date();
-  if (expiresAt !== null && !(typeof expiresAt === "string" && Date.parse(expiresAt) > now.getTime())) { sendError(res, "invalid_payload", "expires_at must be a future ISO-8601 timestamp, or omitted (until lifted)"); return; }
+  const rawExpiresAt: unknown | null = (req.body as any)?.expires_at ?? null;
+  const now = new Date(); const end = parseRestrictionEnd(rawExpiresAt, now); const expiresAt: string | null = end.ok ? end.expiresAt : null; // normalised ISO instant; `"2099"` parsed as a date here and then failed the write, AFTER the audit row
+  if (!end.ok) { sendError(res, "invalid_payload", end.message); return; }
   // Audit first (fail-closed) — after the expires_at check, so a rejected suspension is never audited.
   const auditR = await logModerationAction(sc, userId, adminUserId, "temporary_suspension", reason);
   if (!auditR.ok) { sendError(res, "db_error", `Audit write failed: ${auditR.error}`, { exposeDetail: true }); return; }
@@ -1738,7 +1738,7 @@ router.post("/admin/users/:userId/suspend", async (req, res) => {
   // The suspension IS the user_account_states row (lib/accountModeration.ts); profiles.account_status is
   // not written — its CHECK cannot hold 'suspended', so this route's old first write always failed 23514.
   const applied = await applyAccountRestriction(sc, { userId, kind: "suspended", reason, expiresAt, actorId: adminUserId, now });
-  if (!applied.ok) { sendError(res, "db_error", `Suspension write failed: ${applied.error}. Nothing is in force — retry.`, { exposeDetail: true }); return; }
+  if (!applied.ok) { const voided = await recordModerationNotApplied(sc, { userId, actorId: adminUserId, actionType: "temporary_suspension", auditId: auditR.id, error: applied.error, now }); sendError(res, "db_error", `Suspension write failed: ${applied.error}. Nothing is in force — retry.${notAppliedAuditNote(voided)}`, { exposeDetail: true }); return; }
 
   // Charge the adjudicated finding to the trust engine — only once the suspension is in force. A
   // confirmed suspension cost the user ZERO trust before the charge existed: every moderation route
@@ -1783,7 +1783,7 @@ router.post("/admin/users/:userId/ban", async (req, res) => {
   // moderation state, read by every auth gate. profiles.account_status is not written: its CHECK cannot
   // hold 'banned', so the update this route used to make FIRST failed 23514 on every call (never a ban).
   const applied = await applyAccountRestriction(sc, { userId, kind: "banned", reason, expiresAt: null, actorId: adminUserId, now });
-  if (!applied.ok) { sendError(res, "db_error", `Ban write failed: ${applied.error}. Nothing is in force — retry.`, { exposeDetail: true }); return; }
+  if (!applied.ok) { const voided = await recordModerationNotApplied(sc, { userId, actorId: adminUserId, actionType: "permanent_ban", auditId: auditR.id, error: applied.error, now }); sendError(res, "db_error", `Ban write failed: ${applied.error}. Nothing is in force — retry.${notAppliedAuditNote(voided)}`, { exposeDetail: true }); return; }
 
   // Charge the adjudicated finding to the trust engine — only now that the ban is in force. A confirmed
   // ban cost the user ZERO trust before this: every moderation route wrote its audit row and stopped.
@@ -1831,7 +1831,7 @@ router.post("/admin/users/:userId/restore", async (req, res) => {
   // profiles.account_status = 'active', erasing the history and silently reactivating a deactivated or
   // pending-deletion account: that column is deletion/deactivation state, and is no longer written here.
   const revoked = await revokeAccountRestrictions(sc, { userId, now });
-  if (!revoked.ok) { sendError(res, "db_error", `Restore write failed: ${revoked.error}. The restriction still stands — retry.`, { exposeDetail: true }); return; }
+  if (!revoked.ok) { const voided = await recordModerationNotApplied(sc, { userId, actorId: adminUserId, actionType: "account_restored", auditId: auditR.id, error: revoked.error, now }); sendError(res, "db_error", `Restore write failed: ${revoked.error}. The restriction still stands — retry.${notAppliedAuditNote(voided)}`, { exposeDetail: true }); return; }
   void revokeModerationTrustConsequences(sc, adminUserId, userId, reason ?? "Account restored")
     .catch(() => {});
   // ↑ Reverse the trust consequences of the sanction being lifted — once the lift is written. This is
