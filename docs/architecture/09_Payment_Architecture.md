@@ -1,5 +1,47 @@
 # Payment Architecture
 
+> ## CORRECTION HEADER — added 2026-10-04 after a re-inventory of the tree
+>
+> **§11's first bullet is false at `f71cfb85f`.** It says of §§3–10: *"No migration, no table, no
+> route, no flag."* All four nouns exist. **Nine** migrations implement §§4–10's shapes — 2901, 2920,
+> 2921, 2922, 2930, 3385, 3386, 3387, 3510 — creating **five** tables plus a view; **two** mounted
+> routers serve **eight** endpoints (`artifacts/api-server/src/routes/index.ts:247#router.use(rentABuddyMarketplaceRouter);`);
+> and `creator_attribution_enabled` is a flag, seeded FALSE
+> (`artifacts/api-server/src/migrations/2922_creator_attribution_flag.sql:60#false,`). The body below
+> is unedited and describes 2026-09-07; these corrections take precedence. The full inventory, with
+> every approved decision graded, is `docs/architecture/payments-reconciliation-20261004.md`.
+>
+> **What is now BUILT that §11 lists as absent.** An append-only, double-entry, minor-unit,
+> currency-paired ledger exists twice over — `src/migrations/2901_rent_buddy_earnings_entries.sql`
+> and `src/migrations/2921_creator_earning_entries.sql` — each with a total idempotency index, a
+> no-UPDATE trigger and deny-default grants. §5.3's I1 is a deferred constraint trigger on the
+> creator ledger (`src/migrations/3387_creator_ledger_integrity_and_audit.sql:391#public.creator_earning_transaction_balances()`),
+> which also adds the audit table and a one-transaction door. §9's payout interface exists verbatim,
+> six operations, with a no-money implementation
+> (`artifacts/api-server/src/services/creators/PayoutProvider.ts:63#PayoutProvider`). §10's erasure
+> conflict is no longer "named rather than assumed away": `src/migrations/3510_creator_ledger_erasure_policy_undecided.sql`
+> makes every ledger DELETE fail rather than let a cascade decide it.
+>
+> **Three §1 claims have also gone stale, all in the safe direction.** §1.3.3's three disagreeing
+> fee constants are gone (one resolver, no numeric fallback). §1.4's *"unguarded transitions"* is
+> fixed — payout hold and release are compare-and-swap
+> (`artifacts/api-server/src/routes/rentABuddySpec.ts:2403#PAYOUT_NOT_HOLDABLE_FROM`). The tip path
+> is one accumulating transaction, not three best-effort writes.
+>
+> **What §11 still gets right, and why.** Portava moves no money. No payment processor is installed
+> — re-verified by searching all sixteen `package.json` files and the whole tree: zero Stripe
+> *payments* dependencies, zero other processors, zero Sumsub, zero tax provider. Nothing inserts a
+> `rent_buddy_payouts` row. `payment_status` has no reader and no writer. Refund eligibility is still
+> 501 and tax documents are still unavailable. The reason has changed, though, and the change matters:
+> it is no longer that nothing is built, but that **everything built is CHECK-constrained to be
+> unable to settle** — `cash_settled_minor = 0` on both entry ledgers and `settled_minor = 0` on
+> attributions. A future provider that moved money would need a new, reviewed migration to say so.
+>
+> **One claim here is not a correction but a caveat.** §5.3 presents I1 as *"checks a migration
+> installs, not conventions a reviewer remembers"*. On `rent_buddy_earnings_entries` that is not yet
+> true: append-only is trigger-enforced but zero-sum is enforced in code only, and the migration says
+> so (`src/migrations/2901_rent_buddy_earnings_entries.sql:52#zero-sum`).
+
 *Derived from the repository, 2026-09-07. Sections 1–2 are **current state** and cite the file
 that does the thing; sections 3–9 are **DESIGN** and are labelled as such — nothing in them is
 built. Section 10 mixes both — its citations are current state, its posture is design; section 11
