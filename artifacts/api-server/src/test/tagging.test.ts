@@ -130,7 +130,7 @@ function makeClient(store: Record<string, Row[]> = {}, opts: { userId?: string }
             _rows = [];
           }
           const results = applyFilters(_rows);
-          if (_headOnly || _countHead) {
+          if (_headOnly) {  // `{ count }` WITHOUT `{ head: true }` returns the rows AND the count, as supabase-js does
             resolve({ data: null, count: applyFilters(store[table] ?? []).length, error: null });
             return;
           }
@@ -141,7 +141,7 @@ function makeClient(store: Record<string, Row[]> = {}, opts: { userId?: string }
             return;
           }
           if (_maybeSingle) { resolve({ data: results[0] ?? null, error: null }); return; }
-          resolve({ data: results, error: null });
+          resolve({ data: results, error: null, ...(_countHead ? { count: applyFilters(store[table] ?? []).length } : {}) });
         } catch (e) { reject(e); }
       },
     };

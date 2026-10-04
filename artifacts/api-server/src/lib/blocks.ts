@@ -88,7 +88,7 @@ import { readWhole, afterKey, WHOLE_READ_PAGE_SIZE } from "./feedReads.js";
 
 /** True when a plain `blocks` answer is provably every row its filter matches. */
 export function blocksAnswerIsWhole(data: unknown, count: unknown): boolean {
-  if (!Array.isArray(data)) return true;  // no rows answered and no error: the empty set, as before
+  if (!Array.isArray(data)) return count === 0;  // only an EXACT count of zero proves the empty set; no rows and no count is unread, not empty
   return typeof count === "number" ? data.length >= count : data.length < WHOLE_READ_PAGE_SIZE;
 }
 

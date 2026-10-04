@@ -27,7 +27,7 @@ import { getGem, saveGem, unsaveGem } from '../../../src/services/hiddenGems';
 import { useGemDetail } from '../../../src/hooks/useHiddenGems';
 
 const GEM = { id: 'g1', name: 'Tile courtyard', category: 'viewpoint', city: 'Lisbon', country: 'PT', neighborhood: null, description: null, latitude: null, longitude: null, approxLatitude: null, approxLongitude: null, vibeTags: [], priceRange: null, safetyNotes: null, bestTimeToGo: null, localEtiquette: null, layoverSafe: false, minimumLayoverMinutes: null, sensitivityLevel: 'public', verificationLevel: 'community', status: 'active', submittedBy: null, imageUrl: null, canonicalPlaceId: null, saveCount: 3, visitCount: 0, createdAt: '', updatedAt: '', gemState: null, gemConfidence: null, visitOutcomes: null };
-afterEach(() => { cleanup(); jest.clearAllMocks(); delete (globalThis as any).fetch; });
+afterEach(async () => { await cleanup(); jest.clearAllMocks(); delete (globalThis as any).fetch; });  // AWAITED: RNTL v14's cleanup() is async, and an un-awaited one leaves an act() scope open
 
 describe('census-discovery §122 (B36): getGem and useGemDetail carry an unread save state as unknown', () => {
   const real = jest.requireActual('../../../src/services/hiddenGems') as typeof import('../../../src/services/hiddenGems');
@@ -129,7 +129,7 @@ describe('census-discovery §122 (B36): the gem detail screen over an unread sav
     detail(false);
     await render(<GemDetailScreen />);
     const notSaved = drawn();
-    cleanup();
+    await cleanup();  // AWAITED — an un-awaited cleanup() leaves React 19's act queue undrained and the NEXT render in this file commits nothing
     detail(null);
     await render(<GemDetailScreen />);
     const unknown = drawn();
@@ -143,7 +143,7 @@ describe('census-discovery §122 (B36): the gem detail screen over an unread sav
     expect(drawn().unknown).toBe(0);
     expect(drawn().filled).toBe(0);
     expect(drawn().outline).toBeGreaterThan(0);
-    cleanup();
+    await cleanup();  // AWAITED — an un-awaited cleanup() leaves React 19's act queue undrained and the NEXT render in this file commits nothing
     detail(true);
     await render(<GemDetailScreen />);
     expect(drawn().unknown).toBe(0);
