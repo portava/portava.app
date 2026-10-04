@@ -1800,7 +1800,7 @@ router.get("/users/:userId", async (req, res) => {
   // sentinel; unreadable → 503, never "this profile exists and is fine".
   const targetState = await resolveAccountRestriction(sc as any, target);
   if (targetState.state === "unavailable") {
-    req.log.error({ target, reason: targetState.reason }, "users passport: target account state unreadable — refusing");
+    req.log?.error?.({ target, reason: targetState.reason }, "users passport: target account state unreadable — refusing");
     sendError(res, "degraded_unavailable", "Could not verify this account's status. Please try again.");
     return;
   }
@@ -1942,7 +1942,7 @@ router.get("/users/by-handle/:handle", async (req, res) => {
   // sentinel; unreadable → 503, never "this profile exists and is fine".
   const targetState = await resolveAccountRestriction(sc as any, target);
   if (targetState.state === "unavailable") {
-    req.log.error({ target, reason: targetState.reason }, "users passport: target account state unreadable — refusing");
+    req.log?.error?.({ target, reason: targetState.reason }, "users passport: target account state unreadable — refusing");
     sendError(res, "degraded_unavailable", "Could not verify this account's status. Please try again.");
     return;
   }
