@@ -202,7 +202,7 @@ Four corollaries, each with a live example:
 Twenty modules use them (PR #469's own count; 15 more bypassed them). The current
 failure-vs-emptiness gap is what callers then do with
 `null`: most answer `200` with an empty collection —
-`rentABuddyMarketplace.ts:414,519,632,666,1139,1963`, `sharedMoments.ts:287`, `placeDays.ts:94`,
+`rentABuddyMarketplace.ts:413,518,631,665,1138,1962`, `sharedMoments.ts:287`, `placeDays.ts:94`,
 `searchCandidates.ts:441,578,679,748,849,935,1050,1132,1464,1531,1629,1811`. That is **privacy-safe
 and diagnostically silent**: the viewer, the client and the operator all see "nothing here".
 
