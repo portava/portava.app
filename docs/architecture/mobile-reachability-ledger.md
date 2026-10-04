@@ -622,18 +622,18 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | GET, POST | `/api/rent-a-buddy/admin/city-status` | `artifacts/api-server/src/routes/rentABuddySpec.ts:1676` |
 | PATCH, POST | `/api/rent-a-buddy/admin/city-status/:city` | `artifacts/api-server/src/routes/rentABuddySpec.ts:1695` |
 | POST | `/api/rent-a-buddy/admin/kill-switch` | `artifacts/api-server/src/routes/rentABuddySpec.ts:1628` |
-| GET | `/api/rent-a-buddy/admin/marketplace/cities` | `artifacts/api-server/src/routes/rentABuddyMarketplace.ts:2509` |
+| GET | `/api/rent-a-buddy/admin/marketplace/cities` | `artifacts/api-server/src/routes/rentABuddyMarketplace.ts:2508` |
 | POST | `/api/rent-a-buddy/admin/payouts/:payoutId/hold` | `artifacts/api-server/src/routes/rentABuddySpec.ts:2406` |
 | POST | `/api/rent-a-buddy/admin/payouts/:payoutId/release` | `artifacts/api-server/src/routes/rentABuddySpec.ts:2455` |
-| GET | `/api/rent-a-buddy/admin/pricing/outliers` | `artifacts/api-server/src/routes/rentABuddyMarketplace.ts:2674` |
-| POST | `/api/rent-a-buddy/admin/profiles/:id/city-ambassador` | `artifacts/api-server/src/routes/rentABuddyMarketplace.ts:2582` |
-| DELETE, POST | `/api/rent-a-buddy/admin/profiles/:id/feature` | `artifacts/api-server/src/routes/rentABuddyMarketplace.ts:2540` |
-| POST | `/api/rent-a-buddy/admin/restrictions/city-category` | `artifacts/api-server/src/routes/rentABuddyMarketplace.ts:2765` |
+| GET | `/api/rent-a-buddy/admin/pricing/outliers` | `artifacts/api-server/src/routes/rentABuddyMarketplace.ts:2673` |
+| POST | `/api/rent-a-buddy/admin/profiles/:id/city-ambassador` | `artifacts/api-server/src/routes/rentABuddyMarketplace.ts:2581` |
+| DELETE, POST | `/api/rent-a-buddy/admin/profiles/:id/feature` | `artifacts/api-server/src/routes/rentABuddyMarketplace.ts:2539` |
+| POST | `/api/rent-a-buddy/admin/restrictions/city-category` | `artifacts/api-server/src/routes/rentABuddyMarketplace.ts:2764` |
 | GET | `/api/rent-a-buddy/admin/reviews` | `artifacts/api-server/src/routes/rentABuddy.ts:5348` |
 | POST | `/api/rent-a-buddy/admin/reviews/:reviewId/approve` | `artifacts/api-server/src/routes/rentABuddy.ts:5230` |
 | POST | `/api/rent-a-buddy/admin/reviews/:reviewId/reject` | `artifacts/api-server/src/routes/rentABuddy.ts:5290` |
 | POST | `/api/rent-a-buddy/admin/run-risk-scan` | `artifacts/api-server/src/routes/rentABuddy.ts:6558` |
 | GET | `/api/rent-a-buddy/admin/safety/events` | `artifacts/api-server/src/routes/rentABuddy.ts:5649` |
-| POST | `/api/rent-a-buddy/admin/users/:userId/force-full-in-app` | `artifacts/api-server/src/routes/rentABuddyMarketplace.ts:2742` |
-| POST | `/api/rent-a-buddy/admin/users/:userId/force-public-meetup` | `artifacts/api-server/src/routes/rentABuddyMarketplace.ts:2720` |
+| POST | `/api/rent-a-buddy/admin/users/:userId/force-full-in-app` | `artifacts/api-server/src/routes/rentABuddyMarketplace.ts:2741` |
+| POST | `/api/rent-a-buddy/admin/users/:userId/force-public-meetup` | `artifacts/api-server/src/routes/rentABuddyMarketplace.ts:2719` |
 | PATCH, POST | `/api/rent-a-buddy/admin/users/:userId/limits` | `artifacts/api-server/src/routes/rentABuddy.ts:5672` |
