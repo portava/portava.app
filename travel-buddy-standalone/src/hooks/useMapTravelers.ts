@@ -11,7 +11,7 @@
  *   - Keeps the last good result on transient errors — markers never flash
  *     out of existence because one poll failed — and SAYS the refresh failed
  *     (`error`), so kept markers are never shown as fresh (census-discovery
- *     §112, D-W11X2-127). Only the latest request writes the layer.
+ *     §112, D-W11X2-127). Only the latest request writes the layer. Rows are kept only for the centre they were read for: a failed read for a centre far from it clears them (census-discovery §123, B45).
  *
  * Privacy note: coordinates in MapTraveler are ALREADY coarsened by the
  * server (city centroid or ~2km grid). The client never sees precise
@@ -55,7 +55,7 @@ export function useMapTravelers(opts: {
   const latest = useRef(0);
   const hasLoaded = useRef(false);
   const lastFetchAt = useRef(0);
-  const lastCenter = useRef<{ lat: number; lng: number } | null>(null);
+  const lastCenter = useRef<{ lat: number; lng: number } | null>(null); const rowsCenter = useRef<{ lat: number; lng: number } | null>(null);  // census-discovery §123 (DV-83 round 24, B45): the centre the rows on screen were READ for (lastCenter is the centre last ASKED, answered or not)
   const appActive = useRef(AppState.currentState === 'active' || AppState.currentState === 'unknown');
 
   const doFetch = useCallback(async (fLat: number, fLng: number) => {
@@ -68,13 +68,13 @@ export function useMapTravelers(opts: {
     lastFetchAt.current = Date.now();
     lastCenter.current = { lat: fLat, lng: fLng };
     if (res.ok) {
-      hasLoaded.current = true;
+      hasLoaded.current = true; rowsCenter.current = { lat: fLat, lng: fLng };
       setError(null); setTruncated(res.truncated === true);  // §113 (D-W11X2-129): a cut read is said, and a whole one clears it
       // Dedup by id defensively — one marker per user, always.
       const seen = new Set<string>();
       setTravelers(res.data.filter((t) => (seen.has(t.id) ? false : (seen.add(t.id), true))));
     } else {
-      setError(res.error);  // §112 (D-W11X2-127): kept rows stay, and the failed refresh is said beside them
+      setError(res.error); if (rowsCenter.current && roughKm(rowsCenter.current.lat, rowsCenter.current.lng, fLat, fLng) > radiusKm / 3) { rowsCenter.current = null; setTravelers([]); setTruncated(false); }  // §112 (D-W11X2-127): kept rows stay, and the failed refresh is said beside them; §123 (B45): unless they were read for ANOTHER centre (this hook's own "moved significantly" test) — another city's travelers are not kept over this one's failed read
     }
     setLoading(false);
   }, [radiusKm]);

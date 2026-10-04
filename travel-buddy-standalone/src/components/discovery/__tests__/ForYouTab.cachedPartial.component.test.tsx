@@ -19,11 +19,17 @@
  *   C3  CONTROL: no cache — the skeleton, then the network decides (no notice from nothing)
  *   C4  CONTROL: the first frame of a cached COMPLETE page states no notice
  *
+ * census-discovery §123 (DV-83 round 24): a partial page says how to ask again. In list mode the notice and the
+ * partial-empty state named no control (the map-mode card has "Try again"; the list had only the pull gesture):
+ *   H4  a replayed cached partial page offers "Try again", and a press asks the network again
+ *   H5  the partial-empty state offers "Try again", and a press asks the network again
+ *   C5  CONTROL: a complete page offers no retry
+ *
  * Run with: npx jest src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx
  */
 
 import React from 'react';
-import { render, screen, waitFor, act } from '@testing-library/react-native';
+import { render, screen, waitFor, act, fireEvent } from '@testing-library/react-native';
 
 // ── React: effects can be held off for one render (H0 reads the first frame) ──
 
@@ -239,6 +245,38 @@ describe('ForYouTab — the SWR replay keeps a partial page partial (§99)', () 
     await act(async () => {});
     expect(screen.queryByTestId('for-you-partial')).toBeNull();
     expect(screen.queryByTestId('for-you-partial-empty')).toBeNull();
+  });
+});
+
+describe('ForYouTab — a partial page offers a retry (§123)', () => {
+  it('H4 a replayed cached partial page offers "Try again", and a press asks the network again', async () => {
+    mockGetCachedDiscoveryPlaces.mockReturnValue(PARTIAL_PAGE);
+    pendingRefetch();
+    await renderTab();
+    await act(async () => {});
+    expect(mockGetDiscoveryPlaces).toHaveBeenCalledTimes(1);
+    await act(async () => { fireEvent.press(screen.getByTestId('for-you-partial-retry')); });
+    expect(mockGetDiscoveryPlaces).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId('for-you-partial')).toBeTruthy();  // still partial until an answer says otherwise
+  });
+
+  it('H5 the partial-empty state offers "Try again", and a press asks the network again', async () => {
+    mockGetCachedDiscoveryPlaces.mockReturnValue(PARTIAL_EMPTY_PAGE);
+    pendingRefetch();
+    await renderTab();
+    await act(async () => {});
+    expect(mockGetDiscoveryPlaces).toHaveBeenCalledTimes(1);
+    await act(async () => { fireEvent.press(screen.getByTestId('for-you-partial-empty-retry')); });
+    expect(mockGetDiscoveryPlaces).toHaveBeenCalledTimes(2);
+  });
+
+  it('C5 CONTROL: a complete page offers no retry', async () => {
+    mockGetCachedDiscoveryPlaces.mockReturnValue(COMPLETE_PAGE);
+    pendingRefetch();
+    await renderTab();
+    await act(async () => {});
+    expect(screen.queryByTestId('for-you-partial-retry')).toBeNull();
+    expect(screen.queryByTestId('for-you-partial-empty-retry')).toBeNull();
   });
 });
 

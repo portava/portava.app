@@ -10,6 +10,14 @@
  *   PD0 CONTROL: a whole answer with one post → ok, the post
  *   PD1 `posts: []` beside `failedSources: ["blocks"]` → not ok
  *   PD2 CONTROL: `posts: []`, nothing named (a quiet city) → ok and empty
+ *
+ * census-discovery §123 (DV-83 round 24; the round-23 verifier's survivor Y37): the one name that leaves a feed whole is
+ * `post_saves` (§122, B36: the viewer's own saved state). Every other name is a failed feed, and nothing pinned that for
+ * `post_hides`, the read GET /pulse fails CLOSED over (§122, B40): a mutation that read a `post_hides` refusal as an
+ * empty feed survived. These fixtures kill it.
+ *   PD3 `posts: []` beside `failedSources: ["post_hides"]` → not ok (the viewer hid posts the server could not list)
+ *   PD4 `["user_follows"]` → not ok; PD5 `["post_saves", "post_hides"]` → not ok (one exempt name does not exempt the rest)
+ *   PD6 a name this client has never seen → not ok (only `post_saves` is exempt, by name)
  */
 // NOTE: intentionally exhaustive — apiToken exposes a single async helper; a stable token reaches fetch.
 jest.mock('../apiToken.ts', () => ({
@@ -42,5 +50,27 @@ describe('census-discovery §119 (sweep): getPulseData reads failedSources', () 
     answer({ posts: [], total: 0, tab: 'all' });
     const r = await getPulseData({ city: 'Lisbon' });
     expect(r.ok && r.data.posts).toEqual([]);
+  });
+});
+
+describe('census-discovery §123 (Y37): only `post_saves` leaves a Pulse feed whole', () => {
+  const failed = async (failedSources: string[]) => {
+    answer({ posts: [], total: 0, tab: 'all', failedSources });
+    return getPulseData({ city: 'Lisbon' });
+  };
+  it('PD3 failedSources ["post_hides"] → not ok, never an empty feed', async () => {
+    const r = await failed(['post_hides']);
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.error).toBe("Couldn't load the feed");
+  });
+  it('PD4 failedSources ["user_follows"] → not ok', async () => {
+    expect((await failed(['user_follows'])).ok).toBe(false);
+  });
+  it('PD5 failedSources ["post_saves", "post_hides"] → not ok', async () => {
+    expect((await failed(['post_saves', 'post_hides'])).ok).toBe(false);
+    expect((await failed(['post_hides', 'post_saves'])).ok).toBe(false);
+  });
+  it('PD6 a name this client has never seen → not ok', async () => {
+    expect((await failed(['some_future_read'])).ok).toBe(false);
   });
 });

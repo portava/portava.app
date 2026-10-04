@@ -22,7 +22,7 @@ import { router } from 'expo-router';
 import { ChevronDown, ChevronUp, RefreshCw } from 'lucide-react-native';
 import { color, space, type as t } from '../theme/tokens.ts';
 import { LivePulseCard } from './LivePulseCard.tsx';
-import { buildSummaryText, filterItems, RAIL_FILTERS, type RailFilter } from './LivePulseRail.machine.ts';
+import { collapsedSummaryText, filterItems, RAIL_FILTERS, type RailFilter } from './LivePulseRail.machine.ts';
 import type { UseLivePulseResult } from '../hooks/useLivePulse.ts';
 import type { LivePulseItem } from '../services/livePulse.ts';
 
@@ -89,7 +89,7 @@ export function LivePulseRail({ pulse }: LivePulseRailProps) {
     [items, activeFilter],
   );
 
-  const summaryText = useMemo(() => buildSummaryText(items), [items]);
+  // census-discovery §123 (B46): the collapsed header's line is `collapsedSummaryText` (LivePulseRail.machine.ts), built where it is drawn.
 
   if (!loading && !error && items.length === 0 && unread.length === 0) {  // §118 (SW20): an empty rail over a read that failed is not "No live plans"
     return (
@@ -109,8 +109,8 @@ export function LivePulseRail({ pulse }: LivePulseRailProps) {
       <Pressable style={styles.headerRow} onPress={() => setExpanded((e) => !e)}>
         <View style={styles.headerLeft}>
           <Text style={styles.headerTitle}>Live Pulse</Text>
-          {!expanded && error ? (<Text style={styles.summaryText}>Couldn't load live plans</Text>) : !expanded && items.length > 0 && (  /* census-discovery §122 (B39): a failed read is said collapsed too, never a summary of other items */
-            <Text style={styles.summaryText}>{summaryText}</Text>
+          {!expanded && collapsedSummaryText(items, unread.length, !!error) !== null && (  /* census-discovery §122 (B39): a failed read is said collapsed too, never a summary of other items; §123 (B46): a PARTIAL read is said collapsed too, never the summary alone */
+            <Text style={styles.summaryText} testID="live-pulse-collapsed-summary">{collapsedSummaryText(items, unread.length, !!error)}</Text>
           )}
         </View>
         {expanded ? <ChevronUp size={16} color={color.mute} /> : <ChevronDown size={16} color={color.mute} />}

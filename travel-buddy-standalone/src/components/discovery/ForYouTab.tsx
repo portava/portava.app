@@ -393,7 +393,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
             bookmark icons it explains are ON those cards. Small and quiet on
             purpose: nothing was lost, one read did not come back, and whatever
             the last good read wrote is still what the cards show. */}
-        {source === 'osm' && osmPartial && (<View style={styles.notice} testID="for-you-partial"><Text style={styles.noticeText}>{listPartialNotice('places')}</Text></View>)}{staleShown && (<View style={styles.notice} testID="for-you-stale"><Text style={styles.noticeText}>{`${listStaleNotice('places')} Pull to refresh.`}</Text></View>)}{savedIdsUnavailable && (
+        {source === 'osm' && osmPartial && (<View style={styles.notice} testID="for-you-partial"><Text style={styles.noticeText}>{listPartialNotice('places')}</Text><Pressable onPress={handleRefresh} hitSlop={6} accessibilityRole="button" testID="for-you-partial-retry"><Text style={[styles.noticeText, { color: color.signal }]}>Try again</Text></Pressable></View>)}{staleShown && (<View style={styles.notice} testID="for-you-stale"><Text style={styles.noticeText}>{`${listStaleNotice('places')} Pull to refresh.`}</Text></View>)}{savedIdsUnavailable && (
           <View style={styles.notice} testID="for-you-saved-unavailable">
             <Text style={styles.noticeText}>
               Couldn't check your saved places just now. Your saves are safe — pull to refresh.
@@ -469,7 +469,7 @@ export function ForYouTab({ destination, onAddToPlan, onAddToRoute, contextMode,
           );
         })}
 
-        {source === 'none' && osmPartial && (<View style={styles.empty} testID="for-you-partial-empty"><Sparkles size={28} color={color.faint} /><Text style={styles.emptyTitle}>{listPartialEmptyTitle('places')}</Text><Text style={styles.emptyDesc}>{LIST_PARTIAL_EMPTY_BODY}</Text></View>)}{loadErrorShown && (<View style={styles.empty} testID="for-you-error"><Sparkles size={28} color={color.faint} /><Text style={styles.emptyTitle}>{FOR_YOU_ERROR_TITLE}</Text><Text style={styles.emptyDesc}>{`${loadFailed}. Pull to refresh.`}</Text></View>)}{source === 'none' && !osmPartial && !loadErrorShown && (
+        {source === 'none' && osmPartial && (<View style={styles.empty} testID="for-you-partial-empty"><Sparkles size={28} color={color.faint} /><Text style={styles.emptyTitle}>{listPartialEmptyTitle('places')}</Text><Text style={styles.emptyDesc}>{LIST_PARTIAL_EMPTY_BODY}</Text><Pressable style={mapCoverageStyles.retry} onPress={handleRefresh} hitSlop={6} accessibilityRole="button" testID="for-you-partial-empty-retry"><Text style={mapCoverageStyles.retryText}>Try again</Text></Pressable></View>)}{loadErrorShown && (<View style={styles.empty} testID="for-you-error"><Sparkles size={28} color={color.faint} /><Text style={styles.emptyTitle}>{FOR_YOU_ERROR_TITLE}</Text><Text style={styles.emptyDesc}>{`${loadFailed}. Pull to refresh.`}</Text></View>)}{source === 'none' && !osmPartial && !loadErrorShown && (
           <View style={styles.empty}>
             <Sparkles size={28} color={color.faint} />
             <Text style={styles.emptyTitle}>No recommendations yet</Text>
