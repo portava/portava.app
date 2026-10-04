@@ -16812,7 +16812,7 @@ This section therefore sets no retention for `rank_events`, creator attribution,
   - Cadence: hourly, `artifacts/api-server/src/lib/discoveryServeLogRetentionScheduler.ts:56#export const RETENTION_INTERVAL_MS = 60 * 60 * 1_000;`.
   - Bounds: 1,000 rows per statement and at most 25 statements per tick (`artifacts/api-server/src/lib/discoveryServeLogRetentionScheduler.ts:65#export const MAX_BATCHES_PER_TICK = 25;`).
   - Started from the API entry, line-neutral: `artifacts/api-server/src/index.ts:247#startDiscoveryServeLogRetentionScheduler();`.
-  - Reported at `GET /api/healthz/schedulers` as `discoveryServeLogRetention`, line-neutral: `artifacts/api-server/src/routes/health.ts:520#job: "discoveryServeLogRetention"`.
+  - Reported at `GET /api/healthz/schedulers` as `discoveryServeLogRetention`, line-neutral: `artifacts/api-server/src/routes/health.ts:521#job: "discoveryServeLogRetention"`.
   - A failed purge is reported, not swallowed: `artifacts/api-server/src/lib/discoveryServeLogRetentionScheduler.ts:179#failed after ${report.batches} batch(es)`. A flag that is OFF or unreadable also counts as a failure (`artifacts/api-server/src/lib/discoveryServeLogRetentionScheduler.ts:174#is OFF — expired serve-log rows are being kept`), because the owner ruled out logging without cleanup.
 
 **The timestamp is `created_at`, and why.** Both columns record the serve to within milliseconds on every row the writer produces. The difference is who sets them:

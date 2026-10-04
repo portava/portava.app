@@ -364,7 +364,7 @@ describe("the tree as it stands", () => {
   it("every scheduler in the registry has a file, so reachability is not silently empty", () => {
     const tree = readTree();
     assert.deepEqual(tree.ownerless, [], "these start…() functions are listed but no file exports them");
-    assert.equal(tree.owners.size, 58);
+    assert.equal(tree.owners.size, 59); // 58 until #549 (startDiscoveryServeLogRetentionScheduler) was integrated beside this guard
     assert.ok(tree.reachable.size > 100, `only ${tree.reachable.size} files reachable — the import walk is broken`);
   });
 

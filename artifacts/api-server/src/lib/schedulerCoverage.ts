@@ -3,7 +3,7 @@
  * whether each one is still running.
  *
  * ── WHY THIS FILE EXISTS ─────────────────────────────────────────────────────
- * `index.ts` starts 58 schedulers at boot. Every one is a `setInterval` inside
+ * `index.ts` starts 59 schedulers at boot (58 until #549 added one that reports). Every one is a `setInterval` inside
  * the process, and `.replit` sets `deploymentTarget = "autoscale"`, which
  * suspends a container after fifteen idle minutes; a suspended container's
  * event loop does not advance. On 2026-09-30 15:28 all 58 stopped together and
@@ -83,6 +83,7 @@ export const STARTED_SCHEDULERS: readonly SchedulerRow[] = [
   { start: "startDelayedPostPublisher", persists: ["delayed_post_publisher"] },
   { start: "startDiscoveryCacheCleanup" },
   { start: "startDiscoveryCacheWarmer" },
+  { start: "startDiscoveryServeLogRetentionScheduler", reportedAs: ["discoveryServeLogRetention"], persists: ["discoveryServeLogRetention"] },
   { start: "startDiscoveryTrendRebuildScheduler" },
   { start: "startEventLifecycleScheduler" },
   { start: "startEventWaitlistSweeper", reportedAs: ["eventWaitlistSweeper"] },
