@@ -445,7 +445,7 @@ describe("M7 — earnings aggregation is exhaustive", () => {
   it("the total over 1201 bookings is exact", async () => {
     const rows = makeEarningsRows(1201);
     const fetched = await fetchAllBuddyEarningsRows(makeCappedBookingsClient(rows, 1000), BUDDY_PROF);
-    const summary = foldEarningsRows(fetched!, 0.15, new Date("2026-06-01T00:00:00Z"));
+    const summary = foldEarningsRows(fetched!, 1500, new Date("2026-06-01T00:00:00Z"));
 
     assert.equal(summary.totalInAppUsd, 1201 * 30);
     assert.equal(summary.totalCashConfirmedUsd, 1201 * 70);
@@ -458,7 +458,7 @@ describe("M7 — earnings aggregation is exhaustive", () => {
   it("CONTROL: the pre-fix unpaginated select stops at the cap and under-reports", async () => {
     const rows = makeEarningsRows(1201);
     const capped: any = await makeCappedBookingsClient(rows, 1000).from().select().eq().in();
-    const truncated = foldEarningsRows(capped.data, 0.15, new Date("2026-06-01T00:00:00Z"));
+    const truncated = foldEarningsRows(capped.data, 1500, new Date("2026-06-01T00:00:00Z"));
 
     assert.equal(capped.data.length, 1000, "PostgREST returns a short array and no error");
     assert.ok(truncated.totalInAppUsd < 1201 * 30,
@@ -481,7 +481,7 @@ describe("M7 — earnings aggregation is exhaustive", () => {
       { id: "a", total_usd: 100, deposit_usd: 30, cash_balance_usd: 70, status: "completed", completed_at: "2026-03-15T00:00:00+00:00", booking_date: "2026-03-15" },
       { id: "b", total_usd: 200, deposit_usd: 60, cash_balance_usd: 140, status: "disputed",  completed_at: "2026-03-20T00:00:00+00:00", booking_date: "2026-03-20" },
       { id: "c", total_usd: 100, deposit_usd: 100, cash_balance_usd: 0,  status: "completed", completed_at: null, booking_date: "2026-02-01" },
-    ], 0.15, new Date("2026-06-01T00:00:00Z"));
+    ], 1500, new Date("2026-06-01T00:00:00Z"));
 
     assert.equal(summary.totalInAppUsd, 130);            // 30 + 100; the disputed 60 is excluded
     assert.equal(summary.totalCashConfirmedUsd, 70);
@@ -498,7 +498,7 @@ describe("M7 — earnings aggregation is exhaustive", () => {
   it("falls back to booking_date when completed_at is null, matching the old slice(0,7)", () => {
     const summary = foldEarningsRows(
       [{ id: "a", total_usd: 100, deposit_usd: 100, cash_balance_usd: 0, status: "completed", completed_at: null, booking_date: "2025-11-09" }],
-      0.15,
+      1500,
       new Date("2026-06-01T00:00:00Z"),
     );
     assert.deepEqual(summary.monthlyBreakdown.map((m) => m.month), ["2025-11"]);

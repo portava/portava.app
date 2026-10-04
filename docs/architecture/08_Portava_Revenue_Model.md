@@ -129,18 +129,18 @@ record of a CLOSED defect, kept because the resolution direction it argued is th
 taken.** MEASURED at this head, not inferred: `platformFeePct = 0.15` occurs **0** times in
 `artifacts/api-server/src/routes/rentABuddy.ts`, and `DEFAULT_PLATFORM_FEE_PERCENT` and
 `defaultFeePercent` occur **0** times outside comments and tests. The take rate is resolved in ONE
-place, `artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:104#export async function resolveFeeSchedule(`,
+place, `artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:289#export async function resolveFeeSchedule(`,
 which returns a three-state result (`resolved` / `no_such_level` / `read_failed`) and has **no
 numeric fallback arm at all** — precisely because, as that module's header puts it, the deleted
 literals "were not defaults, they were guesses wearing a default's clothes". The earnings summary
-now consumes it at `artifacts/api-server/src/routes/rentABuddy.ts:7528#const feeSchedule = await resolveFeeSchedule(serviceClient, (bp as any).buddy_level);`
-and reads the rate at `artifacts/api-server/src/routes/rentABuddy.ts:7545#const rule = feeSchedule.rule;`,
+now consumes it at `artifacts/api-server/src/routes/rentABuddy.ts:7586#const feeSchedule = await resolveFeeSchedule(serviceClient, (bp as any).buddy_level);`
+and reads the rate at `artifacts/api-server/src/routes/rentABuddy.ts:7603#const rule = feeSchedule.rule;`,
 REFUSING (`conflict` on a level with no fee row, `db_error` on an unreadable table) rather than
 quoting a number nobody configured. A ratchet names all three dead literals so they cannot come
 back: `artifacts/api-server/src/test/rentBuddyFeeSchedule.test.ts:254`.
 
 The citations this section carried had also drifted onto unrelated code and are removed rather
-than moved: `routes/rentABuddy.ts:6250` is the `isNightlife` line of the traveller-eligibility
+than moved: `routes/rentABuddy.ts:6264#isNightlife` is the `isNightlife` line of the traveller-eligibility
 endpoint, line 6251 is blank, and line 6290 is elsewhere in that same endpoint — none of them ever
 held a fee literal. **What this correction does NOT do:** it does not re-score §2's other
 findings, and it does not touch `12_Claude_Code_Implementation.md`'s M1 severity or its M1/M10
@@ -148,7 +148,7 @@ remediation step, which are that document's own to re-measure.
 
 ### 2.4 The traveller-side fee is structurally zero
 
-The ledger reads `traveler_service_fee_usd` (`lib/rentBuddyEarningsLedger.ts:67`). Both seeds
+The ledger reads `traveler_service_fee_usd` (`lib/rentBuddyEarningsLedger.ts:132#travelerServiceFeeUsdFor`). Both seeds
 populate only `traveler_service_fee_pct` (`0048_rent_buddy_marketplace.sql:418`,
 `0134:1208`), leaving `traveler_service_fee_usd` at its column default of `0`
 (`0048:402`). **No code anywhere reads `traveler_service_fee_pct`** — the only non-type,
@@ -246,7 +246,7 @@ Reconciling them is `09_Payment_Architecture.md`'s work; recorded here because t
 determines how much of a booking is ever collectible in-app, and therefore how much of the take
 rate is enforceable rather than trust-based.
 
-Its sibling `full_payment_required` **is** read and enforced (`routes/rentABuddy.ts:1280`,
+Its sibling `full_payment_required` **is** read and enforced (`routes/rentABuddy.ts:1676#require_full_in_app`,
 `:1322`) — so a market can be forced fully in-app, which is the one lever that would make the
 commission collectible per booking.
 

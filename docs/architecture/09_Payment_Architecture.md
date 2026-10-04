@@ -79,7 +79,7 @@ shape, and each one is a reason section 5 chooses double-entry instead:
 1. **It records money as collected that was never collected.** The upsert sets
    `in_app_amount_collected: Number(booking.deposit_usd ?? 0)`
    (`lib/rentBuddyEarningsLedger.ts:87`). For `payment_mode = 'full_in_app'`, `deposit_usd` **is**
-   the whole total (`routes/rentABuddy.ts:1579`). So a full-in-app booking books its entire value
+   the whole total (`routes/rentABuddy.ts:2174#splitBookingPayment`). So a full-in-app booking books its entire value
    as in-app collected at the moment of booking, while `pay-full` returns 503 and no money exists.
 2. **It never settles.** `is_estimated: true` and `cash_balance_confirmed: false` are written at
    creation (`lib/rentBuddyEarningsLedger.ts:89-90`) and no writer ever changes them —
@@ -93,7 +93,7 @@ shape, and each one is a reason section 5 chooses double-entry instead:
    the earnings summary hard-coded **0.15**. The last of these is exactly the defect
    `docs/rent-buddy-audit.md:401-405` filed against "Task #1701 / #1703". **CLOSED, verified 2026-09-22:**
    all three literals are gone and one resolver reads `rent_buddy_fee_rules`
-   (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:104#export async function resolveFeeSchedule(`),
+   (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:289#export async function resolveFeeSchedule(`),
    with no numeric fallback arm. See `08` §2.3's 2026-09-22 correction for the measurement.
 4. **Aggregates are computed in the API process over an unbounded select.**
    `routes/rentABuddy.ts:6229-6268` and `routes/rentABuddyMarketplace.ts:2149-2196` pull booking

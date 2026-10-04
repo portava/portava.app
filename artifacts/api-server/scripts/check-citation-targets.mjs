@@ -610,7 +610,27 @@ import {
  * the claim; this one onto line 82, the `setIntelConsent(` call the sentence
  * is about, with an anchor. Treat a count that merely improves as unexamined:
  * the only way to know is to diff the list. Same rule as above. */
-export const MAX_DEAD_TARGETS = 161;
+/* RATCHETED 2026-10-04 161 -> 154 by the Rent-a-Buddy commission / deposit
+ * lane. The lane moved lines in routes/rentABuddy.ts, lib/rentBuddyFeeSchedule.ts
+ * and lib/rentBuddyEarningsLedger.ts, which slid TEN pointers in five documents
+ * onto blank lines and bare braces. All ten were repointed by READING the claim
+ * and finding the line that carries it, each with an `#anchor` so doc-citations
+ * holds them from here:
+ *   08 §.. `rentABuddy.ts:6250`  -> `:6264#isNightlife`
+ *   08/12  `rentBuddyEarningsLedger.ts:67` -> `:132#travelerServiceFeeUsdFor`
+ *   08 §.. `rentABuddy.ts:1280`  -> `:1676#require_full_in_app`
+ *   09/12  `rentABuddy.ts:1579`  -> `:2174#splitBookingPayment`
+ *   layover `rentBuddyFeeSchedule.ts:225` -> `:470#rent_buddy_enabled`
+ *   layover bare `:1458` (which INHERITED rentABuddy.ts and never meant it)
+ *           -> `routes/airport.ts:3498#blocks_unreadable`
+ *   trust   `rentABuddy.ts:1237`  -> `:1382#computeTrustScore`
+ *   vocab   `rentABuddy.ts:5959`  -> `:6692#buddy_no_show`
+ * SEVEN of those ten were ALREADY dead before this lane touched anything —
+ * `:1579` was a bare `}`, `:1237` a `.eq(...)` fragment, `:67` a comment fence — so the
+ * count falls by more than the three this lane broke. The gain is real and it
+ * is this lane's, not an inherited one: it was isolated by diffing the --list
+ * output before and after. Same rule as above. */
+export const MAX_DEAD_TARGETS = 154;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);

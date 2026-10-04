@@ -171,11 +171,15 @@ const SUMMARY = "/api/rent-a-buddy/me/earnings/summary";
 describe("the fee percentage comes from the schedule of record", () => {
   it("prices from the buddy's OWN level, and publishes which rate applied", async () => {
     buddyLevel = "pro";
-    feeRuleRow = { buddy_level: "pro", platform_fee_percent: 15, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 };
+    // 1500 basis points is not the flat rate, so the fixture carries the
+    // separate approval the owner decision of 2026-10-04 requires; without it
+    // the resolver refuses, which is asserted in rentBuddyFeeSchedule.test.ts.
+    feeRuleRow = { buddy_level: "pro", platform_fee_basis_points: 1500, commission_override_approval: "fixture-approved-override", traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 };
 
     const res = await get(SUMMARY);
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(res.body.buddyLevel, "pro");
+    assert.equal(res.body.platformFeeBasisPoints, 1500, "the rate of record is basis points");
     assert.equal(res.body.platformFeePercent, 15);
     assert.equal(res.body.estimatedPlatformFeeUsd, 30);   // 15 % of 200
     assert.equal(res.body.estimatedBuddyEarningsUsd, 170);
@@ -183,10 +187,11 @@ describe("the fee percentage comes from the schedule of record", () => {
 
   it("follows the schedule when the operator changes it — no deploy, no literal", async () => {
     buddyLevel = "new";
-    feeRuleRow = { buddy_level: "new", platform_fee_percent: 25, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 };
+    feeRuleRow = { buddy_level: "new", platform_fee_basis_points: 2500, commission_override_approval: "fixture-approved-override", traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 };
 
     const res = await get(SUMMARY);
     assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.platformFeeBasisPoints, 2500);
     assert.equal(res.body.platformFeePercent, 25);
     assert.equal(res.body.estimatedPlatformFeeUsd, 50);
     assert.notEqual(res.body.platformFeePercent, 22, "22 was the deleted dashboard literal");

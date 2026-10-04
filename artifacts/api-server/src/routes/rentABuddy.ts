@@ -50,9 +50,16 @@ import { readSlotFit, type SlotFit } from "../domain/trips/services/TripFreedomC
 // carry its own level-blind 0.15; see lib/rentBuddyFeeSchedule.ts for why a
 // numeric fallback was the defect rather than the safety net (M1 / M10).
 import {
+  applyBasisPoints,
+  basisPointsAsRateFraction,
+  basisPointsToPercent,
   describeFeeScheduleFailure,
   resolveFeeSchedule,
 } from "../lib/rentBuddyFeeSchedule.js";
+// The ONE place a booking's in-app / cash split is decided. The deposit rate is
+// zero (owner decision 2026-10-04) and that module's header says what was
+// deleted to make it so.
+import { splitBookingPayment } from "../services/rentBuddy/PricingService.js";
 import {
   findLaunchControlRow,
   normalizeLaunchControlKey,
@@ -2159,8 +2166,15 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
 
   const rateUsd = buddyProfile.hourly_rate_usd ? Number(buddyProfile.hourly_rate_usd) : 0;
   const totalUsd = Math.round(rateUsd * durationH * 100) / 100;
-  const depositUsd = paymentMode === "deposit_plus_cash" ? Math.round(totalUsd * 0.3 * 100) / 100 : totalUsd;
-  const cashBalanceUsd = paymentMode === "deposit_plus_cash" ? Math.round((totalUsd - depositUsd) * 100) / 100 : 0;
+  // NO DEPOSIT. Owner decision 2026-10-04; the reasoning and the list of what
+  // was deleted are in services/rentBuddy/PricingService.ts' header. This line
+  // used to hold a hard-coded deposit fraction of the total that ignored every
+  // deposit_percent column in the schema. The split is now computed in the one
+  // place that computes it for every booking-creation path.
+  const { depositUsd, cashBalanceUsd } = splitBookingPayment(
+    totalUsd,
+    paymentMode === "deposit_plus_cash" ? "none" : "full",
+  );
 
   // Availability exception / vacation-mode block — check before insert
   const blockingException = await findBlockingAvailabilityException(serviceClient, buddyId, bookingDate);
@@ -6433,7 +6447,14 @@ router.post("/rent-a-buddy/admin/launch-controls", async (req, res) => {
     countryCode = null, city = null, category = null, enabled = false,
     waitlistOnly = false, minAge = 18, nightlifeMinAge = 21,
     requireIdVerification = true, requirePhoneVerification = true,
-    fullPaymentRequired = false, minDepositPct = 30, notes,
+    // minDepositPct defaults to 0, not 30. An admin who creates a launch
+    // control without naming a deposit floor used to ship a 30 % one, which is
+    // the same hard-coded deposit fraction the booking route carried and the
+    // decision of 2026-10-04 removes. `min_deposit_pct` is WRITE-ONLY in this
+    // tree — nothing reads the column — so no money was ever computed from it;
+    // it is corrected so the admin screen stops advertising a floor that no
+    // booking honours.
+    fullPaymentRequired = false, minDepositPct = 0, notes,
   } = req.body ?? {};
 
   // PostgreSQL NULLs do not satisfy UNIQUE equality, so onConflict with nullable
@@ -7318,16 +7339,20 @@ export function nightlifePublicMeetupViolation(meetupLocation: string, category:
 // never short.
 //
 // THE TAKE RATE (M1), NOW CLOSED. This route used to carry its own fraction —
-// applied to every buddy at every level, so a `new` buddy (25 %) and an `elite`
-// buddy (12 %) were both shown a 15 % deduction, and only a `pro` buddy saw a
-// correct number, by coincidence. Verification V2 is discharged:
-// `rent_buddy_fee_rules` holds its five seed rows in production
-// (new 25 / rising 22 / pro 15 / elite 12 / city_ambassador 12), so the literal
-// is gone and the rate is resolved per buddy through the ONE reader,
-// `lib/rentBuddyFeeSchedule.ts`. There is deliberately no numeric fallback:
-// when the schedule cannot answer, this route refuses rather than publishing a
-// take rate nobody configured. See that module's header for why 22 was the
-// defect and not the safety net.
+// applied to every buddy at every level, so a `new` buddy and an `elite` buddy
+// were both shown the same deduction and only one level saw a correct number,
+// by coincidence. The literal is gone and the rate is resolved through the ONE
+// reader, `lib/rentBuddyFeeSchedule.ts`. There is deliberately no numeric
+// fallback: when the schedule cannot answer, this route refuses rather than
+// publishing a take rate nobody configured. See that module's header for why 22
+// was the defect and not the safety net.
+//
+// The rate is now a flat 10 % across every buddy level, carried as 1000 BASIS
+// POINTS (owner decision 2026-10-04, migration 3520). The per-level rates this
+// comment used to quote are history; nothing in this file names a rate.
+// `foldEarningsRows` takes basis points, not a fraction, so the fee is computed
+// by the one rounding rule in `applyBasisPoints` instead of by a float multiply
+// that is wrong on the half-cent.
 //
 // WHAT THIS DELIBERATELY DOES NOT CHANGE. `totalCashConfirmedUsd` keeps summing
 // cash_balance_usd for every non-disputed booking, confirmed or not; see the
@@ -7342,22 +7367,40 @@ const EARNINGS_STATUSES = ["completed", "disputed"] as const;
 interface EarningsMonth { month: string; totalUsd: number; bookingCount: number; inApp: number; cash: number; fees: number }
 
 /**
- * Fold booking rows into the summary, with byte-identical arithmetic to the
- * in-line loop this replaced:
+ * Fold booking rows into the summary:
  *   - month key   = first 7 chars of completed_at, else booking_date, else ""
- *   - fee         = round(total_usd * pct, 2)
+ *   - fee         = applyBasisPoints(total_usd, platformFeeBasisPoints)
  *   - disputed    → gross to totalDisputed, month's bookingCount +1, nothing else
  *   - otherwise   → deposit to inApp, cash_balance to cash, fee to fees,
  *                   (gross - fee) to the month's totalUsd
  *   - yearlyNet   = sum of the current year's monthly totalUsd
  * Exported so the concurrency/exactness tests can drive it directly.
+ *
+ * ── WHY THIS TAKES BASIS POINTS AND NOT A FRACTION ─────────────────────────
+ * It used to take `platformFeePct` as a decimal fraction and compute
+ * `Math.round(gross * pct * 100) / 100`. That is wrong on the half-cent: at
+ * 10 %, a $0.35 booking owes $0.035, which must round to $0.04, but
+ * `0.35 * 0.1` is 0.034999999999999996 in IEEE 754 and the expression yields
+ * $0.03. Taking basis points lets this call the single integer rounding rule
+ * (`applyBasisPoints`), which is also the rule the SQL aggregation path uses,
+ * so the two cannot disagree by a cent.
+ *
+ * `null` from the rounding rule means the row's total could not be priced. It
+ * is NOT treated as a zero fee: the row is counted as unpriceable and the
+ * caller is told, because a fee of zero computed from an unreadable total is a
+ * money figure invented from a failed read.
  */
-export function foldEarningsRows(rows: any[], platformFeePct: number, now: Date = new Date()) {
+export function foldEarningsRows(
+  rows: any[],
+  platformFeeBasisPoints: number,
+  now: Date = new Date(),
+) {
   let totalInApp = 0;
   let totalCashConfirmed = 0;
   let totalFees = 0;
   let totalDisputed = 0;
   const totalPending = 0;
+  const unpriceableBookingIds: string[] = [];
 
   const monthlyMap: Record<string, Omit<EarningsMonth, "month">> = {};
 
@@ -7366,7 +7409,15 @@ export function foldEarningsRows(rows: any[], platformFeePct: number, now: Date 
     if (!monthlyMap[month]) monthlyMap[month] = { totalUsd: 0, bookingCount: 0, inApp: 0, cash: 0, fees: 0 };
 
     const gross = Number(b.total_usd ?? 0);
-    const fee = Math.round(gross * platformFeePct * 100) / 100;
+    const feeOrNull = applyBasisPoints(gross, platformFeeBasisPoints);
+    if (feeOrNull === null) {
+      // The total is unreadable, so this booking has no computable fee and
+      // therefore no computable net. Name it and move on; do not fold a zero.
+      unpriceableBookingIds.push(String(b.id ?? "(unidentified booking)"));
+      monthlyMap[month].bookingCount += 1;
+      continue;
+    }
+    const fee = feeOrNull;
     const net = gross - fee;
 
     if (b.status === "disputed") {
@@ -7404,6 +7455,13 @@ export function foldEarningsRows(rows: any[], platformFeePct: number, now: Date 
     totalNetUsd: totalInApp + totalCashConfirmed - totalFees,
     yearlyNetUsd,
     monthlyBreakdown,
+    /**
+     * Bookings whose total could not be read, so whose fee and net are not in
+     * the totals above. Empty on every ordinary fold. Non-empty means the
+     * figures beside it are a SUBSET and the caller must say so rather than
+     * publishing them as a total.
+     */
+    unpriceableBookingIds,
   };
 }
 
@@ -7547,15 +7605,30 @@ router.get("/rent-a-buddy/dashboard/earnings/summary", async (req, res) => {
   const taxNote = "Tax documents are not available yet. Please keep your own records of earnings for tax purposes. A tax summary feature is planned for a future release.";
 
   // Preferred path: the whole aggregation happens in SQL and comes back as one
-  // row, so there is nothing for a row cap to truncate. The SQL function takes
-  // the rate as a FRACTION (0.15 == 15 %); the schedule stores a percentage.
+  // row, so there is nothing for a row cap to truncate.
+  //
+  // `rb_buddy_earnings_summary(uuid, numeric)` (migration 2330) is already
+  // applied with that signature and takes the rate as a decimal FRACTION, so
+  // the basis points are converted here rather than the function being
+  // rewritten. The conversion is exact: for an integer bps ≤ 10000 the quotient
+  // has at most four decimal places and the shortest round-trip JSON form of
+  // the nearest double IS that decimal, so PostgreSQL parses an exact `numeric`.
+  // SQL then rounds with `ROUND(numeric, 2)` — halves away from zero — which on
+  // non-negative amounts is the same rule as `applyBasisPoints`, so this path
+  // and the fold below agree cent for cent.
   const rpc = await rbRpc(serviceClient, "rb_buddy_earnings_summary", {
     p_buddy_id: (bp as any).id,
-    p_platform_fee_pct: rule.platformFeePercent / 100,
+    p_platform_fee_pct: basisPointsAsRateFraction(rule.platformFeeBasisPoints),
   });
   const agg = rpc.ok ? (Array.isArray(rpc.data) ? rpc.data[0] : rpc.data) : null;
   if (agg && typeof agg === "object" && agg.totalNetUsd !== undefined) {
-    return res.json({ ...agg, taxNote, buddyLevel: feeSchedule.buddyLevel, platformFeePct: rule.platformFeePercent });
+    return res.json({
+      ...agg,
+      taxNote,
+      buddyLevel: feeSchedule.buddyLevel,
+      platformFeeBasisPoints: rule.platformFeeBasisPoints,
+      platformFeePct: basisPointsToPercent(rule.platformFeeBasisPoints),
+    });
   }
 
   // Fallback: exhaustive pagination, same arithmetic. Not truncating either.
@@ -7566,11 +7639,29 @@ router.get("/rent-a-buddy/dashboard/earnings/summary", async (req, res) => {
     return res.status(503).json({ error: "db_error", message: "Earnings could not be totalled. Please try again." });
   }
 
+  const folded = foldEarningsRows(rows, rule.platformFeeBasisPoints);
+  if (folded.unpriceableBookingIds.length > 0) {
+    // Same reasoning as the null-rows branch above, one layer in: a total that
+    // silently omits bookings is indistinguishable from a smaller total.
+    req.log?.error(
+      {
+        userId: user.id, buddyProfileId: (bp as any).id,
+        unpriceableBookingIds: folded.unpriceableBookingIds,
+      },
+      "earnings summary refused: booking totals could not be priced",
+    );
+    return res.status(503).json({
+      error: "db_error",
+      message: "Earnings could not be totalled. Please try again.",
+    });
+  }
+
   return res.json({
-    ...foldEarningsRows(rows, rule.platformFeePercent / 100),
+    ...folded,
     taxNote,
     buddyLevel: feeSchedule.buddyLevel,
-    platformFeePct: rule.platformFeePercent,
+    platformFeeBasisPoints: rule.platformFeeBasisPoints,
+    platformFeePct: basisPointsToPercent(rule.platformFeeBasisPoints),
   });
 });
 
@@ -8087,6 +8178,10 @@ router.post("/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => {
     : null;
   const rateUsd = (buddyProfile as any).hourly_rate_usd ? Number((buddyProfile as any).hourly_rate_usd) : 0;
   const totalUsd = newDurationH != null ? Math.round(rateUsd * newDurationH * 100) / 100 : 0;
+  // A rebook is always full prepayment in app — the whole price, no deposit and
+  // no balance due later. Through the shared split so this path cannot drift
+  // from the canonical one.
+  const rebookSplit = splitBookingPayment(totalUsd, "full");
 
   const { data: newBooking, error } = await serviceClient
     .from("rent_buddy_bookings")
@@ -8104,8 +8199,8 @@ router.post("/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => {
       category: (original as any).category,
       notes: (original as any).notes ?? null,
       total_usd: totalUsd,
-      deposit_usd: totalUsd,
-      cash_balance_usd: 0,
+      deposit_usd: rebookSplit.depositUsd,
+      cash_balance_usd: rebookSplit.cashBalanceUsd,
       payment_mode: "full_in_app",
       status: "pending",
       safety_status: "normal",

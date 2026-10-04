@@ -5228,21 +5228,27 @@ export type Database = {
       rent_buddy_fee_rules: {
         Row: {
           buddy_level: string
+          commission_override_approval: string | null
           description: string | null
+          platform_fee_basis_points: number
           platform_fee_percent: number
           traveler_service_fee_pct: number
           traveler_service_fee_usd: number
         }
         Insert: {
           buddy_level: string
+          commission_override_approval?: string | null
           description?: string | null
+          platform_fee_basis_points: number
           platform_fee_percent: number
           traveler_service_fee_pct: number
           traveler_service_fee_usd: number
         }
         Update: {
           buddy_level?: string
+          commission_override_approval?: string | null
           description?: string | null
+          platform_fee_basis_points?: number
           platform_fee_percent?: number
           traveler_service_fee_pct?: number
           traveler_service_fee_usd?: number

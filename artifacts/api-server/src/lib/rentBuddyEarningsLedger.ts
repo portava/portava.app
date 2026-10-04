@@ -45,6 +45,7 @@ import { logger } from "./logger.js";
 import { buildBookingEntries, fromMinor, reconstructBalances } from "./creatorLedgerEntries.js";
 import { RENT_BUDDY_FEE_RULE_VERSION, toEarningsEntryRow } from "./creatorLedgerRows.js";
 import {
+  basisPointsToPercent,
   describeFeeScheduleFailure,
   platformFeeUsdFor,
   resolveFeeSchedule,
@@ -65,9 +66,17 @@ import {
  * behaviour — see the module header — and all three are logged at error level.
  */
 export type LedgerWriteResult =
-  | { status: "written"; bookingId: string; platformFeePercent: number }
+  | { status: "written"; bookingId: string; platformFeeBasisPoints: number }
   | { status: "skipped"; reason: "missing_arguments" | "buddy_not_found" }
   | { status: "fee_unresolved"; reason: "no_such_level" | "read_failed"; detail: string }
+  /**
+   * The rate resolved but the booking's own amounts could not be priced — a
+   * non-finite or negative `total_usd`, say. NO ROW IS WRITTEN, for the same
+   * reason `fee_unresolved` writes none: a fee of 0 computed from an unreadable
+   * total is a money figure nobody chose, and it is indistinguishable from a
+   * genuinely free booking.
+   */
+  | { status: "amount_unpriceable"; detail: string }
   | { status: "entries_refused"; reason: string; detail: string }
   | { status: "entries_write_failed"; detail: string }
   | { status: "write_failed"; detail: string };
@@ -121,6 +130,21 @@ export async function createEarningsLedgerEntry(
   // recorded amount is 0, exactly as it is today. Charging travellers is
   // Stage 4 and requires ruling R1; see travelerServiceFeeIsChargeable.
   const scheduledTravelerFee = travelerServiceFeeUsdFor(total, rule);
+
+  // Both pricing calls return null when the booking's amounts cannot be priced.
+  // That is NOT a zero fee — see `amount_unpriceable` above and
+  // `applyBasisPoints`' header. Refuse before anything is appended.
+  if (platformFeeAmount === null || scheduledTravelerFee === null) {
+    const detail =
+      `booking total_usd=${JSON.stringify(booking.total_usd)} cannot be priced ` +
+      `at ${rule.platformFeeBasisPoints} basis points`;
+    logger.error(
+      { bookingId: booking.id, buddyProfileId, buddyLevel, detail },
+      "earnings ledger NOT written: the booking's amounts could not be priced",
+    );
+    return { status: "amount_unpriceable", detail };
+  }
+
   const chargeable = await travelerServiceFeeIsChargeable(svc);
   const travelerServiceFeeAmount = chargeable ? scheduledTravelerFee : 0;
 
@@ -191,7 +215,13 @@ export async function createEarningsLedgerEntry(
     total_booking_usd: total,
     addons_usd: Number(booking.addons_total_usd ?? 0),
     tip_usd: Number(booking.tip_usd ?? 0),
-    platform_fee_percent: rule.platformFeePercent,
+    // The rate, recorded losslessly (3520). `platform_fee_percent` beside it is
+    // the LEGACY MIRROR: an `integer` column, so it is rounded HERE, visibly,
+    // rather than left to be rounded on its way into the column by PostgreSQL.
+    // Nothing computes money from the mirror — `platform_fee_amount` on the
+    // same row is the money, and it came from the basis points.
+    platform_fee_basis_points: rule.platformFeeBasisPoints,
+    platform_fee_percent: Math.round(basisPointsToPercent(rule.platformFeeBasisPoints)),
     platform_fee_amount: platformFeeAmount,
     traveler_service_fee_amount: travelerServiceFeeAmount,
     buddy_gross_amount: buddyGross,
@@ -213,5 +243,5 @@ export async function createEarningsLedgerEntry(
     return { status: "write_failed", detail: ledgerErr.message ?? String(ledgerErr) };
   }
 
-  return { status: "written", bookingId: booking.id, platformFeePercent: rule.platformFeePercent };
+  return { status: "written", bookingId: booking.id, platformFeeBasisPoints: rule.platformFeeBasisPoints };
 }

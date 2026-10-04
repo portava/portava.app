@@ -81,9 +81,13 @@ import { createEarningsLedgerEntry } from "../lib/rentBuddyEarningsLedger.js";
 // `defaultFeePercent = 22`; see lib/rentBuddyFeeSchedule.ts for why a numeric
 // fallback was the defect rather than the safety net (M1 / M10).
 import {
+  BASIS_POINTS_PER_UNIT,
+  FLAT_COMMISSION_BASIS_POINTS,
+  basisPointsToPercent,
   describeFeeScheduleFailure,
   platformFeeUsdFor,
   resolveFeeSchedule,
+  roundUsd,
 } from "../lib/rentBuddyFeeSchedule.js";
 import { isNonNumericCoord } from "../lib/coords.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
@@ -1418,8 +1422,13 @@ router.post("/rent-a-buddy/me/packages/v2", async (req, res) => {
       price_usd: priceUsd,
       max_group: maxGroup ?? 1,
       is_active: isActive ?? true,
-      deposit_required: depositRequired ?? true,
-      deposit_percent: depositPercent ?? 20,
+      // No deposit is taken on any booking path (owner decision 2026-10-04),
+      // so an experience created without naming a deposit does not advertise
+      // one. These defaults used to be `true` / 20, which told a traveller a
+      // 20 % deposit was required on a booking that then charged none —
+      // `calculateDeposit` has never read these columns.
+      deposit_required: depositRequired ?? false,
+      deposit_percent: depositPercent ?? 0,
       payment_modes_allowed: paymentModesAllowed ?? ["full_in_app"],
       included_stops: includedStops ?? [],
       included_services: includedServices ?? [],
@@ -1606,22 +1615,12 @@ router.post("/rent-a-buddy/packages/:packageId/book", async (req, res) => {
     applyRollout: true,
   })) return;
 
-  // Calculate deposit
-  const { data: travellerHistory } = await svc
-    .from("rent_buddy_bookings")
-    .select("id")
-    .eq("traveler_id", user.id)
-    .eq("status", "completed");
-
-  const completedCount = (travellerHistory ?? []).length;
-
+  // The in-app / cash split. No deposit is taken (owner decision 2026-10-04;
+  // see PricingService's header), so there is nothing here that depends on the
+  // traveller's booking history — the completed-bookings count this handler
+  // used to fetch fed the deleted deposit ladder and nothing else, so the
+  // unpaginated select that fetched it is gone with it.
   const depositResult = calculateDeposit({
-    category: p.category,
-    pricingType: "package",
-    buddyLevel: buddy.buddy_level,
-    travelerCompletedBookings: completedCount,
-    travelerId: user.id,
-    isGroupBooking: groupSize > 1,
     cashBalanceDisabled: l?.cash_balance_disabled ?? false,
     fullInAppRequired: l?.full_in_app_payment_required ?? false,
     disableDepositCash: buddy.disable_deposit_cash ?? false,
@@ -1823,23 +1822,11 @@ router.post("/rent-a-buddy/bookings/:bookingId/addons", async (req, res) => {
   const { data: limits } = await svc.from("rent_buddy_user_limits").select("*").eq("user_id", user.id).maybeSingle();
   const { data: buddyRow } = await svc.from("rent_buddy_profiles").select("*").eq("id", bk.buddy_id).maybeSingle();
 
-  // Real completed-bookings count for the traveler — hardcoding 0 treated every
-  // traveler as brand-new and inflated the recomputed deposit for repeat
-  // travelers (calculateDeposit lowers the deposit as this count rises).
-  const { data: travellerHistory } = await svc
-    .from("rent_buddy_bookings")
-    .select("id")
-    .eq("traveler_id", user.id)
-    .eq("status", "completed");
-  const travelerCompletedCount = (travellerHistory ?? []).length;
-
+  // The traveller's completed-bookings count used to be read here to feed the
+  // deposit ladder's "first-time traveller" floor. The ladder is gone (no
+  // deposit is taken — owner decision 2026-10-04), so the read is gone too
+  // rather than left behind computing nothing.
   const depositResult = calculateDeposit({
-    category: bk.category,
-    pricingType: bk.pricing_type ?? "hourly",
-    buddyLevel: (buddyRow as any)?.buddy_level ?? "new",
-    travelerCompletedBookings: travelerCompletedCount,
-    travelerId: user.id,
-    isGroupBooking: bk.is_group_booking ?? false,
     cashBalanceDisabled: (limits as any)?.cash_balance_disabled ?? false,
     fullInAppRequired: (limits as any)?.full_in_app_payment_required ?? false,
     disableDepositCash: (buddyRow as any)?.disable_deposit_cash ?? false,
@@ -2255,10 +2242,24 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
     .filter((b) => b.cash_balance_confirmed_by_buddy === true)
     .reduce((s, b) => s + Number(b.cash_balance_usd ?? 0), 0);
 
-  // Platform fee estimate — one take rate, from the schedule of record.
-  const feePercent = feeSchedule.rule.platformFeePercent;
+  // Platform fee estimate — one take rate, from the schedule of record, in
+  // basis points (3520), rounded by the one rule in `applyBasisPoints`.
+  const feeBasisPoints = feeSchedule.rule.platformFeeBasisPoints;
   const estimatedPlatformFee = platformFeeUsdFor(completedTotal, feeSchedule.rule);
-  const estimatedBuddyEarnings = Math.round((completedTotal - estimatedPlatformFee) * 100) / 100;
+  const estimatedBuddyEarnings =
+    estimatedPlatformFee === null ? null : roundUsd(completedTotal - estimatedPlatformFee);
+
+  // `null` means the completed total could not be priced. It is not a zero fee
+  // and must not be published as one on a buddy's own money screen — the same
+  // reasoning as the refusal two branches above, which is why it is the same
+  // refusal.
+  if (estimatedPlatformFee === null || estimatedBuddyEarnings === null) {
+    logger.error(
+      { userId: auth.user.id, buddyProfileId: buddyProfile.id, completedTotal, feeBasisPoints },
+      "earnings summary refused: the completed total could not be priced",
+    );
+    return sendError(res, 'db_error', "Earnings could not be totalled. Please try again.");
+  }
 
   res.json({
     isEstimated: true,
@@ -2283,8 +2284,11 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
     // The rate and the level it came from, published together so a buddy can
     // see WHICH schedule row priced them. Previously the percentage was never
     // returned at all, which is how three different rates coexisted unnoticed.
+    // The basis points are the rate; `platformFeePercent` is published beside
+    // them, derived, for the screens that still render a percentage.
     buddyLevel: feeSchedule.buddyLevel,
-    platformFeePercent: feePercent,
+    platformFeeBasisPoints: feeBasisPoints,
+    platformFeePercent: basisPointsToPercent(feeBasisPoints),
     estimatedPlatformFeeUsd: estimatedPlatformFee,
     estimatedBuddyEarningsUsd: estimatedBuddyEarnings,
     statusBreakdown: {
@@ -2348,7 +2352,17 @@ export function toLedgerEntryView(row: any) {
     totalBookingUsd: row.total_booking_usd,
     addonsUsd: row.addons_usd,
     tipUsd: row.tip_usd,
-    platformFeePercent: row.platform_fee_percent ?? null,
+    // The rate this row was priced at, in basis points (3520). `null` on rows
+    // written before 3520 — which is a fact about the row, not a rate — and the
+    // percentage is published beside it, DERIVED from the basis points when
+    // they exist and falling back to the row's own legacy mirror only when they
+    // do not. Neither is ever a number this function made up: see the mobile
+    // ledger screen, which used to render `platformFeePercent ?? 22`.
+    platformFeeBasisPoints: row.platform_fee_basis_points ?? null,
+    platformFeePercent:
+      row.platform_fee_basis_points != null
+        ? basisPointsToPercent(Number(row.platform_fee_basis_points))
+        : (row.platform_fee_percent ?? null),
     platformFeeAmount: row.platform_fee_amount,
     travelerServiceFeeAmount: row.traveler_service_fee_amount,
     buddyGrossAmount: row.buddy_gross_amount,
@@ -2657,6 +2671,28 @@ router.get("/rent-a-buddy/admin/pricing/outliers", async (req, res) => {
   res.json({ outliers: data ?? [] });
 });
 
+/**
+ * The operator's editor for the schedule of record.
+ *
+ * ── IT TAKES BASIS POINTS, AND IT REFUSES AN UNAPPROVED OVERRIDE ────────────
+ * The commission is a flat 10 % — 1000 basis points — across every buddy level
+ * (owner decision 2026-10-04), and a departure from it is permitted only when
+ * SEPARATELY APPROVED. The mechanism to vary the rate therefore stays, and this
+ * handler stays its editor; what it cannot do is approve.
+ * `rent_buddy_fee_rules.commission_override_approval` is not in this payload and
+ * is written by no route at all, so the only way to approve an override is a
+ * reviewed migration that names it.
+ *
+ * The database CHECK `rbfr_flat_rate_unless_approved` (3520) would refuse an
+ * off-flat write anyway. The explicit refusal below exists so the operator gets
+ * a sentence instead of a constraint-violation string, and so the rule is
+ * legible at the surface an operator actually touches.
+ *
+ * `platformFeePercent` is deliberately NOT accepted. Silently converting a
+ * percent to basis points would mean a client that still speaks the old field
+ * keeps editing the rate through a lossy integer, which is the expressibility
+ * defect 3520 removed. An ambiguous payload is rejected rather than guessed.
+ */
 router.patch("/rent-a-buddy/admin/fee-rules", async (req, res) => {
   const admin = await requireAdmin(req, res);
   if (!admin) return;
@@ -2667,10 +2703,36 @@ router.patch("/rent-a-buddy/admin/fee-rules", async (req, res) => {
 
   for (const upd of updates) {
     if (!upd.buddyLevel) continue;
+
+    if (upd.platformFeeBasisPoints === undefined || upd.platformFeeBasisPoints === null) {
+      return sendError(res, 'invalid_payload',
+        `platformFeeBasisPoints is required for '${upd.buddyLevel}' (10% = 1000). ` +
+        "The percent field is no longer accepted: an integer percent cannot " +
+        "express a fractional rate, which is why the schedule stores basis points.");
+    }
+
+    const basisPoints = Number(upd.platformFeeBasisPoints);
+    if (!Number.isInteger(basisPoints) || basisPoints < 0 || basisPoints > BASIS_POINTS_PER_UNIT) {
+      return sendError(res, 'invalid_payload',
+        `platformFeeBasisPoints for '${upd.buddyLevel}' must be a whole number ` +
+        `of basis points between 0 and ${BASIS_POINTS_PER_UNIT} (10% = 1000).`);
+    }
+
+    if (basisPoints !== FLAT_COMMISSION_BASIS_POINTS) {
+      return sendError(res, 'conflict',
+        `The platform commission is a flat ${FLAT_COMMISSION_BASIS_POINTS} basis ` +
+        `points (${basisPointsToPercent(FLAT_COMMISSION_BASIS_POINTS)}%) across all ` +
+        "Buddy levels. A market override requires separate approval and is " +
+        "recorded by a migration, not by this screen.");
+    }
+
     const { error: feeErr } = await svc.from("rent_buddy_fee_rules")
       .upsert({
         buddy_level: upd.buddyLevel,
-        platform_fee_percent: upd.platformFeePercent,
+        platform_fee_basis_points: basisPoints,
+        // The legacy mirror, rounded here rather than by the integer column it
+        // lands in. Nothing prices from it (3520).
+        platform_fee_percent: Math.round(basisPointsToPercent(basisPoints)),
         traveler_service_fee_usd: upd.travelerServiceFeeUsd ?? 0,
         traveler_service_fee_pct: upd.travelerServiceFeePct ?? 0,
         updated_at: new Date().toISOString(),
