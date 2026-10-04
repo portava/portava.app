@@ -19,12 +19,6 @@
  *   C3  CONTROL: no cache — the skeleton, then the network decides (no notice from nothing)
  *   C4  CONTROL: the first frame of a cached COMPLETE page states no notice
  *
- * census-discovery §123 (DV-83 round 24): a partial page says how to ask again. In list mode the notice and the
- * partial-empty state named no control (the map-mode card has "Try again"; the list had only the pull gesture):
- *   H4  a replayed cached partial page offers "Try again", and a press asks the network again
- *   H5  the partial-empty state offers "Try again", and a press asks the network again
- *   C5  CONTROL: a complete page offers no retry
- *
  * Run with: npx jest src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx
  */
 
@@ -248,6 +242,12 @@ describe('ForYouTab — the SWR replay keeps a partial page partial (§99)', () 
   });
 });
 
+// census-discovery §123 (DV-83 round 24): a partial page says how to ask again. In list mode the notice and the
+// partial-empty state named no control (the map-mode card has "Try again"; the list had only the pull gesture):
+//   H4  a replayed cached partial page offers "Try again", and a press asks the network again
+//   H5  the partial-empty state offers "Try again", and a press asks the network again
+//   C5  CONTROL: a complete page offers no retry
+// (Stated here, not in the header: census-discovery cites H1, H0 and C2 above by line.)
 describe('ForYouTab — a partial page offers a retry (§123)', () => {
   it('H4 a replayed cached partial page offers "Try again", and a press asks the network again', async () => {
     mockGetCachedDiscoveryPlaces.mockReturnValue(PARTIAL_PAGE);
