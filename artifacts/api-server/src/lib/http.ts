@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import type { Request, Response } from "express";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { getServiceClient, isServiceClientReady, _setTestServiceClient } from "./supabase";
-export { _setTestServiceClient } from "./supabase";
+export { _setTestServiceClient } from "./supabase"; import { readIdempotencyKey } from "./idempotencyKey"; // PAY-046 (09 §7): on this line so that no cited line below moves
 
 /**
  * Constant-time comparison for shared secrets (internal API keys, webhook
@@ -656,4 +656,34 @@ export async function canEditPlanItem(
   }
 
   return { permitted: true, role, creatorId, status };
+}
+
+// ---------------------------------------------------------------------------
+// Idempotency-Key — `09` §7 part 1, PAY-046
+// ---------------------------------------------------------------------------
+
+/**
+ * Require the `Idempotency-Key` header on a request that moves money.
+ *
+ * Returns the key, or null after having already written a 400
+ * `invalid_payload` whose `reason` is `idempotency_key_required` or
+ * `idempotency_key_malformed`. Callers `return` on null, exactly as with
+ * `requireUser`, and call this BEFORE any write or provider call: a money
+ * request that reaches a write without a key cannot be made safe afterwards.
+ *
+ * The key is handed, unchanged, to the ledger as `idempotencyKey` together
+ * with a `scope` that names the route and carries no person's id
+ * (`services/payments/PaymentLedger.ts`); the database's UNIQUE (scope,
+ * idempotency_key) index then decides whether the request is new, a replay, or
+ * the same key over different money. The shape rules, and what a present header
+ * does NOT prove, are in `lib/idempotencyKey.ts`.
+ *
+ * Not attached to any route here. The money routes that must call it belong to
+ * the workstreams that own them (tips, capture, refunds, payouts).
+ */
+export function requireIdempotencyKey(req: Request, res: Response): string | null {
+  const read = readIdempotencyKey(req.headers["idempotency-key"]);
+  if (read.ok) return read.key;
+  sendError(res, "invalid_payload", read.message, { reason: read.reason });
+  return null;
 }
