@@ -940,6 +940,30 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     needs: [preflight, live-db-slot, schema-drift]
+    # ORDERING, NOT GATING — the same change, for the same reason, as
+    # `api-server-check-all` above, whose comment argues it in full and names
+    # THIS job as one of the two that still skip. The ordering edge stays: this
+    # job must not race schema-drift's applier. What changes is that a red
+    # schema-drift no longer SKIPS it.
+    #
+    # WHY IT MATTERS HERE MORE THAN ANYWHERE. Measured: one migration
+    # hand-applied to the CI project ahead of its PR left a ledger row naming a
+    # file no commit on main carried, `certify:migrations` failed on it, and this
+    # job and its sibling SKIPPED for every main commit from 2026-10-01 13:13Z
+    # until 2026-10-02 23:45Z. The first skipped run was a `schedule` run on
+    # `b99787c81` — the same commit that had passed the day before — which is
+    # what proves a ledger row and not any code did it. For that window the RLS
+    # policy suite, the `profiles.role` write boundary and the `is_official`
+    # trigger asserted nothing.
+    #
+    # THE TRADE-OFF, STATED. On a PR branch schema-drift legitimately fails, so
+    # this job will now run against a CI database that does not carry the
+    # branch's own migration. It asserts RLS policies and write boundaries, not
+    # the branch's new objects, so that is expected to be a no-op — but it is a
+    # real change in when it runs, and a suite that does depend on an unapplied
+    # object would newly go red here. That red is the correct outcome under this
+    # workflow's governing rule: a skipped job must never read as success.
+    if: ${{ !cancelled() }}
     environment: ci-nonprod-supabase
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -1114,6 +1138,30 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: [preflight, live-db-slot, schema-drift]
+    # ORDERING, NOT GATING — the same change, for the same reason, as
+    # `api-server-check-all` above, whose comment argues it in full and names
+    # THIS job as one of the two that still skip. The ordering edge stays: this
+    # job must not race schema-drift's applier. What changes is that a red
+    # schema-drift no longer SKIPS it.
+    #
+    # WHY IT MATTERS HERE MORE THAN ANYWHERE. Measured: one migration
+    # hand-applied to the CI project ahead of its PR left a ledger row naming a
+    # file no commit on main carried, `certify:migrations` failed on it, and this
+    # job and its sibling SKIPPED for every main commit from 2026-10-01 13:13Z
+    # until 2026-10-02 23:45Z. The first skipped run was a `schedule` run on
+    # `b99787c81` — the same commit that had passed the day before — which is
+    # what proves a ledger row and not any code did it. For that window the RLS
+    # policy suite, the `profiles.role` write boundary and the `is_official`
+    # trigger asserted nothing.
+    #
+    # THE TRADE-OFF, STATED. On a PR branch schema-drift legitimately fails, so
+    # this job will now run against a CI database that does not carry the
+    # branch's own migration. It asserts RLS policies and write boundaries, not
+    # the branch's new objects, so that is expected to be a no-op — but it is a
+    # real change in when it runs, and a suite that does depend on an unapplied
+    # object would newly go red here. That red is the correct outcome under this
+    # workflow's governing rule: a skipped job must never read as success.
+    if: ${{ !cancelled() }}
     environment: ci-nonprod-supabase
     env:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}

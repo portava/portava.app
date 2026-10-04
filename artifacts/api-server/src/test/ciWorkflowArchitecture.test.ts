@@ -1304,6 +1304,488 @@ describe("CI architecture — the schema-drift job rehearses migrations (census-
 });
 
 /**
+ * THE LIVE-DB COVERAGE DETECTOR — the predicate, pinned.
+ *
+ * WHY THIS BLOCK EXISTS
+ * =====================
+ * `.github/workflows/live-db-coverage.yml` answers a question no other check
+ * in this repository asks: not "did the live-DB certification pass" but "does
+ * a `CI (live DB)` RUN EXIST AT ALL for this pull request's head SHA". It
+ * exists because a pull request with a merge conflict gets NO run created —
+ * GitHub cannot build the merge ref, so the `pull_request` event never fires,
+ * and `push: ['**']` was deliberately removed from that workflow on measured
+ * evidence (docs/ci/README.md § "Concurrency: the shared database is a queue,
+ * not a race"). `ci.yml` and `unwired-checks.yml` still run on `push` and
+ * report green, so the PR reads FULLY GREEN with no live-database
+ * certification and not even a grey entry for the missing one.
+ *
+ * Measured 2026-10-03: PR #530 (head 846f58e7…) 11 check runs all success, no
+ * live-DB name present, its branch's newest live-DB run against an EARLIER
+ * commit; PR #393 (head 1b78d3b6…) 10/10 success, dirty since 2026-09-05,
+ * newest live-DB run on its branch against a different commit.
+ *
+ * The predicate lives in `.github/scripts/live-db-coverage-decide.sh` and
+ * takes its listing on stdin, so it can be executed here with no network —
+ * the same split, for the same reason, as live-db-slot-decide.sh above. An
+ * unpinned predicate rots: this check will red `main`'s board when it fires,
+ * so a false positive is expensive and the cases that must NOT be flagged are
+ * asserted as hard as the cases that must.
+ *
+ * WHAT THIS BLOCK DOES NOT COVER, stated rather than implied:
+ *   * It does not execute the fetcher. The fetcher needs the Actions API, by
+ *     construction — that is why the predicate was split out of it. The
+ *     listings below are TRANSCRIBED from real API responses, so they pin what
+ *     the decider does with the truth, not that the fetcher reports the truth.
+ *   * It says nothing about whether the grace window is the right length, or
+ *     whether `commit.committer.date` is a sound clock. It is not: the field is
+ *     author-controlled, which is why the fetcher prefers the earliest
+ *     `created_at` among the SHA's own workflow runs and why `age_source` is on
+ *     every line.
+ */
+describe("CI architecture — a pull request with no live-DB run at all is caught", () => {
+  const DECIDER = resolve(REPO_ROOT, ".github/scripts/live-db-coverage-decide.sh");
+
+  /** Run the decider over a listing, exactly as the fetcher pipes it in. */
+  const decide = (listing: string, grace = "1800") => {
+    const r = spawnSync("bash", [DECIDER], {
+      input: listing,
+      encoding: "utf8",
+      env: { ...process.env, LIVE_DB_COVERAGE_GRACE_SECONDS: grace },
+    });
+    const field = (k: string) =>
+      new RegExp(`^${k}=(.*)$`, "m").exec(r.stdout ?? "")?.[1] ?? null;
+    return {
+      code: r.status,
+      stdout: r.stdout ?? "",
+      stderr: r.stderr ?? "",
+      checked: field("checked"),
+      covered: field("covered"),
+      tooNew: field("too_new"),
+      uncertified: field("uncertified"),
+      unmeasurable: field("unmeasurable"),
+      /** The decider's one-line verdict for a PR, e.g. "UNCERTIFIED". */
+      verdictOf: (pr: number) =>
+        new RegExp(`^pr=${pr} \\S+ verdict=(\\S+)`, "m").exec(r.stdout ?? "")?.[1] ?? null,
+    };
+  };
+
+  /**
+   * THE MEASURED LISTING, 2026-10-03T08:51:09Z, all 16 open pull requests, as
+   * the fetcher would have produced it. Columns:
+   *
+   *   <pr> <head_sha> <age_s> <age_source> <run_state> <gate> <horizon>
+   *
+   * Every `run_state` here was established from the API: a branch-filtered
+   * listing of `CI (live DB)` runs matched on exact `head_sha`, cross-checked
+   * against the head commit's check runs. The two load-bearing ages (#530,
+   * #393) are measured from the earliest `created_at` among each SHA's own
+   * workflow runs. Ages on COVERED rows are not load-bearing — `run`
+   * short-circuits before the window is consulted — and are left at 0, which
+   * is what the fetcher emits for them rather than spending an API call on a
+   * number nothing reads.
+   *
+   * The horizon was measured too: the oldest `CI (live DB)` run still visible
+   * is run_number 1, id 31362783748, created_at 2026-08-10T06:39:09Z, of 2894
+   * runs. Every open PR's head postdates it, so every row is `within` and no
+   * row is excused by retention.
+   */
+  const MEASURED_20261003 = [
+    "568 ea546d1ec2a233835693ec3c0dca15d9895bde27 0 first-ci-run run failure within",
+    "567 17bbe7359bc1aaf8c723b14de533d78b75c1b7ce 0 first-ci-run run success within",
+    "566 8c6a630d2f26afd58256a36d78ca4a452f8e699f 0 first-ci-run run none within",
+    "565 37439026ca6aae552196319b7c699eeb027885aa 0 first-ci-run run none within",
+    "564 c8b65fa7d26847a993a433fef3489f26615744db 0 first-ci-run run failure within",
+    "562 f38cb2364e96fd2b89b27b59fb09de62b1cd52c7 0 first-ci-run run none within",
+    "561 641d3170bcf15037996826ca5696d706fe8d9172 0 first-ci-run run none within",
+    "560 a7cc849fb06636048c315a0ac94fa50e0cbc23a7 0 first-ci-run run none within",
+    "549 fd0a600e19c0d4c2fbd9d549770e7de421f485d6 0 first-ci-run run success within",
+    "530 846f58e7c12781d2633648354b25a5b7c98e4da7 8129 first-ci-run no-run - within",
+    "521 6855e2d1daff902cb7ad6b365dab0e499ed91628 0 first-ci-run run success within",
+    "393 1b78d3b6a6e570aef6c1864b7b38a3e1a8bf80b6 2405224 first-ci-run no-run - within",
+    "89 42976b20acde328172b0ae68922093979a594505 0 first-ci-run run success within",
+    "65 cd1f4e1bb92340823f34c2008efd43b7d5c13008 0 first-ci-run run success within",
+    "54 9fa159a254859bfc586561a32d2a200ff089f916 0 first-ci-run run success within",
+    "52 158e4f0f99227aab8c5f8da45407294a1bf59399 0 first-ci-run run success within",
+  ].join("\n") + "\n";
+
+  it("keeps the predicate in a script with no network, so it can be executed here", () => {
+    assert.ok(
+      existsSync(DECIDER),
+      "live-db-coverage-decide.sh is missing. Inlining the predicate back into " +
+        "assert-live-db-coverage.sh makes it untestable by construction — the " +
+        "fetcher needs the Actions API.",
+    );
+    assert.ok(
+      (statSync(DECIDER).mode & 0o111) !== 0,
+      "live-db-coverage-decide.sh is not executable",
+    );
+  });
+
+  it("flags EXACTLY the two pull requests measured to have no run, out of 16", () => {
+    const r = decide(MEASURED_20261003);
+    assert.equal(r.checked, "16");
+    assert.equal(r.covered, "14");
+    assert.equal(
+      r.uncertified,
+      "#530@846f58e7c12781d2633648354b25a5b7c98e4da7 #393@1b78d3b6a6e570aef6c1864b7b38a3e1a8bf80b6",
+      "the detector must name #530 and #393 and nothing else. These are the two " +
+        "SHAs with no live-DB run at all; the other fourteen have one.",
+    );
+    assert.equal(r.unmeasurable, "", "no open PR's head predates the visible run history");
+    assert.equal(r.code, 1, "a missing certification must FAIL, not warn");
+  });
+
+  it("does NOT flag the four dirty pull requests that are fine", () => {
+    // THE WHOLE REASON THIS IS NOT KEYED ON `mergeable_state`. Six open PRs
+    // were dirty on 2026-10-03 — #549, #530, #521, #393, #54, #52 — and only
+    // two were in the bad state. #549's live-DB verdict is FAILURE, so it is
+    // visibly red; #521's and #54's are SUCCESS; #52's runs predate the trigger
+    // narrowing. Keying on the conflict would flag four PRs that are fine and
+    // would miss any future SHA that loses its run for some other reason.
+    const r = decide(MEASURED_20261003);
+    for (const pr of [549, 521, 54, 52]) {
+      assert.equal(
+        r.verdictOf(pr), "covered",
+        `#${pr} is dirty but HAS a run for its head SHA. Flagging it would make ` +
+          "this check a merge-conflict detector, which is the cause and not the symptom.",
+      );
+    }
+  });
+
+  it("does not flag a pull request whose run is still queued or in progress", () => {
+    // Measured: #562's head f38cb2364e had `CI (live DB)` run 37110875715 in
+    // state `queued`, and #560's 37109728991 was `in_progress` with its gate
+    // job not yet started (gate=none). A run that exists but has not finished
+    // RENDERS in the check list; absence does not. Treating "no conclusion yet"
+    // as "no run" would flag every PR in its first few minutes.
+    const r = decide(MEASURED_20261003);
+    assert.equal(r.verdictOf(562), "covered");
+    assert.equal(r.verdictOf(560), "covered");
+  });
+
+  it("does not flag a superseded SHA whose run was CANCELLED", () => {
+    // Verified: run 37103666245 is `conclusion: cancelled` and its verdict job
+    // 111149624241 is `failure`, so that SHA is already visibly red and a later
+    // commit gets certified. 24 of the 98 runs on one branch sampled that day
+    // were cancelled. Flagging this population would bury the real signal in
+    // roughly a quarter of all SHAs.
+    const r = decide("777 c04c7a5c44000000000000000000000000000000 7000 first-ci-run run failure within\n");
+    assert.equal(r.verdictOf(777), "covered");
+    assert.equal(r.code, 0, "a run that exists and failed is a DIFFERENT, already-visible problem");
+  });
+
+  it("does not flag a SHA pushed moments ago, and does flag the same SHA later", () => {
+    // Run CREATION is near-instant but not synchronous with anything, and
+    // GitHub delays it under load. Without the window this would flag the very
+    // SHA that was just pushed — a false positive on a healthy repository,
+    // which is the one failure mode that gets a check deleted.
+    const fresh = "999 abcdef1234000000000000000000000000000000 120 first-ci-run no-run - within\n";
+    const stale = "999 abcdef1234000000000000000000000000000000 1800 first-ci-run no-run - within\n";
+    assert.equal(decide(fresh).verdictOf(999), "inside-window");
+    assert.equal(decide(fresh).code, 0);
+    assert.equal(decide(stale).verdictOf(999), "UNCERTIFIED");
+    assert.equal(decide(stale).code, 1, "the window is a delay, not an exemption");
+  });
+
+  it("treats a SHA stamped in the future as inside the window, not as a finding", () => {
+    // A negative age means the clock disagrees, or the commit was forward-dated.
+    // Neither is evidence that a run is missing.
+    const r = decide("999 abcdef1234000000000000000000000000000000 -45 commit-date no-run - within\n");
+    assert.equal(r.verdictOf(999), "inside-window");
+    assert.equal(r.code, 0);
+  });
+
+  it("reports UNMEASURABLE, separately and still red, for a SHA past the retention horizon", () => {
+    // GitHub DELETES workflow runs once log retention elapses, and a SHA can
+    // also predate the workflow. In either case a run may genuinely have
+    // existed and certified the commit, so "no run" is not evidence. Calling
+    // that UNCERTIFIED would be a false accusation against every long-lived PR,
+    // arriving on a schedule, forever.
+    //
+    // It is NOT silently excused either: an unestablished result is not a pass
+    // in this repository, so it fails — under its own name, with its own count,
+    // because the remedy differs (a run, versus a human deciding whether a PR
+    // that old should still be open).
+    const r = decide("7 1111111111111111111111111111111111111111 99999999 commit-date no-run - before\n");
+    assert.equal(r.verdictOf(7), "UNMEASURABLE");
+    assert.equal(r.uncertified, "", "an unmeasurable SHA must NOT be reported as uncertified");
+    assert.equal(r.unmeasurable, "#7@1111111111111111111111111111111111111111");
+    assert.equal(r.code, 1, "unmeasurable is the weakest state, and it is not a pass");
+  });
+
+  it("reports UNMEASURABLE when the horizon itself could not be established", () => {
+    // The fetcher sets horizon=unknown rather than exiting, so the check still
+    // reports — with the weaker claim it can actually support.
+    const r = decide("7 1111111111111111111111111111111111111111 99999999 commit-date no-run - unknown\n");
+    assert.equal(r.verdictOf(7), "UNMEASURABLE");
+    assert.equal(r.code, 1);
+  });
+
+  it("REFUSES a listing it cannot parse rather than skipping the line", () => {
+    // A listing we cannot parse is not a listing that proves every PR is
+    // certified. Skipping the bad line is how a parser bug becomes a green
+    // check: the one row that failed to render is exactly the row most likely
+    // to be the finding.
+    const withGarbage =
+      "530 846f58e7c12781d2633648354b25a5b7c98e4da7 8129 first-ci-run no-run - within\n" +
+      "this is not a listing line\n";
+    const r = decide(withGarbage);
+    assert.equal(r.code, 3, "an unparseable listing must be refused, not partially trusted");
+    assert.match(r.stderr, /refusing to decide from a listing that did not parse/);
+  });
+
+  it("REFUSES an unrecognised run_state instead of assuming it means covered", () => {
+    const r = decide("530 846f58e7c12781d2633648354b25a5b7c98e4da7 8129 first-ci-run maybe - within\n");
+    assert.equal(r.code, 3);
+  });
+
+  it("reports an empty listing as vacuous rather than clean", () => {
+    // "No open pull requests" and "the fetcher handed me nothing" are the same
+    // bytes here, and only the fetcher can tell them apart — it cross-checks an
+    // empty pulls listing against the repository's own open-issue count before
+    // this script ever sees it. So the decider says what it actually knows.
+    const r = decide("");
+    assert.equal(r.checked, "0");
+    assert.equal(r.code, 0);
+    assert.match(
+      r.stderr, /NOTHING was certified and nothing was checked. This is vacuous, not clean/,
+      "a zero must never be printed as if it were a pass",
+    );
+  });
+
+  it("refuses a grace window that is not a number of seconds", () => {
+    const r = decide(MEASURED_20261003, "soon");
+    assert.equal(r.code, 64, "a misconfigured window must be a usage error, not a default");
+  });
+
+  it("control: emptying the predicate's finding cannot be mistaken for a clean run", () => {
+    // The mutation this guards against is the obvious one — make every row read
+    // `run` and the check goes green forever. The assertion is that the
+    // MEASURED listing produces a NON-ZERO exit, so a tree in which #530 and
+    // #393 are genuinely fixed will still execute this block against the
+    // recorded bytes rather than against today's API.
+    const allCovered = MEASURED_20261003.replace(/no-run -/g, "run success");
+    assert.equal(decide(allCovered).code, 0, "precondition: a fully covered listing passes");
+    assert.equal(decide(MEASURED_20261003).code, 1, "the recorded defect must still be seen");
+  });
+});
+
+/**
+ * The coverage workflow's own shape. Three things about it are load-bearing and
+ * were each arrived at by getting them wrong first, so they are pinned.
+ */
+describe("CI architecture — the coverage detector is repo-wide, not per-branch", () => {
+  const coverage = readFileSync(resolve(WF, "live-db-coverage.yml"), "utf8");
+
+  it("never triggers per-branch", () => {
+    // IT WAS BUILT AS A JOB IN ci.yml FIRST, AND THAT WAS WRONG. The question
+    // is repo-wide — "does EVERY open PR have a run" — and ci.yml is
+    // per-branch, so one stale conflicted PR would turn every branch's CI red.
+    // Worse, the verdict block above requires every ci.yml job to be in
+    // `ci-verdict`'s `needs:`, and ci-verdict is the context branch protection
+    // is meant to require: one conflicted PR nobody is working on would then
+    // block the merge of every other PR. A repo-wide question gets a repo-wide
+    // trigger and reds its own board only.
+    const on = triggerBlock(coverage);
+    assert.ok(
+      !/pull_request:/.test(on),
+      "live-db-coverage.yml must not trigger on `pull_request`: it would then " +
+        "report one PR's problem on another PR's check list.",
+    );
+    assert.ok(
+      !/branches:\s*\['\*\*'\]/.test(on),
+      "live-db-coverage.yml must not trigger on every branch — see above.",
+    );
+    assert.match(
+      on, /push:\s*\n\s*branches:\s*\[main\]/,
+      "a merge to main is the event that MAKES open PRs conflict, so it is the " +
+        "causal trigger and must stay",
+    );
+    assert.match(
+      on, /schedule:/,
+      "the state also changes with no push at all — a run can be deleted, and a " +
+        "head SHA can cross the retention horizon while the repository sits idle",
+    );
+  });
+
+  it("does not collide with the other scheduled workflows", () => {
+    // GitHub names the top of the hour as a high-load time and delays scheduled
+    // runs under it, which is why every cron in this repository is off the hour
+    // and offset from the others.
+    const cron = /-\s*cron:\s*'([^']+)'/.exec(triggerBlock(coverage))?.[1] ?? "";
+    assert.ok(cron.length > 0, "no cron found");
+    const minute = cron.split(" ")[0];
+    assert.notEqual(minute, "0", "a cron on the hour is the one GitHub delays");
+    for (const taken of ["17", "47", "23"]) {
+      assert.notEqual(
+        minute, taken,
+        `minute ${taken} is already used by live-db.yml (17 6), ` +
+          "clean-build-proof.yml (47 3) or story-retention.yml (23 *)",
+      );
+    }
+  });
+
+  it("carries its own verdict, so a cancelled detector is not a pass", () => {
+    // The `concurrency` group cancels a superseded pass, and a workflow whose
+    // only job was cancelled does not read as failed in every surface. This is
+    // the same job live-db.yml, ci.yml and unwired-checks.yml each carry, for
+    // the same reason.
+    assert.match(coverage, /^ {2}coverage-verdict:$/m, "no verdict job");
+    const block = coverage.slice(coverage.indexOf("\n  coverage-verdict:\n"));
+    assert.match(block, /if:\s*\$\{\{\s*always\(\)\s*\}\}/, "the verdict must be `if: always()`");
+    assert.match(block, /needs:\n\s+- coverage\b/, "the verdict must need the detector");
+    assert.match(block, /needs\.coverage\.result/, "the verdict must READ the detector's result");
+    assert.match(block, /"coverage:\$R_COVERAGE"/, "the result must reach the comparison as an operand");
+    assert.match(
+      block, /!=\s*"success"/,
+      "anything that is not success — skipped, cancelled, failure — must be red",
+    );
+  });
+
+  it("stays credential-free and read-only", () => {
+    // The condition this workflow reports is "the credentialed lane did not
+    // run", so it must not be able to fail for the same reasons that lane does.
+    assert.ok(
+      !/secrets\./.test(coverage),
+      "live-db-coverage.yml must read no repository secret — it uses github.token",
+    );
+    for (const scope of ["actions: read", "pull-requests: read", "contents: read"]) {
+      assert.ok(coverage.includes(scope), `the permissions block must declare \`${scope}\``);
+    }
+    assert.ok(
+      !/\b(write|write-all)\b/.test(/permissions:\n(?:\s+\S+:.*\n)+/.exec(coverage)?.[0] ?? ""),
+      "no scope here may be writable",
+    );
+  });
+});
+
+/**
+ * CI architecture — the two strings the coverage detector identifies its
+ * target by, pinned the way the three verdict contexts above are pinned.
+ *
+ * WHY. `.github/scripts/assert-live-db-coverage.sh` asks its question about one
+ * named workflow and one named job, and it finds them BY THOSE NAMES:
+ *
+ *   WORKFLOW_NAME   = 'CI (live DB)'
+ *   GATE_JOB_PREFIX = 'api-server · check:all + live_pulse gate'
+ *
+ * Neither is derived, and neither can be: they are the published identities —
+ * what appears in a pull request's check list and what a required status check
+ * is matched against — and a derived assertion would simply follow a rename and
+ * prove nothing. Exactly the reasoning in the VERDICTS block above.
+ *
+ * The two halves fail DIFFERENTLY if a rename is not mirrored here, and that
+ * asymmetry is the reason this block exists:
+ *
+ *   * WORKFLOW_NAME is fail-closed. An unresolvable name exits 1 with "could
+ *     not resolve the workflow id", verified by fixture in
+ *     src/test/liveDbCoverageFetcher.test.ts. Loud.
+ *
+ *   * GATE_JOB_PREFIX is NOT. The lookup is `select(.name | startswith(...))`
+ *     and a miss is normalised to `gate=unknown` — a legitimate state for a run
+ *     whose gate job was skipped out of the job list, so it cannot be made
+ *     fatal without flagging PRs that are fine. A rename therefore degrades the
+ *     (b) half of the question to `unknown` for EVERY pull request, silently,
+ *     while the check stays green. That is the shape of defect this whole lane
+ *     is about, so the rename is caught here instead.
+ *
+ * Both separators are U+00B7 MIDDLE DOT, written as an escape so a copy-paste
+ * through a lossy editor cannot substitute a hyphen or an ASCII dot and leave
+ * the file looking right.
+ */
+describe("CI architecture — the live-DB coverage detector's target names are pinned", () => {
+  const FETCHER_PATH = resolve(REPO_ROOT, ".github/scripts/assert-live-db-coverage.sh");
+  const fetcher = existsSync(FETCHER_PATH) ? readFileSync(FETCHER_PATH, "utf8") : "";
+
+  /** `name:` of live-db.yml — the workflow whose absence is being detected. */
+  const WORKFLOW_NAME = "CI (live DB)";
+  /** The leading segment of the gate job's `name:`; the published name adds
+   *  " (needs credentials)", which is prose rather than identity. */
+  const GATE_JOB_PREFIX = "api-server · check:all + live_pulse gate";
+
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+  it("the detector exists (nothing below means anything if it does not)", () => {
+    assert.ok(
+      fetcher.length > 0,
+      `${FETCHER_PATH} is missing. The live-DB coverage detector is the only thing that ` +
+        "observes a pull request whose head SHA got no `CI (live DB)` run at all — an " +
+        "absence that renders as nothing in the check list, not as a grey or red entry.",
+    );
+  });
+
+  it("WORKFLOW_NAME is the literal 'CI (live DB)'", () => {
+    assert.match(
+      fetcher, new RegExp(`^WORKFLOW_NAME='${esc(WORKFLOW_NAME)}'$`, "m"),
+      `assert-live-db-coverage.sh no longer sets WORKFLOW_NAME to exactly ` +
+        `${JSON.stringify(WORKFLOW_NAME)}. That string is how the detector finds the workflow ` +
+        "whose runs it counts; it is resolved through the Actions API by `name:`, not by " +
+        "filename or numeric id. If the workflow was renamed, change it in live-db.yml, in " +
+        "this script, in the required-status-check settings and in this literal — all four, in " +
+        "one change.",
+    );
+  });
+
+  it("WORKFLOW_NAME is live-db.yml's actual `name:` — the two cannot drift apart", () => {
+    assert.match(
+      liveDb, new RegExp(`^name: ${esc(WORKFLOW_NAME)}$`, "m"),
+      `live-db.yml's \`name:\` is not exactly ${JSON.stringify(WORKFLOW_NAME)}, so the ` +
+        "coverage detector is looking for a workflow that no longer exists under that name. " +
+        "Its lookup fails closed, so this is a red build rather than a false green — but it " +
+        "reds on every run until both sides are changed together.",
+    );
+  });
+
+  it("GATE_JOB_PREFIX is the literal 'api-server · check:all + live_pulse gate'", () => {
+    assert.match(
+      fetcher, new RegExp(`^GATE_JOB_PREFIX='${esc(GATE_JOB_PREFIX)}'$`, "m"),
+      `assert-live-db-coverage.sh no longer sets GATE_JOB_PREFIX to exactly ` +
+        `${JSON.stringify(GATE_JOB_PREFIX)}. Unlike WORKFLOW_NAME this one does NOT fail ` +
+        "closed: a prefix that matches no job is normalised to `gate=unknown`, which is also " +
+        "the legitimate reading for a run whose gate job was skipped out of its job list. So a " +
+        "stale prefix reports `unknown` for every pull request while the check stays green — " +
+        "the (b) half of the question answered by nothing at all.",
+    );
+  });
+
+  it("GATE_JOB_PREFIX actually prefixes the job name live-db.yml declares", () => {
+    const m = /^ {4}name: (api-server · check:all.*)$/m.exec(liveDb);
+    assert.ok(
+      m,
+      "live-db.yml declares no job whose `name:` begins 'api-server · check:all'. That job is " +
+        "the live-database certification itself; GATE_JOB_PREFIX in " +
+        ".github/scripts/assert-live-db-coverage.sh is matched against it with " +
+        "`startswith()`, and a prefix matching nothing degrades to `gate=unknown` without " +
+        "failing. Re-derive both.",
+    );
+    assert.ok(
+      m[1].startsWith(GATE_JOB_PREFIX),
+      `the gate job publishes as ${JSON.stringify(m[1])}, which does not start with ` +
+        `${JSON.stringify(GATE_JOB_PREFIX)}. \`startswith()\` therefore matches nothing and ` +
+        "the detector's (b) half silently reports `unknown` for every pull request. Update the " +
+        "prefix in assert-live-db-coverage.sh and this literal together.",
+    );
+  });
+
+  it("both separators are U+00B7 MIDDLE DOT, in the script and in the workflow", () => {
+    // Pinned explicitly because the three characters are visually
+    // indistinguishable at a glance and two of them break the match silently.
+    for (const [what, text] of [
+      ["GATE_JOB_PREFIX in assert-live-db-coverage.sh", /^GATE_JOB_PREFIX='api-server (.) check:all/m.exec(fetcher)?.[1]],
+      ["the gate job's `name:` in live-db.yml", /^ {4}name: api-server (.) check:all/m.exec(liveDb)?.[1]],
+    ] as const) {
+      assert.equal(
+        text, "·",
+        `${what} does not use U+00B7 MIDDLE DOT as its separator (got ` +
+          `${text === undefined ? "no match at all" : `U+${text.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}`}). ` +
+          "U+00B7, U+2022 BULLET and a plain ASCII '.' all look alike here, and the job name " +
+          "is matched as a byte string.",
+      );
+    }
+  });
+});
+
+/**
  * The run listing the slot loop polls, measured 2026-10-03.
  *
  * The loop used to page through the workflow's WHOLE run history every poll

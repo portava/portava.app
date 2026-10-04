@@ -1091,6 +1091,18 @@ serializes the DB jobs into two waves rather than four abreast —
 having gained `needs: schema-drift` so no suite asserts schema state mid-apply —
 but two jobs of one run still overlap on the database.
 
+That edge is **ordering, not gating**: all three of the jobs that `needs:`
+`schema-drift` carry `if: ${{ !cancelled() }}`, so a red `schema-drift` makes
+them run late rather than not at all. Without it they skipped, and a skipped job
+is scored as a pass — see [A skipped job is scored as a
+pass](#a-skipped-job-is-scored-as-a-pass). That is not hypothetical: one
+migration hand-applied to the CI project ahead of its PR failed
+`certify:migrations` on a ledger row naming a file no commit on main carried, and
+both live-DB suites skipped for every main commit from 2026-10-01 13:13Z to
+2026-10-02 23:45Z. The cost is that on a PR branch, where `schema-drift`
+legitimately fails because the branch's own migration is never applied here,
+these suites now run against a database without it.
+
 What keeps them from colliding today is that they own disjoint fixtures:
 distinct fixture-email prefixes (`isSweepableFixtureUser` in
 `src/test/liveFixtureUsers.ts` additionally refuses to delete an account that

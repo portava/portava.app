@@ -1,0 +1,309 @@
+# live-db-coverage.yml — DOES EVERY OPEN PULL REQUEST HAVE A LIVE-DB RUN AT ALL.
+#
+# THE DEFECT, MEASURED 2026-10-03.
+#
+# A pull request with a merge conflict gets NO `CI (live DB)` workflow run
+# created. GitHub cannot build the merge ref, so it never fires the
+# `pull_request` event. `ci.yml` and `unwired-checks.yml` still run on `push`
+# and report green, so the PR's check list reads FULLY GREEN with no
+# live-database certification and not even a grey entry for the missing one.
+#
+#   PR #530, head 846f58e7…  11 check runs, all success, no live-DB check-run
+#                             name present at all. Its branch's newest live-DB
+#                             run (37097887542) was against an EARLIER commit,
+#                             0cb20f42….
+#   PR #393, head 1b78d3b6…  10 check runs, all success, dirty since
+#                             2026-09-05. Newest live-DB run on its branch
+#                             (33961248341) against a different commit.
+#
+# This is the same class of failure as PR #339's 20/20 green with zero live-DB
+# entries (docs/ci/README.md), with a different cause: there the runs were
+# evicted, here they were never created.
+#
+# WHY THE FIX CANNOT LIVE IN live-db.yml
+# --------------------------------------
+# Nothing a workflow declares makes an event fire that GitHub never sent. The
+# trigger that would have covered it, `push: ['**']`, was deliberately removed
+# on measured evidence — 64 of 100 runs cancelled, 23 failure, 12 success, and
+# 45% of commits receiving NO verdict at all — see docs/ci/README.md
+# § "Concurrency: the shared database is a queue, not a race". Re-adding it
+# would reintroduce exactly the defect that change fixed. The absence is only
+# observable from OUTSIDE the missing run, which is what this file is.
+#
+# WHY THIS IS ITS OWN WORKFLOW AND NOT A JOB IN ci.yml
+# ----------------------------------------------------
+# It was built as a job in `ci.yml` first, and that was wrong for a structural
+# reason worth writing down so it is not re-attempted.
+#
+# The question is REPO-WIDE: "does every open PR have a run". `ci.yml` is
+# PER-BRANCH — it triggers on `push: ['**']` and `pull_request`. So a single
+# stale conflicted PR that nobody is working on would turn EVERY branch's CI
+# red. Worse, src/test/ciWorkflowArchitecture.test.ts requires every job in
+# `ci.yml` to appear in `ci-verdict`'s `needs:` ("Every job added to this
+# workflow must be added to the verdict in the same commit"), and `ci-verdict`
+# is the context branch protection is meant to require on `main`. The result
+# would be one conflicted PR blocking the merge of every other PR — a far
+# larger blast radius than the defect being reported.
+#
+# A repo-wide question therefore gets a repo-wide trigger, and reds its own
+# board and nothing else. `ci.yml` is untouched.
+#
+# WHY IT IS CREDENTIAL-FREE AND MUST STAY THAT WAY
+# ------------------------------------------------
+# It reads GitHub's own run history and nothing else: no secret, no database,
+# no Supabase project. It uses `github.token`, the automatically-minted per-run
+# token, not a configured repository secret. That matters beyond tidiness — the
+# condition this workflow reports is "the credentialed lane did not run", so it
+# must not be able to fail for the same reasons that lane does.
+#
+# THE TRIGGERS, AND WHAT EACH ONE IS FOR
+# --------------------------------------
+#   push: [main]   The CAUSAL event. A merge to `main` is what makes an open PR
+#                  conflict, so this is the moment the population of at-risk
+#                  PRs changes. Nothing per-branch and nothing on
+#                  `pull_request`: see above.
+#   schedule       The backstop, because the state can also change with no
+#                  push at all — a run can be deleted, and a PR's head can
+#                  cross the log-retention horizon while the repository sits
+#                  idle. `41 */6 * * *` is deliberately off the hour (GitHub
+#                  names the top of the hour as a high-load time and delays
+#                  scheduled runs under it) and deliberately offset from
+#                  live-db.yml's `17 6`, clean-build-proof.yml's `47 3` and
+#                  story-retention.yml's `23 *`. Six-hourly rather than daily
+#                  because the worst-case time a conflicted PR spends looking
+#                  fully green is the cadence; rather than hourly because the
+#                  state does not change that fast and each pass costs ~2N API
+#                  calls.
+#   workflow_dispatch  So a human can ask the question now, which is also how
+#                  you confirm a fix without waiting for the cron.
+#
+# TWO KNOWN COSTS OF `schedule`, STATED RATHER THAN DISCOVERED LATER, both of
+# them already documented in story-retention.yml's header:
+#   * On a PUBLIC repository GitHub DISABLES a scheduled workflow after 60 days
+#     with no repository activity. That is structurally the same failure this
+#     file reports — a check that stops without telling anyone. `push: [main]`
+#     is the half that does not expire, and it is why there are two triggers
+#     rather than one.
+#   * A `schedule` only ever runs from the DEFAULT BRANCH. Until this file is
+#     on `main` the cron does nothing; `workflow_dispatch` is how it is
+#     exercised before then.
+#
+# WHAT A RED HERE MEANS
+# ---------------------
+# Two states, never merged, because the remedies differ:
+#   UNCERTIFIED   no run exists for this head SHA and the absence is real.
+#                 Resolve the conflict and push, or dispatch `CI (live DB)`
+#                 against the branch.
+#   UNMEASURABLE  the head SHA predates the oldest `CI (live DB)` run still
+#                 visible, so a run may have existed and been deleted by log
+#                 retention. Nothing is established — decide whether a PR that
+#                 old should still be open.
+# Both FAIL. Neither is a claim that the database is broken, and neither is a
+# claim that any certification PASSED; existence is all that is asserted.
+
+name: live-DB coverage
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '41 */6 * * *'
+  workflow_dispatch:
+
+# Least privilege, and every scope is read-only. `actions: read` lists this
+# repository's workflow runs; `pull-requests: read` lists the open PRs;
+# `contents: read` is what actions/checkout needs. Nothing here writes
+# anything, comments on anything or publishes anything.
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+
+# One pass at a time, and a superseded pass is CANCELLED rather than queued:
+# the answer is a snapshot of the open PRs, so an older in-flight pass is
+# answering a question the newer one is about to answer better. A cancelled run
+# renders as "cancelled", not as success, and the verdict job below treats it
+# as a failure, so this cannot hide anything.
+concurrency:
+  group: live-db-coverage
+  cancel-in-progress: true
+
+jobs:
+  # ───────────────────────────────────────────────────────────────────────────
+  # The detector. FAILS, never warns, and fails the same way when it cannot
+  # establish its result: an unreadable Actions API, an unresolvable workflow
+  # name, an unreadable head-commit date and an empty PR listing that the
+  # repository's own open-issue count contradicts all exit non-zero. "I could
+  # not see a missing run" is not "no run is missing" — the rule stated at the
+  # top of ci.yml and in run_gate() in
+  # artifacts/api-server/scripts/run-all-checks.sh.
+  #
+  # The predicate itself is in .github/scripts/live-db-coverage-decide.sh,
+  # which takes the per-PR listing on stdin and touches no network, so it is
+  # executed by src/test/ciWorkflowArchitecture.test.ts against the listing
+  # measured on 2026-10-03 rather than trusted. That is the same split as
+  # live-db-acquire-slot.sh / live-db-slot-decide.sh, for the same reason: only
+  # the fetcher needs the network, and only the decision can be wrong.
+  # ───────────────────────────────────────────────────────────────────────────
+  coverage:
+    name: live-DB coverage · every open PR head SHA has a run
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # ─────────────────────────────────────────────────────────────────────
+      # REFUSE TO START WITHOUT THE BUDGET THIS PASS NEEDS.
+      #
+      # The Actions API limit is 1000 requests/hour PER REPOSITORY for the
+      # default token, not per workflow, so this pass shares one pool with
+      # every concurrent live-db-acquire-slot.sh poller and everything else
+      # in the repository. Measured 2026-10-03: that poller paginates all
+      # ~2894 runs of live-db.yml on EVERY 20-second poll, so a single
+      # waiting job can drain the pool on its own, and a run of live-db.yml
+      # then spends ~940s receiving nothing but 403s.
+      #
+      # Without this step, a drained pool reaches the assert script as a
+      # mid-pass 403. It fails closed, which is correct, but it fails having
+      # already spent requests the repository did not have, and the reader
+      # is sent to fix an `actions: read` scope that was never wrong. So:
+      # establish the budget BEFORE spending any of it, and when it is not
+      # there, refuse cheaply and say exactly why.
+      #
+      # `GET /rate_limit` is documented as not counting against the core
+      # quota, so asking is free. That is GitHub's documented behaviour
+      # rather than something measured here; if it ever changes, this step
+      # costs one request, which is still the cheapest thing in the pass.
+      #
+      # THIS STEP FAILS. It does not skip and it does not warn. A pass that
+      # cannot establish the budget cannot establish coverage either, and a
+      # check that did not run must never read as a pass — which is the
+      # whole premise of this workflow. The error text below is written so
+      # that this red is not mistaken for a coverage finding, because it is
+      # not one: no PR is implicated when this fires.
+      # ─────────────────────────────────────────────────────────────────────
+      - name: Refuse to start without the API budget this pass needs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Worst case for this pass is `4 + 2N` requests at N open PRs
+          # (see .github/scripts/assert-live-db-coverage.sh): 60 at the
+          # N = 28 measured on 2026-10-03. N is not known until the PR
+          # listing is fetched, which costs a request, so this floor is
+          # deliberately STATIC and sized with headroom for the pass, the
+          # verdict job, and a concurrent poller's next few polls. Raise it
+          # if the open-PR count grows well past 28.
+          MIN_BUDGET: ${{ vars.LIVE_DB_COVERAGE_MIN_BUDGET || '150' }}
+        run: |
+          set -uo pipefail
+
+          if ! printf '%s' "${MIN_BUDGET}" | grep -Eq '^[0-9]+$'; then
+            echo "::error::live-DB coverage: MIN_BUDGET '${MIN_BUDGET}' is not a number. Refusing to guess a floor."
+            exit 1
+          fi
+
+          BODY="$(gh api rate_limit 2>&1)"
+          RC=$?
+          if [ "$RC" -ne 0 ]; then
+            echo "${BODY}"
+            echo "::error::live-DB coverage: could not read GET /rate_limit (gh exit ${RC}). An unestablished budget is not a budget, so this pass refuses to start rather than spending requests it cannot account for. This is NOT a coverage finding: no pull request is implicated."
+            exit 1
+          fi
+
+          REMAINING="$(printf '%s' "${BODY}" | jq -r '.resources.core.remaining // empty' 2>/dev/null)"
+          LIMIT="$(printf '%s' "${BODY}" | jq -r '.resources.core.limit // empty' 2>/dev/null)"
+          RESET="$(printf '%s' "${BODY}" | jq -r '.resources.core.reset // empty' 2>/dev/null)"
+
+          for pair in "remaining:${REMAINING}" "limit:${LIMIT}" "reset:${RESET}"; do
+            name="${pair%%:*}"; value="${pair#*:}"
+            if ! printf '%s' "${value}" | grep -Eq '^[0-9]+$'; then
+              echo "::error::live-DB coverage: /rate_limit answered but .resources.core.${name} was not a number ('${value}'). Refusing to decide the budget from a response that did not parse. This is NOT a coverage finding."
+              exit 1
+            fi
+          done
+
+          RESET_UTC="$(date -u -d "@${RESET}" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "epoch ${RESET}")"
+
+          {
+            echo "### live-DB coverage · API budget"
+            echo ""
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| core remaining | ${REMAINING} |"
+            echo "| core limit | ${LIMIT} |"
+            echo "| floor for this pass | ${MIN_BUDGET} |"
+            echo "| window resets | ${RESET_UTC} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${REMAINING}" -lt "${MIN_BUDGET}" ]; then
+            echo "::error::live-DB coverage: REFUSED TO START — the repository's Actions API budget is ${REMAINING} of ${LIMIT}, below the floor of ${MIN_BUDGET} this pass needs (worst case 4 + 2N requests). The window resets at ${RESET_UTC}; this pass will run on its next trigger. THIS IS NOT A COVERAGE FINDING: no pull request is implicated and nothing was checked. The usual drain is a concurrent 'CI (live DB)' run whose live-db-acquire-slot.sh poller paginates every run of that workflow on each poll."
+            exit 1
+          fi
+
+          echo "live-DB coverage: budget ${REMAINING}/${LIMIT} is at or above the floor of ${MIN_BUDGET}; proceeding. Window resets ${RESET_UTC}."
+
+      - name: Every open PR head SHA must have a CI (live DB) run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/assert-live-db-coverage.sh
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # THE VERDICT. A skipped, cancelled or failed job must not read as a pass.
+  #
+  # The same job that live-db.yml, ci.yml and unwired-checks.yml each carry, for
+  # the same reason, and it is NOT redundant with a single-job workflow. A job
+  # that is cancelled — by the `concurrency` group above, by a repository-wide
+  # cancellation, by a runner dying — reports `cancelled`, and a workflow whose
+  # only job was cancelled does not report failure in every surface that reads
+  # it. `if: always()` makes this run anyway and turn anything that is not
+  # `success` into an explicit red that NAMES the job.
+  #
+  # This is also the job to put in branch protection or a required-checks
+  # ruleset if this workflow is ever wired into one: it is the only one whose
+  # success implies the detector actually ran.
+  # ───────────────────────────────────────────────────────────────────────────
+  coverage-verdict:
+    name: live-DB coverage · verdict (skipped or cancelled is not a pass)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: ${{ always() }}
+    needs:
+      - coverage
+    steps:
+      - name: The coverage job must have run and succeeded
+        shell: bash
+        env:
+          R_COVERAGE: ${{ needs.coverage.result }}
+        run: |
+          set -uo pipefail
+          BAD=0
+          {
+            echo "### live-DB coverage run verdict"
+            echo ""
+            echo "| job | result |"
+            echo "| --- | --- |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          for PAIR in \
+            "coverage:$R_COVERAGE"
+          do
+            NAME="${PAIR%%:*}"
+            RESULT="${PAIR#*:}"
+            echo "| $NAME | ${RESULT:-unknown} |" >> "$GITHUB_STEP_SUMMARY"
+            echo "$NAME: ${RESULT:-unknown}"
+            if [ "$RESULT" != "success" ]; then
+              echo "::error::Job '$NAME' reported '${RESULT:-unknown}', not 'success'. A skipped or cancelled job verified NOTHING about which open pull requests hold a live-database certification — and this workflow exists precisely because 'did not run' is indistinguishable from 'passed' in GitHub's check list. Re-run it."
+              BAD=1
+            fi
+          done
+
+          if [ "$BAD" -ne 0 ]; then
+            {
+              echo ""
+              echo "> **This run did not establish live-DB coverage of the open pull requests.**"
+              echo "> The detector did not reach a successful conclusion. See the annotations above."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "The coverage detector ran and succeeded."
