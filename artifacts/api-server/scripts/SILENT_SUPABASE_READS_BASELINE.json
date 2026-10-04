@@ -23,7 +23,6 @@
   "artifacts/api-server/src/routes/compass.ts::S4": 4,
   "artifacts/api-server/src/routes/countryEssentials.ts::S2": 1,
   "artifacts/api-server/src/routes/dailyBrief.ts::S3": 2,
-  "artifacts/api-server/src/routes/discovery.ts::S2": 1,
   "artifacts/api-server/src/routes/engagement.ts::S4": 1,
   "artifacts/api-server/src/routes/events.ts::S2": 7,
   "artifacts/api-server/src/routes/events.ts::S4": 1,

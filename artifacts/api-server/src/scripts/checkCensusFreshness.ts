@@ -4728,6 +4728,15 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/types/mapObjects.ts",  // §114 grades the client's liveUnread field (SW4)
     "travel-buddy-standalone/src/services/mapProjection.ts",  // §114 grades the envelope's optional refusal (B5)
     "travel-buddy-standalone/metro.config.js",  // §114: the guard reads its blockList for what Metro bundles (D-W11X2-141)
+    // census-discovery §123 (lane DISC-DV83, round 24): the files §123 grades that this census did not watch.
+    "artifacts/api-server/src/lib/wholeList.ts",  // §123 grades one viewer's list read whole or said unreadable (B43, SW33)
+    "artifacts/api-server/src/lib/viewerSavedReads.ts",  // §123 grades the viewer's saved state read whole (B44)
+    "artifacts/api-server/src/lib/overpassAnswer.ts",  // §123 grades the one reading of an HTTP-200 Overpass body (SW35)
+    "artifacts/api-server/src/lib/exclusionSet.ts",  // §123 grades the exclusion set read whole (SW33)
+    "artifacts/api-server/src/lib/venuesService.ts",  // §123 grades the venue lookup over an unfinished Overpass answer (SW35)
+    "artifacts/api-server/src/lib/localContext.ts",  // §123 grades the local context over an unfinished Overpass answer (SW35)
+    "artifacts/api-server/src/lib/neighborhoodMatch.ts",  // §123 grades the neighbourhood match over an unfinished Overpass answer (SW35)
+    "travel-buddy-standalone/src/components/LivePulseRail.machine.ts",  // §123 grades the collapsed rail's line over a partial read (B46)
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

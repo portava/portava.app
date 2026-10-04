@@ -3410,3 +3410,60 @@ No APPROVAL REQUIRED entry is added. Arming the stop (D-W10-O-3) and gate 2 (D-W
 - **Ruled (the round-22 verifier).** `post_hides` is inside DV-83 and a safety fail-open (closed, D-W11X2-180). GET /admin's events list is outside (the admin console). POST/DELETE /posts/:id/save's `count ?? 0` is outside (census-media's counter write, the class D-W11X2-178 rules a ranking counter); not a safety fail-open. `cityConfidenceWindowedReads` is outside while its flag is seeded FALSE. The co-host picker's refusal whenever `event_rsvps` or `profiles` is named is a fail-closed over-refusal, not a break.
 - **Swept and sound.** The remaining silent sites in the graded routes are ranking signals, notifications, the featured badge and Pulse's place cards; every other keyset cursor on these surfaces pages by a key column or one already restricted to non-null; every other consumer of failed-source names counts every name.
 - **Left for their owners.** GET /users/search (`app/discover.tsx`'s people search, lane tm-people, §106) serves `isFollowing` over an unbound follows read; this lane was told not to touch it. The media feeds' own state (`routes/posts.ts`, `routes/memories.ts`, `routes/highlights.ts`, the gems feed hook) is census-media's. GET /discovery/community's unresolved viewer served as anonymous (§94.11, D-W11X2-15) is unchanged.
+
+### D-W11X2-189 — GET /pulse, GET /pulse/live and `fetchBlockedSet` apply the viewer's hide and block lists whole (§122.15 B43, Z9; lane DISC-DV83)
+
+- **Found.** Each read `post_hides` or a direction of `blocks` with one unbounded request. PostgREST cuts a response at db-max-rows (1000) and reports nothing, so past the cap a hidden post, or a post by someone in a block relation with the viewer, was served with nothing named. `fetchBlockedSet`, which every other Discovery surface reads its block set through, was cut the same way. A safety fail-open.
+- **Decision.** The plain request carries its exact count, so a list under the cap still costs one round trip; when the count says rows were left out the list is read again by key (`lib/wholeList.ts`, over `lib/feedReads.ts`); a list that cannot be read whole fails closed exactly as a failed read does (`posts: []` naming the list; an empty rail; `null` from `fetchBlockedSet`).
+- **Tests.** `pulseSafetyListsWhole` HC1–HC3, BC1–BC3, LB1 (red first), LB3, LB4 (red under their site mutation); HC0 (two hidden posts: kills Z9), HC0b, BC0, BC4, LB0, LB2 controls. `blocksWholeSet` FB1–FB4, FB6 (red first); FB0, FB5, FB7.
+
+### D-W11X2-190 — a viewer whose token nobody evaluated is never served as anonymous on GET /discovery/community; D-W11X2-182 and -188 corrected (§122.15 B42)
+
+- **Corrected.** D-W11X2-188 left the route's unresolved viewer "unchanged" and D-W11X2-182 called the community list's saved state closed; the round-23 verifier rules §94.11's path inside DV-83, its blocked-submitter case a safety fail-open.
+- **Decision.** The lookup's error is read with D-W11X2-21's one classifier: a REJECTED token is an anonymous caller; a lookup that threw or that Auth did not answer leaves the viewer unresolved. For an unresolved viewer authored rows are withheld (the posture over an unreadable block set, §102), `open_to_me` narrows to places open to everyone and never reports a missing date of birth, `isSaved` is `null`, and `viewer` is named; when rows were withheld the answer is the D11 envelope (`upstream_unavailable` / `community_viewer_unresolved`, `partial` or `nothing`).
+- **Tests.** `discoveryCommunityViewerUnresolved` CV1–CV4, CV7–CV9 (red first); CV0, CV5, CV6, CV9c controls.
+
+### D-W11X2-191 — the viewer's own saved state is read whole, the collection ids in chunks (§122.15 B44)
+
+- **Found.** `viewerSavedEventIds`, GET /discovery/community's saved read and GET /discovery/community/saved-ids measured "saved" from `collections`, `collection_items`, `event_saves` and `discovery_place_saves` reads cut at 1000 rows.
+- **Decision.** `lib/viewerSavedReads.ts` reads each list whole by key; the viewer's collection ids are consulted 50 at a time, so the fix does not turn a viewer with a thousand collections into a request line no gateway accepts. A read that cannot be made whole is the failure each caller already names or refuses on; nothing new is said on a healthy read.
+- **Tests.** `eventsSavedStateWhole` CC1, CC2 (five answers each), CI1 ×2, CI2 (red first); CC0, CC3. `discoverySavedReadsWhole` SI1–SI3, CW1, CW2 (red first); SI0, SI4, CW0, CW3.
+
+### D-W11X2-192 — an unread saved state is DRAWN as unknown; D-W11X2-181, -182 and -187 corrected for the drawing (§122.15 B41)
+
+- **Corrected.** Each said the bookmark "says" its unknown state. It said it to a screen reader only: the glyph was the outline that means "not saved".
+- **Decision.** `EventCard`, the event screen, the gem screen and `SaveButton` draw a question-mark glyph for an unknown saved state; the control is still not a toggle and keeps its label.
+- **Tests.** `EventCard.savedUnknownDrawn` EC0–EC2, `EventDetail.savedState` EU0, EU0b, EU1, `gemDetailSavedUnknown` GU0, GU1, `SaveButton.savedUnknown` SU6–SU8. **jest: registered, and first run by CI; this lane could not run jest and did not see them red.**
+
+### D-W11X2-193 — no other centre's travelers over a failed read, and a partial rail said collapsed; D-W11X2-185 corrected (§122.15 B45, B46)
+
+- **Corrected.** D-W11X2-185's "no hook keeps another context's items over a failed read" did not hold for the Discovery map's travelers layer, and its collapsed-header sentence covered a failed read, not a partial one.
+- **Decision.** `useMapTravelers` records the centre its rows were read for and clears them when a failed read is for a centre more than a third of the radius away; a failed refresh of the same area keeps them. `collapsedSummaryText` (`LivePulseRail.machine.ts`) says a partial read beside the count and a failed read in place of it.
+- **Tests.** `useMapTravelers.movedCentre` MV1–MV6 and `LivePulseRail.collapsedPartial` RP0–RP3 (jest; first run by CI). `LivePulseRail.collapsed` (node; 6 cases, run by this lane).
+
+### D-W11X2-194 — the consumer guard resolves imports to real paths (§122.15 B47, GH55)
+
+- **Found.** A consumer reaching a Discovery carrier through a symlinked module was not seen; the verifier's F8 survived on disk.
+- **Decision.** `resolveSpec` resolves the importing file and the resolved target with `realpathSync`, and follows the links the guard's own in-memory fixtures declare.
+- **Tests.** GH55–GH55i; six red with the resolver reverted. F8 placed on disk is caught and removed; the guard passes whole (129 cases).
+
+### D-W11X2-195 — the round-23 verifier's six surviving mutations are pinned (Y37, Z9, Z4, Z4b, Z4c, Z11)
+
+- **Decision.** Z9: HC0 holds two hidden posts. Z4, Z4b, Z4c, Z11: `eventsMeasuredWithholding` withholds an event over a read that ANSWERS on each of the six lists and asserts no `truncated`; MF was extended to /search and /following after two of this lane's own re-applications survived. Y37: `pulseFeedUnread` PD3–PD6 (jest; first run by CI). Z5 stays equivalent as ruled.
+- **Tests.** 18 re-applied mutations, 18 killed (§123.11).
+
+### D-W11X2-196 — the sweep: one viewer's lists, the unresolved viewer elsewhere, the other Overpass clients (SW33–SW37)
+
+- **SW33.** Every unbounded read filtered to one viewer that a Discovery answer is decided from is whole or said unreadable (`lib/wholeList.ts`): the exclusion set, the mute list, Compass's block and mute lists (profile and tools), the passport surface's block list, the events tab's RSVPs, memberships and follows, GET /pulse's crew follows and the rail's saved events, owned trips and requested bookings, GET /me/hashtag-follows, GET /wishlist. **Ruled:** an answer with neither rows nor an error is handed back as it came; each site reads it as it did before (PostgREST does not give that answer to a list read, and many existing doubles do).
+- **SW34.** GET /discovery refuses an unresolved viewer whole (`discovery_viewer_unresolved`, `nothing`, `viewer`) before any cache; GET /discovery/feed withholds authored places and names `viewer`; the Layover gate, asked about a traveller nobody resolved, answers OFF only when the mode flag is off or absent and refuses otherwise (`layover_viewer_unresolved`); the two layover-safe gem lists answer 503. **Ruled, conservative default, owner question listed:** GET /discovery is refused rather than served partial, because no part of that page is independent of the viewer; the community list and the feed, which hold venue facts that need no viewer, stay partial.
+- **SW35.** `overpassBodyUnfinished` (`lib/overpassAnswer.ts`) is the one reading of an HTTP-200 Overpass body; the venue lookup, the local context and the neighbourhood match read it and cache nothing unfinished.
+- **SW36.** For You's partial notice and partial-empty state carry a retry.
+- **SW37.** Each whole-read call site is pinned at the site (CT, PT, PB, PP, LB3, LB4).
+- **Tests.** `exclusionSetWhole`, `viewerListsWhole`, `compassPassportBlockListWhole`, `discoveryViewerUnresolvedServe`, `hiddenGemsLayoverViewerUnresolved`, `overpassUnfinishedAnswer` (each red first or red under its site mutation; §123.11); `ForYouTab.cachedPartial` H4, H5, C5 (jest; first run by CI).
+
+### D-W11X2-197 — recorded: what is left for other owners, the residuals, and D-W11X2-188 corrected
+
+- **Corrected.** D-W11X2-188's "GET /users/search serves `isFollowing` over an unbound follows read" is stale: the route binds its follow errors, and people search is outside DV-83 (the round-23 verifier). Its "GET /discovery/community's unresolved viewer is unchanged" is superseded by D-W11X2-190.
+- **Left for their owners.** `optionalUser` (`lib/http.ts`, shared) answers null for a token nobody evaluated, so GET /places/:id/reviews and /votes (`routes/reviews.ts`, census-trust), the place-living routes, the buddy marketplace and one trips route answer an unresolved viewer as anonymous: B42's class. The Telegraph venue tools state "no staffed venue found" over a failed lookup (census-telegraph). The passport surface reads `blocks` one way (census-passport). The Wall's feeds over a failed `post_hides` read (census-wall, §122.15). The remaining unbounded viewer-scoped reads in other censuses' files.
+- **Residuals inside Discovery.** GET /hidden-gems/:id's 404 for the owner of a non-active gem whose token nobody evaluated (answering 503 would be an existence oracle; owner question). `fetchCityAreas`' grid fallback over a failed areas read, stored for seven days. An Overpass query's own `out … N` limit. Long `in.(…)` filters for a viewer with hundreds of followed hosts.
+- **Not verified by this lane.** No jest suite, no client typecheck and no whole-suite run was possible in the lane's workspace; the round-23 verifier's report and probes were not available. CI and the next independent verifier are the check.
