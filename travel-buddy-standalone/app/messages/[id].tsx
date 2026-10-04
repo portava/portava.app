@@ -71,7 +71,7 @@ import {
 } from '../../src/features/telegraph/lifecycle/lifecycleApi.ts';
 import { useThreadReadState } from '../../src/features/telegraph/lifecycle/useThreadReadState.ts';
 import { OwnMessageStatusRow } from '../../src/features/telegraph/lifecycle/OwnMessageStatusRow.tsx';
-import { useReaderAvatars } from '../../src/features/telegraph/lifecycle/useReaderAvatars.ts'; import type { OwnMessageStatus } from '../../src/features/telegraph/lifecycle/readState.ts'; import { TelegraphConnectionBanner } from '../../src/features/telegraph/connection/TelegraphConnectionBanner.tsx';
+import { useReaderAvatars } from '../../src/features/telegraph/lifecycle/useReaderAvatars.ts'; import { failedSendCopy, type OwnMessageStatus, type SendFailure } from '../../src/features/telegraph/lifecycle/readState.ts'; import { TelegraphConnectionBanner } from '../../src/features/telegraph/connection/TelegraphConnectionBanner.tsx';
 import { headerSubtitle } from '../../src/features/telegraph/header/headerAxes.ts';
 import { useConversationHeader } from '../../src/features/telegraph/header/useConversationHeader.ts';
 import { ComposerPlusMenu } from '../../src/features/telegraph/composer/ComposerPlusMenu.tsx'; import { VoiceRecorderSheet } from '../../src/features/telegraph/voice/VoiceRecorderSheet.tsx'; // one line: census-telegraph cites this file at :253, :270, :844, :869, :1624, :1831, :1947, :1958, :2089, :2094, :2114, :2172, :2227, :2269 and :2376.
@@ -748,7 +748,7 @@ function MessageBubble({
   readerAvatars,
   dismissedAiMsgIds,
   onDismissAiCard,
-  deliveryStatus,
+  deliveryStatus, sendFailure,
   onRetry,
   onRetryTranslation,
   currentUserId,
@@ -771,7 +771,7 @@ function MessageBubble({
   readerAvatars?: string[];
   dismissedAiMsgIds?: Set<string>;
   onDismissAiCard?: (msgId: string) => void;
-  deliveryStatus?: 'sending' | 'sent' | 'failed' | null;
+  deliveryStatus?: 'sending' | 'sent' | 'failed' | null; /** Why the server refused it, when it said — a burst-limit pause is not a dropped connection. */ sendFailure?: SendFailure | null;
   onRetry?: () => void;
   onRetryTranslation?: () => void;
   currentUserId?: string;
@@ -1088,7 +1088,7 @@ function MessageBubble({
       {mine && deliveryStatus === 'failed' && (
         <Pressable style={styles.deliveryRow} onPress={onRetry} hitSlop={8}>
           <AlertCircle size={11} color="#EF4444" />
-          <Text style={styles.deliveryFailed}>Tap to retry</Text>
+          <Text style={styles.deliveryFailed} testID="telegraph-send-failed-copy">{failedSendCopy(sendFailure)}</Text>
         </Pressable>
       )}
 
@@ -2224,7 +2224,7 @@ export default function TelegraphThread() {
                 readerAvatars={mine ? readerAvatarsForMsg(m) : undefined}
                 dismissedAiMsgIds={dismissedAiMsgIds}
                 onDismissAiCard={(msgId) => setDismissedAiMsgIds((prev) => new Set([...prev, msgId]))}
-                deliveryStatus={mine ? (m.deliveryStatus ?? null) : null}
+                deliveryStatus={mine ? (m.deliveryStatus ?? null) : null} sendFailure={mine ? (m.sendFailure ?? null) : null}
                 onRetry={mine && m.clientId ? () => retrySend(m.clientId!) : undefined}
                 onRetryTranslation={!mine && m.id ? () => { retryTranslation(m.id).catch(() => {}); } : undefined}
                 currentUserId={userId ?? undefined}

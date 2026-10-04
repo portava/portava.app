@@ -33,8 +33,8 @@ import type { MessageReceipt } from './lifecycleApi.ts';
 export type OwnMessageStatus =
   /** Local, not yet accepted by the server. */
   | { kind: 'sending' }
-  /** Local, and the server did not accept it. */
-  | { kind: 'failed' }
+  /** Local, and the server did not accept it. `failure` says why, when the server did. */
+  | { kind: 'failed'; failure?: SendFailure | null }
   /** Accepted by the server; nothing more is known. */
   | { kind: 'sent' }
   /** A recipient's open connection took it (observed live on this device). */
@@ -68,13 +68,13 @@ export function isServerMessageId(id: string | null | undefined): boolean {
 }
 
 export function ownMessageStatus(input: {
-  deliveryStatus?: 'sending' | 'sent' | 'failed' | null;
+  deliveryStatus?: 'sending' | 'sent' | 'failed' | null; sendFailure?: SendFailure | null;
   receipt?: MessageReceipt | null;
   receiptsState: ReceiptsState;
   delivery?: DeliveryObservation | null;
 }): OwnMessageStatus {
   if (input.deliveryStatus === 'sending') return { kind: 'sending' };
-  if (input.deliveryStatus === 'failed') return { kind: 'failed' };
+  if (input.deliveryStatus === 'failed') return input.sendFailure ? { kind: 'failed', failure: input.sendFailure } : { kind: 'failed' };
   const r = input.receipt;
   if (r && r.status === 'SEEN' && r.seenBy > 0) {
     return { kind: 'seen', seenBy: r.seenBy, recipientCount: r.recipientCount };
@@ -96,7 +96,7 @@ export function ownMessageStatus(input: {
 export function ownMessageStatusLabel(status: OwnMessageStatus, opts: { isGroup: boolean }): string {
   switch (status.kind) {
     case 'sending': return 'Sending…';
-    case 'failed': return 'Not sent · tap to retry';
+    case 'failed': return `Not sent · ${failedSendCopy(status.failure).toLowerCase()}`;
     case 'sent': return 'Sent';
     case 'delivered': return 'Delivered';
     case 'recipient_offline': return 'Sent · they were offline';
@@ -175,4 +175,60 @@ export function applyReadToReceipts(
     });
   }
   return out;
+}
+
+/* ───────────────────── why a send was not accepted ─────────────────────
+ *
+ * A failed send used to be one state with one instruction: "Tap to retry".
+ * That is the right instruction for a dropped connection and the WRONG one for
+ * the server's burst limit (Telegraph §22), where retrying at once is refused
+ * again and each refusal reads as the app being broken. Since the limit now
+ * applies at every send door, it is a refusal a real person can meet, and the
+ * row under their message has to tell them what happened and when to come back.
+ *
+ * Only `rate_limited` is modelled. Every other failure keeps the words it had:
+ * this module does not claim to know why a send failed unless the server said.
+ */
+
+/** Why the server did not accept one of the caller's own messages, when it said. */
+export interface SendFailure {
+  kind: 'rate_limited';
+  /** Seconds the server asked for (`Retry-After`), or null when it gave none. */
+  retryAfterSeconds: number | null;
+}
+
+/**
+ * `Retry-After` as whole seconds, or null when the server sent none or sent
+ * something this cannot read. Only the delta-seconds form is produced by this
+ * API; an HTTP-date is treated as "not stated" rather than guessed at, because
+ * a wrong wait shown to a person is worse than "in a moment".
+ */
+export function parseRetryAfterSeconds(raw: string | null | undefined): number | null {
+  if (typeof raw !== 'string') return null;
+  const t = raw.trim();
+  if (!/^\d{1,6}$/.test(t)) return null;
+  const n = Number(t);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** The failure a send result carries, or null when it carries no stated reason. */
+export function sendFailureFrom(res: { ok: boolean; errorKind?: string; retryAfterSeconds?: number | null }): SendFailure | null {
+  if (res.ok || res.errorKind !== 'rate_limited') return null;
+  const s = res.retryAfterSeconds;
+  return { kind: 'rate_limited', retryAfterSeconds: typeof s === 'number' && Number.isFinite(s) && s > 0 ? s : null };
+}
+
+/**
+ * The words on the row under a message the server did not accept.
+ *
+ * The wait is rounded UP and coarsened — "about 4 min", never "237 s" — because
+ * the number is the server's window, not a countdown this screen keeps, and a
+ * precise figure that then turns out a few seconds wrong is a small lie.
+ */
+export function failedSendCopy(failure: SendFailure | null | undefined): string {
+  if (!failure || failure.kind !== 'rate_limited') return 'Tap to retry';
+  const s = failure.retryAfterSeconds;
+  if (s === null) return 'Sending too fast · try again in a moment';
+  if (s < 60) return 'Sending too fast · try again in under a minute';
+  return `Sending too fast · try again in about ${Math.ceil(s / 60)} min`;
 }

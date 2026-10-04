@@ -59,7 +59,7 @@ import { resolveInteractionPermissions } from '../services/interactionPermission
 import { isKillSwitchEngaged } from '../lib/featureFlags.js';
 import { appStorageUrlInfo } from '../lib/mediaUrl.js';
 import { classifyMemoryMediaUrl } from '../services/memory/memoryMediaOrigin.js';
-import { messagingStopUnknownRefusal } from '../lib/telegraphThreadWrite.js';
+import { messagingStopUnknownRefusal, refuseSendOverRate, resolveClientDiscriminator } from '../lib/telegraphThreadWrite.js';
 import { isUuid } from '../lib/followDecisions'; import { REPORT_REASON_CODES, reportSeverityFor, type ReportReasonCode } from '../lib/reportReasons'; import { refuseEditOnEncryptedThread } from '../services/telegraph/editE2eeGate';
 import {
   translateMessageForThread,
@@ -2706,9 +2706,9 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     return;
   }
 
-  const msgTypeRaw = typeof req.body?.msgType === 'string' ? req.body.msgType : 'text';
-  const msgType = msgTypeRaw === 'system' ? 'system' : 'text';
-  const subtype = typeof req.body?.subtype === 'string' ? req.body.subtype : null;
+  const discriminator = resolveClientDiscriminator(req.body?.msgType, req.body?.subtype); // a `system` row renders as platform chrome: only the subtypes the app itself authors
+  if (!discriminator.ok) { req.log.warn({ userId: user.id, threadId, reason: discriminator.reason }, 'message refused: client-supplied msg_type / subtype'); sendError(res, 'invalid_payload', discriminator.message); return; }
+  const { msgType, subtype } = discriminator;
   // Optional client-generated id used to correlate optimistic sends with the
   // server message (echoed in the response and in the realtime event).
   const clientId = typeof req.body?.clientId === 'string' ? req.body.clientId.slice(0, 64) : null;
@@ -3380,7 +3380,7 @@ router.post('/threads/:threadId/media', async (req, res) => {
     return;
   }
 
-  const sc = client;
+  const sc = client; if (await refuseSendOverRate(req, res, getServiceClient() ?? client, user.id, threadId)) return; // §22: the burst limit was on the text door alone
   const now = new Date().toISOString();
 
   const { data: msg, error: msgErr } = await sc
