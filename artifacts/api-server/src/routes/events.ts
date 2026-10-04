@@ -2554,7 +2554,7 @@ router.patch("/events/:id", async (req, res) => {
   // Fetch current event to detect key-detail changes for notifications
   const { data: current } = await sc.from("events").select("*").eq("id", id).maybeSingle();
   if (!current) { sendError(res, "not_found", "Event not found"); return; }
-
+  if (refuseTicketUrlOnUpdate(res, b, current)) return; // REV-020: before the state write, so a refusal changes nothing (helper at the end of this file)
   // ── the state transition, through the one authority ───────────────────────
   // `started` is refused here by NAME rather than by the table: the table says
   // open|full|waitlist -> started is a structurally legal pair, but WHO may
@@ -7065,4 +7065,43 @@ function safetySummaryFailedSources(req: any, eventId: string, reads: Record<str
   if (failed.length === 0) return {};
   req.log?.error?.({ eventId, failed }, "safety summary: lists unreadable — reported as null, not empty");
   return { failedSources: failed };
+}
+
+/**
+ * REV-020 (docs/architecture/08_Portava_Revenue_Model.md §3.5): the ticket-host
+ * allowlist binds an UPDATE as it binds create and publish.
+ *
+ * `PATCH /events/:id` wrote `price_url` raw, so the ticket link of an event
+ * that had passed the check at publish could afterwards be repointed at any
+ * host. Two cases are refused, and the caller invokes this BEFORE its state
+ * write so that a refused request changes nothing:
+ *
+ *   1. the body carries a URL: it must be allowlisted, whatever the state;
+ *   2. the body publishes a draft (draft -> open) without carrying one: the
+ *      STORED link is what goes live, so it is held to the rule
+ *      POST /events/:id/publish applies (`ticket_url ?? price_url`).
+ *
+ * `priceUrl: null` clears the link and is always allowed (checkTicketUrl
+ * answers null for an empty value). An edit that neither names the link nor
+ * publishes is not blocked by a link stored before this rule existed.
+ *
+ * Same envelope as create: 400 `invalid_payload` with checkTicketUrl's message.
+ * Returns true when it has answered the request. Appended here, and called
+ * from one line, so that no line this file is cited at moves.
+ */
+function refuseTicketUrlOnUpdate(
+  res: Parameters<typeof sendError>[0],
+  body: { priceUrl?: string | null | undefined; state?: string | undefined },
+  current: unknown,
+): boolean {
+  const stored = current as { state?: string; ticket_url?: string | null; price_url?: string | null };
+  const publishesDraft = stored.state === "draft" && body.state === "open";
+  const ticketErr = body.priceUrl !== undefined
+    ? checkTicketUrl(body.priceUrl)
+    : publishesDraft
+      ? checkTicketUrl(stored.ticket_url ?? stored.price_url)
+      : null;
+  if (!ticketErr) return false;
+  sendError(res, "invalid_payload", ticketErr);
+  return true;
 }
