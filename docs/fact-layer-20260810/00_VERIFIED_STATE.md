@@ -1201,7 +1201,7 @@ byte-identical between the trees. Cite the standalone path.
 **7.15 Nothing in the server sweeps storage objects by media state.**
 **[CLONE 13dcfe3]**, established by enumerating every `.storage.from(...).remove(...)`
 call in the server tree (eleven, excluding tests):
-`routes/adminMedia.ts:338`, `routes/admin.ts:1539`, `routes/memories.ts:663`,
+`routes/adminMedia.ts:338`, `routes/admin.ts:1539`, `routes/memories.ts:664`,
 `routes/postcards.ts:787`, `routes/stories.ts:635`, `routes/profile.ts:746`,
 `:1158`, `:1185` — all user- or admin-initiated deletes;
 `lib/stamps/generationWorker.ts:1092` — that worker's own failure rollback;

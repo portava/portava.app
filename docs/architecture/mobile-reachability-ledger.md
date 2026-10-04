@@ -289,8 +289,8 @@ Full per-route detail, including the resolved chain for each wired route, is in
 
 | Method(s) | Route | Handler |
 | --- | --- | --- |
-| GET | `/api/airport/pulse` | `artifacts/api-server/src/routes/airport.ts:1648` |
-| POST | `/api/airport/sessions/:id/plan` | `artifacts/api-server/src/routes/airport.ts:812` |
+| GET | `/api/airport/pulse` | `artifacts/api-server/src/routes/airport.ts:1650` |
+| POST | `/api/airport/sessions/:id/plan` | `artifacts/api-server/src/routes/airport.ts:814` |
 | GET | `/api/appeals/restorations/pending` | `artifacts/api-server/src/routes/appeals.ts:157` |
 | POST | `/api/auth/signup` | `artifacts/api-server/src/routes/auth.ts:170` |
 | GET | `/api/buddies` | `artifacts/api-server/src/routes/rentABuddy.ts:1059` |
@@ -388,10 +388,10 @@ Full per-route detail, including the resolved chain for each wired route, is in
 | GET | `/api/media/:id/comments` | `artifacts/api-server/src/routes/mediaFeed.ts:2305` |
 | POST | `/api/media/:id/view` | `artifacts/api-server/src/routes/mediaFeed.ts:1849` |
 | GET | `/api/media/file/:bucket/*path` | `artifacts/api-server/src/routes/mediaFile.ts:139` |
-| DELETE, POST | `/api/memories/:id/save` | `artifacts/api-server/src/routes/memories.ts:1185` |
-| POST | `/api/memories/:id/share` | `artifacts/api-server/src/routes/memories.ts:1244` |
-| GET | `/api/memories/:id/tags` | `artifacts/api-server/src/routes/memories.ts:1025` |
-| PATCH | `/api/memories/:id/tags/:userId` | `artifacts/api-server/src/routes/memories.ts:1071` |
+| DELETE, POST | `/api/memories/:id/save` | `artifacts/api-server/src/routes/memories.ts:1293` |
+| POST | `/api/memories/:id/share` | `artifacts/api-server/src/routes/memories.ts:1352` |
+| GET | `/api/memories/:id/tags` | `artifacts/api-server/src/routes/memories.ts:1133` |
+| PATCH | `/api/memories/:id/tags/:userId` | `artifacts/api-server/src/routes/memories.ts:1179` |
 | GET | `/api/og/:type/:id` | `artifacts/api-server/src/routes/og.ts:373` |
 | GET | `/api/og/:type/:id/image.png` | `artifacts/api-server/src/routes/og.ts:462` |
 | GET | `/api/passport/:userId/journeys` | `artifacts/api-server/src/routes/passport.ts:1554` |
@@ -490,15 +490,15 @@ Full per-route detail, including the resolved chain for each wired route, is in
 
 | Method(s) | Route | Handler |
 | --- | --- | --- |
-| GET, POST | `/api/admin/airport/caution-zones` | `artifacts/api-server/src/routes/airport.ts:1893` |
-| DELETE | `/api/admin/airport/caution-zones/:id` | `artifacts/api-server/src/routes/airport.ts:1960` |
-| GET, POST | `/api/admin/airport/profiles` | `artifacts/api-server/src/routes/airport.ts:1760` |
-| DELETE, PATCH | `/api/admin/airport/profiles/:id` | `artifacts/api-server/src/routes/airport.ts:1805` |
-| GET | `/api/admin/airport/reports` | `artifacts/api-server/src/routes/airport.ts:2045` |
-| POST | `/api/admin/airport/reports/:id/resolve` | `artifacts/api-server/src/routes/airport.ts:2070` |
-| GET | `/api/admin/airport/sessions` | `artifacts/api-server/src/routes/airport.ts:1868` |
-| GET | `/api/admin/airport/verified-places` | `artifacts/api-server/src/routes/airport.ts:1978` |
-| PATCH | `/api/admin/airport/verified-places/:id` | `artifacts/api-server/src/routes/airport.ts:2010` |
+| GET, POST | `/api/admin/airport/caution-zones` | `artifacts/api-server/src/routes/airport.ts:1895` |
+| DELETE | `/api/admin/airport/caution-zones/:id` | `artifacts/api-server/src/routes/airport.ts:1962` |
+| GET, POST | `/api/admin/airport/profiles` | `artifacts/api-server/src/routes/airport.ts:1762` |
+| DELETE, PATCH | `/api/admin/airport/profiles/:id` | `artifacts/api-server/src/routes/airport.ts:1807` |
+| GET | `/api/admin/airport/reports` | `artifacts/api-server/src/routes/airport.ts:2047` |
+| POST | `/api/admin/airport/reports/:id/resolve` | `artifacts/api-server/src/routes/airport.ts:2072` |
+| GET | `/api/admin/airport/sessions` | `artifacts/api-server/src/routes/airport.ts:1870` |
+| GET | `/api/admin/airport/verified-places` | `artifacts/api-server/src/routes/airport.ts:1980` |
+| PATCH | `/api/admin/airport/verified-places/:id` | `artifacts/api-server/src/routes/airport.ts:2012` |
 | POST | `/api/admin/circle/disable-context` | `artifacts/api-server/src/routes/circle.ts:1913` |
 | POST | `/api/admin/circle/kill-switch` | `artifacts/api-server/src/routes/circle.ts:1963` |
 | GET | `/api/admin/circle/reports` | `artifacts/api-server/src/routes/circle.ts:1887` |
