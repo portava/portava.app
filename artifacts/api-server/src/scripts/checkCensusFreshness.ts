@@ -2062,6 +2062,12 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/calls/",
     "artifacts/api-server/src/lib/telegraphBroadcast.ts",
     "artifacts/api-server/src/lib/telegraphEvents.ts",
+    // ADDED 2026-10-04 by §42: the applied-migration record is what the T327 / T338 / T387 ceiling is
+    // checked against offline, and §42.1 cites it to say that 2325, 2810 and 3000 are not in production.
+    // Citing the repository's own deployment record and not watching it is the scope gap
+    // check:census-scope-coverage exists to name. This block sits BELOW checkCensusFreshness.ts:1522,
+    // which three censuses cite, so adding lines here displaces nothing.
+    "artifacts/api-server/src/lib/capability/production-applied-migrations.json",
     "artifacts/api-server/src/lib/messagingPermissions.ts",
     "artifacts/api-server/src/lib/blockGuard.ts",
     "artifacts/api-server/src/routes/messaging.ts",

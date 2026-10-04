@@ -4,7 +4,7 @@
 | --- | --- |
 | **Specs** | `docs/specs/Portava_Telegraph_Design_Architecture_Developer_Spec_v1.txt` (30 sections) and `..._v1_1.txt` (32 headings). The `.docx` originals are authoritative and were extracted and compared; see §2. |
 | **Tree censused** | `claude/portava-continuation-uqta94`, working tree at `ebe72b34`. Sibling agents committed the shared tree during this pass (HEAD is now `feedfb0a`); `git diff ebe72b34..feedfb0a` over every path cited below touches exactly one file — `routes/safeReturn.ts`, +43 lines, an unrelated Passport contact projection appended after `:817` plus two imports — so every verdict holds at HEAD, with that file's post-`:26` citations renumbered. Censused state is **main**: open PRs #460 and #472 are read but never scored into a bucket; see §9. |
-| `head_commit` | `1fe72289b` — RE-DECLARED 2026-09-15 at the squash merge of PR #482. The previous value was `80a8d655a`, a commit on the pre-merge branch. **The squash made it an orphan**: it still exists in a clone that fetched the branch, but it is on no line of history leading to `main`, and `check:census-freshness` refuses an orphan because the check would pass locally and fail in a fresh clone. Nothing about this census was re-measured and NO verdict moves — `1fe72289b` is the commit its previous declaration's tree became, so zero counted files have changed since it. The prior declaration and its reasoning follow. — RE-DECLARED 2026-09-14 by §23, replacing `42aeac38`. §23 re-derived T70 (`W → C`) and recorded fourteen membership gates that moved no verdict by §20.6's own rule. Nine counted files changed. It does **NOT** certify the other 229 `C` rows, and §1's reading rule applies unchanged. The previous declaration read: `42aeac38` — DECLARED 2026-09-11. It **starts a clock; it does not certify a past.** Read the next row before quoting it. |
+| `head_commit` | `f71cfb85f` — RE-DECLARED 2026-10-04 by **§42**, which is what §41 deferred to the integrator: §41 was written on a lane branch that would be squashed and declining to declare one of its commits was right. `f71cfb85f` is the merge of #586 on `main`, so it is an ancestor of every clone that fetches `main` and carries none of the orphan hazard the paragraphs below record. The 201 counted files that changed since `1fe72289b` are PR #572's own work and twelve other lanes'. **This is a RE-MEASUREMENT of the rows §42 names and NOT of the rest**: §42 re-derived §41's five moves against the code and the committed production capture, corrected the reasons on T69, T74 and T394 without moving any of them, and moved NO verdict. It does **NOT** certify the other 448 rows, and §1's reading rule applies unchanged. The acknowledgement written against `1fe72289b` is RETIRED, not deleted, in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`. The previous declaration read: `1fe72289b` — RE-DECLARED 2026-09-15 at the squash merge of PR #482. The previous value was `80a8d655a`, a commit on the pre-merge branch. **The squash made it an orphan**: it still exists in a clone that fetched the branch, but it is on no line of history leading to `main`, and `check:census-freshness` refuses an orphan because the check would pass locally and fail in a fresh clone. Nothing about this census was re-measured and NO verdict moves — `1fe72289b` is the commit its previous declaration's tree became, so zero counted files have changed since it. The prior declaration and its reasoning follow. — RE-DECLARED 2026-09-14 by §23, replacing `42aeac38`. §23 re-derived T70 (`W → C`) and recorded fourteen membership gates that moved no verdict by §20.6's own rule. Nine counted files changed. It does **NOT** certify the other 229 `C` rows, and §1's reading rule applies unchanged. The previous declaration read: `42aeac38` — DECLARED 2026-09-11. It **starts a clock; it does not certify a past.** Read the next row before quoting it. |
 | **What that declaration does and does not say** | `42aeac38` is #476's squash — where this document itself reached `main`. The 451 verdicts were taken at working tree `ebe72b34` (and re-checked at `feedfb0a`), both of which squash-merge orphaned: they resolve in no clone, so **nobody can diff `ebe72b34..42aeac38`, and this declaration does not claim that interval was empty.** What it claims is mechanically checked: `git diff --name-only 42aeac38..HEAD` over the 26 paths in `CENSUS_SCOPE["census-telegraph.md"]` returns **0 files**, and from here any change to one of them ages this census. Before it, `check:census-freshness` reported this document as CANNOT BE CHECKED — the weakest of the three states. FRESH means *no counted file has moved since `42aeac38`*; it does **not** mean the rows were re-read, and none has been. **The scope deliberately excludes `src/scripts/` and `src/test/`**, which supply 40 of this census's 84 resolved citations: those are the guards and suites it used as EVIDENCE, not the surface it measures, and scoping them would age Telegraph on every unrelated lane's guard work until someone switched the check off. Declared by the Trips lane while recounting the sibling census; if the Telegraph lane disagrees, reverting costs only the check. |
 | **Method** | Requirement-level, four buckets, one bucket per requirement. Every BUILT verdict cites a file:line that was opened and read. Matches `census-sensing.md` and `census-wall.md`. |
 | **Database** | Not queried. Storage facts are the ones supplied as ground truth — **independently corroborated in-tree** by `artifacts/api-server/baseline/20260907_production_tables.txt`, committed during this pass, which lists exactly seven Telegraph tables (`message_reports`, `message_requests`, `message_thread_members`, `message_threads`, `message_translations`, `messages`, `thread_reports`) and contains no `unsent` column anywhere. |
@@ -10174,3 +10174,117 @@ restated in place. Counted with `check:census-integrity`, not by arithmetic on �
 451 rows. CONSTRUCTED (C + W) is 416 of 451 = 92.2 %; CORRECT is 239 of 451 = 53.0 %. Four of
 the five moves are to W and three of those wait only on migrations reaching production; the one
 move to C (T71) is a client rule with controlled evidence and no production observation.
+
+## §42 — 2026-10-04 (re-census, integration): §41's five moves re-derived, THREE STALE REASONS on `C` and `W` rows corrected, and NO VERDICT MOVES
+
+**What this section is.** §41 declined to re-declare `head_commit`, correctly, because it was written
+on a lane branch that would be squashed. PR #572 is now merged and this census's declaration is moved
+to `f71cfb85f`, the merge of #586 on `main`, and §41's acknowledgement is retired. This section also
+re-reads the rows whose SUBJECT #572 touched, as part of a corpus-wide re-census opened on a single
+measurement: `check:census-integrity` returns the **same** `C` across all thirteen censuses at
+`f71cfb85f` as it did at `626b46b7e` — and `626b46b7e` IS #572's own merge, so for this surface the
+"before" reading already contained §41's five moves. The question left is whether §41 got them right
+and whether it missed anything.
+
+**The answer: it got all five right, and it left three stale reasons behind it — two of them on rows
+scored `C`.** No verdict moves. Nothing is re-read outside #572's subject, and a row this section does
+not name keeps the verdict and the reason it had.
+
+### §42.1 §41's five moves, re-derived against the code and the committed production capture
+
+- **T71 `X → C` HOLDS.** §7.2's three prohibitions are each covered by one hook rather than argued
+  about: the app must be in the FOREGROUND and the screen FOCUSED, and only a message loaded into that
+  thread's list is a threshold — a realtime event or a delivery receipt is not
+  (`travel-buddy-standalone/src/features/telegraph/lifecycle/useThreadReadState.ts:93#export function useThreadReadState(`,
+  threshold rule at `travel-buddy-standalone/src/features/telegraph/lifecycle/readState.ts:123#export function seenThreshold(`).
+  §41's own disclosure is restated rather than quietly dropped: "rendered" is list-level, not
+  viewport-level, so a thread opened at its newest message marks that message and nothing tracks
+  per-item visibility. `C` rather than `W` because §7.2's three named prohibitions are what the row
+  states, and each is tested in both directions.
+- **T425 `N → W` HOLDS**, with `W` the right ceiling for the two reasons §41 gives.
+- **T327, T338, T387 `N → W` HOLD, and the blocker is confirmed from the repository rather than taken
+  on trust.** Each is "IMPLEMENTATION-COMPLETE; awaits 2325 → 2810 → 3000 on production". **None of the
+  three migrations appears in `production-applied-migrations.json`**, whose newest entry is
+  `2971_layover_discovery_mode_flag`; the 2026-09-22 capture shows `message_thread_members` with nine
+  columns and **neither `delivered_sequence` nor `seen_sequence`**, and **no unsend function at all** in
+  its function list. The ceiling these rows name is real and it is checkable offline.
+
+### §42.2 Three reasons corrected, verdict unmoved — and two of them are on rows scored `C`
+
+| id | was | now | the correction |
+|---|---|---|---|
+| T69 | W | **W** | The row's reason is a GREP RESULT, and the grep no longer returns what it says. It reads *"**no DELIVERED concept anywhere** (`grep -i '\bdelivered\b'` over `routes/messaging.ts` + `routes/groupChat.ts` + `lib/telegraphEvents.ts` returns one unrelated E2EE string)"*. At this tree `lib/telegraphEvents.ts` carries the §13.2 `message.delivered` event as a declared member of the event union, with its own emitter and its own notes block, and it is emitted per fan-out (`artifacts/api-server/src/lib/telegraphEvents.ts:444#type: "message.delivered",`); #572 made a client render from it. **`W` is unchanged and the count in the reason is wrong in the row's own favour**: the honest reading is four of six states rather than two — SENDING, SENT, FAILED and SEEN are measured, DELIVERED is OBSERVED IN SESSION AND STORED NOWHERE, and UNSENT exists only behind a function production does not have (T327). The row stays `W` because a state the system forgets the moment the screen closes is not a lifecycle state: `delivered_sequence` is declared in an unapplied migration (`artifacts/api-server/src/migrations/2810_telegraph_message_kernel.sql:177#ALTER TABLE public.message_thread_members ADD COLUMN IF NOT EXISTS delivered_sequence bigint;`) and nothing writes it. **A reason that was false in the direction of pessimism is still a false reason**, and this is the second census in this re-census pass where a stale reason named the wrong blocker. |
+| T74 | C | **C** | **A `C` resting on a citation that points at unrelated code — the IN-RANGE-BUT-WRONG class, found in a row nobody would re-check.** The row's evidence is *"unread counts are derived by comparing `created_at > last_read_at` over lines 924-969 of `routes/messaging.ts`"*. At this tree those lines are the **message-request accept handler** — a compare-and-swap on `message_requests.status` and a direct-thread lookup, with no unread arithmetic in them. The claim is still TRUE and is now in two places, both anchored so the next shift is loud: the per-thread derivation at `artifacts/api-server/src/routes/messaging.ts:2186#// Unread count: messages newer than last_read_at not sent by the user.` and the exact count #572 added for threads a bounded page could not answer, `artifacts/api-server/src/services/telegraph/inboxReads.ts:187#export async function countUnreadFromOthers(`. The forbidden shape is still structurally absent, and **the kernel design does not reintroduce it**: 2810 adds `delivered_sequence` and `seen_sequence` as per-member-per-thread COLUMNS, not a row per message per user, so the prohibition survives the migration that has not landed. `C` holds on evidence rather than on a pointer. |
+| T394 | C | **C** | The same citation, the same repair. *"`last_read_at` feeds only unread counts"*, over the same lines 924-969, pointed at the accept handler too. The claim needed re-reading and not just repointing, because #572 gave `last_read_at` a SECOND consumer: the receipts surface behind `artifacts/api-server/src/routes/telegraphLifecycle.ts:132#/threads/:threadId/receipts`, which is what draws "Seen" and "Seen by N". **That is still a passive read receipt being used as a passive read receipt**, which is exactly what the row permits; what it forbids is inferring acceptance, agreement or acknowledgement from it, and every consent-shaped act still has its own explicit object. `C` holds, and the row is now true of two consumers instead of one. |
+
+### §42.3 Rows read and NOT moved
+
+- **T133** (`C`, do not encode delivery or availability solely by colour) is now satisfied
+  NON-VACUOUSLY on the surface it is actually about. Its restated evidence is the shared-context rail;
+  #572 added the first delivery surface Telegraph has ever had, and it renders a WORD — Sending, Not
+  sent, Sent, Delivered, Seen, "Sent · read status unavailable" — from
+  `travel-buddy-standalone/src/features/telegraph/lifecycle/readState.ts:70#export function ownMessageStatus(`,
+  and the connection banner renders a sentence. The prohibition held while nothing rendered delivery,
+  and it holds now that something does. No move, and a stronger row than it was.
+- **T344** (`C`) does not reopen. §42 checked the one thing that could reopen it — whether #572's
+  rewrite of the inbox reads introduced a new plausible-empty — and it is the opposite: a catch-up read
+  that fails REFUSES rather than showing a thread empty or read.
+- **T289**, **T428**, **T444**, **T8** stay `W`. The list half of the home projection got more
+  complete; the Now band and the nearby summary still have no source, which is what holds those rows.
+- **T73**, **T295** stay as §41 restated them. **T72** stays `W`: `last_read_at` is still a timestamp
+  and the sequence columns are still in an unapplied migration with no writer.
+- **T393** stays `N ∅`. There is still no acknowledgement object, so nothing can confuse one with a
+  read.
+- **T326**, **T53** stay `W` as §38 left them; neither is #572's subject.
+
+### §42.4 What this section looked for and did NOT find
+
+Stated because a re-census that reports only what it found is not auditable. This section looked
+specifically for a row to move DOWN on this surface and found none. The three candidates and why each
+survived: **T74** — the receipts surface #572 added does not create a per-message receipt row, and
+neither does the kernel migration behind it; **T71** — "rendered" is list-level, which is a real limit
+and is not one of §7.2's three prohibitions; **T295** — the ratchet moved in the right direction, from
+six client bypass sites to three, and the shrink-only baseline came down with it rather than being
+left as slack.
+
+### §42.5 The headline, unchanged
+
+No verdict moves, so the distribution is §41.8's. Recounted with `check:census-integrity` rather than
+copied: `CENSUS_INTEGRITY_DUMP=ALL` over this file before and after this section yields the same 451
+(id, verdict) pairs — the three restated rows move their LINE only, which is what a reason correction
+should do and the one thing a byte comparison of that dump could not have told you.
+
+| bucket | §41 | **§42** |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 239 | **239** |
+| BUILT-BUT-WRONG | 177 | **177** |
+| NOT-BUILT | 33 | **33** |
+| CANNOT-VERIFY | 2 | **2** |
+
+451 rows; CONSTRUCTED 416 of 451 = 92.2 %, CORRECT 239 of 451 = 53.0 %.
+
+**This surface is the clearest case for why the corpus `C` did not move.** #572 is a large, careful,
+test-first PR that closed nine defects a tester would have met, and its own census section moved five
+rows — four to `W` and one, a client rule, to `C`. Three of the four `W` moves wait on the same three
+migrations reaching production. Nothing in the PR could move a `C`, because what it fixed was the
+honesty of state a person reads, and the rows that would reward it are gated on a message kernel that
+is written and not applied.
+
+### §42.6 Freshness, and what this does NOT claim
+
+`head_commit` is RE-DECLARED at `f71cfb85f`. The census-telegraph acknowledgement written against
+`1fe72289b` is RETIRED, not deleted, in
+`artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`. Zero counted files have changed
+since the new declaration.
+
+No code, no flag, no migration, and **no database read or write of any kind** — every deployment fact
+above is quoted from the repository's own committed capture and applied-migration record. This section
+certifies no row it does not name.
+
+### §42.7 What would turn this red
+
+- 2325, 2810 and 3000 reaching production: T327, T338, T387 and T69 all have to be re-read the same
+  day, and T69's DELIVERED clause becomes decidable rather than in-session.
+- A writer for `delivered_sequence`: T69 and T73 move together or the document has to say why not.
+- Another rewrite of `routes/messaging.ts` without repointing T74 and T394: both go back to citing
+  whatever ends up at lines 924-969, which is how this pass found them.
