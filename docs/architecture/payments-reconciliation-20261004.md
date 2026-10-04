@@ -129,7 +129,7 @@ vocabulary admits three of `09` §3's eight states and can never produce `payabl
 | `lib/creatorRuleEvaluation.ts` | refuses `{}` rule params rather than defaulting (`artifacts/api-server/src/lib/creatorRuleEvaluation.ts:68#p))`) | reachable |
 | `lib/creatorAttributionScheduler.ts` | hourly tick, started at `artifacts/api-server/src/index.ts:293#startPlaceCooccurrenceRebuildScheduler();` | reachable, **inert**: one flag read per tick |
 | `lib/rentBuddyEarningsLedger.ts` | writes the legacy estimate summary row | reachable |
-| `lib/rentBuddyFeeSchedule.ts` | the single fee resolver (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:46#FEE_SCHEDULE_TABLE`, `:104#resolveFeeSchedule(`) | reachable |
+| `lib/rentBuddyFeeSchedule.ts` | the single fee resolver (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:80#FEE_SCHEDULE_TABLE`, `:289#resolveFeeSchedule(`) | reachable |
 | `lib/rentBuddyKycGate.ts` | hard-blocks booking creation (§1.4) | **reachable and closed** |
 | `services/creators/CreatorAttributionService.ts` | the only writer of all three tables | reachable |
 | `services/creators/CreatorAttributionProducers.ts` | the one production attribution producer | reachable, flag-gated |
@@ -151,8 +151,8 @@ vocabulary admits three of `09` §3's eight states and can never produce `payabl
 |---|---|---|
 | `routes/creatorEconomy.ts` | 3 creator-own reads, e.g. `artifacts/api-server/src/routes/creatorEconomy.ts:64#asyncHandler(async` | `requireUser` + the flag; payout eligibility **deliberately not served** |
 | `routes/adminCreatorLedger.ts` | 5: audit read, hold, release, recompute, `artifacts/api-server/src/routes/adminCreatorLedger.ts:101#asyncHandler(async` | `artifacts/api-server/src/routes/adminCreatorLedger.ts:85#requireAdmin(req,` + the flag re-checked in every service function |
-| `routes/rentABuddy.ts` pay | `pay-deposit` / `pay-full`, both **503**, no side effects (`artifacts/api-server/src/routes/rentABuddy.ts:2292#async`) | none needed — constant responses |
-| `routes/rentABuddy.ts` refund | `refund-eligibility`, **501** (`artifacts/api-server/src/routes/rentABuddy.ts:4076#async`) | none |
+| `routes/rentABuddy.ts` pay | `pay-deposit` / `pay-full`, both **503**, no side effects (`artifacts/api-server/src/routes/rentABuddy.ts:2306#pay-deposit`) | none needed — constant responses |
+| `routes/rentABuddy.ts` refund | `refund-eligibility`, **501** (`artifacts/api-server/src/routes/rentABuddy.ts:4090#refund-eligibility`) | none |
 | `routes/rentABuddySpec.ts` payouts | hold (`artifacts/api-server/src/routes/rentABuddySpec.ts:2446#asyncHandler(async`), release (`:2495#asyncHandler(async`) | `requireAdmin`; now **compare-and-swap** (§3) |
 | `routes/verification.ts` | session create, status, webhook | rate-limited, signature-enforced, key-mode-gated |
 
@@ -265,8 +265,21 @@ decision; nothing implements it.**
 
 ### D3 Fees — "10 % platform commission on the pre-tax service price, shown before checkout; no commission on tips; no deposit in the first release; configurable by product and market" → **PARTIAL**
 
+> **CORRECTED 2026-10-04 by PR #616, after this document was written.** The two findings below
+> that this section records as open are now CLOSED, and the body is left unedited — same treatment
+> this document gives `09` §11. The commission is a **flat 10 % across every buddy level, carried
+> as 1000 BASIS POINTS** (`artifacts/api-server/src/migrations/3520_rent_buddy_commission_basis_points.sql:1#3520_rent_buddy_commission_basis_points.sql`,
+> written and **not applied**), which also removes the expressibility defect this section names:
+> the `integer` percent column could not hold a fractional rate, so "configurable by market" was
+> unrepresentable. Market overrides remain possible but require a separately recorded approval,
+> enforced by a CHECK and by the resolver. **The 30 % deposit is gone** — deleted, along with a
+> SECOND deposit computation this pass did not find: a six-rule 20/25/35/40 % ladder in
+> `artifacts/api-server/src/services/rentBuddy/PricingService.ts:2#PricingService`. No booking path
+> now charges a deposit at all. The line citations below were repointed by this lane's line moves;
+> the claims they carried were true when written.
+
 - **Commission exists, configurably, but not at 10 %.** The schedule of record is a per-level table
-  read through one resolver (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:46#FEE_SCHEDULE_TABLE`),
+  read through one resolver (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:80#FEE_SCHEDULE_TABLE`),
   seeded 25 / 22 / 15 / 12 / 12 % by buddy level
   (`artifacts/api-server/migrations/0134_rent_buddy_schema_rebuild.sql:1208#traveler_service_fee_pct)`).
   **`10` / `0.10` as a fee percentage has zero hits in the tree.** The column is `integer`, so a
@@ -278,8 +291,8 @@ decision; nothing implements it.**
 - **"Shown before checkout" — unknown.** Not established: this pass did not trace the mobile
   checkout surface, and the 503 on `pay-deposit` means no checkout executes.
 - **No deposit — CONTRADICTED in code.** A booking in `deposit_plus_cash` mode still computes a
-  30 % deposit from a hard-coded literal (`artifacts/api-server/src/routes/rentABuddy.ts:2160#Number(buddyProfile.hourly_rate_usd)`
-  and the three lines below it), ignoring the `deposit_percent` columns that exist. Unreachable
+  30 % deposit from a hard-coded literal (`artifacts/api-server/src/routes/rentABuddy.ts:2167#Number(buddyProfile.hourly_rate_usd)`
+  and the lines below it — **CLOSED, see the correction at the head of this section**), ignoring the `deposit_percent` columns that exist. Unreachable
   today because `rent_buddy_enabled` is FALSE, but the first release would ship it.
 
 ### D4 Payouts — "monthly, after earnings are finalized, services are completed, and verification is complete; carry small balances forward to a locally appropriate minimum" → **ABSENT**
@@ -292,7 +305,7 @@ compare-and-swap (§3).
 
 ### D5 Refunds — "full refund when the provider cancels, the service is unavailable, or a safety issue is upheld… don't promise fees or deposits are non-refundable" → **ABSENT**
 
-`refund-eligibility` is 501 (`artifacts/api-server/src/routes/rentABuddy.ts:4076#async`) and there
+`refund-eligibility` is 501 (`artifacts/api-server/src/routes/rentABuddy.ts:4090#refund-eligibility`) and there
 is **no refund-execution route at all**. What exists is ledger **reversal** — a different thing,
 correctly distinguished: `POST /admin/creator-ledger/transactions/reverse` appends negating entries
 and never edits or deletes. Two residual hazards, both pre-existing: seeded support-template text
@@ -317,7 +330,7 @@ has never fired.
 Verified in §3.3. No provider, no interface, no rate table, no per-country configuration, no
 withholding. `tax_withheld` exists only as a reserved doc concept and is **not** in the ledger's
 account CHECK. The single tax-adjacent artifact is a hardcoded disclaimer shown to buddies
-(`artifacts/api-server/src/routes/rentABuddy.ts:7547#documents`) — which is honest, and is the whole
+(`artifacts/api-server/src/routes/rentABuddy.ts:7605#documents`) — which is honest, and is the whole
 of it.
 
 ### D8 Identity — "no unverified bookings; identity and payment-provider verification before offering or booking; Sumsub behind a provider interface, with per-country availability checks" → **PARTIAL**
@@ -409,7 +422,7 @@ Every `stripe` code hit in the tree is **Stripe *Identity***, a KYC product, con
 Zero hits worktree-wide for `avalara`, `taxjar`, `stripe tax`, `sovos`, `quaderno`, `taxProvider`,
 `TaxProvider`, `tax_provider`, `calculateTax`, `taxRate`, `sales_tax`, `tax_document`,
 `taxDocument`, and `vat` / `gst` / `1099` at word boundaries. `withholding` matches only
-privacy-language. The only tax artifact is the disclaimer string at `artifacts/api-server/src/routes/rentABuddy.ts:7547#documents`.
+privacy-language. The only tax artifact is the disclaimer string at `artifacts/api-server/src/routes/rentABuddy.ts:7605#documents`.
 
 ### 3.4 No payout scheduler — proved by enumeration
 
