@@ -246,8 +246,18 @@ describe("profileVisibility — the ban/suspension state of user_account_states"
     const r = await resolveProfileVisibility(sc, "viewer", "t", row as any);
     assert.equal(r.visibility, "unavailable", "an unread ban state must not read as 'no ban'");
   });
-  it("CONTROL — a genuinely absent user_account_states carries no restriction", async () => {
-    const sc = fake({ user_account_states: { error: ABSENT_42P01 }, blocks: { rows: [] }, profile_privacy_settings: { rows: [] } });
+  // This was a CONTROL asserting the opposite ("a genuinely absent user_account_states carries no
+  // restriction"). Since the owner's decision of 2026-10-03 the table IS the moderation state, so a
+  // missing one means every ban is unread — reported as missing, never treated as "not banned".
+  it("a genuinely ABSENT user_account_states hides the profile too: missing means unread, not 'nobody is banned'", async () => {
+    for (const absent of [ABSENT_42P01, { code: "PGRST205", message: "Could not find the table 'public.user_account_states' in the schema cache" }]) {
+      const sc = fake({ user_account_states: { error: absent }, blocks: { rows: [] }, profile_privacy_settings: { rows: [] } });
+      const r = await resolveProfileVisibility(sc, "viewer", "t", row as any);
+      assert.equal(r.visibility, "unavailable", absent.code);
+    }
+  });
+  it("CONTROL — a readable, empty user_account_states does not hide the profile", async () => {
+    const sc = fake({ user_account_states: { rows: [] }, blocks: { rows: [] }, profile_privacy_settings: { rows: [] } });
     const r = await resolveProfileVisibility(sc, "viewer", "t", row as any);
     assert.notEqual(r.visibility, "unavailable");
   });

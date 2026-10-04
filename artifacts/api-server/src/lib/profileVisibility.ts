@@ -201,13 +201,13 @@ export async function resolveProfileVisibility(
     return { visibility: "unavailable", privacySettings: null };
   }
 
-  // Fallback: query user_account_states. FAIL-CLOSED on any error other than a
-  // genuinely ABSENT table — an RLS denial, a connection failure or a
-  // missing-column PGRST204 tells us NOTHING about the account's state, and the
-  // old `if (!acctErr && acct?.state)` read every one of them as "still active",
-  // so a deactivated, banned or deleted profile stayed fully visible for the
-  // duration of the error. An absent table is different in kind: there is no
-  // state to read, so there is no restriction to honour.
+  // Fallback: query user_account_states. FAIL-CLOSED on EVERY error, an ABSENT
+  // table included (42P01 / PGRST205) — an RLS denial, a connection failure, a
+  // missing-column PGRST204 and a table PostgREST cannot see all tell us NOTHING
+  // about the account's state. An absent table used to be exempt ("no state to
+  // read, so no restriction to honour"); since 2026-10-03 this table is THE
+  // moderation state (owner decision), so "missing" means every ban is unread,
+  // not that nobody is banned — the auth gate refuses on it for the same reason.
   //
   // A LIST, not maybeSingle, and banned / suspended rows only while IN FORCE
   // (lib/accountStateGate.ts, the moderation contract): an unban revokes a row
@@ -223,10 +223,10 @@ export async function resolveProfileVisibility(
       .eq("user_id", targetId)
       .in("state", ["deleted", "deactivated", "banned", "suspended"]);
     if (acctErr) {
-      if (!isTableMissingErr(acctErr)) {
-        return { visibility: "unavailable", privacySettings: null };
+      if (isTableMissingErr(acctErr)) {
+        logger.error({ err: acctErr, targetId }, "profileVisibility: user_account_states is MISSING — bans and suspensions cannot be read; withholding the profile");
       }
-      // table genuinely absent → no restriction to read
+      return { visibility: "unavailable", privacySettings: null }; // missing is reported as missing (above), never treated as "not banned"
     } else if (!Array.isArray(acctRows)) {
       return { visibility: "unavailable", privacySettings: null };
     } else if (
@@ -237,10 +237,10 @@ export async function resolveProfileVisibility(
       return { visibility: "unavailable", privacySettings: null };
     }
   } catch (e: any) {
-    if (!isTableMissingErr(e)) {
-      return { visibility: "unavailable", privacySettings: null };
+    if (isTableMissingErr(e)) {
+      logger.error({ err: e, targetId }, "profileVisibility: user_account_states is MISSING — withholding the profile");
     }
-    /* table missing → no restriction */
+    return { visibility: "unavailable", privacySettings: null }; // thrown or resolved, absent or not: unread is never "no restriction"
   }
 
   // ── 2. Block check (FAIL-CLOSED) ───────────────────────────────────────────

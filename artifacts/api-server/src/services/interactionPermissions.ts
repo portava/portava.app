@@ -304,8 +304,8 @@ export async function resolveInteractionPermissions(
   }
 
   // ── PRIORITY 1: Target account state ──────────────────────────────────────
-  // Phase 2 table — silences table-missing errors; throws on real DB errors.
-  const targetState = (await optList<{ state: string; expires_at?: string | null }>(
+  // critList, not optList: user_account_states is THE moderation state (owner decision 2026-10-03), no longer a "Phase 2 table that may not be migrated yet" — a MISSING table means every ban is unread, so it throws like any other failed read instead of reading as "not banned".
+  const targetState = (await critList<{ state: string; expires_at?: string | null }>(
     sc.from("user_account_states")
       .select("state, expires_at")
       .eq("user_id", targetUserId)
@@ -318,7 +318,7 @@ export async function resolveInteractionPermissions(
   }
 
   // ── PRIORITY 1b: Viewer account state ────────────────────────────────────
-  const viewerState = (await optList<{ state: string; expires_at?: string | null }>(
+  const viewerState = (await critList<{ state: string; expires_at?: string | null }>(
     sc.from("user_account_states")
       .select("state, expires_at")
       .eq("user_id", viewerId)
