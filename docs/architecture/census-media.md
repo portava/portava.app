@@ -1154,7 +1154,7 @@ So, before this pass:
 - **Nothing was hidden.** `post_hides` — created by
   `artifacts/api-server/src/migrations/0116_post_hides.sql:9#CONSTRAINT post_hides_unique UNIQUE (user_id, post_id)`,
   present in production, and READ by
-  `artifacts/api-server/src/routes/pulse.ts:157#const { data: hiddenRows } = await sc`
+  `artifacts/api-server/src/routes/pulse.ts:158#.from("post_hides")`
   to suppress a viewer's hidden posts — was written by **nothing anywhere in the tree**.
   Pulse honoured a list no surface could add to.
 - **The cited ranking penalty had no inputs.** `notInterestedPenalty` reads three fields
@@ -1423,7 +1423,7 @@ Both halves are wrong. At `3eaf2436f`, `post_hides` had **one writer and three r
 | WRITER | `POST /api/posts/:postId/hide` — `artifacts/api-server/src/routes/posts.ts:2648#router.post("/posts/:postId/hide"`, an idempotent upsert on the same conflict target §9 later duplicated |
 | READER | the following feed — `artifacts/api-server/src/routes/posts.ts:1246#.from("post_hides")` |
 | READER | the global feed — `artifacts/api-server/src/routes/posts.ts:1388#.from("post_hides")` |
-| READER | Pulse — `artifacts/api-server/src/routes/pulse.ts:157#const { data: hiddenRows } = await sc` |
+| READER | Pulse — `artifacts/api-server/src/routes/pulse.ts:158#.from("post_hides")` |
 | CLIENT | `travel-buddy-standalone/src/services/posts.ts:652#export async function hidePost` , called from `travel-buddy-standalone/src/components/PulseFeedCard.tsx:141#const ok = await hidePost(item.id);` |
 | TEST | `artifacts/api-server/src/test/postHide.test.ts:5#- Authenticated user can hide a post (upserts into post_hides, returns { hidden: true })` |
 

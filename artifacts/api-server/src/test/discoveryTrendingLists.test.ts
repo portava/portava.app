@@ -162,7 +162,7 @@ const ids = (body: any) => body.items.map((i: any) => i.placeId);
 const ACTIONS = ["places", "for-you", "emerging", "areas"] as const;
 
 describe("L-A — both flags, fail-closed; signed-in; bounded input", () => {
-  it("L-A1. each action: 401 without a bearer, 404 with either flag off or unreadable, 400 on a bad destination, 200 otherwise", async () => {
+  it("L-A1. each action: 401 without a bearer, 404 with either flag off, 503 flag_unreadable with the flags unreadable (§104), 400 on a bad destination, 200 otherwise", async () => {
     for (const a of ACTIONS) {
       withDb();
       assert.equal((await get(a, "Lisbon", null)).status, 401, a);
@@ -173,7 +173,7 @@ describe("L-A — both flags, fail-closed; signed-in; bounded input", () => {
         assert.ok(!db.reads.includes("place_momentum"), "nothing read with a flag off");
       }
       withDb(SEED(), { erroring: ["feature_flags"] });
-      assert.equal((await get(a, "Lisbon")).status, 404, `${a}: an unreadable flag reads OFF`);
+      const unread = await get(a, "Lisbon"); assert.equal(unread.status, 503, `${a}: an unreadable flag is a failed read`); assert.equal(unread.body.reason, "flag_unreadable", a);  // census-discovery §104 (DV-83, D-W11X2-56): restated — was: assert.equal((await get(a, "Lisbon")).status, 404, `${a}: an unreadable flag reads OFF`);
       withDb();
       for (const bad of [null, "", "x".repeat(81), "lisbon,porto", "a(b)"]) assert.equal((await get(a, bad)).status, 400, `${a} ${bad}`);
       const ok = await get(a, " Lisbon ");

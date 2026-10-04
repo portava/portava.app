@@ -67,3 +67,25 @@ export function isPartial(refusal: CoverageLike | null | undefined): boolean {
 export function isPartialEmpty(refusal: CoverageLike | null | undefined, rows: readonly unknown[] | null | undefined): boolean {
   return isPartial(refusal) && (rows?.length ?? 0) === 0;
 }
+
+/**
+ * A browse list whose REFRESH failed in transport while the last page stays on
+ * screen (census-discovery §100, DV-83, register D-W11X2-22). The rows kept are
+ * a real earlier answer, so they stay; the person is told they may be out of
+ * date rather than shown them as a fresh, complete answer — or losing them to
+ * an empty state the failed read never established.
+ */
+export function listStaleNotice(noun: string): string {
+  return `Couldn’t refresh just now, so these ${noun} may be out of date.`;
+}
+
+/**
+ * A browse or search list whose NEXT page (page ≥ 2) could not be read — a
+ * transport failure, a thrown read, or a `nothing` refusal (census-discovery
+ * §101, DV-83, register D-W11X2-30). The rows already on screen are real and
+ * stay; this says the rest of the list was not read, instead of the list
+ * stopping without a word. The caller adds its own retry affordance.
+ */
+export function listMoreFailedNotice(noun: string): string {
+  return `Couldn’t load more ${noun} just now.`;
+}

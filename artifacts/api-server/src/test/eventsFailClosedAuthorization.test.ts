@@ -202,7 +202,7 @@ describe("checkEventEligibility — the block lookup", () => {
     const sc = makeClient({ event_roles: [], blocks: [] }, new Set(["blocks"]));
     const r = await checkEventEligibility(sc, EV, ME);
     assert.equal(r.ok, false);
-    assert.match((r as any).message, /cannot join/i);
+    assert.equal((r as any).unread, true); assert.match((r as any).message, /temporarily unavailable/i);  // census-discovery §111 (D-W11X2-107): still denied, and marked as a check that could not be read, not "Cannot join this event"
   });
 
   it("still denies a genuinely blocked caller", async () => {

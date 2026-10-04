@@ -28,7 +28,7 @@ import { CachedImage } from '../../../components/CachedImage.tsx'; import { clus
 import { mediaMapOffline, type OfflineResult } from '../../../services/media/mediaOffline.ts'; // §39 "Map thumbnails" (census-media §29, MD300)
 import { useMediaMap, MEDIA_MAP_ZOOM } from '../hooks/useMediaMap.ts';
 import {
-  positionsUnavailableCopy,
+  positionsUnavailableCopy, MEDIA_MAP_PARTIAL_COPY,
   selectMediaMapModel,
   type MediaMapCluster,
 } from '../state/mediaMapStore.ts';
@@ -127,7 +127,7 @@ export function MediaMapScreen({
             {state.totalPerspectives} {state.totalPerspectives === 1 ? 'perspective' : 'perspectives'}
           </Text>
         ) : null}
-      </View>{cachedLabel ? <Text style={tailStyles.cached} accessibilityRole="text" testID="media-map-cached">{cachedLabel}</Text> : null}
+      </View>{cachedLabel ? <Text style={tailStyles.cached} accessibilityRole="text" testID="media-map-cached">{cachedLabel}</Text> : null}{model.positionsPartial ? <Text style={tailStyles.cached} accessibilityRole="text" testID="media-map-partial">{MEDIA_MAP_PARTIAL_COPY}</Text> : null /* census-discovery §114 (DV-83, sweep SW3) */}
 
       {canDraw && center ? (
         <MediaMapCanvas

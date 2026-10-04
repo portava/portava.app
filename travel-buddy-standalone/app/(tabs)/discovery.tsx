@@ -111,15 +111,15 @@ function DiscoveryHubScreen() {
   } = useFollowingHighlights();
   const currentCity = locationState.place.city ?? null;
 
-  const [trendingHashtags, setTrendingHashtags] = useState<TrendingHashtag[]>([]);
+  const [trendingHashtags, setTrendingHashtags] = useState<TrendingHashtag[]>([]); const [trendingFailed, setTrendingFailed] = useState(false); const [trendingPartial, setTrendingPartial] = useState(false);  // census-discovery §104 (DV-83, D-W11X2-57): a failed read is said
   useEffect(() => {
-    let cancelled = false;
+    let cancelled = false; setTrendingHashtags([]); setTrendingFailed(false); setTrendingPartial(false);  // census-discovery §104 (DV-83, D-W11X2-57): chips belong to the city they were read for; a new city starts with none
     getTrendingHashtags('city', currentCity).then((res) => {
       if (cancelled) return;
       // Normalize at the boundary: missing/invalid array → [].
-      if (res.ok && res.data) setTrendingHashtags((res.data.trending ?? []).slice(0, 12));
+      const coverage = trendingCoverage(res.ok ? res.data : null); if (res.ok && res.data && coverage !== 'failed') { setTrendingHashtags((res.data.trending ?? []).slice(0, 12)); setTrendingPartial(coverage === 'partial'); } else setTrendingFailed(true);  // census-discovery §108 (DV-83, D-W11X2-79): branch on the refusal's coverage, never on `ok` alone
     }).catch((err) => {
-      if (!cancelled && __DEV__) console.error('[Discovery] trending hashtags failed:', err);
+      if (!cancelled) setTrendingFailed(true); if (!cancelled && __DEV__) console.error('[Discovery] trending hashtags failed:', err);
     });
     return () => { cancelled = true; };
   }, [currentCity]);
@@ -1044,7 +1044,7 @@ function DiscoveryHubScreen() {
             </View>
           )}
 
-          {/* Trending hashtags */}
+          {/* Trending hashtags */}{trendingFailed && trendingHashtags.length === 0 ? (<Text style={[styles.trendingChipText, { paddingHorizontal: space.lg, paddingTop: 4, color: color.mute }]} testID="discovery-trending-failed">Couldn’t load trending tags just now.</Text>) : null}{trendingPartial && trendingHashtags.length > 0 ? (<Text style={[styles.trendingChipText, { paddingHorizontal: space.lg, paddingTop: 4, color: color.mute }]} testID="discovery-trending-partial">Trending tags may be incomplete right now.</Text>) : null}
           {trendingHashtags.length > 0 && (
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.trendingBar} contentContainerStyle={styles.trendingBarContent} pointerEvents="auto">
               {trendingHashtags.map((ht) => (
@@ -1577,4 +1577,16 @@ export default function DiscoveryHub() {
       <DiscoveryHubScreen />
     </ScreenErrorBoundary>
   );
+}
+
+/**
+ * census-discovery §108 (DV-83 round 11, D-W11X2-79): GET /hashtags/trending serves a window it could not
+ * read completely with the Discovery refusal envelope. `partial` beside chips keeps them under a
+ * "may be incomplete" line; any other refusal (a `nothing`, a missing or unknown coverage, or a partial
+ * with no chips) is a failed read, never a complete — or empty — trending list.
+ */
+function trendingCoverage(data: { trending?: unknown[]; refusal?: { coverage?: unknown } | null } | null | undefined): 'complete' | 'partial' | 'failed' {
+  if (!data) return 'failed';
+  if (data.refusal == null) return 'complete';
+  return data.refusal.coverage === 'partial' && (data.trending?.length ?? 0) > 0 ? 'partial' : 'failed';
 }

@@ -9961,8 +9961,32 @@ not an oracle for the id); an unreadable membership or message read is a 503
 - Red if: a non-member's report is filed or snapshotted; a left member's is; an unreadable
   membership read files a report or answers 404.
 
+## §40 — The call gateway says an event gate it could not read (round-16 note from census-discovery §113, N1). NO ROW MOVES
+
+**2026-09-30, Discovery lane W11-X2 (round 16), census-discovery §113 and register D-W11X2-134.** `head_commit` is NOT
+re-declared; no row of this census moves. Controlled evidence only.
+
+- **What was wrong.** `eventRoomIneligibility` (`artifacts/api-server/src/lib/calls/callGatewayAdapter.ts`) mapped the
+  shared event-eligibility refusal by its MESSAGE. The age seam's unread message ("Your age could not be checked right
+  now") contains "age", so a failed age read became `age_ineligible` — "This event's voice room isn't available for your
+  age group"; every other unread gate, a failed events or RSVP read and a thrown read became `not_event_eligible` —
+  "This voice room is for event attendees". All denied (fail closed); none was true.
+- **The fix.** The adapter reads the refusal's `unread` marker first and answers the gateway's existing retryable
+  outcome, `degraded_unavailable` (503, `retryable: true`); a failed events, RSVP or thrown read answers the same, and a
+  failed staff-role read is weighed after the RSVP (an attendee is admitted either way). The call screen says "Calling
+  couldn't be checked right now. Try again in a moment." (`travel-buddy-standalone/src/context/CallContext.tsx`). Every
+  edit is line-neutral in the adapter; the engine's gateway type gains the reason.
+- **Tests.** `artifacts/api-server/src/test/callGatewayEligibilityUnread.test.ts` (V15-CG1, CG1b–CG6 red first; V15-CG0,
+  CGc) and `travel-buddy-standalone/src/context/__tests__/CallContext.degradedCopy.component.test.tsx` (CD1 red first);
+  `callRoutes.test.ts`' pin of the thrown read changes in place to `degraded_unavailable`. Mutations N1–N7, each applied
+  alone and restored by sha256: 7 killed.
+
 ## Cited, not graded (check:census-scope-coverage)
 
+- NOT-GRADED: travel-buddy-standalone/src/context/CallContext.tsx — §40 names its copy for the gateway's `degraded_unavailable` outcome; the call screen's copy is graded by no row of this census, and no row moves.
+- NOT-GRADED: artifacts/api-server/src/test/callGatewayEligibilityUnread.test.ts — §40's controlled evidence for the call gateway's unread-gate outcome; no Telegraph verdict moves on it.
+- NOT-GRADED: travel-buddy-standalone/src/context/__tests__/CallContext.degradedCopy.component.test.tsx — §40's controlled evidence for the call screen's copy; no Telegraph verdict moves on it.
+- NOT-GRADED: artifacts/api-server/src/test/callRoutes.test.ts — §40 names it only because its pin of a thrown event read changed in place to `degraded_unavailable`; no Telegraph verdict moves on it.
 Declared 2026-09-27 by the coverage-guard fix (census-media §32.14). Each line names a file this census cites and does not grade, and says why. The guard refuses a declaration for any file a verdict row cites.
 
 - NOT-GRADED: artifacts/api-server/src/services/tagging/TaggingService.ts — counted in §17.8 and §19.4's tally of dropped-error reads beyond routes/messaging.ts and recorded there as fail-closed (it tags nobody when the block set is unreadable); §19.6 item 6 says it was not re-derived and the finding is not restated as this census's own, and T344's C rests on the three route files §20.5 classified and on routes/messaging.ts.

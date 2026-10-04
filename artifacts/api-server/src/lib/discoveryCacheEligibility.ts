@@ -344,7 +344,7 @@ export async function withMutedAuthors(
   if (blocked === null) return null;
   if (!sc) return null;
   try {
-    const { data, error } = await sc.from("user_mutes").select("muted_id").eq("muter_id", viewerId);
+    const { data, error } = await wholeListResult(() => sc.from("user_mutes").select("muted_id", { count: "exact" }).eq("muter_id", viewerId), "muted_id");  // census-discovery §123 (DV-83 round 24): the WHOLE mute list, by key — one cut at the row cap is read on, or is unreadable (null below), never "these are all you muted"
     if (error || !Array.isArray(data)) return null;
     if (data.length === 0) return blocked;
     const out = new Set(blocked);
@@ -462,3 +462,6 @@ export function isAdultOnlyVenue(
 ): boolean {
   return adultTypes.has(venueKey(place.type)) || adultTypes.has(venueKey(place.category));
 }
+
+// census-discovery §123 (DV-83 round 24): one viewer's list read whole (lib/wholeList.ts). At the foot so no cited line moves; ESM hoists imports.
+import { wholeListResult } from "./wholeList.js";

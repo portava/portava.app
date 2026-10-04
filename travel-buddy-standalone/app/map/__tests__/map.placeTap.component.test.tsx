@@ -21,7 +21,7 @@ jest.mock('expo-router', () => ({
   ...jest.requireActual('expo-router'),
   router: { push: jest.fn(), replace: jest.fn(), back: jest.fn(), navigate: jest.fn(), dismiss: jest.fn() },
   useRouter: () => ({ push: jest.fn(), back: jest.fn() }),
-  useLocalSearchParams: () => ({ entityTypes: 'places', title: 'Bangkok' }),
+  useLocalSearchParams: () => ({ entityTypes: 'places', title: 'Bangkok', city: 'Bangkok' }),  // census-discovery §116 (B17): a city param, never the title
   usePathname: () => '/',
   useSegments: () => [],
   useFocusEffect: (cb: () => (() => void) | void) => {

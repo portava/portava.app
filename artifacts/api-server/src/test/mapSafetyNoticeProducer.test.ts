@@ -450,3 +450,46 @@ describe("safety_notice through GET /api/map/projection", () => {
     assert.ok(!r.body.sources.includes("safety"));
   });
 });
+
+// ── census-discovery §113 (DV-83 round 16 sweep, D-W11X2-135): a safety scan cut at its cap ─────────────────────
+//
+// readSafetyNotices read MAX_SAFETY_SNAPSHOT_ROWS (200) current safety snapshots worldwide with no order, and placed
+// them in the viewport AFTER the cut. With more than 200 current notices elsewhere, the one in view was never read,
+// and the gateway still named `safety` with no refusal — a missing safety notice stated as a complete layer.
+describe("§113: safety notices over a snapshot scan cut at its cap (D-W11X2-135)", () => {
+  const elsewhere = (n: number) => Array.from({ length: n }, (_v: unknown, i: number) => snapshot({ id: `snap-far-${i}`, subject_id: `77777777-0000-4000-8000-${String(i).padStart(12, "0")}`, observed_at: iso(-1) }));
+  let app: ProjectionApp | null = null;
+  beforeEach(() => { _clearProtectedZoneCache(); _clearFlowZoneCache(); });
+  afterEach(async () => { if (app) await app.close(); app = null; });
+
+  it("SN1 200 notices elsewhere ahead of the one in view → the read says it was cut", async () => {
+    const r = await readSafetyNotices(client(world({ intel_state_snapshots: [...elsewhere(200), snapshot()] })), { bbox: BBOX, now: NOW });
+    assert.ok(r.ok);
+    if (!r.ok) return;
+    assert.equal((r.report as any).capped, true, JSON.stringify(r.report));
+  });
+  it("SN2 the gateway over the same cut scan → safety is not named, and the producer names the cut", async () => {
+    app = await startRouterApp(mapProjectionRouter, gatewayWorld({ intel_state_snapshots: [...elsewhere(200), snapshot()] }), { token: TOKEN, userId: VIEWER });
+    const r = await app.projection(`bbox=${BBOX_STR}&zoom=14&kinds=safety_notice`);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.sources.includes("safety"), false, JSON.stringify(r.body.sources));
+    assert.equal(r.body.producers.safety_notice.refusal, "snapshots_capped", JSON.stringify(r.body.producers.safety_notice));
+  });
+  it("SN3 the scan reads the freshest notices first (the order it asks for; this fake keeps insertion order)", async () => {
+    const c: any = client(world());
+    const from = c.from.bind(c); const orders: unknown[] = [];
+    c.from = (t: string) => { const q = from(t); if (t === "intel_state_snapshots") { const o = q.order.bind(q); q.order = (col: string, opt: unknown) => { orders.push([col, opt]); return o(col, opt); }; } return q; };
+    await readSafetyNotices(c, { bbox: BBOX, now: NOW });
+    assert.deepEqual(orders, [["observed_at", { ascending: false }]]);
+  });
+  it("SNc CONTROL: 199 elsewhere and one in view (200 in all) → a whole read: no mark, the notice served, safety named", async () => {
+    const r = await readSafetyNotices(client(world({ intel_state_snapshots: [...elsewhere(199), snapshot()] })), { bbox: BBOX, now: NOW });
+    assert.ok(r.ok);
+    if (!r.ok) return;
+    assert.equal("capped" in r.report, false);
+    assert.equal(r.notices.length, 1);
+    app = await startRouterApp(mapProjectionRouter, gatewayWorld(), { token: TOKEN, userId: VIEWER });
+    const g = await app.projection(`bbox=${BBOX_STR}&zoom=14&kinds=safety_notice`);
+    assert.deepEqual(g.body.producers.safety_notice, { refusal: null, collected: 1 });
+  });
+});

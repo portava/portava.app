@@ -2904,6 +2904,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // these three do not live there, so the trailing-slash entry never reached
     // them and a change to any of the three aged nothing.
     "artifacts/api-server/src/lib/contextKernel.ts",
+    // census-compass §33 (lane W11-X2, round 13): the membership predicate's evidence — joins written by the real writers.
+    "artifacts/api-server/src/test/compassCircleMembershipPredicate.test.ts",
+    // census-compass §34 (lane W11-X2, round 14): the tools fail closed over an unread profile — the safety evidence.
+    "artifacts/api-server/src/test/compassAskProfileUnreadFailClosed.test.ts",
     "artifacts/api-server/src/lib/opportunityEngine.ts",
     "artifacts/api-server/src/routes/opportunities.ts",
     "artifacts/api-server/src/compass/",
@@ -4468,6 +4472,271 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/discoveryFeedNoServiceClient.test.ts",
     "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryEventPostsRail.refresh.component.test.tsx",
     "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.pullToRefresh.component.test.tsx",
+    // census-discovery §99 (lane W11-X2, round 3): DV-83 re-graded on ForYouTab's cached replay of a partial page.
+    "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.cachedPartial.component.test.tsx",
+    // census-discovery §100 (lane W11-X2, round 4): DV-83 re-graded on a failed read and on map mode, both tabs,
+    // and on the community and suggestion hooks' transport failures.
+    "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.failedRead.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.failedRead.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/__tests__/useCommunityDiscovery.failedRead.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/__tests__/useSearchSuggestions.failedRead.component.test.tsx",
+    // census-discovery §101 (lane W11-X2, round 5): DV-83 re-graded on cursor pages, the end claim, a city switch,
+    // the Compass feed's scope, the output kinds' failed reads and the no-service-client arms.
+    "travel-buddy-standalone/app/__tests__/search.loadMore.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.endClaim.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/__tests__/useCommunityDiscovery.citySwitch.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/compass/__tests__/useCompassFeed.scope.component.test.tsx",
+    "travel-buddy-standalone/src/services/__tests__/compass.feedCacheScope.component.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.compassScope.component.test.tsx",
+    "travel-buddy-standalone/src/services/compass.ts",  // §101 grades its feed cache's scope (D-W11X2-34)
+    "artifacts/api-server/src/test/discoveryOutputKindsFailedReads.test.ts",
+    "artifacts/api-server/src/test/discoveryNoServiceClientRefusals.test.ts",
+    // census-discovery §102 (lane W11-X2, round 6): DV-83 re-graded on the trip projection arms, an unreadable
+    // author set, the tab's and search's latest request, the Wikidata and Nominatim error bodies, and the Compass picks.
+    "artifacts/api-server/src/test/discoveryAuthorSetUnreadable.test.ts",
+    "artifacts/api-server/src/test/discoveryUpstreamErrorBody.test.ts",
+    "artifacts/api-server/src/test/discoveryTripProjectionConsumer.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.latestRequest.component.test.tsx",
+    "travel-buddy-standalone/app/__tests__/search.latestRequest.component.test.tsx",
+    "travel-buddy-standalone/src/components/compass/__tests__/CompassPicksSection.failedRead.component.test.tsx",
+    "travel-buddy-standalone/src/components/compass/CompassPicksSection.tsx",  // §102 grades its failed-read state (D-W11X2-41)
+    "travel-buddy-standalone/src/hooks/__tests__/useSearchSuggestions.heldQuery.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/PlaceDetailSheet.wikidata.component.test.tsx",
+    // census-discovery §103 (lane W11-X2, round 7): DV-83 re-graded on the client cache key, the real-name read,
+    // the Compass section's failed build and unread flags, the buddy launch flag and the suggestion groups' key.
+    "artifacts/api-server/src/compass/flags.ts",  // §103 grades readCompassEnabled / readCompassFlag (D-W11X2-50)
+    "artifacts/api-server/src/compass/CompassPipeline.ts",  // §103 grades flagsUnreadable (D-W11X2-49)
+    "artifacts/api-server/src/lib/publicIdentity.ts",  // §103 grades nameVisibilitySetOrNull (D-W11X2-48)
+    "artifacts/api-server/src/test/discoverySearchNameVisibility.test.ts",
+    "artifacts/api-server/src/test/compassSectionFailedRead.test.ts",
+    "artifacts/api-server/src/test/compassFlagsUnreadableGate.test.ts",
+    "travel-buddy-standalone/src/services/discoveryQueryStamp.ts",
+    "travel-buddy-standalone/src/hooks/compass/compassSectionFailure.ts",
+    "travel-buddy-standalone/src/services/__tests__/discovery.cacheKey.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.cacheKey.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryCategoryTab.heldQuery.component.test.tsx",
+    "travel-buddy-standalone/src/components/compass/__tests__/CompassPicksSection.buildError.component.test.tsx",
+    // census-discovery §104 (lane W11-X2, round 8): DV-83 re-graded on the Compass candidate reads, the
+    // /compass/recommendations failure arms and their consumers, the trending chips, an unread rollout flag
+    // and the why sheet.
+    "artifacts/api-server/src/compass/CompassItemHydrator.ts",  // §104 grades compassHydrationFailedSources (D-W11X2-54)
+    "artifacts/api-server/src/compass/CompassFrontLoadEngine.ts",  // §104 grades the first page's failed-read guard (D-W11X2-54)
+    "artifacts/api-server/src/routes/compassHome.ts",  // §104 grades the best move's failed-read arm (D-W11X2-54)
+    "artifacts/api-server/src/routes/hashtags.ts",  // §104 grades the trending fallback read (D-W11X2-57)
+    "artifacts/api-server/src/test/compassCandidateSourcesUnread.test.ts",
+    "artifacts/api-server/src/test/discoveryFlagUnreadable.test.ts",
+    "artifacts/api-server/src/test/compassWhyNoServiceClient.test.ts",
+    "artifacts/api-server/src/test/hashtagsTrendingFallbackRead.test.ts",
+    "travel-buddy-standalone/src/services/compassRecommendationsRefusal.ts",
+    "travel-buddy-standalone/src/components/compass/CompassTravelerRow.tsx",  // §104 grades its failed/partial state (D-W11X2-55)
+    "travel-buddy-standalone/src/components/compass/CompassPassportSuggestions.tsx",  // §104 (D-W11X2-55)
+    "travel-buddy-standalone/src/components/map/AskCompassBar.tsx",  // §104 (D-W11X2-55)
+    "travel-buddy-standalone/src/components/compass/CompassWhySheet.tsx",  // §104 (D-W11X2-58)
+    "travel-buddy-standalone/src/hooks/compass/useCompassWhyExplanation.ts",  // §104 (D-W11X2-58)
+    "travel-buddy-standalone/src/components/compass/__tests__/CompassTravelerRow.failedRead.component.test.tsx",
+    "travel-buddy-standalone/app/(tabs)/__tests__/discovery.trendingCityChange.component.test.tsx",
+    "travel-buddy-standalone/app/__tests__/search.compassRailFailed.component.test.tsx",
+    "travel-buddy-standalone/src/components/compass/__tests__/CompassPicksSection.sourcesUnread.component.test.tsx",
+    "travel-buddy-standalone/src/components/compass/__tests__/CompassPassportSuggestions.refusal.component.test.tsx",
+    "travel-buddy-standalone/src/components/map/__tests__/AskCompassBar.refusal.component.test.tsx",
+    "travel-buddy-standalone/src/services/__tests__/compassMatches.refusal.component.test.ts",
+    "travel-buddy-standalone/src/components/compass/__tests__/CompassWhySheet.failedRead.component.test.tsx",
+    // census-discovery §105 (lane W11-X2, round 9): DV-83 re-graded on the Trail read routes, the hashtag
+    // feed and its screen, GET /compass/feed's flags, the why sheet's latest request and the Compass home.
+    "artifacts/api-server/src/test/discoveryTrailMemberSourceUnread.test.ts",
+    "artifacts/api-server/src/test/hashtagFeedTabsUnread.test.ts",
+    "artifacts/api-server/src/test/compassFeedFlagUnread.test.ts",
+    "artifacts/api-server/src/test/compassHomeFlagsUnread.test.ts",
+    "travel-buddy-standalone/app/hashtag/[slug].tsx",  // §105 grades its failed states and latest-request guard (D-W11X2-61)
+    "travel-buddy-standalone/src/services/hashtag.ts",  // §105 grades the failure status it keeps (D-W11X2-61)
+    "travel-buddy-standalone/src/components/compass/CompassHome.tsx",  // §105 grades its failed and partial lines (D-W11X2-65)
+    "travel-buddy-standalone/app/__tests__/hashtag.failedRead.component.test.tsx",
+    "travel-buddy-standalone/src/services/__tests__/hashtag.status.component.test.ts",
+    "travel-buddy-standalone/src/services/__tests__/discoveryRecommendationsRefusal.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryOutputKindsRail.partial.component.test.tsx",
+    "travel-buddy-standalone/src/components/compass/__tests__/CompassWhySheet.latestRequest.component.test.tsx",
+    "travel-buddy-standalone/src/components/compass/__tests__/CompassHome.failedRead.component.test.tsx",
+    // census-discovery §107 (lane W11-X2, round 10): DV-83 re-graded on the Compass home's presence and
+    // weather reads, the Telegraph cards and their tray, and the city-confidence route.
+    "artifacts/api-server/src/compass/CompassSocialEngine.ts",  // §107 grades getWhosAround's unread signal (D-W11X2-67)
+    "artifacts/api-server/src/lib/weatherCache.ts",  // §107 grades getWeatherContext's failure status (D-W11X2-67)
+    "artifacts/api-server/src/routes/compassGraph.ts",  // §107 grades GET /compass/city-confidence's refusal (D-W11X2-70)
+    "travel-buddy-standalone/src/components/CompassTelegraphTray.tsx",  // §107 grades its failed state (D-W11X2-68)
+    "artifacts/api-server/src/compass/CompassProfileService.ts",  // §107 grades its location-unread mark (D-W11X2-73)
+    "artifacts/api-server/src/test/compassHomeSourcesUnread.test.ts",
+    "artifacts/api-server/src/test/compassTelegraphUnread.test.ts",
+    "artifacts/api-server/src/test/discoveryStopUnreadable.test.ts",
+    "artifacts/api-server/src/test/compassCityConfidenceUnread.test.ts",
+    "artifacts/api-server/src/test/mapSearchFlagUnread.test.ts",
+    "artifacts/api-server/src/test/compassProfileLocationUnread.test.ts",
+    "artifacts/api-server/src/test/compassWhosAroundToolUnread.test.ts",
+    "travel-buddy-standalone/src/components/compass/__tests__/CompassHome.sectionUnread.component.test.tsx",
+    "travel-buddy-standalone/src/components/__tests__/CompassTelegraphTray.failedRead.component.test.tsx",
+    "travel-buddy-standalone/src/services/__tests__/compassTelegraph.refusal.component.test.ts",
+    "travel-buddy-standalone/src/services/__tests__/cityConfidence.refusal.component.test.tsx",
+    // census-discovery §108 (lane W11-X2, round 11): DV-83 re-graded on the presence walk's consent batch.
+    "artifacts/api-server/src/lib/circleAccessGuard.ts",  // §108.1 BK1: canViewCirclePresenceBatch's unchecked consent reads
+    "travel-buddy-standalone/src/components/compass/CompassBuddyRow.tsx",  // §108 grades its failed and partial states (D-W11X2-81)
+    "travel-buddy-standalone/src/features/trips/map/tripCompassRead.ts",  // §108 grades the trip map's Compass read (D-W11X2-81)
+    "artifacts/api-server/src/test/compassPresenceConsentUnread.test.ts",
+    "artifacts/api-server/src/test/compassTelegraphCityUnread.test.ts",
+    "artifacts/api-server/src/test/discoveryStopMeasurementUnread.test.ts",
+    "artifacts/api-server/src/test/hashtagsTrendingComplete.test.ts",
+    "artifacts/api-server/src/test/compassBuddyArmUnread.test.ts",
+    "travel-buddy-standalone/src/services/__tests__/compassTelegraphChip.transport.component.test.ts",
+    "travel-buddy-standalone/app/(tabs)/__tests__/discovery.trendingPartial.component.test.tsx",
+    "travel-buddy-standalone/src/components/compass/__tests__/CompassBuddyRow.failedRead.component.test.tsx",
+    "travel-buddy-standalone/src/features/trips/map/__tests__/tripCompassRead.test.ts",
+    "travel-buddy-standalone/app/map/__tests__/tripCompassAlternativesRead.component.test.tsx",
+    // census-discovery §109 (lane W11-X2, round 12): DV-83 re-graded on the trip page's Compass Brief and get_circle_activity.
+    "travel-buddy-standalone/src/components/TripPage.tsx",  // §109.1 BK1: CompassTripBrief never branches on coverage
+    "artifacts/api-server/src/compass/CompassStructuredContext.ts",  // §109.1 BK2: the circle reads read as `{ data }` alone
+    "travel-buddy-standalone/src/components/__tests__/CompassTripBrief.failedRead.component.test.tsx",
+    "artifacts/api-server/src/test/compassCircleActivityUnread.test.ts",
+    "artifacts/api-server/src/test/compassToolsUnreadFacts.test.ts",
+    // census-discovery §110 (lane W11-X2, round 13): DV-83 re-graded on the Compass search tools, GET /map/search's events source, the structured context's circle caps and GET /circle/compass-suggestions.
+    "artifacts/api-server/src/routes/circle.ts",  // §110.1 BK4: GET /circle/compass-suggestions reads `{ data }` alone
+    // census-discovery §110 (lane W11-X2, round 13): the round's suites and the files §110 grades.
+    "artifacts/api-server/src/test/compassToolsFlagsUnread.test.ts",
+    "artifacts/api-server/src/test/mapSearchEventGateUnread.test.ts",
+    "artifacts/api-server/src/test/compassCircleReadBounds.test.ts",
+    "artifacts/api-server/src/test/circleCompassSuggestionsUnread.test.ts",
+    "artifacts/api-server/src/test/compassHonestStatesRound13.test.ts",
+    "artifacts/api-server/src/test/hiddenGemsBranchReads.test.ts",
+    "artifacts/api-server/src/test/compassFeedPipelineFlagsUnread.test.ts",
+    "artifacts/api-server/src/test/eventDetailUnreadGate.test.ts",
+    "artifacts/api-server/src/test/compassToolsCappedReads.test.ts",
+    "artifacts/api-server/src/test/discoveryAggregatesTruncated.test.ts",
+    "travel-buddy-standalone/src/components/__tests__/CircleCompassSuggestions.refusal.component.test.tsx",
+    "artifacts/api-server/src/compass/CompassFeedBuilder.ts",  // §110 grades buildFeed's flagsUnreadable (D-W11X2-100)
+    // census-discovery §111 (lane W11-X2, round 14): the round's suites and the files §111 grades.
+    "artifacts/api-server/src/test/eventGatesThreeState.test.ts",
+    "artifacts/api-server/src/test/hiddenGemsProjectionUnread.test.ts",
+    "artifacts/api-server/src/test/compassStructuredContextRound14.test.ts",
+    "artifacts/api-server/src/test/mapTemporalForecastEventsUnread.test.ts",
+    "artifacts/api-server/src/test/compassPresenceWalkBounds.test.ts",
+    "artifacts/api-server/src/test/circleFlagUnread.test.ts",
+    "artifacts/api-server/src/test/compassAskProfileUnreadFailClosed.test.ts",
+    "travel-buddy-standalone/src/components/map/__tests__/TimeMachineControl.forecastUnread.component.test.tsx",
+    "travel-buddy-standalone/src/features/map/time/__tests__/forecastUnread.test.ts",
+    "travel-buddy-standalone/app/__tests__/circlePresence.unreadFlag.component.test.tsx",
+    "travel-buddy-standalone/src/features/map/time/forecastUnread.ts",  // §111 grades the client's unread forecast layer (D-W11X2-115)
+    "artifacts/api-server/src/routes/mapProjectionTemporal.ts",  // §111 grades the forecast's events source (D-W11X2-115)
+    "artifacts/api-server/src/lib/blockGuard.ts",  // §111 grades readBlockBetween (D-W11X2-107)
+    // census-discovery §112 (lane W11-X2, round 15): the round's suites and the files §112 grades.
+    "artifacts/api-server/src/test/mapTemporalBlocksUnread.test.ts",
+    "artifacts/api-server/src/test/hiddenGemsTripCityUnread.test.ts",
+    "travel-buddy-standalone/src/hooks/__tests__/useTemporalEntities.failedRead.component.test.tsx",
+    "travel-buddy-standalone/app/gems/__tests__/gemsFailedRead.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/__tests__/useMapTravelers.failedRead.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryMapView.travelersFailedRead.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/useTemporalEntities.ts",  // §112 grades the Time Machine's failed state (D-W11X2-122)
+    "travel-buddy-standalone/src/hooks/useHiddenGems.ts",  // §112 grades the Hidden Gems hooks' request ids and the Layover error (D-W11X2-123, -124)
+    "travel-buddy-standalone/app/gems/index.tsx",  // §112 grades the Layover tab's error state (D-W11X2-123)
+    "travel-buddy-standalone/src/hooks/useMapTravelers.ts",  // §112 grades the travelers layer's failed read (D-W11X2-127)
+    "travel-buddy-standalone/src/components/map/TimeMachineControl.tsx",  // §112 grades the historical strip's notice (D-W11X2-122)
+    "travel-buddy-standalone/src/components/discovery/DiscoveryMapView.tsx",  // §112 grades the travelers badge over a failed read (D-W11X2-127)
+    "travel-buddy-standalone/src/services/mapTemporal.ts",  // §112 grades the envelope's refusal and nullable report (D-W11X2-121)
+    "travel-buddy-standalone/src/components/layover/LayoverDiscoveryCard.tsx",  // §112 corrects its comment on useLayoverGems (D-W11X2-123)
+    "artifacts/api-server/src/lib/mapTravelers.ts",  // §112.12 names its unmarked caps as seen and left (census-map M144)
+    // census-discovery §113 (lane W11-X2, round 16): the round's suites and the files §113 grades.
+    "artifacts/api-server/src/test/mapTravelersScanCap.test.ts",
+    "artifacts/api-server/src/test/mapTemporalHistoryUnread.test.ts",
+    "artifacts/api-server/src/test/hiddenGemsScanCap.test.ts",
+    "artifacts/api-server/src/test/nearbyEventsScanCap.test.ts",
+    "artifacts/api-server/src/test/discoverySweepR16.test.ts",
+    "travel-buddy-standalone/src/hooks/__tests__/useMapTravelers.capped.component.test.tsx",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryMapView.travelersCapped.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/__tests__/useTemporalEntities.historyUnread.component.test.tsx",
+    "travel-buddy-standalone/app/gems/__tests__/gemsNearMe.component.test.tsx",
+    "travel-buddy-standalone/app/__tests__/hashtag.followUnknown.component.test.tsx",
+    "travel-buddy-standalone/src/components/__tests__/TagPreviewSheet.followUnknown.component.test.tsx",
+    "artifacts/api-server/src/routes/mapTravelers.ts",  // §113 grades GET /map/travelers' cut mark (D-W11X2-129)
+    "artifacts/api-server/src/services/hiddenGems/HiddenGemDiscoveryService.ts",  // §113 grades the discovery scan's cut mark (D-W11X2-131)
+    "travel-buddy-standalone/src/services/hiddenGems.ts",  // §113 grades the Near Me service (D-W11X2-131)
+    "travel-buddy-standalone/src/services/mapTravelers.ts",  // §113 grades the travelers service's cut mark (D-W11X2-129)
+    "travel-buddy-standalone/src/features/map/time/forecastUnread.ts",  // §113 grades historyUnread and temporalNotice (D-W11X2-130, -136)
+    "travel-buddy-standalone/app/hashtag/[slug].tsx",  // §113 grades the hashtag page's unknown follow state (D-W11X2-137)
+    "travel-buddy-standalone/src/components/TagPreviewSheet.tsx",  // §113 grades the preview sheet's unknown follow state (D-W11X2-137)
+    "travel-buddy-standalone/src/services/hashtag.ts",  // §113 grades the nullable follow state (D-W11X2-137)
+    // census-discovery §114 (lane W11-X2, round 17): the files §114 grades.
+    "travel-buddy-standalone/src/hooks/useMapEntities.ts",  // §114 grades the NOW map's unread and cut layers (B5)
+    "travel-buddy-standalone/src/data/discovery.ts",  // §114 names its `export *` from src/__fixtures__, which puts that directory in the bundle (GH28)
+    // census-discovery §115 (lane W11-X2, round 18): the files §115 grades.
+    "artifacts/api-server/src/lib/buddyMapRead.ts",  // §115 grades the buddy layer's flag read (B8)
+    "artifacts/api-server/src/routes/events.ts",  // §115 grades GET /events' cut signal and near* filter (B12)
+    "artifacts/api-server/src/lib/circleLocationsRead.ts",  // §115 grades the circle reader's unread stop and block set (SW6)
+    "artifacts/api-server/src/lib/mapProducers/personalCityProducer.ts",  // §115 grades the personal-city fold's cut (SW5)
+    "travel-buddy-standalone/src/features/map/layers/layerPageCut.ts",  // §115 grades the rollback path's page-cut mark (B12)
+    "travel-buddy-standalone/src/components/map/CityTimeline.tsx",  // §115 grades the city timeline's not-whole state (SW9)
+    "travel-buddy-standalone/src/services/map.ts",  // §115 grades the rollback friends read (SW6)
+    "travel-buddy-standalone/src/services/events.ts",  // §115 grades the events list type's `truncated` (B12)
+    "travel-buddy-standalone/src/services/rentABuddy.ts",  // §115 grades the buddy search type's `refusal` (SW8)
+    // census-discovery §116 (lane W11-X2, round 19): the files §116 grades.
+    "artifacts/api-server/src/lib/nearBox.ts",  // §116 grades the near box every near read uses (B18, SW13)
+    "travel-buddy-standalone/src/features/map/layers/viewportBoxClamped.ts",  // §116 grades the clipped-viewport mark (SW14)
+    // census-discovery §117 (lane W11-X2, round 20): the files §117 grades.
+    "artifacts/api-server/src/lib/privacy/eventSerializers.ts",  // §117 grades the list's served waitlist count (B20)
+    "travel-buddy-standalone/src/components/HostDashboardPanel.tsx",  // §117 grades the attendees tab over a failed read (B19)
+    "artifacts/api-server/src/lib/pagedRead.ts",  // §117 grades the whole-or-refused paged read every count uses (B21, SW19)
+    "artifacts/api-server/src/lib/eventRowReads.ts",  // §117 grades the live counters and the paged event row reads (B20, B21, SW18)
+    "travel-buddy-standalone/src/lib/eventAttendeesUnread.ts",  // §117 grades how the event screens read a failed attendee read (B19)
+    "travel-buddy-standalone/src/lib/eventListMarks.ts",  // §117 grades how every events list's marks are read (SW17)
+    "travel-buddy-standalone/app/(tabs)/events.tsx",  // §117 grades the events tab over a failed or cut list (SW17)
+    "travel-buddy-standalone/app/events/list.tsx",  // §117 grades /events/list over a failed or cut list (SW17)
+    "travel-buddy-standalone/src/hooks/useCityPulse.ts",  // §117 grades the Pulse city feed's unread mark (SW17)
+    "travel-buddy-standalone/src/components/ExploreTodaySection.tsx",  // §117 grades Explore Today over an unread feed (SW17)
+    "travel-buddy-standalone/app/(tabs)/index.tsx",  // §117 grades Pulse's "Fits your time" over an unread feed (SW17)
+    // census-discovery §118 (lane W11-X2, round 21): the files §118 grades.
+    "artifacts/api-server/src/compass/CompassTools.ts",  // §118 grades the group tool's capacity statement over an unread count (B22)
+    "artifacts/api-server/src/routes/pulse.ts",  // §118 grades GET /pulse and /pulse/live's going counts and capacity (B22)
+    "travel-buddy-standalone/app/event/[id].tsx",  // §118 grades the event screen's unread counts and its "+N" (B24, B25)
+    "travel-buddy-standalone/src/components/events/EventCohostsPanel.tsx",  // §118 grades the co-host picker over a slice (B24)
+    "travel-buddy-standalone/src/components/LivePulseRail.tsx",  // §118 grades the Live rail over an unread read (SW20)
+    "travel-buddy-standalone/src/hooks/useLivePulse.ts",  // §118 grades the Live hook's unread reads and request order (SW20)
+    "travel-buddy-standalone/src/services/livePulse.ts",  // §118 grades how the Live service carries failedSources (SW20)
+    // census-discovery §119 (lane W11-X2, round 22): the files §119 grades.
+    "artifacts/api-server/src/compass/CompassEligibilityEngine.ts",  // §119 grades the candidate pool's capacity gate over an unread going count (B34)
+    "travel-buddy-standalone/src/components/map/LivePulseCard.tsx",  // §119 grades the NOW map card's line over an unread section (B31)
+    "travel-buddy-standalone/src/features/map/pulse/pulseCardAnswer.ts",  // §119 grades what the map keeps from a /pulse/live answer (B31)
+    "travel-buddy-standalone/src/services/pulse.ts",  // §119 grades how getPulseData reads a named failed read (SW27)
+    // census-discovery §122 (lane W11-X2, round 23): the files §122 grades that this census did not watch.
+    "travel-buddy-standalone/src/components/SaveButton.tsx",  // §122 grades the bookmark over an unread saved state (B36)
+    "travel-buddy-standalone/src/components/cards/EventCard.tsx",  // §122 grades the events card's bookmark over an unknown saved state (B35)
+    "travel-buddy-standalone/src/components/search/SearchResultCard.tsx",  // §122 grades a search result's action over an unread own state (SW29, SW32)
+    "travel-buddy-standalone/src/hooks/usePulseFeed.ts",  // §122 grades the For You feed over a failed read for a new city (SW31)
+    "travel-buddy-standalone/app/gems/[id].tsx",  // §122 grades the gem screen's bookmark over an unread saved state (B36)
+    "travel-buddy-standalone/src/hooks/__tests__/useMapEntities.unreadOptional.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/__tests__/useMapEntities.legacyGemsCut.component.test.tsx",
+    "travel-buddy-standalone/app/map/__tests__/mapScreen.unreadLayers.component.test.tsx",
+    "travel-buddy-standalone/src/hooks/__tests__/useTemporalEntities.forecastLayersUnread.component.test.tsx",
+    "travel-buddy-standalone/app/gems/__tests__/gemsListCapped.component.test.tsx",
+    "travel-buddy-standalone/app/destination/__tests__/destination.gemsCapped.component.test.tsx",
+    "travel-buddy-standalone/src/features/media/__tests__/MediaMapScreen.gatewayPartial.component.test.tsx",
+    "travel-buddy-standalone/src/features/map/place/__tests__/livePlaceModel.liveUnread.test.ts",
+    "artifacts/api-server/src/test/mapLiveEnrichmentUnread.test.ts",
+    "travel-buddy-standalone/src/components/map/MapUnreadLayersBanner.tsx",  // §114 grades the NOW map's unread-layers notice (B5)
+    "travel-buddy-standalone/src/features/map/layers/unreadLayersNotice.ts",  // §114 grades its wording, safety first (B5)
+    "travel-buddy-standalone/src/services/gemListCut.ts",  // §114 grades the cut mark beside a gem list (SW1, SW2)
+    "travel-buddy-standalone/app/destination/[slug].tsx",  // §114 grades the destination page's cut gem list (SW1)
+    "travel-buddy-standalone/src/features/media/hooks/useMediaMap.ts",  // §114 grades the Media Map's gateway read (SW3)
+    "travel-buddy-standalone/src/features/media/state/mediaMapStore.ts",  // §114 grades mediaMapGatewayPartial and the partial state (SW3)
+    "travel-buddy-standalone/src/features/media/screens/MediaMapScreen.tsx",  // §114 grades the partial notice (SW3)
+    "travel-buddy-standalone/src/features/map/place/livePlaceModel.ts",  // §114 grades the unread live state's wording (SW4)
+    "artifacts/api-server/src/lib/mapObjects.ts",  // §114 grades the liveUnread field (SW4)
+    "artifacts/api-server/src/lib/mapProjection.ts",  // §114 grades enrichWithLiveClaims' liveUnread mark (SW4)
+    "travel-buddy-standalone/src/types/mapObjects.ts",  // §114 grades the client's liveUnread field (SW4)
+    "travel-buddy-standalone/src/services/mapProjection.ts",  // §114 grades the envelope's optional refusal (B5)
+    "travel-buddy-standalone/metro.config.js",  // §114: the guard reads its blockList for what Metro bundles (D-W11X2-141)
+    // census-discovery §123 (lane DISC-DV83, round 24): the files §123 grades that this census did not watch.
+    "artifacts/api-server/src/lib/wholeList.ts",  // §123 grades one viewer's list read whole or said unreadable (B43, SW33)
+    "artifacts/api-server/src/lib/viewerSavedReads.ts",  // §123 grades the viewer's saved state read whole (B44)
+    "artifacts/api-server/src/lib/overpassAnswer.ts",  // §123 grades the one reading of an HTTP-200 Overpass body (SW35)
+    "artifacts/api-server/src/lib/exclusionSet.ts",  // §123 grades the exclusion set read whole (SW33)
+    "artifacts/api-server/src/lib/venuesService.ts",  // §123 grades the venue lookup over an unfinished Overpass answer (SW35)
+    "artifacts/api-server/src/lib/localContext.ts",  // §123 grades the local context over an unfinished Overpass answer (SW35)
+    "artifacts/api-server/src/lib/neighborhoodMatch.ts",  // §123 grades the neighbourhood match over an unfinished Overpass answer (SW35)
+    "travel-buddy-standalone/src/components/LivePulseRail.machine.ts",  // §123 grades the collapsed rail's line over a partial read (B46)
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

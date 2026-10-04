@@ -59,7 +59,7 @@
  * mixing Date.now() with a no-arg new Date() in one function body.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { isKillSwitchEngaged } from "./featureFlags.js";
+import { isKillSwitchEngaged, type KillSwitchReadStatus } from "./featureFlags.js";  // census-discovery §115 (SW6)
 import { fetchBlockedSet } from "./blocks.js";
 import {
   coarsenPosition,
@@ -97,7 +97,7 @@ export type CircleLocationsStage =
    * table means UNKNOWN STANDING for every member — and serving a suspended
    * member's position is exactly the defect this gate exists to prevent.
    */
-  | "profiles";
+  | "profiles" | "kill_switch" | "blocks";  // census-discovery §115 (DV-83, sweep SW6): an unread stop or block set is a failed read, never an empty circle
 
 export type CircleLocationsResult =
   | { ok: true; locations: CircleLocationEntry[] }
@@ -122,8 +122,8 @@ export async function readCircleLocations(
   opts: CircleLocationsOptions = {},
 ): Promise<CircleLocationsResult> {
   // 1. Emergency stop, on the SERVE path as well as the write path.
-  if (await isKillSwitchEngaged(sc as any, "disable_location_sharing")) {
-    return { ok: true, locations: [] };
+  const stopRead: KillSwitchReadStatus = {}; if (await isKillSwitchEngaged(sc as any, "disable_location_sharing", stopRead)) {  // §115 (SW6): engaged is an empty circle; UNREAD is a failed read (still nobody served)
+    return stopRead.unread ? { ok: false, stage: "kill_switch", message: "disable_location_sharing could not be read" } : { ok: true, locations: [] };
   }
 
   // 2. Caller's circle members.
@@ -141,7 +141,7 @@ export async function readCircleLocations(
   // 3. Bidirectional block filter, fail-closed.
   const blockedSet =
     opts.blockedSet !== undefined ? opts.blockedSet : await fetchBlockedSet(sc, viewerId);
-  if (blockedSet === null) return { ok: true, locations: [] };
+  if (blockedSet === null) return { ok: false, stage: "blocks", message: "block state could not be read" };  // §115 (SW6): nobody served, and said unread
 
   const memberIds: string[] = memberIdsRaw.filter((id) => !blockedSet.has(id));
   if (memberIds.length === 0) return { ok: true, locations: [] };

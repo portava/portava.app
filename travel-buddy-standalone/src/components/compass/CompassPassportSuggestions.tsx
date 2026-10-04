@@ -17,7 +17,8 @@ import {
 import { router } from 'expo-router';
 import { Sparkles, UserPlus, UserCheck, MapPin, Calendar } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import { fetchCompassRecommendations, type CompassRecommendation } from '../../services/compass.ts';
+import { fetchCompassRecommendations, type CompassRecommendation } from '../../services/compass.ts'; import { compassRecommendationsFailed } from '../../services/compassRecommendationsRefusal.ts';
+import { listPartialNotice } from '../../services/discoveryCoverageNotice.ts';
 import { getFollowStatus, followUser } from '../../services/follows.ts';
 import { resolveCompassTitle, formatCompassSubtitle } from '../../utils/compassFormat.ts';
 
@@ -164,6 +165,7 @@ export function CompassPassportSuggestions({ isOwner }: CompassPassportSuggestio
   const [items, setItems]               = useState<CompassRecommendation[]>([]);
   const [loading, setLoading]           = useState(true);
   const [done, setDone]                 = useState(false);
+  const [readState, setReadState]       = useState<'failed' | 'partial' | null>(null);  // census-discovery §104 (DV-83, D-W11X2-55): the shared surface=passport arms refuse; a failed read is said, never the section's absence
   const [followStates, setFollowStates] = useState<Record<string, FollowState>>({});
 
   const handleFollowStateChange = useCallback((id: string, state: FollowState) => {
@@ -174,6 +176,8 @@ export function CompassPassportSuggestions({ isOwner }: CompassPassportSuggestio
     if (!isOwner) { setLoading(false); setDone(true); return; }
     fetchCompassRecommendations({ surface: 'passport', limit: 8 })
       .then(async (res) => {
+        if (!res.ok || !res.data || compassRecommendationsFailed(res.data)) { setReadState('failed'); return; }
+        if (res.data.refusal?.coverage === 'partial') setReadState('partial');
         if (res.ok && res.data) {
           const recs = res.data.recommendations;
           setItems(recs);
@@ -204,7 +208,7 @@ export function CompassPassportSuggestions({ isOwner }: CompassPassportSuggestio
           }
         }
       })
-      .catch(() => {})
+      .catch(() => { setReadState('failed'); })
       .finally(() => { setLoading(false); setDone(true); });
   }, [isOwner]);
 
@@ -222,11 +226,16 @@ export function CompassPassportSuggestions({ isOwner }: CompassPassportSuggestio
     );
   }
 
-  if (done && items.length === 0) return null;
+  if (done && items.length === 0 && readState === null) return null;  // census-discovery §104 (DV-83, D-W11X2-55)
 
   return (
     <View style={s.container}>
       <Header />
+      {readState ? (
+        <Text style={s.readNotice} testID={`compass-passport-${readState}`}>
+          {readState === 'failed' ? 'Couldn\u2019t load suggestions just now.' : listPartialNotice('suggestions')}
+        </Text>
+      ) : null}
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.row}>
         {items.map((item) => (
           <SuggestionCard
@@ -246,6 +255,12 @@ export function CompassPassportSuggestions({ isOwner }: CompassPassportSuggestio
 const s = StyleSheet.create({
   container: {
     marginTop: space.xl,
+  },
+  readNotice: {
+    fontSize: 12,
+    color: color.mute,
+    paddingHorizontal: space.lg,
+    paddingBottom: space.sm,
   },
   header: {
     flexDirection: 'row',

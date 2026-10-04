@@ -26,7 +26,7 @@ import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 import {
   fetchCompassRecommendations,
   type CompassRecommendation,
-} from '../../services/compass.ts';
+} from '../../services/compass.ts'; import { compassRecommendationsFailed } from '../../services/compassRecommendationsRefusal.ts';
 import type { MapEntity } from '../../types/mapTypes.ts';
 import { mapObjectToEntity } from '../../types/mapTypes.ts';
 import { projectCompassResult } from '../../features/map/projection/clientProjection.ts';
@@ -181,7 +181,7 @@ export function AskCompassBar({
 
     setLoading(false);
 
-    if (!res.ok || !res.data) {
+    if (!res.ok || !res.data || compassRecommendationsFailed(res.data)) {  // census-discovery §104 (DV-83, D-W11X2-55): a refused read is not zero results
       setErrorMsg("Couldn't reach Compass — check connection");
       // Leave existing markers unchanged (do NOT call onResults)
       return;
@@ -194,7 +194,7 @@ export function AskCompassBar({
 
     // onResults([]) triggers carousel empty state — intentional for zero results.
     // Camera fly-to is handled by the parent (geocodeAndFly in map/index.tsx).
-    onResults(entities, trimmed);
+    onResults(entities, trimmed); if (res.data.refusal?.coverage === 'partial') setErrorMsg("Some Compass suggestions couldn't load");  // census-discovery §104 (DV-83, D-W11X2-55)
   }
 
   function handleChipPress(chip: string) {

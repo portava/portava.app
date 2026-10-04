@@ -122,7 +122,7 @@ describe("I — GET /me/tags/pending", () => {
   });
 });
 
-// census-discovery §99: the inbox read against the LIVE tags schema. Live `tags` carries `created_at` and no
+// census-discovery §98.10: the inbox read against the LIVE tags schema. Live `tags` carries `created_at` and no
 // `tagged_at` (docs/design/tagging-directions.md; snapshot src/test/generated/liveColumns.json), and PostgREST
 // fails the WHOLE statement on an unknown column. I1–I5's fixture carried whatever key the route read, so they
 // passed while the live read could never run. I6 drives the same route through makeSchemaStrictClient, which

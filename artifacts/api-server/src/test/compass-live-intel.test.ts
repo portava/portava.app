@@ -176,7 +176,7 @@ describe("Phase 8 — confidence system", () => {
 
   it("search_places labels verified catalog places community_reported and unverified historical", async () => {
     const sc = makeClient({ discovery_places: [PLACE, { ...PLACE, id: "place-2", verified: false }] });
-    const res: any = await executeCompassTool(sc, "user-1", null, "search_places", { query: "cafe" });
+    const res: any = await executeCompassTool(sc, "user-1", { userId: "user-1", blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as any /* census-compass §34: a tool ranks only over a read profile */, "search_places", { query: "cafe" });
     const byId = new Map(res.candidates.map((c: any) => [c.id, c]));
     assert.equal((byId.get("place-1") as any).confidence.sourceClass, "community_reported");
     assert.equal((byId.get("place-2") as any).confidence.sourceClass, "historical");
@@ -184,7 +184,7 @@ describe("Phase 8 — confidence system", () => {
 
   it("search_events labels candidates community_reported", async () => {
     const sc = makeClient({ events: [EVENT] });
-    const res: any = await executeCompassTool(sc, "user-1", null, "search_events", { query: "beach" });
+    const res: any = await executeCompassTool(sc, "user-1", { userId: "user-1", blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as any /* census-compass §34: a tool ranks only over a read profile */, "search_events", { query: "beach" });
     assert.equal(res.candidates.length, 1);
     assert.equal(res.candidates[0].confidence.sourceClass, "community_reported");
     assert.equal(res.candidates[0].confidence.label, CONFIDENCE_LABELS.community_reported);

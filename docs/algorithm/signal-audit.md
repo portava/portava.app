@@ -194,7 +194,7 @@ test-pinned, not accidental:**
 
 | Outcome | `artifacts/travel-buddy` | `travel-buddy-standalone` (this tree) |
 |---|---|---|
-| `save` | ✅ `SaveButton.tsx:120,165` | ✅ `SaveButton.tsx:120,165` |
+| `save` | ✅ `SaveButton.tsx:127,177` | ✅ `SaveButton.tsx:127,177` |
 | `tap` | ✅ `app/(tabs)/index.tsx:665` | ❌ **not wired** |
 
 The standalone test file states it outright:

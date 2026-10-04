@@ -13,7 +13,7 @@
  *   5.  City launch gate: if COMPASS_CITY_LAUNCH_REQUIRED is true,
  *       the item's city must match COMPASS_CITY_<CITY>_ENABLED flag
  *   6.  Verification: item requires verification but is unverified
- *   7.  Event capacity: event is full → not eligible
+ *   7.  Event capacity: event is full, or its going count could not be read → not eligible
  *   8.  Circle-only content: viewer must be in the item's circle
  *   9.  Trip-only content: viewer must be a trip member
  *  10.  Buddy booking eligibility: buddy must have active status
@@ -96,9 +96,9 @@ function checkEligibility(
   // 7. Event capacity: full events are ineligible for new attendees
   if (item.type === "event") {
     const capacity = item.capacity ?? null;
-    const attendees = item.currentAttendees ?? 0;
-    if (capacity !== null && attendees >= capacity) {
-      return ineligible("event_at_capacity");
+    const attendees = item.currentAttendees;  // census-discovery §119 (DV-83 round 22, B34): the live count, or none when its read failed — never 0 going
+    if (capacity !== null && (attendees == null || attendees >= capacity)) {
+      return ineligible(attendees == null ? "capacity_could_not_be_checked" : "event_at_capacity");  // §119 (B34): an unread count is no room, as the group tool rules (D-W11X2-167)
     }
   }
 

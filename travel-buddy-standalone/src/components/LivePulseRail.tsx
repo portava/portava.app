@@ -22,7 +22,7 @@ import { router } from 'expo-router';
 import { ChevronDown, ChevronUp, RefreshCw } from 'lucide-react-native';
 import { color, space, type as t } from '../theme/tokens.ts';
 import { LivePulseCard } from './LivePulseCard.tsx';
-import { buildSummaryText, filterItems, RAIL_FILTERS, type RailFilter } from './LivePulseRail.machine.ts';
+import { collapsedSummaryText, filterItems, RAIL_FILTERS, type RailFilter } from './LivePulseRail.machine.ts';
 import type { UseLivePulseResult } from '../hooks/useLivePulse.ts';
 import type { LivePulseItem } from '../services/livePulse.ts';
 
@@ -82,16 +82,16 @@ export function LivePulseRail({ pulse }: LivePulseRailProps) {
   // outcome to THIS serve rather than an earlier Live Pulse serve of the same
   // entity. Separation from the ranked /pulse feed comes from the surface
   // ('live_pulse'), not from this session.
-  const { items, loading, error, sessionId, refresh, dismiss, changeContext: _changeContext } = pulse;
+  const { items, loading, error, sessionId, refresh, dismiss, changeContext: _changeContext } = pulse; const unread = pulse.unread ?? [];  // census-discovery §118 (SW20): what the server could not read
 
   const filteredItems = useMemo(
     () => filterItems(items, activeFilter),
     [items, activeFilter],
   );
 
-  const summaryText = useMemo(() => buildSummaryText(items), [items]);
+  // census-discovery §123 (B46): the collapsed header's line is `collapsedSummaryText` (LivePulseRail.machine.ts), built where it is drawn.
 
-  if (!loading && !error && items.length === 0) {
+  if (!loading && !error && items.length === 0 && unread.length === 0) {  // §118 (SW20): an empty rail over a read that failed is not "No live plans"
     return (
       <View style={styles.container}>
         <Pressable style={styles.headerRow} onPress={() => setExpanded((e) => !e)}>
@@ -109,8 +109,8 @@ export function LivePulseRail({ pulse }: LivePulseRailProps) {
       <Pressable style={styles.headerRow} onPress={() => setExpanded((e) => !e)}>
         <View style={styles.headerLeft}>
           <Text style={styles.headerTitle}>Live Pulse</Text>
-          {!expanded && items.length > 0 && (
-            <Text style={styles.summaryText}>{summaryText}</Text>
+          {!expanded && collapsedSummaryText(items, unread.length, !!error) !== null && (  /* census-discovery §122 (B39): a failed read is said collapsed too, never a summary of other items; §123 (B46): a PARTIAL read is said collapsed too, never the summary alone */
+            <Text style={styles.summaryText} testID="live-pulse-collapsed-summary">{collapsedSummaryText(items, unread.length, !!error)}</Text>
           )}
         </View>
         {expanded ? <ChevronUp size={16} color={color.mute} /> : <ChevronDown size={16} color={color.mute} />}
@@ -142,7 +142,7 @@ export function LivePulseRail({ pulse }: LivePulseRailProps) {
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.skeletonRow}>
               {[0, 1, 2].map((i) => <SkeletonCard key={i} />)}
             </ScrollView>
-          ) : error ? (
+          ) : error || items.length === 0 ? (
             <View style={styles.errorState}>
               <Text style={styles.errorText}>Couldn't load live plans.</Text>
               <Pressable style={styles.retryBtn} onPress={refresh}>
@@ -174,7 +174,7 @@ export function LivePulseRail({ pulse }: LivePulseRailProps) {
                 />
               )}
             />
-          )}
+          )}{unread.length > 0 && items.length > 0 ? <Text style={styles.filterEmptyText} testID="live-pulse-unread">Some live plans couldn't be loaded.</Text> : null}{/* census-discovery §118 (SW20): a section the server could not read is said */}
         </>
       )}
     </View>

@@ -37,7 +37,7 @@ import { placeObject, PLACE_ID } from '../../../src/__fixtures__/mapEntities.ts'
 // band, where §17 introduces individual places.
 const mockParams: Record<string, string> = {
   entityTypes: 'places',
-  title: 'Da Nang',
+  title: 'Da Nang', city: 'Da Nang',  // census-discovery §116 (B17): the places layer reads the `city` param, never the title
   zoom: '14',
   lat: '16.0544',
   lng: '108.2022',

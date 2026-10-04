@@ -130,10 +130,10 @@ router.get("/pulse", async (req, res) => {
   // For crew tab we need the followed-user IDs first
   let crewIds: string[] | null = null;
   if (tab === "crew") {
-    const { data: followRows } = await client
+    const { data: followRows, error: followRowsErr } = await wholeListResult(() => client  // census-discovery §123 (DV-83 round 24): everyone the viewer follows, WHOLE, by key
       .from("user_follows")
-      .select("following_id")
-      .eq("follower_id", user.id);
+      .select("following_id", { count: "exact" })
+      .eq("follower_id", user.id), "following_id"); if (followRowsErr) { res.json({ posts: [], total: 0, tab, failedSources: ["user_follows"] }); return; }  // census-discovery §119 (DV-83 round 22, sweep): a failed follows read is not "you follow nobody"
     crewIds = (followRows as any[] ?? []).map((r: any) => r.following_id);
     if (crewIds.length === 0) {
       res.json({ posts: [], total: 0, tab });
@@ -152,14 +152,14 @@ router.get("/pulse", async (req, res) => {
   // Fetch caller's hidden post IDs before the main query so the DB-level LIMIT
   // applies to visible posts only — avoiding premature hasMore=false for pages
   // that happen to contain hidden entries.
-  const hiddenPostIds: string[] = [];
+  const hiddenPostIds: string[] = []; let hidesFetchFailed = false;
   try {
-    const { data: hiddenRows } = await sc
+    const hiddenRead = await readKeyedWhole(() => sc
       .from("post_hides")
-      .select("post_id")
-      .eq("user_id", user.id);
-    for (const r of hiddenRows ?? []) hiddenPostIds.push((r as any).post_id);
-  } catch { /* best-effort: feed continues even if the hide table is unreachable */ }
+      .select("post_id", { count: "exact" })
+      .eq("user_id", user.id), "post_id"); if (!hiddenRead.ok) { hidesFetchFailed = true; req.log.warn({ userId: user.id, err: hiddenRead.error }, "pulse: hide list could not be read whole"); }  // census-discovery §123 (DV-83 round 24, B43): the WHOLE hide list, by key — a list cut at the row cap is read on, or is a failed read, never "this is all you hid"
+    for (const r of hiddenRead.ok ? hiddenRead.value : []) hiddenPostIds.push(r.post_id as string);
+  } catch { hidesFetchFailed = true; } if (hidesFetchFailed) { req.log.warn({ userId: user.id }, "pulse: hide list unknown — returning empty feed (fail-closed)"); res.json({ posts: [], total: 0, tab, failedSources: ["post_hides"] }); return; }  // census-discovery §122 (DV-83 round 23, B40): a failed hide read is never "you hid nothing" — fail closed, as the block read does, and say so
 
   let query = sc
     .from("posts")
@@ -223,15 +223,15 @@ router.get("/pulse", async (req, res) => {
   let blockFetchFailed = false;
   const blockedSet = new Set<string>();
   try {
-    const [blockedRes, blockerRes] = await Promise.all([
-      sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
-      sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
+    const [blockedRes, blockerRes] = await Promise.all([  // census-discovery §123 (DV-83 round 24, B43): both block lists WHOLE, by key — one cut at the row cap is read on, or fails closed below
+      readKeyedWhole(() => sc.from("blocks").select("blocked_id", { count: "exact" }).eq("blocker_id", user.id), "blocked_id"),
+      readKeyedWhole(() => sc.from("blocks").select("blocker_id", { count: "exact" }).eq("blocked_id", user.id), "blocker_id"),
     ]);
-    if (blockedRes.error || blockerRes.error) {
-      blockFetchFailed = true;
+    if (!blockedRes.ok || !blockerRes.ok) {
+      blockFetchFailed = true; req.log.warn({ userId: user.id, err: !blockedRes.ok ? blockedRes.error : !blockerRes.ok ? blockerRes.error : undefined }, "pulse: block lists could not be read whole");
     } else {
-      for (const row of (blockedRes.data as any[]) ?? []) blockedSet.add(row.blocked_id as string);
-      for (const row of (blockerRes.data as any[]) ?? []) blockedSet.add(row.blocker_id as string);
+      for (const row of blockedRes.value) blockedSet.add(row.blocked_id as string);
+      for (const row of blockerRes.value) blockedSet.add(row.blocker_id as string);
     }
   } catch {
     blockFetchFailed = true;
@@ -239,7 +239,7 @@ router.get("/pulse", async (req, res) => {
 
   if (blockFetchFailed) {
     req.log.warn({ userId: user.id }, "pulse: block-state unknown — returning empty feed (fail-closed)");
-    res.json({ posts: [], total: 0, tab });
+    res.json({ posts: [], total: 0, tab, failedSources: ["blocks"] });  // census-discovery §119 (DV-83 round 22, sweep): fail-closed, and said — never an empty feed unnamed
     return;
   }
 
@@ -294,16 +294,16 @@ router.get("/pulse", async (req, res) => {
   // Batch-fetch which posts the viewer has bookmarked so we can include savedByMe
   // in the response without a per-post query.
   const postIds = rows.map((r: any) => r.id as string);
-  const savedSet = new Set<string>();
+  const savedSet = new Set<string>(); let savedReadFailed = false;
   if (postIds.length > 0) {
     try {
-      const { data: saveRows } = await sc
+      const { data: saveRows, error: saveRowsErr } = await sc
         .from("post_saves")
         .select("post_id")
         .eq("user_id", user.id)
-        .in("post_id", postIds);
+        .in("post_id", postIds); if (saveRowsErr) savedReadFailed = true;
       for (const r of (saveRows as any[]) ?? []) savedSet.add(r.post_id as string);
-    } catch { /* non-fatal — savedByMe defaults to false */ }
+    } catch { savedReadFailed = true; }  // census-discovery §122 (DV-83 round 23, B36): a failed read is never "you saved none of these" — savedByMe is null and post_saves is named
   }
 
   // Batch-fetch featured-by-Portava status so the badge renders without a
@@ -374,7 +374,7 @@ router.get("/pulse", async (req, res) => {
       spanTags:         spans.tags,
       spanHashtags:     spans.hashtagUsages,
       // Bookmark state for the authenticated viewer
-      savedByMe: savedSet.has(row.id as string),
+      savedByMe: savedReadFailed ? null : savedSet.has(row.id as string),
       // Featured-by-Portava badge category — null when post has not been featured
       featuredByPortava: featuredPulseMap.get(row.id as string) ?? null,
       // Canonical place ID — used by the place-affinity boost in scoreCandidate
@@ -503,7 +503,7 @@ router.get("/pulse", async (req, res) => {
           if (blockedSet.size > 0 && blockedSet.has(ev.host_id as string)) continue;
           rawEvents.push(ev);
         }
-      }
+      } const poolGoingUnread = (await liveEventCounters(sc, rawEvents, { going: true })).length > 0; if (poolGoingUnread) req.log?.warn?.({ events: rawEvents.length }, "pulse ranking: live going counts unread — ranking events without a capacity term rather than on the cached counter");  // census-discovery §118 (B22)
 
       const rawPlans: any[] = [];
       if (planResult.status === "fulfilled") {
@@ -609,7 +609,7 @@ router.get("/pulse", async (req, res) => {
         city: ev.city ? (ev.city as string).toLowerCase() : null,
         authorId: (ev.host_id as string | null) ?? null,
         authorTrustScore: trustMap.get(ev.host_id as string) ?? null,
-        hasCapacity: ev.max_attendees == null || (ev.going_count ?? 0) < ev.max_attendees,
+        hasCapacity: poolGoingUnread ? null : ev.max_attendees == null || (ev.going_count ?? 0) < ev.max_attendees,  // §118 (B22): unread → unknown, never the cached counter
         category: (ev.category as string | null) ?? null,
         tags: Array.isArray(ev.tags)
           ? (ev.tags as string[]).map((t) => t.toLowerCase())
@@ -620,8 +620,8 @@ router.get("/pulse", async (req, res) => {
           category: ev.category,
           startsAt: ev.starts_at,
           city: ev.city,
-          hasCapacity: ev.max_attendees == null || (ev.going_count ?? 0) < ev.max_attendees,
-          goingCount: ev.going_count ?? 0,
+          hasCapacity: poolGoingUnread ? null : ev.max_attendees == null || (ev.going_count ?? 0) < ev.max_attendees,
+          goingCount: poolGoingUnread ? null : (ev.going_count ?? 0),
           maxAttendees: ev.max_attendees ?? null,
         },
       }));
@@ -909,7 +909,7 @@ router.get("/pulse", async (req, res) => {
   } catch { /* non-fatal — place cards degrade gracefully */ }
 
   // perf-trim: rankedCandidates stripped — not rendered by any client component; internal ranking state only
-  res.json({ posts: pulsePostsForViewer(rows, orderedPosts, user.id), total: orderedPosts.length, tab, prompts, placeCards, sessionId }); // census-media §42: a post whose place mapPublicPost withholds reaches a non-owner as city and country only (pulsePostsForViewer, at the foot of this file)
+  res.json({ posts: pulsePostsForViewer(rows, orderedPosts, user.id), total: orderedPosts.length, tab, prompts, placeCards, sessionId, ...(savedReadFailed ? { failedSources: ["post_saves"] } : {}) }); // census-discovery §122 (B36) names an unread save state; census-media §42: a post whose place mapPublicPost withholds reaches a non-owner as city and country only (pulsePostsForViewer, at the foot of this file)
 
   // ── Impressions: the SERVED page ────────────────────────────────────────────
   // Logged HERE, after res.json, because `orderedPosts` is only final here: the
@@ -1120,11 +1120,11 @@ router.get("/pulse/live", async (req, res) => {
   }
 
   // ── Load feature flags in parallel ─────────────────────────────────────
-  const [safeReturnEnabled, hiddenGemsEnabled, circlesEnabled] = await Promise.all([
-    isFlagEnabled(sc, 'safe_return_enabled').catch(() => false),
-    isFlagEnabled(sc, 'hidden_gems_enabled').catch(() => false),
-    isFlagEnabled(sc, 'find_your_circle_enabled').catch(() => false),
-  ]);
+  const liveUnread = new Set<string>(); const flagRead: { unread?: boolean } = {};  /* census-discovery §118 (DV-83 round 21, B22 and its sweep): every read this rail could not make is named in `failedSources`, so a section it could not read is never said as absent */ const [safeReturnEnabled, hiddenGemsEnabled, circlesEnabled] = await Promise.all([
+    isFlagEnabled(sc, 'safe_return_enabled', flagRead).catch(() => { flagRead.unread = true; return false; }),
+    isFlagEnabled(sc, 'hidden_gems_enabled', flagRead).catch(() => { flagRead.unread = true; return false; }),
+    isFlagEnabled(sc, 'find_your_circle_enabled', flagRead).catch(() => { flagRead.unread = true; return false; }),
+  ]); if (flagRead.unread) liveUnread.add("feature_flags");
 
   // ── Load blocked user IDs (both directions) ──────────────────────────────
   // FAIL CLOSED, matching the feed endpoint at the top of this file. "No blocks"
@@ -1136,24 +1136,24 @@ router.get("/pulse/live", async (req, res) => {
   const blockedSet = new Set<string>();
   let blockFetchFailed = false;
   try {
-    const [outRes, inRes] = await Promise.all([
-      sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
-      sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
+    const [outRes, inRes] = await Promise.all([  // census-discovery §123 (DV-83 round 24, B43): both block lists WHOLE, by key, as the feed above reads them
+      readKeyedWhole(() => sc.from("blocks").select("blocked_id", { count: "exact" }).eq("blocker_id", user.id), "blocked_id"),
+      readKeyedWhole(() => sc.from("blocks").select("blocker_id", { count: "exact" }).eq("blocked_id", user.id), "blocker_id"),
     ]);
-    if (outRes.error || inRes.error) {
+    if (!outRes.ok || !inRes.ok) {
       blockFetchFailed = true;
       req.log?.warn(
         {
           userId: user.id,
-          outCode: (outRes.error as any)?.code,
-          inCode: (inRes.error as any)?.code,
-          err: outRes.error ?? inRes.error,
+          outCode: !outRes.ok ? outRes.error.code : undefined,
+          inCode: !inRes.ok ? inRes.error.code : undefined,
+          err: !outRes.ok ? outRes.error : !inRes.ok ? inRes.error : undefined,
         },
         "pulse/live: block-state read failed — returning an empty rail (fail-closed)",
       );
     } else {
-      for (const r of (outRes.data as any[]) ?? []) blockedSet.add(r.blocked_id as string);
-      for (const r of (inRes.data as any[]) ?? []) blockedSet.add(r.blocker_id as string);
+      for (const r of outRes.value) blockedSet.add(r.blocked_id as string);
+      for (const r of inRes.value) blockedSet.add(r.blocker_id as string);
     }
   } catch (err) {
     blockFetchFailed = true;
@@ -1164,7 +1164,7 @@ router.get("/pulse/live", async (req, res) => {
   }
 
   if (blockFetchFailed) {
-    res.json({ items: [], fallbackContext: fallbackContext ?? null, sessionId });
+    res.json({ items: [], fallbackContext: fallbackContext ?? null, sessionId, failedSources: [...liveUnread, "blocks"] });  // §118: fail-closed, and said: an empty rail over unread block state is not "No live plans"
     return;
   }
 
@@ -1196,14 +1196,14 @@ router.get("/pulse/live", async (req, res) => {
   // ── 0. Safe Return — active sessions (urgency 0, highest priority) ─────────
   if (safeReturnEnabled) {
     try {
-      const { data: sessions } = await sc
+      const { data: sessions, error: sessionsErr } = await sc
         .from("safe_return_sessions")
         .select("id, status, timer_end_at, trip_id, escalation_level")
         .eq("user_id", user.id)
         .in("status", ["active", "pending"])
         .gt("timer_end_at", now)
         .order("timer_end_at", { ascending: true })
-        .limit(1);
+        .limit(1); if (sessionsErr) liveUnread.add("safe_return_sessions");
 
       for (const session of (sessions as any[]) ?? []) {
         const minutesLeft = session.timer_end_at
@@ -1230,7 +1230,7 @@ router.get("/pulse/live", async (req, res) => {
           _urgency:          0,
         });
       }
-    } catch { /* non-fatal */ }
+    } catch { liveUnread.add("safe_return_sessions"); /* non-fatal — but said (§118) */ }
   }
 
   // ── 1. Events — hosted and RSVP'd ─────────────────────────────────────────
@@ -1245,7 +1245,7 @@ router.get("/pulse/live", async (req, res) => {
         .select("event_id, status")
         .eq("user_id", user.id)
         .in("status", ["going", "maybe"]),
-    ]);
+    ]); if (hostedRes.error) liveUnread.add("events"); if (rsvpRowsRes.error) liveUnread.add("event_rsvps"); const hostedGoingUnread = (await liveEventCounters(sc, (hostedRes.data as any[]) ?? [], { going: true })).length > 0; if (hostedGoingUnread) liveUnread.add("event_rsvps");  // §118 (B22): the live going count, never the cached counter
 
     // Apply city filter for hosted events when context scopes to a city
     // Note: hosted events are shown regardless of visibility — the host always sees their own events.
@@ -1257,8 +1257,8 @@ router.get("/pulse/live", async (req, res) => {
       const sl = computeStatusLabel(ev.starts_at, ev.ends_at);
       if (sl === 'My Plan') continue;
       const maxAtt = ev.max_attendees as number | null;
-      const goingCount = (ev.going_count as number | null) ?? 0;
-      const atCapacity = maxAtt !== null && goingCount >= maxAtt;
+      const goingCount = hostedGoingUnread ? null : ((ev.going_count as number | null) ?? 0);  // §118 (B22): unread → no count
+      const atCapacity = goingCount === null ? null : maxAtt !== null && goingCount >= maxAtt;  // null: unknown, so never "Full" and never said joinable
       addItem({
         id:                `event:${ev.id as string}`,
         item_type:         'event',
@@ -1275,20 +1275,20 @@ router.get("/pulse/live", async (req, res) => {
         secondary_action:  null,
         reason_labels:     atCapacity ? ['Your event', 'Full'] : ['Your event'],
         expires_at:        (ev.ends_at as string | null) ?? null,
-        is_joinable:       !atCapacity,
+        is_joinable:       atCapacity === false,
         // No _urgency override — let urgency() derive from status_label + user_relationship='host'
       });
     }
 
     const rsvpEventIds = ((rsvpRowsRes.data as any[]) ?? []).map((r: any) => r.event_id as string);
     if (rsvpEventIds.length > 0) {
-      const { data: rsvpEvents } = await sc
+      const { data: rsvpEvents, error: rsvpEventsErr } = await sc
         .from("events")
         .select("id, title, starts_at, ends_at, city, state, visibility, going_count, max_attendees, host_id")
         .in("id", rsvpEventIds)
         .in("state", ["open", "started"])
         .gt("ends_at", now)
-        .neq("host_id", user.id);
+        .neq("host_id", user.id); if (rsvpEventsErr) liveUnread.add("events"); const rsvpGoingUnread = (await liveEventCounters(sc, (rsvpEvents as any[]) ?? [], { going: true })).length > 0; if (rsvpGoingUnread) liveUnread.add("event_rsvps");  // §118 (B22)
 
       for (const ev of (rsvpEvents as any[]) ?? []) {
         if (blockedSet.has(ev.host_id as string)) continue;
@@ -1301,8 +1301,8 @@ router.get("/pulse/live", async (req, res) => {
         const sl = computeStatusLabel(ev.starts_at, ev.ends_at);
         if (sl === 'My Plan') continue;
         const maxAtt = ev.max_attendees as number | null;
-        const goingCount = (ev.going_count as number | null) ?? 0;
-        const atCapacity = maxAtt !== null && goingCount >= maxAtt;
+        const goingCount = rsvpGoingUnread ? null : ((ev.going_count as number | null) ?? 0);  // §118 (B22): unread → no count
+        const atCapacity = goingCount === null ? null : maxAtt !== null && goingCount >= maxAtt;
         addItem({
           id:                `event:${ev.id as string}`,
           item_type:         'event',
@@ -1319,22 +1319,22 @@ router.get("/pulse/live", async (req, res) => {
           secondary_action:  atCapacity ? null : { label: 'Invite', type: 'share_event' },
           reason_labels:     ["You're going"],
           expires_at:        (ev.ends_at as string | null) ?? null,
-          is_joinable:       !atCapacity,
+          is_joinable:       atCapacity === false,
         });
       }
     }
-  } catch { /* non-fatal */ }
+  } catch { liveUnread.add("events"); /* non-fatal — but said (§118) */ }
 
   // ── 2. Trips — user is a member ────────────────────────────────────────────
   let callerTripIds: string[] = [];
   const tripCityMap = new Map<string, string | null>(); // tripId → destinationCity
 
   try {
-    const { data: memberRows } = await sc
+    const { data: memberRows, error: memberRowsErr } = await sc
       .from("trip_members")
       .select("trip_id, role")
       .eq("user_id", user.id)
-      .in("role", ["owner", "co_host", "member"]);
+      .in("role", ["owner", "co_host", "member"]); if (memberRowsErr) liveUnread.add("trip_members");
 
     callerTripIds = ((memberRows as any[]) ?? []).map((r: any) => r.trip_id as string);
     const roleMap = new Map<string, string>(((memberRows as any[]) ?? []).map((r: any) => [r.trip_id as string, r.role as string]));
@@ -1346,11 +1346,11 @@ router.get("/pulse/live", async (req, res) => {
         : callerTripIds;
 
       if (queryTripIds.length > 0) {
-        const { data: trips } = await sc
+        const { data: trips, error: tripsErr } = await sc
           .from("trips")
           .select("id, title, destination_city, start_date, end_date, status, visibility, owner_id")
           .in("id", queryTripIds)
-          .in("status", ["planning", "upcoming", "active"]);
+          .in("status", ["planning", "upcoming", "active"]); if (tripsErr) liveUnread.add("trips");
 
         for (const trip of (trips as any[]) ?? []) {
           const city = (trip.destination_city as string | null) ?? null;
@@ -1390,7 +1390,7 @@ router.get("/pulse/live", async (req, res) => {
         }
       }
     }
-  } catch { /* non-fatal */ }
+  } catch { liveUnread.add("trips"); /* non-fatal — but said (§118) */ }
 
   // ── Location fallback: tripCity had no active trip → try savedCity → myPlans ─
   if (context === 'tripCity' && !citySlug) {
@@ -1419,13 +1419,13 @@ router.get("/pulse/live", async (req, res) => {
   if (circlesEnabled && callerTripIds.length > 0) {
     try {
       const fourHoursAgo = new Date(nowMs - 4 * 60 * 60 * 1000).toISOString();
-      const { data: presences } = await sc
+      const { data: presences, error: presencesErr } = await sc
         .from("circle_presence")
         .select("context_id, user_id, updated_at")
         .eq("context_type", "trip")
         .in("context_id", callerTripIds)
         .neq("user_id", user.id)
-        .gt("updated_at", fourHoursAgo);
+        .gt("updated_at", fourHoursAgo); if (presencesErr) liveUnread.add("circle_presence");
 
       // Group by context_id (trip) and count unique members
       const tripPresenceCounts = new Map<string, number>();
@@ -1457,7 +1457,7 @@ router.get("/pulse/live", async (req, res) => {
           _urgency:          5,
         });
       }
-    } catch { /* non-fatal */ }
+    } catch { liveUnread.add("circle_presence"); /* non-fatal — but said (§118) */ }
   }
 
   // ── 4. Buddy bookings — pending requests (both directions) ─────────────────
@@ -1497,17 +1497,17 @@ router.get("/pulse/live", async (req, res) => {
     }
 
     const [travelerRes, buddyProfileRes] = await Promise.all([
-      sc.from("buddy_bookings")
-        .select("id, buddy_id, booking_date, city, status")
+      wholeListResult(() => sc.from("buddy_bookings")  // census-discovery §123 (DV-83 round 24): WHOLE, by key
+        .select("id, buddy_id, booking_date, city, status", { count: "exact" })
         .eq("traveler_id", user.id)
-        .eq("status", "requested"),
+        .eq("status", "requested"), "id"),
       // rent_buddy_profiles is the correct table; gate on admin_status = 'active'
       sc.from("rent_buddy_profiles")
         .select("id")
         .eq("user_id", user.id)
         .eq("admin_status", "active")
         .maybeSingle(),
-    ]);
+    ]); if (travelerRes.error) liveUnread.add("buddy_bookings"); if (buddyProfileRes.error) liveUnread.add("rent_buddy_profiles");  // §118
 
     for (const bk of (travelerRes.data as any[]) ?? []) {
       // buddy_id is a profile ID; compare against blockedProfileSet (not blockedSet of user IDs)
@@ -1540,11 +1540,11 @@ router.get("/pulse/live", async (req, res) => {
     // As a buddy — only show if caller has an approved buddy profile
     const buddyProfileRow = buddyProfileRes.data as any;
     if (buddyProfileRow?.id) {
-      const { data: incomingBookings } = await sc
+      const { data: incomingBookings, error: incomingErr } = await sc
         .from("buddy_bookings")
         .select("id, traveler_id, booking_date, city, status")
         .eq("buddy_id", buddyProfileRow.id as string)
-        .eq("status", "requested");
+        .eq("status", "requested"); if (incomingErr) liveUnread.add("buddy_bookings");
 
       for (const bk of (incomingBookings as any[]) ?? []) {
         if (blockedSet.has(bk.traveler_id as string)) continue;
@@ -1569,7 +1569,7 @@ router.get("/pulse/live", async (req, res) => {
         });
       }
     }
-  } catch { /* non-fatal */ }
+  } catch { liveUnread.add("buddy_bookings"); /* non-fatal — but said (§118) */ }
 
   // ── 5. Hidden Gems — top-rated active gems in the target city ─────────────
   // When context=nearMe with coordinates, apply haversine radius (50 km) instead
@@ -1601,7 +1601,7 @@ router.get("/pulse/live", async (req, res) => {
           .eq("status", "active")
           .order("save_count", { ascending: false })
           .limit(100);
-        if (error) {
+        if (error) { liveUnread.add("hidden_gems");  // §118: and said
           // supabase-js resolves on a database error, so without this the rail
           // renders "no gems near you" — a claim about a place — whenever the
           // table is unreadable. The rail still degrades to empty (it is a
@@ -1666,7 +1666,7 @@ router.get("/pulse/live", async (req, res) => {
             .ilike("city", `%${gemCity}%`)
             .order("save_count", { ascending: false })
             .limit(12);
-          if (error) {
+          if (error) { liveUnread.add("hidden_gems");  // §118: and said
             req.log?.warn(
               { err: error, code: "live_pulse_gem_read_failed" },
               "livePulse: city gem read failed — no gems this request",
@@ -1683,7 +1683,7 @@ router.get("/pulse/live", async (req, res) => {
         }
       }
 
-      for (const gem of gems ?? []) {
+      const gemSaves = await liveGemSaveCounts(sc, (gems ?? []).map((g: any) => g.id as string)); if (!gemSaves) liveUnread.add("hidden_gem_saves"); for (const gem of gems ?? []) {  // census-discovery §118 (SW21): the live save count
         const distKm = (gem._distKm as number | null) ?? null;
         addItem({
           id:                `hidden_gem:${gem.id as string}`,
@@ -1697,7 +1697,7 @@ router.get("/pulse/live", async (req, res) => {
           city:              (gem.city as string | null) ?? null,
           starts_at:         null,
           ends_at:           null,
-          people_count:      (gem.save_count as number | null) ?? null,
+          people_count:      gemSaves ? (gemSaves.get(gem.id as string) ?? 0) : null,  // §118 (SW21): the live save count, never the cached save_count a lost increment leaves behind
           user_relationship: 'available',
           primary_action:    { label: 'Explore', type: 'navigate_gem' },
           secondary_action:  { label: 'Save', type: 'save_gem' },
@@ -1707,17 +1707,17 @@ router.get("/pulse/live", async (req, res) => {
           _urgency:          9,
         });
       }
-    } catch { /* non-fatal */ }
+    } catch { liveUnread.add("hidden_gems"); /* non-fatal — but said (§118) */ }
   }
 
   // ── 6. Compass picks — personalised gems from user's preferred cities ──────
   if (hiddenGemsEnabled) {
     try {
-      const { data: compassProfile } = await sc
+      const { data: compassProfile, error: compassProfileErr } = await sc
         .from("compass_user_profiles")
         .select("preferred_cities, current_city")
         .eq("user_id", user.id)
-        .maybeSingle();
+        .maybeSingle(); if (compassProfileErr) liveUnread.add("compass_user_profiles");
 
       const profile = compassProfile as any;
       const compassCities: string[] = [];
@@ -1740,7 +1740,7 @@ router.get("/pulse/live", async (req, res) => {
           .ilike("city", `%${compassCity}%`)
           .order("save_count", { ascending: false })
           .limit(8);
-        if (picksError) {
+        if (picksError) { liveUnread.add("hidden_gems");  // §118: and said
           req.log?.warn(
             { err: picksError, code: "live_pulse_gem_read_failed" },
             "livePulse: compass pick gem read failed — no picks for this city",
@@ -1752,7 +1752,7 @@ router.get("/pulse/live", async (req, res) => {
         const disclosablePicks = ((picks as any[]) ?? [])
           .filter((g: any) => mayDiscloseGemIdentity(g, user.id))
           .slice(0, 2);
-        for (const gem of disclosablePicks) {
+        const gemSaves = await liveGemSaveCounts(sc, disclosablePicks.map((g: any) => g.id as string)); if (!gemSaves) liveUnread.add("hidden_gem_saves"); for (const gem of disclosablePicks) {  // §118 (SW21)
           addItem({
             id:                `compass:${gem.id as string}`,
             item_type:         'compass',
@@ -1763,7 +1763,7 @@ router.get("/pulse/live", async (req, res) => {
             city:              (gem.city as string | null) ?? null,
             starts_at:         null,
             ends_at:           null,
-            people_count:      (gem.save_count as number | null) ?? null,
+            people_count:      gemSaves ? (gemSaves.get(gem.id as string) ?? 0) : null,  // §118 (SW21)
             user_relationship: 'available',
             primary_action:    { label: 'Explore', type: 'navigate_gem' },
             secondary_action:  { label: 'Save', type: 'save_gem' },
@@ -1774,7 +1774,7 @@ router.get("/pulse/live", async (req, res) => {
           });
         }
       }
-    } catch { /* non-fatal */ }
+    } catch { liveUnread.add("hidden_gems"); /* non-fatal — but said (§118) */ }
   }
 
   // ── 7. Available buddies — discovery cards for approved buddies in city ─────
@@ -1783,13 +1783,13 @@ router.get("/pulse/live", async (req, res) => {
     const buddyCitySlug = citySlug;
     if (buddyCitySlug) {
       const buddyCity = buddyCitySlug.replace(/-/g, ' ');
-      const { data: availableBuddies } = await sc
+      const { data: availableBuddies, error: availableBuddiesErr } = await sc
         .from("rent_buddy_profiles")
         .select("id, user_id, city, bio")
         .eq("admin_status", "active")
         .ilike("city", `%${buddyCity}%`)
         .neq("user_id", user.id)
-        .limit(3);
+        .limit(3); if (availableBuddiesErr) liveUnread.add("rent_buddy_profiles");
 
       for (const bp of (availableBuddies as any[]) ?? []) {
         if (blockedSet.has(bp.user_id as string)) continue;
@@ -1826,16 +1826,16 @@ router.get("/pulse/live", async (req, res) => {
         });
       }
     }
-  } catch { /* non-fatal */ }
+  } catch { liveUnread.add("rent_buddy_profiles"); /* non-fatal — but said (§118) */ }
 
   // ── 8. Saved events — user's bookmarked upcoming events ──────────────────
   // Shows events the user saved (event_saves) that are not already in the rail
   // via RSVP. Provides discovery context for plans the user wants to attend.
   try {
-    const { data: saveRows } = await sc
+    const { data: saveRows, error: saveRowsErr } = await wholeListResult(() => sc  // census-discovery §123 (DV-83 round 24): every saved event, WHOLE, by key
       .from("event_saves")
-      .select("event_id")
-      .eq("user_id", user.id);
+      .select("event_id", { count: "exact" })
+      .eq("user_id", user.id), "event_id"); if (saveRowsErr) liveUnread.add("event_saves");
 
     const savedEventIds = ((saveRows as any[]) ?? []).map((r: any) => r.event_id as string);
     // Skip IDs already in the deduplicated items set
@@ -1843,13 +1843,13 @@ router.get("/pulse/live", async (req, res) => {
     const newSavedIds = savedEventIds.filter((id: string) => !alreadyAdded.has(`event:${id}`));
 
     if (newSavedIds.length > 0) {
-      const { data: savedEvents } = await sc
+      const { data: savedEvents, error: savedEventsErr } = await sc
         .from("events")
         .select("id, title, starts_at, ends_at, city, state, visibility, going_count, max_attendees, host_id")
         .in("id", newSavedIds)
         .in("state", ["open", "started"])
         .gt("ends_at", now)
-        .in("visibility", ["public", "friends_only"]);
+        .in("visibility", ["public", "friends_only"]); if (savedEventsErr) liveUnread.add("events"); const savedGoingUnread = (await liveEventCounters(sc, (savedEvents as any[]) ?? [], { going: true })).length > 0; if (savedGoingUnread) liveUnread.add("event_rsvps");  // §118 (B22)
 
       for (const ev of (savedEvents as any[]) ?? []) {
         if (blockedSet.has(ev.host_id as string)) continue;
@@ -1860,8 +1860,8 @@ router.get("/pulse/live", async (req, res) => {
         const sl = computeStatusLabel(ev.starts_at, ev.ends_at);
         if (sl === 'My Plan') continue;
         const maxAtt = ev.max_attendees as number | null;
-        const goingCount = (ev.going_count as number | null) ?? 0;
-        const atCapacity = maxAtt !== null && goingCount >= maxAtt;
+        const goingCount = savedGoingUnread ? null : ((ev.going_count as number | null) ?? 0);  // §118 (B22): unread → no count
+        const atCapacity = goingCount === null ? null : maxAtt !== null && goingCount >= maxAtt;
         addItem({
           id:                `event:${ev.id as string}`,
           item_type:         'event',
@@ -1878,28 +1878,28 @@ router.get("/pulse/live", async (req, res) => {
           secondary_action:  { label: 'RSVP Going', type: 'rsvp_event_going' },
           reason_labels:     atCapacity ? ['Saved', 'Full'] : ['Saved'],
           expires_at:        (ev.ends_at as string | null) ?? null,
-          is_joinable:       !atCapacity,
+          is_joinable:       atCapacity === false,
           // No _urgency override — let urgency() derive from status_label + user_relationship='saved'
         });
       }
     }
-  } catch { /* non-fatal */ }
+  } catch { liveUnread.add("event_saves"); /* non-fatal — but said (§118) */ }
 
   // ── 9. Trip join requests — pending requests to join host's trips ─────────
   // Surfaces Action Needed items for trips the user owns with pending requests.
   try {
-    const { data: ownedTrips } = await sc
+    const { data: ownedTrips, error: ownedTripsErr } = await wholeListResult(() => sc  // census-discovery §123 (DV-83 round 24): every trip the viewer owns, WHOLE, by key
       .from("trips")
-      .select("id, destination_city")
-      .eq("owner_id", user.id);
+      .select("id, destination_city", { count: "exact" })
+      .eq("owner_id", user.id), "id"); if (ownedTripsErr) liveUnread.add("trips");
 
     const ownedTripIds = ((ownedTrips as any[]) ?? []).map((t: any) => t.id as string);
     if (ownedTripIds.length > 0) {
-      const { data: pendingRequests } = await sc
+      const { data: pendingRequests, error: pendingErr } = await sc
         .from("trip_join_requests")
         .select("id, trip_id, user_id, created_at")
         .in("trip_id", ownedTripIds)
-        .eq("status", "pending");
+        .eq("status", "pending"); if (pendingErr) liveUnread.add("trip_join_requests");
 
       // Group by trip_id — one rail item per trip with pending count
       const byTrip = new Map<string, { count: number; dest: string | null; earliest: string }>();
@@ -1939,7 +1939,7 @@ router.get("/pulse/live", async (req, res) => {
         });
       }
     }
-  } catch { /* non-fatal */ }
+  } catch { liveUnread.add("trip_join_requests"); /* non-fatal — but said (§118) */ }
 
   // ── Sort by urgency, then by starts_at ascending ───────────────────────────
   items.sort((a, b) => {
@@ -1979,7 +1979,7 @@ router.get("/pulse/live", async (req, res) => {
     req.log?.warn({ err, userId: user.id }, "pulse/live: rank_events serve insert failed (non-fatal)");
   });
 
-  res.json({ items: responseItems, fallbackContext: fallbackContext ?? null, sessionId });
+  res.json({ items: responseItems, fallbackContext: fallbackContext ?? null, sessionId, ...(liveUnread.size > 0 ? { failedSources: [...liveUnread] } : {}) });  // §118: a healthy body gains no key
 });
 
 export default router;
@@ -2029,4 +2029,38 @@ export function pulsePostsForViewer<T extends { id?: unknown }>(rows: readonly a
 }
 
 // census-discovery §78 H3 (DV-09), integrated by lane W10-I (§91): Pulse ranks on its own `01` §9 objective when the flag is on.
-import { surfaceObjectiveOptions } from "../lib/discoveryRankDesigns.js";
+import { surfaceObjectiveOptions } from "../lib/discoveryRankDesigns.js"; import { liveEventCounters } from "../lib/eventRowReads.js";  // census-discovery §118 (B22)
+
+// ── census-discovery §118 (DV-83 round 21, lane W11-X2; sweep SW21) ──────────────────────────────────────────────────
+// A Hidden Gem card's count was `hidden_gems.save_count`, a cached counter that nothing recomputes: HiddenGemService's
+// fallback increment is lost when its read fails (logged `save_count_increment_lost`), and the card served it as
+// measured. The rail shows at most a handful of gems, so each is counted live with an exact head count of its
+// `hidden_gem_saves` rows. `null` when any count could not be read: the cards then carry no count, and the read is named.
+async function liveGemSaveCounts(sc: any, gemIds: string[]): Promise<Map<string, number> | null> {
+  const ids = [...new Set(gemIds)];
+  const counts = new Map<string, number>();
+  if (ids.length === 0) return counts;
+  try {
+    const reads = await Promise.all(ids.map((id) => sc.from("hidden_gem_saves").select("gem_id", { count: "exact", head: true }).eq("gem_id", id)));
+    for (let i = 0; i < ids.length; i++) {
+      const r = reads[i] as { error?: unknown; count?: number | null };
+      if (r?.error || typeof r?.count !== "number") return null;
+      counts.set(ids[i]!, r.count);
+    }
+    return counts;
+  } catch {
+    return null;
+  }
+}
+
+// ── census-discovery §123 (DV-83 round 24, lane DISC-DV83; the round-23 verifier's B43) ───────────────────────────────
+// GET /pulse and GET /pulse/live read the viewer's hide list and both block lists with ONE unbounded read each. PostgREST
+// cuts a response at db-max-rows (1000 on this deployment) and says nothing, so a viewer past the cap had only their
+// first 1000 hides or blocks applied: a post they hid, or a post by someone who blocked them, was served with nothing
+// named. A safety fail-open. Each list is now read WHOLE: the plain read first (one request, with an exact count, so a
+// list under the cap costs what it did), and when the count says rows were left out, again by key until none remain
+// (`readWhole`, lib/feedReads.ts). A list that cannot be read whole is a failed read, and each caller already fails
+// closed over one and names it (`post_hides`, `blocks`). Declared at the foot so no cited line above moves.
+// `readKeyedWhole` lives in lib/wholeList.ts: the sweep found the same shape on the crew tab's follows and on three of
+// the rail's own lists (saved events, owned trips, requested bookings), and on the events tab and Compass beside them.
+import { readKeyedWhole, wholeListResult } from "../lib/wholeList.js";

@@ -3065,7 +3065,7 @@ an empty list or a generic error:
   `artifacts/api-server/src/routes/rentABuddy.ts:302#gate: "rent_buddy_enabled"`;
 - the booking kill switches answered the same `feature_disabled` as the master
   switch; each refusal now names the engaged switch through
-  `artifacts/api-server/src/lib/featureFlags.ts:179#export async function engagedRabBookingKillSwitch(`,
+  `artifacts/api-server/src/lib/featureFlags.ts:188#export async function engagedRabBookingKillSwitch(`,
   which reads through the existing fail-closed `isKillSwitchEngaged` and decides
   nothing;
 - the client's single mapping from refusal to sentence is
@@ -3125,11 +3125,11 @@ because `false` means "skip the gates". Three sites on `main` did this:
   gateway and the media resolver.
 
 All three now read the flag through one three-state helper
-(`artifacts/api-server/src/routes/events.ts:6970#eventTrustGatesRun`, over
+(`artifacts/api-server/src/routes/events.ts:6986#eventTrustGatesRun`, over
 `readFlagState`): `on` runs the gates, `off` and `absent` skip them exactly as before, and
 `unreadable` RUNS them. Running them over an unknown flag can only refuse more — each gate already
 fails closed on its own unread input (the trust seam, the age seam, the verified read). Sites:
-`artifacts/api-server/src/routes/events.ts:712#eventTrustGatesRun(sc)`,
+`artifacts/api-server/src/routes/events.ts:712#trustGatesFlag` (in `checkEventEligibility` the same three-state read is made in place since the merge with census-discovery §111, D-W11X2-107: `unreadable` runs the gates and marks what they refuse `unread`),
 `artifacts/api-server/src/routes/events.ts:1139#eventTrustGatesRun(sc)`,
 `artifacts/api-server/src/routes/events.ts:3229#eventTrustGatesRun(sc)`. These were the only three reads
 of the flag in the tree.
@@ -3212,11 +3212,11 @@ the seat and seated on accept (`200 {"status":"going"}`).
 - **Accept** runs the gate after the visibility re-check
   (`artifacts/api-server/src/routes/events.ts:3333#checkEventEligibility`). A refusal writes nothing:
   the gate's own `403`, or `503 degraded_unavailable` when a gate input could not be read
-  (`artifacts/api-server/src/routes/events.ts:7042#sendEligibilityRefusal`). The accept's event read now
+  (`artifacts/api-server/src/routes/events.ts:7058#sendEligibilityRefusal`). The accept's event read now
   names the gate columns and binds its error (`artifacts/api-server/src/routes/events.ts:3316#evCapErr`;
   a failed read was `404 "Event not found"`, now `503`).
 - **Both promoters** offer the seat to the first ELIGIBLE user in queue order through one helper
-  (`artifacts/api-server/src/routes/events.ts:6995#eligibleWaitlisted`; the route's call is
+  (`artifacts/api-server/src/routes/events.ts:7011#eligibleWaitlisted`; the route's call is
   `artifacts/api-server/src/routes/events.ts:627#pickEligibleWaitlisted`, the sweeper's
   `artifacts/api-server/src/lib/eventWaitlistSweeper.ts:255#eligibleWaitlisted`). An ineligible user is
   skipped and their row LEFT: a refusal can come from the fail-closed block read, and deleting over an
@@ -3224,9 +3224,9 @@ the seat and seated on accept (`200 {"status":"going"}`).
   verdict, offers nobody at or behind that user — skipping them would jump the queue over someone the
   gate could not judge; the sweeper counts that event `unreadable`.
 - To tell "could not read" from "refused", `checkEventEligibility`'s refusals over an unread input carry
-  `unavailable: true` (`artifacts/api-server/src/routes/events.ts:669#unavailable`): the ban read, the
+  `unread: true` (`artifacts/api-server/src/routes/events.ts:669#unread`; named `unavailable` on this lane's branch, one marker with census-discovery §110's since the merge): the ban read, the
   trust seam, the age seam, and the verified read, which bound no error and read a failure as "not
-  verified" (`artifacts/api-server/src/routes/events.ts:715#profileErr`; its
+  verified" (`artifacts/api-server/src/routes/events.ts:715#verifiedErr`; its
   `UNCHECKED_READS_ALLOWLIST.json` entry is deleted). The other callers still send `errorCode`/`message`,
   so no other route's answer changes. The block read still folds a failure into "blocked"
   (`isBlockedBetween`); at accept that is a `403`, not a `503` — closed, but not told apart.
@@ -3270,7 +3270,7 @@ on a count; with the reopen arm closed, that state is the one the last READABLE 
 `GET /events/:id/safety-summary` answered each unread list as `[]` — for the banned list, "nobody is
 banned". Each list (`reports`, `noShows`, `blockedUsers`) is now `null` when its read failed, and a
 `failedSources` array names them (`artifacts/api-server/src/routes/events.ts:6240#blockedUsers`,
-`artifacts/api-server/src/routes/events.ts:7063#safetySummaryFailedSources`). The healthy body is
+`artifacts/api-server/src/routes/events.ts:7079#safetySummaryFailedSources`). The healthy body is
 byte-identical — no `failedSources` key. No client consumes this route: a search of every tracked file
 (the Expo app, `travel-buddy-standalone`, `lib/`, `packages/`) finds none, and
 `docs/architecture/mobile-reachability-ledger.json` classifies it `DEAD ENDPOINT`. There is no screen to
@@ -3312,6 +3312,15 @@ Cited in this section, graded by no row of this census:
 - NOT-GRADED: artifacts/api-server/src/lib/eventWaitlistSweeper.ts — §30.6 names it as the second promoter the eligibility gate now covers; waitlist seating is graded by no row of this census.
 - NOT-GRADED: artifacts/api-server/src/test/eventWaitlistSweeper.test.ts — §30.10 names it only because its double was taught the new eligibility reads; no Trust verdict moves on it.
 - NOT-GRADED: docs/architecture/mobile-reachability-ledger.json — §30.9 cites its `DEAD ENDPOINT` classification of the safety summary as a reachability fact; it is a generated ledger, not a Trust surface.
+
+### §30.11 The sweeper's unreadable-eligibility skip is pinned (round-16 note, census-discovery §113, D-W11X2-134)
+
+**NO ROW MOVES.** The round-15 Discovery verifier's mutation V9 — deleting `if (pick.unavailable) continue;` in
+`artifacts/api-server/src/lib/eventWaitlistSweeper.ts` — survived every suite: the pass then counted a freed seat as
+stranded ("queue exhausted") over an eligibility nobody could read, a failed read reported as an ops count. §30.10's
+"0 survivors" did not cover it. `eventsWaitlistCapacityFailClosed.test.ts` SW3b now asserts `stranded === 0` and nobody
+promoted when the head's eligibility is unreadable, with the control SW3c (every waitlister readable and banned → the
+seat IS stranded). Applied alone and restored by sha256, V9 is killed by SW3b. No source line changed.
 
 ## §31 (sensing-trust lane) — 2026-10-03 · Five trust reads that granted on a failed read now refuse; the identity-check screen, its failure copy and the verification write are finished. **THREE ROWS MOVE: TV-2b, TV-2d and TV-U8, each W → C.**
 

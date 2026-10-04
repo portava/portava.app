@@ -483,10 +483,9 @@ describe("circleLocationsRead — preserved gates", () => {
       await servedIds(baseState({ feature_flags: [{ flag: "disable_location_sharing", enabled: true }] })),
       [],
     );
-    assert.deepEqual(
-      await servedIds(baseState({ feature_flags: { error: { message: "flags down" } } })),
-      [],
-    );
+    const unread = await read(baseState({ feature_flags: { error: { message: "flags down" } } }));  // census-discovery §115 (SW6): exposes nobody AND says the stop was unread
+    assert.deepEqual(unread, { ok: false, stage: "kill_switch", message: "disable_location_sharing could not be read" });
+    assert.ok(unread.ok === false);
   });
 
   it("still treats a missing prefs row as NOT consent", async () => {
@@ -500,7 +499,7 @@ describe("circleLocationsRead — preserved gates", () => {
     );
     assert.deepEqual(await servedIds(baseState({ blocks: [{ blocker_id: VIEWER, blocked_id: MEM_A }] })), []);
     assert.deepEqual(await servedIds(baseState({ blocks: [{ blocker_id: MEM_A, blocked_id: VIEWER }] })), []);
-    assert.deepEqual(await servedIds(baseState({ blocks: { error: { message: "blocks down" } } })), []);
+    assert.deepEqual(await read(baseState({ blocks: { error: { message: "blocks down" } } })), { ok: false, stage: "blocks", message: "block state could not be read" });  // §115 (SW6)
   });
 
   it("still withholds the name unless the member opted into show_real_name", async () => {

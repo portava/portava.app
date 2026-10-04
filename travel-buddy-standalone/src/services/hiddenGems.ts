@@ -5,7 +5,7 @@
  * Pattern: same as tripCrewLocation.ts / passportStamps.ts.
  */
 import { supabase } from '../lib/supabase.ts';
-import { freshToken as freshApiToken } from './apiToken.ts';
+import { freshToken as freshApiToken } from './apiToken.ts'; import { markGemListCut } from './gemListCut.ts';  // census-discovery §114 (sweep)
 import { normalizeGuideProfile, normalizeGemVisitOutcomes, type GemVisitOutcomes } from './hiddenGemsMappers.ts';
 import type {
   GemState,
@@ -204,22 +204,22 @@ export async function listGems(opts: ListGemsOptions = {}): Promise<HiddenGem[]>
   if (opts.limit)             params.set('limit', String(opts.limit));
 
   const qs = params.toString();
-  const data = await apiFetch<{ gems: any[] }>(`/api/hidden-gems${qs ? `?${qs}` : ''}`);
-  return (data.gems ?? []).map(mapGem);
+  const data = await apiFetch<{ gems: any[]; truncated?: boolean }>(`/api/hidden-gems${qs ? `?${qs}` : ''}`);
+  const out = (data.gems ?? []).map(mapGem); return data.truncated === true ? markGemListCut(out) : out;  // census-discovery §114 (DV-83, sweep): a cut list is marked beside the array (services/gemListCut.ts)
 }
 
 /** Get a single gem by ID. */
 export async function getGem(
   gemId: string,
   tripId?: string,
-): Promise<{ gem: HiddenGem; savedByMe: boolean; guideProfile: GuideProfile | null }> {
+): Promise<{ gem: HiddenGem; savedByMe: boolean | null; guideProfile: GuideProfile | null }> {  // census-discovery §122 (B36): null when the server could not read the viewer's save
   const qs = tripId ? `?tripId=${tripId}` : '';
-  const data = await apiFetch<{ gem: any; savedByMe: boolean; guideProfile: any | null }>(
+  const data = await apiFetch<{ gem: any; savedByMe: boolean | null; guideProfile: any | null }>(
     `/api/hidden-gems/${gemId}${qs}`,
   );
   return {
     gem: mapGem(data.gem),
-    savedByMe: data.savedByMe ?? false,
+    savedByMe: typeof data.savedByMe === 'boolean' ? data.savedByMe : null,  // §122 (B36): unknown, never "not saved"
     // Normalised, not passed through: the route sends the raw snake_case row.
     guideProfile: normalizeGuideProfile(data.guideProfile),
   };
@@ -464,3 +464,20 @@ export function verificationBadge(level: GemVerificationLevel): string {
 // ── §16.1 OUTCOME (census-media §21) — pure helpers live in hiddenGemsMappers
 // (no react-native), so node tests and the gem page share one definition.
 export { normalizeGemVisitOutcomes, gemVisitOutcomeSentence, type GemVisitOutcomes } from './hiddenGemsMappers.ts';
+
+/**
+ * Gems near a point (GET /hidden-gems/nearby), and whether the server CUT the answer (census-discovery §113, DV-83,
+ * D-W11X2-131): its scan hit a cap or the list was sliced to `limit`. A cut answer is never "no gems near you".
+ */
+export async function listNearbyGems(
+  lat: number,
+  lng: number,
+  radiusKm: number,
+  category?: GemCategory,
+  limit = 50,
+): Promise<{ gems: HiddenGem[]; truncated: boolean }> {
+  const params = new URLSearchParams({ lat: String(lat), lng: String(lng), radiusKm: String(radiusKm), limit: String(limit) });
+  if (category) params.set('category', category);
+  const data = await apiFetch<{ gems: any[]; truncated?: boolean }>(`/api/hidden-gems/nearby?${params}`);
+  return { gems: (data.gems ?? []).map(mapGem), truncated: data.truncated === true };
+}

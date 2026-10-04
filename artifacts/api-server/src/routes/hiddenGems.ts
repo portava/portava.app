@@ -82,12 +82,12 @@ import {
 import {
   recordGemContribution,
   batchDeriveGemProjections,
-  deriveGemProjection,
+  deriveGemProjection, gemProjectionsUnreadSources,
 } from "../services/hiddenGems/HiddenGemContributionService.js";
 import { GEM_CONTRIBUTION_TYPES } from "../lib/hiddenGemState.js";
 import { logDiscoveryServe, DiscoveryServePoint } from "../lib/discoveryServeLog.js";  import { stampServedRecommendations, exposureForResponse, serveClockOf } from "../lib/discoveryRecommendationRecord.js";  // census-discovery §48 — serve point 11's response carries the ids its serve-log rows do
 
-import { isAdmin } from "../lib/requireAdmin.js";  import { layoverGemWindow, gemsUnderLayoverMode, certifiedWindowKeys, LAYOVER_WINDOW_UNREADABLE_MESSAGE } from "../lib/discoveryLayoverGems.js";  // census-discovery §56 (A13/A14): the layover window is the certified snapshot's
+import { isAdmin } from "../lib/requireAdmin.js"; import { discoveryRefusal } from "../lib/discoveryRefusal.js"; import { readFlagState } from "../lib/capability/schemaCapability.js"; import { aggregateReadComplete, emptyVoteRatingAgg } from "../lib/discoveryPlaceAggregates.js";  import { layoverGemWindow, gemsUnderLayoverMode, certifiedWindowKeys, LAYOVER_WINDOW_UNREADABLE_MESSAGE } from "../lib/discoveryLayoverGems.js";  // census-discovery §56 (A13/A14): the layover window is the certified snapshot's
 
 const router = Router();
 
@@ -204,7 +204,7 @@ const contributionSchema = z.object({
 
 // ── Vote + review aggregate batch enrichment (gems) ──────────────────────────
 
-type GemAgg = { worthItCount: number; avgRating: number | null; reviewCount: number };
+type GemAgg = { worthItCount: number | null; avgRating: number | null; reviewCount: number | null };  // census-discovery §111 (D-W11X2-114): null = that field's read failed or was cut
 
 async function batchFetchGemAggregates(
   sc: ReturnType<typeof getServiceClient>,
@@ -216,29 +216,29 @@ async function batchFetchGemAggregates(
     const [votesRes, reviewsRes] = await Promise.all([
       sc
         .from("place_votes")
-        .select("entity_id, vote")
+        .select("entity_id, vote", { count: "exact" })  // census-discovery §110 (D-W11X2-103)
         .eq("entity_type", "gem")
         .in("entity_id", gemIds),
       sc
         .from("reviews")
-        .select("entity_id, rating")
+        .select("entity_id, rating", { count: "exact" })
         .eq("entity_type", "place")
         .in("entity_id", gemIds)
         .eq("state", "published"),
     ]);
-    for (const row of (votesRes.data ?? []) as any[]) {
+    for (const row of (aggregateReadComplete(votesRes) ? votesRes.data ?? [] : []) as any[]) {  // §110: a cut or failed read states no count
       const id = row.entity_id as string;
-      if (!result.has(id)) result.set(id, { worthItCount: 0, avgRating: null, reviewCount: 0 });
-      if (row.vote === "worth_it") result.get(id)!.worthItCount++;
+      if (!result.has(id)) result.set(id, emptyVoteRatingAgg(votesRes, reviewsRes));  // §111 (D-W11X2-114)
+      if (row.vote === "worth_it") result.get(id)!.worthItCount = (result.get(id)!.worthItCount ?? 0) + 1;
     }
     const reviewsByGem = new Map<string, number[]>();
-    for (const row of (reviewsRes.data ?? []) as any[]) {
+    for (const row of (aggregateReadComplete(reviewsRes) ? reviewsRes.data ?? [] : []) as any[]) {
       const id = row.entity_id as string;
       if (!reviewsByGem.has(id)) reviewsByGem.set(id, []);
       if (row.rating != null) reviewsByGem.get(id)!.push(parseFloat(String(row.rating)));
     }
     for (const [id, ratings] of reviewsByGem) {
-      if (!result.has(id)) result.set(id, { worthItCount: 0, avgRating: null, reviewCount: 0 });
+      if (!result.has(id)) result.set(id, emptyVoteRatingAgg(votesRes, reviewsRes));  // §111 (D-W11X2-114)
       const entry = result.get(id)!;
       entry.reviewCount = ratings.length;
       if (ratings.length > 0) {
@@ -255,10 +255,10 @@ async function resolveCallerId(req: any, sc: any): Promise<string | null> {
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
   if (!token) return null;
   try {
-    const { data } = await sc.auth.getUser(token);
+    const { data, error } = await sc.auth.getUser(token); if (!data?.user?.id && error && authServiceUnreachable(error)) _gemViewerUnresolved.add(req);  // census-discovery §123: a REJECTED token is an anonymous caller; a lookup Auth did not answer leaves the viewer unresolved
     return (data?.user?.id as string) ?? null;
   } catch {
-    return null;
+    _gemViewerUnresolved.add(req); return null;  // §123: a lookup that threw evaluated nothing
   }
 }
 
@@ -272,7 +272,7 @@ router.post("/hidden-gems", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
 
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!gemFlagOn(res, await readFlagState(sc, "hidden_gems_enabled"))) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -409,11 +409,11 @@ router.post("/hidden-gems", async (req, res) => {
 router.get("/hidden-gems", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!gemFlagOn(res, await readFlagState(sc, "hidden_gems_enabled"))) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
-  const callerId = await resolveCallerId(req, sc);
+  const callerId = await resolveCallerId(req, sc); if (gemViewerUnresolved(req) && req.query.layoverSafe === "1") { sendError(res, "degraded_unavailable", LAYOVER_WINDOW_UNREADABLE_MESSAGE); return; }  // census-discovery §123: the layover window is this traveller's; nobody resolved them, so it is withheld, never the query's own minutes
   const callerTripId = (req.query.tripId as string) || null;
 
   const opts: any = {
@@ -453,7 +453,7 @@ router.get("/hidden-gems", async (req, res) => {
         .maybeSingle(),
     ]);
 
-    const tripRow = tripRes.data as any;
+    if (tripRes.error || memberRes.error) { sendError(res, "degraded_unavailable", "We could not check that trip right now. Please try again shortly."); return; } const tripRow = tripRes.data as any;  // census-discovery §110 (D-W11X2-97): a failed read is not "Trip not found"
     if (!tripRow) { sendError(res, "not_found", "Trip not found"); return; }
 
     const isOwner = tripRow.owner_id === user.id;
@@ -468,13 +468,13 @@ router.get("/hidden-gems", async (req, res) => {
       // recorded in trip_plan_items (source_type="hidden_gem", source_id =
       // gem id), the same table /:id/plan writes to. Resolve the gem ids via
       // that join table first, then fetch the gems themselves.
-      const { data: planItems } = await sc
+      const { data: planItems, error: planItemsErr } = await sc
         .from("trip_plan_items")
         .select("source_id")
         .eq("trip_id", callerTripId)
         .eq("source_type", "hidden_gem");
-      const gemIdsForTrip = [...new Set(((planItems as any[]) ?? []).map((p: any) => p.source_id as string))];
-      const { data: tripGems } = gemIdsForTrip.length
+      if (planItemsErr) throw planItemsErr; const gemIdsForTrip = [...new Set(((planItems as any[]) ?? []).map((p: any) => p.source_id as string))];
+      const { data: tripGems, error: tripGemsErr } = gemIdsForTrip.length
         ? await sc
             .from("hidden_gems")
             .select("*")
@@ -482,8 +482,8 @@ router.get("/hidden-gems", async (req, res) => {
             .eq("status", "active")
             .order("created_at", { ascending: false })
             .limit(opts.limit)
-        : { data: [] as any[] };
-      const safe = await applyGemPrivacyBatch(tripGems ?? [], sc, user.id, callerTripId);
+        : { data: [] as any[], error: null };
+      if (tripGemsErr) throw tripGemsErr; const safe = await applyGemPrivacyBatch(tripGems ?? [], sc, user.id, callerTripId);  // §110 (D-W11X2-97): a failed read is not "no gems on this trip"
       const gemIds = (safe as any[]).map((g: any) => g.id as string);
       const agg = await batchFetchGemAggregates(sc, gemIds);
       const enriched = (safe as any[]).map((g: any) => {
@@ -499,14 +499,14 @@ router.get("/hidden-gems", async (req, res) => {
   // submittedBy: return gems submitted by a specific user (public guide profile queries)
   if (opts.submittedBy) {
     try {
-      const { data: userGems } = await sc
+      const { data: userGems, error: userGemsErr } = await sc
         .from("hidden_gems")
         .select("*")
         .eq("submitted_by", opts.submittedBy)
         .eq("status", "active")
         .order("created_at", { ascending: false })
         .limit(opts.limit);
-      const safe = await applyGemPrivacyBatch(userGems ?? [], sc, callerId, callerTripId);
+      if (userGemsErr) throw userGemsErr; const safe = await applyGemPrivacyBatch(userGems ?? [], sc, callerId, callerTripId);  // §110 (D-W11X2-97): a failed read is not "this guide has no gems"
       const gemIds2 = (safe as any[]).map((g: any) => g.id as string);
       const agg2 = await batchFetchGemAggregates(sc, gemIds2);
       const enriched2 = (safe as any[]).map((g: any) => {
@@ -522,7 +522,7 @@ router.get("/hidden-gems", async (req, res) => {
   try {
     // Use weighted discovery ranking (verif weight + saves + visits + vibe-tag match)
     const { discoverGems } = await import("../services/hiddenGems/HiddenGemDiscoveryService.js");
-    const ranked = await discoverGems(sc, {
+    const { ranked, truncated: listCut } = await discoverGems(sc, {  // census-discovery §113 (DV-83, D-W11X2-131): a cut scan or page is said
       city: opts.city,
       neighborhood: opts.neighborhood,
       category: opts.category,
@@ -541,10 +541,10 @@ router.get("/hidden-gems", async (req, res) => {
       const a = agg3.get(g.id);
       const p = projections3.get(g.id);
       const base = a ? { ...g, worthItCount: a.worthItCount, avgRating: a.avgRating, reviewCount: a.reviewCount } : { ...g };
-      if (p) { base.gemState = p.gemState; base.gemConfidence = p.gemConfidence; }
+      if (p && !p.unreadSources) { base.gemState = p.gemState; base.gemConfidence = p.gemConfidence; }
       return base;
     });
-    res.json({ gems: stampServedRecommendations(enriched3, exposureForResponse(res, callerId ?? null)), total: enriched3.length, ...certifiedWindowKeys(layoverWindow, gatedGems.summary) });  // §48 DV-40 — every served gem carries its exposure id, anonymous included
+    res.json({ gems: stampServedRecommendations(enriched3, exposureForResponse(res, callerId ?? null)), total: enriched3.length, ...certifiedWindowKeys(layoverWindow, gatedGems.summary), ...gemStateRefusal(projections3.values(), "GET /hidden-gems"), ...(listCut ? { truncated: true } : {}) });  // §48 DV-40 — every served gem carries its exposure id, anonymous included
 
     // Serve point 11 — this route ranks (discoverGems: verification weight +
     // saves + visits + vibe-tag match) and served its results to users while
@@ -583,7 +583,7 @@ router.get("/hidden-gems/saved", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!gemFlagOn(res, await readFlagState(sc, "hidden_gems_enabled"))) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -607,16 +607,16 @@ router.get("/hidden-gems/saved", async (req, res) => {
 router.get("/hidden-gems/layover-safe", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!gemFlagOn(res, await readFlagState(sc, "hidden_gems_enabled"))) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
-  if (!await isFlagEnabled(sc, "hidden_gems_layover_enabled")) {
+  if (!gemFlagOn(res, await readFlagState(sc, "hidden_gems_layover_enabled"))) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
   // census-discovery §56 (A13/A14): in a LIVE layover the window is the certified snapshot's `usableMinutes` and the
   // query figure is ignored — it can neither widen nor narrow it; only a caller who is in no layover states a hypothetical.
-  const callerId = await resolveCallerId(req, sc);
+  const callerId = await resolveCallerId(req, sc); if (gemViewerUnresolved(req)) { sendError(res, "degraded_unavailable", LAYOVER_WINDOW_UNREADABLE_MESSAGE); return; }  // census-discovery §123: as above — an unresolved traveller's layover is unread, not absent
   const window = await layoverGemWindow(sc, callerId);
   if (window.kind === "refused") { sendError(res, "degraded_unavailable", LAYOVER_WINDOW_UNREADABLE_MESSAGE); return; }
   const availableMinutes = window.kind === "certified" ? window.minutes : parseInt(req.query.availableMinutes as string);
@@ -645,20 +645,20 @@ router.get("/hidden-gems/trip-city/:tripId", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!gemFlagOn(res, await readFlagState(sc, "hidden_gems_enabled"))) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
   const tripId = req.params.tripId;
 
   // Load trip destination
-  const { data: trip } = await client
+  const { data: trip, error: tripErr } = await client
     .from("trips")
     .select("id, destination_city")
     .eq("id", tripId)
     .maybeSingle();
 
-  if (!trip) {
+  if (tripErr) { sendError(res, "degraded_unavailable", "We could not check that trip right now. Please try again shortly."); return; } if (!trip) {  // census-discovery §112 (DV-83, D-W11X2-125): a failed read is not "Trip not found"
     sendError(res, "not_found", "Trip not found");
     return;
   }
@@ -702,7 +702,7 @@ router.get("/hidden-gems/nearby", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!gemFlagOn(res, await readFlagState(sc, "hidden_gems_enabled"))) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -713,7 +713,7 @@ router.get("/hidden-gems/nearby", async (req, res) => {
   }
 
   try {
-    const ranked = await findNearbyGems(sc, parsed.data.lat, parsed.data.lng, parsed.data.radiusKm, {
+    const { ranked, truncated: nearbyCut } = await findNearbyGems(sc, parsed.data.lat, parsed.data.lng, parsed.data.radiusKm, {  // §113 (D-W11X2-131)
       category: parsed.data.category,
       limit: parsed.data.limit,
     });
@@ -726,12 +726,12 @@ router.get("/hidden-gems/nearby", async (req, res) => {
         return {
           ...safe,
           distanceKm,
-          ...(p ? { gemState: p.gemState, gemConfidence: p.gemConfidence } : {}),
+          ...(p && !p.unreadSources ? { gemState: p.gemState, gemConfidence: p.gemConfidence } : {}),
         };
       }),
     );
 
-    res.json({ ok: true, gems: stampServedRecommendations(gems, exposureForResponse(res, user.id)) });  // §48 DV-40 — every served gem carries its exposure id
+    res.json({ ok: true, gems: stampServedRecommendations(gems, exposureForResponse(res, user.id)), ...gemStateRefusal(projections.values(), "GET /hidden-gems/nearby"), ...(nearbyCut ? { truncated: true } : {}) });  // §113 (D-W11X2-131): a cut scan is never "no gems near you"  // §48 DV-40 — every served gem carries its exposure id
 
     // Serve point 11 — same reasoning as GET /hidden-gems above; the `route`
     // field is what separates the two in the corpus. findNearbyGems ranks by
@@ -754,7 +754,7 @@ router.get("/hidden-gems/nearby", async (req, res) => {
 router.get("/hidden-gems/:id", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!gemFlagOn(res, await readFlagState(sc, "hidden_gems_enabled"))) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -782,8 +782,8 @@ router.get("/hidden-gems/:id", async (req, res) => {
     // gem's existing signals + structured contributions (never stored). Reads no
     // coordinate values beyond presence, so it is privacy-neutral.
     const projection = await deriveGemProjection(sc, gem);
-    (safe as any).gemState = projection.gemState;
-    (safe as any).gemConfidence = projection.gemConfidence; (safe as any).visitOutcomes = await import("../services/hiddenGems/HiddenGemOutcomeService.js").then((m) => m.readGemOutcomeSummary(sc, String((gem as any).id))).catch(() => ({ determined: false, reason: "unreadable" })); // §16.1 OUTCOME: verified visits linked to what the visitor reported (census-media §21)
+    if (!projection.unreadSources) (safe as any).gemState = projection.gemState; else (safe as any).gemStateUnread = projection.unreadSources;  // census-discovery §111 (DV-83, D-W11X2-110): no state from a failed read
+    if (!projection.unreadSources) (safe as any).gemConfidence = projection.gemConfidence; (safe as any).visitOutcomes = await import("../services/hiddenGems/HiddenGemOutcomeService.js").then((m) => m.readGemOutcomeSummary(sc, String((gem as any).id))).catch(() => ({ determined: false, reason: "unreadable" })); // §16.1 OUTCOME: verified visits linked to what the visitor reported (census-media §21)
 
     // Attach guide profile if gem has guide_verified_by
     let guideProfile: any = null;
@@ -792,18 +792,18 @@ router.get("/hidden-gems/:id", async (req, res) => {
     }
 
     // Attach saved state for authenticated callers
-    let savedByMe = false;
+    let savedByMe: boolean | null = false; let savedUnread: string | null = callerId || !String(req.headers.authorization ?? "").startsWith("Bearer ") ? null : "viewer";  // census-discovery §122 (DV-83 round 23, B36): a token with no resolved viewer is not "not saved"
     if (callerId) {
-      const { data: saveRow } = await sc
+      const { data: saveRow, error: saveRowErr } = await sc
         .from("hidden_gem_saves")
         .select("gem_id")
         .eq("gem_id", req.params.id)
         .eq("user_id", callerId)
-        .maybeSingle();
-      savedByMe = !!saveRow;
-    }
+        .maybeSingle(); if (saveRowErr) savedUnread = "hidden_gem_saves";
+      savedByMe = savedUnread ? null : !!saveRow;
+    } else if (savedUnread) savedByMe = null;
 
-    res.json({ gem: safe, guideProfile, savedByMe });
+    res.json({ gem: safe, guideProfile, savedByMe, ...(savedUnread ? { failedSources: [savedUnread] } : {}) });  // §122 (B36): the viewer's saved state is unknown over a failed read, and the read is named
   } catch (err: any) {
     sendError(res, "db_error", err.message);
   }
@@ -818,7 +818,7 @@ router.patch("/hidden-gems/:id", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!gemFlagOn(res, await readFlagState(sc, "hidden_gems_enabled"))) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -888,7 +888,7 @@ router.post("/hidden-gems/:id/save", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!gemFlagOn(res, await readFlagState(sc, "hidden_gems_enabled"))) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -917,7 +917,7 @@ router.delete("/hidden-gems/:id/save", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!gemFlagOn(res, await readFlagState(sc, "hidden_gems_enabled"))) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -938,10 +938,10 @@ router.post("/hidden-gems/:id/verify-visit", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!gemFlagOn(res, await readFlagState(sc, "hidden_gems_enabled"))) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
-  if (!await isFlagEnabled(sc, "hidden_gem_verification_enabled")) {
+  if (!gemFlagOn(res, await readFlagState(sc, "hidden_gem_verification_enabled"))) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -1092,7 +1092,7 @@ router.post("/hidden-gems/:id/report", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!gemFlagOn(res, await readFlagState(sc, "hidden_gems_enabled"))) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -1123,7 +1123,7 @@ router.post("/hidden-gems/:id/contribute", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!gemFlagOn(res, await readFlagState(sc, "hidden_gems_enabled"))) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -1151,8 +1151,8 @@ router.post("/hidden-gems/:id/contribute", async (req, res) => {
       ok: true,
       contributionId: result.contributionId,
       alreadyObserved: result.alreadyObserved,
-      gemState: projection?.gemState ?? null,
-      gemConfidence: projection?.gemConfidence ?? null,
+      gemState: (projection && !projection.unreadSources ? projection.gemState : null), ...(projection?.unreadSources ? { gemStateUnread: projection.unreadSources } : {}),
+      gemConfidence: (projection && !projection.unreadSources ? projection.gemConfidence : null),
     });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
@@ -1168,7 +1168,7 @@ router.post("/hidden-gems/:id/share-telegraph", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!gemFlagOn(res, await readFlagState(sc, "hidden_gems_enabled"))) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -1252,7 +1252,7 @@ router.post("/hidden-gems/:id/plan", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "hidden_gems_enabled")) {
+  if (!gemFlagOn(res, await readFlagState(sc, "hidden_gems_enabled"))) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -1379,7 +1379,7 @@ router.post("/hidden-gems/:id/plan", async (req, res) => {
 router.get("/hidden-gems/guides/:userId", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "local_guides_enabled")) {
+  if (!gemFlagOn(res, await readFlagState(sc, "local_guides_enabled"))) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -1402,7 +1402,7 @@ router.post("/hidden-gems/guides/apply", async (req, res) => {
 
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
-  if (!await isFlagEnabled(sc, "local_guides_enabled")) {
+  if (!gemFlagOn(res, await readFlagState(sc, "local_guides_enabled"))) { if (res.headersSent) return;  // census-discovery §111 (DV-83, D-W11X2-111): an unread flag is 503 flag_unreadable, never feature_disabled
     sendError(res, "feature_disabled"); return;
   }
 
@@ -1692,3 +1692,37 @@ router.post("/admin/local-guides/:userId/status", async (req, res) => {
 });
 
 export default router;
+
+// ── census-discovery §111 (DV-83 round 14, lane W11-X2, D-W11X2-110, D-W11X2-111) ──
+//
+// D-W11X2-111: every gate here read its flag with the local `isFlagEnabled`, which answers `false` for a
+// failed read, so an unread `hidden_gems_enabled` was `404 feature_disabled` — the feature stated as OFF over
+// a read that never happened (the class D-W11X2-56 and D-W11X2-71 closed at other serve points). The gate now
+// reads the flag's four states and answers an unreadable one 503 `degraded_unavailable` / `flag_unreadable`.
+function gemFlagOn(res: import("express").Response, state: Awaited<ReturnType<typeof readFlagState>>): boolean {
+  if (state === "unreadable") { sendError(res, "degraded_unavailable", "Hidden gems could not be checked right now. Please try again shortly.", { reason: "flag_unreadable" }); return false; }
+  return state === "on";
+}
+
+// D-W11X2-110: a gem whose aggregate reads failed is served without a state or confidence (the client
+// draws none), and the body says which reads failed — `partial`, because the gems themselves were read.
+function gemStateRefusal(projections: Iterable<{ unreadSources?: string[] } | undefined>, route: string): { refusal?: ReturnType<typeof discoveryRefusal> } {
+  const failed = gemProjectionsUnreadSources(projections as Iterable<any>);
+  return failed.length > 0 ? { refusal: discoveryRefusal("transient_db", "gem_state_unread", route, "partial", failed) } : {};
+}
+
+
+// ── census-discovery §123 (DV-83 round 24, lane DISC-DV83; the sweep beside the round-23 verifier's B42) ─────────────
+//
+// `resolveCallerId` answered null both for a caller with no token and for one whose token nobody could evaluate. On the
+// layover-safe reads that made a traveller in a live layover an anonymous caller, and `layoverGemWindow(sc, null)`
+// answers "no layover": the list was served for the query's own `availableMinutes`, the figure §56 (A13/A14) says a
+// live layover ignores. The lookup's error is now read with Discovery's one classifier (D-W11X2-21), the request is
+// marked, and the two layover-safe reads refuse it as they refuse an unreadable snapshot. GET /hidden-gems/:id keeps
+// §122's answer for a token with no viewer (the gem, `savedByMe: null`, `viewer` named). Declared at the foot so no
+// cited line moves; ESM hoists the import.
+import { authServiceUnreachable } from "./discovery.js";
+const _gemViewerUnresolved = new WeakSet<object>();
+function gemViewerUnresolved(req: object): boolean {
+  return _gemViewerUnresolved.has(req);
+}

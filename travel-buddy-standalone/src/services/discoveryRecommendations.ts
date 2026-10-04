@@ -37,7 +37,7 @@ export interface OutputKindEmerging { place: { id: string; name: string | null }
 export type OutputKindItem = OutputKindTrail | OutputKindMoment | OutputKindEmerging;
 
 export type OutputKindResult =
-  | { ok: true; kind: OutputKind; rankedBy: string; items: OutputKindItem[] }
+  | { ok: true; kind: OutputKind; rankedBy: string; items: OutputKindItem[]; /** census-discovery §105 (DV-83): the body carried a `partial` refusal — the rows are real, the list is incomplete. */ partial?: true }
   | { ok: false; reason: 'signed_out' | 'disabled' | 'invalid' | 'unavailable' | 'network' | 'not_configured' };
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -88,18 +88,18 @@ export async function getOutputKindRecommendations(
   if (res.status === 404) return { ok: false, reason: 'disabled' };
   if (res.status === 400) return { ok: false, reason: 'invalid' };
   if (!res.ok) return { ok: false, reason: 'unavailable' };
-  let body: { kind?: unknown; rankedBy?: unknown; items?: unknown };
+  let body: { kind?: unknown; rankedBy?: unknown; items?: unknown; refusal?: { coverage?: unknown } | null };
   try {
     body = (await res.json()) as typeof body;
   } catch {
     return { ok: false, reason: 'unavailable' };
   }
-  if (!body || !Array.isArray(body.items)) return { ok: false, reason: 'unavailable' };
+  if (!body || !Array.isArray(body.items)) return { ok: false, reason: 'unavailable' }; const coverage = body.refusal ? body.refusal.coverage : undefined; if (body.refusal && coverage !== 'partial') return { ok: false, reason: 'unavailable' };  // census-discovery §105 (DV-83, D-W11X2-60): a refusal beside a 200 is a failed read; `nothing` (or any unknown coverage) is never an empty page
   return {
     ok: true,
     kind,
     rankedBy: typeof body.rankedBy === 'string' ? body.rankedBy : 'none',
-    items: body.items as OutputKindItem[],
+    items: body.items as OutputKindItem[], ...(coverage === 'partial' ? { partial: true as const } : {}),
   };
 }
 

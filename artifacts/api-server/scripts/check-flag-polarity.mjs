@@ -235,7 +235,7 @@ const STOP_READER = 'isKillSwitchEngaged';
 // — whether the CALLER's branch on the value is the right one — it could not
 // say for isFlagEnabled either; the file's own header states that limit
 // ("IT DOES NOT ENFORCE: that the classification is RIGHT").
-const CAP_READERS = ['isFlagEnabled', 'isLivePlacesCapabilityEnabled', 'isEnabled', 'getFlagRow', 'readFlagState'];
+const CAP_READERS = ['isFlagEnabled', 'isLivePlacesCapabilityEnabled', 'isEnabled', 'getFlagRow', 'readFlagState', 'readCompassFlag'];  // `readCompassFlag` joined on 2026-09-29 (census-discovery §107, D-W11X2-68): compass/flags.ts's strict reader over the SAME COMPASS_% bulk load and cache as `isEnabled` — true/false when read, null when the load failed — deciding nothing (the caller refuses on null). GET /compass/telegraph moved COMPASS_TELEGRAPH onto it so an unread table stops answering "off"; listing it widens what this check sees, as readFlagState did, and keeps a STOP read through it visible to R2.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SCAN SCOPE
@@ -1306,6 +1306,10 @@ const DIRECT_READS = [
   { file: 'routes/stamps.ts',                      flag: 'stamp_system_v2_enabled',       reason: `Read directly, error branch ${V}: catch returns 503 feature_not_available, same as the disabled path. Fail-closed.` },
   { file: 'services/passport/UnifiedStampService.ts', flag: 'stamp_unified_view_enabled', reason: `Read directly, error branch ${V}: checks \`error\` → false, legacy counts stay authoritative. Fail-closed.` },
   { file: 'services/trust/TrustEventService.ts',   flag: 'trust_engine_enabled',          reason: `Read directly, error branch ${V}: catch → false. Fail-closed.` },
+  { file: 'lib/inputAssistance/searchCandidates.ts', flag: 'rent_buddy_enabled', reason: 'Read directly (rentBuddyLaunchedOrThrow), error branch verified by hand at 5f2b0e7eb + census-discovery §103 (D-W11X2-51): a resolved error AND a throw both raise DiscoverySearchReadError("feature_flags"), so buddies are withheld and the search refuses by name; an ABSENT row reads false (not launched). Fail-closed, and said. Read only while discovery_buddy_launch_gate_enabled is on.' },
+  { file: 'routes/discoveryOutputKinds.ts', flag: 'discovery_output_kinds_enabled', reason: 'Read directly (outputKindsFlagRead), error branch verified fail-closed by hand at 67d900e55 + census-discovery §104 (D-W11X2-56): a resolved error AND a throw answer null, and the route answers 503 degraded_unavailable / flag_unreadable, so nothing is served and the rail says a failed read; an ABSENT row reads false (the off 404, byte-identical).' },
+  { file: 'routes/discoveryTrending.ts', flag: 'discovery_trending_api_enabled', reason: 'Read directly (trendingApiFlagRead), error branch verified fail-closed by hand at 67d900e55 + census-discovery §104 (D-W11X2-56): a resolved error AND a throw answer null, and both routes answer 503 degraded_unavailable / flag_unreadable, so nothing is served; an ABSENT row reads false (the off 404).' },
+  { file: 'routes/discoveryTrending.ts', flag: 'discovery_trend_lists_enabled', reason: 'Read directly (trendListsFlagRead), error branch verified fail-closed by hand at 67d900e55 + census-discovery §104 (D-W11X2-56): a resolved error AND a throw answer null, and the list routes answer 503 degraded_unavailable / flag_unreadable, so nothing is served; an ABSENT row reads false (the off 404). Read only when discovery_trending_api_enabled read true.' },
   { file: 'services/trust/TrustGamingDetectionService.ts', flag: 'trust_gaming_detection_enabled', reason: `Read directly, error branch ${V}: no try/catch, but checks \`error\` explicitly, logs, and returns false. Fail-closed against a returned error; an outright throw propagates to the caller.` },
 
   // ── Fail-closed, but by a variable INITIALIZED OUTSIDE THE TRY, which is ──

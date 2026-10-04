@@ -68,14 +68,14 @@ export function useCityPulse({
   // sessionId is the UUID the server stamped on the impression batch for this
   // fetch — consumers must forward it to recordOutcome() so impressions and
   // outcomes can be joined in rank_events.
-  const [sessionId, setSessionId] = useState<string | undefined>(undefined);
+  const [sessionId, setSessionId] = useState<string | undefined>(undefined); const [eventsUnread, setEventsUnread] = useState<'failed' | 'partial' | null>(null);  // census-discovery §117 (SW17): today's events were not read whole
 
   useEffect(() => {
     const city = currentCitySlug?.replace(/-/g, ' ') ?? '';
     if (!city) {
       // Clear stale sessionId so consumers don't see a value from the previous
       // city when the slug is unset (e.g. the user closes the city picker).
-      setSessionId(undefined);
+      setSessionId(undefined); setEventsUnread(null);
       return;
     }
     const base = apiBase();
@@ -88,7 +88,7 @@ export function useCityPulse({
     // is never shown under the new city's name while the debounce or fetch is
     // in flight.
     setEvents([]);
-    setSessionId(undefined);
+    setSessionId(undefined); setEventsUnread(null);
 
     let cancelled = false;
     let ttlTimer: ReturnType<typeof setTimeout>;
@@ -96,21 +96,21 @@ export function useCityPulse({
     function doFetch() {
       freshToken().then((token) => {
         if (!token || cancelled) {
-          if (__DEV__) setEvents(mockEvents);
+          if (__DEV__) setEvents(mockEvents); if (!cancelled) setEventsUnread('failed');  // §117 (SW17): no token, so nothing was read
           return;
         }
         fetchCityEvents(base, token, city, currentCitySlug ?? '')
-          .then(({ events: fetched, sessionId: sid }) => {
+          .then(({ events: fetched, sessionId: sid, notWhole }) => {
             if (cancelled) return;
             setSessionId(sid);
-            setEvents(resolveEventsOnSuccess(fetched));
+            setEvents(resolveEventsOnSuccess(fetched)); setEventsUnread(notWhole ? 'partial' : null);
             // Schedule a background re-fetch once the TTL expires so events
             // stay fresh without requiring the user to pull-to-refresh.
             ttlTimer = setTimeout(doFetch, ttlMs);
           })
           .catch(() => {
             if (cancelled) return;
-            setEvents(resolveEventsOnError(__DEV__, mockEvents));
+            setEvents(resolveEventsOnError(__DEV__, mockEvents)); setEventsUnread('failed');  // §117 (SW17): a failed read is said, never an empty day
           });
       });
     }
@@ -141,5 +141,5 @@ export function useCityPulse({
   // `events` is the raw fetched list before bucket filtering. Expose it so
   // consumers like ExploreTodaySection can do their own time-band grouping
   // without re-fetching or pulling in the full filterPulse machinery.
-  return { buckets, events, availability, status, sessionId, loading: false, error: null };
+  return { buckets, events, availability, status, sessionId, eventsUnread, loading: false, error: null };
 }

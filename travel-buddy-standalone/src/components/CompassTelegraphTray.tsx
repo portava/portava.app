@@ -9,9 +9,9 @@
  * filters to public-only items accessible to all thread participants.
  *
  * Empty state: "No suggestions right now" with a dismiss button — no fake cards.
- * Unavailable state (flag off or error): shows a brief notice and dismisses.
+ * Failed state (census-discovery §107, D-W11X2-68): a failed read or a refusal says so, with a retry — only a readable empty answer is the empty state. A partial answer keeps its cards under one "may be incomplete" line.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Modal,
   View,
@@ -26,7 +26,7 @@ import { CachedImage } from './CachedImage.tsx';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Compass, X, MapPin, Send, Zap } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar } from '../theme/tokens.ts';
-import { fetchCompassTelegraphCards, type CompassTelegraphCard } from '../services/compass.ts';
+import { fetchCompassTelegraphCards, type CompassTelegraphCard } from '../services/compass.ts'; import { listPartialNotice } from '../services/discoveryCoverageNotice.ts';
 
 const TYPE_LABELS: Record<string, string> = {
   event:      'Event',
@@ -77,21 +77,21 @@ export function CompassTelegraphTray({
   const [city, setCity]             = useState<string | null>(null);
   const [loading, setLoading]       = useState(false);
   const [sharedId, setSharedId]     = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null); const [failed, setFailed] = useState(false); const [partial, setPartial] = useState(false); const trayReqRef = useRef(0);  // §107
 
   const load = useCallback(async () => {
-    if (!threadId) return;
-    setLoading(true);
+    if (!threadId) return; const myId = ++trayReqRef.current;  // §107: only the latest open's answer writes the tray
+    setLoading(true); setFailed(false); setPartial(false);
     setCards([]);
     setCity(null);
     try {
-      const result = await fetchCompassTelegraphCards(threadId);
-      if (result.ok && result.cards) {
+      const result = await fetchCompassTelegraphCards(threadId); if (trayReqRef.current !== myId) return;
+      if (!result.ok || !result.cards || (result.partial === true && result.cards.length === 0)) setFailed(true); else {  // census-discovery §107 (DV-83, D-W11X2-68): a failed read or a refusal is never "couldn't find"
         setCards(result.cards);
-        setCity(result.city ?? null);
+        setCity(result.city ?? null); setPartial(result.partial === true);
       }
     } finally {
-      setLoading(false);
+      if (trayReqRef.current === myId) setLoading(false);
     }
   }, [threadId]);
 
@@ -153,7 +153,7 @@ export function CompassTelegraphTray({
             <ActivityIndicator size="small" color={color.signal} />
             <Text style={s.emptyText}>Finding suggestions…</Text>
           </View>
-        ) : cards.length === 0 ? (
+        ) : failed ? (<TrayFailed onRetry={load} onDismiss={onDismiss} />) : cards.length === 0 ? (
           <View style={s.emptyWrap}>
             <View style={s.emptyIcon}>
               <Zap size={22} color={color.faint} />
@@ -171,7 +171,7 @@ export function CompassTelegraphTray({
             showsVerticalScrollIndicator={false}
             contentContainerStyle={s.cardList}
           >
-            {cards.map((card) => (
+            {partial ? <Text style={s.emptyBody}>{listPartialNotice(TRAY_NOUN)}</Text> : null}{cards.map((card) => (
               <CardRow
                 key={card.id}
                 card={card}
@@ -466,3 +466,29 @@ const cr = StyleSheet.create({
     color: color.mute,
   },
 });
+
+// ── census-discovery §107 (DV-83 round 10, lane W11-X2, D-W11X2-68): the tray's failed state ──
+// The tray set its cards only on `result.ok`, so an HTTP failure, a network failure and a refusal
+// all fell through to the empty state, "Compass couldn't find relevant recommendations for this
+// chat" — a claim about the chat made from a read that did not answer. Only a readable empty
+// answer says that now; a failure says it failed and offers a retry.
+const TRAY_NOUN = 'Compass suggestions';
+export const TELEGRAPH_TRAY_FAILED = 'Compass suggestions couldn’t be loaded just now';
+
+function TrayFailed({ onRetry, onDismiss }: { onRetry: () => void; onDismiss: () => void }) {
+  return (
+    <View style={s.emptyWrap} testID="compass-telegraph-tray-failed">
+      <View style={s.emptyIcon}>
+        <Zap size={22} color={color.faint} />
+      </View>
+      <Text style={s.emptyTitle}>{TELEGRAPH_TRAY_FAILED}</Text>
+      <Text style={s.emptyBody}>This is on our side, not this chat. Try again in a moment.</Text>
+      <Pressable style={s.dismissBtn} onPress={onRetry} accessibilityRole="button">
+        <Text style={s.dismissBtnText}>Try again</Text>
+      </Pressable>
+      <Pressable style={s.dismissBtn} onPress={onDismiss}>
+        <Text style={s.dismissBtnText}>Dismiss</Text>
+      </Pressable>
+    </View>
+  );
+}

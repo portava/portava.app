@@ -12,7 +12,7 @@
  * screen (spec §51). Empty sections hide; if everything is empty the page
  * says so honestly and offers Discover.
  */
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import {
   View, Text, Pressable, StyleSheet, ScrollView, ActivityIndicator, RefreshControl,
 } from 'react-native';
@@ -20,15 +20,16 @@ import { CachedImage } from '../../src/components/CachedImage';
 import { router, useLocalSearchParams } from 'expo-router';
 import { ChevronLeft, MapPin, Gem, CalendarDays, Compass } from 'lucide-react-native';
 import { listGems, type HiddenGem } from '../../src/services/hiddenGems';
+import { gemListCut } from '../../src/services/gemListCut';  // census-discovery §114 (sweep SW1b)
 import { listEvents, type EventListItem } from '../../src/services/events';
 import { getPulseData, type PulsePost } from '../../src/services/pulse';
 import { color, space, radius, type as t, aspect, avatar } from '../../src/theme/tokens';
 import { usePlainBottomInset } from '../../src/hooks/useBottomInset';
 import { CityConfidenceBadge } from '../../src/components/compass/CityConfidenceBadge';
 import { TripFsqPlacesSection } from '../../src/components/trip/TripFsqPlacesSection';
-import { toFsqCityKey } from '../../src/utils/fsqCityKey';
+import { toFsqCityKey } from '../../src/utils/fsqCityKey'; import { eventListNotWhole } from '../../src/lib/eventListMarks.ts';  // census-discovery §117 (SW17)
 
-type SectionState<T> = { status: 'loading' | 'ready' | 'error'; items: T[] };
+type SectionState<T> = { status: 'loading' | 'ready' | 'error'; items: T[]; /** census-discovery §114 (sweep SW1b): the server cut the list */ cut?: boolean };
 
 function fmtEventDate(iso: string | null): string {
   if (!iso) return '';
@@ -47,37 +48,37 @@ export default function Destination() {
 
   const [gems, setGems] = useState<SectionState<HiddenGem>>({ status: 'loading', items: [] });
   const [events, setEvents] = useState<SectionState<EventListItem>>({ status: 'loading', items: [] });
-  const [posts, setPosts] = useState<SectionState<PulsePost>>({ status: 'loading', items: [] });
+  const [posts, setPosts] = useState<SectionState<PulsePost>>({ status: 'loading', items: [] }); const loadSeq = useRef({ gems: 0, events: 0, posts: 0 });  // census-discovery §118 (SW23): only a section's latest load is drawn
 
   const loadGems = useCallback(async () => {
-    setGems({ status: 'loading', items: [] });
+    setGems({ status: 'loading', items: [] }); const seq = ++loadSeq.current.gems;
     try {
-      const items = await listGems({ city: cityName, limit: 10 });
-      setGems({ status: 'ready', items: items ?? [] });
+      const items = await listGems({ city: cityName, limit: 10 }); if (seq !== loadSeq.current.gems) return;  // §118 (SW23): an answer for a city no longer on screen is never drawn
+      setGems({ status: 'ready', items: items ?? [], cut: gemListCut(items) });
     } catch {
-      setGems({ status: 'error', items: [] });
+      if (seq === loadSeq.current.gems) setGems({ status: 'error', items: [] });
     }
   }, [cityName]);
 
   const loadEvents = useCallback(async () => {
-    setEvents({ status: 'loading', items: [] });
+    setEvents({ status: 'loading', items: [] }); const seq = ++loadSeq.current.events;
     try {
-      const res = await listEvents({ city: cityName, limit: 10 });
-      if (res.ok && res.data) setEvents({ status: 'ready', items: res.data.events ?? [] });
+      const res = await listEvents({ city: cityName, limit: 10 }); if (seq !== loadSeq.current.events) return;  // §118 (SW23)
+      if (res.ok && res.data) setEvents({ status: 'ready', items: res.data.events ?? [], cut: eventListNotWhole(res.data) });  // §117 (SW17): GET /events said it is not whole
       else setEvents({ status: 'error', items: [] });
     } catch {
-      setEvents({ status: 'error', items: [] });
+      if (seq === loadSeq.current.events) setEvents({ status: 'error', items: [] });
     }
   }, [cityName]);
 
   const loadPosts = useCallback(async () => {
-    setPosts({ status: 'loading', items: [] });
+    setPosts({ status: 'loading', items: [] }); const seq = ++loadSeq.current.posts;
     try {
-      const res = await getPulseData({ city: cityName, limit: 12 });
+      const res = await getPulseData({ city: cityName, limit: 12 }); if (seq !== loadSeq.current.posts) return;  // §118 (SW23)
       if (res.ok) setPosts({ status: 'ready', items: res.data.posts ?? [] });
       else setPosts({ status: 'error', items: [] });
     } catch {
-      setPosts({ status: 'error', items: [] });
+      if (seq === loadSeq.current.posts) setPosts({ status: 'error', items: [] });
     }
   }, [cityName]);
 
@@ -93,7 +94,7 @@ export default function Destination() {
   const anyLoading = gems.status === 'loading' || events.status === 'loading' || posts.status === 'loading';
   const allEmpty =
     !anyLoading &&
-    gems.items.length === 0 && events.items.length === 0 && posts.items.length === 0 &&
+    gems.items.length === 0 && !gems.cut && events.items.length === 0 && !events.cut && posts.items.length === 0 &&  // §114 (SW1b): a cut gem read is not "no gems"; §117 (SW17): nor a cut events read "no events"
     gems.status !== 'error' && events.status !== 'error' && posts.status !== 'error';
 
   const SectionError = ({ onRetry }: { onRetry: () => void }) => (
@@ -163,6 +164,12 @@ export default function Destination() {
                 </Pressable>
               ))}
             </ScrollView>
+            {gems.cut ? <Text style={s.sectionErrorText}>Showing some gems</Text> : null}
+          </View>
+        ) : gems.cut ? (
+          <View style={s.section}>
+            <Text style={s.sectionTitle}>Hidden Gems</Text>
+            <Text style={s.sectionErrorText}>Couldn't check every gem in {cityName}</Text>
           </View>
         ) : null}
 
@@ -204,7 +211,7 @@ export default function Destination() {
               </Pressable>
             ))}
           </View>
-        ) : null}
+        ) : events.cut ? (<View style={s.section}><Text style={s.sectionTitle}>Events</Text><Text style={s.sectionErrorText}>Couldn't check every event in {cityName}</Text></View>) : null}
 
         {/* ── Recent traveler posts ── */}
         {posts.status === 'error' ? (

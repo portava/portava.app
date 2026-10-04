@@ -168,14 +168,17 @@ export function sanitizeIdentityKeys<T extends Record<string, any>>(
 }
 
 /**
- * nameVisibilitySet, for a caller that can SAY a failure: `null` when the
- * privacy-settings read failed, instead of the empty set nameVisibilitySet
- * falls back to. census-discovery §106 (tm-people): GET /users/search drops
- * every row that matched only on a hidden name, so the empty fallback turned
- * a failed read into "nobody matched". Callers that can only fail closed keep
- * nameVisibilitySet; the rule (show_real_name = true) is the same query.
+ * census-discovery §103 (DV-83, D-W11X2-48): the same batched read as
+ * `nameVisibilitySet`, but a failed read is `null`, never an empty set.
+ *
+ * `nameVisibilitySet`'s empty set is right where the set only REDACTS a label
+ * (no name shown, the row stays). It is wrong where the set FILTERS rows: search's
+ * C09 rule drops a traveler matched only by a real name the set does not allow,
+ * so an unread set silently removed every such traveler and the list was served
+ * as the whole answer. A caller that filters by this set uses this variant and
+ * says the read failed instead.
  */
-export async function readNameVisibilitySet(sc: any, userIds: Array<string | null | undefined>): Promise<Set<string> | null> {
+export async function nameVisibilitySetOrNull(sc: any, userIds: Array<string | null | undefined>): Promise<Set<string> | null> {
   const ids = [...new Set(userIds.filter((x): x is string => typeof x === "string" && x.length > 0))];
   if (ids.length === 0) return new Set();
   try {
@@ -190,3 +193,17 @@ export async function readNameVisibilitySet(sc: any, userIds: Array<string | nul
     return null;
   }
 }
+
+/**
+ * nameVisibilitySet, for a caller that can SAY a failure: `null` when the
+ * privacy-settings read failed, instead of the empty set nameVisibilitySet
+ * falls back to. census-discovery §106 (tm-people): GET /users/search drops
+ * every row that matched only on a hidden name, so the empty fallback turned
+ * a failed read into "nobody matched". Callers that can only fail closed keep
+ * nameVisibilitySet; the rule (show_real_name = true) is the same query.
+ *
+ * The same function as nameVisibilitySetOrNull (census-discovery §103), which
+ * landed under that name in parallel; both names stay so neither lane's
+ * callers or citations move.
+ */
+export const readNameVisibilitySet = nameVisibilitySetOrNull;

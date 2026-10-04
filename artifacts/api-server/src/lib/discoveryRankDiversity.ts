@@ -99,8 +99,8 @@ export async function loadTrailKeys(sc: any, candidateIds: readonly string[]): P
   try {
     const members = await sc.from("content_trails").select("trail_id, source_id")
       .eq("source_type", "place").in("relationship", [...TRAIL_MEMBER_RELATIONSHIPS])
-      .in("source_id", [...byMember.keys()]).limit(MAX_TRAIL_KEY_ROWS);
-    if (members.error || !Array.isArray(members.data)) return { trailIds, degraded: true };
+      .in("source_id", [...byMember.keys()]).limit(MAX_TRAIL_KEY_ROWS + 1);  // census-discovery §113 (D-W11X2-137): one past the cap
+    if (members.error || !Array.isArray(members.data) || members.data.length > MAX_TRAIL_KEY_ROWS) return { trailIds, degraded: true };  // a cut membership read is reported, never a whole grouping
     const trailSet = [...new Set((members.data as any[]).map((r) => r.trail_id).filter(Boolean))];
     if (trailSet.length === 0) return { trailIds, degraded: false };
     const live = await sc.from("trails").select("id").in("id", trailSet).neq("lifecycle_status", "archived");

@@ -142,7 +142,7 @@ export const LAYOVER_MODE_REFUSAL_CODES = {
    * `feature_flags` could not be read, so whether the restriction applies is
    * UNKNOWN — and an unknown restriction is not a lifted one.
    */
-  flag: "layover_flag_unreadable",
+  flag: "layover_flag_unreadable", viewer: "layover_viewer_unresolved",  // census-discovery §123: a token was presented and nobody resolved it, so nobody could be looked at
 } as const;
 
 /** One place the certified universe withheld, and the reason it gave. */
@@ -236,9 +236,9 @@ export async function discoveryLayoverGate(
    * It is NOT a seam for changing the gate's answer: it changes who is asked,
    * and the contract still refuses on absence.
    */
-  opts: { provider?: TravelTimeProvider; snapshotRead?: LayoverSnapshotResult } = {}, // snapshotRead: a caller that already read THIS traveller's snapshot passes it, so one request is certified once (census-discovery §56)
+  opts: { provider?: TravelTimeProvider; snapshotRead?: LayoverSnapshotResult; viewerUnresolved?: boolean } = {}, // snapshotRead: a caller that already read THIS traveller's snapshot passes it, so one request is certified once (census-discovery §56)
 ): Promise<DiscoveryLayoverGate> {
-  if (!sc || !userId) return OFF;
+  if (!sc || !userId) return !userId && opts.viewerUnresolved ? unresolvedViewerGate(sc, route) : OFF;  // census-discovery §123: no traveller is an ANSWER; a traveller nobody resolved is not
   const flag = await readFlagState(sc, LAYOVER_DISCOVERY_MODE_FLAG);
   // `off` and `absent` are ANSWERS — a row saying no, and nobody having said
   // anything. Both mean the restriction does not exist, for anybody, and the
@@ -389,4 +389,24 @@ export function serveUnderLayoverGate<T extends { id: string }>(
 ): T[] {
   if (!gate.ok || !gate.active) return items;
   return items.filter((i) => gate.admittedIds.has(i.id));
+}
+
+// ── census-discovery §123 (DV-83 round 24, lane DISC-DV83) ───────────────────────────────────────────────────────────
+//
+// `userId` null meant one thing above: an anonymous caller, for whom there is no session and nothing to gate. The serve
+// paths also reach here with a caller who PRESENTED a token that nobody could resolve (Supabase Auth unreachable, rate
+// limited, or the lookup threw). That caller may be in a live layover; the gate cannot look. Answering OFF for them is
+// the gate failing open on an unhealthy auth service.
+//
+// The header's rule decides it: whether the restriction could apply is a fact about the traveller, and it is asked
+// only once the flag says the restriction may exist. `off` and `absent` are answers for everybody, so nothing is
+// withheld and an auth outage does not blank Discovery. With the flag on, or unreadable, the page is refused, as it is
+// for a traveller whose snapshot could not be read. Callers opt in with `opts.viewerUnresolved`; omitted, nothing changes.
+async function unresolvedViewerGate(sc: any, route: string): Promise<DiscoveryLayoverGate> {
+  const flag = sc ? await readFlagState(sc, LAYOVER_DISCOVERY_MODE_FLAG) : "unreadable";
+  if (flag === "off" || flag === "absent") return OFF;
+  return {
+    ok: false, active: false, admittedIds: null, summary: null,
+    refusal: discoveryRefusal("upstream_unavailable", LAYOVER_MODE_REFUSAL_CODES.viewer, route, "nothing", ["viewer"]),
+  };
 }

@@ -85,7 +85,7 @@ describe("loadNearbyEvents — optional candidate window (Wall spec TABLE 4)", (
     const out = await loadNearbyEvents(fakeSc(log) as any, VIEWER, 10.31, 123.91, 25, new Set());
     assert.equal(out?.length, 3);
     assert.deepEqual(log.or, [], "no OR predicate is added for a caller that wants the neighbourhood");
-    assert.deepEqual(log.limit, [60]);
+    assert.deepEqual(log.limit, [61]);  // census-discovery §113 (D-W11X2-132): the cap of 60, read one past so a cut scan is known
     // Only the two bounding-box lte filters.
     assert.deepEqual(log.lte.map(([c]) => c), ["location_lat", "location_lng"]);
   });
@@ -109,16 +109,16 @@ describe("loadNearbyEvents — optional candidate window (Wall spec TABLE 4)", (
     assert.deepEqual(log.or, [
       `ends_at.gte.${window.nowIso},starts_at.gte.${window.openEndedStartsAfterIso}`,
     ]);
-    assert.deepEqual(log.limit, [8], "the caller's row bound is what reaches the query");
+    assert.deepEqual(log.limit, [9], "the caller's row bound is what reaches the query (§113: read one past it, so a cut is known)");
   });
 
   it("clamps a caller's row bound into 1..60", async () => {
     const high = emptyLog();
     await loadNearbyEvents(fakeSc(high) as any, VIEWER, 10.31, 123.91, 25, new Set(), { limit: 5_000 });
-    assert.deepEqual(high.limit, [60]);
+    assert.deepEqual(high.limit, [61]);  // §113: the clamped cap, read one past
     const low = emptyLog();
     await loadNearbyEvents(fakeSc(low) as any, VIEWER, 10.31, 123.91, 25, new Set(), { limit: 0 });
-    assert.deepEqual(low.limit, [1]);
+    assert.deepEqual(low.limit, [2]);
   });
 });
 

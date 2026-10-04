@@ -418,6 +418,12 @@ describe("V — revocation both ways, with no cache between reads", () => {
     _setTestClient(makeDb(seed(), ["trip_members", "event_roles"]), true);
     const failed = await call("GET", `/v1/discovery/trails/${T}/modules`, CREW);
     assert.deepEqual(failed.body.modules[0].items, [], "both members are withheld while their reads fail");
+    // RESTATED by census-discovery §105 (DV-83 round 9, D-W11X2-60). This case used to stop at the
+    // line above, and so pinned the defect the round-8 verifier found: a failed read served as a
+    // complete, empty Trail page. Withholding stays right (fail closed, §64); what changed is that the
+    // page now SAYS it is a failed read, with one generic source that names no member kind.
+    assert.equal(failed.body.refusal?.coverage, "nothing", "a page emptied by failed reads is refused, never a complete empty page");
+    assert.deepEqual(failed.body.refusal?.failedSources, ["trail_member_sources"]);
     _setTestClient(db, true);
     assert.equal((await call("GET", `/v1/discovery/trails/${T}/modules`, CREW)).text, a.text, "a recovered read serves again");
   });

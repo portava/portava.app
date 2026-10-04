@@ -25,7 +25,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { requireUser, sendError } from '../lib/http.js';
 import { getServiceClient } from '../lib/supabase.js';
-import { nameVisibilitySet } from '../lib/publicIdentity.js';
+import { nameVisibilitySet } from '../lib/publicIdentity.js'; import { discoveryRefusal, sendDiscoveryRefusal } from '../lib/discoveryRefusal.js';  // census-discovery §108 (D-W11X2-79)
 
 import { requireAdmin } from "../lib/requireAdmin.js";
 import { readBlockExclusions, isExcluded, sendExclusionsUnavailable } from '../lib/exclusionSet.js';
@@ -82,7 +82,7 @@ router.get('/hashtags/suggestions', async (req, res) => {
   const candidateIds = allCandidates.map((h: any) => h.id);
 
   // Fetch which ones the caller follows
-  const { data: followed } = await sc
+  const { data: followed, error: followedErr } = await sc  // §113 (D-W11X2-137)
     .from('user_hashtag_follows')
     .select('hashtag_id')
     .eq('user_id', user.id)
@@ -92,17 +92,17 @@ router.get('/hashtags/suggestions', async (req, res) => {
 
   // Fetch city-trending scores (usage in last 48h for user's city)
   const since = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
-  let cityTrendSet = new Set<string>();
+  let cityTrendSet = new Set<string>(); let cityUsageFailed = false;
 
   if (city) {
-    const { data: cityUsage } = await sc
+    const { data: cityUsage, error: cityUsageErr } = await sc
       .from('hashtag_usage')
       .select('hashtag_id')
       .in('hashtag_id', candidateIds)
       .eq('city', city)
       .gte('created_at', since);
 
-    const cityCountMap: Record<string, number> = {};
+    const cityCountMap: Record<string, number> = {}; if (cityUsageErr) cityUsageFailed = true;
     for (const row of (cityUsage ?? []) as any[]) {
       cityCountMap[row.hashtag_id] = (cityCountMap[row.hashtag_id] ?? 0) + 1;
     }
@@ -128,8 +128,8 @@ router.get('/hashtags/suggestions', async (req, res) => {
       slug: h.slug,
       name: h.name,
       usageCount: h.usage_count,
-      isFollowing: followedSet.has(h.id),
-    })),
+      isFollowing: followedErr ? null : followedSet.has(h.id),
+    })), ...(followedErr || cityUsageFailed ? { failedSources: [...(followedErr ? ['user_hashtag_follows'] : []), ...(cityUsageFailed ? ['hashtag_usage'] : [])] } : {}),
   });
 });
 
@@ -165,15 +165,15 @@ router.get('/hashtags/trending', async (req, res) => {
 
   const since = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
 
-  // Fetch usage rows in window
-  let usageQ = sc
-    .from('hashtag_usage')
-    .select('hashtag_id, author_id, city')
-    .gte('created_at', since);
+  // Fetch usage rows in window — census-discovery §108 (DV-83, D-W11X2-79): read to its end in ordered pages against an exact count; PostgREST's db-max-rows cut the unbounded read silently
+  const cityOnly = scope === 'city' && cityId ? cityId : null; const usageRead = await readTrendingWindow<any>(
+    () => { const q = sc.from('hashtag_usage').select('id', { count: 'exact', head: true }).gte('created_at', since); return cityOnly ? q.eq('city', cityOnly) : q; },
+    (from, to) => { const q = sc.from('hashtag_usage').select('hashtag_id, author_id, city').gte('created_at', since); return (cityOnly ? q.eq('city', cityOnly) : q).order('created_at', { ascending: true }).order('id', { ascending: true }).range(from, to); },
+  );
 
-  if (scope === 'city' && cityId) usageQ = usageQ.eq('city', cityId);
+  let windowIncomplete = !usageRead.complete;  // §108: a window read short of its count, or over the cap, is never served as the complete ranking
 
-  const { data: usageRows, error: usageErr } = await usageQ;
+  const { data: usageRows, error: usageErr } = { data: usageRead.rows, error: usageRead.error };
 
   if (usageErr) {
     req.log.error({ err: usageErr }, 'hashtags/trending usage failed');
@@ -197,10 +197,10 @@ router.get('/hashtags/trending', async (req, res) => {
   let effectiveScope: 'global' | 'city' = scope;
   if (scope === 'city' && Object.keys(usageByHt).length === 0) {
     effectiveScope = 'global';
-    const { data: fbRows } = await sc
-      .from('hashtag_usage')
-      .select('hashtag_id, author_id, city')
-      .gte('created_at', since);
+    const fbRead = await readTrendingWindow<any>(() => sc.from('hashtag_usage').select('id', { count: 'exact', head: true }).gte('created_at', since),
+      (from, to) => sc.from('hashtag_usage').select('hashtag_id, author_id, city').gte('created_at', since).order('created_at', { ascending: true }).order('id', { ascending: true }).range(from, to));
+    const { data: fbRows, error: fbErr } = { data: fbRead.rows, error: fbRead.error }; if (!fbRead.complete) windowIncomplete = true;  // census-discovery §108 (D-W11X2-79): the fallback window is paged the same way
+    if (fbErr) { req.log.error({ err: fbErr }, 'hashtags/trending global fallback failed'); sendError(res, 'db_error', fbErr.message); return; }  // census-discovery §104 (DV-83, D-W11X2-57): the Discover screen's chips; a failed fallback read is not "nothing trending"
     for (const row of (fbRows ?? []) as any[]) {
       if (!usageByHt[row.hashtag_id]) {
         usageByHt[row.hashtag_id] = { total: 0, authors: new Set(), cityCount: 0 };
@@ -212,18 +212,18 @@ router.get('/hashtags/trending', async (req, res) => {
   }
 
   if (Object.keys(usageByHt).length === 0) {
-    res.status(200).json({ trending: [], scope: effectiveScope, city: cityId ?? null });
+    sendTrending(res, [], effectiveScope, cityId ?? null, windowIncomplete);  // §108: an incomplete window is never "nothing trending"
     return;
   }
 
   // Fetch engagement for posts using these hashtags in the window
   const htIds = Object.keys(usageByHt);
-  const { data: postUsage } = await sc
-    .from('hashtag_usage')
-    .select('hashtag_id, source_id')
-    .eq('source_type', 'post')
-    .in('hashtag_id', htIds)
-    .gte('created_at', since);
+  const postUsageRead = await readByIdChunks(htIds, (ids) => readTrendingWindow<any>(
+    () => sc.from('hashtag_usage').select('id', { count: 'exact', head: true }).eq('source_type', 'post').in('hashtag_id', ids).gte('created_at', since),
+    (from, to) => sc.from('hashtag_usage').select('hashtag_id, source_id').eq('source_type', 'post').in('hashtag_id', ids).gte('created_at', since).order('created_at', { ascending: true }).order('id', { ascending: true }).range(from, to),
+  ));  // census-discovery §108 (DV-83, D-W11X2-79): paged to its end, in id chunks a request URL can carry
+  const { data: postUsage, error: postUsageErr } = { data: postUsageRead.rows, error: postUsageRead.error }; if (!postUsageRead.complete) windowIncomplete = true;
+  if (postUsageErr) { req.log.error({ err: postUsageErr }, 'hashtags/trending ranking read failed'); sendError(res, 'db_error', 'trending hashtags could not be ranked just now'); return; }  // census-discovery §105 (DV-83, D-W11X2-61): a failed ranking read is not a ranking
 
   const postsByHt: Record<string, string[]> = {};
   for (const row of (postUsage ?? []) as any[]) {
@@ -235,10 +235,10 @@ router.get('/hashtags/trending', async (req, res) => {
   let engagementMap: Record<string, number> = {};
 
   if (allPostIds.length > 0) {
-    const { data: postsData } = await sc
-      .from('posts')
-      .select('id, like_count, comment_count')
-      .in('id', allPostIds);
+    const postsRead = await readByIdChunks(allPostIds, async (ids) => { const { data, error } = await sc.from('posts').select('id, like_count, comment_count').in('id', ids); return { rows: (data ?? []) as any[], error, complete: !error }; });
+    // census-discovery §108 (D-W11X2-79): in id chunks; a chunk is at most TRENDING_ID_CHUNK rows (ids are keys), below db-max-rows, so each read is complete
+    const { data: postsData, error: postsDataErr } = { data: postsRead.rows, error: postsRead.error };
+    if (postsDataErr) { req.log.error({ err: postsDataErr }, 'hashtags/trending ranking read failed'); sendError(res, 'db_error', 'trending hashtags could not be ranked just now'); return; }  // §105
 
     const postEngMap: Record<string, number> = {};
     for (const p of (postsData ?? []) as any[]) {
@@ -253,16 +253,16 @@ router.get('/hashtags/trending', async (req, res) => {
   // Compute event activity (hashtag_usage rows where source_type='event' in window)
   const eventActMap: Record<string, number> = {};
   try {
-    const { data: evtUsage } = await sc
-      .from('hashtag_usage')
-      .select('hashtag_id')
-      .eq('source_type', 'event')
-      .in('hashtag_id', htIds)
-      .gte('created_at', since);
+    const evtRead = await readByIdChunks(htIds, (ids) => readTrendingWindow<any>(
+      () => sc.from('hashtag_usage').select('id', { count: 'exact', head: true }).eq('source_type', 'event').in('hashtag_id', ids).gte('created_at', since),
+      (from, to) => sc.from('hashtag_usage').select('hashtag_id').eq('source_type', 'event').in('hashtag_id', ids).gte('created_at', since).order('created_at', { ascending: true }).order('id', { ascending: true }).range(from, to),
+    ));  // census-discovery §108 (D-W11X2-79): paged like the window
+    const { data: evtUsage, error: evtUsageErr } = { data: evtRead.rows, error: evtRead.error }; if (!evtRead.complete) windowIncomplete = true;
+    if (evtUsageErr) throw evtUsageErr;  // §105: answered below
     for (const row of (evtUsage ?? []) as any[]) {
       eventActMap[row.hashtag_id] = (eventActMap[row.hashtag_id] ?? 0) + 1;
     }
-  } catch { /* events table may not exist on all deployments */ }
+  } catch (err) { req.log.error({ err: err }, 'hashtags/trending ranking read failed'); sendError(res, 'db_error', 'trending hashtags could not be ranked just now'); return; }  // census-discovery §105 (D-W11X2-61): this reads hashtag_usage, which the route read above — a failure is not "no event activity" (was: an empty catch, 'events table may not exist')
 
   // Compute weighted scores
   const scored = htIds.map((htId) => {
@@ -312,7 +312,7 @@ router.get('/hashtags/trending', async (req, res) => {
     }))
     .sort((a: any, b: any) => b.trendingScore - a.trendingScore);
 
-  res.status(200).json({ trending, scope: effectiveScope, city: cityId ?? null });
+  sendTrending(res, trending, effectiveScope, cityId ?? null, windowIncomplete);  // census-discovery §108 (DV-83, D-W11X2-79): a ranking over an incomplete window is served as partial
 });
 
 // ─── GET /api/hashtags/:slug ──────────────────────────────────────────────────
@@ -366,12 +366,12 @@ router.get('/hashtags/:slug', async (req, res) => {
       .eq('hashtag_id', htRow.id)
       .not('city', 'is', null)
       .gte('created_at', new Date(nowMs - 30 * 24 * 60 * 60 * 1000).toISOString())
-      .limit(200),
+      .limit(201),  // census-discovery §113 (D-W11X2-137): one past the cap
   ]);
 
   // Tally city counts and pick the winner
-  let topCity: string | null = null;
-  if (cityRes.data && cityRes.data.length > 0) {
+  let topCity: string | null = null; const tallyCut = Array.isArray(cityRes.data) && cityRes.data.length > 200;  // §113: "the most" is not stated over a cut tally
+  if (!tallyCut && cityRes.data && cityRes.data.length > 0) {
     const cityCount: Record<string, number> = {};
     for (const row of cityRes.data as any[]) {
       if (row.city) cityCount[row.city] = (cityCount[row.city] ?? 0) + 1;
@@ -385,9 +385,9 @@ router.get('/hashtags/:slug', async (req, res) => {
     slug: htRow.slug,
     name: htRow.name,
     usageCount: htRow.usage_count,
-    isFollowing: followRes.data !== null,
+    isFollowing: followRes.error ? null : followRes.data !== null,  // §113 (D-W11X2-137): a failed read is not "not following"
     topCity,
-    createdAt: htRow.created_at,
+    createdAt: htRow.created_at, ...(followRes.error || cityRes.error ? { failedSources: [...(followRes.error ? ['user_hashtag_follows'] : []), ...(cityRes.error ? ['hashtag_usage'] : [])] } : {}),
   });
 });
 
@@ -403,12 +403,12 @@ router.post('/hashtags/:slug/follow', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  const { data: ht } = await sc
+  const { data: ht, error: htErr } = await sc
     .from('hashtags')
     .select('id, is_blocked')
     .eq('slug', slug)
     .maybeSingle();
-
+  if (htErr) { sendError(res, 'degraded_unavailable', 'We could not check that hashtag right now'); return; }  // census-discovery §113 (D-W11X2-137): never "not found" over a failed read
   if (!ht || (ht as any).is_blocked) { sendError(res, 'not_found', 'Hashtag not found'); return; }
 
   const { error } = await sc
@@ -436,12 +436,12 @@ router.delete('/hashtags/:slug/follow', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  const { data: ht } = await sc
+  const { data: ht, error: htErr } = await sc
     .from('hashtags')
     .select('id')
     .eq('slug', slug)
     .maybeSingle();
-
+  if (htErr) { sendError(res, 'degraded_unavailable', 'We could not check that hashtag right now'); return; }  // §113 (D-W11X2-137)
   if (!ht) { sendError(res, 'not_found', 'Hashtag not found'); return; }
 
   const { error } = await sc
@@ -492,13 +492,13 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  const { data: ht } = await sc
+  const { data: ht, error: htErr } = await sc
     .from('hashtags')
     .select('id, is_blocked')
     .eq('slug', slug)
     .maybeSingle();
 
-  if (!ht || (ht as any).is_blocked) { sendError(res, 'not_found', 'Hashtag not found'); return; }
+  if (htErr) return sendFeedReadFailed(req, res, htErr, 'hashtag');  if (!ht || (ht as any).is_blocked) { sendError(res, 'not_found', 'Hashtag not found'); return; }
 
   const htId = (ht as any).id;
 
@@ -620,8 +620,8 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
 
   } else if (tab === 'people') {
     // Exclude blocked/blocking profiles
-    const { data: profiles } = await sc
-      .from('profiles').select('id, handle, name, avatar_url').in('id', sourceIds);
+    const { data: profiles, error: peopleErr } = await sc
+      .from('profiles').select('id, handle, name, avatar_url').in('id', sourceIds); if (peopleErr) return sendFeedReadFailed(req, res, peopleErr, 'people');
     const visiblePeople = (profiles ?? []).filter((p: any) => !isExcluded(feedBlockedSet, p.id));
     // Universal display-name rule: real name only when the subject opted in.
     const allowedPeopleNames = await nameVisibilitySet(sc, visiblePeople.map((p: any) => p.id as string));
@@ -638,8 +638,8 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
   } else if (tab === 'places') {
     try {
       // submitted_by allows filtering out content from blocked users
-      const { data: places } = await sc
-        .from('discovery_places').select('id, name, city, place_type, image_url, submitted_by').in('id', sourceIds);
+      const { data: places, error: placesErr } = await sc
+        .from('discovery_places').select('id, name, city, place_type, image_url, submitted_by').in('id', sourceIds); if (placesErr) return sendFeedReadFailed(req, res, placesErr, 'places');
       const items = (places ?? [])
         .filter((p: any) => !isExcluded(feedBlockedSet, p.submitted_by))
         .map((p: any) => ({
@@ -647,17 +647,17 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
           placeType: p.place_type ?? null, imageUrl: p.image_url ?? null,
         }));
       res.status(200).json({ items, posts: [], hasMore: items.length === limit, nextCursor, tab, scope });
-    } catch { res.status(200).json({ items: [], posts: [], hasMore: false, nextCursor: null, tab, scope }); }
+    } catch (err) { sendFeedReadFailed(req, res, err, 'places'); }  // census-discovery §105 (DV-83): a thrown read is a failed tab, never an empty page
 
   } else if (tab === 'trips') {
     try {
       // Visibility: only show public trips OR trips the viewer is a member/owner of
-      const { data: memberRows } = await sc
-        .from('trip_members').select('trip_id').eq('user_id', user.id).in('trip_id', sourceIds);
+      const { data: memberRows, error: tripMembersErr } = await sc
+        .from('trip_members').select('trip_id').eq('user_id', user.id).in('trip_id', sourceIds); if (tripMembersErr) return sendFeedReadFailed(req, res, tripMembersErr, 'trips');
       const viewerTripIds = new Set((memberRows ?? []).map((r: any) => r.trip_id as string));
 
-      const { data: trips } = await sc
-        .from('trips').select('id, title, destination_city, status, owner_id, visibility').in('id', sourceIds);
+      const { data: trips, error: tripsErr } = await sc
+        .from('trips').select('id, title, destination_city, status, owner_id, visibility').in('id', sourceIds); if (tripsErr) return sendFeedReadFailed(req, res, tripsErr, 'trips');
       const items = (trips ?? [])
         .filter((t: any) =>
           !isExcluded(feedBlockedSet, t.owner_id) &&
@@ -667,19 +667,19 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
           id: t.id, type: 'trip', name: t.title, destination: t.destination_city ?? null, status: t.status,
         }));
       res.status(200).json({ items, posts: [], hasMore: items.length === limit, nextCursor, tab, scope });
-    } catch { res.status(200).json({ items: [], posts: [], hasMore: false, nextCursor: null, tab, scope }); }
+    } catch (err) { sendFeedReadFailed(req, res, err, 'trips'); }  // census-discovery §105 (DV-83): a thrown read is a failed tab, never an empty page
 
   } else if (tab === 'circles') {
     try {
       // Visibility: only show circles the viewer owns, is a member of, or are public.
       // Live membership table is circle_memberships(user_id = circle owner,
       // other_id = member) — membership is keyed by circle OWNER, not circle id.
-      const { data: circles } = await sc.from('circles').select('id, name, owner_id, visibility').in('id', sourceIds);
+      const { data: circles, error: circlesErr } = await sc.from('circles').select('id, name, owner_id, visibility').in('id', sourceIds); if (circlesErr) return sendFeedReadFailed(req, res, circlesErr, 'circles');
       const ownerIds = [...new Set((circles ?? []).map((c: any) => c.owner_id as string))];
       let viewerCircleOwnerIds = new Set<string>();
       if (ownerIds.length > 0) {
-        const { data: memberRows } = await sc
-          .from('circle_memberships').select('user_id').eq('other_id', user.id).in('user_id', ownerIds);
+        const { data: memberRows, error: circleMembersErr } = await sc
+          .from('circle_memberships').select('user_id').eq('other_id', user.id).in('user_id', ownerIds); if (circleMembersErr) return sendFeedReadFailed(req, res, circleMembersErr, 'circles');
         viewerCircleOwnerIds = new Set((memberRows ?? []).map((r: any) => r.user_id as string));
       }
       const items = (circles ?? [])
@@ -689,13 +689,13 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
         )
         .map((c: any) => ({ id: c.id, type: 'circle', name: c.name }));
       res.status(200).json({ items, posts: [], hasMore: items.length === limit, nextCursor, tab, scope });
-    } catch { res.status(200).json({ items: [], posts: [], hasMore: false, nextCursor: null, tab, scope }); }
+    } catch (err) { sendFeedReadFailed(req, res, err, 'circles'); }  // census-discovery §105 (DV-83): a thrown read is a failed tab, never an empty page
 
   } else if (tab === 'events') {
     try {
       // Events are public by nature; filter out those by blocked organizers
-      const { data: events } = await sc
-        .from('events').select('id, title, location_name, starts_at, ends_at, host_id').in('id', sourceIds);
+      const { data: events, error: eventsErr } = await sc
+        .from('events').select('id, title, location_name, starts_at, ends_at, host_id').in('id', sourceIds); if (eventsErr) return sendFeedReadFailed(req, res, eventsErr, 'events');
       const items = (events ?? [])
         .filter((e: any) => !isExcluded(feedBlockedSet, e.host_id))
         .map((e: any) => ({
@@ -703,7 +703,7 @@ router.get('/hashtags/:slug/feed', async (req, res) => {
           startAt: e.starts_at ?? null, endAt: e.ends_at ?? null,
         }));
       res.status(200).json({ items, posts: [], hasMore: items.length === limit, nextCursor, tab, scope });
-    } catch { res.status(200).json({ items: [], posts: [], hasMore: false, nextCursor: null, tab, scope }); }
+    } catch (err) { sendFeedReadFailed(req, res, err, 'events'); }  // census-discovery §105 (DV-83): a thrown read is a failed tab, never an empty page
 
   } else {
     res.status(200).json({ items: [], posts: [], hasMore: false, nextCursor: null, tab, scope });
@@ -720,11 +720,11 @@ router.get('/me/hashtag-follows', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  const { data, error } = await sc
+  const { data, error } = await wholeOrderedListResult<any>(() => sc  // census-discovery §123 (DV-83 round 24): every followed hashtag, WHOLE — past the row cap the list was served short with nothing said
     .from('user_hashtag_follows')
-    .select('hashtag_id, created_at, hashtags(id, slug, name, usage_count)')
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false });
+    .select('hashtag_id, created_at, hashtags(id, slug, name, usage_count)', { count: 'exact' })
+    .eq('user_id', user.id), (q) => q
+    .order('created_at', { ascending: false }).order('hashtag_id', { ascending: true }));
 
   if (error) {
     req.log.error({ err: error }, 'me/hashtag-follows failed');
@@ -1059,3 +1059,71 @@ router.patch('/admin/hashtags/:slug', async (req, res) => {
 });
 
 export default router;
+
+// ── census-discovery §105 (DV-83 round 9, lane W11-X2, D-W11X2-61): a failed hashtag-feed read ──
+// GET /hashtags/:slug/feed is the page every Discover trending chip opens. Its people,
+// places, trips, circles and events tabs read `{ data }` alone and their catches answered
+// `{ items: [], hasMore: false }`, so a failed read was an empty tab ("No {tab} content
+// yet"); the hashtag lookup ignored its error, so a failed read was "Hashtag not found".
+// Each read now answers `db_error` (500) on failure, exactly as the posts tab always did.
+// A read that SUCCEEDED and found nothing is unchanged: an empty tab, or 404 for a hashtag
+// that is absent or blocked. The message is generic: the DB's own text is for the log.
+function sendFeedReadFailed(req: { log: { error: (o: object, m: string) => void } }, res: Parameters<typeof sendError>[0], err: unknown, read: string): void {
+  req.log.error({ err, read }, 'hashtag feed read failed');
+  sendError(res, 'db_error', 'this hashtag feed could not be loaded just now');
+}
+
+// ─── census-discovery §108 (DV-83 round 11, D-W11X2-79): GET /hashtags/trending reads its windows to the end ──
+//
+// PostgREST caps every response at db-max-rows (production: 1000, census §67.3) and says nothing, so an
+// unbounded read of a busy 48 h window came back PARTIAL with `error: null`, and the chips were ranked over
+// it as the complete list. Each window read is now an exact count, then ordered pages (created_at, id — new
+// rows land at the end, so the pages do not shift) until the count is reached. A window over the row cap,
+// or pages that fall short of the count, is ranked over what was read and served with coverage `partial`;
+// a failed page is a failed read (db_error), never a ranking of the pages before it.
+
+export const TRENDING_WINDOW_PAGE = 1000;
+export const TRENDING_WINDOW_MAX_ROWS = 20_000;
+/** Ids per `.in()` read: a list a request URL can carry. */
+export const TRENDING_ID_CHUNK = 100;
+
+type TrendingReadError = { message: string } | null;
+interface TrendingWindowRead<T> { rows: T[]; error: TrendingReadError; complete: boolean }
+type TrendingCountRead = () => PromiseLike<{ count?: number | null; error: unknown }>;
+type TrendingPageRead = (from: number, to: number) => PromiseLike<{ data: unknown; error: unknown }>;
+
+async function readTrendingWindow<T>(countRead: TrendingCountRead, pageRead: TrendingPageRead): Promise<TrendingWindowRead<T>> {
+  const head = await countRead();
+  if (head.error) return { rows: [], error: head.error as TrendingReadError, complete: false };
+  const total = typeof head.count === 'number' ? head.count : null;
+  const rows: T[] = [];
+  while (rows.length < TRENDING_WINDOW_MAX_ROWS) {
+    const { data, error } = await pageRead(rows.length, rows.length + TRENDING_WINDOW_PAGE - 1);
+    if (error) return { rows: [], error: error as TrendingReadError, complete: false };
+    const got = (Array.isArray(data) ? data : []) as T[];
+    rows.push(...got);
+    if (got.length === 0 || (total !== null ? rows.length >= total : got.length < TRENDING_WINDOW_PAGE)) break;
+  }
+  return { rows, error: null, complete: total !== null ? rows.length >= total : rows.length < TRENDING_WINDOW_MAX_ROWS };
+}
+
+async function readByIdChunks<T>(ids: string[], read: (chunk: string[]) => Promise<TrendingWindowRead<T>>): Promise<TrendingWindowRead<T>> {
+  const rows: T[] = [];
+  let complete = true;
+  for (let i = 0; i < ids.length; i += TRENDING_ID_CHUNK) {
+    const r = await read(ids.slice(i, i + TRENDING_ID_CHUNK));
+    if (r.error) return { rows: [], error: r.error, complete: false };
+    rows.push(...r.rows);
+    if (!r.complete) complete = false;
+  }
+  return { rows, error: null, complete };
+}
+
+function sendTrending(res: import('express').Response, trending: unknown[], scope: 'global' | 'city', city: string | null, incomplete: boolean): void {
+  const body = { trending, scope, city };
+  if (!incomplete) { res.status(200).json(body); return; }
+  sendDiscoveryRefusal(res, body, discoveryRefusal('transient_db', 'trending_window_incomplete', 'GET /hashtags/trending', trending.length > 0 ? 'partial' : 'nothing', ['hashtag_usage']));
+}
+
+// census-discovery §123 (DV-83 round 24): one viewer's list read whole (lib/wholeList.ts). At the foot so no cited line moves; ESM hoists imports.
+import { wholeOrderedListResult } from '../lib/wholeList.js';

@@ -85,10 +85,10 @@ function MinimalCard({
 // ── Hashtag card ──────────────────────────────────────────────────────────────
 
 function HashtagCard({
-  data, following, followBusy, onFollow, onNavigate,
+  data, following, followBusy, onFollow, onNavigate, followUnknown = false,
 }: {
   data: HashtagMeta;
-  following: boolean;
+  following: boolean; /** census-discovery §113 (D-W11X2-137): the follow read failed */ followUnknown?: boolean;
   followBusy: boolean;
   onFollow: () => void;
   onNavigate: () => void;
@@ -148,7 +148,7 @@ function HashtagCard({
           {followBusy
             ? <ActivityIndicator size="small" color={following ? color.deep : color.onInk} />
             : <Text style={[s.followBtnText, following && s.followBtnTextActive]}>
-                {following ? 'Following' : 'Follow'}
+                {following ? 'Following' : followUnknown ? "Can't check follow" : 'Follow'}
               </Text>
           }
         </Pressable>
@@ -206,7 +206,7 @@ export function TagPreviewSheet({ visible, type, id, label, onClose, onNavigate 
   const [error, setError] = useState<string | null>(null);
   const [hashtagData, setHashtagData] = useState<HashtagMeta | null>(null);
   const [userData, setUserData] = useState<UserPreview | null>(null);
-  const [following, setFollowing] = useState(false);
+  const [following, setFollowing] = useState(false); const [followUnknown, setFollowUnknown] = useState(false);  // §113 (D-W11X2-137)
   const [followBusy, setFollowBusy] = useState(false);
 
   useEffect(() => {
@@ -221,7 +221,7 @@ export function TagPreviewSheet({ visible, type, id, label, onClose, onNavigate 
         setLoading(false);
         if (res.ok && res.data) {
           setHashtagData(res.data);
-          setFollowing(res.data.isFollowing);
+          setFollowing(res.data.isFollowing === true); setFollowUnknown(res.data.isFollowing == null);  // §113: null = could not be read
         } else {
           setError(res.error ?? 'Could not load hashtag');
         }
@@ -245,7 +245,7 @@ export function TagPreviewSheet({ visible, type, id, label, onClose, onNavigate 
     if (followBusy || type !== 'hashtag') return;
     setFollowBusy(true);
     const res = following ? await unfollowHashtag(id) : await followHashtag(id);
-    if (res.ok) setFollowing((v) => !v);
+    if (res.ok) { setFollowing((v) => !v); setFollowUnknown(false); }
     setFollowBusy(false);
   }
 
@@ -276,7 +276,7 @@ export function TagPreviewSheet({ visible, type, id, label, onClose, onNavigate 
         return hashtagData ? (
           <HashtagCard
             data={hashtagData}
-            following={following}
+            following={following} followUnknown={followUnknown}
             followBusy={followBusy}
             onFollow={handleFollow}
             onNavigate={onNavigate}

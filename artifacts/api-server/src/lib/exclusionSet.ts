@@ -143,11 +143,11 @@ export async function readBlockExclusions(
     return { ok: true, ids };
   }
 
-  const { data, error } = await sc
+  const { data, error, count } = await sc
     .from("blocks")
-    .select("blocker_id, blocked_id")
+    .select("blocker_id, blocked_id", { count: "exact" })
     .or(`blocker_id.eq.${viewerId},blocked_id.eq.${viewerId}`);
-  if (error) return exclusionsUnavailable(error);
+  if (error) return exclusionsUnavailable(error); if (!blocksAnswerIsWhole(data, count)) return wholeViewerExclusions(sc, viewerId);  // census-discovery §123 (DV-83 round 24): an answer cut at the row cap is not the set
   const ids = new Set<string>();
   for (const r of (data ?? []) as any[]) {
     if (r?.blocker_id === viewerId) { if (r?.blocked_id) ids.add(String(r.blocked_id)); }
@@ -193,11 +193,11 @@ export async function readGroupBlockExclusions(
   if (!sc) return exclusionsUnavailable("no client");
   if (memberIds.length === 0) return exclusions([]);
   const [asBlocker, asBlocked] = await Promise.all([
-    sc.from("blocks").select("blocker_id, blocked_id").in("blocker_id", memberIds as string[]),
-    sc.from("blocks").select("blocker_id, blocked_id").in("blocked_id", memberIds as string[]),
+    sc.from("blocks").select("blocker_id, blocked_id", { count: "exact" }).in("blocker_id", memberIds as string[]),
+    sc.from("blocks").select("blocker_id, blocked_id", { count: "exact" }).in("blocked_id", memberIds as string[]),
   ]);
   if (asBlocker?.error) return exclusionsUnavailable(asBlocker.error);
-  if (asBlocked?.error) return exclusionsUnavailable(asBlocked.error);
+  if (asBlocked?.error) return exclusionsUnavailable(asBlocked.error); if (!blocksAnswerIsWhole(asBlocker?.data, asBlocker?.count) || !blocksAnswerIsWhole(asBlocked?.data, asBlocked?.count)) return wholeGroupExclusions(sc, memberIds);  // census-discovery §123: either direction cut at the row cap → both read again whole
   const ids = new Set<string>();
   for (const b of (asBlocker?.data ?? []) as any[]) if (b?.blocked_id) ids.add(String(b.blocked_id));
   for (const b of (asBlocked?.data ?? []) as any[]) if (b?.blocker_id) ids.add(String(b.blocker_id));
@@ -233,4 +233,48 @@ export function sendExclusionsUnavailable(
     "degraded_unavailable",
     "Could not verify who is blocked. Please try again.",
   );
+}
+
+// ── census-discovery §123 (DV-83 round 24, lane DISC-DV83; the sweep beside the round-23 verifier's B43) ─────────────
+//
+// `readBlockExclusions` (without `among`) and `readGroupBlockExclusions` each made one unbounded request. PostgREST cuts
+// a response at db-max-rows (1000 on this deployment) and reports nothing, so `ok: true` came back holding the first
+// 1000 counter-parties and `isExcluded` answered false for everyone in the rows past the cut: the exclusion silently
+// stopped applying to them, which is the defect this module exists to prevent, arrived at by another road. Each read
+// now carries its exact count. A cut answer is read again WHOLE, by key; a set that cannot be read whole is
+// `exclusionsUnavailable`, so `isExcluded` answers true for everybody. A set under the cap still costs one request.
+// The `among` form asks about a bounded candidate list and is unchanged. Declared at the foot; ESM hoists the imports.
+import { blocksAnswerIsWhole, fetchBlockedSetByKey } from "./blocks.js";
+import { readAllPages, keysetAfter } from "./pagedRead.js";
+
+/** One viewer's whole exclusion set, both directions by key (lib/blocks.ts), or unavailable. */
+async function wholeViewerExclusions(sc: any, viewerId: string): Promise<ExclusionSet> {
+  try {
+    const whole = await fetchBlockedSetByKey(sc, viewerId);
+    return whole === null ? exclusionsUnavailable("blocks: the list was cut at the row cap and could not be read whole") : { ok: true, ids: whole };
+  } catch (e) {
+    return exclusionsUnavailable(e);
+  }
+}
+
+/** A group's whole exclusion set: each direction paged by its unique key `(blocker_id, blocked_id)`, or unavailable. */
+async function wholeGroupExclusions(sc: any, memberIds: readonly string[]): Promise<ExclusionSet> {
+  const direction = (column: "blocker_id" | "blocked_id") =>
+    readAllPages<{ blocker_id: string; blocked_id: string }>(
+      (from, to, after) => keysetAfter(sc.from("blocks").select("blocker_id, blocked_id", { count: "exact" }).in(column, memberIds as string[]), ["blocker_id", "blocked_id"], after)
+        .order("blocker_id").order("blocked_id").range(from, to),
+      { key: (r) => [String(r.blocker_id), String(r.blocked_id)] },
+    );
+  try {
+    const [asBlocker, asBlocked] = await Promise.all([direction("blocker_id"), direction("blocked_id")]);
+    if (asBlocker.error || !asBlocker.data) return exclusionsUnavailable(asBlocker.error ?? "blocks: the list could not be read whole");
+    if (asBlocked.error || !asBlocked.data) return exclusionsUnavailable(asBlocked.error ?? "blocks: the list could not be read whole");
+    const ids = new Set<string>();
+    for (const b of asBlocker.data) if (b?.blocked_id) ids.add(String(b.blocked_id));
+    for (const b of asBlocked.data) if (b?.blocker_id) ids.add(String(b.blocker_id));
+    for (const id of memberIds) ids.delete(id); // members themselves stay
+    return { ok: true, ids };
+  } catch (e) {
+    return exclusionsUnavailable(e);
+  }
 }

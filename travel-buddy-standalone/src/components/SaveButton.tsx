@@ -16,7 +16,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Pressable, StyleSheet, ActivityIndicator, Platform,
 } from 'react-native';
-import { Bookmark } from 'lucide-react-native';
+import { Bookmark, CircleHelp } from 'lucide-react-native';
 import type { EntityType } from '../services/collections.ts';
 import { saveItem, unsaveItem, checkSaved } from '../services/collections.ts';
 import { color } from '../theme/tokens.ts';
@@ -35,6 +35,12 @@ interface SaveButtonProps {
   onSavedChange?: (saved: boolean) => void;
   /** Feed session ID forwarded to the rank-outcome endpoint so saves are attributed to the session. */
   sessionId?: string | null;
+  /**
+   * census-discovery §122 (DV-83 round 23, B36): the caller's feed could not read the viewer's saved state (GET /pulse
+   * names `post_saves`). The bookmark is drawn as unknown and says so; it is not a toggle (a tap cannot know which way it
+   * would go) and asks the server nothing. The viewer's own toggle this session (the saved-posts cache) still wins.
+   */
+  savedUnknown?: boolean;
 }
 
 export function SaveButton({
@@ -45,6 +51,7 @@ export function SaveButton({
   tint,
   onSavedChange,
   sessionId,
+  savedUnknown,
 }: SaveButtonProps) {
   const { userId } = useSession();
 
@@ -56,7 +63,7 @@ export function SaveButton({
     : undefined;
 
   const [saved, setSaved]           = useState(cachedSaved ?? initialSaved ?? false);
-  const [loading, setLoading]       = useState(cachedSaved === undefined && initialSaved === undefined);
+  const [loading, setLoading]       = useState(cachedSaved === undefined && initialSaved === undefined && !savedUnknown);
   const [pickerOpen, setPickerOpen] = useState(false);
   const mounted = useRef(true);
 
@@ -77,9 +84,9 @@ export function SaveButton({
         return;
       }
     }
-    // Prop provided by parent (e.g. from feed API response).
-    if (initialSaved !== undefined) {
-      if (!hasInteracted.current) setSaved(initialSaved);
+    // Prop provided by parent (e.g. from feed API response), or the parent says it could not read it (§122, B36).
+    if (initialSaved !== undefined || savedUnknown) {
+      if (!hasInteracted.current) setSaved(initialSaved ?? false);
       setLoading(false);
       return;
     }
@@ -97,7 +104,7 @@ export function SaveButton({
       })
       .catch(() => { if (!cancelled && mounted.current) setLoading(false); });
     return () => { cancelled = true; };
-  }, [entityType, entityId, initialSaved, userId]);
+  }, [entityType, entityId, initialSaved, userId, savedUnknown]);
 
   // Sync when the feed refreshes a new initialSaved prop (e.g. after pull-to-
   // refresh).  Prefer the cache if populated; skip entirely if the user has
@@ -130,26 +137,30 @@ export function SaveButton({
   };
 
   const iconColor = tint ?? (saved ? color.signal : color.mute);
+  // §122 (B36): unknown only while nothing measured is at hand — no cached own toggle, no tap in this instance.
+  const unknown = !!savedUnknown && cachedSaved === undefined && !hasInteracted.current;
 
   return (
     <>
       <Pressable
-        onPress={loading ? undefined : toggle}
+        onPress={loading || unknown ? undefined : toggle}
         onLongPress={loading ? undefined : () => setPickerOpen(true)}
         hitSlop={12}
         style={({ pressed }) => [s.btn, pressed && { opacity: 0.65 }]}
-        accessibilityLabel={saved ? 'Unsave' : 'Save'}
+        accessibilityLabel={unknown ? "Couldn't check if saved" : saved ? 'Unsave' : 'Save'}
         accessibilityRole="button"
+        accessibilityState={unknown ? { disabled: true } : undefined}
       >
         {loading ? (
           <ActivityIndicator size="small" color={iconColor} />
+        ) : unknown ? (
+          <CircleHelp size={size} color={tint ?? color.mute} />
         ) : (
           <Bookmark
             size={size}
             color={iconColor}
             fill={saved ? iconColor : 'none'}
-            strokeWidth={saved ? 0 : 1.8}
-          />
+            strokeWidth={saved ? 0 : 1.8} />
         )}
       </Pressable>
 
@@ -159,6 +170,7 @@ export function SaveButton({
         entityId={entityId}
         onClose={() => setPickerOpen(false)}
         onSaved={(colId) => {
+          hasInteracted.current = true;  // §122 (B36): the viewer's own save from the picker is measured; it ends an unknown state
           setSaved(true);
           if (entityType === 'post' && userId) writeSavedCache(userId, entityId, true);
           onSavedChange?.(true);

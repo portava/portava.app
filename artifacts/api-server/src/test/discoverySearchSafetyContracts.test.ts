@@ -559,3 +559,40 @@ describe("retry after a transient policy failure", () => {
     });
   }
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// census-discovery §122 (DV-83 round 23, lane W11-X2; sweep SW32): a traveler result never states the viewer's follow
+// state over a read that failed. `searchTravelers` read the viewer's follow edges and pending requests with no error
+// bound and served `actionState: { isFollowing: false }` (and `isRequestSent: false`) as measured; the result card
+// drew "Follow" / "Request". The privacy rule above is unchanged (a failed follow read still collapses a private
+// account to a locked preview); only the stated own state goes: `actionState: null`, which the card draws as "View".
+//   SF0 CONTROL: the viewer follows ALICE → isFollowing true
+//   SF1 the user_follows read FAILS → ALICE served, actionState null
+//   SF2 the friend_requests read FAILS → GUS (private) served locked, actionState null
+//   SF3 CONTROL: no follow edge, every read answers → isFollowing false
+// ═════════════════════════════════════════════════════════════════════════════
+describe("census-discovery §122 (SW32): a traveler result never states follow state over a failed read", () => {
+  const actionOf = async (id: string) => ((await searchIds("travelers")).body.results as any[]).find((r) => r.id === id);
+  it("SF0 CONTROL: followed → isFollowing true", async () => {
+    const w = world(); w.rows!.user_follows = [{ follower_id: VIEWER, following_id: ALICE }]; fresh(w);
+    assert.deepEqual((await actionOf(ALICE))?.actionState, { isFollowing: true });
+  });
+  it("SF1 the user_follows read FAILS → served, actionState null", async () => {
+    const w = world(); w.rows!.user_follows = [{ follower_id: VIEWER, following_id: ALICE }];
+    fresh({ ...world(), rows: w.rows, errorTables: { user_follows: { code: "57014", message: "timeout" } } });
+    const r = await actionOf(ALICE);
+    assert.ok(r, "the row is still served");
+    assert.equal(r.actionState, null);
+  });
+  it("SF2 the friend_requests read FAILS → the private account served locked, actionState null", async () => {
+    fresh({ ...world(), errorTables: { friend_requests: { code: "57014", message: "timeout" } } });
+    const r = await actionOf(GUS);
+    assert.ok(r, "the row is still served");
+    assert.equal(r.accessState.canAccess, false);
+    assert.equal(r.actionState, null);
+  });
+  it("SF3 CONTROL: not followed → isFollowing false", async () => {
+    fresh(world());
+    assert.deepEqual((await actionOf(ALICE))?.actionState, { isFollowing: false });
+  });
+});

@@ -162,7 +162,7 @@ export async function rankEmergingForViewer(
   if (found.length === 0) return { kind: "emerging_discoveries", status: "empty", rankedBy: "pde", items: [] };
   const admitted = opts.category && opts.category !== "for_you" ? new Set([opts.category]) : null;
   const mat = await materialiseCandidates(sc, found.map((f) => f.id), { viewerId: viewer.userId, cityPrefix, admitted });
-  if (mat.failedReads.includes("discovery_places")) return { kind: "emerging_discoveries", status: "unavailable", rankedBy: "none", items: [], unavailable: "discovery_places" };
+  if (mat.failedReads.includes("discovery_places")) return { kind: "emerging_discoveries", status: "unavailable", rankedBy: "none", items: [], unavailable: "discovery_places" };  if (mat.failedReads.length > 0) return { kind: "emerging_discoveries", status: "unavailable", rankedBy: "none", items: [], unavailable: mat.failedReads[0] };  // census-discovery §101 (DV-83, D-W11X2-33): a failed blocks, standing or canonical-places read removes rows (fail closed) or loses them, so the list is not the list — unavailable, which the route sends as 503 with this reason, never 200 with a short or empty list
   const state = new Map(found.map((f) => [f.id, f.state]));
   const rows = [...mat.rows.values()].map((p) => ({ place: p as PdePlace, item: { place: p, trendState: state.get(p.id) ?? "emerging" } }));
   if (rows.length === 0) return { kind: "emerging_discoveries", status: "empty", rankedBy: "pde", items: [] };

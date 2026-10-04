@@ -108,9 +108,9 @@ export async function trackOsmPlaceSave(
     return;
   }
 
-  if (newSaveRows && newSaveRows.length > 0) {
-    // A brand-new row was inserted — safe to increment.
-    const newCount = ((dpRow as any).saved_count ?? 0) + 1;
+  const inserted = Boolean(newSaveRows && newSaveRows.length > 0); const measured = await placeSaversCount(svc, (dpRow as any).id);  // census-discovery §119 (DV-83 round 22, D-W11X2-172): every save writes the measured number of savers, so a lost or raced write is repaired by the next save, never kept
+  if (measured.ok && (measured.count !== null || inserted)) {
+    const newCount = measured.count ?? ((dpRow as any).saved_count ?? 0) + 1;  // §119: snapshot + 1 only where the server answers no count; a failed count writes nothing
     const { error: countError } = await svc
       .from("discovery_places")
       .update({ saved_count: newCount })
@@ -236,17 +236,17 @@ router.get("/wishlist", async (req, res) => {
 
   const listId = typeof req.query["list"] === "string" ? req.query["list"] : null;
 
-  let query = sc.client
+  // census-discovery §123 (DV-83 round 24): the list WHOLE. One unbounded read stood here; past PostgREST's 1000-row
+  // cap the list was served short with nothing said. `base` is the filter; `ordered` is the display order (newest
+  // first) made total by the row's own key, so a paged read neither repeats nor skips a row.
+  const base = () => { const q = sc.client
     .from("wishlist_places")
-    .select("place_id, place_data, list_id, saved_at")
-    .eq("user_id", sc.user.id)
-    .order("saved_at", { ascending: false });
+    .select("place_id, place_data, list_id, saved_at", { count: "exact" })
+    .eq("user_id", sc.user.id); return listId ? (q as any).eq("list_id", listId) : q; };
+  const ordered = (q: any) => q
+    .order("saved_at", { ascending: false }).order("place_id", { ascending: true }).order("list_id", { ascending: true });
 
-  if (listId) {
-    query = (query as any).eq("list_id", listId);
-  }
-
-  const { data, error } = await (query as any);
+  const { data, error } = await wholeOrderedListResult<any>(base, ordered);
 
   if (error) {
     sendError(res, "db_error", (error as { message: string }).message);
@@ -361,3 +361,14 @@ router.delete("/wishlist", async (req, res) => {
 });
 
 export default router;
+
+// ── census-discovery §119 (DV-83 round 22, lane W11-X2; the round-21 verifier's note on D-W11X2-172) ────────────────
+/** How many travellers have saved discovery place `placeId`: `count` null when the server answers no count; `ok` false when the read failed. */
+async function placeSaversCount(svc: NonNullable<ReturnType<typeof getServiceClient>>, placeId: string): Promise<{ ok: boolean; count: number | null }> {
+  const { count, error } = await svc.from("discovery_place_saves").select("place_id", { count: "exact", head: true }).eq("place_id", placeId);
+  if (error) { wishlistLogger.warn({ err: error, placeId }, "trackOsmPlaceSave: saver count failed (non-blocking; the next save repairs it)"); return { ok: false, count: null }; }
+  return { ok: true, count: typeof count === "number" ? count : null };
+}
+
+// census-discovery §123 (DV-83 round 24): one viewer's list read whole (lib/wholeList.ts). At the foot so no cited line moves; ESM hoists imports.
+import { wholeOrderedListResult } from "../lib/wholeList.js";

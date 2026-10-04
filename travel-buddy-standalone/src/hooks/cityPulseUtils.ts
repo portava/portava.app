@@ -107,6 +107,8 @@ export function safeStartMs(startAt: string | null | undefined): number {
 export interface FetchCityEventsResult {
   events: CityEvent[];
   sessionId: string | undefined;
+  /** census-discovery §117 (SW17): GET /events said the answer is not whole (`truncated`); absent when it is whole. */
+  notWhole?: true;
 }
 
 /**
@@ -147,11 +149,15 @@ export async function fetchCityEvents(
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);
-  const data = (await r.json()) as { events?: unknown[]; sessionId?: string };
-  const events = (data?.events ?? []).map((e) =>
-    mapApiEvent(e as Record<string, unknown>, city, currentCitySlug),
-  );
-  return { events, sessionId: data?.sessionId };
+  const data = (await r.json()) as { events?: unknown[]; sessionId?: string; failedSources?: unknown; truncated?: unknown };
+  // census-discovery §117 (DV-83, sweep SW17): a going count the server could not recount live is the cached one,
+  // named in `failedSources`; each event carries the mark, and an answer that is not whole says so.
+  const countsUnread = Array.isArray(data?.failedSources) && (data.failedSources as unknown[]).includes('event_rsvps');
+  const events = (data?.events ?? []).map((e) => {
+    const m = mapApiEvent(e as Record<string, unknown>, city, currentCitySlug);
+    return countsUnread ? { ...m, attendeeCountUnread: true } : m;
+  });
+  return { events, sessionId: data?.sessionId, ...(data?.truncated === true ? { notWhole: true as const } : {}) };
 }
 
 /**

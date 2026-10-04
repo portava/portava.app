@@ -31,7 +31,7 @@ import {
 import { EventCard } from '../../src/components/cards/EventCard';
 import { EventCardSkeleton } from '../../src/components/loading/EventCardSkeleton';
 import { EmptyState } from '../../src/components/ui/EmptyState';
-import { ErrorState } from '../../src/components/ui/ErrorState';
+import { ErrorState } from '../../src/components/ui/ErrorState'; import { eventListNotWhole } from '../../src/lib/eventListMarks';  // census-discovery §117 (SW17)
 import { useSession } from '../../src/context/SessionContext';
 import { useLocationContext } from '../../src/context/LocationContext';
 import { color, space, radius, type as t, shadow } from '../../src/theme/tokens';
@@ -119,7 +119,7 @@ function EventsTabScreen() {
   const [categoryRows, setCategoryRows]       = useState<Record<string, EventListItem[]>>({});
   const [loading, setLoading]                 = useState(true);
   const [error, setError]                     = useState<string | null>(null);
-  const [myEventsError, setMyEventsError]     = useState(false);
+  const [myEventsError, setMyEventsError]     = useState(false); const [listsNotWhole, setListsNotWhole] = useState(false); const [listsFailed, setListsFailed] = useState(false); const loadSeq = useRef(0);  // §117 (SW17): a list failed or was cut; §118 (B28): a list failed beside others drawn; (B26 shape) only the latest load is drawn
 
   // ── Filters ────────────────────────────────────────────────────────────────
   const [showFilters, setShowFilters]         = useState(false);
@@ -134,10 +134,10 @@ function EventsTabScreen() {
 
   // ── Near-me location request ───────────────────────────────────────────────
   const [nearMeRequested, setNearMeRequested] = useState(false);
-  const [nearMeLoading, setNearMeLoading]     = useState(false);
+  const [nearMeLoading, setNearMeLoading]     = useState(false); const [nearMeUnread, setNearMeUnread] = useState(false); const nearSeq = useRef(0);  // §118 (B27): a failed near read is said; only the latest near read is drawn
 
   // ── Optimistic save state ──────────────────────────────────────────────────
-  const [savedIds, setSavedIds] = useState<Set<string>>(new Set());
+  const [savedToggles, setSavedToggles] = useState<Map<string, boolean>>(new Map()); const [savedUnread, setSavedUnread] = useState(false); const savedStateOf = (ev: EventListItem): boolean | null => (savedToggles.has(ev.id) ? savedToggles.get(ev.id)! : typeof ev.isSaved === 'boolean' ? ev.isSaved : null);  // census-discovery §122 (DV-83 round 23, B35): each card's bookmark is its list's measured isSaved; only the viewer's own taps sit beside it; no measured state is unknown
   // Per-event in-flight lock — Set so different events can be saved concurrently
   const savingLockRef = useRef(new Set<string>());
 
@@ -182,7 +182,7 @@ function EventsTabScreen() {
     if (!configured || !isAuthed) { setLoading(false); return; }
     if (isRefresh) setRefreshing(true);
     else setLoading(true);
-    setError(null);
+    setError(null); const seq = ++loadSeq.current;  // census-discovery §118 (DV-83 round 21): a later load supersedes this one
 
     try {
     const cat = category !== 'All' ? category : undefined;
@@ -211,7 +211,7 @@ function EventsTabScreen() {
       getMyDrafts(),
       getMyEventInvites(),
       listMyEvents(10),
-    ]);
+    ]); if (seq !== loadSeq.current) return;  // §118: an answer for a filter no longer on screen is never drawn
 
     const rawTomorrow = tomorrowRes.ok ? (tomorrowRes.data?.events ?? []) : [];
     const rawMain = mainRes.ok ? (mainRes.data?.events ?? []) : [];
@@ -242,29 +242,29 @@ function EventsTabScreen() {
     if (myRes.ok) { setMyEvents(rawMy); setMyEventsError(false); }
     else { setMyEventsError(true); setMyEvents([]); }
 
-    if (mainRes.ok) setTodayEvents(dedupedToday);
-    if (tomorrowRes.ok) setTomorrowEvents(dedupedTomorrow);
-    if (weekendRes.ok) setWeekendEvents(dedupedWeekend);
-    if (followRes.ok) setFollowingEvents(dedupedFollowing);
-    if (circleRes.ok) setCircleEvents(dedupedCircle);
-    if (savedRes.ok) {
-      const evs = savedRes.data?.events ?? [];
+    setTodayEvents(mainRes.ok ? dedupedToday : []); setListsNotWhole([mainRes, tomorrowRes, weekendRes, followRes, circleRes, savedRes, myRes, draftsRes, invitesRes].some((r) => !r.ok || eventListNotWhole(r.data))); setListsFailed([mainRes, tomorrowRes, weekendRes, followRes, circleRes, savedRes, myRes, draftsRes, invitesRes].some((r) => !r.ok));  // census-discovery §117 (SW17): an empty tab over a failed or cut list is not "No events yet"
+    setTomorrowEvents(tomorrowRes.ok ? dedupedTomorrow : []);  // census-discovery §119 (DV-83 round 22, B30): a section whose read failed is cleared, never the last filter's rows; the failure is said (error / lists-unread note)
+    setWeekendEvents(weekendRes.ok ? dedupedWeekend : []);  // §119 (B30)
+    setFollowingEvents(followRes.ok ? dedupedFollowing : []);  // §119 (B30, sweep)
+    setCircleEvents(circleRes.ok ? dedupedCircle : []);  // §119 (B30, sweep)
+    {
+      const evs = savedRes.ok ? (savedRes.data?.events ?? []) : [];  // census-discovery §119 (DV-83 round 22, sweep): a failed saved read clears the Saved section, and is said
       setSavedEvents(evs);
-      setSavedIds(new Set(evs.map((e) => e.id)));
+      setSavedUnread(!savedRes.ok);  // §122 (B35): the bookmarks no longer come from this read (it is page 1, and may fail); its failure is said
     }
-    if (draftsRes.ok) setDrafts(draftsRes.data?.drafts ?? []);
-    if (invitesRes.ok) setPendingInvites((invitesRes.data?.invites ?? []).filter((i) => i.status === 'pending'));
+    setDrafts(draftsRes.ok ? (draftsRes.data?.drafts ?? []) : []);  // §119 (sweep): a failed drafts read is not the last load's drafts; it is said (draftsRes is in the lists above)
+    setPendingInvites(invitesRes.ok ? (invitesRes.data?.invites ?? []).filter((i) => i.status === 'pending') : []);  // §119 (sweep): never an earlier read's "N pending invites"; said
 
     // Category discovery rows — only when no category filter and no date preset
     if (datePreset === 'all' && category === 'All') {
       const catResults = await Promise.all(
         FEATURED_CATEGORIES.map((c) => listEvents({ category: c, free: freeOnly || undefined, city, limit: 8 })),
-      );
+      ); if (seq !== loadSeq.current) return;
       const rows: Record<string, EventListItem[]> = {};
       FEATURED_CATEGORIES.forEach((c, i) => {
         if (catResults[i].ok) rows[c] = (catResults[i].data?.events ?? []).filter((e) => !myIds.has(e.id));
       });
-      setCategoryRows(rows);
+      setCategoryRows(rows); if (catResults.some((r) => !r.ok || eventListNotWhole(r.data))) setListsNotWhole(true);
     } else {
       setCategoryRows({});
     }
@@ -283,8 +283,8 @@ function EventsTabScreen() {
       // an infinite spinner with no recovery (beta-audit fix).
       setError('Failed to load events');
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (seq === loadSeq.current) setLoading(false);
+      if (seq === loadSeq.current) setRefreshing(false);
     }
   }, [configured, isAuthed, category, datePreset, cityFilter, freeOnly, verifiedHostOnly, capacityAvailable]);
 
@@ -317,7 +317,7 @@ function EventsTabScreen() {
   }, [loading, error, todayEvents, tomorrowEvents, weekendEvents, followingEvents, categoryRows, saveEventsSnapshot]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Near-me load ───────────────────────────────────────────────────────────
-  async function handleNearMeRequest() {
+  async function handleNearMeRequest(km: number = radiusKm) {  // census-discovery §118 (DV-83 round 21, B27): the radius asked for is passed, never read from the render that made this function
     if (!locationState.coords) {
       setNearMeRequested(true);
       await requestLocation();
@@ -331,14 +331,14 @@ function EventsTabScreen() {
       }
     }
     if (!locationState.coords) return;
-    setNearMeLoading(true);
+    setNearMeLoading(true); const seq = ++nearSeq.current;
     const res = await listEvents({
       nearLat: locationState.coords.lat,
       nearLng: locationState.coords.lng,
-      nearRadiusKm: radiusKm,
+      nearRadiusKm: km,
       limit: 15,
-    });
-    if (res.ok) setNearMeEvents((res.data?.events ?? []).filter((e) => !myEventIdsRef.current.has(e.id)));
+    }); if (seq !== nearSeq.current) return;  // §118 (B27): an answer for a radius no longer selected is never drawn
+    if (res.ok) setNearMeEvents((res.data?.events ?? []).filter((e) => !myEventIdsRef.current.has(e.id))); else setNearMeEvents([]); setNearMeUnread(!res.ok || (eventListNotWhole(res.data) && (res.data?.events ?? []).length === 0));  // §118 (B27): a failed near read clears the old radius's rows and is said
     setNearMeLoading(false);
   }
 
@@ -351,20 +351,20 @@ function EventsTabScreen() {
 
   // ── Save toggle ────────────────────────────────────────────────────────────
   async function handleSaveToggle(ev: EventListItem) {
-    if (savingLockRef.current.has(ev.id)) return;
+    if (savingLockRef.current.has(ev.id) || savedStateOf(ev) === null) return;  // §122 (B35): an unknown saved state is not a toggle
     savingLockRef.current.add(ev.id);
-    const wasSaved = savedIds.has(ev.id);
-    setSavedIds((prev) => {
-      const next = new Set(prev);
-      if (wasSaved) next.delete(ev.id); else next.add(ev.id);
+    const wasSaved = savedStateOf(ev) === true;
+    setSavedToggles((prev) => {
+      const next = new Map(prev);
+      next.set(ev.id, !wasSaved);
       return next;
     });
     try {
       if (wasSaved) {
-        await unsaveEvent(ev.id);
-        setSavedEvents((prev) => prev.filter((e) => e.id !== ev.id));
+        const r = await unsaveEvent(ev.id); if (!r.ok) setSavedToggles((prev) => new Map(prev).set(ev.id, true));  // §122 (B35): a write that failed is not the viewer's toggle
+        if (r.ok) setSavedEvents((prev) => prev.filter((e) => e.id !== ev.id));
       } else {
-        await saveEvent(ev.id);
+        const r = await saveEvent(ev.id); if (!r.ok) setSavedToggles((prev) => new Map(prev).set(ev.id, false));  // §122 (B35)
       }
     } finally {
       savingLockRef.current.delete(ev.id);
@@ -431,12 +431,12 @@ function EventsTabScreen() {
                 locationName={item.locationName}
                 city={item.city}
                 coverUrl={item.coverUrl}
-                goingCount={item.goingCount}
+                goingCount={item.goingCount} goingCountUnread={item.goingCountUnread}
                 maxAttendees={item.maxAttendees}
                 category={item.category}
                 state={item.state}
                 myRsvp={item.myRsvp ?? undefined}
-                isSaved={savedIds.has(item.id)}
+                isSaved={savedStateOf(item) === true} savedUnknown={savedStateOf(item) === null}
                 coverDisclaimerRequired={item.coverDisclaimerRequired}
                 coverDisclaimerText={item.coverDisclaimerText}
                 onPress={() => router.push(`/event/${item.id}` as any)}
@@ -553,7 +553,7 @@ function EventsTabScreen() {
                 <Pressable
                   key={r.km}
                   style={[styles.chip, radiusKm === r.km && styles.chipActive]}
-                  onPress={() => { setRadiusKm(r.km); if (locationState.coords) handleNearMeRequest(); }}
+                  onPress={() => { setRadiusKm(r.km); if (locationState.coords) handleNearMeRequest(r.km); }}
                 >
                   <Text style={[styles.chipText, radiusKm === r.km && styles.chipTextActive]}>{r.label}</Text>
                 </Pressable>
@@ -846,7 +846,7 @@ function EventsTabScreen() {
                 </View>
                 <Pressable
                   style={styles.nearMePrompt}
-                  onPress={handleNearMeRequest}
+                  onPress={() => handleNearMeRequest()}
                   disabled={nearMeLoading}
                 >
                   {nearMeLoading ? (
@@ -855,8 +855,8 @@ function EventsTabScreen() {
                     <MapPin size={18} color={color.signal} />
                   )}
                   <View style={{ flex: 1 }}>
-                    <Text style={styles.nearMeTitle}>
-                      {nearMeLoading ? 'Looking for events nearby…' : 'Find events near you'}
+                    <Text style={styles.nearMeTitle} testID={!nearMeLoading && nearMeUnread ? 'near-me-unread' : undefined}>
+                      {nearMeLoading ? 'Looking for events nearby…' : nearMeUnread ? "Couldn't load events near you. Tap to try again." : 'Find events near you'}
                     </Text>
                     {!nearMeLoading && (
                       <Text style={styles.nearMeSubtitle}>Tap to enable location and see what's happening close by</Text>
@@ -900,7 +900,7 @@ function EventsTabScreen() {
             savedEvents,
           )}
 
-          {/* Empty states */}
+          {listsFailed && hasContent ? <Text style={styles.yourEventsErrorText} testID="events-lists-unread">Some event lists couldn't be loaded. Pull down to try again.</Text> : null}{savedUnread ? <Text style={styles.yourEventsErrorText} testID="events-saved-unread">Couldn't load your saved events.</Text> : null}{/* Empty states — §118 (B28): a list that failed beside others drawn is said */}
           {!loading && !hasContent && drafts.length === 0 && (
             error ? (
               <ErrorState message={error} onRetry={() => load(false)} />
@@ -916,7 +916,7 @@ function EventsTabScreen() {
                 title="Location not available"
                 description="Enable location in your device settings to find events near you, or browse by city."
               />
-            ) : (
+            ) : listsNotWhole ? (<EmptyState icon={CalendarX} title="Couldn't load every event" description="Some event lists couldn't be read just now. Pull down to try again." />) : (
               <EmptyState
                 icon={CalendarX}
                 title="No events yet"

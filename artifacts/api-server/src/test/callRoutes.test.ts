@@ -1643,13 +1643,13 @@ describe("callGatewayAdapter — DB error paths (fail-closed)", () => {
     assert.equal(store.__sessions.size, 0, "no session persisted when denied by fail-closed crew check");
   });
 
-  it("eventRoomIneligibility returns 'not_event_eligible' (denied) when an event query throws", async () => {
+  it("eventRoomIneligibility returns 'degraded_unavailable' (denied) when an event query throws", async () => {
     const throwingClient: any = {
       from: () => { throw new Error("simulated DB outage"); },
     };
     const gw = makeCallGateway(throwingClient);
     const result = await gw.eventRoomIneligibility("event-id", "user-id");
-    assert.equal(result, "not_event_eligible",
+    assert.equal(result, "degraded_unavailable",  // census-discovery §113 (D-W11X2-134): still denied, said as "could not check", never "for attendees"
       "fail-closed: a DB outage must never silently grant event room access");
   });
 

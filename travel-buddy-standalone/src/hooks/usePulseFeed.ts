@@ -61,7 +61,7 @@ export function usePulseFeed(opts: {
   // Fetch generation — bumped by every reload so an in-flight loadMore started
   // against the previous list can't append stale rows (or write a stale cursor)
   // into the fresh one.
-  const fetchGenRef = useRef(0);
+  const fetchGenRef = useRef(0); const itemsKey = useRef<string | null>(null);  // census-discovery §122 (DV-83 round 23, SW31): the city and position `items` were read for
 
   // Client-side block filter — defense-in-depth on top of server-side block enforcement.
   // When the block list is still loading (empty Set), no items are incorrectly excluded.
@@ -79,7 +79,7 @@ export function usePulseFeed(opts: {
   const reload = useCallback(() => {
     abortRef.current?.abort();
     const ac = new AbortController();
-    abortRef.current = ac;
+    abortRef.current = ac; const key = `${opts.city ?? ''}|${opts.lat ?? ''}|${opts.lng ?? ''}`;
     cursorRef.current = null;
     fetchGenRef.current += 1; // invalidate any in-flight loadMore
 
@@ -99,16 +99,16 @@ export function usePulseFeed(opts: {
           }
           setItems(raw.map(pulsePostToFeedItem).filter((p) => !deletedIds.current.has(p.id) && isNotBlocked(p)));
           setPlaceCards(result.data.placeCards.map(placeCardToFeedItem));
-          setSessionId(result.data.sessionId ?? null);
+          setSessionId(result.data.sessionId ?? null); itemsKey.current = key;
           setError(null);
           setErrorKind(null);
         } else {
-          setError(result.error);
+          if (itemsKey.current !== key) { itemsKey.current = key; setItems([]); setPlaceCards([]); setSessionId(null); } setError(result.error);  // §122 (SW31): a failed read for a new city keeps none of the old one's posts; a failed refresh of the same one keeps them
           setErrorKind(result.errorKind ?? null);
         }
       })
       .catch(() => {
-        if (!ac.signal.aborted) { setError('Network error'); setErrorKind('network'); }
+        if (!ac.signal.aborted) { if (itemsKey.current !== key) { itemsKey.current = key; setItems([]); setPlaceCards([]); setSessionId(null); } setError('Network error'); setErrorKind('network'); }  // §122 (SW31)
       })
       .finally(() => {
         if (!ac.signal.aborted) setLoading(false);

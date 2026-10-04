@@ -17,9 +17,9 @@ import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isFlagEnabled } from "../lib/featureFlags.js"; import { readFlagState } from "../lib/capability/schemaCapability.js";  // census-discovery §107 (D-W11X2-71)
 import { fetchBlockedSet } from "../lib/blocks.js";
-import { listMapTravelers } from "../lib/mapTravelers.js";
+import { listMapTravelersRead } from "../lib/mapTravelers.js";
 import { findNearbyGems } from "../services/hiddenGems/HiddenGemDiscoveryService.js";
 import { applyGemPrivacyBatch } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
 import { checkEventEligibility } from "./events.js";
@@ -30,8 +30,8 @@ import {
 import {
   logDiscoveryServe, DiscoveryServePoint, searchTypeToItemKind,
 } from "../lib/discoveryServeLog.js";  import { stampServedRecommendations, exposureForResponse, serveClockOf } from "../lib/discoveryRecommendationRecord.js";  // census-discovery §48 — serve point 12's response carries the ids its serve-log rows do
-import { buildCommandsFromIntent } from "../lib/mapCommands.js";
-import { forwardGeocode } from "../lib/geocodeForward.js";
+import { buildCommandsFromIntent } from "../lib/mapCommands.js"; import { EVENT_CAUSE_DEFAULT_DURATION_MINUTES } from "../lib/mapProducers/eventContextProducer.js";  // census-discovery §113 (D-W11X2-132): the forward window's assumed duration
+import { forwardGeocode } from "../lib/geocodeForward.js"; import { nearBox, applyNearBox } from "../lib/nearBox.js";  // census-discovery §116 (sweep SW13)
 
 const router = Router();
 
@@ -69,7 +69,7 @@ const router = Router();
  */
 export interface NearbyEventsWindow {
   nowIso: string;
-  startsBeforeIso: string;
+  startsBeforeIso?: string;  // census-discovery §113 (D-W11X2-132): omitted = no upper bound (the NOW gateway and map search read every event not yet over)
   openEndedStartsAfterIso: string;
 }
 
@@ -78,9 +78,9 @@ export async function loadNearbyEvents(
   sc: any, viewerId: string, lat: number, lng: number, radiusKm: number, blockedSet: Set<string>,
   opts: { window?: NearbyEventsWindow; limit?: number } = {},
 ): Promise<any[] | null> {
-  const latDelta = radiusKm / 111;
-  const lngDelta = radiusKm / (111 * Math.max(0.2, Math.cos((lat * Math.PI) / 180)));
-  let q = sc
+  const box = nearBox(lat, lng, radiusKm);  // census-discovery §116 (DV-83, sweep SW13): the circle's exact box (lib/nearBox) — wrapped at the antimeridian,
+  // every longitude over a pole; it was lat ± r/111, lng ± r/(111·max(0.2, cos lat)), which dropped events inside the radius.
+  let q = applyNearBox(sc
     .from("events")
     // `ends_at` is what projectEvent turns into the object's `expiresAt`, and
     // `expiresAt` is what stops a started event rendering as LIVE forever
@@ -88,33 +88,33 @@ export async function loadNearbyEvents(
     // from this list, so every gateway-served event had expiresAt undefined.
     .select("id, host_id, title, location_name, location_lat, location_lng, show_exact_location, starts_at, ends_at, cover_url, visibility, state, age_min, age_max, trust_score_min, verified_only")
     .not("state", "in", '("draft","cancelled","archived")')
-    .in("visibility", ["public", "friends_only"])
-    .gte("location_lat", lat - latDelta).lte("location_lat", lat + latDelta)
-    .gte("location_lng", lng - lngDelta).lte("location_lng", lng + lngDelta);
+    .in("visibility", ["public", "friends_only"]), box, "location_lat", "location_lng");
+  // (§116 SW13: the two lines of bounds that stood here are the box's, applied above.)
+
   const w = opts.window;
   if (w) {
-    q = q
-      .lte("starts_at", w.startsBeforeIso)
+    // census-discovery §113 (D-W11X2-132): the upper bound on the start is optional (a forward window has none).
+    q = (w.startsBeforeIso ? q.lte("starts_at", w.startsBeforeIso) : q)
       .or(`ends_at.gte.${w.nowIso},starts_at.gte.${w.openEndedStartsAfterIso}`);
   }
-  const { data, error } = await q.limit(Math.max(1, Math.min(opts.limit ?? 60, 60)));
+  const scanCap = Math.max(1, Math.min(opts.limit ?? 60, 60)); const { data: scanned, error } = await q.order("starts_at", { ascending: true }).limit(scanCap + 1);  // §113 (DV-83, D-W11X2-132): soonest first, and one row past the cap so a cut scan is known
   // A read FAILURE is not an empty neighbourhood: return null so a caller that
   // needs the distinction (the §10 inferred-cause path reports eventsReadFailed)
   // can tell them apart. Callers that don't care coalesce null to [].
-  if (error || !Array.isArray(data)) return null;
-  const out: any[] = [];
+  if (error || !Array.isArray(scanned)) return null; const scanCut = scanned.length > scanCap; const data = scanned.slice(0, scanCap);  // §113: the per-row gates and every caller's filters run after this cut
+  const out: any[] = []; let withheldUnchecked = 0;  // census-discovery §110 (DV-83, D-W11X2-93): rows a gate withheld because its read FAILED
   for (const ev of data as any[]) {
     if (blockedSet.has(ev.host_id)) continue;
     if (ev.visibility === "friends_only" && ev.host_id !== viewerId) {
-      const { data: friendship } = await sc
+      const { data: friendship, error: friendshipErr } = await sc
         .from("user_friendships")
         .select("user_a")
         .or(`and(user_a.eq.${viewerId},user_b.eq.${ev.host_id}),and(user_b.eq.${viewerId},user_a.eq.${ev.host_id})`)
         .maybeSingle();
-      if (!friendship) continue;
+      if (friendshipErr) { withheldUnchecked++; continue; } if (!friendship) continue;  // §110: an unread friendship is withheld, and counted — never "not a friend"
     }
     const elig = await checkEventEligibility(sc, ev, viewerId);
-    if (!elig.ok) continue;
+    if (!elig.ok) { if (elig.unread) withheldUnchecked++; continue; }  // §110: a gate that could not be read is counted, not folded into "ineligible"
     // Honor show_exact_location, matching formatEvent(): a host who hid the exact
     // location must not have its coordinates echoed on the discovery map to
     // anyone but themselves. (Participants still see the exact spot in the event
@@ -125,7 +125,7 @@ export async function loadNearbyEvents(
     }
     out.push(ev);
   }
-  return out;
+  if (withheldUnchecked > 0) WITHHELD_UNCHECKED.set(out, withheldUnchecked); if (scanCut) SCAN_CUT.add(out); return out;
 }
 
 /**
@@ -138,7 +138,7 @@ export async function loadNearbyEvents(
  */
 interface SourceReport {
   refusal: string | null;
-  collected: number;
+  collected: number; /** §110 (D-W11X2-93): present only when rows were withheld because a gate could not be read */ withheldUnchecked?: number;
 }
 
 // ── GET /api/map/search ───────────────────────────────────────────────────────
@@ -151,7 +151,7 @@ router.get("/map/search", asyncHandler(async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured"); return; }
 
   const generatedAt = new Date().toISOString();
-  if (!(await isFlagEnabled(sc, "map_search_enabled"))) {
+  const mapSearchFlag = await readFlagState(sc, "map_search_enabled"); if (mapSearchFlag === "unreadable") { res.json({ enabled: false, refusal: "flag_unreadable", results: [], viewport: null, total: 0, nextCursor: null, sources: null, generatedAt }); return; } if (mapSearchFlag !== "on") {  // census-discovery §107 (DV-83, D-W11X2-71): an UNREAD flag is named, never the flag-off body — was: if (!(await isFlagEnabled(sc, "map_search_enabled"))) {
     res.json({ enabled: false, results: [], viewport: null, total: 0, nextCursor: null, sources: null, generatedAt });
     return;
   }
@@ -224,16 +224,16 @@ router.get("/map/search", asyncHandler(async (req, res) => {
     // function now returns null for a failed read, a failed privacy query, or
     // an unknown block state — so a null here is a genuine refusal and not
     // merely "nothing was thrown".
-    const travelers = await listMapTravelers(sc, { viewerId: user.id, lat, lng, radiusKm, blockedSet })
+    const read = await listMapTravelersRead(sc, { viewerId: user.id, lat, lng, radiusKm, blockedSet })
       .catch(() => null);
-    if (travelers === null) { sources.traveler = { refusal: "travelers_unreadable", collected: 0 }; return; }
-    for (const t of travelers) results.push(normalizeTraveler(t));
-    sources.traveler = { refusal: null, collected: travelers.length };
+    if (read === null) { sources.traveler = { refusal: "travelers_unreadable", collected: 0 }; return; }
+    for (const t of read.travelers) results.push(normalizeTraveler(t));
+    sources.traveler = { refusal: read.truncated ? "travelers_capped" : null, collected: read.travelers.length };  // §113 (DV-83, D-W11X2-129): a cut scan is not a complete source
   })());
 
   if (want("gem")) tasks.push((async () => {
     // Same gap as travelers: findNearbyGems returns a bare array.
-    const ranked = await findNearbyGems(sc, lat, lng, radiusKm, { limit: 60 }).catch(() => null);
+    const found = await findNearbyGems(sc, lat, lng, radiusKm, { limit: 60 }).catch(() => null); const ranked = found === null ? null : found.ranked;  // §113 (D-W11X2-131)
     if (ranked === null) { sources.gem = { refusal: "gems_threw", collected: 0 }; return; }
     const notBlocked = ranked.filter((r: any) => !r.gem?.submitted_by || !blockedSet.has(r.gem.submitted_by));
     const safe = await applyGemPrivacyBatch(notBlocked.map((r: any) => r.gem), sc, user.id).catch(() => null);
@@ -241,15 +241,15 @@ router.get("/map/search", asyncHandler(async (req, res) => {
     // a privacy-filter outage from reading as a quiet neighbourhood.
     if (safe === null) { sources.gem = { refusal: "gem_privacy_unavailable", collected: 0 }; return; }
     safe.forEach((g: any, i: number) => results.push(normalizeGem(g, notBlocked[i]?.distanceKm ?? null)));
-    sources.gem = { refusal: null, collected: safe.length };
+    sources.gem = { refusal: found!.truncated ? "gems_capped" : null, collected: safe.length };  // §113 (DV-83, D-W11X2-131): a cut gem scan is not a complete source
   })());
 
   if (want("event")) tasks.push((async () => {
     // The one source that DOES carry the distinction. null is a read failure.
-    const events = await loadNearbyEvents(sc, user.id, lat, lng, radiusKm, blockedSet).catch(() => null);
+    const events = await loadNearbyEvents(sc, user.id, lat, lng, radiusKm, blockedSet, { window: forwardEventsWindow(Date.now()) }).catch(() => null);  // §113 (D-W11X2-132): events not yet over
     if (events === null) { sources.event = { refusal: "events_unreadable", collected: 0 }; return; }
     for (const ev of events) results.push(normalizeEvent(ev));
-    sources.event = { refusal: null, collected: events.length };
+    const unchecked = nearbyEventsWithheldUnchecked(events); sources.event = unchecked > 0 ? { refusal: "event_gates_unreadable", collected: events.length, withheldUnchecked: unchecked } : nearbyEventsScanCut(events) ? { refusal: "events_capped", collected: events.length } : { refusal: null, collected: events.length };  // §110 (DV-83, D-W11X2-93): rows withheld unchecked are not a complete source
   })());
 
   await Promise.all(tasks);
@@ -317,3 +317,53 @@ router.post("/map/compass-command", asyncHandler(async (req, res) => {
 }));
 
 export default router;
+
+// ── census-discovery §110 (DV-83 round 13, lane W11-X2, D-W11X2-93): what a gate withheld UNCHECKED ──
+//
+// Every row `loadNearbyEvents` reads passes per-event gates that fail CLOSED on a failed read (the
+// friends-only friendship read; `checkEventEligibility`'s ban, verified, trust and age reads). Failing
+// closed is right — an unreadable gate must not admit — but the row is then missing for a reason
+// that is not a fact about the event, so the caller must be able to say so. The count rides beside
+// the array (a WeakMap, so a healthy array and every body built from it are unchanged).
+const WITHHELD_UNCHECKED = new WeakMap<object, number>();
+
+/** How many rows `loadNearbyEvents` withheld because a gate could not be read (0 when none, or for any other array). */
+export function nearbyEventsWithheldUnchecked(rows: unknown): number {
+  return rows && typeof rows === "object" ? (WITHHELD_UNCHECKED.get(rows as object) ?? 0) : 0;
+}
+
+// ── census-discovery §113 (DV-83 round 16, lane W11-X2, D-W11X2-132): a scan cut at its cap ──
+//
+// `loadNearbyEvents` reads its rows soonest-first and one past its cap. When the extra row came back, the scan was
+// CUT: the per-row gates and every caller's filters (the query, the forecast window, the live check) ran over the
+// first `scanCap` rows only, so no caller may state the answer as complete. The mark rides beside the array, as the
+// withheld count does, so a healthy array and every body built from it are unchanged.
+const SCAN_CUT = new WeakSet<object>();
+
+/** Whether `loadNearbyEvents` cut its scan at the cap for this answer (false for any other value). */
+export function nearbyEventsScanCut(rows: unknown): boolean {
+  return !!rows && typeof rows === "object" && SCAN_CUT.has(rows as object);
+}
+
+/**
+ * The window for a caller that shows what is on or ahead (GET /map/search, the NOW gateway): an event whose end is
+ * not yet past, or — with no usable end — one that started within the assumed duration. No upper bound on the start.
+ */
+export function forwardEventsWindow(nowMs: number): NearbyEventsWindow {
+  return {
+    nowIso: new Date(nowMs).toISOString(),
+    openEndedStartsAfterIso: new Date(nowMs - EVENT_CAUSE_DEFAULT_DURATION_MINUTES * 60_000).toISOString(),
+  };
+}
+
+/**
+ * The window for the temporal forecast: a superset of `projectEventForecast`'s rule (the event's
+ * [starts, ends-or-starts] interval overlaps the target's [windowStart, windowEnd]).
+ */
+export function forecastEventsWindow(target: { windowStart: number; windowEnd: number }): NearbyEventsWindow {
+  return {
+    nowIso: new Date(target.windowStart).toISOString(),
+    startsBeforeIso: new Date(target.windowEnd).toISOString(),
+    openEndedStartsAfterIso: new Date(target.windowStart).toISOString(),
+  };
+}

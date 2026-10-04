@@ -24,8 +24,8 @@ import {
   fetchMapTemporal,
   type TemporalForecastReport,
   type TemporalHistoryReport,
-} from '../services/mapTemporal.ts';
-import { bboxFromCenter } from '../services/mapProjection.ts';
+} from '../services/mapTemporal.ts'; import { forecastLayersUnread, historyUnread } from '../features/map/time/forecastUnread.ts';  // census-discovery §111 (D-W11X2-115); §113 (D-W11X2-130)
+import { bboxFromCenter } from '../services/mapProjection.ts'; import { viewportBoxClamped } from '../features/map/layers/viewportBoxClamped.ts';  // census-discovery §116 (SW14)
 import { NOW_OFFSET, offsetKey, offsetsEqual, type TimeOffset } from '../features/map/time/timeMachine.ts';
 
 /** Matches useMapEntities' DEFAULT_VIEWPORT_RADIUS_KM, so both viewports agree. */
@@ -51,9 +51,14 @@ export interface UseTemporalEntitiesResult {
   enabled: boolean;
   /** Forecast counts + accepted_plan refusal — present only for a future offset. */
   forecast: TemporalForecastReport | null;
-  /** `available:false` is the honest "no history yet" — present only for a past offset. */
+  /** Present only for a past offset. `available:false` is a FAILED history read (§113, D-W11X2-130) — `failed` is set. */
   history: TemporalHistoryReport | null;
-  loading: boolean;
+  loading: boolean; /** census-discovery §111 (D-W11X2-115): forecast layers the server could not read — say so, never draw their absence */ unreadForecastLayers: string[];
+  /**
+   * census-discovery §112 (DV-83, D-W11X2-122): the last read for this offset failed, or the server refused it.
+   * Nothing from it (or from the previous offset) is drawn; the Time Machine says it could not be loaded.
+   */
+  failed: boolean; /** census-discovery §114 (DV-83, B6): the answer was page one of several (`nextCursor` set) — the time is not whole; say so */ pageCut: boolean;
 }
 
 export function useTemporalEntities(args: UseTemporalEntitiesArgs): UseTemporalEntitiesResult {
@@ -61,9 +66,10 @@ export function useTemporalEntities(args: UseTemporalEntitiesArgs): UseTemporalE
 
   const [objects, setObjects] = useState<MapObject[]>([]);
   const [enabled, setEnabled] = useState(false);
-  const [forecast, setForecast] = useState<TemporalForecastReport | null>(null);
+  const [forecast, setForecast] = useState<TemporalForecastReport | null>(null); const [unreadForecastLayers, setUnreadForecastLayers] = useState<string[]>([]); const [pageCut, setPageCut] = useState(false);  // §114 (B6)
   const [history, setHistory] = useState<TemporalHistoryReport | null>(null);
   const [loading, setLoading] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   const isNow = offsetsEqual(offset, NOW_OFFSET);
   const shouldFetch = active && !isNow && lat != null && lng != null;
@@ -73,15 +79,22 @@ export function useTemporalEntities(args: UseTemporalEntitiesArgs): UseTemporalE
       // Idle: drop the previous offset's payload so it can never show under NOW
       // or a closed mode.
       setObjects([]);
-      setForecast(null);
+      setForecast(null); setUnreadForecastLayers([]); setPageCut(false);
       setHistory(null);
       setLoading(false);
+      setFailed(false);
       return;
     }
 
     const controller = new AbortController();
     let cancelled = false;
     setLoading(true);
+    // census-discovery §112 (D-W11X2-122): "[] while loading" — the previous offset's payload is never drawn under
+    // this offset's label while its read is in flight, nor kept when that read fails.
+    setObjects([]);
+    setForecast(null); setUnreadForecastLayers([]); setPageCut(false);
+    setHistory(null);
+    setFailed(false);
 
     fetchMapTemporal({
       bbox: bboxFromCenter(lat as number, lng as number, radiusKm),
@@ -96,12 +109,16 @@ export function useTemporalEntities(args: UseTemporalEntitiesArgs): UseTemporalE
         if (res.ok) {
           setEnabled(res.data.enabled);
           setObjects(res.data.enabled ? res.data.objects : []);
-          setForecast(res.data.forecast);
-          setHistory(res.data.history);
+          setForecast(res.data.forecast); setUnreadForecastLayers(forecastLayersUnread(res.data));
+          setHistory(res.data.history); setPageCut(res.data.nextCursor != null || viewportBoxClamped(lat as number, lng as number, radiusKm));  // §114 (B6): page one of several is said, never drawn as the whole time; §116 (SW14): nor a viewport box clamped at ±180° or a pole
+          setFailed(res.data.refusal != null || historyUnread(res.data));  // §113 (D-W11X2-130): a past answer that read no history is failed, never an empty past
+        } else {
+          setFailed(true);
         }
       })
       .catch(() => {
-        /* fail-soft: keep the last successful payload cleared, never crash */
+        // Fail-soft, never crash — but a failed read is said, never drawn as an empty offset (§112, D-W11X2-122).
+        if (!cancelled) setFailed(true);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -115,5 +132,5 @@ export function useTemporalEntities(args: UseTemporalEntitiesArgs): UseTemporalE
     // are rounded into the same viewport bucket the fetch uses.
   }, [shouldFetch, offsetKey(offset), offset, lat, lng, zoom, radiusKm, tz]);
 
-  return { objects, enabled, forecast, history, loading };
+  return { objects, enabled, forecast, history, loading, unreadForecastLayers, failed, pageCut };
 }

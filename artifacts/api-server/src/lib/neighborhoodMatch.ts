@@ -172,7 +172,7 @@ async function queryOverpass(query: string): Promise<OsmElement[]> {
       });
     }
     if (!res?.ok) return [];
-    const data = (await res.json()) as { elements?: OsmElement[] };
+    const data = (await res.json()) as { elements?: OsmElement[] }; if (overpassBodyUnfinished(data)) return [];  // census-discovery §123 (DV-83 round 24): a 200 whose `remark` says the query did not finish is a failed read, like a non-2xx — its cut element set is never scored and stored for 7 days as the city's
     return Array.isArray(data?.elements) ? data.elements : [];
   } catch {
     return [];
@@ -570,3 +570,6 @@ export function centerOfGravity(
 
   return { lat, lng, shares };
 }
+
+// census-discovery §123 (DV-83 round 24): the one reading of an Overpass body (lib/overpassAnswer.ts). At the foot so no cited line moves; ESM hoists imports.
+import { overpassBodyUnfinished } from "./overpassAnswer.js";

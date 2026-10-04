@@ -249,6 +249,6 @@ async function mergeRouteAggregates(sc: any, out: MaterialiseOutcome): Promise<v
   if (agg.size === 0) return;
   for (const [id, p] of out.rows) {
     const a = agg.get(id.slice(3));
-    if (a) out.rows.set(id, { ...p, worthItCount: a.worthItCount, avgRating: a.avgRating, reviewCount: a.reviewCount });
+    if (a) out.rows.set(id, { ...p, worthItCount: a.worthItCount ?? undefined, avgRating: a.avgRating, reviewCount: a.reviewCount ?? undefined });  // census-discovery §111 (D-W11X2-114): an unread count is absent, never 0
   }
 }

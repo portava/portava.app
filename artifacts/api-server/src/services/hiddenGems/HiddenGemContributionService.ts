@@ -146,7 +146,7 @@ export interface GemProjection {
     band: string;
   };
   /** Per-type independent-observation counts (each row is a distinct user). */
-  contributionCounts: Partial<Record<GemContributionType, number>>;
+  contributionCounts: Partial<Record<GemContributionType, number>>; /** census-discovery §111 (D-W11X2-110): the aggregate reads that FAILED — present only then; the state and confidence are then not measured */ unreadSources?: string[];
 }
 
 interface GemAggregate {
@@ -202,9 +202,9 @@ async function batchFetchGemAggregates(
       .in("gem_id", gemIds),
   ]);
 
-  if (verRes.error) logger.warn({ err: verRes.error }, "gem aggregate: verifications read failed (non-fatal)");
-  if (visRes.error) logger.warn({ err: visRes.error }, "gem aggregate: visits read failed (non-fatal)");
-  if (conRes.error) logger.warn({ err: conRes.error }, "gem aggregate: contributions read failed (non-fatal)");
+  if (verRes.error) { logger.warn({ err: verRes.error }, "gem aggregate: verifications read failed"); markAggregateUnread(out, "hidden_gem_verifications"); }  // census-discovery §111 (DV-83, D-W11X2-110): was "(non-fatal)" — a failed read folded into a measured-looking state
+  if (visRes.error) { logger.warn({ err: visRes.error }, "gem aggregate: visits read failed"); markAggregateUnread(out, "hidden_gem_visits"); }
+  if (conRes.error) { logger.warn({ err: conRes.error }, "gem aggregate: contributions read failed"); markAggregateUnread(out, "hidden_gem_contributions"); }
 
   for (const row of (verRes.data ?? []) as any[]) {
     const a = out.get(row.gem_id);
@@ -307,7 +307,7 @@ export async function batchDeriveGemProjections(
   for (const gem of gems) {
     const id = gem?.id as string;
     if (!id) continue;
-    out.set(id, projectGem(gem, aggs.get(id) ?? emptyAggregate(), nowMs));
+    out.set(id, withUnreadSources(projectGem(gem, aggs.get(id) ?? emptyAggregate(), nowMs), aggs));  // census-discovery §111 (DV-83, D-W11X2-110): a projection over a failed read says so
   }
   return out;
 }
@@ -326,4 +326,28 @@ export async function deriveGemProjection(
       contributionCounts: {},
     }
   );
+}
+
+// ── census-discovery §111 (DV-83 round 14, lane W11-X2, D-W11X2-110): a gem state derived from a failed read is not measured ──
+//
+// The verifications, visits and contributions reads each logged a failure as "non-fatal" and took `[]`, so
+// `projectGem` derived a state and a confidence from zeros — "quiet now / unverified" for a gem five people
+// confirmed this week — and GET /hidden-gems served it as the gem's measured state (§107's "measured thin").
+// The batch now remembers which of its reads failed, and every projection built from it carries
+// `unreadSources`; a caller serves no state or confidence from such a projection.
+const UNREAD_AGGREGATES = new WeakMap<Map<string, GemAggregate>, Set<string>>();
+function markAggregateUnread(aggs: Map<string, GemAggregate>, source: string): void {
+  const set = UNREAD_AGGREGATES.get(aggs) ?? new Set<string>();
+  set.add(source);
+  UNREAD_AGGREGATES.set(aggs, set);
+}
+function withUnreadSources(projection: GemProjection, aggs: Map<string, GemAggregate>): GemProjection {
+  const unread = UNREAD_AGGREGATES.get(aggs);
+  return unread && unread.size > 0 ? { ...projection, unreadSources: [...unread].sort() } : projection;
+}
+/** The failed aggregate reads behind any of these projections (sorted, de-duplicated); empty when every read succeeded. */
+export function gemProjectionsUnreadSources(projections: Iterable<GemProjection | null | undefined>): string[] {
+  const out = new Set<string>();
+  for (const p of projections) for (const s of p?.unreadSources ?? []) out.add(s);
+  return [...out].sort();
 }

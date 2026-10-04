@@ -51,7 +51,7 @@
 import { isMissingColumnError, isMissingSchemaError } from "./capability/schemaCapability.js";
 import { PRIVACY_THRESHOLD_V1 } from "./intelContracts.js";
 import { meetsKAnonymity } from "./kAnonymity.js";
-import { MOMENTUM_CACHE_TTL_MS } from "./discoveryLocalMomentum.js";
+import { MOMENTUM_CACHE_TTL_MS } from "./discoveryLocalMomentum.js"; import { keysetBefore, keySortsBefore } from "./pagedRead.js";  // census-discovery §118 (SW22)
 import { RECOMMENDATION_ID_SHAPE } from "./rankEventsProvenance.js";
 import {
   isTrendState, trendReasonFor,
@@ -780,13 +780,13 @@ async function emergingTrails(sc: any, viewerId: string, destination: string, no
     const served = [...new Set(members.flatMap((m) => [m.source_id, `db/${m.source_id}`]))];
     if (served.length === 0) return { trails: [], unavailable: null };
     const since = new Date(nowMs - MOMENTUM_BASELINE_WINDOW_MS).toISOString();
-    const rows: TrendRowV2[] = [];
+    const rows: TrendRowV2[] = []; let lastRow: Record<string, unknown> | null = null;  // census-discovery §118 (DV-83 round 21, SW22): the keyset cursor
     for (let offset = 0; offset < MOMENTUM_ROW_LIMIT; offset += MOMENTUM_PAGE_SIZE) {
-      const { data, error } = await sc.from("rank_events").select("item_id, outcome, served_at, outcome_at, user_id")
-        .eq("surface", "discovery").neq("outcome", "analytics").in("item_id", served).gte("served_at", since)
+      const { data, error }: { data: any[] | null; error: unknown } = await keysetBefore(sc.from("rank_events").select("id, item_id, outcome, served_at, outcome_at, user_id")
+        .eq("surface", "discovery").neq("outcome", "analytics").in("item_id", served).gte("served_at", since), ["served_at", "id"], lastRow)
         .order("served_at", { ascending: false }).order("id", { ascending: false })
-        .range(offset, Math.min(offset + MOMENTUM_PAGE_SIZE, MOMENTUM_ROW_LIMIT) - 1);
-      if (error || !Array.isArray(data)) return { trails: [], unavailable: "trail_read_failed" };
+        .range(0, Math.min(MOMENTUM_PAGE_SIZE, MOMENTUM_ROW_LIMIT - offset) - 1);  // §118 (SW22): by key, never at an offset a serve logged meanwhile shifts
+      if (error || !Array.isArray(data) || (lastRow !== null && data.length > 0 && !keySortsBefore(data[0], lastRow, ["served_at", "id"]))) return { trails: [], unavailable: "trail_read_failed" }; if (data.length > 0) lastRow = data[data.length - 1];  // §118 (SW22): a page that repeats a row is a failed read
       rows.push(...(data as TrendRowV2[]).map((r) => ({ ...r, item_id: r.item_id.replace(/^db\//, "") })));
       if (data.length < MOMENTUM_PAGE_SIZE) break;
     }

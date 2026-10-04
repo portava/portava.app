@@ -6,7 +6,7 @@
  *   lat         — initial camera latitude (city/destination)
  *   lng         — initial camera longitude
  *   zoom        — initial zoom level (default 11)
- *   title       — label shown in the top control bar
+ *   title       — label shown in the top control bar, never read as a city; `city` is the city (census-discovery §116 B17)
  *
  * On web, renders a static "not available" placeholder with a Back button.
  * When location permission is denied, shows an inline prompt card.
@@ -72,7 +72,7 @@ import { LivePulseCard } from '../../src/components/map/LivePulseCard.tsx';
 import { MapHeader, mapHeaderStackOffset } from '../../src/components/map/MapHeader.tsx';
 import { MapFilterChips, MAP_FILTER_CHIPS_HEIGHT } from '../../src/components/map/MapFilterChips.tsx';
 import { homeVisibleObjects, homeChipCounts } from '../../src/features/map/home/homeFilters.ts';
-import { getLivePulseItems, type LivePulseItem } from '../../src/services/livePulse.ts';
+import { getLivePulseItems, type LivePulseItem } from '../../src/services/livePulse.ts'; import { pulseCardAnswer } from '../../src/features/map/pulse/pulseCardAnswer.ts';  // census-discovery §119 (B31)
 import { OptimizeTodaySheet } from '../../src/components/map/OptimizeTodaySheet.tsx';
 import {
   tripToMapObjects,
@@ -91,7 +91,7 @@ import { listSaved } from '../../src/services/discoveryBookmarks.ts';
 import { getCrewMap } from '../../src/features/trips/crew/tripCrewLocation.ts';
 import { fetchTripRoutePlan } from '../../src/services/routePlan.ts';
 import { getActiveSession } from '../../src/services/safeReturn.ts';
-import { fetchCompassRecommendations } from '../../src/services/compass.ts';
+import { fetchCompassRecommendations } from '../../src/services/compass.ts'; import { tripCompassRecommendations, tripCompassReadState, type TripCompassRead } from '../../src/features/trips/map/tripCompassRead.ts';  // census-discovery §108 (D-W11X2-81)
 import { useMediaPicker } from '../../src/hooks/useMediaPicker.ts';
 import type { MapMediaAsset } from '../../src/features/map/truth/contributionFlow.ts';
 import type { MediaKind } from '../../src/features/map/truth/liveTruth.ts';
@@ -178,7 +178,7 @@ import {
 } from '../../src/features/map/compass/compassMapModel.ts';
 import { toTemporalObjects, offsetsEqual } from '../../src/features/map/time/timeMachine.ts';
 import { buildTemporalView } from '../../src/features/map/time/temporalView.ts';
-import { useTemporalEntities } from '../../src/hooks/useTemporalEntities.ts';
+import { useTemporalEntities } from '../../src/hooks/useTemporalEntities.ts'; import { temporalNotice } from '../../src/features/map/time/forecastUnread.ts'; import { MapUnreadLayersBanner } from '../../src/components/map/MapUnreadLayersBanner.tsx';  // census-discovery §113 (D-W11X2-130); §114 (B5): the unread-layers notice
 import type { DiscoveryMapViewProps } from '../../src/components/discovery/DiscoveryMapView.tsx';
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext.tsx';
 
@@ -744,7 +744,7 @@ function FullScreenMapScreenInner() {
     lat?: string;
     lng?: string;
     zoom?: string;
-    title?: string;
+    title?: string; city?: string;  // census-discovery §116 (B17): the city readers take, apart from the display title
     category?: string;
     focusId?: string;
     mode?: string;
@@ -823,7 +823,7 @@ function FullScreenMapScreenInner() {
   const paramLat = parseCoord(params.lat);
   const paramLng = parseCoord(params.lng);
   const paramZoom = parseZoom(params.zoom);
-  const title = firstParam(params.title);
+  const title = firstParam(params.title); const cityParam = firstParam(params.city);  // census-discovery §116 (DV-83, B17): the display title is never a city; only a `city` param is
   const entityTypes = firstParam(params.entityTypes) ?? '';
   const category = parseCategory(params.category);
   /** focusId: if set, carousel + camera will snap to the matching entity on first load. */
@@ -918,7 +918,7 @@ function FullScreenMapScreenInner() {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Entity data fetch ───────────────────────────────────────────────────────
-  // `title` is used as the city name — passed in from Discovery / Trips entry points.
+  // The `city` param is the city name (§116 B17: the display `title`, a Compass card's venue name, never is).
   // In passport mode the hook still runs but its output is discarded in favour of
   // ── §16 layer preferences (tri-state; separate from the legacy boolean set) ──
   //
@@ -1005,10 +1005,10 @@ function FullScreenMapScreenInner() {
     liveEnrichment,
     staleness,
     source: entitiesSource,
-    stage: entitiesStage,
+    stage: entitiesStage, unreadLayers: mapUnreadLayers, truncated: mapTruncated,  // census-discovery §114 (DV-83, B5): a layer the gateway did not read, and a page of several, are said
   } = useMapEntities({
     enabledLayers: mode === 'passport' ? [] : enabledLayers,
-    city: mode === 'passport' ? null : title,
+    city: mode === 'passport' ? null : (cityParam ?? null),
     lat: fallbackLat,
     lng: fallbackLng,
     zoom: cameraZoom ?? paramZoom,
@@ -1078,7 +1078,7 @@ function FullScreenMapScreenInner() {
     setPlacesRetryCount((n) => n + 1);
   }, []);
 
-  const destination = title; // city name string, e.g. "Cebu City"
+  const destination = cityParam; // city name string, e.g. "Cebu City" — census-discovery §116 (B17): the city param, never the title
 
   // Whether the places layer has been requested and a destination is available.
   const placesLayerActive =
@@ -1180,9 +1180,9 @@ function FullScreenMapScreenInner() {
   // PROPOSAL the user must accept; acceptance persists through the Trips write
   // path (`persistOptimizeAcceptance`), never a silent rewrite.
   const tripId = firstParam(params.tripId);
-  const tripCity = title;
+  const tripCity = cityParam;  // §116 (B17)
   const [composedTrip, setComposedTrip] = useState<ComposedTripMap | null>(null);
-  const [proposal, setProposal] = useState<OptimizeProposal | null>(null);
+  const [proposal, setProposal] = useState<OptimizeProposal | null>(null); const compassAltRead: TripCompassRead = (composedTrip as (ComposedTripMap & { compassRead?: TripCompassRead }) | null)?.compassRead ?? null;  // census-discovery §108 (DV-83, D-W11X2-81): the trip's Compass read, said — carried on the composed trip, so only the latest build writes it
 
   const buildComposedTrip = useCallback(async (): Promise<ComposedTripMap | null> => {
     if (!tripId) return null;
@@ -1201,16 +1201,16 @@ function FullScreenMapScreenInner() {
     // to this trip (§24 purpose-bound); an unrelated session is not projected.
     const safeReturnSession =
       safeRes.session && safeRes.session.tripId === tripId ? safeRes.session : null;
-    return composeTripMap({
+    return Object.assign(composeTripMap({
       tripId,
       planItems,
       savedPlaces,
       crew: crewRes.ok ? crewRes.data.members : [],
       routePlan,
       safeReturnSession,
-      compassRecommendations: compassRes.ok ? (compassRes.data?.recommendations ?? []) : [],
+      compassRecommendations: tripCompassRecommendations(compassRes),  // census-discovery §108 (DV-83, D-W11X2-81): branch on coverage — was: compassRes.ok ? (compassRes.data?.recommendations ?? []) : []
       now: nowIso,
-    });
+    }), { compassRead: tripCompassReadState(compassRes) });
   }, [tripId, tripCity]);
 
   useEffect(() => {
@@ -1313,7 +1313,7 @@ function FullScreenMapScreenInner() {
   // card itself decides WHICH item is most important, via the pure
   // selectHeadlinePulseItem, so that choice is deterministic and testable rather
   // than baked into this screen.
-  const [pulseItems, setPulseItems] = useState<LivePulseItem[]>([]);
+  const [pulseItems, setPulseItems] = useState<LivePulseItem[]>([]); const [pulseUnread, setPulseUnread] = useState<string[]>([]);  // census-discovery §119 (DV-83 round 22, B31): what /pulse/live could not read
   useEffect(() => {
     if (mode === 'passport') return;
     let cancelled = false;
@@ -1334,7 +1334,7 @@ function FullScreenMapScreenInner() {
         lng: query.lng,
         citySlug: query.citySlug,
       }).catch(() => null);
-      if (!cancelled && res && res.ok) setPulseItems(res.items);
+      if (!cancelled) { const a = pulseCardAnswer(res); setPulseItems(a.items); setPulseUnread(a.unread); }  // §119 (B31): failedSources reach the card; a failed read keeps no earlier camera's items, and is said
     })();
     return () => { cancelled = true; };
   }, [mode, machine.mode, cameraCenter]);
@@ -2656,7 +2656,7 @@ function FullScreenMapScreenInner() {
         onPassportRetry={mode === 'passport' ? handlePassportRetry : undefined}
         placesLoading={legacyPlacesActive ? placesLoading : undefined}
         placesError={legacyPlacesActive ? placesError : undefined}
-        placesEmpty={legacyPlacesActive ? placesEmpty : undefined}
+        placesEmpty={legacyPlacesActive ? placesEmpty : undefined} layersNotWhole={(mapUnreadLayers ?? []).length > 0 || mapTruncated === true} /* census-discovery §115 (DV-83, sweep SW9) */
         onPlacesRetry={legacyPlacesActive ? handlePlacesRetry : undefined}
         style={[
           s.carousel,
@@ -2674,7 +2674,7 @@ function FullScreenMapScreenInner() {
           </Text>
         </View>
       ) : null}
-      {legacyPlacesActive && placesPartial && places.length > 0 ? (<View style={[s.cityBanner, showCityLocationBanner ? { top: 26 } : null]} pointerEvents="none" testID="map-places-partial"><AlertTriangle size={12} color="#fff" /><Text style={s.cityBannerText}>{listPartialNotice('places')}</Text></View>) : null}
+      {legacyPlacesActive && placesPartial && places.length > 0 ? (<View style={[s.cityBanner, showCityLocationBanner ? { top: 26 } : null]} pointerEvents="none" testID="map-places-partial"><AlertTriangle size={12} color="#fff" /><Text style={s.cityBannerText}>{listPartialNotice('places')}</Text></View>) : null}{tripId && compassAltRead ? (<View style={[s.cityBanner, { top: 52 }]} pointerEvents="none" testID={`map-compass-alternatives-${compassAltRead}`}><AlertTriangle size={12} color="#fff" /><Text style={s.cityBannerText}>{compassAltRead === 'failed' ? 'Couldn\u2019t load Compass alternatives just now.' : listPartialNotice('Compass alternatives')}</Text></View>) : null}{mode !== 'passport' ? <MapUnreadLayersBanner unread={mapUnreadLayers ?? []} truncated={mapTruncated === true} top={(showCityLocationBanner ? 26 : 0) + (legacyPlacesActive && placesPartial && places.length > 0 ? 26 : 0)} /> : null /* census-discovery §114 (DV-83, B5): never an unread or cut layer drawn as an empty one; safety first */}
       {/* Passport mode banner */}
       {mode === 'passport' ? (
         <View style={s.modeBanner} pointerEvents="none">
@@ -2723,7 +2723,7 @@ function FullScreenMapScreenInner() {
 
           {/* Ask Compass search bar */}
           <AskCompassBar
-            city={title ?? ''}
+            city={cityParam ?? ''}
             userLat={userLat}
             userLng={userLng}
             bottomInset={insets.bottom}
@@ -2739,9 +2739,9 @@ function FullScreenMapScreenInner() {
           surfaces use — rather than this screen inventing its own routing.
           Hidden while a Compass query or a selection already owns the bottom
           of the screen; §3 says cards must not permanently consume the viewport. */}
-      {pulseItems.length > 0 && !compassQuery && !selectedObject ? (
+      {(pulseItems.length > 0 || pulseUnread.length > 0) && !compassQuery && !selectedObject ? (  /* §119 (B31) */
         <LivePulseCard
-          items={pulseItems}
+          items={pulseItems} failedSources={pulseUnread}
           bottomInset={insets.bottom + 96}
           onDeepLink={(deepLink, item) => {
             if (deepLink.mode) dispatchMapEvent({ type: 'ENTER_MODE', mode: deepLink.mode });
@@ -2837,7 +2837,7 @@ function FullScreenMapScreenInner() {
           offset={timeOffset}
           onChange={setTimeOffset}
           timeline={temporalView.timeline}
-          forecastConfidence={temporalView.forecastConfidence}
+          forecastConfidence={temporalView.forecastConfidence} unreadNotice={temporalNotice(temporal)} timelineNotWhole={atTemporalOffset ? temporalNotice(temporal) != null : (mapUnreadLayers ?? []).length > 0 || mapTruncated === true} /* §115 (SW9): an empty city timeline over a read that was not whole says so;  census-discovery §111 (D-W11X2-115); §112 (D-W11X2-122); §113 (D-W11X2-130): a failed, refused or in-flight read is said, never drawn as an empty time */
           bottomInset={insets.bottom + 140}
         />
       ) : null}
@@ -3235,7 +3235,7 @@ function FullScreenMapScreenInner() {
         onClose={() => dispatchMapEvent({ type: 'CLOSE_OVERLAY', overlay: 'SEARCH' })}
         lat={userLat ?? fallbackLat}
         lng={userLng ?? fallbackLng}
-        city={title}
+        city={cityParam}
         onSelect={(result, frame) => {
           dispatchMapEvent({ type: 'CLOSE_OVERLAY', overlay: 'SEARCH' });
           const cam = cameraRef.current;

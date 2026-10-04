@@ -21,8 +21,8 @@
  * emerging Trails are computed on the request. No serve path imports it.
  *
  * Behind `discovery_trending_api_enabled` (3410, seeded FALSE; read per request
- * with isFlagEnabled, so revoking it takes effect on the next request and an
- * unreadable flag reads OFF). Signed-in only: the answer is scoped to the
+ * strictly, so revoking it takes effect on the next request; §104: an
+ * unreadable flag is a 503 flag_unreadable, never OFF). Signed-in only: the answer is scoped to the
  * viewer's own exposures, which an anonymous serve does not have.
  *
  * `11` §9's error semantics: 401 unauthenticated · 404 feature_disabled ·
@@ -34,7 +34,7 @@ import { Router, type Request, type Response } from "express";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { isFlagEnabled } from "../lib/featureFlags.js";
+// census-discovery §104 (DV-83, D-W11X2-56): both flags are read strictly at the foot — was: import { isFlagEnabled } from "../lib/featureFlags.js";
 import {
   explainExposures, parseRecommendationIds, readViewerExposures, readTrendSnapshot,
   TREND_EXPLANATIONS_MAX_IDS,
@@ -50,7 +50,7 @@ router.get("/v1/discovery/trending/explanations", asyncHandler(async (req: Reque
   if (!sc) return sendError(res, "degraded_unavailable", "trend explanations are not available in this deployment", { reason: "no_service_client" });
 
   // Literal at the read site (check:flag-polarity reads call sites).
-  if (!(await isFlagEnabled(sc, "discovery_trending_api_enabled"))) {
+  const apiFlag = await trendingApiFlagRead(sc); if (apiFlag === null) return sendError(res, "degraded_unavailable", "trend explanations could not be checked just now", { reason: "flag_unreadable" }); if (!apiFlag) {  // census-discovery §104 (DV-83, D-W11X2-56)
     return sendError(res, "feature_disabled", "trend explanations are not enabled");
   }
 
@@ -96,7 +96,7 @@ function listHandler(action: ListAction) {
     const sc = getServiceClient();
     if (!sc) return sendError(res, "degraded_unavailable", "trending lists are not available in this deployment", { reason: "no_service_client" });
     // Literals at the read site (check:flag-polarity reads call sites).
-    if (!(await isFlagEnabled(sc, "discovery_trending_api_enabled")) || !(await isFlagEnabled(sc, "discovery_trend_lists_enabled"))) {
+    const apiFlag = await trendingApiFlagRead(sc); const listsFlag = apiFlag === false ? false : await trendListsFlagRead(sc); if (apiFlag === null || listsFlag === null) return sendError(res, "degraded_unavailable", "trending lists could not be checked just now", { reason: "flag_unreadable" }); if (!apiFlag || !listsFlag) {  // census-discovery §104 (DV-83, D-W11X2-56): an unread flag is a failed read, never the off 404
       return sendError(res, "feature_disabled", "trending lists are not enabled");
     }
     const destination = parseDestination(req.query["destination"]);
@@ -128,3 +128,28 @@ router.get("/v1/discovery/trending/areas", listHandler("areas"));
 // comment inserted above them moves the lines another branch's file names.)
 
 export default router;
+
+// ── census-discovery §104 (DV-83, D-W11X2-56): the rollout flags, read strictly ──
+// `isFlagEnabled` answers false for a failed read as for an off flag, so a timed-out
+// feature_flags read answered "not enabled" (404). `null` here is the failed read, and
+// the routes answer 503 degraded_unavailable / flag_unreadable. An ABSENT row is still
+// off. One literal per read site; check:flag-polarity records both in DIRECT_READS.
+async function trendingApiFlagRead(sc: any): Promise<boolean | null> {
+  try {
+    const { data, error } = await sc.from("feature_flags").select("enabled").eq("flag", "discovery_trending_api_enabled").maybeSingle();
+    if (error) return null;
+    return Boolean((data as any)?.enabled);
+  } catch {
+    return null;
+  }
+}
+
+async function trendListsFlagRead(sc: any): Promise<boolean | null> {
+  try {
+    const { data, error } = await sc.from("feature_flags").select("enabled").eq("flag", "discovery_trend_lists_enabled").maybeSingle();
+    if (error) return null;
+    return Boolean((data as any)?.enabled);
+  } catch {
+    return null;
+  }
+}
