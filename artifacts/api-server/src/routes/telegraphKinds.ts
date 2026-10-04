@@ -36,7 +36,7 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { logger as rootLogger } from "../lib/logger.js";
-import { guardTelegraphThreadWrite } from "../lib/telegraphThreadWrite.js";
+import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js"; import { sendBucketForKind } from "../domain/telegraph/policies/messageDoorPolicy.js";
 import { emitLocationStarted, publishToThread } from "../lib/telegraphEvents.js";
 import {
   DRAWER_TABS,
@@ -280,9 +280,9 @@ router.post(
       }
     }
 
-    const guard = await guardTelegraphThreadWrite(client, threadId, user.id);
+    const guard = await guardTelegraphThreadWrite(client, threadId, user.id, { sendBucket: sendBucketForKind(validated.envelope.kind) });
     if (!guard.ok) {
-      sendError(res, guard.code, guard.message);
+      sendThreadWriteRefusal(res, guard);
       return;
     }
 

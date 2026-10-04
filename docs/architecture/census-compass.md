@@ -4224,3 +4224,95 @@ from an empty hidden set.
 - NOT-GRADED: travel-buddy-standalone/src/features/live/__tests__/senseCheckHonesty.component.test.tsx — §32.3's suite for the Sense panel and the auto-check; no verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/src/components/compass/__tests__/CompassLive.checkHonesty.component.test.tsx — §32.3's suite for the live card; no verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/compassFallbackMutes.test.ts — §35.5's controlled evidence for the fallback mute fix and the `get_circle_activity` null-profile fix; no Compass verdict moves on it, and CR-04/CTG-02 keep the evidence they already cite.
+
+## §36 — 2026-10-04 (re-census, integration): no row moves. PR #584 touches no Compass row's subject, and TWO of the twelve `W` rows are code-actionable from inside this repository
+
+**What this section is.** The re-census pass of the 3–4 October merged surfaces, opened on a corpus
+measurement rather than a suspicion: `check:census-integrity` returns the same `C` at `f71cfb85f` as
+it did at `626b46b7e`, 108 commits and seventeen pull requests earlier. The wave's PR for this census
+was #584 — *"interactionPermissions: a rejected read is unread, never a synthetic 42P01"*. Scope: the
+rows whose SUBJECT #584 touched, plus all fifteen non-C rows re-read against their own stated
+blockers. Nothing else is re-read.
+
+**`head_commit` is NOT re-declared.** 166 counted files are watched here and this pass read three.
+Documentation only: no code, no migration, no flag, no schema change, and **this section read no
+database.**
+
+### 36.1 #584's reach into this census: one prose mention, no row
+
+#584 changed one line of `artifacts/api-server/src/services/interactionPermissions.ts` and its test.
+This census cites that file exactly once, in §26's prose, and no Compass verdict rests on it:
+the sentence that names it is about the shared artifact *"which fifteen routes already call"*, cited
+to explain why Compass does not own an interaction gate of its own. **So the row-level answer is that
+there is nothing to grade**, and that is the honest reading rather than a gap: the fix is graded in
+`census-trust.md` §32, which is also where this pass records that #584 closed a THIRD entrance to a
+fail-open that census's §31 enumerates as two.
+
+### 36.2 Row moves: none, in either direction
+
+**0 up, 0 down.** No `C` row's subject was touched, so there is no down-move candidate; and the
+fifteen non-C rows do not move for the reasons below.
+
+### 36.3 The fifteen non-C rows, classified — and the "deployment-gated" reading does NOT fully hold here
+
+This matters because the re-census pass found, on `census-trips.md` and `census-telegraph.md`, that
+every remaining non-C row is gated on an apply, a flag or an owner, so no amount of good engineering
+moves a letter. **On this surface that is true of thirteen rows and false of two**, and saying so is
+the point of classifying them one at a time rather than quoting a predecessor.
+
+| class | rows | the blocker, from the row's own cell |
+|---|---|---|
+| flag seeded FALSE on every deployment | CX-03, CX-05, CX-11, CT-08, CCL-05, CPV2-03 | `compass_decision_enabled` (2800, seeded FALSE), `opportunity_engine_enabled`, `TRIP_OPERATIONAL_PROJECTIONS_FLAG`, `COMPASS_LIVE_CONSTRAINTS_ENABLED`. §12.3 classes CX-05 as OWNER: *"a flag flip closes it with no code."* |
+| owner, by instruction | CPH-02 (**N**) | the roadmap reserves the finalized system prompt for the owner and says *"do not touch"*. A lane building it would be disobeying the spec. |
+| owner sentence | CCL-03, CCL-14 (**?**) | §24.1: one sentence from the owner settles each either way. |
+| a fact about the PAST, unfixable by any future code | CCL-01, CPH-EVAL | CCL-01: Phase 1 was never put through the programme's own gate, and Phases 3–15 were built over it. CPH-EVAL: the per-phase history cannot be produced. **Nothing that can be written now changes what was done then**, which is a fifth class the other censuses in this wave do not have. |
+| external measurement or vendor | CPH-01, CPH-08 | CPH-01 needs a real-model end-to-end run that passes. CPH-08's three failing sources need a live places provider, a live events provider and a routing provider — the roadmap's own *"now, live Foursquare later"* names the first. |
+| **code-actionable, no owner decision and no apply required** | **CT-02, CT-09** | 36.4 |
+
+### 36.4 The two rows a lane could move, and exactly what would move them
+
+**CT-02 — typed Trip projections.** The row asks that Compass consume Trips through typed
+projections. Its cell records that a corpus grep for raw trip reads across the Compass tree *"is now
+**eleven**"* modules, having been eight when the row was written, and then says: *"The verdict holds
+and the number in its evidence does not."* **Every one of the eleven is a read this repository can
+route through a projection without a flag, a migration or a decision.** The number going up while the
+verdict stayed still is the shape of a row that nobody is working on, not a row that nobody can work
+on.
+
+**CT-09 — the governed proposal.** Two reasons, and only one of them is a gate. The cell establishes
+that `affectedObjects` exists in the tree but *"belong[s] to §9.3's decision object, **not** to the
+proposal `create_proposal` creates, which still carries none"* — that is a field to carry, which is
+code. It then *"gains a second reason the row did not have"*: `create_proposal` refuses outright when
+`trip_kernel_enabled` is false. **So CT-09 needs a code change AND a flag**, and recording it in the
+flag class alone — which a classification pass that trusted the second sentence would do — hides the
+half that is available today.
+
+**Neither is a defect found by this pass**; both are stated in the rows' own cells, and neither row
+moves. What this section adds is the classification: **the blanket "deployment-gated, not
+code-actionable" finding is a per-surface measurement and not a corpus law**, and on Compass it is
+13 of 15 rather than 15 of 15.
+
+### 36.5 Headline, restated from the rows
+
+Unchanged, and recounted rather than carried forward:
+**141 requirements · 126 BUILT-AND-CORRECT · 12 BUILT-BUT-WRONG · 1 NOT-BUILT · 2 CANNOT-VERIFY.**
+126 + 12 + 1 + 2 = 141. CONSTRUCTED 97.9 % (138 / 141) · CORRECT 89.4 % (126 / 141).
+
+This is §27's figure, which is the last headline this document states and the one
+`check:census-integrity` reads; §29–§35 each moved nothing and each said so in its own title. **§26.17's
+114 / 24 / 1 / 2 is superseded** and is left verbatim as the measurement §26 took, like every
+superseded figure in this file.
+
+### 36.6 What would turn this red
+
+- Any later classification of this census's non-C rows that puts CT-02 or CT-09 wholly in a flag,
+  owner or vendor class: 36.4 is the measurement, and the error would be in the conservative
+  direction, which is the one nobody audits.
+- `compass_decision_enabled` or `opportunity_engine_enabled` flipped in production: six rows stop
+  being activations and have to be re-read as shipped surfaces the same day, with CX-03 and CX-05 the
+  first two.
+- A Compass module acquiring a twelfth raw trip read: CT-02's number is wrong again, and the row's
+  own evidence has now been wrong in the same direction twice.
+- A `getRestrictionState` or `resolveInteractionPermissions` call appearing under the Compass tree:
+  this census would acquire a verdict that rests on `census-trust.md`'s subject, and §32.2's third
+  entrance would become a Compass finding as well as a Trust one.

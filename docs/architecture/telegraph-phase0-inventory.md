@@ -184,7 +184,7 @@ fixed enumeration of `subtype` is complete. They are declared in
 - `artifacts/api-server/src/services/telegraphReportEvidence.ts` — `` msg_type: (msg as any).msg_type ?? null | subtype: (msg as any).subtype ?? null | subtype: m.subtype ?? null `` (parser / passthrough, writes no message)
 - `artifacts/api-server/src/lib/liveReferenceMessages.ts` — `` msg_type: LIVE_REFERENCE_MSG_TYPE | subtype: LIVE_REFERENCE_MSG_SUBTYPE ``
 - `artifacts/api-server/src/lib/calls/callStoreAdapter.ts` — `` subtype: `call_${session.status}` ``
-- `artifacts/api-server/src/routes/messaging.ts` — `` subtype: req.body?.subtype (any string the client sends) ``
+- `artifacts/api-server/src/routes/messaging.ts` — `` msg_type: msgType | subtype (both from resolveClientDiscriminator, a closed list) ``
 - `artifacts/api-server/src/routes/circle.ts` — `` subtype: cardSubtype ``
 - `artifacts/api-server/src/routes/highlights.ts` — `` subtype: id ``
 - `artifacts/api-server/src/routes/rentABuddy.ts` — `` subtype: `booking_status_${newStatus}` ``
