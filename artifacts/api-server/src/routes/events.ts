@@ -815,7 +815,7 @@ const CreateEventSchema = z.object({
   chatEnabled:     z.boolean().optional(),
   waitlistEnabled: z.boolean().optional(),
   priceType:       z.enum(["free", "external"]).optional(),
-  priceUrl:        z.string().url().optional().nullable(),
+  priceUrl:        z.string().url().refine(isHttpsUrl, "Ticket URL must be an https link").optional().nullable(),
   rsvpOptions:     z.array(z.enum(["going", "maybe", "interested", "cant_go"])).optional(),
   category:           z.string().max(60).optional(),
   city:               z.string().max(100).optional(),
@@ -2603,7 +2603,7 @@ router.patch("/events/:id", async (req, res) => {
   if (b.waitlistEnabled !== undefined) patch.waitlist_enabled = b.waitlistEnabled;
   if (b.attendeeCommentsEnabled !== undefined) patch.attendee_comments_enabled = b.attendeeCommentsEnabled;
   if (b.priceType       !== undefined) patch.price_type       = b.priceType;
-  if (b.priceUrl        !== undefined) patch.price_url        = b.priceUrl;
+  if (b.priceUrl        !== undefined) patch.price_url        = b.priceUrl; else if (b.priceType === "free") patch.price_url = null; // REV-020: free carries no link
   if (b.category        !== undefined) patch.category         = b.category;
   if (b.city               !== undefined) patch.city                = b.city;
   if (b.country            !== undefined) patch.country             = b.country;
@@ -4235,7 +4235,7 @@ function checkProhibitedContent(title: string, description?: string | null): str
 function checkTicketUrl(url?: string | null): string | null {
   if (!url) return null;
   try {
-    const parsed = new URL(url);
+    const parsed = new URL(url); if (parsed.protocol !== "https:") return "Ticket URL must be an https link";
     const host = parsed.hostname.replace(/^www\./, "");
     if (!ALLOWED_TICKET_HOSTS.some((h) => host === h || host.endsWith(`.${h}`))) {
       return `Ticket URL host is not on the allowlist (${ALLOWED_TICKET_HOSTS.join(", ")})`;
@@ -7073,35 +7073,59 @@ function safetySummaryFailedSources(req: any, eventId: string, reads: Record<str
  *
  * `PATCH /events/:id` wrote `price_url` raw, so the ticket link of an event
  * that had passed the check at publish could afterwards be repointed at any
- * host. Two cases are refused, and the caller invokes this BEFORE its state
- * write so that a refused request changes nothing:
+ * host. The caller invokes this BEFORE its state write, so that a refused
+ * request changes nothing. Two things are refused:
  *
- *   1. the body carries a URL: it must be allowlisted, whatever the state;
- *   2. the body publishes a draft (draft -> open) without carrying one: the
- *      STORED link is what goes live, so it is held to the rule
- *      POST /events/:id/publish applies (`ticket_url ?? price_url`).
+ *   1. A CHANGE of the link to a value checkTicketUrl refuses (a host off the
+ *      allowlist, or any scheme but https), whatever the event's state.
+ *      A value equal to the stored one is not a change: the composer sends the
+ *      stored link back with every edit, and an event whose link was stored
+ *      before this rule existed must still be editable. That link is not
+ *      rewritten, and the rule below keeps it from being published.
+ *   2. PUBLISHING a draft (draft -> open) whose link, as it will stand once
+ *      this request is applied, is refused by checkTicketUrl — the rule
+ *      POST /events/:id/publish applies (`ticket_url ?? price_url`). Publish
+ *      must not expose a link the allowlist would not have admitted, so the
+ *      host is told what to do: remove the link or replace it.
  *
- * `priceUrl: null` clears the link and is always allowed (checkTicketUrl
- * answers null for an empty value). An edit that neither names the link nor
- * publishes is not blocked by a link stored before this rule existed.
+ * What the link WILL be: `priceUrl: null` clears it; `priceType: "free"` with
+ * no `priceUrl` clears it too (a free event carries no link — the PATCH writes
+ * `price_url = null` for that case); otherwise the body's value, or the stored
+ * one. Clearing is always allowed.
  *
- * Same envelope as create: 400 `invalid_payload` with checkTicketUrl's message.
+ * Same envelope as create: 400 `invalid_payload`, and every message begins
+ * "Ticket URL" — the composer recognises a link refusal by that and shows it at
+ * the link field (travel-buddy-standalone/src/lib/ticketLink.ts).
  * Returns true when it has answered the request. Appended here, and called
  * from one line, so that no line this file is cited at moves.
  */
 function refuseTicketUrlOnUpdate(
   res: Parameters<typeof sendError>[0],
-  body: { priceUrl?: string | null | undefined; state?: string | undefined },
+  body: { priceUrl?: string | null | undefined; priceType?: string | null | undefined; state?: string | undefined },
   current: unknown,
 ): boolean {
   const stored = current as { state?: string; ticket_url?: string | null; price_url?: string | null };
+  const storedUrl = stored.price_url ?? null;
+  const clears = body.priceUrl === null || (body.priceUrl === undefined && body.priceType === "free");
+  const nextUrl = clears ? null : body.priceUrl ?? storedUrl;
+
+  if (!clears && body.priceUrl !== undefined && body.priceUrl !== storedUrl) {
+    const changeErr = checkTicketUrl(body.priceUrl);
+    if (changeErr) { sendError(res, "invalid_payload", changeErr); return true; }
+  }
+
   const publishesDraft = stored.state === "draft" && body.state === "open";
-  const ticketErr = body.priceUrl !== undefined
-    ? checkTicketUrl(body.priceUrl)
-    : publishesDraft
-      ? checkTicketUrl(stored.ticket_url ?? stored.price_url)
-      : null;
-  if (!ticketErr) return false;
-  sendError(res, "invalid_payload", ticketErr);
-  return true;
+  if (publishesDraft) {
+    const publishErr = checkTicketUrl(stored.ticket_url ?? nextUrl);
+    if (publishErr) {
+      sendError(res, "invalid_payload", `${publishErr}. Remove the ticket link or replace it with an allowed one, then publish.`);
+      return true;
+    }
+  }
+  return false;
+}
+
+/** The only scheme a ticket link may carry. `javascript:`, `intent:`, `http:` and the rest are not links to a ticket seller. */
+function isHttpsUrl(url: string): boolean {
+  try { return new URL(url).protocol === "https:"; } catch { return false; }
 }
