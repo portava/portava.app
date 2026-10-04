@@ -623,12 +623,12 @@ router.get("/trips/:tripId/invitable-users", async (req, res) => {
   const membership = await requireTripMember(sc, tripId, user.id);
   if (!membership) { sendError(res, "forbidden", "Not a trip member"); return; }
 
-  const [{ data: memberRows }, { data: friendsAsA }, { data: friendsAsB }, blockedSet] = await Promise.all([
-    sc.from("trip_members").select("user_id").eq("trip_id", tripId).in("role", ["owner", "member"]),
-    sc.from("user_friendships").select("user_b").eq("user_a", user.id),
-    sc.from("user_friendships").select("user_a").eq("user_b", user.id),
-    readBlockExclusions(sc, user.id),
-  ]);
+  const [{ data: memberRows, error: memberRowsErr }, { data: friendsAsA, error: friendsAErr }, { data: friendsAsB, error: friendsBErr }, blockedSet] = await Promise.all([
+    sc.from("trip_members").select("user_id, status").eq("trip_id", tripId).in("role", ["owner", "co_host", "member", "viewer"]), sc.from("user_friendships").select("user_b").eq("user_a", user.id),
+    sc.from("user_friendships").select("user_a").eq("user_b", user.id), readBlockExclusions(sc, user.id)]);
+  // §79: an unread crew list offered the trip's own crew as invitees and an unread friend list said "nobody to invite" — refuse.
+  const rosterErr = memberRowsErr ?? friendsAErr ?? friendsBErr;
+  if (rosterErr) { req.log.error({ err: rosterErr }, "trips/invitable-users: roster unreadable"); sendError(res, "degraded_unavailable", "We could not load who you can invite right now. Please try again shortly."); return; }
   //
   // FAIL-CLOSED, shape 3 (lib/exclusionSet.ts): both halves of this response —
   // groupMembers and otherFollowers — are rosters of people, and the block set
@@ -645,7 +645,7 @@ router.get("/trips/:tripId/invitable-users", async (req, res) => {
     return;
   }
 
-  const groupMemberIds = (memberRows ?? [])
+  const groupMemberIds = (memberRows ?? []).filter((r: any) => r.status == null || r.status === "accepted") // accepted crew, requireTripMember's rule (§79)
     .map((r: any) => r.user_id as string)
     .filter((id) => id !== user.id && !isExcluded(blockedSet, id));
 
@@ -655,10 +655,10 @@ router.get("/trips/:tripId/invitable-users", async (req, res) => {
     ...(friendsAsB ?? []).map((r: any) => r.user_a as string),
   ].filter((id) => id !== user.id && !groupMemberSet.has(id) && !isExcluded(blockedSet, id));
 
-  const allIds = [...groupMemberIds, ...otherFollowerIds];
-  const profileMap: Record<string, any> = {};
+  const allIds = [...groupMemberIds, ...otherFollowerIds]; const profileMap: Record<string, any> = {};
   if (allIds.length > 0) {
-    const { data: profiles } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", allIds);
+    const { data: profiles, error: profilesErr } = await sc.from("profiles").select("id, handle, name, avatar_url").in("id", allIds); // NOT enrichment: toUser drops ids without one (§79)
+    if (profilesErr) { req.log.error({ err: profilesErr }, "trips/invitable-users: profiles unreadable"); sendError(res, "degraded_unavailable", "We could not load who you can invite right now. Please try again shortly."); return; }
     const allowedNames = await nameVisibilitySet(sc, allIds);
     for (const p of profiles ?? []) profileMap[(p as any).id] = sanitizeIdentity(p as any, allowedNames, user.id);
   }
@@ -715,15 +715,15 @@ router.get("/me/trip-invites/pending", async (req, res) => {
   const tripMap: Record<string, any> = {};
   for (const t of trips ?? []) tripMap[(t as any).id] = t;
 
-  // Count accepted members per trip (for invite preview)
-  const { data: memberCountData } = await sc
+  // Count accepted members per trip (invite preview): any accepted role, status still on the trip — co-hosts were not counted, members who left were (§79).
+  const { data: memberCountData, error: memberCountErr } = await sc
     .from("trip_members")
-    .select("trip_id")
-    .in("trip_id", tripIds)
-    .in("role", ["owner", "member"]);
+    .select("trip_id, status").in("trip_id", tripIds)
+    .in("role", ["owner", "co_host", "member", "viewer"]);
 
   const memberCountMap: Record<string, number> = {};
-  for (const mr of memberCountData ?? []) {
+  if (memberCountErr) req.log.warn({ err: memberCountErr }, "pending invites: member counts unreadable — memberCount null");
+  for (const mr of (memberCountErr ? [] : (memberCountData ?? []) as any[]).filter((r) => r.status == null || r.status === "accepted")) {
     const tid = (mr as any).trip_id as string;
     memberCountMap[tid] = (memberCountMap[tid] ?? 0) + 1;
   }
@@ -1305,9 +1305,9 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
   const { tripId } = req.params;
   if (!/^[0-9a-f-]{36}$/i.test(tripId)) { res.status(400).json({ error: "invalid_payload", message: "Invalid trip id" }); return; }
 
-  const { data: membership } = await client
-    .from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", user.id).maybeSingle();
-
+  // `error` bound (§79): an unread row was "No invitation found", a 404 the app does not retry. Unreadable is 503.
+  const { data: membership, error: membershipErr } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", user.id).maybeSingle();
+  if (membershipErr) { req.log.error({ err: membershipErr }, "accept invite: invitation unreadable"); sendError(res, "degraded_unavailable", "We could not read your invitation right now. Please try again shortly."); return; }
   if (!membership) { res.status(404).json({ error: "not_found", message: "No invitation found for this trip" }); return; }
   if ((membership as any).role !== "invited") { res.status(400).json({ error: "invalid_payload", message: `Already a ${(membership as any).role}` }); return; }
 
@@ -1324,12 +1324,8 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
   // IS joining a private plan; a public trip is not one, so the restriction does
   // not touch it.
   //
-  // The degraded branch is deliberately absent here, and that is not an
-  // oversight: getRestrictionState fails OPEN for this type on purpose
-  // (TrustRestrictionService:207-214, "Low-risk actions (private_plan_access,
-  // location_plan_join) stay open"), so canJoinPrivatePlans is `true` on an
-  // unreadable read and this gate cannot fire on a degraded one. The hosting
-  // gate above needs its degraded branch because hosting fails CLOSED.
+  // census-trust §31: a DEGRADED read refuses this type too (it used to stay OPEN
+  // as "low-risk"), so it is answered retryably here, never as a restriction.
   const { data: tripVis, error: tripVisErr } = await client
     .from("trips").select("visibility").eq("id", tripId).maybeSingle();
   if (tripVisErr) {
@@ -1339,6 +1335,10 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
   const isPrivatePlan = ["private", "invite"].includes(String((tripVis as any)?.visibility ?? "private"));
   if (isPrivatePlan) {
     const inviteTrust = await getRestrictionState(client, user.id);
+    if (inviteTrust.degradedReason === "fail_closed") {
+      sendError(res, "degraded_unavailable", "We could not verify your permissions right now. Please try again shortly.");
+      return;
+    }
     if (!inviteTrust.canJoinPrivatePlans) {
       res.status(403).json({
         error: "trust_restriction",
@@ -1419,9 +1419,9 @@ router.post("/trips/:tripId/decline-invite", async (req, res) => {
   const { tripId } = req.params;
   if (!/^[0-9a-f-]{36}$/i.test(tripId)) { res.status(400).json({ error: "invalid_payload", message: "Invalid trip id" }); return; }
 
-  const { data: membership } = await client
-    .from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", user.id).maybeSingle();
-
+  // `error` bound for accept-invite's reason (§79).
+  const { data: membership, error: membershipErr } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", user.id).maybeSingle();
+  if (membershipErr) { req.log.error({ err: membershipErr }, "decline invite: invitation unreadable"); sendError(res, "degraded_unavailable", "We could not read your invitation right now. Please try again shortly."); return; }
   if (!membership) { res.status(404).json({ error: "not_found", message: "No invitation found for this trip" }); return; }
   if ((membership as any).role !== "invited") { res.status(400).json({ error: "invalid_payload", message: "Cannot decline — you are already a member" }); return; }
 
@@ -1522,10 +1522,10 @@ router.get("/me/plan-editable-trips", async (req, res) => {
 
   const editorMap: Record<string, string[]> = {};
   if (specificIds.length > 0) {
-    const { data: editorRows } = await sc
-      .from("plan_editors")
-      .select("trip_id, user_id")
-      .in("trip_id", specificIds);
+    // An unread editor list dropped every specific_members trip from the
+    // picker without a word (census-trips §79): refuse instead.
+    const { data: editorRows, error: editorErr } = await sc.from("plan_editors").select("trip_id, user_id").in("trip_id", specificIds);
+    if (editorErr) { req.log.error({ err: editorErr }, "me/plan-editable-trips: plan_editors unreadable"); sendError(res, "degraded_unavailable", "We could not check which trips you can edit right now. Please try again shortly."); return; }
     for (const e of editorRows ?? []) {
       const eid = (e as any).trip_id as string;
       if (!editorMap[eid]) editorMap[eid] = [];

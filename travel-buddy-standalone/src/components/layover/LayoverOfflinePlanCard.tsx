@@ -34,16 +34,16 @@
  *
  * ── WHAT IS NOT HERE ─────────────────────────────────────────────────────────
  * No route (there is no routing provider), no flight or gate status (no flight
- * feed), no crew meeting point (the bundle still answers `no_crew_storage`), no
- * phrases (`no_phrase_catalogue`). Those are L152–L155 and each is a server-side
- * absence; none of them is papered over with something this card invented.
+ * feed), no phrases (`no_phrase_catalogue`). Those are L152, L153 and L155, and
+ * each is a server-side absence; none is papered over here. The crew meeting
+ * point (L154) IS here since census-layover §48 — the cached label or why not.
  */
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { MapPin, Plane } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { fmtDur } from './layoverFormat.ts';
-import { bundleFreshness } from './layoverReturnFacts.ts';
+import { bundleFreshness, describeCrewMeetingPointCapability } from './layoverReturnFacts.ts';
 import type { CachedLayoverPlan } from '../../lib/layoverPlanCache.ts';
 import type { LocalReplanDecision, LocalReplanRefusal } from './layoverLocalReplan.ts';
 
@@ -144,6 +144,12 @@ export function LayoverOfflinePlanCard({ plan, replan, nowMs }: Props) {
           </Text>
         </View>
       )}
+
+      {/* §16 L154 — where to meet the crew, or why that is not saved. The same
+          words the online card uses; a failed crew read is never "no crew". */}
+      <Text style={styles.stopText} testID="layover-cached-plan-crew-point">
+        {describeCrewMeetingPointCapability(plan.crewMeetingPoint).sentence}
+      </Text>
 
       {/* §16 L156 — "local conservative fallback only if deterministic inputs
           suffice; otherwise show unavailable/stale". Both halves, and the

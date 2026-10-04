@@ -21,13 +21,13 @@ import { Dimensions } from 'react-native';
 import { useStamp } from './useStamp.ts';
 import { useStampAnimation } from './useStampAnimation.ts';
 import { useStampAnimationContext } from '../context/StampAnimationContext.tsx';
-import type { MediaFeedItem } from '../types/media.ts';
+import type { MediaFeedItem } from '../types/media.ts'; import { stepCount } from '../lib/unreadCount.ts';
 
 export interface UseWatchStampReturn {
   /** Ref to attach to the rail's stamp-icon wrapper View (used for measure()). */
   stampGroupRef: React.RefObject<View | null>;
   visualIsStamped: boolean;
-  visualCount: number;
+  visualCount: number | null; // null = unread (census-media §47), drawn as the mark
   stampLoading: boolean;
   isAnimating: boolean;
   buttonStyle: unknown;
@@ -42,7 +42,7 @@ export function useWatchStamp(item: MediaFeedItem): UseWatchStampReturn {
   const { count: apiCount, isStamped: apiIsStamped, isLoading: stampLoading, toggle: toggleStamp } = useStamp({
     entityType: 'media',
     entityId: item.id,
-    initialCount: item.stampCount ?? item.likeCount ?? 0,
+    initialCount: item.stampCount ?? item.likeCount, // null stays null: an unread count is not 0
     initialIsStamped: item.isStampedByViewer ?? item.likedByMe ?? false,
   });
 
@@ -52,7 +52,7 @@ export function useWatchStamp(item: MediaFeedItem): UseWatchStampReturn {
   const [visualIsStamped, setVisualIsStamped] = useState(
     item.isStampedByViewer ?? item.likedByMe ?? false,
   );
-  const [visualCount, setVisualCount] = useState(item.stampCount ?? item.likeCount ?? 0);
+  const [visualCount, setVisualCount] = useState<number | null>(item.stampCount ?? item.likeCount);
 
   const apiStateRef = useRef({ isStamped: apiIsStamped, count: apiCount });
   /** Resolved value of the toggle() call currently/most-recently in flight — see fireStampAt. */
@@ -113,7 +113,7 @@ export function useWatchStamp(item: MediaFeedItem): UseWatchStampReturn {
       // whichever happens later — using the toggle promise's own resolved
       // value directly, never a possibly-stale mirror ref.
       let animDone = false;
-      let toggleResult: { isStamped: boolean; count: number } | null = null;
+      let toggleResult: { isStamped: boolean; count: number | null } | null = null;
       const finalizeIfReady = () => {
         if (!animDone || !toggleResult) return;
         setVisualIsStamped(toggleResult.isStamped);
@@ -138,7 +138,7 @@ export function useWatchStamp(item: MediaFeedItem): UseWatchStampReturn {
         theme: 'Default',
         onImpact: () => {
           setVisualIsStamped(nextStamped);
-          setVisualCount((prev) => (nextStamped ? prev + 1 : Math.max(0, prev - 1)));
+          setVisualCount((prev) => stepCount(prev, nextStamped));
         },
         onComplete: () => {
           animatingRef.current = false;

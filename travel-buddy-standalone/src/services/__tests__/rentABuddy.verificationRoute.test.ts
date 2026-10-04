@@ -47,7 +47,7 @@
  * Run: node --import tsx --test src/services/__tests__/rentABuddy.verificationRoute.test.ts
  */
 import { describe, it } from 'node:test';
-import assert from 'node:assert/strict';
+import assert from 'node:assert/strict'; import { readFileSync } from 'node:fs'; import { dirname, resolve } from 'node:path'; import { fileURLToPath } from 'node:url'; // census-trust §31: one line, so cited lines keep their numbers
 
 import {
   bookingErrorCopy,
@@ -157,5 +157,75 @@ describe('classifyBookingRefusal — the three-way decision, out of the screen',
       assert.equal(r.kind, 'failure', String(code));
       assert.equal(r.body, GENERIC, String(code));
     }
+  });
+});
+
+/** travel-buddy-standalone/, from src/services/__tests__/. */
+const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
+
+// ── census-trust §31 — TV-5b: the AGE refusals name themselves ───────────────
+//
+// TV-5b's remaining gap (§19.5): "it reaches C only when a client surface
+// renders the verified_minor refusal". The server refuses a booking from a
+// traveller whose identity check says they are under 18 with 403
+// `age_requirement`, an unreadable check with 503
+// `age_verification_unavailable`, and a missing date of birth with 403
+// `age_verification_required` (routes/rentABuddy.ts, refuseKnownMinorTraveler
+// and the launch-control gate). None of the three was in any map, so every
+// one fell through to GENERIC — "Something went wrong on our side … Please try
+// again" — which for a verified minor is false three times over, and invites
+// exactly the retry the age gate exists to stop.
+//
+// A FOURTH class, `ineligible`: a requirement this account does not meet. It is
+// not a closed feature (nothing to wait for), not actionable (no screen clears
+// an age result), and not a failure (retrying changes nothing). The outage is
+// the opposite: `age_verification_unavailable` IS a failure, and retrying is
+// the honest advice — but it says what failed instead of "on our side". A
+// missing date of birth is the third case again: ACTIONABLE, because the person
+// can add one, and the action names the screen where it is added.
+describe('census-trust §31 — TV-5b: age refusals are named, never "something went wrong"', () => {
+  it('V10 — `age_requirement` (a verified minor, or under the location minimum) is INELIGIBLE with age copy', () => {
+    const r = classifyBookingRefusal('age_requirement');
+    assert.equal(r.kind, 'ineligible', `classified as ${r.kind}: an age refusal is not a failure to retry`);
+    assert.notEqual(r.body, GENERIC);
+    assert.match(r.body, /age/i);
+    assert.ok(!r.body.includes('_'), `raw code leaked: ${r.body}`);
+    assert.equal(bookingRefusalAction('age_requirement'), null, 'no screen clears an age result');
+    assert.equal(isBookingUnavailable('age_requirement'), false, 'the feature is not closed');
+  });
+
+  it('V11 — the age copy does not disclose the identity-check result or invite a retry', () => {
+    const body = classifyBookingRefusal('age_requirement').body.toLowerCase();
+    assert.ok(!/try again|retry/.test(body), `an age refusal must not invite a retry: ${body}`);
+    assert.ok(!/document|passport|birthday you|born/.test(body), `must not disclose what a document said: ${body}`);
+  });
+
+  it('V12 — `age_verification_unavailable` is a FAILURE whose copy says the AGE CHECK could not run', () => {
+    const r = classifyBookingRefusal('age_verification_unavailable');
+    assert.equal(r.kind, 'failure', 'an unknown answer is an outage, and retrying is honest');
+    assert.notEqual(r.body, GENERIC);
+    assert.match(r.body, /age/i);
+    assert.match(r.body, /try again/i);
+  });
+
+  it('V13 — `age_verification_required` (no date of birth found) is ACTIONABLE, to the screen that sets one', () => {
+    const r = classifyBookingRefusal('age_verification_required');
+    assert.equal(r.kind, 'actionable', `classified as ${r.kind}: the person can add a date of birth`);
+    assert.match(r.body, /date of birth/i);
+    assert.notEqual(r.body, GENERIC);
+    const action = bookingRefusalAction('age_verification_required');
+    assert.ok(action);
+    assert.ok(
+      PORTAVA_ROUTES.some((route) => route.path === action.route.replace(/^\//, '')),
+      `\`${action.route}\` is in no route in portavaRoutes.ts`,
+    );
+    const screen = readFileSync(resolve(APP_ROOT, `app${action.route}.tsx`), 'utf8');
+    assert.match(screen, /dateOfBirth/, `${action.route} is not the screen that edits the date of birth`);
+  });
+
+  it('V14 CONTROL — the three earlier classes are untouched by the fourth', () => {
+    assert.equal(classifyBookingRefusal('verification_required').kind, 'actionable');
+    assert.equal(classifyBookingRefusal('verification_unavailable').kind, 'unavailable');
+    assert.equal(classifyBookingRefusal('db_error', 'x').kind, 'failure');
   });
 });

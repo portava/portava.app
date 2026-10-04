@@ -15,7 +15,7 @@
 # THE PREDICATE
 # -------------
 #   This run holds the slot iff it is the OLDEST of this workflow's
-#   in_progress/queued runs THAT HAVE NOT FORFEITED THEIR CLAIM.
+#   in_progress/queued runs THAT HAVE NOT FORFEITED OR RELEASED THEIR CLAIM.
 #
 # ── THE FORFEIT CLAUSE, ADDED 2026-09-21, AND THE TRAP IT CLOSES ─────────────
 #
@@ -62,14 +62,28 @@
 # rather than skipped — a listing we cannot parse is not a listing that proves
 # the database is free.
 #
-# `claim` is optional and is either `held` or `forfeited`. OMITTED MEANS HELD:
+# ── THE RELEASE CLAUSE, ADDED 2026-10-03 ─────────────────────────────────────
+#
+# A run whose database jobs have ALL concluded is done with the database even
+# though it is still queued/in_progress — its verdict job, which touches no
+# database, can sit in GitHub's runner queue for many minutes. Measured on run
+# 37128138124: every DB job concluded by 14:42:46Z, the verdict queued from
+# then, and the run kept the slot while other runs' verify steps timed out
+# (exit 75, certified nothing). Such a run is annotated `released`. Like a
+# forfeited run it is ACTIVE but not a CLAIMANT; it is counted separately so the
+# log says which of the two it was. The annotator (live-db-acquire-slot.sh)
+# decides `released` and fails closed to `held`; it never marks the ASKING run
+# released, and if a listing ever did, that run is not a claimant, so it can
+# never be the holder — it is refused, not granted.
+#
+# `claim` is optional and is `held`, `forfeited` or `released`. OMITTED MEANS HELD:
 # a caller that cannot determine a run's claim must not thereby cause it to be
 # ignored, and the two-field form stays valid so the recorded 2026-09-05
 # fixture still exercises the same code.
 #
 # INPUT (env): GITHUB_RUN_ID — the run asking.
 #
-# OUTPUT (stdout): `holder=<run_id>` plus `active=<n>`.
+# OUTPUT (stdout): `holder=<run_id>`, `active=<n>`, `forfeited=<n>`, `released=<n>`.
 #
 # EXIT CODES
 #   0  this run holds the slot
@@ -96,7 +110,7 @@ VALID=""
 MALFORMED=0
 while IFS= read -r line; do
   [ -z "${line//[[:space:]]/}" ] && continue
-  if printf '%s\n' "$line" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z?[^ ]*[[:space:]]+[0-9]+([[:space:]]+(held|forfeited))?$'; then
+  if printf '%s\n' "$line" | grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z?[^ ]*[[:space:]]+[0-9]+([[:space:]]+(held|forfeited|released))?$'; then
     VALID="${VALID}${line}"$'\n'
   else
     MALFORMED=1
@@ -117,11 +131,13 @@ fi
 
 ACTIVE="$(printf '%s\n' "$VALID" | wc -l | tr -d ' ')"
 
-# Runs that forfeited are still ACTIVE (they are in progress, and they are still
-# listed) but they are not CLAIMANTS. Reported separately so a waiting run's log
-# says how many of the runs ahead of it actually hold anything.
-CLAIMANTS="$(printf '%s\n' "$VALID" | awk '$3 != "forfeited"')"
+# Runs that forfeited or released are still ACTIVE (they are in progress, and
+# they are still listed) but they are not CLAIMANTS. Reported separately so a
+# waiting run's log says how many of the runs ahead of it actually hold anything
+# — and, of those that do not, which lost the slot and which finished with it.
+CLAIMANTS="$(printf '%s\n' "$VALID" | awk '$3 != "forfeited" && $3 != "released"')"
 FORFEITED="$(printf '%s\n' "$VALID" | awk '$3 == "forfeited"' | wc -l | tr -d ' ')"
+RELEASED="$(printf '%s\n' "$VALID" | awk '$3 == "released"' | wc -l | tr -d ' ')"
 
 if [ -z "$CLAIMANTS" ]; then
   # Every active run has forfeited, INCLUDING possibly this one. That is not
@@ -131,7 +147,8 @@ if [ -z "$CLAIMANTS" ]; then
   echo "holder="
   echo "active=${ACTIVE}"
   echo "forfeited=${FORFEITED}"
-  echo "live-db-slot-decide: every active run has forfeited its claim" >&2
+  echo "released=${RELEASED}"
+  echo "live-db-slot-decide: every active run has forfeited or released its claim" >&2
   exit 1
 fi
 
@@ -140,6 +157,7 @@ OLDEST="$(printf '%s\n' "$CLAIMANTS" | sort -k1,1 -k2,2n | head -1 | awk '{print
 echo "holder=${OLDEST}"
 echo "active=${ACTIVE}"
 echo "forfeited=${FORFEITED}"
+echo "released=${RELEASED}"
 
 # The asking run must appear in its own listing. If it does not, the listing is
 # stale or filtered and the "oldest" it names is not authoritative — the same

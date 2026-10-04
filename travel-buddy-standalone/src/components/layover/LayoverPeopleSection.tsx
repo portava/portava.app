@@ -8,7 +8,7 @@ import { Avatar } from '../ui/Avatar.tsx';
 import { CachedImage } from '../CachedImage.tsx';
 import { Users, Star, BadgeCheck } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import type { LayoverBuddy, LayoverPresenceAnswer } from '../../services/layover.ts';
+import type { LayoverBuddiesAnswer, LayoverBuddy, LayoverBuddySafetyGate, LayoverPresenceAnswer } from '../../services/layover.ts';
 import { primaryIdentityText } from '../../lib/displayIdentity.ts';
 
 /**
@@ -38,7 +38,7 @@ interface Props {
   shareEnabled: boolean;
   shareBusy: boolean;
   presence: LayoverPresenceAnswer;
-  buddies: LayoverBuddy[];
+  buddies: LayoverBuddiesAnswer | null; // the WHOLE /buddies answer, null before the first read (census §48)
   canEdit: boolean;
   onToggleShare: (enabled: boolean) => void;
   onOpenBuddy: (buddy: LayoverBuddy) => void;
@@ -142,20 +142,20 @@ export function LayoverPeopleSection({
         </View>
       )}
 
-      {/* Rent-a-Buddy */}
-      {buddies.length > 0 && (
+      {/* Rent-a-Buddy: the list, or the server's reason there is none (§48). */}<BuddiesNotice answer={buddies} />
+      {buddies?.ok && buddies.buddies.length > 0 && (
         <>
           <Text style={styles.buddyHead}>Local buddies for a few hours</Text>
           <Text style={styles.buddySub}>Booked through the regular Rent-a-Buddy flow</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.buddyRow}>
-            {buddies.map((b) => (
+            {buddies.buddies.map((b) => (
               <Pressable key={b.id} style={styles.buddyCard} onPress={() => onOpenBuddy(b)}>
                 {b.coverPhotoUrl
                   ? <CachedImage source={{ uri: b.coverPhotoUrl }} style={styles.buddyPhoto} />
                   : <View style={[styles.buddyPhoto, styles.buddyPhotoFallback]}>
                       <Text style={styles.buddyPhotoInitials}>{initials(b.displayName, null)}</Text>
                     </View>}
-                {b.availableDuringLayover && (
+                {b.availableDuringLayover === true && (
                   <View style={styles.availTag}><Text style={styles.availTagText}>free during your layover</Text></View>
                 )}
                 <View style={styles.buddyBody}>
@@ -176,9 +176,99 @@ export function LayoverPeopleSection({
               </Pressable>
             ))}
           </ScrollView>
+          <BuddiesCaptions answer={buddies} />
         </>
       )}
     </View>
+  );
+}
+
+/**
+ * Why the certified gate withheld the list, from the gate's OWN fields — the
+ * same verdict and return state the countdown on this screen shows. Nothing
+ * here re-derives whether leaving is possible.
+ */
+function gateSentence(gate: LayoverBuddySafetyGate | null): string {
+  if (gate && gate.returnState && gate.returnState !== 'NORMAL') {
+    return "It's time to head back to the airport, so local buddies aren't offered right now.";
+  }
+  if (gate?.verdict === 'no') {
+    return "There's not enough time to leave the airport and get back, so local buddies aren't offered.";
+  }
+  if (gate?.verdict === 'stay_airside') {
+    return "You're staying airside this time, so local buddies aren't offered.";
+  }
+  return "Local buddies aren't offered for this layover right now.";
+}
+
+/**
+ * census-layover L273 / L254 / L294 — every buddy answer that is NOT a list.
+ *
+ * The card used to render the Rent-a-Buddy row only when `buddies.length > 0`
+ * and the dashboard filled `buddies` with `[]` for a failed read, so four
+ * different answers left the screen as no section at all:
+ *
+ *   failed read (503 / offline)   say so, with the server's sentence
+ *   safety gate refused           say why, from the certified verdict
+ *   marketplace switched off      say so
+ *   degraded with nobody shown    say that it is not a count
+ *
+ * A MEASURED empty list renders nothing and claims nothing: the route serves
+ * the top of a bounded page, not a census of the city, so "nobody here" would
+ * be a claim it never made.
+ */
+function BuddiesNotice({ answer }: { answer: LayoverBuddiesAnswer | null }) {
+  if (!answer) return null;
+  let id: string;
+  let text: string;
+  if (!answer.ok) {
+    id = 'layover-buddies-unavailable';
+    text = answer.message;
+  } else if (answer.refusal === 'rent_buddy_not_enabled') {
+    id = 'layover-buddies-off';
+    text = "Booking a local buddy isn't switched on yet.";
+  } else if (answer.refusal) {
+    id = 'layover-buddies-gate';
+    text = gateSentence(answer.safetyGate);
+  } else if (answer.buddies.length === 0 && answer.degraded) {
+    id = 'layover-buddies-unmeasured';
+    text = answer.degradedReasons.includes('blocks_unreadable')
+      ? "We couldn't check your block list, so nobody is shown right now. This isn't a count of zero."
+      : "We couldn't check local buddies right now. This isn't a count of zero.";
+  } else {
+    return null;
+  }
+  return (
+    <>
+      <Text style={styles.buddyHead}>Local buddies for a few hours</Text>
+      <Text style={styles.presenceUnknown} testID={id}>{text}</Text>
+    </>
+  );
+}
+
+/**
+ * What qualifies a list that WAS served. A "free during your layover" badge is
+ * drawn only for a measured `true` (above); `null` is "not checked", and this
+ * says so instead of letting it read as `false` (census §23.8). A tight window
+ * served only verified, non-new profiles (`trustRequirement`, L254), and the
+ * traveller is told why the list is short rather than left to guess.
+ */
+function BuddiesCaptions({ answer }: { answer: LayoverBuddiesAnswer | null }) {
+  if (!answer?.ok) return null;
+  const availabilityUnknown = answer.buddies.some((b) => b.availableDuringLayover === null);
+  return (
+    <>
+      {answer.trustRequirement?.applied ? (
+        <Text style={styles.buddySub} testID="layover-buddies-verified-only">
+          Your window is tight, so only verified buddies are shown.
+        </Text>
+      ) : null}
+      {availabilityUnknown ? (
+        <Text style={styles.buddySub} testID="layover-buddies-availability-unknown">
+          We couldn&rsquo;t check who&rsquo;s free during your layover.
+        </Text>
+      ) : null}
+    </>
   );
 }
 

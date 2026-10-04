@@ -26,7 +26,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getRestrictionState, DegradedPermissionCheckError } from "./trust/TrustRestrictionService.js";
-import { logger as rootLogger } from "../lib/logger.js";
+import { logger as rootLogger } from "../lib/logger.js"; import { isAbsentTableError } from "../lib/absentTableError.js"; // one line: this file is cited by line
 
 const log = rootLogger.child({ service: "interactionPermissions" });
 
@@ -158,11 +158,11 @@ export interface InteractionPermissions {
  * now a real error: it throws, and the caller reports a degraded check.
  */
 function isTableMissingError(error: any): boolean {
-  if (!error) return false;
-  return (
-    error.code === "42P01" ||
-    String(error.message ?? "").toLowerCase().includes("does not exist")
-  );
+  // census-trust §31: ABSENT TABLE ONLY. The old body also matched ANY message
+  // holding "does not exist" — Postgres's wording for a dropped COLUMN (42703) —
+  // so column drift on a DENY table read as "nobody has one" and went permissive.
+  // lib/absentTableError.ts owns the narrow rule and says why.
+  return isAbsentTableError(error);
 }
 
 /**
@@ -467,7 +467,7 @@ export async function resolveInteractionPermissions(
   ])).map((r) =>
     r.status === "fulfilled"
       ? r.value
-      : { data: null, error: (r.reason && (r.reason as any).code) ? r.reason : { code: "42P01", message: String((r.reason as any)?.message ?? r.reason) } },
+      : { data: null, error: (r.reason && (r.reason as any).code) ? r.reason : { code: "REJECTED", message: String((r.reason as any)?.message ?? r.reason) } }, // never 42P01: a rejected read is unread, not an absent table
   ) as any;
 
   // Extract values — for optional Phase 2 tables, ignore table-missing errors
@@ -538,18 +538,18 @@ export async function resolveInteractionPermissions(
 
   // Cooldown: active if row exists and not expired (or no expiry = permanent)
   //
-  // DIRECTION UNCHANGED, and recorded rather than quietly kept: a cooldown row
-  // is a DENY signal (the follow cooldown is set for 90 days after a block), so
-  // `return false` on error is fail-OPEN — an unreadable
-  // `user_interaction_cooldowns` lets a previously-blocked viewer follow again.
-  // Flipping it to fail-CLOSED would block a legitimate pair's friend request
-  // and follow for the duration of an outage, which is a behaviour change for
-  // 15+ routes and belongs to whoever owns the cooldown policy, not to a
-  // read-hygiene pass. What this commit does supply is the signal that was
-  // missing entirely: the failure is logged and named in `degradedReads` above,
-  // so the fail-open is now observable instead of silent.
+  // DIRECTION CHANGED (census-trust §31): a cooldown row is a DENY signal (the
+  // follow cooldown is set for 90 days after a block), so `return false` on a
+  // read error was fail-OPEN — an unreadable `user_interaction_cooldowns` let a
+  // previously-blocked viewer follow and friend-request again. An unread DENY
+  // state now fails CLOSED in its own direction, the posture user_restrictions
+  // below already takes: the cooldown is ASSUMED in force, the failure is named
+  // in `degradedReads`, and the verdict is marked degraded so a caller can say
+  // "try again" instead of "you can't". The cost — a legitimate pair waits out
+  // the outage — is the direction a block-derived control must err in. An
+  // ABSENT table (Phase 2, 42P01) still means no cooldown exists.
   function isActiveCooldown(res: { data: { expires_at: string | null } | null; error: any } | any): boolean {
-    if ((res as any).error && !isTableMissingError((res as any).error)) return false; // skip on error — see note above
+    if ((res as any).error && !isTableMissingError((res as any).error)) return true; // unread → assumed in force (§31)
     if (!(res as any).data) return false;
     const exp = (res as any).data.expires_at as string | null;
     return !exp || new Date(exp) > new Date();

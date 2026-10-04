@@ -91,7 +91,7 @@ export interface CompassLayoverInput {
   recommendations?: Array<Record<string, unknown>>;
   recommendationsUnavailableReason?: string | null;
   stops?: LayoverToolContext["stops"];
-  stopsUnavailableReason?: string | null; /** The session owner's corridor, resolved by the route (`resolveLayoverEntry`) as the snapshot resolves it — census-discovery §65. Omitted = unresolved. */ entry?: EntryEligibility | null; /** census-discovery §81: the certified snapshot, when the route read one — its record and its usable minutes are then the answer's, and nothing is re-derived here. */ snapshot?: LayoverSnapshot | null;
+  stopsUnavailableReason?: string | null; /** The session owner's corridor, resolved by the route (`resolveLayoverEntry`) as the snapshot resolves it — census-discovery §65. Omitted = unresolved. */ entry?: EntryEligibility | null; /** census-discovery §81: the certified snapshot, when the route read one — its record and its usable minutes are then the answer's, and nothing is re-derived here. */ snapshot?: LayoverSnapshot | null; /** census-layover §48 L110: the route's block-cleared crew read, with its OUTCOME — a failed read travels as a reason, never as []. Omitted = not read. */ crew?: import("../layover/LayoverCrewVisibility.js").CompassCrewCandidates;
 }
 
 export interface CompassLayoverAnswer {
@@ -200,7 +200,7 @@ Answer (max ${maxLength} characters):`;
     recommendations: input.recommendations,
     recommendationsUnavailableReason: input.recommendationsUnavailableReason ?? null,
     stops: input.stops,
-    stopsUnavailableReason: input.stopsUnavailableReason ?? null,
+    stopsUnavailableReason: input.stopsUnavailableReason ?? null, crew: input.crew,
   };
   const toolsConsulted: LayoverToolName[] = [];
   let answer: string;
@@ -791,7 +791,7 @@ export interface LayoverToolContext {
   /** Plan stops, in order. */
   stops?: Array<{ title: string; durationMin: number; travelMin: number; insideAirport: boolean }>;
   /** Same distinction for the plan. Zero stops fit every window (census L47). */
-  stopsUnavailableReason?: string | null;
+  stopsUnavailableReason?: string | null; /** §48 L110: crew candidates as the route read them (block-cleared, no user ids); `ok: false` = the read failed. Absent = not read. */ crew?: import("../layover/LayoverCrewVisibility.js").CompassCrewCandidates;
 }
 
 export type LayoverToolName =
@@ -840,10 +840,10 @@ export type LayoverToolResult =
  * not merely disallowed, it is unexpressible. `layoverPrivacyCompassContract.test.ts`
  * sweeps every tool against a record and asserts exactly that.
  *
- * Two tools are UNAVAILABLE on this tree and say so instead of inventing an
- * answer: `getCrewCandidates` (no crew storage, census L28) and `replan` (no
- * event-driven replanner, census §11). An unavailable tool is a first-class
- * result, not an error and not an empty success.
+ * One tool is UNAVAILABLE on this tree and says so instead of inventing an
+ * answer: `replan` (no event-driven replanner, census §11); `getCrewCandidates`
+ * refuses only when its crew read failed or was not handed over (§48). An
+ * unavailable tool is a first-class result, not an error and not an empty success.
  */
 export function runLayoverTool(
   tool: LayoverToolName,
@@ -984,7 +984,7 @@ export function runLayoverTool(
       });
 
     case "getCrewCandidates":
-      return no("no_crew_storage");
+      return !ctx.crew ? no("crew_candidates_not_read") : ctx.crew.ok ? ok({ ...ctx.crew.value }) : no(ctx.crew.reason); // §48 L110 — was a false no("no_crew_storage")
 
     case "requestConstraintClarification": {
       const field = String(args.field ?? "");

@@ -134,6 +134,8 @@ export function WallScreen({
         caughtUp={feed.caughtUp}
         stale={feed.stale}
         cachedAt={feed.cachedAt}
+        error={feed.error}
+        failedLanes={feed.failedLanes}
         onEndReached={feed.loadMore}
         onRefresh={feed.refresh}
         onHide={feed.hide}

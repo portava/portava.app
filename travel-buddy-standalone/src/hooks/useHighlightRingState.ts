@@ -44,7 +44,40 @@ interface CacheEntry {
 
 const CACHE_TTL_MS = 60_000;
 const cache = new Map<string, CacheEntry>();
-const inFlight = new Set<string>();
+/**
+ * One read per user at a time, SHARED by every hook asking about that user.
+ *
+ * This used to be a `Set` of user ids, and a hook that found its user already
+ * in it simply returned — so when two cards for the same person mounted
+ * together (two posts by one friend in the feed, a profile header plus a
+ * traveler row) only the first ever got an answer. The second stayed `null`
+ * and drew no ring until it remounted. Every asker now awaits the same promise.
+ */
+const inFlight = new Map<string, Promise<HighlightRingState>>();
+
+function readRingState(userId: string): Promise<HighlightRingState> {
+  const existing = inFlight.get(userId);
+  if (existing) return existing;
+  const p = (async () => {
+    try {
+      const r = await fetchUserHighlights(userId);
+      // §28.11. The read failed. Do not answer the question, and above all do
+      // not CACHE the non-answer: a cached `hasActive:false` is
+      // indistinguishable from the truth for 60 seconds on every surface that
+      // asks about this user.
+      if (!r.ok || !r.data) return unreadableState();
+      const computed = computeState(r.data);
+      cache.set(userId, { state: computed, fetchedAt: Date.now() });
+      return computed;
+    } catch {
+      return unreadableState();
+    } finally {
+      inFlight.delete(userId);
+    }
+  })();
+  inFlight.set(userId, p);
+  return p;
+}
 
 function getCached(userId: string): HighlightRingState | null {
   const entry = cache.get(userId);
@@ -110,33 +143,20 @@ export function useHighlightRingState(userId: string | null, refreshKey = 0): Hi
       return;
     }
 
-    if (inFlight.has(userId)) return;
-
     // Wait for the persisted IDs to finish loading before the first fetch so
     // computeState uses the full set and avoids a spurious "unviewed" flash.
+    let cancelled = false;
     const run = async () => {
       await initViewedIds();
-      if (inFlight.has(userId)) return;
-      inFlight.add(userId);
-      try {
-        const r = await fetchUserHighlights(userId);
-        if (!r.ok || !r.data) {
-          // §28.11. The read failed. Do not answer the question, and above all
-          // do not CACHE the non-answer: a cached `hasActive:false` is
-          // indistinguishable from the truth for 60 seconds on every surface
-          // that asks about this user.
-          if (userIdRef.current === userId) setState(unreadableState());
-          return;
-        }
-        const computed = computeState(r.data);
-        cache.set(userId, { state: computed, fetchedAt: Date.now() });
-        if (userIdRef.current === userId) setState(computed);
-      } finally {
-        inFlight.delete(userId);
-      }
+      const next = await readRingState(userId);
+      if (cancelled || userIdRef.current !== userId) return;
+      // allViewed is recomputed per asker: the viewed set may have grown while
+      // the shared read was in flight.
+      setState(next.unreadable ? next : computeState(next.highlights));
     };
 
     run();
+    return () => { cancelled = true; };
   }, [userId, refreshKey]);
 
   return state;

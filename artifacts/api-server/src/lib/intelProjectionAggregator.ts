@@ -167,15 +167,15 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
   // written, so a low input publishes "no live intelligence" over a venue that
   // has some.
   let evidenceComplete = true;
-  const { data: obs, error: obsErr } = await sc
+  const { data: obs, error: obsErr, count: obsCount } = await sc
     .from("intel_observations")
-    .select("id, actor_id, presence_level, source_class, expires_at, group_key, observed_at, value")
+    .select("id, actor_id, presence_level, source_class, expires_at, group_key, observed_at, value", { count: "exact" })
     .eq("subject_id", claim.subject_id)
     .eq("claim_type", claim.claim_type)
     .in("moderation_state", PILOT_CLAIMABLE_MODERATION_STATES as unknown as string[]);
-  if (obsErr) {
+  if (obsErr || wasCut(obs, obsCount)) { // a read CUT at the row cap is a sample, not the cohort (wasCut)
     evidenceComplete = false;
-    logger.warn({ err: obsErr, claim: claim.id }, "intelProjectionAggregator: observation cohort read failed; claim will be withheld");
+    logger.warn({ err: obsErr, cut: !obsErr, claim: claim.id }, "intelProjectionAggregator: observation cohort read failed or was cut at the server row cap; claim will be withheld");
   }
   const freshObsAll = ((obs as any[]) ?? []).filter((o) => !o.expires_at || o.expires_at > nowIso);
 
@@ -236,11 +236,11 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
   const mediaByObs = new Map<string, Set<string>>();
   const sourceByObs = new Map<string, Set<string>>();
   if (obsIds.length > 0) {
-    const { data: evidence, error: evidenceErr } = await sc
+    const { data: evidence, error: evidenceErr, count: evidenceCount } = await sc
       .from("intel_evidence")
-      .select("observation_id, evidence_kind, media_asset_id, detail")
+      .select("observation_id, evidence_kind, media_asset_id, detail", { count: "exact" })
       .in("observation_id", obsIds);
-    if (evidenceErr) {
+    if (evidenceErr || wasCut(evidence, evidenceCount)) { // cut = the shared media past the cap goes unseen, same fail-OPEN
       // THIS ONE FAILED OPEN, not closed. With the maps empty, reporters who
       // share a media asset or a common feed stop collapsing into one cluster,
       // so distinctGroups goes UP and maxGroupShare goes DOWN — the §11
@@ -250,7 +250,7 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
       // failing to detect coordination IS presenting coordinated reporters as
       // independent.
       evidenceComplete = false;
-      logger.warn({ err: evidenceErr, claim: claim.id }, "intelProjectionAggregator: independence-evidence read failed; claim will be withheld");
+      logger.warn({ err: evidenceErr, cut: !evidenceErr, claim: claim.id }, "intelProjectionAggregator: independence-evidence read failed or was cut at the server row cap; claim will be withheld");
     }
     for (const e of ((evidence as any[]) ?? [])) {
       const oid = e.observation_id;
@@ -336,13 +336,13 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
     !cohortMayCountAsConsensus && mayCountAsConsensus(sourceClass) ? "sponsored" : sourceClass;
 
   // Confirmation stances for this claim.
-  const { data: confs, error: confsErr } = await sc.from("intel_confirmations").select("stance").eq("claim_id", claim.id);
-  if (confsErr) {
+  const { data: confs, error: confsErr, count: confsCount } = await sc.from("intel_confirmations").select("stance", { count: "exact" }).eq("claim_id", claim.id);
+  if (confsErr || wasCut(confs, confsCount)) { // a cut stance read drops the disagreements past the cap
     // Zero rows scores agreement 0.5 (neutral) AND makes confirmationConflict
     // false — i.e. an unreadable confirmations table reads as "nobody disagreed",
     // which is the cohort-conflict signal switched off rather than fail-closed.
     evidenceComplete = false;
-    logger.warn({ err: confsErr, claim: claim.id }, "intelProjectionAggregator: confirmation-stance read failed; claim will be withheld");
+    logger.warn({ err: confsErr, cut: !confsErr, claim: claim.id }, "intelProjectionAggregator: confirmation-stance read failed or was cut at the server row cap; claim will be withheld");
   }
   let agrees = 0, disagrees = 0;
   for (const c of ((confs as any[]) ?? [])) {
@@ -687,4 +687,22 @@ export async function assembleClaimInput(sc: SupabaseClient, claim: ClaimRow, no
     // class rather than the Phase-1 default.
     sourceClass: projectedSourceClass,
   };
+}
+
+/**
+ * A CUT READ — the one failure that resolves with NO error. Did the server hand
+ * back FEWER rows than the filter matched? The cohort read takes every
+ * observation ever stored for a (subject, claim type) and filters freshness in
+ * memory; the stance and evidence reads take every row for the claim / cohort.
+ * PostgREST cuts any response at db-max-rows (1000 on hosted) without an error,
+ * so past that the actor count, the plurality value, the agreement score and
+ * the §11 group gate were computed on an arbitrary sample and projected as the
+ * cohort — and the evidence read failed OPEN, because the shared media past the
+ * cap is exactly what collapses a crew into one group. Each read asks for
+ * `count: "exact"`; a count larger than the rows returned withholds the claim
+ * through evidenceComplete. A count the driver did not return proves nothing
+ * either way and is not treated as a cut.
+ */
+function wasCut(rows: unknown, count: unknown): boolean {
+  return typeof count === "number" && Array.isArray(rows) && count > rows.length;
 }

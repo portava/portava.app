@@ -24,7 +24,7 @@ import {
   TextInput,
   Animated,
 } from 'react-native';
-import { supabase } from '../lib/supabase.ts';
+import { useThreadReadState } from '../features/telegraph/lifecycle/useThreadReadState.ts'; // §7.2/§7.3: seen + receipts (replaced a direct message_thread_members read)
 import { AvatarImage } from './ui/DisplayMediaImage.tsx';
 import { MentionInput, type MentionInputHandle } from './MentionInput.tsx';
 import { MentionSuggestionList } from './MentionSuggestionList.tsx';
@@ -34,7 +34,7 @@ import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
 import { router } from 'expo-router';
 import {
   ArrowLeft, Send, Users, Globe, Info, VolumeX, Languages, Paperclip,
-  Compass, Bot, Copy, Trash2, Flag, Reply, Check, CheckCheck, Search, BookmarkPlus, X,
+  Compass, Bot, Copy, Trash2, Flag, Reply, Search, BookmarkPlus, X,
   AlertCircle, RefreshCw, CalendarClock, Clock, Pencil, History,
 } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -56,7 +56,7 @@ import * as Clipboard from 'expo-clipboard';
 import { MessageEntrance, useMessageEntranceGate } from './MessageEntrance.tsx';
 import { SharedContextRail } from '../features/telegraph/index.ts';
 import { PortavaObjectMessage } from '../features/telegraph/sharing/PortavaObjectMessage.tsx';
-import { deriveReceiptState, deriveSeenBy } from '../features/telegraph/lifecycle/lifecycleApi.ts';
+import { TelegraphConnectionBanner } from '../features/telegraph/connection/TelegraphConnectionBanner.tsx'; import { OwnMessageStatusRow } from '../features/telegraph/lifecycle/OwnMessageStatusRow.tsx'; import { useReaderAvatars } from '../features/telegraph/lifecycle/useReaderAvatars.ts'; import type { OwnMessageStatus } from '../features/telegraph/lifecycle/readState.ts';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import { localDateKey, localTodayKey } from '../utils/localDate.ts';
 
@@ -296,7 +296,6 @@ function GroupMessageBubble({
   mine,
   onLongPress,
   receiptState,
-  receiptSeenBy,
   readerAvatars,
   autoTranslate,
   defaultShowOriginal,
@@ -306,9 +305,8 @@ function GroupMessageBubble({
   item: Message;
   mine: boolean;
   onLongPress?: () => void;
-  receiptState?: 'sent' | 'read' | null;
-  /** §7.3's "Seen by N" for a group. Null renders the plain "Seen". */
-  receiptSeenBy?: number | null;
+  /** §7.3 / §30A.15: what is known about one of the caller's own messages (useThreadReadState). */
+  receiptState?: OwnMessageStatus | null;
   /** Up to 3 avatar URIs of members who've read past this message. */
   readerAvatars?: string[];
   autoTranslate: boolean;
@@ -406,12 +404,6 @@ function GroupMessageBubble({
           <Text style={styles.deliverySending}>Sending…</Text>
         </View>
       )}
-      {mine && deliveryStatus === 'sent' && !receiptState && (
-        <View style={styles.deliveryRow}>
-          <Check size={11} color={color.signal} />
-          <Text style={styles.deliverySent}>Sent</Text>
-        </View>
-      )}
       {mine && deliveryStatus === 'failed' && (
         <Pressable style={styles.deliveryRow} onPress={onRetry} hitSlop={8}>
           <AlertCircle size={11} color="#EF4444" />
@@ -419,24 +411,10 @@ function GroupMessageBubble({
         </Pressable>
       )}
 
-      {/* Read receipt — shown on every confirmed own message */}
+      {/* §7.3 / §30A.15 — Sent, Delivered (observed live), Seen by N, or "read status
+          unavailable" when the receipts could not be read. Never a guessed "Sent". */}
       {mine && receiptState && deliveryStatus !== 'sending' && deliveryStatus !== 'failed' && (
-        <View style={styles.receiptRow}>
-          {/* §7.3: Sent or Seen. There is no DELIVERED to report. */}
-          {receiptState === 'read' ? (
-            <>
-              <CheckCheck size={11} color={color.signal} />
-              <Text style={styles.receiptSent}>
-                {receiptSeenBy && receiptSeenBy > 1 ? `Seen by ${receiptSeenBy}` : 'Seen'}
-              </Text>
-            </>
-          ) : (
-            <>
-              <Check size={11} color={color.signal} />
-              <Text style={styles.receiptSent}>Sent</Text>
-            </>
-          )}
-        </View>
+        <OwnMessageStatusRow status={receiptState} isGroup />
       )}
 
       {/* Group reader avatar chips — up to 3 members who've read past this message */}
@@ -560,69 +538,16 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
   }, [messages]);
 
 
-  // Group-thread member reads — fetched once per thread to drive per-message reader chips.
-  const [groupMemberReads, setGroupMemberReads] = useState<
-    { userId: string; lastReadAt: string | null; avatarUrl: string | null }[]
-  >([]);
-  /**
-   * Telegraph §7.3 — the per-message receipt, derived from measured reads.
-   *
-   * THIS USED TO FABRICATE "DELIVERED": `ageSecs > 3 ? 'delivered' : 'sent'`
-   * showed a double tick because three seconds had elapsed. Nothing on this
-   * deployment produces a delivery signal — no per-device acknowledgement, no
-   * `lastDeliveredSequence` — so a "Delivered" tick was a claim about the
-   * recipient's device that nobody measured. DELIVERED is gone; what remains is
-   * SEEN, from the same `last_read_at` predicate §7.4's unsend window uses, and
-   * SENT otherwise.
-   */
-  const receiptForMsg = useCallback((msg: Message): 'sent' | 'read' | null => {
-    return deriveReceiptState({ createdAt: msg.createdAt, memberReads: groupMemberReads });
-  }, [groupMemberReads]);
-
-  /** §7.3's "Seen by N". */
-  const seenByForMsg = useCallback((msg: Message): number | null => {
-    return deriveSeenBy(msg.createdAt, groupMemberReads);
-  }, [groupMemberReads]);
-
-
-  useEffect(() => {
-    if (!thread?.id) return;
-    let active = true;
-    (async () => {
-      const { data: members } = await supabase
-        .from('message_thread_members')
-        .select('user_id, last_read_at')
-        .eq('thread_id', thread.id)
-        .is('left_at', null)
-        .neq('user_id', userId ?? '');
-      if (!active || !members || members.length === 0) return;
-      const ids = (members as any[]).map((m) => m.user_id as string);
-      const { data: profs } = await supabase
-        .from('profiles')
-        .select('id, avatar_url')
-        .in('id', ids);
-      if (!active) return;
-      const avatarMap = new Map(((profs ?? []) as any[]).map((p) => [p.id as string, p.avatar_url as string | null]));
-      setGroupMemberReads(
-        (members as any[]).map((m) => ({
-          userId: m.user_id as string,
-          lastReadAt: (m.last_read_at as string | null) ?? null,
-          avatarUrl: avatarMap.get(m.user_id as string) ?? null,
-        })),
-      );
-    })();
-    return () => { active = false; };
-  }, [thread?.id, userId]);
-
-  // Derive up to 3 reader avatar URIs for a given message.
-  const readerAvatarsForMsg = useCallback((msg: Message): string[] => {
-    if (!msg.createdAt) return [];
-    return groupMemberReads
-      .filter((m) => m.lastReadAt !== null && new Date(m.lastReadAt) >= new Date(msg.createdAt))
-      .slice(0, 3)
-      .map((m) => m.avatarUrl)
-      .filter((u): u is string => !!u);
-  }, [groupMemberReads]);
+  // §7.2 / §7.3 / §30A.15 — seen while you look, receipts refreshed when a read
+  // lands, and a failed receipts read kept distinct (useThreadReadState). This
+  // replaced a direct `message_thread_members` read taken ONCE per thread: it
+  // never refreshed, it read as "Sent" when it failed, and this screen never
+  // marked the thread read at all, so a trip chat opened here stayed unread.
+  const readState = useThreadReadState({ threadId: thread?.id ?? null, messages, viewerId: userId });
+  const readerAvatarUrl = useReaderAvatars(messages.flatMap((m) => readState.readersFor(m)));
+  const readerAvatarsForMsg = useCallback((msg: Message): string[] =>
+    readState.readersFor(msg).slice(0, 3).map((id) => readerAvatarUrl(id)).filter((u): u is string => !!u),
+  [readState, readerAvatarUrl]);
 
   const handleDeleteForMe = useCallback(async (msgId: string) => {
     await deleteMessage(msgId);
@@ -721,9 +646,9 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
           style={styles.headerIconBtn}
           accessibilityLabel={threadMuted ? 'Unmute thread' : 'Mute thread'}
           onPress={async () => {
-            const next = !threadMuted;
-            const res = await muteThread(id, next);
-            if (res.ok) setThreadMuted(next);
+            const next = !threadMuted; const tid = thread?.id; // the THREAD id: `id` is the trip/circle id, so this used to mute nothing
+            const res = tid ? await muteThread(tid, next) : { ok: false as const, message: 'This conversation is not open yet.' };
+            if (res.ok) setThreadMuted(next); else Alert.alert(next ? 'Could not mute' : 'Could not unmute', res.message ?? 'Nothing was changed. Please try again.');
           }}
         >
           <VolumeX size={18} color={threadMuted ? color.signal : color.mute} />
@@ -812,7 +737,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
           "at the top of EACH conversation". Renders nothing when the pair (or
           crew) shares no canonical mutual state, and nothing when the read
           failed. */}
-      {thread?.id ? <SharedContextRail threadId={thread.id} /> : null}
+      {thread?.id ? <SharedContextRail threadId={thread.id} /> : null}<TelegraphConnectionBanner />{/* §30A.15 */}
 
       <FlatList
         ref={listRef}
@@ -912,8 +837,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
                   setActionMsg(m);
                   setActionMsgMine(mine);
                 }}
-                receiptState={mine ? receiptForMsg(m) : null}
-                receiptSeenBy={mine ? seenByForMsg(m) : null}
+                receiptState={mine ? readState.statusFor(m) : null}
                 readerAvatars={mine ? readerAvatarsForMsg(m) : undefined}
                 autoTranslate={autoTranslate}
                 defaultShowOriginal={defaultShowOriginal}

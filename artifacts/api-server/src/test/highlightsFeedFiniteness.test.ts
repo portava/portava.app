@@ -51,11 +51,19 @@ function makeFakeClient(rows: any[], flagOn: boolean) {
   function chain(table: string) {
     let limitN: number | null = null;
     let head = false;
+    // The page cursor. Honoured (rather than ignored like the other filters)
+    // because the cursor walk below is only evidence if `?cursor=` really moves
+    // the window: `created_at > cursor`, applied BEFORE the limit, as PostgREST
+    // applies it. Rows are built in ascending created_at order, the route's
+    // order, and toISOString() makes string order equal time order.
+    let createdAfter: string | null = null;
     const obj: any = {
       select(_c?: string, o?: any) { if (o?.head) head = true; return obj; },
       insert() { return obj; }, update() { return obj; }, upsert() { return obj; }, delete() { return obj; },
       eq() { return obj; }, neq() { return obj; }, in() { return obj; },
-      lt() { return obj; }, gt() { return obj; }, is() { return obj; }, not() { return obj; },
+      lt() { return obj; },
+      gt(col: string, v: string) { if (col === "created_at") createdAfter = v; return obj; },
+      is() { return obj; }, not() { return obj; },
       // `.or()` is how the feed asks for "not expired OR permanent" since
       // migration 2975 made `expires_at` nullable. A fake without it makes the
       // handler throw, which arrives as a 500 and reads exactly like a broken
@@ -70,7 +78,8 @@ function makeFakeClient(rows: any[], flagOn: boolean) {
     };
     async function resolve(single: boolean): Promise<any> {
       if (table === "highlights") {
-        const out = limitN != null ? rows.slice(0, limitN) : rows;
+        const windowed = createdAfter != null ? rows.filter((r) => r.created_at > createdAfter!) : rows;
+        const out = limitN != null ? windowed.slice(0, limitN) : windowed;
         return { data: single ? (out[0] ?? null) : out, error: null, count: out.length };
       }
       if (table === "blocks") return { data: single ? null : [], error: null, count: 0 };
@@ -193,6 +202,125 @@ describe("GET /highlights/following-feed — §12 finiteness", () => {
       const { status, body } = await feed(app.baseUrl, "?limit=abc");
       assert.equal(status, 200);
       assert.equal(total(body), 60, "an unparseable limit falls back to the default, not to 0 or to unbounded");
+    } finally { await app.close(); }
+  });
+});
+
+/**
+ * A page the viewer's FILTERS shrank is not the end of the feed.
+ *
+ * With the cap on, the route reads `limit * 5` raw rows, then removes what this
+ * viewer may not see (circle_only / trip_only without the relationship, §11
+ * resurfacing controls, §10 consent) and cuts the page. It used to emit
+ * `nextCursor` only when the CUT page was full, so a raw window that filtering
+ * shrank below `limit` ended the feed with `nextCursor: null` — and a window
+ * filtering emptied returned `{ users: [] }` with no cursor at all. Either way
+ * every visible highlight after that window was unreachable, and a client that
+ * follows the cursor (the only honest way to read a capped feed) was told the
+ * feed was complete. The window is the unit the server examined, so the cursor
+ * continues from the last row it examined whenever that window was full.
+ *
+ * The fake withholds every circle_only row (no circle_memberships), which is the
+ * filter these tests use to shrink a window.
+ */
+describe("GET /highlights/following-feed — the cursor walk reaches every visible highlight", () => {
+  /** Rows in ascending created_at with the given visibilities, in order. */
+  function rowsWith(visibilities: string[]) {
+    return visibilities.map((v, i) => ({ ...highlights(visibilities.length)[i], visibility: v }));
+  }
+
+  /** Follow `nextCursor` until the server says there is nothing further. */
+  async function walk(base: string, limit: number): Promise<{ ids: string[]; pages: number }> {
+    const ids: string[] = [];
+    let cursor: string | null = null;
+    let pages = 0;
+    do {
+      const qs = `?limit=${limit}` + (cursor ? `&cursor=${encodeURIComponent(cursor)}` : "");
+      const { status, body } = await feed(base, qs);
+      assert.equal(status, 200);
+      for (const u of body?.users ?? []) for (const h of u.highlights as Array<{ id: string }>) ids.push(h.id);
+      const next: string | null = body?.nextCursor ?? null;
+      assert.notEqual(next, cursor, "a cursor that does not advance would loop forever");
+      cursor = next;
+      pages += 1;
+      assert.ok(pages <= 50, "the walk must terminate");
+    } while (cursor);
+    return { ids, pages };
+  }
+
+  it("continues past a raw window that filtering EMPTIED", async () => {
+    // limit 5 → raw window 25: all 25 circle_only (withheld), then 10 public.
+    const rows = rowsWith([...Array(25).fill("circle_only"), ...Array(10).fill("public")]);
+    const app = await startApp(rows, true);
+    try {
+      const first = await feed(app.baseUrl, "?limit=5");
+      assert.equal(first.status, 200);
+      assert.equal(total(first.body), 0, "nothing in the first window is visible to this viewer");
+      assert.equal(first.body?.nextCursor, rows[24].created_at,
+        "the window was full, so the feed continues after the last row the server examined");
+
+      const { ids } = await walk(app.baseUrl, 5);
+      assert.deepEqual(ids, rows.slice(25).map((r) => r.id), "every public highlight, each exactly once, in order");
+    } finally { await app.close(); }
+  });
+
+  it("continues past a raw window that filtering SHRANK below the page size", async () => {
+    // 2 public, 23 circle_only (window of 25 full, 2 visible), then 10 public.
+    const rows = rowsWith(["public", "public", ...Array(23).fill("circle_only"), ...Array(10).fill("public")]);
+    const app = await startApp(rows, true);
+    try {
+      const first = await feed(app.baseUrl, "?limit=5");
+      assert.equal(total(first.body), 2);
+      assert.equal(first.body?.nextCursor, rows[24].created_at,
+        "a short page cut from a FULL window is not the end of the feed");
+
+      const { ids } = await walk(app.baseUrl, 5);
+      const visible = rows.filter((r) => r.visibility === "public").map((r) => r.id);
+      assert.equal(ids.length, 12);
+      assert.deepEqual(ids, visible, "every public highlight, each exactly once, in order");
+    } finally { await app.close(); }
+  });
+
+  it("still ends the feed when the raw window was NOT full", async () => {
+    // 3 circle_only + 2 public: the window (25) is not full, so nothing lies beyond it.
+    const rows = rowsWith(["circle_only", "circle_only", "circle_only", "public", "public"]);
+    const app = await startApp(rows, true);
+    try {
+      const { body } = await feed(app.baseUrl, "?limit=5");
+      assert.equal(total(body), 2);
+      assert.equal(body?.nextCursor, null, "a window that was not full is everything there is");
+    } finally { await app.close(); }
+  });
+
+  it("ends the feed on an emptied window that was NOT full", async () => {
+    const rows = rowsWith(["circle_only", "circle_only"]);
+    const app = await startApp(rows, true);
+    try {
+      const { status, body } = await feed(app.baseUrl, "?limit=5");
+      assert.equal(status, 200);
+      assert.equal(total(body), 0);
+      assert.equal(body?.nextCursor ?? null, null, "nothing lies beyond a window that was not full");
+    } finally { await app.close(); }
+  });
+
+  it("leaves the unbounded (flag OFF) response shape alone when everything is filtered", async () => {
+    const rows = rowsWith(["circle_only", "circle_only"]);
+    const app = await startApp(rows, false);
+    try {
+      const { body } = await feed(app.baseUrl);
+      assert.equal(total(body), 0);
+      assert.ok(!Object.prototype.hasOwnProperty.call(body ?? {}, "nextCursor"),
+        "an unbounded response keeps its pre-2339 shape");
+    } finally { await app.close(); }
+  });
+
+  it("walks a feed with nothing filtered in full pages, each highlight once", async () => {
+    const rows = highlights(23);
+    const app = await startApp(rows, true);
+    try {
+      const { ids, pages } = await walk(app.baseUrl, 5);
+      assert.deepEqual(ids, rows.map((r) => r.id));
+      assert.ok(pages >= 5, "23 rows at 5 per page take at least five pages");
     } finally { await app.close(); }
   });
 });
