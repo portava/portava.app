@@ -70,10 +70,10 @@ interface ServerCreator {
 
 interface ServerStats {
   viewCount: number;
-  likeCount: number;
-  saveCount: number;
-  commentCount: number;
-  stampItCount?: number;
+  likeCount: number | null;
+  saveCount: number | null;
+  commentCount: number | null;
+  stampItCount?: number | null;
 }
 
 interface ServerLocation {
@@ -85,10 +85,10 @@ interface ServerLocation {
 }
 
 interface ServerViewerState {
-  hasLiked: boolean;
-  hasSaved: boolean;
-  isFollowingCreator: boolean;
-  hasFollowRequestPending: boolean;
+  hasLiked: boolean | null;
+  hasSaved: boolean | null;
+  isFollowingCreator: boolean | null;
+  hasFollowRequestPending: boolean | null;
 }
 
 interface ServerLinkedEntity {
@@ -191,7 +191,7 @@ export function mapServerFeedItem(raw: ServerFeedItem): MediaFeedItem {
     saveCount: raw.stats.saveCount,
     likedByMe: raw.viewerState.hasLiked,
     savedByMe: raw.viewerState.hasSaved,
-    stampItCount: raw.stats.stampItCount ?? 0,
+    stampItCount: raw.stats.stampItCount === undefined ? 0 : raw.stats.stampItCount, // absent (legacy) = 0; null = unread (census-media §47), never 0
     locationVerified: raw.locationVerified ?? false,
     featuredByPortava: (raw as any).featuredByPortava ?? null,
   };

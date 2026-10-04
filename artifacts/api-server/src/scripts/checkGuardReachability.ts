@@ -86,6 +86,61 @@ const WORKFLOW_DIR = process.env.GUARD_WORKFLOW_DIR
 
 /** Per-guard ceiling when the manual claim is tested by running it. */
 const MANUAL_RUN_TIMEOUT_MS = 120_000;
+
+/**
+ * Tracked files git reports as changed, relative to the repo root.
+ *
+ * Only TRACKED changes count. A guard is free to write scratch files; what must
+ * never happen is a guard rewriting a committed artifact while this check is
+ * proving that the guard looked at it.
+ */
+function dirtyTrackedFiles(): Set<string> {
+  const r = spawnSync("git", ["status", "--porcelain", "--untracked-files=no"], {
+    cwd: REPO_ROOT, encoding: "utf8", timeout: 30_000, maxBuffer: 8 * 1024 * 1024,
+  });
+  // A repo git cannot read is not evidence of cleanliness, but it is also not a
+  // finding about any guard. An empty set makes this assertion inert rather than
+  // wrong, and the rest of the check is unaffected.
+  if (r.status !== 0 || typeof r.stdout !== "string") return new Set();
+  return new Set(
+    r.stdout.split("\n").map((l) => l.slice(3).trim()).filter((p) => p.length > 0),
+  );
+}
+
+/** Dirty before this check started: a developer's own edits, not a guard's. */
+const BASELINE_DIRTY = dirtyTrackedFiles();
+
+/**
+ * PROVING A GUARD LOOKED MUST NOT CHANGE WHAT IT LOOKED AT.
+ *
+ * This is the general form of the defect InspectionProof.args documents: any
+ * guard whose checker writes a tracked file when this process runs it has
+ * silently repaired the very drift the suite is about to measure, and the
+ * repair disappears with the runner's checkout, so nobody sees it either way.
+ *
+ * Shared by BOTH spawn paths. The first version of this assertion guarded only
+ * the inspection proof, which left the manual-claim run below — a second bare
+ * spawn of a checker, in the same process, before the same gates — able to
+ * reopen the hole without tripping anything. A guard that writes is caught
+ * whichever question this check was asking when it ran it.
+ *
+ * Returns the problem to report, or null. Tracked files only (a guard is free
+ * to write scratch files), and files already dirty before this check started
+ * are ignored so a developer with local edits is not blamed for them.
+ */
+function mutationProblem(checker: string, before: Set<string>): string | null {
+  const appeared = [...dirtyTrackedFiles()].filter(
+    (p) => !before.has(p) && !BASELINE_DIRTY.has(p),
+  );
+  if (appeared.length === 0) return null;
+  return (
+    `${checker}: MUTATED the working tree when this check ran it — ${appeared.join(", ")}. A guard ` +
+    `that writes the artifact it gates repairs the drift instead of reporting it, and every later ` +
+    `check in the same check:all then compares a file this process regenerated. Pin the gate's ` +
+    `arguments in the registry (InspectionProof.args, e.g. ["--check"]) so the proof runs the gate ` +
+    `and not the writer.`
+  );
+}
 const MIN_RESPONSIBILITY = 60;
 const MIN_MANUAL_REASON = 120;
 /** Directories that hold guards. Anything named check* in them must be declared. */
@@ -417,10 +472,22 @@ function main(): void {
     }
 
     const abs = join(API_ROOT, g.checker);
-    const argv = abs.endsWith(".mjs") ? [abs] : ["--import", "tsx/esm", abs];
+    // The registry may pin the arguments. It MUST for a checker whose default
+    // mode writes the artifact it gates — see InspectionProof.args. Running
+    // such a guard bare to prove it looked repairs the drift it exists to
+    // report, and every later gate in the same check:all then compares a file
+    // this process just regenerated.
+    const argv = (abs.endsWith(".mjs") ? [abs] : ["--import", "tsx/esm", abs]).concat(
+      g.inspects.args ?? [],
+    );
+    const before = dirtyTrackedFiles();
     const run = spawnSync(process.execPath, argv, {
       cwd: API_ROOT, encoding: "utf8", timeout: MANUAL_RUN_TIMEOUT_MS, maxBuffer: 32 * 1024 * 1024,
     });
+    const mutated = mutationProblem(g.checker, before);
+    if (mutated !== null) {
+      problems.push(mutated);
+    }
     const out = `${run.stdout ?? ""}${run.stderr ?? ""}`;
     const m = out.match(new RegExp(g.inspects.countPattern));
     if (run.status !== 0) {
@@ -590,7 +657,14 @@ function main(): void {
         // it is reported so the reader knows which of the two happened.
         const manualAbs = join(API_ROOT, g.checker);
         if (existsSync(manualAbs) && !process.env.GUARD_SKIP_MANUAL_RUN) {
-          const argv = manualAbs.endsWith(".mjs") ? [manualAbs] : ["--import", "tsx/esm", manualAbs];
+          // The registry's pinned arguments apply HERE TOO. No manual guard
+          // declares an inspection proof today, but the field is the registry's
+          // statement of how a checker must be invoked, and this path invokes
+          // the same checkers: honouring it in one spawn and not the other is
+          // how the two answers drift apart.
+          const argv = (manualAbs.endsWith(".mjs") ? [manualAbs] : ["--import", "tsx/esm", manualAbs]).concat(
+            g.inspects?.args ?? [],
+          );
           // SANITISED ENVIRONMENT, and this is load-bearing rather than tidy.
           //
           // The question the rule asks is "could CI invoke this?", and CI has no
@@ -606,10 +680,15 @@ function main(): void {
           for (const k of Object.keys(sanitised)) {
             if (/^(EXPO_PUBLIC_)?SUPABASE_/.test(k)) delete sanitised[k];
           }
+          const beforeManual = dirtyTrackedFiles();
           const run = spawnSync(process.execPath, argv, {
             cwd: API_ROOT, encoding: "utf8", timeout: MANUAL_RUN_TIMEOUT_MS,
             maxBuffer: 32 * 1024 * 1024, env: sanitised,
           });
+          const manualMutated = mutationProblem(g.checker, beforeManual);
+          if (manualMutated !== null) {
+            problems.push(manualMutated);
+          }
           if (run.status === 0) {
             problems.push(
               `${g.checker}: declared MANUAL — "CI cannot invoke it" — but it runs cleanly here and exits 0. ` +

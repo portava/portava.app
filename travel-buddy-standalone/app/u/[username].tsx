@@ -721,8 +721,8 @@ function PublicPassportScreenNative() {
 
   const isOwn = social?.isOwnProfile ?? profile?.isOwnProfile ?? (profile?.id === currentUserId);
 
-  // Stamps Earned count — sourced from the public passport response.
-  const stampsEarned: number = (profile as any)?.stampsEarned ?? 0;
+  // Stamps Earned — public passport response; null / stampsEarnedUnavailable (server could not count) shows "—", never 0, and skips the milestone hook.
+  const stampsEarned: number | null = typeof (profile as any)?.stampsEarned === 'number' && (profile as any)?.stampsEarnedUnavailable !== true ? (profile as any).stampsEarned : null;
 
   // Milestone celebration hook — only fires for the profile owner.
   const {
@@ -987,12 +987,12 @@ function PublicPassportScreenNative() {
             { n: countries, label: 'Countries' },
             { n: cities, label: 'Cities' },
             { n: follow.followersCount, label: 'Followers' },
-            { n: stampsEarned, label: 'Stamps Earned' },
+            { n: stampsEarned ?? '—', label: 'Stamps Earned' },
           ].map((item, i) => (
             <React.Fragment key={item.label}>
               {i > 0 && <View style={styles.statsDivider} />}
               <View style={styles.statsCell}>
-                <Text style={styles.statsN}>
+                <Text style={styles.statsN} testID={`stats-n-${item.label}`}>
                   {follow.loading && item.label === 'Followers' ? '—' : item.n}
                 </Text>
                 <Text style={styles.statsL}>{item.label}</Text>
@@ -1050,7 +1050,7 @@ function PublicPassportScreenNative() {
         )}
 
         {/* 10K Stamps badge — permanent once threshold is reached */}
-        <TenKStampsBadge stampsEarned={stampsEarned} />
+        {stampsEarned !== null && <TenKStampsBadge stampsEarned={stampsEarned} />}
 
         {/* Following pill */}
         {follow.followingCount > 0 && (

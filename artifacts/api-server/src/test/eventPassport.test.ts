@@ -32,7 +32,7 @@ import {
 } from "../services/passport/EventPassportService.js";
 import { buildConsumerProjection } from "../services/passport/PassportConsumerProjections.js";
 import { buildPassportProjection, type ViewerResolution, type ViewerPermissions } from "../services/passport/PassportProjectionService.js";
-import { makePassportDb } from "./helpers/fakePassportDb.js";
+import { makePassportDb, type FakePassportDbOptions } from "./helpers/fakePassportDb.js";
 import { createServer } from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
@@ -88,7 +88,7 @@ interface SeedOpts {
   homeCountryHidden?: boolean;
 }
 
-function seed(opts: SeedOpts = {}) {
+function seed(opts: SeedOpts = {}, dbOpts: FakePassportDbOptions = {}) {
   const rsvps: any[] = [];
   if (opts.ownerRsvp !== null) rsvps.push({ event_id: EVENT, user_id: OWNER, status: opts.ownerRsvp ?? "going" });
   if (opts.viewerRsvp !== null) rsvps.push({ event_id: EVENT, user_id: VIEWER, status: opts.viewerRsvp ?? "going" });
@@ -139,7 +139,7 @@ function seed(opts: SeedOpts = {}) {
       user_id: OWNER, overall_score: 78, public_level: "trusted_traveler",
       plan_attendance: 72, host_quality: 68, communication: 55, respect_safety: 80,
     }],
-  });
+  }, dbOpts);
 }
 
 function liveShare(overrides: Record<string, any> = {}) {
@@ -216,7 +216,9 @@ describe("event Passport — bounded TTL (§31)", () => {
     };
 
     const r = await createEventPassportShare(db, OWNER, EVENT, NOW);
-    assert.deepEqual(r, { ok: false, reason: "not_found" }, "the caller is told it failed");
+    // `unavailable`, not `not_found`: a refused write is an outage, and the
+    // route answers it as a retryable 500 (passport lane, 2026-10-03).
+    assert.deepEqual(r, { ok: false, reason: "unavailable" }, "the caller is told it failed");
     assert.equal(previous.revoked_at, null, "the previous share is still LIVE, not collaterally revoked");
 
     // And it still resolves — the owner really did keep what they had.
@@ -592,5 +594,142 @@ describe("event Passport routes", () => {
     assert.equal(r.body.passport.variant, "event");
     assert.equal(r.cacheControl, "private, no-store",
       "an expiring, viewer-specific projection must never be cached");
+  });
+});
+
+// ── An outage is not a refusal (passport lane, 2026-10-03) ───────────────────
+//
+// Every step below already FAILED CLOSED — nothing was ever granted on a failed
+// read. What was wrong was the ANSWER: an unreadable events row was "that event
+// does not exist", an unreadable RSVP was "you are not attending", a refused
+// write was "Share not found", and the owner's own unreadable share was "you
+// are not sharing". Each told a person something false about the world instead
+// of "we could not check". `unavailable` is still a refusal — it never returns
+// a passport — and the routes answer it as a retryable 500, not a 403/404.
+
+const DOWN = { code: "08006", message: "server closed the connection unexpectedly" };
+
+describe("event Passport — an outage is reported as an outage, still fail-closed", () => {
+  it("create: an unreadable event is unavailable, not event_not_found", async () => {
+    const r = await createEventPassportShare(seed({}, { failReads: { events: DOWN } }), OWNER, EVENT, NOW);
+    assert.deepEqual(r, { ok: false, reason: "unavailable" });
+  });
+
+  it("create: an unreadable RSVP is unavailable, not owner_not_attending", async () => {
+    const r = await createEventPassportShare(seed({}, { failReads: { event_rsvps: DOWN } }), OWNER, EVENT, NOW);
+    assert.deepEqual(r, { ok: false, reason: "unavailable" });
+  });
+
+  it("create: a refused share write is unavailable, not not_found", async () => {
+    const r = await createEventPassportShare(
+      seed({}, { failWrites: { event_passport_shares: DOWN } }), OWNER, EVENT, NOW);
+    assert.deepEqual(r, { ok: false, reason: "unavailable" });
+  });
+
+  it("revoke: a refused write is unavailable, not not_found", async () => {
+    const r = await revokeEventPassportShare(
+      seed({ shares: [liveShare()] }, { failWrites: { event_passport_shares: DOWN } }), OWNER, EVENT, NOW);
+    assert.deepEqual(r, { ok: false, reason: "unavailable" });
+  });
+
+  it("owner's own read: an unreadable share REJECTS, it is not 'not sharing'", async () => {
+    await assert.rejects(
+      () => getOwnEventPassportShare(seed({ shares: [liveShare()] }, { failReads: { event_passport_shares: DOWN } }), OWNER, EVENT, NOW),
+      /unreadable/,
+    );
+  });
+
+  it("owner's own read: an unreadable event REJECTS, it is not 'not sharing'", async () => {
+    await assert.rejects(
+      () => getOwnEventPassportShare(seed({ shares: [liveShare()] }, { failReads: { events: DOWN } }), OWNER, EVENT, NOW),
+      /unreadable/,
+    );
+  });
+
+  for (const table of ["event_passport_shares", "events", "event_rsvps"]) {
+    it(`resolve: an unreadable ${table} is unavailable — and never a passport`, async () => {
+      const r = await resolveEventPassport(
+        seed({ shares: [liveShare()] }, { failReads: { [table]: DOWN } }),
+        "a".repeat(48), VIEWER, NOW, inject(resolution("event_group", permsFollowing())));
+      assert.deepEqual(r, { ok: false, reason: "unavailable" });
+    });
+  }
+
+  it("CONTROL: the genuine refusals are unchanged", async () => {
+    assert.deepEqual(
+      await createEventPassportShare(seed({ ownerRsvp: null }), OWNER, EVENT, NOW),
+      { ok: false, reason: "owner_not_attending" });
+    assert.deepEqual(
+      await resolveEventPassport(seed({ shares: [liveShare()], viewerRsvp: null }), "a".repeat(48), VIEWER, NOW),
+      { ok: false, reason: "not_attending" });
+    assert.deepEqual(
+      await resolveEventPassport(seed({ shares: [] }), "b".repeat(48), VIEWER, NOW),
+      { ok: false, reason: "not_found" });
+    assert.equal(await getOwnEventPassportShare(seed({ shares: [] }), OWNER, EVENT, NOW), null);
+  });
+});
+
+describe("event Passport routes — an outage is a retryable 500, not a 403/404", () => {
+  async function serve(store: any) {
+    _setTestServiceClient(store as any);
+    _setTestClient({
+      from: (t: string) => store.from(t),
+      auth: {
+        getUser: async (token: string) => {
+          const id = ({ "owner-tok": OWNER, "viewer-tok": VIEWER } as Record<string, string>)[token];
+          return id ? { data: { user: { id } }, error: null } : { data: { user: null }, error: { message: "invalid" } };
+        },
+      },
+    } as any, true);
+    const app = express();
+    app.use(express.json());
+    app.use((req: any, _res: any, next: any) => { req.log = { error: () => {}, info: () => {}, warn: () => {} }; next(); });
+    app.use("/api", passportRouter);
+    const srv = createServer(app);
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", () => r()));
+    srv.unref();
+    const port = (srv.address() as any).port;
+    const call = async (method: string, path: string, tok: string, body?: unknown) => {
+      const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+        method,
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${tok}`, connection: "close" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const text = await res.text();
+      return { status: res.status, body: text ? JSON.parse(text) : null };
+    };
+    const close = () => new Promise<void>((r) => { srv.closeAllConnections(); srv.close(() => r()); });
+    return { call, close };
+  }
+
+  it("POST create with the events table unreadable → 500 db_error", async () => {
+    const { call, close } = await serve(seed({}, { failReads: { events: DOWN } }));
+    const r = await call("POST", "/api/passport/event-share", "owner-tok", { eventId: EVENT });
+    await close();
+    assert.equal(r.status, 500, JSON.stringify(r.body));
+    assert.equal(r.body.error, "db_error");
+  });
+
+  it("GET own share with the shares table unreadable → 500, not { share: null }", async () => {
+    const { call, close } = await serve(seed({ shares: [liveShare()] }, { failReads: { event_passport_shares: DOWN } }));
+    const r = await call("GET", `/api/passport/event-share/${EVENT}`, "owner-tok");
+    await close();
+    assert.equal(r.status, 500, JSON.stringify(r.body));
+    assert.equal(r.body.share, undefined);
+  });
+
+  it("POST revoke with the write refused → 500, not 404", async () => {
+    const { call, close } = await serve(seed({ shares: [liveShare()] }, { failWrites: { event_passport_shares: DOWN } }));
+    const r = await call("POST", `/api/passport/event-share/${EVENT}/revoke`, "owner-tok");
+    await close();
+    assert.equal(r.status, 500, JSON.stringify(r.body));
+  });
+
+  it("GET resolve with RSVPs unreadable → 500 and no passport, not a 403 'not at the event'", async () => {
+    const { call, close } = await serve(seed({ shares: [liveShare()] }, { failReads: { event_rsvps: DOWN } }));
+    const r = await call("GET", `/api/passport/event-passport/${"a".repeat(48)}`, "viewer-tok");
+    await close();
+    assert.equal(r.status, 500, JSON.stringify(r.body));
+    assert.equal(r.body.passport, undefined);
   });
 });

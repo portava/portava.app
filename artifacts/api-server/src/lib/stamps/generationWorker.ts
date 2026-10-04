@@ -738,19 +738,79 @@ async function premiumRenderingEnabled(sc: any): Promise<boolean> {
  * definition references this catalog entry; otherwise 'common'. (Rarity is a
  * definition-level concept; catalog artwork is shared. Per-definition rarity
  * variants are a later wave — hero_path is kept so recomposition is cheap.)
+ *
+ * THE LINK IS `user_stamps (stamp_definition_id, catalog_id)`. This used to
+ * filter `stamp_definitions.catalog_id`, a column that table has never had in
+ * the canonical chain or on the hosted database; PostgREST answered 42703, the
+ * catch answered "common", and every premium stamp was framed as common with
+ * nothing logged. The triggering award (`triggered_by_action =
+ * "user_stamp:<id>"`) is read first because the worker can claim the job before
+ * the award engine back-fills `user_stamps.catalog_id`.
+ *
+ * "common" is returned only for the two DOCUMENTED reasons, and `basis` says
+ * which. Any read that fails REJECTS with `rarity_unresolved:` so the job is
+ * retried rather than composed with a guessed rarity. No try/catch: supabase-js
+ * resolves on a database error, so every `error` is bound here instead.
  */
-async function rarityForCatalog(sc: any, catalogId: string): Promise<string> {
-  try {
+export type CatalogRarityBasis = "definition" | "no_linked_definition" | "shared_by_definitions";
+
+export async function rarityForCatalog(
+  sc: any,
+  catalogId: string,
+  triggeredByAction: string | null | undefined,
+): Promise<{ rarity: string; basis: CatalogRarityBasis; definitionId: string | null }> {
+  const unresolved = (what: string, err: any) =>
+    new Error(`rarity_unresolved: ${what} read failed for catalog ${catalogId}: ${err?.message ?? String(err)}`);
+
+  let definitionId: string | null = null;
+
+  const trigger = /^user_stamp:([0-9a-f-]{36})$/i.exec(triggeredByAction ?? "");
+  if (trigger) {
     const { data, error } = await sc
-      .from("stamp_definitions")
-      .select("rarity")
-      .eq("catalog_id", catalogId)
-      .limit(2);
-    if (error || !Array.isArray(data) || data.length !== 1) return "common";
-    return (data[0] as any)?.rarity ?? "common";
-  } catch {
-    return "common";
+      .from("user_stamps")
+      .select("stamp_definition_id")
+      .eq("id", trigger[1])
+      .maybeSingle();
+    if (error) throw unresolved("user_stamps (triggering award)", error);
+    definitionId = (data as any)?.stamp_definition_id ?? null;
   }
+
+  if (!definitionId) {
+    const { data, error } = await sc
+      .from("user_stamps")
+      .select("stamp_definition_id")
+      .eq("catalog_id", catalogId)
+      .not("stamp_definition_id", "is", null)
+      .limit(1);
+    if (error) throw unresolved("user_stamps (catalog link)", error);
+    definitionId = ((data as any[]) ?? [])[0]?.stamp_definition_id ?? null;
+  }
+
+  if (!definitionId) return { rarity: "common", basis: "no_linked_definition", definitionId: null };
+
+  // A second, different definition on the same artwork decides "shared".
+  const { data: other, error: otherErr } = await sc
+    .from("user_stamps")
+    .select("stamp_definition_id")
+    .eq("catalog_id", catalogId)
+    .not("stamp_definition_id", "is", null)
+    .neq("stamp_definition_id", definitionId)
+    .limit(1);
+  if (otherErr) throw unresolved("user_stamps (shared-definition probe)", otherErr);
+  if (((other as any[]) ?? []).length > 0) {
+    return { rarity: "common", basis: "shared_by_definitions", definitionId: null };
+  }
+
+  const { data: def, error: defErr } = await sc
+    .from("stamp_definitions")
+    .select("rarity")
+    .eq("id", definitionId)
+    .maybeSingle();
+  if (defErr) throw unresolved("stamp_definitions", defErr);
+  if (!def) {
+    throw new Error(`rarity_unresolved: stamp_definitions has no row ${definitionId} linked from catalog ${catalogId}`);
+  }
+  return { rarity: (def as any).rarity, basis: "definition", definitionId };
 }
 
 // ── Orphan-cleanup error persistence ─────────────────────────────────────────
@@ -972,6 +1032,25 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
       ? buildHeroArtPrompt(entry, identity)
       : buildStampPrompt(entry);
 
+    // Rarity treatment for premium composition (definition-level concept;
+    // 'common' when the catalog entry has zero or several linked definitions,
+    // and `basis` says which). Resolved BEFORE the paid generation call so an
+    // unreadable link fails the job without spending a generation.
+    const rarityResolution = premium
+      ? await rarityForCatalog(sc, catalogId, (job as any).triggered_by_action ?? null)
+      : null;
+    const compositionRarity = rarityResolution ? normalizeRarity(rarityResolution.rarity) : "common";
+    if (rarityResolution) {
+      console.log(JSON.stringify({
+        event:         "stamp.generation.rarity_resolved",
+        job_id:        jobId,
+        catalog_id:    catalogId,
+        rarity:        compositionRarity,
+        basis:         rarityResolution.basis,
+        definition_id: rarityResolution.definitionId,
+      }));
+    }
+
     // Generate candidates
     const provider = getStampImageProvider();
     const images = await provider.generate(prompt, CANDIDATE_COUNT);
@@ -1012,9 +1091,6 @@ export async function runGenerationCycle(): Promise<{ processed: boolean; catalo
       }));
     }
 
-    // Rarity treatment for premium composition (definition-level concept;
-    // 'common' when the catalog entry has zero or several linked definitions).
-    const compositionRarity = premium ? normalizeRarity(await rarityForCatalog(sc, catalogId)) : "common";
 
     // Upload each candidate and insert artwork version rows
     const versionInserts: any[] = [];

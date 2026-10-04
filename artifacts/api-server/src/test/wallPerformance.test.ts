@@ -208,18 +208,24 @@ const FLAGS: Record<string, boolean> = {
 /** Supabase calls issued since the last reset — the hardware-independent half. */
 let readCount = 0;
 /**
- * Artificial per-call latency, in milliseconds, applied to EVERY supabase call
- * the page makes. Zero for the benchmarks above (they measure our own CPU work);
- * set by the round-trip-depth test below, which is the only thing in this file
- * that can speak about the 500 ms target as a LATENCY number rather than a
- * quantity of work. See the `W146` block at the end of the file.
+ * ROUND-TRIP MODE, used only by the depth test at the end of the file (the
+ * `W146` block). Null for the benchmarks above, which measure our own CPU work
+ * with a zero-latency client. When it is an array, every supabase call the page
+ * makes is HELD: its release is queued here instead of resolving. The depth
+ * test's driver waits until the process has gone quiet, then releases the whole
+ * queue at once — that is one database round trip. A call issued while others
+ * are held lands in the SAME round (it ran concurrently); a call that can only
+ * be issued once an earlier result has arrived lands in a LATER round (it was
+ * serialized behind it). So the number of releases one page needs IS its
+ * serialized round-trip depth, counted exactly and with no clock involved.
  */
-let CALL_DELAY_MS = 0;
+let heldCalls: Array<() => void> | null = null;
 
-/** Resolve a fake query after the currently-configured artificial latency. */
+/** Resolve a fake query: at once, or — in round-trip mode — when its round is released. */
 function settle<T>(value: T): Promise<T> {
-  if (CALL_DELAY_MS <= 0) return Promise.resolve(value);
-  return new Promise<T>((resolve) => setTimeout(() => resolve(value), CALL_DELAY_MS));
+  const held = heldCalls;
+  if (!held) return Promise.resolve(value);
+  return new Promise<T>((resolve) => held.push(() => resolve(value)));
 }
 /** Which tables those calls hit. Printed only under WALL_BENCH_DIAG=1, so a
  *  failure can be attributed to a table without re-instrumenting anything. */
@@ -448,8 +454,19 @@ describe("Wall first-page performance (spec §33 / TABLE 4)", () => {
   // What decides that number is not how many reads the page issues (343 issued
   // concurrently cost one round trip) but how many of them are SERIALIZED: the
   // depth of the longest await-chain of database calls on the critical path.
-  // Elapsed ≈ cpu + depth × round-trip-latency, so depth is measurable from here
-  // by giving every fake query a known artificial latency and differencing.
+  // Elapsed ≈ cpu + depth × round-trip-latency, so the depth is the number that
+  // turns a per-round-trip latency into a page time.
+  //
+  // HOW THE DEPTH IS COUNTED — AND WHY IT IS NO LONGER TIMED. The first version
+  // of this test gave every fake query a real `setTimeout` latency and read the
+  // depth off the difference of two wall-clock runs. On a shared, loaded machine
+  // that difference wandered from 74 to 109 for an unchanged tree — a 110 line
+  // it was one busy second away from crossing, and a regression it could just as
+  // easily have hidden. It now holds every query (see `heldCalls`) and releases
+  // them one ROUND at a time, only once the process has gone quiet. Ordering on
+  // the event loop does not depend on load, only timing does, so the count is
+  // the same integer on every machine at every speed — and it is the exact
+  // quantity the old slope was estimating.
   //
   // This is a measurement that CAN fail on a slow path: awaiting one more query
   // inside a per-item loop adds ~21 to the depth and moves both numbers below.
@@ -469,14 +486,15 @@ describe("Wall first-page performance (spec §33 / TABLE 4)", () => {
   /**
    * Serialized supabase round trips on the critical path of ONE first page.
    *
-   * MEASURED at the commit that introduced this block: 92-93, reproducibly —
-   * three runs of this file alone and three runs inside the full 89-file suite
-   * all landed in that range. The ratchet is 110, and it was SIZED AGAINST THE
+   * MEASURED at the commit that introduced this block: 92-93 by the old timed
+   * slope. The ratchet is 110, and it was SIZED AGAINST THE
    * REGRESSION rather than guessed: adding ONE awaited read per feed item to
    * `routes/wall.ts` was measured to move the depth to ~113 and the modelled
    * time from ~378 ms to ~459 ms — a change the 375-read ratchet (363 reads) and
    * the 9-per-item slope ratchet (8.3) both still PASS. This line is the only
-   * guard in the file that catches it, which is the reason it exists.
+   * guard in the file that catches it, which is the reason it exists. The
+   * counted depth, and the same mutation re-measured under counting, are
+   * recorded in census-wall §19.
    *
    * WHAT THIS NUMBER MEANS. At depth ~92 the first page can only clear 500 ms if
    * the average database round trip is under ~5.4 ms. That is achievable in-region
@@ -488,67 +506,122 @@ describe("Wall first-page performance (spec §33 / TABLE 4)", () => {
    */
   const ROUND_TRIP_DEPTH_RATCHET = 110;
 
+  /**
+   * Wait until the process is QUIET: nothing left that could still issue a
+   * query in the current round. Microtasks (every `await` continuation) drain
+   * before any macrotask, a `setImmediate` runs after the poll phase, and a
+   * 0 ms timer queued now fires after any ≤1 ms timer the page queued earlier —
+   * so two consecutive passes in which the held queue does not grow mean every
+   * query this round can issue has been issued. Event-loop ORDER, not elapsed
+   * time, is what this relies on, which is why load cannot move the count.
+   */
+  async function quiesce(): Promise<void> {
+    let stable = 0;
+    let seen = heldCalls?.length ?? 0;
+    while (stable < 2) {
+      await new Promise<void>((r) => setImmediate(r));
+      await new Promise<void>((r) => setTimeout(r, 0));
+      await new Promise<void>((r) => setImmediate(r));
+      const now = heldCalls?.length ?? 0;
+      if (now === seen) stable += 1;
+      else { seen = now; stable = 0; }
+    }
+  }
+
+  /** Serve one page in round-trip mode; return its status, body and counted depth. */
+  async function countRounds(path: string): Promise<{ status: number; json: any; rounds: number; calls: number }> {
+    const queue: Array<() => void> = [];
+    heldCalls = queue;
+    let rounds = 0;
+    let calls = 0;
+    let settled = false;
+    let outcome: { status: number; json: any } | null = null;
+    let failure: unknown = null;
+    const request = get(path).then(
+      (r) => { outcome = r; settled = true; },
+      (e) => { failure = e; settled = true; },
+    );
+    try {
+      // A bound on idle passes, so a page that hangs fails rather than spins.
+      let idlePasses = 0;
+      while (!settled) {
+        await quiesce();
+        if (settled) break;
+        if (queue.length === 0) {
+          // Nothing held and no response yet: loopback I/O is still in flight.
+          if (++idlePasses > 2_000) throw new Error(`${path} neither queried nor answered`);
+          continue;
+        }
+        idlePasses = 0;
+        const batch = queue.splice(0, queue.length);
+        rounds += 1;
+        calls += batch.length;
+        for (const release of batch) release();
+      }
+      await request;
+    } finally {
+      heldCalls = null;
+      // Anything still held (a fire-and-forget read the response did not wait
+      // for) is released so it cannot leak into the next test.
+      for (const release of queue.splice(0, queue.length)) release();
+    }
+    if (failure) throw failure;
+    return { ...(outcome as unknown as { status: number; json: any }), rounds, calls };
+  }
+
   it("the first page's serialized round-trip depth stays inside its ratchet", async () => {
     _clearPromotedScopeCache();
     await get("/api/wall?mode=for_you"); // warm any per-process cache first
 
-    const timeAt = async (delayMs: number): Promise<number> => {
-      CALL_DELAY_MS = delayMs;
-      try {
-        const t0 = performance.now();
-        const res = await get("/api/wall?mode=for_you");
-        const elapsed = performance.now() - t0;
-        // A 500 error path would be fast and would measure nothing.
-        if (res.status !== 200 || res.json?.items?.length !== 20) {
-          throw new Error(`the modelled page was not a real full page (status ${res.status})`);
-        }
-        return elapsed;
-      } finally {
-        CALL_DELAY_MS = 0;
-      }
-    };
+    // CPU time with a zero-latency client: the only clock left in this test,
+    // and it only feeds the modelled figure, where it is a few ms against 500.
+    const t0 = performance.now();
+    const cpuRes = await get("/api/wall?mode=for_you");
+    const cpuOnly = performance.now() - t0;
+    assert.equal(cpuRes.status, 200);
 
-    // THE SLOPE IS MEASURED AT TWO LARGE, NON-ZERO DELAYS, and the reason is a
-    // measured flake, not caution. Each awaited call carries a fixed scheduling
-    // overhead on top of the delay it asks for, and a busy runner inflates that
-    // overhead: measured inside the full 89-file suite, one 4 ms timer took
-    // ~6.8 ms, so a page timed AT 4 ms/round-trip read 600 ms against a 500 ms
-    // line while the structure had not changed at all. Differencing two runs
-    // that issue the SAME number of timers cancels the overhead exactly —
-    // (d·2N + kN) − (d·N + kN) = d·N — and doing it at 8/16 ms rather than 4/8
-    // makes whatever does not cancel a smaller fraction of the answer.
-    const SLOPE_LOW_MS = 8;
-    const SLOPE_HIGH_MS = 16;
+    const counted = await countRounds("/api/wall?mode=for_you");
+    // A 500 error path would be shallow and would measure nothing.
+    assert.equal(counted.status, 200, "the counted page must be a real page");
+    assert.equal(counted.json?.items?.length, 20, "the counted page must be a full first page");
+    const depth = counted.rounds;
 
-    const cpuOnly = await timeAt(0);
-    const atLow = await timeAt(SLOPE_LOW_MS);
-    const atHigh = await timeAt(SLOPE_HIGH_MS);
-    const depth = (atHigh - atLow) / (SLOPE_HIGH_MS - SLOPE_LOW_MS);
+    // DETERMINISM, checked rather than asserted in a comment: the same page
+    // counted again must give the same integer. If it ever does not, something
+    // on the page is racing a real clock and the count above is not exact.
+    const again = await countRounds("/api/wall?mode=for_you");
+    assert.equal(
+      again.rounds,
+      depth,
+      `the round-trip count is not deterministic (${depth} then ${again.rounds}) — something on ` +
+        `the first page races a real timer, so this guard would flake`,
+    );
 
-    // The spec's number, DERIVED from the two robust measurements rather than
-    // read off a stopwatch. An absolute wall-clock reading at 4 ms/round-trip is
-    // what the comment above says it is: a hostage to the runner's timer queue.
     const modelledMs = cpuOnly + depth * MODELLED_RTT_MS;
 
     console.log(
       `[bench] first page modelled at ${MODELLED_RTT_MS}ms/round-trip: ${modelledMs.toFixed(0)}ms ` +
-        `(cpu ${cpuOnly.toFixed(1)}ms + ~${depth.toFixed(0)} serialized round trips; ` +
+        `(cpu ${cpuOnly.toFixed(1)}ms + ${depth} serialized round trips, counted; ` +
         `ratchet ${ROUND_TRIP_DEPTH_RATCHET}) — implies a per-round-trip budget of ` +
         `${(FIRST_PAGE_TARGET_MS / Math.max(depth, 1)).toFixed(1)}ms to hold ${FIRST_PAGE_TARGET_MS}ms. ` +
-        `[raw: ${atLow.toFixed(0)}ms at ${SLOPE_LOW_MS}ms, ${atHigh.toFixed(0)}ms at ${SLOPE_HIGH_MS}ms]`,
+        `[${counted.calls} calls released over the ${depth} rounds]`,
     );
 
-    // Vacuity guard: if the latency injection ever stops reaching the page, the
-    // slope collapses to noise and every assertion below becomes free.
+    // Vacuity guard: if the holding ever stops reaching the page, the count
+    // collapses and every assertion below becomes free.
     assert.ok(
       depth > 20,
-      `only ~${depth.toFixed(1)} serialized round trips observed — the injected latency is ` +
+      `only ${depth} serialized round trips observed — the held queries are ` +
         `not reaching the page, so this test is measuring nothing`,
+    );
+    assert.ok(
+      counted.calls > 5,
+      `only ${counted.calls} calls were held — the round-trip mode is not wired to the page`,
     );
 
     assert.ok(
       depth <= ROUND_TRIP_DEPTH_RATCHET,
-      `the first page now waits on ~${depth.toFixed(0)} serialized database round trips, over ` +
+      `the first page now waits on ${depth} serialized database round trips, over ` +
         `the recorded ratchet of ${ROUND_TRIP_DEPTH_RATCHET}. Something new is awaited in a ` +
         `loop. At this depth the ${FIRST_PAGE_TARGET_MS}ms target needs every round trip to ` +
         `land inside ${(FIRST_PAGE_TARGET_MS / Math.max(depth, 1)).toFixed(1)}ms.`,
@@ -563,7 +636,7 @@ describe("Wall first-page performance (spec §33 / TABLE 4)", () => {
       modelledMs <= FIRST_PAGE_TARGET_MS,
       `modelled at ${MODELLED_RTT_MS}ms per round trip the first page takes ` +
         `${modelledMs.toFixed(0)}ms, over TABLE 4's ${FIRST_PAGE_TARGET_MS}ms — the serialized ` +
-        `depth grew to ~${depth.toFixed(0)}.`,
+        `depth grew to ${depth}.`,
     );
   });
 });

@@ -401,7 +401,15 @@ export function HighlightViewer({
     setLikeMap((m) => ({ ...m, [current.id]: { liked: nextLiked, count: nextCount } }));
     const r = await toggleHighlightLike(current.id, prev.liked);
     if (r.ok && r.data) {
-      setLikeMap((m) => ({ ...m, [current.id]: { liked: r.data!.likedByMe, count: r.data!.likeCount } }));
+      // The server answers `likeCount: null` when the like LANDED but the
+      // count could not be read (routes/highlights.ts says so rather than
+      // inventing a zero). Writing that null over the count erased the number
+      // from the screen; the optimistic count is the best figure there is.
+      const serverCount = r.data.likeCount;
+      setLikeMap((m) => ({
+        ...m,
+        [current.id]: { liked: r.data!.likedByMe, count: typeof serverCount === 'number' ? serverCount : nextCount },
+      }));
     } else {
       setLikeMap((m) => ({ ...m, [current.id]: prev }));
     }
@@ -427,9 +435,19 @@ export function HighlightViewer({
 
   function handleReport() {
     if (!current) return;
+    const id = current.id;
+    // `reportHighlight` RESOLVES `{ ok: false }` on a refusal or a dropped
+    // connection; it never rejects. The old `.then(() => 'Reported')` therefore
+    // thanked the person for a report the server never took — on a safety
+    // control, the one place a false "done" is worst.
+    const send = async (reason: string) => {
+      const r = await reportHighlight(id, reason);
+      if (r.ok) Alert.alert('Reported', 'Thank you.');
+      else Alert.alert('Could not send report', r.message ?? 'Your report was not sent. Please try again.');
+    };
     Alert.alert('Report Highlight', 'Why are you reporting this?', [
-      { text: 'Inappropriate', onPress: () => reportHighlight(current.id, 'inappropriate').then(() => Alert.alert('Reported', 'Thank you.')) },
-      { text: 'Spam', onPress: () => reportHighlight(current.id, 'spam').then(() => Alert.alert('Reported', 'Thank you.')) },
+      { text: 'Inappropriate', onPress: () => { void send('inappropriate'); } },
+      { text: 'Spam', onPress: () => { void send('spam'); } },
       { text: 'Cancel', style: 'cancel' },
     ]);
   }
@@ -646,6 +664,7 @@ export function HighlightViewer({
                   onPress={handleLike}
                   onLongPress={() => setLikerHighlightId(current.id)}
                   hitSlop={HIT_SLOP}
+                  testID="highlight-like"
                 >
                   <ActionStampIcon
                     active={likeState.liked}
@@ -758,7 +777,7 @@ export function HighlightViewer({
             )}
 
             {!isOwner && (
-              <Pressable onPress={handleReport} style={s.actionBtn} hitSlop={HIT_SLOP}>
+              <Pressable onPress={handleReport} style={s.actionBtn} hitSlop={HIT_SLOP} testID="highlight-report" accessibilityRole="button" accessibilityLabel="Report this highlight">
                 <Flag size={POST_ACTION_ICON_SIZE} color="rgba(255,255,255,0.7)" />
               </Pressable>
             )}

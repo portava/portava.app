@@ -79,7 +79,7 @@ import {
   type MediaSessionState, type MediaRankedItem,
 } from "../services/ranking/MediaFeedRankingService.js"; import { isWatchStage24RankingEnabled, orderWatchCandidatesByStage24 } from "../services/media/WatchStage24Ranking.js";
 import { recordMediaEvent } from "../lib/mediaAnalytics.js";
-import { resolveGemCoords, type GemCoordContext } from "../services/hiddenGems/HiddenGemPrivacyGuard.js";
+import { resolveGemCoords, type GemCoordContext } from "../services/hiddenGems/HiddenGemPrivacyGuard.js"; import { FailedSources, readWhole, readWholeColumn, afterKey, countRowsPerId, exactCount, known } from "../lib/feedReads.js"; import { loadGemPageReads } from "../lib/mediaFeedReads.js"; import { recountPostCounter, recountGemSaves } from "../lib/postCounters.js"; // census-media §47
 
 const router = Router();
 
@@ -291,7 +291,7 @@ const TRIP_LINKED_COLUMNS =
 async function resolveLinkedEntities(
   page: Array<{ id: string; event_id?: string | null; trip_id?: string | null }>,
   viewerUserId: string,
-  sc: any,
+  sc: any, failed?: FailedSources, // census-media §47: each unread read below is named here — an unread linked entity is not "no linked entity"
 ): Promise<Map<string, MediaFeedLinkedEntity>> {
   const result = new Map<string, MediaFeedLinkedEntity>();
 
@@ -327,38 +327,38 @@ async function resolveLinkedEntities(
     (async (): Promise<any[]> => {
       if (eventIds.length === 0) return [];
       try {
-        const { data } = await sc
+        const { data, error } = await sc
           .from("events")
           .select(EVENT_LINKED_COLUMNS)
           .in("id", eventIds);
-        return (data as any[]) ?? [];
-      } catch { return []; }
+        if (error) failed?.note("events", error); return (data as any[]) ?? [];
+      } catch (err) { failed?.note("events", err); return []; }
     })(),
     // Fetch trips
     (async (): Promise<any[]> => {
       if (tripIds.length === 0) return [];
       try {
-        const { data } = await sc
+        const { data, error } = await sc
           .from("trips")
           .select(TRIP_LINKED_COLUMNS)
           .in("id", tripIds);
-        return (data as any[]) ?? [];
-      } catch { return []; }
+        if (error) failed?.note("trips", error); return (data as any[]) ?? [];
+      } catch (err) { failed?.note("trips", err); return []; }
     })(),
     // Viewer's event RSVPs (going/maybe/interested qualify as membership)
     (async (): Promise<Set<string>> => {
       if (eventIds.length === 0) return new Set();
       try {
-        const { data } = await sc
+        const { data, error } = await sc
           .from("event_rsvps")
           .select("event_id")
           .eq("user_id", viewerUserId)
           .in("event_id", eventIds)
           .in("status", ["going", "maybe", "interested"]);
-        const s = new Set<string>();
+        const s = new Set<string>(); if (error) failed?.note("event_rsvps", error); // §47: unread membership strips the entity (fail-closed), and is named
         for (const r of (data as any[]) ?? []) s.add(r.event_id as string);
         return s;
-      } catch { return new Set(); }
+      } catch (err) { failed?.note("event_rsvps", err); return new Set(); }
     })(),
     // Viewer's trip memberships — role must be accepted AND status must be
     // 'accepted' (or null for legacy rows that pre-date the status column).
@@ -366,13 +366,13 @@ async function resolveLinkedEntities(
     (async (): Promise<Set<string>> => {
       if (tripIds.length === 0) return new Set();
       try {
-        const { data } = await sc
+        const { data, error } = await sc
           .from("trip_members")
           .select("trip_id, status")
           .eq("user_id", viewerUserId)
           .in("trip_id", tripIds)
           .in("role", ["owner", "co_host", "member", "viewer"]);
-        const s = new Set<string>();
+        const s = new Set<string>(); if (error) failed?.note("trip_members", error); // §47: unread membership strips the entity (fail-closed), and is named
         for (const r of (data as any[]) ?? []) {
           // Accept null status (legacy rows) or explicitly 'accepted'.
           // All other statuses (invited, declined, removed, left) are outsiders.
@@ -382,7 +382,7 @@ async function resolveLinkedEntities(
           }
         }
         return s;
-      } catch { return new Set(); }
+      } catch (err) { failed?.note("trip_members", err); return new Set(); }
     })(),
   ]);
 
@@ -609,31 +609,31 @@ async function handleGridFeed(req: any, res: any): Promise<void> {
   // ── Pre-fetch viewer context for filter-specific queries ────────────────────
   const followedCreatorIds = new Set<string>();
   const savedPostIds = new Set<string>();
-
-  await Promise.all([
-    (async () => {
-      if (filter === "following") {
-        try {
-          const { data } = await sc
-            .from("user_follows")
-            .select("following_id")
-            .eq("follower_id", user.id);
-          for (const r of (data as any[]) ?? []) followedCreatorIds.add(r.following_id as string);
-        } catch { /* non-fatal */ }
-      }
-    })(),
-    (async () => {
-      if (filter === "saved") {
-        try {
-          const { data } = await sc
-            .from("post_saves")
-            .select("post_id")
-            .eq("user_id", user.id);
-          for (const r of (data as any[]) ?? []) savedPostIds.add(r.post_id as string);
-        } catch { /* non-fatal */ }
-      }
-    })(),
+  // census-media §47: who you follow and what you saved are read WHOLE, by key —
+  // never the first 1,000 rows — and an unread list is a retryable 503, never the
+  // empty page that says "you follow no one" / "you saved nothing". Both used to
+  // sit in `try { … } catch { /* non-fatal */ }`, which a resolved error never
+  // reaches: supabase-js RESOLVES `{ data: null, error }`.
+  const gridFailed = new FailedSources(req.log, "media grid");
+  const [gridFollows, gridSaves] = await Promise.all([
+    filter === "following"
+      ? readWholeColumn(sc, "user_follows", "following_id", (q: any) => q.eq("follower_id", user.id))
+      : null,
+    filter === "saved"
+      ? readWholeColumn(sc, "post_saves", "post_id", (q: any) => q.eq("user_id", user.id))
+      : null,
   ]);
+  for (const id of known(gridFollows ?? { ok: true, value: [] }, gridFailed, "user_follows") ?? []) followedCreatorIds.add(id);
+  for (const id of known(gridSaves ?? { ok: true, value: [] }, gridFailed, "post_saves") ?? []) savedPostIds.add(id);
+  if (gridFailed.any) {
+    sendError(res, "degraded_unavailable", "Could not load this view. Please try again.");
+    return;
+  }
+  // The whole list then rides in the `.in(...)` filter of the candidate query
+  // below. A viewer with very many follows or saves can meet the gateway's URL
+  // length limit there; that fails the query LOUDLY (db_error) rather than
+  // cutting the list, and is recorded as a finding in census-media §47.
+  // (An unread list never reaches the empty-result branches below.)
 
   // Following filter with zero followed creators → empty result
   if (filter === "following" && followedCreatorIds.size === 0) {
@@ -727,7 +727,7 @@ async function handleGridFeed(req: any, res: any): Promise<void> {
     ? await loadViewerTripIds(sc, user.id)
     : undefined;
 
-  const { eligible, blockFetchFailed } = await filterEligibleMediaCandidates(
+  const { eligible, blockFetchFailed, failedSource: gridGateSource, softFailedSources: gridSoftFailed } = await filterEligibleMediaCandidates(
     candidates,
     {
       viewerUserId: user.id,
@@ -736,11 +736,11 @@ async function handleGridFeed(req: any, res: any): Promise<void> {
       viewerTripIds: gridViewerTripIds,
     },
     sc,
-  );
+  ); for (const src of gridSoftFailed ?? []) gridFailed.note(src); // census-media §47: a mute or hide gate that was OFF is named
 
   if (blockFetchFailed) {
     req.log.warn({ userId: user.id }, "media/feed?mode=grid: block-state unknown — returning empty feed");
-    res.json({ items: [], nextCursor: null, sessionId });
+    res.json({ items: [], nextCursor: null, sessionId, failedSources: [gridGateSource ?? "blocks"] }); // census-media §47: fail-closed AND said — an empty grid over an unread gate is not "nothing here"
     return;
   }
 
@@ -793,7 +793,7 @@ async function handleGridFeed(req: any, res: any): Promise<void> {
     session_id: sessionId,
   }, sc);
 
-  res.json({ items, nextCursor, sessionId });
+  res.json({ items, nextCursor, sessionId, ...gridFailed.body() });
 }
 
 // ── GET /api/media/feed?mode=hidden_gems ─────────────────────────────────────
@@ -855,22 +855,22 @@ router.get("/media/gems-feed", asyncHandler(async (req, res) => {
       return;
     }
     // Load trip destination city — requires membership
-    const { data: tripRow } = await sc
+    const { data: tripRow, error: tripErr } = await sc
       .from("trips")
       .select("id, destination_city, owner_id")
       .eq("id", tripId)
-      .maybeSingle();
+      .maybeSingle(); if (tripErr) { req.log.error({ err: tripErr }, "gems feed: trip read failed"); sendError(res, "db_error", tripErr.message); return; } // census-media §47: an unread trip is not "Trip not found"
     if (!tripRow) {
       sendError(res, "not_found", "Trip not found");
       return;
     }
     // Verify caller is a trip member
-    const { data: memberRow } = await sc
+    const { data: memberRow, error: memberErr } = await sc
       .from("trip_members")
       .select("user_id")
       .eq("trip_id", tripId)
       .eq("user_id", user.id)
-      .maybeSingle();
+      .maybeSingle(); if (memberErr) { req.log.error({ err: memberErr }, "gems feed: trip membership read failed"); sendError(res, "db_error", memberErr.message); return; } // §47: unread is not "Not a trip member"
     if (!memberRow && (tripRow as any).owner_id !== user.id) {
       sendError(res, "forbidden", "Not a trip member");
       return;
@@ -966,7 +966,7 @@ router.get("/media/gems-feed", asyncHandler(async (req, res) => {
   const submitterIdsForBlocks = [
     ...new Set(allRowsRaw.map((g: any) => g.submitted_by as string).filter(Boolean)),
   ];
-  let allRows = allRowsRaw;
+  let allRows = allRowsRaw; const gemsFailed = new FailedSources(req.log, "gems feed"); // census-media §47: every read this feed could not make is named in failedSources
   if (submitterIdsForBlocks.length > 0) {
     try {
       const [blockedRes, blockerRes] = await Promise.all([
@@ -978,8 +978,8 @@ router.get("/media/gems-feed", asyncHandler(async (req, res) => {
       for (const r of (blockedRes.data as any[]) ?? []) blocked.add(r.blocked_id as string);
       for (const r of (blockerRes.data as any[]) ?? []) blocked.add(r.blocker_id as string);
       allRows = allRowsRaw.filter((g: any) => !g.submitted_by || !blocked.has(g.submitted_by as string));
-    } catch {
-      req.log.warn({ userId: user.id }, "gems feed: block-state unknown — returning empty feed");
+    } catch (err) {
+      gemsFailed.note("blocks", err); req.log.warn({ userId: user.id }, "gems feed: block-state unknown — returning empty feed"); // §47: fail-closed AND said
       allRows = [];
     }
   }
@@ -997,43 +997,43 @@ router.get("/media/gems-feed", asyncHandler(async (req, res) => {
   const profileMap = new Map<string, any>();
   if (submitterIds.length > 0) {
     try {
-      const { data: profiles } = await sc
+      const { data: profiles, error: profilesErr } = await sc
         .from("profiles")
         .select(GEM_PROFILE_COLUMNS)
-        .in("id", submitterIds);
+        .in("id", submitterIds); if (profilesErr) gemsFailed.note("profiles", profilesErr); // census-media §47: an unread submitter is named, not shown as nobody
       for (const p of (profiles as any[]) ?? []) profileMap.set(p.id as string, p);
-    } catch { /* non-fatal: profiles stay empty */ }
+    } catch (err) { gemsFailed.note("profiles", err); /* non-fatal: profiles stay empty — and that is said */ }
   }
 
   // Batch: saved gems, follows, display-name privacy
   const gemIds: string[] = page.map((g: any) => g.id as string);
-  const [savedSet, followedCreatorIdsGems, allowedRealNameIds] = await Promise.all([
-    (async () => {
-      const s = new Set<string>();
-      if (gemIds.length === 0) return s;
-      try {
-        const { data } = await sc
-          .from("hidden_gem_saves")
-          .select("gem_id")
-          .eq("user_id", user.id)
-          .in("gem_id", gemIds);
-        for (const r of (data as any[]) ?? []) s.add(r.gem_id as string);
-      } catch { /* non-fatal */ }
-      return s;
-    })(),
-    (async () => {
-      const s = new Set<string>();
-      if (submitterIds.length === 0) return s;
-      try {
-        const { data } = await sc
-          .from("user_follows")
-          .select("following_id")
-          .eq("follower_id", user.id)
-          .in("following_id", submitterIds);
-        for (const r of (data as any[]) ?? []) s.add(r.following_id as string);
-      } catch { /* non-fatal */ }
-      return s;
-    })(),
+  // census-media §47 — the DV-83 verifiers' "isSaved over a failed enrichment
+  // read". These were two `try { … } catch { /* non-fatal */ }` reads, which a
+  // resolved error never reaches, so an unreadable hidden_gem_saves made every
+  // gem read hasSaved:false and an unreadable user_follows made every submitter
+  // read as not followed. lib/mediaFeedReads.loadGemPageReads reads the
+  // viewer's saves and follows, and the LIVE save count per gem (the cached
+  // hidden_gems.save_count is not moved by POST /media/:id/save, which is how
+  // this feed saves). A read that fails is null on every item and is named in
+  // failedSources; the privacy gates in hydrateGemFeedItem still read an
+  // unknown follow as "not following" — they fail closed on it.
+  const [gemReads, allowedRealNameIds] = await Promise.all([
+    loadGemPageReads(sc, user.id, gemIds, submitterIds, gemsFailed),
+    // ↑ census-media §47. What each field of a Gems item means after this read:
+    //   viewerState.hasSaved            true / false, or null — hidden_gem_saves unread
+    //   viewerState.isFollowingCreator  true / false, or null — user_follows unread
+    //   stats.saveCount                 the live count, or null — hidden_gem_saves unread
+    //   creator.relationshipStatus      "unknown" when the follow graph was unread
+    // and the response carries `failedSources` naming each unread table, so a
+    // client can say "couldn't check" instead of drawing an empty bookmark or a
+    // Follow button over a read that did not happen. Nothing is withheld that was
+    // served before: the reads only stop an unknown being served as a "no".
+    // The live count is one HEAD count per gem on the page (hidden_gem_saves has
+    // no single key to page rows by), at most eight at a time.
+    // nameVisibilitySet fails closed to @handle, which is privacy-safe and makes
+    // no claim, so it is left as it was.
+    // (Display-name privacy, below, is unchanged.)
+    // ─────────────────────────────────────────────────────────────────────────
     nameVisibilitySet(sc, submitterIds),
   ]);
 
@@ -1056,14 +1056,14 @@ router.get("/media/gems-feed", asyncHandler(async (req, res) => {
       gem,
       viewerUserId: user.id,
       allowedRealNameIds,
-      savedGemIds: savedSet,
-      followedCreatorIds: followedCreatorIdsGems,
+      savedGemIds: gemReads.saved, followStateUnknown: gemReads.following === null, saveCount: gemReads.saveCounts ? (gemReads.saveCounts.get(gem.id as string) ?? 0) : null, // census-media §47
+      followedCreatorIds: gemReads.following ?? new Set<string>(),
       submitterProfile: profileMap.get(gem.submitted_by) ?? null,
       resolvedCoords: coordsByGemId.get(gem.id as string) ?? null,
     }),
   );
 
-  res.json({ items, nextCursor, sessionId });
+  res.json({ items, nextCursor, sessionId, ...gemsFailed.body() });
 }));
 
 // ── POST /api/media/:id/report ─────────────────────────────────────────────────
@@ -1299,7 +1299,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   // Fetch followed creator IDs (for following feed), viewer country, and viewer
   // date-of-birth in parallel. Country and age are used for SQL-level pre-filters
   // that prevent restricted posts from leaving the DB on cache misses.
-  const followedCreatorIds = new Set<string>();
+  const followedCreatorIds = new Set<string>(); const watchFailed = new FailedSources(req.log, "watch feed"); // census-media §47: every read this feed could not make is named in failedSources
   let viewerCountry: string | null = null;
   let viewerAge: number | null = null;
 
@@ -1307,29 +1307,29 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     // Followed creator IDs — only needed for the following feed
     (async () => {
       if (feedType !== "following") return;
-      try {
-        const { data: followRows } = await sc
-          .from("user_follows")
-          .select("following_id")
-          .eq("follower_id", user.id);
-        for (const r of (followRows as any[]) ?? []) followedCreatorIds.add(r.following_id as string);
-      } catch { /* non-fatal */ }
+      try { // census-media §47: the WHOLE follow graph, read by key (never the first 1,000 rows);
+        // an unread graph is NAMED and answered with a 503 below, never with the
+        // empty "you're all caught up" page a resolved error used to produce.
+        const followRead = await readWholeColumn(sc, "user_follows", "following_id", (q: any) => q.eq("follower_id", user.id));
+        if (!followRead.ok) watchFailed.note("user_follows", followRead.error);
+        else for (const id of followRead.value) followedCreatorIds.add(id);
+      } catch (err) { watchFailed.note("user_follows", err); }
     })(),
     // Viewer's location country and date-of-birth — used for SQL-level
     // geo/age-restriction pre-filters. Best-effort: if unavailable the in-memory
     // gate in filterEligibleMediaCandidates handles both restrictions fail-closed.
     (async () => {
       try {
-        const { data: viewerProfile } = await sc
+        const { data: viewerProfile, error: viewerProfileErr } = await sc
           .from("profiles")
           // `date_of_birth` is no longer selected here: the age answer comes
           // from the seam below, and a column selected for an age decision that
           // is made elsewhere is the next author's trap.
           .select("location_country")
           .eq("id", user.id)
-          .maybeSingle();
+          .maybeSingle(); if (viewerProfileErr) watchFailed.note("profiles", viewerProfileErr); // census-media §47: the viewer's country could not be read — named
         viewerCountry = (viewerProfile as any)?.location_country ?? null;
-      } catch { /* non-fatal */ }
+      } catch (err) { watchFailed.note("profiles", err); }
     })(),
     // THROUGH THE SEAM (lib/gateAge.ts), and deliberately as a SIBLING of the
     // country read inside the existing Promise.all rather than inside it: the
@@ -1345,7 +1345,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     })(),
   ]);
 
-  if (feedType === "following" && followedCreatorIds.size === 0) {
+  if (watchFailed.has("user_follows")) { sendError(res, "degraded_unavailable", "Could not load who you follow. Please try again."); return; } if (feedType === "following" && followedCreatorIds.size === 0) { // census-media §47: an unread follow graph is not "caught up"
     res.json({ items: [], nextCursor: null, sessionId });
     return;
   }
@@ -1401,15 +1401,15 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     ? await loadViewerTripIds(sc, user.id)
     : undefined;
 
-  const { eligible, blockFetchFailed } = await filterEligibleMediaCandidates(
+  const { eligible, blockFetchFailed, failedSource: watchGateSource, softFailedSources: watchSoftFailed } = await filterEligibleMediaCandidates(
     candidates,
     { viewerUserId: user.id, feedType, followedCreatorIds, viewerCountry, viewerAge, viewerTripIds: watchViewerTripIds },
     sc,
-  );
+  ); for (const src of watchSoftFailed ?? []) watchFailed.note(src); // census-media §47: a mute or hide gate that was OFF is named
 
   if (blockFetchFailed) {
     req.log.warn({ userId: user.id }, "media/feed: block-state unknown — returning empty feed");
-    res.json({ items: [], nextCursor: null, sessionId });
+    res.json({ items: [], nextCursor: null, sessionId, failedSources: [watchGateSource ?? "blocks"] }); // census-media §47: fail-closed AND said — not "nothing to watch"
     return;
   }
 
@@ -1418,28 +1418,28 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   // Load the viewer's interest tags for ranking.
   let interestTags = new Set<string>();
   try {
-    const { data: prefRow } = await sc
+    const { data: prefRow, error: prefErr } = await sc
       .from("compass_user_preferences")
       .select("interests")
       .eq("user_id", user.id)
-      .maybeSingle();
+      .maybeSingle(); if (prefErr) watchFailed.note("compass_user_preferences", prefErr); // census-media §47: ranked without the interest term, and that is said
     const interests: string[] = (prefRow as any)?.interests ?? [];
     interestTags = new Set(interests.map((t: string) => t.toLowerCase()));
-  } catch { /* non-fatal */ }
+  } catch (err) { watchFailed.note("compass_user_preferences", err); }
 
   // ── Seen IDs (for fatigue penalty) ────────────────────────────────────────
   // Load recent impressions for the viewer so seen items are penalised.
   const seenIds = new Set<string>();
   try {
-    const { data: seenRows } = await sc
+    const { data: seenRows, error: seenErr } = await sc
       .from("rank_events")
       .select("item_id")
       .eq("user_id", user.id)
       .eq("surface", "watch_feed")
       .gte("served_at", new Date(nowMs - 7 * 24 * 60 * 60 * 1000).toISOString())
-      .limit(500);
+      .limit(500); if (seenErr) watchFailed.note("rank_events", seenErr); // census-media §47: ranked without the seen penalty, and that is said
     for (const r of (seenRows as any[]) ?? []) seenIds.add(r.item_id as string);
-  } catch { /* non-fatal */ }
+  } catch (err) { watchFailed.note("rank_events", err); }
 
   // ── Load media ranking flags + signals ────────────────────────────────────
   const watchStage24Read = isWatchStage24RankingEnabled(sc); const [mediaFlags, mediaSignalsMap, creatorSignalsMap, placeAffinities] = await Promise.all([
@@ -1457,16 +1457,16 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   if (mediaFlags.featuredBoostEnabled && eligible.length > 0) {
     try {
       const sevenDaysAgo = new Date(nowMs - 7 * 24 * 60 * 60 * 1000).toISOString();
-      const { data: featuredRows } = await sc
+      const { data: featuredRows, error: featuredErr } = await sc
         .from("portava_featured")
         .select("post_id, category, featured_at")
         .eq("status", "live")
         .in("post_id", eligible.map((c) => c.id))
-        .gte("featured_at", sevenDaysAgo);
+        .gte("featured_at", sevenDaysAgo); if (featuredErr) watchFailed.note("portava_featured", featuredErr); // census-media §47: the boost is skipped, and that is said
       for (const r of (featuredRows as any[]) ?? []) {
         featuredMap.set(r.post_id as string, { featuredAt: r.featured_at as string, category: r.category as string });
       }
-    } catch { /* non-fatal: ranking boost skipped */ }
+    } catch (err) { watchFailed.note("portava_featured", err); /* non-fatal: ranking boost skipped */ }
   }
 
   // ── Pre-load bucket counts for novelty ranking (no per-post DB lookups) ─────
@@ -1479,21 +1479,17 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   // posts.like_count is no longer updated by the unified stamp write path;
   // derive likeCount from content_stamps (entity_type='media') instead so
   // ranking signals stay in sync with the actual stamp table.
-  const rankingStampCountMap = new Map<string, number>();
-  if (eligible.length > 0) {
-    try {
-      const eligibleIds = eligible.map((c) => c.id);
-      const { data: rankStampRows } = await sc
-        .from("content_stamps")
-        .select("entity_id")
-        .eq("entity_type", "media")
-        .in("entity_id", eligibleIds);
-      for (const r of (rankStampRows as any[]) ?? []) {
-        const eid = r.entity_id as string;
-        rankingStampCountMap.set(eid, (rankingStampCountMap.get(eid) ?? 0) + 1);
-      }
-    } catch { /* non-fatal: falls back to posts.like_count */ }
-  }
+  // census-media §47: EXACT — the rows read whole, by key. One unbounded read
+  // here was cut at 1,000 rows across up to 200 candidates, so busy posts were
+  // under-ranked in silence; and a post with no stamp row fell back to the stale
+  // posts.like_count. Now: an exact count per candidate (0 when it has none) or,
+  // when content_stamps cannot be read, NO like term at all (null) — never the
+  // cached counter — with content_stamps named in failedSources.
+  const rankingStampCounts = known(
+    await countRowsPerId(sc, "content_stamps", "entity_id", eligible.map((c) => c.id), (q: any) => q.eq("entity_type", "media")),
+    watchFailed,
+    "content_stamps",
+  );
 
   // ── Build ranking candidates (merge DB signals into candidate shape) ────────
   const rankCandidates: RankingMediaFeedItem[] = eligible.map((c) => {
@@ -1509,7 +1505,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
       city:     (c as any).location_city ?? null,
       category: (c as any).category ?? null,
       tags:     Array.isArray(c.tags) ? c.tags.map((t: string) => t.toLowerCase()) : [],
-      likeCount:  rankingStampCountMap.get(c.id) ?? Number((c as any).like_count ?? 0),
+      likeCount:  rankingStampCounts ? (rankingStampCounts.get(c.id) ?? 0) : null, // census-media §47: exact, or no term — never posts.like_count
       joinCount:  0,
       featuredAt: featuredEntry?.featuredAt ?? null,
       featuredByPortava: featuredEntry?.category ?? null,
@@ -1531,12 +1527,16 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   const creatorImpressions = new Map<string, number>();
   if (sessionId && mediaFlags.creatorFatigueEnabled) {
     try {
-      const { data: sessionRows } = await sc
-        .from("rank_events")
-        .select("item_id")
-        .eq("user_id", user.id)
-        .eq("session_id", sessionId)
-        .eq("surface", "watch_feed");
+      // census-media §47: WHOLE, by key (a long session past 1,000 rows was cut); an unread one is named, and the page is ranked without session fatigue.
+      const sessionRead = await readWhole<any>((after, size) => afterKey(
+        sc
+          .from("rank_events")
+          .select("id, item_id", { count: "exact" })
+          .eq("user_id", user.id)
+          .eq("session_id", sessionId)
+          .eq("surface", "watch_feed").order("id", { ascending: true }).limit(size), "id", after), (r) => String(r.id));
+      if (!sessionRead.ok) watchFailed.note("rank_events", sessionRead.error);
+      const sessionRows = sessionRead.ok ? sessionRead.value : [];
       // Map item_id → author_id using the already-loaded eligible candidates.
       const itemToAuthor = new Map<string, string>(
         eligible.map((c) => [c.id, c.author_id]).filter(([, aid]) => Boolean(aid)) as [string, string][],
@@ -1547,7 +1547,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
           creatorImpressions.set(authorId, (creatorImpressions.get(authorId) ?? 0) + 1);
         }
       }
-    } catch { /* non-fatal */ }
+    } catch (err) { watchFailed.note("rank_events", err); }
   }
   const mediaSession: MediaSessionState = { creatorImpressions };
 
@@ -1609,13 +1609,13 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
         const s = new Set<string>();
         if (pageIds.length === 0) return s;
         try {
-          const { data } = await sc
+          const { data, error } = await sc
             .from("post_saves")
             .select("post_id")
             .eq("user_id", user.id)
             .in("post_id", pageIds);
-          for (const r of (data as any[]) ?? []) s.add(r.post_id as string);
-        } catch { /* non-fatal */ }
+          if (error) { watchFailed.note("post_saves", error); return null; } for (const r of (data as any[]) ?? []) s.add(r.post_id as string); // census-media §47: unread is null ("could not check"), never "not saved"
+        } catch (err) { watchFailed.note("post_saves", err); return null; }
         return s;
       })(),
       (async () => {
@@ -1623,28 +1623,28 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
         const s = new Set<string>();
         if (pageIds.length === 0) return s;
         try {
-          const { data } = await sc
+          const { data, error } = await sc
             .from("content_stamps")
             .select("entity_id")
             .eq("user_id", user.id)
             .eq("entity_type", "media")
             .in("entity_id", pageIds);
-          for (const r of (data as any[]) ?? []) s.add(r.entity_id as string);
-        } catch { /* non-fatal */ }
+          if (error) { watchFailed.note("content_stamps", error); return null; } for (const r of (data as any[]) ?? []) s.add(r.entity_id as string); // census-media §47: unread is null, never "not stamped"
+        } catch (err) { watchFailed.note("content_stamps", err); return null; }
         return s;
       })(),
       (async () => {
         const s = new Set<string>();
         if (authorIds.length === 0) return s;
         try {
-          const { data } = await sc
+          const { data, error } = await sc
             .from("friend_requests")
             .select("recipient_id")
             .eq("requester_id", user.id)
             .eq("status", "pending")
             .in("recipient_id", authorIds);
-          for (const r of (data as any[]) ?? []) s.add(r.recipient_id as string);
-        } catch { /* non-fatal */ }
+          if (error) { watchFailed.note("friend_requests", error); return null; } for (const r of (data as any[]) ?? []) s.add(r.recipient_id as string); // census-media §47: unread is null, never "no request"
+        } catch (err) { watchFailed.note("friend_requests", err); return null; }
         return s;
       })(),
       nameVisibilitySet(sc, authorIds),
@@ -1654,57 +1654,49 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
   // API base URL for relay URLs (relative when empty — works in all environments).
   const apiBaseUrl = process.env.API_BASE_URL ?? "";
 
-  // ── Stamp-it counts (batch COUNT on media_stamp_reactions) ─────────────────
-  // Counted in-memory after fetching matching rows — PostgREST does not support
-  // per-row GROUP BY aggregates in the JS client.
-  const stampCountMap = new Map<string, number>();
-  if (pageIds.length > 0) {
-    try {
-      const { data: stampRows } = await sc
-        .from("media_stamp_reactions")
-        .select("post_id")
-        .in("post_id", pageIds);
-      for (const r of (stampRows as any[]) ?? []) {
-        const pid = r.post_id as string;
-        stampCountMap.set(pid, (stampCountMap.get(pid) ?? 0) + 1);
-      }
-    } catch { /* non-fatal: stamp count defaults to 0 */ }
-  }
-
-  // ── Like counts from content_stamps (entity_type='media') ─────────────────
-  // posts.like_count is not updated by compat like writes; derive from stamps.
-  const mediaLikeCountMap = new Map<string, number>();
-  if (pageIds.length > 0) {
-    try {
-      const { data: likeCountRows } = await sc
-        .from("content_stamps")
-        .select("entity_id")
-        .eq("entity_type", "media")
-        .in("entity_id", pageIds);
-      for (const r of (likeCountRows as any[]) ?? []) {
-        const eid = r.entity_id as string;
-        mediaLikeCountMap.set(eid, (mediaLikeCountMap.get(eid) ?? 0) + 1);
-      }
-    } catch { /* non-fatal: falls back to posts.like_count */ }
-  }
+  // ── Stamp-it, like, save and comment counts ───────────────────────────────
+  // census-media §47. Each is EXACT and LIVE, or it is null:
+  //   stampItCount  media_stamp_reactions per post
+  //   likeCount     content_stamps (entity_type 'media') per post — the unified like
+  //   saveCount     post_saves per post — NOT the cached posts.save_count, which
+  //                 POST /media/:id/save (this tab's own save) never maintained
+  //   commentCount  non-deleted posts_comments per post — NOT the cached comment_count
+  // The two old reads fetched one row per stamp / reaction with no bound, so
+  // PostgREST cut a busy page at 1,000 rows and the counts were undercounted in
+  // silence; they sat in `try { … } catch { /* non-fatal */ }`, which a resolved
+  // error never reaches, so an outage read as 0. countRowsPerId reads the rows
+  // whole, by key; a count it cannot read is null on every item and its table is
+  // named in failedSources. (PostgREST has no per-row GROUP BY for the JS client,
+  // which is why the rows are read rather than counted server-side.)
+  const [stampItRead, likeRead, saveCountRead, commentCountRead] = await Promise.all([
+    countRowsPerId(sc, "media_stamp_reactions", "post_id", pageIds),
+    countRowsPerId(sc, "content_stamps", "entity_id", pageIds, (q: any) => q.eq("entity_type", "media")),
+    countRowsPerId(sc, "post_saves", "post_id", pageIds),
+    countRowsPerId(sc, "posts_comments", "post_id", pageIds, (q: any) => q.is("deleted_at", null)),
+  ]);
+  const stampCountMap = known(stampItRead, watchFailed, "media_stamp_reactions");
+  const mediaLikeCountMap = known(likeRead, watchFailed, "content_stamps");
+  const liveSaveCountMap = known(saveCountRead, watchFailed, "post_saves");
+  const liveCommentCountMap = known(commentCountRead, watchFailed, "posts_comments");
+  const countOf = (m: Map<string, number> | null, id: string) => (m ? (m.get(id) ?? 0) : null);
 
   // ── Linked entity resolution ───────────────────────────────────────────────
-  const linkedEntityMap = await resolveLinkedEntities(page, user.id, sc);
+  const linkedEntityMap = await resolveLinkedEntities(page, user.id, sc, watchFailed); // census-media §47: an unread linked entity is named
 
   // Re-fetch featured map for the final page (may differ from ranking-time map)
   // so the hydrated items carry featuredByPortava for client-side badge display.
   const pageFeaturedMap = new Map<string, string>();
   if (pageIds.length > 0) {
     try {
-      const { data: pfRows } = await sc
+      const { data: pfRows, error: pfErr } = await sc
         .from("portava_featured")
         .select("post_id, category")
         .eq("status", "live")
-        .in("post_id", pageIds);
+        .in("post_id", pageIds); if (pfErr) watchFailed.note("portava_featured", pfErr); // census-media §47: an omitted badge over an unread table is named
       for (const r of (pfRows as any[]) ?? []) {
         pageFeaturedMap.set(r.post_id as string, r.category as string);
       }
-    } catch { /* non-fatal: badge omitted */ }
+    } catch (err) { watchFailed.note("portava_featured", err); /* non-fatal: badge omitted — and said */ }
   }
 
   // ── Hidden-Gem location protection (fail-closed) ────────────────────────────
@@ -1714,14 +1706,22 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     const postMedia = Array.isArray(c.post_media) ? c.post_media : [];
     const featuredCategory = pageFeaturedMap.get(c.id) ?? null;
     return hydrateMediaFeedItem({
-      row: { ...c, stamp_it_count: stampCountMap.get(c.id) ?? 0, stamp_like_count: mediaLikeCountMap.get(c.id) ?? 0, featured_by_portava: featuredCategory },
+      // census-media §47: exact, live counts read above, or null (unread) — never 0 for a failure, never a cached column.
+      row: {
+        ...c,
+        stamp_it_count: countOf(stampCountMap, c.id),
+        stamp_like_count: countOf(mediaLikeCountMap, c.id),
+        save_count: countOf(liveSaveCountMap, c.id),
+        comment_count: countOf(liveCommentCountMap, c.id),
+        featured_by_portava: featuredCategory,
+      },
       sourceType: "post",
       viewerUserId: user.id,
       allowedRealNameIds,
-      savedPostIds: savedSet,
-      likedPostIds: likedSet,
+      savedPostIds: savedSet, // null when post_saves could not be read
+      likedPostIds: likedSet, // null when content_stamps could not be read
       followedCreatorIds,
-      pendingFollowRequestIds: pendingFollowSet,
+      pendingFollowRequestIds: pendingFollowSet, // null when friend_requests could not be read
       postMedia,
       useSignedUrls: true,
       supabaseUrl,
@@ -1788,7 +1788,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     session_id: sessionId,
   }, sc);
 
-  res.json({ items, nextCursor, sessionId });
+  res.json({ items, nextCursor, sessionId, ...watchFailed.body() });
 }));
 
 // ── GET /api/media/:id ────────────────────────────────────────────────────────
@@ -1826,7 +1826,7 @@ router.get("/media/:id", asyncHandler(async (req, res) => {
     return;
   }
 
-  const authorId = (row as any).author_id as string | undefined;
+  const authorId = (row as any).author_id as string | undefined; const singleFailed = new FailedSources(req.log, "media item"); // census-media §47: every read below that fails is named in failedSources
 
   // ── Resolve relationship BEFORE eligibility ────────────────────────────────
   // Eligibility for private-profile posts depends on whether the viewer follows
@@ -1835,43 +1835,43 @@ router.get("/media/:id", asyncHandler(async (req, res) => {
   const [viewerFollowsAuthor, savedSet, likedSet, pendingFollowSet, allowedRealNameIds] =
     await Promise.all([
       // Does viewer follow author?
-      (async (): Promise<boolean> => {
+      (async (): Promise<boolean | null> => {
         if (!authorId) return false;
         try {
-          const { data } = await sc
+          const { data, error } = await sc
             .from("user_follows")
             .select("following_id")
             .eq("follower_id", user.id)
             .eq("following_id", authorId)
             .maybeSingle();
-          return Boolean(data);
-        } catch { return false; }
+          if (error) { singleFailed.note("user_follows", error); return null; } return Boolean(data); // census-media §47: unread is null, never "not following"
+        } catch (err) { singleFailed.note("user_follows", err); return null; }
       })(),
       (async () => {
         const s = new Set<string>();
         try {
-          const { data } = await sc.from("post_saves").select("post_id").eq("user_id", user.id).eq("post_id", id);
+          const { data, error } = await sc.from("post_saves").select("post_id").eq("user_id", user.id).eq("post_id", id); if (error) { singleFailed.note("post_saves", error); return null; } // §47: null, never "not saved"
           if ((data as any[])?.length) s.add(id);
-        } catch { /* non-fatal */ }
+        } catch (err) { singleFailed.note("post_saves", err); return null; }
         return s;
       })(),
       (async () => {
         // Read stamp state from content_stamps (unified write path since Task 3047).
         const s = new Set<string>();
         try {
-          const { data } = await sc.from("content_stamps").select("entity_id").eq("user_id", user.id).eq("entity_type", "media").eq("entity_id", id);
+          const { data, error } = await sc.from("content_stamps").select("entity_id").eq("user_id", user.id).eq("entity_type", "media").eq("entity_id", id); if (error) { singleFailed.note("content_stamps", error); return null; } // §47
           if ((data as any[])?.length) s.add(id);
-        } catch { /* non-fatal */ }
+        } catch (err) { singleFailed.note("content_stamps", err); return null; }
         return s;
       })(),
       (async () => {
         const s = new Set<string>();
         try {
           if (authorId) {
-            const { data } = await sc.from("friend_requests").select("recipient_id").eq("requester_id", user.id).eq("recipient_id", authorId).eq("status", "pending");
+            const { data, error } = await sc.from("friend_requests").select("recipient_id").eq("requester_id", user.id).eq("recipient_id", authorId).eq("status", "pending"); if (error) { singleFailed.note("friend_requests", error); return null; } // §47
             if ((data as any[])?.length) s.add(authorId);
           }
-        } catch { /* non-fatal */ }
+        } catch (err) { singleFailed.note("friend_requests", err); return null; }
         return s;
       })(),
       nameVisibilitySet(sc, authorId ? [authorId] : []),
@@ -1904,7 +1904,7 @@ router.get("/media/:id", asyncHandler(async (req, res) => {
     sc,
   );
 
-  if (blockFetchFailed || eligible.length === 0) {
+  if (blockFetchFailed || (eligible.length === 0 && viewerFollowsAuthor === null)) { sendError(res, "degraded_unavailable", "Could not check whether you can see this item. Please try again."); return; } if (eligible.length === 0) { // census-media §47: an unread gate or follow is not "not found"
     sendError(res, "not_found", "Media item not found");
     return;
   }
@@ -1926,7 +1926,7 @@ router.get("/media/:id", asyncHandler(async (req, res) => {
     sc,
     { profilesKey: "profiles" },
   );
-  if (singleItemSafe.length === 0) {
+  if (singleItemSafe.length === 0 && viewerFollowsAuthor === null) { sendError(res, "degraded_unavailable", "Could not check whether you can see this item. Please try again."); return; } if (singleItemSafe.length === 0) { // §47
     sendError(res, "not_found", "Media item not found");
     return;
   }
@@ -1934,31 +1934,31 @@ router.get("/media/:id", asyncHandler(async (req, res) => {
   const postMedia = Array.isArray((row as any).post_media) ? (row as any).post_media : [];
 
   // Fetch stamp-it count and like count (content_stamps) for this single item
-  let singleStampCount = 0;
-  let singleLikeCount = 0;
-  try {
-    const [{ data: stampRows }, { data: likeRows }] = await Promise.all([
-      sc.from("media_stamp_reactions").select("post_id").eq("post_id", id),
-      sc.from("content_stamps").select("entity_id").eq("entity_type", "media").eq("entity_id", id),
-    ]);
-    singleStampCount = ((stampRows as any[]) ?? []).length;
-    singleLikeCount = ((likeRows as any[]) ?? []).length;
-  } catch { /* non-fatal */ }
+  // census-media §47: four EXACT HEAD counts (the row reads they replace were cut at 1,000 rows), LIVE (save/comment were the cached columns), each null and named when unread.
+  const [stampItN, likeN, saveN, commentN] = await Promise.all([
+    exactCount(sc.from("media_stamp_reactions").select("post_id", { count: "exact", head: true }).eq("post_id", id)),
+    exactCount(sc.from("content_stamps").select("entity_id", { count: "exact", head: true }).eq("entity_type", "media").eq("entity_id", id)),
+    exactCount(sc.from("post_saves").select("post_id", { count: "exact", head: true }).eq("post_id", id)),
+    exactCount(sc.from("posts_comments").select("post_id", { count: "exact", head: true }).eq("post_id", id).is("deleted_at", null)),
+  ]);
+  const singleStampCount = known(stampItN, singleFailed, "media_stamp_reactions"); const singleLikeCount = known(likeN, singleFailed, "content_stamps");
+  const singleSaveCount = known(saveN, singleFailed, "post_saves"); const singleCommentCount = known(commentN, singleFailed, "posts_comments");
+  // (A count of 0 here is measured; null is "could not be read".)
 
   // Resolve linked entity (event or trip) for the single item
-  const singleLinkedEntityMap = await resolveLinkedEntities([row as any], user.id, sc);
+  const singleLinkedEntityMap = await resolveLinkedEntities([row as any], user.id, sc, singleFailed);
 
   // Hidden-Gem location protection for the single item (fail-closed).
   const singleGemCtx = await loadFeedGemContext(sc, [row as any], req.log);
 
   const item = hydrateMediaFeedItem({
-    row: { ...(row as any), stamp_it_count: singleStampCount, stamp_like_count: singleLikeCount },
+    row: { ...(row as any), stamp_it_count: singleStampCount, stamp_like_count: singleLikeCount, save_count: singleSaveCount, comment_count: singleCommentCount },
     sourceType: "post",
     viewerUserId: user.id,
     allowedRealNameIds,
     savedPostIds: savedSet,
     likedPostIds: likedSet,
-    followedCreatorIds: followedIds,
+    followedCreatorIds: followedIds, followStateUnknown: viewerFollowsAuthor === null, // census-media §47
     pendingFollowRequestIds: pendingFollowSet,
     postMedia,
     useSignedUrls: true,
@@ -1968,7 +1968,7 @@ router.get("/media/:id", asyncHandler(async (req, res) => {
     resolvedLocation: protectedFeedLocation(row as any, singleGemCtx, user.id),
   });
 
-  res.json({ item });
+  res.json({ item, ...singleFailed.body() });
 }));
 
 // ── POST /api/media/:id/view ──────────────────────────────────────────────────
@@ -2021,7 +2021,7 @@ router.post("/media/:id/view", asyncHandler(async (req, res) => {
     .eq("id", id)
     .maybeSingle();
 
-  if (postErr || !postRow) {
+  if (postErr || !postRow) { if (postErr) { req.log.error({ err: postErr }, "media/view: post read failed"); sendError(res, "db_error", postErr.message); return; } // census-media §47: an unread post is not "not found"
     sendError(res, "not_found", "Media item not found");
     return;
   }
@@ -2134,13 +2134,13 @@ async function verifyMediaAccess(
   sc: any,
   id: string,
   viewerUserId: string,
-): Promise<{ kind: "post"; authorId: string } | { kind: "gem"; submittedBy: string | null } | null> {
+): Promise<{ kind: "post"; authorId: string } | { kind: "gem"; submittedBy: string | null } | null | "unreadable"> { // census-media §47: "unreadable" = a read this check needs failed — the caller answers 503, never "not found"
   // ── Try posts first (most common path) ────────────────────────────────────
-  const { data: postRow } = await sc
+  const { data: postRow, error: postReadErr } = await sc
     .from("posts")
     .select("id, author_id, status, visibility, trip_id")
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle(); if (postReadErr) return "unreadable";
 
   if (postRow && (postRow as any).status === "active") {
     const authorId: string = (postRow as any).author_id;
@@ -2152,7 +2152,7 @@ async function verifyMediaAccess(
       .from("blocks")
       .select("blocker_id", { count: "exact", head: true })
       .or(`and(blocker_id.eq.${viewerUserId},blocked_id.eq.${authorId}),and(blocker_id.eq.${authorId},blocked_id.eq.${viewerUserId})`);
-    if (blockError || (blockCount ?? 0) > 0) return null;
+    if (blockError) return "unreadable"; if ((blockCount ?? 0) > 0) return null; // §47: still refused when unread — as "could not check", not "not found"
 
     // Visibility check — a private post requires follow or ownership.
     // ("friends" used to be tested here too. `posts.visibility` is the enum
@@ -2160,13 +2160,13 @@ async function verifyMediaAccess(
     // row can ever hold it and the branch could never fire. Removed with the
     // PATCH schema that was the only thing trying to write it.)
     if (visibility === "private" && authorId !== viewerUserId) {
-      const { data: followRow } = await sc
+      const { data: followRow, error: followErr } = await sc
         .from("user_follows")
         .select("follower_id")
         .eq("follower_id", viewerUserId)
         .eq("following_id", authorId)
         .maybeSingle();
-      if (!followRow) return null;
+      if (followErr) return "unreadable"; if (!followRow) return null;
     }
 
     // trip_only posts require accepted trip membership (viewer or author)
@@ -2194,11 +2194,11 @@ async function verifyMediaAccess(
   }
 
   // ── Try hidden_gems ───────────────────────────────────────────────────────
-  const { data: gemRow } = await sc
+  const { data: gemRow, error: gemReadErr } = await sc
     .from("hidden_gems")
     .select("id, submitted_by, status")
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle(); if (gemReadErr) return "unreadable";
 
   if (gemRow && (gemRow as any).status === "active") {
     const submittedBy: string | null = (gemRow as any).submitted_by as string | null;
@@ -2209,7 +2209,7 @@ async function verifyMediaAccess(
         .from("blocks")
         .select("blocker_id", { count: "exact", head: true })
         .or(`and(blocker_id.eq.${viewerUserId},blocked_id.eq.${submittedBy}),and(blocker_id.eq.${submittedBy},blocked_id.eq.${viewerUserId})`);
-      if (blockError || (blockCount ?? 0) > 0) return null;
+      if (blockError) return "unreadable"; if ((blockCount ?? 0) > 0) return null;
     }
 
     return { kind: "gem", submittedBy };
@@ -2232,7 +2232,7 @@ router.post("/media/:id/like", asyncHandler(async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
   const mediaAccess = await verifyMediaAccess(sc, id, user.id);
-  if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; }
+  if (mediaAccess === "unreadable") { sendError(res, "degraded_unavailable", "Could not check access to this item. Please try again."); return; } if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; } // census-media §47
   // Self-like guard: preserve legacy behavior (authors cannot stamp their own media).
   if (mediaAccess.kind === "post" && (mediaAccess as any).authorId === user.id) {
     sendError(res, "forbidden", "Cannot like your own content");
@@ -2280,7 +2280,7 @@ router.post("/media/:id/react", asyncHandler(async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
   const mediaAccess = await verifyMediaAccess(sc, id, user.id);
-  if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; }
+  if (mediaAccess === "unreadable") { sendError(res, "degraded_unavailable", "Could not check access to this item. Please try again."); return; } if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; } // census-media §47
 
   if (mediaAccess.kind === "post") {
     const { error } = await sc
@@ -2314,7 +2314,7 @@ router.delete("/media/:id/like", asyncHandler(async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client unavailable"); return; }
   const mediaAccess = await verifyMediaAccess(sc, id, user.id);
-  if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; }
+  if (mediaAccess === "unreadable") { sendError(res, "degraded_unavailable", "Could not check access to this item. Please try again."); return; } if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; } // census-media §47
   const { stampCount } = await unstampEntity(sc, user.id, "media", id);
   res.json({ ok: true, stampCount });
 }));
@@ -2333,7 +2333,7 @@ router.post("/media/:id/save", asyncHandler(async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
   const mediaAccess = await verifyMediaAccess(sc, id, user.id);
-  if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; }
+  if (mediaAccess === "unreadable") { sendError(res, "degraded_unavailable", "Could not check access to this item. Please try again."); return; } if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; } // census-media §47
 
   if (mediaAccess.kind === "post") {
     const { error } = await sc
@@ -2365,7 +2365,7 @@ router.post("/media/:id/save", asyncHandler(async (req, res) => {
     surface:   mediaAccess.kind === "post" ? "watch_feed" : "gems_feed",
   }, sc);
 
-  res.json({ saved: true, mediaId: id });
+  const savedCount = mediaAccess.kind === "post" ? await recountPostCounter(sc, id, "save", req.log) : await recountGemSaves(sc, id, req.log); res.json({ saved: true, mediaId: id, saveCount: savedCount.count, ...savedCount.failed.body() }); // census-media §47: the cached save_count now follows this write (it never did); the count is exact, or null and named
 }));
 
 // ── DELETE /api/media/:id/save ────────────────────────────────────────────────
@@ -2382,7 +2382,7 @@ router.delete("/media/:id/save", asyncHandler(async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
   const mediaAccess = await verifyMediaAccess(sc, id, user.id);
-  if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; }
+  if (mediaAccess === "unreadable") { sendError(res, "degraded_unavailable", "Could not check access to this item. Please try again."); return; } if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; } // census-media §47
 
   if (mediaAccess.kind === "post") {
     const { error } = await sc
@@ -2400,7 +2400,7 @@ router.delete("/media/:id/save", asyncHandler(async (req, res) => {
     if (error) { req.log.error({ err: error }, "hidden_gem_saves delete failed"); sendError(res, "db_error", error.message); return; }
   }
 
-  res.json({ saved: false, mediaId: id });
+  const unsavedCount = mediaAccess.kind === "post" ? await recountPostCounter(sc, id, "save", req.log) : await recountGemSaves(sc, id, req.log); res.json({ saved: false, mediaId: id, saveCount: unsavedCount.count, ...unsavedCount.failed.body() }); // census-media §47: as the save above
 }));
 
 // ── POST /api/media/:id/share ─────────────────────────────────────────────────
@@ -2440,7 +2440,7 @@ router.post("/media/:id/share", asyncHandler(async (req, res) => {
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload"); return; }
 
   const mediaAccess = await verifyMediaAccess(sc, id, user.id);
-  if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; }
+  if (mediaAccess === "unreadable") { sendError(res, "degraded_unavailable", "Could not check access to this item. Please try again."); return; } if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; } // census-media §47
 
   // Record share event (fire-and-forget on write failure — never block the share)
   void recordMediaEvent("share", {
@@ -2477,7 +2477,7 @@ router.get("/media/:id/comments", asyncHandler(async (req, res) => {
   }
 
   const mediaAccess = await verifyMediaAccess(sc, id, user.id);
-  if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; }
+  if (mediaAccess === "unreadable") { sendError(res, "degraded_unavailable", "Could not check access to this item. Please try again."); return; } if (!mediaAccess) { sendError(res, "not_found", "Media item not found"); return; } // census-media §47
 
   // Gems don't have structured comments yet — return empty
   if (mediaAccess.kind === "gem") {
@@ -2538,13 +2538,13 @@ router.patch("/media/:id", asyncHandler(async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
-  const { data: postRow } = await sc
+  const { data: postRow, error: patchReadErr } = await sc
     .from("posts")
     .select("id, author_id")
     .eq("id", id)
     .eq("status", "active")
     .maybeSingle();
-
+  if (patchReadErr) { req.log.error({ err: patchReadErr }, "media visibility patch: post read failed"); sendError(res, "db_error", patchReadErr.message); return; } // census-media §47: an unread post is not "not found"
   if (!postRow) { sendError(res, "not_found", "Media item not found"); return; }
   if ((postRow as any).author_id !== user.id) { sendError(res, "forbidden", "Only the owner can change visibility"); return; }
 
@@ -2572,11 +2572,11 @@ router.delete("/media/:id", asyncHandler(async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not available"); return; }
 
   // Try posts first
-  const { data: postRow } = await sc
+  const { data: postRow, error: deleteReadErr } = await sc
     .from("posts")
     .select("id, author_id, status")
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle(); if (deleteReadErr) { req.log.error({ err: deleteReadErr }, "media delete: post read failed"); sendError(res, "db_error", deleteReadErr.message); return; } // census-media §47: an unread post is not "not found"
 
   if (postRow) {
     if ((postRow as any).author_id !== user.id) { sendError(res, "not_found", "Media item not found"); return; } // census-media §28.13: a stranger gets what a missing id gets (was: sendError(res, "forbidden", "Only the owner can delete this post"); return; })
@@ -2587,11 +2587,11 @@ router.delete("/media/:id", asyncHandler(async (req, res) => {
   }
 
   // Try hidden_gems
-  const { data: gemRow } = await sc
+  const { data: gemRow, error: deleteGemReadErr } = await sc
     .from("hidden_gems")
     .select("id, submitted_by")
     .eq("id", id)
-    .maybeSingle();
+    .maybeSingle(); if (deleteGemReadErr) { req.log.error({ err: deleteGemReadErr }, "media delete: gem read failed"); sendError(res, "db_error", deleteGemReadErr.message); return; } // §47
 
   if (!gemRow) { sendError(res, "not_found", "Media item not found"); return; }
   if ((gemRow as any).submitted_by !== user.id) { sendError(res, "not_found", "Media item not found"); return; } // census-media §28.13 (was: "forbidden", "Only the owner can delete this item")

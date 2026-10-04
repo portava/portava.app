@@ -988,7 +988,7 @@ not touched, queried or altered.
 | Four statuses | `artifacts/api-server/src/services/memoryCertification/chaos.ts:77#ChaosStatus` | `TOLERATED` / `BROKEN` / **`PARTIAL`** / `NO_SURFACE`. `PARTIAL` exists because two scenarios have one certifiable half and one absent half, and both "pass" and "skip" would be false. |
 | The deterministic world | `artifacts/api-server/src/services/memoryCertification/world.ts:97#CertificationWorld` and `:228#certificationClient` | No clock, no randomness, no network. `certificationClient` implements the narrow `ClientLike` slice `derivativeRegistry.ts` declares, resolving with `{ data, error }` exactly as supabase-js does, so the REAL `deriveProjection`, `rebuildProjection`, `projectionStaleness`, `revokeDerivativesForMemory` and `searchMemories` run against it. |
 | The report | `artifacts/api-server/src/services/memoryCertification/runCertification.ts:216#runCertification`, rendered at `:256#formatCertificationReport` | Byte-identical across runs, carrying the six engine versions §25 says a replay must be attributed to. A test asserts the rendering contains no timestamp and no duration, because a report that cannot be diffed is not a replay. |
-| The wiring | `artifacts/api-server/src/scripts/checkMemoryCertification.ts:42#async`, `artifacts/api-server/package.json:55#check:memory-certification`, `artifacts/api-server/scripts/run-all-checks.sh:192#run_check`, `artifacts/api-server/src/scripts/guardRegistry.ts:718#checker` | It runs in `check:all`. `run-all-checks.sh` goes from 25 passed to **26**; the five exit-2 checks are unchanged (they need live credentials this pass must not supply). |
+| The wiring | `artifacts/api-server/src/scripts/checkMemoryCertification.ts:42#async`, `artifacts/api-server/package.json:55#check:memory-certification`, `artifacts/api-server/scripts/run-all-checks.sh:192#run_check`, `artifacts/api-server/src/scripts/guardRegistry.ts:747#checker` | It runs in `check:all`. `run-all-checks.sh` goes from 25 passed to **26**; the five exit-2 checks are unchanged (they need live credentials this pass must not supply). |
 
 #### A real defect the suite found, and the production fix
 
@@ -1531,7 +1531,7 @@ named exactly which files to look at; this is what was found.
 from `014a25d5`. It was merged into `claude/sweet-fermat-fmx7up` at `d4be8e952` — 141 commits
 further on. `head_commit` stays `254e1876`, which is legitimate under the checker's stated
 rule ("ANCESTOR-OF-HEAD, not ancestor-of-main") because the merge commit makes it one, and
-`live-db.yml:442#fetch-depth` clones deep enough for CI to resolve it. **It is still
+`live-db.yml:461#fetch-depth` clones deep enough for CI to resolve it. **It is still
 pre-squash**, so the owner follow-up B.1 already records — re-declare at the squash when this
 lands — is unchanged and still owed.
 
@@ -6341,7 +6341,7 @@ No migration. No flag changed. No write bypasses the memory kernel: the only Mem
 - **HM-F13.** Save and unsave are offered to non-owners. The saved shelf is `/memory/saved`. Share runs the gate, then posts the `MEMORY` reference into a chosen thread (`POST /threads/:id/share`, resolved per reader at read time), at `travel-buddy-standalone/src/features/memories/social/MemoryShareSheet.tsx:35#MemoryShareSheet`. "Share link" appears only for a public Memory.
 - **HM-F11.** Three routes, `/memory/timeline`, `/memory/place-history` and `/memory/people-history`, share one list shell with loading, error-with-retry and empty states (`travel-buddy-standalone/src/features/memories/social/MemoryRowsScreen.tsx:48#MemoryRowsScreen`). An unbuildable projection (`degraded_unavailable`) is an error, never "no memories". The owner reaches them from the Memory screen. People history is offered only for an APPROVED participant.
 - **HM-F14.** The profile Memories tab keeps the `passport_memories` list and adds the `memories` albums the server lets this viewer see, with cursor paging: `travel-buddy-standalone/src/features/memories/social/ProfileMemoryAlbums.tsx:28#ProfileMemoryAlbums`, mounted line-neutrally at `travel-buddy-standalone/app/passport/[username].tsx:572#ProfileMemoryAlbums`.
-- **HM-F15.** `/trip/:id/recap` is at `travel-buddy-standalone/app/trip/[id]/recap.tsx:32#TripRecapRoute`, linked from the Trip Memory section at `travel-buddy-standalone/app/trip/[id].tsx:1099#trip-open-recap`. "Not on this trip" (`not_found`) is kept apart from "could not build it".
+- **HM-F15.** `/trip/:id/recap` is at `travel-buddy-standalone/app/trip/[id]/recap.tsx:32#TripRecapRoute`, linked from the Trip Memory section at `travel-buddy-standalone/src/features/memories/TripMemorySection.tsx:87#trip-open-recap` (moved out of the trip screen verbatim by §AB). "Not on this trip" (`not_found`) is kept apart from "could not build it".
 - **HM-F17.** `/shared-moments/:id` is rebuilt.
   - A non-member is shown the preview, at `travel-buddy-standalone/app/shared-moments/[id].tsx:54#getSharedMomentPreview`. That means accept or decline an invitation, ask to join, or invitation only: `travel-buddy-standalone/src/features/sharedMoments/SharedMomentJoinPanel.tsx:23#SharedMomentJoinPanel`.
   - A member contributes one of their OWN posts (`travel-buddy-standalone/src/features/sharedMoments/SharedMomentPanels.tsx:121#ContributePanel`).
@@ -6496,6 +6496,105 @@ faked network), not production.
   create navigates; the create writes a table instead of calling the route; or
   a precision the person chose is not sent.
 
+## §AB — 2026-10-03 (lane highlights, testing mode): the tester flows — post, see, view, react, trip Memory — say what really happened, and NO VERDICT MOVES
+
+**What this section is.** The owner's testing mode asks for every intended flow to work end to end for a tester. This lane swept the flows a tester runs on this domain, in the order the coordinator set: post a Highlight, see friends' Highlights, view and react, Memories created from trips, and honest failure states. It fixed what it found, test-first. **No row grades a client screen or these flow seams**, and every server change here sits beside a row rather than on one, so no verdict moves. The section says why for each candidate in §AB.4.
+
+**Live state read for this pass** (read-only `SELECT`s on the hosted testing database, 2026-10-03; this is production evidence, not controlled evidence):
+
+- `memory_kernel_enabled`, `memory_projection`, `memory_location_precision_enabled`, `memory_public_feed_projection_enabled` and `highlights_feed_bounded_enabled` are all `false`. `stories_enabled` and the `shared_moments_*` flags are `true`.
+- `highlight_resurfacing_preferences`, `highlight_projection_policies`, `highlight_sources`, `highlight_revocation_log`, `memory_command_receipts`, `memory_command_audit`, `memory_domain_events`, `memory_event_outbox` and `memory_derivative_registry` all exist. `highlights` carries `lifetime_class`, `lifecycle_state`, `highlight_type`, `pinned_at` and `renderer_version`. Several older rows still say 2720–2723 are unapplied. That reason is stale, and §AB.5 lists those rows for the next re-measure.
+
+### §AB.1 What was wrong, and what was built
+
+1. **A trip Memory could be created twice** (Memories from trips, server).
+   - With the kernel flag off, §19's idempotency key dedupes nothing (H175). A retry after a dropped response wrote a second trip-crew Memory and tagged the whole crew again.
+   - `POST /trips/:tripId/memory` now answers the owner's existing live trip Memory (`200`, `existing: true`, `taggedCount: 0`). The call is line-neutral at `artifacts/api-server/src/routes/memories.ts:2592#answerExistingTripMemory`. The guard is at the foot, at `artifacts/api-server/src/routes/memories.ts:3464#async function answerExistingTripMemory`.
+   - An unreadable pre-read refuses `degraded_unavailable` before any write. A deleted Memory does not count.
+2. **The trip screen read every failure as "no Memory"** (Memories from trips, client).
+   - A 503 or a dropped connection showed the owner "Create a memory from this trip", and everybody else "No memory for this trip yet".
+   - The section moved verbatim to its own module. The trip screen now mounts it from there (`travel-buddy-standalone/app/trip/[id].tsx:54#TripMemorySection`).
+   - Only `not_found` now means none (`travel-buddy-standalone/src/features/memories/TripMemorySection.tsx:40#res.kind === 'not_found'`). Anything else is an error with Try again (`travel-buddy-standalone/src/features/memories/TripMemorySection.tsx:70#trip-memory-error`).
+   - `getTripMemory` and `createTripMemory` now carry `kind`. The create sends the §19 key, and a blind retry reuses it (`travel-buddy-standalone/src/services/memories.ts:467#CREATE_MEMORY_FROM_TRIP`). These edits are line-neutral, because census-media cites `:529`.
+3. **A refused report was thanked as sent** (view and react).
+   - `reportHighlight` resolves `{ok:false}` and never rejects. The viewer chained `.then(() => 'Reported')`.
+   - It now says so (`travel-buddy-standalone/src/components/HighlightViewer.tsx:446#Could not send report`).
+   - In the same file, a like that landed with an unreadable count (`likeCount: null`, as the server reports it) no longer erases the number (`travel-buddy-standalone/src/components/HighlightViewer.tsx:411#typeof serverCount === 'number'`).
+4. **"0 viewers / No views yet." from a failed read** (view and react).
+   - The owner's viewers sheet now shows an error with Try again (`travel-buddy-standalone/src/components/HighlightViewersSheet.tsx:45#else setFailed(true)`).
+   - It also drops a late answer for the previous Highlight (`travel-buddy-standalone/src/components/HighlightViewersSheet.tsx:43#if (stale) return`).
+5. **The second card for a friend never drew a ring** (see friends' Highlights).
+   - `useHighlightRingState` kept a `Set` of user ids with a read in flight. A hook that found its user in the set returned, and never received an answer.
+   - Every asker now awaits one shared read (`travel-buddy-standalone/src/hooks/useHighlightRingState.ts:58#function readRingState`). A failed read is still `unreadable` and still never cached.
+6. **The owner's failed read became the empty-state invitation** (post a Highlight).
+   - The Passport dropped the hook's `unreadable` flag. Its Travel Highlights strip drew "Share travel moments as highlights" over Highlights the owner had posted.
+   - The strip now says it could not load them and offers Try again (`travel-buddy-standalone/src/components/passport/PassportHighlightsStrip.tsx:126#passport-highlights-unreadable`).
+   - The Passport is wired line-neutrally (`travel-buddy-standalone/app/(tabs)/passport.tsx:296#highlightsUnreadable`).
+7. **A deleted or moderator-removed Story could be resurrected as a Highlight.**
+   - `POST /stories/:id/save-to-highlight` selected `state` and never read it.
+   - It now answers `not_found` before any write. The fix is one line, and line-neutral (`artifacts/api-server/src/routes/stories.ts:878#state === "deleted"`).
+
+### §AB.2 Decisions (routine; this census has no register)
+
+- **TM-HL-D1.** There is one live trip Memory per trip per owner. This is the rule `GET /trips/:tripId/memory` already encodes: owner-scoped, the newest row that is not deleted. A repeat create returns that Memory and does not refuse with 409, so the client's existing success path opens it.
+- **TM-HL-D2.** A Story's `expired` and `saved` states may still be saved to a Highlight. Only `deleted` and `removed` are refused.
+
+### §AB.3 Tests seen red, and mutations
+
+All of this is controlled evidence: fakes and component tests, never production.
+
+**Server** (node:test, already registered):
+
+| Suite | New tests | Red on base | Total after |
+| --- | --- | --- | --- |
+| `memoriesTripMemoryDegraded` | 4 | 2 | 9/9 |
+| `storyHighlightVisibility` | 4 | 2 | 21/21 |
+| `memories` (fixture corrected, assertions unchanged) | 1 | — | 65/65 |
+
+`memories.test.ts`'s shared fixture already held this owner's live Memory for the trip. Under TM-HL-D1, its "creates memory from trip" case now unlinks that Memory first, and a sibling case pins the existing-Memory answer.
+
+**Client** (jest):
+
+| Suite | Tests | Red on base |
+| --- | --- | --- |
+| `TripMemorySection` | 5 | 2 (on the verbatim move) |
+| `memories.tripMemory` | 5 | 5 |
+| `HighlightViewer.engagement` | 4 | 2 (base plus the two testIDs) |
+| `HighlightViewersSheet.unreadable` | 3 | 2 |
+| `useHighlightRingState.sharedRead` | 2 | 2 |
+| `PassportHighlightsStrip.unreadable` | 2 | 1 |
+| `passport.ownHighlightsUnreadable` | 2 | 2 |
+
+**Restated:** `testingModeWiring` HM-F15 read the recap link from `function TripMemorySection` inside the trip screen. It now asserts that the trip screen imports and mounts the moved module, and that the module still carries the link. It was seen red on the move, then green.
+
+**Mutations:** 42 applied, each alone, each restored by sha256. All 42 were killed (S1–S5, C1–C6, V1–V4, VS1–VS4, R1–R3, P1–P3, A1–A3, ST1–ST3, W1–W2).
+
+### §AB.4 Why no verdict moves
+
+- **H175** (operation ids) stays W. The trip create now sends a key, but replay dedupe is still the kernel's, and `memory_kernel_enabled` is false. The duplicate guard is a route rule, not §19's idempotency.
+- **H130** stays W, on the kernel's deployment, as before.
+- **H84** stays W, on owner decision D6.
+- **H204** stays X, but its live-state question is now answered. On the hosted database, `authenticated` and `anon` hold no INSERT or UPDATE privilege on `verification_level`, `source_type`, `source_id`, `plan_id`, `trip_id`, `place_id` or `suggestion_reason` of `passport_memories`. That is the boundary 2150 writes. The rule is that a verdict moves only on code plus a test, and this pass wrote neither for H204. The evidence is recorded for the next re-measure, which should move it X → C, with `passportMemorySelfVerification.test.ts` as its controlled half.
+
+### §AB.5 Found, not fixed here
+
+- **Two lines in PR #570's files.** This lane may not edit them.
+  - `fetchHighlightRingStates` (client `services/highlights.ts`) collapses a failed read to `hasActive:false`. It has no caller today.
+  - The following feed pages on `created_at` alone, so rows that share the boundary timestamp are skipped. The coordinator's report carries a keyset patch for this.
+- **Stale reasons on rows that may move with the next re-measure.** H33, H36, H75, H81, H82, H87, H90, H91, H146, H187, H188, H200, H201, H210 and H221 still say 2720 or 2721 are unapplied. Their tables exist on the hosted database today.
+
+### §AB.6 What would turn this red
+
+Any of the following makes the suites above go red:
+
+- A repeat trip create writes a second row, or tags the crew again.
+- An unreadable trip Memory read shows the create offer.
+- A refused report says "Reported".
+- A failed viewers read shows "No views yet."
+- A second card for a friend waits forever.
+- The owner's failed Highlight read shows the empty invitation.
+- A deleted Story becomes a Highlight.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/migrations/0067_reviews.sql — Cited once, in the headline's 2026-09-14 attribution restatement, to show that the migration the first headline credited to the Memories scrapbook is a cross-domain review system for trips and bookings. That paragraph moves no verdict, and no row grades reviews.
@@ -6506,7 +6605,7 @@ faked network), not production.
 - NOT-GRADED: artifacts/api-server/src/routes/sharedMoments.ts — §TM.1 cites the Shared Moment participation reads the testing-mode lane added. Shared Moments are a Live Places object, not a Memory, and no row here grades that router (H53 is about `memory_tags`, and §TM says why it stays N).
 - NOT-GRADED: travel-buddy-standalone/app/memory/[id].tsx — §TM.2 cites the Memory screen's delete-honesty line as client wiring for HM-F09. No row grades a client screen; the rows grade the routes and the kernel it calls.
 - NOT-GRADED: travel-buddy-standalone/app/passport/[username].tsx — §TM.2 cites where the profile Memories tab mounts the Memory albums (HM-F14). The profile screen is census-passport's, and no row here grades it.
-- NOT-GRADED: travel-buddy-standalone/app/trip/[id].tsx — §TM.2 cites the "View trip recap" link. The trip screen is census-trips'; H166 grades the recap route, not this link.
+- NOT-GRADED: travel-buddy-standalone/app/trip/[id].tsx — §AB cites where the trip screen mounts the Trip Memory section (the "View trip recap" link §TM.2 cited moved with it). The trip screen is census-trips'; H166 grades the recap route, not this link.
 - NOT-GRADED: travel-buddy-standalone/app/shared-moments/[id].tsx — §TM.2 cites the Shared Moment screen's preview fallback (HM-F17). Shared Moments are not graded by any row in this census.
 - NOT-GRADED: travel-buddy-standalone/src/services/placeRecaps.ts — §TM.2 cites the honest `listPlaceRecaps`. Place recaps are a Live Places object; no row here grades them.
 - NOT-GRADED: travel-buddy-standalone/app/place/[id].tsx — §TM.2 cites where the place screen mounts your recaps (HM-F19). The place screen is census-media's; no row here grades it.
@@ -6531,3 +6630,10 @@ faked network), not production.
 - NOT-GRADED: travel-buddy-standalone/app/memory/edit.tsx — §AA.1 cites the in-place redirect for a missing id; the editor is client work, and no row here grades it
 - NOT-GRADED: travel-buddy-standalone/src/components/create/__tests__/CreateHubSheet.routes.component.test.tsx — §AA.3 names it as restated for the hub's new Memory route; controlled client evidence, no verdict rests on it
 - NOT-GRADED: travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts — §AA.3 names it for the new GlobalPlacePicker consumer it now lists; a design-system suite graded by census-media, and no row here rests on it
+- NOT-GRADED: travel-buddy-standalone/src/features/memories/TripMemorySection.tsx — §AB's Trip Memory block, moved verbatim out of the trip screen and given honest load states; client code, no row here grades it
+- NOT-GRADED: travel-buddy-standalone/src/components/HighlightViewer.tsx — §AB.1 cites the report and like honesty lines; no row grades the viewer client
+- NOT-GRADED: travel-buddy-standalone/src/components/HighlightViewersSheet.tsx — §AB.1 cites the viewers sheet's error state and stale guard; client code, no row grades it
+- NOT-GRADED: travel-buddy-standalone/src/hooks/useHighlightRingState.ts — §AB.1 cites the shared ring read; client code, no row grades it
+- NOT-GRADED: travel-buddy-standalone/src/components/passport/PassportHighlightsStrip.tsx — §AB.1 cites the owner strip's unreadable state; client code, no row grades it
+- NOT-GRADED: travel-buddy-standalone/app/(tabs)/passport.tsx — §AB.1 cites the line-neutral wiring of the strip's unreadable flag; the profile screen is census-passport's
+- NOT-GRADED: artifacts/api-server/src/test/passportMemorySelfVerification.test.ts — §AB.4 names it as the controlled half of the H204 move it RECOMMENDS and does not make; no verdict in this census rests on it today

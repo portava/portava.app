@@ -429,6 +429,37 @@ export interface PassportStats {
   readFailed: boolean;
 }
 
+const STATS_PAGE = 1000;
+
+async function readAllActiveUserStamps(
+  db: SupabaseClient,
+  userId: string,
+): Promise<{ data: any[] | null; error: { message: string } | null }> {
+  const rows: any[] = [];
+  let after: string | null = null;
+  for (;;) {
+    let q = db
+      .from("user_stamps")
+      .select("id, country, city, visibility, is_revoked, stamp_definitions(category, slug, evidences_presence)")
+      .eq("user_id", userId)
+      .eq("is_revoked", false)
+      .order("id", { ascending: true });
+    if (after !== null) q = q.gt("id", after);
+    const { data, error } = await q.limit(STATS_PAGE);
+    if (error) return { data: null, error };
+    if (!Array.isArray(data)) return { data: null, error: { message: "user_stamps page returned no rows array" } };
+    if (data.length === 0) return { data: rows, error: null };
+    rows.push(...data);
+    // The page's greatest id — with `order(id)` honoured that is its last row;
+    // taking the max keeps the walk correct even if an order were ignored.
+    const top = data.reduce((m: string, r: any) => (String(r.id) > m ? String(r.id) : m), "");
+    if (after !== null && top <= after) {
+      return { data: null, error: { message: "user_stamps keyset did not advance" } };
+    }
+    after = top;
+  }
+}
+
 export async function buildStats(
   db: SupabaseClient,
   userId: string,
@@ -439,11 +470,13 @@ export async function buildStats(
   // Live stamp awards land in `user_stamps` — read from there instead, joined
   // to stamp_definitions for the plan/host/hidden_gem/safe_return category
   // breakdown that passport_stamps.stamp_type used to provide.
-  const { data, error } = await db
-    .from("user_stamps")
-    .select("country, city, visibility, is_revoked, stamp_definitions(category, slug, evidences_presence)")
-    .eq("user_id", userId)
-    .eq("is_revoked", false);
+  //
+  // A WHOLE read, by keyset (passport lane, 2026-10-03): one request answers at
+  // most PostgREST's max-rows (1,000) and says nothing about the rest, so a
+  // traveller past that was shown a cut total and the countries/cities of
+  // whichever rows came back. Pages walk `id` to an EMPTY page (a server cap
+  // below STATS_PAGE cannot end it early), and any failed page fails the whole.
+  const { data, error } = await readAllActiveUserStamps(db, userId);
 
   if (error || !data) {
     if (error) {

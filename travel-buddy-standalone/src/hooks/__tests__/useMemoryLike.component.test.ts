@@ -38,7 +38,7 @@ beforeEach(() => { mockLike.mockReset(); mockUnlike.mockReset(); });
 it('liking calls likeMemory and takes the server count', async () => {
   mockLike.mockResolvedValue({ ok: true, likeCount: 7 });
   const { result } = await renderHook(() => useMemoryLike(MID, 4, false));
-  let out: { isStamped: boolean; count: number } | undefined;
+  let out: { isStamped: boolean; count: number | null } | undefined;
   await act(async () => { out = await result.current.toggle(); });
   expect(mockLike).toHaveBeenCalledWith(MID);
   expect(mockUnlike).not.toHaveBeenCalled();
@@ -59,7 +59,7 @@ it('unliking calls unlikeMemory', async () => {
 it('a refused like rolls back to what the server still holds', async () => {
   mockLike.mockResolvedValue({ ok: false });
   const { result } = await renderHook(() => useMemoryLike(MID, 4, false));
-  let out: { isStamped: boolean; count: number } | undefined;
+  let out: { isStamped: boolean; count: number | null } | undefined;
   await act(async () => { out = await result.current.toggle(); });
   expect(out).toEqual({ isStamped: false, count: 4 });
   expect(result.current.isStamped).toBe(false);

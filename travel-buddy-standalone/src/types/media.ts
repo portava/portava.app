@@ -13,7 +13,7 @@ export interface MediaFeedCreator {
   displayName: string;
   username: string;
   avatarUrl: string | null;
-  isFollowing?: boolean;
+  isFollowing?: boolean | null;
   /** True when the creator holds a verified traveler status. */
   verified?: boolean;
 }
@@ -59,14 +59,14 @@ export interface MediaFeedItem {
   /** True when the viewer has stamped this item. Replaces legacy likedByMe. */
   isStampedByViewer?: boolean;
   /** @deprecated Use stampCount. Kept for backward compat during transition. */
-  likeCount: number;
-  commentCount: number;
-  saveCount: number;
+  likeCount: number | null;
+  commentCount: number | null;
+  saveCount: number | null;
   /** @deprecated Use isStampedByViewer. Kept for backward compat during transition. */
-  likedByMe: boolean;
-  savedByMe: boolean;
+  likedByMe: boolean | null;
+  savedByMe: boolean | null;
   /** Number of distinct viewers who stamped this video. Absent on legacy items. */
-  stampItCount?: number;
+  stampItCount?: number | null;
   /** True when the post was GPS-verified at the tagged location at upload time. */
   locationVerified?: boolean;
   /**
