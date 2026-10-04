@@ -2672,6 +2672,65 @@ router.get("/rent-a-buddy/admin/pricing/outliers", async (req, res) => {
 });
 
 /**
+ * Whether one entry of the admin fee-rules payload may be written, and at what
+ * rate. Exported and pure so the rule is TESTABLE rather than only reachable
+ * through an authenticated HTTP round trip — a guard that is asserted by
+ * reading the handler's source survives being short-circuited, which is exactly
+ * what a mutation test found.
+ *
+ * The three refusals, in order:
+ *   1. no `platformFeeBasisPoints` — the percent field is NOT accepted, because
+ *      silently converting a percent would keep the rate editable through the
+ *      lossy integer unit that migration 3520 removed.
+ *   2. not a whole number of basis points in 0–10000.
+ *   3. not the flat rate, with no way to approve an override from here — the
+ *      second half of "market overrides only when separately approved". The
+ *      database CHECK `rbfr_flat_rate_unless_approved` would refuse the write
+ *      anyway; this exists so an operator gets a sentence rather than a
+ *      constraint-violation string.
+ */
+export type FeeRuleUpdateVerdict =
+  | { ok: true; basisPoints: number }
+  | { ok: false; code: "invalid_payload" | "conflict"; message: string };
+
+export function judgeFeeRuleUpdate(upd: any): FeeRuleUpdateVerdict {
+  const level = String(upd?.buddyLevel ?? "");
+
+  if (upd?.platformFeeBasisPoints === undefined || upd?.platformFeeBasisPoints === null) {
+    return {
+      ok: false, code: "invalid_payload",
+      message:
+        `platformFeeBasisPoints is required for '${level}' (10% = 1000). ` +
+        "The percent field is no longer accepted: an integer percent cannot " +
+        "express a fractional rate, which is why the schedule stores basis points.",
+    };
+  }
+
+  const basisPoints = Number(upd.platformFeeBasisPoints);
+  if (!Number.isInteger(basisPoints) || basisPoints < 0 || basisPoints > BASIS_POINTS_PER_UNIT) {
+    return {
+      ok: false, code: "invalid_payload",
+      message:
+        `platformFeeBasisPoints for '${level}' must be a whole number ` +
+        `of basis points between 0 and ${BASIS_POINTS_PER_UNIT} (10% = 1000).`,
+    };
+  }
+
+  if (basisPoints !== FLAT_COMMISSION_BASIS_POINTS) {
+    return {
+      ok: false, code: "conflict",
+      message:
+        `The platform commission is a flat ${FLAT_COMMISSION_BASIS_POINTS} basis ` +
+        `points (${basisPointsToPercent(FLAT_COMMISSION_BASIS_POINTS)}%) across all ` +
+        "Buddy levels. A market override requires separate approval and is " +
+        "recorded by a migration, not by this screen.",
+    };
+  }
+
+  return { ok: true, basisPoints };
+}
+
+/**
  * The operator's editor for the schedule of record.
  *
  * ── IT TAKES BASIS POINTS, AND IT REFUSES AN UNAPPROVED OVERRIDE ────────────
@@ -2704,35 +2763,16 @@ router.patch("/rent-a-buddy/admin/fee-rules", async (req, res) => {
   for (const upd of updates) {
     if (!upd.buddyLevel) continue;
 
-    if (upd.platformFeeBasisPoints === undefined || upd.platformFeeBasisPoints === null) {
-      return sendError(res, 'invalid_payload',
-        `platformFeeBasisPoints is required for '${upd.buddyLevel}' (10% = 1000). ` +
-        "The percent field is no longer accepted: an integer percent cannot " +
-        "express a fractional rate, which is why the schedule stores basis points.");
-    }
-
-    const basisPoints = Number(upd.platformFeeBasisPoints);
-    if (!Number.isInteger(basisPoints) || basisPoints < 0 || basisPoints > BASIS_POINTS_PER_UNIT) {
-      return sendError(res, 'invalid_payload',
-        `platformFeeBasisPoints for '${upd.buddyLevel}' must be a whole number ` +
-        `of basis points between 0 and ${BASIS_POINTS_PER_UNIT} (10% = 1000).`);
-    }
-
-    if (basisPoints !== FLAT_COMMISSION_BASIS_POINTS) {
-      return sendError(res, 'conflict',
-        `The platform commission is a flat ${FLAT_COMMISSION_BASIS_POINTS} basis ` +
-        `points (${basisPointsToPercent(FLAT_COMMISSION_BASIS_POINTS)}%) across all ` +
-        "Buddy levels. A market override requires separate approval and is " +
-        "recorded by a migration, not by this screen.");
-    }
+    const verdict = judgeFeeRuleUpdate(upd);
+    if (!verdict.ok) return sendError(res, verdict.code, verdict.message);
 
     const { error: feeErr } = await svc.from("rent_buddy_fee_rules")
       .upsert({
         buddy_level: upd.buddyLevel,
-        platform_fee_basis_points: basisPoints,
+        platform_fee_basis_points: verdict.basisPoints,
         // The legacy mirror, rounded here rather than by the integer column it
         // lands in. Nothing prices from it (3520).
-        platform_fee_percent: Math.round(basisPointsToPercent(basisPoints)),
+        platform_fee_percent: Math.round(basisPointsToPercent(verdict.basisPoints)),
         traveler_service_fee_usd: upd.travelerServiceFeeUsd ?? 0,
         traveler_service_fee_pct: upd.travelerServiceFeePct ?? 0,
         updated_at: new Date().toISOString(),

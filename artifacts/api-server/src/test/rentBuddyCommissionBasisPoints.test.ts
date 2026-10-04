@@ -48,7 +48,7 @@ import {
 } from "../lib/rentBuddyFeeSchedule.js";
 import { buildBookingEntries, reconstructBalances, toMinor } from "../lib/creatorLedgerEntries.js";
 import { RENT_BUDDY_FEE_RULE_VERSION } from "../lib/creatorLedgerRows.js";
-import { toLedgerEntryView } from "../routes/rentABuddyMarketplace.js";
+import { judgeFeeRuleUpdate, toLedgerEntryView } from "../routes/rentABuddyMarketplace.js";
 import { foldEarningsRows } from "../routes/rentABuddy.js";
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -547,7 +547,48 @@ describe("the superseded percent column is not a pricing input", () => {
     );
   });
 
-  it("the admin editor cannot set a rate other than the flat one", () => {
+  it("the admin editor REFUSES a rate other than the flat one", () => {
+    // Behavioural, not a source scan. A guard asserted by reading the handler
+    // survives being short-circuited: `if (false)` in its place left the
+    // source-scan version of this test green, which is what moved the decision
+    // into an exported pure function.
+    assert.deepEqual(
+      judgeFeeRuleUpdate({ buddyLevel: "pro", platformFeeBasisPoints: 1000 }),
+      { ok: true, basisPoints: 1000 },
+      "the flat rate is writable",
+    );
+
+    for (const bps of [0, 900, 1001, 1500, 2500, 10000]) {
+      const v = judgeFeeRuleUpdate({ buddyLevel: "pro", platformFeeBasisPoints: bps });
+      assert.equal(v.ok, false, `${bps} basis points must be refused from this screen`);
+      assert.equal(v.ok === false && v.code, "conflict");
+      assert.match(
+        v.ok === false ? v.message : "", /separate approval/,
+        "and the refusal must say that an override needs separate approval",
+      );
+    }
+  });
+
+  it("the admin editor refuses a rate it cannot read, and refuses the percent field", () => {
+    for (const bad of [undefined, null]) {
+      const v = judgeFeeRuleUpdate({ buddyLevel: "pro", platformFeeBasisPoints: bad });
+      assert.equal(v.ok, false, "a missing rate is not a rate");
+      assert.equal(v.ok === false && v.code, "invalid_payload");
+    }
+    // The old field is NOT silently converted: a client still speaking percent
+    // would otherwise keep editing the rate through the lossy integer unit.
+    const legacy = judgeFeeRuleUpdate({ buddyLevel: "pro", platformFeePercent: 10 });
+    assert.equal(legacy.ok, false);
+    assert.match(legacy.ok === false ? legacy.message : "", /percent field is no longer accepted/);
+
+    for (const bad of [1000.5, -1, 10001, "ten", NaN]) {
+      const v = judgeFeeRuleUpdate({ buddyLevel: "pro", platformFeeBasisPoints: bad });
+      assert.equal(v.ok, false, `${String(bad)} is not a whole number of basis points`);
+      assert.equal(v.ok === false && v.code, "invalid_payload");
+    }
+  });
+
+  it("the admin editor's source still routes through the flat-rate decision", () => {
     const src = stripComments(readFileSync(join(SRC, "routes/rentABuddyMarketplace.ts"), "utf8"));
     assert.ok(
       src.includes("platformFeeBasisPoints"),
