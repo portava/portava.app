@@ -11,7 +11,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   readFileSync, readdirSync, statSync,
-  mkdtempSync, mkdirSync, writeFileSync, copyFileSync, rmSync, realpathSync,
+  mkdtempSync, mkdirSync, writeFileSync, copyFileSync, rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
@@ -448,49 +448,29 @@ describe("evaluate() — the guard honours migrations, not just the baseline", (
 // into the fixture, so what runs is the shipped entry point, byte for byte,
 // read fresh from disk on every run.
 //
-// ── THESE SIX ASSERTED NOTHING ON macOS, AND PASSED ON LINUX CI ─────────────
-// Fixed 2026-10-04. The fixture tree was missing two things Node needs before
-// it will run a copied entry point. Measured on macOS (Node 24, `os.tmpdir()`
-// = `/var/folders/…`) by building the fixture four ways:
+// ── THESE SIX ASSERTED NOTHING UNTIL 2026-10-04, AND WHY IT WAS INVISIBLE ───
+// Two separate causes had to be removed before any of them measured the guard,
+// and PR #601 removed both — the `package.json` in `fixture()` below, and
+// `realpathSync` on BOTH sides of the entry-point comparison in
+// `src/scripts/checkNotNullWrites.ts`. Fixing it in the guard rather than here
+// is the right place: `resolve(process.argv[1])` against a symlink-resolved
+// `import.meta.url` was fragile for ANY caller invoking the guard through a
+// symlinked path, not only for this fixture.
 //
-//   realpath  package.json   result
-//   ────────  ────────────   ────────────────────────────────────────────────
-//   no        no             `Cannot find module './parseBaselineSchema.js'`
-//   no        yes            exit 0, NO OUTPUT AT ALL — main() never ran
-//   yes       no             `Cannot find module './parseBaselineSchema.js'`
-//   yes       yes            the guard actually runs
+// THE SHAPE IS WORTH REMEMBERING. Neither cause made these cases fail
+// honestly. The module-format one crashed the subprocess; the symlink one made
+// it exit 0 having printed nothing — and exit 0 is what three of the six cases
+// assert. A case checking only the exit code would have passed against a guard
+// that never executed a line. That is what `runGuard`'s canary below now
+// refuses, and it is deliberately NOT a second realpath here: if the guard's
+// own realpath is ever reverted, these six must go RED rather than be rescued
+// by the fixture.
 //
-// So both are necessary, and they fail in different ways:
-//
-//   * no `package.json` → Node resolves the copied guard as CommonJS (it takes
-//     a file's module format from the nearest package.json `type`, walking UP,
-//     and a temp directory has none above it to `/`), and its own
-//     `./parseBaselineSchema.js` import dies — `.js` is an ESM convention this
-//     repo relies on, and tsx only rewrites it to `.ts` on the ESM path;
-//   * a root under `os.tmpdir()`, which on macOS is a SYMLINK to
-//     `/private/var/folders/…`, so the guard's own
-//     `resolve(process.argv[1]) === fileURLToPath(import.meta.url)` compared
-//     `/var/…` against `/private/var/…`, never matched, and `main()` was never
-//     called. That one is the dangerous shape: exit 0 with no output, and
-//     exit 0 is what three of these cases assert.
-//
-// Both are fixed in `fixture()` below, each beside the failure it produced.
-//
-// WHAT IS NOT EXPLAINED, SAID RATHER THAN SMOOTHED OVER: this file is in the
-// `test` script and `api-server · node:test suite` was GREEN on `main` and on
-// PR #610 with the unfixed fixture, so on the Linux runner these six passed.
-// The symlink half is macOS-only by construction (`/tmp` is a real directory
-// there), but the package.json half should bite any platform and evidently did
-// not. The runner's own log no longer carries the suite output, so the reason
-// was not established. The canary on `runGuard` below exists for exactly that
-// gap: whatever the platform, a fixture that does not reach `main()` now fails
-// by name instead of passing six times.
-//
-// ── AND THE SIX ARE NOW FALSIFIABLE, MEASURED RATHER THAN ASSUMED ───────────
-// .agents/memory/prove-the-test-fails-before-trusting-it.md. A green test over
-// a crashing fixture is the reason this block needs a mutation matrix and not
-// just a repair. Each mutation was applied to `src/scripts/checkNotNullWrites.ts`
-// alone, this block re-run, and the guard restored:
+// ── AND THE SIX ARE FALSIFIABLE, MEASURED RATHER THAN ASSUMED ───────────────
+// .agents/memory/prove-the-test-fails-before-trusting-it.md. Repairing a
+// fixture does not establish that what it now runs is checked, so each
+// mutation below was applied to `src/scripts/checkNotNullWrites.ts` alone, this
+// block re-run, and the guard restored:
 //
 //   M1a  delete the refusal (`if (files.length < 100)` → `if (false)`)
 //          → kills "REFUSES, exit 1, …"
@@ -507,9 +487,16 @@ describe("evaluate() — the guard honours migrations, not just the baseline", (
 //        → `w.nulled`)
 //          → kills "the same write passes when NO migration tightens the
 //            column", plus three others
+//   M5   revert #601's entry-point repair (drop `realpathSync` from BOTH sides
+//        of the comparison at the foot of checkNotNullWrites.ts)
+//          → takes ALL SIX red, and `runGuard`'s canary names the cause in the
+//            first assertion rather than leaving six assorted failures to be
+//            decoded. This is what makes that repair falsifiable from here.
 //
-// Every case is killed by at least one mutation and no mutation kills all six,
-// so none of them is merely asserting that the guard runs.
+// M1a-M4 are each killed by at least one case and no single mutation kills all
+// six, so none of them is merely asserting that the guard runs. M5 is the
+// exception and deliberately so: it removes the guard's ability to run at all,
+// which is precisely the condition the canary exists to report.
 describe("the guard SCRIPT — main() honours migrations, and refuses when it cannot read them", () => {
   const REAL_SCRIPTS = resolve(__dir, "../scripts");
 
@@ -526,58 +513,33 @@ describe("the guard SCRIPT — main() honours migrations, and refuses when it ca
    * script files, `src/migrations`, `src/routes` and a `baseline/` whose
    * filename is the one BASELINE_PATH resolves to. Both copied modules
    * resolve every path off their own location, so each lands inside here.
-   *
-   * ── TWO THINGS THE TREE MUST CARRY, AND NEITHER IS DECORATION ─────────────
-   * Running the shipped entry point out of a temp directory needs the temp
-   * directory to look enough like a package for Node to treat it as one. Both
-   * of the following were missing, and the six cases below asserted nothing
-   * for it; see the block comment above `realRoot` and `package.json` for the
-   * failure each one produced.
    */
   function fixture(opts: {
     migrations: Array<{ name: string; sql: string }>;
     source: string;
   }): string {
-    // 1. THE ROOT MUST BE A REAL PATH.
-    //
-    // On macOS `os.tmpdir()` is `/var/folders/…`, which is a SYMLINK to
-    // `/private/var/folders/…`. The guard ends with
-    //     resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-    // and Node's ESM loader resolves a module URL through symlinks while
-    // `process.argv[1]` stays as spawnSync was given it. So the two sides
-    // compared `/var/…` against `/private/var/…`, never matched, and `main()`
-    // WAS NEVER CALLED: the guard exited 0 having printed nothing. That is the
-    // worse of the two failures, because "exit 0" is what three of these cases
-    // expect — only their stdout assertions caught it.
-    const realRoot = realpathSync(mkdtempSync(join(tmpdir(), "notnull-guard-")));
-
+    const root = mkdtempSync(join(tmpdir(), "notnull-guard-"));
     for (const d of ["src/scripts", "src/migrations", "src/routes", "baseline"]) {
-      mkdirSync(join(realRoot, d), { recursive: true });
+      mkdirSync(join(root, d), { recursive: true });
     }
-
-    // 2. THE ROOT MUST DECLARE ITS MODULE TYPE.
-    //
-    // Node decides a file's module format from the nearest package.json
-    // `type`, walking UP from the file. A temp directory has none above it all
-    // the way to `/`, so the copied guard loaded as CommonJS and its own
-    //     import { … } from "./parseBaselineSchema.js"
-    // died with `Cannot find module './parseBaselineSchema.js'` — the `.js`
-    // specifier is an ESM convention this repo relies on, and tsx only
-    // rewrites it to `.ts` on the ESM path. The real package.json two
-    // directories above the real script says `"type": "module"`; the fixture
-    // has to say it too, or what runs is not the shipped entry point under the
-    // conditions it ships under.
-    writeFileSync(join(realRoot, "package.json"), JSON.stringify({ type: "module" }) + "\n");
-
     for (const f of ["checkNotNullWrites.ts", "parseBaselineSchema.ts"]) {
-      copyFileSync(join(REAL_SCRIPTS, f), join(realRoot, "src/scripts", f));
+      copyFileSync(join(REAL_SCRIPTS, f), join(root, "src/scripts", f));
     }
-    writeFileSync(join(realRoot, "baseline/20260819_baseline_structure.sql"), FIXTURE_BASELINE);
-    writeFileSync(join(realRoot, "src/routes/w.ts"), opts.source);
+    // The copied guard imports "./parseBaselineSchema.js", which only resolves to
+    // the .ts beside it when node treats the tree as ESM. Node decides that by
+    // walking UP for a package.json, and this tree is under $TMPDIR — so what it
+    // finds depends on where $TMPDIR happens to be. On CI that resolves; on macOS
+    // ($TMPDIR = /var/folders/...) nothing above it declares a type, node falls
+    // back to CJS, and the require fails with MODULE_NOT_FOUND — six cases red for
+    // a reason that has nothing to do with the guard. Declare it here so the tree
+    // carries its own answer and the test means the same thing everywhere.
+    writeFileSync(join(root, "package.json"), JSON.stringify({ type: "module" }));
+    writeFileSync(join(root, "baseline/20260819_baseline_structure.sql"), FIXTURE_BASELINE);
+    writeFileSync(join(root, "src/routes/w.ts"), opts.source);
     for (const m of opts.migrations) {
-      writeFileSync(join(realRoot, "src/migrations", m.name), m.sql);
+      writeFileSync(join(root, "src/migrations", m.name), m.sql);
     }
-    return realRoot;
+    return root;
   }
 
   /** Enough padding migrations to clear the `< 100` refusal honestly. */
@@ -592,18 +554,17 @@ describe("the guard SCRIPT — main() honours migrations, and refuses when it ca
    * Spawn the copied guard — and REFUSE to return a result that cannot be an
    * answer from it.
    *
-   * This canary is the generalisation of the two fixture defects fixed above,
-   * and it is here because of how they hid. A broken fixture does not make
-   * these cases fail honestly: it makes the subprocess produce
-   * `status: 0, stdout: ""`, and THREE of the six cases below assert
-   * `status === 0`. Any case that checked only the exit code would have passed
-   * against a guard that never executed a line. The two causes were
-   * platform-specific, so the same silence can arrive from a platform nobody
-   * ran this on yet; this turns it into a named failure instead of six quiet
-   * passes.
+   * This is the generalisation of the two defects PR #601 fixed, and it is here
+   * because of HOW they hid rather than what they were. A broken fixture does
+   * not make these cases fail honestly: it produces `status: 0, stdout: ""`,
+   * and three of the six cases below assert `status === 0`. Both causes were
+   * environment-dependent, so the same silence can arrive from an environment
+   * nobody has run this in yet — a different `$TMPDIR`, a loader change, a
+   * future entry-point check. This turns it into a named failure instead of six
+   * quiet passes.
    *
-   * The guard always prints its summary line on every path it can reach —
-   * refusal and no-writes both print before exiting — so "no output at all" is
+   * The guard prints its summary line on every path it can reach — the refusal
+   * and the no-writes case both print before exiting — so "no output at all" is
    * never a legitimate result, whatever the exit code.
    */
   function runGuard(root: string) {
@@ -616,11 +577,12 @@ describe("the guard SCRIPT — main() honours migrations, and refuses when it ca
 
     assert.ok(
       out.stdout.trim() !== "" || out.stderr.trim() !== "",
-      "FIXTURE IS BROKEN, not the guard: the spawned guard produced no output on either " +
-      `stream (exit ${out.status}). It never reached main(). Every assertion below would ` +
-      "be vacuous. Check that the fixture root is a REAL path (the entry-point check " +
-      "compares process.argv[1] against a symlink-resolved import.meta.url) and that it " +
-      `carries a package.json declaring "type": "module". Root: ${root}`,
+      "FIXTURE IS BROKEN, or the guard no longer recognises itself as the entry " +
+      `point: the spawned guard produced no output on either stream (exit ${out.status}). ` +
+      "It never reached main(), so every assertion below would be vacuous. Check " +
+      "that checkNotNullWrites.ts still compares REAL paths in its entry-point " +
+      "test, and that this fixture still writes a package.json declaring " +
+      `"type": "module". Root: ${root}`,
     );
 
     return out;
