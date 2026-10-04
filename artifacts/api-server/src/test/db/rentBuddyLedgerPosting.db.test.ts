@@ -30,6 +30,14 @@
  *   X  the TypeScript callers (lib/rentBuddyLedgerPosting.ts) speak to the real
  *      functions: parameter names, return shapes, and the named error when a
  *      function is absent
+ *   Q  ONE market: the rate AND the amount rb_quote_booking shows are the rate
+ *      and the amount rb_post_booking_ledger posts, for a booking whose own city
+ *      and country are not the buddy's
+ *   D  the deposit switch: off (and absent) = 0 deposit; on = integer minor units
+ *   A  add-ons are one idempotent ledger event: the fold equals the new total,
+ *      commission included, at the rate the booking was ledgered at
+ *   U  unledgered is counted by ENTRIES; an unfulfilled booking cannot be revived
+ *   K  the creation key is unique per traveller
  *
  * THE PURE MODEL IS THE SPECIFICATION. `lib/creatorLedgerEntries.ts`
  * (`buildBookingEntries`, `buildReversal`) used to be the writer's arithmetic
@@ -54,10 +62,12 @@ import { RENT_BUDDY_FEE_RULE_VERSION, toEarningsEntryRow } from "../../lib/creat
 import {
   LEDGER_REVERSED_NOTE_PREFIX,
   LEDGER_UNAVAILABLE,
+  postBookingAddons,
   postBookingLedgerEvent,
   postBookingTip,
+  quoteBooking,
+  quotePricedBooking,
   readBuddyLedgerTotals,
-  resolvePlatformFeePercent,
   transitionPayout,
 } from "../../lib/rentBuddyLedgerPosting.js";
 
@@ -248,6 +258,57 @@ function seedBooking(o: {
 const setStatus = (bookingId: string, status: string) =>
   asService(`UPDATE public.rent_buddy_bookings SET status = ${q(status)}, updated_at = now() WHERE id = ${q(bookingId)};`);
 
+/** `rb_quote_booking` as the API's role. `price` null ⇒ a rate-only quote. */
+function quote(buddyProfile: string, o: { category?: string | null; price?: number | string | null; qty?: number | string; mode?: string | null; pct?: number | null } = {}): any {
+  const num = (v: number | string | null | undefined) => (v === null || v === undefined ? "NULL" : typeof v === "number" ? String(v) : `${q(v)}::numeric`);
+  const out = asService(
+    `SELECT public.rb_quote_booking(${q(buddyProfile)}, ${o.category === null ? "NULL" : q(o.category ?? "city")}, ${num(o.price)}, ${num(o.qty ?? 1)}, ` +
+    `${o.mode === null || o.mode === undefined ? "NULL" : q(o.mode)}, ${o.pct === null || o.pct === undefined ? "NULL" : String(o.pct)})::text;`,
+  );
+  return JSON.parse(out.join("\n"));
+}
+
+/** The booking row's money and terms, as stored. */
+interface TermsRow { status: string; total_usd: number; addons_total_usd: number; deposit_usd: number; cash_balance_usd: number; payment_mode: string; deposit_percent: number | null; deposit_rule_applied: string | null }
+const termsOf = (bookingId: string): TermsRow => rows<TermsRow>(
+  `SELECT status::text AS status, total_usd::float8 AS total_usd, addons_total_usd::float8 AS addons_total_usd, deposit_usd::float8 AS deposit_usd,
+          cash_balance_usd::float8 AS cash_balance_usd, payment_mode::text AS payment_mode, deposit_percent, deposit_rule_applied
+     FROM public.rent_buddy_bookings WHERE id = ${q(bookingId)}`,
+)[0]!;
+
+/** An add-on of a buddy's. Removed with the buddy's profile (ON DELETE CASCADE). */
+function seedAddon(buddyProfile: string, price: number, active = true): string {
+  return scalar(
+    `INSERT INTO public.rent_buddy_addons (buddy_id, title, price_usd, is_active) VALUES (${q(buddyProfile)}, 'payd add-on ' || ${price}, ${price}, ${active}) RETURNING id`,
+  )!;
+}
+const attachedAddons = (bookingId: string) => rows<{ addon_id: string; price_usd: number }>(
+  `SELECT addon_id, price_usd::float8 AS price_usd FROM public.rent_buddy_booking_addons WHERE booking_id = ${q(bookingId)} ORDER BY created_at, addon_id`,
+);
+const OPEN_STATUSES = ["pending", "requested", "scheduled"];
+const addons = (bookingId: string, ids: string[], over: Record<string, unknown> = {}) =>
+  post(bookingId, "addons", null, { traveler_id: w.traveller, addon_ids: ids, allowed_statuses: OPEN_STATUSES, ...over });
+
+/** The ONE deposit switch: rent_buddy_global_controls.deposits_enabled on the singleton row (id = 1). */
+const SWITCH_ON = `INSERT INTO public.rent_buddy_global_controls (id, deposits_enabled) VALUES (1, true) ON CONFLICT (id) DO UPDATE SET deposits_enabled = true;`;
+const SWITCH_OFF = `UPDATE public.rent_buddy_global_controls SET deposits_enabled = false WHERE id = 1;`;
+const switchValue = () => scalar(`SELECT deposits_enabled FROM public.rent_buddy_global_controls WHERE id = 1`);
+
+/**
+ * Set the switch for the duration of `fn`, and put the singleton row back
+ * EXACTLY as it was — including absent, which is how a harness without the
+ * seed row starts and is itself a state the function must read as OFF.
+ */
+function withDepositSwitch<T>(state: "on" | "missing", fn: () => T): T {
+  const saved = scalar(`SELECT row_to_json(gc)::text FROM public.rent_buddy_global_controls gc WHERE gc.id = 1`);
+  exec(state === "on" ? SWITCH_ON : `DELETE FROM public.rent_buddy_global_controls WHERE id = 1;`);
+  try { return fn(); } finally {
+    exec(saved
+      ? `DELETE FROM public.rent_buddy_global_controls WHERE id = 1;\nINSERT INTO public.rent_buddy_global_controls SELECT * FROM json_populate_record(NULL::public.rent_buddy_global_controls, ${q(saved)}::json);`
+      : `DELETE FROM public.rent_buddy_global_controls WHERE id = 1;`);
+  }
+}
+
 function urlFor(db: string): string { const u = new URL(LOCAL_DB_URL); u.pathname = `/${db}`; return u.toString(); }
 const CLONE = `payd_3824_${randomUUID().slice(0, 8)}`;
 
@@ -306,8 +367,16 @@ describe("migration 3824 — the Rent-a-Buddy ledger posting door, executed", { 
     const fnCount = () => Number(scalar(
       `SELECT count(*) FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
         WHERE n.nspname = 'public' AND p.proname IN ('rb_post_booking_ledger','rb_resolve_platform_fee_percent',
-              'rb_booking_ledger_on_unfulfilled','rb_buddy_ledger_totals','rb_admin_payout_transition')`,
+              'rb_booking_ledger_on_unfulfilled','rb_buddy_ledger_totals','rb_admin_payout_transition',
+              'rb_quote_booking','rb_booking_market','rb_platform_fee_minor','rb_booking_payment_terms','rb_booking_refuse_uncancel')`,
     ));
+    /** Round 2's schema objects: [the un-cancel trigger, the creation_key column, its unique index, the deposit switch column]. */
+    const round2 = () => [
+      scalar(`SELECT count(*) FROM pg_trigger WHERE tgrelid = 'public.rent_buddy_bookings'::regclass AND tgname = 'rbb_refuse_uncancel'`),
+      scalar(`SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='rent_buddy_bookings' AND column_name='creation_key'`),
+      scalar(`SELECT count(*) FROM pg_indexes WHERE schemaname='public' AND indexname='rbb_creation_key_once'`),
+      scalar(`SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='rent_buddy_global_controls' AND column_name='deposits_enabled'`),
+    ].map(Number);
 
     before(() => {
       const main = new URL(LOCAL_DB_URL).pathname.slice(1);
@@ -318,8 +387,12 @@ describe("migration 3824 — the Rent-a-Buddy ledger posting door, executed", { 
     });
     after(() => useDatabase(null));
 
-    test("M1. the chain applied 3824: five functions, the trigger, the column, the widened vocabulary", () => {
-      assert.equal(fnCount(), 5);
+    test("M1. the chain applied 3824: ten functions, the triggers, the columns, the widened vocabulary, the deposit switch OFF", () => {
+      assert.equal(fnCount(), 10);
+      assert.deepEqual(round2(), [1, 1, 1, 1]);
+      assert.equal(scalar(`SELECT column_default || '/' || is_nullable FROM information_schema.columns WHERE table_schema='public' AND table_name='rent_buddy_global_controls' AND column_name='deposits_enabled'`), "false/NO", "the deposit switch must default to OFF and can never be NULL");
+      assert.equal(scalar(`SELECT count(*) FROM public.rent_buddy_global_controls WHERE deposits_enabled`), "0", "no row may be ON after the migration");
+      assert.equal(scalar(`SELECT count(*) FROM public.feature_flags WHERE flag ILIKE '%deposit%'`), "0", "the switch is a column: no feature flag for it exists to be toggled from the flag list");
       assert.equal(scalar(`SELECT count(*) FROM pg_trigger WHERE tgrelid = 'public.rent_buddy_bookings'::regclass AND tgname = 'rbb_reverse_ledger_on_unfulfilled'`), "1");
       assert.equal(scalar(`SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='rent_buddy_launch_controls' AND column_name='platform_fee_percent'`), "1");
       assert.match(scalar(`SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'rbee_entry_reason_check'`)!, /settlement/);
@@ -328,13 +401,33 @@ describe("migration 3824 — the Rent-a-Buddy ledger posting door, executed", { 
     test("M2. re-applying is a no-op that still passes its own postconditions", () => {
       const again = applyOnClone(FORWARD);
       assert.equal(again.ok, true, again.stderr);
-      assert.equal(fnCount(), 5);
+      assert.equal(fnCount(), 10);
+      assert.deepEqual(round2(), [1, 1, 1, 1]);
+    });
+
+    test("M2b. re-applying does NOT turn an operator's deposit switch back off", () => {
+      exec(SWITCH_ON);
+      const again = applyOnClone(FORWARD);
+      assert.equal(again.ok, true, again.stderr);
+      assert.equal(switchValue(), "t", "a re-run of the migration changed a value an operator set");
+    });
+
+    test("M7. the rollback REFUSES, changing nothing, while the deposit switch is ON", () => {
+      // (left ON by M2b) Rolling back would drop the function that reads the
+      // switch and leave an operator's decision pointing at nothing.
+      const back = applyOnClone(ROLLBACK);
+      assert.equal(back.ok, false);
+      assert.match(back.stderr, /ROLLBACK REFUSED \(3824\).*rent_buddy_global_controls\.deposits_enabled is ON/);
+      assert.equal(fnCount(), 10, "a refused rollback must change nothing");
+      assert.deepEqual(round2(), [1, 1, 1, 1]);
+      exec(SWITCH_OFF);
     });
 
     test("M3. the rollback removes exactly what 3824 added and restores 2901's vocabulary", () => {
       const back = applyOnClone(ROLLBACK);
       assert.equal(back.ok, true, back.stderr);
       assert.equal(fnCount(), 0);
+      assert.deepEqual(round2(), [0, 0, 0, 0], "the rollback left a round-2 object behind");
       assert.equal(scalar(`SELECT count(*) FROM pg_trigger WHERE tgrelid = 'public.rent_buddy_bookings'::regclass AND tgname = 'rbb_reverse_ledger_on_unfulfilled'`), "0");
       assert.equal(scalar(`SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='rent_buddy_launch_controls' AND column_name='platform_fee_percent'`), "0");
       assert.doesNotMatch(scalar(`SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'rbee_entry_reason_check'`)!, /settlement/);
@@ -345,7 +438,8 @@ describe("migration 3824 — the Rent-a-Buddy ledger posting door, executed", { 
     test("M4. it re-applies after the rollback", () => {
       const forward = applyOnClone(FORWARD);
       assert.equal(forward.ok, true, forward.stderr);
-      assert.equal(fnCount(), 5);
+      assert.equal(fnCount(), 10);
+      assert.deepEqual(round2(), [1, 1, 1, 1]);
     });
 
     test("M5. the rollback REFUSES, changing nothing, while a commission override exists", () => {
@@ -353,7 +447,7 @@ describe("migration 3824 — the Rent-a-Buddy ledger posting door, executed", { 
       const back = applyOnClone(ROLLBACK);
       assert.equal(back.ok, false);
       assert.match(back.stderr, /ROLLBACK REFUSED \(3824\).*commission override/);
-      assert.equal(fnCount(), 5, "a refused rollback must change nothing");
+      assert.equal(fnCount(), 10, "a refused rollback must change nothing");
       exec(`DELETE FROM public.rent_buddy_launch_controls WHERE country_code = ${q(MARKET)};`);
     });
 
@@ -368,7 +462,7 @@ describe("migration 3824 — the Rent-a-Buddy ledger posting door, executed", { 
       const back = applyOnClone(ROLLBACK);
       assert.equal(back.ok, false);
       assert.match(back.stderr, /ROLLBACK REFUSED \(3824\).*settlement/);
-      assert.equal(fnCount(), 5, "a refused rollback must change nothing");
+      assert.equal(fnCount(), 10, "a refused rollback must change nothing");
       assert.match(scalar(`SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'rbee_entry_reason_check'`)!, /settlement/);
     });
   });
@@ -382,6 +476,15 @@ describe("migration 3824 — the Rent-a-Buddy ledger posting door, executed", { 
       "public.rb_resolve_platform_fee_percent(text, text, text, text)",
       "public.rb_buddy_ledger_totals(uuid)",
       "public.rb_admin_payout_transition(uuid, text, uuid, text)",
+      "public.rb_quote_booking(uuid, text, numeric, numeric, text, integer)",
+    ];
+    /** Called only by the functions above, or by a trigger: executable by NO role. */
+    const INTERNAL = [
+      "public.rb_booking_market(uuid)",
+      "public.rb_platform_fee_minor(bigint, integer)",
+      "public.rb_booking_payment_terms(bigint, text, integer)",
+      "public.rb_booking_ledger_on_unfulfilled()",
+      "public.rb_booking_refuse_uncancel()",
     ];
     test("G1. every callable function: definer, search_path pinned, service_role yes, anon/authenticated/PUBLIC no", () => {
       for (const fn of FNS) {
@@ -396,6 +499,49 @@ describe("migration 3824 — the Rent-a-Buddy ledger posting door, executed", { 
         )[0]!;
         assert.deepEqual(r, { secdef: true, pinned: true, svc: true, anon: false, authed: false, pub: false }, fn);
       }
+    });
+
+    // `SET search_path = public` leaves pg_temp searched FIRST for relations, so a
+    // session's temporary table of the same name shadowed the real one. Every
+    // function now names the order explicitly, with pg_temp last.
+    test("G3. every function 3824 defines pins search_path to exactly pg_catalog, public, pg_temp; the internal ones are executable by no role", () => {
+      for (const fn of [...FNS, ...INTERNAL]) {
+        const cfg = scalar(`SELECT array_to_string(proconfig, '|') FROM pg_proc WHERE oid = ${q(fn)}::regprocedure`)!;
+        assert.equal(cfg.replace(/\s+/g, ""), "search_path=pg_catalog,public,pg_temp", fn);
+        assert.equal(scalar(`SELECT prosecdef FROM pg_proc WHERE oid = ${q(fn)}::regprocedure`), "t", fn);
+      }
+      for (const fn of INTERNAL) {
+        const r = rows<{ svc: boolean; anon: boolean; authed: boolean; pub: boolean }>(
+          `SELECT has_function_privilege('service_role', p.oid, 'EXECUTE') AS svc, has_function_privilege('anon', p.oid, 'EXECUTE') AS anon,
+                  has_function_privilege('authenticated', p.oid, 'EXECUTE') AS authed, has_function_privilege('public', p.oid, 'EXECUTE') AS pub
+             FROM pg_proc p WHERE p.oid = ${q(fn)}::regprocedure`,
+        )[0]!;
+        assert.deepEqual(r, { svc: false, anon: false, authed: false, pub: false }, fn);
+      }
+    });
+
+    test("G4. a TEMPORARY table named like a real one does not change a price, a rate or the deposit switch", () => {
+      // The regression: a temp `rent_buddy_fee_rules` made the resolver return 0 %.
+      const bk = seedBooking({ buddyProfile: w.buddy25Profile, total: 80 });
+      const out = asService(
+        `CREATE TEMP TABLE rent_buddy_fee_rules (buddy_level text, platform_fee_percent integer, traveler_service_fee_usd numeric, traveler_service_fee_pct numeric);\n` +
+        `INSERT INTO rent_buddy_fee_rules VALUES (${q(LEVEL_25)}, 0, 0, 0);\n` +
+        `CREATE TEMP TABLE rent_buddy_global_controls (id integer, deposits_enabled boolean);\n` +
+        `INSERT INTO rent_buddy_global_controls VALUES (1, true);\n` +
+        `CREATE TEMP TABLE rent_buddy_launch_controls (id uuid DEFAULT gen_random_uuid(), country_code text, city text, category text, platform_fee_percent integer, updated_at timestamptz DEFAULT now());\n` +
+        `INSERT INTO rent_buddy_launch_controls (country_code, city, category, platform_fee_percent) VALUES (NULL, NULL, NULL, 1);\n` +
+        // The shadow is real: an unqualified name in THIS session resolves to the temp table.
+        `SELECT (SELECT platform_fee_percent FROM rent_buddy_fee_rules WHERE buddy_level = ${q(LEVEL_25)})::text;\n` +
+        `SELECT public.rb_quote_booking(${q(w.buddy25Profile)}, 'city', 100, 1, 'deposit_plus_cash', NULL)::text;\n` +
+        `SELECT public.rb_post_booking_ledger(${q(bk)}, 'booking_created')::text;`,
+      );
+      assert.equal(out[0], "0", "the temp table does not shadow the real one in this session — the test proves nothing");
+      const quoted = JSON.parse(out[1]!);
+      assert.deepEqual([quoted.ok, quoted.fee_percent, quoted.fee_source, quoted.fee_usd, quoted.deposit_enabled, quoted.deposit_usd],
+        [true, 25, "fee_schedule", 25, false, 0], "a temporary table changed the quote");
+      const posted = JSON.parse(out[2]!);
+      assert.deepEqual([posted.ok, posted.fee_percent], [true, 25], "a temporary table changed the rate a booking was ledgered at");
+      assert.equal(summaryOf(bk)!.platform_fee_amount, 20);
     });
 
     test("G2. a signed-in client cannot call the posting function, and nothing is written", () => {
@@ -728,6 +874,46 @@ describe("migration 3824 — the Rent-a-Buddy ledger posting door, executed", { 
       assert.equal(tip(b, "after-legacy-2", 1).entries_appended, 2, "carried over ONCE");
       assert.deepEqual(tipCopies(b), { tips: 6, booking: 6, summary: 6 });
       assertSummaryIsFold(b, "T6");
+    });
+
+    // `carried-over` is the transaction T6's legacy tip is carried into the
+    // entries under. A caller's key of the same spelling collided with it: ON
+    // CONFLICT DO NOTHING dropped the NEW tip and the call still answered ok.
+    test("T8. the event key `carried-over` is RESERVED: refused by name, in any case, and nothing is written", () => {
+      const b = seedBooking({ total: 100, status: "completed" });
+      assert.equal(post(b, "booking_created").ok, true);
+      exec(
+        `INSERT INTO public.rent_buddy_tips (booking_id, traveler_id, buddy_user_id, amount_usd) VALUES (${q(b)}, ${q(w.traveller)}, ${q(w.buddyUser)}, 3);\n` +
+        `UPDATE public.rent_buddy_bookings SET tip_usd = 3 WHERE id = ${q(b)};`,
+      );
+      const before_ = JSON.stringify([entriesOf(b), tipCopies(b)]);
+      for (const key of ["carried-over", "CARRIED-OVER", "Carried-Over", "  carried-over  "]) {
+        const r = tip(b, key, 2);
+        assert.deepEqual([r.ok, r.refusal], [false, "event_key_reserved"], key);
+      }
+      assert.equal(JSON.stringify([entriesOf(b), tipCopies(b)]), before_, "a refused tip wrote something");
+      // The tip, sent under a key of the caller's own, is NOT dropped.
+      const ok = tip(b, "mine-1", 2);
+      assert.deepEqual([ok.ok, ok.entries_appended], [true, 4], "the carried-over pair and the new pair");
+      assert.deepEqual(tipCopies(b), { tips: 5, booking: 5, summary: 5 });
+      assertSummaryIsFold(b, "T8");
+    });
+
+    test("T9. NaN, ±Infinity and an amount at or above 10^8 are REFUSED (`invalid_amount`) — not raised as an overflow", () => {
+      const snapshot = () => JSON.stringify([entriesOf(bk), tipCopies(bk)]);
+      const before_ = snapshot();
+      for (const amount of ["NaN", "Infinity", "-Infinity", 100000000, 1e9, 99999999.999]) {
+        const out = psql(
+          `SET LOCAL ROLE service_role;\nSELECT public.rb_post_booking_ledger(${q(bk)}, 'tip', ${q(`t9-${String(amount)}`.replace(/[^A-Za-z0-9_.:-]/g, "_"))}, ` +
+          `${q(JSON.stringify({ traveler_id: w.traveller, amount_usd: amount, note: null }))}::jsonb)::text;`,
+          { single: true },
+        );
+        assert.equal(out.status, 0, `${String(amount)} RAISED instead of being refused: ${out.stderr}`);
+        const r = JSON.parse(out.stdout.trim().split("\n").pop()!);
+        assert.deepEqual([r.ok, r.refusal], [false, "invalid_amount"], String(amount));
+      }
+      assert.equal(tip(bk, "t9-text", "abc" as any).refusal, "invalid_arguments");
+      assert.equal(snapshot(), before_);
     });
 
     test("T7. a tip on a completed booking that was never ledgered ledgers it first, in the same call", () => {
@@ -1132,6 +1318,20 @@ describe("migration 3824 — the Rent-a-Buddy ledger posting door, executed", { 
       assert.equal(snap(), held, "a refused re-hold must not overwrite held_by or the reason");
     });
 
+    // paid → on_hold → released would "release" money that had already left.
+    test("P5. only a PENDING payout can be held: paid, processing, failed, cancelled, released — refused, unchanged, unaudited", () => {
+      for (const status of ["paid", "processing", "failed", "cancelled", "released", "something_else"]) {
+        const id = seedPayout(status);
+        const before_ = JSON.stringify([payout(id), audits(id)]);
+        const held = transition(id, "hold", w.admin, "too late");
+        assert.deepEqual([held.ok, held.refusal, held.current_status], [false, "conflict", status], status);
+        // …so it cannot be released (again) either.
+        const released = transition(id, "release", w.admin, "again");
+        assert.deepEqual([released.ok, released.refusal, released.current_status], [false, "conflict", status], status);
+        assert.equal(JSON.stringify([payout(id), audits(id)]), before_, `${status}: a refused transition changed or audited something`);
+      }
+    });
+
     test("P4. two simultaneous releases: exactly one applies, one audit row, and it names the winner", async () => {
       const id = seedPayout();
       const second = seedUser("payd_admin2");
@@ -1151,6 +1351,469 @@ describe("migration 3824 — the Rent-a-Buddy ledger posting door, executed", { 
       const released = audits(id).filter((x) => x.action === "payout_released");
       assert.equal(released.length, 1);
       assert.equal(released[0]!.admin_id, winner);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Q — one market: what checkout is shown is what is posted
+  // ═══════════════════════════════════════════════════════════════════════════
+  describe("Q — the rate and the AMOUNT quoted are the rate and the amount posted", () => {
+    const OTHER = `${MARKET}-elsewhere`;
+    after(() => exec(`DELETE FROM public.rent_buddy_launch_controls WHERE country_code IN (${q(MARKET)}, ${q(OTHER)});`));
+
+    // The defect: the quote resolved the commission for the buddy's PROFILE city
+    // and the posting for the city on the BOOKING row — a request-supplied string
+    // on the canonical route. This test FAILS if the two differ.
+    test("Q1. a booking whose own city and country are not the buddy's is posted at the quoted rate, to the cent", () => {
+      // An override for the place the REQUEST names. It must price nothing.
+      exec(`INSERT INTO public.rent_buddy_launch_controls (country_code, city, category, platform_fee_percent) VALUES (${q(OTHER)}, 'Request City', NULL, 3), (${q(OTHER)}, NULL, NULL, 4);`);
+      const shown = quote(w.buddy25Profile, { price: 33.33, qty: 3 });
+      assert.deepEqual([shown.ok, shown.priced, shown.market_country, shown.market_city], [true, true, MARKET, "Payd City"]);
+      assert.deepEqual([shown.fee_percent, shown.fee_source, shown.total_minor, shown.fee_minor], [25, "fee_schedule", 9999, 2500]);
+
+      const bk = seedBooking({ buddyProfile: w.buddy25Profile, total: shown.total_usd, city: "Request City", country: OTHER });
+      const posted = post(bk, "booking_created");
+      assert.equal(posted.ok, true, JSON.stringify(posted));
+      assert.equal(posted.fee_percent, shown.fee_percent, "the rate posted is not the rate quoted");
+      const f = fold(entriesOf(bk));
+      assert.equal(f.gross, shown.total_minor, "the gross posted is not the price quoted");
+      assert.equal(f.fee, shown.fee_minor, "the commission posted is not the commission quoted");
+      assert.equal(f.net, shown.total_minor - shown.fee_minor);
+      assert.equal(summaryOf(bk)!.platform_fee_amount, shown.fee_usd);
+      assert.equal(summaryOf(bk)!.buddy_net_estimated_amount, shown.buddy_net_usd);
+      assertSummaryIsFold(bk, "Q1");
+    });
+
+    test("Q2. an override on the BUDDY's market applies to both — whatever the booking row says", () => {
+      exec(`INSERT INTO public.rent_buddy_launch_controls (country_code, city, category, platform_fee_percent) VALUES (${q(MARKET)}, 'Payd City', NULL, 7);`);
+      for (const [city, country] of [["Request City", OTHER], ["Payd City", MARKET], ["", null]] as const) {
+        const shown = quote(w.buddy25Profile, { price: 123.45 });
+        const bk = seedBooking({ buddyProfile: w.buddy25Profile, total: 123.45, city, country });
+        const posted = post(bk, "booking_created");
+        assert.deepEqual([shown.fee_percent, shown.fee_source, posted.fee_percent, posted.fee_source], [7, "launch_control", 7, "launch_control"], `${city}/${String(country)}`);
+        assert.equal(fold(entriesOf(bk)).fee, shown.fee_minor, `${city}/${String(country)}`);
+        assert.equal(shown.fee_minor, 864, "7 % of 123.45 = 8.6415 → 8.64");
+      }
+      exec(`DELETE FROM public.rent_buddy_launch_controls WHERE country_code = ${q(MARKET)};`);
+    });
+
+    test("Q3. the quote trims the buddy's market exactly as the posting does, and a blank one is NULL (no market override can match)", () => {
+      const padded = seedBuddy("payd_padded", "new");
+      exec(`UPDATE public.rent_buddy_profiles SET country = '  ' || ${q(MARKET)} || '  ', city = '  ' WHERE id = ${q(padded.profile)};`);
+      exec(`INSERT INTO public.rent_buddy_launch_controls (country_code, city, category, platform_fee_percent) VALUES (${q(MARKET)}, NULL, NULL, 6);`);
+      const shown = quote(padded.profile, { price: 50 });
+      assert.deepEqual([shown.market_country, shown.market_city, shown.fee_percent], [MARKET, null, 6]);
+      const bk = seedBooking({ buddyProfile: padded.profile, total: 50, city: "anything" });
+      assert.equal(post(bk, "booking_created").fee_percent, 6);
+      exec(`DELETE FROM public.rent_buddy_launch_controls WHERE country_code = ${q(MARKET)};`);
+    });
+
+    test("Q4. a rate-only quote prices nothing; refusals are named; nothing is ever written", () => {
+      const before_ = scalar(`SELECT count(*) FROM public.rent_buddy_earnings_entries`);
+      const rate = quote(w.buddyProfile, { price: null });
+      assert.deepEqual([rate.ok, rate.priced, rate.fee_percent, rate.fee_source, rate.tip_commission_percent, rate.deposit_enabled], [true, false, 10, "owner_default", 0, false]);
+      assert.equal("total_usd" in rate, false);
+      assert.deepEqual(
+        [
+          quote(randomUUID(), { price: 10 }).refusal,
+          quote(w.buddyProfile, { price: "NaN" }).refusal,
+          quote(w.buddyProfile, { price: "Infinity" }).refusal,
+          quote(w.buddyProfile, { price: -1 }).refusal,
+          quote(w.buddyProfile, { price: 10, qty: 0 }).refusal,
+          quote(w.buddyProfile, { price: 10, qty: "NaN" }).refusal,
+          quote(w.buddyProfile, { price: 100000000 }).refusal,
+          quote(w.buddyProfile, { price: 50000, qty: 2000 }).refusal,
+          quote(w.buddyProfile, { price: 10, mode: "barter" }).refusal,
+          quote(w.buddyProfile, { price: 10, mode: "deposit_plus_cash", pct: 101 }).refusal,
+        ],
+        ["buddy_not_found", "invalid_total", "invalid_total", "invalid_total", "invalid_total", "invalid_total", "invalid_total", "invalid_total", "invalid_payment_mode", "invalid_arguments"],
+      );
+      assert.equal(quote(w.buddyProfile, { price: 99999999.99 }).total_minor, 9999999999, "the largest price a booking can carry is quoted");
+      assert.equal(quote(w.buddyProfile, { price: 0 }).total_minor, 0, "a free booking is a price");
+      assert.equal(scalar(`SELECT count(*) FROM public.rent_buddy_earnings_entries`), before_);
+    });
+
+    test("Q5. the arithmetic is the posting's: rate × hours rounded once, the commission rounded once, in minor units", () => {
+      for (const [price, qty, totalMinor, feeMinor] of [[20, 2.5, 5000, 500], [33.333, 3, 10000, 1000], [0.05, 1, 5, 1], [0.04, 1, 4, 0], [10.05, 1, 1005, 101]] as const) {
+        const r = quote(w.buddyProfile, { price, qty });
+        assert.deepEqual([r.total_minor, r.fee_minor, r.total_usd * 100 === r.total_minor || Math.round(r.total_usd * 100) === r.total_minor], [totalMinor, feeMinor, true], `${price} × ${qty}`);
+        const bk = seedBooking({ total: r.total_usd });
+        assert.equal(post(bk, "booking_created").ok, true);
+        assert.deepEqual([fold(entriesOf(bk)).gross, fold(entriesOf(bk)).fee], [totalMinor, feeMinor], `${price} × ${qty}: posted ≠ quoted`);
+      }
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // D — the deposit switch (owner ruling 2026-10-04: no deposit in the first release)
+  // ═══════════════════════════════════════════════════════════════════════════
+  describe("D — one switch decides whether any deposit exists; it is OFF", () => {
+    const terms = (r: any) => [r.payment_mode, r.deposit_enabled, r.deposit_percent, r.deposit_usd, r.cash_balance_usd];
+
+    test("D1. OFF (as seeded): every booking's deposit is 0; a deposit_plus_cash booking's cash balance is the whole price", () => {
+      assert.notEqual(switchValue(), "t", "the switch must be OFF (or its singleton row absent) on the harness");
+      assert.deepEqual(terms(quote(w.buddyProfile, { price: 33.33, mode: "deposit_plus_cash" })), ["deposit_plus_cash", false, 0, 0, 33.33]);
+      assert.deepEqual(terms(quote(w.buddyProfile, { price: 33.33, mode: "deposit_plus_cash", pct: 40 })), ["deposit_plus_cash", false, 0, 0, 33.33], "a percentage is POLICY; with the switch off it takes nothing");
+      assert.deepEqual(terms(quote(w.buddyProfile, { price: 33.33, mode: "full_in_app" })), ["full_in_app", false, 0, 0, 0]);
+      assert.deepEqual(terms(quote(w.buddyProfile, { price: 33.33 })), ["full_in_app", false, 0, 0, 0], "no mode named = full in-app, the column's default");
+    });
+
+    test("D2. a MISSING singleton row is OFF — absence is never read as permission", () => {
+      withDepositSwitch("missing", () => {
+        assert.deepEqual(terms(quote(w.buddyProfile, { price: 33.33, mode: "deposit_plus_cash", pct: 40 })), ["deposit_plus_cash", false, 0, 0, 33.33]);
+        assert.equal(quote(w.buddyProfile, { price: null }).deposit_enabled, false);
+      });
+    });
+
+    test("D3. ON: the split is integer minor units — it sums to the price exactly; full in-app is the whole price", () => {
+      withDepositSwitch("on", () => {
+        assert.equal(quote(w.buddyProfile, { price: null }).deposit_enabled, true);
+        // 30 % (the literal the canonical route carried) when the caller names none.
+        assert.deepEqual(terms(quote(w.buddyProfile, { price: 33.33, mode: "deposit_plus_cash" })), ["deposit_plus_cash", true, 30, 10, 23.33]);
+        assert.deepEqual(terms(quote(w.buddyProfile, { price: 33.33, mode: "deposit_plus_cash", pct: 40 })), ["deposit_plus_cash", true, 40, 13.33, 20]);
+        assert.deepEqual(terms(quote(w.buddyProfile, { price: 33.33, mode: "full_in_app", pct: 40 })), ["full_in_app", true, 100, 33.33, 0]);
+        for (const price of [0.01, 0.03, 19.99, 100.01, 99999999.99]) {
+          for (const pct of [0, 20, 25, 35, 40, 100]) {
+            const r = quote(w.buddyProfile, { price, mode: "deposit_plus_cash", pct });
+            assert.equal(Math.round(r.deposit_usd * 100) + Math.round(r.cash_balance_usd * 100), r.total_minor, `${price} at ${pct} %: deposit + cash ≠ price`);
+            assert.ok(r.deposit_usd >= 0 && r.cash_balance_usd >= 0, `${price} at ${pct} %`);
+          }
+        }
+      });
+      // …and it is OFF again afterwards.
+      assert.equal(quote(w.buddyProfile, { price: 33.33, mode: "deposit_plus_cash" }).deposit_usd, 0);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // A — add-ons: one idempotent ledger event
+  // ═══════════════════════════════════════════════════════════════════════════
+  describe("A — an add-on is priced INTO the ledger: the fold equals the booking's new total", () => {
+    // The defect: total 100 → 150 on the booking row, `booking_created` re-posted
+    // as a replay, the ledger's gross still 100 — so the commission and the
+    // buddy's earnings excluded every add-on.
+    test("A1. 100 + 50: four ADJUSTMENT entries; gross 150, commission 15, net 135; the join row; the booking's totals", () => {
+      const bk = seedBooking({ total: 100, deposit: 0 });
+      assert.equal(post(bk, "booking_created").ok, true);
+      const originals = entriesOf(bk);
+      const addon = seedAddon(w.buddyProfile, 50);
+
+      const r = addons(bk, [addon]);
+      assert.deepEqual([r.ok, r.event, r.replayed, r.entries_appended, r.addons_added], [true, "addons", false, 4, 1], JSON.stringify(r));
+      assert.deepEqual(r.booking, { total_usd: 150, addons_total_usd: 50, deposit_usd: 0, cash_balance_usd: 0, payment_mode: "full_in_app", added_usd: 50 });
+
+      const all = entriesOf(bk);
+      assert.equal(all.length, 8);
+      // Append-only: the originals are byte-for-byte what they were.
+      assert.deepEqual(all.filter((e) => originals.some((o) => o.id === e.id)), originals);
+      const adj = all.filter((e) => !originals.some((o) => o.id === e.id));
+      assert.deepEqual(adj.map((e) => `${e.transaction_key.replace(bk, "<bk>")}|${e.account}|${e.entry_reason}|${e.amount_minor}`).sort(), [
+        "booking:<bk>:addons:1:booking_gross|buddy_payable|booking_gross|5000",
+        "booking:<bk>:addons:1:booking_gross|traveler_receivable|booking_gross|-5000",
+        "booking:<bk>:addons:1:platform_fee|buddy_payable|platform_fee|-500",
+        "booking:<bk>:addons:1:platform_fee|platform_revenue|platform_fee|500",
+      ]);
+      assert.ok(adj.every((e) => e.rule_version === RULE_V2 && e.reverses_entry_id === null && e.provider === "none"));
+      assert.ok(adj.filter((e) => e.account === "buddy_payable").every((e) => e.beneficiary_user_id === w.buddyUser));
+      assert.equal(unbalancedTransactions(bk), 0);
+
+      const f = fold(all);
+      assert.deepEqual([f.gross, f.fee, f.net], [15000, 1500, 13500], "the fold does not equal the new total");
+      const s = summaryOf(bk)!;
+      assert.deepEqual([s.total_booking_usd, s.platform_fee_amount, s.buddy_net_estimated_amount, s.platform_fee_percent], [150, 15, 135, 10]);
+      assert.equal(scalar(`SELECT addons_usd::float8 FROM public.rent_buddy_earnings_ledger WHERE booking_id = ${q(bk)}`), "50");
+      assertSummaryIsFold(bk, "A1");
+      assert.deepEqual([termsOf(bk).total_usd, termsOf(bk).addons_total_usd], [150, 50]);
+      assert.deepEqual(attachedAddons(bk), [{ addon_id: addon, price_usd: 50 }]);
+      assert.equal(Math.round(termsOf(bk).total_usd * 100), f.gross, "the booking's total and the ledger's gross disagree");
+    });
+
+    test("A2. a retry attaches, prices and ledgers NOTHING — idempotent by state, not by a key the client must remember", () => {
+      const bk = seedBooking({ total: 100, deposit: 0 });
+      assert.equal(post(bk, "booking_created").ok, true);
+      const addon = seedAddon(w.buddyProfile, 50);
+      assert.equal(addons(bk, [addon]).ok, true);
+      const before_ = JSON.stringify([entriesOf(bk), summaryOf(bk), termsOf(bk), attachedAddons(bk)]);
+      for (let i = 0; i < 3; i++) {
+        const r = addons(bk, [addon, addon]);
+        assert.deepEqual([r.ok, r.replayed, r.entries_appended, r.addons_added, r.booking.total_usd, r.booking.added_usd], [true, true, 0, 0, 150, 0]);
+      }
+      assert.equal(JSON.stringify([entriesOf(bk), summaryOf(bk), termsOf(bk), attachedAddons(bk)]), before_);
+    });
+
+    test("A3. six concurrent attaches of one add-on: attached once, priced once, ledgered once", async () => {
+      const bk = seedBooking({ total: 100, deposit: 0 });
+      assert.equal(post(bk, "booking_created").ok, true);
+      const addon = seedAddon(w.buddyProfile, 50);
+      const script = `SET LOCAL ROLE service_role;\nSELECT public.rb_post_booking_ledger(${q(bk)}, 'addons', NULL, ` +
+        `${q(JSON.stringify({ traveler_id: w.traveller, addon_ids: [addon], allowed_statuses: OPEN_STATUSES }))}::jsonb)::text;`;
+      const results = await Promise.all(Array.from({ length: 6 }, () => psqlAsync(script)));
+      for (const r of results) assert.equal(r.status, 0, r.stderr);
+      const parsed = results.map((r) => JSON.parse(r.stdout.trim()));
+      assert.equal(parsed.filter((p) => p.ok && p.addons_added === 1).length, 1, "exactly one call may attach the add-on");
+      assert.equal(parsed.filter((p) => p.ok && p.addons_added === 0 && p.replayed === true).length, 5);
+      assert.equal(attachedAddons(bk).length, 1);
+      assert.equal(termsOf(bk).total_usd, 150, "an add-on was priced in more than once");
+      assert.deepEqual([fold(entriesOf(bk)).gross, fold(entriesOf(bk)).fee, entriesOf(bk).length], [15000, 1500, 8]);
+      assertSummaryIsFold(bk, "A3");
+    });
+
+    test("A4. successive add-ons: each is its own adjustment, and the commission is round(total × rate) — not a sum of roundings", () => {
+      const bk = seedBooking({ buddyProfile: w.buddy25Profile, total: 33.33, deposit: 0 });
+      assert.equal(post(bk, "booking_created").ok, true);                    // 25 % of 33.33 = 8.3325 → 8.33
+      assert.equal(fold(entriesOf(bk)).fee, 833);
+      const tiny = seedAddon(w.buddy25Profile, 0.1);
+      const tiny2 = seedAddon(w.buddy25Profile, 0.1);
+      const big = seedAddon(w.buddy25Profile, 50);
+
+      assert.equal(addons(bk, [tiny]).ok, true);                             // 33.43 → 8.3575 → 8.36
+      assert.deepEqual([fold(entriesOf(bk)).gross, fold(entriesOf(bk)).fee], [3343, 836]);
+      assert.equal(addons(bk, [tiny2]).ok, true);                            // 33.53 → 8.3825 → 8.38
+      assert.deepEqual([fold(entriesOf(bk)).gross, fold(entriesOf(bk)).fee], [3353, 838], "0.025 + 0.025 rounded separately would be 8.39");
+      const r = addons(bk, [big, tiny]);                                     // 83.53 → 20.8825 → 20.88; `tiny` is already attached
+      assert.deepEqual([r.addons_added, r.booking.added_usd, r.booking.total_usd], [1, 50, 83.53]);
+      const f = fold(entriesOf(bk));
+      assert.deepEqual([f.gross, f.fee, f.net], [8353, 2088, 6265]);
+      assert.equal(f.fee, Math.round(f.gross * 25 / 100), "the fee fold is not round(total × rate)");
+      assert.deepEqual(
+        [...new Set(entriesOf(bk).map((e) => e.transaction_key).filter((k) => k.includes(":addons:")))].map((k) => k.split(":").slice(3).join(":")).sort(),
+        ["1:booking_gross", "1:platform_fee", "2:booking_gross", "2:platform_fee", "3:booking_gross", "3:platform_fee"],
+      );
+      assert.equal(unbalancedTransactions(bk), 0);
+      assertSummaryIsFold(bk, "A4");
+    });
+
+    test("A5. the booking keeps the RATE it was ledgered at: a later override or schedule change does not re-rate the add-on", () => {
+      const bk = seedBooking({ buddyProfile: w.buddy25Profile, total: 100, deposit: 0 });
+      assert.equal(post(bk, "booking_created").fee_percent, 25);
+      exec(`INSERT INTO public.rent_buddy_launch_controls (country_code, city, category, platform_fee_percent) VALUES (${q(MARKET)}, NULL, NULL, 5);`);
+      try {
+        const addon = seedAddon(w.buddy25Profile, 50);
+        assert.equal(addons(bk, [addon]).ok, true);
+        assert.deepEqual([summaryOf(bk)!.platform_fee_percent, summaryOf(bk)!.platform_fee_amount, summaryOf(bk)!.buddy_net_estimated_amount], [25, 37.5, 112.5]);
+      } finally {
+        exec(`DELETE FROM public.rent_buddy_launch_controls WHERE country_code = ${q(MARKET)};`);
+      }
+    });
+
+    test("A6. a booking that was never ledgered is ledgered in the same call, at its NEW total — no adjustment needed", () => {
+      const bk = seedBooking({ total: 100, deposit: 0 });
+      const addon = seedAddon(w.buddyProfile, 50);
+      const r = addons(bk, [addon]);
+      assert.deepEqual([r.ok, r.entries_appended, r.fee_percent, r.fee_source], [true, 4, 10, "owner_default"]);
+      assert.ok(entriesOf(bk).every((e) => !e.transaction_key.includes(":addons:")));
+      assert.deepEqual([fold(entriesOf(bk)).gross, fold(entriesOf(bk)).fee], [15000, 1500]);
+      assertSummaryIsFold(bk, "A6");
+    });
+
+    test("A7. refusals are named and write NOTHING — not the join row, not the total, not an entry", () => {
+      const bk = seedBooking({ total: 100, deposit: 0 });
+      assert.equal(post(bk, "booking_created").ok, true);
+      const addon = seedAddon(w.buddyProfile, 50);
+      const inactive = seedAddon(w.buddyProfile, 20, false);
+      const started = seedBooking({ total: 100, status: "in_progress" });
+      const snapshot = () => JSON.stringify([entriesOf(bk), termsOf(bk), attachedAddons(bk), entriesOf(started), termsOf(started), attachedAddons(started)]);
+      const before_ = snapshot();
+
+      assert.equal(addons(bk, [addon], { traveler_id: w.outsider }).refusal, "not_traveler");
+      assert.equal(addons(bk, [addon], { traveler_id: null }).refusal, "not_traveler");
+      assert.equal(addons(started, [addon]).refusal, "booking_not_open");
+      assert.equal(addons(bk, [addon], { allowed_statuses: ["scheduled"] }).refusal, "booking_not_open");
+      assert.equal(addons(bk, [inactive]).refusal, "no_valid_addons");
+      assert.equal(addons(bk, [randomUUID()]).refusal, "no_valid_addons");
+      assert.equal(addons(bk, []).refusal, "invalid_arguments");
+      assert.equal(addons(bk, [addon], { allowed_statuses: [] }).refusal, "invalid_arguments");
+      assert.equal(addons(bk, ["not-a-uuid"]).refusal, "invalid_arguments", "a bad id must be a refusal, not a raised cast error");
+      assert.equal(addons(bk, [addon], { payment_mode: "barter" }).refusal, "invalid_arguments");
+      assert.equal(addons(bk, [addon], { deposit_percent: 101 }).refusal, "invalid_arguments");
+      assert.equal(post(randomUUID(), "addons", null, { traveler_id: w.traveller, addon_ids: [addon], allowed_statuses: OPEN_STATUSES }).refusal, "booking_not_found");
+      assert.equal(snapshot(), before_);
+
+      // An inactive add-on beside an active one: only the active one attaches.
+      const mixed = addons(bk, [inactive, addon]);
+      assert.deepEqual([mixed.ok, mixed.addons_added, mixed.booking.total_usd], [true, 1, 150]);
+      assert.deepEqual(attachedAddons(bk).map((a) => a.addon_id), [addon]);
+    });
+
+    test("A8. a total that would overflow the money column is refused, not raised", () => {
+      const bk = seedBooking({ total: 99999990, deposit: 0 });
+      assert.equal(post(bk, "booking_created").ok, true);
+      const addon = seedAddon(w.buddyProfile, 50);
+      // (bigint amounts: entriesOf() reads amount_minor as an int for the model comparison)
+      const entryState = () => scalar(`SELECT count(*) || ':' || COALESCE(sum(abs(amount_minor)), 0) FROM public.rent_buddy_earnings_entries WHERE booking_id = ${q(bk)}`);
+      const before_ = JSON.stringify([entryState(), termsOf(bk)]);
+      assert.equal(entryState(), "4:21999997800", "gross 99,999,990.00 twice and 10 % of it twice");
+      const r = addons(bk, [addon]);
+      assert.deepEqual([r.ok, r.refusal], [false, "invalid_total"]);
+      assert.equal(JSON.stringify([entryState(), termsOf(bk)]), before_);
+      assert.deepEqual(attachedAddons(bk), []);
+    });
+
+    test("A9. cancelling a booking with add-ons reverses EVERY earning entry, adjustments included: the fold is zero", () => {
+      const bk = seedBooking({ total: 100, deposit: 0 });
+      assert.equal(post(bk, "booking_created").ok, true);
+      assert.equal(addons(bk, [seedAddon(w.buddyProfile, 50)]).ok, true);
+      setStatus(bk, "cancelled_by_traveler");
+      const all = entriesOf(bk);
+      assert.equal(all.length, 16, "8 earning entries and their 8 reversals");
+      const f = fold(all);
+      assert.deepEqual([f.gross, f.fee, f.net, f.receivable], [0, 0, 0, 0]);
+      assert.equal(unbalancedTransactions(bk), 0);
+      assertSummaryIsFold(bk, "A9");
+      // …and add-ons cannot be attached to it afterwards.
+      assert.equal(addons(bk, [seedAddon(w.buddyProfile, 5)]).refusal, "booking_not_open");
+    });
+
+    test("A10. the payment terms are re-derived under the ONE switch: no deposit while it is off; integer cents when it is on", () => {
+      const cash = seedBooking({ total: 100, deposit: 0, cash: 100 });
+      exec(`UPDATE public.rent_buddy_bookings SET payment_mode = 'deposit_plus_cash' WHERE id = ${q(cash)};`);
+      assert.equal(post(cash, "booking_created").ok, true);
+      const r = addons(cash, [seedAddon(w.buddyProfile, 33.33)], { deposit_percent: 40, deposit_rule: "new_traveler", deposit_reason: "First-time traveler" });
+      assert.deepEqual(r.booking, { total_usd: 133.33, addons_total_usd: 33.33, deposit_usd: 0, cash_balance_usd: 133.33, payment_mode: "deposit_plus_cash", added_usd: 33.33 });
+      assert.deepEqual(
+        [termsOf(cash).deposit_usd, termsOf(cash).cash_balance_usd, termsOf(cash).deposit_percent, termsOf(cash).deposit_rule_applied],
+        [0, 133.33, 0, "no_deposit"], "a deposit was stored while the owner's switch is off",
+      );
+      assert.deepEqual([summaryOf(cash)!.deposit_amount, summaryOf(cash)!.cash_balance_due], [0, 133.33], "the summary's terms did not follow the booking's");
+
+      withDepositSwitch("on", () => {
+        const on = seedBooking({ total: 100, deposit: 0, cash: 100 });
+        exec(`UPDATE public.rent_buddy_bookings SET payment_mode = 'deposit_plus_cash' WHERE id = ${q(on)};`);
+        assert.equal(post(on, "booking_created").ok, true);
+        const x = addons(on, [seedAddon(w.buddyProfile, 33.33)], { deposit_percent: 40, deposit_rule: "new_traveler", deposit_reason: "First-time traveler" });
+        assert.deepEqual([x.booking.deposit_usd, x.booking.cash_balance_usd], [53.33, 80], "40 % of 133.33 = 53.332 → 53.33; the rest is cash");
+        assert.deepEqual([termsOf(on).deposit_percent, termsOf(on).deposit_rule_applied], [40, "new_traveler"]);
+      });
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // U — unledgered bookings are counted truthfully; an unfulfilled booking stays so
+  // ═══════════════════════════════════════════════════════════════════════════
+  describe("U — unledgered is counted by ENTRIES, and a cancelled booking cannot come back", () => {
+    const totals = (user: string) => JSON.parse(asService(`SELECT public.rb_buddy_ledger_totals(${q(user)})::text;`).join("\n"));
+
+    // The defect: the count was `completed bookings with no SUMMARY row`. A
+    // completed booking with a summary row and no entries — what 2330's writer
+    // left, and 2901 backfilled nothing — contributes $0 to every figure and was
+    // not counted, so a buddy's earnings silently omitted it.
+    test("U1. a completed booking with a summary ROW and no entries is unledgered: counted, and contributes no money", () => {
+      const solo = seedBuddy("payd_u1", "new");
+      const ledgered = seedBooking({ buddyProfile: solo.profile, total: 100, status: "completed" });
+      assert.equal(post(ledgered, "booking_created").ok, true);
+      const rowOnly = seedBooking({ buddyProfile: solo.profile, total: 80, status: "completed" });
+      exec(
+        `INSERT INTO public.rent_buddy_earnings_ledger (booking_id, buddy_user_id, traveler_id, total_booking_usd, platform_fee_percent, platform_fee_amount, buddy_gross_amount, buddy_net_estimated_amount)
+         VALUES (${q(rowOnly)}, ${q(solo.user)}, ${q(w.traveller)}, 80, 22, 17.6, 80, 62.4);`,
+      );
+      const neither = seedBooking({ buddyProfile: solo.profile, total: 60, status: "completed" });
+      const free = seedBooking({ buddyProfile: solo.profile, total: 0, status: "completed" });
+      assert.equal(post(free, "booking_created").ok, true);     // a zero summary, no entries — by design
+      assert.ok(neither);
+
+      const t = totals(solo.user);
+      assert.equal(t.completedCount, 4);
+      assert.equal(t.unledgeredCompletedCount, 2, "the booking with a summary row and no entries was not counted");
+      assert.deepEqual([t.ledgeredGrossUsd, t.estimatedPlatformFeeUsd, t.estimatedBuddyEarningsUsd], [100, 10, 90],
+        "a summary row with no entries was folded in — the entries are the record");
+      assert.equal(t.completedTotalUsd, 240);
+      assert.equal(t.isEstimated, true);
+    });
+
+    test("U2. posting `booking_created` for the row-only booking ledgers it — the count drops; nothing is backfilled by itself", () => {
+      const solo = seedBuddy("payd_u2", "new");
+      const rowOnly = seedBooking({ buddyProfile: solo.profile, total: 80, status: "completed" });
+      exec(
+        `INSERT INTO public.rent_buddy_earnings_ledger (booking_id, buddy_user_id, traveler_id, total_booking_usd, platform_fee_percent, platform_fee_amount, buddy_gross_amount, buddy_net_estimated_amount)
+         VALUES (${q(rowOnly)}, ${q(solo.user)}, ${q(w.traveller)}, 80, 22, 17.6, 80, 62.4);`,
+      );
+      assert.equal(totals(solo.user).unledgeredCompletedCount, 1);
+      assert.equal(entriesOf(rowOnly).length, 0, "the read must not write");
+      // An explicit posting prices it at TODAY's configuration (10), not the 22
+      // on the old row: which rate an old booking is owed is the backfill's
+      // question, and it is why no backfill runs in this migration.
+      const r = post(rowOnly, "booking_created");
+      assert.deepEqual([r.ok, r.fee_percent], [true, 10]);
+      assert.equal(totals(solo.user).unledgeredCompletedCount, 0);
+    });
+
+    // The defect: cancel → the earning entries are reversed → the status is
+    // written back to a live one → `booking_created` answered ok/replayed and
+    // appended nothing: a live booking whose ledger folds to zero. No route
+    // revives a booking (cancelled, cancelled_by_*, declined, expired are
+    // terminal in lib/stateMachines/registry.ts), so the TABLE refuses it.
+    test("U3. an unfulfilled booking cannot be moved back to a live status: 23514, and nothing changes", () => {
+      for (const dead of ["cancelled", "cancelled_by_traveler", "cancelled_by_buddy", "declined", "expired"]) {
+        const bk = seedBooking({ total: 40 });
+        assert.equal(post(bk, "booking_created").ok, true);
+        setStatus(bk, dead);
+        const before_ = JSON.stringify([entriesOf(bk), termsOf(bk).status]);
+        for (const live of ["requested", "pending", "scheduled", "in_progress", "completed", "disputed"]) {
+          const r = psql(`\\set VERBOSITY verbose\nSET LOCAL ROLE service_role;\nUPDATE public.rent_buddy_bookings SET status = ${q(live)} WHERE id = ${q(bk)};`, { single: true });
+          assert.notEqual(r.status, 0, `${dead} → ${live} was allowed`);
+          assert.match(r.stderr, /23514/, `${dead} → ${live}: ${r.stderr}`);
+        }
+        assert.equal(JSON.stringify([entriesOf(bk), termsOf(bk).status]), before_);
+        // Unfulfilled → unfulfilled is still a move the lifecycle makes (R3).
+        setStatus(bk, "expired");
+        assert.equal(termsOf(bk).status, "expired");
+        // Any other column of a dead booking can still be written.
+        asService(`UPDATE public.rent_buddy_bookings SET notes = 'support note' WHERE id = ${q(bk)};`);
+      }
+    });
+
+    test("U4. if a revived booking exists anyway, re-posting REFUSES it by name — never ok/replayed over a ledger that folds to zero", () => {
+      const bk = seedBooking({ total: 40, status: "completed" });
+      assert.equal(post(bk, "booking_created").ok, true);
+      setStatus(bk, "cancelled");
+      // Only a superuser bypassing triggers can make this state.
+      exec(`SET session_replication_role = replica;\nUPDATE public.rent_buddy_bookings SET status = 'completed' WHERE id = ${q(bk)};\nSET session_replication_role = origin;`);
+      const before_ = JSON.stringify(entriesOf(bk));
+      const r = post(bk, "booking_created");
+      assert.deepEqual([r.ok, r.refusal], [false, "booking_reversed"], JSON.stringify(r));
+      const tipped = post(bk, "tip", "u4", { traveler_id: w.traveller, amount_usd: 5 });
+      assert.deepEqual([tipped.ok, tipped.refusal], [false, "booking_reversed"], "a tip must not be recorded on a booking whose earnings were reversed");
+      assert.equal(JSON.stringify(entriesOf(bk)), before_);
+      exec(`SET session_replication_role = replica;\nUPDATE public.rent_buddy_bookings SET status = 'cancelled' WHERE id = ${q(bk)};\nSET session_replication_role = origin;`);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // K — the creation key
+  // ═══════════════════════════════════════════════════════════════════════════
+  describe("K — a retried create cannot make a second booking: creation_key is unique per traveller", () => {
+    const insertKeyed = (traveller: string, key: string | null) => psql(
+      `\\set VERBOSITY verbose\nSET LOCAL ROLE service_role;\nINSERT INTO public.rent_buddy_bookings (buddy_id, traveler_id, booking_date, duration_h, city, category, status, total_usd, creation_key)
+       VALUES (${q(w.buddyProfile)}, ${q(traveller)}, current_date, 1, 'Payd City', 'city', 'requested', 10, ${key === null ? "NULL" : q(key)}) RETURNING id;`,
+      { single: true },
+    );
+    const track = (r: { status: number; stdout: string }) => { if (r.status === 0) w.bookings.push(r.stdout.trim().split("\n")[0]!); return r; };
+
+    test("K1. the same traveller and key twice: the second INSERT is a unique violation naming the index the API looks for", () => {
+      const key = `book:${w.buddyProfile}:attempt-${randomUUID()}`;
+      assert.equal(track(insertKeyed(w.traveller, key)).status, 0);
+      const second = insertKeyed(w.traveller, key);
+      assert.notEqual(second.status, 0);
+      assert.match(second.stderr, /23505/);
+      assert.match(second.stderr, /rbb_creation_key_once/, "lib/rentBuddyEarningsLedger.ts#isCreationKeyConflict matches on this name");
+      assert.equal(scalar(`SELECT count(*) FROM public.rent_buddy_bookings WHERE traveler_id = ${q(w.traveller)} AND creation_key = ${q(key)}`), "1");
+    });
+
+    test("K2. the key is scoped by the ACTING USER: another traveller may use the same key; no key at all is never a conflict", () => {
+      const key = `book:${w.buddyProfile}:attempt-${randomUUID()}`;
+      assert.equal(track(insertKeyed(w.traveller, key)).status, 0);
+      assert.equal(track(insertKeyed(w.outsider, key)).status, 0);
+      assert.equal(track(insertKeyed(w.traveller, null)).status, 0);
+      assert.equal(track(insertKeyed(w.traveller, null)).status, 0);
+    });
+
+    test("K3. the key has a bounded shape", () => {
+      const tooLong = insertKeyed(w.traveller, "x".repeat(401));
+      assert.notEqual(tooLong.status, 0);
+      assert.match(tooLong.stderr, /rbb_creation_key_shape/);
+      const empty = insertKeyed(w.traveller, "");
+      assert.notEqual(empty.status, 0);
+      assert.match(empty.stderr, /rbb_creation_key_shape/);
     });
   });
 
@@ -1179,15 +1842,44 @@ describe("migration 3824 — the Rent-a-Buddy ledger posting door, executed", { 
       assert.deepEqual([refused.status, (refused as any).refusal], ["refused", "not_traveler"]);
     });
 
-    test("X2. resolvePlatformFeePercent and readBuddyLedgerTotals read the database's own answers", async () => {
-      const fee = await resolvePlatformFeePercent(rpcClient(), { buddyLevel: LEVEL_25, countryCode: MARKET, city: "Payd City", category: "city" });
-      assert.deepEqual(fee, { status: "ok", feePercent: 25, feeSource: "fee_schedule" });
-      const dflt = await resolvePlatformFeePercent(rpcClient(), { buddyLevel: "standard", countryCode: null, city: null, category: null });
-      assert.deepEqual(dflt, { status: "ok", feePercent: 10, feeSource: "owner_default" });
+    test("X2. quoteBooking and readBuddyLedgerTotals read the database's own answers", async () => {
+      const rate = await quoteBooking(rpcClient(), { buddyProfileId: w.buddy25Profile, category: "city" });
+      assert.equal(rate.status, "ok", JSON.stringify(rate));
+      if (rate.status !== "ok") return;
+      assert.deepEqual(
+        [rate.quote.feePercent, rate.quote.feeSource, rate.quote.marketCountry, rate.quote.marketCity, rate.quote.priced, rate.quote.totalUsd, rate.quote.depositEnabled],
+        [25, "fee_schedule", MARKET, "Payd City", false, null, false],
+      );
+      const dflt = await quoteBooking(rpcClient(), { buddyProfileId: w.buddyProfile, category: null });
+      assert.deepEqual(dflt.status === "ok" && [dflt.quote.feePercent, dflt.quote.feeSource], [10, "owner_default"]);
 
       const totals = await readBuddyLedgerTotals(rpcClient(), w.buddy25User);
       assert.equal(totals.status, "ok");
       if (totals.status === "ok") assert.equal(totals.totals.inAppAmountCollectedUsd, 0);
+    });
+
+    test("X5. quotePricedBooking and postBookingAddons: the lib reads the database's price, terms and add-on answer", async () => {
+      const priced = await quotePricedBooking(rpcClient(), { buddyProfileId: w.buddy25Profile, category: "city", unitPriceUsd: 33.33, quantity: 3, paymentMode: "deposit_plus_cash" });
+      assert.deepEqual(priced, { status: "ok", quote: {
+        feePercent: 25, feeSource: "fee_schedule", totalUsd: 99.99, feeUsd: 25, paymentMode: "deposit_plus_cash",
+        depositEnabled: false, depositPercent: 0, depositUsd: 0, cashBalanceUsd: 99.99,
+      } });
+      const refused = await quotePricedBooking(rpcClient(), { buddyProfileId: randomUUID(), unitPriceUsd: 10 });
+      assert.deepEqual([refused.status, (refused as any).refusal], ["refused", "buddy_not_found"]);
+      const badMode = await quoteBooking(rpcClient(), { buddyProfileId: w.buddyProfile, unitPriceUsd: 10, paymentMode: "barter" });
+      assert.deepEqual([badMode.status, (badMode as any).refusal], ["refused", "invalid_payment_mode"]);
+
+      const bk = seedBooking({ total: 100, deposit: 0 });
+      assert.equal(post(bk, "booking_created").ok, true);
+      const addon = seedAddon(w.buddyProfile, 50);
+      const attached = await postBookingAddons(rpcClient(), { bookingId: bk, travelerId: w.traveller, addonIds: [addon], allowedStatuses: OPEN_STATUSES });
+      assert.deepEqual(attached, { status: "attached", addonsAdded: 1, replayed: false, entriesAppended: 4,
+        booking: { totalUsd: 150, addonsTotalUsd: 50, depositUsd: 0, cashBalanceUsd: 0, paymentMode: "full_in_app", addedUsd: 50 } });
+      const again = await postBookingAddons(rpcClient(), { bookingId: bk, travelerId: w.traveller, addonIds: [addon], allowedStatuses: OPEN_STATUSES });
+      assert.deepEqual(again.status === "attached" && [again.addonsAdded, again.replayed, again.entriesAppended, again.booking.totalUsd, again.booking.addedUsd], [0, true, 0, 150, 0]);
+      const notMine = await postBookingAddons(rpcClient(), { bookingId: bk, travelerId: w.outsider, addonIds: [addon], allowedStatuses: OPEN_STATUSES });
+      assert.deepEqual([notMine.status, (notMine as any).refusal], ["refused", "not_traveler"]);
+      assertSummaryIsFold(bk, "X5");
     });
 
     test("X3. transitionPayout applies and refuses through the real function", async () => {
@@ -1225,6 +1917,11 @@ describe("migration 3824 — the Rent-a-Buddy ledger posting door, executed", { 
         assert.deepEqual([tipped.status, (tipped as any).error], ["unavailable", LEDGER_UNAVAILABLE]);
         const payout = await transitionPayout(rpcClient(), { payoutId: randomUUID(), action: "hold", adminId: w.admin, reason: "x4" });
         assert.deepEqual([payout.status, (payout as any).error], ["unavailable", LEDGER_UNAVAILABLE]);
+        // The quote is absent too: creation is refused BEFORE a booking is inserted.
+        const quoted = await quotePricedBooking(rpcClient(), { buddyProfileId: w.buddyProfile, unitPriceUsd: 10 });
+        assert.deepEqual([quoted.status, (quoted as any).error], ["unavailable", LEDGER_UNAVAILABLE]);
+        const addonsAbsent = await postBookingAddons(rpcClient(), { bookingId: bk, travelerId: w.traveller, addonIds: [randomUUID()], allowedStatuses: OPEN_STATUSES });
+        assert.deepEqual([addonsAbsent.status, (addonsAbsent as any).error], ["unavailable", LEDGER_UNAVAILABLE]);
 
         // No read-modify-write happened in its place.
         assert.equal(entriesOf(bk).length, 0);
