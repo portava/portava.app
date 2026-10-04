@@ -38,7 +38,7 @@ import {
   sendLayoverTelegraph,
   setReturnDeadline,
   setShareCityStatus,
-  type LayoverBuddy,
+  type LayoverBuddiesAnswer,
   type LayoverOverview,
   type LayoverRecommendation,
   type LayoverOverviewFailure,
@@ -160,7 +160,7 @@ export default function LayoverDashboardScreen() {
     sharing: false, count: 0, travelers: [],
     degraded: true, degradedReasons: ['not_yet_read'], withheld: [],
   });
-  const [buddies, setBuddies] = useState<LayoverBuddy[]>([]);
+  const [buddies, setBuddies] = useState<LayoverBuddiesAnswer | null>(null); // L273/L294: the answer, null until read
   const [shareBusy, setShareBusy] = useState(false);
   const [addingRecId, setAddingRecId] = useState<string | null>(null);
   const [reminderBusy, setReminderBusy] = useState(false);
@@ -309,7 +309,7 @@ export default function LayoverDashboardScreen() {
           },
         );
         if (ovRead.overview.share.enabled) loadPresence(id);
-        setBuddies(buddyRes?.buddies ?? []);
+        setBuddies(buddyRes); // the WHOLE answer — a failed read or a gate refusal is not `[]` (census §48)
       } else {
         // The server's own sentence and its own retryability. This screen does
         // not decide whether a layover is gone or a read failed — it forwards

@@ -124,6 +124,8 @@ function makeFakeClient(state: FakeState, userId: string) {
       delete() { return builder; },
       eq(col: string, val: any) { filters.push((r) => r[col] === val); return builder; },
       neq(col: string, val: any) { filters.push((r) => r[col] !== val); return builder; },
+      // buildStats walks user_stamps by keyset (`gt` the last id seen).
+      gt(col: string, val: any) { filters.push((r) => String(r[col]) > String(val)); return builder; },
       in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return builder; },
       not(col: string, op: string, val: any) {
         if (op === "eq") filters.push((r) => r[col] !== val);

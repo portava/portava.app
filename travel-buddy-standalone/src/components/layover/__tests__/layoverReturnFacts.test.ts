@@ -326,3 +326,68 @@ test('one crewmate is singular', () => {
   assert.ok(line);
   assert.doesNotMatch(line, /people/i);
 });
+
+// ── §16 L154 — the server's crew-meeting-point reasons (census-layover §48) ──
+//
+// WHAT WOULD TURN THIS RED. The server answered `no_crew_storage` for every
+// bundle until §48; it now answers WHY there is no point with one of four
+// words. Three of them are facts about the traveller's crew, and the client
+// must say each one as itself: "your crew could not be read" collapsed into
+// "none was cached" (or worse, "you are not in a crew") is the failed-read-as-
+// empty defect, offline, where the traveller cannot check.
+
+const withReason = (reason: string): LayoverOfflineBundle => ({
+  ...BUNDLE,
+  crewMeetingPoint: { available: false, value: null, reason: reason as never },
+});
+
+test('L154: a crew that could not be read is said as that — never as "no crew"', () => {
+  const m = describeCrewMeetingPoint(withReason('crew_unreadable'));
+  assert.equal(m.label, null);
+  assert.equal(m.reason, 'crew_unreadable');
+  assert.match(m.sentence, /could not be read/i);
+  assert.doesNotMatch(m.sentence, /not in a crew/i);
+});
+
+test('L154: no crew is said as no crew', () => {
+  const m = describeCrewMeetingPoint(withReason('not_in_crew'));
+  assert.equal(m.reason, 'not_in_crew');
+  assert.match(m.sentence, /not in a crew/i);
+});
+
+test('L154: a crew that set no meeting point is said as that', () => {
+  const m = describeCrewMeetingPoint(withReason('no_meeting_point_set'));
+  assert.equal(m.reason, 'no_meeting_point_set');
+  assert.match(m.sentence, /has not set one/i);
+});
+
+test('L154: a bundle built without a crew read claims nothing about the crew', () => {
+  const m = describeCrewMeetingPoint(withReason('crew_not_read'));
+  assert.equal(m.reason, 'crew_not_read');
+  assert.match(m.sentence, /^No crew meeting point saved — /);
+  assert.doesNotMatch(m.sentence, /not in a crew|has not set one|could not be read/i);
+});
+
+test('L154: the cached point itself still reads verbatim from the new server', () => {
+  const m = describeCrewMeetingPoint({
+    ...BUNDLE,
+    crewMeetingPoint: { available: true, value: 'Terminal 2 food court', reason: null },
+  });
+  assert.equal(m.sentence, 'Meet your crew at Terminal 2 food court.');
+});
+
+// ── §15.1 L144 — the server's TRUE reason the crew was not told (§48) ───────
+//
+// The server said `no_crew_storage` on every abort, false since 2984. It now
+// says `crew_notify_not_enabled`: crews exist, and telling one that a member
+// turned back is a disclosure the owner has not switched on (L144 stays
+// owner-gated). The traveller is told the practical consequence — nobody was
+// messaged for them — not an excuse about storage.
+
+test('L144: "not enabled" tells the traveller to let their crew know themselves', () => {
+  const line = describeCrewNotification({ crewNotified: [], crewNotifyUnavailableReason: 'crew_notify_not_enabled' });
+  assert.ok(line);
+  assert.match(line, /not told/i);
+  assert.match(line, /let them know yourself/i);
+  assert.doesNotMatch(line, /nothing set up/i);
+});

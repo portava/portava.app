@@ -467,7 +467,7 @@ export async function resolveInteractionPermissions(
   ])).map((r) =>
     r.status === "fulfilled"
       ? r.value
-      : { data: null, error: (r.reason && (r.reason as any).code) ? r.reason : { code: "42P01", message: String((r.reason as any)?.message ?? r.reason) } },
+      : { data: null, error: (r.reason && (r.reason as any).code) ? r.reason : { code: "REJECTED", message: String((r.reason as any)?.message ?? r.reason) } }, // never 42P01: a rejected read is unread, not an absent table
   ) as any;
 
   // Extract values — for optional Phase 2 tables, ignore table-missing errors

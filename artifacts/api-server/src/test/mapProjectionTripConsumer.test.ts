@@ -481,7 +481,17 @@ describe("cancellation and removal propagate to the wire", () => {
   });
 
   it("a trip removed from the projection (ON DELETE CASCADE) is removed from the map", async () => {
-    const r = await tripLayer(readyState({ trip_map_projections: [] }));
+    // A deleted trip cascades BOTH its trip_members rows (baseline
+    // trip_members_trip_id_fkey, ON DELETE CASCADE) and its projection row
+    // (2520's trip_id REFERENCES trips ON DELETE CASCADE), so the deletion is
+    // modelled as all three gone. Keeping the membership while dropping only
+    // the projection row is a different state — a trip the projection has not
+    // covered yet — and the coverage section below asserts it is REFUSED.
+    const r = await tripLayer(readyState({
+      trip_map_projections: [],
+      trips: [],
+      trip_members: [{ user_id: USER, trip_id: "t-invited", role: "invited" }],
+    }));
     assert.deepEqual(r.body.objects, []);
     // Read successfully, and empty — NOT the same as unread.
     assert.deepEqual(r.body.sources, ["trips"]);
@@ -680,6 +690,95 @@ describe("a projection read failure is refused, never served as an empty layer",
     );
     assert.deepEqual(r.body.sources, []);
     assert.equal(r.body.trips.refusal, "projection_schema_unexpected");
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 7b. COVERAGE — every trip in the viewer's scope must be in the projection
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// The projection is written only by trip_map_projection_drain (kernel outbox
+// events) and trip_map_projection_rebuild, and nothing in the server calls the
+// rebuild. A trip that predates the kernel, or whose outbox event has not been
+// drained yet, therefore has NO row. Measured read-only on the testing database
+// (ajrurzioarfkagpuxfnb) on 2026-10-03: 43 trips, 0 trip_map_projections rows,
+// 0 trip_outbox rows. Turning map_trip_projection_read_enabled on there served
+// every viewer's trip layer as a SUCCESSFUL empty read — "you have no trips" —
+// which is decision 3's failure (a layer missing a trip is indistinguishable
+// from a viewer with one fewer trip) reached through a missing row rather than
+// a stale one.
+
+describe("coverage: a trip in the viewer's scope with no projection row refuses the layer", () => {
+  it("a member of a trip the projection has not covered yet gets a REFUSED layer, not an empty one", async () => {
+    const r = await tripLayer(readyState({ trip_map_projections: [] }));
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.objects, []);
+    assert.deepEqual(
+      r.body.sources,
+      [],
+      "an unprojected trip must not read as 'this viewer has no trips'",
+    );
+    assert.equal(r.body.trips.path, "projection");
+    assert.equal(r.body.trips.refusal, "projection_incomplete");
+    assert.equal(r.body.trips.scoped, 1);
+    assert.equal(r.body.trips.uncovered, 1);
+    assert.equal(r.headers["x-map-trip-source"], "projection:unread");
+  });
+
+  it("ONE uncovered trip refuses the WHOLE layer — no partly-drawn trip layer", async () => {
+    const r = await tripLayer(
+      readyState({
+        trip_members: [
+          { user_id: USER, trip_id: "t1", role: "owner" },
+          { user_id: USER, trip_id: "t2", role: "member" },
+        ],
+        trips: [tripRow(), tripRow({ id: "t2", title: "Hoi An" })],
+        trip_map_projections: [projectionRow()],
+      }),
+    );
+    assert.deepEqual(r.body.objects, [], "t1's pin alone would be a smaller trip layer, not a true one");
+    assert.deepEqual(r.body.sources, []);
+    assert.equal(r.body.trips.refusal, "projection_incomplete");
+    assert.equal(r.body.trips.scoped, 2);
+    assert.equal(r.body.trips.uncovered, 1);
+  });
+
+  it("a row that cannot be folded (no version) does not count as coverage", async () => {
+    const r = await tripLayer(
+      readyState({
+        trip_map_projections: [projectionRow({ source_trip_version: null })],
+      }),
+    );
+    assert.deepEqual(r.body.sources, []);
+    assert.equal(r.body.trips.refusal, "projection_incomplete");
+    assert.equal(r.body.trips.invalidRows, 1);
+  });
+
+  it("full coverage still serves, and reports nothing uncovered", async () => {
+    const r = await tripLayer(
+      readyState({
+        trip_members: [
+          { user_id: USER, trip_id: "t1", role: "owner" },
+          { user_id: USER, trip_id: "t2", role: "member" },
+        ],
+        trips: [tripRow(), tripRow({ id: "t2", title: "Hoi An" })],
+        trip_map_projections: [
+          projectionRow(),
+          projectionRow({ trip_id: "t2" }, { trip_id: "t2", title: "Hoi An" }),
+        ],
+      }),
+    );
+    assert.deepEqual(r.body.sources, ["trips"]);
+    assert.equal(r.body.trips.refusal, null);
+    assert.equal(r.body.trips.uncovered, 0);
+    assert.equal(r.body.objects.length, 2);
+  });
+
+  it("the not-ready branch never reports coverage (it does not read the projection)", async () => {
+    const r = await tripLayer(baseState({ trip_map_projections: [] }));
+    assert.equal(r.body.trips.path, "canonical");
+    assert.equal(r.body.trips.refusal, null);
+    assert.equal(r.body.trips.uncovered, 0);
   });
 });
 

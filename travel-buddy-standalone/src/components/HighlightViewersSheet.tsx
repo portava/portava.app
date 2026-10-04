@@ -24,15 +24,29 @@ export function HighlightViewersSheet({ visible, highlightId, onClose }: Props) 
   const insets = useSafeAreaInsets();
   const [viewers, setViewers] = useState<HighlightViewer[]>([]);
   const [loading, setLoading] = useState(false);
+  // §28.11. A failed read used to render "👁 0 viewers" and "No views yet." —
+  // a claim about who has seen the owner's Highlight, made from a request that
+  // failed. It is now an error with a retry.
+  const [failed, setFailed] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     if (!visible || !highlightId) return;
+    // The owner can open this sheet, close it, advance to the next Highlight
+    // and open it again before the first read lands. Without this guard the
+    // late answer for the PREVIOUS Highlight overwrote the current one's list.
+    let stale = false;
     setLoading(true);
+    setFailed(false);
+    setViewers([]);
     fetchHighlightViewers(highlightId).then((r) => {
-      setViewers(r.ok && r.data ? r.data : []);
+      if (stale) return;
+      if (r.ok && r.data) setViewers(r.data);
+      else setFailed(true);
       setLoading(false);
     });
-  }, [visible, highlightId]);
+    return () => { stale = true; };
+  }, [visible, highlightId, reloadKey]);
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -40,7 +54,7 @@ export function HighlightViewersSheet({ visible, highlightId, onClose }: Props) 
       <View style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 16) }]}>
         <View style={s.grab} />
         <View style={s.head}>
-          <Text style={s.title}>👁 {viewers.length} viewer{viewers.length !== 1 ? 's' : ''}</Text>
+          <Text style={s.title}>{failed ? '👁 Viewers' : `👁 ${viewers.length} viewer${viewers.length !== 1 ? 's' : ''}`}</Text>
           <View style={{ flex: 1 }} />
           <Pressable onPress={onClose} hitSlop={8} style={s.closeBtn}>
             <X size={18} color={color.ink} />
@@ -50,6 +64,18 @@ export function HighlightViewersSheet({ visible, highlightId, onClose }: Props) 
         {loading ? (
           <View style={s.loading}>
             <ActivityIndicator size="small" color={color.signal} />
+          </View>
+        ) : failed ? (
+          <View style={s.empty} testID="highlight-viewers-error">
+            <Text style={s.emptyText}>Couldn{'’'}t load who viewed this.</Text>
+            <Pressable
+              testID="highlight-viewers-retry"
+              onPress={() => setReloadKey((k) => k + 1)}
+              accessibilityRole="button"
+              hitSlop={8}
+            >
+              <Text style={s.retry}>Try again</Text>
+            </Pressable>
           </View>
         ) : viewers.length === 0 ? (
           <View style={s.empty}>
@@ -102,6 +128,7 @@ const s = StyleSheet.create({
   loading: { padding: space.xl, alignItems: 'center' },
   empty: { padding: space.xl, alignItems: 'center' },
   emptyText: { ...t.body, color: color.mute },
+  retry: { ...t.bodyStrong, color: color.signal, marginTop: space.sm },
   list: { paddingHorizontal: space.lg, paddingBottom: space.md, gap: space.md },
   row: { flexDirection: 'row', alignItems: 'center', gap: space.md },
   info: { flex: 1 },

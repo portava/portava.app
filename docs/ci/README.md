@@ -955,6 +955,104 @@ and unit-tests the verdict classifier's and the slot decider's behaviour rather
 than grepping the YAML for a word — an earlier version did grep, and a mutation
 that collapsed NOT_EXECUTED into FAIL survived it.
 
+#### The hole the narrowing left: a conflicted PR gets no run at all
+
+The trigger narrowing above has a case it does not cover, measured 2026-10-03.
+A pull request whose `mergeable_state` is `dirty` receives **no `pull_request`
+event**, because GitHub cannot build the merge ref the workflow would run
+against. Feature-branch pushes deliberately no longer start a DB run. So the
+moment a PR conflicts with its base, its live-DB certification simply stops
+being produced, and `ci.yml` and `unwired-checks.yml` keep reporting green on
+every subsequent push.
+
+Nothing in this file previously said so. The 45%-no-verdict measurement above
+blamed eviction, eviction was fixed, and this cause was never enumerated — so
+the symptom it documents ("a commit with no verdict is indistinguishable, in
+GitHub's check list, from one that passed") came back through a different door.
+
+Measured on PR #562 at `b3293929c`: `CI` green, `Unwired checks` green, both
+verdict jobs green, and **no `CI (live DB)` run existed for the sha at all** —
+on a commit whose entire subject was a fix to two gates that execute only
+inside `api-server · check:all + live_pulse gate`. Three other open PRs were in
+the same state that morning, their heads carrying zero live-DB runs: #561,
+#530 and #393. #561's head had moved and carried a run again within the hour;
+#530 was `dirty` against the 2026-10-03 advance of `main`; and #393 has been
+`dirty` since 2026-09-05, so its head has never been certified at all and has
+read green for four weeks.
+
+The condition is narrower than "the PR is conflicted", and a detector must not
+key on `mergeable_state`: a PR whose head landed while it was still mergeable
+KEEPS that run and goes `dirty` later when `main` moves, which is why #521,
+#54, #52 and #549 are all `dirty` and all have a live-DB run at their head:
+#521 and #54 green, #549 red and therefore visible, and #52's from the
+`push` trigger that predates the narrowing. What is missing is a run for a
+commit whose merge ref could not be built at the moment it was pushed — and
+that includes **the push that creates the conflict itself**, where nothing
+outside the PR changes at all.
+
+PR #560 is that variant, measured 2026-10-03. `main`'s tip `db657b73b` was
+committed at 05:58:30Z and was still the tip hours later, so it never moved
+between the two pushes below:
+
+- `02b75c4d6` (pushed 09:26:39Z) got `CI (live DB)` run 37113087273, and
+  `git merge-tree db657b73b 02b75c4d6` exits 0.
+- `39d842aa5` (pushed 09:42:40Z) got `CI` and `Unwired checks (probation)` on
+  the `push` event, both green, and **no `CI (live DB)` run of any kind**.
+  `git merge-tree db657b73b 39d842aa5` exits 1 with a content conflict in
+  `artifacts/api-server/package.json`.
+
+The commit's own one-line edit to that file's `test` script is the whole
+cause: against an unmoved base, the head before it merged clean and the head
+after it did not. The branch had been behind `main` since `0fa752ece` and was
+certified in that state, so "merge `main` promptly" would in fact have avoided
+this collision — but nothing told the author it was now required, and nothing
+told them certification had stopped. A PR can go from certified to silently
+uncertified on one of its own pushes, with no event anywhere saying so, and
+the author's next signal is three green checks.
+
+The same hole opens without the branch touching the conflicting file at all,
+and that is the form most likely to be met on a busy day. On 2026-10-03 PR
+#562 was merged up to `main` at `ce7fd05e9`, validated, and pushed as
+`33b32fd13` at 14:05Z. Between the merge and the push `main` moved to
+`05c5a86fe` (PR #574), which made the branch conflict again; the API reported
+`mergeable_state: "dirty"` for the PR at that moment, and the push got `CI`
+and `Unwired checks (probation)` on the `push` event and **no `CI (live DB)`
+run of any kind**. Nothing on the branch had changed since it merged clean.
+
+So "merge `main` promptly" is necessary and not sufficient: on a day when
+`main` takes several merges an hour, a branch can be conflict-free when
+validation starts and conflicted by the time the push lands, and the push that
+carries the validated work is the one that goes uncertified. The only reliable
+signal is to read the PR's `mergeable_state` AFTER pushing and, if it is
+`dirty`, merge `main` again and push again — not to infer from a local
+`git merge-tree` that was true a moment earlier.
+
+The question to ask of a head sha is therefore whether a `CI (live DB)` run
+exists for it at all, and then whether
+`api-server · check:all + live_pulse gate` reached a conclusion of its own —
+not whether a verdict is red, because a superseded run's verdict job reports
+failure and looks the same as a real one.
+
+This is the third time the defect has been found. PR #521's description
+documents it under *"Read this first: a certification tier that switched itself
+off"*, with a measured table naming heads `5aa5d4836`, `71f156dc2` and
+`7a53438b6` and the conclusion "A conflicted PR is an unmonitored PR"; it
+declined to change the trigger, correctly, and left no mechanical remedy. The
+remedy in force is still "merge `main` promptly", which is a habit rather than
+a gate.
+
+There is no fix in the workflow to make here: a `pull_request` event for an
+unbuildable merge ref is not something a repository can ask for. What is
+actionable is the reading rule, which is why it is written down:
+
+- **Greenness in the check list is not certification.** Confirm a `CI (live DB)`
+  run EXISTS for the CURRENT head sha
+  (`actions/runs?head_sha=<sha>`), and that the check:all job RAN.
+- **`mergeable_state` is part of CI status.** A `dirty` PR is not merely
+  awkward to merge; it is uncertified from that moment on, and every commit
+  pushed to it afterwards is uncertified too.
+- Merging the base branch back in restores the event, and with it the run.
+
 #### The re-run bypass (fixed 2026-09-05)
 
 `gh run rerun --failed` re-runs only the jobs that **failed**. The
