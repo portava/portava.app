@@ -21,7 +21,7 @@ These rulings govern the product. Each is marked with what the code does today. 
 | **Adults only.** Only adults who pass identity verification, provider onboarding and safety checks may be paid; no payments for minors. | **Partly implemented.** A traveller whose verified identity record says they are under 18 is refused on every booking-creation path, whether or not a launch control matches. Minimum ages (18; 21 for nightlife by default) are enforced where a launch control matches. Nothing is paid to anyone, so the payout half is not built. |
 | **Commission: 10 % of the pre-tax service price, shown before checkout.** A starting value, configurable by product and market. | **Implemented**, with one thing for the owner to decide — see "Money" below. The rate is configuration read by the database, the checkout screen shows it before a request can be sent, and 10 is what applies when nothing is configured. The stored fee schedule holds other values and was deliberately not changed. |
 | **No platform commission on tips.** | **Implemented.** A tip is recorded as one pair of ledger entries from traveller to buddy and no commission entry exists for it. |
-| **No deposit in the first release.** | **Implemented in what is charged and shown** — nothing is charged, and no screen says a deposit is taken or collected. **Not yet removed from the booking's stored terms:** a booking still carries a payment mode and a stored in-app / cash split (see "Money"). |
+| **No deposit in the first release.** | **Implemented.** Nothing is charged; no screen asks for, shows or mentions a deposit amount; and every booking, on all five creation paths and after add-ons, is stored with a deposit of `0`. This is one switch, `rent_buddy_global_controls.deposits_enabled`, off by default — see "Deposits and payment modes". It exists so the ruling can be revisited "with a defined reason and refund terms"; turning it on is an owner decision and needs screen work first. |
 | **Refunds.** Full refund when the provider cancels, the service is unavailable, or a safety issue is upheld; full refund for a cancellation before the service begins; cancellations after it begins go through support and local rules. Fees or deposits are never promised to be non-refundable. | **Not implemented as refunds** — there is nothing to refund, because nothing is collected. **Implemented in the record:** when a booking is cancelled, declined, expires, or a dispute is resolved for the traveller, its earning entries are reversed in the same database transaction. The app no longer says a deposit is forfeited. |
 | **Payments stay in test mode** until payment, identity and tax readiness are established. | **Holds.** `pay-deposit` and `pay-full` answer `503`; no processor is installed. |
 
@@ -101,7 +101,7 @@ disputed → cancelled    (an admin resolves the dispute for the traveller)
 
 Key transitions:
 - **requested / pending** — the traveller submits a booking request and it awaits the buddy. The canonical route (`POST /api/rent-a-buddy/bookings`) writes `requested`; the other four creation paths (rebook, the spec request, accepting an offer, booking a package) write `pending`. Both mean the same thing and every guard accepts both.
-- **The buddy has 24 hours to accept.** A request not answered by its `expires_at` is moved to `expired` by the request sweeper. The canonical route sets `expires_at` 24 hours ahead (`BUDDY_ACCEPT_WINDOW_HOURS`). A package booking may expire sooner — 15 minutes when the buddy is marked available now, 1 hour for a same-day booking, otherwise 24 hours. *Known gap:* rebook, the spec request and offer acceptance write no `expires_at`, so those requests do not expire.
+- **The buddy has 24 hours to accept.** A request not answered by its `expires_at` is moved to `expired` by the request sweeper. All five creation paths set `expires_at`: the canonical route, rebook, the spec request and offer acceptance set it 24 hours ahead (`BUDDY_ACCEPT_WINDOW_HOURS`); a package booking may expire sooner — 15 minutes when the buddy is marked available now, 1 hour for a same-day booking, otherwise 24 hours. (A booking made by accepting an offer is `pending` like any other: the buddy still accepts it, and the app says so rather than "confirmed".)
 - **scheduled** — the buddy accepts; the session is confirmed. (`confirmed` exists in the enum and is accepted by guards for old rows; nothing writes it.)
 - **declined** — the buddy declines the request.
 - **cancelled_by_traveler / cancelled_by_buddy** — either party cancels before the session. A user cancellation never writes plain `cancelled`.
@@ -115,6 +115,8 @@ Key transitions:
 
 When a booking reaches `cancelled`, `cancelled_by_traveler`, `cancelled_by_buddy`, `declined` or `expired`, its earning entries are reversed in the same database transaction as the status change (see "Money").
 
+**Those five statuses are final.** The database refuses to move a booking out of one of them into a live status (trigger `rbb_refuse_uncancel`); no route did so, and a revived booking would be a live booking whose earnings had been reversed. A traveller who still wants the session makes a new booking.
+
 ---
 
 ## Money
@@ -124,17 +126,23 @@ When a booking reaches `cancelled`, `cancelled_by_traveler`, `cancelled_by_buddy
 ### The ledger
 - Every booking has **ledger entries** (`rent_buddy_earnings_entries`: append-only, signed, in minor units, double-entry) and one **summary row** (`rent_buddy_earnings_ledger`) that is the sum of those entries.
 - Both are written by one database function, `rb_post_booking_ledger` (migration `3824_rent_buddy_ledger_posting.sql`), in one transaction, and it is safe to call twice for the same event. The API computes no fee, net or total itself.
-- **A booking is not created without its ledger.** All five creation paths post the ledger immediately after inserting the booking; if that fails the booking is withdrawn and the request answers `503` with a named error (`ledger_unavailable`, `ledger_write_failed` or `ledger_refused`). There is no fallback that writes the figures another way.
+- **A booking is not created without its ledger.** All five creation paths post the ledger immediately after inserting the booking. There is no fallback that writes the figures another way.
+  - If the posting's answer does not arrive, it is asked again before anything else happens — the function is safe to call twice — so a posting that had in fact been written is found, and the booking is returned.
+  - Only a booking that really has no ledger is withdrawn. The request then answers with a named error: `503 ledger_unavailable` or `503 ledger_write_failed` (retry later), or a `4xx ledger_refused` with `retryable: false` when the database refused the booking itself — retrying that changes nothing.
+  - If the booking cannot be withdrawn it exists, and it is returned as created. On offer acceptance the offer stays accepted, so one offer cannot produce two bookings.
+- **A retried request does not make a second booking.** Every creation request may carry an `Idempotency-Key` (the app sends one per attempt and re-sends it when the answer was lost). The key is stored on the booking, unique per traveller and per thing being booked; a retry returns the original booking.
 - Entries are never updated or deleted. A cancelled, declined or expired booking, and a dispute resolved for the traveller, append exact reversing entries.
 - Every summary row is marked `is_estimated`. Only a settlement entry — which must name a payment provider and its reference — can clear it, and no route can write one. Until a provider exists, "collected in app" is `0` everywhere.
+- **Completed bookings that are not in the ledger are counted, not hidden.** A buddy's earnings are the sum of ledger entries. A completed booking with a price and no entries adds nothing to that sum, so the earnings screens say how many there are: "N completed bookings are not yet in your ledger and are not included in the figures above." Bookings completed before the ledger existed are in this state. They are **not** backfilled automatically — see "Not done: backfilling old bookings".
 
 ### Commission
-- **10 % of the pre-tax service price** is the starting value (owner ruling). The base is the booking's `total_usd`; no tax is computed anywhere, so that is the pre-tax price. The commission is taken from the buddy's earnings — nothing is added to the price the traveller sees.
+- **10 % of the pre-tax service price** is the starting value (owner ruling). The base is the booking's `total_usd` — **including add-ons** (see "Add-ons"); no tax is computed anywhere, so that is the pre-tax price. The commission is taken from the buddy's earnings — nothing is added to the price the traveller sees.
 - The rate is **configuration**, resolved by the database most-specific first:
   1. a **market / product override** — `platform_fee_percent` on a launch control for the country, city and category (admin: Launch Controls);
   2. the **fee schedule** for the buddy's level — `rent_buddy_fee_rules` (admin: Marketplace → Fee rules);
   3. **10**, when neither exists.
 - **For the owner:** the stored fee schedule holds 25 / 22 / 15 / 12 / 12 % by buddy level, not 10. While those rows exist they are what applies — the migration did not rewrite live configuration. Making 10 % the rate in force means clearing or changing those rows, or setting overrides. That is a decision about live pricing and is not made by this document or by the code.
+- **The market is the buddy's.** "Country" and "city" in the list above are the country and city on the buddy's own profile — never the city typed into a booking request. One database function (`rb_quote_booking`) answers "what would this booking cost and what is the commission on it", and it is what the checkout screen shows, what each creation path stores as the booking's price, and — through the same market and the same arithmetic — what the ledger records. The rate and the amount a traveller is shown are therefore the rate and the amount posted.
 - A booking keeps the rate it was priced at; changing configuration does not re-price it.
 - **Shown before checkout:** the booking form shows the commission that applies to this buddy and category, from `GET /api/rent-a-buddy/buddies/:buddyId/commission`, and a request cannot be sent until it has loaded. A buddy sees their rate on the earnings screens.
 - A traveller-side service fee is stored in the fee schedule but is **not charged and not recorded**. Whether one should exist is undecided.
@@ -142,11 +150,20 @@ When a booking reaches `cancelled`, `cancelled_by_traveler`, `cancelled_by_buddy
 ### Tips
 - `POST /api/rent-a-buddy/bookings/:bookingId/tip`, traveller only, completed bookings only. Tips add up; a second tip does not replace the first.
 - **No commission on tips.** A tip is one pair of entries, traveller to buddy.
-- A client may send an `Idempotency-Key`; the same key with the same amount is recorded once. No screen in the app sends a tip yet.
+- A client may send an `Idempotency-Key`; the same key with the same amount is recorded once. The key `carried-over` is reserved for the ledger's own use and is refused. No screen in the app sends a tip yet.
+- An amount that is not a positive number a money column can hold is a `400`, not a server error.
+
+### Add-ons
+- `POST /api/rent-a-buddy/bookings/:bookingId/addons`, traveller only, before the session starts. No screen in the app attaches add-ons yet.
+- Attaching add-ons is **one database operation**: it attaches them, adds their prices to the booking's total, re-derives the payment terms, and appends ledger entries so that the ledger's total equals the booking's new total. An add-on already attached is not attached or charged again, however often the request is repeated.
+- **The commission applies to add-ons.** The ruling is a commission "on the pre-tax service price"; an add-on is part of the price of the service, and nothing in the rulings excludes it. The add-on is commissioned at the rate the booking was priced at. If the owner wants add-ons commission-free, that is a rule to state — it is one line in the database function.
 
 ### Deposits and payment modes
-- **No deposit is taken** (owner ruling), and no screen says one is.
-- *Known gap:* a booking still stores a payment mode (`full_in_app` or `deposit_plus_cash`) and an in-app / cash split computed when it is created. These are stored terms, not money collected, and they predate the ruling. Removing them belongs to the payment work, not to this document.
+- **No deposit is taken** (owner ruling). No screen asks a buddy for a deposit amount, shows a traveller one, or computes one.
+- **One switch:** the column `deposits_enabled` on `rent_buddy_global_controls` (the lane's single row of payment-policy controls), **off** by default. It is read in exactly one place, the database function that derives a booking's payment terms (`rb_booking_payment_terms`). While it is off — or if that row is missing — every booking is stored with a deposit of `0`, on all five creation paths, on an offer, and after add-ons. The deposit columns are kept. It is deliberately **not** a feature flag and is not in the admin flag list or the Global controls screen: it is changed in the database, by decision.
+- A booking still has a **payment mode**, because it says how the price is paid, not whether a deposit exists: `full_in_app` (nothing is due in cash) or `deposit_plus_cash`, which with no deposit simply means the whole price is due in cash at the meetup. The app labels it "Cash at meetup".
+- **If the owner turns the switch on** (the ruling says the question may be revisited "with a defined reason and refund terms"): a `deposit_plus_cash` booking's deposit is a percentage of the price — the existing risk rules choose it — computed in the database in whole cents, and the rest is the cash balance. Nothing else changes in the API. **The screens do not show a deposit**, so the reason and the refund terms the owner defines have to be added to them before the switch is turned on. The rollback of migration 3824 refuses to run while the switch is on.
+- Offers and bookings created before this change may still carry a stored deposit figure. It is not shown, and a booking made from such an offer is stored with none.
 
 ### Cash
 - Either party can confirm that the cash balance changed hands (`POST /api/rent-a-buddy/bookings/:bookingId/confirm-cash`). The confirmation is one locked database write, and an amount above what the booking says is owed is refused.
@@ -154,6 +171,14 @@ When a booking reaches `cancelled`, `cancelled_by_traveler`, `cancelled_by_buddy
 ### Payouts
 - `rent_buddy_payouts` is a status record. Nothing in the app creates a payout row yet, and **no money moves**: "released" is a status.
 - Admins can list payouts by state and hold or release one (`GET /api/rent-a-buddy/admin/payouts`, `POST …/:payoutId/hold`, `POST …/:payoutId/release`; app: Admin → Payouts). A reason is required. The status change and its audit entry are one database transaction — if the audit entry cannot be written, the status does not change.
+- The only moves are **pending → on hold → released**. A payout in any other state — paid, failed, cancelled, already held, already released — cannot be put on hold (`409`), and only a held payout can be released.
+
+### Not done: backfilling old bookings
+Completed bookings that have no ledger entries are counted on the earnings screens (above) and are **not** given entries by this change. Doing so is a separate piece of work, because it writes money figures for past bookings and each of these has to be settled first:
+- **Which rate?** Posting an old booking today prices it at today's configuration. Some old bookings have a summary row carrying the rate in force when they were made (for example 22 %); their buddies were shown earnings at that rate. Re-pricing them changes what a buddy was told they earned.
+- **Which bookings?** Only bookings that were really completed, with the price they really had — including any add-ons and tips recorded outside the ledger.
+- **It cannot be undone.** Ledger entries are append-only; a wrong backfill is corrected by more entries, not by deleting it.
+- **It must be rehearsed** against a copy of production data and reconciled booking by booking before it is run.
 
 ---
 
@@ -190,7 +215,7 @@ After a booking reaches `completed` status, the traveler can request the same bu
 - **Body:** `{ bookingDate: "YYYY-MM-DD", startTime?, durationH?, groupSize? }`
 - **Mobile:** "Book again" button on the booking detail screen
 
-The rebook route copies `city`, `category`, and `notes` from the original booking and applies the buddy's current hourly rate. It creates a fresh `pending` booking — the buddy must accept again.
+The rebook route copies `city`, `category`, and `notes` from the original booking and applies the buddy's current hourly rate. It creates a fresh `pending` booking — the buddy must accept again, within 24 hours.
 
 ---
 
@@ -363,3 +388,8 @@ On 2026-10-04 every sentence above was checked against the code. Where they disa
 | The dispute window is `dispute_window_h` hours | It is 24 hours, a constant in the routes | Document |
 | Seven screens, including `book/[id]`, `bookings` and `dashboard` | Those three do not exist | Document: the table was corrected |
 | Migrations `0047`–`0114` | Those numbers are the frozen legacy tree's | Document: re-keyed to file names in both trees |
+| *Known gap:* rebook, the spec request and offer acceptance write no `expires_at` | True | **Code**: all three now set the same 24-hour window |
+| *Known gap:* a booking still stores a deposit split | True, and two screens still showed or asked for a deposit | **Code**: one switch, off; every booking stores a deposit of `0`; the screens show none |
+| A booking whose ledger cannot be written is withdrawn and answers `503` | When the ledger HAD been written and only the answer was lost, the booking could not be withdrawn, the request still answered `503`, and a retry made a second booking | **Code**: the posting is confirmed before anything is withdrawn; a booking that exists is returned; requests carry an `Idempotency-Key` |
+| The commission shown at checkout is the one the ledger records | They were resolved for two different places — the buddy's city and the city typed into the request | **Code**: one definition of the market, the buddy's, in the database |
+| (nothing about add-ons) | Add-ons raised the booking's total and never reached the ledger | **Code** and document: add-ons are one database operation and are commissioned |
