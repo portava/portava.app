@@ -17,14 +17,18 @@
  * device. It shows the reason is recorded, passed and drawn in source; reading
  * the row under a refused message needs a tester who sends past the limit.
  *
- * SHOWN RED FIRST: with `lifecycle/readState.ts` and the five wired files at
- * their `f71cfb85f` content, section A fails to import (`sendFailureFrom` is not
- * exported) and every C case fails. Mutations after the change, each restored:
- *   • `failedSendCopy` returns 'Tap to retry' for rate_limited   → A3, A4 red.
- *   • `sendFailureFrom` ignores `ok`                              → A2 red.
- *   • the 'rate_limited' entry removed from `known`               → C1 red.
- *   • a hook's `sendFailure: sendFailureFrom(res)` removed        → C2 red.
- *   • a screen's `{failedSendCopy(sendFailure)}` put back to text → C3 red.
+ * SHOWN RED FIRST: against a pristine copy of `main` at `f71cfb85f`, all nine
+ * cases fail (`sendFailureFrom` is not exported, so the file does not load).
+ * Eight mutations after the change, each applied alone and restored by sha256,
+ * all killed:
+ *   • `failedSendCopy` returns 'Tap to retry' for rate_limited   → A3, A4, A6.
+ *   • `sendFailureFrom` ignores `ok`                              → A2.
+ *   • the wait rounded DOWN                                       → A4.
+ *   • a stale reason shown while the message is sending again     → A6.
+ *   • 'rate_limited' removed from the transport's `known` list    → C1.
+ *   • a hook's `sendFailure: sendFailureFrom(res)` removed        → C2.
+ *   • a retry that keeps the old reason                           → C2.
+ *   • a screen's `{failedSendCopy(sendFailure)}` put back to text → C3.
  *
  * Run: node --import tsx --test src/features/telegraph/__tests__/sendFailure.test.ts
  */
