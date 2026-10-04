@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import type { Request, Response } from "express";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { getServiceClient, isServiceClientReady, _setTestServiceClient } from "./supabase";
-export { _setTestServiceClient } from "./supabase";
+export { _setTestServiceClient } from "./supabase"; import { bindIdempotencyKey, type IdempotencyBinding } from "./idempotencyKey"; // PAY-046 (09 §7): on this line so that no cited line below moves
 
 /**
  * Constant-time comparison for shared secrets (internal API keys, webhook
@@ -656,4 +656,52 @@ export async function canEditPlanItem(
   }
 
   return { permitted: true, role, creatorId, status };
+}
+
+// ---------------------------------------------------------------------------
+// Idempotency-Key — `09` §7 part 1, PAY-046
+// ---------------------------------------------------------------------------
+
+/**
+ * Require the `Idempotency-Key` header on a request that moves money, and
+ * NAMESPACE it by who is asking.
+ *
+ * Returns `{ scope, idempotencyKey }`, or null after having already written the
+ * response. Callers `return` on null, exactly as with `requireUser`, and call
+ * this BEFORE any write or provider call: a money request that reaches a write
+ * without a key cannot be made safe afterwards.
+ *
+ * The pair is handed, unchanged, to `postPaymentTransaction`
+ * (`services/payments/PaymentLedger.ts`); the database's UNIQUE (scope,
+ * idempotency_key) index then decides whether the request is new, a replay, or
+ * the same key over different money. The header is the CLIENT's choice, so the
+ * key alone is never returned: `scope` is `http:<operation>:<actorPartyId>`,
+ * built here from the REQUIRED `binding`, so no producer can forget to say
+ * whose key it is. Two users who send the same key do not collide; one user
+ * retrying replays. `actorPartyId` is the authorised caller's payment party id
+ * (`ensurePaymentAccount(...).partyId`), not their profile id — the ledger
+ * refuses a profile id in a scope.
+ *
+ * A missing or malformed header is a 400 `invalid_payload` whose `reason` is
+ * `idempotency_key_required` or `idempotency_key_malformed`. A binding that is
+ * not an operation slug plus a party id is the route's bug: 500 `db_error`
+ * (generic message), never a key without its namespace. The shape rules, and
+ * what a present header does NOT prove, are in `lib/idempotencyKey.ts`.
+ *
+ * Not attached to any route here. The money routes that must call it belong to
+ * the workstreams that own them (tips, capture, refunds, payouts).
+ */
+export function requireIdempotencyKey(
+  req: Request,
+  res: Response,
+  binding: IdempotencyBinding,
+): { scope: string; idempotencyKey: string } | null {
+  const bound = bindIdempotencyKey(req.headers["idempotency-key"], binding);
+  if (bound.ok) return { scope: bound.scope, idempotencyKey: bound.idempotencyKey };
+  if (bound.reason === "idempotency_binding_invalid") {
+    sendError(res, "db_error", bound.message);
+    return null;
+  }
+  sendError(res, "invalid_payload", bound.message, { reason: bound.reason });
+  return null;
 }
