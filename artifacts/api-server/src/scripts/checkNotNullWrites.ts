@@ -37,7 +37,7 @@
  * Static, so it needs no database and runs on every push.
  * Run: node --import tsx/esm src/scripts/checkNotNullWrites.ts
  */
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, statSync, realpathSync } from "node:fs";
 import { resolve, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -270,6 +270,13 @@ function main(): void {
 }
 
 // Run only when executed directly; the test suite imports findNullWrites.
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Compare REAL paths. `import.meta.url` is already symlink-resolved by node,
+// but `process.argv[1]` is the string the caller typed. On macOS /var is a
+// symlink to /private/var, so a guard invoked through $TMPDIR compared
+// "/var/..." against "/private/var/..." , decided it was not the entry point,
+// and EXITED 0 HAVING CHECKED NOTHING — a green that measured nothing, which is
+// the exact failure class this guard exists to catch.
+const __entry = process.argv[1] ? realpathSync(resolve(process.argv[1])) : "";
+if (__entry && __entry === realpathSync(fileURLToPath(import.meta.url))) {
   main();
 }
