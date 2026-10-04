@@ -84,3 +84,38 @@ What the guard does, so a test run can be read correctly:
   gate stays closed until a test-mode transcript (session → hosted flow → signed
   webhook → `identity_verifications.status = verified` → `profiles.verification_level`)
   is recorded.
+
+## Payments in TEST mode — the provider seam and its secrets (PAY-T03)
+PROV-01 above predates the owner's ruling of 2026-10-04. The ruling replaces its
+step 2: the first integration is **Stripe Connect in test mode**, the service
+provider is the seller, and the charge is a **direct charge** on the provider's
+connected account with the platform's fee as a separate amount, *where Stripe
+supports it* (not destination charges). Stripe is not worldwide coverage; each
+market is enabled separately.
+
+What exists now is the seam, not the Stripe adapter:
+`artifacts/api-server/src/services/payments/` holds the provider contract, a
+deterministic fake for local runs, a tax-provider interface, a registry and a
+readiness report. **The Stripe adapter is not written yet (PAY-T04).** Until it is
+registered, `PAYMENT_PROVIDER=stripe` answers `provider_not_registered` and
+payments stay off; setting the variables below early is harmless and lets the
+startup line confirm the key is a test key.
+
+| Secret | Value | Notes |
+|---|---|---|
+| `PAYMENT_PROVIDER` | **leave unset** today (means `none`); `stripe` once PAY-T04 is merged | `fake` works only in a local run — it is refused in production, whenever `REPLIT_DEPLOYMENT` is set, and without `NODE_ENV=development`/`test`. |
+| `STRIPE_SECRET_KEY` | `sk_test_…`, or better a restricted `rk_test_…` | Developers → API keys with **Test mode on** (or a Sandbox). A different variable from `STRIPE_IDENTITY_SECRET_KEY`. A standard test secret key can serve both; a restricted key needs the payment and Connect permissions PAY-T04 will list. A `sk_live_`/`rk_live_` key is refused before any request; anything else (`pk_…`, `whsec_…`, upper case, a leading space) is refused as unrecognised and `PAYMENTS_ALLOW_LIVE` does not rescue it. |
+| `STRIPE_WEBHOOK_SECRET` | `whsec_…` | The signing secret of the **payments** webhook endpoint (a separate endpoint from the identity one, so a separate secret). The route itself is PAY-T19; add the endpoint when it exists. For direct charges the endpoint must listen to **connected accounts'** events. |
+| `PAYMENTS_ENABLED_MARKETS` | comma-separated ISO country codes, e.g. `US` | The markets the platform has enabled payments in. Empty (the default) enables none. A market also needs the provider to support it and tax to be configured for it. |
+| `TAX_PROVIDER` | **leave unset** (means `none`) | No real tax provider exists yet. With `none`, tax is configured for no market and checkout refuses. `fake` is local-run only. |
+| `PAYMENTS_ALLOW_LIVE` | **leave unset** | As above: only the exact string `true` lets a live key or a `livemode: true` event through. |
+
+`STRIPE_CONNECT_CLIENT_ID` (named in PROV-01) is only needed for OAuth onboarding
+of existing Stripe accounts; hosted onboarding through account links does not use
+it. Do not create it unless PAY-T04 asks for it.
+
+The server logs a second startup line, `startup: payment provider readiness`, with
+`paymentProvider`, `operational`, `keyMode`, `keyRefused`, `liveAllowed`,
+`taxProvider`, `taxConfigured`, `enabledMarkets` and the first `reason` payments
+are not operational. It never logs a key. Today it reads `paymentProvider: "none"`,
+`operational: false`.
