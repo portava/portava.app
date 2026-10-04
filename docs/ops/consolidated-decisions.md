@@ -84,7 +84,7 @@ null and documents that contract, `lib/trustScore` types the score
 are `NOT NULL DEFAULT 50.00`
 (`artifacts/api-server/baseline/20260819_baseline_structure.sql:10940#overall_score numeric(5,2)`),
 and the scorer still substitutes the same constant for a category with no
-events (`artifacts/api-server/src/services/trust/TrustScoreService.ts:229#function computeCategoryScore`).
+events (`artifacts/api-server/src/services/trust/TrustScoreService.ts:331#function computeCategoryScore`).
 #449's don't-persist guard is NOT on main. So a user with one negative event is
 dragged back toward 50 by eight fabricated neutrals.
 
@@ -112,9 +112,9 @@ idle one at the call site?
 **Current main — this is what changes the answer.** #450's two headline defects
 are already fixed on main by a DIFFERENT implementation than the PR's. The
 function has the caller it lacked
-(`artifacts/api-server/src/lib/trustMaintenanceScheduler.ts:653#restrictionsExpired = await expireOldRestrictions(db);`)
+(`artifacts/api-server/src/lib/trustMaintenanceScheduler.ts:679#const sweep = await expireOldRestrictions(db);`)
 and it does now bind its error
-(`artifacts/api-server/src/services/trust/TrustRestrictionService.ts:333#export async function expireOldRestrictions(`).
+(`artifacts/api-server/src/services/trust/TrustRestrictionService.ts:391#export async function expireOldRestrictions(`).
 But it returns `0` on that error into a bare `Promise<number>`, and the
 scheduler assigns that to `restrictionsExpired`. **A failed sweep still reports
 as a clean sweep that found nothing.** Main's version is also unbounded — no
@@ -138,10 +138,10 @@ measurement pattern this whole workstream exists to remove.
 **Current main.** #467's central addition already landed: `getTrustProfileResult`
 is imported by the projection service. Main ALSO shipped a vocabulary #467 never
 proposed — `measured | partial | substituted | unavailable | not_applicable`
-(`artifacts/api-server/src/services/passport/PassportProjectionService.ts:273#export type DomainTrustBasis`)
+(`artifacts/api-server/src/services/passport/PassportProjectionService.ts:279#export type DomainTrustBasis`)
 — and renders it as a note beside the word. But main still substitutes 50, still
 calls it "Established"
-(`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1109#function presentationWord`),
+(`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1129#function presentationWord`),
 and still hardcodes `applicable: true` on five of the six domains.
 
 **Why neither option as written.**
@@ -260,7 +260,7 @@ the member's earliest message also returns every OTHER sender's message after
 that instant, which is most of the gap §14.3 exists to deny.
 
 **What accepting it commits to, measured.**
-`artifacts/api-server/src/services/groupChatHistoryBound.ts:93#export function withinWindow`
+`artifacts/api-server/src/services/groupChatHistoryBound.ts:109#export function withinWindow`
 has **31 call sites across 13 files**, but it is one predicate, so all 31
 inherit the carve-out untouched. **18 of those paths also push the bound into
 the query first** as a `created_at` `.gte`, so a carve-out written only in
