@@ -14,6 +14,7 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
+import { acceptedLedgerPosting, functionNotFound } from "./helpers/fakeRentBuddyLedgerRpc.js";
 import rentABuddySpecRouter from "../routes/rentABuddySpec.js";
 
 // ── Test server ───────────────────────────────────────────────────────────────
@@ -69,6 +70,10 @@ interface SpecState {
   cityRollouts: any[];
   /** rent_buddy_user_limits rows, keyed by user_id. */
   userLimits: any[];
+  /** How rb_post_booking_ledger answers; unset ⇒ "posted". */
+  ledger?: "posted" | "absent" | "error";
+  /** Every rb_post_booking_ledger call the route made. */
+  ledgerCalls?: any[];
 }
 
 const OPEN_FLAGS = (): Record<string, boolean> => ({
@@ -93,9 +98,14 @@ function makeClient() {
       _filters: [] as Array<[string, string, any]>,
       _insertData: null as any,
       _maybeSingle: false,
+      _delete: false,
 
       select() { return this; },
       insert(data: any) { this._insertData = data; return this; },
+      // A booking withdrawn because its ledger could not be posted. APPLIED to
+      // `insertedBookings`, so "no booking row" below is a statement about what
+      // is stored, not about what was attempted.
+      delete() { this._delete = true; return this; },
       eq(col: string, val: any) { this._filters.push(["eq", col, val]); return this; },
       lte(col: string, val: any) { this._filters.push(["lte", col, val]); return this; },
       gte(col: string, val: any) { this._filters.push(["gte", col, val]); return this; },
@@ -130,6 +140,15 @@ function makeClient() {
 
       async _resolve(): Promise<any> {
         const t = this._table;
+
+        if (this._delete) {
+          if (t === "rent_buddy_bookings") {
+            const id = this._filters.find(([op, col]) => op === "eq" && col === "id")?.[2];
+            assert.ok(id !== undefined, "an unfiltered DELETE on rent_buddy_bookings");
+            state.insertedBookings = state.insertedBookings.filter((r: any) => r.id !== id);
+          }
+          return { data: null, error: null };
+        }
 
         if (this._insertData !== null) {
           const row = { id: `gen-${Math.random().toString(36).slice(2)}`, ...this._insertData };
@@ -201,6 +220,17 @@ function makeClient() {
 
   return {
     from: (table: string) => fakeTable(table),
+    // The earnings ledger is one SQL function since migration 3824, and a
+    // booking whose ledger cannot be posted is REFUSED (there is no JavaScript
+    // fallback). The function answers "posted" unless a case sets
+    // `state.ledger`; every other function stays absent, as it was with no `.rpc`.
+    rpc: async (fn: string, args: any) => {
+      if (fn !== "rb_post_booking_ledger") return functionNotFound(fn);
+      (state.ledgerCalls ??= []).push(args);
+      if (state.ledger === "absent") return functionNotFound(fn);
+      if (state.ledger === "error") return { data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } };
+      return acceptedLedgerPosting(args);
+    },
     auth: {
       getUser: async (token: string) => {
         if (token === FAKE_TOKEN) return { data: { user: { id: USER_ID } }, error: null };
@@ -312,4 +342,36 @@ describe("Spec router booking request — blocked-date enforcement", () => {
     assert.equal(r.body.booking?.category, "city");
     assert.equal(state.insertedBookings.length, 1);
   });
+});
+
+// ── PAY-050: the fifth creation path does not seat an unledgered booking ──────
+//
+// This route ended `createEarningsLedgerEntry(...).catch(() => {})` like the
+// other four. The other four are driven by rentABuddyGateConsolidation.test.ts;
+// this is the same assertion for the spec request, on stored state.
+
+describe("Spec router booking request — a booking that cannot be ledgered is refused and withdrawn", () => {
+  it("CONTROL: the ledger is posted once, for the booking that was inserted", async () => {
+    const r = await req("POST", `/api/rent-a-buddy/buddies/${BUDDY_PROF}/request`, requestBody());
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(state.insertedBookings.length, 1);
+    assert.deepEqual(state.ledgerCalls, [{
+      p_booking_id: state.insertedBookings[0].id, p_event: "booking_created", p_event_key: null, p_args: {},
+    }]);
+  });
+
+  for (const [ledger, error] of [["absent", "ledger_unavailable"], ["error", "ledger_write_failed"]] as const) {
+    it(`posting ${ledger} → 503 ${error}; no booking row remains and none is returned`, async () => {
+      state.ledger = ledger;
+      const r = await req("POST", `/api/rent-a-buddy/buddies/${BUDDY_PROF}/request`, requestBody());
+      assert.equal(r.status, 503, JSON.stringify(r.body));
+      assert.equal(r.body.error, error);
+      assert.equal(r.body.retryable, true);
+      assert.equal(r.body.booking, undefined);
+      assert.equal(state.ledgerCalls?.length, 1, "one attempt — not retried, and not attempted a second way");
+      assert.equal(state.insertedBookings.length, 0,
+        "a booking exists with no earnings ledger — the state PAY-050 is about");
+      assert.equal(JSON.stringify(r.body).includes("statement timeout"), false, "the database's message is for the log");
+    });
+  }
 });

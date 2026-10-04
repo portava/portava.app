@@ -287,12 +287,51 @@ describe("one take rate, one reader — read as text", () => {
     );
   });
 
-  it("the ledger writer no longer touches the fee table directly", () => {
-    const src = stripComments(readFileSync(join(SRC, "lib/rentBuddyEarningsLedger.ts"), "utf8"));
-    assert.equal(
-      src.includes(`.from("${FEE_SCHEDULE_TABLE}")`), false,
-      "the ledger prices through resolveFeeSchedule so the refusal path cannot be bypassed",
-    );
-    assert.ok(src.includes("resolveFeeSchedule"), "the ledger must resolve the fee, not assume one");
+  // PAY-055. This used to assert that the ledger writer priced "through
+  // resolveFeeSchedule" — i.e. that the JavaScript writer read the schedule via
+  // the one JavaScript reader. The writer no longer prices anything: migration
+  // 3824 moved the read AND the arithmetic into `rb_post_booking_ledger`, in the
+  // transaction that writes the entries. So the assertion is the stronger one:
+  // the writer reaches the schedule by NO JavaScript path, and the reader that
+  // prices a booking is the SQL function.
+  it("the ledger writer reads no fee at all — the booking is priced inside the database", () => {
+    for (const f of ["lib/rentBuddyEarningsLedger.ts", "lib/rentBuddyLedgerPosting.ts"]) {
+      const src = stripComments(readFileSync(join(SRC, f), "utf8"));
+      assert.equal(src.includes(FEE_SCHEDULE_TABLE), false, `${f} names the fee table`);
+      assert.equal(src.includes("resolveFeeSchedule"), false,
+        `${f} resolves a fee in JavaScript — a second pricing path beside the SQL function`);
+      assert.equal(/platformFeeUsdFor|travelerServiceFeeUsdFor/.test(src), false,
+        `${f} computes a fee in JavaScript`);
+    }
+    const writer = stripComments(readFileSync(join(SRC, "lib/rentBuddyEarningsLedger.ts"), "utf8"));
+    assert.ok(writer.includes('postBookingLedgerEvent(svc, booking.id, "booking_created")'),
+      "the writer must post through the one SQL function");
+  });
+
+  it("the function that PRICES a booking reads the same schedule table, in SQL", () => {
+    const sql = readFileSync(join(SRC, "migrations/3824_rent_buddy_ledger_posting.sql"), "utf8");
+    const start = sql.indexOf("CREATE OR REPLACE FUNCTION public.rb_resolve_platform_fee_percent(");
+    assert.notEqual(start, -1, "3824 no longer defines rb_resolve_platform_fee_percent");
+    const end = sql.indexOf("$_$;", start);
+    assert.notEqual(end, -1);
+    const body = sql.slice(start, end);
+    assert.match(body, new RegExp(`FROM ${FEE_SCHEDULE_TABLE} `),
+      "the SQL resolver must read the schedule of record, not a second table");
+    assert.match(body, /platform_fee_percent/);
+    assert.match(body, /'owner_default'/, "a missing row must be NAMED as the default, never returned as if configured");
+  });
+
+  it("the JavaScript resolver's only remaining caller is a READ — no write path prices in JavaScript", () => {
+    const callers = files
+      .filter((f) => !f.endsWith("lib/rentBuddyFeeSchedule.ts"))
+      .filter((f) => /\bresolveFeeSchedule\(/.test(stripComments(readFileSync(f, "utf8"))))
+      .map((f) => relative(SRC, f));
+    assert.deepEqual(callers, ["routes/rentABuddy.ts"]);
+    const src = stripComments(readFileSync(join(SRC, "routes/rentABuddy.ts"), "utf8"));
+    const calls = [...src.matchAll(/\bresolveFeeSchedule\(/g)];
+    assert.equal(calls.length, 1, "a second JavaScript pricing call site appeared in routes/rentABuddy.ts");
+    const handlerStart = src.lastIndexOf("router.", calls[0]!.index!);
+    assert.match(src.slice(handlerStart, handlerStart + 80), /^router\.get\("\/rent-a-buddy\/dashboard\/earnings\/summary"/,
+      "resolveFeeSchedule is now called from something other than the read-only earnings dashboard");
   });
 });

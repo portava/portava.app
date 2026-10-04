@@ -41,10 +41,10 @@ import { loadTravelerIdentity, readVerifiedAgeSignal } from "../lib/travelerVeri
 import {
   AWAITING_BUDDY_STATUSES, ACCEPTED_STATUSES, UPCOMING_STATUSES,
   CANCELLABLE_STATUSES, CHANGE_ALLOWED_STATUSES, THREAD_ALLOWED_STATUSES,
-  isOneOf,
+  isOneOf, BUDDY_ACCEPT_WINDOW_HOURS,
 } from "../lib/rentBuddyBookingStatus.js";
 import { runBuddyRequestSweep } from "../lib/rentBuddyRequestSweeper.js";
-import { createEarningsLedgerEntry } from "../lib/rentBuddyEarningsLedger.js";
+import { createEarningsLedgerEntry, sendBookingLedgerRefusal, withdrawUnledgeredBooking } from "../lib/rentBuddyEarningsLedger.js"; import { CASH_CONFIRMATION_RPC, LEDGER_POSTING_RPC, LEDGER_WRITE_FAILED, callMoneyRpc, postBookingTip, type MoneyRpcFailure } from "../lib/rentBuddyLedgerPosting.js"; // one line: docs cite this file by line
 import { readSlotFit, type SlotFit } from "../domain/trips/services/TripFreedomConsumers.js";
 // The ONE reader of rent_buddy_fee_rules. The earnings-summary route used to
 // carry its own level-blind 0.15; see lib/rentBuddyFeeSchedule.ts for why a
@@ -56,7 +56,7 @@ import {
 import {
   findLaunchControlRow,
   normalizeLaunchControlKey,
-  upsertLaunchControlRow,
+  upsertLaunchControlRow, PLATFORM_FEE_OVERRIDE_MESSAGE, parsePlatformFeeOverride,
 } from "../lib/rentBuddyLaunchControls.js";
 // The ONE bidirectional, fail-closed block resolver. Marketplace search filters
 // against the same set the map layer does.
@@ -311,33 +311,40 @@ function sc(fallback?: any) {
   return getServiceClient() ?? fallback;
 }
 
-// ── Atomic money primitives (migration 2330) ──────────────────────────────────
+// ── Atomic money primitives (migrations 2330 and 3824) ───────────────────────
 //
-// The rent-a-buddy money record has three places where a write can be lost or
+// The rent-a-buddy money record has places where a write can be lost or
 // inflated under concurrency. Each is repaired by moving the read-decide-write
-// sequence into ONE database statement, created by
-// src/migrations/2330_rent_buddy_money_atomicity.sql:
+// sequence into ONE database statement:
 //
-//   rb_accumulate_booking_tip   M8  — a second tip ADDS instead of replacing
-//   rb_confirm_booking_cash     M13 — cash confirmation is one locked write,
-//                                     and refuses an inflated amount
-//   rb_buddy_earnings_summary   M7  — the earnings total is aggregated DB-side
-//                                     so no row cap can truncate it
+//   rb_post_booking_ledger      3824 — a tip appends its entry pair and
+//                                      re-derives the summary, the tips row and
+//                                      the booking's tip_usd in one transaction
+//   rb_confirm_booking_cash     2330 M13 — cash confirmation is one locked
+//                                      write, and refuses an inflated amount
+//   rb_buddy_earnings_summary   2330 M7 — the earnings total is aggregated
+//                                      DB-side so no row cap can truncate it
 //
-// Every call site keeps a fallback for the case where the function is not
-// there: an un-applied migration (12 §5.2 — migrations are applied out of band
-// BEFORE the PR that adds one can go green, so this file must be correct on
-// both sides of that apply) or a partial test client with no `.rpc`. The
-// fallbacks are documented individually; none of them silently reintroduces
-// the defect the RPC exists to fix.
+// ── NO MONEY WRITE HAS A FALLBACK (payments PAY-018, `09` §3 refusal 2) ──────
+// The two WRITE helpers below used to carry a read-modify-write fallback for
+// "the function is not there": an un-applied migration, or a partial test
+// client with no `.rpc`. Each said it was not atomic and each still wrote a
+// money figure computed in this process from a read another request could
+// invalidate. They are gone. With the function absent the write is REFUSED,
+// with a named error, and nothing is attempted a second way.
+//
+// `rbRpc` survives for the one READ that still has a fallback — the dashboard
+// earnings aggregate, which falls back to an exhaustive paginated read and
+// never writes.
 
 /**
  * Call a SQL function, distinguishing "the function answered" from "there is no
  * function here". supabase-js RESOLVES on a rejected query, so a failure is in
  * `res.error` and never thrown — see .agents/memory/api-server-testing.md.
  *
- * Returns `{ ok: false }` when the RPC could not be used at all, so the caller
- * can take its documented fallback instead of reporting a false success.
+ * Returns `{ ok: false }` when the RPC could not be used at all. READ paths
+ * only: a money WRITE goes through lib/rentBuddyLedgerPosting.ts, which names
+ * the failure instead of flattening it.
  */
 async function rbRpc(client: any, fn: string, args: Record<string, unknown>): Promise<{ ok: boolean; data?: any }> {
   if (typeof client?.rpc !== "function") return { ok: false };
@@ -351,112 +358,68 @@ async function rbRpc(client: any, fn: string, args: Record<string, unknown>): Pr
   }
 }
 
+/** What happened to one tip. */
+export type BookingTipResult =
+  | { status: "applied"; totalTipUsd: number; replayed: boolean }
+  /** The database looked and said no; nothing was written. */
+  | { status: "refused"; refusal: string; detail: string }
+  /** `ledger_unavailable` / `ledger_write_failed`; nothing was written. */
+  | MoneyRpcFailure;
+
 /**
- * M8 — add `amountUsd` to the tip on a booking, atomically.
+ * Add `amountUsd` to the tip on a booking — as LEDGER ENTRIES, atomically.
  *
- * THE DEFECT THIS REPLACES. The tip path in routes/rentABuddyMarketplace.ts
- * (POST /rent-a-buddy/bookings/:bookingId/tip) upserts rent_buddy_tips on
- * conflict target `booking_id` with a bare `amount_usd: amountUsd`. The table
- * carries UNIQUE (booking_id), so the second tip a traveller leaves REPLACES
- * the first rather than adding to it. There is no other copy of the first tip
- * and no reconciliation that could recover it — which is why 12 §4 orders M8
- * ahead of the rest of Stage 1B: "a destroyed money record is not recoverable
- * later." It then issues two more UPDATEs (the ledger's tip_usd and the
- * booking's tip_usd) with no transaction and explicitly best-effort, each
- * carrying the SINGLE amount rather than the running total, so the three copies
- * can and do disagree.
+ * THE DEFECTS THIS REPLACES. (M8) The tip route upserted rent_buddy_tips on
+ * conflict target `booking_id` with a bare amount, so a second tip REPLACED the
+ * first. 2330's rb_accumulate_booking_tip fixed the accumulation but (PAY-014)
+ * never wrote an ENTRY: a tip reached the tips row and two `tip_usd` copies and
+ * not rent_buddy_earnings_entries, so after a tip the summary row was no longer
+ * the fold of the entries it is supposed to be a projection of.
  *
- * This helper is the correct primitive: one RPC, one transaction, GREATEST(0,
- * col + delta) accumulation in rent_buddy_tips, and both denormalised copies
- * written from the accumulated total.
+ * `rb_post_booking_ledger(…, 'tip', …)` appends ONE balanced pair (traveller →
+ * buddy) and then writes the summary, the tips row and the booking's `tip_usd`
+ * from the fold of the entries, in one transaction. There is no fee leg: the
+ * owner ruling of 2026-10-04 is no platform commission on tips, and the
+ * function books none.
  *
- * Returns the new running total, or null when it could not be applied. A null
- * is a REAL FAILURE the caller must surface — the fallback below is not
- * atomic, and pretending a lost tip succeeded is the defect this repairs.
+ * `eventKey` identifies the TIP, not the attempt (`09` §7.1): the same key with
+ * the same amount is a replay and adds nothing; with a different amount it is
+ * refused.
  *
- * Exported because the only call site today is in rentABuddyMarketplace.ts,
- * which already imports from this module.
+ * There is no fallback. `unavailable` and `failed` are real failures the caller
+ * must surface — pretending a lost tip succeeded is the defect M8 named.
+ *
+ * Exported because the only call site is in rentABuddyMarketplace.ts, which
+ * already imports from this module.
  */
 export async function accumulateBookingTip(
   client: any,
   bookingId: string,
   travelerId: string,
   amountUsd: number,
-  note?: string | null,
-): Promise<{ totalTipUsd: number; atomic: boolean } | null> {
-  if (!client || !bookingId || !travelerId) return null;
-  if (!Number.isFinite(amountUsd) || amountUsd <= 0) return null;
-
-  const rpc = await rbRpc(client, "rb_accumulate_booking_tip", {
-    p_booking_id: bookingId,
-    p_traveler_id: travelerId,
-    p_amount_usd: amountUsd,
-    p_note: note ?? null,
-  });
-  if (rpc.ok) {
-    // RETURNS TABLE surfaces as an array of one row through PostgREST.
-    const row = Array.isArray(rpc.data) ? rpc.data[0] : rpc.data;
-    const total = Number(row?.total_tip_usd ?? row?.totalTipUsd ?? NaN);
-    if (Number.isFinite(total)) return { totalTipUsd: total, atomic: true };
+  note: string | null | undefined,
+  eventKey: string,
+): Promise<BookingTipResult> {
+  if (!bookingId || !travelerId) {
+    return { status: "refused", refusal: "invalid_arguments", detail: "booking and traveller are required" };
+  }
+  if (!Number.isFinite(amountUsd) || amountUsd <= 0) {
+    return { status: "refused", refusal: "invalid_amount", detail: "a tip must be a positive amount" };
+  }
+  if (!eventKey) {
+    return { status: "refused", refusal: "event_key_required", detail: "a tip needs an event key" };
   }
 
-  // FALLBACK — read-modify-write, used only where the RPC is unavailable.
-  // It is NOT atomic and says so in its return value, but it still ACCUMULATES:
-  // even here a second tip must never destroy the first. Two concurrent tips on
-  // this path can lose one increment; before 2330 a second tip lost the whole
-  // first tip on every path, concurrent or not.
-  try {
-    const readRes: any = await client
-      .from("rent_buddy_tips")
-      .select("id, amount_usd")
-      .eq("booking_id", bookingId)
-      .maybeSingle();
-    if (readRes?.error) return null; // never write a total derived from a failed read
-
-    const existing = readRes?.data ? Number((readRes.data as any).amount_usd ?? 0) : 0;
-    const total = Math.max(0, Math.round(((Number.isFinite(existing) ? existing : 0) + amountUsd) * 100) / 100);
-
-    // buddy_user_id is derived, never taken from the caller: the tips row names
-    // who is owed the money.
-    const bookingRes: any = await client
-      .from("rent_buddy_bookings")
-      .select("id, traveler_id, buddy_id")
-      .eq("id", bookingId)
-      .maybeSingle();
-    if (bookingRes?.error || !bookingRes?.data) return null;
-    if ((bookingRes.data as any).traveler_id !== travelerId) return null;
-
-    const bpRes: any = await client
-      .from("rent_buddy_profiles")
-      .select("id, user_id")
-      .eq("id", (bookingRes.data as any).buddy_id)
-      .maybeSingle();
-    if (bpRes?.error || !bpRes?.data) return null;
-
-    const upsertRes: any = await client
-      .from("rent_buddy_tips")
-      .upsert({
-        booking_id: bookingId,
-        traveler_id: travelerId,
-        buddy_user_id: (bpRes.data as any).user_id,
-        amount_usd: total,
-        note: note ?? null,
-      }, { onConflict: "booking_id" });
-    if (upsertRes?.error) return null;
-
-    await client
-      .from("rent_buddy_earnings_ledger")
-      .update({ tip_usd: total, updated_at: new Date().toISOString() })
-      .eq("booking_id", bookingId);
-    await client
-      .from("rent_buddy_bookings")
-      .update({ tip_usd: total, updated_at: new Date().toISOString() })
-      .eq("id", bookingId);
-
-    return { totalTipUsd: total, atomic: false };
-  } catch {
-    return null;
+  const posted = await postBookingTip(client, { bookingId, travelerId, amountUsd, note: note ?? null, eventKey });
+  if (posted.status !== "posted") return posted;
+  if (!posted.summary) {
+    return {
+      status: "failed", error: LEDGER_WRITE_FAILED, rpc: LEDGER_POSTING_RPC,
+      detail: "the posting function reported a tip and returned no summary",
+    };
   }
+  // The running total, as the database folded it. Not `previous + amountUsd`.
+  return { status: "applied", totalTipUsd: posted.summary.tipUsd, replayed: posted.replayed };
 }
 
 /** The verdict rb_confirm_booking_cash returns, plus the post-write state. */
@@ -467,7 +430,8 @@ export interface CashConfirmationResult {
    * 'not_party'          caller is neither the traveller nor the buddy
    * 'amount_exceeds_due' a positive confirmation claimed more cash than the
    *                      booking says is owed; NOTHING was written
-   * 'unavailable'        the confirmation could not be attempted at all
+   * 'unavailable'        the confirmation could not be attempted at all;
+   *                      NOTHING was written — see `failure`
    */
   outcome: "confirmed" | "not_found" | "not_party" | "amount_exceeds_due" | "unavailable";
   actedAsTraveler: boolean;
@@ -479,8 +443,10 @@ export interface CashConfirmationResult {
   bookingStatus: string | null;
   cashDueUsd: number | null;
   disputeExpiresAt: string | null;
-  /** False when the non-atomic fallback ran (no RPC available). */
+  /** True for every write that happened: there is no non-atomic path. */
   atomic: boolean;
+  /** Set when outcome is 'unavailable': the NAMED reason nothing was written. */
+  failure?: MoneyRpcFailure;
 }
 
 function normaliseConfirmRow(row: any): CashConfirmationResult {
@@ -519,6 +485,12 @@ function normaliseConfirmRow(row: any): CashConfirmationResult {
  * booking's own `cash_balance_usd`. A claim above what the booking says is owed
  * is refused, not written and not clamped: clamping would record a settlement
  * that neither party agreed to.
+ *
+ * NO FALLBACK (PAY-018). This used to read the booking and write it back from
+ * here when `rb_confirm_booking_cash` was absent — exactly the lost-update
+ * shape the function exists to remove. With the function absent the
+ * confirmation is now REFUSED (`outcome: "unavailable"`, `failure` naming why)
+ * and nothing is written.
  */
 export async function confirmBookingCash(
   client: any,
@@ -535,74 +507,102 @@ export async function confirmBookingCash(
   };
   if (!client || !bookingId || !actorUserId) return unavailable;
 
-  const rpc = await rbRpc(client, "rb_confirm_booking_cash", {
+  const answer = await callMoneyRpc(client, CASH_CONFIRMATION_RPC, {
     p_booking_id: bookingId,
     p_actor_id: actorUserId,
     p_confirmed: confirmed,
     p_amount_usd: amountUsd ?? null,
   });
-  if (rpc.ok) {
-    const row = Array.isArray(rpc.data) ? rpc.data[0] : rpc.data;
-    if (row?.outcome) return normaliseConfirmRow(row);
-  }
+  if (!("ok" in answer)) return { ...unavailable, failure: answer };
 
-  // FALLBACK — read-then-write, for a client with no `.rpc` or a database where
-  // 2330 is not applied yet. It is NOT race-free and reports `atomic: false`,
-  // but it DOES enforce the amount bound, because that half of M13 is a
-  // validation rule rather than a concurrency property and must hold on every
-  // path.
-  try {
-    const bookingRes: any = await client
-      .from("rent_buddy_bookings")
-      .select("*")
-      .eq("id", bookingId)
-      .maybeSingle();
-    if (bookingRes?.error) return unavailable;
-    const b: any = bookingRes?.data;
-    if (!b) return { ...unavailable, outcome: "not_found" };
+  const row = Array.isArray(answer.data) ? answer.data[0] : answer.data;
+  if (row?.outcome) return normaliseConfirmRow(row);
 
-    const bpRes: any = await client
-      .from("rent_buddy_profiles")
-      .select("id, user_id")
-      .eq("id", b.buddy_id)
-      .maybeSingle();
-    if (bpRes?.error) return unavailable;
-    const buddyUserId: string | null = bpRes?.data ? (bpRes.data as any).user_id : null;
-
-    const isTraveler = b.traveler_id === actorUserId;
-    const isBuddy = !!buddyUserId && buddyUserId === actorUserId;
-    if (!isTraveler && !isBuddy) return { ...unavailable, outcome: "not_party" };
-
-    const due = Number(b.cash_balance_usd ?? 0);
-    if (confirmed === true && amountUsd !== null && amountUsd !== undefined
-        && Number(amountUsd) > (Number.isFinite(due) ? due : 0) + 0.005) {
-      return { ...unavailable, outcome: "amount_exceeds_due", actedAsTraveler: isTraveler, actedAsBuddy: isBuddy, cashDueUsd: due };
-    }
-
-    const patch: Record<string, any> = { updated_at: new Date().toISOString() };
-    if (isTraveler) patch.cash_balance_confirmed_by_traveler = confirmed;
-    if (isBuddy) patch.cash_balance_confirmed_by_buddy = confirmed;
-    const updRes: any = await client.from("rent_buddy_bookings").update(patch).eq("id", bookingId);
-    if (updRes?.error) return unavailable;
-
-    const bool = (v: any): boolean | null => (v === true || v === false ? v : null);
-    return {
-      outcome: "confirmed",
-      actedAsTraveler: isTraveler,
-      actedAsBuddy: isBuddy,
-      travelerConfirmed: isTraveler ? confirmed : bool(b.cash_balance_confirmed_by_traveler),
-      buddyConfirmed: isBuddy ? confirmed : bool(b.cash_balance_confirmed_by_buddy),
-      travelerUserId: b.traveler_id ?? null,
-      bookingStatus: b.status ?? null,
-      cashDueUsd: Number.isFinite(due) ? due : null,
-      disputeExpiresAt: b.dispute_window_expires_at ?? null,
-      atomic: false,
-    };
-  } catch {
-    return unavailable;
-  }
+  return {
+    ...unavailable,
+    failure: {
+      status: "failed", error: LEDGER_WRITE_FAILED, rpc: CASH_CONFIRMATION_RPC,
+      detail: "the cash-confirmation function returned no verdict",
+    },
+  };
 }
 
+// ── What stood here, and why the lines below have not moved ─────────────────
+//
+// Until migration 3824 this block was 76 lines longer. The difference was two
+// read-modify-write FALLBACKS, each reached when its SQL function was absent:
+//
+//   tips   read rent_buddy_tips, added the new amount in JavaScript, upserted
+//          the row and then UPDATEd rent_buddy_earnings_ledger.tip_usd and
+//          rent_buddy_bookings.tip_usd in two further statements;
+//   cash   read the booking, decided which confirmation column to set, bounded
+//          the amount in JavaScript and wrote the booking back.
+//
+// Both said they were not atomic, and both still wrote a money figure derived
+// from a read another request could invalidate — the shape `09` §3 refusal 2
+// forbids, kept alive on exactly the path nobody watches. They are deleted, not
+// disabled: with the function absent the write is refused by name
+// (`ledger_unavailable`) and nothing is attempted a second way. The tests that
+// used to assert "…accumulates on the fallback path too" now assert the
+// refusal (src/test/rentBuddyMoneyAtomicity.test.ts, rentBuddyMoneyCallSites).
+//
+// The lines from here to the next section are intentionally empty. More than
+// 590 citations across docs/ name a line of this file, and roughly a third
+// carry no anchor a checker can verify; shrinking this block would have moved
+// every line below it and silently turned those citations into pointers at
+// the wrong code. Reuse this space for code before adding lines elsewhere.
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
+//
 // ── User limits helper ─────────────────────────────────────────────────────────
 
 // Exported so every booking-CREATION path applies the same account-level
@@ -2211,7 +2211,7 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
       deposit_usd: depositUsd,
       cash_balance_usd: cashBalanceUsd,
       is_test_booking: !!(req.body?.is_test_booking),
-      expires_at: new Date(nowMs + 48 * 3600 * 1000).toISOString(),
+      expires_at: new Date(nowMs + BUDDY_ACCEPT_WINDOW_HOURS * 3600 * 1000).toISOString(),
       status: "requested",
       safety_status: "normal",
       route_plan: [],
@@ -2223,12 +2223,12 @@ router.post("/rent-a-buddy/bookings", async (req, res) => {
   if (error) return sendError(res, "db_error", error.message);
 
   if (booking) {
-    // Estimated earnings-ledger row. GET /rent-a-buddy/me/earnings/ledger reads
-    // this table and nothing else, and the writer was module-private inside
-    // rentABuddyMarketplace.ts — so the CANONICAL booking route never wrote one
-    // and a buddy booked the ordinary way saw a permanently empty ledger.
-    // Best-effort: the booking is already committed.
-    await createEarningsLedgerEntry(serviceClient, booking, buddyId).catch(() => {});
+    // The booking's earnings ledger — entries and summary in ONE transaction (rb_post_booking_ledger, 3824) — is posted FIRST, and its result is no longer swallowed: a booking that cannot be ledgered is withdrawn and refused by name before any event or notification names it (PAY-050).
+    const ledger = await createEarningsLedgerEntry(serviceClient, booking, buddyId);
+    if (ledger.status !== "written") {
+      await withdrawUnledgeredBooking(serviceClient, (booking as any).id);
+      return sendBookingLedgerRefusal(res, ledger);
+    }
 
     recordBookingEvent(serviceClient, req.log, {
       booking_id: (booking as any).id,
@@ -3357,7 +3357,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/confirm-cash", async (req, res) =
     });
   }
   if (result.outcome !== "confirmed") {
-    return res.status(503).json({ error: "db_error", message: "Cash confirmation could not be recorded. Please try again." });
+    req.log?.error?.({ bookingId, failure: result.failure ?? null }, "confirm-cash: the confirmation was not recorded"); return res.status(503).json({ error: result.failure?.error ?? LEDGER_WRITE_FAILED, retryable: true, message: "Cash confirmation could not be recorded. Please try again." }); // PAY-018: nothing was written and nothing was attempted a second way — `ledger_unavailable` when rb_confirm_booking_cash is absent, `ledger_write_failed` when the call errored
   }
 
   // Post-write state, read out of the same statement that wrote it. The old
@@ -5247,16 +5247,16 @@ router.get("/rent-a-buddy/dashboard/earnings", async (req, res) => {
   const serviceClient = sc(auth.client);
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
-  const { data: bp } = await serviceClient.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
+  const { data: bp, error: bpErr } = await serviceClient.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle(); if (bpErr) { req.log?.error?.({ err: bpErr, userId: auth.user.id }, "dashboard earnings: buddy profile read failed"); return sendError(res, "db_error", bpErr.message); } // A FAILED READ IS NOT A ZERO: both reads here used to take `{ data }` only, so an outage answered a confident `{ totalUsd: 0 }` on a buddy's own earnings screen
   if (!bp) return res.json({ totalUsd: 0, thisMonthUsd: 0, completedBookings: 0, breakdown: [] });
 
-  const { data } = await serviceClient
-    .from("rent_buddy_bookings")
-    .select("total_usd, booking_date")
-    .eq("buddy_id", (bp as any).id)
-    .eq("status", "completed");
+  const completedRows = await fetchAllPagedRows(serviceClient, "rent_buddy_bookings", "id, total_usd, booking_date", { column: "buddy_id", value: (bp as any).id, statuses: ["completed"] }); // exhaustive, and null on a failed page (M7): a single unpaginated read was also silently SHORT past PostgREST's row cap
+  if (completedRows === null) {
+    req.log?.error?.({ userId: auth.user.id, buddyProfileId: (bp as any).id }, "dashboard earnings: completed bookings could not be read in full");
+    return sendError(res, "db_error", "Earnings could not be totalled. Please try again.");
+  }
 
-  const rows = (data ?? []) as any[];
+  const rows = completedRows as any[];
   const totalUsd = rows.reduce((s: number, r: any) => s + Number(r.total_usd ?? 0), 0);
   const thisMonth = new Date().toISOString().slice(0, 7);
   const thisMonthUsd = rows
@@ -6434,7 +6434,7 @@ router.post("/rent-a-buddy/admin/launch-controls", async (req, res) => {
     waitlistOnly = false, minAge = 18, nightlifeMinAge = 21,
     requireIdVerification = true, requirePhoneVerification = true,
     fullPaymentRequired = false, minDepositPct = 30, notes,
-  } = req.body ?? {};
+  } = req.body ?? {}; const feeOverride = parsePlatformFeeOverride(req.body?.platformFeePercent); if (feeOverride.invalid) return res.status(400).json({ error: "invalid_payload", message: PLATFORM_FEE_OVERRIDE_MESSAGE }); // 3824: the per-market, per-product commission override — absent = not part of this write, null = no override, anything but a whole 0..100 is refused here rather than left to the column's CHECK
 
   // PostgreSQL NULLs do not satisfy UNIQUE equality, so onConflict with nullable
   // columns is unreliable. This handler was fixed by hand with a select-then-
@@ -6451,7 +6451,7 @@ router.post("/rent-a-buddy/admin/launch-controls", async (req, res) => {
     require_phone_verification: requirePhoneVerification,
     full_payment_required: fullPaymentRequired,
     min_deposit_pct: minDepositPct,
-    notes: notes ?? null,
+    notes: notes ?? null, ...(feeOverride.provided ? { platform_fee_percent: feeOverride.value } : {}),
   };
 
   const { data, error } = await upsertLaunchControlRow(
@@ -6486,7 +6486,7 @@ router.patch("/rent-a-buddy/admin/launch-controls/:controlId", async (req, res) 
   if (b.requireIdVerification !== undefined)   patch.require_id_verification  = b.requireIdVerification;
   if (b.requirePhoneVerification !== undefined)patch.require_phone_verification = b.requirePhoneVerification;
   if (b.fullPaymentRequired !== undefined)     patch.full_payment_required    = b.fullPaymentRequired;
-  if (b.notes !== undefined)                   patch.notes                    = b.notes;
+  if (b.notes !== undefined)                   patch.notes                    = b.notes; const feeOverride = parsePlatformFeeOverride(b.platformFeePercent); if (feeOverride.invalid) return res.status(400).json({ error: "invalid_payload", message: PLATFORM_FEE_OVERRIDE_MESSAGE }); if (feeOverride.provided) patch.platform_fee_percent = feeOverride.value; // 3824: the commission override for this market/product — a whole percentage of the pre-tax service price, or null to fall back to the fee schedule and then the owner default
 
   const { error: lcPatchErr } = await serviceClient.from("rent_buddy_launch_controls").update(patch).eq("id", controlId);
   if (lcPatchErr) return sendError(res, "db_error", lcPatchErr.message);
@@ -8124,7 +8124,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/rebook", async (req, res) => {
   // back empty. An event about a booking that does not exist is not an audit
   // row worth attempting.
   if (newBooking) {
-    await createEarningsLedgerEntry(serviceClient, newBooking, buddyProfileId).catch(() => {});
+    const ledger = await createEarningsLedgerEntry(serviceClient, newBooking, buddyProfileId); if (ledger.status !== "written") { await withdrawUnledgeredBooking(serviceClient, (newBooking as any).id); return sendBookingLedgerRefusal(res, ledger); } // PAY-050: posted first, result checked — an unledgered booking is withdrawn and refused by name
 
     recordBookingEvent(serviceClient, req.log, {
       booking_id: (newBooking as any).id,

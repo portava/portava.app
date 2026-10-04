@@ -19,7 +19,7 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
-import rentABuddyRouter, { POLICY_TEXT, toPublicBuddyReview } from "../routes/rentABuddy.js";
+import rentABuddyRouter, { POLICY_TEXT, toPublicBuddyReview } from "../routes/rentABuddy.js"; import { acceptingLedgerRpc, fakeConfirmBookingCash } from "./helpers/fakeRentBuddyLedgerRpc.js"; // one line: census-trips cites this file by line
 import { toLedgerEntryView } from "../routes/rentABuddyMarketplace.js";
 import { specAliasRewrite } from "../lib/specAliasRewrite.js";
 import { runBuddyRequestSweep } from "../lib/rentBuddyRequestSweeper.js";
@@ -739,7 +739,7 @@ function makeClient(userId: string, role = "user") {
   }
 
   return {
-    from: (table: string) => fakeTable(table),
+    from: (table: string) => fakeTable(table), rpc: async (fn: string, args: any) => fn === "rb_confirm_booking_cash" ? fakeConfirmBookingCash({ bookings: state.bookings ?? {}, buddyProfiles: state.buddyProfiles ?? {} }, args) : acceptingLedgerRpc()(fn, args), // since migration 3824 a booking whose ledger cannot be posted is REFUSED and cash confirmation has no read-then-write fallback (PAY-050 / PAY-018): this suite is about neither, so the posting answers "posted" and 2330's confirm is modelled over this fake's bookings; every other function stays absent, as with no `.rpc`
     auth: {
       getUser: async (token: string) => {
         if (token === FAKE_TOKEN)  return { data: { user: { id: USER_ID } }, error: null };
@@ -4851,19 +4851,19 @@ describe("toLedgerEntryView", () => {
     assert.deepEqual(snake, [], `raw columns leaked: ${snake.join(", ")}`);
   });
 
-  // M6 — this used to assert `warning === undefined` for `is_estimated: false`,
-  // pinning a branch that can never be taken. `createEarningsLedgerEntry` is
-  // the only writer of rent_buddy_earnings_ledger in the tree, it writes
-  // `is_estimated: true` at creation, and NOTHING clears it: there is no
-  // settlement writer, no rent_buddy_payouts INSERT and no payment path. A
-  // conditional warning claimed a capability the code does not have.
-  it("warns unconditionally — nothing in this tree can settle a ledger row", () => {
-    assert.equal(toLedgerEntryView(ROW).warning, "Estimated — payout not processed");
-    assert.equal(
-      toLedgerEntryView({ ...ROW, is_estimated: false }).warning,
-      "Estimated — payout not processed",
-      "no writer can produce is_estimated=false, so no reader may present a row as settled",
-    );
+  // M6 / PAY-010 — this asserted the warning was UNCONDITIONAL while nothing could
+  // settle a row. Migration 3824 added the writer: rb_post_booking_ledger derives
+  // `is_estimated` by folding the entries (false only when a SETTLEMENT entry
+  // exists and nothing is left owing), so both arms are real. The false arm is
+  // PRODUCED in a real database by src/test/db/rentBuddyLedgerPosting.db.test.ts
+  // (S5); the full reader contract is in src/test/rentBuddyLedgerPosting.test.ts.
+  // (Kept to the original block's length: census-trips cites this file by line.)
+  it("warns while the row is an estimate, and stops only for a row a settlement entry cleared", () => {
+    assert.deepEqual([toLedgerEntryView(ROW).warning, toLedgerEntryView(ROW).isEstimated], ["Estimated — payout not processed", true]);
+    const settled = toLedgerEntryView({ ...ROW, is_estimated: false });
+    assert.deepEqual([settled.warning, settled.isEstimated], [null, false]);
+    const unset = toLedgerEntryView({ ...ROW, is_estimated: undefined });
+    assert.deepEqual([unset.warning, unset.isEstimated], ["Estimated — payout not processed", true], "a missing flag must never read as settled");
   });
 });
 

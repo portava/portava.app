@@ -24,6 +24,7 @@ import http from "http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
+import { acceptedLedgerPosting, functionNotFound } from "./helpers/fakeRentBuddyLedgerRpc.js";
 import rentABuddyRouter from "../routes/rentABuddy.js";
 import rentABuddyMarketplaceRouter from "../routes/rentABuddyMarketplace.js";
 import { specAliasRewrite } from "../lib/specAliasRewrite.js";
@@ -108,6 +109,15 @@ interface State {
   availability: any[];
   availabilityExceptions: any[];
   insertedBookings: any[];
+  /**
+   * How `rb_post_booking_ledger` answers. "posted" for every suite that is not
+   * about the ledger; the last suite in this file drives the other three.
+   */
+  ledger: "posted" | "absent" | "error" | "refused";
+  /** Every rpc the routes made, in order. */
+  rpcCalls: Array<{ fn: string; args: any }>;
+  /** Ids of bookings DELETEd (a booking withdrawn because it could not be ledgered). */
+  withdrawnBookingIds: string[];
 }
 
 let state: State;
@@ -147,6 +157,9 @@ function freshState(): State {
     availability: [],
     availabilityExceptions: [],
     insertedBookings: [],
+    ledger: "posted",
+    rpcCalls: [],
+    withdrawnBookingIds: [],
   };
 }
 
@@ -159,11 +172,13 @@ function makeClient() {
       _updateData: null as any,
       _maybeSingle: false,
       _single: false,
+      _delete: false,
       _orExpr: null as string | null,
 
       select() { return this; },
       insert(data: any) { this._insertData = data; return this; },
       update(data: any) { this._updateData = data; return this; },
+      delete() { this._delete = true; return this; },
       eq(col: string, val: any) { this._filters.push(["eq", col, val]); return this; },
       neq(col: string, val: any) { this._filters.push(["neq", col, val]); return this; },
       lt(col: string, val: any) { this._filters.push(["lt", col, val]); return this; },
@@ -205,6 +220,20 @@ function makeClient() {
           const row = { id: `gen-${Math.random().toString(36).slice(2)}`, ...this._insertData };
           if (t === "rent_buddy_bookings") state.insertedBookings.push(row);
           return { data: this._maybeSingle ? row : null, error: null };
+        }
+
+        // ── Deletes ─────────────────────────────────────────────────────────
+        // Applied to the stored state: a booking withdrawn because its ledger
+        // could not be posted is GONE from `insertedBookings`, which is what
+        // every "no row seated" assertion in this file reads.
+        if (this._delete) {
+          if (t === "rent_buddy_bookings") {
+            const id = this._eq("id");
+            assert.ok(id !== undefined, "an unfiltered DELETE on rent_buddy_bookings");
+            state.withdrawnBookingIds.push(id);
+            state.insertedBookings = state.insertedBookings.filter((r) => r.id !== id);
+          }
+          return { data: null, error: null };
         }
 
         // ── Updates ─────────────────────────────────────────────────────────
@@ -353,6 +382,22 @@ function makeClient() {
 
   return {
     from: (table: string) => fakeTable(table),
+    // The earnings ledger is one SQL function since migration 3824, and a
+    // booking whose ledger cannot be posted is REFUSED (there is no JavaScript
+    // fallback). `state.ledger` says how the function answers: "posted" for
+    // the gate suites, which are not about the ledger; every other function
+    // stays absent, as it was with no `.rpc`.
+    rpc: async (fn: string, args: any) => {
+      state.rpcCalls.push({ fn, args });
+      if (fn !== "rb_post_booking_ledger" || state.ledger === "absent") return functionNotFound(fn);
+      if (state.ledger === "error") {
+        return { data: null, error: { code: "40001", message: "could not serialize access due to concurrent update" } };
+      }
+      if (state.ledger === "refused") {
+        return { data: { ok: false, refusal: "invalid_total", detail: "-5" }, error: null };
+      }
+      return acceptedLedgerPosting(args);
+    },
     auth: {
       getUser: async (token: string) => {
         if (token === TRAVELER_TOKEN) return { data: { user: { id: TRAVELER_ID } }, error: null };
@@ -647,4 +692,81 @@ describe("every creation path is gated by rent_buddy_city_restrictions (fail-clo
       assert.equal(state.insertedBookings.length, 0, "no booking row should be created when restrictions are unreadable");
     });
   }
+});
+
+// ── The earnings ledger: a booking that cannot be ledgered is not a booking ─────
+//
+// Payments PAY-050. Every creation path used to end
+// `createEarningsLedgerEntry(...).catch(() => {})`: the booking was committed,
+// the ledger write was fired and its failure thrown away, and the traveller got
+// their booking back with no fee record behind it. Each path now posts the
+// ledger FIRST, and on anything but success withdraws the booking it just
+// inserted and answers a NAMED 503. Asserted on stored state — the booking row
+// is gone — for all four paths this harness drives.
+
+describe("every creation path refuses, and withdraws, a booking whose ledger cannot be posted", () => {
+  const allPaths = [...paths, { name: "POST /bookings", run: () => directBooking() }];
+  const CASES: Array<{ ledger: State["ledger"]; error: string; why: string }> = [
+    { ledger: "absent",  error: "ledger_unavailable",  why: "the posting function is not there (migration 3824 not applied)" },
+    { ledger: "error",   error: "ledger_write_failed", why: "the posting call errored" },
+    { ledger: "refused", error: "ledger_refused",      why: "the database refused the booking by name" },
+  ];
+
+  for (const p of allPaths) {
+    it(`${p.name}: CONTROL — with the ledger posted the booking is seated, and the ledger was posted for THAT booking`, async () => {
+      currentCategory = "city";
+      const r = await p.run();
+      assert.ok(r.status === 200 || r.status === 201, `expected success, got ${r.status}: ${JSON.stringify(r.body)}`);
+      assert.equal(state.insertedBookings.length, 1);
+      const ledgerCalls = state.rpcCalls.filter((c) => c.fn === "rb_post_booking_ledger");
+      assert.equal(ledgerCalls.length, 1, "exactly one posting per booking");
+      assert.deepEqual(ledgerCalls[0]!.args, {
+        p_booking_id: state.insertedBookings[0].id, p_event: "booking_created", p_event_key: null, p_args: {},
+      });
+      assert.deepEqual(state.withdrawnBookingIds, []);
+    });
+
+    for (const c of CASES) {
+      it(`${p.name}: ${c.why} → 503 ${c.error}, and NO booking row remains`, async () => {
+        currentCategory = "city";
+        state.ledger = c.ledger;
+        const r = await p.run();
+
+        assert.equal(r.status, 503, JSON.stringify(r.body));
+        assert.equal(r.body.error, c.error);
+        assert.equal(r.body.retryable, true);
+        assert.equal(r.body.booking, undefined, "a refusal must not hand back a booking");
+        assert.equal(r.body.bookingId, undefined);
+        if (c.ledger === "refused") assert.equal(r.body.refusal, "invalid_total");
+
+        assert.equal(state.withdrawnBookingIds.length, 1, "the inserted booking was not withdrawn");
+        assert.equal(state.insertedBookings.length, 0,
+          "a booking exists with no earnings ledger — the state PAY-050 is about");
+        assert.equal(
+          state.rpcCalls.filter((x) => x.fn === "rb_post_booking_ledger").length, 1,
+          "the posting was retried, or attempted a second way",
+        );
+        assert.equal(state.rpcCalls[0]!.args.p_booking_id, state.withdrawnBookingIds[0],
+          "the booking withdrawn must be the one the ledger was refused for");
+      });
+    }
+  }
+
+  it("offer-accept: the offer's claim is RELEASED with the booking — it is pending again and points at nothing", async () => {
+    currentCategory = "city";
+    state.ledger = "absent";
+    const r = await offerAccept();
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+    const offer = state.offers["offer-1"];
+    assert.equal(offer.status, "pending", "an accepted offer with no booking can never be accepted again");
+    assert.equal(offer.accepted_booking_id, undefined);
+
+    // …so the traveller can accept it again once the ledger is back.
+    state.ledger = "posted";
+    const again = await req("POST", "/api/rent-a-buddy/offers/offer-1/accept", {});
+    assert.ok(again.status === 200 || again.status === 201, JSON.stringify(again.body));
+    assert.equal(state.insertedBookings.length, 1);
+    assert.equal(state.offers["offer-1"].status, "accepted");
+    assert.equal(state.offers["offer-1"].accepted_booking_id, state.insertedBookings[0].id);
+  });
 });

@@ -108,8 +108,14 @@ const REQUIRED_ROUTES: Array<[string, string]> = [
   ["post",   "/api/rent-a-buddy/admin/category-status"],
   ["post",   "/api/rent-a-buddy/admin/category-status/:category"],
   // Admin — payouts
+  ["get",    "/api/rent-a-buddy/admin/payouts"],
   ["post",   "/api/rent-a-buddy/admin/payouts/:payoutId/hold"],
   ["post",   "/api/rent-a-buddy/admin/payouts/:payoutId/release"],
+  // Commission shown before checkout; earnings read by the buddy money screens
+  ["get",    "/api/rent-a-buddy/buddies/:buddyId/commission"],
+  ["get",    "/api/rent-a-buddy/me/earnings/summary"],
+  ["get",    "/api/rent-a-buddy/me/earnings/ledger"],
+  ["get",    "/api/rent-a-buddy/dashboard/earnings"],
   // Testing-mode wiring (lane tm-rab, WP-01): routes the app now calls from
   // booking/[id], active, buddy-dashboard/sessions + my-offers and the admin
   // reviews / support / risk / launch-controls screens. Listed here so a route
