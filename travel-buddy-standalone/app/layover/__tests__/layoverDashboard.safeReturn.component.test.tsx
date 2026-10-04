@@ -61,7 +61,7 @@ jest.mock('../../../src/components/layover/LayoverHero', () => {
   return { LayoverHero: () => <View testID="layover-hero-stub" /> };
 });
 // NOTE: intentional stub — see above.
-jest.mock('../../../src/components/layover/CanILeaveCard', () => ({ CanILeaveCard: () => null }));
+jest.mock('../../../src/components/layover/CanILeaveCard', () => ({ CanILeaveCard: () => null })); jest.mock('../../../src/components/layover/LayoverConstraintsCard', () => { const { View } = require('react-native'); return { LayoverConstraintsCard: (props: any) => { (global as any).__constraintsCardProps = props; return <View testID="layover-constraints-card-stub" />; } }; }); // NOTE: intentional recording stub — the card has its own suite (LayoverConstraintsCard.component.test.tsx); here it proves the MOUNT and its props
 // NOTE: intentional stub — see above.
 jest.mock('../../../src/components/layover/AirportEssentialsCard', () => ({ AirportEssentialsCard: () => null }));
 // NOTE: intentional stub — see above.
@@ -554,4 +554,31 @@ test('L123 — the screen passes the certified return anchor to the map card', a
   await act(async () => { anchor.onReturnNow(); });
   await waitFor(() => expect(layoverService.returnToAirportNow).toHaveBeenCalledTimes(1));
   expect(layoverService.returnToAirportNow).toHaveBeenCalledWith('sess-1');
+});
+
+// ── §4 / §5 / §12.1 (census L22, L35, L49) — the constraints card is REACHABLE ─
+//
+// A card with its own green suite and no mount is a helper with no caller. This
+// is the one assertion in the repository that fails when
+// `<LayoverConstraintsCard>` is removed from the dashboard, and it pins the two
+// things the screen owes the card: THIS session, and a re-read of the screen
+// after a declaration — the verdict and the deadline may both have moved.
+test('the dashboard mounts the constraints card for this session, directly under the verdict', async () => {
+  (global as any).__constraintsCardProps = null;
+  (global as any).__overview = overview(false);
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-constraints-card-stub')).toBeTruthy());
+  const props = (global as any).__constraintsCardProps;
+  expect(props.sessionId).toBe('sess-1');
+  expect(props.canEdit).toBe(true);
+
+  const order = testIdOrder();
+  expect(order.indexOf('layover-constraints-card-stub')).toBeGreaterThan(order.indexOf('layover-hero-stub'));
+  expect(order.indexOf('layover-constraints-card-stub')).toBeLessThan(order.indexOf('layover-flight-change-card'));
+
+  // A declaration re-reads the dashboard rather than leaving the old verdict up.
+  const before = layoverService.getLayoverOverview.mock.calls.length;
+  await act(async () => { props.onChanged(); });
+  await waitFor(() => expect(layoverService.getLayoverOverview.mock.calls.length).toBeGreaterThan(before));
 });
