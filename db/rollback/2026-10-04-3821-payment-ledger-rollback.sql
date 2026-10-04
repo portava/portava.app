@@ -16,8 +16,9 @@
 -- records and the only link between a person and them; dropping them is a
 -- retention decision (owner ruling 2026-10-04: kept for a defined period), not
 -- a rollback. Nothing is changed.
--- With all four empty it drops the tables, the eight functions and 3821's
--- ledger row.
+-- With all four empty it drops the tables, the fourteen functions and 3821's
+-- ledger row. (public.payment_transaction_scrubbed takes a payment_transactions
+-- row, so it is dropped BEFORE that table.)
 
 BEGIN;
 
@@ -45,6 +46,14 @@ END
 $pre$;
 
 DROP FUNCTION IF EXISTS public.payment_account_ensure(jsonb);
+DO $scrubbed$
+BEGIN
+  -- Its argument type is the table's row type: nameable only while the table exists.
+  IF to_regclass('public.payment_transactions') IS NOT NULL THEN
+    DROP FUNCTION IF EXISTS public.payment_transaction_scrubbed(public.payment_transactions, uuid, uuid);
+  END IF;
+END
+$scrubbed$;
 DROP TABLE IF EXISTS public.payment_ledger_entries;
 DROP TABLE IF EXISTS public.payment_transactions;
 DROP TABLE IF EXISTS public.payment_accounts;
@@ -54,8 +63,13 @@ DROP FUNCTION IF EXISTS public.payment_transaction_has_balanced_entries();
 DROP FUNCTION IF EXISTS public.payment_assert_transaction_balanced(uuid);
 DROP FUNCTION IF EXISTS public.payment_entry_transaction_is_open();
 DROP FUNCTION IF EXISTS public.payment_transaction_open();
+DROP FUNCTION IF EXISTS public.payment_transaction_admit();
+DROP FUNCTION IF EXISTS public.payment_party_scrub_identifiers();
+DROP FUNCTION IF EXISTS public.payment_scrub_profile_identifier(uuid, uuid);
 DROP FUNCTION IF EXISTS public.payment_party_identity_guard();
 DROP FUNCTION IF EXISTS public.payment_ledger_append_only();
+DROP FUNCTION IF EXISTS public.payment_identifier_scrubbed(text, uuid, uuid);
+DROP FUNCTION IF EXISTS public.payment_identifier_pattern(uuid);
 
 DO $ledger$
 BEGIN
@@ -78,8 +92,10 @@ BEGIN
    WHERE ns.nspname = 'public' AND f.proname IN (
      'payment_account_ensure', 'payment_entry_transaction_balances', 'payment_transaction_has_balanced_entries',
      'payment_assert_transaction_balanced', 'payment_entry_transaction_is_open', 'payment_transaction_open',
-     'payment_party_identity_guard', 'payment_ledger_append_only');
+     'payment_party_identity_guard', 'payment_ledger_append_only', 'payment_transaction_admit',
+     'payment_party_scrub_identifiers', 'payment_scrub_profile_identifier', 'payment_transaction_scrubbed',
+     'payment_identifier_scrubbed', 'payment_identifier_pattern');
   IF n <> 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3821 rollback): % of 3821''s 8 functions survived.', n;
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3821 rollback): % of 3821''s 14 functions survived.', n;
   END IF;
 END $post$;

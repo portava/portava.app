@@ -23,7 +23,8 @@
 --                                    balance delta, or writes nothing.
 --
 -- ── THE POSTING FUNCTION ────────────────────────────────────────────────────
--- SECURITY DEFINER, search_path pinned empty, EXECUTE for service_role only.
+-- SECURITY DEFINER, search_path pinned to pg_catalog, pg_temp (pg_temp last and
+-- named: see 3821's header), EXECUTE for service_role only.
 -- It is SECURITY DEFINER for one reason: service_role holds no INSERT on the
 -- ledger (3821), so the API's own key cannot append an entry around the
 -- projection or around I6. This function is the only writer.
@@ -45,6 +46,16 @@
 --     whose type has its floor enforced may not be moved further onto its
 --     abnormal side unless the transaction's kind is listed for it. A violation
 --     raises payment_insufficient_balance (PL402) and the whole call rolls back.
+--   WHAT A REQUEST MUST SAY, beyond its shape. The entries name at least two
+--     DIFFERENT accounts. The beneficiary is an account the transaction CREDITS
+--     (`09` §6: "beneficiary_account_id — the account credited", and constraint
+--     2: "whoever triggers a charge is not thereby a payee") — an account that
+--     is debited, or nets to zero, is refused as beneficiary_not_credited. When
+--     the booked and original currencies are the same, original_amount_minor is
+--     the total of the credit entries (original_amount_mismatch). No text field
+--     names a person (3821: ptx_admit, ptx_no_contact_details).
+--   OUT OF RANGE. A balance that would leave bigint is refused by name
+--     (payment_amount_out_of_range, PL416), not reported as a bare 22003.
 --   CONCURRENCY. Before any entry is written the accounts it names are locked
 --     FOR NO KEY UPDATE in id order: two posts on one account are serialised
 --     (so the floor is checked against the true balance and both land), the
@@ -86,6 +97,12 @@ BEGIN
   END IF;
   IF to_regprocedure('public.payment_assert_transaction_balanced(uuid)') IS NULL THEN
     RAISE EXCEPTION 'PRECONDITION FAILED (3822): public.payment_assert_transaction_balanced(uuid) is absent (3821).';
+  END IF;
+  -- The posting function relies on 3821's admission trigger (no person in an
+  -- envelope's text) and on its seal; an older 3821 has neither in this form.
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger g
+                  WHERE g.tgrelid = 'public.payment_transactions'::regclass AND g.tgname = 'ptx_admit' AND NOT g.tgisinternal) THEN
+    RAISE EXCEPTION 'PRECONDITION FAILED (3822): trigger ptx_admit is absent from public.payment_transactions (an older 3821 is in place).';
   END IF;
   IF has_table_privilege('service_role', 'public.payment_ledger_entries', 'INSERT') THEN
     RAISE EXCEPTION 'PRECONDITION FAILED (3822): service_role can INSERT ledger entries directly; the projection would not be the only path.';
@@ -173,42 +190,44 @@ RETURNS jsonb
 LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
-SET search_path TO ''
+SET search_path TO pg_catalog, pg_temp
 AS $fn$
 DECLARE
-  uuid_re   CONSTANT text := '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$';
-  int_re    CONSTANT text := '^-?[0-9]{1,18}$';
-  k              text;
-  e              jsonb;
-  v_entries      jsonb;
-  v_n            int;
-  v_scope        text;
-  v_key          text;
-  v_kind         text;
-  v_currency     text;
-  v_orig_cur     text;
-  v_orig_amount  bigint;
-  v_fx           jsonb;
-  v_fx_rate      numeric;
-  v_fx_source    text;
-  v_fx_at        timestamptz;
-  v_fx_tx        uuid;
-  v_reverses     uuid;
-  v_cause_kind   text;
-  v_cause_id     text;
-  v_subject_kind text;
-  v_subject_id   text;
-  v_beneficiary  uuid;
-  v_version      text;
-  v_external_ref text;
-  v_occurred_at  timestamptz;
-  v_sum          numeric;
-  v_hash         text;
-  v_id           uuid;
+  uuid_re   CONSTANT pg_catalog.text := '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$';
+  int_re    CONSTANT pg_catalog.text := '^-?[0-9]{1,18}$';
+  k              pg_catalog.text;
+  e              pg_catalog.jsonb;
+  v_entries      pg_catalog.jsonb;
+  v_n            pg_catalog.int4;
+  v_scope        pg_catalog.text;
+  v_key          pg_catalog.text;
+  v_kind         pg_catalog.text;
+  v_currency     pg_catalog.text;
+  v_orig_cur     pg_catalog.text;
+  v_orig_amount  pg_catalog.int8;
+  v_fx           pg_catalog.jsonb;
+  v_fx_rate      pg_catalog.numeric;
+  v_fx_source    pg_catalog.text;
+  v_fx_at        pg_catalog.timestamptz;
+  v_fx_tx        pg_catalog.uuid;
+  v_reverses     pg_catalog.uuid;
+  v_cause_kind   pg_catalog.text;
+  v_cause_id     pg_catalog.text;
+  v_subject_kind pg_catalog.text;
+  v_subject_id   pg_catalog.text;
+  v_beneficiary  pg_catalog.uuid;
+  v_version      pg_catalog.text;
+  v_external_ref pg_catalog.text;
+  v_occurred_at  pg_catalog.timestamptz;
+  v_sum          pg_catalog.numeric;
+  v_credited     pg_catalog.numeric;
+  v_benef_net    pg_catalog.numeric;
+  v_hash         pg_catalog.text;
+  v_id           pg_catalog.uuid;
   v_existing     record;
-  v_problem      text;
-  v_constraint   text;
-  v_balances     jsonb;
+  v_problem      pg_catalog.text;
+  v_constraint   pg_catalog.text;
+  v_balances     pg_catalog.jsonb;
 BEGIN
   -- ── 1. The request's shape. Nothing is defaulted and nothing is ignored. ──
   IF p IS NULL OR jsonb_typeof(p) <> 'object' THEN
@@ -222,7 +241,7 @@ BEGIN
       RAISE EXCEPTION 'payment_invalid_request: unknown_field — %', k USING ERRCODE = 'PL422';
     END IF;
   END LOOP;
-  IF p ? 'livemode' AND p->'livemode' IS DISTINCT FROM 'false'::jsonb THEN
+  IF p ? 'livemode' AND p->'livemode' IS DISTINCT FROM 'false'::pg_catalog.jsonb THEN
     RAISE EXCEPTION 'payment_live_mode_refused — this ledger records test-mode money only' USING ERRCODE = 'PL451';
   END IF;
 
@@ -252,25 +271,25 @@ BEGIN
   IF p->>'original_amount_minor' !~ int_re THEN
     RAISE EXCEPTION 'payment_invalid_request: amount_not_an_integer — original_amount_minor' USING ERRCODE = 'PL422';
   END IF;
-  v_orig_amount := (p->>'original_amount_minor')::bigint;
+  v_orig_amount := (p->>'original_amount_minor')::pg_catalog.int8;
   IF p->>'beneficiary_account_id' !~ uuid_re THEN
     RAISE EXCEPTION 'payment_invalid_request: not_a_uuid — beneficiary_account_id' USING ERRCODE = 'PL422';
   END IF;
-  v_beneficiary := (p->>'beneficiary_account_id')::uuid;
+  v_beneficiary := (p->>'beneficiary_account_id')::pg_catalog.uuid;
   IF p->>'fx_transaction_id' IS NOT NULL THEN
     IF p->>'fx_transaction_id' !~ uuid_re THEN
       RAISE EXCEPTION 'payment_invalid_request: not_a_uuid — fx_transaction_id' USING ERRCODE = 'PL422';
     END IF;
-    v_fx_tx := (p->>'fx_transaction_id')::uuid;
+    v_fx_tx := (p->>'fx_transaction_id')::pg_catalog.uuid;
   END IF;
   IF p->>'reverses_transaction_id' IS NOT NULL THEN
     IF p->>'reverses_transaction_id' !~ uuid_re THEN
       RAISE EXCEPTION 'payment_invalid_request: not_a_uuid — reverses_transaction_id' USING ERRCODE = 'PL422';
     END IF;
-    v_reverses := (p->>'reverses_transaction_id')::uuid;
+    v_reverses := (p->>'reverses_transaction_id')::pg_catalog.uuid;
   END IF;
   BEGIN
-    v_occurred_at := (p->>'occurred_at')::timestamptz;
+    v_occurred_at := (p->>'occurred_at')::pg_catalog.timestamptz;
   EXCEPTION WHEN others THEN
     RAISE EXCEPTION 'payment_invalid_request: not_a_timestamp — occurred_at' USING ERRCODE = 'PL422';
   END;
@@ -285,10 +304,10 @@ BEGIN
        OR v_fx->>'rate' !~ '^[0-9]{1,12}(\.[0-9]{1,12})?$' THEN
       RAISE EXCEPTION 'payment_invalid_request: conversion_details — fx needs rate (a positive decimal), source and at' USING ERRCODE = 'PL422';
     END IF;
-    v_fx_rate   := (v_fx->>'rate')::numeric;
+    v_fx_rate   := (v_fx->>'rate')::pg_catalog.numeric;
     v_fx_source := v_fx->>'source';
     BEGIN
-      v_fx_at := (v_fx->>'at')::timestamptz;
+      v_fx_at := (v_fx->>'at')::pg_catalog.timestamptz;
     EXCEPTION WHEN others THEN
       RAISE EXCEPTION 'payment_invalid_request: not_a_timestamp — fx.at' USING ERRCODE = 'PL422';
     END;
@@ -319,7 +338,7 @@ BEGIN
     IF coalesce(e->>'amount_minor', '') !~ int_re THEN
       RAISE EXCEPTION 'payment_invalid_request: amount_not_an_integer — entries[].amount_minor must be a whole number of minor units' USING ERRCODE = 'PL422';
     END IF;
-    IF (e->>'amount_minor')::bigint = 0 THEN
+    IF (e->>'amount_minor')::pg_catalog.int8 = 0 THEN
       RAISE EXCEPTION 'payment_invalid_request: zero_amount — an entry of 0 moves nothing (09 §5.3 I5)' USING ERRCODE = 'PL422';
     END IF;
     IF e->>'entry_reason' IS NULL THEN
@@ -327,23 +346,29 @@ BEGIN
     END IF;
   END LOOP;
 
-  SELECT sum((x->>'amount_minor')::bigint) INTO v_sum FROM jsonb_array_elements(v_entries) x;
+  -- DISTINCT accounts: a +500 / -500 pair on one account is two entries that
+  -- sum to zero and move nothing.
+  IF (SELECT count(DISTINCT (y->>'account_id')::pg_catalog.uuid) FROM jsonb_array_elements(v_entries) y) < 2 THEN
+    RAISE EXCEPTION 'payment_invalid_request: entries_too_few — a money movement names at least two different accounts; every entry here names the same one' USING ERRCODE = 'PL422';
+  END IF;
+
+  SELECT sum((x->>'amount_minor')::pg_catalog.int8) INTO v_sum FROM jsonb_array_elements(v_entries) x;
   IF v_sum <> 0 THEN
     RAISE EXCEPTION 'payment_transaction_unbalanced — the entries sum to %, not 0 (09 §5.3 I1)', v_sum USING ERRCODE = 'PL002';
   END IF;
 
   -- Named refusals for the two things the composite keys would otherwise
   -- report as a bare foreign-key violation.
-  SELECT x.account_id::text INTO v_problem
-    FROM (SELECT DISTINCT (y->>'account_id')::uuid AS account_id FROM jsonb_array_elements(v_entries) y) x
+  SELECT x.account_id::pg_catalog.text INTO v_problem
+    FROM (SELECT DISTINCT (y->>'account_id')::pg_catalog.uuid AS account_id FROM jsonb_array_elements(v_entries) y) x
     LEFT JOIN public.payment_accounts a ON a.id = x.account_id
    WHERE a.id IS NULL
    LIMIT 1;
   IF v_problem IS NOT NULL THEN
     RAISE EXCEPTION 'payment_invalid_request: account_not_found — %', v_problem USING ERRCODE = 'PL422';
   END IF;
-  SELECT a.id::text || ' is ' || a.currency INTO v_problem
-    FROM (SELECT DISTINCT (y->>'account_id')::uuid AS account_id FROM jsonb_array_elements(v_entries) y) x
+  SELECT a.id::pg_catalog.text || ' is ' || a.currency INTO v_problem
+    FROM (SELECT DISTINCT (y->>'account_id')::pg_catalog.uuid AS account_id FROM jsonb_array_elements(v_entries) y) x
     JOIN public.payment_accounts a ON a.id = x.account_id
    WHERE a.currency <> v_currency OR a.livemode
    LIMIT 1;
@@ -351,9 +376,29 @@ BEGIN
     RAISE EXCEPTION 'payment_invalid_request: currency_mismatch — account %, the transaction is % (09 §5.3 I4/I5: a transaction is single-currency)', v_problem, v_currency
       USING ERRCODE = 'PL422';
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM jsonb_array_elements(v_entries) y WHERE (y->>'account_id')::uuid = v_beneficiary) THEN
+  SELECT sum((y->>'amount_minor')::pg_catalog.int8) INTO v_benef_net
+    FROM jsonb_array_elements(v_entries) y WHERE (y->>'account_id')::pg_catalog.uuid = v_beneficiary;
+  IF v_benef_net IS NULL THEN
     RAISE EXCEPTION 'payment_invalid_request: beneficiary_not_a_party — beneficiary_account_id % is named by no entry (09 §6: the account credited)', v_beneficiary
       USING ERRCODE = 'PL422';
+  END IF;
+  -- `09` §6: the beneficiary is "the account credited"; §6 constraint 2: whoever
+  -- triggers a charge is not thereby a payee. An account this transaction DEBITS
+  -- (or leaves unchanged) is not its beneficiary.
+  IF v_benef_net <= 0 THEN
+    RAISE EXCEPTION 'payment_invalid_request: beneficiary_not_credited — beneficiary_account_id % nets % in this transaction; the beneficiary is the account credited (09 §6), never one that is debited', v_beneficiary, v_benef_net
+      USING ERRCODE = 'PL422';
+  END IF;
+
+  -- What was presented is what moves. Only comparable in one currency: across
+  -- two, the ledger holds neither currency's exponent and converts nothing.
+  IF v_orig_cur = v_currency THEN
+    SELECT coalesce(sum((y->>'amount_minor')::pg_catalog.int8) FILTER (WHERE (y->>'amount_minor')::pg_catalog.int8 > 0), 0)
+      INTO v_credited FROM jsonb_array_elements(v_entries) y;
+    IF v_credited <> v_orig_amount THEN
+      RAISE EXCEPTION 'payment_invalid_request: original_amount_mismatch — original_amount_minor is % but the credit entries total %; in one currency they are the same figure', v_orig_amount, v_credited
+        USING ERRCODE = 'PL422';
+    END IF;
   END IF;
 
   -- ── 3. What this request IS, for telling a replay from a different request. ──
@@ -361,8 +406,8 @@ BEGIN
     'kind', v_kind,
     'currency', v_currency,
     'original_currency', v_orig_cur,
-    'original_amount_minor', v_orig_amount::text,
-    'fx_rate', CASE WHEN v_fx_rate IS NULL THEN NULL ELSE trim_scale(v_fx_rate)::text END,
+    'original_amount_minor', v_orig_amount::pg_catalog.text,
+    'fx_rate', CASE WHEN v_fx_rate IS NULL THEN NULL ELSE trim_scale(v_fx_rate)::pg_catalog.text END,
     'fx_rate_source', v_fx_source,
     'fx_rate_at', CASE WHEN v_fx_at IS NULL THEN NULL
                        ELSE to_char(v_fx_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') END,
@@ -376,13 +421,13 @@ BEGIN
     'attribution_version', v_version,
     'external_ref', v_external_ref,
     'entries', (
-      SELECT jsonb_agg(jsonb_build_array(z.account_id, z.amount_minor::text, z.entry_reason)
+      SELECT jsonb_agg(jsonb_build_array(z.account_id, z.amount_minor::pg_catalog.text, z.entry_reason)
                        ORDER BY z.account_id, z.entry_reason, z.amount_minor)
-        FROM (SELECT (y->>'account_id')::uuid AS account_id,
-                     (y->>'amount_minor')::bigint AS amount_minor,
+        FROM (SELECT (y->>'account_id')::pg_catalog.uuid AS account_id,
+                     (y->>'amount_minor')::pg_catalog.int8 AS amount_minor,
                      y->>'entry_reason' AS entry_reason
                 FROM jsonb_array_elements(v_entries) y) z)
-  )::text, 'UTF8')), 'hex');
+  )::pg_catalog.text, 'UTF8')), 'hex');
 
   -- ── 4. The envelope: the index decides whether this key is new. ─────────
   BEGIN
@@ -432,7 +477,7 @@ BEGIN
   -- ── 5. Serialise on the accounts, in one order for every caller. ───────
   PERFORM 1
      FROM public.payment_accounts a
-    WHERE a.id IN (SELECT (y->>'account_id')::uuid FROM jsonb_array_elements(v_entries) y)
+    WHERE a.id IN (SELECT (y->>'account_id')::pg_catalog.uuid FROM jsonb_array_elements(v_entries) y)
     ORDER BY a.id
       FOR NO KEY UPDATE;
 
@@ -440,7 +485,7 @@ BEGIN
   BEGIN
     INSERT INTO public.payment_ledger_entries
       (transaction_id, account_id, amount_minor, currency, livemode, entry_reason)
-    SELECT v_id, (y->>'account_id')::uuid, (y->>'amount_minor')::bigint, v_currency, false, y->>'entry_reason'
+    SELECT v_id, (y->>'account_id')::pg_catalog.uuid, (y->>'amount_minor')::pg_catalog.int8, v_currency, false, y->>'entry_reason'
       FROM jsonb_array_elements(v_entries) y;
   EXCEPTION
     WHEN check_violation OR foreign_key_violation OR not_null_violation THEN
@@ -452,12 +497,13 @@ BEGIN
   -- This transaction takes no further entries, in this call or after it.
   PERFORM set_config(
     'portava.payment_open_transactions',
-    replace(coalesce(current_setting('portava.payment_open_transactions', true), ''), v_id::text || ',', ''),
+    replace(coalesce(current_setting('portava.payment_open_transactions', true), ''), v_id::pg_catalog.text || ',', ''),
     true);
 
   -- ── 7. The projection, in ONE statement, and I6 against what it returns. ──
+  BEGIN
   WITH delta AS (
-    SELECT en.account_id, sum(en.amount_minor)::bigint AS delta_minor, count(*) AS n
+    SELECT en.account_id, sum(en.amount_minor)::pg_catalog.int8 AS delta_minor, count(*) AS n
       FROM public.payment_ledger_entries en
      WHERE en.transaction_id = v_id
      GROUP BY en.account_id
@@ -479,8 +525,8 @@ BEGIN
              WHEN r.floor_enforced AND NOT (v_kind = ANY (r.overdraft_kinds))
                   AND ((r.normal_side = 'credit' AND m.balance_minor < 0 AND d.delta_minor < 0)
                     OR (r.normal_side = 'debit'  AND m.balance_minor > 0 AND d.delta_minor > 0))
-               THEN a.account_type || ' account ' || m.account_id::text || ' would stand at '
-                    || m.balance_minor::text || ' after a ' || v_kind || ' of ' || d.delta_minor::text
+               THEN a.account_type || ' account ' || m.account_id::pg_catalog.text || ' would stand at '
+                    || m.balance_minor::pg_catalog.text || ' after a ' || v_kind || ' of ' || d.delta_minor::pg_catalog.text
              ELSE NULL
            END AS refusal
       FROM moved m
@@ -488,11 +534,17 @@ BEGIN
       JOIN public.payment_accounts a ON a.id = m.account_id
       LEFT JOIN public.payment_balance_rules r ON r.account_type = a.account_type
   )
-  SELECT jsonb_agg(jsonb_build_object('account_id', j.account_id, 'balance_minor', j.balance_minor::text)
+  SELECT jsonb_agg(jsonb_build_object('account_id', j.account_id, 'balance_minor', j.balance_minor::pg_catalog.text)
                    ORDER BY j.account_id),
          min(j.refusal)
     INTO v_balances, v_problem
     FROM judged j;
+  EXCEPTION WHEN numeric_value_out_of_range THEN
+    -- balance_minor + delta left bigint. Named, so a caller is not told to
+    -- retry something that can never succeed.
+    RAISE EXCEPTION 'payment_amount_out_of_range — this posting would take an account''s balance outside the range of a 64-bit count of minor units; nothing was written'
+      USING ERRCODE = 'PL416';
+  END;
 
   IF v_problem IS NOT NULL THEN
     RAISE EXCEPTION 'payment_insufficient_balance — % (09 §5.3 I6)', v_problem USING ERRCODE = 'PL402';
@@ -510,7 +562,7 @@ BEGIN
 END;
 $fn$;
 COMMENT ON FUNCTION public.payment_post_transaction(jsonb) IS
-  '3822 (09 §4, §5.3 I6, §7; PAY-023, PAY-034, PAY-046, PAY-047): the only writer of payment_transactions, payment_ledger_entries and payment_account_balances. One call is one transaction: envelope + entries + balance delta, or nothing. Idempotent on (scope, idempotency_key): a replay returns the original transaction (replayed = true); the same key with different content raises PL409 payment_idempotency_conflict. Locks the named accounts in id order, updates the projection in one INSERT … ON CONFLICT DO UPDATE, and refuses (PL402 payment_insufficient_balance) a move that payment_balance_rules does not allow. Amounts are integer minor units, taken as given; balances are returned as text. SECURITY DEFINER with search_path pinned empty; EXECUTE for service_role only.';
+  '3822 (09 §4, §5.3 I6, §7; PAY-023, PAY-034, PAY-046, PAY-047): the only writer of payment_transactions, payment_ledger_entries and payment_account_balances. One call is one transaction: envelope + entries + balance delta, or nothing. Idempotent on (scope, idempotency_key): a replay returns the original transaction (replayed = true); the same key with different content raises PL409 payment_idempotency_conflict. Locks the named accounts in id order, updates the projection in one INSERT … ON CONFLICT DO UPDATE, and refuses (PL402 payment_insufficient_balance) a move that payment_balance_rules does not allow. The entries must name two different accounts, the beneficiary must be an account the transaction credits (09 §6), and in one currency the credits must total original_amount_minor; a balance that would leave bigint raises PL416 payment_amount_out_of_range. Amounts are integer minor units, taken as given; balances are returned as text. SECURITY DEFINER with search_path pinned to pg_catalog, pg_temp; EXECUTE for service_role only.';
 REVOKE ALL ON FUNCTION public.payment_post_transaction(jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.payment_post_transaction(jsonb) FROM anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.payment_post_transaction(jsonb) TO service_role;
@@ -554,8 +606,8 @@ BEGIN
   END IF;
   SELECT count(*) INTO n FROM pg_proc f
    WHERE f.oid = 'public.payment_post_transaction(jsonb)'::regprocedure AND f.prosecdef
-     AND f.proconfig @> ARRAY['search_path=""'];
-  IF n <> 1 THEN RAISE EXCEPTION '3822: POSTCONDITION FAILED: payment_post_transaction is not SECURITY DEFINER with search_path pinned empty'; END IF;
+     AND f.proconfig @> ARRAY['search_path=pg_catalog, pg_temp'];
+  IF n <> 1 THEN RAISE EXCEPTION '3822: POSTCONDITION FAILED: payment_post_transaction is not SECURITY DEFINER with search_path pinned to pg_catalog, pg_temp'; END IF;
 
   -- The door is still the only writer: no role but the owner may INSERT.
   FOREACH t IN ARRAY ARRAY['payment_transactions', 'payment_ledger_entries', 'payment_account_balances'] LOOP

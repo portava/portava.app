@@ -12,6 +12,8 @@
  *   PS7  toMinorUnits renders digits and never rounds
  *   PS8  the read sends the caller's profile id and the filter, and maps the page
  *   PS9  the read gate is fail-closed
+ *   PS10 an account comes back with its party id — the pseudonym a person is named by
+ *   PS11 erasure: the open-balance refusal carries the balances; `retain` is explicit and returns the party id
  *
  * The database half — that the function really does these things — is
  * src/test/db/paymentLedger.db.test.ts.
@@ -148,6 +150,9 @@ describe("PaymentLedger service wrapper (09 §3.2, §7, §8)", () => {
       ["PL451", "live_mode_refused"],
       ["PL422", "invalid_request"],
       ["PL006", "invalid_request"],
+      ["PL007", "invalid_request"],
+      ["PL416", "amount_out_of_range"],
+      ["PL428", "open_balance"],
       ["40001", "retryable_contention"],
       ["40P01", "retryable_contention"],
       ["23505", "db_error"],
@@ -261,9 +266,12 @@ describe("PaymentLedger service wrapper (09 §3.2, §7, §8)", () => {
     ]);
   });
 
-  it("PS8b. erasure sends only the profile id and returns counts — no party id is surfaced", async () => {
+  it("PS8b. erasure sends only the profile id by default and returns counts — with nothing left open, no party id is surfaced", async () => {
     const { sc, calls } = recorder(() => ({
-      data: { removed: true, accounts: 2, entries_retained: 7, identity_removed_at: "2026-10-04T10:00:00+00:00", retention_period: null, retain_until: null },
+      data: {
+        removed: true, accounts: 2, entries_retained: 7, identity_removed_at: "2026-10-04T10:00:00+00:00",
+        retention_period: null, retain_until: null, identifiers_scrubbed: 0, open_balances: [],
+      },
       error: null,
     }));
     const r = await removePaymentIdentity(sc, PAYEE);
@@ -271,7 +279,67 @@ describe("PaymentLedger service wrapper (09 §3.2, §7, §8)", () => {
     assert.deepEqual(r, {
       ok: true, removed: true, accounts: 2, entriesRetained: 7,
       identityRemovedAt: "2026-10-04T10:00:00+00:00", retentionPeriod: null, retainUntil: null,
+      identifiersScrubbed: 0, openBalances: [],
     });
+    assert.equal("partyId" in r, false);
+  });
+
+  it("PS10. an account comes back with its party id; a result without one is a failure, not an account", async () => {
+    const PARTY = "44444444-4444-4444-8444-444444444444";
+    const ok = recorder(() => ({ data: { account_id: PAYEE, party_id: PARTY, created: true }, error: null }));
+    assert.deepEqual(
+      await ensurePaymentAccount(ok.sc, { owner: { kind: "user", profileId: PAYER }, accountType: "user_payable", currency: "USD" }),
+      { ok: true, accountId: PAYEE, partyId: PARTY, created: true });
+    assert.deepEqual(ok.calls[0]!.args.p, { owner_kind: "user", account_type: "user_payable", currency: "USD", livemode: false, profile_id: PAYER });
+    for (const data of [{ account_id: PAYEE, created: true }, { party_id: PARTY, created: true }, { account_id: PAYEE, party_id: "", created: true }]) {
+      const { sc } = recorder(() => ({ data, error: null }));
+      const r = await ensurePaymentAccount(sc, { owner: { kind: "platform", label: "portava" }, accountType: "platform_revenue", currency: "USD" });
+      assert.equal(r.ok === false && r.reason, "db_error", JSON.stringify(data));
+    }
+  });
+
+  it("PS11. erasure with an open balance: the refusal names what is open; `retain` is sent only when asked for, and returns the party id", async () => {
+    const open = [{ account_id: PAYEE, account_type: "user_payable", currency: "USD", balance_minor: "10000" }];
+    const mapped = [{ accountId: PAYEE, accountType: "user_payable", currency: "USD", balanceMinor: "10000" }];
+    // The database's refusal: SQLSTATE PL428, the balances as JSON in DETAIL (PostgREST's `details`).
+    const refusing = recorder(() => ({
+      data: null,
+      error: { code: "PL428", message: "payment_open_balance — this person's payment party has 1 account(s) with a non-zero balance", details: JSON.stringify(open) },
+    }));
+    const refused = await removePaymentIdentity(refusing.sc, PAYER);
+    assert.deepEqual(refusing.calls[0]!.args.p, { profile_id: PAYER }, "no mode is sent unless the caller chose one: the database's default is to refuse");
+    assert.equal(refused.ok, false);
+    if (!refused.ok) {
+      assert.equal(refused.reason, "open_balance");
+      assert.match(refused.detail, /payment_open_balance/);
+      assert.deepEqual(refused.openBalances, mapped);
+      assert.equal(typeof refused.openBalances![0]!.balanceMinor, "string");
+    }
+    // Details that cannot be read still refuse — without a list, never as a success.
+    for (const details of [undefined, "", "not json", "{}"]) {
+      const f = classifyLedgerError({ code: "PL428", message: "payment_open_balance", details });
+      assert.equal(f.reason, "open_balance", String(details));
+      assert.equal("openBalances" in f, false, String(details));
+    }
+    // The explicit alternative.
+    const PARTY = "44444444-4444-4444-8444-444444444444";
+    const retaining = recorder(() => ({
+      data: {
+        removed: true, accounts: 1, entries_retained: 1, identity_removed_at: "2026-10-04T10:00:00+00:00",
+        retention_period: "7 years", retain_until: "2033-10-04T10:00:00+00:00", identifiers_scrubbed: 2, open_balances: open, party_id: PARTY,
+      },
+      error: null,
+    }));
+    const retained = await removePaymentIdentity(retaining.sc, PAYER, { onOpenBalance: "retain" });
+    assert.deepEqual(retaining.calls[0]!.args.p, { profile_id: PAYER, on_open_balance: "retain" });
+    assert.deepEqual(retained, {
+      ok: true, removed: true, accounts: 1, entriesRetained: 1, identityRemovedAt: "2026-10-04T10:00:00+00:00",
+      retentionPeriod: "7 years", retainUntil: "2033-10-04T10:00:00+00:00", identifiersScrubbed: 2, openBalances: mapped, partyId: PARTY,
+    });
+    // An answer that does not say what is open is not trusted to mean "nothing is".
+    const vague = recorder(() => ({ data: { removed: true, accounts: 1, entries_retained: 1 }, error: null }));
+    const v = await removePaymentIdentity(vague.sc, PAYER);
+    assert.equal(v.ok === false && v.reason, "db_error");
   });
 
   it("PS9. the read gate is fail-closed: an unreadable or absent flag is OFF", async () => {

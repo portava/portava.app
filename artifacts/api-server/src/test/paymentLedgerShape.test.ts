@@ -6,18 +6,20 @@
  *   SH1  the three migrations exist in the payments band, each with a rollback that refuses to drop data
  *   SH2  I3: no statement-level UPDATE/DELETE trigger in any of them (TRUNCATE-level only)
  *   SH3  deny-default: REVOKE before GRANT, SELECT-only for service_role, nothing for a client, no policy
- *   SH4  every SECURITY DEFINER function pins an empty search_path and is executable by service_role only
+ *   SH4  every function pins search_path to pg_catalog, pg_temp (never empty) and qualifies its types;
+ *        SECURITY DEFINER is the three doors plus the trigger functions that run outside them
  *   SH5  the nine account types and eight kinds, exactly; no currency default; test mode CHECKed
  *   SH6  each file is one BEGIN … COMMIT with a $pre$ block (the applier's shape)
  *   SH7  PaymentLedger.ts: rpc only — no table access, no provider, no money arithmetic, no fallback
  *   SH8  routes/payments.ts: GET only, requireUser, and no identity taken from the request
  *   SH9  the predicate that trusts an identity parameter is in authz, never public
+ *   SH10 PAY-046 stays honest: requireIdempotencyKey is on NO route yet, and cannot return a bare key
  *
  * Run: node --import tsx/esm --test src/test/paymentLedgerShape.test.ts
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -35,6 +37,15 @@ const TABLES = [
   "payment_account_balances", "payment_balance_rules", "payment_retention_settings",
 ];
 const DEFINER_FUNCTIONS = ["payment_account_ensure", "payment_post_transaction", "payment_party_remove_identity"];
+/**
+ * Trigger functions that run OUTSIDE a door — at COMMIT, or under a foreign-key
+ * action — and so as whichever role's statement caused them. They are SECURITY
+ * DEFINER so that they do not depend on that role holding EXECUTE or SELECT.
+ */
+const DEFINER_TRIGGER_FUNCTIONS = [
+  "payment_entry_transaction_balances", "payment_transaction_has_balanced_entries",
+  "payment_transaction_beneficiary_is_party", "payment_party_scrub_identifiers",
+];
 
 /** SQL with `--` comments removed, so prose about a thing is not the thing. */
 function sqlCode(sql: string): string {
@@ -107,19 +118,41 @@ describe("payment ledger shape (09 §3.2, §5.3, §8, §10)", () => {
     assert.doesNotMatch(all, /\bGRANT (ALL|INSERT|UPDATE|DELETE|TRUNCATE)\b/);
   });
 
-  it("SH4. each SECURITY DEFINER function pins search_path to '' and is executable by service_role only", () => {
-    const functions = [...all.matchAll(/CREATE OR REPLACE FUNCTION (\w+)\.(\w+)\(([^)]*)\)\s+RETURNS[\s\S]*?AS \$fn\$/g)];
-    assert.ok(functions.length >= 12, `found ${functions.length} functions`);
+  it("SH4. every function pins search_path to pg_catalog, pg_temp and qualifies its types; SECURITY DEFINER is the doors and the out-of-door triggers", () => {
+    const functions = [...all.matchAll(/CREATE OR REPLACE FUNCTION (\w+)\.(\w+)\(([^)]*)\)\s+RETURNS[\s\S]*?AS \$fn\$\n([\s\S]*?)\n\$fn\$;/g)];
+    assert.ok(functions.length >= 19, `found ${functions.length} functions`);
     const definers: string[] = [];
-    for (const [head, schema, name] of functions) {
-      assert.match(head!, /SET search_path TO ''/, `${schema}.${name} pins an empty search_path`);
-      if (/SECURITY DEFINER/.test(head!)) definers.push(name!);
+    const definerTriggers: string[] = [];
+    for (const [whole, schema, name, , body] of functions) {
+      const head = whole!.slice(0, whole!.indexOf("AS $fn$"));
+      // pg_temp LAST and NAMED. An empty search_path leaves pg_temp searched FIRST for type names,
+      // which let a caller's pg_temp domain run its CHECK as the owner of a definer function.
+      assert.match(head, /SET search_path TO pg_catalog, pg_temp\n/, `${schema}.${name} pins pg_catalog, pg_temp`);
+      if (/SECURITY DEFINER/.test(head)) (/RETURNS trigger/.test(head) ? definerTriggers : definers).push(name!);
+      // Every type a body names is schema-qualified: a cast, and a declaration.
+      const code = body!.replace(/'(?:[^']|'')*'/g, "''");
+      assert.doesNotMatch(code, /::(?!pg_catalog\.)[a-z]/, `${schema}.${name}: an unqualified cast`);
+      assert.doesNotMatch(code, /^\s+\w+\s+(?:CONSTANT\s+)?(uuid|text|jsonb|timestamptz|bigint|int|integer|numeric|boolean|interval)\b/m, `${schema}.${name}: an unqualified declaration`);
     }
-    assert.deepEqual(definers.sort(), [...DEFINER_FUNCTIONS].sort(), "exactly the three write doors are SECURITY DEFINER");
+    assert.doesNotMatch(all, /search_path\s*(TO|=)\s*''/, "no function is left on an empty search_path");
+    assert.doesNotMatch(all, /search_path=""/, "no postcondition still accepts an empty search_path");
+    assert.deepEqual(definers.sort(), [...DEFINER_FUNCTIONS].sort(), "exactly the three write doors are callable SECURITY DEFINER functions");
+    assert.deepEqual(definerTriggers.sort(), [...DEFINER_TRIGGER_FUNCTIONS].sort(), "and exactly these trigger functions");
     for (const name of [...DEFINER_FUNCTIONS, "payment_party_ledger"]) {
       assert.match(all, new RegExp(`REVOKE ALL ON FUNCTION public\\.${name}\\(jsonb\\) FROM PUBLIC;`), name);
       assert.match(all, new RegExp(`REVOKE ALL ON FUNCTION public\\.${name}\\(jsonb\\) FROM anon, authenticated;`), name);
       assert.match(all, new RegExp(`GRANT EXECUTE ON FUNCTION public\\.${name}\\(jsonb\\) TO service_role;`), name);
+    }
+    // Everything else in public is internal: revoked from service_role BY NAME, so a database with
+    // Supabase's default privileges and one without end up with the same grants.
+    const callable = new Set([...DEFINER_FUNCTIONS, "payment_party_ledger", "payment_account_owned_by_profile"]);
+    for (const [, schema, name, args] of functions) {
+      if (callable.has(name!)) continue;
+      const signature = args!.split(",").map((a) => a.trim().split(/\s+/).slice(1).join(" ")).filter(Boolean).join(", ");
+      assert.ok(
+        all.includes(`REVOKE ALL ON FUNCTION ${schema}.${name}(${signature}) FROM anon, authenticated, service_role;`),
+        `${schema}.${name}(${signature}) is revoked from service_role explicitly`);
+      assert.ok(!all.includes(`GRANT EXECUTE ON FUNCTION ${schema}.${name}(`), `${name} is granted to nobody`);
     }
     // Every other object a definer body names is schema-qualified: nothing resolves through a path.
     assert.doesNotMatch(all, /\b(FROM|JOIN|INTO|UPDATE)\s+payment_/, "an unqualified payment table reference");
@@ -218,11 +251,30 @@ describe("payment ledger shape (09 §3.2, §5.3, §8, §10)", () => {
   it("SH9. the ownership predicate trusts a parameter, so it lives in authz with a pinned search_path — never in public", () => {
     const m3 = forward[2]!;
     assert.match(m3, /CREATE SCHEMA IF NOT EXISTS authz;/);
-    assert.match(m3, /CREATE OR REPLACE FUNCTION authz\.payment_account_owned_by_profile\(p_account_id uuid, p_profile_id uuid\)[\s\S]*?SECURITY INVOKER\s+SET search_path TO ''/);
+    assert.match(m3, /CREATE OR REPLACE FUNCTION authz\.payment_account_owned_by_profile\(p_account_id uuid, p_profile_id uuid\)[\s\S]*?SECURITY INVOKER\s+SET search_path TO pg_catalog, pg_temp\n/);
     assert.doesNotMatch(all, /CREATE OR REPLACE FUNCTION public\.payment_account_owned_by/);
     assert.match(m3, /REVOKE ALL ON FUNCTION authz\.payment_account_owned_by_profile\(uuid, uuid\) FROM anon, authenticated;/);
     assert.doesNotMatch(m3, /GRANT USAGE ON SCHEMA authz TO[^;]*(anon|authenticated)/);
     // The flag ships OFF.
     assert.match(m3, /'payment_ledger_reads_enabled',\s+false,/);
+  });
+
+  it("SH10. PAY-046 stays honest: requireIdempotencyKey is attached to NO route yet, and it cannot hand back a key without its scope", () => {
+    const routesDir = join(SRC, "routes");
+    const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory() ? walk(join(dir, e.name)) : /\.ts$/.test(e.name) ? [join(dir, e.name)] : []);
+    // An IMPORT of the helper from lib/ (intel.ts and memories.ts each have a private function of the
+    // same name for their own, non-money keys; a comment that mentions the helper is not a caller).
+    const IMPORTS_HELPER = /import\s[^;]*\b(requireIdempotencyKey|bindIdempotencyKey)\b[^;]*from\s+"[^"]*lib\/(http|idempotencyKey)(\.js)?"/;
+    assert.match('import { requireUser, requireIdempotencyKey } from "../lib/http";', IMPORTS_HELPER, "the detector can fire");
+    const callers = walk(routesDir).filter((f) => IMPORTS_HELPER.test(tsCode(readFileSync(f, "utf8"))));
+    // When the first money route adopts it, this assertion is the place to say so — and PAY-046 can move.
+    assert.deepEqual(callers, [], "a route now requires the header: update PAY-046's status and this test together");
+    const http = tsCode(read("artifacts/api-server/src/lib/http.ts"));
+    const fn = http.slice(http.indexOf("export function requireIdempotencyKey("));
+    assert.match(fn, /binding: IdempotencyBinding,\s*\): \{ scope: string; idempotencyKey: string \} \| null \{/, "the binding is a required parameter and the result is the pair");
+    assert.doesNotMatch(fn.slice(0, fn.indexOf("\n}\n")), /return read\.key|: string \| null/, "no path returns a bare key");
+    const pure = tsCode(read("artifacts/api-server/src/lib/idempotencyKey.ts"));
+    assert.match(pure, /scope: `http:\$\{operation\}:\$\{actorPartyId\.toLowerCase\(\)\}`/);
   });
 });

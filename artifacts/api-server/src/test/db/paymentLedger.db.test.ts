@@ -16,15 +16,27 @@
  * handed, `livemode` is CHECK-constrained false, and nothing in the suite
  * reaches a network.
  *
- *   A1–A13  the tables: I1 balanced at COMMIT, I2/I3 append-only, I4 single
+ *   A1–A16  the tables: I1 balanced at COMMIT, I2/I3 append-only, I4 single
  *           currency, I5 non-zero and account currency, I7 attribution and
- *           idempotency, the nine account types, idempotent account creation
- *   B1–B8   the posting function: one transaction, replay, differing replay,
- *           named refusals, the balance floor, reversals, the write boundary
+ *           idempotency, the nine account types, idempotent account creation,
+ *           the seal, two different accounts, the credited beneficiary, the
+ *           original amount tied to the entries
+ *   B1–B9   the posting function: one transaction, replay, differing replay,
+ *           named refusals, the balance floor, reversals, the write boundary,
+ *           a balance out of range
  *   C1–C4   concurrency: both land, one key lands once, one payout wins, no deadlock
  *   D1–D6   party-scoped reads: each side only its side
- *   E1–E6   pseudonymisation: identity removed, balances and invariants unchanged
- *   F1      the flag row is FALSE
+ *   E1–E8   pseudonymisation: an open balance refuses or is explicitly retained,
+ *           identity removed, balances and invariants unchanged
+ *   G1–G4   regressions for what the independent verification of #598 found:
+ *           pg_temp type shadowing, identifiers that survived erasure, two users
+ *           sharing one client key
+ *   F1–F2   the flag row is FALSE; everything still balances
+ *
+ * THE SAME SUITE RUNS ON TWO KINDS OF DATABASE and must pass on both: one with
+ * Supabase-style default privileges (every new function executable by
+ * service_role) and a plain one where a function has only the grants its
+ * migration states. B7 asserts the privileges are IDENTICAL on both.
  */
 import { describe, test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -33,6 +45,7 @@ import { randomUUID } from "node:crypto";
 import { HAVE_DB, currentDatabaseUrl, exec, jsonLiteral, psql, rows, scalar, seedUser } from "./localDb.js";
 import { creatorPsqlClient, pgError } from "./creatorLedgerPsqlClient.js";
 import { paymentLedgerPurgeSql } from "./paymentLedgerFixture.js";
+import { bindIdempotencyKey } from "../../lib/idempotencyKey.js";
 import {
   ensurePaymentAccount,
   postPaymentTransaction,
@@ -46,12 +59,17 @@ const SCOPE = `test-payb-${RUN}`;
 const PLATFORM = `t_platform_${RUN}`;
 const PROCESSOR = `t_processor_${RUN}`;
 const DIRECT = `t_direct_${RUN}`;
+const OVERFLOW = `t_overflow_${RUN}`;
 const sc = creatorPsqlClient();
 
 let payer = "", payee = "", stranger = "", other = "", erased = "", hardDeleted = "";
 const users: string[] = [];
 let aPayer = "", aPayee = "", aPayeeEur = "", aRevenue = "", aClearing = "", aRefunds = "", aOther = "";
 const accounts: string[] = [];
+/** account id -> the payment party that owns it (the pseudonym a person is named by). */
+const partyOf: Record<string, string> = {};
+/** A committed, balanced transaction written in A1: what A8 tries to reopen. */
+let sealedTx = "";
 /**
  * Group A writes rows DIRECTLY, as the table owner, to prove what the tables
  * refuse. A direct write goes around the posting function and therefore around
@@ -81,6 +99,7 @@ async function account(
   assert.equal(r.ok, true, JSON.stringify(r));
   if (!r.ok) throw new Error("unreachable");
   if (!accounts.includes(r.accountId)) accounts.push(r.accountId);
+  partyOf[r.accountId] = r.partyId;
   return r.accountId;
 }
 
@@ -198,7 +217,8 @@ function postSql(payload: Record<string, unknown>): string {
 function rawPayload(key: string, kind: string, entries: Array<[string, number, string]>, beneficiary: string): Record<string, unknown> {
   return {
     scope: SCOPE, idempotency_key: key, kind, currency: "USD", livemode: false,
-    original_currency: "USD", original_amount_minor: 100,
+    // In one currency the original amount IS the total of the credit entries.
+    original_currency: "USD", original_amount_minor: entries.filter(([, a]) => a > 0).reduce((sum, [, a]) => sum + a, 0),
     cause_kind: "booking", cause_id: key, subject_kind: "booking", subject_id: key,
     beneficiary_account_id: beneficiary, attribution_version: "test-rules/v1",
     occurred_at: new Date().toISOString(),
@@ -232,7 +252,7 @@ describe("the payment ledger on a real database (09 §4-§7, §10; migrations 38
     exec(paymentLedgerPurgeSql({
       accountIds: [...accounts, ...directAccounts],
       profileIds: users,
-      partyLabels: [PLATFORM, PROCESSOR, DIRECT],
+      partyLabels: [PLATFORM, PROCESSOR, DIRECT, OVERFLOW],
       scope: SCOPE,
     }));
   });
@@ -253,6 +273,7 @@ describe("the payment ledger on a real database (09 §4-§7, §10; migrations 38
       const ok = owner(`BEGIN;\n${envelopeSql(tx)}\n${entrySql(tx, aDirA, 500)}\n${entrySql(tx, aDirB, -500)}\nCOMMIT;`);
       assert.equal(ok.status, 0, ok.stderr);
       assert.equal(scalar(`SELECT count(*) FROM public.payment_ledger_entries WHERE transaction_id = '${tx}'`), "2");
+      sealedTx = tx;
     });
 
     test("A2. I1: an envelope with no entries, and one with a single entry, are refused at COMMIT", () => {
@@ -320,9 +341,15 @@ describe("the payment ledger on a real database (09 §4-§7, §10; migrations 38
       assert.match(version.error!.message, /ptx_attribution_version_shape/, version.stderr);
       const key = owner(envelopeSql(tx, { idempotency_key: `''` }));
       assert.match(key.error!.message, /ptx_idempotency_key_shape/, key.stderr);
-      // A scope may not carry an id: the row could never be pseudonymised.
+      // A scope may not carry a PROFILE id: the row outlives the person's erasure.
       const scope = owner(envelopeSql(tx, { scope: `'http:tip:${payer}'` }));
-      assert.match(scope.error!.message, /ptx_scope_shape/, scope.stderr);
+      assert.equal(scope.error?.code, "PL422", scope.stderr);
+      assert.match(scope.error!.message, /person_identifier — scope/, scope.stderr);
+      assert.match(owner(envelopeSql(tx, { scope: `'Not A Slug'` })).error!.message, /ptx_scope_shape/);
+      // A PARTY id is how a scope says whose key it is: it passes the door (and
+      // this envelope, having no entries, is then refused by the balance check).
+      const partyScope = owner(envelopeSql(tx, { scope: `'http:tip:${partyOf[aPayer]}'` }));
+      assert.equal(partyScope.error?.code, "PL002", partyScope.stderr);
       assert.equal(scalar(`SELECT count(*) FROM public.payment_transactions WHERE id = '${tx}'`), "0");
     });
 
@@ -364,11 +391,29 @@ describe("the payment ledger on a real database (09 §4-§7, §10; migrations 38
       assert.deepEqual(ledgerSnapshot(), before, "nothing changed");
     });
 
-    test("A8. I1: a committed transaction is sealed — a later, self-balancing pair of entries is refused", () => {
-      const tx = scalar(`SELECT id FROM public.payment_transactions WHERE scope = '${SCOPE}' LIMIT 1`)!;
-      const r = owner(`BEGIN;\n${entrySql(tx, aDirA, 700)}\n${entrySql(tx, aDirB, -700)}\nCOMMIT;`);
+    test("A8. I1: a committed transaction is sealed — a later pair is refused, also behind ON CONFLICT DO NOTHING and behind a hand-written token", () => {
+      const tx = sealedTx;
+      assert.ok(tx, "A1 committed a transaction");
+      const pair = `${entrySql(tx, aDirA, 700)}\n${entrySql(tx, aDirB, -700)}`;
+      const r = owner(`BEGIN;\n${pair}\nCOMMIT;`);
       assert.equal(r.error?.code, "PL003", r.stderr);
       assert.match(r.error!.message, /payment_transaction_sealed/);
+      // The verifier's reopen: re-INSERT the committed id behind ON CONFLICT (id) DO
+      // NOTHING — nothing is inserted, and a BEFORE INSERT trigger would still have fired.
+      const reinsert = envelopeSql(tx, { idempotency_key: `'reopen-${tx}'` }).replace(/;$/, " ON CONFLICT (id) DO NOTHING;");
+      assert.match(reinsert, /ON CONFLICT \(id\) DO NOTHING;$/);
+      const reopened = owner(`BEGIN;\n${reinsert}\n${pair}\nCOMMIT;`);
+      assert.equal(reopened.error?.code, "PL003", reopened.stderr);
+      // A token written by hand opens nothing: the envelope is another transaction's.
+      const forged = owner(`BEGIN;\nSELECT set_config('portava.payment_open_transactions', '${tx},', true);\n${pair}\nCOMMIT;`);
+      assert.equal(forged.error?.code, "PL003", forged.stderr);
+      assert.equal(scalar(`SELECT count(*) FROM public.payment_ledger_entries WHERE transaction_id = '${tx}'`), "2", "the committed transaction still has its two entries");
+      assert.equal(scalar(`SELECT sum(amount_minor) FILTER (WHERE amount_minor > 0) FROM public.payment_ledger_entries WHERE transaction_id = '${tx}'`), "500");
+      // Half of the seal: created_at is the envelope's OWN transaction's clock, whatever a writer supplies.
+      const backdated = randomUUID();
+      const ok = owner(`BEGIN;\n${envelopeSql(backdated, { created_at: `'2020-01-01T00:00:00Z'` })}\n${entrySql(backdated, aDirA, 500)}\n${entrySql(backdated, aDirB, -500)}\nCOMMIT;`);
+      assert.equal(ok.status, 0, ok.stderr);
+      assert.equal(scalar(`SELECT created_at > now() - interval '5 minutes' FROM public.payment_transactions WHERE id = '${backdated}'`), "t");
     });
 
     test("A9. PAY-021/PAY-026: nine account types, each with its owner kind; test mode only; no currency is assumed", () => {
@@ -405,7 +450,9 @@ describe("the payment ledger on a real database (09 §4-§7, §10; migrations 38
 
     test("A10. PAY-022: account creation is idempotent, also under concurrency; no row is seeded for a zero balance", async () => {
       const again = await ensurePaymentAccount(sc, { owner: { kind: "user", profileId: payee }, accountType: "user_payable", currency: "USD" });
-      assert.deepEqual(again, { ok: true, accountId: aPayee, created: false });
+      assert.deepEqual(again, { ok: true, accountId: aPayee, partyId: partyOf[aPayee], created: false });
+      assert.equal(scalar(`SELECT owner_id FROM public.payment_accounts WHERE id = '${aPayee}'`), partyOf[aPayee], "partyId is the account's owner: the pseudonym, not the profile");
+      assert.notEqual(partyOf[aPayee], payee);
       const payload = { owner_kind: "user", profile_id: stranger, account_type: "user_payable", currency: "USD" };
       const results = await Promise.all(Array.from({ length: 8 }, () =>
         psqlAsync(`SET ROLE service_role;\nSELECT public.payment_account_ensure(${jsonLiteral(payload)})->>'account_id';`)));
@@ -462,6 +509,35 @@ describe("the payment ledger on a real database (09 §4-§7, §10; migrations 38
       // A profile with NO payment rows deletes untouched by any of this.
       const nobody = seedUser("paybnobody");
       exec(`DELETE FROM public.profiles WHERE id = '${nobody}'; DELETE FROM auth.users WHERE id = '${nobody}';`);
+    });
+
+    test("A14. I1: two entries on ONE account are not a movement — refused at COMMIT although they sum to zero", () => {
+      const tx = randomUUID();
+      const r = owner(`BEGIN;\n${envelopeSql(tx)}\n${entrySql(tx, aDirA, -500)}\n${entrySql(tx, aDirA, 500)}\nSELECT 'reached the commit';\nCOMMIT;`);
+      assert.match(r.stdout, /reached the commit/);
+      assert.equal(r.error?.code, "PL002", r.stderr);
+      assert.match(r.error!.message, /names 1 account\(s\)/);
+      assert.equal(scalar(`SELECT count(*) FROM public.payment_transactions WHERE id = '${tx}'`), "0");
+    });
+
+    test("A15. 09 §6: the beneficiary is the account CREDITED — an account the transaction debits is refused at COMMIT", () => {
+      const tx = randomUUID();
+      const r = owner(`BEGIN;\n${envelopeSql(tx, { beneficiary_account_id: `'${aDirB}'` })}\n${entrySql(tx, aDirA, 500)}\n${entrySql(tx, aDirB, -500)}\nCOMMIT;`);
+      assert.equal(r.error?.code, "PL006", r.stderr);
+      assert.match(r.error!.message, /payment_beneficiary_not_credited/);
+      assert.equal(scalar(`SELECT count(*) FROM public.payment_transactions WHERE id = '${tx}'`), "0");
+    });
+
+    test("A16. the original amount is tied to the entries (one currency: the credits total it), and the rate's direction is written down", () => {
+      const tx = randomUUID();
+      const r = owner(`BEGIN;\n${envelopeSql(tx, { original_amount_minor: `499` })}\n${entrySql(tx, aDirA, 500)}\n${entrySql(tx, aDirB, -500)}\nCOMMIT;`);
+      assert.equal(r.error?.code, "PL007", r.stderr);
+      assert.match(r.error!.message, /payment_original_amount_mismatch/);
+      assert.equal(scalar(`SELECT count(*) FROM public.payment_transactions WHERE id = '${tx}'`), "0");
+      const comment = (col: string) => scalar(
+        `SELECT col_description('public.payment_transactions'::regclass, (SELECT attnum FROM pg_attribute WHERE attrelid = 'public.payment_transactions'::regclass AND attname = '${col}'))`)!;
+      assert.match(comment("fx_rate"), /units of currency \(booked\) per ONE unit of original_currency/);
+      assert.match(comment("original_amount_minor"), /equals the sum of the transaction's credit entries/);
     });
   });
 
@@ -522,9 +598,10 @@ describe("the payment ledger on a real database (09 §4-§7, §10; migrations 38
     test("B3. the same key over DIFFERENT content is a named conflict, never a success, and writes nothing", async () => {
       const before = ledgerSnapshot();
       const variants: Array<Partial<PostPaymentTransactionInput>> = [
-        { entries: [{ accountId: aPayer, amountMinor: -12000, entryReason: "principal" }, { accountId: aPayee, amountMinor: 12000, entryReason: "principal" }] },
+        { originalAmountMinor: 12000, entries: [{ accountId: aPayer, amountMinor: -12000, entryReason: "principal" }, { accountId: aPayee, amountMinor: 12000, entryReason: "principal" }] },
         { entries: first.entries.map((e) => (e.entryReason === "tip" ? { ...e, entryReason: "principal" as const } : e)) },
-        { originalAmountMinor: 11001 },
+        // What was presented is part of the content: the same entries, presented in another currency.
+        { originalCurrency: "JPY", originalAmountMinor: 1650000, conversion: { rate: "0.0067", source: "processor", at: "2026-10-04T08:00:00Z" } },
         { externalRef: "pi_test_other" },
         { kind: "charge" },
         { attribution: { ...first.attribution, causeId: "another-booking" } },
@@ -545,7 +622,10 @@ describe("the payment ledger on a real database (09 §4-§7, §10; migrations 38
         ["unbalanced", { entries: [{ accountId: aPayer, amountMinor: -500, entryReason: "principal" }, { accountId: aPayee, amountMinor: 499, entryReason: "principal" }] }, "transaction_unbalanced", /sum to -1/],
         ["one entry", { entries: [{ accountId: aPayee, amountMinor: 500, entryReason: "principal" }] }, "invalid_request", /entries_too_few/],
         ["zero amount", { entries: [{ accountId: aPayer, amountMinor: 0, entryReason: "principal" }, { accountId: aPayee, amountMinor: 0, entryReason: "principal" }] }, "invalid_request", /zero_amount/],
-        ["unknown reason", { entries: [{ accountId: aPayer, amountMinor: -5, entryReason: "bonus" as any }, { accountId: aPayee, amountMinor: 5, entryReason: "principal" }] }, "invalid_request", /ple_entry_reason_known/],
+        ["one account twice", { entries: [{ accountId: aPayee, amountMinor: -500, entryReason: "principal" }, { accountId: aPayee, amountMinor: 500, entryReason: "principal" }] }, "invalid_request", /entries_too_few/],
+        ["original amount not the entries' total", { originalAmountMinor: 11001 }, "invalid_request", /original_amount_mismatch/],
+        ["beneficiary debited", { attribution: { ...capture().attribution, beneficiaryAccountId: aPayer } }, "invalid_request", /beneficiary_not_credited/],
+        ["unknown reason", { originalAmountMinor: 5, entries: [{ accountId: aPayer, amountMinor: -5, entryReason: "bonus" as any }, { accountId: aPayee, amountMinor: 5, entryReason: "principal" }] }, "invalid_request", /ple_entry_reason_known/],
         ["unknown account", { entries: [{ accountId: randomUUID(), amountMinor: -5, entryReason: "principal" }, { accountId: aPayee, amountMinor: 5, entryReason: "principal" }] }, "invalid_request", /account_not_found/],
         ["mixed currency", { entries: [{ accountId: aPayer, amountMinor: -5, entryReason: "principal" }, { accountId: aPayeeEur, amountMinor: 5, entryReason: "principal" }], attribution: { ...capture().attribution, beneficiaryAccountId: aPayer } }, "invalid_request", /currency_mismatch/],
         ["beneficiary not a party", { attribution: { ...capture().attribution, beneficiaryAccountId: aOther } }, "invalid_request", /beneficiary_not_a_party/],
@@ -555,7 +635,9 @@ describe("the payment ledger on a real database (09 §4-§7, §10; migrations 38
         ["blank attribution", { attribution: { ...capture().attribution, causeId: "  " } }, "invalid_request", /missing_field/],
         ["currency shape", { currency: "usd" }, "invalid_request", /currency_shape/],
         ["conversion missing", { originalCurrency: "JPY" }, "invalid_request", /ptx_conversion_details/],
-        ["scope with an id", { scope: `http:tip:${payer}` }, "invalid_request", /ptx_scope_shape/],
+        ["scope with a profile id", { scope: `http:tip:${payer}` }, "invalid_request", /person_identifier — scope/],
+        ["scope not a slug", { scope: "Tips For Sam" }, "invalid_request", /ptx_scope_shape/],
+        ["rate source not a slug", { originalCurrency: "JPY", conversion: { rate: "0.0067", source: "Sam at the desk", at: "2026-10-04T08:00:00Z" } }, "invalid_request", /ptx_fx_rate_source_shape/],
       ];
       for (const [name, over, reason, detail] of cases) {
         const r = await postPaymentTransaction(sc, capture(over));
@@ -579,6 +661,7 @@ describe("the payment ledger on a real database (09 §4-§7, §10; migrations 38
       assert.ok(start > 0);
       const payout = (amount: number, key: string) => postPaymentTransaction(sc, capture({
         idempotencyKey: key, kind: "payout", originalAmountMinor: amount,
+        attribution: { ...capture().attribution, beneficiaryAccountId: aClearing },
         entries: [{ accountId: aPayee, amountMinor: -amount, entryReason: "payout" }, { accountId: aClearing, amountMinor: amount, entryReason: "payout" }],
       }));
       const before = ledgerSnapshot();
@@ -589,6 +672,7 @@ describe("the payment ledger on a real database (09 §4-§7, §10; migrations 38
       // A refund and a reversal-shaped debit are refused the same way: only the listed kind may cross.
       const refund = await postPaymentTransaction(sc, capture({
         kind: "refund", originalAmountMinor: start + 1,
+        attribution: { ...capture().attribution, beneficiaryAccountId: aRefunds },
         entries: [{ accountId: aPayee, amountMinor: -(start + 1), entryReason: "refund" }, { accountId: aRefunds, amountMinor: start + 1, entryReason: "refund" }],
       }));
       assert.equal(refund.ok === false && refund.reason, "insufficient_balance");
@@ -600,6 +684,7 @@ describe("the payment ledger on a real database (09 §4-§7, §10; migrations 38
       // 09 §9.2: a chargeback arrives after the payout and drives the payee negative.
       const chargeback = await postPaymentTransaction(sc, capture({
         kind: "chargeback", originalAmountMinor: 4000,
+        attribution: { ...capture().attribution, beneficiaryAccountId: aClearing },
         entries: [{ accountId: aPayee, amountMinor: -4000, entryReason: "chargeback" }, { accountId: aClearing, amountMinor: 4000, entryReason: "chargeback" }],
       }));
       assert.equal(chargeback.ok, true, JSON.stringify(chargeback));
@@ -628,6 +713,8 @@ describe("the payment ledger on a real database (09 §4-§7, §10; migrations 38
       const payeeBefore = balance(aPayee) - 10000, payerBefore = balance(aPayer) + 11000;
       const reversal = (entries: PostPaymentTransactionInput["entries"], key: string) => postPaymentTransaction(sc, capture({
         idempotencyKey: key, kind: "reversal", reversesTransactionId: original.transactionId, entries,
+        // The reversal credits the payer back: the payer's account is ITS beneficiary.
+        attribution: { ...capture().attribution, beneficiaryAccountId: aPayer },
       }));
       const partial = await reversal(
         [{ accountId: aPayer, amountMinor: 11000, entryReason: "reversal" }, { accountId: aPayee, amountMinor: -11000, entryReason: "reversal" }],
@@ -656,8 +743,32 @@ describe("the payment ledger on a real database (09 §4-§7, §10; migrations 38
       for (const fn of ["payment_post_transaction", "payment_account_ensure", "payment_party_remove_identity"]) {
         const f = rows<any>(`SELECT prosecdef AS d, proconfig::text AS c FROM pg_proc WHERE oid = 'public.${fn}(jsonb)'::regprocedure`)[0];
         assert.equal(f.d, true, fn);
-        assert.equal(f.c, `{"search_path=\\"\\""}`, fn);
+        assert.equal(f.c, `{"search_path=pg_catalog, pg_temp"}`, fn);
       }
+      // NONE of the payment functions is left on an empty search_path (which searches pg_temp first for types).
+      assert.deepEqual(rows<any>(
+        `SELECT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname IN ('public', 'authz') AND left(p.proname, 8) = 'payment_'
+            AND p.proconfig::text IS DISTINCT FROM '{"search_path=pg_catalog, pg_temp"}'`), []);
+      const names = (where: string) => rows<{ f: string }>(
+        `SELECT p.proname AS f FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+          WHERE n.nspname IN ('public', 'authz') AND left(p.proname, 8) = 'payment_' AND (${where}) ORDER BY 1`).map((x) => x.f);
+      // SECURITY DEFINER: the three doors, and the trigger functions that run outside them
+      // (two balance checks and the beneficiary check at COMMIT, the scrub under a foreign-key action).
+      assert.deepEqual(names("p.prosecdef"), [
+        "payment_account_ensure", "payment_entry_transaction_balances", "payment_party_remove_identity",
+        "payment_party_scrub_identifiers", "payment_post_transaction", "payment_transaction_beneficiary_is_party",
+        "payment_transaction_has_balanced_entries",
+      ]);
+      // What service_role may execute is the same five functions on a database WITH Supabase's
+      // default privileges and on one WITHOUT: nothing depends on an implicit grant.
+      assert.deepEqual(names("has_function_privilege('service_role', p.oid, 'EXECUTE')"), [
+        "payment_account_ensure", "payment_account_owned_by_profile", "payment_party_ledger",
+        "payment_party_remove_identity", "payment_post_transaction",
+      ]);
+      assert.deepEqual(names("has_function_privilege('anon', p.oid, 'EXECUTE') OR has_function_privilege('authenticated', p.oid, 'EXECUTE')"), []);
+      assert.equal(as("service_role", `SELECT public.payment_assert_transaction_balanced('${randomUUID()}');`).error?.code, "42501");
+      assert.equal(as("service_role", `SELECT public.payment_scrub_profile_identifier('${randomUUID()}', '${randomUUID()}');`).error?.code, "42501");
       for (const role of ["anon", "authenticated"] as const) {
         for (const fn of ["payment_post_transaction", "payment_account_ensure", "payment_party_remove_identity", "payment_party_ledger"]) {
           assert.equal(as(role, `SELECT public.${fn}('{}'::jsonb);`).error?.code, "42501", `${role} ${fn}`);
@@ -691,6 +802,30 @@ describe("the payment ledger on a real database (09 §4-§7, §10; migrations 38
       // The fee earned on the first capture is readable on its own, apart from principal and tip.
       assert.equal(scalar(`SELECT sum(amount_minor) FROM public.payment_ledger_entries WHERE transaction_id = '${firstId}' AND entry_reason = 'platform_fee'`), "1000");
       assert.equal(scalar(`SELECT sum(amount_minor) FROM public.payment_ledger_entries WHERE transaction_id = '${firstId}' AND entry_reason = 'tip'`), "1000");
+    });
+
+    test("B9. a balance that would leave bigint is refused by NAME (amount_out_of_range) — not a bare 22003 — and writes nothing", async () => {
+      const big = "999999999999999999";
+      const aBig = await account({ kind: "platform", label: OVERFLOW }, "platform_revenue", "USD");
+      const aBigContra = await account({ kind: "platform", label: OVERFLOW }, "refund_liability", "USD");
+      const post = () => postPaymentTransaction(sc, capture({
+        kind: "fee", originalAmountMinor: big,
+        attribution: { ...capture().attribution, beneficiaryAccountId: aBig },
+        entries: [{ accountId: aBig, amountMinor: big, entryReason: "adjustment" }, { accountId: aBigContra, amountMinor: `-${big}`, entryReason: "adjustment" }],
+      }));
+      for (let i = 0; i < 9; i++) {
+        const r = await post();
+        assert.equal(r.ok, true, `post ${i}: ${JSON.stringify(r)}`);
+      }
+      const held = () => scalar(`SELECT balance_minor::text FROM public.payment_account_balances WHERE account_id = '${aBig}'`);
+      assert.equal(held(), "8999999999999999991");
+      const before = ledgerSnapshot();
+      const tenth = await post();
+      assert.equal(tenth.ok, false);
+      if (!tenth.ok) { assert.equal(tenth.reason, "amount_out_of_range", JSON.stringify(tenth)); assert.match(tenth.detail, /payment_amount_out_of_range/); }
+      assert.deepEqual(ledgerSnapshot(), before, "nothing of the refused posting persists");
+      assert.equal(held(), "8999999999999999991");
+      assert.equal(drift(), 0);
     });
   });
 
@@ -726,7 +861,7 @@ describe("the payment ledger on a real database (09 §4-§7, §10; migrations 38
       const start = balance(aPayee);
       assert.ok(start > 0);
       const results = await Promise.all(Array.from({ length: 10 }, (_, i) =>
-        psqlAsync(postSql(rawPayload(`c3-${RUN}-${i}`, "payout", [[aPayee, -start, "payout"], [aClearing, start, "payout"]], aPayee)))));
+        psqlAsync(postSql(rawPayload(`c3-${RUN}-${i}`, "payout", [[aPayee, -start, "payout"], [aClearing, start, "payout"]], aClearing)))));
       const won = results.filter((r) => r.status === 0);
       const refused = results.filter((r) => r.status !== 0);
       assert.equal(won.length, 1, results.map((r) => r.stderr).join("\n"));
@@ -852,7 +987,7 @@ describe("the payment ledger on a real database (09 §4-§7, §10; migrations 38
     test("D6. PAY-072: the ownership predicate is in authz, pinned, not a client's to call — and answers per account", () => {
       const f = rows<any>(
         `SELECT n.nspname AS s, p.prosecdef AS d, p.proconfig::text AS c FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE p.proname = 'payment_account_owned_by_profile'`);
-      assert.deepEqual(f, [{ s: "authz", d: false, c: `{"search_path=\\"\\""}` }]);
+      assert.deepEqual(f, [{ s: "authz", d: false, c: `{"search_path=pg_catalog, pg_temp"}` }]);
       const owned = (accountId: string, profileId: string) =>
         scalar(`SELECT authz.payment_account_owned_by_profile('${accountId}', '${profileId}')`);
       assert.equal(owned(aPayee, payee), "t");
@@ -894,14 +1029,41 @@ describe("the payment ledger on a real database (09 §4-§7, §10; migrations 38
       assert.equal(owe.ok, true, JSON.stringify(owe));
     });
 
-    test("E1. removing the identity changes NO ledger row and NO balance; the profile id is gone from every payment table", async () => {
+    const openOnErased = () => [
+      { accountId: aErased, accountType: "user_payable", currency: "USD", balanceMinor: "7200" },
+      { accountId: aErasedReceivable, accountType: "user_receivable", currency: "USD", balanceMinor: "-300" },
+    ];
+
+    test("E1. an OPEN BALANCE refuses the removal by name, lists what is open, and changes nothing", async () => {
+      const before = ledgerSnapshot();
+      assert.equal(balance(aErased), 7200);
+      assert.equal(balance(aErasedReceivable), -300);
+      for (const options of [undefined, { onOpenBalance: "refuse" as const }]) {
+        const r = await removePaymentIdentity(sc, erased, options);
+        assert.equal(r.ok, false, JSON.stringify(r));
+        if (r.ok) return;
+        assert.equal(r.reason, "open_balance");
+        assert.match(r.detail, /payment_open_balance/);
+        assert.deepEqual(r.openBalances, openOnErased(), "what is owed, and what is owing, is named");
+      }
+      // The explicit argument has two values; anything else is not quietly treated as either.
+      const unknown = await removePaymentIdentity(sc, erased, { onOpenBalance: "escheat" as any });
+      assert.equal(unknown.ok === false && unknown.reason, "invalid_request", JSON.stringify(unknown));
+      if (!unknown.ok) assert.match(unknown.detail, /on_open_balance/);
+      // Refused means untouched: still linked, still readable by its owner, no row changed.
+      assert.deepEqual(ledgerSnapshot(), before);
+      assert.equal(scalar(`SELECT count(*) FROM public.payment_parties WHERE profile_id = '${erased}' AND identity_removed_at IS NULL`), "1");
+      const mine = await readPartyLedger(sc, erased, { limit: 0 });
+      assert.equal(mine.ok && mine.hasParty && mine.accounts.length === 2, true);
+    });
+
+    test("E2. retain: the identity goes, NO ledger row and NO balance changes, and the open balances stay addressable by party id", async () => {
       const before = ledgerSnapshot();
       const balances = Object.fromEntries(accounts.map((a) => [a, balance(a)]));
-      assert.equal(balances[aErased], 7200);
-      assert.equal(balances[aErasedReceivable], -300);
       assert.ok(mentions(erased) >= 1, "before: the party row links the profile");
+      const partyId = scalar(`SELECT owner_id FROM public.payment_accounts WHERE id = '${aErased}'`)!;
 
-      const r = await removePaymentIdentity(sc, erased);
+      const r = await removePaymentIdentity(sc, erased, { onOpenBalance: "retain" });
       assert.equal(r.ok, true, JSON.stringify(r));
       if (!r.ok) return;
       assert.equal(r.removed, true);
@@ -910,43 +1072,60 @@ describe("the payment ledger on a real database (09 §4-§7, §10; migrations 38
       assert.ok(r.identityRemovedAt);
       assert.equal(r.retentionPeriod, null, "the retention period is undecided");
       assert.equal(r.retainUntil, null);
-      assert.equal("partyId" in r, false, "the pseudonym is not handed back to a caller who holds the profile id");
+      assert.equal(r.identifiersScrubbed, 0, "the door kept the profile id out of every transaction, so there was nothing to rewrite");
+      assert.deepEqual(r.openBalances, openOnErased());
+      assert.equal(r.partyId, partyId, "with a balance left open, the pseudonym is the handle on it");
 
       assert.deepEqual(ledgerSnapshot(), before, "every transaction, entry, account and balance row is byte-identical");
       for (const a of accounts) assert.equal(balance(a), balances[a], a);
       assert.equal(mentions(erased), 0, "no payment row, in any column, mentions the erased profile");
+      assert.equal(mentions(erased.replace(/-/g, "")), 0);
       assert.equal(drift(), 0);
       assert.equal(unbalanced(), 0);
       const party = rows<any>(
         `SELECT pt.profile_id, pt.identity_removed_at IS NOT NULL AS stamped, pt.identity_removed_via AS via, pt.kind
            FROM public.payment_parties pt JOIN public.payment_accounts a ON a.owner_id = pt.id WHERE a.id = '${aErased}'`)[0];
       assert.deepEqual(party, { profile_id: null, stamped: true, via: "erasure_request", kind: "user" });
-      // Pseudonymised, NOT anonymous: the person's accounts are still linked to each other.
-      assert.equal(scalar(`SELECT count(DISTINCT owner_id) FROM public.payment_accounts WHERE id IN ('${aErased}', '${aErasedReceivable}')`), "1");
+      // NOT ORPHANED: the party id returned finds the accounts and what stands on them, as service_role reads.
+      const found = as("service_role",
+        `SELECT a.id || '=' || b.balance_minor FROM public.payment_accounts a JOIN public.payment_account_balances b ON b.account_id = a.id
+          WHERE a.owner_id = '${r.partyId}' ORDER BY a.account_type;`);
+      assert.deepEqual(found.stdout.trim().split("\n"), [`${aErased}=7200`, `${aErasedReceivable}=-300`]);
       assert.equal(scalar(`SELECT count(*) FROM public.profiles WHERE id = '${erased}'`), "1", "the profile row itself is untouched (the tombstone is the deletion service's)");
     });
 
-    test("E2. after removal: the erased profile reads nothing, the counterparty's read is unchanged, and the ledger still works", async () => {
+    test("E3. after removal: the erased profile reads nothing, the counterparty's read is unchanged, and the retained balance is still settled by account", async () => {
       const gone = await readPartyLedger(sc, erased, { limit: 200 });
       assert.deepEqual(gone, { ok: true, hasParty: false, accounts: [], entries: [], nextCursor: null });
       assert.equal(scalar(`SELECT authz.payment_account_owned_by_profile('${aErased}', '${erased}')`), "f");
       const payerSide = await readPartyLedger(sc, payer, { limit: 200 });
       assert.equal(payerSide.ok && payerSide.entries.some((e) => e.transactionId === erasedTx && e.amountMinor === "-8000"), true);
-      // A late chargeback is addressed by ACCOUNT, needs no identity, and obeys the same rules.
+      // What is owed to the pseudonymous party is paid out by ACCOUNT: no identity is needed.
+      const settle = await postPaymentTransaction(sc, capture({
+        kind: "payout", originalAmountMinor: 7200,
+        attribution: { ...capture().attribution, beneficiaryAccountId: aClearing },
+        entries: [{ accountId: aErased, amountMinor: -7200, entryReason: "payout" }, { accountId: aClearing, amountMinor: 7200, entryReason: "payout" }],
+      }));
+      assert.equal(settle.ok, true, JSON.stringify(settle));
+      assert.equal(balance(aErased), 0);
+      // A late chargeback is addressed the same way and obeys the same rules.
       const late = await postPaymentTransaction(sc, capture({
         kind: "chargeback", originalAmountMinor: 8000, externalRef: `dp_erased_${RUN}`,
-        attribution: { ...capture().attribution, beneficiaryAccountId: aErased },
+        attribution: { ...capture().attribution, beneficiaryAccountId: aClearing },
         entries: [{ accountId: aErased, amountMinor: -8000, entryReason: "chargeback" }, { accountId: aClearing, amountMinor: 8000, entryReason: "chargeback" }],
       }));
       assert.equal(late.ok, true, JSON.stringify(late));
-      assert.equal(balance(aErased), -800);
+      assert.equal(balance(aErased), -8000);
       assert.equal(drift(), 0);
       assert.equal(unbalanced(), 0);
     });
 
-    test("E3. idempotent and irreversible: a second removal does nothing; the link cannot be restored or repointed", async () => {
-      const again = await removePaymentIdentity(sc, erased);
-      assert.deepEqual(again, { ok: true, removed: false, accounts: 0, entriesRetained: 0, identityRemovedAt: null, retentionPeriod: null, retainUntil: null });
+    test("E4. idempotent and irreversible: a second removal does nothing; the link cannot be restored or repointed", async () => {
+      const again = await removePaymentIdentity(sc, erased, { onOpenBalance: "retain" });
+      assert.deepEqual(again, {
+        ok: true, removed: false, accounts: 0, entriesRetained: 0, identityRemovedAt: null, retentionPeriod: null, retainUntil: null,
+        identifiersScrubbed: 0, openBalances: [],
+      });
       const partyId = scalar(`SELECT owner_id FROM public.payment_accounts WHERE id = '${aErased}'`)!;
       for (const set of [`profile_id = '${erased}'`, `profile_id = '${payer}'`, `identity_removed_at = NULL`, `kind = 'platform'`, `label = 'x'`]) {
         const r = owner(`UPDATE public.payment_parties SET ${set} WHERE id = '${partyId}';`);
@@ -959,7 +1138,7 @@ describe("the payment ledger on a real database (09 §4-§7, §10; migrations 38
       assert.equal(owner(`UPDATE public.payment_parties SET profile_id = '${payer}' WHERE id = '${live}';`).error?.code, "PL005");
     });
 
-    test("E4. a profile's hard deletion is neither blocked by its ledger rows nor deletes them: the link is removed, the records stay", async () => {
+    test("E5. a profile's hard deletion is neither blocked by its ledger rows nor deletes them: the link is removed, the records stay", async () => {
       const aHard = await account({ kind: "user", profileId: hardDeleted }, "user_payable", "USD");
       const earn = await postPaymentTransaction(sc, capture({
         attribution: { ...capture().attribution, beneficiaryAccountId: aHard }, originalAmountMinor: 500,
@@ -974,14 +1153,15 @@ describe("the payment ledger on a real database (09 §4-§7, §10; migrations 38
       assert.deepEqual(ledgerSnapshot(), before, "no ledger row changed");
       assert.equal(balance(aHard), 500);
       assert.equal(mentions(hardDeleted), 0);
+      // The foreign key cannot refuse, so a balance open at that moment stays on a party that SAYS how it lost its link.
       assert.deepEqual(
-        rows<any>(`SELECT pt.profile_id, pt.identity_removed_via AS via, pt.identity_removed_at IS NOT NULL AS stamped FROM public.payment_parties pt JOIN public.payment_accounts a ON a.owner_id = pt.id WHERE a.id = '${aHard}'`),
-        [{ profile_id: null, via: "profile_deleted", stamped: true }],
+        rows<any>(`SELECT pt.id, pt.profile_id, pt.identity_removed_via AS via, pt.identity_removed_at IS NOT NULL AS stamped FROM public.payment_parties pt JOIN public.payment_accounts a ON a.owner_id = pt.id WHERE a.id = '${aHard}'`),
+        [{ id: partyOf[aHard], profile_id: null, via: "profile_deleted", stamped: true }],
       );
       assert.equal(drift(), 0);
     });
 
-    test("E5. the retention period is ONE configurable value, undecided by default, and nothing deletes", () => {
+    test("E6. the retention period is ONE configurable value, undecided by default, and nothing deletes", () => {
       assert.deepEqual(rows<any>(`SELECT retention_period, decision_ref FROM public.payment_retention_settings`), [{ retention_period: null, decision_ref: null }]);
       // A period needs its decision recorded; a second row is impossible.
       assert.match(owner(`UPDATE public.payment_retention_settings SET retention_period = '7 years';`).error!.message, /prs_decision_recorded/);
@@ -1008,7 +1188,7 @@ describe("the payment ledger on a real database (09 §4-§7, §10; migrations 38
       }
     });
 
-    test("E6. the same profile transacting again gets a NEW party: the removed link is not quietly rebuilt", async () => {
+    test("E7. the same profile transacting again gets a NEW party: the removed link is not quietly rebuilt, and the old balance is not lost with it", async () => {
       const oldParty = scalar(`SELECT owner_id FROM public.payment_accounts WHERE id = '${aErased}'`)!;
       const fresh = await account({ kind: "user", profileId: erased }, "user_payable", "USD");
       assert.notEqual(fresh, aErased);
@@ -1017,6 +1197,242 @@ describe("the payment ledger on a real database (09 §4-§7, §10; migrations 38
       assert.equal(scalar(`SELECT profile_id IS NULL FROM public.payment_parties WHERE id = '${oldParty}'`), "t");
       const r = await readPartyLedger(sc, erased, { limit: 200 });
       assert.equal(r.ok && r.hasParty && r.entries.length === 0 && r.accounts.length === 1, true, "the old records are not readable through the new party");
+      // The old party's balances are where they were, under the id the retain call handed back.
+      assert.equal(balance(aErased), -8000);
+      assert.equal(balance(aErasedReceivable), -300);
+      assert.equal(scalar(`SELECT count(*) FROM public.payment_accounts WHERE owner_id = '${oldParty}'`), "2");
+    });
+
+    test("E8. settle first: once every balance is zero the default removal succeeds, and hands back no pseudonym", async () => {
+      const settled = seedUser("paybsettled");
+      users.push(settled);
+      const aSettled = await account({ kind: "user", profileId: settled }, "user_payable", "USD");
+      const earn = await postPaymentTransaction(sc, capture({
+        attribution: { ...capture().attribution, beneficiaryAccountId: aSettled }, originalAmountMinor: 10000,
+        entries: [{ accountId: aPayer, amountMinor: -10000, entryReason: "principal" }, { accountId: aSettled, amountMinor: 10000, entryReason: "principal" }],
+      }));
+      assert.equal(earn.ok, true, JSON.stringify(earn));
+      // The verifier's case: a payee with 10000 payable. It is no longer erasable by default …
+      const refused = await removePaymentIdentity(sc, settled);
+      assert.equal(refused.ok === false && refused.reason, "open_balance", JSON.stringify(refused));
+      if (!refused.ok) assert.deepEqual(refused.openBalances, [{ accountId: aSettled, accountType: "user_payable", currency: "USD", balanceMinor: "10000" }]);
+      // … so a re-ensure still resolves to the SAME party and account: nothing was orphaned.
+      const same = await ensurePaymentAccount(sc, { owner: { kind: "user", profileId: settled }, accountType: "user_payable", currency: "USD" });
+      assert.deepEqual(same, { ok: true, accountId: aSettled, partyId: partyOf[aSettled], created: false });
+      const payout = await postPaymentTransaction(sc, capture({
+        kind: "payout", originalAmountMinor: 10000,
+        attribution: { ...capture().attribution, beneficiaryAccountId: aClearing },
+        entries: [{ accountId: aSettled, amountMinor: -10000, entryReason: "payout" }, { accountId: aClearing, amountMinor: 10000, entryReason: "payout" }],
+      }));
+      assert.equal(payout.ok, true, JSON.stringify(payout));
+      const r = await removePaymentIdentity(sc, settled);
+      assert.equal(r.ok, true, JSON.stringify(r));
+      if (!r.ok) return;
+      assert.deepEqual(
+        { removed: r.removed, accounts: r.accounts, entriesRetained: r.entriesRetained, open: r.openBalances, scrubbed: r.identifiersScrubbed },
+        { removed: true, accounts: 1, entriesRetained: 2, open: [], scrubbed: 0 });
+      assert.equal("partyId" in r, false, "with nothing left open, the pseudonym is not handed to a caller who holds the profile id");
+      assert.equal(mentions(settled), 0);
+      assert.equal(drift(), 0);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  describe("G — what the independent verification of #598 found, kept as regressions", () => {
+    /** A jsonb literal that names its type by schema: the session's own casts must not meet a pg_temp shadow. */
+    const j = (v: unknown) => jsonLiteral(v).replace(/::jsonb$/, "::pg_catalog.jsonb");
+
+    test("G1. pg_temp cannot shadow a type inside a payment function: the verifier's CREATE DOMAIN pg_temp.uuid … CHECK (pg_temp.evil()) never runs", () => {
+      const floor = () => scalar(`SELECT floor_enforced::text || '/' || overdraft_kinds::text FROM public.payment_balance_rules WHERE account_type = 'user_payable'`);
+      assert.equal(floor(), "true/{chargeback}");
+      const variants: Array<[string, string]> = [
+        // The verifier's payload: as the table owner this UPDATE succeeds, and I6 is switched off for every payee.
+        ["flips the balance rule", `UPDATE public.payment_balance_rules SET floor_enforced = false WHERE account_type = 'user_payable';`],
+        // Any invocation at all, under any role, fails the statement that caused it.
+        ["raises", `RAISE EXCEPTION 'pg_temp.evil() ran as %', current_user;`],
+      ];
+      for (const [name, body] of variants) {
+        const probe = seedUser("paybtemp");
+        users.push(probe);
+        const key = `temp-${RUN}-${randomUUID().slice(0, 8)}`;
+        const script =
+          `\\set VERBOSITY verbose\nSET LOCAL ROLE service_role;\n` +
+          `CREATE FUNCTION pg_temp.evil() RETURNS boolean LANGUAGE plpgsql AS $evil$ BEGIN ${body} RETURN true; END $evil$;\n` +
+          ["uuid", "text", "jsonb", "timestamptz", "numeric", "int8", "int4", "bool", "interval"]
+            .map((t) => `CREATE DOMAIN pg_temp.${t} AS pg_catalog.${t} CHECK (pg_temp.evil());`).join("\n") + "\n" +
+          `SELECT public.payment_account_ensure(${j({ owner_kind: "user", profile_id: probe, account_type: "user_payable", currency: "USD" })})->>'account_id';\n` +
+          `SELECT public.payment_post_transaction(${j(rawPayload(key, "capture", [[aPayer, -9, "principal"], [aPayee, 9, "principal"]], aPayee))})->>'replayed';\n` +
+          `SELECT public.payment_party_ledger(${j({ profile_id: probe, limit: 5 })})->>'has_party';\n` +
+          `SELECT public.payment_party_remove_identity(${j({ profile_id: probe })})->>'removed';\n`;
+        const r = psql(script, { single: true });
+        assert.equal(r.status, 0, `${name}: ${r.stderr}`);
+        const out = r.stdout.trim().split("\n");
+        assert.match(out[0]!, /^[0-9a-f-]{36}$/, name);
+        accounts.push(out[0]!);
+        assert.deepEqual(out.slice(1), ["false", "true", "true"], `${name}: all four doors answered`);
+        assert.equal(floor(), "true/{chargeback}", `${name}: the balance rule is what it was`);
+        assert.equal(scalar(`SELECT count(*) FROM public.payment_transactions WHERE scope = '${SCOPE}' AND idempotency_key = '${key}'`), "1", "the post committed: the deferred checks ran too");
+      }
+      assert.equal(drift(), 0);
+    });
+
+    test("G2. no envelope names a person: the verifier's inputs — a profile id as key, cause and subject, an email as the processor reference — are refused at the door", async () => {
+      const before = ledgerSnapshot();
+      const n = transactionCount();
+      const noParty = seedUser("paybnamed");
+      users.push(noParty);
+      const at = () => capture().attribution;
+      const cases: Array<[string, Partial<PostPaymentTransactionInput>, RegExp]> = [
+        ["profile id as the idempotency key", { idempotencyKey: payee }, /person_identifier — idempotency_key/],
+        ["profile id as the cause", { attribution: { ...at(), causeId: payee } }, /person_identifier — cause_id/],
+        ["profile id as the subject", { attribution: { ...at(), subjectId: payee } }, /person_identifier — subject_id/],
+        ["an email as the processor reference", { externalRef: "a.traveller@example.test" }, /ptx_external_ref_shape/],
+        // … and the same thing spelled other ways, or about other people.
+        ["profile id inside a key", { idempotencyKey: `tip:${payee}:1` }, /person_identifier — idempotency_key/],
+        ["dashless", { idempotencyKey: `tip:${payee.replace(/-/g, "")}:1` }, /person_identifier — idempotency_key/],
+        ["upper case", { attribution: { ...at(), causeId: `USER-${payee.toUpperCase()}` } }, /person_identifier — cause_id/],
+        ["the payer's profile id (a party the transaction debits)", { attribution: { ...at(), subjectId: payer } }, /person_identifier — subject_id/],
+        ["the profile of someone the transaction does not touch", { attribution: { ...at(), causeId: stranger } }, /person_identifier — cause_id/],
+        ["the profile of someone with no payment party at all", { attribution: { ...at(), subjectId: noParty } }, /person_identifier — subject_id/],
+        ["a profile id in the scope", { scope: `http:tip:${payee}` }, /person_identifier — scope/],
+        ["a profile id as the processor reference", { externalRef: `pi_${payee}` }, /person_identifier — external_ref/],
+        ["an email as the cause", { attribution: { ...at(), causeId: "a.traveller@example.test" } }, /ptx_no_contact_details/],
+        ["an email inside a key", { idempotencyKey: "tip:a.traveller@example.test:1" }, /ptx_no_contact_details/],
+        ["a phone number as the subject", { attribution: { ...at(), subjectId: "+1 415 555 0100" } }, /ptx_no_contact_details/],
+        ["a phone number inside a key", { idempotencyKey: "tip:+14155550100:1" }, /ptx_no_contact_details/],
+        ["a bare number as the cause", { attribution: { ...at(), causeId: "4155550100" } }, /ptx_no_contact_details/],
+        ["free text as the processor reference", { externalRef: "paid in cash to Sam" }, /ptx_external_ref_shape/],
+      ];
+      for (const [name, over, detail] of cases) {
+        const r = await postPaymentTransaction(sc, capture(over));
+        assert.equal(r.ok, false, name);
+        if (!r.ok) { assert.equal(r.reason, "invalid_request", `${name}: ${JSON.stringify(r)}`); assert.match(r.detail, detail, name); }
+      }
+      assert.equal(transactionCount(), n);
+      assert.deepEqual(ledgerSnapshot(), before, "nothing of any refused request persists");
+      // The door is the TABLE's, so it holds for the owner too …
+      const direct = owner(envelopeSql(randomUUID(), { cause_id: `'${payee}'` }));
+      assert.equal(direct.error?.code, "PL422", direct.stderr);
+      assert.match(owner(envelopeSql(randomUUID(), { external_ref: `'a.traveller@example.test'` })).error!.message, /ptx_external_ref_shape/);
+      // … and a person IS nameable — by payment party id, the ledger's pseudonym; a numbered thing by what it is.
+      const byParty = await postPaymentTransaction(sc, capture({ attribution: { ...at(), causeId: `party:${partyOf[aPayee]}`, subjectId: "booking:4155550100" } }));
+      assert.equal(byParty.ok, true, JSON.stringify(byParty));
+      assert.equal(drift(), 0);
+    });
+
+    test("G3. what was written AROUND the door is scrubbed when the identity is removed — by the erasure door and by the foreign key — and the scrub is the only UPDATE an envelope admits", async () => {
+      const target = seedUser("paybscrub");
+      users.push(target);
+      const aTarget = await account({ kind: "user", profileId: target }, "user_payable", "USD");
+      const party = partyOf[aTarget]!;
+      const dashless = (id: string) => id.replace(/-/g, "");
+      const ids = [randomUUID(), randomUUID(), randomUUID()].sort();
+      const plant = (id: string, cols: Record<string, string>) => `${envelopeSql(id, cols)}\n${entrySql(id, aDirA, 500)}\n${entrySql(id, aDirB, -500)}\n`;
+      // Only a superuser can do this: with triggers off, the door (ptx_admit) does not run.
+      exec(
+        "SET session_replication_role = replica;\n" +
+        // The verifier's exact inputs: the profile uuid as idempotency_key, cause_id and subject_id.
+        plant(ids[0]!, { idempotency_key: `'${target}'`, cause_id: `'${target}'`, subject_id: `'${target}'` }) +
+        plant(ids[1]!, { scope: `'${SCOPE}-x-${target}'`, idempotency_key: `'planted-${RUN}'`, external_ref: `'pi_${dashless(target)}'` }) +
+        plant(ids[2]!, { cause_id: `'user:${target.toUpperCase()}'` }) +
+        "SET session_replication_role = origin;");
+      assert.ok(mentions(target) >= 3);
+      assert.ok(mentions(dashless(target)) >= 1);
+      const money = () => rows<any>(
+        `SELECT (to_jsonb(t) - 'scope' - 'idempotency_key' - 'cause_id' - 'subject_id' - 'attribution_version' - 'external_ref' - 'fx_rate_source')::text AS t,
+                (SELECT jsonb_agg(to_jsonb(e) ORDER BY e.id)::text FROM public.payment_ledger_entries e WHERE e.transaction_id = t.id) AS e
+           FROM public.payment_transactions t WHERE t.id IN (${inList(ids)}) ORDER BY t.id`);
+      const before = money();
+      const projection = ledgerSnapshot().filter((r) => r.startsWith("ba "));
+
+      // The scrub is the ONLY update an envelope admits. A token written by hand admits nothing else …
+      const guarded = (token: string, set: string) =>
+        owner(`BEGIN;\nSELECT set_config('portava.payment_identity_scrub', '${token}', true);\nUPDATE public.payment_transactions SET ${set} WHERE id = '${ids[0]}';\nCOMMIT;`);
+      for (const set of [`cause_id = 'rewritten'`, `original_amount_minor = 1`, `beneficiary_account_id = '${aDirB}'`, `occurred_at = now()`]) {
+        assert.equal(guarded(`${randomUUID()}:${randomUUID()}`, set).error?.code, "PL001", set);
+      }
+      // … not even alongside the rewrite the token names.
+      assert.equal(guarded(`${target}:${party}`, `cause_id = '${party}', subject_id = '${party}', idempotency_key = 'scrubbed:${ids[0]}', original_amount_minor = 1`).error?.code, "PL001");
+      assert.equal(guarded(`${target}:${party}`, `cause_id = '${party}'`).error?.code, "PL001", "a partial rewrite is not the scrub either");
+      assert.equal(mentions(target) >= 3, true, "nothing was changed by any of those");
+
+      const r = await removePaymentIdentity(sc, target);
+      assert.equal(r.ok, true, JSON.stringify(r));
+      if (!r.ok) return;
+      assert.equal(r.removed, true);
+      assert.equal(r.identifiersScrubbed, 3);
+      assert.equal(mentions(target), 0, "no payment row mentions the profile id, in any case");
+      assert.equal(mentions(dashless(target)), 0, "… or its dashless spelling");
+      assert.deepEqual(
+        rows<any>(`SELECT id, scope, idempotency_key AS k, cause_id AS c, subject_id AS s, external_ref AS x FROM public.payment_transactions WHERE id IN (${inList(ids)}) ORDER BY id`),
+        [
+          { id: ids[0], scope: SCOPE, k: `scrubbed:${ids[0]}`, c: party, s: party, x: null },
+          { id: ids[1], scope: `${SCOPE}-x-${party}`, k: `scrubbed:${ids[1]}`, c: "direct", s: "direct", x: `pi_${dashless(party)}` },
+          { id: ids[2], scope: SCOPE, k: `direct-${ids[2]}`, c: `user:${party}`, s: "direct", x: null },
+        ],
+        "the person is now named by party id, and a key that carried them is a tombstone",
+      );
+      assert.deepEqual(money(), before, "amounts, accounts, currency, kind, beneficiary, timestamps and every entry are untouched");
+      assert.deepEqual(ledgerSnapshot().filter((x) => x.startsWith("ba ")), projection, "no balance moved");
+      assert.equal(unbalanced(), 0);
+
+      // The foreign key's removal (a profile row deleted outright) scrubs the same way.
+      const hard = seedUser("paybscrubhard");
+      users.push(hard);
+      const aHard = await account({ kind: "user", profileId: hard }, "user_payable", "USD");
+      const planted = randomUUID();
+      exec("SET session_replication_role = replica;\n" + plant(planted, { cause_id: `'${hard}'`, subject_id: `'trip:${dashless(hard)}'` }) + "SET session_replication_role = origin;");
+      assert.equal(as("service_role", `DELETE FROM public.profiles WHERE id = '${hard}';`).status, 0);
+      assert.equal(mentions(hard) + mentions(dashless(hard)), 0);
+      assert.deepEqual(
+        rows<any>(`SELECT cause_id AS c, subject_id AS s FROM public.payment_transactions WHERE id = '${planted}'`),
+        [{ c: partyOf[aHard], s: `trip:${dashless(partyOf[aHard]!)}` }]);
+    });
+
+    test("G4. two users, ONE Idempotency-Key: the scope names the actor, so neither is told 'conflict' for the other's request, and each one's retry is a replay", async () => {
+      const KEY = `client-chosen-key-${RUN}`;
+      const operation = `test_tip_${RUN}`;
+      const aStrangerReceivable = await account({ kind: "user", profileId: stranger }, "user_receivable", "USD");
+      const userA = bindIdempotencyKey(KEY, { operation, actorPartyId: partyOf[aPayer]! });
+      const userB = bindIdempotencyKey(KEY, { operation, actorPartyId: partyOf[aStrangerReceivable]! });
+      assert.equal(userA.ok && userB.ok, true);
+      if (!userA.ok || !userB.ok) return;
+      assert.equal(userA.idempotencyKey, userB.idempotencyKey, "the same client key …");
+      assert.notEqual(userA.scope, userB.scope, "… under two scopes");
+      const tip = (bound: { scope: string; idempotencyKey: string }, from: string, amount: number) => capture({
+        scope: bound.scope, idempotencyKey: bound.idempotencyKey, originalAmountMinor: amount,
+        attribution: { ...capture().attribution, causeKind: "tip" },
+        entries: [{ accountId: from, amountMinor: -amount, entryReason: "tip" }, { accountId: aPayee, amountMinor: amount, entryReason: "tip" }],
+      });
+      const fromA = tip(userA, aPayer, 700), fromB = tip(userB, aStrangerReceivable, 300);
+      const start = balance(aPayee);
+      const a1 = await postPaymentTransaction(sc, fromA);
+      const b1 = await postPaymentTransaction(sc, fromB);
+      assert.equal(a1.ok && !a1.replayed, true, JSON.stringify(a1));
+      assert.equal(b1.ok && !b1.replayed, true, `user B's different tip under user A's key: ${JSON.stringify(b1)}`);
+      if (!a1.ok || !b1.ok) return;
+      assert.notEqual(a1.transactionId, b1.transactionId);
+      assert.equal(balance(aPayee), start + 1000, "both tips were booked");
+      // Each user's retry replays THEIR transaction.
+      assert.deepEqual(await postPaymentTransaction(sc, fromA), { ok: true, transactionId: a1.transactionId, replayed: true, balances: [] });
+      assert.deepEqual(await postPaymentTransaction(sc, fromB), { ok: true, transactionId: b1.transactionId, replayed: true, balances: [] });
+      assert.equal(balance(aPayee), start + 1000, "and booked nothing again");
+      // Within ONE user the key still protects: the same key over different money is a conflict.
+      const changed = await postPaymentTransaction(sc, { ...tip(userA, aPayer, 701) });
+      assert.equal(changed.ok === false && changed.reason, "idempotency_conflict");
+      // What the namespace prevents — the same two requests under one route-wide scope: B is refused for good.
+      const shared = { scope: SCOPE, idempotencyKey: `${KEY}-shared` };
+      assert.equal((await postPaymentTransaction(sc, { ...fromA, ...shared })).ok, true);
+      const collided = await postPaymentTransaction(sc, { ...fromB, ...shared });
+      assert.equal(collided.ok === false && collided.reason, "idempotency_conflict");
+      // The namespace is a PARTY id. A route that passed the profile id instead is stopped by the ledger.
+      const wrong = bindIdempotencyKey(KEY, { operation, actorPartyId: payer });
+      assert.equal(wrong.ok, true);
+      if (!wrong.ok) return;
+      const refused = await postPaymentTransaction(sc, tip(wrong, aPayer, 700));
+      assert.equal(refused.ok === false && refused.reason, "invalid_request");
+      if (!refused.ok) assert.match(refused.detail, /person_identifier — scope/);
+      assert.equal(drift(), 0);
     });
   });
 

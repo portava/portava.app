@@ -24,6 +24,13 @@
 --                                  entry_reason — and nothing else (PAY-038).
 --   public.payment_account_ensure(jsonb)  idempotent account creation (PAY-022).
 --
+-- EVERY FUNCTION OF 3821-3823 PINS `search_path TO pg_catalog, pg_temp` — pg_temp
+-- LAST, and named. An empty search_path does NOT exclude pg_temp: PostgreSQL
+-- then searches it FIRST for relation and TYPE names, so a caller's
+-- `CREATE DOMAIN pg_temp.uuid … CHECK (pg_temp.f())` ran f() as the owner of a
+-- SECURITY DEFINER function that declared a `uuid` variable. Every type inside
+-- a function body is also written pg_catalog.<type>, and every table public.<t>.
+--
 -- SIGN CONVENTION, fixed here because every reader depends on it: a CREDIT is a
 -- positive amount_minor and a DEBIT is negative, as 2901/2921 already write
 -- them (payable and revenue positive, receivable negative). An account's
@@ -35,10 +42,29 @@
 --       to zero: CONSTRAINT TRIGGERs ple_transaction_balances (on entries) and
 --       ptx_has_balanced_entries (on the envelope, so an envelope with NO
 --       entries is refused too), both DEFERRABLE INITIALLY DEFERRED — checked at
---       COMMIT, because the two sides are separate INSERTs. A transaction has
---       at least two entries. An entry may only be inserted in the database
---       transaction that inserted its envelope (ple_transaction_is_open): a
---       committed transaction cannot grow a later, self-balancing pair.
+--       COMMIT, because the two sides are separate INSERTs. A transaction names
+--       at least two DIFFERENT accounts (a +500/-500 pair on one account moves
+--       nothing), and when it is booked in the currency it was presented in,
+--       its credits total original_amount_minor.
+--       SEALED: an entry may only be inserted in the database transaction that
+--       inserted its envelope (ple_transaction_is_open). Two things must both
+--       hold: the envelope's id was announced by an AFTER INSERT row trigger —
+--       which fires only for a row actually inserted, so `INSERT … ON CONFLICT
+--       DO NOTHING` over a committed id announces nothing — and the envelope's
+--       created_at, which a BEFORE INSERT trigger forces to now(), equals THIS
+--       transaction's now(), so a hand-written announcement cannot open an
+--       envelope another transaction committed. WHAT THIS DOES NOT CONSTRAIN,
+--       and it is all about the table owner (service_role, authenticated and
+--       anon hold no write privilege at all): (a) a role that can disable
+--       triggers — the owner by ALTER TABLE … DISABLE TRIGGER, a superuser by
+--       session_replication_role — is bound by no trigger; (b) inside the ONE
+--       database transaction that created an envelope, the owner writing
+--       directly can still add a balanced pair to it after the posting function
+--       has returned, by re-announcing it by hand; (c) two transactions that
+--       began in the same microsecond share a now(). In each case the owner
+--       must act deliberately, the pair must still balance, and the result is a
+--       projection that no longer equals its entries — which the reconciliation
+--       job (`09` §4, unbuilt) is what would notice.
 --   I2  immutable: no INSERT, UPDATE or DELETE grant to service_role at all (the
 --       only writers are the SECURITY DEFINER functions of this file and 3822),
 --       plus a BEFORE UPDATE OR DELETE ... FOR EACH ROW trigger that raises.
@@ -64,13 +90,34 @@
 --   CHECK-forbidden otherwise, so a conversion can be neither omitted nor
 --   invented.
 -- ERASURE ("pseudonymize accounting entries, removing direct identifiers and
---   the identity link … keep only the records needed"): no entry, transaction
---   or account row holds a profile id. The link is payment_parties.profile_id,
---   ON DELETE SET NULL, and removing it is the ONE change payment_parties
---   permits. It touches one row, changes no ledger row, and no invariant above
---   reads it. The door, the retention setting and their tests are 3823's.
+--   the identity link … keep only the records needed"): the link is
+--   payment_parties.profile_id, ON DELETE SET NULL, and removing it is the ONE
+--   change payment_parties permits. No entry or account row has a column that
+--   could hold a person. The ENVELOPE has seven text columns that could
+--   (scope, idempotency_key, cause_id, subject_id, attribution_version,
+--   external_ref, fx_rate_source), so they are guarded twice:
+--   AT THE DOOR, for every writer — trigger ptx_admit refuses a row whose text
+--   contains the id of any profile (so of any party's profile), spelled with or
+--   without dashes in either case; CHECK ptx_no_contact_details refuses an
+--   '@', a +<digits> phone number, and a cause/subject/key that is nothing but
+--   digits; external_ref must have a provider object id's shape; scope,
+--   attribution_version and fx_rate_source are slugs. A cause or subject that
+--   really is a person is written as their PARTY id, never their profile id.
+--   AT ERASURE — when a party's link is removed (by 3823's door or by profiles'
+--   ON DELETE SET NULL) trigger pp_identity_scrub rewrites any envelope text
+--   that still carries that profile id to the party id, and tombstones an
+--   idempotency key that carried it. That rewrite is the one UPDATE
+--   payment_transactions permits, and it can change nothing else.
+--   WHAT CANNOT BE DETECTED: a name, a username, an id in an encoding other
+--   than hex, or the id of a profile whose row no longer exists (nothing is
+--   left to recognise it by — keeping a list of erased ids would be keeping
+--   the identifiers). The seven columns are for ids of things, and say so.
+--   The scrub leaves content_hash as it was: it is the hash of what was first
+--   posted, so a replay of that content is still recognised as a replay (or
+--   is refused at the door, while the profile row exists).
 --   The rows stay LINKABLE to each other through the party id: this is
---   pseudonymisation, not anonymisation.
+--   pseudonymisation, not anonymisation. The door, the open-balance rule, the
+--   retention setting and their tests are 3823's.
 -- FEES AND TIPS ("10% … no platform commission on tips … configurable by
 --   product and market"): no rate lives here. entry_reason separates
 --   'principal', 'tip' and 'platform_fee' so a fee is never folded into what it
@@ -82,7 +129,9 @@
 --   intel_reward_ledger `CHECK (cash_amount = 0)` posture (`09` §1.5).
 --
 -- ── WHAT THIS DELIBERATELY DOES NOT DO ──────────────────────────────────────
--- * No provider is named, imported or called. external_ref is an opaque id.
+-- * No provider is named, imported or called. external_ref is a provider OBJECT
+--   id — `<prefix>_<token>` — and nothing else; an adapter whose provider issues
+--   bare numbers stores them under its own prefix.
 -- * No account type is defined for an `external` party. `09` §5.2 pairs none of
 --   the nine with it (the cash memo of §9.2 is unbuilt), so the owner-kind
 --   vocabulary admits `external` and the pairing CHECK admits no account for it
@@ -217,7 +266,10 @@ CREATE TABLE IF NOT EXISTS public.payment_transactions (
   livemode                boolean     NOT NULL,
   original_currency       char(3)     NOT NULL,
   original_amount_minor   bigint      NOT NULL,
-  -- `09` §8: the rate ACTUALLY APPLIED, its source and its timestamp.
+  -- `09` §8: the rate ACTUALLY APPLIED, its source and its timestamp. DIRECTION:
+  -- units of `currency` (booked) per ONE unit of `original_currency`, both in
+  -- MAJOR units — 75 000 JPY booked as 502.50 USD is 0.0067. `09` §2's fx_rates
+  -- reads the same way round (units of currency per 1 base).
   fx_rate                 numeric     NULL,
   fx_rate_source          text        NULL,
   fx_rate_at              timestamptz NULL,
@@ -235,19 +287,21 @@ CREATE TABLE IF NOT EXISTS public.payment_transactions (
   beneficiary_account_id  uuid        NOT NULL,
   attribution_version     text        NOT NULL,
 
-  -- The processor's object id. Opaque: nothing here knows a provider.
+  -- The processor's object id: `<prefix>_<token>`. Nothing here knows a provider.
   external_ref            text        NULL,
   occurred_at             timestamptz NOT NULL,
+  -- Forced to now() by ptx_admit, whatever a writer supplies: it is half of the
+  -- seal (an entry needs an envelope created in ITS OWN database transaction).
   created_at              timestamptz NOT NULL DEFAULT now(),
 
   CONSTRAINT ptx_kind_known CHECK (kind IN (
     'charge', 'capture', 'fee', 'payout', 'refund', 'chargeback', 'reversal', 'fx')),
-  -- The scope NAMES the kind of event (a route, a webhook source, a job). It is
-  -- a lower-case slug and may not contain a uuid: an append-only row is the
-  -- one place a person's id could never be removed from.
-  CONSTRAINT ptx_scope_shape CHECK (
-    scope ~ '^[a-z0-9][a-z0-9:._/-]{0,119}$'
-    AND scope !~ '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'),
+  -- The scope NAMES the event's source and, for a client-chosen key, WHOSE key
+  -- it is: `http:<operation>:<the caller's payment PARTY id>` (lib/http.ts
+  -- requireIdempotencyKey), so two callers who pick the same key never meet.
+  -- A lower-case slug. A party id is welcome; a PROFILE id is refused by
+  -- ptx_admit, here as in every other text column.
+  CONSTRAINT ptx_scope_shape CHECK (scope ~ '^[a-z0-9][a-z0-9:._/-]{0,119}$'),
   CONSTRAINT ptx_idempotency_key_shape CHECK (
     length(idempotency_key) BETWEEN 1 AND 255 AND idempotency_key = btrim(idempotency_key)),
   -- `09` §7.2. TOTAL, so a replay is found by the index, never by a read.
@@ -277,7 +331,24 @@ CREATE TABLE IF NOT EXISTS public.payment_transactions (
     AND length(btrim(subject_kind)) BETWEEN 1 AND 60
     AND length(btrim(subject_id)) BETWEEN 1 AND 200
     AND length(btrim(attribution_version)) BETWEEN 1 AND 120),
-  CONSTRAINT ptx_external_ref_shape CHECK (external_ref IS NULL OR length(btrim(external_ref)) BETWEEN 1 AND 255),
+  -- A provider object id (pi_…, ch_…, re_…, po_…, evt_…): a short lower-case
+  -- prefix, an underscore, a token. Not an email, not a note, not free text.
+  CONSTRAINT ptx_external_ref_shape CHECK (
+    external_ref IS NULL OR external_ref ~ '^[a-z][a-z0-9]{1,15}_[A-Za-z0-9_-]{4,200}$'),
+  CONSTRAINT ptx_fx_rate_source_shape CHECK (
+    fx_rate_source IS NULL OR fx_rate_source ~ '^[a-z0-9][a-z0-9:._/-]{0,119}$'),
+  -- Named to sort AFTER ptx_attribution_present (CHECKs are tested in name
+  -- order), so a blank id is still reported as absent. No text column may hold
+  -- an '@' or a +<digits> phone number, and a key, cause or subject may not be
+  -- digits and separators alone: a bare number cannot be told from a phone
+  -- number, so a numeric id is written with what it is an id OF — `booking:42`.
+  CONSTRAINT ptx_no_contact_details CHECK (
+    (scope || '|' || idempotency_key || '|' || cause_id || '|' || subject_id || '|' || attribution_version
+       || '|' || coalesce(external_ref, '') || '|' || coalesce(fx_rate_source, ''))
+      !~ '@|\+[0-9][0-9 ().-]{5,}[0-9]'
+    AND idempotency_key !~ '^[0-9 ().+-]{1,20}$'
+    AND cause_id !~ '^[0-9 ().+-]{1,20}$'
+    AND subject_id !~ '^[0-9 ().+-]{1,20}$'),
   -- The beneficiary is an account in this transaction's currency and mode.
   CONSTRAINT ptx_beneficiary_fk FOREIGN KEY (beneficiary_account_id, currency, livemode)
     REFERENCES public.payment_accounts (id, currency, livemode),
@@ -285,7 +356,13 @@ CREATE TABLE IF NOT EXISTS public.payment_transactions (
   CONSTRAINT ptx_id_currency_mode_key UNIQUE (id, currency, livemode)
 );
 COMMENT ON TABLE public.payment_transactions IS
-  '3821 (09 §5.4; PAY-037, PAY-047): one row per money movement, carrying kind, (scope, idempotency_key) UNIQUE, the frozen attribution tuple (09 §6), the booked currency with the ORIGINAL currency and amount and any conversion details (owner ruling 2026-10-04), external_ref and occurred_at. Its entries are payment_ledger_entries. Append-only; livemode CHECK-constrained FALSE. No column holds a profile id or free text about a person.';
+  '3821 (09 §5.4; PAY-037, PAY-047): one row per money movement, carrying kind, (scope, idempotency_key) UNIQUE, the frozen attribution tuple (09 §6), the booked currency with the ORIGINAL currency and amount and any conversion details (owner ruling 2026-10-04), external_ref and occurred_at. Its entries are payment_ledger_entries. Append-only; livemode CHECK-constrained FALSE. Its text columns are ids of THINGS: a row whose text contains a profile id, an @ or a +phone number is refused at INSERT for every writer (ptx_admit, ptx_no_contact_details), a person is referred to by payment PARTY id, and the one UPDATE the table permits is the erasure scrub that replaces a removed profile id with its party id (pp_identity_scrub). A name or an id in another encoding cannot be detected.';
+COMMENT ON COLUMN public.payment_transactions.fx_rate IS
+  '09 §8: the rate actually applied — units of currency (booked) per ONE unit of original_currency, both in MAJOR units. Stored as handed in; the ledger knows no currency''s minor-unit exponent and converts nothing.';
+COMMENT ON COLUMN public.payment_transactions.original_amount_minor IS
+  'What the customer was presented, in minor units of original_currency. When original_currency = currency it equals the sum of the transaction''s credit entries (checked at COMMIT, SQLSTATE PL007). When they differ it is not comparable to the entries without each currency''s exponent, so it is stored beside fx_rate and not checked against them.';
+COMMENT ON COLUMN public.payment_transactions.external_ref IS
+  'The provider object id, <prefix>_<token>. Constrained to that shape: this column is not for notes or contact details.';
 
 -- At most one reversal per transaction: reversing twice re-credits money once owed.
 CREATE UNIQUE INDEX IF NOT EXISTS ptx_one_reversal_per_transaction
@@ -332,14 +409,97 @@ CREATE INDEX IF NOT EXISTS ple_transaction_idx ON public.payment_ledger_entries 
 CREATE INDEX IF NOT EXISTS ple_account_idx ON public.payment_ledger_entries (account_id);
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- What an erased profile id looks like in text, and what replaces it.
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Pure functions of their arguments. They are shared by the scrub (which
+-- performs the rewrite) and by the append-only guard (which permits an UPDATE of
+-- payment_transactions only when it IS that rewrite), so the two cannot disagree.
+CREATE OR REPLACE FUNCTION public.payment_identifier_pattern(p_id uuid)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+SET search_path TO pg_catalog, pg_temp
+AS $fn$
+  -- The id's 32 hex digits with an optional dash between any two: it matches the
+  -- canonical spelling, the dashless one, and anything between. Used with ~*.
+  SELECT pg_catalog.array_to_string(
+           pg_catalog.regexp_split_to_array(pg_catalog.replace(p_id::pg_catalog.text, '-', ''), ''), '-?');
+$fn$;
+REVOKE ALL ON FUNCTION public.payment_identifier_pattern(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.payment_identifier_pattern(uuid) FROM anon, authenticated, service_role;
+
+CREATE OR REPLACE FUNCTION public.payment_identifier_scrubbed(p_value text, p_profile uuid, p_replacement uuid)
+RETURNS text
+LANGUAGE sql
+IMMUTABLE
+SET search_path TO pg_catalog, pg_temp
+AS $fn$
+  -- The canonical spelling becomes the replacement's canonical spelling; any
+  -- other spelling becomes its dashless one. NULL stays NULL.
+  SELECT pg_catalog.regexp_replace(
+           pg_catalog.regexp_replace(p_value, p_profile::pg_catalog.text, p_replacement::pg_catalog.text, 'gi'),
+           public.payment_identifier_pattern(p_profile),
+           pg_catalog.replace(p_replacement::pg_catalog.text, '-', ''), 'gi');
+$fn$;
+REVOKE ALL ON FUNCTION public.payment_identifier_scrubbed(text, uuid, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.payment_identifier_scrubbed(text, uuid, uuid) FROM anon, authenticated, service_role;
+
+CREATE OR REPLACE FUNCTION public.payment_transaction_scrubbed(
+  p_row public.payment_transactions, p_profile uuid, p_replacement uuid)
+RETURNS jsonb
+LANGUAGE plpgsql
+IMMUTABLE
+SET search_path TO pg_catalog, pg_temp
+AS $fn$
+BEGIN
+  -- The seven text columns of an envelope as they stand once p_profile is gone.
+  -- A key that carried the id (or sits under a scope that did) is tombstoned
+  -- whole: `scrubbed:<transaction id>` is unique by construction, so an erasure
+  -- can never fail on ptx_idempotency_once.
+  RETURN jsonb_build_object(
+    'scope', public.payment_identifier_scrubbed(p_row.scope, p_profile, p_replacement),
+    'idempotency_key', CASE
+      WHEN (p_row.scope || '|' || p_row.idempotency_key) ~* public.payment_identifier_pattern(p_profile)
+        THEN 'scrubbed:' || p_row.id::pg_catalog.text
+      ELSE p_row.idempotency_key END,
+    'cause_id', public.payment_identifier_scrubbed(p_row.cause_id, p_profile, p_replacement),
+    'subject_id', public.payment_identifier_scrubbed(p_row.subject_id, p_profile, p_replacement),
+    'attribution_version', public.payment_identifier_scrubbed(p_row.attribution_version, p_profile, p_replacement),
+    'external_ref', public.payment_identifier_scrubbed(p_row.external_ref, p_profile, p_replacement),
+    'fx_rate_source', public.payment_identifier_scrubbed(p_row.fx_rate_source, p_profile, p_replacement));
+END;
+$fn$;
+REVOKE ALL ON FUNCTION public.payment_transaction_scrubbed(public.payment_transactions, uuid, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.payment_transaction_scrubbed(public.payment_transactions, uuid, uuid) FROM anon, authenticated, service_role;
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- I2 / I3: append-only. Row-level and TRUNCATE-level; never statement-level.
 -- ═══════════════════════════════════════════════════════════════════════════
 CREATE OR REPLACE FUNCTION public.payment_ledger_append_only()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path TO ''
+SET search_path TO pg_catalog, pg_temp
 AS $fn$
+DECLARE
+  v_token pg_catalog.text;
 BEGIN
+  -- THE ONE EXCEPTION, on the envelope only: the erasure scrub. It is admitted
+  -- when a scrub is in progress in this transaction (the token names the
+  -- removed profile id and its replacement) AND the row that would result is
+  -- exactly the old row with that id replaced in its text columns — computed
+  -- here, from OLD, by the same function the scrub uses. Any other change under
+  -- the same token is refused like every other UPDATE. Amounts, accounts,
+  -- currency, kind, the beneficiary and every timestamp cannot change by it.
+  IF TG_OP = 'UPDATE' AND TG_LEVEL = 'ROW' AND TG_TABLE_SCHEMA = 'public' AND TG_TABLE_NAME = 'payment_transactions' THEN
+    v_token := coalesce(current_setting('portava.payment_identity_scrub', true), '');
+    IF v_token ~ '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}:[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$' THEN
+      IF to_jsonb(NEW) IS DISTINCT FROM to_jsonb(OLD)
+         AND to_jsonb(NEW) = to_jsonb(OLD) || public.payment_transaction_scrubbed(
+               OLD, left(v_token, 36)::pg_catalog.uuid, right(v_token, 36)::pg_catalog.uuid) THEN
+        RETURN NEW;
+      END IF;
+    END IF;
+  END IF;
   RAISE EXCEPTION
     'payment_ledger_append_only — % on % is refused: ledger rows are never changed or removed; a correction is a new, opposite transaction (09 §5.3 I2)',
     TG_OP, TG_TABLE_NAME
@@ -347,9 +507,9 @@ BEGIN
 END;
 $fn$;
 COMMENT ON FUNCTION public.payment_ledger_append_only() IS
-  '3821 (09 §5.3 I2/I3): refuses UPDATE, DELETE and TRUNCATE of a payment ledger table with SQLSTATE PL001. Attached FOR EACH ROW (UPDATE, DELETE) and FOR EACH STATEMENT (TRUNCATE only — TRUNCATE fires no row trigger). Never attached as a statement-level UPDATE/DELETE trigger.';
+  '3821 (09 §5.3 I2/I3): refuses UPDATE, DELETE and TRUNCATE of a payment ledger table with SQLSTATE PL001. Attached FOR EACH ROW (UPDATE, DELETE) and FOR EACH STATEMENT (TRUNCATE only — TRUNCATE fires no row trigger). Never attached as a statement-level UPDATE/DELETE trigger. ONE exception, on payment_transactions: the erasure scrub of public.payment_scrub_profile_identifier — an UPDATE whose result is exactly the old row with a removed profile id replaced by its party id in the seven text columns, and nothing else.';
 REVOKE ALL ON FUNCTION public.payment_ledger_append_only() FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.payment_ledger_append_only() FROM anon, authenticated;
+REVOKE ALL ON FUNCTION public.payment_ledger_append_only() FROM anon, authenticated, service_role;
 
 DROP TRIGGER IF EXISTS ple_append_only ON public.payment_ledger_entries;
 CREATE TRIGGER ple_append_only
@@ -394,7 +554,7 @@ CREATE TRIGGER pp_no_truncate
 CREATE OR REPLACE FUNCTION public.payment_party_identity_guard()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path TO ''
+SET search_path TO pg_catalog, pg_temp
 AS $fn$
 BEGIN
   IF NEW.id IS DISTINCT FROM OLD.id OR NEW.kind IS DISTINCT FROM OLD.kind
@@ -419,7 +579,7 @@ $fn$;
 COMMENT ON FUNCTION public.payment_party_identity_guard() IS
   '3821: BEFORE UPDATE FOR EACH ROW on payment_parties. Permits exactly one change — profile_id going from a profile to NULL — and stamps identity_removed_at / identity_removed_via itself, so the erasure door and the profiles foreign key (ON DELETE SET NULL) leave identical rows. Every other UPDATE raises SQLSTATE PL005.';
 REVOKE ALL ON FUNCTION public.payment_party_identity_guard() FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.payment_party_identity_guard() FROM anon, authenticated;
+REVOKE ALL ON FUNCTION public.payment_party_identity_guard() FROM anon, authenticated, service_role;
 
 DROP TRIGGER IF EXISTS pp_identity_guard ON public.payment_parties;
 CREATE TRIGGER pp_identity_guard
@@ -427,43 +587,171 @@ CREATE TRIGGER pp_identity_guard
   FOR EACH ROW EXECUTE FUNCTION public.payment_party_identity_guard();
 
 -- ═══════════════════════════════════════════════════════════════════════════
+-- Erasure, second half: nothing else still says who it was.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE OR REPLACE FUNCTION public.payment_scrub_profile_identifier(p_profile uuid, p_replacement uuid)
+RETURNS bigint
+LANGUAGE plpgsql
+VOLATILE
+SET search_path TO pg_catalog, pg_temp
+AS $fn$
+DECLARE
+  v_pattern pg_catalog.text;
+  v_rows    pg_catalog.int8 := 0;
+BEGIN
+  IF p_profile IS NULL OR p_replacement IS NULL THEN
+    RETURN 0;
+  END IF;
+  v_pattern := public.payment_identifier_pattern(p_profile);
+  -- Transaction-local, and cleared below: the guard admits the rewrite only
+  -- while it is set, and only when the rewrite is the one it computes itself.
+  PERFORM set_config('portava.payment_identity_scrub', p_profile::pg_catalog.text || ':' || p_replacement::pg_catalog.text, true);
+  UPDATE public.payment_transactions t
+     SET scope               = s.j->>'scope',
+         idempotency_key     = s.j->>'idempotency_key',
+         cause_id            = s.j->>'cause_id',
+         subject_id          = s.j->>'subject_id',
+         attribution_version = s.j->>'attribution_version',
+         external_ref        = s.j->>'external_ref',
+         fx_rate_source      = s.j->>'fx_rate_source'
+    FROM (SELECT x.id, public.payment_transaction_scrubbed(x, p_profile, p_replacement) AS j
+            FROM public.payment_transactions x
+           WHERE (x.scope || '|' || x.idempotency_key || '|' || x.cause_id || '|' || x.subject_id || '|'
+                  || x.attribution_version || '|' || coalesce(x.external_ref, '') || '|'
+                  || coalesce(x.fx_rate_source, '')) ~* v_pattern) s
+   WHERE t.id = s.id;
+  GET DIAGNOSTICS v_rows = ROW_COUNT;
+  PERFORM set_config('portava.payment_identity_scrub', '', true);
+  RETURN v_rows;
+END;
+$fn$;
+COMMENT ON FUNCTION public.payment_scrub_profile_identifier(uuid, uuid) IS
+  '3821 (owner ruling 2026-10-04, erasure): rewrites every payment_transactions row whose text columns still carry p_profile — in any hex spelling, either case — replacing it with p_replacement (the party id) and tombstoning an idempotency key that carried it; returns the rows rewritten. Amounts, accounts and entries are untouched. One sequential pass over payment_transactions per erasure. ptx_admit keeps profile ids out at INSERT, so this normally finds nothing; it exists so that an identifier written around the door does not outlive the person''s erasure. SECURITY INVOKER and executable by no role but the owner: its callers are the party trigger pp_identity_scrub and 3823''s erasure door.';
+REVOKE ALL ON FUNCTION public.payment_scrub_profile_identifier(uuid, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.payment_scrub_profile_identifier(uuid, uuid) FROM anon, authenticated, service_role;
+
+CREATE OR REPLACE FUNCTION public.payment_party_scrub_identifiers()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO pg_catalog, pg_temp
+AS $fn$
+BEGIN
+  -- The count is left in a transaction-local setting for the erasure door to report.
+  PERFORM set_config(
+    'portava.payment_identity_scrubbed_rows',
+    public.payment_scrub_profile_identifier(OLD.profile_id, NEW.id)::pg_catalog.text,
+    true);
+  RETURN NULL;
+END;
+$fn$;
+COMMENT ON FUNCTION public.payment_party_scrub_identifiers() IS
+  '3821: AFTER UPDATE FOR EACH ROW on payment_parties, WHEN the profile link has just been removed. Runs the scrub with the party id as the replacement, so the erasure door and profiles'' ON DELETE SET NULL leave the same ledger. SECURITY DEFINER (a trigger function: not callable directly) so the rewrite does not depend on which role caused the link to go.';
+REVOKE ALL ON FUNCTION public.payment_party_scrub_identifiers() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.payment_party_scrub_identifiers() FROM anon, authenticated, service_role;
+
+DROP TRIGGER IF EXISTS pp_identity_scrub ON public.payment_parties;
+CREATE TRIGGER pp_identity_scrub
+  AFTER UPDATE ON public.payment_parties
+  FOR EACH ROW
+  WHEN (OLD.profile_id IS NOT NULL AND NEW.profile_id IS NULL)
+  EXECUTE FUNCTION public.payment_party_scrub_identifiers();
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- The door, for every writer: no envelope names a person.
+-- ═══════════════════════════════════════════════════════════════════════════
+CREATE OR REPLACE FUNCTION public.payment_transaction_admit()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path TO pg_catalog, pg_temp
+AS $fn$
+DECLARE
+  v_field pg_catalog.text;
+BEGIN
+  -- Half of the seal: an envelope's created_at is its own transaction's now().
+  NEW.created_at := now();
+
+  -- Every 32-hex-digit window of every text column (dashes removed, lower-cased)
+  -- is looked up as a profile id: in payment_parties (the profile of any party,
+  -- so of every party this transaction could touch) and in profiles. One index
+  -- probe per window; a column with no long hex run costs nothing.
+  SELECT f.name INTO v_field
+    FROM (VALUES ('scope', NEW.scope), ('idempotency_key', NEW.idempotency_key), ('cause_id', NEW.cause_id),
+                 ('subject_id', NEW.subject_id), ('attribution_version', NEW.attribution_version),
+                 ('external_ref', NEW.external_ref), ('fx_rate_source', NEW.fx_rate_source)) AS f(name, val)
+   CROSS JOIN LATERAL (SELECT lower(replace(f.val, '-', '')) AS s) n
+   CROSS JOIN LATERAL generate_series(1, length(n.s) - 31) AS g(i)
+   CROSS JOIN LATERAL (SELECT CASE WHEN substr(n.s, g.i, 32) ~ '^[0-9a-f]{32}$'
+                                   THEN substr(n.s, g.i, 32)::pg_catalog.uuid END AS candidate) w
+   WHERE w.candidate IS NOT NULL
+     AND (EXISTS (SELECT 1 FROM public.payment_parties pt WHERE pt.profile_id = w.candidate)
+       OR EXISTS (SELECT 1 FROM public.profiles pr WHERE pr.id = w.candidate))
+   LIMIT 1;
+  IF v_field IS NOT NULL THEN
+    RAISE EXCEPTION
+      'payment_invalid_request: person_identifier — % contains a profile id. A ledger row outlives the person''s erasure: refer to a person by payment party id, and derive keys from the event', v_field
+      USING ERRCODE = 'PL422';
+  END IF;
+  RETURN NEW;
+END;
+$fn$;
+COMMENT ON FUNCTION public.payment_transaction_admit() IS
+  '3821: BEFORE INSERT FOR EACH ROW on payment_transactions, so it binds every writer. Forces created_at to now() (the seal reads it) and refuses, with SQLSTATE PL422 person_identifier, a row any of whose seven text columns contains the id of a profile — dashed or not, either case. Emails and phone numbers are refused by CHECK ptx_no_contact_details.';
+REVOKE ALL ON FUNCTION public.payment_transaction_admit() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.payment_transaction_admit() FROM anon, authenticated, service_role;
+
+DROP TRIGGER IF EXISTS ptx_admit ON public.payment_transactions;
+CREATE TRIGGER ptx_admit
+  BEFORE INSERT ON public.payment_transactions
+  FOR EACH ROW EXECUTE FUNCTION public.payment_transaction_admit();
+
+-- ═══════════════════════════════════════════════════════════════════════════
 -- I1, first half: an entry is written with its envelope, in one transaction.
 -- ═══════════════════════════════════════════════════════════════════════════
--- The envelope's BEFORE INSERT announces its id in a transaction-local setting;
--- an entry is accepted only for an id announced in the SAME database
--- transaction. set_config(…, true) cannot outlive the transaction, so a
--- committed envelope is closed to further entries for good. Without this, a
--- later pair of entries that itself sums to zero would pass the balance check
--- while moving money under an attribution that was frozen for something else.
+-- The envelope's AFTER INSERT announces its id in a transaction-local setting.
+-- AFTER, not BEFORE: a BEFORE INSERT row trigger fires even when ON CONFLICT DO
+-- NOTHING then inserts nothing, which let `INSERT … (id = <a committed
+-- transaction>) ON CONFLICT (id) DO NOTHING` re-announce a committed envelope.
+-- An AFTER row trigger fires only for a row that was inserted.
+-- An entry is accepted only when its envelope was announced AND was created in
+-- this same database transaction (created_at = now(); ptx_admit forces the
+-- former and nothing can set the latter). set_config(…, true) cannot outlive
+-- the transaction, and a committed envelope's created_at is another
+-- transaction's, so a committed envelope is closed to further entries for good.
+-- Without this, a later pair of entries that itself sums to zero would pass the
+-- balance check while moving money under an attribution frozen for something
+-- else, and around the balance projection.
 CREATE OR REPLACE FUNCTION public.payment_transaction_open()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path TO ''
+SET search_path TO pg_catalog, pg_temp
 AS $fn$
 BEGIN
   PERFORM set_config(
     'portava.payment_open_transactions',
-    coalesce(current_setting('portava.payment_open_transactions', true), '') || NEW.id::text || ',',
+    coalesce(current_setting('portava.payment_open_transactions', true), '') || NEW.id::pg_catalog.text || ',',
     true);
-  RETURN NEW;
+  RETURN NULL;
 END;
 $fn$;
 REVOKE ALL ON FUNCTION public.payment_transaction_open() FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.payment_transaction_open() FROM anon, authenticated;
+REVOKE ALL ON FUNCTION public.payment_transaction_open() FROM anon, authenticated, service_role;
 
 DROP TRIGGER IF EXISTS ptx_open_for_entries ON public.payment_transactions;
 CREATE TRIGGER ptx_open_for_entries
-  BEFORE INSERT ON public.payment_transactions
+  AFTER INSERT ON public.payment_transactions
   FOR EACH ROW EXECUTE FUNCTION public.payment_transaction_open();
 
 CREATE OR REPLACE FUNCTION public.payment_entry_transaction_is_open()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path TO ''
+SET search_path TO pg_catalog, pg_temp
 AS $fn$
 BEGIN
-  IF position(NEW.transaction_id::text || ',' IN
-              coalesce(current_setting('portava.payment_open_transactions', true), '')) = 0 THEN
+  IF position(NEW.transaction_id::pg_catalog.text || ',' IN
+              coalesce(current_setting('portava.payment_open_transactions', true), '')) = 0
+     OR NOT EXISTS (SELECT 1 FROM public.payment_transactions t
+                     WHERE t.id = NEW.transaction_id AND t.created_at = now()) THEN
     RAISE EXCEPTION
       'payment_transaction_sealed — an entry may only be written in the database transaction that wrote its envelope (%); a committed transaction takes no further entries (09 §5.3 I1)',
       NEW.transaction_id
@@ -473,7 +761,7 @@ BEGIN
 END;
 $fn$;
 REVOKE ALL ON FUNCTION public.payment_entry_transaction_is_open() FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.payment_entry_transaction_is_open() FROM anon, authenticated;
+REVOKE ALL ON FUNCTION public.payment_entry_transaction_is_open() FROM anon, authenticated, service_role;
 
 DROP TRIGGER IF EXISTS ple_transaction_is_open ON public.payment_ledger_entries;
 CREATE TRIGGER ple_transaction_is_open
@@ -486,22 +774,26 @@ CREATE TRIGGER ple_transaction_is_open
 CREATE OR REPLACE FUNCTION public.payment_assert_transaction_balanced(p_transaction_id uuid)
 RETURNS void
 LANGUAGE plpgsql
-SET search_path TO ''
+SET search_path TO pg_catalog, pg_temp
 AS $fn$
 DECLARE
-  n_entries    bigint;
-  n_currencies bigint;
-  residual     numeric;
-  original     uuid;
+  n_accounts   pg_catalog.int8;
+  n_currencies pg_catalog.int8;
+  residual     pg_catalog.numeric;
+  credited     pg_catalog.numeric;
+  v_tx         record;
 BEGIN
-  SELECT count(*), count(DISTINCT e.currency), coalesce(sum(e.amount_minor), 0)
-    INTO n_entries, n_currencies, residual
+  SELECT count(DISTINCT e.account_id), count(DISTINCT e.currency), coalesce(sum(e.amount_minor), 0),
+         coalesce(sum(e.amount_minor) FILTER (WHERE e.amount_minor > 0), 0)
+    INTO n_accounts, n_currencies, residual, credited
     FROM public.payment_ledger_entries e
    WHERE e.transaction_id = p_transaction_id;
-  IF n_entries < 2 THEN
+  -- DISTINCT accounts, not entries: +500 and -500 on one account is two entries
+  -- that sum to zero and move nothing.
+  IF n_accounts < 2 THEN
     RAISE EXCEPTION
-      'payment_transaction_unbalanced — transaction % has % entr(y/ies); a money movement names at least two accounts (09 §5.2, §5.4)',
-      p_transaction_id, n_entries
+      'payment_transaction_unbalanced — transaction % names % account(s); a money movement names at least two different accounts (09 §5.2, §5.4)',
+      p_transaction_id, n_accounts
       USING ERRCODE = 'PL002';
   END IF;
   -- Unreachable while ple_transaction_fk stands (I4); kept so the invariant is
@@ -517,10 +809,23 @@ BEGIN
       USING ERRCODE = 'PL002';
   END IF;
 
-  -- `09` §9.2: a reversal's entries are the negation of the original's.
-  SELECT t.reverses_transaction_id INTO original
+  SELECT t.reverses_transaction_id AS original, t.currency, t.original_currency, t.original_amount_minor
+    INTO v_tx
     FROM public.payment_transactions t WHERE t.id = p_transaction_id;
-  IF original IS NOT NULL AND EXISTS (
+
+  -- The amount the customer was presented is the amount the entries move: in
+  -- one currency, the credits total original_amount_minor. (Across currencies
+  -- the two figures are not comparable without each currency's exponent, which
+  -- the ledger does not hold; the rate applied is stored beside them instead.)
+  IF v_tx.original_currency = v_tx.currency AND credited <> v_tx.original_amount_minor THEN
+    RAISE EXCEPTION
+      'payment_original_amount_mismatch — transaction % records original_amount_minor % but its credit entries total %',
+      p_transaction_id, v_tx.original_amount_minor, credited
+      USING ERRCODE = 'PL007';
+  END IF;
+
+  -- `09` §9.2: a reversal's entries are the negation of the original's.
+  IF v_tx.original IS NOT NULL AND EXISTS (
     SELECT 1
       FROM (SELECT e.account_id, sum(e.amount_minor) AS net
               FROM public.payment_ledger_entries e
@@ -528,24 +833,33 @@ BEGIN
       FULL JOIN
            (SELECT e.account_id, sum(e.amount_minor) AS net
               FROM public.payment_ledger_entries e
-             WHERE e.transaction_id = original GROUP BY e.account_id) o
+             WHERE e.transaction_id = v_tx.original GROUP BY e.account_id) o
         USING (account_id)
      WHERE coalesce(r.net, 0) <> -coalesce(o.net, 0)
   ) THEN
     RAISE EXCEPTION
       'payment_reversal_not_negation — transaction % must negate transaction % exactly, account by account (09 §9.2)',
-      p_transaction_id, original
+      p_transaction_id, v_tx.original
       USING ERRCODE = 'PL004';
   END IF;
 END;
 $fn$;
 REVOKE ALL ON FUNCTION public.payment_assert_transaction_balanced(uuid) FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.payment_assert_transaction_balanced(uuid) FROM anon, authenticated;
+REVOKE ALL ON FUNCTION public.payment_assert_transaction_balanced(uuid) FROM anon, authenticated, service_role;
 
+-- The two deferred checks run at COMMIT, AFTER a SECURITY DEFINER posting
+-- function has returned — so as the SESSION's role, service_role, which holds
+-- no EXECUTE on payment_assert_transaction_balanced. They are therefore
+-- SECURITY DEFINER themselves (trigger functions: not callable directly). On a
+-- database with Supabase's default privileges this was masked, because
+-- service_role is granted EXECUTE on every new function there; on a plain one
+-- every post failed at COMMIT with 42501. The explicit REVOKE … FROM
+-- service_role above makes both kinds of database behave the same.
 CREATE OR REPLACE FUNCTION public.payment_entry_transaction_balances()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path TO ''
+SECURITY DEFINER
+SET search_path TO pg_catalog, pg_temp
 AS $fn$
 BEGIN
   PERFORM public.payment_assert_transaction_balanced(NEW.transaction_id);
@@ -553,12 +867,13 @@ BEGIN
 END;
 $fn$;
 REVOKE ALL ON FUNCTION public.payment_entry_transaction_balances() FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.payment_entry_transaction_balances() FROM anon, authenticated;
+REVOKE ALL ON FUNCTION public.payment_entry_transaction_balances() FROM anon, authenticated, service_role;
 
 CREATE OR REPLACE FUNCTION public.payment_transaction_has_balanced_entries()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path TO ''
+SECURITY DEFINER
+SET search_path TO pg_catalog, pg_temp
 AS $fn$
 BEGIN
   PERFORM public.payment_assert_transaction_balanced(NEW.id);
@@ -566,7 +881,7 @@ BEGIN
 END;
 $fn$;
 REVOKE ALL ON FUNCTION public.payment_transaction_has_balanced_entries() FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.payment_transaction_has_balanced_entries() FROM anon, authenticated;
+REVOKE ALL ON FUNCTION public.payment_transaction_has_balanced_entries() FROM anon, authenticated, service_role;
 
 DROP TRIGGER IF EXISTS ple_transaction_balances ON public.payment_ledger_entries;
 CREATE CONSTRAINT TRIGGER ple_transaction_balances
@@ -610,18 +925,18 @@ RETURNS jsonb
 LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
-SET search_path TO ''
+SET search_path TO pg_catalog, pg_temp
 AS $fn$
 DECLARE
-  k          text;
-  v_kind     text;
-  v_profile  uuid;
-  v_label    text;
-  v_type     text;
-  v_currency text;
-  v_party    uuid;
-  v_account  uuid;
-  v_created  boolean := false;
+  k          pg_catalog.text;
+  v_kind     pg_catalog.text;
+  v_profile  pg_catalog.uuid;
+  v_label    pg_catalog.text;
+  v_type     pg_catalog.text;
+  v_currency pg_catalog.text;
+  v_party    pg_catalog.uuid;
+  v_account  pg_catalog.uuid;
+  v_created  pg_catalog.bool := false;
 BEGIN
   IF p IS NULL OR jsonb_typeof(p) <> 'object' THEN
     RAISE EXCEPTION 'payment_invalid_request: payload_not_an_object' USING ERRCODE = 'PL422';
@@ -631,7 +946,7 @@ BEGIN
       RAISE EXCEPTION 'payment_invalid_request: unknown_field — %', k USING ERRCODE = 'PL422';
     END IF;
   END LOOP;
-  IF p ? 'livemode' AND p->'livemode' IS DISTINCT FROM 'false'::jsonb THEN
+  IF p ? 'livemode' AND p->'livemode' IS DISTINCT FROM 'false'::pg_catalog.jsonb THEN
     RAISE EXCEPTION 'payment_live_mode_refused — this ledger records test-mode money only' USING ERRCODE = 'PL451';
   END IF;
 
@@ -651,7 +966,7 @@ BEGIN
       IF v_label IS NOT NULL OR coalesce(p->>'profile_id', '') !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN
         RAISE EXCEPTION 'payment_invalid_request: user_owner_needs_profile_id_and_no_label' USING ERRCODE = 'PL422';
       END IF;
-      v_profile := (p->>'profile_id')::uuid;
+      v_profile := (p->>'profile_id')::pg_catalog.uuid;
       INSERT INTO public.payment_parties (kind, profile_id) VALUES ('user', v_profile)
       ON CONFLICT (profile_id) DO NOTHING;
       SELECT pt.id INTO v_party FROM public.payment_parties pt WHERE pt.profile_id = v_profile;
@@ -691,7 +1006,7 @@ BEGIN
 END;
 $fn$;
 COMMENT ON FUNCTION public.payment_account_ensure(jsonb) IS
-  '3821 (09 §4; PAY-022): idempotent account creation — INSERT … ON CONFLICT DO NOTHING on the party and on the (owner_kind, owner_id, account_type, currency, livemode) tuple, then the row''s id. A second call returns the same account with created = false. Payload: owner_kind, account_type, currency, and profile_id (user) or owner_label (platform, processor). Unknown fields, a bad shape, a missing profile and livemode other than false are refused by name (PL422 / PL451). SECURITY DEFINER because service_role holds no INSERT on the ledger; EXECUTE for service_role only.';
+  '3821 (09 §4; PAY-022): idempotent account creation — INSERT … ON CONFLICT DO NOTHING on the party and on the (owner_kind, owner_id, account_type, currency, livemode) tuple, then the row''s id. A second call returns the same account with created = false. Payload: owner_kind, account_type, currency, and profile_id (user) or owner_label (platform, processor). Unknown fields, a bad shape, a missing profile and livemode other than false are refused by name (PL422 / PL451). Returns account_id, party_id (the pseudonym a person is referred to by everywhere else in the ledger) and created. SECURITY DEFINER because service_role holds no INSERT on the ledger, search_path pinned to pg_catalog, pg_temp; EXECUTE for service_role only.';
 REVOKE ALL ON FUNCTION public.payment_account_ensure(jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.payment_account_ensure(jsonb) FROM anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.payment_account_ensure(jsonb) TO service_role;
@@ -780,9 +1095,72 @@ BEGIN
     RAISE EXCEPTION '3821: POSTCONDITION FAILED: service_role cannot execute payment_account_ensure';
   END IF;
   SELECT count(*) INTO n FROM pg_proc f
-   WHERE f.oid = 'public.payment_account_ensure(jsonb)'::regprocedure AND f.prosecdef
-     AND f.proconfig @> ARRAY['search_path=""'];
-  IF n <> 1 THEN RAISE EXCEPTION '3821: POSTCONDITION FAILED: payment_account_ensure is not SECURITY DEFINER with search_path pinned empty'; END IF;
+   WHERE f.oid = 'public.payment_account_ensure(jsonb)'::regprocedure AND f.prosecdef;
+  IF n <> 1 THEN RAISE EXCEPTION '3821: POSTCONDITION FAILED: payment_account_ensure is not SECURITY DEFINER'; END IF;
+
+  -- EVERY function of this file pins search_path to pg_catalog, pg_temp — never
+  -- empty, which leaves pg_temp searched FIRST for type names.
+  SELECT count(*) INTO n FROM pg_proc f JOIN pg_namespace ns ON ns.oid = f.pronamespace
+   WHERE ns.nspname = 'public' AND f.proname IN (
+     'payment_identifier_pattern', 'payment_identifier_scrubbed', 'payment_transaction_scrubbed',
+     'payment_ledger_append_only', 'payment_party_identity_guard', 'payment_scrub_profile_identifier',
+     'payment_party_scrub_identifiers', 'payment_transaction_admit', 'payment_transaction_open',
+     'payment_entry_transaction_is_open', 'payment_assert_transaction_balanced',
+     'payment_entry_transaction_balances', 'payment_transaction_has_balanced_entries', 'payment_account_ensure')
+     AND f.proconfig @> ARRAY['search_path=pg_catalog, pg_temp'];
+  IF n <> 14 THEN RAISE EXCEPTION '3821: POSTCONDITION FAILED: % of 14 functions pin search_path to pg_catalog, pg_temp', n; END IF;
+
+  -- SECURITY DEFINER is held by the account door and by the three trigger
+  -- functions that run outside it (two at COMMIT, one under a foreign-key
+  -- action) — and by nothing else in this file.
+  SELECT count(*) INTO n FROM pg_proc f JOIN pg_namespace ns ON ns.oid = f.pronamespace
+   WHERE ns.nspname = 'public' AND f.prosecdef AND f.proname IN (
+     'payment_identifier_pattern', 'payment_identifier_scrubbed', 'payment_transaction_scrubbed',
+     'payment_ledger_append_only', 'payment_party_identity_guard', 'payment_scrub_profile_identifier',
+     'payment_transaction_admit', 'payment_transaction_open', 'payment_entry_transaction_is_open',
+     'payment_assert_transaction_balanced');
+  IF n <> 0 THEN RAISE EXCEPTION '3821: POSTCONDITION FAILED: % internal function(s) are SECURITY DEFINER', n; END IF;
+  SELECT count(*) INTO n FROM pg_proc f JOIN pg_namespace ns ON ns.oid = f.pronamespace
+   WHERE ns.nspname = 'public' AND f.prosecdef AND f.prorettype = 'pg_catalog.trigger'::regtype AND f.proname IN (
+     'payment_entry_transaction_balances', 'payment_transaction_has_balanced_entries', 'payment_party_scrub_identifiers');
+  IF n <> 3 THEN RAISE EXCEPTION '3821: POSTCONDITION FAILED: % of 3 deferred / cascade trigger functions are SECURITY DEFINER', n; END IF;
+
+  -- No role but the owner may execute an internal function — on a database with
+  -- Supabase's default privileges as on one without.
+  FOREACH t IN ARRAY ARRAY[
+    'public.payment_identifier_pattern(uuid)', 'public.payment_identifier_scrubbed(text, uuid, uuid)',
+    'public.payment_transaction_scrubbed(public.payment_transactions, uuid, uuid)',
+    'public.payment_scrub_profile_identifier(uuid, uuid)', 'public.payment_assert_transaction_balanced(uuid)',
+    'public.payment_ledger_append_only()', 'public.payment_party_identity_guard()',
+    'public.payment_party_scrub_identifiers()', 'public.payment_transaction_admit()',
+    'public.payment_transaction_open()', 'public.payment_entry_transaction_is_open()',
+    'public.payment_entry_transaction_balances()', 'public.payment_transaction_has_balanced_entries()'] LOOP
+    FOREACH pr IN ARRAY ARRAY['anon', 'authenticated', 'service_role'] LOOP
+      IF has_function_privilege(pr, t, 'EXECUTE') THEN
+        RAISE EXCEPTION '3821: POSTCONDITION FAILED: % can execute %', pr, t;
+      END IF;
+    END LOOP;
+  END LOOP;
+
+  -- The seal's and the door's triggers, and the constraints an older shape of
+  -- this table would lack (CREATE TABLE IF NOT EXISTS adopts what it finds).
+  SELECT count(*) INTO n FROM pg_trigger g
+   WHERE NOT g.tgisinternal AND g.tgenabled = 'O' AND (g.tgtype & 1) = 1 AND (g.tgtype & 4) = 4
+     AND ((g.tgrelid = 'public.payment_transactions'::regclass AND g.tgname = 'ptx_admit' AND (g.tgtype & 2) = 2)
+       OR (g.tgrelid = 'public.payment_transactions'::regclass AND g.tgname = 'ptx_open_for_entries' AND (g.tgtype & 2) = 0)
+       OR (g.tgrelid = 'public.payment_ledger_entries'::regclass AND g.tgname = 'ple_transaction_is_open' AND (g.tgtype & 2) = 2));
+  IF n <> 3 THEN RAISE EXCEPTION '3821: POSTCONDITION FAILED: % of 3 admission / seal triggers present (ptx_admit BEFORE, ptx_open_for_entries AFTER, ple_transaction_is_open BEFORE)', n; END IF;
+  SELECT count(*) INTO n FROM pg_trigger g
+   WHERE NOT g.tgisinternal AND g.tgenabled = 'O' AND g.tgrelid = 'public.payment_parties'::regclass
+     AND g.tgname = 'pp_identity_scrub' AND (g.tgtype & 1) = 1 AND (g.tgtype & 2) = 0 AND (g.tgtype & 16) = 16;
+  IF n <> 1 THEN RAISE EXCEPTION '3821: POSTCONDITION FAILED: the erasure scrub trigger is absent from payment_parties'; END IF;
+  SELECT count(*) INTO n FROM pg_constraint k
+   WHERE k.conrelid = 'public.payment_transactions'::regclass AND k.contype = 'c' AND k.convalidated
+     AND ((k.conname = 'ptx_no_contact_details')
+       OR (k.conname = 'ptx_fx_rate_source_shape')
+       OR (k.conname = 'ptx_external_ref_shape' AND pg_get_constraintdef(k.oid) LIKE '%[a-z][a-z0-9]{1,15}\_%')
+       OR (k.conname = 'ptx_scope_shape' AND pg_get_constraintdef(k.oid) NOT LIKE '%AND%'));
+  IF n <> 4 THEN RAISE EXCEPTION '3821: POSTCONDITION FAILED: % of 4 envelope text constraints are the ones this file declares (an older payment_transactions is in place: roll it back first)', n; END IF;
 END
 $post$;
 
@@ -795,6 +1173,12 @@ DECLARE
   v_a        uuid;
   v_b        uuid;
   v_tx       uuid := gen_random_uuid();
+  v_same     uuid := gen_random_uuid();
+  v_forged   uuid := gen_random_uuid();
+  one_account_refused boolean := false;
+  forged_refused      boolean := false;
+  contact_refused     boolean := false;
+  mismatch_refused    boolean := false;
   unbalanced_refused boolean := false;
   update_refused     boolean := false;
   delete_refused     boolean := false;
@@ -813,6 +1197,44 @@ BEGIN
       INSERT INTO public.payment_ledger_entries (transaction_id, account_id, amount_minor, currency, livemode, entry_reason)
       VALUES (gen_random_uuid(), v_a, 1, 'USD', false, 'adjustment');
     EXCEPTION WHEN SQLSTATE 'PL003' THEN sealed_refused := true;
+    END;
+
+    -- … and a HAND-WRITTEN announcement opens nothing: there is no envelope of
+    -- this transaction behind it.
+    PERFORM set_config('portava.payment_open_transactions', v_forged::text || ',', true);
+    BEGIN
+      INSERT INTO public.payment_ledger_entries (transaction_id, account_id, amount_minor, currency, livemode, entry_reason)
+      VALUES (v_forged, v_a, 1, 'USD', false, 'adjustment');
+    EXCEPTION WHEN SQLSTATE 'PL003' THEN forged_refused := true;
+    END;
+    PERFORM set_config('portava.payment_open_transactions', '', true);
+
+    -- An email is not a processor reference.
+    BEGIN
+      INSERT INTO public.payment_transactions
+        (kind, scope, idempotency_key, content_hash, currency, livemode, original_currency,
+         original_amount_minor, cause_kind, cause_id, subject_kind, subject_id,
+         beneficiary_account_id, attribution_version, external_ref, occurred_at)
+      VALUES
+        ('fee', 'probe:3821', 'probe-contact', repeat('0', 64), 'USD', false, 'USD', 100,
+         'adjustment', 'probe', 'booking', 'probe', v_a, 'probe/v1', 'someone@example.test', now());
+    EXCEPTION WHEN check_violation THEN contact_refused := true;
+    END;
+
+    -- Two entries on ONE account sum to zero and move nothing. (Its own block:
+    -- the refusal rolls these rows back, with the checks they queued.)
+    BEGIN
+      INSERT INTO public.payment_transactions
+        (id, kind, scope, idempotency_key, content_hash, currency, livemode, original_currency,
+         original_amount_minor, cause_kind, cause_id, subject_kind, subject_id,
+         beneficiary_account_id, attribution_version, occurred_at)
+      VALUES
+        (v_same, 'fee', 'probe:3821', 'probe-same', repeat('0', 64), 'USD', false, 'USD', 100,
+         'adjustment', 'probe', 'booking', 'probe', v_a, 'probe/v1', now());
+      INSERT INTO public.payment_ledger_entries (transaction_id, account_id, amount_minor, currency, livemode, entry_reason)
+      VALUES (v_same, v_a, 100, 'USD', false, 'adjustment'), (v_same, v_a, -100, 'USD', false, 'adjustment');
+      PERFORM public.payment_assert_transaction_balanced(v_same);
+    EXCEPTION WHEN SQLSTATE 'PL002' THEN one_account_refused := (SQLERRM LIKE '%names 1 account(s)%');
     END;
 
     INSERT INTO public.payment_transactions
@@ -837,6 +1259,15 @@ BEGIN
     END;
     SET CONSTRAINTS public.ple_transaction_balances DEFERRED;
 
+    -- Made to balance, but 100 was presented and the credits now total 105: the
+    -- original amount is tied to the entries.
+    BEGIN
+      INSERT INTO public.payment_ledger_entries (transaction_id, account_id, amount_minor, currency, livemode, entry_reason)
+      VALUES (v_tx, v_a, 5, 'USD', false, 'adjustment'), (v_tx, v_b, -15, 'USD', false, 'adjustment');
+      PERFORM public.payment_assert_transaction_balanced(v_tx);
+    EXCEPTION WHEN SQLSTATE 'PL007' THEN mismatch_refused := true;
+    END;
+
     BEGIN
       UPDATE public.payment_ledger_entries SET amount_minor = 90 WHERE transaction_id = v_tx AND account_id = v_a;
     EXCEPTION WHEN SQLSTATE 'PL001' THEN update_refused := true;
@@ -852,6 +1283,10 @@ BEGIN
   END;
 
   IF NOT sealed_refused THEN RAISE EXCEPTION '3821: POSTCONDITION FAILED: an entry was accepted for an envelope not written in this transaction'; END IF;
+  IF NOT forged_refused THEN RAISE EXCEPTION '3821: POSTCONDITION FAILED: a hand-written announcement opened a transaction to entries'; END IF;
+  IF NOT contact_refused THEN RAISE EXCEPTION '3821: POSTCONDITION FAILED: an email address was accepted as a processor reference'; END IF;
+  IF NOT one_account_refused THEN RAISE EXCEPTION '3821: POSTCONDITION FAILED: a transaction naming one account passed the balance check'; END IF;
+  IF NOT mismatch_refused THEN RAISE EXCEPTION '3821: POSTCONDITION FAILED: an original amount its entries do not total was accepted'; END IF;
   IF NOT zero_refused THEN RAISE EXCEPTION '3821: POSTCONDITION FAILED: a zero-amount entry was accepted'; END IF;
   IF NOT unbalanced_refused THEN RAISE EXCEPTION '3821: POSTCONDITION FAILED: an unbalanced transaction passed the balance check'; END IF;
   IF NOT update_refused THEN RAISE EXCEPTION '3821: POSTCONDITION FAILED: an entry was updated'; END IF;

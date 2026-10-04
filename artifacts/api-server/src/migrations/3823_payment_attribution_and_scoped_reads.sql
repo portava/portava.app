@@ -24,8 +24,11 @@
 --   attribution_version a lower-case version slug (`intel_attributions.
 --                       algorithm_version`'s role). A revised split is a NEW
 --                       transaction under a new version, never an edit.
---   beneficiary_account_id  must be an account one of the transaction's own
---                       entries names — "the account credited" — checked at
+--   beneficiary_account_id  must be an account the transaction CREDITS — its
+--                       entries on that account net above zero (`09` §6: "the
+--                       account credited"; constraint 2: "whoever triggers a
+--                       charge is not thereby a payee"). An account no entry
+--                       names, or one the transaction debits, is refused at
 --                       COMMIT by constraint trigger ptx_has_beneficiary_entry,
 --                       for every writer.
 --
@@ -39,7 +42,8 @@
 -- amount of the whole transaction).
 --
 -- The ownership predicate is authz.payment_account_owned_by_profile(account,
--- profile), in schema `authz` with its search_path pinned, because it takes the
+-- profile), in schema `authz` with its search_path pinned
+-- (pg_catalog, pg_temp — never empty: see 3821's header) because it takes the
 -- identity as a PARAMETER (2182: such a predicate must not be reachable as a
 -- PostgREST RPC). `authz` is created here if 2182 has not been applied to the
 -- target; 2182's own CREATE SCHEMA IF NOT EXISTS then finds it.
@@ -54,11 +58,30 @@
 --
 -- ── (3) ERASURE (owner ruling 2026-10-04, creator-ledger erasure) ───────────
 -- public.payment_party_remove_identity(jsonb) removes the profile link of a
--- person's payment party. That is the whole act: no account, entry,
--- transaction or balance row is touched, so every balance and every invariant
--- is exactly what it was, and the records remain linkable to each other through
--- the party id (pseudonymised, not anonymous). It returns counts and the
--- retention answer — never the party id, so a caller cannot write the mapping
+-- person's payment party, and (3821's pp_identity_scrub) rewrites any envelope
+-- text that still carries the profile id to the party id. No amount, account,
+-- entry or balance is touched, so every balance and every invariant is exactly
+-- what it was, and the records remain linkable to each other through the party
+-- id (pseudonymised, not anonymous).
+--   OPEN BALANCES. A person who is owed money (a payable above zero), or owes
+--   it, must not vanish from it: once the link is gone the same profile gets a
+--   NEW, empty party, and nothing would connect them to the old balance. So
+--   the door REFUSES — payment_open_balance, SQLSTATE PL428, the balances in
+--   DETAIL as JSON — while any account of the party has a non-zero balance.
+--   The default is to refuse; the caller settles first (a payout, a refund, or
+--   whatever the owner rules for unclaimed money), and nothing has changed.
+--   `on_open_balance: "retain"` is the explicit alternative: the identity is
+--   removed NOW, the balances stay on the pseudonymous party, and the result
+--   carries them AND the party id, so the amount stays addressable — a payout
+--   or an escheat is then posted by account id, which needs no identity.
+--   Which of the two the deletion service uses, and what becomes of unclaimed
+--   money, are the owner's questions; the mechanism serves either answer.
+--   WHAT THE FOREIGN KEY CANNOT DO: a profile row deleted outright removes the
+--   link through ON DELETE SET NULL, which cannot refuse. Those parties are
+--   findable — payment_parties.identity_removed_via = 'profile_deleted' with a
+--   non-zero balance — and are the reconciliation job's to report.
+-- It returns counts and the retention answer. The party id is returned ONLY in
+-- the retain case above; otherwise a caller is not handed the mapping to write
 -- back down next to the profile.
 -- public.payment_retention_settings holds the retention period as ONE
 -- configurable value. It is seeded NULL = undecided: the owner's ruling says "a
@@ -128,26 +151,37 @@ BEGIN
 END
 $vocab$;
 
+-- SECURITY DEFINER for the reason 3821's two deferred checks are: it runs at
+-- COMMIT as the session's role, after the posting function has returned.
 CREATE OR REPLACE FUNCTION public.payment_transaction_beneficiary_is_party()
 RETURNS trigger
 LANGUAGE plpgsql
-SET search_path TO ''
+SECURITY DEFINER
+SET search_path TO pg_catalog, pg_temp
 AS $fn$
+DECLARE
+  v_net pg_catalog.numeric;
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM public.payment_ledger_entries e
-     WHERE e.transaction_id = NEW.id AND e.account_id = NEW.beneficiary_account_id
-  ) THEN
+  SELECT sum(e.amount_minor) INTO v_net
+    FROM public.payment_ledger_entries e
+   WHERE e.transaction_id = NEW.id AND e.account_id = NEW.beneficiary_account_id;
+  IF v_net IS NULL THEN
     RAISE EXCEPTION
       'payment_beneficiary_not_a_party — transaction % names beneficiary account %, which none of its entries touches (09 §6: the account credited)',
       NEW.id, NEW.beneficiary_account_id
+      USING ERRCODE = 'PL006';
+  END IF;
+  IF v_net <= 0 THEN
+    RAISE EXCEPTION
+      'payment_beneficiary_not_credited — transaction % names beneficiary account %, which it does not credit (net %). The beneficiary is the account credited (09 §6); whoever is charged is not thereby the payee',
+      NEW.id, NEW.beneficiary_account_id, v_net
       USING ERRCODE = 'PL006';
   END IF;
   RETURN NULL;
 END;
 $fn$;
 REVOKE ALL ON FUNCTION public.payment_transaction_beneficiary_is_party() FROM PUBLIC;
-REVOKE ALL ON FUNCTION public.payment_transaction_beneficiary_is_party() FROM anon, authenticated;
+REVOKE ALL ON FUNCTION public.payment_transaction_beneficiary_is_party() FROM anon, authenticated, service_role;
 
 -- Named to sort AFTER ptx_has_balanced_entries: triggers on one row fire in name
 -- order, so a transaction with no entries at all is reported as unbalanced (the
@@ -170,7 +204,7 @@ RETURNS boolean
 LANGUAGE sql
 STABLE
 SECURITY INVOKER
-SET search_path TO ''
+SET search_path TO pg_catalog, pg_temp
 AS $fn$
   SELECT p_profile_id IS NOT NULL AND p_account_id IS NOT NULL AND EXISTS (
     SELECT 1
@@ -182,7 +216,7 @@ AS $fn$
   );
 $fn$;
 COMMENT ON FUNCTION authz.payment_account_owned_by_profile(uuid, uuid) IS
-  '3823 (09 §10; PAY-072): true when the account belongs to the user party currently linked to the profile. The ONE ownership predicate for payment reads. It takes the identity as a parameter, so it lives in authz (not reachable as a PostgREST RPC) and is executable by service_role only. SECURITY INVOKER, search_path pinned empty. A party whose identity has been removed owns nothing by this predicate. If a payment table is ever given a client policy, the policy calls a predicate in authz that derives the viewer from auth.uid() — never one in public.';
+  '3823 (09 §10; PAY-072): true when the account belongs to the user party currently linked to the profile. The ONE ownership predicate for payment reads. It takes the identity as a parameter, so it lives in authz (not reachable as a PostgREST RPC) and is executable by service_role only. SECURITY INVOKER, search_path pinned to pg_catalog, pg_temp. A party whose identity has been removed owns nothing by this predicate. If a payment table is ever given a client policy, the policy calls a predicate in authz that derives the viewer from auth.uid() — never one in public.';
 REVOKE ALL ON FUNCTION authz.payment_account_owned_by_profile(uuid, uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION authz.payment_account_owned_by_profile(uuid, uuid) FROM anon, authenticated;
 GRANT EXECUTE ON FUNCTION authz.payment_account_owned_by_profile(uuid, uuid) TO service_role;
@@ -192,21 +226,21 @@ RETURNS jsonb
 LANGUAGE plpgsql
 STABLE
 SECURITY INVOKER
-SET search_path TO ''
+SET search_path TO pg_catalog, pg_temp
 AS $fn$
 DECLARE
-  uuid_re      CONSTANT text := '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$';
-  k            text;
-  v_profile    uuid;
-  v_party      uuid;
-  v_cause_kind text;
-  v_cause_id   text;
-  v_limit      int := 50;
-  v_before_at  timestamptz;
-  v_before_id  uuid;
-  v_accounts   jsonb;
-  v_rows       jsonb;
-  v_cursor     jsonb := NULL;
+  uuid_re      CONSTANT pg_catalog.text := '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$';
+  k            pg_catalog.text;
+  v_profile    pg_catalog.uuid;
+  v_party      pg_catalog.uuid;
+  v_cause_kind pg_catalog.text;
+  v_cause_id   pg_catalog.text;
+  v_limit      pg_catalog.int4 := 50;
+  v_before_at  pg_catalog.timestamptz;
+  v_before_id  pg_catalog.uuid;
+  v_accounts   pg_catalog.jsonb;
+  v_rows       pg_catalog.jsonb;
+  v_cursor     pg_catalog.jsonb := NULL;
 BEGIN
   IF p IS NULL OR jsonb_typeof(p) <> 'object' THEN
     RAISE EXCEPTION 'payment_invalid_request: payload_not_an_object' USING ERRCODE = 'PL422';
@@ -219,7 +253,7 @@ BEGIN
   IF coalesce(p->>'profile_id', '') !~ uuid_re THEN
     RAISE EXCEPTION 'payment_invalid_request: not_a_uuid — profile_id' USING ERRCODE = 'PL422';
   END IF;
-  v_profile := (p->>'profile_id')::uuid;
+  v_profile := (p->>'profile_id')::pg_catalog.uuid;
 
   v_cause_kind := p->>'cause_kind';
   v_cause_id   := p->>'cause_id';
@@ -228,10 +262,10 @@ BEGIN
   END IF;
 
   IF p->>'limit' IS NOT NULL THEN
-    IF p->>'limit' !~ '^[0-9]{1,3}$' OR (p->>'limit')::int > 200 THEN
+    IF p->>'limit' !~ '^[0-9]{1,3}$' OR (p->>'limit')::pg_catalog.int4 > 200 THEN
       RAISE EXCEPTION 'payment_invalid_request: limit — a whole number from 0 to 200' USING ERRCODE = 'PL422';
     END IF;
-    v_limit := (p->>'limit')::int;
+    v_limit := (p->>'limit')::pg_catalog.int4;
   END IF;
 
   IF (p->>'before_occurred_at' IS NULL) <> (p->>'before_entry_id' IS NULL) THEN
@@ -241,9 +275,9 @@ BEGIN
     IF p->>'before_entry_id' !~ uuid_re THEN
       RAISE EXCEPTION 'payment_invalid_request: not_a_uuid — before_entry_id' USING ERRCODE = 'PL422';
     END IF;
-    v_before_id := (p->>'before_entry_id')::uuid;
+    v_before_id := (p->>'before_entry_id')::pg_catalog.uuid;
     BEGIN
-      v_before_at := (p->>'before_occurred_at')::timestamptz;
+      v_before_at := (p->>'before_occurred_at')::pg_catalog.timestamptz;
     EXCEPTION WHEN others THEN
       RAISE EXCEPTION 'payment_invalid_request: not_a_timestamp — before_occurred_at' USING ERRCODE = 'PL422';
     END;
@@ -255,23 +289,23 @@ BEGIN
   IF v_party IS NULL THEN
     -- An ANSWER, not a failure: this profile has no payment party (it never
     -- had one, or its identity has been removed). A failed read raises.
-    RETURN jsonb_build_object('has_party', false, 'accounts', '[]'::jsonb, 'entries', '[]'::jsonb, 'next_cursor', NULL);
+    RETURN jsonb_build_object('has_party', false, 'accounts', '[]'::pg_catalog.jsonb, 'entries', '[]'::pg_catalog.jsonb, 'next_cursor', NULL);
   END IF;
 
   SELECT coalesce(jsonb_agg(jsonb_build_object(
            'account_id', a.id,
            'account_type', a.account_type,
            'currency', a.currency,
-           'balance_minor', coalesce(b.balance_minor, 0)::text,
+           'balance_minor', coalesce(b.balance_minor, 0)::pg_catalog.text,
            'entry_count', coalesce(b.entry_count, 0)
-         ) ORDER BY a.account_type, a.currency), '[]'::jsonb)
+         ) ORDER BY a.account_type, a.currency), '[]'::pg_catalog.jsonb)
     INTO v_accounts
     FROM public.payment_accounts a
     LEFT JOIN public.payment_account_balances b ON b.account_id = a.id
    WHERE a.owner_id = v_party AND a.owner_kind = 'user'
      AND authz.payment_account_owned_by_profile(a.id, v_profile);
 
-  SELECT coalesce(jsonb_agg(x.entry ORDER BY x.occurred_at DESC, x.entry_id DESC), '[]'::jsonb)
+  SELECT coalesce(jsonb_agg(x.entry ORDER BY x.occurred_at DESC, x.entry_id DESC), '[]'::pg_catalog.jsonb)
     INTO v_rows
     FROM (
       SELECT t.occurred_at, e.id AS entry_id,
@@ -280,7 +314,7 @@ BEGIN
                'transaction_id', e.transaction_id,
                'account_id', e.account_id,
                'account_type', a.account_type,
-               'amount_minor', e.amount_minor::text,
+               'amount_minor', e.amount_minor::pg_catalog.text,
                'currency', e.currency,
                'entry_reason', e.entry_reason,
                'transaction_kind', t.kind,
@@ -304,7 +338,7 @@ BEGIN
     ) x;
 
   IF jsonb_array_length(v_rows) > v_limit THEN
-    SELECT coalesce(jsonb_agg(y.entry ORDER BY y.ord), '[]'::jsonb)
+    SELECT coalesce(jsonb_agg(y.entry ORDER BY y.ord), '[]'::pg_catalog.jsonb)
       INTO v_rows
       FROM jsonb_array_elements(v_rows) WITH ORDINALITY AS y(entry, ord)
      WHERE y.ord <= v_limit;
@@ -319,7 +353,7 @@ BEGIN
 END;
 $fn$;
 COMMENT ON FUNCTION public.payment_party_ledger(jsonb) IS
-  '3823 (09 §10; PAY-073): the party-scoped read. For {profile_id} it returns that profile''s payment accounts with balances, and a page (newest first, keyset cursor) of the ledger entries NAMING THOSE ACCOUNTS, optionally for one cause. Entries on any other account — the counterparty''s, the platform''s, the processor''s — are never in the result, and no returned column belongs to a counterparty. A profile with no payment party gets has_party = false; a failed read raises. Amounts are text. SECURITY INVOKER, search_path pinned empty; EXECUTE for service_role only, because it takes the identity as a parameter: the one caller is services/payments/PaymentLedger.ts with requireUser''s user id.';
+  '3823 (09 §10; PAY-073): the party-scoped read. For {profile_id} it returns that profile''s payment accounts with balances, and a page (newest first, keyset cursor) of the ledger entries NAMING THOSE ACCOUNTS, optionally for one cause. Entries on any other account — the counterparty''s, the platform''s, the processor''s — are never in the result, and no returned column belongs to a counterparty. A profile with no payment party gets has_party = false; a failed read raises. Amounts are text. SECURITY INVOKER, search_path pinned to pg_catalog, pg_temp; EXECUTE for service_role only, because it takes the identity as a parameter: the one caller is services/payments/PaymentLedger.ts with requireUser''s user id.';
 REVOKE ALL ON FUNCTION public.payment_party_ledger(jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.payment_party_ledger(jsonb) FROM anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.payment_party_ledger(jsonb) TO service_role;
@@ -355,41 +389,90 @@ RETURNS jsonb
 LANGUAGE plpgsql
 VOLATILE
 SECURITY DEFINER
-SET search_path TO ''
+SET search_path TO pg_catalog, pg_temp
 AS $fn$
 DECLARE
-  k            text;
-  v_profile    uuid;
-  v_party      uuid;
-  v_removed_at timestamptz;
-  v_accounts   bigint;
-  v_entries    bigint;
-  v_period     interval;
+  k            pg_catalog.text;
+  v_profile    pg_catalog.uuid;
+  v_mode       pg_catalog.text;
+  v_party      pg_catalog.uuid;
+  v_removed_at pg_catalog.timestamptz;
+  v_accounts   pg_catalog.int8;
+  v_entries    pg_catalog.int8;
+  v_period     pg_catalog.interval;
+  v_open       pg_catalog.jsonb;
+  v_scrubbed   pg_catalog.int8 := 0;
+  v_result     pg_catalog.jsonb;
 BEGIN
   IF p IS NULL OR jsonb_typeof(p) <> 'object' THEN
     RAISE EXCEPTION 'payment_invalid_request: payload_not_an_object' USING ERRCODE = 'PL422';
   END IF;
   FOR k IN SELECT jsonb_object_keys(p) LOOP
-    IF k <> 'profile_id' THEN
+    IF k NOT IN ('profile_id', 'on_open_balance') THEN
       RAISE EXCEPTION 'payment_invalid_request: unknown_field — %', k USING ERRCODE = 'PL422';
     END IF;
   END LOOP;
   IF coalesce(p->>'profile_id', '') !~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' THEN
     RAISE EXCEPTION 'payment_invalid_request: not_a_uuid — profile_id' USING ERRCODE = 'PL422';
   END IF;
-  v_profile := (p->>'profile_id')::uuid;
+  v_profile := (p->>'profile_id')::pg_catalog.uuid;
+  v_mode := coalesce(p->>'on_open_balance', 'refuse');
+  IF v_mode NOT IN ('refuse', 'retain') THEN
+    RAISE EXCEPTION 'payment_invalid_request: on_open_balance — refuse (the default) or retain' USING ERRCODE = 'PL422';
+  END IF;
 
-  -- The whole act. payment_party_identity_guard stamps identity_removed_at.
-  UPDATE public.payment_parties pt
-     SET profile_id = NULL, identity_removed_via = 'erasure_request'
-   WHERE pt.kind = 'user' AND pt.profile_id = v_profile
-  RETURNING pt.id, pt.identity_removed_at INTO v_party, v_removed_at;
+  SELECT pt.id INTO v_party
+    FROM public.payment_parties pt
+   WHERE pt.kind = 'user' AND pt.profile_id = v_profile;
 
   IF v_party IS NULL THEN
-    -- Nothing was linked: never a payment party, or already removed. Idempotent.
+    -- Nothing is linked: never a payment party, or already removed. Idempotent.
+    -- Text that still carries the id is rewritten all the same; there is no
+    -- party to rewrite it TO, so the replacement is a fresh id that means nothing.
+    v_scrubbed := public.payment_scrub_profile_identifier(v_profile, gen_random_uuid());
     RETURN jsonb_build_object('removed', false, 'accounts', 0, 'entries_retained', 0,
-                              'identity_removed_at', NULL, 'retention_period', NULL, 'retain_until', NULL);
+                              'identity_removed_at', NULL, 'retention_period', NULL, 'retain_until', NULL,
+                              'identifiers_scrubbed', v_scrubbed, 'open_balances', '[]'::pg_catalog.jsonb);
   END IF;
+
+  -- The posting function's own lock, in its order: a post on one of these
+  -- accounts either finished before the balances are read below, or waits.
+  PERFORM 1 FROM public.payment_accounts a WHERE a.owner_id = v_party ORDER BY a.id FOR NO KEY UPDATE;
+
+  -- Folded from the entries (the truth), not read off the projection.
+  SELECT coalesce(jsonb_agg(jsonb_build_object(
+           'account_id', o.id, 'account_type', o.account_type, 'currency', o.currency,
+           'balance_minor', o.balance::pg_catalog.text) ORDER BY o.account_type, o.currency), '[]'::pg_catalog.jsonb)
+    INTO v_open
+    FROM (SELECT a.id, a.account_type, a.currency, sum(e.amount_minor) AS balance
+            FROM public.payment_accounts a
+            JOIN public.payment_ledger_entries e ON e.account_id = a.id
+           WHERE a.owner_id = v_party
+           GROUP BY a.id, a.account_type, a.currency
+          HAVING sum(e.amount_minor) <> 0) o;
+
+  IF jsonb_array_length(v_open) > 0 AND v_mode = 'refuse' THEN
+    RAISE EXCEPTION
+      'payment_open_balance — this person''s payment party has % account(s) with a non-zero balance; the identity was not removed and nothing was changed', jsonb_array_length(v_open)
+      USING ERRCODE = 'PL428',
+            DETAIL = v_open::pg_catalog.text,
+            HINT = 'Settle each balance to zero first, or pass on_open_balance = retain to remove the identity now and keep the balances on the pseudonymous party, addressed by the party_id that call returns.';
+  END IF;
+
+  -- The whole act. payment_party_identity_guard stamps identity_removed_at, and
+  -- pp_identity_scrub rewrites any envelope text still carrying the profile id.
+  PERFORM set_config('portava.payment_identity_scrubbed_rows', '0', true);
+  UPDATE public.payment_parties pt
+     SET profile_id = NULL, identity_removed_via = 'erasure_request'
+   WHERE pt.id = v_party AND pt.profile_id = v_profile
+  RETURNING pt.identity_removed_at INTO v_removed_at;
+  IF NOT FOUND THEN
+    -- The link went between the read above and here (a concurrent removal).
+    RETURN jsonb_build_object('removed', false, 'accounts', 0, 'entries_retained', 0,
+                              'identity_removed_at', NULL, 'retention_period', NULL, 'retain_until', NULL,
+                              'identifiers_scrubbed', 0, 'open_balances', '[]'::pg_catalog.jsonb);
+  END IF;
+  v_scrubbed := coalesce(nullif(current_setting('portava.payment_identity_scrubbed_rows', true), ''), '0')::pg_catalog.int8;
 
   SELECT count(*) INTO v_accounts FROM public.payment_accounts a WHERE a.owner_id = v_party;
   SELECT count(*) INTO v_entries
@@ -398,19 +481,26 @@ BEGIN
    WHERE a.owner_id = v_party;
   SELECT s.retention_period INTO v_period FROM public.payment_retention_settings s WHERE s.singleton;
 
-  -- The party id is deliberately NOT returned: the caller holds the profile id,
-  -- and handing it the pseudonym would let it write the link back down.
-  RETURN jsonb_build_object(
+  v_result := jsonb_build_object(
     'removed', true,
     'accounts', v_accounts,
     'entries_retained', v_entries,
     'identity_removed_at', v_removed_at,
-    'retention_period', v_period::text,
-    'retain_until', CASE WHEN v_period IS NULL THEN NULL ELSE v_removed_at + v_period END);
+    'retention_period', v_period::pg_catalog.text,
+    'retain_until', CASE WHEN v_period IS NULL THEN NULL ELSE v_removed_at + v_period END,
+    'identifiers_scrubbed', v_scrubbed,
+    'open_balances', v_open);
+  -- The party id is returned ONLY with balances left open on it (retain): it is
+  -- then the one handle on money still owed. Otherwise it is withheld — the
+  -- caller holds the profile id, and the pseudonym beside it is the link again.
+  IF jsonb_array_length(v_open) > 0 THEN
+    v_result := v_result || jsonb_build_object('party_id', v_party);
+  END IF;
+  RETURN v_result;
 END;
 $fn$;
 COMMENT ON FUNCTION public.payment_party_remove_identity(jsonb) IS
-  '3823 (owner ruling 2026-10-04): pseudonymise a person''s payment records by removing the ONE identity link, payment_parties.profile_id. No account, entry, transaction or balance row is touched, so every balance and invariant is unchanged; the records stay linkable to each other through the party id (pseudonymised, not anonymous) and are retained — nothing is deleted. Idempotent: a second call reports removed = false. Returns counts and the retention answer (retain_until is NULL while public.payment_retention_settings.retention_period is undecided), never the party id. SECURITY DEFINER with search_path pinned empty; EXECUTE for service_role only.';
+  '3823 (owner ruling 2026-10-04): pseudonymise a person''s payment records by removing the ONE identity link, payment_parties.profile_id; any envelope text still carrying the profile id is rewritten to the party id (3821 pp_identity_scrub). No amount, account, entry or balance is touched; the records stay linkable through the party id (pseudonymised, not anonymous) and are retained — nothing is deleted. REFUSES with SQLSTATE PL428 payment_open_balance (the balances in DETAIL, as JSON) while any account of the party has a non-zero balance, unless on_open_balance = retain is passed: then the identity is removed, the balances stay on the party, and the result carries open_balances and party_id so the amount stays addressable. Idempotent: a second call reports removed = false. Returns counts, identifiers_scrubbed and the retention answer (retain_until is NULL while public.payment_retention_settings.retention_period is undecided); party_id only in the retain case. SECURITY DEFINER with search_path pinned to pg_catalog, pg_temp; EXECUTE for service_role only.';
 REVOKE ALL ON FUNCTION public.payment_party_remove_identity(jsonb) FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.payment_party_remove_identity(jsonb) FROM anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.payment_party_remove_identity(jsonb) TO service_role;
@@ -458,8 +548,8 @@ BEGIN
   -- PAY-072: the predicate is in authz, pinned, and not a client's to call.
   SELECT count(*) INTO n FROM pg_proc f JOIN pg_namespace ns ON ns.oid = f.pronamespace
    WHERE ns.nspname = 'authz' AND f.proname = 'payment_account_owned_by_profile'
-     AND f.proconfig @> ARRAY['search_path=""'] AND NOT f.prosecdef;
-  IF n <> 1 THEN RAISE EXCEPTION '3823: POSTCONDITION FAILED: authz.payment_account_owned_by_profile is absent, unpinned or SECURITY DEFINER'; END IF;
+     AND f.proconfig @> ARRAY['search_path=pg_catalog, pg_temp'] AND NOT f.prosecdef;
+  IF n <> 1 THEN RAISE EXCEPTION '3823: POSTCONDITION FAILED: authz.payment_account_owned_by_profile is absent, not pinned to pg_catalog, pg_temp, or SECURITY DEFINER'; END IF;
   SELECT count(*) INTO n FROM pg_proc f JOIN pg_namespace ns ON ns.oid = f.pronamespace
    WHERE ns.nspname = 'public' AND f.proname = 'payment_account_owned_by_profile';
   IF n <> 0 THEN RAISE EXCEPTION '3823: POSTCONDITION FAILED: an ownership predicate that trusts a parameter is in public'; END IF;
@@ -476,9 +566,26 @@ BEGIN
       RAISE EXCEPTION '3823: POSTCONDITION FAILED: service_role cannot execute %', t;
     END IF;
     SELECT count(*) INTO n FROM pg_proc f
-     WHERE f.oid = t::regprocedure AND f.proconfig @> ARRAY['search_path=""'];
-    IF n <> 1 THEN RAISE EXCEPTION '3823: POSTCONDITION FAILED: % has no pinned search_path', t; END IF;
+     WHERE f.oid = t::regprocedure AND f.proconfig @> ARRAY['search_path=pg_catalog, pg_temp'];
+    IF n <> 1 THEN RAISE EXCEPTION '3823: POSTCONDITION FAILED: % does not pin search_path to pg_catalog, pg_temp', t; END IF;
   END LOOP;
+  -- The deferred beneficiary check runs at COMMIT as the session's role: it is
+  -- SECURITY DEFINER, pinned, and no role's to call.
+  SELECT count(*) INTO n FROM pg_proc f
+   WHERE f.oid = 'public.payment_transaction_beneficiary_is_party()'::regprocedure AND f.prosecdef
+     AND f.proconfig @> ARRAY['search_path=pg_catalog, pg_temp'];
+  IF n <> 1 THEN RAISE EXCEPTION '3823: POSTCONDITION FAILED: payment_transaction_beneficiary_is_party is not SECURITY DEFINER with search_path pinned to pg_catalog, pg_temp'; END IF;
+  IF has_function_privilege('service_role', 'public.payment_transaction_beneficiary_is_party()', 'EXECUTE') THEN
+    RAISE EXCEPTION '3823: POSTCONDITION FAILED: service_role can execute payment_transaction_beneficiary_is_party';
+  END IF;
+  SELECT count(*) INTO n FROM pg_proc f
+   WHERE f.oid = 'public.payment_party_remove_identity(jsonb)'::regprocedure AND f.prosecdef;
+  IF n <> 1 THEN RAISE EXCEPTION '3823: POSTCONDITION FAILED: payment_party_remove_identity is not SECURITY DEFINER'; END IF;
+  -- Nothing of 3821-3823 is left on an empty search_path.
+  SELECT count(*) INTO n FROM pg_proc f JOIN pg_namespace ns ON ns.oid = f.pronamespace
+   WHERE ns.nspname IN ('public', 'authz') AND left(f.proname, 8) = 'payment_'
+     AND NOT coalesce(f.proconfig, '{}'::text[]) @> ARRAY['search_path=pg_catalog, pg_temp'];
+  IF n <> 0 THEN RAISE EXCEPTION '3823: POSTCONDITION FAILED: % payment function(s) do not pin search_path to pg_catalog, pg_temp', n; END IF;
   SELECT count(*) INTO n FROM pg_proc f
    WHERE f.oid = 'public.payment_party_ledger(jsonb)'::regprocedure AND f.prosecdef;
   IF n <> 0 THEN RAISE EXCEPTION '3823: POSTCONDITION FAILED: payment_party_ledger is SECURITY DEFINER; it must read as its caller'; END IF;
@@ -530,6 +637,8 @@ DECLARE
   unknown_subject_refused      boolean := false;
   frozen                       boolean := false;
   stranger_beneficiary_refused boolean := false;
+  debited_beneficiary_refused  boolean := false;
+  one_account_refused          boolean := false;
 BEGIN
   BEGIN
     v_revenue := (public.payment_account_ensure(jsonb_build_object(
@@ -556,6 +665,19 @@ BEGIN
     BEGIN
       PERFORM public.payment_post_transaction(v_req || jsonb_build_object('subject_kind', 'user', 'idempotency_key', 'probe-0'));
     EXCEPTION WHEN SQLSTATE 'PL422' THEN unknown_subject_refused := true;
+    END;
+
+    -- The account a transaction DEBITS is not its beneficiary; and two entries
+    -- on one account are not a movement.
+    BEGIN
+      PERFORM public.payment_post_transaction(v_req || jsonb_build_object('beneficiary_account_id', v_refunds, 'idempotency_key', 'probe-0'));
+    EXCEPTION WHEN SQLSTATE 'PL422' THEN debited_beneficiary_refused := (SQLERRM LIKE '%beneficiary_not_credited%');
+    END;
+    BEGIN
+      PERFORM public.payment_post_transaction(v_req || jsonb_build_object('idempotency_key', 'probe-0', 'entries', jsonb_build_array(
+        jsonb_build_object('account_id', v_revenue, 'amount_minor', 700, 'entry_reason', 'platform_fee'),
+        jsonb_build_object('account_id', v_revenue, 'amount_minor', -700, 'entry_reason', 'platform_fee'))));
+    EXCEPTION WHEN SQLSTATE 'PL422' THEN one_account_refused := (SQLERRM LIKE '%entries_too_few%');
     END;
 
     v_tx := (public.payment_post_transaction(v_req)->>'transaction_id')::uuid;
@@ -590,6 +712,8 @@ BEGIN
   IF NOT unknown_subject_refused THEN RAISE EXCEPTION '3823: POSTCONDITION FAILED: a person was accepted as the subject of a payment'; END IF;
   IF NOT frozen THEN RAISE EXCEPTION '3823: POSTCONDITION FAILED: an attribution tuple was rewritten'; END IF;
   IF NOT stranger_beneficiary_refused THEN RAISE EXCEPTION '3823: POSTCONDITION FAILED: a beneficiary no entry touches was accepted'; END IF;
+  IF NOT debited_beneficiary_refused THEN RAISE EXCEPTION '3823: POSTCONDITION FAILED: a debited account was accepted as the beneficiary'; END IF;
+  IF NOT one_account_refused THEN RAISE EXCEPTION '3823: POSTCONDITION FAILED: a transaction naming one account was accepted'; END IF;
   IF EXISTS (SELECT 1 FROM public.payment_parties WHERE label = 'probe_3823')
      OR EXISTS (SELECT 1 FROM public.payment_transactions WHERE scope = 'probe:3823') THEN
     RAISE EXCEPTION '3823: POSTCONDITION FAILED: the probe left a row behind';

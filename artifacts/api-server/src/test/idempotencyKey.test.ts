@@ -6,6 +6,8 @@
  *   IK3  two keys (a repeated header, or a joined one) are refused, not guessed at
  *   IK4  shape: length bounds, charset, first character
  *   IK5  the key is never trimmed or repaired
+ *   IK6  bindIdempotencyKey: the pair (scope, key) names the operation and the actor's payment party
+ *   IK7  bindIdempotencyKey: a binding that is not an operation slug and a party id yields no pair
  *
  * Run: node --import tsx/esm --test src/test/idempotencyKey.test.ts
  */
@@ -15,6 +17,7 @@ import {
   IDEMPOTENCY_KEY_HEADER,
   IDEMPOTENCY_KEY_MAX_LENGTH,
   IDEMPOTENCY_KEY_MIN_LENGTH,
+  bindIdempotencyKey,
   readIdempotencyKey,
 } from "../lib/idempotencyKey.js";
 
@@ -74,5 +77,38 @@ describe("readIdempotencyKey (09 §7, PAY-046)", () => {
   it("IK5. a key with surrounding whitespace is refused, not trimmed: two spellings would be two keys", () => {
     assert.equal(readIdempotencyKey(" booking:1:tip:1").ok, false);
     assert.equal(readIdempotencyKey("booking:1:tip:1 ").ok, false);
+  });
+
+  const PARTY_A = "11111111-1111-4111-8111-111111111111";
+  const PARTY_B = "22222222-2222-4222-8222-222222222222";
+
+  it("IK6. the same key from two actors is two (scope, key) pairs; from one actor it is one — and the key itself is untouched", () => {
+    const a = bindIdempotencyKey("client-chosen-0001", { operation: "tip", actorPartyId: PARTY_A });
+    const b = bindIdempotencyKey("client-chosen-0001", { operation: "tip", actorPartyId: PARTY_B });
+    assert.deepEqual(a, { ok: true, scope: `http:tip:${PARTY_A}`, idempotencyKey: "client-chosen-0001" });
+    assert.deepEqual(b, { ok: true, scope: `http:tip:${PARTY_B}`, idempotencyKey: "client-chosen-0001" });
+    assert.deepEqual(bindIdempotencyKey("client-chosen-0001", { operation: "tip", actorPartyId: PARTY_A }), a);
+    // The header's own refusals pass through unchanged.
+    const none = bindIdempotencyKey(undefined, { operation: "tip", actorPartyId: PARTY_A });
+    assert.equal(none.ok === false && none.reason, "idempotency_key_required");
+    const bad = bindIdempotencyKey("two keys, joined", { operation: "tip", actorPartyId: PARTY_A });
+    assert.equal(bad.ok === false && bad.reason, "idempotency_key_malformed");
+    // The longest operation still fits the ledger's 120-character scope.
+    const long = bindIdempotencyKey("client-chosen-0001", { operation: "a".repeat(60), actorPartyId: PARTY_A });
+    assert.equal(long.ok && long.scope.length <= 120, true);
+  });
+
+  it("IK7. no binding, no pair: there is no un-namespaced form to fall back to", () => {
+    for (const binding of [
+      undefined, null, {}, { operation: "tip" }, { actorPartyId: PARTY_A },
+      { operation: "T", actorPartyId: PARTY_A }, { operation: "tip:all", actorPartyId: PARTY_A },
+      { operation: "a".repeat(61), actorPartyId: PARTY_A }, { operation: "tip", actorPartyId: "user-42" },
+      { operation: "tip", actorPartyId: PARTY_A.replace(/-/g, "") }, { operation: 7, actorPartyId: PARTY_A },
+    ]) {
+      const r = bindIdempotencyKey("client-chosen-0001", binding as any);
+      assert.equal(r.ok, false, JSON.stringify(binding));
+      if (!r.ok) assert.equal(r.reason, "idempotency_binding_invalid", JSON.stringify(binding));
+      assert.equal("idempotencyKey" in r, false);
+    }
   });
 });

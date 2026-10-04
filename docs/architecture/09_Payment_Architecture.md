@@ -624,9 +624,37 @@ CHECK-constrained false on accounts and transactions.
   in `authz`.
 - **A committed transaction is sealed.** An entry can only be written in the database transaction
   that wrote its envelope, which §5.3 did not ask for and I1 needs: otherwise a later, self-balancing
-  pair of entries could move money under an attribution frozen for something else.
+  pair of entries could move money under an attribution frozen for something else. The envelope's id
+  is announced by an AFTER INSERT trigger (so `INSERT … ON CONFLICT DO NOTHING` over a committed id
+  announces nothing) and its `created_at` must be the writing transaction's own `now()`. This binds
+  every role that cannot disable triggers; the table owner and a superuser can, and no trigger
+  constrains them.
+- **I1 counts accounts, not entries.** A transaction names at least two *different* accounts, and
+  when it is booked in the currency it was presented in, its credits total `original_amount_minor`.
+  `fx_rate` is units of the booked `currency` per one unit of `original_currency`, in major units.
+- **§6's beneficiary is checked.** `beneficiary_account_id` must be an account the transaction
+  credits (its entries on it net above zero); an account it debits is refused.
+- **No ledger row names a person.** A transaction's text fields are ids of things. A profile id, an
+  email address or a phone number in any of them is refused at INSERT for every writer, the
+  processor reference must look like a provider object id, and a person is referred to by payment
+  *party* id. When a party's identity is removed — by the erasure door or by the profile's deletion
+  — any transaction text still carrying that profile id is rewritten to the party id; that rewrite
+  is the one UPDATE the transaction table admits. A name or an id in some other encoding cannot be
+  detected.
+- **Erasure does not orphan money.** The erasure door refuses (`payment_open_balance`) while the
+  person's party has a non-zero balance, and names the balances. `on_open_balance: retain` is the
+  explicit alternative: the identity goes, the balances stay on the pseudonymous party, and the
+  party id is returned so they remain addressable. Which the deletion service uses, and what becomes
+  of unclaimed money, are owner decisions. A profile row deleted outright cannot be refused by the
+  foreign key; such a party is marked `profile_deleted` and is the reconciliation job's to report.
+- **A client's `Idempotency-Key` is namespaced by who sent it.** `requireIdempotencyKey` returns the
+  pair (`scope`, `idempotencyKey`) with `scope = http:<operation>:<the caller's party id>`, so two
+  callers who choose the same key never meet. It is still attached to **no route**.
+- **Every function pins `search_path` to `pg_catalog, pg_temp`**, never empty: an empty path leaves
+  `pg_temp` searched first for type names.
 
 **Still not built:** every producer (§9: charge, capture, refund, chargeback, payout), the FX
 mechanism of §8 beyond its columns, the reconciliation job of §4, the webhook of §7, the client
-screens, the account-deletion service's call of `payment_party_remove_identity`, and the retention
-period itself — `payment_retention_settings` holds it as one value and it is undecided.
+screens, the account-deletion service's call of `payment_party_remove_identity`, the adoption of
+`requireIdempotencyKey` by any money route, and the retention period itself —
+`payment_retention_settings` holds it as one value and it is undecided.

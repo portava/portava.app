@@ -33,8 +33,17 @@
  * A replay is a success with `replayed: true` and the ORIGINAL transaction id.
  *
  * ── NO PROVIDER ─────────────────────────────────────────────────────────────
- * Nothing here imports, names or calls a payment provider. `externalRef` is an
- * opaque string the caller got from wherever it got it.
+ * Nothing here imports, names or calls a payment provider. `externalRef` is a
+ * provider object id (`<prefix>_<token>`) the caller got from wherever it got it.
+ *
+ * ── NO PERSON IN A LEDGER ROW ───────────────────────────────────────────────
+ * A transaction outlives the erasure of the people in it, so its text fields
+ * (`scope`, `idempotencyKey`, `causeId`, `subjectId`, `attributionVersion`,
+ * `externalRef`, `conversion.source`) are ids of THINGS. The database refuses a
+ * profile id, an email address or a phone number in any of them
+ * (`invalid_request`, detail `person_identifier` / `ptx_no_contact_details`).
+ * Where a person must be named, name their payment PARTY —
+ * `ensurePaymentAccount(...).partyId` — never their profile id.
  *
  * ── TEST MODE ONLY ──────────────────────────────────────────────────────────
  * Every request is sent with `livemode: false`, and the tables CHECK it.
@@ -125,11 +134,29 @@ export type PaymentLedgerRefusal =
   | "already_reversed"
   /** `livemode` other than false. This ledger records test-mode money only (PL451). */
   | "live_mode_refused"
+  /** A balance would leave the range of a 64-bit count of minor units (PL416). Never retryable. */
+  | "amount_out_of_range"
+  /** Erasure refused: the person's party still has a non-zero balance (PL428). See `openBalances`. */
+  | "open_balance"
   /** A serialisation failure or deadlock: nothing was written, the same request may be retried. */
   | "retryable_contention"
   | "db_error";
 
-export type PaymentLedgerFailure = { ok: false; reason: PaymentLedgerRefusal; detail: string };
+/** One account of a party whose balance is not zero. */
+export interface PaymentOpenBalance {
+  accountId: string;
+  accountType: string;
+  currency: string;
+  balanceMinor: MinorUnits;
+}
+
+export type PaymentLedgerFailure = {
+  ok: false;
+  reason: PaymentLedgerRefusal;
+  detail: string;
+  /** Present on `open_balance`: what must be settled, or explicitly retained. */
+  openBalances?: PaymentOpenBalance[];
+};
 export type PaymentLedgerResult<T> = ({ ok: true } & T) | PaymentLedgerFailure;
 
 const refuse = (reason: PaymentLedgerRefusal, detail: string): PaymentLedgerFailure => ({ ok: false, reason, detail });
@@ -143,6 +170,9 @@ const SQLSTATE_REFUSALS: Readonly<Record<string, PaymentLedgerRefusal>> = {
   PL451: "live_mode_refused",
   PL422: "invalid_request",
   PL006: "invalid_request",
+  PL007: "invalid_request",
+  PL416: "amount_out_of_range",
+  PL428: "open_balance",
   "40001": "retryable_contention",
   "40P01": "retryable_contention",
 };
@@ -156,12 +186,33 @@ export function classifyLedgerError(error: any): PaymentLedgerFailure {
   const code = String(error?.code ?? "");
   const message = String(error?.message ?? error ?? "");
   const named = SQLSTATE_REFUSALS[code];
+  if (named === "open_balance") {
+    // The function puts the balances in the error's DETAIL as JSON; PostgREST
+    // relays it as `details`. Unreadable details still refuse, without the list.
+    const openBalances = readOpenBalances(error?.details);
+    return openBalances ? { ...refuse(named, message), openBalances } : refuse(named, message);
+  }
   if (named) return refuse(named, message);
   if (code === "42883" || code === "PGRST202" || code === "42P01" ||
       /function \S+ does not exist|relation "[^"]+" does not exist|could not find the (function|table)/i.test(message)) {
     return refuse("ledger_unavailable", `the payment ledger is not applied here: ${message}`);
   }
   return refuse("db_error", message);
+}
+
+/** Map the function's `open_balances` (an array, or its JSON text). Amounts stay strings. */
+function readOpenBalances(raw: unknown): PaymentOpenBalance[] | null {
+  let list: unknown = raw;
+  if (typeof raw === "string") {
+    try { list = JSON.parse(raw); } catch { return null; }
+  }
+  if (!Array.isArray(list)) return null;
+  return list.map((b: any) => ({
+    accountId: String(b?.account_id),
+    accountType: String(b?.account_type),
+    currency: String(b?.currency),
+    balanceMinor: String(b?.balance_minor),
+  }));
 }
 
 /** One function call. A thrown transport error is a failure too, never a success. */
@@ -191,11 +242,15 @@ export interface EnsurePaymentAccountInput {
   currency: string;
 }
 
-/** Idempotent: the same owner, type and currency always resolve to the same account. */
+/**
+ * Idempotent: the same owner, type and currency always resolve to the same account.
+ * `partyId` is the owner's payment party — the pseudonym by which a person is
+ * named anywhere else in the ledger (an idempotency scope, a cause, a subject).
+ */
 export async function ensurePaymentAccount(
   sc: any,
   input: EnsurePaymentAccountInput,
-): Promise<PaymentLedgerResult<{ accountId: string; created: boolean }>> {
+): Promise<PaymentLedgerResult<{ accountId: string; partyId: string; created: boolean }>> {
   const payload: Record<string, unknown> = {
     owner_kind: input.owner.kind,
     account_type: input.accountType,
@@ -209,7 +264,9 @@ export async function ensurePaymentAccount(
   if (!r.ok) return r;
   const accountId = r.data.account_id;
   if (typeof accountId !== "string" || accountId === "") return refuse("db_error", "payment_account_ensure returned no account_id");
-  return { ok: true, accountId, created: r.data.created === true };
+  const partyId = r.data.party_id;
+  if (typeof partyId !== "string" || partyId === "") return refuse("db_error", "payment_account_ensure returned no party_id");
+  return { ok: true, accountId, partyId, created: r.data.created === true };
 }
 
 // ── Posting ─────────────────────────────────────────────────────────────────
@@ -227,38 +284,58 @@ export interface PaymentAttribution {
   causeId: string;
   subjectKind: PaymentSubjectKind;
   subjectId: string;
-  /** Must be an account one of the entries names. */
+  /**
+   * The account this transaction CREDITS (`09` §6): its entries on it net above
+   * zero. An account the transaction debits is refused (`beneficiary_not_credited`)
+   * — whoever is charged is not thereby the payee.
+   */
   beneficiaryAccountId: string;
   attributionVersion: string;
 }
 
 /** `09` §8 — the rate actually applied, its source and its time. Required when the currencies differ. */
 export interface PaymentConversion {
-  /** A positive decimal as a string, e.g. "0.9134". Never a JS float. */
+  /**
+   * Units of `currency` (booked) per ONE unit of `originalCurrency`, in major
+   * units: 75 000 JPY booked as 502.50 USD is "0.0067". A positive decimal as a
+   * string, never a JS float.
+   */
   rate: string;
+  /** A lower-case slug naming where the rate came from, e.g. "processor". */
   source: string;
   at: string;
 }
 
 export interface PostPaymentTransactionInput {
-  /** Names the kind of event (a route, a webhook source, a job). A slug; no ids. */
+  /**
+   * Names the event's source — a lower-case slug. For a key a CLIENT chose it
+   * must also say whose key it is, or two callers who pick the same key collide:
+   * take `scope` and `idempotencyKey` together from `requireIdempotencyKey`
+   * (lib/http.ts), which builds `http:<operation>:<the caller's party id>`.
+   * Never a profile id (refused).
+   */
   scope: string;
   /** Derived from the EVENT, not the attempt (`09` §7). */
   idempotencyKey: string;
   kind: PaymentTransactionKind;
   /** The currency the entries are booked in. */
   currency: string;
-  /** What the customer was presented: the original currency and amount. */
+  /**
+   * What the customer was presented: the original currency and amount. When
+   * `originalCurrency` is `currency`, the amount must be the total of the credit
+   * (positive) entries, or the request is refused (`original_amount_mismatch`).
+   */
   originalCurrency: string;
   originalAmountMinor: MinorUnitsInput;
   conversion?: PaymentConversion | null;
   fxTransactionId?: string | null;
   reversesTransactionId?: string | null;
   attribution: PaymentAttribution;
-  /** The processor's object id, opaque here. */
+  /** The processor's object id, `<prefix>_<token>` (e.g. `pi_…`). Not free text. */
   externalRef?: string | null;
   /** When the event happened (ISO 8601), not when it was posted. */
   occurredAt: string;
+  /** At least two entries naming at least two DIFFERENT accounts, summing to zero. */
   entries: readonly PaymentEntryInput[];
 }
 
@@ -447,27 +524,58 @@ export interface RemovedPaymentIdentity {
   /** null: the retention period is undecided (payment_retention_settings). */
   retentionPeriod: string | null;
   retainUntil: string | null;
+  /** Transactions whose text still carried the profile id and were rewritten to the party id. */
+  identifiersScrubbed: number;
+  /** Balances left on the pseudonymous party. Empty unless `onOpenBalance: "retain"` was passed. */
+  openBalances: PaymentOpenBalance[];
+  /**
+   * The pseudonymous party the open balances stay on — present ONLY when
+   * `openBalances` is not empty, because it is then the one handle on money
+   * still owed. Keep it with the settlement work, never beside the profile id.
+   */
+  partyId?: string;
+}
+
+export interface RemovePaymentIdentityOptions {
+  /**
+   * What to do when the person's party still has a non-zero balance.
+   * "refuse" (the default): nothing changes and the call answers
+   * `open_balance` with `openBalances` — settle them, then call again.
+   * "retain": remove the identity now and leave the balances on the
+   * pseudonymous party, returned with its `partyId` so they stay addressable.
+   * Which one a deletion uses, and what becomes of unclaimed money, are the
+   * owner's decisions; this module makes neither.
+   */
+  onOpenBalance?: "refuse" | "retain";
 }
 
 /**
  * Pseudonymise a person's payment records: remove the one link between their
- * profile and their payment party. No ledger row changes, every balance is what
- * it was, and nothing is deleted. Idempotent. The pseudonym is not returned.
+ * profile and their payment party, and rewrite any transaction text that still
+ * carried their profile id. No amount, entry or balance changes, and nothing is
+ * deleted. Idempotent. Refuses while the party has an open balance unless
+ * `onOpenBalance: "retain"` is passed. The pseudonym is returned only then.
  *
  * NOT YET CALLED by `services/accountDeletion/AccountDeletionService.ts`: that
  * step belongs to the account-deletion workstream (PAY-T23). Until it is wired,
  * a deleted account's payment party keeps its link unless the profile row
- * itself is deleted (the foreign key then removes it).
+ * itself is deleted (the foreign key then removes it — and cannot refuse, so a
+ * balance open at that moment stays on a party marked `profile_deleted`).
  */
 export async function removePaymentIdentity(
   sc: any,
   profileId: string,
+  options: RemovePaymentIdentityOptions = {},
 ): Promise<PaymentLedgerResult<RemovedPaymentIdentity>> {
-  const r = await call(sc, "payment_party_remove_identity", { profile_id: profileId });
+  const payload: Record<string, unknown> = { profile_id: profileId };
+  if (options.onOpenBalance !== undefined) payload["on_open_balance"] = options.onOpenBalance;
+  const r = await call(sc, "payment_party_remove_identity", payload);
   if (!r.ok) return r;
   const d = r.data;
   if (typeof d.removed !== "boolean") return refuse("db_error", "payment_party_remove_identity returned an unexpected shape");
-  return {
+  const openBalances = readOpenBalances(d.open_balances);
+  if (openBalances === null) return refuse("db_error", "payment_party_remove_identity returned no open_balances");
+  const result: { ok: true } & RemovedPaymentIdentity = {
     ok: true,
     removed: d.removed,
     accounts: d.accounts,
@@ -475,5 +583,9 @@ export async function removePaymentIdentity(
     identityRemovedAt: d.identity_removed_at ?? null,
     retentionPeriod: d.retention_period ?? null,
     retainUntil: d.retain_until ?? null,
+    identifiersScrubbed: d.identifiers_scrubbed,
+    openBalances,
   };
+  if (typeof d.party_id === "string" && d.party_id !== "") result.partyId = d.party_id;
+  return result;
 }
