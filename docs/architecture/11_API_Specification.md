@@ -95,7 +95,7 @@ Two traps inside the rewrite itself:
 - It is an `else if` chain — at most **one** rewrite applies per request.
 - `/api/buddies/…` (with a trailing segment) is rewritten; bare `/api/buddies` is **not**
   (`specAliasRewrite.ts:19-22`), because that is a real list endpoint served by
-  `rentABuddy.ts:685`. The `/buddies` (1), `/rent-buddy` (3) and `/rent-a-buddy` (196) families
+  `rentABuddy.ts:691`. The `/buddies` (1), `/rent-buddy` (3) and `/rent-a-buddy` (196) families
   are all live and all different.
 
 ## Rule 2 — registration order is authorization to serve
@@ -202,7 +202,7 @@ Four corollaries, each with a live example:
 Twenty modules use them (PR #469's own count; 15 more bypassed them). The current
 failure-vs-emptiness gap is what callers then do with
 `null`: most answer `200` with an empty collection —
-`rentABuddyMarketplace.ts:414,519,632,666,1139,1963`, `sharedMoments.ts:287`, `placeDays.ts:94`,
+`rentABuddyMarketplace.ts:415,520,633,667,1140,1964`, `sharedMoments.ts:287`, `placeDays.ts:94`,
 `searchCandidates.ts:441,578,679,748,849,935,1050,1132,1464,1531,1629,1811`. That is **privacy-safe
 and diagnostically silent**: the viewer, the client and the operator all see "nothing here".
 
@@ -313,7 +313,7 @@ widened to `['admin','owner']` only by `rentABuddyRollout.ts`. The role is read 
 *caller's own* client, not the service client (`requireAdmin.ts:103-111`).
 
 Machine callers: two `/internal/*` endpoints (`profile.ts:1627`,
-`rentABuddy.ts:6302`) plus the two webhooks, authenticated by shared secret through
+`rentABuddy.ts:6308`) plus the two webhooks, authenticated by shared secret through
 `safeSecretEquals` (`http.ts:14-19`), which hashes both sides before `timingSafeEqual` so neither
 content nor length leaks through response timing.
 
