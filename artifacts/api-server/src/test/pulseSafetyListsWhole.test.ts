@@ -24,6 +24,8 @@
  *   LB0  CONTROL (GET /pulse/live): the host of an event the viewer is going to blocked the viewer (one row) → not on the rail
  *   LB1  GET /pulse/live: 1200 people blocked the viewer, that host among the rows past the cap → not on the rail
  *   LB2  CONTROL (GET /pulse/live): 1200 block rows, none of them that host's → the event is on the rail
+ *   LB3  GET /pulse/live: the viewer blocked 1200 people, that host among the rows past the cap → not on the rail
+ *   LB4  GET /pulse/live: a block list is cut and its keyed re-read FAILS → an empty rail (fail-closed), never the rail filtered on a prefix
  */
 import { describe, it, after } from "node:test";
 import assert from "node:assert/strict";
@@ -164,5 +166,14 @@ describe("census-discovery §123 (B43): GET /pulse/live applies both of the view
     const r = await get(liveWorld(blocks(1200, "blockedViewer", BOB, -1)), "/api/pulse/live");
     assert.equal(onRail(r.body, EV2), true, railSeen(r));
     assert.equal((r.body.failedSources ?? []).includes("blocks"), false, railSeen(r));
+  });
+  it("LB3 the viewer blocked 1200 people, the host among the rows past the cap → the event is not on the rail", async () => {
+    const r = await get(liveWorld(blocks(1200, "viewerBlocked", BOB, 1100)), "/api/pulse/live");
+    assert.equal(r.status, 200, railSeen(r));
+    assert.equal(onRail(r.body, EV2), false, `an event hosted by someone the viewer blocked is on the rail: ${railSeen(r)}`);
+  });
+  it("LB4 a block list is cut and its keyed re-read FAILS → the rail is empty (fail-closed)", async () => {
+    const r = await get(liveWorld(blocks(1200, "viewerBlocked", BOB, -1)), "/api/pulse/live", { fail: (x) => x.table === "blocks" && x.ordered });
+    assert.equal(onRail(r.body, EV2), false, `a rail filtered on a cut block list was served: ${railSeen(r)}`);
   });
 });

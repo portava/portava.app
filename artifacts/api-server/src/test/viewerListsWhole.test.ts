@@ -12,6 +12,10 @@
  *     MU0  CONTROL: three mutes → those three, beside the blocked set
  *     CP1  getCompassProfile: 1200 blockers, 1200 blocked, 1200 muted → each list whole, the id past the cap in each
  *     CP2  a Compass safety list is cut and cannot be read whole → the profile is refused (fail-closed), never built short
+ *     CT1  a Compass tool (search_events) over a STALE profile snapshot: 1200 blocks, the host past the cap → the event is not offered
+ *     CT2  the same for 1200 people who blocked the viewer, and CT3 for 1200 mutes
+ *     CT4  a hidden-user list is cut and cannot be read whole, and there is no snapshot → the tool offers nothing
+ *     CT0  CONTROL: nobody hidden → the event is offered; one block row → it is not
  *   the events tab
  *     EF1  GET /events/following: 1200 follows, the host past the cap → the event is listed
  *     EC1  GET /events/circles: 1200 circle memberships, the circle past the cap → the event is listed
@@ -24,6 +28,10 @@
  *     PC2  the follow list is cut and cannot be read whole → no posts, `user_follows` named
  *     PR1  GET /pulse/live: 1200 saved events, the upcoming one past the cap → on the rail
  *     PR2  the saved list is cut and cannot be read whole → `event_saves` named
+ *     PT1  GET /pulse/live: 1200 owned trips, the one with a pending join request past the cap → its request is on the rail
+ *     PT2  the owned-trips list is cut and cannot be read whole → `trips` named
+ *     PB1  GET /pulse/live: 1200 requested bookings, this city's past the cap → on the rail
+ *     PB2  the bookings list is cut and cannot be read whole → `buddy_bookings` named
  *   lists served whole
  *     HF1  GET /me/hashtag-follows: 1200 followed hashtags → all 1200, newest first
  *     WL1  GET /wishlist: 1200 saved places → all 1200, newest first; WL2 cut and unreadable → an error, never a shorter list
@@ -37,6 +45,7 @@ import { _setTestServiceClient } from "../lib/supabase.js";
 import { invalidateFlagsCache } from "../compass/flags.js";
 import { withMutedAuthors } from "../lib/discoveryCacheEligibility.js";
 import { getCompassProfile, clearCompassProfileCache } from "../compass/CompassProfileService.js";
+import { executeCompassTool } from "../compass/CompassTools.js";
 import { world, eventsServer, EVENT, HOST, VIEWER } from "./helpers/eventsWorld.js";
 import { cappedClient, seqId, type Row, type SeenRead } from "./helpers/cappedPostgrest.js";
 
@@ -86,6 +95,36 @@ describe("census-discovery §123: the Compass profile's block and mute lists are
     await assert.rejects(() => getCompassProfile(cappedClient(tables(), { fail: (r) => r.table === "user_mutes" && r.ordered }) as any, ME, true), /safety-list load failed/);
     clearCompassProfileCache();
     await assert.rejects(() => getCompassProfile(cappedClient(tables(), { fail: (r) => r.table === "blocks" && r.ordered }) as any, ME, true), /safety-list load failed/);
+  });
+});
+
+describe("census-discovery §123: a Compass tool re-reads the hidden-user lists whole", () => {
+  const EV = { id: "ee000000-0000-4000-a000-000000000042", title: "Rooftop jazz", description: null, city: "Paris", country: "FR", starts_at: new Date(Date.now() + 86_400_000).toISOString(), category: "music", host_id: TARGET, state: "open", visibility: "public" };
+  // A snapshot taken before the viewer's lists grew: it hides nobody. The tool must not trust it over the lists.
+  const stale = { userId: ME, currentCity: "Paris", blockedUserIds: [], blockerUserIds: [], mutedUserIds: [], interests: ["music"] } as any;
+  const offered = async (tables: Record<string, Row[]>, profile: unknown, fail?: Fail) => {
+    const r = (await executeCompassTool(cappedClient({ events: [EV], blocks: [], user_mutes: [], ...tables }, { fail }) as any, ME, profile as any, "search_events", { city: "Paris" })) as Record<string, any>;
+    return { listed: JSON.stringify(r.candidates ?? []).includes(EV.id), r };
+  };
+  it("CT0 CONTROL: nobody hidden → the event is offered; one block row → it is not", async () => {
+    assert.equal((await offered({}, stale)).listed, true);
+    assert.equal((await offered({ blocks: [{ blocker_id: ME, blocked_id: TARGET }] }, stale)).listed, false);
+  });
+  it("CT1 1200 blocks, the host past the cap → the event is not offered", async () => {
+    const o = await offered({ blocks: list(1200, "blocker_id", ME, "blocked_id", TARGET, 1100) }, stale);
+    assert.equal(o.listed, false, "a Compass tool offered an event hosted by someone the viewer blocked");
+  });
+  it("CT2 1200 people blocked the viewer, the host past the cap → the event is not offered", async () => {
+    const o = await offered({ blocks: list(1200, "blocked_id", ME, "blocker_id", TARGET, 1100) }, stale);
+    assert.equal(o.listed, false, "a Compass tool offered an event hosted by someone who blocked the viewer");
+  });
+  it("CT3 1200 mutes, the host past the cap → the event is not offered", async () => {
+    const o = await offered({ user_mutes: list(1200, "muter_id", ME, "muted_id", TARGET, 1100) }, stale);
+    assert.equal(o.listed, false, "a Compass tool offered an event hosted by someone the viewer muted");
+  });
+  it("CT4 a hidden-user list is cut and cannot be read whole, and there is no snapshot → nothing is offered", async () => {
+    const o = await offered({ blocks: list(1200, "blocker_id", ME, "blocked_id", TARGET, 1100) }, null, (x) => x.table === "blocks" && x.ordered);
+    assert.equal(o.listed, false, JSON.stringify(o.r).slice(0, 300));
   });
 });
 
@@ -157,10 +196,10 @@ const post = { id: POST, author_id: BOB, content: "Sunset from the fort", status
 const in2h = new Date(Date.now() + 2 * 3_600_000).toISOString();
 const in3days = new Date(Date.now() + 3 * 86_400_000).toISOString();
 const SAVED_EV = "ec000000-0000-4000-8000-000000000077";
-const railTables = (saves: Row[]): Record<string, Row[]> => ({
+const railTables = (saves: Row[], over: Record<string, Row[]> = {}): Record<string, Row[]> => ({
   feature_flags: [{ flag: "safe_return_enabled", enabled: false }, { flag: "hidden_gems_enabled", enabled: false }, { flag: "find_your_circle_enabled", enabled: false }],
   events: [{ id: SAVED_EV, host_id: BOB, title: "Night market", starts_at: in2h, ends_at: in3days, city: "Manila", state: "open", visibility: "public", going_count: 1, max_attendees: 10 }],
-  event_rsvps: [], event_saves: saves, trip_members: [], trips: [], trip_join_requests: [], safe_return_sessions: [], blocks: [],
+  event_rsvps: [], event_saves: saves, trip_members: [], trips: [], trip_join_requests: [], safe_return_sessions: [], blocks: [], ...over,
 });
 
 describe("census-discovery §123: Pulse reads the viewer's follows and saves whole", () => {
@@ -192,6 +231,39 @@ describe("census-discovery §123: Pulse reads the viewer's follows and saves who
   it("PR2 the saved list is cut and cannot be read whole → `event_saves` named", async () => {
     const r = await rail(list(1200, "user_id", ALICE, "event_id", SAVED_EV, 1100), (x) => x.table === "event_saves" && x.ordered);
     assert.equal(((r.body.failedSources ?? []) as string[]).includes("event_saves"), true, JSON.stringify(r.body).slice(0, 300));
+  });
+  // the rail's own trips (join requests to them) and requested bookings
+  const TRIP = "7e1b0000-0000-4000-8000-000000000042";
+  const trips = (n: number, at: number): Row[] => Array.from({ length: n }, (_, i) => ({ id: i === at ? TRIP : seqId("7e1a0000", i), owner_id: ALICE, destination_city: i === at ? "Cebu" : `City ${i}` }));
+  const joinRequest = [{ id: "9a000000-0000-4000-8000-000000000001", trip_id: TRIP, user_id: BOB, status: "pending", created_at: "2026-09-30T10:00:00.000Z" }];
+  const railWith = (over: Record<string, Row[]>, fail?: Fail, query = "") => mount("../routes/pulse.js", railTables([], over), `/api/pulse/live${query}`, fail);
+  const hasItem = (b: any, id: string) => ((b.items ?? []) as any[]).some((i) => i.id === id);
+  it("PT0 CONTROL: one owned trip with a pending join request → the request is on the rail", async () => {
+    const r = await railWith({ trips: trips(1, 0), trip_join_requests: joinRequest });
+    assert.equal(hasItem(r.body, `trip_request:${TRIP}`), true, JSON.stringify(r.body).slice(0, 300));
+  });
+  it("PT1 1200 owned trips, the one with a pending request past the cap → its request is on the rail", async () => {
+    const r = await railWith({ trips: trips(1200, 1100), trip_join_requests: joinRequest });
+    assert.equal(hasItem(r.body, `trip_request:${TRIP}`), true, `a pending join request is missing from the rail: ${JSON.stringify({ items: (r.body.items ?? []).length, failedSources: r.body.failedSources })}`);
+  });
+  it("PT2 the owned-trips list is cut and cannot be read whole → `trips` named", async () => {
+    const r = await railWith({ trips: trips(1200, 1100), trip_join_requests: joinRequest }, (x) => x.table === "trips" && x.ordered && x.eqs.owner_id === ALICE);
+    assert.equal(((r.body.failedSources ?? []) as string[]).includes("trips"), true, JSON.stringify(r.body).slice(0, 300));
+  });
+  const BOOKING = "b00c0000-0000-4000-8000-000000000042";
+  const bookings = (n: number, at: number): Row[] => Array.from({ length: n }, (_, i) => ({ id: i === at ? BOOKING : seqId("b00a0000", i), traveler_id: ALICE, buddy_id: seqId("b0dd0000", i), booking_date: in2h, city: i === at ? "Manila" : "Elsewhere", status: "requested" }));
+  const RAIL_CITY = "?context=currentCity&citySlug=manila";
+  it("PB0 CONTROL: one requested booking in this city → on the rail", async () => {
+    const r = await railWith({ buddy_bookings: bookings(1, 0) }, undefined, RAIL_CITY);
+    assert.equal(hasItem(r.body, `buddy_request:${BOOKING}`), true, JSON.stringify(r.body).slice(0, 300));
+  });
+  it("PB1 1200 requested bookings, this city's past the cap → on the rail", async () => {
+    const r = await railWith({ buddy_bookings: bookings(1200, 1100) }, undefined, RAIL_CITY);
+    assert.equal(hasItem(r.body, `buddy_request:${BOOKING}`), true, `a requested booking is missing from the rail: ${JSON.stringify({ items: (r.body.items ?? []).length, failedSources: r.body.failedSources })}`);
+  });
+  it("PB2 the bookings list is cut and cannot be read whole → `buddy_bookings` named", async () => {
+    const r = await railWith({ buddy_bookings: bookings(1200, 1100) }, (x) => x.table === "buddy_bookings" && x.ordered, RAIL_CITY);
+    assert.equal(((r.body.failedSources ?? []) as string[]).includes("buddy_bookings"), true, JSON.stringify(r.body).slice(0, 300));
   });
 });
 
