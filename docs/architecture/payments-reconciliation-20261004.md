@@ -5,7 +5,7 @@ documentation only — this pass built nothing, applied nothing, flipped no flag
 database. **Production (`ajrurzioarfkagpuxfnb`) was not read, not even for aggregates.** Every
 deployment fact below is quoted from a committed capture in `artifacts/api-server/baseline/`.
 Every `file:line` carries an anchor so the next code move is loud rather than silent
-(`artifacts/api-server/scripts/check-doc-citations.mjs:300#good`).*
+(`artifacts/api-server/scripts/check-doc-citations.mjs:38#This is the half that goes red when code moves`).*
 
 ## Why this document exists
 
