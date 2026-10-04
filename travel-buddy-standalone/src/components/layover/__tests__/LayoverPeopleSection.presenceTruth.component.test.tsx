@@ -51,7 +51,7 @@ async function renderCard(presence: React.ComponentProps<typeof LayoverPeopleSec
       shareEnabled
       shareBusy={false}
       presence={presence}
-      buddies={[]}
+      buddies={null}
       canEdit
       onToggleShare={() => {}}
       onOpenBuddy={() => {}}

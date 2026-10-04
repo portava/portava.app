@@ -311,7 +311,7 @@ export type OfflineUnavailableReason =
   | 'no_routing_provider'
   | 'no_envelope_geometry'
   | 'no_flight_feed'
-  | 'no_crew_storage'
+  | 'no_crew_storage' | 'crew_not_read' | 'not_in_crew' | 'no_meeting_point_set' | 'crew_unreadable' // §48 L154; the first is what pre-§48 cached bundles carry
   | 'no_phrase_catalogue';
 
 export interface OfflineCapability<T> {
@@ -362,12 +362,12 @@ export interface LayoverOfflineBundle {
    * OFFLINE half: the one thing about a crew worth surviving the network dying
    * is where to meet them.
    *
-   * NOT YET SERVED. `buildOfflineBundle`
-   * (artifacts/api-server/src/services/airport/LayoverDegradedService.ts) still
-   * returns `unavailable("no_crew_storage")` unconditionally, and its own type
-   * is still `<never>`. So today every response makes this unavailable and the
-   * card renders the unavailable branch. The client is ready; the server is one
-   * `available(label)` call away. See the report for LO-API.
+   * SERVED SINCE census-layover §48. `buildOfflineBundle`
+   * (artifacts/api-server/src/services/airport/LayoverDegradedService.ts) reads
+   * the traveller's OWN crew and answers its label, or why not: `not_in_crew`,
+   * `no_meeting_point_set`, `crew_unreadable` (a failed read, never "no crew")
+   * or `crew_not_read`. `layoverPlanCache` keeps it, so the offline card can
+   * still say where to meet when the network has gone.
    */
   crewMeetingPoint: OfflineCapability<string>;
   translationPhrases: OfflineCapability<never>;
@@ -406,9 +406,9 @@ export type ReturnNowStatusCapability = 'enabled' | 'flag_on_readers_not_widened
  * it had not been taught, and `returnToAirportNow` casts the body whole, so a
  * narrowed union would be a lie the compiler could not catch.
  *
- * KNOWN MEMBERS TODAY, and neither is a policy decision:
- *   `no_crew_storage`  what the server still sends unconditionally
- *                      (LayoverSafeReturnService.ts:383), now stale.
+ * KNOWN MEMBERS TODAY (the first names an owner decision; this client takes none):
+ *   `crew_notify_not_enabled`  what the server sends since §48; the owner has
+ *                      not enabled the L144 disclosure. (`no_crew_storage`: pre-§48.)
  *
  * ── WHAT THIS CLIENT DELIBERATELY DOES NOT DECIDE ────────────────────────────
  * Whether a crew SHOULD be told that one of its members aborted is a
@@ -614,8 +614,61 @@ export interface LayoverBuddy {
   coverPhotoUrl: string | null;
   buddyLevel: string | null;
   availableNow: boolean;
-  availableDuringLayover: boolean;
+  /**
+   * `null` means NOBODY CHECKED — the availability table could not be read —
+   * and the route says so in `degradedReasons`. It is not `false`: `false` is
+   * a measured "not marked available during your layover", a claim about this
+   * person. Census §23.8 recorded the route half of this; the type is the
+   * client half, so a truthiness test cannot fold the two back together.
+   */
+  availableDuringLayover: boolean | null;
+  /** TRUE when the profile positively declares a service a layover can use. */
+  layoverCompatible?: boolean;
 }
+
+/**
+ * The certified answer the route gates the list on (`LayoverBuddyGate.ts`).
+ * Its vocabulary, not ours: the verdict is the same §9 verdict the countdown on
+ * this screen shows, so the list and the countdown cannot disagree.
+ */
+export interface LayoverBuddySafetyGate {
+  passed: boolean;
+  verdict: LeaveAdvice['verdict'] | string;
+  usableMinutes: number;
+  returnState: LayoverReturnState | string;
+}
+
+/** What a high-risk (tight) layover requires of a buddy profile. */
+export interface LayoverBuddyTrustRequirement {
+  applied: boolean;
+  reason: 'tight_window' | string | null;
+  requires: string[];
+}
+
+/**
+ * census-layover L273 / L254 / L294 — the buddy list, or the reason there is
+ * none. Never an empty array standing in for either.
+ *
+ * `ok: true` is an answer from the route. `refusal` is null when it served a
+ * list (possibly empty) and names why when it declined to:
+ * `safety_gate_not_passed` (the certified window — see `safetyGate`) or
+ * `rent_buddy_not_enabled` (the marketplace is off). `degraded` means a read
+ * the route made fell closed; `blocks_unreadable` serves nobody by design.
+ * `ok: false` is the absence of an answer, with the server's sentence when it
+ * wrote one.
+ */
+export type LayoverBuddiesAnswer =
+  | {
+      ok: true;
+      city: string | null;
+      buddies: LayoverBuddy[];
+      refusal: string | null;
+      safetyGate: LayoverBuddySafetyGate | null;
+      trustRequirement: LayoverBuddyTrustRequirement | null;
+      degraded: boolean;
+      degradedReasons: string[];
+    }
+  | { ok: false; message: string };
 
 export interface CreateSessionPayload {
   airportId?: string | null;
@@ -772,16 +825,42 @@ export type LayoverToolName =
 
 // ── API calls ─────────────────────────────────────────────────────────────────
 
-export async function searchAirports(query: string): Promise<AirportProfile[]> {
+/**
+ * census-layover L294 (C2) — a search, or a stated failure to search.
+ *
+ * `ok: true` is the route's answer: `airports` (possibly empty — a MEASURED
+ * "nothing matches"), whether the mode is on at all (`featureEnabled: false`
+ * is the route's answer when `airport_mode_enabled` is off), and `degraded`
+ * when the curated table could not be read and the static set was served.
+ * `ok: false` means no answer arrived. This used to return `[]` for every one
+ * of those, so a failed search read as "no airport matches" on the first
+ * screen of the feature.
+ */
+export type AirportSearchResult =
+  | { ok: true; airports: AirportProfile[]; featureEnabled: boolean; degraded: boolean }
+  | { ok: false; message: string };
+
+const SEARCH_UNREACHABLE = "Airport search couldn't be reached. Check your connection and try again.";
+
+export async function searchAirports(query: string): Promise<AirportSearchResult> {
+  let res: Response;
   try {
-    const res = await authedFetch(airportUrl(`search?q=${encodeURIComponent(query)}`));
-    if (!res.ok) return [];
-    const json = await res.json();
-    return json.airports ?? [];
+    res = await authedFetch(airportUrl(`search?q=${encodeURIComponent(query)}`));
   } catch (err) {
     console.warn('[layover] searchAirports failed:', err);
-    return [];
+    return { ok: false, message: SEARCH_UNREACHABLE };
   }
+  let json: Record<string, any> = {};
+  try { json = await res.json(); } catch { /* falls through to the status check */ }
+  if (!res.ok) {
+    return { ok: false, message: typeof json.message === 'string' ? json.message : SEARCH_UNREACHABLE };
+  }
+  return {
+    ok: true,
+    airports: Array.isArray(json.airports) ? (json.airports as AirportProfile[]) : [],
+    featureEnabled: json.featureEnabled !== false,
+    degraded: json.degraded === true,
+  };
 }
 
 export async function resolveAirportByIata(iata: string): Promise<AirportProfile | null> {
@@ -796,17 +875,51 @@ export async function resolveAirportByIata(iata: string): Promise<AirportProfile
   }
 }
 
-export async function createLayoverSession(payload: CreateSessionPayload): Promise<{
-  session: LayoverSession;
-  safeReturnSuggested: boolean;
-  safeReturnReasons: string[];
-}> {
-  const res = await authedFetch(airportUrl('sessions'), {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) throw new Error(`Failed to create layover session: ${res.status}`);
-  return res.json();
+/**
+ * census-layover L294 (C2) — the session, or the server's refusal WITH its code.
+ *
+ * `POST /airport/sessions` refuses in sentences written for a traveller ("This
+ * layover has already departed — set a departure time in the future", "A
+ * layover window cannot exceed 48 hours", "Airport details could not be
+ * loaded. Please try again."), under codes that say whether a retry can help.
+ * This used to THROW `Failed to create layover session: <status>`, discarding
+ * the code and the sentence, so the sheet told every refusal to "try again" —
+ * including the ones a retry cannot fix — and its `feature_disabled` branch
+ * matched a string that could never contain the code. `retryable` is the
+ * server's own flag; `code: null` means no server answered at all.
+ */
+export type CreateLayoverOutcome =
+  | { ok: true; session: LayoverSession; safeReturnSuggested: boolean; safeReturnReasons: string[] }
+  | { ok: false; code: string | null; message: string; retryable: boolean };
+
+const CREATE_UNREACHABLE = "We couldn't reach Portava. Check your connection and try again.";
+
+export async function createLayoverSession(payload: CreateSessionPayload): Promise<CreateLayoverOutcome> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions'), {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    return { ok: false, code: null, message: CREATE_UNREACHABLE, retryable: true };
+  }
+  let json: Record<string, any> = {};
+  try { json = await res.json(); } catch { /* falls through to the status check */ }
+  if (!res.ok || !json.session) {
+    return {
+      ok: false,
+      code: typeof json.error === 'string' ? json.error : null,
+      message: typeof json.message === 'string' ? json.message : 'Could not start your layover. Please try again.',
+      retryable: json.retryable === true,
+    };
+  }
+  return {
+    ok: true,
+    session: json.session as LayoverSession,
+    safeReturnSuggested: json.safeReturnSuggested === true,
+    safeReturnReasons: Array.isArray(json.safeReturnReasons) ? (json.safeReturnReasons as string[]) : [],
+  };
 }
 
 /**
@@ -1373,13 +1486,44 @@ export async function getLayoverPresence(sessionId: string): Promise<LayoverPres
   };
 }
 
-export async function getLayoverBuddies(sessionId: string): Promise<{
-  city: string | null;
-  buddies: LayoverBuddy[];
-} | null> {
-  const res = await authedFetch(airportUrl('sessions', sessionId, 'buddies'));
-  if (!res.ok) return null;
-  return res.json();
+/** What a failed buddy read says when the server said nothing (offline, unparseable). */
+const BUDDIES_UNREACHABLE = 'Local buddies could not be loaded. Please try again.';
+
+/**
+ * Resolves in EVERY case — it used to throw on an offline `fetch` into the
+ * dashboard's `Promise.all`, and to answer a 503 with `null`, which the screen
+ * stored as `[]`. Every field the route publishes is named here, so no caller
+ * has to decide what an absent confidence flag means.
+ */
+export async function getLayoverBuddies(sessionId: string): Promise<LayoverBuddiesAnswer> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'buddies'));
+  } catch {
+    return { ok: false, message: BUDDIES_UNREACHABLE };
+  }
+  let json: Record<string, any> = {};
+  try { json = await res.json(); } catch { /* falls through to the status check */ }
+  if (!res.ok || json.ok === false) {
+    return { ok: false, message: typeof json.message === 'string' ? json.message : BUDDIES_UNREACHABLE };
+  }
+  return {
+    ok: true,
+    city: typeof json.city === 'string' ? json.city : null,
+    buddies: Array.isArray(json.buddies)
+      ? (json.buddies as LayoverBuddy[]).map((b) => ({
+          ...b,
+          // An older server sent `false` for an unread table; this one sends
+          // `null`. Anything that is not a boolean is "not checked".
+          availableDuringLayover: typeof b.availableDuringLayover === 'boolean' ? b.availableDuringLayover : null,
+        }))
+      : [],
+    refusal: typeof json.reason === 'string' ? json.reason : null,
+    safetyGate: json.safetyGate ?? null,
+    trustRequirement: json.trustRequirement ?? null,
+    degraded: json.degraded === true,
+    degradedReasons: Array.isArray(json.degradedReasons) ? (json.degradedReasons as string[]) : [],
+  };
 }
 
 // ── Telegraph ─────────────────────────────────────────────────────────────────
@@ -1590,7 +1734,17 @@ export type CrewInfeasibilityReason =
 export interface CrewSolution {
   crewVersion: string;
   sharedReturnBy: string | null;
+  /**
+   * Only crewmates this traveller may see a card for (census-layover §48):
+   * the server no longer names a member across a block or a paused share.
+   */
   bindingMemberIds: string[];
+  /**
+   * TRUE when the binding deadline belongs to a crewmate this traveller may
+   * not see. Optional: an older server does not publish it, and absent means
+   * UNREPORTED, not false.
+   */
+  bindingMemberHidden?: boolean;
   feasible: boolean;
   reasons: CrewInfeasibilityReason[];
   split: boolean;
@@ -1632,9 +1786,16 @@ export type CrewState =
  * are waiting for them.
  */
 export async function getLayoverCrew(sessionId: string): Promise<CrewState | null> {
-  const res = await authedFetch(airportUrl('sessions', sessionId, 'crew'));
-  if (!res.ok) return null;
-  return res.json();
+  // RESOLVES in every case. Without the `try`, an offline `fetch` rejected
+  // straight through the section's floated `refresh()`, and the card sat on
+  // its spinner instead of saying the crew could not be loaded.
+  try {
+    const res = await authedFetch(airportUrl('sessions', sessionId, 'crew'));
+    if (!res.ok) return null;
+    return (await res.json()) as CrewState;
+  } catch {
+    return null;
+  }
 }
 
 export type CrewActionOutcome =

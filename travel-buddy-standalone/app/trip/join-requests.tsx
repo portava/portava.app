@@ -1,7 +1,7 @@
 /**
- * Join requests — the owner's review screen (TRIP-F06, WP-10; census-trips §77).
+ * Join requests — the hosts' review screen (TRIP-F06, WP-10; census-trips §77, §79).
  *
- * Every pending request on every trip the viewer owns (GET
+ * Every pending request on every trip the viewer owns or co-hosts (GET
  * /trips/join-requests), grouped by trip, each approved or declined in place.
  * The list is JoinRequestsList, the same component the trip page mounts for a
  * single trip. Trip titles are enrichment only: if they cannot be read the

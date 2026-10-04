@@ -54,7 +54,7 @@ import { fetchMediaFeedItemById } from '../../src/services/mediaFeed.ts';
 import { VerifiedLocationStamp } from '../../src/components/media/VerifiedLocationStamp.tsx';
 import { useMediaSave } from '../../src/hooks/useMediaSave.ts';
 import { StampButton } from '../../src/components/stamps/StampButton.tsx';
-import { recordMediaShare } from '../../src/services/mediaInteractions.ts';
+import { recordMediaShare } from '../../src/services/mediaInteractions.ts'; import { UNREAD_COUNT_MARK, unreadCountLabel } from '../../src/lib/unreadCount.ts';
 import { MediaCommentSheet } from '../../src/components/media/MediaCommentSheet.tsx';
 import {
   getViewerContext,
@@ -95,13 +95,13 @@ interface ViewerPost {
   authorAvatarUrl: string | null;
   locationName: string | null;
   locationCity: string | null;
-  likeCount: number;
-  commentCount: number;
-  saveCount: number;
-  likedByMe: boolean;
-  savedByMe: boolean;
+  likeCount: number | null; // census-media §47: a count or flag the server could not read is null, never 0/false
+  commentCount: number | null;
+  saveCount: number | null;
+  likedByMe: boolean | null;
+  savedByMe: boolean | null;
   /** Number of distinct viewers who stamped this post. From MediaFeedStats.stampItCount. */
-  stampItCount: number;
+  stampItCount: number | null;
 }
 
 function mapMediaFeedItem(item: import('../../src/types/media.ts').MediaFeedItem): ViewerPost {
@@ -122,7 +122,7 @@ function mapMediaFeedItem(item: import('../../src/types/media.ts').MediaFeedItem
     saveCount: item.saveCount,
     likedByMe: item.likedByMe,
     savedByMe: item.savedByMe,
-    stampItCount: item.stampItCount ?? 0,
+    stampItCount: item.stampItCount !== undefined ? item.stampItCount : 0, // absent (older server) = 0; null (unread) stays null
   };
 }
 
@@ -139,8 +139,8 @@ function fmtCount(n: number): string {
 interface OverlayProps {
   post: ViewerPost | null;
   isSaved: boolean;
-  saveCount: number;
-  commentCount: number;
+  saveCount: number | null;
+  commentCount: number | null;
   isMuted: boolean;
   isVideo: boolean;
   onClose: () => void;
@@ -155,7 +155,7 @@ interface OverlayProps {
   /** True when the viewing user is the post's creator. */
   isOwner: boolean;
   /** Number of distinct viewers who stamped this post. Shown only to the creator. */
-  stampItCount: number;
+  stampItCount: number | null;
   /** Media v2 World shell (§15): show the action-rail entry when enabled. */
   showActions?: boolean;
   /** Opens the media action rail. */
@@ -305,7 +305,7 @@ function ViewerOverlay({
               entityType="media"
               entityId={post.id}
               initialCount={post.likeCount}
-              initialIsStamped={post.likedByMe}
+              initialIsStamped={post.likedByMe === true}
               iconSize={28} tone="onDark"
               style={ov.stampBtnWrapper}
             />
@@ -314,17 +314,17 @@ function ViewerOverlay({
           {/* Comment */}
           <Pressable style={ov.actionBtn} onPress={onComment} hitSlop={6} accessibilityRole="button" accessibilityLabel="Comment">
             <MessageCircle size={28} color="#fff" strokeWidth={1.8} />
-            {commentCount > 0 ? <Text style={ov.actionCount}>{fmtCount(commentCount)}</Text> : null}
+            {commentCount === null ? <Text style={ov.actionCount} accessibilityLabel={unreadCountLabel('Comment')}>{UNREAD_COUNT_MARK}</Text> : commentCount > 0 ? <Text style={ov.actionCount}>{fmtCount(commentCount)}</Text> : null}
           </Pressable>
 
           {/* Save */}
           <Pressable style={ov.actionBtn} onPress={onSave} hitSlop={6} accessibilityRole="button" accessibilityLabel={isSaved ? 'Unsave' : 'Save'}>
             <Bookmark size={28} color={isSaved ? color.signal : '#fff'} fill={isSaved ? color.signal : 'transparent'} strokeWidth={isSaved ? 0 : 1.8} />
-            {saveCount > 0 ? <Text style={ov.actionCount}>{fmtCount(saveCount)}</Text> : null}
+            {saveCount === null ? <Text style={ov.actionCount} accessibilityLabel={unreadCountLabel('Save')}>{UNREAD_COUNT_MARK}</Text> : saveCount > 0 ? <Text style={ov.actionCount}>{fmtCount(saveCount)}</Text> : null}
           </Pressable>
 
           {/* Stamp count — creator-only analytics signal */}
-          {isOwner && stampItCount > 0 ? (
+          {isOwner && stampItCount !== null && stampItCount > 0 ? ( /* unread (§47): the creator-only vanity count is not drawn, as at 0 */
             <View style={ov.actionBtn} pointerEvents="none" accessibilityLabel={`${stampItCount} stamps`}>
               <Zap size={26} color="rgba(255,220,80,0.9)" fill="rgba(255,220,80,0.9)" strokeWidth={0} />
               <Text style={ov.actionCount}>{fmtCount(stampItCount)}</Text>
@@ -724,9 +724,9 @@ export default function MediaViewer() {
 
   // Counts — save is optimistic via hook; stamp is managed by StampButton itself
   const activeIsSaved      = activeItem ? (saveHook.savedSet[activeItem.id] ?? activePost?.savedByMe ?? false) : false;
-  const activeSaveCount    = activePost?.saveCount ?? 0;
-  const activeCommentCount = activePost?.commentCount ?? 0;
-  const activeStampItCount = activePost?.stampItCount ?? 0;
+  const activeSaveCount    = activePost ? activePost.saveCount : 0; // null (unread, §47) stays null: drawn as the mark
+  const activeCommentCount = activePost ? activePost.commentCount : 0;
+  const activeStampItCount = activePost ? activePost.stampItCount : 0;
   const activeIsOwner      = Boolean(activePost && currentUserId && activePost.authorId === currentUserId);
 
   return (

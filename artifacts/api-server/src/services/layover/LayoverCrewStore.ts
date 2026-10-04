@@ -31,7 +31,10 @@
  * and ghost mode that `publishableUserIds` reads, are the other two. That
  * composition already exists in the route layer (`cityPresence`), and this
  * module returns raw membership so the route can apply it. Answering it here
- * would fork the rule.
+ * would fork the rule. The one place the rule must run INSIDE a write — who
+ * may join a crew, given who is already in it — takes it as an argument
+ * (`CrewAdmission`, supplied by `LayoverCrewVisibility.blockAdmission`), so the
+ * store owns the moment and the route layer still owns the rule.
  *
  * ── STORAGE ──────────────────────────────────────────────────────────────────
  * `layover_crews` and `layover_crew_members`, created by migration 2984.
@@ -214,6 +217,53 @@ export async function crewMembers(
   return { ok: true, value: (data ?? []).map((r) => toMember(r as Record<string, any>)) };
 }
 
+/**
+ * The live members of several crews at once, keyed by crew id.
+ *
+ * Exists for the BLOCK check on crew discovery (`LayoverCrewVisibility.ts`): a
+ * crew may be offered to a traveller only when none of its members is in a
+ * block relation with them, so the list cannot be filtered without knowing who
+ * is in each crew. One bounded read rather than one per crew.
+ *
+ * ── A TRUNCATED READ IS A FAILED READ ────────────────────────────────────────
+ * `CREW_READ_LIMIT` bounds how many members one crew read certifies, so a page
+ * of `crewIds.length × CREW_READ_LIMIT` rows holds every member of every crew
+ * the store will ever serve. The read asks for ONE MORE than that. If that row
+ * arrives, some crew has more members than any read here can see — a row edited
+ * out of band — and the member list is incomplete. Clearing a crew against an
+ * incomplete member list is exactly how a blocked member slips through, so the
+ * whole read is refused rather than answered from the page that fitted.
+ */
+export async function liveMembersOfCrews(
+  db: SupabaseClient,
+  crewIds: readonly string[],
+): Promise<CrewRead<Map<string, CrewMemberRow[]>>> {
+  const byCrew = new Map<string, CrewMemberRow[]>();
+  if (crewIds.length === 0) return { ok: true, value: byCrew };
+  const ceiling = crewIds.length * CREW_READ_LIMIT;
+  const { data, error } = await db
+    .from("layover_crew_members")
+    .select("crew_id,user_id,session_id,role,joined_at")
+    .in("crew_id", crewIds as string[])
+    .is("left_at", null)
+    .limit(ceiling + 1);
+  if (error) {
+    logger.warn({ err: error.message, crews: crewIds.length }, "crew member read failed — refusing rather than clearing crews against nobody");
+    return FAILED;
+  }
+  const rows = (data ?? []).map((r) => toMember(r as Record<string, any>));
+  if (rows.length > ceiling) {
+    logger.warn({ crews: crewIds.length, rows: rows.length }, "crew member read hit its ceiling — refusing rather than clearing crews against a partial member list");
+    return FAILED;
+  }
+  for (const m of rows) {
+    const list = byCrew.get(m.crewId) ?? [];
+    list.push(m);
+    byCrew.set(m.crewId, list);
+  }
+  return { ok: true, value: byCrew };
+}
+
 /** Open, unexpired crews in one city, excluding any the caller is already in. */
 export async function openCrewsInCity(
   db: SupabaseClient,
@@ -371,9 +421,30 @@ export async function createCrew(
  * `canonCity` on both sides — the stored city is already canonical (`createCrew`
  * writes it that way) and the caller's is not.
  */
+/**
+ * May this traveller join a crew whose members are `memberIds`?
+ *
+ * The RULE is not this module's to hold — "WHO MAY SEE A MEMBER" is the route
+ * layer's (see the header), and a crew is a way of putting people in the same
+ * place, so the block list is the first question it asks. What this module
+ * owns is the MOMENT: `joinCrew` is the only place that knows the members and
+ * has not yet written, so the route hands its rule in and the store asks it
+ * there. `memberIds` carries the founder and every live member, minus the
+ * joiner.
+ *
+ *   "admit"    nobody in the crew stands in the way.
+ *   "refuse"   somebody does. Reported as `crew_unavailable` — the same answer
+ *              as a crew that has closed — so a refusal never tells the joiner
+ *              that a person in that crew has blocked them, or that they have
+ *              blocked somebody in it.
+ *   "unknown"  the rule could not be evaluated (an unreadable block list).
+ *              Reported as `read_failed`; the join does not happen.
+ */
+export type CrewAdmission = (memberIds: string[]) => Promise<"admit" | "refuse" | "unknown">;
+
 export async function joinCrew(
   db: SupabaseClient,
-  input: { userId: string; sessionId: string; crewId: string; city: string },
+  input: { userId: string; sessionId: string; crewId: string; city: string; admit: CrewAdmission },
   nowIso: string,
 ): Promise<CrewWrite<{ crew: CrewRow; members: CrewMemberRow[] }>> {
   const existing = await activeCrewForUser(db, input.userId, nowIso);
@@ -408,6 +479,23 @@ export async function joinCrew(
 
   const before = await crewMembers(db, crew.id);
   if (!before.ok) return { ok: false, reason: "read_failed" };
+
+  // WHO IS ALREADY HERE decides whether this traveller may be, and it is asked
+  // BEFORE the capacity answer and before any write: a refused join must leave
+  // nothing behind and must not be distinguishable, by its reason, from a crew
+  // that closed. Asked for a re-join too, for the city check's reason — a
+  // membership that should not exist is not re-confirmed by tapping again.
+  const others = new Set<string>([crew.createdBy, ...before.value.map((m) => m.userId)]);
+  others.delete(input.userId);
+  const admission = await input.admit([...others]);
+  if (admission === "unknown") return { ok: false, reason: "read_failed" };
+  if (admission === "refuse") {
+    // No user ids in the log line: that two people are in a block relation is
+    // not something an operational log needs to carry.
+    logger.warn({ crewId: crew.id }, "crew join refused — a member is in a block relation with the joiner");
+    return { ok: false, reason: "crew_unavailable" };
+  }
+
   const alreadyIn = before.value.some((m) => m.userId === input.userId);
   if (!alreadyIn && before.value.length >= crew.maxMembers) {
     return { ok: false, reason: "crew_full" };

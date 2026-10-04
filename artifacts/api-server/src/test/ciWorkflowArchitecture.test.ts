@@ -483,6 +483,23 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
      *  second boundary, the case a real 1-second-resolution clock hits only
      *  occasionally. */
     tickingClock?: boolean;
+    /** Make the first N listing calls answer the way a rate-limited
+     *  `gh api --jq` actually answers: the REST error body on STDOUT, exit 1.
+     *  Measured on run 37113934334 job 111186609364, 2026-10-03. */
+    apiRefusals?: number;
+    /** Ceiling for the refusal backoff, so a test does not really sleep for
+     *  the production default. */
+    pollMaxSeconds?: number;
+    /** Serve the fixture listing for BOTH status queries, reproducing a run
+     *  that moved queued -> in_progress between the two calls. */
+    bothStatuses?: boolean;
+    /** Refuse with NOTHING on stdout and this one line on stderr, which is how
+     *  `gh api --jq` answers an HTTP error it could not parse a body out of:
+     *  the filter never runs, so stdout is empty and the only account of the
+     *  cause is the summary line. Run 37122355417 refused twelve times and the
+     *  script printed `exit 1` twelve times, because it was reading the stream
+     *  that was empty and discarding the one that was not. */
+    refusalStderr?: string;
   }) => {
     const dir = mkdtempSync(join(tmpdir(), "portava-slot-"));
     writeFileSync(join(dir, "listing.txt"), opts.listing ?? "");
@@ -495,11 +512,37 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
         { mode: 0o755 },
       );
     }
+    const calls = JSON.stringify(join(dir, "listing-calls"));
+    const asked = JSON.stringify(join(dir, "asked-urls"));
     writeFileSync(
       join(dir, "gh"),
       "#!/usr/bin/env bash\n" +
+        `printf '%s\\n' "$*" >> ${asked}\n` +
         // `gh api .../actions/workflows/<id>/runs...` -> the listing.
+        // The script asks per status, so the stub answers per status: the
+        // fixture listing stands in for the in-progress runs, and `queued`
+        // comes back empty, as it would for a queue of running jobs.
+        'if [[ "$*" == *"status=queued"* ]]; then\n' +
+        (opts.bothStatuses ? `  cat ${JSON.stringify(join(dir, "listing.txt"))}\n` : "") +
+        "  exit 0\n" +
+        "fi\n" +
         'if [[ "$*" == *"/actions/workflows/"* ]]; then\n' +
+        `  n=$(cat ${calls} 2>/dev/null || echo 0); n=$((n + 1)); echo $n > ${calls}\n` +
+        `  if [ "$n" -le ${opts.apiRefusals ?? 0} ]; then\n` +
+        // Two real shapes, both exiting non-zero and neither saying the
+        // database is free: an error object on stdout, or an empty stdout with
+        // one summary line on stderr.
+        (opts.refusalStderr
+          ? `    printf '%s\\n' ${JSON.stringify(opts.refusalStderr)} >&2\n`
+          : "    cat <<'J'\n" +
+            "{\n" +
+            '"message": "API rate limit exceeded for installation ID 1.",\n' +
+            '"documentation_url": "https://docs.github.com/en/rest/using-the-rest-api/getting-started-with-the-rest-api#rate-limiting",\n' +
+            '"status": "403"\n' +
+            "}\n" +
+            "J\n") +
+        "    exit 1\n" +
+        "  fi\n" +
         `  cat ${JSON.stringify(join(dir, "listing.txt"))}\n` +
         "  exit 0\n" +
         "fi\n" +
@@ -520,10 +563,23 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
         LIVE_DB_SLOT_ROLE: opts.role,
         LIVE_DB_SLOT_TIMEOUT_SECONDS: String(opts.timeoutSeconds ?? 1),
         LIVE_DB_SLOT_POLL_SECONDS: "1",
+        LIVE_DB_SLOT_POLL_MAX_SECONDS: String(opts.pollMaxSeconds ?? 2),
       },
     });
+    let emitted = "";
+    try {
+      emitted = readFileSync(join(dir, "out"), "utf8");
+    } catch {
+      emitted = "";
+    }
+    let askedUrls: string[] = [];
+    try {
+      askedUrls = readFileSync(join(dir, "asked-urls"), "utf8").split("\n").filter(Boolean);
+    } catch {
+      askedUrls = [];
+    }
     rmSync(dir, { recursive: true, force: true });
-    return { code: r.status, out: `${r.stdout}${r.stderr}` };
+    return { code: r.status, out: `${r.stdout}${r.stderr}`, emitted, askedUrls };
   };
 
   it("EXECUTES fail-closed: a verify that cannot prove the slot exits 75", () => {
@@ -580,6 +636,281 @@ describe("CI architecture — a re-run cannot inherit somebody else's slot", () 
     });
     assert.equal(contended.code, 75, `a contended verify must still exit 75. Got ${contended.code}:\n${contended.out}`);
     assert.match(contended.out, /holder=33967153487/, "it must have asked once before timing out");
+  });
+
+  /**
+   * Measured 2026-10-03 on run 37113934334 job 111186609364. Its last 340
+   * seconds were spent re-asking a rate-limited API every 20s, and the job's
+   * final error told the reader to re-run because "the attempt starts at the
+   * BACK of the queue" — a cause it had no evidence for. Three sessions spent
+   * a morning on queue arithmetic because of that sentence. The refusal has to
+   * name itself.
+   */
+  /**
+   * The request budget, which is the resource that actually ran out on
+   * 2026-10-03. The listing used to `--paginate` the workflow's whole run
+   * history and filter client-side: `--jq` filters each page without stopping
+   * the walk, so one poll cost ceil(2919/100) = 30 requests, every 20s, from
+   * every waiting lane, against a per-REPOSITORY budget. No amount of backoff
+   * fixes that, because the budget is gone before the first 403 arrives.
+   */
+  it("asks the API to filter by status instead of walking the whole run history", () => {
+    const r = runSlotScript({
+      role: "verify",
+      runId: "33967153487",
+      listing: "2026-09-05T12:49:56Z 33967153487\n",
+    });
+    assert.equal(r.code, 0, `the oldest active run must still be let through. Got ${r.code}:\n${r.out}`);
+
+    const listings = r.askedUrls.filter((u) => u.includes("/actions/workflows/"));
+    assert.ok(listings.length > 0, "the script asked for no run listing at all");
+    for (const url of listings) {
+      assert.match(
+        url, /[?&]status=(in_progress|queued)\b/,
+        `an unfiltered run listing paginates the entire workflow history (2919 runs = 30 requests ` +
+          `per poll). Ask the API to filter: ${url}`,
+      );
+    }
+    // Both statuses, or the queue is only half visible.
+    assert.ok(
+      listings.some((u) => u.includes("status=in_progress")) && listings.some((u) => u.includes("status=queued")),
+      `both in_progress and queued must be asked for, got: ${JSON.stringify(listings)}`,
+    );
+
+    // Two calls are not one atomic snapshot, and the order decides whether a
+    // run can fall through the gap between them. Runs only move queued ->
+    // in_progress, so `queued` must be asked FIRST: a run queued at the first
+    // call is seen there, one already running is seen by the second. Reversed,
+    // a run that starts between the calls is listed by NEITHER — and a missed
+    // run is how this script concludes a held database is free.
+    const firstQueued = listings.findIndex((u) => u.includes("status=queued"));
+    const firstRunning = listings.findIndex((u) => u.includes("status=in_progress"));
+    assert.ok(
+      firstQueued < firstRunning,
+      `queued must be asked before in_progress, or a run starting mid-poll is listed by neither: ` +
+        `${JSON.stringify(listings)}`,
+    );
+  });
+
+  it("de-duplicates a run that the two status calls both returned", () => {
+    // The price of the safe order: a run that starts between the calls appears
+    // twice. It cannot make the slot look free — the oldest is still the
+    // oldest — but it inflates `active=`, and humans read that number when
+    // deciding whether to push another branch.
+    const r = runSlotScript({
+      role: "queue",
+      runId: "37113934334",
+      // The stub serves this listing for BOTH statuses, so every run is
+      // returned twice, exactly as a mid-poll transition would.
+      listing: "2026-10-03T09:42:05Z 37113934334\n2026-10-03T09:18:27Z 37112598597\n",
+      bothStatuses: true,
+      timeoutSeconds: 2,
+    });
+    assert.match(
+      r.out, /holder=37112598597, 2 active/,
+      `two distinct runs must count as 2 active, not 4. Got:\n${r.out}`,
+    );
+  });
+
+  it("EXECUTES fail-closed on a refused API, and names the 403 instead of blaming the queue", () => {
+    const r = runSlotScript({
+      role: "verify",
+      runId: "37113934334",
+      listing: "2026-10-03T09:42:05Z 37113934334\n",
+      apiRefusals: 99,
+      timeoutSeconds: 3,
+    });
+    assert.equal(r.code, 75, `a job that never got a listing must exit 75. Got ${r.code}:\n${r.out}`);
+    assert.match(
+      r.out, /REFUSED the run listing \(HTTP 403, rate limit\)/,
+      "the poll must say the API refused it, and say why",
+    );
+    assert.match(r.out, /refused ALL/, "the final error must attribute the failure to the API, not to a queue");
+    assert.doesNotMatch(
+      r.out, /BACK of the queue/,
+      "a job that never saw a listing must not advise a re-run as though it had been queued",
+    );
+    assert.doesNotMatch(r.out, /holder=/, "it cannot name a holder it never learned");
+    assert.match(
+      r.emitted, /live_db_slot_api_refusals=\d+\/\d+/,
+      "the refusal count must reach the telemetry, or the next reader is back to reading a 600-line log",
+    );
+  });
+
+  it("quotes gh's own account of a refusal, rather than reporting a bare exit code", () => {
+    // The first version of this fix named the right CATEGORY and not the cause.
+    // Run 37122355417 waited 2700s and printed `(exit 1)` on all twelve polls:
+    // stdout was empty, so the body-detector never fired, and the one line that
+    // said what had happened went to a stream the script dropped. A number is
+    // not a diagnosis — whoever reads the next timeout needs the reason.
+    const r = runSlotScript({
+      role: "verify",
+      runId: "37122355417",
+      listing: "2026-10-03T12:17:54Z 37122355417\n",
+      apiRefusals: 99,
+      refusalStderr: "gh: Resource not accessible by integration (HTTP 403)",
+      timeoutSeconds: 3,
+    });
+    assert.equal(r.code, 75, `a job that never got a listing must exit 75. Got ${r.code}:\n${r.out}`);
+    assert.match(
+      r.out, /Resource not accessible by integration \(HTTP 403\)/,
+      `the refusal must carry gh's own words. Got:\n${r.out}`,
+    );
+    assert.doesNotMatch(
+      r.out, /REFUSED the run listing \(exit 1\) —? ?this says/,
+      "a bare exit code is what sent the last reader back to the logs with nothing",
+    );
+    assert.match(r.out, /refused ALL/, "the final error must still blame the API, not a queue");
+  });
+
+  it("classifies a rate limit it can only see on stderr", () => {
+    // The rate-limit body carries no `status` key, and with `--jq` it may not
+    // reach stdout at all. A detector that reads one stream and one key calls
+    // the commonest refusal "exit 1" — which is what run 37122355417 printed
+    // twelve times while the cause sat one redirect away.
+    const r = runSlotScript({
+      role: "verify",
+      runId: "37122355417",
+      listing: "2026-10-03T12:17:54Z 37122355417\n",
+      apiRefusals: 99,
+      refusalStderr: "gh: API rate limit exceeded for installation ID 1. (HTTP 403)",
+      timeoutSeconds: 3,
+    });
+    assert.equal(r.code, 75, `must still fail closed. Got ${r.code}:\n${r.out}`);
+    assert.match(
+      r.out, /REFUSED the run listing \(HTTP 403, rate limit/,
+      `a rate limit visible only on stderr must still be named one. Got:\n${r.out}`,
+    );
+  });
+
+  it("declares every slot diagnostic the script emits as a job output", () => {
+    // A value written to $GITHUB_OUTPUT that the job does not declare goes
+    // nowhere. The script learned to emit the refusal count, the holders and
+    // the undecided-poll count, and for one run it emitted all three into a
+    // void: run 37122355417's telemetry recorded a 2700s wait and said nothing
+    // about why, because `live-db-slot` declared only slot/waited/attempt. The
+    // reason sat in a 600-line log instead of the artifact built to carry it.
+    const script = readFileSync(resolve(REPO_ROOT, ".github/scripts/live-db-acquire-slot.sh"), "utf8");
+    const emitted = [...script.matchAll(/emit "(live_db_slot[a-z_]*)=/g)].map((m) => m[1]);
+    assert.ok(emitted.length >= 6, `expected the script to emit several slot facts, found ${emitted.length}`);
+
+    const jobStart = liveDb.indexOf("\n  live-db-slot:\n");
+    assert.ok(jobStart !== -1, "live-db.yml no longer defines a live-db-slot job");
+    const outStart = liveDb.indexOf("\n    outputs:\n", jobStart);
+    const outEnd = liveDb.indexOf("\n    steps:\n", jobStart);
+    assert.ok(
+      outStart !== -1 && outEnd !== -1 && outStart < outEnd,
+      "live-db-slot has no outputs: block before its steps:",
+    );
+    const outputs = liveDb.slice(outStart, outEnd);
+
+    const undeclared = [...new Set(emitted)].filter((k) => !outputs.includes(k));
+    assert.deepEqual(
+      undeclared, [],
+      `live-db-slot emits ${undeclared.join(", ")} but does not declare them as job outputs, ` +
+        "so nothing downstream — the telemetry artifact, the step summary, the verdict — can read them",
+    );
+  });
+
+  it("backs off while the API refuses, rather than polling it at a fixed interval", () => {
+    // A fixed interval under a rate limit is self-defeating: every waiting lane
+    // keeps spending the budget that none of them can get an answer without.
+    //
+    // The budget is deliberately far larger than the three waits measured here.
+    // At 5s it was not: each poll spends real time spawning two `gh` calls, so
+    // the remaining budget fell under the ceiling by the third poll and the
+    // clamp — correct behaviour, pinned by its own test below — rewrote the
+    // very numbers this test reads. That made a timing-sensitive test out of a
+    // question about growth. 12s leaves seconds of slack, so a failure here
+    // means the backoff stopped growing.
+    const r = runSlotScript({
+      role: "verify",
+      runId: "37113934334",
+      listing: "2026-10-03T09:42:05Z 37113934334\n",
+      apiRefusals: 99,
+      timeoutSeconds: 12,
+      pollMaxSeconds: 2,
+    });
+    const waits = [...r.out.matchAll(/Backing off (\d+)s/g)].map((m) => Number(m[1]));
+    assert.ok(waits.length >= 3, `expected several refused polls, saw ${waits.length}:\n${r.out}`);
+    assert.deepEqual(
+      waits.slice(0, 3), [1, 2, 2],
+      `the interval must grow and then hold at the ceiling, got ${JSON.stringify(waits)}`,
+    );
+  });
+
+  it("never backs off past the budget it promised to wait", () => {
+    // The deadline is only checked at the top of the loop, so an unclamped
+    // backoff reports a wait longer than the stated one — in a job whose
+    // purpose is to report that number honestly.
+    const r = runSlotScript({
+      role: "verify",
+      runId: "37113934334",
+      listing: "2026-10-03T09:42:05Z 37113934334\n",
+      apiRefusals: 99,
+      timeoutSeconds: 5,
+      pollMaxSeconds: 60,
+    });
+    const waits = [...r.out.matchAll(/Backing off (\d+)s/g)].map((m) => Number(m[1]));
+    const slept = waits.reduce((a, b) => a + b, 0);
+    assert.ok(
+      slept <= 5,
+      `the backoff slept ${slept}s against a 5s budget (${JSON.stringify(waits)}), so the ceiling ` +
+        "is not clamped to the time remaining",
+    );
+    assert.ok(waits.every((w) => w <= 5), `no single sleep may exceed the budget: ${JSON.stringify(waits)}`);
+  });
+
+  /**
+   * Measured 2026-10-03 on run 37117788717 (#564): 135 polls over 2710s, every
+   * one of them `the run listing is empty`, no 403 body anywhere, no holder
+   * ever named, and `Actions: read` present in the token's permissions. A
+   * listing that omits the asking run cannot be true while that run is in
+   * progress — and the error still called it a queue backlog and advised a
+   * re-run.
+   */
+  it("says so when no poll ever named a holder, instead of calling it a backlog", () => {
+    const r = runSlotScript({
+      role: "queue",
+      runId: "37117788717",
+      listing: "",
+      timeoutSeconds: 3,
+    });
+    assert.equal(r.code, 75, `still fail-closed. Got ${r.code}:\n${r.out}`);
+    assert.match(
+      r.out, /NOT ONE named a holder/,
+      "the error must say the job never established a queue position",
+    );
+    assert.match(
+      r.out, /NOT a queue backlog/,
+      "it must not advise re-running when a drained queue would change nothing",
+    );
+    assert.doesNotMatch(
+      r.out, /re-run it when the queue drains/,
+      "that is the one piece of advice this failure cannot support",
+    );
+    assert.match(
+      r.emitted, /live_db_slot_undecided=[1-9]/,
+      "the undecidable-poll count must reach the telemetry",
+    );
+  });
+
+  it("does not blame the API when the API answered and the queue was the wait", () => {
+    // The mixed case, which is what both measured runs actually were: real
+    // queue wait behind a named holder, and a refusal only at the end.
+    const r = runSlotScript({
+      role: "queue",
+      runId: "37113934334",
+      listing: "2026-10-03T09:42:05Z 37113934334\n2026-10-03T09:18:27Z 37112598597\n",
+      apiRefusals: 1,
+      timeoutSeconds: 4,
+    });
+    assert.equal(r.code, 75, `still fail-closed. Got ${r.code}:\n${r.out}`);
+    assert.match(r.out, /holder=37112598597/, "once the API answered, the holder must be named");
+    assert.doesNotMatch(
+      r.out, /refused ALL/,
+      "a run that did get an answer was queued, and saying otherwise is the same error in reverse",
+    );
   });
 
   it("refuses an unknown role rather than defaulting to something permissive", () => {
@@ -1071,5 +1402,493 @@ describe("CI architecture — the slot listing asks only for runs that can hold 
     });
     assert.equal(r.code, 0, `the oldest run must acquire. Got ${r.code}:\n${r.out}`);
     assert.match(r.out, /oldest of 2 active/, "a run listed twice must be counted once");
+  });
+});
+
+/**
+ * A run that has FINISHED with the database releases the slot (2026-10-03).
+ *
+ * Measured ~14:52Z: run 37128138124 (PR #573) concluded every database job by
+ * 14:42:46Z — schema drift, RLS + role boundaries, api-server check:all +
+ * live_pulse gate, post-media revocation — but its verdict job, which touches no
+ * database, sat in GitHub's runner queue from 14:42:46Z. The run stayed
+ * `queued`, so it kept the slot, and other runs' `verify` steps timed out after
+ * 1200s (exit 75) having certified nothing — e.g. run 37128414250 for PR #570.
+ *
+ * The rule: a run RELEASES the slot once every job named in the workflow's
+ * LIVE_DB_SLOT_DB_JOBS is listed, in the run's CURRENT attempt, and concluded
+ * (any conclusion). Everything else — API failure, a DB job not yet listed, a
+ * DB job still running, a job from an older attempt — is `held`. A released run
+ * blocks nobody, like a forfeited one, but is logged as `released`.
+ */
+describe("CI architecture — a run that is done with the database releases the slot", () => {
+  const DECIDER = resolve(REPO_ROOT, ".github/scripts/live-db-slot-decide.sh");
+  const SLOT_JOB = "live DB · acquire the shared-database slot";
+  const VERDICT_JOB = "live DB · verdict (cancelled or skipped is not a pass)";
+  const PREFLIGHT_JOB = "preflight · every CI-invoked package script exists";
+
+  /** Comment lines removed, so a name in a comment can never satisfy a check. */
+  const stripYamlComments = (src: string) =>
+    src.split("\n").filter((l) => !/^\s*#/.test(l)).join("\n");
+
+  /** `LIVE_DB_SLOT_DB_JOBS` from the workflow's top-level `env:`, one name per entry. */
+  const dbJobsFromWorkflow = (src: string): string[] => {
+    const text = stripYamlComments(src);
+    const envAt = text.indexOf("\nenv:\n");
+    assert.ok(envAt >= 0, "live-db.yml has no top-level `env:` block");
+    const envBlock = text.slice(envAt + 1).split(/\n(?=\S)/)[0] ?? "";
+    const m = /\n {2}LIVE_DB_SLOT_DB_JOBS: \|-?\n((?: {4}.*\n?)+)/.exec(envBlock);
+    assert.ok(
+      m,
+      "live-db.yml's top-level env does not define LIVE_DB_SLOT_DB_JOBS as a block scalar. " +
+        "Without it no run can ever RELEASE the slot, and a run whose only remaining job is a " +
+        "queued verdict blocks every other run until their verify steps time out.",
+    );
+    return m[1]!.split("\n").map((l) => l.trim()).filter(Boolean);
+  };
+
+  type Job = { id: string; name: string; block: string; needs: string[] };
+  /** Every job in the workflow: id, display name, comment-stripped block, needs. */
+  const workflowJobs = (src: string): Job[] => {
+    const text = stripYamlComments(src);
+    const jobsAt = text.indexOf("\njobs:\n");
+    assert.ok(jobsAt >= 0, "no `jobs:` block");
+    const body = text.slice(jobsAt + "\njobs:\n".length);
+    const parts = body.split(/\n(?= {2}[A-Za-z0-9_-]+:\s*$)/m);
+    const jobs: Job[] = [];
+    for (const part of parts) {
+      const head = /^ {2}([A-Za-z0-9_-]+):\s*$/m.exec(part);
+      if (!head) continue;
+      const name = /^ {4}name:\s*(.+?)\s*$/m.exec(part)?.[1]?.replace(/^(['"])(.*)\1$/, "$2") ?? "";
+      let needs: string[] = [];
+      const inline = /^ {4}needs:\s*\[([^\]]*)\]/m.exec(part);
+      const scalar = /^ {4}needs:\s*([A-Za-z0-9_-]+)\s*$/m.exec(part);
+      const list = /^ {4}needs:\s*\n((?: {6}- .+\n?)+)/m.exec(part);
+      if (inline) needs = inline[1]!.split(",").map((s) => s.trim()).filter(Boolean);
+      else if (scalar) needs = [scalar[1]!];
+      else if (list) needs = list[1]!.split("\n").map((l) => l.replace(/^\s*-\s*/, "").trim()).filter(Boolean);
+      jobs.push({ id: head[1]!, name, block: part, needs });
+    }
+    return jobs;
+  };
+
+  /** Ids `.github/scripts/assert-ci-scripts.mjs` declares credential-bearing. */
+  const requiredCredentialJobs = (): string[] => {
+    const src = readFileSync(resolve(REPO_ROOT, ".github/scripts/assert-ci-scripts.mjs"), "utf8");
+    const m = /const REQUIRED_CREDENTIAL_JOBS = \[([\s\S]*?)\];/.exec(src);
+    assert.ok(m, "REQUIRED_CREDENTIAL_JOBS not found in assert-ci-scripts.mjs");
+    return [...m[1]!.replace(/\/\/.*$/gm, "").matchAll(/'([^']+)'/g)].map((x) => x[1]!);
+  };
+
+  /**
+   * The database jobs as the WORKFLOW defines them, independently of the env
+   * var: every job that `needs: live-db-slot` AND can reach the database (it
+   * binds the credential environment, references a secret, or re-verifies the
+   * slot). Returns a list of problems; empty means no drift.
+   */
+  const dbJobDrift = (src: string): string[] => {
+    const problems: string[] = [];
+    const declared = dbJobsFromWorkflow(src);
+    const jobs = workflowJobs(src);
+    const reachesDb = (j: Job) =>
+      /^ {4}environment:/m.test(j.block) || /\bsecrets\./.test(j.block) ||
+      /LIVE_DB_SLOT_ROLE: verify/.test(j.block);
+    const derived = jobs.filter((j) => j.needs.includes("live-db-slot") && reachesDb(j));
+    const strays = jobs.filter((j) => !j.needs.includes("live-db-slot") && reachesDb(j) && j.id !== "live-db-slot");
+
+    const want = new Set(derived.map((j) => j.name));
+    const have = new Set(declared);
+    if (have.size !== declared.length) problems.push(`LIVE_DB_SLOT_DB_JOBS lists a name twice: ${declared.join(" | ")}`);
+    for (const n of want) if (!have.has(n)) problems.push(`database job "${n}" is missing from LIVE_DB_SLOT_DB_JOBS — a run would RELEASE the slot while it is still running`);
+    for (const n of have) if (!want.has(n)) problems.push(`LIVE_DB_SLOT_DB_JOBS names "${n}", which is not a slot-gated database job of live-db.yml (a typo here makes release impossible; a non-DB job here delays it)`);
+    for (const j of strays) problems.push(`job ${j.id} reaches the database but does not need live-db-slot`);
+    const creds = new Set(requiredCredentialJobs());
+    const derivedIds = new Set(derived.map((j) => j.id));
+    for (const id of creds) if (!derivedIds.has(id)) problems.push(`REQUIRED_CREDENTIAL_JOBS declares ${id}, which is not a slot-gated database job`);
+    for (const id of derivedIds) if (!creds.has(id)) problems.push(`database job ${id} is not in REQUIRED_CREDENTIAL_JOBS`);
+    return problems;
+  };
+
+  it("names the database jobs in ONE place, and that place matches the workflow exactly", () => {
+    assert.deepEqual(dbJobDrift(liveDb), [], "LIVE_DB_SLOT_DB_JOBS has drifted from live-db.yml");
+    const declared = dbJobsFromWorkflow(liveDb);
+    assert.ok(declared.length >= 4, `expected the four database jobs, got ${JSON.stringify(declared)}`);
+    for (const n of [SLOT_JOB, VERDICT_JOB, PREFLIGHT_JOB]) {
+      assert.ok(!declared.includes(n), `"${n}" touches no database and must not delay a release`);
+    }
+    // One definition. A job-level override would make that job's verify step
+    // judge other runs by a different list.
+    assert.equal(
+      (stripYamlComments(liveDb).match(/LIVE_DB_SLOT_DB_JOBS:/g) ?? []).length, 1,
+      "LIVE_DB_SLOT_DB_JOBS must be defined exactly once, at workflow level",
+    );
+  });
+
+  it("control: the drift check rejects a list with a job dropped, a job added, or a new unlisted DB job", () => {
+    const declared = dbJobsFromWorkflow(liveDb);
+    const dropped = liveDb.replace(`\n    ${declared[0]}\n`, "\n");
+    assert.notEqual(dropped, liveDb);
+    assert.ok(dbJobDrift(dropped).some((p) => p.includes("missing from LIVE_DB_SLOT_DB_JOBS")));
+
+    const added = liveDb.replace(`\n    ${declared[0]}\n`, `\n    ${declared[0]}\n    ${VERDICT_JOB}\n`);
+    assert.ok(dbJobDrift(added).some((p) => p.includes(VERDICT_JOB)));
+
+    const newJob = liveDb.replace(
+      "\n  live-db-verdict:\n",
+      "\n  new-db-job:\n    name: new · touches the database\n    runs-on: ubuntu-latest\n" +
+        "    needs: [preflight, live-db-slot]\n    environment: ci-nonprod-supabase\n" +
+        "    steps:\n      - run: true\n\n  live-db-verdict:\n",
+    );
+    assert.ok(dbJobDrift(newJob).some((p) => p.includes("new · touches the database")));
+  });
+
+  // ── The decider: `released` is a third claim value ─────────────────────────
+  const decide = (runId: string, listing: string) => {
+    const r = spawnSync("bash", [DECIDER], {
+      input: listing, encoding: "utf8", env: { ...process.env, GITHUB_RUN_ID: runId },
+    });
+    return {
+      holder: /holder=(\d*)/.exec(r.stdout)?.[1] ?? "",
+      released: /released=(\d+)/.exec(r.stdout)?.[1] ?? "",
+      forfeited: /forfeited=(\d+)/.exec(r.stdout)?.[1] ?? "",
+      code: r.status,
+    };
+  };
+
+  it("decider: a released run stops blocking, and is counted apart from forfeited ones", () => {
+    const listing =
+      "2026-10-03T14:00:39Z 37128138124 released\n" + "2026-10-03T14:05:21Z 37128414250 held\n";
+    assert.deepEqual(
+      decide("37128414250", listing),
+      { holder: "37128414250", released: "1", forfeited: "0", code: 0 },
+      "the run behind a released run must acquire",
+    );
+    const mixed =
+      "2026-10-03T13:00:00Z 1 forfeited\n2026-10-03T14:00:39Z 37128138124 released\n2026-10-03T14:05:21Z 37128414250 held\n";
+    assert.deepEqual(decide("37128414250", mixed), { holder: "37128414250", released: "1", forfeited: "1", code: 0 });
+  });
+
+  it("decider: a run marked released is never granted the slot itself, and all-released is not a free slot", () => {
+    const listing =
+      "2026-10-03T14:00:39Z 37128138124 released\n" + "2026-10-03T14:05:21Z 37128414250 held\n";
+    assert.equal(decide("37128138124", listing).code, 1);
+    const all = "2026-10-03T14:00:39Z 37128138124 released\n2026-10-03T14:05:21Z 37128414250 forfeited\n";
+    assert.equal(decide("37128414250", all).code, 1);
+  });
+
+  // ── The wait loop against a stub Actions API ───────────────────────────────
+
+  /** The DB job names the real workflow declares (red before the env var exists). */
+  const DB_JOBS = (() => {
+    try { return dbJobsFromWorkflow(liveDb); } catch { return [] as string[]; }
+  })();
+
+  type JobRow = { name: string; status: string; conclusion?: string; attempt?: number };
+  /** The jobs listing exactly as the script's `--jq` renders it: attempt, status, conclusion, name — tab-separated. */
+  const jobsTsv = (rows: JobRow[]) =>
+    rows.map((r) => `${r.attempt ?? 1}\t${r.status}\t${r.conclusion ?? ""}\t${r.name}`).join("\n") + "\n";
+
+  /** run 37128138124 as measured: every DB job concluded, the verdict queued. */
+  const HOLDER = "37128138124";
+  const WAITER = "37128414250";
+  const MEASURED: JobRow[] = [
+    { name: PREFLIGHT_JOB, status: "completed", conclusion: "success" },
+    { name: SLOT_JOB, status: "completed", conclusion: "success" },
+    { name: "schema drift · apply migrations, certify, then audit vs live (needs credentials)", status: "completed", conclusion: "success" },
+    { name: "live DB · RLS + role/is_official write boundaries (needs credentials)", status: "completed", conclusion: "success" },
+    { name: "api-server · check:all + live_pulse gate (needs credentials)", status: "completed", conclusion: "success" },
+    { name: "post-media revocation · before-proof, apply, after-proof", status: "completed", conclusion: "success" },
+    { name: VERDICT_JOB, status: "queued" },
+  ];
+  /** The waiter, mid-job: slot acquired, its DB jobs running. */
+  const WAITER_JOBS: JobRow[] = [
+    { name: PREFLIGHT_JOB, status: "completed", conclusion: "success" },
+    { name: SLOT_JOB, status: "completed", conclusion: "success" },
+    ...DB_JOBS.map((name) => ({ name, status: "in_progress" })),
+  ];
+  const LISTING =
+    `2026-10-03T14:00:39Z ${HOLDER} 1\n` + `2026-10-03T14:05:21Z ${WAITER} 1\n`;
+
+  const runRelease = (opts: {
+    runId?: string;
+    listing?: string;
+    jobs: Record<string, string>;
+    /** Run ids whose jobs query fails (non-zero exit) after printing its file. */
+    failJobs?: string[];
+  }) => {
+    const dir = mkdtempSync(join(tmpdir(), "portava-slot-release-"));
+    writeFileSync(join(dir, "listing.txt"), opts.listing ?? LISTING);
+    for (const [id, tsv] of Object.entries(opts.jobs)) writeFileSync(join(dir, `jobs-${id}.txt`), tsv);
+    for (const id of opts.failJobs ?? []) writeFileSync(join(dir, `jobs-${id}.fail`), "");
+    writeFileSync(
+      join(dir, "gh"),
+      "#!/usr/bin/env bash\n" +
+        `d=${JSON.stringify(dir)}\n` +
+        'if [[ "$*" == *"/actions/workflows/"* ]]; then cat "$d/listing.txt"; exit 0; fi\n' +
+        'if [[ "$*" =~ /actions/runs/([0-9]+)/jobs ]]; then\n' +
+        '  id="${BASH_REMATCH[1]}"\n' +
+        '  [ -f "$d/jobs-$id.txt" ] && cat "$d/jobs-$id.txt"\n' +
+        '  if [ -f "$d/jobs-$id.fail" ]; then echo "gh: HTTP 502 Bad Gateway" >&2; exit 1; fi\n' +
+        "  exit 0\n" +
+        "fi\n" +
+        "echo 424242\n",
+      { mode: 0o755 },
+    );
+    const r = spawnSync("bash", [resolve(REPO_ROOT, ".github/scripts/live-db-acquire-slot.sh")], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${dir}:${process.env.PATH ?? ""}`,
+        GH_TOKEN: "stub",
+        GITHUB_REPOSITORY: "portava/portava.app",
+        GITHUB_RUN_ID: opts.runId ?? WAITER,
+        GITHUB_RUN_ATTEMPT: "1",
+        GITHUB_OUTPUT: join(dir, "out"),
+        LIVE_DB_SLOT_ROLE: "verify",
+        LIVE_DB_SLOT_TIMEOUT_SECONDS: "1",
+        LIVE_DB_SLOT_POLL_SECONDS: "1",
+        LIVE_DB_SLOT_DB_JOBS: DB_JOBS.join("\n"),
+      },
+    });
+    rmSync(dir, { recursive: true, force: true });
+    return { code: r.status, out: `${r.stdout}${r.stderr}` };
+  };
+
+  const assertReleased = (jobs: JobRow[], why: string) => {
+    const r = runRelease({ jobs: { [HOLDER]: jobsTsv(jobs), [WAITER]: jobsTsv(WAITER_JOBS) } });
+    assert.equal(r.code, 0, `${why}: the waiter must acquire. Got ${r.code}:\n${r.out}`);
+    assert.match(r.out, /ACQUIRED/);
+    assert.match(r.out, /\b1 released\b/, `the log must say the run ahead was RELEASED:\n${r.out}`);
+    assert.match(r.out, /\b0 forfeited\b/, `a released run is not a forfeited one:\n${r.out}`);
+  };
+  const assertHeld = (r: { code: number | null; out: string }, why: string) => {
+    assert.equal(r.code, 75, `${why}: the holder must keep the slot and the waiter must time out. Got ${r.code}:\n${r.out}`);
+    assert.match(r.out, new RegExp(`holder=${HOLDER}`), `${why}: the log must name the holder:\n${r.out}`);
+    assert.doesNotMatch(r.out, /ACQUIRED/);
+  };
+  const withDbJob = (i: number, patch: Partial<JobRow> | null): JobRow[] => {
+    const name = DB_JOBS[i]!;
+    return MEASURED.flatMap((row) => (row.name !== name ? [row] : patch === null ? [] : [{ ...row, ...patch }]));
+  };
+
+  it("EXECUTES 37128138124: every DB job concluded, verdict queued ⇒ released, and the waiter acquires", () => {
+    assert.ok(DB_JOBS.length > 0, "LIVE_DB_SLOT_DB_JOBS is not defined in live-db.yml");
+    assertReleased(MEASURED, "the measured 2026-10-03 holder");
+    // ANY conclusion counts: a DB job that failed, was cancelled or was skipped
+    // is not touching the database either.
+    for (const conclusion of ["failure", "cancelled", "skipped"]) {
+      assertReleased(withDbJob(1, { conclusion }), `a DB job concluded ${conclusion}`);
+    }
+  });
+
+  it("EXECUTES: one DB job still in progress ⇒ held", () => {
+    assertReleased(MEASURED, "control");
+    for (let i = 0; i < DB_JOBS.length; i++) {
+      assertHeld(
+        runRelease({ jobs: { [HOLDER]: jobsTsv(withDbJob(i, { status: "in_progress", conclusion: "" })), [WAITER]: jobsTsv(WAITER_JOBS) } }),
+        `"${DB_JOBS[i]}" in progress`,
+      );
+    }
+    // in_progress is not concluded, whatever the conclusion field says
+    assertHeld(
+      runRelease({ jobs: { [HOLDER]: jobsTsv(withDbJob(3, { status: "in_progress" })), [WAITER]: jobsTsv(WAITER_JOBS) } }),
+      "a DB job in progress with a stale conclusion",
+    );
+    // completed with a null conclusion is not a conclusion
+    assertHeld(
+      runRelease({ jobs: { [HOLDER]: jobsTsv(withDbJob(0, { conclusion: "" })), [WAITER]: jobsTsv(WAITER_JOBS) } }),
+      "a DB job with a null conclusion",
+    );
+  });
+
+  it("EXECUTES: a DB job absent from the jobs listing (not yet queued behind `needs:`) ⇒ held", () => {
+    assertReleased(MEASURED, "control");
+    for (let i = 0; i < DB_JOBS.length; i++) {
+      assertHeld(
+        runRelease({ jobs: { [HOLDER]: jobsTsv(withDbJob(i, null)), [WAITER]: jobsTsv(WAITER_JOBS) } }),
+        `"${DB_JOBS[i]}" missing from the listing`,
+      );
+    }
+    // Only the slot job listed — the shape of a run still in its queue job.
+    assertHeld(
+      runRelease({ jobs: { [HOLDER]: jobsTsv(MEASURED.slice(0, 2)), [WAITER]: jobsTsv(WAITER_JOBS) } }),
+      "a run whose DB jobs have not been listed yet",
+    );
+  });
+
+  it("EXECUTES: DB jobs concluded in an OLDER attempt than the run's current one ⇒ held", () => {
+    assertReleased(MEASURED, "control");
+    // The run was re-run (attempt 2 in the listing) but the jobs listing still
+    // shows attempt 1's concluded jobs: attempt 2's will touch the database.
+    assertHeld(
+      runRelease({
+        listing: `2026-10-03T14:00:39Z ${HOLDER} 2\n2026-10-03T14:05:21Z ${WAITER} 1\n`,
+        jobs: { [HOLDER]: jobsTsv(MEASURED), [WAITER]: jobsTsv(WAITER_JOBS) },
+      }),
+      "attempt mismatch",
+    );
+    // A listing that does not say which attempt is current cannot prove it.
+    assertHeld(
+      runRelease({
+        listing: `2026-10-03T14:00:39Z ${HOLDER}\n2026-10-03T14:05:21Z ${WAITER}\n`,
+        jobs: { [HOLDER]: jobsTsv(MEASURED), [WAITER]: jobsTsv(WAITER_JOBS) },
+      }),
+      "attempt unknown",
+    );
+  });
+
+  it("EXECUTES: the jobs API failing ⇒ held, even if it printed a listing that would release", () => {
+    assertReleased(MEASURED, "control");
+    assertHeld(
+      runRelease({ jobs: { [HOLDER]: jobsTsv(MEASURED), [WAITER]: jobsTsv(WAITER_JOBS) }, failJobs: [HOLDER] }),
+      "jobs API exited non-zero after partial output",
+    );
+    assertHeld(
+      runRelease({ jobs: { [WAITER]: jobsTsv(WAITER_JOBS) }, failJobs: [HOLDER] }),
+      "jobs API exited non-zero with no output",
+    );
+    assertHeld(
+      runRelease({ jobs: { [HOLDER]: "<html>502</html>\n", [WAITER]: jobsTsv(WAITER_JOBS) } }),
+      "jobs API answered something unparseable",
+    );
+  });
+
+  it("EXECUTES: a forfeited run still FORFEITS (logged as forfeited, not released) and its own verify still fails", () => {
+    const forfeited: JobRow[] = MEASURED.map((row) =>
+      row.name === SLOT_JOB ? { ...row, conclusion: "failure" }
+        : DB_JOBS.includes(row.name) ? { ...row, conclusion: "skipped" } : row);
+    const r = runRelease({ jobs: { [HOLDER]: jobsTsv(forfeited), [WAITER]: jobsTsv(WAITER_JOBS) } });
+    assert.equal(r.code, 0, `the waiter must acquire behind a forfeited run. Got ${r.code}:\n${r.out}`);
+    assert.match(r.out, /\b1 forfeited\b/, `forfeiture takes precedence and is logged as such:\n${r.out}`);
+    assert.match(r.out, /\b0 released\b/, `a forfeited run must not be reported as released:\n${r.out}`);
+
+    // The forfeited run's own verify (api-server-check-all runs under
+    // `if: !cancelled()`) must still be refused.
+    const own = runRelease({
+      runId: HOLDER,
+      jobs: { [HOLDER]: jobsTsv(forfeited.map((row) => (row.name === DB_JOBS[2] ? { ...row, status: "in_progress", conclusion: "" } : row))), [WAITER]: jobsTsv(WAITER_JOBS) },
+    });
+    assert.equal(own.code, 75, `a forfeited run's own verify must fail. Got ${own.code}:\n${own.out}`);
+  });
+
+  it("EXECUTES: a run never treats ITSELF as released — its own verify step is still working", () => {
+    // Even handed a listing in which all of its own DB jobs look concluded,
+    // the oldest run asking for itself is `held`, so it is granted the slot
+    // rather than refused as if it had given it up.
+    const r = runRelease({ runId: HOLDER, jobs: { [HOLDER]: jobsTsv(MEASURED), [WAITER]: jobsTsv(WAITER_JOBS) } });
+    assert.equal(r.code, 0, `the oldest run must keep its own slot. Got ${r.code}:\n${r.out}`);
+    assert.match(r.out, /ACQUIRED/);
+    assert.match(r.out, /\b0 released\b/);
+  });
+
+  /**
+   * The stubs above hand back what the script's `--jq` filters WOULD print, so
+   * they cannot notice a filter that stops emitting a field the rule needs (the
+   * listing's run_attempt, the jobs' status). This one runs the script's REAL
+   * filters, through `jq -r` exactly as `gh api --jq` applies them, over Actions
+   * API JSON shaped like the 2026-10-03 measurement.
+   */
+  it("EXECUTES the script's real --jq filters over Actions API JSON", (t) => {
+    if (spawnSync("jq", ["--version"]).status !== 0) {
+      assert.ok(!process.env.CI, "jq is required in CI to execute the slot script's --jq filters");
+      t.skip("jq is not installed; this case runs in CI");
+      return;
+    }
+    const run = (holderAttemptInListing: number) => {
+      const dir = mkdtempSync(join(tmpdir(), "portava-slot-jq-"));
+      try {
+        const runObj = (id: number, status: string, started: string, attempt: number) =>
+          ({ id: Number(id), status, run_started_at: started, created_at: started, run_attempt: attempt });
+        writeFileSync(join(dir, "queued.json"), JSON.stringify({
+          workflow_runs: [runObj(Number(HOLDER), "queued", "2026-10-03T14:00:39Z", holderAttemptInListing)],
+        }));
+        writeFileSync(join(dir, "in_progress.json"), JSON.stringify({
+          workflow_runs: [runObj(Number(WAITER), "in_progress", "2026-10-03T14:05:21Z", 1)],
+        }));
+        const jobsJson = (rows: JobRow[]) => JSON.stringify({
+          jobs: rows.map((r, i) => ({
+            id: 111000000000 + i, name: r.name, status: r.status,
+            conclusion: r.conclusion ? r.conclusion : null, run_attempt: r.attempt ?? 1,
+          })),
+        });
+        writeFileSync(join(dir, `jobs-${HOLDER}.json`), jobsJson(MEASURED));
+        writeFileSync(join(dir, `jobs-${WAITER}.json`), jobsJson(WAITER_JOBS));
+        writeFileSync(join(dir, "run.json"), JSON.stringify({ workflow_id: 330887793 }));
+        writeFileSync(
+          join(dir, "gh"),
+          "#!/usr/bin/env bash\n" +
+            `d=${JSON.stringify(dir)}\n` +
+            'filter=""; ep=""; prev=""\n' +
+            'for a in "$@"; do [ "$prev" = "--jq" ] && filter="$a"; case "$a" in repos/*) ep="$a";; esac; prev="$a"; done\n' +
+            'case "$ep" in\n' +
+            '  *status=queued*) f="$d/queued.json" ;;\n' +
+            '  *status=in_progress*) f="$d/in_progress.json" ;;\n' +
+            '  */jobs*) id="${ep#*/actions/runs/}"; f="$d/jobs-${id%%/*}.json" ;;\n' +
+            '  *) f="$d/run.json" ;;\n' +
+            "esac\n" +
+            'jq -r "$filter" "$f"\n',
+          { mode: 0o755 },
+        );
+        const r = spawnSync("bash", [resolve(REPO_ROOT, ".github/scripts/live-db-acquire-slot.sh")], {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: `${dir}:${process.env.PATH ?? ""}`,
+            GH_TOKEN: "stub",
+            GITHUB_REPOSITORY: "portava/portava.app",
+            GITHUB_RUN_ID: WAITER,
+            GITHUB_RUN_ATTEMPT: "1",
+            GITHUB_OUTPUT: join(dir, "out"),
+            LIVE_DB_SLOT_ROLE: "verify",
+            LIVE_DB_SLOT_TIMEOUT_SECONDS: "1",
+            LIVE_DB_SLOT_POLL_SECONDS: "1",
+            LIVE_DB_SLOT_DB_JOBS: DB_JOBS.join("\n"),
+          },
+        });
+        return { code: r.status, out: `${r.stdout}${r.stderr}` };
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    };
+    const released = run(1);
+    assert.equal(released.code, 0, `the measured holder must release. Got ${released.code}:\n${released.out}`);
+    assert.match(released.out, /\b1 released\b/);
+    // Same jobs, but the listing says the run is now on attempt 2: held.
+    assertHeld(run(2), "the listing's current attempt does not match the jobs'");
+  });
+
+  it("EXECUTES: with LIVE_DB_SLOT_DB_JOBS unset nothing is ever released (fail closed)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "portava-slot-release-unset-"));
+    try {
+      writeFileSync(join(dir, "listing.txt"), LISTING);
+      writeFileSync(join(dir, "holder.txt"), jobsTsv(MEASURED));
+      writeFileSync(
+        join(dir, "gh"),
+        "#!/usr/bin/env bash\n" +
+          `if [[ "$*" == *"/actions/workflows/"* ]]; then cat ${JSON.stringify(join(dir, "listing.txt"))}; exit 0; fi\n` +
+          `if [[ "$*" == *"/runs/${HOLDER}/jobs"* ]]; then cat ${JSON.stringify(join(dir, "holder.txt"))}; exit 0; fi\n` +
+          "echo 424242\n",
+        { mode: 0o755 },
+      );
+      const env = { ...process.env } as Record<string, string | undefined>;
+      delete env.LIVE_DB_SLOT_DB_JOBS;
+      const r = spawnSync("bash", [resolve(REPO_ROOT, ".github/scripts/live-db-acquire-slot.sh")], {
+        encoding: "utf8",
+        env: {
+          ...env,
+          PATH: `${dir}:${process.env.PATH ?? ""}`,
+          GH_TOKEN: "stub",
+          GITHUB_REPOSITORY: "portava/portava.app",
+          GITHUB_RUN_ID: WAITER,
+          GITHUB_OUTPUT: join(dir, "out"),
+          LIVE_DB_SLOT_ROLE: "verify",
+          LIVE_DB_SLOT_TIMEOUT_SECONDS: "1",
+          LIVE_DB_SLOT_POLL_SECONDS: "1",
+        },
+      });
+      assertHeld({ code: r.status, out: `${r.stdout}${r.stderr}` }, "no DB job list");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -220,6 +220,11 @@ describe("the presence property is asked for, and is a real column", () => {
         const b: any = {
           select(cols: string) { if (table === "user_stamps") selects.push(cols); return b; },
           eq() { return b; },
+          // buildStats walks user_stamps by keyset (order id, gt last, limit);
+          // an empty first page ends the walk, so it still reads exactly once.
+          order() { return b; },
+          gt() { return b; },
+          limit() { return b; },
           then(res: any) { return Promise.resolve({ data: [], error: null }).then(res); },
         };
         return b;

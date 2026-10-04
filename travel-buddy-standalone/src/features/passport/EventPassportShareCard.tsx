@@ -12,6 +12,10 @@
  *   • no live share → a single "Share my Passport here" action.
  *   • live share → the QR (which encodes ONLY the opaque deep link), the
  *     remaining time stated in words, and Revoke.
+ *   • the server could not be reached or could not check (an OUTAGE, not a
+ *     refusal) → "Couldn't check your event Passport" and Try again. An outage
+ *     is never shown as "nothing is shared" (which would offer a Share button
+ *     over a share that may be live) and never hides the card as a refusal would.
  *
  * The card never decides who may see the share. It shows the owner what they
  * are sharing and how long for; every resolve is re-checked server-side.
@@ -48,6 +52,9 @@ export function EventPassportShareCard({
   const [share, setShare] = React.useState<EventPassportShare | null>(initialShare ?? null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  /** The first read failed as an OUTAGE: we do not know whether a share is live. */
+  const [readFailed, setReadFailed] = React.useState(false);
+  const [readAttempt, setReadAttempt] = React.useState(0);
 
   React.useEffect(() => {
     if (initialAvailable !== undefined) return;
@@ -56,11 +63,17 @@ export function EventPassportShareCard({
       const res = await getMyEventPassportShare(eventId);
       if (cancelled) return;
       if (!res.enabled) { setAvailable(false); return; }
+      if (!res.ok) {
+        if (res.outage) { setReadFailed(true); setAvailable(true); return; }
+        setAvailable(false); // a 4xx refusal: nothing this card can offer
+        return;
+      }
+      setReadFailed(false);
       setAvailable(true);
-      setShare(res.ok ? res.data : null);
+      setShare(res.data);
     })();
     return () => { cancelled = true; };
-  }, [eventId, initialAvailable]);
+  }, [eventId, initialAvailable, readAttempt]);
 
   const onShare = React.useCallback(async () => {
     if (busy) return;
@@ -69,6 +82,11 @@ export function EventPassportShareCard({
     const res = await createEventPassportShare(eventId);
     setBusy(false);
     if (!res.enabled) { setAvailable(false); return; }
+    if (!res.ok && res.outage) {
+      // The server could not mint — not a "no". Keep the card and say so.
+      setError('Could not share right now. Try again.');
+      return;
+    }
     if (!res.ok || !res.data) {
       // A refusal (not attending, event over) hides the affordance rather than
       // inviting a retry that would be refused identically.
@@ -93,6 +111,26 @@ export function EventPassportShareCard({
   // Nothing to offer: capability off, not attending, or the event is done.
   if (available === false) return null;
   if (available === null) return null; // first read still in flight — draw nothing
+
+  if (readFailed) {
+    return (
+      <View style={s.card} testID="event-passport-share-card">
+        <View style={s.headerRow}>
+          <QrIcon size={icon.s18} color={color.ink} />
+          <Text style={s.title}>Event Passport</Text>
+        </View>
+        <Text style={s.error}>Couldn't check your event Passport.</Text>
+        <Pressable
+          style={s.secondaryBtn}
+          onPress={() => { setReadFailed(false); setAvailable(null); setReadAttempt((n) => n + 1); }}
+          accessibilityRole="button"
+          accessibilityLabel="Try checking my event Passport again"
+        >
+          <Text style={s.secondaryText}>Try again</Text>
+        </Pressable>
+      </View>
+    );
+  }
 
   // §31: a share the client already knows has lapsed is never shown as current.
   const live = isShareLive(share);

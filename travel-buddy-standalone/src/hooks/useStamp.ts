@@ -7,17 +7,17 @@
  * Shared between StampButton and any custom stamp surface.
  */
 import { useState, useCallback } from 'react';
-import { stampEntity, unstampEntity } from '../services/stamps.ts';
+import { stampEntity, unstampEntity } from '../services/stamps.ts'; import { stepCount } from '../lib/unreadCount.ts';
 
 export interface UseStampOptions {
   entityType: string;
   entityId: string;
-  initialCount: number;
+  initialCount: number | null; // null = the server could not read it (census-media §47)
   initialIsStamped: boolean;
 }
 
 export interface UseStampReturn {
-  count: number;
+  count: number | null; // null = unread; an optimistic step keeps it unread
   isStamped: boolean;
   /** True while the API call is in-flight (prevents double-taps). */
   isLoading: boolean;
@@ -28,7 +28,7 @@ export interface UseStampReturn {
    * use this return value rather than re-reading component state via a ref,
    * which can race ahead of a still-in-flight request.
    */
-  toggle: () => Promise<{ isStamped: boolean; count: number }>;
+  toggle: () => Promise<{ isStamped: boolean; count: number | null }>;
 }
 
 export function useStamp({
@@ -37,7 +37,7 @@ export function useStamp({
   initialCount,
   initialIsStamped,
 }: UseStampOptions): UseStampReturn {
-  const [count, setCount]       = useState(initialCount);
+  const [count, setCount]       = useState<number | null>(initialCount);
   const [isStamped, setIsStamped] = useState(initialIsStamped);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -48,7 +48,7 @@ export function useStamp({
     const wasStamped = isStamped;
     const prevCount  = count;
     const optimisticIsStamped = !wasStamped;
-    const optimisticCount = wasStamped ? Math.max(0, prevCount - 1) : prevCount + 1;
+    const optimisticCount = stepCount(prevCount, !wasStamped);
 
     // Optimistic update
     setIsStamped(optimisticIsStamped);

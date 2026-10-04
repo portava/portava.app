@@ -2587,9 +2587,9 @@ router.post("/trips/:tripId/memory", async (req, res) => {
     return;
   }
 
-  const crewIds = ((members ?? []) as any[])
-    .map((m) => m.user_id as string)
-    .filter((uid) => uid !== user.id);
+  const crewIds = ((members ?? []) as any[]).map((m) => m.user_id as string).filter((uid) => uid !== user.id);
+  // One live trip Memory per trip — a retry or second tap answers it, never a second row (answerExistingTripMemory, at the foot).
+  if (await answerExistingTripMemory(req, res, sc, tripId, user.id)) return;
 
   const tripInsertRow = {
     owner_id: user.id,
@@ -3440,6 +3440,45 @@ async function answerMemoryShare(req: any, res: any, userId: string, id: string)
       public: (memory as any).visibility === "public" && (memory as any).state === "published",
     },
   });
+}
+
+/**
+ * POST /trips/:tripId/memory's duplicate guard. Answers (and returns true) when
+ * this owner already has a live Memory for this trip; returns false when there
+ * is none and the create should proceed.
+ *
+ * WHY THE ROUTE NEEDS ONE. §19's idempotency key dedupes only on the kernel
+ * path, and `memory_kernel_enabled` is false on the hosted testing deployment,
+ * so every create there is the legacy direct write (census H175). A retry after
+ * a dropped response therefore wrote a SECOND trip-crew Memory and tagged the
+ * whole crew again, while GET /trips/:tripId/memory only ever shows the newest.
+ * The rule is the one that GET already encodes — "the canonical trip memory",
+ * owner-scoped, newest live row — so the answer here is exactly what that read
+ * would return. A deleted Memory does not count, so a person who deleted their
+ * trip Memory can make a new one.
+ *
+ * FAIL CLOSED. supabase-js RESOLVES on a database error; an unread `memories`
+ * must not be taken as "none exists" and turned into a second row, so it
+ * refuses with `degraded_unavailable` (503, retryable) and writes nothing.
+ */
+async function answerExistingTripMemory(req: any, res: any, sc: any, tripId: string, ownerId: string): Promise<boolean> {
+  const { data: rows, error } = await sc
+    .from("memories")
+    .select(TRIP_MEMORY_SELECT as any)
+    .eq("trip_id", tripId)
+    .eq("owner_id", ownerId)
+    .neq("state", "deleted")
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (error) {
+    req.log.error({ err: error, tripId }, "create-from-trip: existing trip Memory unreadable — refusing BEFORE the write");
+    sendError(res, "degraded_unavailable", "Could not check for this trip's Memory. Please try again.");
+    return true;
+  }
+  const existing = ((rows ?? []) as any[])[0];
+  if (!existing) return false;
+  res.status(200).json({ memory: mapMemory(existing, ownerId), taggedCount: 0, existing: true });
+  return true;
 }
 
 // Imported at the TAIL so no line above moves; ESM hoists it.

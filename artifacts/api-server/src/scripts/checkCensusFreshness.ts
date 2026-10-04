@@ -89,7 +89,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // the problem. Both ends of every vertical slice are listed.
   "census-trips.md": [
     // The kernel and its command families.
-    "artifacts/api-server/src/domain/trips/commands/tripKernel.ts", "travel-buddy-standalone/src/components/privacy/PrivateTripCard.tsx", "travel-buddy-standalone/src/components/discovery/TripWishlistPicker.tsx", "travel-buddy-standalone/src/services/discoveryBookmarks.ts", // WP-10 §77: the requester's withdraw, the Save-to-trip picker and the device store the saved-places merge reads
+    "artifacts/api-server/src/domain/trips/commands/tripKernel.ts", "travel-buddy-standalone/src/components/privacy/PrivateTripCard.tsx", "travel-buddy-standalone/src/components/discovery/TripWishlistPicker.tsx", "travel-buddy-standalone/src/services/discoveryBookmarks.ts", "travel-buddy-standalone/src/services/trips.ts", "travel-buddy-standalone/src/components/TripMembersSheet.tsx", "artifacts/api-server/src/test/tripJoinFlowReadFailures.test.ts", "artifacts/api-server/src/test/tripInvitesPending.test.ts", "travel-buddy-standalone/src/services/__tests__/trips.readFailure.component.test.ts", "travel-buddy-standalone/src/components/__tests__/TripMembersSheet.readFailure.component.test.tsx", "travel-buddy-standalone/src/components/__tests__/TripCreate.partialStops.component.test.tsx", // WP-10 §77: the requester's withdraw, the Save-to-trip picker and the device store the saved-places merge reads; §79: the trip client service, the members sheet and the suites pinning the join flow's failure states
     // §45: the decision-diff harness, its golden, and the Phase 0 inventory (generated and hand-written halves).
     "artifacts/api-server/src/domain/trips/replay/corpus.ts",
     "artifacts/api-server/src/domain/trips/replay/run.ts",
@@ -781,7 +781,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/layoverScenarioMatrix.test.ts",
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): L169 and L267 cite `app/trip/[id].tsx`, which the guard resolves to the legacy repo-root mock (113 lines); the trip screen whose lines they cite is travel-buddy-standalone's, so both are watched rather than one chosen.
     "travel-buddy-standalone/app/trip/[id].tsx",
-    "app/trip/[id].tsx",
+    "app/trip/[id].tsx", "travel-buddy-standalone/src/lib/__tests__/layoverPlanCache.component.test.ts", // WIDENED 2026-10-03 by the LAYOVER lane, line-neutral (this file is cited by line): census-layover §48.2 moves L154 N -> W on this suite
   ],
   "census-highlights-memories.md": [
     // ── ADDED 2026-09-22 by the INTEGRATING lane. THIS HALF IS THIS PASS'S OWN
@@ -1591,6 +1591,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/wallQuickMedia.test.ts",
     // WIDENED 2026-09-27 by lane E (census-media §38.11): W10 now spells its tab-registration citation as the standalone screen, so the guard checks the file the row means rather than the repo-root mock above.
     "travel-buddy-standalone/app/(tabs)/_layout.tsx",
+    // ADDED 2026-10-03 by census-wall §19: the proofs §19.2 cites for F1–F4.
+    "artifacts/api-server/src/test/wallFollowGraphWhole.test.ts",
+    "artifacts/api-server/src/test/wallTakedownRevalidate.test.ts",
+    "artifacts/api-server/src/test/wallEngagementLoop.test.ts",
   ],
   // Discovery has NO SPEC. Its 67 rows are 25 inbound obligations from other
   // surfaces' specs, 9 rows shared with the Global Input Intelligence census,

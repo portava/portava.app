@@ -25,6 +25,13 @@ interface Props {
   isOwner?: boolean;
   onHighlightPress?: (index: number) => void;
   onAddHighlight?: () => void;
+  /**
+   * §28.11. True when the owner's own Highlights could not be READ. An empty
+   * `highlights` is then "we could not find out", and the empty-state
+   * invitation below would tell the owner they have none.
+   */
+  unreadable?: boolean;
+  onRetry?: () => void;
 }
 
 const BUBBLE_SIZE = 62;
@@ -79,7 +86,7 @@ function AddBubble({ onPress }: { onPress?: () => void }) {
 }
 
 export function PassportHighlightsStrip({
-  highlights, hasActive, allViewed, isOwner, onHighlightPress, onAddHighlight,
+  highlights, hasActive, allViewed, isOwner, onHighlightPress, onAddHighlight, unreadable = false, onRetry,
 }: Props) {
   const hasAny = highlights.length > 0;
 
@@ -114,8 +121,20 @@ export function PassportHighlightsStrip({
           <AddBubble onPress={onAddHighlight} />
         ) : null}
 
+        {/* The read failed: say so, and offer it again. Never the invitation. */}
+        {isOwner && !hasAny && unreadable ? (
+          <View style={s.emptyHint} testID="passport-highlights-unreadable">
+            <Text style={s.emptyText}>Couldn{'\u2019'}t load your highlights.</Text>
+            {onRetry ? (
+              <Pressable onPress={onRetry} testID="passport-highlights-retry" accessibilityRole="button" hitSlop={8}>
+                <Text style={s.retryText}>Try again</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
+
         {/* Empty state for owner with no highlights */}
-        {isOwner && !hasAny ? (
+        {isOwner && !hasAny && !unreadable ? (
           <View style={s.emptyHint}>
             <Text style={s.emptyText}>
               Share travel moments as highlights — they expire in 3–48 hours
@@ -187,5 +206,9 @@ const s = StyleSheet.create({
   emptyText: {
     fontSize: 12, color: PP.inkMuted,
     textAlign: 'center', lineHeight: 16,
+  },
+  retryText: {
+    fontSize: 12, color: PP.ink, fontWeight: '700',
+    textAlign: 'center', marginTop: 4,
   },
 });

@@ -16066,3 +16066,120 @@ happened, which a screen would have repeated to the admin.
   routes themselves are not flag-gated.
 - Red if: the verify or guide-status route answers ok for a refused write or a missing target; a
   screen shows an empty queue for a failed read, or drops a row the server refused.
+
+## 47. MEDIA lane — the post and media feeds never state a failed read as 0, empty, false or "not found" — 2026-10-03
+
+Branch `claude/lane-media-20261003`, cut from `main` at `0fa752ece`. Code in `7383e3cfb`, `6cb60f7da`,
+`0858447c6`, `c8cfcf547` (tests), `30148ba68` and `c429a29c0` (client). **No MD row moves**;
+`head_commit` is not re-declared; the headline stands at 450 rows, 408 C / 34 W / 8 N / 0 X (read
+from check:census-integrity). Controlled evidence only: route tests over in-memory clients that fail
+a read on demand and cut an unbounded read at 1,000 rows as PostgREST does, and component tests. No
+flag was touched, no migration was added, and nothing was read from or written to any database.
+
+### 47.1 Where this came from, and why no row moves
+
+The DV-83 verifiers (PR #530) found three defects outside their own scope and handed them to this
+census: POST/DELETE /posts/:id/save stamping `count ?? 0` over a failed count read; `isSaved` and the
+ranking terms read as false/0 over a failed enrichment read; and routes/mediaFeed.ts's 22 baselined
+silent reads. Every one of the 42 non-C rows is an activation, an owner decision or a vendor (the
+lane's classification: 0 code-actionable, 17 awaiting a flag or device evidence, 16 owner-gated,
+9 external — the same split §41.2 records), so the lane worked the defect class instead. No MD row
+grades these read paths: the rows that cite routes/mediaFeed.ts (MD55, MD363, MD386) grade the
+construction of the social layer and the compat wrapper, which §47 does not change.
+
+### 47.2 Server — a count is measured or `null`, a viewer flag is true/false or `null`, and the read is named
+
+- **Counters.** A save or comment write recounts with an exact HEAD count and stamps the cached
+  column only when the count was read
+  (`artifacts/api-server/src/lib/postCounters.ts:49#export async function recountPostCounter(`,
+  `artifacts/api-server/src/routes/posts.ts:2527#await recountPostCounter(sc, postId, "save", req.log)`);
+  an unread count is answered `null`, named in `failedSources`, and the cached column is left as it
+  was. POST/DELETE /media/:id/save now keep `posts.save_count` and `hidden_gems.save_count` in step.
+- **Feeds.** The post feeds (global, following, trip, single post) read stamps, comments and saves
+  whole and live, plus the viewer's own rows
+  (`artifacts/api-server/src/lib/postCounters.ts:103#export async function loadPostEngagement(`);
+  the Watch feed, single item, Gems feed and grid do the same through
+  `artifacts/api-server/src/lib/feedReads.ts:139#export async function readWhole<T>(`, which pages
+  by key past PostgREST's 1,000-row cut. Every unread table is named once per response
+  (`artifacts/api-server/src/lib/feedReads.ts:71#export class FailedSources {`). A ranking input
+  that could not be read is named and the page is ranked without its term, never on the cached
+  `like_count`. An unread follow graph is `relationshipStatus: "unknown"`
+  (`artifacts/api-server/src/lib/mediaFeedItem.ts:33#| "unknown";`), never "none".
+- **Gates.** Blocks, mutes and hides are read whole: past 1,000 blocked accounts the blocked
+  creators past the cut were served, and past 1,000 private accounts the global post feed served
+  their posts. An unread hard gate names itself
+  (`artifacts/api-server/src/lib/mediaEligibility.ts:244#failedSource: "blocks"`) and still fails
+  closed; a soft gate that was off is reported. An unread access check answers 503, not 404
+  (`artifacts/api-server/src/routes/mediaFeed.ts:2143#if (postReadErr) return "unreadable";`); an
+  unread follow row on a followers-only post, an unread comment permission and an unread saver
+  profile are 503, never "Post not found", "Only friends can comment" or "nobody saved this". The
+  friends-only check reads `.limit(1)`, so two people with a friendship row in each direction are no
+  longer refused as strangers (PGRST116 from `.maybeSingle()`).
+- **Silent reads.** `SILENT_SUPABASE_READS_BASELINE.json`: routes/mediaFeed.ts S2 22 → 0 and S4 4 → 0;
+  routes/posts.ts S2 8 → 2 and S4 2 → 0. Total 212 → 178. Every edit in routes/mediaFeed.ts,
+  routes/posts.ts and lib/mediaEligibility.ts is line-neutral: each cited line keeps its number and text.
+
+### 47.3 Client — the null is not turned back into 0 or false
+
+The server's nulls reached a client that undid them: the Watch mapper set an unread `stampItCount`
+to 0, the Gems overlay seeded its Stamp with `likeCount ?? 0` and drew `String(count || '')`, GemsFeed
+seeded the save store with `hasSaved ?? false`, useStamp stepped `null + 1 = 1`, both rails drew an
+unread count exactly like a measured 0, and Gems showed Follow over an unread follow graph.
+`travel-buddy-standalone/src/lib/unreadCount.ts:30#if (count === null) return UNREAD_COUNT_MARK;`
+draws an unread count as the mark "—", labelled "<action>, count unavailable"; an optimistic step over
+an unread count stays unread until the server answers
+(`travel-buddy-standalone/src/hooks/useStamp.ts:51#stepCount(prevCount, !wasStamped)`), and a refused
+tap rolls back to unread; an unread saved flag is not written into the save store
+(`travel-buddy-standalone/src/hooks/useMediaSave.ts:32#item.savedByMe !== null`); an unread follow
+state shows no Follow button
+(`travel-buddy-standalone/src/components/media/GemsItemOverlay.tsx:284#isKnownFalse(item.viewerState.isFollowingCreator)`).
+A measured count draws as before, and an absent (older-server) `stampItCount` is still 0. An unread
+saved or stamped flag still draws the icon as inactive (the press sends the set action, whose answer
+is measured); the flag is never stored or counted as false.
+
+### 47.4 Tests, seen red
+
+- `artifacts/api-server/src/test/postCountersHonest.test.ts:115#describe(` — 19 tests; 14 red before.
+- `artifacts/api-server/src/test/postFeedsHonest.test.ts:131#describe(` — 17 tests; 11 red before.
+- `artifacts/api-server/src/test/mediaFeedReadsHonest.test.ts:210#describe(` — 51 tests; 25 red before
+  (the rest were written against the fixed code and each shown to bite by a mutation, §47.5).
+- `artifacts/api-server/src/test/feedReads.test.ts:56#describe(` — 18 tests of the shared read helpers.
+- Client: eight suites (34 tests) — WatchItemOverlay.unreadCounts, GemsItemOverlay.unreadState,
+  GemsFeed.unreadSaved, StampButton.unreadCount, useWatchStamp.unreadCount, useMediaSave.unreadSeed,
+  mediaFeed.unreadMapping, app/media-viewer/__tests__/unreadCounts, plus the node suite
+  src/lib/__tests__/unreadCount.test.ts; 13 red against the pre-lane consumers.
+
+### 47.5 Mutations
+
+Each mutation re-introduces one defect, alone, in a file whose sha256 was recorded first; the file is
+restored byte-identically and the sha256 checked. Server: 107 (postCounters 8, feedReads 11, posts.ts
+29, mediaFeed.ts 40, mediaEligibility 8, mediaFeedItem 10, mediaFeedReads 1) — all killed; three
+survived the first pass (FR2, FR4, EL2) and were killed after their tests were sharpened. Client: 24 —
+23 killed, 1 equivalent (StampButton's card-local step is overwritten in the same commit by its own
+API-sync effect, so no rendered state differs).
+
+### 47.6 What this does not claim, open items, and what would turn it red
+
+- Nothing here is production evidence: the outage and the 1,000-row cut are simulated.
+- **Open (not done here): the post feed's client.** `travel-buddy-standalone/src/services/posts.ts`
+  maps `saveCount ?? save_count ?? 0`, `commentCount ?? comment_count ?? 0` and `savedByMe ?? false`,
+  so an unread post count falls back to the cached column (or 0) and an unread flag to false on the
+  post cards. The server half is done (§47.2); the client half is the same work as §47.3 over
+  `PostRow` and its consumers.
+- **Open:** routes/posts.ts keeps two baselined S2 sites and two S3 sites outside the feed and counter
+  paths this section covers; they are not claimed here.
+- Red if: a save or comment write stamps a counter over an unread count; a feed serves 0, false,
+  "none", an empty page or 404 for a read it could not make, or omits it from `failedSources`; a
+  block, mute, hide, follow or private-author list is read in one request; or the client draws an
+  unread count as nothing or a number, or stores an unread flag as false.
+
+- NOT-GRADED: artifacts/api-server/src/test/postCountersHonest.test.ts — §47.4's counter suite; no MD verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/postFeedsHonest.test.ts — §47.4's post feed suite; no MD verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/mediaFeedReadsHonest.test.ts — §47.4's media feed suite; no MD verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/feedReads.test.ts — §47.4's helper suite; no MD verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/lib/postCounters.ts — §47.2's counter and engagement reads; no MD verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/lib/feedReads.ts — §47.2's shared whole-read helpers; no MD verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/lib/mediaFeedItem.ts — §47.2 cites its "unknown" relationship status; no MD verdict rests on it.
+- NOT-GRADED: artifacts/api-server/scripts/SILENT_SUPABASE_READS_BASELINE.json — §47.2's silent-read counts; a guard baseline, not a graded file.
+- NOT-GRADED: travel-buddy-standalone/src/lib/unreadCount.ts — §47.3's unread-count display rule; no MD verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/hooks/useMediaSave.ts — §47.3 cites its seed; no MD verdict rests on it.

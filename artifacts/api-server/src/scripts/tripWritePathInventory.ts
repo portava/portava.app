@@ -213,9 +213,14 @@ if (invokedDirectly) {
   const doc = readFileSync(DOC_PATH, "utf8");
   const current = documentBlock(doc);
   if (check) {
-    if (current === fresh) { console.log(`check:trip-write-path-inventory PASSED — the document's inventory is the tree's.`); process.exit(0); }
+    // The count is part of the contract, not decoration: check:guard-reachability
+    // proves this guard LOOKED by reading a number out of this line. Without one
+    // the registry had to declare `zeroIsProved`, which is the weaker state — and
+    // the proof could only be satisfied by running this script in its WRITING
+    // mode, which repairs the drift instead of reporting it.
+    if (current === fresh) { console.log(`check:trip-write-path-inventory PASSED — ${fresh.split("\n").length} inventory block line(s) compared; the document's inventory is the tree's.`); process.exit(0); }
     const d = blockDrift(current, fresh);
-    console.error(`::error::${path.relative(process.cwd(), DOC_PATH)} is out of date: ${d.added.length} line(s) the tree has that the document lacks, ${d.removed.length} the document has that the tree lacks. Regenerate it in this commit: pnpm -s check:trip-write-path-inventory`);
+    console.error(`::error::${path.relative(process.cwd(), DOC_PATH)} is out of date: ${d.added.length} line(s) the tree has that the document lacks, ${d.removed.length} the document has that the tree lacks. Regenerate it in this commit: node --import tsx/esm src/scripts/tripWritePathInventory.ts (the check: script passes --check and regenerates nothing)`);
     for (const l of d.added.slice(0, 40)) console.error(`  + ${l}`);
     for (const l of d.removed.slice(0, 40)) console.error(`  - ${l}`);
     process.exit(1);

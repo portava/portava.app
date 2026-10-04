@@ -83,7 +83,7 @@ jest.mock('../../../src/components/layover/LayoverCompassCard', () => ({ Layover
 jest.mock('../../../src/services/layover', () => ({
   getLayoverOverview: jest.fn(async () => ({ ok: true, overview: (global as any).__overview })),
   getRecommendations: jest.fn(async () => ({ ok: true, recommendations: [] })),
-  getLayoverBuddies: jest.fn(async () => ({ city: 'Taipei', buddies: [] })),
+  getLayoverBuddies: jest.fn(async () => ({ ok: true, city: 'Taipei', buddies: [], refusal: null, safetyGate: null, trustRequirement: null, degraded: false, degradedReasons: [] })),
   getLayoverPresence: jest.fn(async () => ({ sharing: false, count: 0, travelers: [] })),
   // census L269 — the screen mounts LayoverDiscoveryCard, which reads through
   // this module. Kept in step with the exhaustive list above: an omission here

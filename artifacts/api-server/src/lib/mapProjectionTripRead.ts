@@ -53,6 +53,17 @@
  *    ROW. A pre-2610 row has no anchor, so it silently drops one pin — and a
  *    trip layer missing one trip is indistinguishable from a viewer with one
  *    fewer trip. Refusing the layer is the only outcome an operator can see.
+ *
+ *    The same holds for a trip with NO row at all. The projection is written
+ *    only by trip_map_projection_drain (kernel outbox events) and
+ *    trip_map_projection_rebuild, which nothing in this server calls, so a
+ *    trip that predates the kernel — or whose event is not drained yet — has
+ *    no row. Measured read-only on the testing database 2026-10-03: 43 trips,
+ *    0 projection rows, 0 outbox rows; with the flag on, every viewer's layer
+ *    read as a SUCCESSFUL empty one. A trip in the viewer's scope that the
+ *    fold does not hold therefore refuses the layer as `projection_incomplete`
+ *    (counted in `uncovered`). A deleted trip is not this case: its
+ *    trip_members rows cascade with it, so it leaves the scope too.
  */
 import { logger } from "./logger.js";
 import {
@@ -88,7 +99,9 @@ export type TripLayerRefusal =
   /** At least one row predates 2610 / carries no Map anchor version. */
   | "projection_contract_stale"
   /** 2520's body shape is not the one this reader understands. */
-  | "projection_schema_unexpected";
+  | "projection_schema_unexpected"
+  /** A trip in the viewer's scope has no usable projection row (decision 3). */
+  | "projection_incomplete";
 
 export interface TripLayerCapabilityReport {
   flag: CapabilityVerdict["flag"];
@@ -117,6 +130,8 @@ export interface TripLayerReport {
   contractVersion: number | null;
   /** §19.1 freshness handle: the highest aggregate_version reflected. */
   maxSourceTripVersion: number | null;
+  /** Scoped trips the folded projection holds no row for (projection path only). */
+  uncovered: number;
 }
 
 export interface TripLayerRead {
@@ -142,6 +157,7 @@ function emptyReport(path: TripLayerPath, capability: TripLayerCapabilityReport)
     invalidRows: 0,
     contractVersion: null,
     maxSourceTripVersion: null,
+    uncovered: 0,
   };
 }
 
@@ -283,6 +299,24 @@ async function readFromProjection(
       "map trip projection: a projection row predates the Map anchor (2610) — the whole layer is refused rather than drawn with a pin missing",
     );
     report.refusal = "projection_contract_stale";
+    return { report, trips: null };
+  }
+
+  // Decision 3, for a row that is MISSING rather than stale: every trip in the
+  // viewer's scope must be held by the fold, or the layer would be drawn with
+  // that trip silently absent. An unfoldable row (no version) is not coverage.
+  report.uncovered = tripIds.filter((id) => !fold.rows.has(id)).length;
+  if (report.uncovered > 0) {
+    logger.error(
+      {
+        capability: MAP_TRIP_PROJECTION_CAPABILITY.flag,
+        scoped: report.scoped,
+        uncovered: report.uncovered,
+        rows: report.rows,
+      },
+      "map trip projection: a trip in the viewer's scope has no projection row (never drained or rebuilt) — the whole layer is refused rather than drawn with trips missing",
+    );
+    report.refusal = "projection_incomplete";
     return { report, trips: null };
   }
 
