@@ -23,11 +23,11 @@ export async function fetchBlockedSet(
   userId: string,
 ): Promise<Set<string> | null> {
   try {
-    const { data, error } = await sc
+    const { data, error, count } = await sc
       .from("blocks")
-      .select("blocker_id, blocked_id")
+      .select("blocker_id, blocked_id", { count: "exact" })
       .or(`blocker_id.eq.${userId},blocked_id.eq.${userId}`);
-    if (error) return null;
+    if (error) return null; if (!blocksAnswerIsWhole(data, count)) return await fetchBlockedSetByKey(sc, userId);  // census-discovery §123 (DV-83 round 24): an answer cut at the row cap is not the set
     const set = new Set<string>();
     for (const b of (data ?? []) as any[]) {
       if (b.blocker_id === userId) set.add(b.blocked_id as string);
@@ -72,4 +72,37 @@ export function submitterIsVisible(
   if (!author) return true;               // venue fact — no voice attached to it
   if (blockedIds === null) return false;  // block state unknown → fail closed
   return !blockedIds.has(author);
+}
+
+// ── census-discovery §123 (DV-83 round 24, lane DISC-DV83; the sweep beside the round-23 verifier's B43) ─────────────
+//
+// `fetchBlockedSet` made one unbounded read. PostgREST cuts a response at db-max-rows (1000 on this deployment) and
+// reports nothing, so a viewer with more than 1000 block rows across both directions (their own blocks plus everyone
+// who blocked them) got a set missing every row past the cut, and each caller served the people in those rows as "not
+// blocked". The plain read now carries its exact count. When the count says rows were left out (or, from a client that
+// answers no count, when a full page came back), both directions are read again WHOLE, each keyed by its counter-party
+// column, which `blocks_pair_unique (blocker_id, blocked_id)` makes unique within the direction. A set that cannot be
+// read whole is null: the contract above is unchanged, and so is the one request a set under the cap costs.
+// Declared at the foot so the cited lines above do not move; ESM hoists the import.
+import { readWhole, afterKey, WHOLE_READ_PAGE_SIZE } from "./feedReads.js";
+
+/** True when a plain `blocks` answer is provably every row its filter matches. */
+function blocksAnswerIsWhole(data: unknown, count: unknown): boolean {
+  if (!Array.isArray(data)) return true;  // no rows answered and no error: the empty set, as before
+  return typeof count === "number" ? data.length >= count : data.length < WHOLE_READ_PAGE_SIZE;
+}
+
+/** Both directions of `userId`'s blocks, each read whole by key; null when either cannot be. */
+async function fetchBlockedSetByKey(sc: SupabaseClient, userId: string): Promise<Set<string> | null> {
+  const direction = (mine: "blocker_id" | "blocked_id", other: "blocker_id" | "blocked_id") =>
+    readWhole<Record<string, unknown>>(
+      (after, size) => afterKey((sc as any).from("blocks").select(other, { count: "exact" }).eq(mine, userId).order(other, { ascending: true }).limit(size), other, after),
+      (r) => String(r[other]),
+    );
+  const [blockedByViewer, blockersOfViewer] = await Promise.all([direction("blocker_id", "blocked_id"), direction("blocked_id", "blocker_id")]);
+  if (!blockedByViewer.ok || !blockersOfViewer.ok) return null;
+  const set = new Set<string>();
+  for (const r of blockedByViewer.value) set.add(String(r.blocked_id));
+  for (const r of blockersOfViewer.value) set.add(String(r.blocker_id));
+  return set;
 }

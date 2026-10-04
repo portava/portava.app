@@ -154,11 +154,11 @@ router.get("/pulse", async (req, res) => {
   // that happen to contain hidden entries.
   const hiddenPostIds: string[] = []; let hidesFetchFailed = false;
   try {
-    const { data: hiddenRows, error: hiddenRowsErr } = await sc
+    const hiddenRead = await readKeyedWhole(() => sc
       .from("post_hides")
-      .select("post_id")
-      .eq("user_id", user.id); if (hiddenRowsErr) hidesFetchFailed = true;
-    for (const r of hiddenRows ?? []) hiddenPostIds.push((r as any).post_id);
+      .select("post_id", { count: "exact" })
+      .eq("user_id", user.id), "post_id"); if (!hiddenRead.ok) { hidesFetchFailed = true; req.log.warn({ userId: user.id, err: hiddenRead.error }, "pulse: hide list could not be read whole"); }  // census-discovery §123 (DV-83 round 24, B43): the WHOLE hide list, by key — a list cut at the row cap is read on, or is a failed read, never "this is all you hid"
+    for (const r of hiddenRead.ok ? hiddenRead.value : []) hiddenPostIds.push(r.post_id as string);
   } catch { hidesFetchFailed = true; } if (hidesFetchFailed) { req.log.warn({ userId: user.id }, "pulse: hide list unknown — returning empty feed (fail-closed)"); res.json({ posts: [], total: 0, tab, failedSources: ["post_hides"] }); return; }  // census-discovery §122 (DV-83 round 23, B40): a failed hide read is never "you hid nothing" — fail closed, as the block read does, and say so
 
   let query = sc
@@ -223,15 +223,15 @@ router.get("/pulse", async (req, res) => {
   let blockFetchFailed = false;
   const blockedSet = new Set<string>();
   try {
-    const [blockedRes, blockerRes] = await Promise.all([
-      sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
-      sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
+    const [blockedRes, blockerRes] = await Promise.all([  // census-discovery §123 (DV-83 round 24, B43): both block lists WHOLE, by key — one cut at the row cap is read on, or fails closed below
+      readKeyedWhole(() => sc.from("blocks").select("blocked_id", { count: "exact" }).eq("blocker_id", user.id), "blocked_id"),
+      readKeyedWhole(() => sc.from("blocks").select("blocker_id", { count: "exact" }).eq("blocked_id", user.id), "blocker_id"),
     ]);
-    if (blockedRes.error || blockerRes.error) {
-      blockFetchFailed = true;
+    if (!blockedRes.ok || !blockerRes.ok) {
+      blockFetchFailed = true; req.log.warn({ userId: user.id, err: !blockedRes.ok ? blockedRes.error : !blockerRes.ok ? blockerRes.error : undefined }, "pulse: block lists could not be read whole");
     } else {
-      for (const row of (blockedRes.data as any[]) ?? []) blockedSet.add(row.blocked_id as string);
-      for (const row of (blockerRes.data as any[]) ?? []) blockedSet.add(row.blocker_id as string);
+      for (const row of blockedRes.value) blockedSet.add(row.blocked_id as string);
+      for (const row of blockerRes.value) blockedSet.add(row.blocker_id as string);
     }
   } catch {
     blockFetchFailed = true;
@@ -1136,24 +1136,24 @@ router.get("/pulse/live", async (req, res) => {
   const blockedSet = new Set<string>();
   let blockFetchFailed = false;
   try {
-    const [outRes, inRes] = await Promise.all([
-      sc.from("blocks").select("blocked_id").eq("blocker_id", user.id),
-      sc.from("blocks").select("blocker_id").eq("blocked_id", user.id),
+    const [outRes, inRes] = await Promise.all([  // census-discovery §123 (DV-83 round 24, B43): both block lists WHOLE, by key, as the feed above reads them
+      readKeyedWhole(() => sc.from("blocks").select("blocked_id", { count: "exact" }).eq("blocker_id", user.id), "blocked_id"),
+      readKeyedWhole(() => sc.from("blocks").select("blocker_id", { count: "exact" }).eq("blocked_id", user.id), "blocker_id"),
     ]);
-    if (outRes.error || inRes.error) {
+    if (!outRes.ok || !inRes.ok) {
       blockFetchFailed = true;
       req.log?.warn(
         {
           userId: user.id,
-          outCode: (outRes.error as any)?.code,
-          inCode: (inRes.error as any)?.code,
-          err: outRes.error ?? inRes.error,
+          outCode: !outRes.ok ? outRes.error.code : undefined,
+          inCode: !inRes.ok ? inRes.error.code : undefined,
+          err: !outRes.ok ? outRes.error : !inRes.ok ? inRes.error : undefined,
         },
         "pulse/live: block-state read failed — returning an empty rail (fail-closed)",
       );
     } else {
-      for (const r of (outRes.data as any[]) ?? []) blockedSet.add(r.blocked_id as string);
-      for (const r of (inRes.data as any[]) ?? []) blockedSet.add(r.blocker_id as string);
+      for (const r of outRes.value) blockedSet.add(r.blocked_id as string);
+      for (const r of inRes.value) blockedSet.add(r.blocker_id as string);
     }
   } catch (err) {
     blockFetchFailed = true;
@@ -2051,4 +2051,23 @@ async function liveGemSaveCounts(sc: any, gemIds: string[]): Promise<Map<string,
   } catch {
     return null;
   }
+}
+
+// ── census-discovery §123 (DV-83 round 24, lane DISC-DV83; the round-23 verifier's B43) ───────────────────────────────
+// GET /pulse and GET /pulse/live read the viewer's hide list and both block lists with ONE unbounded read each. PostgREST
+// cuts a response at db-max-rows (1000 on this deployment) and says nothing, so a viewer past the cap had only their
+// first 1000 hides or blocks applied: a post they hid, or a post by someone who blocked them, was served with nothing
+// named. A safety fail-open. Each list is now read WHOLE: the plain read first (one request, with an exact count, so a
+// list under the cap costs what it did), and when the count says rows were left out, again by key until none remain
+// (`readWhole`, lib/feedReads.ts). A list that cannot be read whole is a failed read, and each caller already fails
+// closed over one and names it (`post_hides`, `blocks`). Declared at the foot so no cited line above moves.
+import { readWhole, afterKey, type Read } from "../lib/feedReads.js";
+
+/** Every row `base()` selects, read whole and keyed by `column` (a column the read's own filter makes unique). */
+function readKeyedWhole(base: () => any, column: string): Promise<Read<Array<Record<string, unknown>>>> {
+  return readWhole<Record<string, unknown>>(
+    (after, size) => afterKey(base().order(column, { ascending: true }).limit(size), column, after),
+    (r) => String(r[column]),
+    { first: base },
+  );
 }
