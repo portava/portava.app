@@ -373,7 +373,7 @@
 
 BEGIN;
 
--- ─── the named targets, one place, read by all three blocks below ────────────
+-- ─── the named targets, read by the three blocks below (and repeated, checked, in $post$) ─
 CREATE TEMP TABLE IF NOT EXISTS _p3504_targets (rel text PRIMARY KEY) ON COMMIT DROP;
 
 INSERT INTO _p3504_targets (rel) VALUES
@@ -441,7 +441,12 @@ ON CONFLICT (rel) DO NOTHING;
 -- work. Refuse instead, loudly, naming the table — the remedy is to drop it
 -- from the list in a follow-up migration with the reason recorded. A RESTRICTIVE
 -- policy only ever narrows, so it is not a surface and is not counted.
-DO $$
+--
+-- Tagged $pre$ (integration, 2026-10-04): it reads _p3504_targets, which is
+-- gone after COMMIT, so certify:migrations stage 4 must not re-run it. The
+-- applier runs it here, in this transaction, which is the only place a
+-- precondition means anything; the $post$ block re-asserts the same fact (3).
+DO $pre$
 DECLARE
   v_names text;
 BEGIN
@@ -457,7 +462,7 @@ BEGIN
       '3504 PRECONDITION FAILED: % now carries a permissive RLS policy, so a client role is meant to reach its rows. Revoking the privilege behind it would break that surface. Drop the table from this migration''s list in a follow-up, with the reason recorded.',
       v_names;
   END IF;
-END $$;
+END $pre$;
 
 -- ═══════════════════════════════════════════════════════════════════════════
 -- THE REVOKE — client roles and PUBLIC only; service_role is never named
@@ -482,8 +487,83 @@ END $$;
 -- ═══════════════════════════════════════════════════════════════════════════
 -- POSTCONDITIONS — this migration fails loudly rather than silently no-opping
 -- ═══════════════════════════════════════════════════════════════════════════
-DO $$
+-- RE-RUNNABLE AFTER COMMIT (integration, 2026-10-04). certify:migrations stage 4
+-- re-runs every assertion block that is not $pre$ against the COMMITTED
+-- database, and _p3504_targets is `ON COMMIT DROP`. As #566 wrote it this block
+-- read that table, so on `main` the first run after the merge would have
+-- applied 3504 correctly and then failed its certification with
+--     ERROR: relation "_p3504_targets" does not exist
+-- (measured on a local PostgreSQL 16 with the repository's own stage-4 split).
+-- That is 3390's defect, F4 in docs/ops/discovery-portava-ci-apply-plan.md
+-- §5.3, and this is 3390's repair: the block carries the list as a literal and
+-- reads only the catalogue.
+--   * In the APPLYING transaction the temp table still exists, and it is what
+--     the REVOKE above walked, so it is what is asserted about — and the
+--     literal must name exactly the same tables, or the block raises. Two
+--     lists that can drift apart would let a table be revoked and never
+--     verified after commit, or verified and never revoked.
+--   * AFTER COMMIT the temp table is gone and the literal stands in for it.
+-- An EMPTY temp table is not compared with the literal: it is reported by the
+-- vacuity guard below, which is the more useful message for a sweep over
+-- nothing.
+DO $post$
 DECLARE
+  v_literal constant text[] := ARRAY[
+    'admin_access_log',
+    'call_moderation_actions',
+    'circle_invites',
+    'comment_likes',
+    'compass_abuse_flags',
+    'compass_admin_actions',
+    'compass_admin_weight_sets',
+    'compass_algorithm_versions',
+    'compass_cache_invalidations',
+    'compass_content_freshness',
+    'compass_explanation_reasons',
+    'compass_preload_queue',
+    'compass_rollbacks',
+    'compass_suspension_requests',
+    'compass_testing_scenarios',
+    'compass_user_navigation_patterns',
+    'compass_visibility_boosts',
+    'compass_visibility_cooldowns',
+    'content_translations',
+    'devices',
+    'feature_flag_audit_log',
+    'friend_requests',
+    'highlight_revocation_log',
+    'job_health',
+    'key_packages',
+    'media_dedup_groups',
+    'media_dedup_memberships',
+    'media_events',
+    'media_stamp_reactions',
+    'notification_delivery_attempts',
+    'place_ai_summaries',
+    'place_best_of',
+    'place_cache_invalidation_queue',
+    'place_coverage_buckets',
+    'place_living_cache',
+    'place_merge_log',
+    'place_mismatch_reports',
+    'place_top_contributors',
+    'post_bucket_ledger',
+    'post_edits',
+    'post_event_links',
+    'post_impressions',
+    'post_reactions',
+    'post_shares',
+    'push_retry_queue',
+    'ranking_config_audit_log',
+    'search_history',
+    'stamp_milestones',
+    'story_purge_queue',
+    'telegraph_outbox',
+    'trip_invite_link_attempts',
+    'user_suggestion_seen',
+    'weather_cache'
+  ];
+  v_targets  text[];
   v_named    int;
   v_present  int;
   v_absent   text;
@@ -491,12 +571,31 @@ DECLARE
   v_names    text;
   v_svc      text;
 BEGIN
-  SELECT count(*) INTO v_named FROM _p3504_targets;
+  IF to_regclass('pg_temp._p3504_targets') IS NOT NULL THEN
+    SELECT coalesce(array_agg(t.rel ORDER BY t.rel), ARRAY[]::text[]) INTO v_targets FROM _p3504_targets t;
+    IF cardinality(v_targets) > 0 THEN
+      SELECT string_agg(d.rel, ', ' ORDER BY d.rel) INTO v_names
+        FROM (
+          (SELECT unnest(v_targets) AS rel EXCEPT SELECT unnest(v_literal))
+          UNION ALL
+          (SELECT unnest(v_literal) AS rel EXCEPT SELECT unnest(v_targets))
+        ) d;
+      IF v_names IS NOT NULL THEN
+        RAISE EXCEPTION
+          '3504 postcondition FAILED: the list this block carries for its re-run after COMMIT is not the list the sweep above walked. Named in one and not the other: %. Edit both together.',
+          v_names;
+      END IF;
+    END IF;
+  ELSE
+    v_targets := v_literal;
+  END IF;
+
+  v_named := cardinality(v_targets);
 
   SELECT count(*) FILTER (WHERE to_regclass('public.' || t.rel) IS NOT NULL),
          string_agg(t.rel, ', ' ORDER BY t.rel) FILTER (WHERE to_regclass('public.' || t.rel) IS NULL)
     INTO v_present, v_absent
-    FROM _p3504_targets t;
+    FROM unnest(v_targets) AS t(rel);
 
   -- VACUITY GUARD. Measured 2026-10-03: 52 of these 53 exist on the testing
   -- database (telegraph_outbox pending) and all 53 on portava-ci. A run that
@@ -513,7 +612,7 @@ BEGIN
   SELECT count(*), string_agg(rel, ', ' ORDER BY rel) INTO v_offending, v_names
     FROM (
       SELECT DISTINCT t.rel
-        FROM _p3504_targets t
+        FROM unnest(v_targets) AS t(rel)
         JOIN pg_class c ON c.oid = to_regclass('public.' || t.rel)
         CROSS JOIN LATERAL aclexplode(c.relacl) x
        WHERE x.grantee = 0 OR pg_get_userbyid(x.grantee) IN ('anon', 'authenticated')
@@ -533,7 +632,7 @@ BEGIN
   --    would have passed over a service_role that had lost three of the four.
   --    The database test's mutation case found that in this very block.
   SELECT string_agg(t.rel, ', ' ORDER BY t.rel) INTO v_svc
-    FROM _p3504_targets t
+    FROM unnest(v_targets) AS t(rel)
    WHERE to_regclass('public.' || t.rel) IS NOT NULL
      AND NOT (has_table_privilege('service_role', to_regclass('public.' || t.rel), 'SELECT')
           AND has_table_privilege('service_role', to_regclass('public.' || t.rel), 'INSERT')
@@ -548,7 +647,7 @@ BEGIN
 
   -- 3. No present target acquired a permissive policy while this ran.
   SELECT string_agg(t.rel, ', ' ORDER BY t.rel) INTO v_names
-    FROM _p3504_targets t
+    FROM unnest(v_targets) AS t(rel)
    WHERE to_regclass('public.' || t.rel) IS NOT NULL
      AND EXISTS (SELECT 1 FROM pg_policy p
                   WHERE p.polrelid = to_regclass('public.' || t.rel) AND p.polpermissive);
@@ -561,6 +660,6 @@ BEGIN
 
   RAISE NOTICE '3504 OK: % of % named tables present and revoked, none grants anon/authenticated/PUBLIC anything, service_role intact on all of them. Not present (unreached by this run): %. Residual (see header): the postgres and supabase_admin default ACLs still issue client DML on every NEW table in public.',
     v_present, v_named, coalesce(v_absent, '(none)');
-END $$;
+END $post$;
 
 COMMIT;

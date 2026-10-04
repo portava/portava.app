@@ -51,6 +51,13 @@
  *   CT9  the ten deliberately excluded tables are not touched: their ACLs are
  *        byte-identical before and after the body.
  *   CTA  3504 is idempotent: its body runs twice in one transaction.
+ *   CTB  3504's postcondition runs AFTER COMMIT — with `_p3504_targets` gone,
+ *        as certify:migrations stage 4 re-runs it — passes on the applied
+ *        state, and still raises over a client grant there. As first written
+ *        it failed that re-run with `relation "_p3504_targets" does not exist`.
+ *   CTC  the list the postcondition carries for that re-run is the list the
+ *        REVOKE walks: the same 53 names, and the block raises in the applying
+ *        transaction if the two are made to differ.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -71,28 +78,49 @@ function body(): string {
   return sql.slice(sql.indexOf("\n", begin) + 1, commit) + "\n";
 }
 
-/** 3504's postcondition block alone (the last DO $$ … $$; in the file). */
+/**
+ * 3504's postcondition block alone: `DO $post$ … END $post$;`.
+ *
+ * It was the last `DO $$` block until the integration of #566 (2026-10-04).
+ * certify:migrations stage 4 re-runs every assertion block that is not `$pre$`
+ * AFTER the commit, when `_p3504_targets` (ON COMMIT DROP) is gone, so the
+ * block as first written would have failed certification on `main` with
+ * `relation "_p3504_targets" does not exist` over a correct apply. It is now
+ * tagged, carries the list as a literal for that re-run, and CTB/CTC pin both
+ * halves of that.
+ */
 function postcondition(): string {
   const b = body();
-  const at = b.lastIndexOf("DO $$");
-  assert.ok(at >= 0, "3504: no postcondition block");
-  return b.slice(at);
+  const at = b.lastIndexOf("DO $post$");
+  assert.ok(at >= 0, "3504: no DO $post$ postcondition block");
+  const end = b.indexOf("END $post$;", at);
+  assert.ok(end > at, "3504: postcondition block is not terminated");
+  return b.slice(at, end + "END $post$;".length) + "\n";
 }
 
-/** 3504's precondition block alone (the FIRST DO $$ … $$; in the file). */
+/** 3504's precondition block alone: `DO $pre$ … END $pre$;`, which certify holds back and the applier runs in-transaction. */
 function precondition(): string {
   const b = body();
-  const at = b.indexOf("DO $$");
-  assert.ok(at >= 0, "3504: no precondition block");
-  const end = b.indexOf("END $$;", at);
+  const at = b.indexOf("DO $pre$");
+  assert.ok(at >= 0, "3504: no DO $pre$ precondition block");
+  const end = b.indexOf("END $pre$;", at);
   assert.ok(end > at, "3504: precondition block is not terminated");
-  return b.slice(at, end + "END $$;".length) + "\n";
+  return b.slice(at, end + "END $pre$;".length) + "\n";
+}
+
+/** The names the `$post$` block carries as a literal, for its re-run after COMMIT. */
+function postLiteral(): string[] {
+  const p = postcondition();
+  const at = p.indexOf("v_literal constant text[] := ARRAY[");
+  const end = p.indexOf("];", at);
+  assert.ok(at >= 0 && end > at, "3504: the $post$ block carries no literal list");
+  return [...p.slice(at, end).matchAll(/'([a-z0-9_]+)'/g)].map((m) => m[1]!);
 }
 
 /** Everything up to and including the target list, so a test can read _p3504_targets without revoking. */
 function targetsOnly(): string {
   const b = body();
-  const at = b.indexOf("DO $$");
+  const at = b.indexOf("DO $pre$");
   assert.ok(at >= 0, "3504: no DO block after the target list");
   return b.slice(0, at);
 }
@@ -311,5 +339,43 @@ ${postcondition()}`);
     const out = inRolledBackTx(`${pre3504(aTarget())}${body()}\n${body()}`);
     assert.equal(out.status, 0, out.stderr);
     exec("SELECT 1;");
+  });
+
+  it("CTB: 3504's postcondition runs after COMMIT, without _p3504_targets, and still bites there", () => {
+    const t = aTarget();
+    // No body() first: this is the block ALONE on the committed database, which
+    // is exactly what certify:migrations stage 4 sends. The temp table does not
+    // exist in this session.
+    const gone = psql(`SELECT 'TEMP=' || coalesce(to_regclass('pg_temp._p3504_targets')::text, 'absent');`);
+    assert.match(gone.stdout, /TEMP=absent/, "a _p3504_targets temp table exists outside the migration: this property proves nothing");
+
+    const alone = inRolledBackTx(postcondition());
+    assert.equal(alone.status, 0, `the postcondition cannot be re-run after COMMIT: ${alone.stderr}`);
+    assert.match(alone.stderr, /3504 OK: \d+ of 53 named tables present and revoked/, alone.stderr);
+
+    // And it is not a block that merely stopped raising: on the same footing it
+    // refuses each kind of client grant.
+    for (const grantee of ["anon", "authenticated", "PUBLIC"]) {
+      const out = inRolledBackTx(`GRANT SELECT ON public.${t} TO ${grantee};\n${postcondition()}`);
+      assert.notEqual(out.status, 0, `re-run after COMMIT, the postcondition passed over a grant to ${grantee}`);
+      assert.match(out.stderr, /ERROR:\s+3504 postcondition FAILED/, `${grantee}: ${out.stderr}`);
+    }
+  });
+
+  it("CTC: the list the postcondition re-runs over is the list the REVOKE walks", () => {
+    const walked = targets();
+    const carried = postLiteral();
+    assert.equal(carried.length, 53, `the $post$ literal names ${carried.length} tables`);
+    assert.deepEqual([...carried].sort(), [...walked].sort(), "the $post$ literal and the INSERT list name different tables");
+
+    // In the applying transaction the two are compared, so one edited without
+    // the other cannot commit. Remove one name from the walked list only.
+    const t = aTarget();
+    const out = inRolledBackTx(`${targetsOnly()}
+DELETE FROM _p3504_targets WHERE rel = '${t}';
+${postcondition()}`);
+    assert.notEqual(out.status, 0, "the postcondition passed although its literal and _p3504_targets differ");
+    assert.match(out.stderr, /ERROR:\s+3504 postcondition FAILED: the list this block carries/, out.stderr);
+    assert.match(out.stderr, new RegExp(t), `the block did not name ${t}: ${out.stderr}`);
   });
 });
