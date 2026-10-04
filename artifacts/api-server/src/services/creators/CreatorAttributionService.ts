@@ -85,7 +85,12 @@ import {
   type RecommendationClaim,
 } from "../../lib/creatorServedRecommendation.js";
 import { evaluateCreatorRule, type RuleEvaluationRefusal } from "../../lib/creatorRuleEvaluation.js";
-import { indexChains, type AttributionRow, type EarningEntryRow } from "../../lib/creatorLedgerStatus.js";
+import {
+  indexChains,
+  isIdentitySevered,
+  type AttributionRow,
+  type EarningEntryRow,
+} from "../../lib/creatorLedgerStatus.js";
 import {
   attributionModelFromRow,
   planHold,
@@ -371,6 +376,21 @@ export async function recordCreatorAttribution(
       .from("creator_attributions").select().eq("idempotency_key", row.idempotency_key).maybeSingle();
     if (replayErr) return classifyDbError(replayErr);
     if (existing) {
+      // A SEVERED RECORD IS NEITHER A REPLAY NOR A CONFLICT. Its identity was
+      // erased and the accounting row retained, so it no longer says WHO —
+      // and a comparison against the incoming beneficiary would have to decide
+      // what `null` equals. It equals nothing: `String(null)` is the string
+      // `"null"`, which would differ from every real id and report this as
+      // "already recorded with different content", a sentence about a conflict
+      // that does not exist. Said plainly instead, before any comparison.
+      const existingBeneficiary = (existing as { beneficiary_user_id?: string | null }).beneficiary_user_id ?? null;
+      if (existingBeneficiary === null) {
+        return fail(
+          "identity_severed",
+          `attribution key ${row.idempotency_key} is recorded on a row whose beneficiary identity was erased; ` +
+            `that record names nobody, so this write is neither its replay nor a second claim about it`,
+        );
+      }
       // A REPLAY IS ONLY A REPLAY IF IT SAYS THE SAME THING. Same key with a
       // different recommendation, beneficiary or figures is a second claim about
       // one event, and answering it `replayed` would silently discard it. The
@@ -379,16 +399,18 @@ export async function recordCreatorAttribution(
       // recorded under the version in force when it first arrived.
       const differs =
         (existing.recommendation_id ?? null) !== (rec?.recommendationId ?? null) ||
-        String(existing.beneficiary_user_id) !== String(row.beneficiary_user_id) ||
+        existingBeneficiary !== String(row.beneficiary_user_id) ||
         Number(existing.gross_revenue_minor) !== Number(row.gross_revenue_minor) ||
         Number(existing.provisional_share_minor) !== Number(row.provisional_share_minor) ||
         Boolean(existing.fraud_hold) !== Boolean(row.fraud_hold);
       if (differs) {
         return fail("conflicting_replay", `attribution key ${row.idempotency_key} is already recorded with different content`);
       }
+      const replayedModel = attributionModelFromRow(existing as AttributionRow);
+      if (!replayedModel.ok) return fail(replayedModel.reason, replayedModel.detail);
       return {
         ok: true,
-        value: { id: String(existing.id), attribution: attributionModelFromRow(existing as AttributionRow), row: existing },
+        value: { id: String(existing.id), attribution: replayedModel.model, row: existing },
         replayed: true,
       };
     }
@@ -483,7 +505,9 @@ export async function bookCreatorEarningUnderRule(
         `${figures.value.creatorShareMinor}; it was not computed by the rule it names`,
     );
   }
-  return recordCreatorEarning(sc, String(a.id), attributionModelFromRow(a), figures.value);
+  const model = attributionModelFromRow(a);
+  if (!model.ok) return fail(model.reason, model.detail);
+  return recordCreatorEarning(sc, String(a.id), model.model, figures.value);
 }
 
 // ── The one-transaction door (3387) ─────────────────────────────────────────
@@ -526,6 +550,22 @@ export async function readAttributionChain(
   const { data: row, error } = await sc.from("creator_attributions").select().eq("id", attributionId).maybeSingle();
   if (error) return classifyDbError(error);
   if (!row) return fail("not_found", attributionId);
+  // A SEVERED BENEFICIARY IS NOT A GROUPING KEY. The chain is found by the
+  // three things a supersession must keep, one of which is the beneficiary. On
+  // a row whose identity was erased that column is NULL, and PostgREST's
+  // `beneficiary_user_id=eq.null` matches NOTHING — so this read would hand
+  // back an EMPTY chain for a row it had just fetched by id, reporting "the
+  // identity is gone" as "there is no record", and `readCreatorLedgerAuditTrail`
+  // would then present a reconstruction with no rows, no entries and no audit
+  // as if the attribution had never been acted on. Refuse: the chain is not
+  // establishable from this column, and that is a different answer from empty.
+  if (isIdentitySevered(row as AttributionRow)) {
+    return fail(
+      "identity_severed",
+      `attribution ${attributionId}'s beneficiary identity was erased; its chain cannot be grouped by ` +
+        `beneficiary_user_id, and an empty chain would misreport the row as never acted on`,
+    );
+  }
   const { data, error: e2 } = await sc
     .from("creator_attributions")
     .select()
@@ -705,7 +745,9 @@ export async function holdCreatorAttribution(
   const appended = await appendToLedger(sc, plan.payload);
   if (!appended.ok) return appended;
   const heldRow = { ...head.head, ...plan.payload.attribution!, id: String(appended.value.attribution_id) } as AttributionRow;
-  return { ok: true, value: { id: String(appended.value.attribution_id), attribution: attributionModelFromRow(heldRow) } };
+  const heldModel = attributionModelFromRow(heldRow);
+  if (!heldModel.ok) return fail(heldModel.reason, heldModel.detail);
+  return { ok: true, value: { id: String(appended.value.attribution_id), attribution: heldModel.model } };
 }
 
 // ── Coverage read ───────────────────────────────────────────────────────────

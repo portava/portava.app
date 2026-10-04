@@ -50,6 +50,9 @@ const CONFLICTS: ReadonlySet<CreatorServiceRefusal> = new Set<CreatorServiceRefu
   "already_reversed", "stale_head", "conflicting_replay", "attribution_not_current", "attribution_held",
   "stale_rule_version", "unpublished_rule_version", "booked_in_subsystem_ledger", "transaction_unbalanced",
   "rule_params_incomplete", "rule_params_invalid", "multi_party_split_undecided", "chain_forked",
+  // The record exists and was read; what it no longer carries is an identity.
+  // 409, not 404 (the row is there) and not 5xx (nothing faulted).
+  "identity_severed",
   "refused_by_model",
 ]);
 
