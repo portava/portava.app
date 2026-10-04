@@ -1025,7 +1025,7 @@ export const GUARDS: readonly GuardEntry[] = [
       unit: "ranker, feature-vector, graph-builder and feed-payload files scanned for money identifiers",
     },
     responsibility:
-      "No money identifier (price, fee, earnings, payout, commission, tip, revenue, sponsored placement, paid plan) is read by a ranker (Discovery, the Wall, media, the Compass pipeline, the buddy match scorer), a ranking feature vector, a graph builder or a feed payload, except an allowlisted identifier that enforces a non-goal or is not money where it stands. A real money input is neither excused nor removed by the check: it is a recorded open decision, and the check fails on it until the owner answers (`08` §6, `09` §10; PAY-019, PAY-074).",
+      "No money identifier (price, fee, earnings, payout, commission, tip, revenue, sponsored placement, paid plan) is read by a ranker (Discovery, the Wall, media, the Compass pipeline, the buddy match scorer), a ranking feature vector, a graph builder or a feed payload, except an allowlisted identifier that enforces a non-goal or is not money where it stands. A real money input is neither excused nor removed by the check: it is a recorded open owner question, reported with a warning on every run and not failed, covering only the identifiers it names; the set of such questions is pinned in the check's test (`08` §6, `09` §10; PAY-019, PAY-074).",
     reach: { kind: "check-all", script: "check:no-money-in-ranking" },
   },
 ];

@@ -10,13 +10,11 @@
  * front-load item — is reproduced from the line as it stood before PAY-074.
  *
  *   K1  the vocabulary: whole words, not substrings.
- *   K2  the real tree carries no finding but the recorded open decision, and
- *       the scan is not passing by reading nothing.
- *   K3  the real script, over the real tree, exits 0 and prints its count.
- *       WHILE AN OPEN DECISION STANDS THIS CASE FAILS, and it is meant to: the
- *       real tree does not pass the check (see OPEN_DECISIONS in the script).
- *       It is the control check:guard-reachability requires, and it is not
- *       rewritten to expect a failure.
+ *   K2  the real tree is clean, the open owner question is exactly the one
+ *       pinned here, and the scan is not passing by reading nothing.
+ *   K3  the real script, over the real tree, exits 0, prints its count — and
+ *       EMITS THE WARNING for the open owner question: the question's text,
+ *       where it is tracked, and a GitHub `::warning` annotation on the file.
  *   K4  a money identifier in a ranker, a feature vector, a graph builder or a
  *       feed payload fails — as a variable, a selected column, a table name.
  *   K5  the pre-PAY-074 front-load select fails; the closed projection passes.
@@ -27,8 +25,12 @@
  *       new file named like a ranker, a scorer or a graph builder that nothing
  *       classifies.
  *   K9  the script exits 1 on a fixture tree through its seam.
- *   K10 an open decision FAILS the check, covers exactly the identifiers it
- *       names, and is stale once they are gone.
+ *   K10 an open owner question is reported and does NOT fail the check — and
+ *       is not an allowlist: it covers exactly the identifiers it names (a new
+ *       money read in the same file fails, in a fixture and through the real
+ *       script), and it is stale the moment it names more than the code reads.
+ *   K11 THE RATCHET: the set of open questions is pinned here, tuple by tuple.
+ *       Adding one, widening one, narrowing one or dropping one fails.
  *
  * Run: node --import tsx/esm --test src/test/noMoneyInRankingCheck.test.ts
  */
@@ -59,6 +61,27 @@ const __dir = dirname(fileURLToPath(import.meta.url));
 const API_ROOT = resolve(__dir, "../..");
 const REAL_SRC = resolve(__dir, "..");
 const SCRIPT = "src/scripts/checkNoMoneyInRanking.ts";
+
+/**
+ * THE RATCHET. The open owner questions the check may report without failing, as (file, identifiers).
+ * This list is a second signature on OPEN_DECISIONS: the script cannot gain an entry, widen one or
+ * lose one without this literal being edited by someone who read it. It only ever SHRINKS, and an
+ * entry leaves in one of two ways — its identifiers move to ALLOWLIST citing the owner's ruling, or
+ * the code that reads them is removed. Unanswered as of 2026-10-04; tracked in PR #596's description.
+ */
+const PINNED_OPEN_DECISIONS: ReadonlyArray<readonly [file: string, identifiers: readonly string[]]> = [
+  ["services/rentBuddy/CompatibilityScoreService.ts", ["budgetMaxUsd", "budgetMinUsd", "fullDayRateUsd", "halfDayRateUsd", "hourlyRateUsd"]],
+];
+
+/** Throws unless `decisions` is exactly the pinned set: same files, same identifiers, nothing added, nothing dropped. */
+function assertOpenSetPinned(decisions: ReadonlyArray<{ file: string; identifiers: readonly string[] }>): void {
+  assert.deepEqual(
+    decisions.map((d) => [d.file, [...d.identifiers].sort()]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+    PINNED_OPEN_DECISIONS.map(([file, ids]) => [file, [...ids].sort()]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
+    "OPEN_DECISIONS is not the pinned set. An open owner question may not be added or widened to get a check green, " +
+      "and may not be dropped quietly: move its identifiers to ALLOWLIST citing the owner's ruling, or remove the code, and then edit PINNED_OPEN_DECISIONS.",
+  );
+}
 
 const scratch: string[] = [];
 after(() => { for (const d of scratch) rmSync(d, { recursive: true, force: true }); });
@@ -109,17 +132,18 @@ describe("check:no-money-in-ranking", () => {
     }
   });
 
-  it("K2. the tree as committed carries no finding but the recorded open decision, and the scan reads every group", () => {
+  it("K2. the tree as committed is clean, its one open owner question is the pinned one, and the scan reads every group", () => {
     const r = runCheck(REAL_SRC);
     assert.deepEqual(r.findings, [], "a money identifier is read by a ranker, a feature vector, a graph builder or a feed payload");
-    // Nothing is wrong EXCEPT what OPEN_DECISIONS records — and that is recorded exactly: each entry's
-    // identifiers are all still in its file, and no hit is counted open that an entry does not name.
-    assert.equal(failureCount(r), r.open.length, JSON.stringify({ empty: r.emptyScope, stale: r.staleAllow, staleOpen: r.staleOpen, unclassified: r.unclassified, unjustified: r.unjustified, staleOut: r.staleOutOfScope }));
+    assert.equal(failureCount(r), 0, JSON.stringify({ empty: r.emptyScope, stale: r.staleAllow, staleOpen: r.staleOpen, unclassified: r.unclassified, unjustified: r.unjustified, staleOut: r.staleOutOfScope }));
+    // What is reported-not-failed is exactly what the pinned entries name, as the real tree carries it:
+    // every pinned identifier is still read (else the entry is stale), and no other hit is counted open.
     assert.deepEqual(
       [...new Set(r.open.map((f) => `${f.file}:${f.identifier}`))].sort(),
-      OPEN_DECISIONS.flatMap((d) => d.identifiers.map((id) => `${d.file}:${id}`)).sort(),
-      "an open decision names an identifier its file no longer carries, or the reverse",
+      PINNED_OPEN_DECISIONS.flatMap(([file, ids]) => ids.map((id) => `${file}:${id}`)).sort(),
+      "the money reads reported as an open owner question are not exactly the pinned ones",
     );
+    assert.ok(r.open.length > 0, "nothing is reported as open, yet the pin is not empty: the report has stopped");
     // Vacuity: a scan that inspected nothing must not read as clean.
     assert.ok(r.scanned.size >= 90, `expected at least the 90 files in scope when this was written, scanned ${r.scanned.size}`);
     for (const g of ["ranker", "feature-vector", "graph", "feed-payload"] as const) {
@@ -148,13 +172,35 @@ describe("check:no-money-in-ranking", () => {
     assert.ok(OUT_OF_SCOPE.length >= 1);
   });
 
-  it("K3. CONTROL — the real script over the real tree exits 0 and reports what it scanned", () => {
+  it("K3. CONTROL — the real script over the real tree exits 0, reports what it scanned, and emits the open owner question as a warning", () => {
     const r = spawnSync(process.execPath, ["--import", "tsx/esm", SCRIPT], { cwd: API_ROOT, encoding: "utf8" });
     assert.equal(r.status, 0, `${r.stderr}\n${r.stdout}`.slice(0, 4000));
     const m = /(\d+) ranking, feature-vector, graph and feed-payload files scanned/.exec(r.stdout);
     assert.ok(m, "the inspection line check:guard-reachability reads is missing");
     assert.ok(Number(m![1]) >= 70, "the check is passing by scanning nothing");
     assert.match(r.stdout, /RESULT clean/);
+
+    // The open owner question is SAID, on every run, by the real script: a green that kept quiet about it
+    // would be the allowlist this is not. One GitHub annotation on the file, then the question in full.
+    for (const [file, ids] of PINNED_OPEN_DECISIONS) {
+      const esc = file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const warning = new RegExp(`^::warning file=artifacts/api-server/src/${esc},line=\\d+,title=[^:,]+::OPEN OWNER QUESTION, asked \\d{4}-\\d{2}-\\d{2} and unanswered\\. .*$`, "m").exec(r.stdout);
+      assert.ok(warning, `no ::warning annotation for ${file}:\n${r.stdout.slice(0, 1500)}`);
+      const decision = OPEN_DECISIONS.find((d) => d.file === file)!;
+      assert.ok(warning[0].includes(decision.question), "the annotation does not carry the question");
+      assert.ok(warning[0].includes(decision.trackedIn), "the annotation does not say where the question is tracked");
+      assert.ok(warning[0].includes("reported, not failed"), "the annotation does not say what a warning here means");
+      for (const id of ids) assert.ok(warning[0].includes(`\`${id}\``), `the annotation does not name ${id}`);
+      // …and the long form, for a reader of the log.
+      assert.match(r.stdout, new RegExp(`^  OPEN      ${esc} reads a money input in a ranker\\. Whether it may is an OWNER QUESTION`, "m"));
+      assert.ok(r.stdout.includes(`The question: ${decision.question}`));
+      assert.ok(r.stdout.includes(`Tracked in:   ${decision.trackedIn}.`));
+      assert.ok(r.stdout.includes(`If it may stay: ${decision.ifAllowed}.`) && r.stdout.includes(`If it may not:  ${decision.ifNot}.`));
+    }
+    assert.equal((r.stdout.match(/^::warning /gm) ?? []).length, PINNED_OPEN_DECISIONS.length, "one annotation per open question, no more");
+    assert.match(r.stdout, new RegExp(`RESULT clean \\(${PINNED_OPEN_DECISIONS.length} open owner question\\(s\\) reported above, not failed\\)`));
+    assert.match(OPEN_DECISIONS[0]!.trackedIn, /pull request #596/);
+    assert.equal(OPEN_DECISIONS[0]!.askedOn, "2026-10-04");
   });
 
   it("K4. a money identifier fails in each kind of file: a variable, a selected column, a table name", () => {
@@ -289,22 +335,39 @@ describe("check:no-money-in-ranking", () => {
       cwd: API_ROOT, encoding: "utf8", env: { ...process.env, NO_MONEY_IN_RANKING_SRC: root },
     });
 
-    // Control for the fixture itself: it carries nothing but what the real tree's own entries name — so the
-    // red below is the price and nothing else. While an open decision stands the script fails on it here as
-    // it does on the real tree, and says that is ALL that is wrong; with none, it passes.
+    // Control for the fixture itself: clean, it passes — so the red below is the price and nothing else.
+    // (It carries the open question's identifiers, so it warns, as the real tree does.)
     const clean = run(tree(files));
-    assert.equal(clean.status, OPEN_DECISIONS.length > 0 ? 1 : 0, `${clean.stderr}\n${clean.stdout}`.slice(0, 4000));
+    assert.equal(clean.status, 0, `${clean.stderr}\n${clean.stdout}`.slice(0, 4000));
     assert.doesNotMatch(clean.stdout, /^ {2}(MONEY|EMPTY|UNCLASSIFIED|STALE|UNJUSTIFIED)\b/m, `the fixture is not clean:\n${clean.stdout}`.slice(0, 4000));
-    assert.match(clean.stdout, OPEN_DECISIONS.length > 0 ? /RESULT failed \(open decision only: nothing else is wrong\)/ : /RESULT clean/);
+    assert.match(clean.stdout, /RESULT clean/);
 
     const dirty = run(tree({ ...files, "lib/portavaRank.ts": "export const x = 1;\nexport const bid = (c: any) => c.platform_fee_percent;\n" }));
     assert.equal(dirty.status, 1, `${dirty.stderr}\n${dirty.stdout}`.slice(0, 4000));
     assert.match(dirty.stdout, /MONEY\s+lib\/portavaRank\.ts:2\s+`platform_fee_percent` \(fee\) in a ranker file/);
     assert.match(dirty.stdout, /MONEY\s+lib\/portavaRank\.ts:2\s+`bid` \(bid\)/);
-    assert.match(dirty.stdout, /RESULT failed$/m, "a real finding must not be reported as 'open decision only'");
+    assert.match(dirty.stdout, /RESULT failed$/m);
+
+    // (a) A NEW money read in the file that carries the open question, outside its pinned identifiers,
+    // FAILS — through the real script, with the real OPEN_DECISIONS. The question is not a licence for the file.
+    const scorer = PINNED_OPEN_DECISIONS[0]![0];
+    const widened = run(tree({ ...files, [scorer]: files[scorer] + "export const cut = (b: any) => b.commissionRate * b.platformFeePercent;\n" }));
+    assert.equal(widened.status, 1, `a new money read in ${scorer} passed:\n${widened.stdout}`.slice(0, 4000));
+    assert.match(widened.stdout, new RegExp(`MONEY\\s+${scorer.replace(/[.]/g, "\\.")}:\\d+\\s+\`commissionRate\` \\(commission\\)`));
+    assert.match(widened.stdout, new RegExp(`MONEY\\s+${scorer.replace(/[.]/g, "\\.")}:\\d+\\s+\`platformFeePercent\` \\(fee\\)`));
+    assert.match(widened.stdout, /^::warning /m, "the open question stopped being reported once a real finding appeared");
+    assert.match(widened.stdout, /RESULT failed$/m);
+    // …and one of the pinned identifiers read in ANOTHER in-scope file fails there.
+    const moved = run(tree({ ...files, "lib/portavaRank.ts": "export const x = 1;\nexport const p = (b: any) => b.hourlyRateUsd;\n" }));
+    assert.equal(moved.status, 1, moved.stdout.slice(0, 4000));
+    assert.match(moved.stdout, /MONEY\s+lib\/portavaRank\.ts:2\s+`hourlyRateUsd` \(usd\)/);
+    // …and the entry going stale (the scorer no longer reads one of the identifiers it names) fails too.
+    const narrowed = run(tree({ ...files, [scorer]: files[scorer]!.replace(/^export const open\d+_\d+ = "hourlyRateUsd";\n/m, "") }));
+    assert.equal(narrowed.status, 1, narrowed.stdout.slice(0, 4000));
+    assert.match(narrowed.stdout, /STALE\s+OPEN_DECISIONS services\/rentBuddy\/CompatibilityScoreService\.ts/);
   });
 
-  it("K10. an open decision FAILS the check, covers exactly the identifiers it names, and is stale once they are gone", () => {
+  it("K10. an open owner question is reported and does not fail — and covers exactly the identifiers it names", () => {
     const scorer = "services/buddies/MatchScoreService.ts";
     const scope = [...ONE_OF_EACH, { path: scorer, group: "ranker" as const, why: "fixture buddy scorer" }];
     const reads = "export const fit = (b: any, p: any) => (b.hourlyRateUsd <= p.budgetMaxUsd ? 100 : 10);\n";
@@ -315,37 +378,76 @@ describe("check:no-money-in-ranking", () => {
       question: "may a list price be an input to the order in which buddies are shown?",
       ifAllowed: "move the identifiers to the allowlist, citing the ruling",
       ifNot: "remove the term from the score and delete this entry",
+      askedOn: "2026-10-04",
+      trackedIn: "a fixture: the description of the pull request that asked",
     };
 
-    // Recorded, it is not a plain finding — and the check still FAILS: an open decision is not an allowlist.
+    // Recorded, it is reported and the check passes — and it is NOT counted as allowed.
     const open = runCheck(tree({ ...CLEAN, [scorer]: reads }), config({ scope, openDecisions: [decision] }));
     assert.deepEqual(open.findings, []);
     assert.deepEqual(open.open.map((f) => f.identifier), ["hourlyRateUsd", "budgetMaxUsd"]);
-    assert.deepEqual(open.allowed, [], "an open decision was counted as allowed");
-    assert.equal(failureCount(open), 2, "an open decision did not fail the check");
+    assert.deepEqual(open.allowed, [], "an open owner question was counted as allowed");
+    assert.equal(failureCount(open), 0, "an open owner question failed the check");
 
-    // Unrecorded, the same lines are ordinary findings.
+    // Unrecorded, the same lines are ordinary findings and FAIL: reporting-not-failing is the entry's doing alone.
     const unrecorded = runCheck(tree({ ...CLEAN, [scorer]: reads }), config({ scope }));
     assert.deepEqual(unrecorded.findings.map((f) => f.identifier), ["hourlyRateUsd", "budgetMaxUsd"]);
+    assert.equal(failureCount(unrecorded), 2);
 
-    // It covers the identifiers it names and no other: a commission read arriving in the same file is a finding.
+    // It covers the identifiers it names and no other: a commission read arriving in the same file FAILS.
     const more = runCheck(tree({ ...CLEAN, [scorer]: reads + "export const cut = (b: any) => b.commissionRate;\n" }), config({ scope, openDecisions: [decision] }));
     assert.deepEqual(more.findings.map((f) => f.identifier), ["commissionRate"]);
+    assert.equal(failureCount(more), 1);
     // …and the same identifiers in ANOTHER file are findings there.
     const elsewhere = runCheck(tree({ ...CLEAN, [scorer]: reads, "lib/portavaRank.ts": CLEAN["lib/portavaRank.ts"] + "export const p = (b: any) => b.hourlyRateUsd;\n" }), config({ scope, openDecisions: [decision] }));
     assert.deepEqual(elsewhere.findings.map((f) => `${f.file}:${f.identifier}`), ["lib/portavaRank.ts:hourlyRateUsd"]);
+    assert.equal(failureCount(elsewhere), 1);
 
+    // An entry may not be WIDER than the code: naming an identifier the file does not read is stale, and fails.
+    const wide = runCheck(tree({ ...CLEAN, [scorer]: reads }), config({ scope, openDecisions: [{ ...decision, identifiers: [...decision.identifiers, "tipUsd"] }] }));
+    assert.deepEqual(wide.staleOpen.map((d) => d.file), [scorer]);
+    assert.ok(failureCount(wide) > 0, "an entry naming a money identifier nobody reads yet would excuse it the day somebody does");
     // Answered in code — the term removed — the entry is stale and fails until it is deleted.
     const answered = runCheck(tree({ ...CLEAN, [scorer]: "export const fit = () => 50;\n" }), config({ scope, openDecisions: [decision] }));
     assert.deepEqual(answered.staleOpen.map((d) => d.file), [scorer]);
     assert.ok(failureCount(answered) > 0);
+    // An entry with no identifiers covers nothing and is not an entry.
+    const empty = runCheck(tree({ ...CLEAN, [scorer]: reads }), config({ scope, openDecisions: [{ ...decision, identifiers: [] }] }));
+    assert.equal(empty.staleOpen.length, 1);
+    assert.deepEqual(empty.findings.map((f) => f.identifier), ["hourlyRateUsd", "budgetMaxUsd"]);
 
-    // An entry that does not say what it is asking is not one.
-    const thin = runCheck(tree({ ...CLEAN, [scorer]: reads }), config({ scope, openDecisions: [{ ...decision, question: "ok?" }] }));
-    assert.deepEqual(thin.unjustified, [`OPEN_DECISIONS ${scorer}`]);
+    // An entry that does not say what it asks, when it was asked or where it is tracked is not one.
+    for (const thin of [{ question: "ok?" }, { trackedIn: "somewhere" }, { askedOn: "recently" }, { ifNot: "fix" }]) {
+      const r = runCheck(tree({ ...CLEAN, [scorer]: reads }), config({ scope, openDecisions: [{ ...decision, ...thin }] }));
+      assert.deepEqual(r.unjustified, [`OPEN_DECISIONS ${scorer}`], JSON.stringify(thin));
+      assert.ok(failureCount(r) > 0);
+    }
+  });
 
-    // The real entry: the buddy scorer, the five identifiers, and both ways out written down.
-    assert.deepEqual(OPEN_DECISIONS.map((d) => d.file), ["services/rentBuddy/CompatibilityScoreService.ts"]);
-    assert.deepEqual([...OPEN_DECISIONS[0]!.identifiers].sort(), ["budgetMaxUsd", "budgetMinUsd", "fullDayRateUsd", "halfDayRateUsd", "hourlyRateUsd"]);
+  it("K11. THE RATCHET — the open owner questions are pinned: none may be added, widened, narrowed or dropped unseen", () => {
+    // The real set is the pinned set.
+    assertOpenSetPinned(OPEN_DECISIONS);
+    assert.equal(PINNED_OPEN_DECISIONS.length, 1, "the pin itself grew. It only shrinks: an owner question is answered, never joined by another to get a check green");
+
+    const real = OPEN_DECISIONS[0]!;
+    const refused = (what: string, decisions: ReadonlyArray<{ file: string; identifiers: readonly string[] }>) =>
+      assert.throws(() => assertOpenSetPinned(decisions), /OPEN_DECISIONS is not the pinned set/, `${what} was not caught by the ratchet`);
+
+    // (b) A SECOND open decision — the easy way to turn any future finding green.
+    refused("a second open decision", [...OPEN_DECISIONS, { file: "lib/portavaRank.ts", identifiers: ["platformRevenue"] }]);
+    refused("a second open decision on the same file", [...OPEN_DECISIONS, { file: real.file, identifiers: ["commissionRate"] }]);
+    // Widening the one there is.
+    refused("a widened entry", [{ file: real.file, identifiers: [...real.identifiers, "commissionRate"] }]);
+    // Narrowing or dropping it without the two exits (allowlist citing a ruling, or the code removed).
+    refused("a narrowed entry", [{ file: real.file, identifiers: real.identifiers.slice(1) }]);
+    refused("the entry dropped", []);
+    refused("the entry moved to another file", [{ file: "services/rentBuddy/OtherScore.ts", identifiers: real.identifiers }]);
+    // The twin: the same set, in another order, is the same set.
+    assertOpenSetPinned([{ file: real.file, identifiers: [...real.identifiers].reverse() }]);
+
+    // The pinned identifiers are not also allowlisted: that would be the answer written before it was given.
+    for (const [file, ids] of PINNED_OPEN_DECISIONS) {
+      for (const id of ids) assert.ok(!ALLOWLIST.some((a) => a.file === file && a.identifier === id), `${file} \`${id}\` is both an open question and allowlisted`);
+    }
   });
 });

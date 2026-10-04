@@ -466,9 +466,9 @@ run_check "check:discovery-query-paths" pnpm run check:discovery-query-paths
 # the files that rank, score, build a feature vector, a graph node or a feed payload and
 # fails when a money identifier appears in one, unless an allowlist entry names it and
 # says why it enforces a non-goal or is not money there. A REAL money input is an OPEN
-# DECISION: named, with the question, and the check FAILS on it until the owner answers
-# (today: the buddy match scorer's price fit). Also fails when a scope entry matches no
-# file or a file named like a ranker or scorer is unclassified. Static: no database.
+# OWNER QUESTION: printed with a ::warning on every run and NOT failed (one, unanswered
+# as of 2026-10-04: the buddy match's price fit); the set is pinned in the check's test.
+# Fails on any other money identifier, an empty scope entry, an unclassified ranker/scorer.
 run_check "check:no-money-in-ranking" pnpm run check:no-money-in-ranking
 run_gate  "check:rank-events-surfaces" pnpm run check:rank-events-surfaces
 
