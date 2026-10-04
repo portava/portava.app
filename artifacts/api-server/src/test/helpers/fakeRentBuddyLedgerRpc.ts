@@ -363,18 +363,30 @@ export function fakeLedgerRpc(db: FakeLedgerDb, opts: FakeLedgerRpcOptions = {})
     opts.calls?.push({ fn, args });
     if (opts.tick) await opts.tick();
     if (opts.absent?.includes(fn)) return functionNotFound(fn);
-    switch (fn) {
-      case "rb_post_booking_ledger": return { data: postBookingLedger(db, args), error: null };
-      case "rb_buddy_ledger_totals": return { data: ledgerTotals(db, args), error: null };
-      case "rb_resolve_platform_fee_percent":
-        return {
-          data: [resolveFee(db, { level: args.p_buddy_level, country: args.p_country_code, city: args.p_city, category: args.p_category })],
-          error: null,
-        };
-      case "rb_admin_payout_transition": return payoutTransition(db, args, opts);
-      default: return opts.otherwise ? opts.otherwise(fn, args) : functionNotFound(fn);
-    }
+    return answerLedgerFunction(db, fn, args, opts) ?? (opts.otherwise ? opts.otherwise(fn, args) : functionNotFound(fn));
   };
+}
+
+/**
+ * The same model, SYNCHRONOUSLY, for a fake that answers at the HTTP layer: a
+ * real supabase client over a fake `fetch` whose responder is synchronous (the
+ * rabLifecycle* suites). Returns what `.rpc()` would resolve to — the PostgREST
+ * response BODY is its `data` — or `null` for a function this model does not own.
+ */
+export function answerLedgerFunction(
+  db: FakeLedgerDb, fn: string, args: any, opts: FakeLedgerRpcOptions = {},
+): { data: any; error: any } | null {
+  switch (fn) {
+    case "rb_post_booking_ledger": return { data: postBookingLedger(db, args), error: null };
+    case "rb_buddy_ledger_totals": return { data: ledgerTotals(db, args), error: null };
+    case "rb_resolve_platform_fee_percent":
+      return {
+        data: [resolveFee(db, { level: args.p_buddy_level, country: args.p_country_code, city: args.p_city, category: args.p_category })],
+        error: null,
+      };
+    case "rb_admin_payout_transition": return payoutTransition(db, args, opts);
+    default: return null;
+  }
 }
 
 /**

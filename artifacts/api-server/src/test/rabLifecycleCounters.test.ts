@@ -42,6 +42,7 @@ import express from "express";
 import { createClient } from "@supabase/supabase-js";
 import { _setTestClient, _clearTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
+import { answerLedgerFunction, emptyLedgerDb } from "./helpers/fakeRentBuddyLedgerRpc.js";
 
 const SUPA_URL = "http://supabase.test";
 const SUPA_KEY = "test-service-role-key";
@@ -452,8 +453,23 @@ describe("D: the earnings summary counts the cancellations that were actually wr
       { id: "bk-4", status: "completed",             booking_date: "2020-01-04", total_usd: 200, deposit_usd: 0, cash_balance_usd: 0, tip_usd: 0, pricing_type: "hourly", category: "city", city: "Cebu", duration_h: 2 },
     ];
 
+    // The summary's MONEY is folded in the database since migration 3824
+    // (rb_buddy_ledger_totals) and its rate comes from rb_resolve_platform_fee_percent;
+    // an answer the route cannot read is a 503, not a $0. Both functions are
+    // answered here from the model the route tests use, over THIS test's rows —
+    // none of which has ledger entries, so the completed one is counted and
+    // contributes no money.
+    const ledgerDb = emptyLedgerDb({
+      bookings: Object.fromEntries(BUDDY_ROWS.map((b) => [b.id, { ...b, buddy_id: BUDDY_PROF }])),
+      buddyProfiles: { [BUDDY_PROF]: { user_id: BUDDY_USER, buddy_level: "new" } },
+      feeRules: { new: 20 },
+    });
+
     const client = realClient((c) => {
       if (c.path === "/auth/v1/user") return authUser(c, BUDDY_USER);
+      if (c.path.startsWith("/rest/v1/rpc/")) {
+        return answerLedgerFunction(ledgerDb, c.path.slice("/rest/v1/rpc/".length), c.body)?.data ?? [];
+      }
       if (c.path === "/rest/v1/feature_flags") return [{ flag: "rent_buddy_enabled", enabled: true }];
       if (c.path === "/rest/v1/rent_buddy_profiles" && c.method === "GET") {
         return [{ id: BUDDY_PROF, user_id: BUDDY_USER, buddy_level: "new", profile_views: 0,
@@ -480,5 +496,12 @@ describe("D: the earnings summary counts the cancellations that were actually wr
       "all three cancellation statuses must be counted; filtering on bare 'cancelled' reports 1 of 3",
     );
     assert.equal(res.body?.statusBreakdown?.completed, 1);
+    // …and the money beside those counts is the database's fold, not a sum made
+    // here: one completed booking with no ledger entries is NAMED as unledgered
+    // and nothing is reported as collected.
+    assert.deepEqual(
+      [res.body?.completed?.count, res.body?.completed?.unledgeredCount, res.body?.completed?.inAppAmountCollected, res.body?.platformFeePercent],
+      [1, 1, 0, 20],
+    );
   });
 });

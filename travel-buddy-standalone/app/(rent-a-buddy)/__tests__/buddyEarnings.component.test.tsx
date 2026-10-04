@@ -243,7 +243,7 @@ describe('earnings screen', () => {
 
   it("E3 a completed booking's commission and net are its ledger row's — not 10% / 90% of the total", async () => {
     allOk();
-    const { findByTestId, getByText, queryByText } = await render(<BuddyEarnings />);
+    const { findByTestId, findByText, getByText, queryByText } = await render(<BuddyEarnings />);
     // The date-range chips default to "This month"; show everything.
     await fireEvent.press(await findByText('All time', {}, { timeout: 5000 }));
     await findByTestId('earnings-breakdown-bk-1', {}, { timeout: 5000 });
