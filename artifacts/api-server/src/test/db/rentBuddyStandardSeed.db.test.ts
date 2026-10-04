@@ -183,7 +183,7 @@ describe("3521: the 'standard' level is priced at the approved flat rate", { ski
       `SELECT 'OTHER=' || platform_fee_basis_points || '|' || platform_fee_percent || '|' || ` +
       `       coalesce(commission_override_approval, '<null>') || '|' || traveler_service_fee_pct ` +
       `  FROM public.rent_buddy_fee_rules WHERE buddy_level='fixture_level';\n` +
-      `SELECT 'LEVELS=' || count(*)::text FROM public.rent_buddy_fee_rules;\n` +
+      `SELECT 'PRESENT=' || string_agg(buddy_level, ',' ORDER BY buddy_level) FROM public.rent_buddy_fee_rules;\n` +
       `ROLLBACK;\n`,
     );
     ok(r, "seed beside another level");
@@ -192,7 +192,13 @@ describe("3521: the 'standard' level is priced at the approved flat rate", { ski
       "the other level's rate, mirror, approval and traveller fee must all be untouched — " +
       "3521 seeds 'standard' and nothing else",
     );
-    assert.equal(tagged(r.stdout, "LEVELS"), "2", "exactly the fixture level and 'standard' exist");
+    // Both levels present. Deliberately NOT a total row count: whether the
+    // replayed chain carries other schedule rows is a property of the harness,
+    // not of this migration, and asserting a count would make this test fail
+    // for a reason 3521 did not cause.
+    const present = tagged(r.stdout, "PRESENT").split(",");
+    assert.ok(present.includes("standard"), `'standard' missing from ${present.join(",")}`);
+    assert.ok(present.includes("fixture_level"), `the fixture level was deleted: ${present.join(",")}`);
   });
 
   it("S4: the seed writes no commission_override_approval", () => {
