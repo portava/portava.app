@@ -523,8 +523,16 @@ test('L42 — the card and the footer share one controller, so two taps are one 
   await render(<LayoverDashboardScreen />);
 
   await waitFor(() => expect(screen.getByTestId('layover-footer-return-now')).toBeTruthy());
-  fireEvent.press(screen.getByTestId('layover-footer-return-now'));
-  fireEvent.press(screen.getByTestId('return-to-airport-btn'));
+  // AWAITED, both of them. RNTL v14's `fireEvent` is async: it opens an act()
+  // scope and closes it when its promise settles. Two un-awaited presses leave
+  // two act() scopes open, React 19's act queue is never drained, and from
+  // here on in this file `render()` commits NOTHING — a later test sees an
+  // empty tree and reads as "the component is not mounted". Awaiting does not
+  // weaken the claim: `returnToAirportNow` is still the unresolved deferred
+  // above, so the abort is genuinely in flight when the second control is
+  // pressed, which is the whole point of the case.
+  await fireEvent.press(screen.getByTestId('layover-footer-return-now'));
+  await fireEvent.press(screen.getByTestId('return-to-airport-btn'));
 
   await waitFor(() => expect(layoverService.returnToAirportNow).toHaveBeenCalledTimes(1));
   await act(async () => { release({ kind: 'offline' }); });
