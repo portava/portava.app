@@ -4,9 +4,9 @@
  * This is the unification-layer spine (§3/§4/§42). It WRAPS existing systems and
  * reimplements nothing:
  *
- *   - Candidate generation delegates to `dispatchSearch` (./searchCandidates)
- *     — the same per-type query + match-tier ranking + fail-closed privacy code
- *     paths /discovery/search and /discovery/suggest use.
+ *   - Candidate generation delegates to `dispatchSearchWithCoverage` — the same
+ *     per-type query + match-tier ranking + fail-closed privacy code paths
+ *     /discovery/search uses, coverage included (§80; `dispatchForGateway`).
  *   - Canonical city rows come from `suggestCanonicalLocations`
  *     (lib/canonicalLocations) merged via the existing `mergeCitySuggestions`.
  *   - Normalization goes through the ONE §40 QueryNormalizer service
@@ -27,7 +27,7 @@ import { normalizeLocationName, type CanonicalRow } from '../canonicalLocations'
 import { logger } from '../logger';
 import type { SearchQueryContext } from './searchQueryHelpers';
 import {
-  dispatchSearch,
+  dispatchSearchWithCoverage,
   fetchAgeRestrictedSet,
   canonicalToCityResult,
   mergeCitySuggestions,
@@ -587,8 +587,8 @@ export async function generateSuggestions(
         const runDispatch = (key: string) =>
           Promise.all(
             dispatchTypes.map((t) =>
-              dispatchSearch(sc, key, userId, blockedSet, ageRestrictedSet, t, 0, perType, ctx)
-                .catch(() => { noteTypeUnreadable(coverage, t); return [] as SearchResult[]; }),
+              // §80: the coverage form, so an intra-type partial is not silent.
+              dispatchForGateway(sc, key, userId, blockedSet, ageRestrictedSet, t, perType, ctx, coverage),
             ),
           );
         let perTypeResults = await runDispatch(q);
@@ -914,8 +914,8 @@ async function dispatchAndProject(
   const ctx: SearchQueryContext = { lat: p.lat, lng: p.lng, userCity: p.city, nearbyIntent: false };
   const [perTypeResults] = await protectGatewayCandidates(sc, await Promise.all(
     types.map((t) =>
-      dispatchSearch(sc, p.q, p.userId, blockedSet, ageRestrictedSet, t, 0, perType, ctx)
-        .catch(() => { noteTypeUnreadable(p.coverage, t); return [] as SearchResult[]; }),
+      // §80: the coverage form, as in the generic path above.
+      dispatchForGateway(sc, p.q, p.userId, blockedSet, ageRestrictedSet, t, perType, ctx, p.coverage),
     ),
   ), []);
 
@@ -989,14 +989,86 @@ function applySessionBias(
 export interface GatewayCoverage {
   eligibilityUnreadable: boolean;
   unreadableTypes: Set<string>;
+  /**
+   * The INTRA-type half of the same question (A1): a table a dispatched type
+   * reads that could not be read, while the type's other tables answered. It is
+   * a second set rather than more entries in `unreadableTypes` because the two
+   * mean different things to `gatewayCoverageRefusal` below — a type in
+   * `unreadableTypes` contributed NO rows and counts toward "did everything
+   * fail", whereas a degraded source means rows did come back and the answer can
+   * therefore never be `coverage: "nothing"`. Mixing them would let a partial
+   * `saved` lane report the whole serve as nothing read.
+   *
+   * These are TABLE names (`wishlist_places`, `discovery_place_saves`,
+   * `discovery_places`), the same strings `GET /discovery/search` puts in
+   * `failedSources`, not search types — see `searchSaved` in ./searchCandidates.
+   */
+  degradedSources: Set<string>;
 }
 
 export function newGatewayCoverage(): GatewayCoverage {
-  return { eligibilityUnreadable: false, unreadableTypes: new Set() };
+  return { eligibilityUnreadable: false, unreadableTypes: new Set(), degradedSources: new Set() };
 }
 
 function noteTypeUnreadable(coverage: GatewayCoverage | undefined, type: string): void {
   coverage?.unreadableTypes.add(type);
+}
+
+function noteDegradedSources(coverage: GatewayCoverage | undefined, sources: readonly string[]): void {
+  for (const src of sources) coverage?.degradedSources.add(src);
+}
+
+/**
+ * One per-type candidate read for the gateway, coverage included.
+ *
+ * census-discovery §80 / backlog A1. The gateway used to call `dispatchSearch`,
+ * the bare-array wrapper, at both of its dispatch sites. That wrapper documents
+ * what it drops — "a caller of `dispatchSearch` cannot distinguish a complete
+ * answer from a partial one" — and the gateway is precisely a caller that can
+ * act on the difference: it already owns a coverage sink and already turns it
+ * into the Discovery refusal vocabulary on the envelope, so the one thing it
+ * could not say was the one thing the wrapper threw away. It now takes the
+ * coverage form and records both failure shapes in the sink:
+ *
+ *   • the read THREW — the type contributed nothing, which is the existing
+ *     `noteTypeUnreadable` fail-soft path, unchanged;
+ *   • the read SUCCEEDED PARTIALLY — some of the type's tables were unreadable,
+ *     which before this went nowhere at all.
+ *
+ * The second case is unreachable through the gateway's own taxonomy TODAY:
+ * `DispatchSearchType` (./entityMap) has no `saved` member, and `saved` is the
+ * only type whose rows come from two independently-failing tables, so every
+ * type the gateway can dispatch fails totally or not at all. It is wired anyway
+ * because the alternative is the defect that produced this line — a second
+ * multi-source type, or `saved` joining the taxonomy, would otherwise degrade
+ * silently again, and the sink is the place ./searchCandidates says such a type
+ * "acquires the behaviour by pushing into, not by growing a second mechanism".
+ */
+async function dispatchForGateway(
+  sc: any,
+  q: string,
+  userId: string,
+  // The dispatch signature's own nullable form, deliberately: both call sites
+  // have already run the §29 fail-closed gate and hold non-null sets, and
+  // widening here keeps the helper independent of that narrowing surviving into
+  // the closure the generic path builds.
+  blockedSet: Set<string> | null,
+  ageRestrictedSet: Set<string> | null,
+  type: DispatchSearchType,
+  perType: number,
+  ctx: SearchQueryContext,
+  coverage: GatewayCoverage | undefined,
+): Promise<SearchResult[]> {
+  try {
+    const { results, degradedSources } = await dispatchSearchWithCoverage(
+      sc, q, userId, blockedSet, ageRestrictedSet, type, 0, perType, ctx,
+    );
+    noteDegradedSources(coverage, degradedSources);
+    return results;
+  } catch {
+    noteTypeUnreadable(coverage, type);
+    return [];
+  }
 }
 
 function noteEligibilityUnreadable(coverage: GatewayCoverage | undefined): void {
@@ -1015,8 +1087,14 @@ export function gatewayCoverageRefusal(
   if (coverage.eligibilityUnreadable) {
     return discoveryRefusal("transient_db", "visibility_state_unreadable", GATEWAY_ROUTE);
   }
-  if (coverage.unreadableTypes.size === 0) return null;
-  const failed = [...coverage.unreadableTypes].sort();
+  if (coverage.unreadableTypes.size === 0 && coverage.degradedSources.size === 0) return null;
+  // Both halves are named in `failedSources`, the flat list of what could not be
+  // read that `GET /discovery/search` already sends: a type that contributed no
+  // rows and a table that dropped some of a type's rows are both things the
+  // answer is missing, and the viewer's question ("is this list whole?") does
+  // not distinguish them. Only `unreadableTypes` decides "nothing", because a
+  // degraded source means the type still answered — see the field's comment.
+  const failed = [...coverage.unreadableTypes, ...coverage.degradedSources].sort();
   const all = dispatchedTypes.length > 0 && dispatchedTypes.every((t) => coverage.unreadableTypes.has(t));
   return discoveryRefusal(
     "transient_db", "suggest_sources_unreadable", GATEWAY_ROUTE, all ? "nothing" : "partial", failed,

@@ -30,6 +30,7 @@ import postcardsRouter from "../routes/postcards.js";
 import transportRouter from "../routes/postcardMediaTransport.js";
 import {
   AUDIO_ONLY_M4A,
+  DIMENSIONLESS_MP4,
   FASTSTART_MOV,
   FRAGMENTED_MP4,
   PLAIN_MP4,
@@ -624,9 +625,13 @@ describe("§37.8 on the wire — /complete uses the PROBED size when the client 
   });
 
   it("no client dimensions and a container that states none → refused with the dimension message; nothing marked ready", async () => {
-    state.objects.set(`post-media/${SLOT_PATH}`, Buffer.from(AUDIO_ONLY_M4A));
+    // DIMENSIONLESS_MP4, not AUDIO_ONLY_M4A. This test is about the dimension
+    // guard, so the bytes have to get PAST the sniffer to reach it; an
+    // audio-only container is now refused upstream for having no video track,
+    // which would have made this assertion pass for the wrong reason.
+    state.objects.set(`post-media/${SLOT_PATH}`, Buffer.from(DIMENSIONLESS_MP4));
     const r = await json("POST", `/api/postcards/${POST}/media/${MEDIA}/complete`, {
-      mimeType: "video/mp4", fileSizeBytes: AUDIO_ONLY_M4A.length,
+      mimeType: "video/mp4", fileSizeBytes: DIMENSIONLESS_MP4.length,
     });
     assert.equal(r.status, 400, JSON.stringify(r.body));
     assert.equal(r.body.error, "invalid_payload");
@@ -636,13 +641,32 @@ describe("§37.8 on the wire — /complete uses the PROBED size when the client 
   });
 
   it("client dimensions and a silent container → the client's figure is still used (unchanged)", async () => {
-    state.objects.set(`post-media/${SLOT_PATH}`, Buffer.from(AUDIO_ONLY_M4A));
+    // Same fixture swap, same reason as the test above.
+    state.objects.set(`post-media/${SLOT_PATH}`, Buffer.from(DIMENSIONLESS_MP4));
     const r = await json("POST", `/api/postcards/${POST}/media/${MEDIA}/complete`, {
-      mimeType: "video/mp4", fileSizeBytes: AUDIO_ONLY_M4A.length, width: 720, height: 1280,
+      mimeType: "video/mp4", fileSizeBytes: DIMENSIONLESS_MP4.length, width: 720, height: 1280,
     });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     const write = state.updates.find((u) => u.table === "post_media" && u.patch.processing_status === "ready");
     assert.equal(write?.patch.width, 720);
     assert.equal(write?.patch.height, 1280);
+  });
+
+  it("an AUDIO-ONLY container declared as video/mp4 is refused, and nothing is marked ready", async () => {
+    // The case the two tests above used to stand in for, now asserted as
+    // itself. Before sniffMedia decided on tracks, this request completed 200
+    // and wrote processing_status 'ready' with the client's 720x1280 against a
+    // file with no video track at all — a fabricated size on a fabricated kind.
+    state.objects.set(`post-media/${SLOT_PATH}`, Buffer.from(AUDIO_ONLY_M4A));
+    const r = await json("POST", `/api/postcards/${POST}/media/${MEDIA}/complete`, {
+      mimeType: "video/mp4", fileSizeBytes: AUDIO_ONLY_M4A.length, width: 720, height: 1280,
+    });
+    assert.equal(r.status, 400, JSON.stringify(r.body));
+    assert.equal(
+      state.updates.some((u) => u.table === "post_media" && u.patch.processing_status === "ready"),
+      false,
+      "an audio file must never be marked ready as a video",
+    );
+    assert.equal(state.postMedia[0].processing_status, "pending");
   });
 });
