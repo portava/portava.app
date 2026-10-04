@@ -2164,3 +2164,161 @@ rows support; `check:census-integrity` reads the LAST such block, which until th
 
 - NOT-GRADED: artifacts/api-server/src/lib/wallMomentRead.ts — §19.2 swept it and §19.5 records a finding in it that the security lane's file ownership keeps this lane from fixing; no Wall row grades the previous-readings read
 - NOT-GRADED: artifacts/api-server/src/lib/wallMoments.ts — §19.2 names it among the read paths swept; nothing was found or changed there and no Wall row grades moment building
+
+## §20 — 2026-10-04 (re-census, integration): §19.1's self-disagreement settled, and ONE ROW MOVES — W71 `?` → `W`
+
+**What this section is.** The re-census pass of the 3–4 October merged surfaces, opened on a corpus
+measurement rather than a suspicion: `check:census-integrity` returns the same `C` at `f71cfb85f` as
+it did at `626b46b7e`, 108 commits and seventeen pull requests earlier. PR #579 is this census's.
+Scope: the rows whose SUBJECT #579 touched, every `?` row, and the disagreement §19.1 recorded and
+deliberately left open. Nothing else is re-read, and a row this section does not name keeps the
+verdict and the reason it had.
+
+**`head_commit` is NOT re-declared.** 117 counted files are watched here and this pass read eleven.
+This follows `census-discovery.md` §108.5's precedent in the same wave rather than the
+re-declarations beside it. Documentation only: no code, no migration, no flag, no schema change, and
+**no database was read or written** — every deployment fact below is quoted from the repository's own
+committed capture or from a committed test file.
+
+### 20.1 §19.1's disagreement, settled — and it settles in OPPOSITE directions for its two rows
+
+§19.1 is the one place in this corpus where a census says plainly that it contradicts itself and
+hands the choice on:
+
+> *"§14.5 and §15.4 state a headline of 200 C / 1 W / 0 N / 4 ?, because §14.4 moved W146 `?`→C and
+> W71 `?`→W. Neither move reached §2 … Whoever owns the census should either carry §14.4's moves into
+> §2 with its own argument, or strike §14.5 and §15.4 as superseded. Nothing below depends on which."*
+
+The choice was framed as one decision over two rows. **It is two decisions, and they go opposite
+ways**, which is why neither §15 nor §19 could take it as a package.
+
+**W146 — §14.4's `? → C` is REFUSED, and the refusal is quoted from the evidence §14.1 produced.**
+§14.1 did exactly what the row asked: a real PostgreSQL carrying a fingerprinted production schema,
+real PostgREST, the real client, p50 388 ms and p95 461 ms. That work is in the tree as
+`artifacts/api-server/src/test/wallFirstPageLiveDb.test.ts`, and **the file refuses its own promotion
+in its own header**: `artifacts/api-server/src/test/wallFirstPageLiveDb.test.ts:22#It is NOT the production number, and nothing here should be quoted as one:`
+— then four reasons and a fifth that is decisive, that **six of the page's 23 tables are absent from
+the harness**, so six of 346 reads answer `42P01` fast instead of doing real work and the figure is
+*"slightly OPTIMISTIC"* by the file's own word. A row whose predicate is `< 500 ms backend` cannot
+close on a number its own harness says is not the number. **`?` stands**, as §15.2 and §19.3 both
+said, and §14.5 / §15.4 are **STRUCK AS SUPERSEDED** for this half.
+
+**W71 — §14.4's `? → W` is CARRIED, and on stronger evidence than §14.4 had.** See 20.2. §14.5 /
+§15.4's headline is struck for this half too, because their arithmetic bundled the refused move with
+the carried one; the figure this document now states is 20.4's, which is neither theirs nor §19.7's.
+
+### 20.2 W71 `?` → `W`: the ground the `?` rested on is FALSE at this tree
+
+W71 is *"Voice input and typo normalization use the same global engine."* Its `?` has rested, through
+§11.2, §13 and §19.1, on one claim — that the other half of the contract has no producer at all, so
+no reading can decide it:
+
+- §11.2: *"Voice input has **no producer anywhere in this repository** — nothing in
+  `lib/inputAssistance/` mentions voice, speech or dictation, and no speech-to-text package is a
+  dependency."*
+- §13: *"the Wall cannot tell a transcript from a keystroke, so **no Wall-side change can move this
+  row in either direction**."*
+- §19.1, this census's newest statement, classified it *"owner-gated: a speech producer: the voice
+  native module is an owner decision."*
+
+**The first claim is false at `f71cfb85f`, and the row's own sibling census says so.** A voice
+producer exists, it routes a transcript through the shared engine, and it was built in explicit
+answer to this row:
+
+- The platform recognizer seam names this census as its reason:
+  `travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:14#THE RULING THIS FOLLOWS. census-wall §13.2/§14.2`.
+- A transcript enters the typed path's own request builder, not a parallel one:
+  `travel-buddy-standalone/src/platform/input-assistance/voice/voiceIntake.ts:352#return voiceIntakeRequest(outcome.result, opts);`.
+- There is a mounted surface that produces one:
+  `travel-buddy-standalone/src/platform/input-assistance/voice/VoiceDictationButton.tsx:25#export function VoiceDictationButton({`.
+- `census-input-intelligence.md` grades the identical fact and grades it **`W`**, having moved G163
+  `N → W` in its §34: *"Implementation of the ROUTING is complete and controlled-proven … The hosted
+  testing app is iOS/Android, where no recognizer is installed, so no user can dictate there today."*
+
+So the second claim — that no reading can decide W71 — is also false: the reading is decided, and the
+answer is "built, and not live". **`?` is not available for a fact that has been measured.** The
+remaining blocker is a native module the owner has not approved. With neither it nor a browser
+recognizer bound, the seam answers an explicit no-provider rather than a placeholder transcript
+(`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:50#export const NO_SPEECH_RECOGNIZER: SpeechRecognizerPort = {`),
+which is an owner decision about a dependency — the same class of blocker that sits under dozens of
+`W` rows across this corpus and under exactly none of its `?` rows.
+
+**And this is the move §14.4 proposed, arrived at independently.** §14.2 reached `W` from *"no
+transcription provider is installed, and the decision is priced"*. This section reaches the same
+letter from a producer that now exists and a sibling census that already grades it `W`. Two censuses
+putting the same fact in two different buckets is the drift this corpus exists to catch, and the
+sibling owns the half in question.
+
+### 20.3 Row moves
+
+| id | was | now | why, read at `f71cfb85f` |
+|---|---|---|---|
+| W71 | ? | **W** | **An `X` that had stopped being an unknown.** 20.2 carries the citations, clause by clause: the voice producer exists, routes through the shared engine, has a mounted surface, and is graded `W` by the census that owns it. What remains is a native module awaiting an owner's approval — a `W` blocker everywhere else in this corpus. `C` is NOT claimed and would be wrong: no user on the hosted iOS/Android build can dictate today. |
+| W146 | ? | **?** | **Held against §14.4's own recommendation to move it, and the refusal is cited to the evidence §14.1 built.** 20.1. The row's text already carries §19.3's counted depth of 91; nothing about the verdict changes. |
+
+**§2's W71 and W146 cells are left verbatim**, as every superseded measurement in this file is. That
+is deliberate and is the opposite of the complaint §19.1 made: §19.1's objection was that §14.4's
+moves *never appeared anywhere a reader or the parser would meet them*, not that §2 was edited too
+little. This table is where the current verdict lives, `check:census-integrity` takes the last
+statement, and 20.4 restates the headline from it.
+
+### 20.4 Headline, restated from the rows
+
+**205 requirements · 199 BUILT-AND-CORRECT · 1 BUILT-BUT-WRONG · 0 NOT-BUILT · 5 CANNOT-VERIFY.**
+199 + 1 + 0 + 5 = 205.
+
+| | §19.7 | **§20** |
+|---|---:|---:|
+| BUILT-AND-CORRECT | 199 | **199** |
+| BUILT-BUT-WRONG | 0 | **1** |
+| NOT-BUILT | 0 | **0** |
+| CANNOT-VERIFY | 6 | **5** |
+
+**`C` does not move, and that is the honest shape of this move.** W71 was never counted as correct;
+what changed is that it stops being counted as unanswerable. §14.5's and §15.4's 200 / 1 / 0 / 4 are
+struck: they are this figure plus W146's refused promotion. This census no longer states three
+headlines that disagree.
+
+### 20.5 The four `?` rows left, and why none of them is this one
+
+| id | V | why `?` is still the right letter |
+|---|---|---|
+| W146 | ? | 20.1. A wall-clock number against production, which no harness in this repository can produce and §19.3 deliberately did not approximate. |
+| W149 | ? | a frame capture on a named device by an operator (§14.3). No repository reading substitutes. |
+| W159, W167 | ? | *"generous"* and *"excessive"* — a named designer's dated verdict (§14.3). |
+| W168 | ? | comprehension, which needs 5–8 people who have never seen the Wall (§14.3). The machinery-vocabulary scan stops the one silent regression; it cannot establish comprehension. |
+
+Each is a fact about production, a device, a designer or a user, and none is a fact about this
+repository. W71 was the only one of the six that had become the latter.
+
+### 20.6 Reasons corrected, verdicts unmoved
+
+| id | was | now | the correction |
+|---|---|---|---|
+| W25 | C | **C** | *"Following: strict reverse chronology, no relevance reordering, **only safety/visibility filters**."* The third clause was false until #579: the Following spine read posts for the first 500 followed authors only and derived `followingReachedEnd` from that one read, so authors 501+ were filtered out by an unordered slice — not a safety filter and not a visibility filter — and `caughtUp` was claimed over them. §19.2's F2 fixed it (`artifacts/api-server/src/routes/wall.ts:256#const { data, error } = await readWholeFollowGraph(sc, viewerId);`, and the chunked spine beside it). The row's own sentence is true for the first time at this tree. |
+| W90, W96 | C | **C** | Re-read because §19.5's second finding looks at first like it falsifies them, and it does not. §19.5 records that *"the five feed loaders read absence of a profile status as `active` … so a failed `profiles` batch read admits posts by deactivated and pending-deletion authors for that request."* W96's claim is about the PREDICATE — that a dropped object cannot be re-admitted by the ranker — and the predicate still drops every non-`active` status it is given; W90's claim is that the gate RUNS before projection, and it does. The fail-open is in what the loaders hand the predicate, which no Wall row grades. `C` stands on both, and the finding stands as §19.5 wrote it. |
+
+**One pointer inside §19.5 is wrong and is corrected here rather than in its cell.** It says of that
+fail-open: *"§2 documents this as the loaders' fail-soft default."* §2 does not. A corpus search of
+this document for the phrase finds it on W72's Quick Media row (a fail-soft **empty row**) and
+nowhere near author status. The place it IS documented is the predicate's own comment:
+`artifacts/api-server/src/services/wall/WallProjectionService.ts:215#loaders' own fail-soft default.`
+— which is the code explaining itself, not the census grading it. **A finding attributed to a
+document that does not contain it is a finding nobody can check**, and this one is load-bearing: it
+is the reason §19.5 gives for recording the fail-open rather than closing it.
+
+### 20.7 What would turn this red
+
+- An approved speech native module bootstrapped into the device build: W71's remaining blocker is
+  gone, `census-input-intelligence.md` G163 has to be re-read the same day, and W71 is a `C`
+  candidate on both halves for the first time.
+- A production p50/p95 of `GET /wall?mode=for_you`: W146 is decidable, in either direction, and
+  §19.3's depth of 91 is what the answer should be checked against.
+- Any later section quoting §14.5's or §15.4's 200 / 1 / 0 / 4: they are struck here, and a census
+  that states a struck headline is back where §19.1 found it.
+- The feed loaders' author-status default changing: §19.5's finding closes, and W90 and W96 both have
+  to be re-read, because a fail-closed default is a different trade (§23 against §34) and not simply
+  a better one.
+
+- NOT-GRADED: travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts — as above: §20.2 cites its header, which names this census as its reason, and its refusing default. The recognizer is the sibling census's to grade.
+- NOT-GRADED: travel-buddy-standalone/src/platform/input-assistance/voice/VoiceDictationButton.tsx — as above: §20.2 cites it only to show the producer has a mounted surface. No Wall row grades a dictation control.
