@@ -481,6 +481,15 @@ run_check "check:scheduler-coverage" pnpm run check:scheduler-coverage
 # defend are ledgered as known defects rather than allowed.
 run_check "check:scheduler-relative-windows" pnpm run check:scheduler-relative-windows
 
+# check:no-money-in-ranking — `08` §6 (ranking is never purchasable) and `09` §10
+# (no money field in a graph node, a feed payload or a ranking feature vector). Reads
+# the files that rank, score, build a feature vector, a graph node or a feed payload and
+# fails when a money identifier appears in one, unless an allowlist entry names it and
+# says why it enforces a non-goal or is not money there. A REAL money input is an OPEN
+# OWNER QUESTION: printed with a ::warning on every run and NOT failed (none open: the
+# buddy match's price fit was answered 2026-10-04 and removed); the set is pinned EMPTY.
+# Fails on any other money identifier, an empty scope entry, an unclassified ranker/scorer.
+run_check "check:no-money-in-ranking" pnpm run check:no-money-in-ranking
 run_gate  "check:rank-events-surfaces" pnpm run check:rank-events-surfaces
 
 echo ""
