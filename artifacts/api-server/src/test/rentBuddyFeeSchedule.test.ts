@@ -147,7 +147,13 @@ describe("resolveFeeSchedule — resolved", () => {
 describe("resolveFeeSchedule — no_such_level", () => {
   it("does NOT invent a percentage when the level has no row", async () => {
     // 'standard' is accepted by PATCH /rent-a-buddy/admin/buddies/:id/level and
-    // has never had a fee row (`08` §2.5). It used to silently mean 22 %.
+    // long had no fee row (`08` §2.5). It used to silently mean 22 %.
+    //
+    // Migration 3521 now seeds 'standard', so this is no longer a claim about
+    // that level's configuration — it is the RESOLVER's contract when a row is
+    // absent, which is the property that must not regress. Any level with no
+    // row (one an operator invents, or an unseeded schedule) takes this path,
+    // and it must still refuse rather than yield a rate.
     const { client } = feeClient({ row: null });
     const res = await resolveFeeSchedule(client, "standard");
     assert.equal(res.status, "no_such_level");

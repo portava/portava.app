@@ -53,7 +53,12 @@
  *
  *   • the fee table is unreadable (outage, permissions, renamed column)
  *   • the buddy's level has no row  — `'standard'` is settable by the admin
- *     route and has never had a fee row (`08` §2.5)
+ *     route and long had no fee row (`08` §2.5). Migration 3521 seeds it at the
+ *     approved flat rate (owner decision 2026-10-04), so that particular hole
+ *     is closed on a database that has run 3521 — but the STATE is not retired
+ *     and must not be: any level an operator invents, or a schedule that was
+ *     never seeded, still lands here, and `no_such_level` remains a refusal
+ *     rather than a rate.
  *   • an operator genuinely set 22 %
  *
  * That is `.agents/memory/unseeded-feature-flag-gates.md` applied to pricing:

@@ -106,11 +106,19 @@
 -- for. Seeding a rate into a table whose contents are unknown would be
 -- inventing a price, which is the defect this whole lane exists to remove.
 --
--- `'standard'` is likewise NOT seeded. It is settable by an admin route and has
--- never had a fee row, so every fee route refuses for such a buddy. This
--- migration PRESERVES that refusal deliberately — see
+-- `'standard'` is likewise NOT seeded by THIS file. It is settable by an admin
+-- route and had never had a fee row, so every fee route refused for such a
+-- buddy. This migration PRESERVES that refusal deliberately — see
 -- `lib/rentBuddyFeeSchedule.ts`' header — because a level nobody priced must
 -- not acquire a price as a side effect of a storage change.
+--
+-- ── SUPERSEDED, LATER THE SAME DAY, BY A PRICING DECISION ───────────────────
+-- The owner subsequently priced it: "Seed the `standard` Buddy level at the
+-- approved flat 10% commission so its fee routes work."
+-- `3521_rent_buddy_standard_level_commission_seed.sql` carries that seed, in its
+-- own file so that THIS file's record — that the storage change invented no
+-- price — stays true and separable. The paragraph above is therefore still an
+-- accurate statement about 3520 and no longer the final state of the schedule.
 --
 -- ══════════════════════════════════════════════════════════════════════════════
 -- DEPLOY ORDERING — READ THIS BEFORE SHIPPING THE CODE
