@@ -233,6 +233,7 @@ describe('LayoverModeSheet — the bag question', () => {
     await mount();
     await pickAirportAndTimes();
     mockCreate.mockResolvedValue(created);
+    let started = 0;
     for (const [mode, charged] of table) {
       mockCreate.mockClear();
       await fireEvent.press(screen.getByTestId(`layover-start-baggage-${mode}`));
@@ -240,6 +241,11 @@ describe('LayoverModeSheet — the bag question', () => {
       await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1));
       expect(mockCreate.mock.calls[0][0].baggageMode).toBe(mode);
       expect(mockCreate.mock.calls[0][0].checkedBags).toBe(charged);
+      // The create has SETTLED (the push is its last act) before the next press,
+      // so the button is not still disabled by the previous submit.
+      started += 1;
+      await waitFor(() => expect(mockPush).toHaveBeenCalledTimes(started));
+      await waitFor(() => expect(screen.getByText('Start layover')).toBeTruthy());
     }
   });
 });

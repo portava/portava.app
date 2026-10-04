@@ -88,6 +88,14 @@ const REFUSED: EntryEligibility = {
   corridor: { passportCountry: "GB", destinationCountry: "TW" },
 };
 const UNRESOLVED: EntryEligibility = { state: "unresolved", reason: "no_data_for_corridor" };
+/**
+ * The three borders, as one array typed ONCE. Swept loops iterate this rather
+ * than an inline `[PERMITTED, REFUSED, UNRESOLVED]`: inside a loop whose body
+ * calls `assert.*` (assertion signatures), the compiler narrows each union
+ * constant through the loop's back edge and reports the loop variable as
+ * circular (TS7022).
+ */
+const BORDERS: EntryEligibility[] = [PERMITTED, REFUSED, UNRESOLVED];
 
 function declared(
   set: Partial<{ baggageMode: BaggageMode; recheckRequired: boolean | null; airportChangeRequired: boolean | null }> = {},
@@ -398,7 +406,7 @@ describe("the gate can only WITHHOLD — swept, not sampled", () => {
       for (const mode of BAGGAGE_MODES) {
         for (const recheckRequired of [null, true, false]) {
           for (const airportChangeRequired of [null, true]) {
-            for (const entry of [PERMITTED, REFUSED, UNRESOLVED]) {
+            for (const entry of BORDERS) {
               for (const entryForbidsLandside of [false, true]) {
                 for (const wantsToLeave of [true, false]) {
                   cases += 1;

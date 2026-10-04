@@ -165,18 +165,23 @@ describe('LayoverConstraintsCard — the read', () => {
     expect(screen.queryByText(/No bag time/)).toBeNull();
   });
 
-  it('5. a server with no such route, or with Layover off, renders NOTHING — not a failure', async () => {
+  // ONE render per case, deliberately: two renders with an unmount between them
+  // detach the RNTL screen and silently fail every LATER case in the file (the
+  // note in LayoverMapCard.envelope.component.test.tsx).
+  it('5. a server with NO SUCH ROUTE renders nothing — not a failure', async () => {
     // Express's own 404 for an unmounted route carries no envelope code.
     fetchSpy.mockResolvedValue(jsonResponse(404, {}));
-    const first = await mount();
+    await mount();
     await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.queryByTestId('layover-constraints-loading')).toBeNull());
     expect(screen.queryByTestId('layover-constraints-failed')).toBeNull();
     expect(screen.queryByTestId('layover-constraints-card')).toBeNull();
-    await first.unmount();
+  });
 
+  it('5a. Layover switched OFF renders nothing — not a failure', async () => {
     fetchSpy.mockResolvedValue(jsonResponse(404, { error: 'feature_disabled', message: 'feature_disabled' }));
     await mount();
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(screen.queryByTestId('layover-constraints-loading')).toBeNull());
     expect(screen.queryByTestId('layover-constraints-failed')).toBeNull();
     expect(screen.queryByTestId('layover-constraints-card')).toBeNull();
