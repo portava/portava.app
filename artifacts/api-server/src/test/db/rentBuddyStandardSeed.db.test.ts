@@ -268,8 +268,8 @@ describe("3521: the 'standard' level is priced at the approved flat rate", { ski
       `ROLLBACK;\n`,
     );
     ok(r, "delete-then-seed");
-    assert.match(r.stdout, /pre=0/, `the fixture did not start from an absent level:\n${r.stdout}`);
-    assert.match(r.stdout, /post=1/, `the seed did not create the level:\n${r.stdout}`);
+    assert.equal(tagged(r.stdout, "pre"), "0", "the fixture did not start from an absent level");
+    assert.equal(tagged(r.stdout, "post"), "1", "the seed did not create the level");
     assert.ok(before !== null, "the harness answered no count at all");
   });
 
