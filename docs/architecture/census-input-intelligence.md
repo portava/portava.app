@@ -5441,7 +5441,7 @@ no citation inside the cells moves.
   still consulted by nothing in `lib/inputAssistance/`"* and *"`protected_zones`
   is absent from production"*. **Both are false.** The gateway runs every
   request's candidates through the §24 pass
-  (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:1031#export async function protectGatewayCandidates`),
+  (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:1109#export async function protectGatewayCandidates`),
   which census-discovery §46/§80 built. `artifacts/api-server/src/test/db/discoverySearchProtectionGateway.db.test.ts`
   proves it over a real Postgres: this lane re-ran it on its harness database
   after replaying 3366, and got 4/4. In hosted, 2217 is applied and
