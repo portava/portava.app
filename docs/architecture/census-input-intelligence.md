@@ -2795,9 +2795,9 @@ rows re-read, which this section did not do.
 citation, which takes its file from `discoverySearch.ts` named earlier in the same
 row. **It does not resolve at `a97bfdac0`, it did not resolve at `1fe72289b`
 either, and neither pass can tell you so.** `INHERITED_RE` in
-`artifacts/api-server/scripts/check-doc-citations.mjs:399#export const INHERITED_RE` requires a
+`artifacts/api-server/scripts/check-doc-citations.mjs:421#export const INHERITED_RE` requires a
 closing backtick immediately after the anchor, and `ANCHOR` at
-`artifacts/api-server/scripts/check-doc-citations.mjs:391#const ANCHOR` stops at
+`artifacts/api-server/scripts/check-doc-citations.mjs:413#const ANCHOR` stops at
 the first `"` — so the citation matches NOTHING and is not counted, not checked
 and not reported. `UNBINDABLE_INHERITED_RE` catches the SPACE form of this
 hazard and only that form; a double quote falls through it. `FULL_ANCHOR_RE`
@@ -5486,3 +5486,147 @@ Any of the following would turn this section red:
 * An offline rate whose denominator includes episodes that were never degraded.
 * A future cell that cites `input_selection_history` or `protected_zones` as
   absent from hosted without a fresh object probe.
+
+## §36 — 2026-10-04 (re-census, integration): no row moves, and EIGHT rows state a blocker that this repository's own capture refutes
+
+**What this section is.** The re-census pass of the 3–4 October merged surfaces, opened on a corpus
+measurement rather than a suspicion: `check:census-integrity` returns the same `C` at `f71cfb85f` as
+it did at `626b46b7e`, 108 commits and seventeen pull requests earlier. PR #582 is this census's, and
+§35 is its section. Scope: G373's move re-derived, every row whose stated blocker is migration 2950,
+and §35's outstanding hand-off to `census-sensing.md` (discharged in that document's §31, not here).
+Nothing else is re-read, and a row this section does not name keeps the verdict and the reason it had.
+
+**`head_commit` is NOT re-declared.** 230 counted files are watched here and this pass read nine.
+Documentation only: no code, no migration, no flag, no schema change. **This section read no
+database.** Every deployment fact below is quoted from the repository's own committed capture,
+`artifacts/api-server/src/lib/capability/production-applied-migrations.json`, and §35's hosted probes
+are cited as what §35 recorded rather than re-run.
+
+### 36.1 G373's `N → W` re-derived rather than accepted, and it HOLDS
+
+§35.2 moved G373 on the argument that the producer, the ingest entry and the reader all exist and
+nothing has yet been measured. Re-read at this tree:
+
+- the ingest names the flag as a literal bool
+  (`artifacts/api-server/src/lib/inputAssistance/telemetry.ts:175#degraded: 'bool'`);
+- the reader is a ratio over degraded episodes
+  (`artifacts/api-server/src/lib/inputAssistance/metrics.ts:344#offlineCompletionRate: rate(completedDegraded, degradedEpisodes)`);
+- the hazard §33.3 named is closed — a degraded row is kept out of the latency metric even when it
+  carries a round trip
+  (`artifacts/api-server/src/lib/inputAssistance/metrics.ts:325#if (r.props.degraded === true) continue;`).
+
+`W` and not `C` is right for §14.3's reason: a §57 row asks for a NUMBER. **But the reason §35.2 gave
+for there being no number is the wrong one, and 36.2 is why.**
+
+### 36.2 Eight rows name an unapplied migration. It is applied, and the capture that says so is in this repository.
+
+Every one of these rows states, as the thing that holds it where it is, that migration 2950 is
+unapplied — most of them in the words *"2950 is applied to no database, so `report:input-metrics`
+exits with the PostgREST error rather than printing anything."*
+
+**That is false at `f71cfb85f`, and it is refutable offline.** The repository's own record of what has
+been applied to production carries the entry:
+`artifacts/api-server/src/lib/capability/production-applied-migrations.json:507#"name": "2950_input_assistance_telemetry_events"`,
+under version `20260921121118`. §35.2 reports the same fact from a hosted object probe
+(*"2950 is applied in hosted"*) and so does G306's own closing paragraph, dated 2026-09-21
+(*"`input_assistance_telemetry_events` EXISTS on portava-ci"*). Three independent records agree, one
+of them a committed file, and **eight cells still say the opposite**.
+
+The same capture settles the two §35.3 already corrected, so those corrections are now citable
+offline rather than resting on a probe:
+`artifacts/api-server/src/lib/capability/production-applied-migrations.json:499#"name": "2258_input_selection_history"` (G75) and
+`artifacts/api-server/src/lib/capability/production-applied-migrations.json:503#"name": "2217_protected_locations"` (G190).
+
+| id | V | the stale clause | what the blocker actually is at this tree |
+|---|---|---|---|
+| G292 | **W** | *"migration 2950 has been applied to no database at all, so the route takes its 503 branch and the serve log cannot acquire a row"* | **Two of this row's own three red-criteria are MET.** It asks for: 2950 applied to a database ✓; the 503 branch no longer reachable there ✓ (the table exists, so the refusal branch is unreachable); and one serve observed in the log ✗ — §35.2 records the table at **0 rows**. The row stays `W` on the third clause alone, which is a measurement nobody has taken, not a migration nobody has run. |
+| G306 | **W** | *"migration 2950 is unapplied on production AND on portava-ci"* | **One of its two TURNS-GREEN clauses is MET.** It asks for a live-DB suite that emits a §44 event through the installed sink and reads the row back, AND the table existing in production. The second is met. The first is not. (The cell already corrects its own first sentence for CI and did not reach production.) |
+| G365 | **W** | *"☠prod: migration 2950 unapplied, so no episode has ever been stored"* | the table exists and holds no rows. A §57 row asks for a number; the number's absence is now a data fact, not a schema fact. |
+| G366 | **W** | *"☠prod: migration 2950 unapplied"* | as G365. |
+| G367 | **W** | *"☠prod: migration 2950 unapplied"* | as G365. |
+| G369 | **W** | *"☠prod: migration 2950 unapplied"* | as G365. |
+| G372 | **W** | *"☠prod: migration 2950 unapplied, so no latency has been recorded"* | as G365. |
+| G368 | **N** | *"2950 is itself unapplied, and the owner holds migrations"* | **The clause is false and the row still cannot move.** G368 needs a fifteenth name in `INPUT_TELEMETRY_EVENT_NAMES` with a real call site AND a follow-on migration widening 2950's event-name CHECK. The follow-on is unwritten; 2950 being applied is what makes the CHECK live rather than hypothetical. |
+
+**No verdict moves on any of the eight**, and §18.3's conclusion survives in its second half only:
+*"Applying migration 2950 and reporting the numbers is what moves these five to C"* — the apply has
+happened, the reporting has not, and the conjunction is what the rows rest on.
+
+**Why this is the finding and not a footnote.** A row blocked by an unapplied migration is blocked on
+someone with apply authority. A row blocked by zero rows in an applied table is blocked on someone
+running the product — a different person, a different queue, and a far cheaper action: §35.2 records
+that `input_assistance_telemetry_events` held 0 rows on 2026-10-03 even though 2950 has been live in
+production since 2026-09-21, which means **no build has sent a single §44 event to the place that
+keeps it in the eleven days since the store appeared**. That is a live finding about the product and
+it was invisible for as long as eight cells described the store as absent. A deployment-gated row
+whose gate has already opened is strictly worse than one whose gate is shut, because nobody is
+watching it any more.
+
+**This REFUTES, on this surface, the shape the re-census found on `census-trips.md` and
+`census-telegraph.md`** — where the gates are genuinely still closed and no reading moves a letter.
+Here the gate opened thirteen days before PR #582 was written, #582 itself re-measured two of the
+affected rows (G75, G190) and corrected them, and did not reach the eight that share the same
+migration. "Deployment-gated" was true when written and had stopped being true.
+
+### 36.3 Row moves: none, in either direction
+
+**0 up, 0 down.** The eight above are reason corrections and stay where they are; G373 holds at `W`;
+and nothing #582 built falsified a `C`. Specifically re-read for a down move and not found:
+
+- The ingest allow-list grew by one key, `degraded`, a bool. G306's privacy half demands that the
+  ingest *"REBUILDS each event from a per-name allow-list of ints, unit floats, bools and 64-char
+  enum tokens"* and that no free-text key is admitted. A literal bool is inside that vocabulary, so
+  the widening is the allow-list working rather than a breach of it; G306 is `W` on its measurement
+  half either way.
+- `metrics.ts` gained a reader and a guard and removed none. No `C` row rests on a metric being
+  refused, and the three §57 rows that ARE refused by name (G368, G370, G371) are refused for reasons
+  this change does not touch.
+
+### 36.4 §35's hand-off to `census-sensing.md` — DISCHARGED, elsewhere
+
+§35 states: *"The lane's intel-capture work … moves no row here and is reported to the integration
+owner as proposed census-sensing text, because census-sensing.md is in another open PR."*
+`census-discovery.md` §108.2 named it as the wave's one outstanding integration item.
+
+**It is discharged in `census-sensing.md` §31**, written in the same change as this section, now that
+census-sensing.md is on `main`. Its outcome in one line, so that a reader of this census does not have
+to go and find out: **no sensing row moves either**, and three of that census's `BC` rows had grounds
+that were incomplete until #582 and are whole for the first time at this tree. §35's judgement that
+the work moves no row *here* is confirmed: not one of this census's 373 requirements cites
+`intelProjectionAggregator.ts`, `intelProjectionScheduler.ts`, `trailServe.ts`, `keysetRead.ts` or the
+`app/intel/` capture screens.
+
+### 36.5 Headline, restated from the rows
+
+Unchanged, and recounted rather than carried forward from §35.4:
+
+| Measure | §35 | **§36** |
+| --- | ---: | ---: |
+| Denominator | 373 | **373** |
+| BUILT-AND-CORRECT | 294 | **294** |
+| BUILT-BUT-WRONG | 48 | **48** |
+| NOT-BUILT | 27 | **27** |
+| CANNOT-VERIFY | 4 | **4** |
+| CONSTRUCTED% | 91.7 % | **91.7 %** (342 / 373) |
+| CORRECT% raw | 78.8 % | **78.8 %** (294 / 373) |
+
+### 36.6 What would turn this red
+
+- A future cell citing 2950 as unapplied, in either database, without a fresh reading — §35.5 already
+  wrote this rule for `input_selection_history` and `protected_zones`, and 36.2 extends it to 2950
+  itself, which is the migration §35.5 did not think to name.
+- One §44 event reaching `input_assistance_telemetry_events`: five §57 rows become reportable, G292's
+  third clause is met, and **G292, G365, G366, G367, G369 and G372 all have to be re-read the same
+  day.** That is the single cheapest action available on this surface.
+- The eleven-day gap in 36.2 closing without anyone noticing: if a later section finds rows in that
+  table and reports the metrics without recording that the store had been empty since it was created,
+  the finding about the product disappears into the finding about the number.
+- `report:input-metrics` still exiting with a PostgREST error against a database where 2950 IS
+  applied: that would be a second defect, in the reporter rather than in the schema, and none of the
+  eight cells would describe it.
+
+- NOT-GRADED: artifacts/api-server/src/lib/capability/production-applied-migrations.json — §36.2's offline evidence that 2950, 2258 and 2217 are applied to production. It is the repository's staleness tripwire for deployment facts (and says of itself that it is "a staleness tripwire, not an inventory", so a PRESENT entry is evidence and an ABSENT one is not); no G verdict grades it, and it is deliberately not scoped, because a census that counted it would age on every apply.
+- NOT-GRADED: artifacts/api-server/src/lib/intelProjectionAggregator.ts — §36.4 names it only to state, by file, that no G row cites the intel-capture work PR #582 also carried. It is census-sensing's to grade and is graded there in §31.
+- NOT-GRADED: artifacts/api-server/src/lib/intelProjectionScheduler.ts — as above: named in §36.4 to establish the boundary §35 asserted. census-sensing §31 grades it.
+- NOT-GRADED: artifacts/api-server/src/lib/trailServe.ts — as above. No G row cites the trail read, and census-sensing §31 is where its effect is graded.
+- NOT-GRADED: artifacts/api-server/src/lib/keysetRead.ts — as above: the shared whole-read helper #582 added for the intel paths. No G verdict rests on it.
