@@ -12,6 +12,9 @@
  *   PR5  the readiness report: provider, key mode, PAYMENTS_ALLOW_LIVE, tax
  *   PR6  the older PayoutProvider seam sits behind the contract and its
  *        behaviour for existing callers is unchanged
+ *   PR7  market and tax policy is enforced BY THE REGISTRY: the platform's
+ *        enabled markets, the provider's market support, and a tax computation
+ *        issued by the registered tax provider — a hand-built one is refused
  *
  * Pure: every env is an object passed in. No network, no database.
  * Run: node --import tsx/esm --test src/test/paymentProviderRegistry.test.ts
@@ -40,23 +43,28 @@ import { createFakePaymentProvider } from "../services/payments/FakePaymentProvi
 import {
   NONE_PAYMENT_PROVIDER,
   PAYMENT_PROVIDER_OPERATIONS,
-  paymentOk,
-  refusingPaymentProvider,
+  validateCreatePaymentIntent,
+  type CreatePaymentIntentRequest,
   type PaymentProvider,
   type PaymentResult,
 } from "../services/payments/PaymentProvider.js";
+import { createFakeTaxProvider, taxProviderOrNone } from "../services/payments/TaxProvider.js";
 import { payoutProviderBehind, resolvePayoutProviderBehindPayments, toPayoutRefusal, type PayoutSeamContext } from "../services/payments/payoutSeam.js";
 import {
   PAYMENTS_ENABLED_MARKETS_ENV,
   enabledPaymentMarkets,
+  enforcePaymentPolicy,
   getPaymentProvider,
   paymentMarketEnabled,
+  paymentProviderLabel,
   registeredPaymentAdapters,
   resolvePaymentProvider,
+  sharedFakePaymentProvider,
+  type PaymentPolicy,
   type PaymentProviderAdapterRegistration,
 } from "../services/payments/providerRegistry.js";
 import { paymentsReadiness, paymentsReadinessSummary } from "../services/payments/readiness.js";
-import { LOCAL_ENV, REFUSED_ENVS, tag } from "./helpers/paymentFixtures.js";
+import { LOCAL_ENV, REFUSED_ENVS, buildCharge, callEveryOperation, conformingAdapter, sampleRecipient, tag, type ConformingAdapter } from "./helpers/paymentFixtures.js";
 
 const env = (o: Record<string, string | undefined>): NodeJS.ProcessEnv => o as NodeJS.ProcessEnv;
 
@@ -141,38 +149,39 @@ describe("PR1 — payment key classification", () => {
     assert.equal(fakePaymentProviderPermitted({}), false, "a bare start with no NODE_ENV is what the deployment runs");
     assert.equal(fakePaymentProviderPermitted(env({ NODE_ENV: "development" })), true);
   });
+
+  it("REPLIT_DEPLOYMENT counts when it is PRESENT, even empty — for the mock identity provider and the fake alike", () => {
+    // Replit sets it to "1" in a published app and leaves it unset otherwise; an empty value is a blanked marker, not a local run.
+    for (const local of [{ NODE_ENV: "development" }, { NODE_ENV: "test" }, { NODE_TEST_CONTEXT: "child-v8" }]) {
+      assert.equal(mockIdentityPermitted(env(local)), true, JSON.stringify(local));
+      for (const marker of ["1", "0", "", " ", "false"]) {
+        const e = env({ ...local, REPLIT_DEPLOYMENT: marker });
+        assert.equal(mockIdentityPermitted(e), false, `identity: ${JSON.stringify(local)} with REPLIT_DEPLOYMENT=${JSON.stringify(marker)}`);
+        assert.equal(fakePaymentProviderPermitted(e), false, `payments: ${JSON.stringify(local)} with REPLIT_DEPLOYMENT=${JSON.stringify(marker)}`);
+      }
+      // Unset — by absence or by an explicit undefined — is not a deployment.
+      assert.equal(mockIdentityPermitted(env({ ...local, REPLIT_DEPLOYMENT: undefined })), true);
+    }
+  });
 });
 
-/** A stand-in adapter that counts every call into it and every construction. */
-function standIn(certified = false): { registration: PaymentProviderAdapterRegistration; calls: () => number; creates: () => number; throwNext: (e: unknown) => void } {
-  let calls = 0;
+/** Register a conforming stand-in adapter under the name `stripe`, counting how often it is constructed. */
+function standIn(certified = true): { registration: PaymentProviderAdapterRegistration; adapter: ConformingAdapter; creates: () => number } {
+  const adapter = conformingAdapter("stripe");
   let creates = 0;
-  let toThrow: { e: unknown } | null = null;
-  const provider: PaymentProvider = { ...refusingPaymentProvider("stripe", "payments_disabled", "x") };
-  for (const op of PAYMENT_PROVIDER_OPERATIONS) {
-    (provider as any)[op] = async () => {
-      calls += 1;
-      if (toThrow) { const { e } = toThrow; toThrow = null; throw e; }
-      return paymentOk("stripe", { op });
-    };
-  }
-  (provider as any).marketSupport = (q: { recipientCountry: string }) => ({
-    provider: "stripe", recipientCountry: q.recipientCountry, supported: q.recipientCountry === "US", chargeModels: q.recipientCountry === "US" ? ["direct"] : [],
-    settlementCurrencies: ["USD"], presentmentCurrencySupported: null, reason: q.recipientCountry === "US" ? "supported" : "country_not_supported",
-  });
-  (provider as any).capabilities = () => ({ ...NONE_PAYMENT_PROVIDER.capabilities(), chargeModels: ["direct"] });
   return {
-    registration: { name: "stripe", keyProvider: "stripe", certified, create: () => { creates += 1; return provider; } },
-    calls: () => calls,
+    adapter,
     creates: () => creates,
-    throwNext: (e) => { toThrow = { e }; },
+    registration: { name: "stripe", keyProvider: "stripe", certified, create: () => { creates += 1; return adapter.provider; } },
   };
 }
 
-async function everyOperation(p: PaymentProvider): Promise<Array<[string, PaymentResult<unknown>]>> {
-  const out: Array<[string, PaymentResult<unknown>]> = [];
-  for (const op of PAYMENT_PROVIDER_OPERATIONS) out.push([op, await (p as any)[op]({})]);
-  return out;
+/** A local run with a test key, the US enabled and the fake tax provider: everything the policy asks for. */
+const READY = Object.freeze({ ...LOCAL_ENV, PAYMENT_PROVIDER: "stripe", STRIPE_SECRET_KEY: TEST_KEY, TAX_PROVIDER: "fake", PAYMENTS_ENABLED_MARKETS: "US" });
+
+/** The create-intent request with tax computed by the REGISTERED tax provider of `e` — the only kind the registry accepts. */
+async function attestedCharge(e: NodeJS.ProcessEnv, spec: Partial<Parameters<typeof buildCharge>[0]> = {}): Promise<CreatePaymentIntentRequest> {
+  return buildCharge({ key: "k-create", recipientRef: "acct_1", tax: taxProviderOrNone(e), ...spec });
 }
 
 describe("PR2 — the registry resolves only `none` and `fake`", () => {
@@ -185,26 +194,28 @@ describe("PR2 — the registry resolves only `none` and `fake`", () => {
       const r = resolvePaymentProvider(env({ PAYMENT_PROVIDER: v }));
       assert.deepEqual([r.ok, r.kind, r.ok && r.provider === NONE_PAYMENT_PROVIDER], [true, "none", true], String(v));
     }
-    for (const [op, r] of await everyOperation(getPaymentProvider({}))) assert.deepEqual(tag(r), ["unavailable", "payments_disabled"], op);
+    for (const [op, r] of await callEveryOperation(getPaymentProvider({}))) assert.deepEqual(tag(r), ["unavailable", "payments_disabled"], op);
   });
 
   it("`fake` resolves in a local run only", async () => {
     const local = resolvePaymentProvider(env({ ...LOCAL_ENV, PAYMENT_PROVIDER: "fake" }));
     assert.deepEqual([local.ok, local.kind, local.ok && local.provider.id, local.ok && local.certified], [true, "fake", "fake", false]);
     for (const [why, refused] of REFUSED_ENVS) {
-      const e = env({ ...refused, PAYMENT_PROVIDER: "fake" });
+      const e = env({ ...refused, PAYMENT_PROVIDER: "fake", PAYMENTS_ENABLED_MARKETS: "US", TAX_PROVIDER: "fake" });
       const r = resolvePaymentProvider(e);
       assert.deepEqual([r.ok, !r.ok && r.reason, r.kind], [false, "fake_not_permitted", "fake"], why);
-      for (const [op, answer] of await everyOperation(getPaymentProvider(e))) assert.deepEqual(tag(answer), ["unavailable", "fake_not_permitted"], `${why}: ${op}`);
+      for (const [op, answer] of await callEveryOperation(getPaymentProvider(e))) assert.deepEqual(tag(answer), ["unavailable", "fake_not_permitted"], `${why}: ${op}`);
     }
   });
 
-  it("a fake handed out in a local run stops answering if the same env becomes a deployment", async () => {
-    const e = env({ NODE_ENV: "development", PAYMENT_PROVIDER: "fake" });
-    const provider = getPaymentProvider(e);
-    assert.equal((await provider.validateRecipient("fake_acct_does_not_exist")).status, "failed", "permitted: the fake itself answers (not_found)");
-    e["REPLIT_DEPLOYMENT"] = "1";
-    assert.deepEqual(tag(await provider.validateRecipient("fake_acct_does_not_exist")), ["unavailable", "fake_not_permitted"]);
+  it("a fake handed out in a local run stops answering if the same env becomes a deployment — even with an EMPTY marker", async () => {
+    for (const marker of ["1", ""]) {
+      const e = env({ NODE_ENV: "development", PAYMENT_PROVIDER: "fake" });
+      const provider = getPaymentProvider(e);
+      assert.deepEqual(tag(await provider.validateRecipient("fake_acct_does_not_exist")), ["failed", "not_found"], "permitted: the fake itself answers");
+      e["REPLIT_DEPLOYMENT"] = marker;
+      assert.deepEqual(tag(await provider.validateRecipient("fake_acct_does_not_exist")), ["unavailable", "fake_not_permitted"], JSON.stringify(marker));
+    }
   });
 
   it("every other name is refused — and a live or unrecognised key is the first thing said", () => {
@@ -220,16 +231,30 @@ describe("PR2 — the registry resolves only `none` and `fake`", () => {
     assert.deepEqual([allowed.ok, !allowed.ok && allowed.reason], [false, "provider_not_registered"], "allowing live does not conjure an adapter");
     assert.ok(!JSON.stringify(live).includes(LIVE_KEY), "a resolution must not carry the key");
   });
+
+  it("a configured name is echoed only if it is a known one; anything else — a key pasted there — is `unrecognised value`", async () => {
+    assert.deepEqual(["none", "fake", "stripe"].map((n) => paymentProviderLabel(n)), ["none", "fake", "stripe"]);
+    for (const pasted of ["sk_live_SECRETVALUE123", "paypal", "whsec_SECRETVALUE", "stripe; drop", "x".repeat(300)]) {
+      assert.equal(paymentProviderLabel(pasted.toLowerCase()), "unrecognised value", pasted.slice(0, 20));
+      const e = env({ ...LOCAL_ENV, PAYMENT_PROVIDER: pasted });
+      const r = resolvePaymentProvider(e);
+      assert.deepEqual([r.ok, r.name], [false, "unrecognised value"], pasted.slice(0, 20));
+      const answers = await callEveryOperation(getPaymentProvider(e));
+      const everything = JSON.stringify([r, answers, paymentsReadiness(e), paymentsReadinessSummary(e), resolvePayoutProviderBehindPayments(e)]).toLowerCase();
+      assert.ok(!everything.includes("secretvalue") && !everything.includes(pasted.toLowerCase()), `${pasted.slice(0, 20)}: the configured text was echoed`);
+    }
+  });
 });
 
 describe("PR3 — a keyed adapter is refused before any request", () => {
-  it("a test key reaches the adapter", async () => {
+  it("a test key reaches the adapter, behind the guard and the policy", async () => {
     const s = standIn();
-    const e = env({ PAYMENT_PROVIDER: "stripe", STRIPE_SECRET_KEY: TEST_KEY });
+    const e = env({ ...READY });
     const r = resolvePaymentProvider(e, [s.registration]);
-    assert.deepEqual([r.ok, r.kind, r.keyDecision?.mode], [true, "adapter", "test"]);
-    for (const [op, answer] of await everyOperation(getPaymentProvider(e, [s.registration]))) assert.equal(answer.status, "ok", op);
-    assert.equal(s.calls(), 13);
+    assert.deepEqual([r.ok, r.kind, r.name, r.keyDecision?.mode], [true, "adapter", "stripe", "test"]);
+    const answers = await callEveryOperation(getPaymentProvider(e, [s.registration]), { createPaymentIntent: await attestedCharge(e) });
+    for (const [op, answer] of answers) assert.equal(answer.status, "ok", `${op}: ${JSON.stringify(answer).slice(0, 200)}`);
+    for (const op of PAYMENT_PROVIDER_OPERATIONS) assert.ok(s.adapter.reached.includes(op), `${op} did not reach the adapter`);
   });
 
   it("a live, unrecognised or absent key makes ZERO adapter calls — and the adapter is not even constructed", async () => {
@@ -243,56 +268,117 @@ describe("PR3 — a keyed adapter is refused before any request", () => {
     ];
     for (const [name, key, reason] of refusals) {
       const s = standIn();
-      const e = env({ PAYMENT_PROVIDER: "stripe", STRIPE_SECRET_KEY: key });
+      const e = env({ ...READY, STRIPE_SECRET_KEY: key });
       const r = resolvePaymentProvider(e, [s.registration]);
       assert.deepEqual([r.ok, !r.ok && r.reason], [false, reason], name);
-      for (const [op, answer] of await everyOperation(getPaymentProvider(e, [s.registration]))) assert.deepEqual(tag(answer), ["unavailable", reason], `${name}: ${op}`);
-      assert.deepEqual([s.calls(), s.creates()], [0, 0], `${name}: the adapter was reached`);
+      for (const [op, answer] of await callEveryOperation(getPaymentProvider(e, [s.registration]))) assert.deepEqual(tag(answer), ["unavailable", reason], `${name}: ${op}`);
+      assert.deepEqual([s.adapter.reached, s.creates()], [[], 0], `${name}: the adapter was reached`);
     }
   });
 
   it("PAYMENTS_ALLOW_LIVE exactly \"true\" is the only thing that lets a live key through, and it never rescues an unknown one", async () => {
     for (const [allow, ok] of [["true", true], ["TRUE", false], ["1", false], ["yes", false], ["", false]] as const) {
       const s = standIn();
-      const e = env({ PAYMENT_PROVIDER: "stripe", STRIPE_SECRET_KEY: LIVE_KEY, PAYMENTS_ALLOW_LIVE: allow });
+      const e = env({ ...READY, STRIPE_SECRET_KEY: LIVE_KEY, PAYMENTS_ALLOW_LIVE: allow });
       assert.equal(resolvePaymentProvider(e, [s.registration]).ok, ok, allow);
-      await getPaymentProvider(e, [s.registration]).validateRecipient("acct");
-      assert.equal(s.calls(), ok ? 1 : 0, allow);
+      await getPaymentProvider(e, [s.registration]).validateRecipient("acct_1");
+      assert.deepEqual(s.adapter.reached, ok ? ["validateRecipient"] : [], allow);
     }
     const s = standIn();
-    const e = env({ PAYMENT_PROVIDER: "stripe", STRIPE_SECRET_KEY: "pk_live_x", PAYMENTS_ALLOW_LIVE: "true" });
-    assert.deepEqual(tag(await getPaymentProvider(e, [s.registration]).validateRecipient("acct")), ["unavailable", "unknown_key_prefix"]);
-    assert.equal(s.calls(), 0);
+    const e = env({ ...READY, STRIPE_SECRET_KEY: "pk_live_x", PAYMENTS_ALLOW_LIVE: "true" });
+    assert.deepEqual(tag(await getPaymentProvider(e, [s.registration]).validateRecipient("acct_1")), ["unavailable", "unknown_key_prefix"]);
+    assert.deepEqual(s.adapter.reached, []);
   });
 
   it("the key is re-read before EVERY operation: a key rotated to live under a held provider is refused on the next call", async () => {
     const s = standIn();
-    const e = env({ PAYMENT_PROVIDER: "stripe", STRIPE_SECRET_KEY: TEST_KEY });
+    const e = env({ ...READY });
     const provider = getPaymentProvider(e, [s.registration]);
-    assert.equal((await provider.validateRecipient("acct")).status, "ok");
+    assert.equal((await provider.validateRecipient("acct_1")).status, "ok");
     e["STRIPE_SECRET_KEY"] = LIVE_KEY;
-    for (const [op, answer] of await everyOperation(provider)) assert.deepEqual(tag(answer), ["unavailable", "live_key_not_allowed"], op);
+    for (const [op, answer] of await callEveryOperation(provider, { createPaymentIntent: await attestedCharge(e) })) assert.deepEqual(tag(answer), ["unavailable", "live_key_not_allowed"], op);
     delete e["STRIPE_SECRET_KEY"];
-    assert.deepEqual(tag(await provider.validateRecipient("acct")), ["unavailable", "key_absent"]);
-    assert.equal(s.calls(), 1, "only the call made under the test key reached the adapter");
+    assert.deepEqual(tag(await provider.validateRecipient("acct_1")), ["unavailable", "key_absent"]);
+    assert.deepEqual(s.adapter.reached, ["validateRecipient"], "only the call made under the test key reached the adapter");
   });
 
-  it("whatever the adapter throws leaves the registry as a tagged result", async () => {
+  it("whatever the adapter throws or returns leaves the registry as a tagged result", async () => {
     const s = standIn();
-    const provider = getPaymentProvider(env({ PAYMENT_PROVIDER: "stripe", STRIPE_SECRET_KEY: TEST_KEY }), [s.registration]);
-    s.throwNext("a thrown string");
-    assert.deepEqual(tag(await provider.validateRecipient("acct")), ["failed", "provider_error"]);
-    s.throwNext(new PaymentsLiveModeRefusedError({ provider: "stripe", keyPresent: true, mode: "live", liveAllowed: false, allowed: false, refusal: "live_key_not_allowed" }));
-    assert.deepEqual(tag(await provider.validateRecipient("acct")), ["unavailable", "live_key_not_allowed"]);
+    const provider = getPaymentProvider(env({ ...READY }), [s.registration]);
+    s.adapter.throwNext("a thrown string");
+    assert.deepEqual(tag(await provider.validateRecipient("acct_1")), ["failed", "provider_error"]);
+    s.adapter.throwNext(new PaymentsLiveModeRefusedError({ provider: "stripe", keyPresent: true, mode: "live", liveAllowed: false, allowed: false, refusal: "live_key_not_allowed" }));
+    assert.deepEqual(tag(await provider.validateRecipient("acct_1")), ["unavailable", "live_key_not_allowed"]);
+    s.adapter.answerNext(undefined);
+    assert.deepEqual(tag(await provider.validateRecipient("acct_1")), ["failed", "provider_error"], "an adapter that returns undefined");
+    s.adapter.answerNext({ status: "ok", provider: "stripe", value: { not: "a recipient" } });
+    assert.deepEqual(tag(await provider.getPayoutStatus({ payoutRef: "po_1", kind: "payout", recipientRef: "acct_1" })), ["failed", "provider_error"], "an adapter that returns the wrong object");
+  });
+
+  it("an adapter whose create() throws, or returns nothing, resolves to unavailable / adapter_failed — and nothing throws", async () => {
+    const broken: Array<[string, PaymentProviderAdapterRegistration["create"]]> = [
+      ["throws an Error", () => { throw new Error("no sdk sk_live_SECRETVALUE"); }],
+      ["throws a string", () => { throw "boom"; }],
+      ["returns undefined", (() => undefined) as any],
+      ["returns null", (() => null) as any],
+      ["returns a number", (() => 7) as any],
+    ];
+    for (const [name, create] of broken) {
+      const registration: PaymentProviderAdapterRegistration = { name: "stripe", keyProvider: "stripe", certified: true, create };
+      const e = env({ ...READY });
+      let r: ReturnType<typeof resolvePaymentProvider> | undefined;
+      assert.doesNotThrow(() => { r = resolvePaymentProvider(e, [registration]); }, name);
+      assert.deepEqual([r?.ok, r && !r.ok && r.reason, r?.kind], [false, "adapter_failed", "adapter"], name);
+      for (const [op, answer] of await callEveryOperation(getPaymentProvider(e, [registration]))) assert.deepEqual(tag(answer), ["unavailable", "adapter_failed"], `${name}: ${op}`);
+      const readiness = paymentsReadiness(e, [registration]);
+      assert.deepEqual([readiness.operational, /adapter_failed/.test(readiness.reason)], [false, true], name);
+      assert.ok(!JSON.stringify([r, readiness]).includes("SECRETVALUE"), name);
+    }
+  });
+
+  it("an adapter whose capabilities() or marketSupport() throws has no capability and supports no market", async () => {
+    const s = standIn();
+    const throwing = { ...s.adapter.provider, capabilities: () => { throw new Error("boom"); }, marketSupport: () => { throw new Error("boom"); } } as unknown as PaymentProvider;
+    const registration: PaymentProviderAdapterRegistration = { name: "stripe", keyProvider: "stripe", certified: true, create: () => throwing };
+    const e = env({ ...READY });
+    const provider = getPaymentProvider(e, [registration]);
+    assert.deepEqual(provider.capabilities().chargeModels, []);
+    assert.deepEqual([provider.marketSupport({ recipientCountry: "US" }).supported, provider.marketSupport({ recipientCountry: "US" }).reason], [false, "provider_error"]);
+    assert.deepEqual(tag(await provider.createPaymentIntent(await attestedCharge(e))), ["unavailable", "unsupported_market"], "a provider that cannot say it supports a market does not");
+    const readiness = paymentsReadiness(e, [registration]);
+    assert.deepEqual([readiness.operational, readiness.marketsNotSupportedByProvider], [false, ["US"]]);
+  });
+
+  it("an UNCERTIFIED adapter answers provider_not_certified to everything; only an explicit certification run, on a test key, may use it", async () => {
+    const s = standIn(false);
+    const e = env({ ...READY });
+    const r = resolvePaymentProvider(e, [s.registration]);
+    assert.deepEqual([r.ok, !r.ok && r.reason], [false, "provider_not_certified"]);
+    for (const [op, answer] of await callEveryOperation(getPaymentProvider(e, [s.registration]))) assert.deepEqual(tag(answer), ["unavailable", "provider_not_certified"], op);
+    assert.deepEqual([s.adapter.reached, s.creates()], [[], 0], "an uncertified adapter was reached by an ordinary caller");
+
+    const run = getPaymentProvider(e, [s.registration], { certificationRun: true });
+    assert.equal((await run.validateRecipient("acct_1")).status, "ok");
+    assert.deepEqual(s.adapter.reached, ["validateRecipient"]);
+    // A certification run never proceeds on a live key — not even with PAYMENTS_ALLOW_LIVE=true.
+    const liveEnv = env({ ...READY, STRIPE_SECRET_KEY: LIVE_KEY, PAYMENTS_ALLOW_LIVE: "true" });
+    const liveRun = resolvePaymentProvider(liveEnv, [s.registration], { certificationRun: true });
+    assert.deepEqual([liveRun.ok, !liveRun.ok && liveRun.reason], [false, "provider_not_certified"]);
+    e["STRIPE_SECRET_KEY"] = LIVE_KEY;
+    e["PAYMENTS_ALLOW_LIVE"] = "true";
+    assert.deepEqual(tag(await run.validateRecipient("acct_1")), ["unavailable", "provider_not_certified"], "the key was rotated to live mid-run");
+    assert.deepEqual(s.adapter.reached, ["validateRecipient"]);
   });
 });
 
 describe("PR4 — the platform's enabled markets", () => {
   it("is empty by default, and parses a comma-separated list of ISO country codes", () => {
     assert.equal(PAYMENTS_ENABLED_MARKETS_ENV, "PAYMENTS_ENABLED_MARKETS");
-    assert.deepEqual(enabledPaymentMarkets({}), { markets: [], invalid: [] });
-    assert.deepEqual(enabledPaymentMarkets(env({ PAYMENTS_ENABLED_MARKETS: " us, GB ,us,,jp " })), { markets: ["GB", "JP", "US"], invalid: [] });
-    assert.deepEqual(enabledPaymentMarkets(env({ PAYMENTS_ENABLED_MARKETS: "US,USA,*,all,G B" })), { markets: ["US"], invalid: ["*", "G B", "USA", "all"] });
+    assert.deepEqual(enabledPaymentMarkets({}), { markets: [], invalidCount: 0 });
+    assert.deepEqual(enabledPaymentMarkets(env({ PAYMENTS_ENABLED_MARKETS: " us, GB ,us,,jp " })), { markets: ["GB", "JP", "US"], invalidCount: 0 });
+    const mixed = enabledPaymentMarkets(env({ PAYMENTS_ENABLED_MARKETS: "US,USA,*,all,G B,sk_live_SECRETVALUE" }));
+    assert.deepEqual(mixed, { markets: ["US"], invalidCount: 5 });
+    assert.ok(!JSON.stringify(mixed).includes("SECRETVALUE"), "invalid tokens are counted, never returned");
     assert.equal(paymentMarketEnabled("US", {}), false, "unset enables nothing");
     assert.equal(paymentMarketEnabled("US", env({ PAYMENTS_ENABLED_MARKETS: "US" })), true);
     assert.equal(paymentMarketEnabled("us", env({ PAYMENTS_ENABLED_MARKETS: "US" })), false, "the caller passes the upper-case code");
@@ -337,10 +423,10 @@ describe("PR5 — the readiness report", () => {
     assert.match(france.reason, /does not support recipients in: FR/);
 
     const invalid = paymentsReadiness(env({ ...LOCAL_ENV, PAYMENT_PROVIDER: "fake", TAX_PROVIDER: "fake", PAYMENTS_ENABLED_MARKETS: "US,EVERYWHERE" }));
-    assert.deepEqual([invalid.operational, invalid.invalidMarkets, invalid.enabledMarkets], [false, ["EVERYWHERE"], ["US"]]);
+    assert.deepEqual([invalid.operational, invalid.invalidMarketCount, invalid.enabledMarkets], [false, 1, ["US"]]);
 
     const unknownTax = paymentsReadiness(env({ ...LOCAL_ENV, PAYMENT_PROVIDER: "fake", TAX_PROVIDER: "stripe_tax", PAYMENTS_ENABLED_MARKETS: "US" }));
-    assert.deepEqual([unknownTax.operational, unknownTax.taxConfigured], [false, false]);
+    assert.deepEqual([unknownTax.operational, unknownTax.taxConfigured, unknownTax.taxProvider], [false, false, "unrecognised value"]);
     assert.match(unknownTax.reason, /tax_provider_not_registered/);
   });
 
@@ -364,18 +450,35 @@ describe("PR5 — the readiness report", () => {
     }
   });
 
+  it("the report and the startup line echo NO configuration text: a secret pasted into any of the three variables is not in them", () => {
+    const pasted = env({
+      ...LOCAL_ENV,
+      PAYMENT_PROVIDER: "sk_live_SECRETVALUE_provider",
+      TAX_PROVIDER: "sk_live_SECRETVALUE_tax",
+      PAYMENTS_ENABLED_MARKETS: "US,sk_live_SECRETVALUE_market,whsec_SECRETVALUE",
+      STRIPE_SECRET_KEY: "sk_live_SECRETVALUE_key",
+    });
+    const report = paymentsReadiness(pasted);
+    const line = paymentsReadinessSummary(pasted);
+    assert.deepEqual([report.provider, report.taxProvider, report.invalidMarketCount, report.enabledMarkets, report.operational], ["unrecognised value", "unrecognised value", 2, ["US"], false]);
+    assert.deepEqual([line.paymentProvider, line.taxProvider, line.enabledMarkets], ["unrecognised value", "unrecognised value", ["US"]]);
+    for (const text of [JSON.stringify(report), JSON.stringify(line)]) {
+      assert.ok(!/secretvalue/i.test(text), "configuration text reached the readiness report");
+      assert.ok(!/sk_live_|whsec_/.test(text));
+    }
+  });
+
   it("an adapter that is written but not certified is not operational; certified, with a test key, a market and tax, it is", () => {
-    const base = { ...LOCAL_ENV, PAYMENT_PROVIDER: "stripe", STRIPE_SECRET_KEY: TEST_KEY, TAX_PROVIDER: "fake", PAYMENTS_ENABLED_MARKETS: "US" };
-    const uncertified = paymentsReadiness(env(base), [standIn(false).registration]);
+    const uncertified = paymentsReadiness(env({ ...READY }), [standIn(false).registration]);
     assert.deepEqual([uncertified.operational, uncertified.providerKind, uncertified.providerCertified, uncertified.keyMode], [false, "adapter", false, "test"]);
-    assert.match(uncertified.reason, /not certified/);
-    const certified = paymentsReadiness(env(base), [standIn(true).registration]);
+    assert.match(uncertified.reason, /provider_not_certified.*not certified/);
+    const certified = paymentsReadiness(env({ ...READY }), [standIn(true).registration]);
     assert.deepEqual(certified.blockers, []);
     assert.deepEqual([certified.operational, certified.providerCertified, certified.keyMode, certified.directChargeMarkets], [true, true, "test", ["US"]]);
     assert.match(certified.reason, /operational in test mode for US/);
-    const liveRefused = paymentsReadiness(env({ ...base, STRIPE_SECRET_KEY: LIVE_KEY }), [standIn(true).registration]);
+    const liveRefused = paymentsReadiness(env({ ...READY, STRIPE_SECRET_KEY: LIVE_KEY }), [standIn(true).registration]);
     assert.deepEqual([liveRefused.operational, liveRefused.keyRefused, liveRefused.blockers.length], [false, true, 1], "a certified adapter with a live key is still refused, once");
-    const elsewhere = paymentsReadiness(env({ ...base, PAYMENTS_ENABLED_MARKETS: "US,PH" }), [standIn(true).registration]);
+    const elsewhere = paymentsReadiness(env({ ...READY, PAYMENTS_ENABLED_MARKETS: "US,PH" }), [standIn(true).registration]);
     assert.deepEqual([elsewhere.operational, elsewhere.marketsNotSupportedByProvider], [false, ["PH"]], "no provider is worldwide");
   });
 
@@ -428,6 +531,7 @@ describe("PR6 — the PayoutProvider seam sits behind the contract", () => {
     const handles = new Map<string, { payoutRef: string; kind: "payout"; recipientRef: string }>();
     const context: PayoutSeamContext = {
       payoutKind: "payout",
+      webhookEndpoint: "connect",
       recipientRefFor: async (creatorId) => refs.get(creatorId) ?? null,
       recipientDetailsFor: async (creatorId) => (creatorId === CREATOR ? { country: "US", entityType: "individual", returnUrl: "a://b", refreshUrl: "a://c" } : null),
       payoutHandleFor: async (payoutRef) => handles.get(payoutRef) ?? null,
@@ -458,6 +562,7 @@ describe("PR6 — the PayoutProvider seam sits behind the contract", () => {
     assert.deepEqual(fake.control.balances().recipients[created.value.recipientRef], { USD: 4300 }, "the state, not the return value: the payout debited the balance");
 
     const [delivery] = fake.control.webhooks.deliver({ order: [0] });
+    assert.equal(delivery!.endpoint, "connect", "a recipient's event arrives on the connect endpoint");
     assert.deepEqual(await seam.handleWebhook(delivery!.rawBody, delivery!.headers as Record<string, string>), { ok: true, provider: "fake", value: { accepted: true } });
     const forged = await seam.handleWebhook(delivery!.rawBody, { "fake-signature": "t=1,v1=00" });
     assert.deepEqual([forged.ok, !forged.ok && forged.reason], [false, "invalid_request"]);
@@ -475,6 +580,7 @@ describe("PR6 — the PayoutProvider seam sits behind the contract", () => {
       [{ status: "unavailable", provider: "p", reason: "payments_disabled", detail: "d", retriable: false }, "payouts_disabled"],
       [{ status: "unavailable", provider: "p", reason: "live_key_not_allowed", detail: "d", retriable: false }, "payouts_disabled"],
       [{ status: "unavailable", provider: "p", reason: "fake_not_permitted", detail: "d", retriable: false }, "payouts_disabled"],
+      [{ status: "unavailable", provider: "p", reason: "market_not_enabled", detail: "d", retriable: false }, "payouts_disabled"],
       [{ status: "unavailable", provider: "p", reason: "unsupported_market", detail: "d", retriable: false }, "not_supported"],
       [{ status: "unavailable", provider: "p", reason: "capability_not_supported", detail: "d", retriable: false }, "not_supported"],
       [{ status: "failed", provider: "p", reason: "not_found", detail: "d", retriable: false }, "invalid_request"],
@@ -485,5 +591,153 @@ describe("PR6 — the PayoutProvider seam sits behind the contract", () => {
       assert.deepEqual([r.ok, r.reason, r.provider], [false, reason, "p"], `${result.status}:${result.reason}`);
       assert.ok(r.detail.startsWith(`${result.status}:${result.reason}`));
     }
+  });
+});
+
+describe("PR7 — market and tax policy is enforced by the registry, on every operation that needs it", () => {
+  /** A charge whose tax lines are hand-built: the right shape, consistent with the charge, issued by nobody. */
+  const forgedCharge = (sellerMarket: string, chargeModel: "direct" | "platform" = "direct"): CreatePaymentIntentRequest => ({
+    idempotencyKey: "k-forged",
+    reference: { kind: "rent_buddy_booking", id: "b1" },
+    payerProfileId: "payer-1",
+    payerCountry: "US",
+    amount: { amountMinor: 10_000, currency: "USD" },
+    components: { serviceMinor: 10_000, payerFeeMinor: 0, tipMinor: 0, taxMinor: 0 },
+    chargeModel,
+    recipientRef: chargeModel === "platform" ? null : "acct_1",
+    recipientCountry: chargeModel === "platform" ? null : sellerMarket,
+    platformFee: { commissionMinor: chargeModel === "platform" ? 0 : 1000, payerFeeMinor: 0, taxMinor: 0 },
+    capture: "automatic",
+    tax: [{ provider: "fake", configured: true, sellerMarket, buyerMarket: "US", productKind: "service", taxableMinor: 10_000, taxMinor: 0, currency: "USD", remittedBy: "none", rateBps: 0, jurisdiction: null, calculationRef: null, computedAt: "2026-01-01T00:00:00.000Z" }],
+  });
+
+  it("a hand-built tax computation passes the SHAPE check and is refused by the registry — with TAX_PROVIDER=none and with a real one", async () => {
+    assert.equal(validateCreatePaymentIntent("stripe", forgedCharge("US")), null, "the shape check alone cannot tell: this is why provenance is checked");
+    for (const taxProvider of [undefined, "none", "fake"]) {
+      const s = standIn();
+      const e = env({ ...READY, TAX_PROVIDER: taxProvider });
+      const r = await getPaymentProvider(e, [s.registration]).createPaymentIntent(forgedCharge("US"));
+      assert.deepEqual(tag(r), ["unavailable", "tax_not_configured"], `TAX_PROVIDER=${String(taxProvider)}`);
+      assert.ok(!s.adapter.reached.includes("createPaymentIntent"), `TAX_PROVIDER=${String(taxProvider)}: the forged charge reached the adapter`);
+    }
+    // The verifier's input: a platform charge claiming an unconfigured seller market "XX" with zero tax.
+    const s = standIn();
+    const xx = await getPaymentProvider(env({ ...READY, TAX_PROVIDER: "none" }), [s.registration]).createPaymentIntent(forgedCharge("XX", "platform"));
+    assert.deepEqual(tag(xx), ["unavailable", "market_not_enabled"]);
+    const enabledXx = await getPaymentProvider(env({ ...READY, TAX_PROVIDER: "none", PAYMENTS_ENABLED_MARKETS: "US,XX" }), [s.registration]).createPaymentIntent(forgedCharge("XX", "platform"));
+    assert.deepEqual(tag(enabledXx), ["unavailable", "unsupported_market"], "enabled by the platform, not supported by the provider");
+    assert.deepEqual(s.adapter.reached.filter((op) => op === "createPaymentIntent"), []);
+  });
+
+  it("only a computation ISSUED by the registered tax provider is accepted: not a copy, not another provider's", async () => {
+    const s = standIn();
+    const e = env({ ...READY });
+    const provider = getPaymentProvider(e, [s.registration]);
+    const good = await attestedCharge(e);
+    assert.equal((await provider.createPaymentIntent(good)).status, "ok", "the control");
+    const copied = { ...good, idempotencyKey: "k2", tax: good.tax.map((t) => ({ ...t })) };
+    assert.deepEqual(tag(await provider.createPaymentIntent(copied)), ["unavailable", "tax_not_configured"], "a field-for-field copy");
+    const other = await buildCharge({ key: "k3", recipientRef: "acct_1", tax: createFakeTaxProvider({ env: LOCAL_ENV }) });
+    assert.deepEqual(tag(await provider.createPaymentIntent(other)), ["unavailable", "tax_not_configured"], "issued by a tax provider that is not the registered one");
+    const noTaxProvider = getPaymentProvider(env({ ...READY, TAX_PROVIDER: "none" }), [s.registration]);
+    assert.deepEqual(tag(await noTaxProvider.createPaymentIntent(good)), ["unavailable", "tax_not_configured"], "genuinely issued, but tax is not configured in THIS env");
+    assert.equal(s.adapter.reached.filter((op) => op === "createPaymentIntent").length, 1);
+  });
+
+  it("configured-for-the-market and issued-by-the-provider are separate checks: failing either one refuses", async () => {
+    const charge = forgedCharge("US");
+    const policyWith = (configured: boolean, attests: boolean): PaymentPolicy => ({
+      enabledMarkets: () => ["US"],
+      taxProvider: () => ({
+        id: "stub",
+        marketStatus: (market) => ({ provider: "stub", market, configured, reason: "stub" }),
+        computeTax: async () => ({ status: "unavailable", provider: "stub", reason: "tax_not_configured", detail: "stub", retriable: false }),
+        attests: () => attests,
+      }),
+    });
+    for (const [configured, attests, expected] of [[true, true, "ok"], [false, true, "unavailable"], [true, false, "unavailable"], [false, false, "unavailable"]] as const) {
+      const adapter = conformingAdapter();
+      const r = await enforcePaymentPolicy(adapter.provider, policyWith(configured, attests)).createPaymentIntent(charge);
+      assert.equal(r.status, expected, `configured=${configured} attests=${attests}`);
+      if (r.status !== "ok") assert.equal(r.reason, "tax_not_configured");
+      assert.deepEqual(adapter.reached, expected === "ok" ? ["createPaymentIntent"] : [], `configured=${configured} attests=${attests}`);
+    }
+    // And a computation attested for ANOTHER market does not cover this one.
+    const two = { ...charge, tax: [charge.tax[0]!, { ...charge.tax[0]!, sellerMarket: "GB", taxableMinor: 0 }] };
+    const mixed = await enforcePaymentPolicy(conformingAdapter().provider, policyWith(true, true)).createPaymentIntent({ ...two, recipientCountry: null, recipientRef: null, chargeModel: "platform", platformFee: { commissionMinor: 0, payerFeeMinor: 0, taxMinor: 0 } });
+    assert.deepEqual(tag(mixed), ["failed", "invalid_request"], "one charge, one seller market");
+  });
+
+  it("a market the platform has not enabled blocks money in and money out to a recipient — and never a refund, a cancel or a read", async () => {
+    for (const markets of [undefined, "", "GB", "GB,JP"]) {
+      const s = standIn();
+      const e = env({ ...READY, PAYMENTS_ENABLED_MARKETS: markets });
+      const answers = new Map(await callEveryOperation(getPaymentProvider(e, [s.registration]), { createPaymentIntent: await attestedCharge(e) }));
+      const blocked = ["createPaymentIntent", "confirmPaymentIntent", "capturePaymentIntent", "createRecipient", "createRecipientOnboardingLink", "requestPayout"] as const;
+      const open = ["cancelPaymentIntent", "refundPayment", "reverseOrHoldPayout", "getPaymentIntent", "validateRecipient", "getPayoutStatus", "verifyAndParseWebhook"] as const;
+      assert.equal(blocked.length + open.length, PAYMENT_PROVIDER_OPERATIONS.length);
+      for (const op of blocked) {
+        assert.deepEqual(tag(answers.get(op)!), ["unavailable", "market_not_enabled"], `${String(markets)}: ${op}`);
+        assert.ok(!s.adapter.reached.includes(op), `${String(markets)}: ${op} reached the adapter`);
+      }
+      for (const op of open) assert.equal(answers.get(op)!.status, "ok", `${String(markets)}: ${op} — disabling a market must not trap money or blind the platform`);
+    }
+  });
+
+  it("the recipient's market is the PROVIDER's record of it, not the caller's word", async () => {
+    const s = standIn();
+    const e = env({ ...READY });
+    const provider = getPaymentProvider(e, [s.registration]);
+    const intent = { intentRef: "pi_1", chargeModel: "direct" as const, recipientRef: "acct_1" };
+    assert.equal((await provider.confirmPaymentIntent({ idempotencyKey: "k", intent, paymentMethodRef: null, returnUrl: null })).status, "ok");
+    assert.deepEqual(s.adapter.reached, ["validateRecipient", "confirmPaymentIntent"], "the registry asked the provider where the recipient is established");
+    // The provider now says the recipient is in the Philippines, which is not enabled.
+    s.adapter.reached.length = 0;
+    s.adapter.answerNext({ status: "ok", provider: "stripe", value: sampleRecipient({ country: "PH" }) });
+    assert.deepEqual(tag(await provider.requestPayout({ idempotencyKey: "k", kind: "payout", recipientRef: "acct_1", amount: { amountMinor: 100, currency: "USD" }, reference: { kind: "x", id: "1" } })), ["unavailable", "market_not_enabled"]);
+    assert.deepEqual(s.adapter.reached, ["validateRecipient"]);
+    // If the provider cannot say, nothing proceeds.
+    s.adapter.reached.length = 0;
+    s.adapter.answerNext({ status: "failed", provider: "stripe", reason: "not_found", detail: "d", retriable: false });
+    assert.deepEqual(tag(await provider.capturePaymentIntent({ idempotencyKey: "k", intent, amountMinor: "full", partial: null })), ["failed", "not_found"]);
+    assert.deepEqual(s.adapter.reached, ["validateRecipient"]);
+    // A platform charge has no recipient to ask about.
+    s.adapter.reached.length = 0;
+    await provider.confirmPaymentIntent({ idempotencyKey: "k", intent: { intentRef: "pi_1", chargeModel: "platform", recipientRef: null }, paymentMethodRef: null, returnUrl: null });
+    assert.deepEqual(s.adapter.reached, ["confirmPaymentIntent"]);
+  });
+
+  it("an enabled market the provider does not support, a currency it cannot charge there and a charge model it lacks are each refused", async () => {
+    const s = standIn();
+    const e = env({ ...READY, PAYMENTS_ENABLED_MARKETS: "US,PH" });
+    const provider = getPaymentProvider(e, [s.registration]);
+    const recipient = { idempotencyKey: "k", profileId: "p", entityType: "individual" as const, settlementCurrency: "USD", returnUrl: "a://b", refreshUrl: "a://c" };
+    assert.deepEqual(tag(await provider.createRecipient({ ...recipient, country: "PH" })), ["unavailable", "unsupported_market"]);
+    assert.equal((await provider.createRecipient({ ...recipient, country: "US" })).status, "ok");
+    assert.deepEqual(tag(await provider.createRecipient({ ...recipient, country: "GB" })), ["unavailable", "market_not_enabled"]);
+    const destination = await attestedCharge(e, { key: "k-dest", chargeModel: "destination" });
+    assert.deepEqual(tag(await provider.createPaymentIntent(destination)), ["unavailable", "charge_model_not_supported"], "the stand-in offers direct charges only");
+    assert.deepEqual(s.adapter.reached.filter((op) => op === "createPaymentIntent"), []);
+  });
+
+  it("through the registry the FAKE is held to the same policy", async () => {
+    const off = env({ ...LOCAL_ENV, PAYMENT_PROVIDER: "fake" });
+    const request = { idempotencyKey: "pr7-r1", profileId: "pr7-profile", country: "US", entityType: "individual" as const, settlementCurrency: "USD", returnUrl: "a://b", refreshUrl: "a://c" };
+    assert.deepEqual(tag(await getPaymentProvider(off).createRecipient(request)), ["unavailable", "market_not_enabled"]);
+
+    const on = env({ ...LOCAL_ENV, PAYMENT_PROVIDER: "fake", TAX_PROVIDER: "fake", PAYMENTS_ENABLED_MARKETS: "US" });
+    const provider = getPaymentProvider(on);
+    const created = await provider.createRecipient(request);
+    assert.equal(created.status, "requires_action");
+    if (created.status !== "requires_action") throw new Error("unreachable");
+    const recipientRef = created.value.recipientRef;
+    sharedFakePaymentProvider(on)!.control.setRecipientOnboarding(recipientRef, "verified");
+
+    const forged = { ...forgedCharge("US"), idempotencyKey: "pr7-forged", recipientRef };
+    assert.deepEqual(tag(await provider.createPaymentIntent(forged)), ["unavailable", "tax_not_configured"]);
+    const good = await attestedCharge(on, { key: "pr7-c1", recipientRef });
+    const intent = await provider.createPaymentIntent(good);
+    assert.equal(intent.status, "ok", JSON.stringify(intent).slice(0, 200));
+    assert.deepEqual(tag(await getPaymentProvider(off).createPaymentIntent({ ...good, idempotencyKey: "pr7-c2" })), ["unavailable", "market_not_enabled"]);
   });
 });

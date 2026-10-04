@@ -10,7 +10,13 @@
  *   FW4  delivered late and out of order: an older snapshot arriving after a
  *        newer one is stale and changes nothing
  *   FW5  the property: every permutation of the deliveries, with duplicates,
- *        folds to the same state as the in-order sequence
+ *        folds to the same state as the in-order sequence; equal instants are
+ *        ordered by the counters that only grow, never by text
+ *   FW6  a malformed event — no body, or a kind without its snapshot — is
+ *        refused by the provider and IGNORED with a reason by the fold; neither
+ *        throws
+ *   FW7  two endpoints, two secrets: a delivery verifies only against the
+ *        secret of the endpoint it arrived on
  *
  * `09_Payment_Architecture.md` §7: "the PSP's event id is the idempotency key
  * and the handler must be order-independent as well as duplicate-safe."
@@ -24,12 +30,13 @@ import crypto from "node:crypto";
 
 import { assertWebhookLivemodeAllowed, webhookLivemodeRefused } from "../lib/paymentsMode.js";
 import {
+  FAKE_CONNECT_WEBHOOK_SECRET,
   FAKE_SIGNATURE_HEADER,
   FAKE_WEBHOOK_SECRET,
   createFakePaymentProvider,
   type FakePaymentProvider,
 } from "../services/payments/FakePaymentProvider.js";
-import { intentHandle, type PaymentWebhookEvent, type WebhookDelivery } from "../services/payments/PaymentProvider.js";
+import { intentHandle, type PaymentIntentSnapshot, type PaymentWebhookEvent, type PayoutSnapshot, type WebhookDelivery } from "../services/payments/PaymentProvider.js";
 import {
   applyPaymentEvent,
   canonicalJson,
@@ -39,7 +46,7 @@ import {
   type PaymentEventOutcome,
 } from "../services/payments/paymentEventFold.js";
 import { verifyPaymentWebhookSignature } from "../services/payments/paymentWebhookSignature.js";
-import { LOCAL_ENV, buildCharge, okValue, permutations, tag, verifiedRecipient } from "./helpers/paymentFixtures.js";
+import { LOCAL_ENV, buildCharge, okValue, permutations, sampleIntent, samplePayout, tag, verifiedRecipient } from "./helpers/paymentFixtures.js";
 
 const fresh = (env: NodeJS.ProcessEnv = LOCAL_ENV): FakePaymentProvider => createFakePaymentProvider({ env });
 
@@ -54,9 +61,9 @@ async function lifecycle(fake: FakePaymentProvider): Promise<{ recipientRef: str
   const recipientRef = await verifiedRecipient(fake, { key: "r1" });
   const created = okValue(await fake.createPaymentIntent(await buildCharge({ key: "c1", recipientRef, tipMinor: 1500 })), "create");
   fake.control.script.requireActionOnNextConfirm();
-  await fake.confirmPaymentIntent({ idempotencyKey: "c1-confirm", intent: intentHandle(created), paymentMethodRef: "pm" });
+  await fake.confirmPaymentIntent({ idempotencyKey: "c1-confirm", intent: intentHandle(created), paymentMethodRef: "pm", returnUrl: null });
   fake.control.completePayerAction(created.intentRef, "authenticated");
-  okValue(await fake.refundPayment({ idempotencyKey: "rf1", intent: intentHandle(created), amountMinor: 2500, reason: "support_decision", refundPlatformFee: true }), "refund");
+  okValue(await fake.refundPayment({ idempotencyKey: "rf1", intent: intentHandle(created), amountMinor: 2500, reason: "support_decision", refundPlatformFee: true, reverseTransfer: false }), "refund");
   return { recipientRef, intentRef: created.intentRef };
 }
 
@@ -104,9 +111,9 @@ describe("FW1 — raw body + signature -> a typed event", () => {
     const forged = crypto.createHmac("sha256", "whsec_not_the_secret").update(`${t}.${good!.rawBody}`, "utf8").digest("hex");
     const cases: Array<[string, WebhookDelivery]> = [
       ["a re-serialised body (one byte of whitespace)", tampered],
-      ["no signature header", { rawBody: good!.rawBody, headers: {} }],
-      ["a malformed signature header", { rawBody: good!.rawBody, headers: { [FAKE_SIGNATURE_HEADER]: "v1=" } }],
-      ["a signature made with another secret", { rawBody: good!.rawBody, headers: { [FAKE_SIGNATURE_HEADER]: `t=${t},v1=${forged}` } }],
+      ["no signature header", { rawBody: good!.rawBody, headers: {}, endpoint: good!.endpoint }],
+      ["a malformed signature header", { rawBody: good!.rawBody, headers: { [FAKE_SIGNATURE_HEADER]: "v1=" }, endpoint: good!.endpoint }],
+      ["a signature made with another secret", { rawBody: good!.rawBody, headers: { [FAKE_SIGNATURE_HEADER]: `t=${t},v1=${forged}` }, endpoint: good!.endpoint }],
     ];
     for (const [name, delivery] of cases) assert.deepEqual(tag(await fake.verifyAndParseWebhook(delivery)), ["failed", "signature_invalid"], name);
 
@@ -114,11 +121,11 @@ describe("FW1 — raw body + signature -> a typed event", () => {
     const stale = await fake.verifyAndParseWebhook(good!);
     assert.deepEqual(tag(stale), ["failed", "signature_invalid"], "a delivery older than the replay window");
     assert.match(stale.status === "failed" ? stale.detail : "", /signature_timestamp_out_of_tolerance/);
-    assert.ok(!JSON.stringify(stale).includes(FAKE_WEBHOOK_SECRET));
+    assert.ok(!JSON.stringify(stale).includes(FAKE_WEBHOOK_SECRET) && !JSON.stringify(stale).includes(FAKE_CONNECT_WEBHOOK_SECRET));
   });
 
   it("an unconfigured secret is unavailable — never a pass", () => {
-    const delivery = { rawBody: "{}", headers: { "x-signature": "t=1,v1=00" } };
+    const delivery = { rawBody: "{}", headers: { "x-signature": "t=1,v1=00" }, endpoint: "platform" as const };
     for (const secret of [undefined, "", "   "]) {
       const r = verifyPaymentWebhookSignature({ provider: "p", delivery, headerName: "x-signature", secret });
       assert.deepEqual(r && [r.status, r.reason], ["unavailable", "webhook_secret_not_configured"], JSON.stringify(secret));
@@ -130,11 +137,12 @@ describe("FW1 — raw body + signature -> a typed event", () => {
     for (const raw of ["not json", "[]", "null", JSON.stringify({ id: "e", type: "x" }), JSON.stringify({ id: "e", type: "x", livemode: "false", created: "2026-01-01T00:00:00.000Z", account: null, data: { kind: "ignored" } })]) {
       assert.deepEqual(tag(await fake.verifyAndParseWebhook(fake.control.webhooks.signRawBody(raw))), ["failed", "webhook_malformed"], raw);
     }
-    assert.deepEqual(tag(await fake.verifyAndParseWebhook({ rawBody: 5 as any, headers: {} })), ["failed", "webhook_malformed"]);
+    assert.deepEqual(tag(await fake.verifyAndParseWebhook({ rawBody: 5 as any, headers: {}, endpoint: "platform" })), ["failed", "webhook_malformed"]);
     const unmodelled = JSON.stringify({ id: "fake_evt_custom", type: "balance.available", livemode: false, created: "2026-01-01T00:00:00.000Z", account: null, data: { kind: "ignored" } });
     const event = okValue(await fake.verifyAndParseWebhook(fake.control.webhooks.signRawBody(unmodelled)), "ignored");
     assert.deepEqual([event.body.kind, event.providerEventId, event.providerEventType], ["ignored", "fake_evt_custom", "balance.available"]);
-    assert.equal(applyPaymentEvent(emptyPaymentEventState(), event).outcome, "ignored");
+    const ignored = applyPaymentEvent(emptyPaymentEventState(), event);
+    assert.deepEqual([ignored.outcome, ignored.reason], ["ignored", "unmodelled"]);
   });
 });
 
@@ -165,7 +173,7 @@ describe("FW2 — a livemode event is refused in the testing environment", () =>
     const fake = fresh();
     await lifecycle(fake);
     const [live] = fake.control.webhooks.deliver({ order: [4], livemode: true });
-    const unsigned = { rawBody: live!.rawBody, headers: { [FAKE_SIGNATURE_HEADER]: "t=1,v1=00" } };
+    const unsigned = { rawBody: live!.rawBody, headers: { [FAKE_SIGNATURE_HEADER]: "t=1,v1=00" }, endpoint: live!.endpoint };
     assert.deepEqual(tag(await fake.verifyAndParseWebhook(unsigned)), ["failed", "signature_invalid"]);
   });
 
@@ -282,7 +290,7 @@ describe("FW4 — delivered late and out of order", () => {
     const recipientRef = await verifiedRecipient(fake, { key: "r1" });
     const created = okValue(await fake.createPaymentIntent(await buildCharge({ key: "c1", recipientRef })), "create");
     fake.control.script.requireActionOnNextConfirm();
-    await fake.confirmPaymentIntent({ idempotencyKey: "k1", intent: intentHandle(created), paymentMethodRef: "pm" });
+    await fake.confirmPaymentIntent({ idempotencyKey: "k1", intent: intentHandle(created), paymentMethodRef: "pm", returnUrl: null });
     fake.control.completePayerAction(created.intentRef, "failed");
     const events = await parseAll(fake, fake.control.webhooks.deliver());
     for (const order of permutations(events)) {
@@ -325,13 +333,155 @@ describe("FW5 — any order, any multiplicity, the same state", () => {
     assert.deepEqual([...folded], ["succeeded"]);
   });
 
-  it("equal instants are broken by a fixed order, so two snapshots with one timestamp cannot disagree", () => {
+  it("equal instants are broken by the counters that only grow — never by how two snapshots sort as text", () => {
     const at = "2026-01-01T00:00:10.000Z";
-    const base = { provider: "p", providerEventType: "t", livemode: false, occurredAt: at, accountRef: null };
-    const snapshot = (state: string) => ({ intentRef: "pi_1", state, updatedAt: at }) as any;
-    const a: PaymentWebhookEvent = { ...base, providerEventId: "e1", body: { kind: "payment_intent", intent: snapshot("requires_capture") } };
-    const b: PaymentWebhookEvent = { ...base, providerEventId: "e2", body: { kind: "payment_intent", intent: snapshot("succeeded") } };
-    assert.equal(foldPaymentEvents([a, b]).intents.get("pi_1")?.state, "succeeded");
-    assert.equal(foldPaymentEvents([b, a]).intents.get("pi_1")?.state, "succeeded");
+    const event = (id: string, intent: PaymentIntentSnapshot): PaymentWebhookEvent => ({ provider: "p", providerEventId: id, endpoint: "connect", providerEventType: "t", livemode: false, occurredAt: at, accountRef: "acct_1", body: { kind: "payment_intent", intent }, });
+    const both = (a: PaymentWebhookEvent, b: PaymentWebhookEvent) => [foldPaymentEvents([a, b]).intents.get("pi_1"), foldPaymentEvents([b, a]).intents.get("pi_1")];
+    const captured = { state: "succeeded" as const, amountCapturableMinor: 0, amountCapturedMinor: 11_000, updatedAt: at };
+
+    // The verifier's case: one second, two refunds. As TEXT "1000" sorts before "900"; as a number it is later.
+    for (const held of both(event("e1", sampleIntent({ ...captured, amountRefundedMinor: 900 })), event("e2", sampleIntent({ ...captured, amountRefundedMinor: 1000 })))) {
+      assert.equal(held?.amountRefundedMinor, 1000);
+    }
+    // A capture and its authorisation in one second: the captured snapshot wins.
+    for (const held of both(event("e1", sampleIntent({ updatedAt: at })), event("e2", sampleIntent(captured)))) {
+      assert.deepEqual([held?.state, held?.amountCapturedMinor], ["succeeded", 11_000]);
+    }
+    // Refunded outranks captured: a refund of a small capture beats a larger capture with none.
+    for (const held of both(event("e1", sampleIntent({ ...captured, amountCapturedMinor: 11_000, amountRefundedMinor: 0 })), event("e2", sampleIntent({ ...captured, amountCapturedMinor: 5000, amountRefundedMinor: 1 })))) {
+      assert.equal(held?.amountRefundedMinor, 1);
+    }
+    // With every counter equal, state rank decides.
+    for (const held of both(event("e1", sampleIntent({ state: "requires_action", updatedAt: at })), event("e2", sampleIntent({ state: "requires_capture", updatedAt: at })))) {
+      assert.equal(held?.state, "requires_capture");
+    }
+  });
+
+  it("a LATER instant always wins, whatever the counters say", () => {
+    const event = (id: string, intent: PaymentIntentSnapshot): PaymentWebhookEvent => ({ provider: "p", providerEventId: id, endpoint: "connect", providerEventType: "t", livemode: false, occurredAt: intent.updatedAt, accountRef: "acct_1", body: { kind: "payment_intent", intent } });
+    // A refund that was reported and then FAILED: the provider's later snapshot has LESS refunded.
+    const reported = event("e1", sampleIntent({ state: "succeeded", amountCapturedMinor: 11_000, amountRefundedMinor: 1000, updatedAt: "2026-01-01T00:00:10.000Z" }));
+    const corrected = event("e2", sampleIntent({ state: "succeeded", amountCapturedMinor: 11_000, amountRefundedMinor: 0, updatedAt: "2026-01-01T00:00:11.000Z" }));
+    assert.equal(foldPaymentEvents([reported, corrected]).intents.get("pi_1")?.amountRefundedMinor, 0);
+    assert.equal(foldPaymentEvents([corrected, reported]).intents.get("pi_1")?.amountRefundedMinor, 0);
+  });
+
+  it("same-instant payouts order by what was reversed, then by state rank", () => {
+    const at = "2026-01-01T00:00:10.000Z";
+    const event = (id: string, payout: PayoutSnapshot): PaymentWebhookEvent => ({ provider: "p", providerEventId: id, endpoint: "platform", providerEventType: "t", livemode: false, occurredAt: at, accountRef: null, body: { kind: "payout", payout } });
+    const a = event("e1", samplePayout({ kind: "transfer", state: "paid", amountReversedMinor: 90, updatedAt: at }));
+    const b = event("e2", samplePayout({ kind: "transfer", state: "paid", amountReversedMinor: 100, updatedAt: at }));
+    assert.equal(foldPaymentEvents([a, b]).payouts.get("po_1")?.amountReversedMinor, 100);
+    assert.equal(foldPaymentEvents([b, a]).payouts.get("po_1")?.amountReversedMinor, 100);
+  });
+});
+
+describe("FW6 — a malformed event is ignored with a reason; it never throws", () => {
+  const envelope = { provider: "p", endpoint: "platform" as const, providerEventType: "t", livemode: false, occurredAt: "2026-01-01T00:00:10.000Z", accountRef: null };
+
+  it("the fake refuses a verified event whose body lacks the object its kind promises", async () => {
+    const fake = fresh();
+    const base = { id: "fake_evt_x", type: "payment_intent.succeeded", livemode: false, created: "2026-01-01T00:00:00.000Z", account: null };
+    const bodies: unknown[] = [
+      { kind: "payment_intent" },
+      { kind: "payment_intent", intent: null },
+      { kind: "payment_intent", intent: { intentRef: "pi_1", state: "succeeded" } },
+      { kind: "refund", refund: {} },
+      { kind: "payout", payout: { payoutRef: "po_1" } },
+      { kind: "teleport" },
+      null,
+      "payment_intent",
+    ];
+    for (const data of bodies) {
+      const r = await fake.verifyAndParseWebhook(fake.control.webhooks.signRawBody(JSON.stringify({ ...base, data })));
+      assert.deepEqual(tag(r), ["failed", "webhook_malformed"], JSON.stringify(data));
+    }
+    const missing = await fake.verifyAndParseWebhook(fake.control.webhooks.signRawBody(JSON.stringify(base)));
+    assert.deepEqual(tag(missing), ["failed", "webhook_malformed"], "no data at all");
+  });
+
+  it("the fold ignores a body it cannot read — recorded as seen, state untouched, no throw", () => {
+    const malformed: Array<[string, unknown]> = [
+      ["a kind with no snapshot", { kind: "payment_intent" }],
+      ["a null snapshot", { kind: "payment_intent", intent: null }],
+      ["a snapshot missing its counters", { kind: "payment_intent", intent: { intentRef: "pi_1", state: "succeeded", updatedAt: "2026-01-01T00:00:10.000Z" } }],
+      ["a snapshot with an unparseable time", { kind: "payment_intent", intent: { ...sampleIntent(), updatedAt: "yesterday" } }],
+      ["a null body", null],
+      ["no body", undefined],
+      ["a string body", "payment_intent"],
+      ["an unknown kind", { kind: "teleport" }],
+      ["a payout with no reversed counter", { kind: "payout", payout: { ...samplePayout(), amountReversedMinor: undefined } }],
+    ];
+    for (const [name, body] of malformed) {
+      const event = { ...envelope, providerEventId: "evt_bad", body } as unknown as PaymentWebhookEvent;
+      const empty = emptyPaymentEventState();
+      const applied = applyPaymentEvent(empty, event);
+      assert.deepEqual([applied.outcome, applied.reason], ["ignored", "malformed_body"], name);
+      assert.deepEqual(describePaymentEventState(applied.state), { seenEventIds: ["evt_bad"], intents: [], refunds: [], recipients: [], payouts: [], disputes: [] }, name);
+      assert.deepEqual([applyPaymentEvent(applied.state, event).outcome, applyPaymentEvent(applied.state, event).reason], ["duplicate", null], `${name}: delivered again`);
+    }
+  });
+
+  it("an envelope with no event id cannot even be recorded: ignored as malformed_event, state returned as it was", () => {
+    const state = emptyPaymentEventState();
+    for (const event of [null, undefined, "evt", {}, { ...envelope, body: { kind: "ignored" } }, { ...envelope, providerEventId: "", body: { kind: "ignored" } }, { ...envelope, providerEventId: 7, body: { kind: "ignored" } }]) {
+      const applied = applyPaymentEvent(state, event as unknown as PaymentWebhookEvent);
+      assert.deepEqual([applied.outcome, applied.reason], ["ignored", "malformed_event"], JSON.stringify(event));
+      assert.equal(applied.state, state);
+    }
+  });
+
+  it("the reasons are distinct: unmodelled is a well-formed event about something else; applied, stale and duplicate carry none", () => {
+    const good: PaymentWebhookEvent = { ...envelope, providerEventId: "e1", body: { kind: "payment_intent", intent: sampleIntent({ updatedAt: "2026-01-01T00:00:10.000Z" }) } };
+    const older: PaymentWebhookEvent = { ...envelope, providerEventId: "e0", body: { kind: "payment_intent", intent: sampleIntent({ state: "requires_confirmation", updatedAt: "2026-01-01T00:00:09.000Z" }) } };
+    const other: PaymentWebhookEvent = { ...envelope, providerEventId: "e2", body: { kind: "ignored" } };
+    const first = applyPaymentEvent(emptyPaymentEventState(), good);
+    assert.deepEqual([first.outcome, first.reason], ["applied", null]);
+    assert.deepEqual([applyPaymentEvent(first.state, older).outcome, applyPaymentEvent(first.state, older).reason], ["stale", null]);
+    assert.deepEqual([applyPaymentEvent(first.state, good).outcome, applyPaymentEvent(first.state, good).reason], ["duplicate", null]);
+    assert.deepEqual([applyPaymentEvent(first.state, other).outcome, applyPaymentEvent(first.state, other).reason], ["ignored", "unmodelled"]);
+    // A bad delivery in the middle of good ones changes nothing about the good ones.
+    const bad = { ...envelope, providerEventId: "e3", body: { kind: "payment_intent" } } as unknown as PaymentWebhookEvent;
+    assert.equal(foldPaymentEvents([older, bad, good, bad]).intents.get("pi_1")?.state, "requires_capture");
+  });
+});
+
+describe("FW7 — two endpoints, two secrets", () => {
+  it("events about a recipient's account arrive on the connect endpoint; the platform's own on the platform endpoint", async () => {
+    const fake = fresh();
+    const { recipientRef } = await lifecycle(fake);
+    assert.deepEqual([...new Set(fake.control.webhooks.pending().map((p) => p.endpoint))], ["connect"], "a direct charge lives on the recipient's account");
+    const direct = fake.control.webhooks.deliver();
+    assert.deepEqual([...new Set(direct.map((d) => d.endpoint))], ["connect"]);
+    assert.equal(okValue(await fake.verifyAndParseWebhook(direct[0]!), "verify").endpoint, "connect");
+
+    fake.control.fundPlatformBalance({ amountMinor: 1000, currency: "USD" });
+    okValue(await fake.requestPayout({ idempotencyKey: "tr", kind: "transfer", recipientRef, amount: { amountMinor: 1000, currency: "USD" }, reference: { kind: "x", id: "1" } }), "transfer");
+    const jp = await verifiedRecipient(fake, { key: "jp", country: "JP", settlementCurrency: "JPY" });
+    okValue(await fake.createPaymentIntent(await buildCharge({ key: "d1", recipientRef: jp, sellerMarket: "JP", buyerMarket: "JP", currency: "JPY", chargeModel: "destination" })), "destination");
+    assert.deepEqual(
+      fake.control.webhooks.pending().map((p) => [p.providerEventType, p.endpoint]),
+      [["transfer.paid", "platform"], ["recipient.created", "connect"], ["recipient.updated", "connect"], ["payment_intent.created", "platform"]],
+      "a transfer and a destination charge are the platform's own objects",
+    );
+    const mixed = fake.control.webhooks.deliver();
+    const events = await parseAll(fake, mixed);
+    assert.deepEqual(events.map((e) => [e.endpoint, e.accountRef === null]), [["platform", true], ["connect", false], ["connect", false], ["platform", true]]);
+  });
+
+  it("a delivery verifies only against the secret of the endpoint it arrived on", async () => {
+    const fake = fresh();
+    await lifecycle(fake);
+    const [connect] = fake.control.webhooks.deliver({ order: [0] });
+    assert.equal(connect!.endpoint, "connect");
+    assert.equal((await fake.verifyAndParseWebhook(connect!)).status, "ok", "the control");
+    assert.deepEqual(tag(await fake.verifyAndParseWebhook({ ...connect!, endpoint: "platform" })), ["failed", "signature_invalid"], "signed with the connect secret, presented on the platform endpoint");
+    const platformSigned = fake.control.webhooks.signRawBody(connect!.rawBody, "platform");
+    assert.deepEqual(tag(await fake.verifyAndParseWebhook({ ...platformSigned, endpoint: "connect" })), ["failed", "signature_invalid"]);
+    assert.deepEqual(tag(await fake.verifyAndParseWebhook({ rawBody: connect!.rawBody, headers: connect!.headers } as any)), ["failed", "webhook_malformed"], "the route must say which endpoint");
+    assert.notEqual(FAKE_WEBHOOK_SECRET, FAKE_CONNECT_WEBHOOK_SECRET);
+    const t = Math.floor(fake.control.nowMs() / 1000);
+    const withPlatformSecret = crypto.createHmac("sha256", FAKE_WEBHOOK_SECRET).update(`${t}.${connect!.rawBody}`, "utf8").digest("hex");
+    assert.deepEqual(tag(await fake.verifyAndParseWebhook({ rawBody: connect!.rawBody, headers: { [FAKE_SIGNATURE_HEADER]: `t=${t},v1=${withPlatformSecret}` }, endpoint: "connect" })), ["failed", "signature_invalid"]);
   });
 });
