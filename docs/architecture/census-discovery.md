@@ -6046,9 +6046,9 @@ about what it owed and it paid it.
 
 `B05`'s cell at §91 carries two BARE inherited pointers whose anchors contain a
 double quote. **`check:doc-citations` cannot see either of them.** `ANCHOR` at
-`artifacts/api-server/scripts/check-doc-citations.mjs:405#const ANCHOR` stops at
+`artifacts/api-server/scripts/check-doc-citations.mjs:413#const ANCHOR` stops at
 the first `"`, and `INHERITED_RE` at
-`artifacts/api-server/scripts/check-doc-citations.mjs:413#export const INHERITED_RE`
+`artifacts/api-server/scripts/check-doc-citations.mjs:421#export const INHERITED_RE`
 then demands a closing backtick that is not there, so the citation matches
 nothing: not counted, not checked, not reported. The sibling hazard with a SPACE
 in the anchor IS refused, by `UNBINDABLE_INHERITED_RE`; the quote form falls
