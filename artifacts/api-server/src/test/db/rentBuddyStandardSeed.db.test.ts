@@ -84,13 +84,12 @@ function tagged(stdout: string, tag: string): string {
   return line.slice(tag.length + 1);
 }
 
-/**
- * `RAISE NOTICE` goes to STDERR, not stdout — psql writes server messages there.
- * Asserting a migration's own NOTICE against stdout silently never matches.
- */
-function noticeCount(stderr: string, needle: string): number {
-  return stderr.split("\n").filter((l) => l.includes(needle)).length;
-}
+/** The whole 'standard' row as one comparable string, tagged. */
+const STANDARD_TUPLE = (tag: string) =>
+  `SELECT '${tag}=' || platform_fee_basis_points || '|' || platform_fee_percent || '|' || ` +
+  `       coalesce(commission_override_approval, '<null>') || '|' || ` +
+  `       traveler_service_fee_usd || '|' || traveler_service_fee_pct ` +
+  `  FROM public.rent_buddy_fee_rules WHERE buddy_level='standard';`;
 
 describe("3521: the 'standard' level is priced at the approved flat rate", { skip: !HAVE_DB && "no LOCAL_DB_URL" }, () => {
   it("S0: after 3520 + 3521, 'standard' carries 1000 basis points and no approval", () => {
@@ -127,16 +126,33 @@ describe("3521: the 'standard' level is priced at the approved flat rate", { ski
       "three applies must leave exactly one row — ON CONFLICT DO NOTHING is what makes the " +
       "second and third applies no-ops rather than duplicates",
     );
-    // And the second and third runs must SAY they did nothing, rather than
-    // reporting a seed. The notice is on stderr.
-    assert.equal(
-      noticeCount(r.stderr, "3521 OK (no-op)"), 2,
-      `expected 2 no-op notices from the 2nd and 3rd applies:\n${r.stderr}`,
+
+    // AND the row after three applies must be IDENTICAL to the row after one.
+    //
+    // This replaces an earlier assertion that counted the migration's own
+    // "3521 OK (no-op)" NOTICE. That was testing the migration's LOGGING, not
+    // its behaviour, and psql notice capture turned out to be unreliable here
+    // (3520's notices arrived on stderr while 3521's did not, in the same
+    // script). Comparing the resulting ROW is strictly stronger: a notice can
+    // be right while the data is wrong, but if the row is byte-identical after
+    // N applies then the 2nd and 3rd applies changed nothing, whatever they
+    // printed.
+    const once = psql(
+      `BEGIN;\n${B3520}\n${B3521}\n` +
+      `DELETE FROM public.rent_buddy_fee_rules WHERE buddy_level <> 'standard';\n` +
+      STANDARD_TUPLE("ROW") + `\nROLLBACK;\n`,
     );
+    ok(once, "3521 x1");
+    const thrice = psql(
+      `BEGIN;\n${B3520}\n${B3521}\n${B3521}\n${B3521}\n` +
+      `DELETE FROM public.rent_buddy_fee_rules WHERE buddy_level <> 'standard';\n` +
+      STANDARD_TUPLE("ROW") + `\nROLLBACK;\n`,
+    );
+    ok(thrice, "3521 x3 (tuple)");
     assert.equal(
-      noticeCount(r.stderr, "''standard'' seeded at 1000") +
-      noticeCount(r.stderr, "'standard' seeded at 1000"), 1,
-      `exactly one apply may report an actual seed:\n${r.stderr}`,
+      tagged(thrice.stdout, "ROW"), tagged(once.stdout, "ROW"),
+      "the 'standard' row after THREE applies must equal the row after ONE — that is what " +
+      "idempotent means for a seed, and it is a fact about the data rather than about a log line",
     );
   });
 
@@ -155,6 +171,7 @@ describe("3521: the 'standard' level is priced at the approved flat rate", { ski
       `SELECT 'AFTER=' || platform_fee_basis_points || '|' || platform_fee_percent || '|' || ` +
       `       coalesce(commission_override_approval, '<null>') ` +
       `  FROM public.rent_buddy_fee_rules WHERE buddy_level='standard';\n` +
+      `SELECT 'ROWS=' || count(*)::text FROM public.rent_buddy_fee_rules WHERE buddy_level='standard';\n` +
       `ROLLBACK;\n`,
     );
     ok(r, "seed over an operator edit");
@@ -163,10 +180,9 @@ describe("3521: the 'standard' level is priced at the approved flat rate", { ski
       "the operator's rate, mirror and approval must all survive the re-run EXACTLY. " +
       "A migration that reverts live pricing on re-run is a money defect.",
     );
-    // The notice is on stderr, and it must say no-op rather than claim a seed.
     assert.equal(
-      noticeCount(r.stderr, "3521 OK (no-op)"), 1,
-      `the re-run must report itself as a no-op:\n${r.stderr}`,
+      tagged(r.stdout, "ROWS"), "1",
+      "and the re-run must not have added a second 'standard' row beside the operator's",
     );
   });
 
