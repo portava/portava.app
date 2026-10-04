@@ -524,7 +524,7 @@ None of these changes the ranked order of the Discovery feed. Turn them on one a
 ### Action 24 — the creator ledger (P2) · production activation
 
 - **Approve**, only after question 22(a):
-  1. The C-11 answer your decision selects: `reconciliation-staging/3511_…delete_on_erasure.sql` or `…/3512_…retain_pseudonymised.sql`, both written and rehearsed (census §107) and held out of the chain. Until then `3510_creator_ledger_erasure_policy_undecided.sql` refuses every ledger deletion, so P2 + 3510 may be applied without this answer (rollout plan §1.5).
+  1. **ANSWERED 2026-10-04: retain, pseudonymised.** The file this selected is now `artifacts/api-server/src/migrations/3513_creator_ledger_erasure_retain_pseudonymised.sql` (promoted from `reconciliation-staging/3512_…`), with `reconciliation-staging/3511_…delete_on_erasure.sql` left held and unapplied. Both were written and rehearsed (census §107); the chosen one is in the chain and applied to no database, per the same ruling. Until then `3510_creator_ledger_erasure_policy_undecided.sql` refuses every ledger deletion, so P2 + 3510 may be applied without this answer (rollout plan §1.5).
   2. Then P2, in order: `2901` (with the fix), `2920`, `2921`, `2922`, `2930`, `3385`, `3386`, `3387`.
   3. `creator_attribution_enabled` stays FALSE until 22(b) publishes a rule (B1) and a producer exists (B7).
 - **Unblocks:** it is a precondition of 15 rows: DC-23, DV-26, DV-56–DV-60, DV-63–DV-68, DV-70 and DV-74. None moves on the apply alone; most then need a producer or a published rule (§7).
@@ -606,7 +606,7 @@ This page does not answer these. Each gives a recommended answer and what follow
 ### Question 22 — money · financial
 
 - **(a) C-11** (W10D-B0; also retention). On account erasure, are a creator's earning records deleted, or retained with the direct identity removed (pseudonymised — census §107.4 shows the rows stay linkable, so not anonymous) for a statutory period?
-  - **Recommended: retain, pseudonymised (3512), for the period your legal advice sets** (`09` §6, §11; `04` §11). The period has no spec value, and 3512 builds no purge for it.
+  - **Recommended: retain, pseudonymised (now 3513), for the period your legal advice sets** (`09` §6, §11; `04` §11). **CHOSEN 2026-10-04.** The period STILL has no value and 3513 builds no purge for it, so what is implemented retains indefinitely — which is why the same ruling withheld the apply pending Q11(a).
   - The answer selects the fix migration of action 24. Either answer can be changed at no cost before any creator row exists.
 - **(b) B1–B11.** These are W10D-B1 … W10D-B11, verbatim from census §52.8, with their spec grounds. Recommended defaults:
   - B1: no percentage (the spec gives none), and publishing restricted to you;
@@ -643,7 +643,7 @@ None of these is a new decision.
 1. A tripped stop does not turn off 3455 or 3456 (action 8), or any flag of action 10. Their recovery is a manual flag flip.
 2. Closed by §97 (W11-S): 3440, 3441, 2289, 2297, 2892, 2894, 2995 and 2893 each have a guarded `db/rollback/` file, rehearsed (apply plan §8.5).
 3. Closed by §97 (W11-S): 2901, 2921 and 2930 have rollback files; 2901's and 2921's refuse while any ledger row exists (apply plan §8.5).
-4. The C-11 fix is written as two held answers (3511 delete, 3512 retain; census §107); which one is applied waits on question 22(a). 3510 holds the choice open meanwhile.
+4. The C-11 fix was written as two held answers (3511 delete, 3512 retain; census §107). **Question 22(a) is ANSWERED (2026-10-04): retain, pseudonymised.** Answer B is promoted into the chain as 3513 and wired into `AccountDeletionService`; 3511 stays held. Applying 3513 to a hosted database waits on Q11(a) and on a defined retention period.
 5. The 33 files added since §87 have not been through the applier from the modelled `portava-ci` baseline (apply plan §8.3).
 
 ---

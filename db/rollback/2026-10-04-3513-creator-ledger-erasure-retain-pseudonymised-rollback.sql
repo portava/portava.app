@@ -1,8 +1,14 @@
--- Rollback for 3512_creator_ledger_erasure_retain_pseudonymised.sql (HELD — C-11 answer B).
--- Written 2026-09-30 by the creator-ledger lane (census-discovery §107).
--- Rehearsed only inside fixture B's throwaway database
+-- Rollback for 3513_creator_ledger_erasure_retain_pseudonymised.sql (C-11 answer B, chosen).
+-- Written 2026-09-30 by the creator-ledger lane (census-discovery §107); promoted
+-- with its migration on 2026-10-04 when the owner answered C-11.
+-- Rehearsed only in the throwaway local-db harness and its clones
 -- (src/test/db/creatorLedgerErasurePolicy.db.test.ts); never run against
 -- portava-ci (hwokxgbmezheskbzskfr) or travel-buddy (ajrurzioarfkagpuxfnb).
+--
+-- IT IS NOT A WAY BACK FROM AN ERASURE. It restores the SCHEMA, and only while
+-- no erasure has used it: an identity removal is irreversible by construction
+-- (no mapping from the pseudonym back to the person is stored anywhere), so the
+-- first refusal below is the only honest behaviour once a single receipt exists.
 --
 -- Returns the schema to 3510's "undecided" state. It REFUSES while any row is
 -- pseudonymised or any identity-removal receipt exists: dropping the pseudonym
@@ -23,7 +29,7 @@ BEGIN
        + (SELECT count(*) FROM public.creator_ledger_identity_removals)
     INTO n;
   IF n > 0 THEN
-    RAISE EXCEPTION 'ROLLBACK REFUSED (3512): % pseudonymised row(s) or identity-removal receipt(s) exist. Nothing has been changed.', n;
+    RAISE EXCEPTION 'ROLLBACK REFUSED (3513): % pseudonymised row(s) or identity-removal receipt(s) exist. Nothing has been changed.', n;
   END IF;
 END
 $pre$;
@@ -98,7 +104,7 @@ CREATE TRIGGER clae_erasure_policy_undecided BEFORE DELETE ON public.creator_led
 DO $$
 BEGIN
   IF to_regclass('public.schema_migration_ledger') IS NOT NULL THEN
-    DELETE FROM public.schema_migration_ledger WHERE filename = '3512_creator_ledger_erasure_retain_pseudonymised.sql';
+    DELETE FROM public.schema_migration_ledger WHERE filename = '3513_creator_ledger_erasure_retain_pseudonymised.sql';
   END IF;
 END $$;
 
@@ -108,13 +114,13 @@ DO $post$
 DECLARE n int;
 BEGIN
   IF to_regprocedure('public.creator_ledger_remove_identity(uuid,text,uuid,text)') IS NOT NULL THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3512 rollback): the identity-removal door still exists.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3513 rollback): the identity-removal door still exists.';
   END IF;
   SELECT count(*) INTO n FROM pg_trigger
    WHERE NOT tgisinternal AND tgfoid = 'public.creator_ledger_erasure_policy_undecided()'::regprocedure;
-  IF n <> 4 THEN RAISE EXCEPTION 'POSTCONDITION FAILED (3512 rollback): 3510''s guard is on % of 4 tables.', n; END IF;
+  IF n <> 4 THEN RAISE EXCEPTION 'POSTCONDITION FAILED (3513 rollback): 3510''s guard is on % of 4 tables.', n; END IF;
   SELECT count(*) INTO n FROM pg_trigger
    WHERE NOT tgisinternal AND tgfoid = 'public.intel_append_only()'::regprocedure
      AND tgname IN ('rbee_no_update', 'ca_no_update', 'cee_no_update', 'clae_no_update');
-  IF n <> 4 THEN RAISE EXCEPTION 'POSTCONDITION FAILED (3512 rollback): % of 4 append-only triggers restored.', n; END IF;
+  IF n <> 4 THEN RAISE EXCEPTION 'POSTCONDITION FAILED (3513 rollback): % of 4 append-only triggers restored.', n; END IF;
 END $post$;

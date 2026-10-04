@@ -1407,6 +1407,50 @@ export async function executeAccountDeletion(
     return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
   }
 
+  // ── Creator-ledger pseudonymisation (migration 3513, C-11 answer B) ───────
+  // The owner's answer to C-11, verbatim: "Pseudonymize accounting entries,
+  // removing direct identifiers and the identity link when deletion is
+  // requested. Keep only the records needed for tax, accounting, disputes, or
+  // legal claims, with a defined retention period and access controls."
+  //
+  // The four creator / Rent-a-Buddy ledgers (rent_buddy_earnings_entries,
+  // creator_attributions, creator_earning_entries, creator_ledger_audit_events)
+  // are the only tables in this cascade that are KEPT ON PURPOSE. They are not
+  // content and they are not forgotten: the rows stay, as the accounting record,
+  // and what leaves is the person — their profile id in every column, and the
+  // foreign keys that are the identity LINK.
+  //
+  // WHY IT HAS TO BE HERE AND NOT IN A CASCADE. 3510's header says it: this
+  // service keeps an anonymised TOMBSTONE profile and never deletes a `profiles`
+  // row, so no key hanging off profiles(id) ever fires — not 2920's CASCADE, not
+  // 3387's, and not 2901's old SET NULL. Before this step the four ledgers named
+  // every departed creator and buddy forever, and the cascade never reached the
+  // guard that was supposed to decide their fate. The deletion path is where the
+  // chosen policy becomes real.
+  //
+  // FATAL, like erase_derived_memory and the sensing step above. A retained
+  // financial record is retained INDEFINITELY (3513 builds no purge, because the
+  // retention period has no value yet), so an erasure that completes with the
+  // identity still in it does not leave a residue that ages out — it leaves the
+  // person's uuid in a permanent record, with their account gone and the request
+  // marked completed. Aborting here leaves the request pending, every step above
+  // it idempotent, and nothing anonymised.
+  //
+  // It records NO COUNT, deliberately. 3513's own comment on the door says the
+  // caller must not log the counts beside the user id: how many ledger rows a
+  // person had is a fingerprint that could be matched back to a pseudonym's rows
+  // later. `step` persists nothing, but `deletedCounts` IS persisted on the
+  // request receipt, so the ledger contributes to neither.
+  const ledgerOk = await step(steps, "pseudonymise_creator_ledger", async () => {
+    await pseudonymiseCreatorLedger(sc, userId, opts.actorId ?? null);
+  });
+  if (!ledgerOk) {
+    warnings.push(
+      "creator-ledger entries may still name the erased account — deletion aborted before profile anonymisation; retry is safe",
+    );
+    return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
+  }
+
   // ── 4. Anonymise the tombstone profile (FATAL on failure) ─────────────────
   const profileOk = await step(steps, "anonymise_profile", async () => {
     must(
@@ -1527,6 +1571,182 @@ export async function executeAccountDeletion(
   );
 
   return { ok, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
+}
+
+/**
+ * ── THE CREATOR LEDGER'S IDENTITY LINK ──────────────────────────────────────
+ *
+ * One entry per ledger table and the ONE column on it that names a person: the
+ * foreign key to profiles(id). These are the columns whose severing IS the
+ * "identity link" half of the owner's C-11 answer, and the only columns this
+ * module reads — never the pseudonym columns 3513 adds, so the probe below
+ * means the same thing on a database where 3513 is applied and on one where it
+ * is not.
+ *
+ * The other identifying columns of these tables (subject_id, booking_id,
+ * value_event_id, recommendation_id) are NOT identity columns: they name a
+ * booking, a trail or a served recommendation. They are how a retained row is
+ * still LINKABLE to the person — 3513's header spells that out under
+ * "PSEUDONYMISED, NOT ANONYMOUS" — and cutting them is not what the owner
+ * decided, so nothing here pretends to.
+ */
+export const CREATOR_LEDGER_IDENTITY_COLUMNS: ReadonlyArray<{ table: string; column: string }> = [
+  { table: "rent_buddy_earnings_entries", column: "beneficiary_user_id" },
+  { table: "creator_attributions", column: "beneficiary_user_id" },
+  { table: "creator_earning_entries", column: "beneficiary_user_id" },
+  { table: "creator_ledger_audit_events", column: "actor_user_id" },
+];
+
+/** The reason written onto 3513's receipt. It names no person — the receipt may not. */
+export const CREATOR_LEDGER_REMOVAL_REASON =
+  "Account deletion executed — C-11 answer B: accounting entries retained, direct identifiers and the identity link removed";
+
+/** A table that is not on this database at all. Its absence IS the absence of rows. */
+function isMissingLedgerRelation(err: any): boolean {
+  const code = err?.code ?? err?.details?.code;
+  return code === "42P01" || code === "PGRST205";
+}
+
+/** 3513's door is not on this database (an under-migrated environment). */
+function isMissingLedgerFunction(err: any): boolean {
+  const code = err?.code ?? err?.details?.code;
+  return code === "42883" || code === "PGRST202";
+}
+
+function errText(err: any): string {
+  return err?.message ?? err?.details ?? err?.code ?? String(err);
+}
+
+/**
+ * Does `table` still hold a row whose identity column names `userId`?
+ *
+ * THE MASTER INVARIANT, APPLIED LITERALLY. supabase-js RESOLVES `{ data, error }`
+ * instead of throwing, so the three ways this question can fail to be answered
+ * all arrive as an ordinary return value, and every one of them must be refused
+ * rather than rounded down to "no rows":
+ *
+ *   * `error` set (permission denied, timeout, PostgREST down, malformed
+ *     request) — the ledger could not be read. THROWS. `data ?? []` here would
+ *     report an erasure successful while the person's id sat in a permanent
+ *     accounting record, which is the exact defect class this codebase keeps
+ *     finding: a failed read becoming a zero.
+ *   * `data` not an array (null, undefined, an object) — no rows were returned
+ *     and none were denied either. THROWS, for the same reason.
+ *   * the TABLE itself absent — the one case that IS an answer. A relation that
+ *     does not exist holds no rows, and 2901 / 2920 / 2921 / 3387 are unapplied
+ *     on some environments, so "absent" is reported as such and the caller skips
+ *     it rather than refusing every deletion on those databases.
+ *
+ * Bounded by design: the question is "is there at least one?", like
+ * `hasThirdPartyInterest`'s probes, so `.limit(1)` cannot lose anything (see the
+ * paging doctrine above — that applies to reads whose SET matters).
+ */
+async function ledgerStillNamesUser(
+  sc: any,
+  table: string,
+  column: string,
+  userId: string,
+): Promise<boolean | "relation-absent"> {
+  const res = await sc.from(table).select(column).eq(column, userId).limit(1);
+  if (res?.error) {
+    if (isMissingLedgerRelation(res.error)) return "relation-absent";
+    throw new Error(
+      `${table}.${column}: the creator ledger could not be read (${errText(res.error)}) — ` +
+        "an erasure that cannot see whether the ledger still names the account must refuse, not report success",
+    );
+  }
+  const rows = res?.data;
+  if (!Array.isArray(rows)) {
+    throw new Error(
+      `${table}.${column}: the creator-ledger probe returned ${rows === null ? "null" : typeof rows} instead of rows ` +
+        "with no error — an unanswered read is not an empty ledger",
+    );
+  }
+  return rows.length > 0;
+}
+
+/** Every ledger table that still names `userId`, as `table.column`. Throws if any could not be read. */
+async function ledgerTablesNaming(sc: any, userId: string): Promise<string[]> {
+  const naming: string[] = [];
+  for (const { table, column } of CREATOR_LEDGER_IDENTITY_COLUMNS) {
+    const answer = await ledgerStillNamesUser(sc, table, column, userId);
+    if (answer === "relation-absent") continue;
+    if (answer) naming.push(`${table}.${column}`);
+  }
+  return naming;
+}
+
+/**
+ * Remove the person from the creator / Rent-a-Buddy ledgers while KEEPING the
+ * accounting rows — migration 3513, owner decision C-11 answer B.
+ *
+ * THE ORDER IS THE POINT:
+ *
+ *   1. ASK whether any ledger names them. A person with no ledger row — which
+ *      is everybody today, since `creator_attribution_enabled` and
+ *      `rent_buddy_enabled` are FALSE and the four tables ship empty — needs no
+ *      identity removal, gets no receipt written about them, and never touches
+ *      3513's door. That also means this step does not depend on 3513 being
+ *      applied in order for an ordinary account to be deletable, which matters
+ *      because the owner's ruling withholds the apply pending legal review of
+ *      Q11(a). What it does NOT do is assume the answer: an unreadable ledger
+ *      throws out of `ledgerTablesNaming` and fails the step.
+ *   2. CALL the door when they do appear. One transaction, one random pseudonym
+ *      for the person, every column of every row rewritten, and 3513's own
+ *      residual scan aborts the transaction if the id survives anywhere.
+ *   3. VERIFY from outside. The function's internal scan is the stronger check
+ *      (it reads every column, not just the identity ones), but it runs inside
+ *      the transaction it would abort, so a caller that trusted it would be
+ *      trusting the thing under test. This re-asks the question the erasure
+ *      exists to answer, through the same client the rest of the deletion uses.
+ *      A row left naming the person, or a read that cannot say, refuses.
+ *
+ * Returns nothing on purpose — see the step's comment on why no count is
+ * recorded or logged.
+ */
+async function pseudonymiseCreatorLedger(sc: any, userId: string, actorId: string | null): Promise<void> {
+  const naming = await ledgerTablesNaming(sc, userId);
+  if (naming.length === 0) return;
+
+  // The receipt keeps its actor, and 3513 refuses an actor who IS the subject
+  // (that would keep the subject's id beside the fact of their own removal). The
+  // scheduler and the worker endpoint already pass actorId: null, i.e. 'system';
+  // a self-service path that ever passed the subject is mapped to 'system' here
+  // rather than being handed to a refusal it cannot act on.
+  const admin = actorId !== null && actorId !== userId ? actorId : null;
+  const removal = await sc.rpc("creator_ledger_remove_identity", {
+    p_user: userId,
+    p_actor_kind: admin === null ? "system" : "admin",
+    p_actor_user_id: admin,
+    p_reason: CREATOR_LEDGER_REMOVAL_REASON,
+  });
+
+  if (removal?.error) {
+    if (!isMissingLedgerFunction(removal.error)) {
+      throw new Error(`creator_ledger_remove_identity failed: ${errText(removal.error)}`);
+    }
+    // 3513 is not applied here, and the ledger DOES name this person. There is
+    // no second way to sever the link: the tables are append-only, service_role
+    // holds no UPDATE on them, and 3510's guard refuses every DELETE. Say which
+    // tables and why, and refuse — the alternative is completing an erasure that
+    // left the person in a permanently retained record.
+    throw new Error(
+      `creator_ledger_remove_identity is absent on this database (${errText(removal.error)}) and ` +
+        `${naming.join(", ")} still name the account — migration 3513 must be applied before it can be erased`,
+    );
+  }
+
+  const residual = await ledgerTablesNaming(sc, userId);
+  if (residual.length > 0) {
+    throw new Error(
+      `the identity link survived the removal in ${residual.join(", ")} — ` +
+        "the accounting rows are retained, so this would be a permanent record of an erased person",
+    );
+  }
+  logger.info(
+    { tablesPseudonymised: naming.length },
+    "executeAccountDeletion: creator-ledger identity removed, accounting rows retained (3513, C-11 answer B)",
+  );
 }
 
 // census-map §45: the one module that writes an evidence reference is the one that opens it.

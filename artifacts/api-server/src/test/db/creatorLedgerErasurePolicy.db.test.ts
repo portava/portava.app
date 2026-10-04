@@ -1,19 +1,28 @@
 /**
  * The creator ledger END TO END on synthetic accounts, and C-11's erasure
- * question answered THREE ways in three separate databases — census-discovery §107.
+ * question in all three of its states, in three separate databases —
+ * census-discovery §107.
  *
- * WHY THREE DATABASES. Whether a person's earning records are deleted or kept
- * with the identity removed when their account is erased is an open owner
- * decision (C-11 / W10D-B0). The canonical chain carries only 3510, which
- * refuses every ledger DELETE until the owner decides. The two answers are
- * complete migrations HELD in reconciliation-staging/ and are mutually
- * exclusive, so each runs in its own throwaway clone of the harness database
- * (CREATE DATABASE … TEMPLATE), never beside the other and never against
- * portava-ci or travel-buddy:
+ * C-11 IS ANSWERED (owner, 2026-10-04): "Pseudonymize accounting entries,
+ * removing direct identifiers and the identity link when deletion is requested.
+ * Keep only the records needed for tax, accounting, disputes, or legal claims,
+ * with a defined retention period and access controls." That is answer B, and it
+ * is now the canonical chain's: 3513_creator_ledger_erasure_retain_pseudonymised
+ * (promoted from reconciliation-staging/3512), which replaces 3510's CL451
+ * "undecided" guard with a decided CL452 retention guard.
  *
- *   MAIN  the harness itself: the chain, 3510 included — C-11 UNDECIDED
- *   A     a clone + reconciliation-staging/3511 — DELETE ON ERASURE
- *   B     a clone + reconciliation-staging/3512 — RETAIN, PSEUDONYMISED
+ * WHY STILL THREE DATABASES. The three states are mutually exclusive, so each
+ * runs in its own throwaway clone of the harness database (CREATE DATABASE …
+ * TEMPLATE), never beside another and never against portava-ci or travel-buddy:
+ *
+ *   MAIN  the harness itself: the chain, 3513 included — RETAIN, PSEUDONYMISED
+ *   U     a clone with 3513 ROLLED BACK — the 3510 "undecided" state the chain
+ *         left behind. Its refusals are unchanged from when they were MAIN's, so
+ *         they now certify that the rollback restores the previous behaviour
+ *         exactly, which is what makes 3513 reversible before any erasure uses it
+ *   A     a clone, rolled back to 3510 and then + reconciliation-staging/3511 —
+ *         DELETE ON ERASURE, the answer that was NOT chosen, still held and still
+ *         rehearsed so the choice stays reversible
  *
  * SYNTHETIC DATA ONLY, MARKED AS SUCH. Every account this suite creates has an
  * id starting `c11e5e00`, a handle starting `c11syn_`, the display name
@@ -32,12 +41,15 @@
  * THE FLAG IS NEVER TURNED ON IN A DATABASE: `creator_attribution_enabled` is
  * answered in memory by creatorLedgerPsqlClient (R1 re-reads the row: FALSE).
  *
- *   F1–F7  the ledger flows (MAIN): earnings, refund/reversal, attribution to a
- *          served recommendation, hold and release, recompute, folds and
- *          summaries, the payout boundary
- *   G1–G6  C-11 undecided (MAIN, 3510): every erasure path is refused and changes nothing
+ *   F1–F7  the ledger flows (MAIN, under the chosen answer): earnings,
+ *          refund/reversal, attribution to a served recommendation, hold and
+ *          release, recompute, folds and summaries, the payout boundary
+ *   G1–G6  the rolled-back 3510 state (fixture U): every erasure path is refused
+ *          CL451 and changes nothing
  *   A1–A7  answer A (fixture A): delete on the beneficiary's erasure, whole transactions
- *   B1–B9  answer B (fixture B): identity removed, rows retained, pseudonymised-not-anonymous pinned
+ *   B1–B9  THE CHOSEN ANSWER (fixture B, a clone so retained rows can be left
+ *          behind): identity removed, rows retained, pseudonymised-not-anonymous
+ *          pinned, and a person with no ledger row still erased normally
  *   S1     separation: every ledger row in every fixture belongs to a synthetic account
  *   R1     the flag row is FALSE in every fixture
  */
@@ -79,8 +91,10 @@ const REPO = new URL("../../../../../", import.meta.url);
 const sqlFile = (rel: string) => readFileSync(new URL(rel, REPO), "utf8");
 const A_FORWARD = "reconciliation-staging/3511_creator_ledger_erasure_delete_on_erasure.sql";
 const A_ROLLBACK = "reconciliation-staging/2026-09-30-3511-creator-ledger-erasure-delete-on-erasure-rollback.sql";
-const B_FORWARD = "reconciliation-staging/3512_creator_ledger_erasure_retain_pseudonymised.sql";
-const B_ROLLBACK = "reconciliation-staging/2026-09-30-3512-creator-ledger-erasure-retain-pseudonymised-rollback.sql";
+// Answer B is the chain's now, so these two are canonical paths — the file the
+// harness has ALREADY applied, and its rollback.
+const B_FORWARD = "artifacts/api-server/src/migrations/3513_creator_ledger_erasure_retain_pseudonymised.sql";
+const B_ROLLBACK = "db/rollback/2026-10-04-3513-creator-ledger-erasure-retain-pseudonymised-rollback.sql";
 const G_FORWARD = "artifacts/api-server/src/migrations/3510_creator_ledger_erasure_policy_undecided.sql";
 const G_ROLLBACK = "db/rollback/2026-09-30-3510-creator-ledger-erasure-policy-undecided-rollback.sql";
 
@@ -275,11 +289,11 @@ function foldsWhere(creatorWhere: string, rbeeWhere: string): Record<string, str
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
-const fixtures: Record<"A" | "B", string> = { A: "", B: "" };
+const fixtures: Record<"A" | "B" | "U", string> = { A: "", B: "", U: "" };
 const cloneName = (k: string) => `c11_fixture_${k.toLowerCase()}_${process.pid}`;
 function urlFor(db: string): string { const u = new URL(LOCAL_DB_URL); u.pathname = `/${db}`; return u.toString(); }
 
-describe("the creator ledger on synthetic accounts, and C-11 answered three ways (census-discovery §107)", { skip: !HAVE_DB }, () => {
+describe("the creator ledger on synthetic accounts, and C-11 in its three states (census-discovery §107)", { skip: !HAVE_DB }, () => {
   before(() => {
     trap(globalThis, "fetch", "fetch");
     trap(http, "request", "http.request"); trap(http, "get", "http.get");
@@ -289,7 +303,7 @@ describe("the creator ledger on synthetic accounts, and C-11 answered three ways
     // Two clones of the harness taken BEFORE any row of this suite exists.
     const main = new URL(LOCAL_DB_URL).pathname.slice(1);
     useDatabase(urlFor("postgres"));
-    for (const k of ["A", "B"] as const) {
+    for (const k of ["A", "B", "U"] as const) {
       exec(`DROP DATABASE IF EXISTS "${cloneName(k)}";`);
       exec(`CREATE DATABASE "${cloneName(k)}" TEMPLATE "${main}";`);
       fixtures[k] = urlFor(cloneName(k));
@@ -299,17 +313,22 @@ describe("the creator ledger on synthetic accounts, and C-11 answered three ways
 
   after(() => {
     useDatabase(urlFor("postgres"));
-    for (const k of ["A", "B"] as const) exec(`DROP DATABASE IF EXISTS "${cloneName(k)}";`);
+    for (const k of ["A", "B", "U"] as const) exec(`DROP DATABASE IF EXISTS "${cloneName(k)}";`);
     useDatabase(null);
     for (const [o, k, v] of saved.reverse()) o[k] = v;
   });
 
-  // ── MAIN: the flows, then C-11 undecided ───────────────────────────────────
-  describe("MAIN — the harness chain, 3510 applied: C-11 undecided", () => {
+  // ── MAIN: the flows, under the answer the chain now carries ───────────────
+  describe("MAIN — the harness chain, 3513 applied: C-11 answered (retain, pseudonymised)", () => {
     let w: World;
     before(async () => { useDatabase(null); w = await runSyntheticLedger(); });
     // By the synthetic PREFIX, not by `w`: a flow that fails half-way must not
     // leave its rows behind for the next suite (or the next fixture clone).
+    // Under 3513 a ledger row cannot be DELETEd by any role, so the purge runs
+    // in `session_replication_role = replica` — the same bypass it already
+    // needed for 3510's CL451 guard, now needed for 3513's CL452 one. That is
+    // also why the ERASURE tests run in a clone and not here: a retained row is
+    // retained, and this database is shared with eighteen other suites.
     after(() => exec(purgeSyntheticSql()));
 
     test("F1. earnings are recorded as balanced double entry, provider 'none', no settlement, on both ledgers", () => {
@@ -391,6 +410,34 @@ describe("the creator ledger on synthetic accounts, and C-11 answered three ways
       assert.deepEqual(reached, [], "no network primitive was reached");
     });
 
+    test("S1. separation: every ledger row in MAIN belongs to a synthetic account", () => {
+      assertOnlySynthetic();
+    });
+  });
+
+  // ── U: the state 3513's rollback restores ─────────────────────────────────
+  // These six tests were MAIN's while C-11 was open, and their assertions are
+  // unchanged. What they certify has changed: the chain now answers C-11, so the
+  // "undecided" refusal only exists where 3513 has been rolled back. Reaching it
+  // through the rollback — and finding the SAME refusals, byte for byte, down to
+  // the SQLSTATE and the function name — is what makes 3513 reversible while no
+  // erasure has used it yet, which is the state the owner's ruling holds it in
+  // until legal review confirms Q11(a).
+  describe("FIXTURE U — a clone with 3513 rolled back: the 3510 undecided state", () => {
+    let w: World;
+    before(async () => {
+      useDatabase(fixtures.U);
+      applyFile(B_ROLLBACK);
+      assert.equal(scalar(`SELECT count(*) FROM pg_trigger WHERE tgfoid = 'public.creator_ledger_erasure_policy_undecided()'::regprocedure`), "4",
+        "3513's rollback re-installs 3510's guard on all four ledgers");
+      assert.equal(scalar(`SELECT count(*) FROM pg_proc WHERE proname = 'creator_ledger_remove_identity'`), "0",
+        "and takes the identity-removal door away with it");
+      assert.equal(scalar(`SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND column_name IN ('beneficiary_pseudonym', 'actor_pseudonym')`), "0",
+        "and the pseudonym columns");
+      w = await runSyntheticLedger();
+    });
+    after(() => useDatabase(null));
+
     test("G1. C-11 undecided: erasing a creator (hard DELETE of the profile, as service_role) is refused CL451 and changes nothing", () => {
       const before = ledgerSnapshot();
       const r = attempt(`DELETE FROM public.profiles WHERE id = '${w.E}';`);
@@ -441,7 +488,7 @@ describe("the creator ledger on synthetic accounts, and C-11 answered three ways
       assert.deepEqual(ledgerSnapshot(), before);
     });
 
-    test("S1. separation: every ledger row in MAIN belongs to a synthetic account", () => {
+    test("S1. separation: every ledger row in fixture U belongs to a synthetic account", () => {
       assertOnlySynthetic();
     });
   });
@@ -451,6 +498,13 @@ describe("the creator ledger on synthetic accounts, and C-11 answered three ways
     let w: World;
     before(async () => {
       useDatabase(fixtures.A);
+      // The clone arrives with the CHAIN's answer (3513) applied, and the two
+      // answers refuse to coexist — by precondition, in both directions. So
+      // answer A can only be rehearsed after answer B is rolled back, which is
+      // also the only order an operator could ever change their mind in.
+      applyFile(B_ROLLBACK);
+      assert.equal(scalar(`SELECT count(*) FROM pg_proc WHERE proname = 'creator_ledger_remove_identity'`), "0",
+        "3513's rollback removes answer B's door before answer A is applied");
       // Rehearse 3510 and 3511 in this database while the ledgers are empty:
       // 3510 rollback -> re-apply; 3511 apply -> re-apply -> rollback -> re-apply.
       applyFile(G_ROLLBACK);
@@ -545,12 +599,16 @@ describe("the creator ledger on synthetic accounts, and C-11 answered three ways
   });
 
   // ── B: retain, pseudonymised ───────────────────────────────────────────────
-  describe("FIXTURE B — its own database, 3512 applied: retain, identity removed", () => {
+  describe("FIXTURE B — its own database, the CHOSEN answer 3513: retain, identity removed", () => {
     let w: World;
     let cFoldsBefore: Record<string, string>;
     let cRowsBefore = 0;
     before(async () => {
       useDatabase(fixtures.B);
+      // The clone already carries 3513 from the chain. Re-apply it (3513 is
+      // idempotent and says so: "RECONCILE: already applied"), roll it back,
+      // and apply it again — so the file is rehearsed in all three directions
+      // before a single erasure runs against it.
       applyFile(B_FORWARD); applyFile(B_FORWARD); applyFile(B_ROLLBACK);
       assert.equal(scalar(`SELECT count(*) FROM pg_trigger WHERE tgfoid = 'public.creator_ledger_erasure_policy_undecided()'::regprocedure`), "4", "B's rollback re-installs 3510's guard");
       applyFile(B_FORWARD);
@@ -652,9 +710,9 @@ describe("the creator ledger on synthetic accounts, and C-11 answered three ways
       assert.equal(Number(scalar(`SELECT count(DISTINCT beneficiary_pseudonym) FROM public.creator_attributions WHERE beneficiary_pseudonym IS NOT NULL`)), 2);
     });
 
-    test("B7. 3512's rollback REFUSES while any row is pseudonymised", () => {
+    test("B7. 3513's rollback REFUSES while any row is pseudonymised", () => {
       const r = psql(sqlFile(B_ROLLBACK));
-      assert.match(r.stderr, /ROLLBACK REFUSED \(3512\)/);
+      assert.match(r.stderr, /ROLLBACK REFUSED \(3513\)/);
     });
 
     test("B8. the door refuses an actor who is the subject, and a missing reason", () => {
@@ -663,13 +721,40 @@ describe("the creator ledger on synthetic accounts, and C-11 answered three ways
       assert.ok(mentions(w.D) > 0);
     });
 
+    test("B9. the retention guard is ROW-level: a person with NO ledger row is erased normally under the chosen answer, and so is one whose identity was already removed", () => {
+      // 3510's header explains why this has its own test under every answer: a
+      // STATEMENT-level append-only trigger (2276/2277, removed by 2292) fired
+      // before any row was examined and so refused the erasure of people who had
+      // produced nothing at all, making them undeletable. A decided retention
+      // that did that would block every account deletion on the platform, since
+      // nobody has a ledger row today.
+      const nobody = seedSynthetic("noledger-b").id;
+      const r = attempt(`DELETE FROM public.profiles WHERE id = '${nobody}';`);
+      assert.equal(r.status, 0, r.stderr);
+      exec(`DELETE FROM auth.users WHERE id = '${nobody}';`);
+      // A DELETE that matches no ledger row is permitted: the guard is per row.
+      assert.equal(attempt(`DELETE FROM public.creator_attributions WHERE false;`).status, 0);
+      // And the identity removal itself is what unblocks a person who DOES have
+      // rows — asserted on the column, not on a count: after B2 and B6 ran, no
+      // row of any of the four ledgers still carries a *_user_id that belongs to
+      // a profile which no longer exists.
+      assert.equal(scalar(
+        `SELECT count(*) FROM (
+           SELECT beneficiary_user_id AS u FROM public.rent_buddy_earnings_entries
+           UNION ALL SELECT beneficiary_user_id FROM public.creator_attributions
+           UNION ALL SELECT beneficiary_user_id FROM public.creator_earning_entries
+           UNION ALL SELECT actor_user_id FROM public.creator_ledger_audit_events) x
+          WHERE x.u IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = x.u)`), "0",
+        "a retained ledger row may never name an account that is gone");
+    });
+
     test("S1. separation: every ledger row in fixture B belongs to a synthetic account (or to a pseudonym that replaced one)", () => {
       assertOnlySynthetic();
     });
   });
 
-  test("R1. the flag row is FALSE in MAIN and in both fixtures: every flag-ON path ran on an in-memory answer", () => {
-    for (const url of [null, fixtures.A, fixtures.B]) {
+  test("R1. the flag row is FALSE in MAIN and in all three fixtures: every flag-ON path ran on an in-memory answer", () => {
+    for (const url of [null, fixtures.A, fixtures.B, fixtures.U]) {
       useDatabase(url);
       assert.equal(scalar(`SELECT enabled::text FROM public.feature_flags WHERE flag = '${FLAG}'`), "false");
     }

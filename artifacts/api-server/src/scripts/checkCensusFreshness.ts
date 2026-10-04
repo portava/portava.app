@@ -3930,8 +3930,16 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "db/rollback/2026-09-30-3510-creator-ledger-erasure-policy-undecided-rollback.sql",
     "reconciliation-staging/3511_creator_ledger_erasure_delete_on_erasure.sql",
     "reconciliation-staging/2026-09-30-3511-creator-ledger-erasure-delete-on-erasure-rollback.sql",
-    "reconciliation-staging/3512_creator_ledger_erasure_retain_pseudonymised.sql",
-    "reconciliation-staging/2026-09-30-3512-creator-ledger-erasure-retain-pseudonymised-rollback.sql",
+    // PROMOTED 2026-10-04: the owner answered C-11 (W10D-B0) and answer B moved
+    // into the chain as 3513, with its rollback in db/rollback/. The two staged
+    // paths it replaced are gone from the tree, so they are gone from here —
+    // CENSUS_SCOPE refuses a path that does not exist. Answer A's two files stay
+    // above, held and unapplied.
+    "artifacts/api-server/src/migrations/3513_creator_ledger_erasure_retain_pseudonymised.sql",
+    "db/rollback/2026-10-04-3513-creator-ledger-erasure-retain-pseudonymised-rollback.sql",
+    // The deletion-coverage manifest: §107 now cites it, because the four
+    // ledgers' decided retention is recorded there.
+    "artifacts/api-server/src/lib/deletionDispositions.ts",
     "artifacts/api-server/src/test/db/creatorLedgerErasurePolicy.db.test.ts",
     "artifacts/api-server/src/test/creatorLedgerErasurePolicyShape.test.ts",
     // WIDENED 2026-09-27 by census-discovery §53 (people privacy adapters, lane P5x): A24 moves

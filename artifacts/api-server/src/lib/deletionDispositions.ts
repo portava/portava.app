@@ -267,6 +267,57 @@ export const RETAINED_WITH_REASON: ReadonlyArray<{ table: string; reason: string
       "Append-only projection history with no actor column and no personal data (place key, counts, model inputs). " +
       "The per-person contributions behind it are erased by erase_intel_for_actor; the aggregate record is kept, as intel_claims/intel_state_snapshots are.",
   },
+  // ── The four creator / Rent-a-Buddy ledgers (2901, 2920, 2921, 3387) ──────
+  // OWNER DECISION C-11 / W10D-B0, answered 2026-10-04, verbatim: "Pseudonymize
+  // accounting entries, removing direct identifiers and the identity link when
+  // deletion is requested. Keep only the records needed for tax, accounting,
+  // disputes, or legal claims, with a defined retention period and access
+  // controls. GDPR, for example, permits exceptions to erasure where processing
+  // is needed to meet a legal obligation or establish or defend legal claims.
+  // [GDPR Article 17]" Implemented by migration 3513 (which replaces 3510's
+  // CL451 "undecided" guard with a decided CL452 retention guard plus the
+  // SECURITY DEFINER door) and wired into the deletion path by
+  // AccountDeletionService's `pseudonymise_creator_ledger` step.
+  //
+  // WHY HERE AND NOT IN ANONYMISED_FK_NULLED, which is the same SHAPE (the row
+  // is kept, the identifier goes): that bucket records the mechanical repair of
+  // an `ON DELETE SET NULL` the tombstone defeats, and carries no reason field
+  // because nothing was decided — the FK had already said what to do. These
+  // four are the opposite: the row's survival is an owner DECISION with a legal
+  // basis, and `legalRetentionBoundary`'s DECIDED_RETENTION rule exists to stop
+  // a later policy erasing them without withdrawing that reason in the same
+  // change. A written reason is the whole point of the entry.
+  //
+  // WHAT IS STILL OPEN, and is NOT this manifest's to invent: the "defined
+  // retention period". 3513 builds no purge and names no period, because the
+  // period has no value yet (owner question Q11(a), pending legal review), so
+  // these rows are retained INDEFINITELY today — longer than the decision
+  // authorises once a period exists. Nothing in the repo expresses that period
+  // for these tables.
+  {
+    table: "rent_buddy_earnings_entries",
+    reason:
+      "Rent-a-Buddy accounting entries (double-entry earnings legs and their reversals) are retained for tax, accounting, dispute and legal-claim purposes — GDPR Art. 17(3)(b)/(e). " +
+      "On deletion the person is removed from them rather than the rows: beneficiary_user_id is severed and every occurrence of their id becomes one random pseudonym (migration 3513). Retained rows are frozen and no client role can read them. The retention period itself is pending legal review (Q11(a)).",
+  },
+  {
+    table: "creator_attributions",
+    reason:
+      "Creator attribution records — which value event earned a share, under which published rule version — are retained as the basis of the accounting entries above, for tax, accounting, dispute and legal-claim purposes (GDPR Art. 17(3)(b)/(e)). " +
+      "On deletion beneficiary_user_id is severed and replaced by one random pseudonym (migration 3513); the record is then frozen (no supersession, hold, release or recompute). The retention period is pending legal review (Q11(a)).",
+  },
+  {
+    table: "creator_earning_entries",
+    reason:
+      "Creator earning entries are the money itself: balanced double-entry legs, their reversals and refunds, retained for tax, accounting, dispute and legal-claim purposes (GDPR Art. 17(3)(b)/(e)). " +
+      "On deletion beneficiary_user_id is severed and replaced by one random pseudonym (migration 3513), and the transaction still balances. The retention period is pending legal review (Q11(a)).",
+  },
+  {
+    table: "creator_ledger_audit_events",
+    reason:
+      "The ledger's own audit trail — who held, released or recomputed an attribution, and why — retained with the entries it explains, for dispute and legal-claim purposes (GDPR Art. 17(3)(b)/(e)); an accounting record whose corrections cannot be accounted for is not one. " +
+      "Where an erased person was the ADMIN who acted, actor_user_id is severed and replaced by their pseudonym (migration 3513). The retention period is pending legal review (Q11(a)).",
+  },
 ];
 
 /**
@@ -704,6 +755,20 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "journey_shadow_ground_truth",
   "journey_shadow_qa_reports",
   "journey_shadow_session_issuances",
+  // The four creator / Rent-a-Buddy ledgers, added by migrations 2901, 2920,
+  // 2921 and 3387 (all post-baseline). Classified in RETAINED_WITH_REASON above
+  // under owner decision C-11: the accounting rows are kept and the person is
+  // removed from them by migration 3513's door, called from
+  // AccountDeletionService's `pseudonymise_creator_ledger` step.
+  //
+  // Listed here because the baseline predates all four tables, so the measured
+  // user-link graph cannot see them: without a hand registration the four
+  // tables that hold a departed person's money would be the one part of the
+  // deletion surface the coverage gate has nothing to say about.
+  "rent_buddy_earnings_entries",
+  "creator_attributions",
+  "creator_earning_entries",
+  "creator_ledger_audit_events",
 ];
 
 /** Columns that make a table user-keyed for the purposes of this manifest. */
