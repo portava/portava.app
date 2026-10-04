@@ -38,29 +38,31 @@ function rows(n: number, dir: "in" | "out", target: string | null, at: number, p
 }
 const read = (blocks: Row[], opts: { fail?: (r: SeenRead) => boolean | "throw"; dbMaxRows?: number; reads?: SeenRead[] } = {}) =>
   fetchBlockedSet(cappedClient({ blocks }, opts) as any, VIEWER);
+/** The set, or a failed test when the read was answered null (fail-closed) where a set was owed. */
+async function readSet(blocks: Row[], opts: { dbMaxRows?: number } = {}): Promise<Set<string>> {
+  const set = await read(blocks, opts);
+  if (set === null) throw new assert.AssertionError({ message: "the set was answered null" });
+  return set;
+}
 
 describe("census-discovery §123: fetchBlockedSet answers the whole block set or null", () => {
   it("FB0 CONTROL: a few rows in both directions → every counter-party, never the viewer", async () => {
-    const set = await read([...rows(2, "in", TARGET, 0), ...rows(2, "out", TARGET2, 1, "d0000000"), { blocker_id: seqId("e0000000", 1), blocked_id: seqId("e0000000", 2) }]);
-    assert.ok(set !== null);
+    const set = await readSet([...rows(2, "in", TARGET, 0), ...rows(2, "out", TARGET2, 1, "d0000000"), { blocker_id: seqId("e0000000", 1), blocked_id: seqId("e0000000", 2) }]);
     assert.deepEqual([...set].sort(), [TARGET, TARGET2, seqId("c0000000", 1), seqId("d0000000", 0)].sort());
     assert.equal(set.has(VIEWER), false);
   });
   it("FB1 1200 people blocked the viewer → the one past the cap is in the set", async () => {
-    const set = await read(rows(1200, "in", TARGET, 1100));
-    assert.ok(set !== null, "the set was answered null");
+    const set = await readSet(rows(1200, "in", TARGET, 1100));
     assert.equal(set.size, 1200, `the set holds ${set.size} of 1200 counter-parties`);
     assert.equal(set.has(TARGET), true, "someone who blocked the viewer is missing from the set");
   });
   it("FB2 the viewer blocked 1200 people → the one past the cap is in the set", async () => {
-    const set = await read(rows(1200, "out", TARGET, 1100));
-    assert.ok(set !== null, "the set was answered null");
+    const set = await readSet(rows(1200, "out", TARGET, 1100));
     assert.equal(set.has(TARGET), true, "someone the viewer blocked is missing from the set");
     assert.equal(set.size, 1200);
   });
   it("FB3 700 + 700 rows across both directions → both tails are in the set", async () => {
-    const set = await read([...rows(700, "in", TARGET, 699), ...rows(700, "out", TARGET2, 699, "d0000000")]);
-    assert.ok(set !== null, "the set was answered null");
+    const set = await readSet([...rows(700, "in", TARGET, 699), ...rows(700, "out", TARGET2, 699, "d0000000")]);
     assert.equal(set.has(TARGET) && set.has(TARGET2), true, `missing: ${[TARGET, TARGET2].filter((t) => !set.has(t)).join(", ")}`);
     assert.equal(set.size, 1400);
   });
@@ -74,8 +76,7 @@ describe("census-discovery §123: fetchBlockedSet answers the whole block set or
     assert.equal(await read(rows(2, "in", TARGET, 0), { fail: () => "throw" }), null);
   });
   it("FB6 the server's max-rows (300) is below the page size → still the whole set", async () => {
-    const set = await read(rows(1200, "in", TARGET, 1100), { dbMaxRows: 300 });
-    assert.ok(set !== null, "the set was answered null");
+    const set = await readSet(rows(1200, "in", TARGET, 1100), { dbMaxRows: 300 });
     assert.equal(set.size, 1200, `the set holds ${set.size} of 1200 counter-parties`);
   });
   it("FB7 CONTROL: a set under the cap costs one read", async () => {

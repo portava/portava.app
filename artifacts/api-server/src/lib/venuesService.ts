@@ -108,7 +108,7 @@ async function queryOverpass(
   lat: number,
   lng: number,
   radiusM: number,
-): Promise<NearbyVenue[]> {
+): Promise<NearbyVenue[] | null> {  // census-discovery §123 (DV-83 round 24): null = the read FAILED (never cached); [] = Overpass answered, and nothing named is there
   // Query restaurants, cafes, fast food, and bars within the radius
   const query = `
 [out:json][timeout:5];
@@ -124,7 +124,7 @@ out body center qt ${MAX_RESULTS * 3};`.trim();
     body: `data=${encodeURIComponent(query)}`,
   });
 
-  if (!res.ok) return [];
+  if (!res.ok) return null;
 
   const data = (await res.json()) as {
     elements: Array<{
@@ -136,7 +136,7 @@ out body center qt ${MAX_RESULTS * 3};`.trim();
     }>;
   };
 
-  if (!data?.elements?.length) return [];
+  if (overpassBodyUnfinished(data)) return null; if (!data?.elements?.length) return [];  // §123: a 200 whose `remark` says the query did not finish is a failed read — its cut element set is not "the venues here"
 
   const venues: NearbyVenue[] = data.elements
     .filter((el) => el.tags?.name)
@@ -175,7 +175,7 @@ export async function getNearbyVenues(
     if (!coords) return [];
 
     const venues = await queryOverpass(coords.lat, coords.lng, radiusM);
-
+    if (venues === null) return [];  // census-discovery §123: a failed or unfinished read is NOT cached — it was stored as "no venues here" for the 30-minute TTL
     cache.set(key, { venues, cachedAt: Date.now() });
     return venues;
   } catch {
@@ -191,3 +191,6 @@ export function formatDistance(distanceM: number): string {
   if (distanceM < 1000) return `${Math.round(distanceM / 50) * 50}m away`;
   return `${(distanceM / 1000).toFixed(1)}km away`;
 }
+
+// census-discovery §123 (DV-83 round 24): the one reading of an Overpass body (lib/overpassAnswer.ts). At the foot so no cited line moves; ESM hoists imports.
+import { overpassBodyUnfinished } from "./overpassAnswer.js";

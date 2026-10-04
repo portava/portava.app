@@ -4637,13 +4637,13 @@ function authServiceUnreachable(error: unknown): boolean {
 
 /** True when an HTTP-200 Overpass JSON body does not carry a finished answer. */
 function overpassAnswerFailed(data: unknown): boolean {
-  if (typeof data !== "object" || data === null) return true;
-  const body = data as { elements?: unknown; remark?: unknown };
-  if (!Array.isArray(body.elements)) return true;
-  const remark = body.remark;
-  if (remark === undefined || remark === null || remark === "") return false;
-  if (typeof remark !== "string") return true;
-  return /\berror\b/i.test(remark) || !/^\s*[a-z]+ remark\b/i.test(remark);
+  // census-discovery §123 (DV-83 round 24): the rule above has ONE home now, `overpassBodyUnfinished`
+  // (lib/overpassAnswer.ts), so the three other Overpass clients (lib/venuesService.ts, lib/localContext.ts,
+  // lib/neighborhoodMatch.ts) read the same body the same way. D-W11X2-18's cases are stated there and pinned by
+  // overpassUnfinishedAnswer.test.ts (OA1–OA3); X1–X6, C2 and C3 (discoveryOverpassFailedSource.test.ts) still drive
+  // them through this route. The seven lines that stood here were the rule; this comment stands where they stood, so no
+  // cited line below moves.
+  return overpassBodyUnfinished(data);
 }
 
 /**
@@ -4754,3 +4754,6 @@ function communityViewerRefusal(served: number) {
 
 // census-discovery §123 (DV-83 round 24, B44): the viewer's saved state, read whole. At the foot so no cited line moves; ESM hoists imports.
 import { viewerCollectionSavedIds, viewerSavedPlaceIds } from "../lib/viewerSavedReads.js";
+
+// census-discovery §123 (DV-83 round 24): the one reading of an Overpass body. At the foot so no cited line moves; ESM hoists imports.
+import { overpassBodyUnfinished } from "../lib/overpassAnswer.js";
