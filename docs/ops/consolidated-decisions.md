@@ -9,6 +9,14 @@ row changes on the strength of a ruling — each still needs its own acceptance
 evidence, measured after the change lands. Anyone tempted to mark a row `C`
 because a decision exists should read this sentence again.
 
+**This file is the record of those six, and only those six.** It is not the
+repository's register of owner decisions. Discovery's decisions — including the
+owner's answers of **2026-10-04** to questions 11(a), 12, 15 and 16 — are
+recorded in `docs/architecture/discovery-decision-register.md` (section
+`## OWNER-1004`) and in `docs/ops/discovery-owner-approval-request.md` §8.
+Record a new decision in the register that owns its question; do not start a
+second list here.
+
 | | ruling |
 |---|---|
 | **Q1** | **APPROVED — nullable trust scores.** The nine category columns and `overall_score` become nullable, NULL = not scored. Remove fabricated neutral defaults; update calculations and consumers. An unmeasured category must not contribute an invented 50. **Preserve legitimate measured values — do NOT mass-convert existing 50s without evidence of their origin.** Rehearse the migration and verify partially measured, entirely unmeasured, and negative-evidence cases before enabling the engine. |
