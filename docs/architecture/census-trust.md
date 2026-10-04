@@ -3524,3 +3524,132 @@ Cited in this section, graded by no row of this census:
 - NOT-GRADED: artifacts/api-server/src/lib/capability/schemaCapability.ts — another lane's file, named in §31.5 only as a finding; not changed here.
 - NOT-GRADED: artifacts/api-server/src/lib/liveReferenceMessages.ts — another lane's file, named in §31.5 only as a finding; not changed here.
 - NOT-GRADED: artifacts/api-server/src/lib/wallMomentRead.ts — another lane's file, named in §31.5 only as a finding; not changed here.
+
+## §32 — 2026-10-04 (re-census, integration): no row moves, and PR #584 is a THIRD entrance to the fail-open §31.1 enumerates as two
+
+**What this section is.** The re-census pass of the 3–4 October merged surfaces, opened on a corpus
+measurement rather than a suspicion: `check:census-integrity` returns the same `C` at `f71cfb85f` as
+it did at `626b46b7e`, 108 commits and seventeen pull requests earlier. PR #584 —
+*"interactionPermissions: a rejected read is unread, never a synthetic 42P01"* — is the one this
+census was asked to grade. Scope: the rows whose SUBJECT #584 touched, §31's three moves re-derived,
+and all nineteen non-C rows re-read against their own settlement conditions. Nothing else is re-read.
+
+**`head_commit` is NOT re-declared.** 188 counted files are watched here and this pass read four.
+Documentation only: no code, no migration, no flag, no schema change, and **this section read no
+database** — §31's production readings are quoted as what §31 took.
+
+### 32.1 PR #584 appears nowhere in this census, and the reason is an ancestry fact worth recording
+
+§31 is dated 2026-10-03 and is *"the sensing-trust lane, branch `claude/lane-sensing-trust-20261003`
+cut from `main` at `0fa752ece`"*. #584 is dated 2026-10-03 and was merged independently.
+
+**`git merge-base --is-ancestor` of #584's commit against the commit that wrote §31 FAILS.** The two
+landed on the same day on separate branches, both are in `f71cfb85f`, and neither knew about the
+other. So §31 graded `resolveInteractionPermissions` at a tree where #584's defect was still live,
+and this census carries no record of the fix at all.
+
+**Both PRs were fixing the same fail-open in the same function.** §31.1 item 2 enumerates it *"two
+ways"*. At `f71cfb85f` there were three.
+
+### 32.2 The third entrance, and why §31's own fix did not close it
+
+§31.1 item 2(a) narrowed the "table missing" classifier to the one correct rule — an absent table
+only — because the old one matched a column-not-found code and any message containing *"does not
+exist"*, so column drift on a DENY table read as *"nobody has one of these"*
+(`artifacts/api-server/src/services/interactionPermissions.ts:165#return isAbsentTableError(error);`).
+
+That narrowing is right and is not withdrawn. **It also cannot help against an error that carries the
+absent-table code literally** — and the function was manufacturing exactly that. The gate's reads run
+through `Promise.allSettled`, and a REJECTED read (a thrown client error, a dropped connection, an
+aborted request) was normalised into a synthetic error object **stamped with the absent-table code**.
+Fed to the narrowed classifier, that synthesised code matches, so:
+
+- `user_restrictions` thrown → *"nobody restricts you"*;
+- `user_mutes` thrown → *"you have muted nobody"*;
+- the failure is **not** entered in `degradedReads`, so the verdict is not marked degraded either —
+  the one signal §31.1 item 2(b) added for the sibling case.
+
+#584 replaces the synthetic code with one that means what happened
+(`artifacts/api-server/src/services/interactionPermissions.ts:470#: { data: null, error: (r.reason && (r.reason as any).code) ? r.reason : { code: "REJECTED", message: String((r.reason as any)?.message ?? r.reason) } }, // never 42P01: a rejected read is unread, not an absent table`).
+A rejected read is now a real error, so it is a degraded read and is named.
+
+**This is the sharper finding, and it is about the guard rather than the code**: 2(a) made the
+classifier narrow and correct, which made the SYNTHETIC code more dangerous, not less — a broad
+classifier and a fabricated code are two ways to the same wrong answer, and closing one while the
+other is still open leaves the hole open. The two fixes are only complete together, and no document
+in this repository said so until this section.
+
+### 32.3 Row moves: none, in either direction
+
+**0 up, 0 down.**
+
+**No up move.** Each of the nineteen non-C rows was re-read against the settlement condition its own
+cell states, and every one of them names a person or a deployment:
+**owner decisions** — TV-P2 (`D-DOB`), TV-P3 and TV-0a (`D-MODACTION-*`, then a migration), TV-0e and
+TV-2c (`D-BADGE`), TV-6a (`D-PROVIDER`), TV-4b (`D-SUSPENSION-UX`), TV-U2 (`D-SCORING`), TRV2-08
+(`D-RESTRICTION-REACH`), TRV2-10 (`D-REVERSAL`);
+**a deploy** — A6 (a production measurement by definition), TV-1c (2870 applied to no database);
+**a vendor sandbox** — TV-6b (a transcript through the chosen provider, after TV-6a);
+**a client lane** — TV-5a (two links, one of which needs a surface that does not exist), TV-7c (no
+privacy-policy surface exists at all), TV-4a (an admin route that acts on a report row);
+**a second conjunct on another team's file** — TV-5b, whose remaining gap §31 locates precisely as the
+events list filter;
+**and TV-P0 and TV-U1**, which grade the ENCODING of invariants and the separation of eight concepts
+rather than a behaviour. #584 bears on none of them.
+
+**No down move, checked rather than assumed.** #584 removes a permissive branch and adds a degraded
+signal. It introduces no affordance, no new field and no new permission, so there is no prohibition
+row for it to falsify.
+
+### 32.4 Two `C` rows that were true at this tree ONLY because #584 merged
+
+No verdict moves. These are recorded because the dates matter: at the commit §31 declared, both cells
+were false for the thrown-read case, and §31 could not have known.
+
+| id | V | the row's own claim | what #584 was needed for |
+|---|---|---|---|
+| A12 | **C** | *"Authorization is server-side: restrictions are enforced at the action seam, not inferred by the client"*, resting on the open-thread seam's *"primary, fail-closed `resolveInteractionPermissions`"* | Fail-closed on a resolved database error: yes, both before and after. Fail-closed on a REJECTED read: no, until #584 — a thrown restriction read was absorbed as an absent table and the seam answered permissively. The word in this cell is *fail-closed*, and it is true of every failure mode for the first time at `f71cfb85f`. |
+| C16 | **C** | *"Degraded reads are labelled: fail-open (table missing) vs fail-closed (query error), and callers must never show a restriction message for a failed check"*, with `interactionPermissions` cited among the consumers that honour it | This row's whole subject is the LABELLING, and the synthetic code mislabelled a query failure as a missing table — the precise inversion the row asserts is handled. 2(a) corrected the classifier's reading of real errors; #584 stopped the function inventing a fake one. `C16` holds on both halves only with both fixes in. |
+
+### 32.5 §31's three moves, re-derived — all three HOLD, and none of them depended on #584
+
+Checked, because 32.1 raises the obvious question of whether §31's verdicts were granted on an
+incomplete tree. They were not: TV-2b, TV-2d and TV-U8 are about the verification screen's disclosure
+lists, its failure copy and the verification write against real PostgreSQL. **None touches
+`resolveInteractionPermissions`**, so #584's absence from §31's tree affects none of the three. §31.1
+item 2 is in that section's *fail-opens closed* list, on which it moved no row — which is also why
+the gap in 32.2 cost no verdict.
+
+### 32.6 Reasons corrected, verdicts unmoved
+
+| id | was | now | the correction |
+|---|---|---|---|
+| TRV2-08 | N | **N** | The cell's count is stale and its load-bearing clause is not. It says *"`getRestrictionState` still has exactly five non-Trust callers (messaging, calls, hosting, crew live-share, and a Passport PROJECTION that is display, not a gate)"*. Counted at `f71cfb85f` there are **eight**, enumerated below the table. **`N` stands on the clause that decides the row** — the requirement names Compass, Discovery, social and booking paths, and the Compass tree and the discovery routes still hold no caller, which this pass re-executed. The three extra callers are messaging-adjacent and plan-access paths, not the four. `D-RESTRICTION-REACH` is still the blocker. |
+
+**The eight, counted outside `services/trust/` and the service's own file**: the Passport projection
+(display, not a gate), the call gateway, the open-thread seam, the hosting gate, the trip
+accept-invite gate and the crew live-share gate that §31.1 item 2(b) wired
+(`artifacts/api-server/src/routes/trips.ts:1337#const inviteTrust = await getRestrictionState(client, user.id);`
+and
+`artifacts/api-server/src/routes/tripCrewLocation.ts:484#const locTrust = await getRestrictionState(sc, user.id);`),
+and the Telegraph conversation-capability policy
+(`artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:181#const restriction = await getRestrictionState(sc, viewerId);`).
+Two of the three additions are §31's own work, which is the ordinary way a count in a cell goes stale:
+the section that added the callers did not re-read the row that counts them.
+
+### 32.7 Headline, restated from the rows
+
+Unchanged, and recounted rather than carried forward from §31:
+**108 requirements · 89 BUILT-AND-CORRECT · 12 BUILT-BUT-WRONG · 5 NOT-BUILT · 2 CANNOT-VERIFY.**
+89 + 12 + 5 + 2 = 108. CONSTRUCTED 93.5 % (101 / 108) · CORRECT 82.4 % (89 / 108).
+
+### 32.8 What would turn this red
+
+- Any later section citing §31.1 item 2 as the complete account of the `resolveInteractionPermissions`
+  fail-open: it is two of three, and 32.2 is the third.
+- A normalisation layer anywhere in this repository stamping a synthesised error with a real database
+  error code. The guard class 32.2 describes generalises past this function, and nothing enforces it.
+- A `getRestrictionState` caller appearing under `src/compass/` or the discovery routes: TRV2-08's
+  deciding clause falls and the row is a `W` candidate without any owner decision at all.
+- 2870 applied: TV-1c is decidable, and §31 names the DB assertion that will fail there first.
+

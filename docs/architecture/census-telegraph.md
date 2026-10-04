@@ -3530,9 +3530,9 @@ there — which is why it has survived. Declared at
 decision rather than an accident.
 
 **3. `POST /threads/:threadId/messages` accepts any `subtype` the client sends.**
-`routes/messaging.ts:2711#const subtype = typeof req.body?.subtype === 'string' ? req.body.subtype : null;` takes it straight from the request body; the only
-vocabulary constraint anywhere on that handler is that `msgType` collapses to
-`system` or `text` (`routes/messaging.ts:2710#const msgType = msgTypeRaw === 'system' ? 'system' : 'text';`). A client can stamp any discriminator it likes onto
+The handler's line `const subtype = typeof req.body?.subtype === 'string' ? req.body.subtype : null;` took it straight from the request body; the only
+vocabulary constraint anywhere on that handler was that `msgType` collapsed to
+`system` or `text` (`const msgType = msgTypeRaw === 'system' ? 'system' : 'text';`). (Both lines were REPLACED by §42, so they are restated here as prose rather than repointed at code that means something else; the tense is changed for the same reason.) A client could stamp any discriminator it liked onto
 a message. It cannot forge the payload's authorization — every card's data comes
 from the same client-authored body — so this is a rendering-shape hole rather
 than an access-control one, but it is exactly the seam §30A.10's capability
@@ -9110,8 +9110,8 @@ from outside, and each was EXECUTED rather than argued about:
 1. **§21 search — a bucket a sender could invent.** `SUBTYPE_BUCKET`
    (`domain/telegraph/contracts/conversationSearch.ts:175#export const SUBTYPE_BUCKET`)
    is keyed by `messages.subtype`, and that column is **client-written**:
-   `routes/messaging.ts:2711#const subtype = typeof req.body?.subtype === 'string' ? req.body.subtype : null;`
-   takes it straight off the request body and inserts it. So any authenticated
+   the text door's `const subtype = typeof req.body?.subtype === 'string' ? req.body.subtype : null;` (REPLACED by §42 and restated as prose; it is no longer true of the text door)
+   took it straight off the request body and inserted it. So any authenticated
    sender could post a message with `subtype: "constructor"`, and
    `classifyMessage` returned the `Object` FUNCTION as its §21 bucket. Two
    things broke at once and both were measured: the hit serialised to `{}`,
@@ -10198,3 +10198,111 @@ restated in place. Counted with `check:census-integrity`, not by arithmetic on �
 451 rows. CONSTRUCTED (C + W) is 416 of 451 = 92.2 %; CORRECT is 239 of 451 = 53.0 %. Four of
 the five moves are to W and three of those wait only on migrations reaching production; the one
 move to C (T71) is a client rule with controlled evidence and no production observation.
+
+## §42 — Every door into `messages` holds the send path's gates (lane ws-telegraph-w1, task TEL-01). NO ROW MOVES
+
+Branch `claude/ws-telegraph-w1-20261004`, cut from `main` at `f71cfb85f`. `head_commit` is NOT
+re-declared: this section re-measures no row. **All evidence is CONTROLLED**, and the larger half of
+it has not been executed by its author — see §42.4. No migration, no flag, nothing written to any
+database.
+
+### 42.1 What was wrong, verified against the tree before each fix
+
+| # | Defect | Where | What it allowed |
+| --- | --- | --- | --- |
+| 1 | The client chose the renderer | `POST /threads/:threadId/messages` stored any `subtype` the request named on a `system` row (§12.2 item 3 recorded it as "a rendering-shape hole") | The thread screen draws a `system` row as platform chrome with no sender attribution: `call_*` as a call line with a call-back button, `rent_buddy_*` as a booking milestone banner, anything else as a centred notice carrying the body. A member could post "Payment released" or a notice in the platform's voice |
+| 2 | The burst limit guarded one door of seven | §22's limiter (T279, C) was called from the text door only | Media, typed kinds, voice, share and coordination were unlimited; a script only had to choose another endpoint |
+| 3 | A command wrote with a membership check and nothing else | `CREATE_COORDINATION_SESSION` on `POST /telegraph/commands` inserts a `messages` row carrying a free-text title and note | A sender the other party had BLOCKED could still write into their 1:1 thread; the `disable_messaging` stop did not stop it; and in an end-to-end encrypted thread the server stored plaintext. Not behind the kernel flag, so live |
+| 4 | The same three gaps on `ADD_REACTION`; `REMOVE_REACTION` ended `void conversationId;` | `server/telegraph/commandRoute.ts` | Dark (2811 is applied nowhere). A blocked sender's reaction; a delete naming a message in a conversation the caller was not authorized for |
+
+### 42.2 What changed
+
+- **One rule for the text door.** `artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:89#export function resolveClientDiscriminator`
+  admits `text` with no subtype, or `system` with one of the five subtypes the app itself authors
+  (`artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:60#export const CLIENT_SYSTEM_SUBTYPES`),
+  and REFUSES everything else with 400 rather than rewriting it. The route takes its discriminator
+  from it (`artifacts/api-server/src/routes/messaging.ts:2709#const discriminator = resolveClientDiscriminator(req.body?.msgType, req.body?.subtype);`).
+- **One allowance for every door.** The shared guard gained a fifth gate, last, so a send refused by
+  the other four never spends it (`artifacts/api-server/src/lib/telegraphThreadWrite.ts:153#const rate = await sendRateRefusal(`);
+  the media door, which carries its own copies of the other gates, calls the same limiter
+  (`artifacts/api-server/src/routes/messaging.ts:3383#if (await refuseSendOverRate(`). Every ordinary
+  door counts against the id the text door already used; a §6.2 SAFETY message is counted in a
+  second bucket at the same tier limit, which is a conservative default and an owner question
+  (§42.5). A 429 carries `Retry-After`.
+- **The command door.** `CREATE_COORDINATION_SESSION` and `ADD_REACTION` pass the shared guard
+  before dispatch (`artifacts/api-server/src/server/telegraph/commandRoute.ts:178#if (GUARDED_WRITE_COMMANDS.has(type)`);
+  a blocked sender is told what a non-member is told. `UNSEND_MESSAGE` and `REMOVE_REACTION` are
+  retractions and are deliberately NOT refused by a block or the stop; `REMOVE_REACTION` is now
+  bound to the conversation the caller was authorized for.
+- **An inventory that can fail.** `MESSAGE_WRITERS` in the policy module declares every non-test
+  file that inserts into `messages`; the suite re-derives the list from the tree in both directions.
+  Four user doors are declared KNOWN WEAK under a ceiling that may only fall — two of them in
+  other lanes' files, left untouched and named in the handoff: `routes/hiddenGems.ts`
+  (membership only; plaintext into an E2EE thread; unchecked insert), `routes/highlights.ts` (the
+  highlight reply writes plaintext into an existing DM that may be E2EE), `lib/threadMessage.ts`
+  and `routes/telegraphChat.ts` (start-poll: no stop, block or rate gate).
+- **The client says so.** A send the server paused no longer reads "Tap to retry" on either chat
+  screen (`travel-buddy-standalone/src/features/telegraph/lifecycle/readState.ts:228#export function failedSendCopy`).
+
+Line-neutral in every cited file: `routes/messaging.ts`, the four guarded routes,
+`commandRoute.ts` up to its last cited line, `sendRateLimit.ts` up to its last cited line, both
+chat screens, both send hooks and the client transport hold what they held at every anchored
+citation. Checked by `check:doc-citations`, which this change otherwise fails in exactly three
+places — the three citations of the two lines item 1 replaced, restated above as prose.
+
+### 42.3 No row moves, and why
+
+- **T279** stays C, and the sentence that graded it was true of one door. It is true of all of them
+  now; the verdict was right for a narrower reason than it read as.
+- **T35 / T429 / T359 / T445** stay where they are. The discriminator is bounded; the PAYLOAD of an
+  allowed card is still an unversioned JSON body the sender wrote. That is the rows' remainder.
+- **T30 / T220 / T368 / T418 / T419** stay W. The per-send block re-check now covers the command
+  door; thirty modules still query `blocks` directly, four doors are still weak, and the Nearby
+  clauses are untouched.
+- **T143 / T163** stay W for their own reason (2811 is applied nowhere, and nothing reads a
+  reaction back).
+
+### 42.4 Tests, and exactly what was and was not run
+
+- `artifacts/api-server/src/test/telegraphMessageDoors.test.ts` — 20 cases, node builtins only.
+  **Run by this lane:** 16 pass / 3 fail on the tree before the routes changed (the three were the
+  command door, the media door's rate gate and the shared guard's rate step), 20/20 after. Twelve
+  mutations, each applied alone and restored by sha256: ten killed on the first run; two survived
+  because an assertion matched a helper's DEFINITION rather than its call, the two cases were
+  rewritten to assert the call site, and all twelve are killed.
+- `travel-buddy-standalone/src/features/telegraph/__tests__/sendFailure.test.ts` — 9 cases.
+  **Run by this lane:** 0/9 against a pristine copy of `main`, 9/9 after; eight mutations, all killed.
+- `artifacts/api-server/src/test/telegraphMessageDoorRoutes.test.ts` — 21 request-level cases
+  over the certification harness. **NOT RUN by this lane:** the authoring environment has no
+  `express`, so CI is this suite's first execution. Each refusing case reads the store back and
+  counts the rows that must not be there, and the header records what each case would have
+  returned at `f71cfb85f`; none of that has been observed.
+- The suites that already drive the four guarded routes and the command door were NOT run either.
+  The one known interaction is the limiter's bucket being process state: a suite that makes more
+  than twenty sends as one user through a guarded door would now meet a 429 on the twenty-first.
+  Counted by reading, `telegraphCoordinationLifecycle` reaches exactly twenty and
+  `verifyFlowVoiceEndToEnd` about seventeen, so five suites now reset the limiter where they
+  install their fake client — the same line, and the same reason, `telegraphAdversarialFixtures`
+  has carried since the limiter was written. That is test isolation, not a weakened assertion: no
+  expectation in any of the five changed. The share and coordination suites make at most six
+  guarded sends as one user and were left alone.
+
+- NOT-GRADED: artifacts/api-server/src/test/telegraphMessageDoors.test.ts — §42's rule-and-inventory suite; controlled evidence, no Telegraph verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/telegraphMessageDoorRoutes.test.ts — §42's request-level suite, first executed by CI; no Telegraph verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/hiddenGems.ts — §42.2 names it as a weak door owned by the Discovery lane; this lane did not change it and no Telegraph verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/lib/threadMessage.ts — §42.2 names it as a weak door owned by the Layover lane; this lane did not change it and no Telegraph verdict rests on it.
+
+### 42.5 Owner questions surfaced, not taken
+
+1. May a SAFETY-kind message ever be paused by the burst limit? Built: its own bucket at the same
+   tier limit. Either other answer is a one-line change in `messageDoorPolicy.ts`.
+2. May a reaction be stored for an end-to-end encrypted thread? Built: refused, as every other
+   server-readable write into such a thread is.
+
+### 42.6 What would turn this red
+
+A new file inserting into `messages` without a declaration; a door declared guarded that stops
+calling the guard; the command door dispatching before the guard; a client subtype added to the
+allowlist that no client file sends, or sent by a client file and not allowed; the rate gate moved
+ahead of the other four; a throwing tier read treated as "no limit"; a weak door closed without
+the ceiling falling.

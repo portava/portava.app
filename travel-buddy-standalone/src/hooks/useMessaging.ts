@@ -38,7 +38,7 @@ import {
   type TelegraphEvent,
 } from '../services/telegraphRealtimeService.ts';
 import { useSession } from '../context/SessionContext.tsx';
-import { useSnapshotCache } from './useSnapshotCache.ts';
+import { useSnapshotCache } from './useSnapshotCache.ts'; import { sendFailureFrom } from '../features/telegraph/lifecycle/readState.ts';
 
 // When realtime is connected we lean on pushed events and poll only as a slow
 // safety net. When realtime is unavailable the service reports 'polling' and
@@ -476,7 +476,7 @@ export function useThreadMessages(threadId: string | null) {
       } else {
         setMessages((prev) =>
           prev.map((m) =>
-            m.clientId === clientId ? { ...m, deliveryStatus: 'failed' as const } : m,
+            m.clientId === clientId ? { ...m, deliveryStatus: 'failed' as const, sendFailure: sendFailureFrom(res) } : m,
           ),
         );
       }
@@ -497,7 +497,7 @@ export function useThreadMessages(threadId: string | null) {
       if (!failed || !failed.body) return;
       setMessages((prev) =>
         prev.map((m) =>
-          m.clientId === clientId ? { ...m, deliveryStatus: 'sending' as const } : m,
+          m.clientId === clientId ? { ...m, deliveryStatus: 'sending' as const, sendFailure: null } : m,
         ),
       );
       const res = await sendMessage(threadId, failed.body, {
@@ -515,7 +515,7 @@ export function useThreadMessages(threadId: string | null) {
       } else {
         setMessages((prev) =>
           prev.map((m) =>
-            m.clientId === clientId ? { ...m, deliveryStatus: 'failed' as const } : m,
+            m.clientId === clientId ? { ...m, deliveryStatus: 'failed' as const, sendFailure: sendFailureFrom(res) } : m,
           ),
         );
       }
