@@ -2795,9 +2795,9 @@ rows re-read, which this section did not do.
 citation, which takes its file from `discoverySearch.ts` named earlier in the same
 row. **It does not resolve at `a97bfdac0`, it did not resolve at `1fe72289b`
 either, and neither pass can tell you so.** `INHERITED_RE` in
-`artifacts/api-server/scripts/check-doc-citations.mjs:413#export const INHERITED_RE` requires a
+`artifacts/api-server/scripts/check-doc-citations.mjs:421#export const INHERITED_RE` requires a
 closing backtick immediately after the anchor, and `ANCHOR` at
-`artifacts/api-server/scripts/check-doc-citations.mjs:405#const ANCHOR` stops at
+`artifacts/api-server/scripts/check-doc-citations.mjs:413#const ANCHOR` stops at
 the first `"` — so the citation matches NOTHING and is not counted, not checked
 and not reported. `UNBINDABLE_INHERITED_RE` catches the SPACE form of this
 hazard and only that form; a double quote falls through it. `FULL_ANCHOR_RE`
