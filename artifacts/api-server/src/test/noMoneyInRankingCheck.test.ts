@@ -10,8 +10,13 @@
  * front-load item — is reproduced from the line as it stood before PAY-074.
  *
  *   K1  the vocabulary: whole words, not substrings.
- *   K2  the real tree is clean, and the scan is not passing by reading nothing.
+ *   K2  the real tree carries no finding but the recorded open decision, and
+ *       the scan is not passing by reading nothing.
  *   K3  the real script, over the real tree, exits 0 and prints its count.
+ *       WHILE AN OPEN DECISION STANDS THIS CASE FAILS, and it is meant to: the
+ *       real tree does not pass the check (see OPEN_DECISIONS in the script).
+ *       It is the control check:guard-reachability requires, and it is not
+ *       rewritten to expect a failure.
  *   K4  a money identifier in a ranker, a feature vector, a graph builder or a
  *       feed payload fails — as a variable, a selected column, a table name.
  *   K5  the pre-PAY-074 front-load select fails; the closed projection passes.
@@ -19,8 +24,11 @@
  *   K7  the allowlist admits exactly the entry it names, and a stale or
  *       unjustified entry fails.
  *   K8  it cannot stop looking: an emptied scope entry fails, and so does a
- *       new file named like a ranker or graph builder that nothing classifies.
+ *       new file named like a ranker, a scorer or a graph builder that nothing
+ *       classifies.
  *   K9  the script exits 1 on a fixture tree through its seam.
+ *   K10 an open decision FAILS the check, covers exactly the identifiers it
+ *       names, and is stale once they are gone.
  *
  * Run: node --import tsx/esm --test src/test/noMoneyInRankingCheck.test.ts
  */
@@ -33,6 +41,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   ALLOWLIST,
+  OPEN_DECISIONS,
   OUT_OF_SCOPE,
   SCOPE,
   failureCount,
@@ -100,18 +109,39 @@ describe("check:no-money-in-ranking", () => {
     }
   });
 
-  it("K2. the tree as committed is clean, and the scan reads every group", () => {
+  it("K2. the tree as committed carries no finding but the recorded open decision, and the scan reads every group", () => {
     const r = runCheck(REAL_SRC);
     assert.deepEqual(r.findings, [], "a money identifier is read by a ranker, a feature vector, a graph builder or a feed payload");
-    assert.equal(failureCount(r), 0, JSON.stringify({ empty: r.emptyScope, stale: r.staleAllow, unclassified: r.unclassified, unjustified: r.unjustified, staleOut: r.staleOutOfScope }));
+    // Nothing is wrong EXCEPT what OPEN_DECISIONS records — and that is recorded exactly: each entry's
+    // identifiers are all still in its file, and no hit is counted open that an entry does not name.
+    assert.equal(failureCount(r), r.open.length, JSON.stringify({ empty: r.emptyScope, stale: r.staleAllow, staleOpen: r.staleOpen, unclassified: r.unclassified, unjustified: r.unjustified, staleOut: r.staleOutOfScope }));
+    assert.deepEqual(
+      [...new Set(r.open.map((f) => `${f.file}:${f.identifier}`))].sort(),
+      OPEN_DECISIONS.flatMap((d) => d.identifiers.map((id) => `${d.file}:${id}`)).sort(),
+      "an open decision names an identifier its file no longer carries, or the reverse",
+    );
     // Vacuity: a scan that inspected nothing must not read as clean.
-    assert.ok(r.scanned.size >= 70, `expected at least the 70 files in scope when this was written, scanned ${r.scanned.size}`);
+    assert.ok(r.scanned.size >= 90, `expected at least the 90 files in scope when this was written, scanned ${r.scanned.size}`);
     for (const g of ["ranker", "feature-vector", "graph", "feed-payload"] as const) {
       assert.ok([...r.scanned.values()].includes(g), `no ${g} file was scanned`);
     }
-    for (const f of ["lib/portavaRank.ts", "lib/discoveryPde.ts", "compass/CompassRecommendationEngine.ts", "compass/CompassGraphEngine.ts", "compass/CompassFrontLoadEngine.ts"]) {
+    for (const f of [
+      "lib/portavaRank.ts", "lib/discoveryPde.ts", "compass/CompassRecommendationEngine.ts", "compass/CompassGraphEngine.ts", "compass/CompassFrontLoadEngine.ts",
+      // The Compass pipeline, its item shape and the marketplace's buddy scorer: the scan once stopped short of all of them.
+      "compass/CompassPipeline.ts", "compass/CompassScoringEngine.ts", "compass/CompassDiversityEngine.ts", "compass/types.ts",
+      "services/rentBuddy/CompatibilityScoreService.ts",
+    ]) {
       assert.ok(r.scanned.has(f), `${f} is not being scanned`);
     }
+    // What the wider scan found is accounted for by name, not by leaving the file out.
+    const allowedIn = (file: string) => [...new Set(r.allowed.filter((a) => a.file === file).map((a) => a.identifier))].sort();
+    assert.deepEqual(allowedIn("compass/CompassDiversityEngine.ts"), ["PAID_NIGHTLIFE_CAP_RATIO", "applyNightlifePaidCap", "isNightlifeOrPaid", "isPaid"]);
+    assert.deepEqual(allowedIn("compass/CompassScoringEngine.ts"), ["promoted"]);
+    assert.deepEqual(allowedIn("compass/types.ts"), ["hasOffAppPaymentSignal"]);
+    // The buddy scorer's price inputs are NOT allowlisted: they are the open decision.
+    assert.deepEqual(allowedIn("services/rentBuddy/CompatibilityScoreService.ts"), []);
+    assert.ok(r.open.some((f) => f.file === "services/rentBuddy/CompatibilityScoreService.ts" && f.identifier === "hourlyRateUsd"),
+      "the buddy scorer's read of a list price is no longer reported");
     // Every allowlist entry is in use and carries a real reason (staleAllow/unjustified are empty above); say how many.
     assert.equal(new Set(r.allowed.map((a) => `${a.file}:${a.identifier}`)).size, ALLOWLIST.length);
     assert.ok(SCOPE.every((e) => filesOf(REAL_SRC, e).length > 0));
@@ -222,6 +252,19 @@ describe("check:no-money-in-ranking", () => {
     assert.equal(isRankingShapedName("lib/portavaRank.ts"), true);
     assert.equal(isRankingShapedName("compass/CompassGraphEngine.ts"), true);
 
+    // A SCORER is a ranker by another name: the buddy match's scorer and the Compass
+    // scoring engine both sat outside the scan while the rule knew only "rank" and "graph".
+    for (const name of ["services/rentBuddy/CompatibilityScoreService.ts", "compass/CompassScoringEngine.ts", "lib/trustScore.ts", "lib/placeScorer.ts", "services/x/scoredCandidates.ts", "lib/venueScores.ts"]) {
+      assert.equal(isRankingShapedName(name), true, `${name} is named like a scorer and the rule does not see it`);
+    }
+    // …and it still reads words: a `scoreboard`, an `underscore` helper, a `core` module are not scorers.
+    for (const name of ["lib/underscore.ts", "lib/scoreboard.ts", "lib/coreTypes.ts", "services/soccer/fixtures.ts"]) {
+      assert.equal(isRankingShapedName(name), false, `${name} is not named like a scorer and was flagged`);
+    }
+    const scorer = runCheck(tree({ ...CLEAN, "services/buddies/MatchScoreService.ts": "export const x = 1;\n", "compass/FitScoringEngine.ts": "export const y = 1;\n" }), config());
+    assert.deepEqual(scorer.unclassified.sort(), ["compass/FitScoringEngine.ts", "services/buddies/MatchScoreService.ts"]);
+    assert.ok(failureCount(scorer) > 0);
+
     // An OUT_OF_SCOPE entry for a file that is gone is itself stale.
     const ghost = runCheck(tree(CLEAN), config({ outOfScope: [{ file: "lib/gone/graph.ts", why: "a file that no longer exists and so cannot be excused from anything" }] }));
     assert.deepEqual(ghost.staleOutOfScope, ["lib/gone/graph.ts"]);
@@ -238,20 +281,71 @@ describe("check:no-money-in-ranking", () => {
     }
     // Each allowlisted identifier must appear in its file, or its entry is stale and the clean control goes red.
     ALLOWLIST.forEach((a, i) => { files[a.file] = (files[a.file] ?? "") + `export const literal${i} = "${a.identifier}";\n`; });
+    // …and each open decision's identifiers in its file, or that entry is stale.
+    OPEN_DECISIONS.forEach((d, i) => d.identifiers.forEach((id, j) => { files[d.file] = (files[d.file] ?? "") + `export const open${i}_${j} = "${id}";\n`; }));
     for (const o of OUT_OF_SCOPE) files[o.file] = "export const x = 1;\n";
 
     const run = (root: string) => spawnSync(process.execPath, ["--import", "tsx/esm", SCRIPT], {
       cwd: API_ROOT, encoding: "utf8", env: { ...process.env, NO_MONEY_IN_RANKING_SRC: root },
     });
 
-    // Control for the fixture itself: clean, it passes — so the red below is the price and nothing else.
+    // Control for the fixture itself: it carries nothing but what the real tree's own entries name — so the
+    // red below is the price and nothing else. While an open decision stands the script fails on it here as
+    // it does on the real tree, and says that is ALL that is wrong; with none, it passes.
     const clean = run(tree(files));
-    assert.equal(clean.status, 0, `${clean.stderr}\n${clean.stdout}`.slice(0, 4000));
+    assert.equal(clean.status, OPEN_DECISIONS.length > 0 ? 1 : 0, `${clean.stderr}\n${clean.stdout}`.slice(0, 4000));
+    assert.doesNotMatch(clean.stdout, /^ {2}(MONEY|EMPTY|UNCLASSIFIED|STALE|UNJUSTIFIED)\b/m, `the fixture is not clean:\n${clean.stdout}`.slice(0, 4000));
+    assert.match(clean.stdout, OPEN_DECISIONS.length > 0 ? /RESULT failed \(open decision only: nothing else is wrong\)/ : /RESULT clean/);
 
     const dirty = run(tree({ ...files, "lib/portavaRank.ts": "export const x = 1;\nexport const bid = (c: any) => c.platform_fee_percent;\n" }));
     assert.equal(dirty.status, 1, `${dirty.stderr}\n${dirty.stdout}`.slice(0, 4000));
     assert.match(dirty.stdout, /MONEY\s+lib\/portavaRank\.ts:2\s+`platform_fee_percent` \(fee\) in a ranker file/);
     assert.match(dirty.stdout, /MONEY\s+lib\/portavaRank\.ts:2\s+`bid` \(bid\)/);
-    assert.match(dirty.stdout, /RESULT failed/);
+    assert.match(dirty.stdout, /RESULT failed$/m, "a real finding must not be reported as 'open decision only'");
+  });
+
+  it("K10. an open decision FAILS the check, covers exactly the identifiers it names, and is stale once they are gone", () => {
+    const scorer = "services/buddies/MatchScoreService.ts";
+    const scope = [...ONE_OF_EACH, { path: scorer, group: "ranker" as const, why: "fixture buddy scorer" }];
+    const reads = "export const fit = (b: any, p: any) => (b.hourlyRateUsd <= p.budgetMaxUsd ? 100 : 10);\n";
+    const decision = {
+      file: scorer,
+      identifiers: ["hourlyRateUsd", "budgetMaxUsd"],
+      what: "the fixture scorer compares a list price with the viewer's stated budget",
+      question: "may a list price be an input to the order in which buddies are shown?",
+      ifAllowed: "move the identifiers to the allowlist, citing the ruling",
+      ifNot: "remove the term from the score and delete this entry",
+    };
+
+    // Recorded, it is not a plain finding — and the check still FAILS: an open decision is not an allowlist.
+    const open = runCheck(tree({ ...CLEAN, [scorer]: reads }), config({ scope, openDecisions: [decision] }));
+    assert.deepEqual(open.findings, []);
+    assert.deepEqual(open.open.map((f) => f.identifier), ["hourlyRateUsd", "budgetMaxUsd"]);
+    assert.deepEqual(open.allowed, [], "an open decision was counted as allowed");
+    assert.equal(failureCount(open), 2, "an open decision did not fail the check");
+
+    // Unrecorded, the same lines are ordinary findings.
+    const unrecorded = runCheck(tree({ ...CLEAN, [scorer]: reads }), config({ scope }));
+    assert.deepEqual(unrecorded.findings.map((f) => f.identifier), ["hourlyRateUsd", "budgetMaxUsd"]);
+
+    // It covers the identifiers it names and no other: a commission read arriving in the same file is a finding.
+    const more = runCheck(tree({ ...CLEAN, [scorer]: reads + "export const cut = (b: any) => b.commissionRate;\n" }), config({ scope, openDecisions: [decision] }));
+    assert.deepEqual(more.findings.map((f) => f.identifier), ["commissionRate"]);
+    // …and the same identifiers in ANOTHER file are findings there.
+    const elsewhere = runCheck(tree({ ...CLEAN, [scorer]: reads, "lib/portavaRank.ts": CLEAN["lib/portavaRank.ts"] + "export const p = (b: any) => b.hourlyRateUsd;\n" }), config({ scope, openDecisions: [decision] }));
+    assert.deepEqual(elsewhere.findings.map((f) => `${f.file}:${f.identifier}`), ["lib/portavaRank.ts:hourlyRateUsd"]);
+
+    // Answered in code — the term removed — the entry is stale and fails until it is deleted.
+    const answered = runCheck(tree({ ...CLEAN, [scorer]: "export const fit = () => 50;\n" }), config({ scope, openDecisions: [decision] }));
+    assert.deepEqual(answered.staleOpen.map((d) => d.file), [scorer]);
+    assert.ok(failureCount(answered) > 0);
+
+    // An entry that does not say what it is asking is not one.
+    const thin = runCheck(tree({ ...CLEAN, [scorer]: reads }), config({ scope, openDecisions: [{ ...decision, question: "ok?" }] }));
+    assert.deepEqual(thin.unjustified, [`OPEN_DECISIONS ${scorer}`]);
+
+    // The real entry: the buddy scorer, the five identifiers, and both ways out written down.
+    assert.deepEqual(OPEN_DECISIONS.map((d) => d.file), ["services/rentBuddy/CompatibilityScoreService.ts"]);
+    assert.deepEqual([...OPEN_DECISIONS[0]!.identifiers].sort(), ["budgetMaxUsd", "budgetMinUsd", "fullDayRateUsd", "halfDayRateUsd", "hourlyRateUsd"]);
   });
 });
