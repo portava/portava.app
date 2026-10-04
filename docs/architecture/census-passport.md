@@ -2356,3 +2356,117 @@ defects that path actually hits.
 - NOT-GRADED: travel-buddy-standalone/src/components/passport/__tests__/PassportStatsRow.readFailed.component.test.tsx — §25.4's suite; no verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/src/features/passport/__tests__/eventPassport.client.component.test.ts — §25.4's suite; no verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/src/features/passport/__tests__/EventPassport.component.test.tsx — §25.4 cites its two new outage blocks; no verdict rests on them.
+
+## §26 — 2026-10-04 (re-census, integration): no row moves, and §25.1's own classification counts four `C` rows as non-C
+
+**What this section is.** The re-census pass of the 3–4 October merged surfaces, opened on a corpus
+measurement rather than a suspicion: `check:census-integrity` returns the same `C` at `f71cfb85f` as
+it did at `626b46b7e`, 108 commits and seventeen pull requests earlier. PR #581 is this census's.
+Scope: the rows whose SUBJECT #581 touched, plus all eleven non-C rows, each re-read against its own
+settlement condition. Nothing else is re-read, and a row this section does not name keeps the verdict
+and the reason it had.
+
+**`head_commit` is NOT re-declared**, for §25's reason and §26.4's: this section grades no row.
+Documentation only — no code, no migration, no flag, no schema change, and **nothing was read from or
+written to any database**, hosted or otherwise. Where a hosted fact appears it is quoted from §25,
+which took it, or from the repository's own committed capture.
+
+### 26.1 Row moves: none, in either direction
+
+**0 up, 0 down**, and here is the work rather than the assertion. Each of the eleven non-C rows was
+re-read against the settlement condition its own cell states:
+
+| id | V | what settles it | class |
+|---|---|---|---|
+| P13 | W | a ruling in `brand-palette-decision.md` that already names this row and says *"stays W"* | owner, already ruled |
+| P128 | W | the same artifact, line 129; on the blocker ledger as `PASSPORT_DARK_MODE_FIRST` | owner, already ruled |
+| P133 | W | two of four clauses ruled out by the same artifact; whether restrained glass survives the paper metaphor is *"genuinely UNDECIDED"* | owner |
+| P42 | W | lifting the Discovery ranker hold. Nothing in this census's paths is involved | owner (another programme's hold) |
+| P50 | W | recalibrating a confidence band, which **changes the word a person is shown**. `D-WORD` | owner / product |
+| P154 | W | P50 moving. §16 confirmed P154 is P45 and P50 under a phase number, and P45 already moved | follows P50 |
+| P59 | N | a product decision that a seventh capability should exist. Re-executed greps return **0** for `canProvideVisaBuddyService`, `VisaBuddy` and `visa_buddy` outside the guard test | owner / product |
+| P61 | W | a migration adding the `place` CHECK label, plus a product rule for what earns one. Ten of eleven labels present | owner, then a migration lane |
+| P159 | W | one paragraph from the owner defining the surface; everything after that sentence is small and inside this census's paths | owner / product |
+| P77 | W | a participant field `PassportMemory` does not have. Four of §15's five views exist, and *"four of five does not close a row that names five"* | cross-lane (memory services) |
+| P66 | X | a designer's dated sign-off against a rendered screen. 26.3 | owner / design |
+
+**§25.1's classification therefore HOLDS in substance**: *"No row on the tester's path was
+code-actionable, so the pass worked the defects that path actually hits."* Re-reading each row
+independently reaches the same place. **Not one of the eleven can be moved by code in this
+repository**, and that is a fact about where this surface's work stopped, not about #581.
+
+### 26.2 §25.1's arithmetic disagrees with the check it quotes in the same sentence
+
+§25.1 opens: *"Fifteen rows are not C (`check:census-integrity`: 158 C · 9 W · 1 N · 1 X …"*.
+
+**9 + 1 + 1 = 11, not 15**, and the two numbers are five words apart. The list that follows then names
+fifteen rows, and four of them are `C` at this tree — each moved by an earlier section of this
+document, with evidence, and none of those moves was withdrawn:
+
+| id | §25.1 filed it as | actual verdict at `f71cfb85f` | where it moved |
+|---|---|---|---|
+| P45 | owner-gated | **C** | §16.1's `W → C`: the three clauses are domain-specific, confidence-aware and explainable, and the third was closed when `trust.domains` acquired a client consumer instead of being overridden by a flattering constant |
+| P75 | product-surface build, deferred | **C** | §13.1, *"Built and closed"* |
+| P126 | product-surface build, deferred | **C** | §13.1, *"Built and closed"* |
+| P169 | blocked cross-lane | **C** | §18's `W → C`: the row's own text specified *"two BULK LIST endpoints … one job, not two"*, and both lists adopted the extended batch projection |
+
+**No verdict moves on this.** The eleven are the eleven, and this document's own parser has said so
+since §15.1. What the correction buys is that a reader of §25.1 — the newest section before this one,
+and therefore the one a reader reaches first — is no longer told that four closed rows are open.
+**This is the sharper half of the finding**: an overcount of non-C rows reads as conservatism, so it
+is the direction nobody audits.
+
+### 26.3 P66 stays `X`, and what would settle it is now narrower and harder
+
+P66 is *"Premium collectible appearance with perforated / passport-stamp edges."* §16's note sharpened
+the question to *"is this premium ENOUGH"* rather than *"is there any premium treatment"*, on the
+ground that the tree ships rarity affordances — a rarity badge, sawtooth and wave frames, a legendary
+glow ring.
+
+**That ground survives #581, and it survives for a reason worth writing down, because #581's first
+finding looks at first as though it destroys it.** §25.2 records that *"Every premium stamp was
+framed 'common'"*: `rarityForCatalog` filtered `stamp_definitions.catalog_id`, a column that table has
+never had, PostgREST answered 42703, and the catch answered `"common"` — so on the hosted database
+twelve composed artwork versions belonging to rare (6) and uncommon (6) definitions are **all composed
+common**. If P66's affordances came from that composition, the renders a designer would be shown would
+carry no rarity differentiation at all and §16's note would be false.
+
+They do not. The affordances are rendered client-side from the item's own rarity field, not from the
+server-composed artwork, which is why the composition defect and the rendering affordances are
+independent and why §16's note holds unaltered. **`X` stands.**
+
+What this section adds to the row's settlement condition, because a sign-off taken today would be
+taken against the wrong artwork: §25.5 records that *"The 12 common-framed artwork versions need
+recomposing after deploy; that is a hosted write."* **A designer shown a premium stamp whose artwork
+came from the hosted store before that recompose is being shown a common frame.** So the condition is
+now: recompose first, then sign off. Nothing about this is an engineering verdict, which is why the
+letter does not change.
+
+### 26.4 What #581 did to rows it does not grade, stated so the next reader is not surprised
+
+§25.6 says *"No P row moves. None grades stamp rarity, a stat's failure state, or an outage's
+wording."* Re-read and confirmed row by row: P69 (*"Metallic accents and subtle depth may distinguish
+premium/earned states"*) and P130 (*"Gold for premium/earned travel identity and collectible
+stamps"*) both rest on the theme tokens and the client card, neither of which the generation worker
+touches; and no P row rests on `measureStampsEarned`, `buildStats` or the event-Passport status
+vocabulary. **So the four defects #581 fixed were each real, each user-visible, and each invisible to
+this census's 169 requirements.** That is a statement about the census's coverage, not about the lane,
+and it is the one thing on this surface a future denominator revision should look at first.
+
+### 26.5 Headline, restated from the rows
+
+Unchanged, and recounted rather than carried forward from §25:
+**169 requirements · 158 BUILT-AND-CORRECT · 9 BUILT-BUT-WRONG · 1 NOT-BUILT · 1 CANNOT-VERIFY.**
+158 + 9 + 1 + 1 = 169. CONSTRUCTED 98.8 % (167 / 169) · CORRECT 93.5 % (158 / 169).
+
+### 26.6 What would turn this red
+
+- A later section quoting §25.1's "fifteen": the overcount is corrected here, and repeating it puts
+  four closed rows back in the open column.
+- A designer's P66 sign-off dated before the twelve artwork versions are recomposed: the sign-off is
+  about artwork the deploy will replace, and the row has to be re-opened rather than closed.
+- Any P row newly rested on a composed artwork's rarity, on `stampsEarned`, or on an event-Passport
+  status word, without §26.4 being read first: #581's fixes are what make such a row gradeable at all.
+- Migration 2294 applied and `passport_event_share_enabled` flipped: event-Passport sharing stops
+  being implementation-complete-and-dark, and §25.5's awaiting clause has to be re-read as a shipped
+  surface the same day.
