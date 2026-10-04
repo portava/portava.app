@@ -61,11 +61,10 @@ describe("PAY-002 — every booking write is the API's service client", () => {
 
     const supabase = code(join(SRC, "lib", "supabase.ts"));
     assert.match(supabase, /createClient\(supabaseUrl, serviceRoleKey,/, "the API's client is no longer built from the service-role key");
-    // The variable's name is assembled, not written: check:guard-coverage classes
-    // any file that NAMES a Supabase credential variable as able to reach the
-    // database, and this file only reads source text.
-    const serviceKeyVar = ["SUPABASE", "SERVICE", "ROLE", "KEY"].join("_");
-    assert.match(supabase, new RegExp(`const serviceRoleKey = process\\.env\\.${serviceKeyVar}`));
+    // The variable is NAMED here, so check:guard-coverage classes this file as
+    // able to reach the database. It only matches source text; that is declared
+    // in the EXEMPT list of scripts/check-guard-coverage.mjs, with the reason.
+    assert.match(supabase, /const serviceRoleKey = process\.env\.SUPABASE_SERVICE_ROLE_KEY/);
 
     const http = code(join(SRC, "lib", "http.ts"));
     const requireUser = http.slice(http.indexOf("export async function requireUser("));

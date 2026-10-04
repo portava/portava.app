@@ -71,9 +71,15 @@
 --    rent_buddy_bookings alone would have closed the door the finding names and
 --    left the one beside it open to callers with no account at all.
 --
---    Whether the hosted databases still carry these views and grants cannot be
---    read from the repository. The baseline is production's own dump and no
---    later file changes them; a read-only catalog query settles it (handoff).
+--    That is the baseline's state, and the state of any database built from it.
+--    The two hosted databases were read (catalog only) on 2026-10-04 and have
+--    moved on in one respect, out of band — no file here did it: the nine views
+--    already carry security_invoker = true, are owned by postgres, and grant
+--    authenticated the four DML verbs and anon nothing. There the view door is
+--    shut and this file switches no view; PAY-002 itself is open exactly as
+--    above (anon and authenticated hold SELECT, INSERT, UPDATE, DELETE on
+--    rent_buddy_bookings; the three baseline policies stand). Both starting
+--    states were rehearsed.
 --
 -- 3. THE SIBLING: rent_buddy_offers.
 --      POLICY rb_offers_buddy FOR ALL USING (auth.uid() = buddy_user_id)   + GRANT ALL
@@ -138,13 +144,19 @@
 --     authenticated and PUBLIC.
 --   * DROP POLICY rb_booking_traveler_ins. With the grant gone it could admit
 --     nothing; it is dropped so that the first GRANT anyone adds for an
---     unrelated reason does not silently re-open the insert. rb_booking_svc
---     (FOR ALL, service_role) is the write policy that remains.
---   * The nine views, and any other view that reaches rent_buddy_bookings or
---     rent_buddy_offers: SET (security_invoker = true). The view then reaches
---     its table with the CALLER's rights, so the table's grants and policies
+--     unrelated reason does not silently re-open the insert. It is dropped
+--     whatever its present text (the advisor's `(select auth.uid())` rewrite,
+--     a `TO authenticated` role list): its definition as found is recorded,
+--     and the rollback recreates it from the record, not from the baseline.
+--     rb_booking_svc (FOR ALL, service_role) is the write policy that remains.
+--   * The nine views, and ONLY those nine, where one still runs with its
+--     owner's rights: SET (security_invoker = true). The view then reaches its
+--     table with the CALLER's rights, so the table's grants and policies
 --     decide, as they do for the table itself. buddy_bookings and
 --     buddy_booking_requests additionally lose the client write privileges.
+--     Any OTHER view that reaches rent_buddy_bookings or rent_buddy_offers with
+--     its owner's rights is the same door, but it is somebody else's object:
+--     the precondition names it and refuses, and nothing is altered.
 --
 -- WHAT IT DOES NOT DO
 --   * SELECT is untouched everywhere. rb_booking_parties (the traveller and the
@@ -170,21 +182,45 @@
 -- Client roles hold different things on different databases: the full default
 -- set where 2490 is not applied (the baseline, the local harness), the four DML
 -- verbs where it is. So the state this file is about to change is RECORDED, as
--- it was, at the end of the comment on rent_buddy_bookings: each client write
--- privilege removed, whether the policy existed, and which views were switched.
--- The record is written once; a second apply finds it, changes nothing more and
--- passes the same postconditions.
+-- it was, in the comment on rent_buddy_bookings: each client write privilege
+-- removed, the dropped policy's definition (command, roles, USING, WITH CHECK)
+-- or null, and which views were switched. The record is one line of its own,
+--     <<3820-prior-state {…json…} 3820-prior-state>>
+-- found by its delimiters wherever it sits, so a later COMMENT that appends to
+-- or prepends to the text does not hide it. It is written once; a second apply
+-- finds it, changes nothing more and passes the same postconditions.
+--
+-- WHY A COMMENT, AND WHO CAN READ IT. The table comment is where this band's
+-- boundary files keep such a record (3364, 3365). The alternatives were looked
+-- at: this file's schema_migration_ledger row is written by the applier, after
+-- this file's body, its `notes` are overwritten on every apply, and a database
+-- this file was applied to by hand has no row at all; and a table of its own
+-- would be a new relation with its own boundary to hold. A table comment is
+-- visible wherever descriptions are exposed — PostgREST's OpenAPI document and
+-- GraphQL introspection show it to any role that can see the table. What it
+-- discloses is the privilege names the client roles used to hold, one policy's
+-- definition and nine view names: the 2026-08-19 baseline's own content, about
+-- a state that no longer holds. No row data, no identifier, no secret.
 --
 -- Rollback: db/rollback/2026-10-04-3820-rent-buddy-bookings-write-boundary-rollback.sql
--- restores exactly that record, removes it, and deletes this file's ledger row.
--- It re-opens every door listed above.
+-- restores exactly that record, removes it (and only it) from the comment, and
+-- deletes this file's ledger row. It re-opens every door listed above. Without
+-- the record it REFUSES and changes nothing.
 --
 -- THE POSTCONDITION reads the catalog, not the statements: aclexplode over
 -- pg_class.relacl (which sees MAINTAIN; information_schema does not) and
 -- pg_attribute.attacl (a column-level grant survives in a place relacl does not
--- show), pg_policy for a write policy that is not the service one, and
--- pg_depend/pg_rewrite for a view that still reaches either table with its
--- owner's rights.
+-- show), and pg_depend/pg_rewrite for a view that still reaches either table
+-- with its owner's rights. Its policy claim is about what a client role can
+-- DO, not about the text of a policy: it fails when anon or authenticated
+-- effectively holds a write privilege on either table (role membership
+-- included) AND row level security would let the write through — RLS off, or a
+-- permissive policy for that command that applies to the role and is not the
+-- service predicate. `auth.role() = 'service_role'` is recognised with or
+-- without the advisor's `(SELECT … AS x)` wrapper and whatever the role list.
+-- A client-write policy that no privilege can reach (rb_offers_buddy is one:
+-- it is also how a buddy READS their offers) is reported in the closing NOTICE,
+-- not refused.
 -- ══════════════════════════════════════════════════════════════════════════════
 
 BEGIN;
@@ -241,15 +277,44 @@ BEGIN
     RAISE EXCEPTION 'PRECONDITION FAILED (3820): column-level client write privileges exist (%). That is a designed client write path this file was not written against; decide it by hand.', bad;
   END IF;
 
-  -- The policy this file drops must be the one the rollback knows how to
-  -- recreate: FOR INSERT, permissive, to PUBLIC, WITH CHECK (auth.uid() = traveler_id).
-  SELECT p.polname INTO bad
-    FROM pg_policy p
-   WHERE p.polrelid = bk AND p.polname = 'rb_booking_traveler_ins'
-     AND NOT (p.polcmd = 'a' AND p.polpermissive AND p.polroles = ARRAY[0]::oid[] AND p.polqual IS NULL
-              AND regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '[()[:space:]]', '', 'g') = 'auth.uid=traveler_id');
+  -- This file switches the nine compatibility views and no other. A view outside
+  -- that list which reaches either table with its owner's rights is the same
+  -- door, but it is another owner's object and another design's decision: it is
+  -- named and refused here, before anything changes, rather than altered.
+  WITH RECURSIVE reach(oid) AS (
+    SELECT c.oid FROM pg_class c
+     WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p')
+       AND c.relname IN ('rent_buddy_bookings', 'rent_buddy_offers')
+    UNION
+    SELECT r.ev_class
+      FROM reach
+      JOIN pg_depend d ON d.refobjid = reach.oid AND d.refclassid = 'pg_class'::regclass AND d.classid = 'pg_rewrite'::regclass
+      JOIN pg_rewrite r ON r.oid = d.objid
+  )
+  SELECT string_agg(n.nspname || '.' || c.relname, ', ' ORDER BY n.nspname, c.relname) INTO bad
+    FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE c.relkind = 'v' AND c.oid IN (SELECT oid FROM reach)
+     AND NOT (n.nspname = 'public' AND c.relname IN (
+           'buddy_availability', 'buddy_booking_checkins', 'buddy_booking_requests', 'buddy_bookings',
+           'buddy_change_requests', 'buddy_disputes', 'buddy_favorites', 'buddy_profiles', 'buddy_reviews'))
+     AND NOT COALESCE((SELECT lower(o.option_value) IN ('true', 'on', '1', 'yes')
+                         FROM pg_options_to_table(c.reloptions) o WHERE o.option_name = 'security_invoker'), false);
   IF bad IS NOT NULL THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (3820): policy % on rent_buddy_bookings is not the baseline''s (FOR INSERT WITH CHECK (auth.uid() = traveler_id)); this file will not drop a policy its rollback cannot recreate.', bad;
+    RAISE EXCEPTION 'PRECONDITION FAILED (3820): view(s) % reach rent_buddy_bookings or rent_buddy_offers with their owner''s rights and are not among the nine compatibility views this file switches. Each walks past the boundary this file draws. Set security_invoker on it as its owner, or remove it, then apply again. Nothing has been changed.', bad;
+  END IF;
+
+  -- The nine it does switch must be the applying role's to alter.
+  SELECT string_agg(c.relname, ', ' ORDER BY c.relname) INTO bad
+    FROM pg_class c
+   WHERE c.relnamespace = 'public'::regnamespace AND c.relkind = 'v'
+     AND c.relname IN (
+           'buddy_availability', 'buddy_booking_checkins', 'buddy_booking_requests', 'buddy_bookings',
+           'buddy_change_requests', 'buddy_disputes', 'buddy_favorites', 'buddy_profiles', 'buddy_reviews')
+     AND NOT COALESCE((SELECT lower(o.option_value) IN ('true', 'on', '1', 'yes')
+                         FROM pg_options_to_table(c.reloptions) o WHERE o.option_name = 'security_invoker'), false)
+     AND NOT pg_has_role(c.relowner, 'USAGE');
+  IF bad IS NOT NULL THEN
+    RAISE EXCEPTION 'PRECONDITION FAILED (3820): % cannot switch compatibility view(s) % to the caller''s rights: it does not own them. Apply as their owner. Nothing has been changed.', current_user, bad;
   END IF;
 END
 $pre$;
@@ -293,7 +358,9 @@ BEGIN
 
   -- The record the rollback restores from. Written ONCE: a second apply finds
   -- it and must not replace the state before 3820 with the state after it.
-  IF prior IS NULL OR position('3820 (PAY-002):' IN prior) = 0 THEN
+  -- It is found by its delimiters, on a line of its own, wherever the comment
+  -- has since been added to.
+  IF prior IS NULL OR prior !~ '<<3820-prior-state \{[^\n]*\} 3820-prior-state>>' THEN
     state := jsonb_build_object(
       -- One entry per relation and role: the write privileges it held, and
       -- which of them (normally none) it held with grant option.
@@ -310,59 +377,59 @@ BEGIN
                                 AND (x.grantee = 0 OR pg_get_userbyid(x.grantee) IN ('anon', 'authenticated'))
                                 AND x.privilege_type <> 'SELECT'
                               GROUP BY c.relname, x.grantee) g),
-      'policy', EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = bk AND p.polname = 'rb_booking_traveler_ins'),
+      -- The policy this file drops, as it is defined HERE — not as the baseline
+      -- wrote it. null where there is none.
+      'policy', (SELECT jsonb_build_object(
+                          'cmd', CASE p.polcmd WHEN 'r' THEN 'SELECT' WHEN 'a' THEN 'INSERT' WHEN 'w' THEN 'UPDATE' WHEN 'd' THEN 'DELETE' ELSE 'ALL' END,
+                          'permissive', p.polpermissive,
+                          'roles', (SELECT jsonb_agg(CASE WHEN r = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(r) END ORDER BY r) FROM unnest(p.polroles) r),
+                          'using', pg_get_expr(p.polqual, p.polrelid),
+                          'check', pg_get_expr(p.polwithcheck, p.polrelid))
+                   FROM pg_policy p WHERE p.polrelid = bk AND p.polname = 'rb_booking_traveler_ins'),
+      -- Which of the nine compatibility views still ran with their owner's
+      -- rights: the ones this apply switches, and the rollback switches back.
       'invoker', (
-        WITH RECURSIVE reach(oid) AS (
-          SELECT c.oid FROM pg_class c
-           WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p')
-             AND c.relname IN ('rent_buddy_bookings', 'rent_buddy_offers')
-          UNION
-          SELECT r.ev_class
-            FROM reach
-            JOIN pg_depend d ON d.refobjid = reach.oid AND d.refclassid = 'pg_class'::regclass AND d.classid = 'pg_rewrite'::regclass
-            JOIN pg_rewrite r ON r.oid = d.objid
-        )
         SELECT COALESCE(jsonb_agg(jsonb_build_array(n.nspname, c.relname) ORDER BY n.nspname, c.relname), '[]'::jsonb)
           FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-         WHERE c.relkind = 'v'
-           AND (c.oid IN (SELECT oid FROM reach)
-             OR (n.nspname = 'public' AND c.relname IN (
-                   'buddy_availability', 'buddy_booking_checkins', 'buddy_booking_requests', 'buddy_bookings',
-                   'buddy_change_requests', 'buddy_disputes', 'buddy_favorites', 'buddy_profiles', 'buddy_reviews')))
+         WHERE c.relkind = 'v' AND n.nspname = 'public'
+           AND c.relname IN (
+                 'buddy_availability', 'buddy_booking_checkins', 'buddy_booking_requests', 'buddy_bookings',
+                 'buddy_change_requests', 'buddy_disputes', 'buddy_favorites', 'buddy_profiles', 'buddy_reviews')
            AND NOT COALESCE((SELECT lower(o.option_value) IN ('true', 'on', '1', 'yes')
                                FROM pg_options_to_table(c.reloptions) o WHERE o.option_name = 'security_invoker'), false)
       )
     );
+    -- One line of prose, then the record on a line of its own between its
+    -- delimiters (jsonb prints on one line; a line break inside a policy
+    -- expression is escaped). The rollback and postcondition 6 read exactly
+    -- that line and nothing around it.
     note := '3820 (PAY-002): anon, authenticated and PUBLIC hold no write privilege on this table, on rent_buddy_offers '
          || 'or on the buddy_bookings and buddy_booking_requests views, and the buddy_* compatibility views run with the '
-         || 'caller''s rights; every writer is the API as service_role. State before 3820, which its rollback restores: '
-         || state::text;
+         || 'caller''s rights; every writer is the API as service_role. The next line is the state before 3820: its '
+         || 'rollback restores from it and refuses without it.'
+         || E'\n' || '<<3820-prior-state ' || state::text || ' 3820-prior-state>>';
     EXECUTE format('COMMENT ON TABLE public.rent_buddy_bookings IS %L',
                    CASE WHEN prior IS NULL THEN note ELSE prior || E'\n\n' || note END);
+    -- Said in the apply's own output too: if the comment is ever replaced, this
+    -- line in the log is the copy the state can be recovered from by hand.
+    RAISE NOTICE '3820 recorded the state before it: %', state::text;
   END IF;
 
-  -- Every view that reaches either table, and the nine compatibility views by
-  -- name, wherever one exists as a view: the caller's rights, not the owner's.
+  -- The nine compatibility views by name, wherever one exists as a view and
+  -- still runs with its owner's rights: the caller's rights instead. A view
+  -- already switched is not touched (on the hosted databases that is all nine).
   -- (A legacy buddy_bookings TABLE, where 0147 found one, is not a view of
-  -- anything and is left alone.)
+  -- anything and is left alone.) No other view is altered: the precondition
+  -- refused if one outside this list reaches either table as its owner.
   FOR v IN
-    WITH RECURSIVE reach(oid) AS (
-      SELECT c.oid FROM pg_class c
-       WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p')
-         AND c.relname IN ('rent_buddy_bookings', 'rent_buddy_offers')
-      UNION
-      SELECT r.ev_class
-        FROM reach
-        JOIN pg_depend d ON d.refobjid = reach.oid AND d.refclassid = 'pg_class'::regclass AND d.classid = 'pg_rewrite'::regclass
-        JOIN pg_rewrite r ON r.oid = d.objid
-    )
     SELECT n.nspname, c.relname
       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-     WHERE c.relkind = 'v'
-       AND (c.oid IN (SELECT oid FROM reach)
-         OR (n.nspname = 'public' AND c.relname IN (
-               'buddy_availability', 'buddy_booking_checkins', 'buddy_booking_requests', 'buddy_bookings',
-               'buddy_change_requests', 'buddy_disputes', 'buddy_favorites', 'buddy_profiles', 'buddy_reviews')))
+     WHERE c.relkind = 'v' AND n.nspname = 'public'
+       AND c.relname IN (
+             'buddy_availability', 'buddy_booking_checkins', 'buddy_booking_requests', 'buddy_bookings',
+             'buddy_change_requests', 'buddy_disputes', 'buddy_favorites', 'buddy_profiles', 'buddy_reviews')
+       AND NOT COALESCE((SELECT lower(o.option_value) IN ('true', 'on', '1', 'yes')
+                           FROM pg_options_to_table(c.reloptions) o WHERE o.option_name = 'security_invoker'), false)
      ORDER BY n.nspname, c.relname
   LOOP
     EXECUTE format('ALTER VIEW %I.%I SET (security_invoker = true)', v.nspname, v.relname);
@@ -452,11 +519,12 @@ COMMIT;
 -- ── Postconditions (separate transaction: they assert what persisted) ────────
 DO $post$
 DECLARE
-  bk      regclass := 'public.rent_buddy_bookings'::regclass;
   leak    text;
+  inert   text;
   descr   text := obj_description('public.rent_buddy_bookings'::regclass, 'pg_class');
   n_rel   integer;
   n_view  integer;
+  svc     CONSTANT text := '^((select)?auth\.role(as[a-z_"]+)?=''service_role''::text|''service_role''::text=(select)?auth\.role(as[a-z_"]+)?)$';
 BEGIN
   -- 1. No client role, directly or through PUBLIC, holds anything but SELECT on
   --    the two tables or the two views over bookings. Read from relacl, so
@@ -491,22 +559,60 @@ BEGIN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3820): a client role still holds a column-level write privilege: %.', leak;
   END IF;
 
-  -- 3. No policy on rent_buddy_bookings admits a client write: every policy
-  --    that covers a write command is the service one, by its role list or by
-  --    its predicate.
-  SELECT string_agg(p.polname, ', ' ORDER BY p.polname) INTO leak
-    FROM pg_policy p
-   WHERE p.polrelid = bk
-     AND p.polcmd <> 'r'
-     AND NOT (
-       p.polroles = ARRAY[(SELECT oid FROM pg_roles WHERE rolname = 'service_role')]::oid[]
-       OR (COALESCE(regexp_replace(pg_get_expr(p.polqual, p.polrelid), '[()[:space:]]', '', 'g'), 'auth.role=''service_role''::text') = 'auth.role=''service_role''::text'
-           AND COALESCE(regexp_replace(pg_get_expr(p.polwithcheck, p.polrelid), '[()[:space:]]', '', 'g'), 'auth.role=''service_role''::text') = 'auth.role=''service_role''::text'
-           AND (p.polqual IS NOT NULL OR p.polwithcheck IS NOT NULL))
-     );
+  -- 3. No client role can still write either table. This is about what the
+  --    role can DO, not about how a policy is spelled. A write needs BOTH
+  --      (a) an effective privilege — has_table_privilege and
+  --          has_any_column_privilege follow role membership, which claims 1
+  --          and 2 (direct ACL entries) do not; and
+  --      (b) a way past row level security: RLS switched off, or a PERMISSIVE
+  --          policy for that command which applies to the role (PUBLIC, the
+  --          role, or a role it is a member of) and is not the service
+  --          predicate.
+  --    `svc` recognises the service predicate after parentheses and whitespace
+  --    are removed: auth.role() = 'service_role', either way round, bare or in
+  --    the advisor's (SELECT auth.role() AS x) wrapper. Anything it does not
+  --    recognise counts as admitting the client, which is the safe direction.
+  SELECT string_agg(DISTINCT c.relname || ':' || cr.rolname || ':' || w.priv
+                             || COALESCE(' admitted by policy ' || adm.polname, ' with row level security off'), ', ')
+    INTO leak
+    FROM pg_class c
+    CROSS JOIN pg_roles cr
+    CROSS JOIN (VALUES ('INSERT', 'a'), ('UPDATE', 'w'), ('DELETE', 'd')) AS w(priv, cmd)
+    LEFT JOIN LATERAL (
+      SELECT p.polname
+        FROM pg_policy p
+       WHERE p.polrelid = c.oid AND p.polpermissive AND p.polcmd::text IN (w.cmd, '*')
+         AND EXISTS (SELECT 1 FROM unnest(p.polroles) pr
+                      WHERE CASE WHEN pr = 0 THEN true ELSE pg_has_role(cr.oid, pr, 'MEMBER') END)
+         AND NOT ((p.polqual IS NOT NULL OR p.polwithcheck IS NOT NULL)
+                  AND COALESCE(regexp_replace(lower(pg_get_expr(p.polqual, p.polrelid)), '[()[:space:]]', '', 'g') ~ svc, true)
+                  AND COALESCE(regexp_replace(lower(pg_get_expr(p.polwithcheck, p.polrelid)), '[()[:space:]]', '', 'g') ~ svc, true))
+       ORDER BY p.polname
+       LIMIT 1
+    ) adm ON true
+   WHERE c.relnamespace = 'public'::regnamespace AND c.relkind IN ('r', 'p')
+     AND c.relname IN ('rent_buddy_bookings', 'rent_buddy_offers')
+     AND cr.rolname IN ('anon', 'authenticated')
+     AND (has_table_privilege(cr.oid, c.oid, w.priv)
+          OR (w.priv <> 'DELETE' AND has_any_column_privilege(cr.oid, c.oid, w.priv)))
+     AND (NOT c.relrowsecurity OR adm.polname IS NOT NULL);
   IF leak IS NOT NULL THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3820): rent_buddy_bookings still carries a client write policy: %.', leak;
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3820): a client role can still write: %.', leak;
   END IF;
+
+  -- ...and, reported not refused: client-write policies no privilege reaches.
+  -- Each admits nothing while claims 1-3 hold, and would admit a client write
+  -- the day someone hands a client role the privilege it governs.
+  SELECT string_agg(c.relname || '.' || p.polname, ', ' ORDER BY c.relname, p.polname) INTO inert
+    FROM pg_policy p JOIN pg_class c ON c.oid = p.polrelid
+   WHERE c.relnamespace = 'public'::regnamespace AND c.relname IN ('rent_buddy_bookings', 'rent_buddy_offers')
+     AND p.polpermissive AND p.polcmd <> 'r'
+     AND EXISTS (SELECT 1 FROM unnest(p.polroles) pr, pg_roles cr
+                  WHERE cr.rolname IN ('anon', 'authenticated')
+                    AND CASE WHEN pr = 0 THEN true ELSE pg_has_role(cr.oid, pr, 'MEMBER') END)
+     AND NOT ((p.polqual IS NOT NULL OR p.polwithcheck IS NOT NULL)
+              AND COALESCE(regexp_replace(lower(pg_get_expr(p.polqual, p.polrelid)), '[()[:space:]]', '', 'g') ~ svc, true)
+              AND COALESCE(regexp_replace(lower(pg_get_expr(p.polwithcheck, p.polrelid)), '[()[:space:]]', '', 'g') ~ svc, true));
 
   -- 4. The writer still writes.
   SELECT string_agg(c.relname || ':' || p, ', ' ORDER BY c.relname, p) INTO leak
@@ -545,12 +651,13 @@ BEGIN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3820): view(s) still run with their owner''s rights and so walk past the table''s privileges and policies: %.', leak;
   END IF;
 
-  -- 6. The record the rollback restores from is there and parses.
-  IF descr IS NULL OR position('3820 (PAY-002):' IN descr) = 0
-     OR (substring(descr FROM 'State before 3820, which its rollback restores: (\{.*\})$')::jsonb -> 'privileges') IS NULL THEN
+  -- 6. The record the rollback restores from is there and parses: its own
+  --    line, found by its delimiters wherever else the comment has grown.
+  IF descr IS NULL
+     OR (substring(descr FROM '<<3820-prior-state (\{[^\n]*\}) 3820-prior-state>>')::jsonb -> 'privileges') IS NULL THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3820): the record the rollback restores from is missing from the comment on rent_buddy_bookings.';
   END IF;
 
-  RAISE NOTICE '3820 OK: % relation(s) hold no client write privilege; rent_buddy_bookings has no client write policy; service_role writes; % view(s) run with the caller''s rights.', n_rel, n_view;
+  RAISE NOTICE '3820 OK: % relation(s) hold no client write privilege; no client role can write rent_buddy_bookings or rent_buddy_offers; service_role writes; % view(s) run with the caller''s rights. Client-write policies no privilege reaches: %.', n_rel, n_view, COALESCE(inert, 'none');
 END
 $post$;

@@ -41,14 +41,29 @@
  *        round 2145; after, refused — and the buddy still edits a field 2145
  *        lets a buddy edit.
  *   W7   3820's postcondition is not decorative: each claim, broken, makes it
- *        raise; untouched, it passes.
+ *        raise; untouched, it passes. Its policy claim is about what a client
+ *        role can DO — an effective privilege AND a policy that admits it — and
+ *        the catalog verdict is checked against the write itself.
+ *   W7b  re-applying 3820 repairs every re-opened door it owns, reports a
+ *        client-write policy no privilege reaches, and refuses a view it does
+ *        not own the decision for.
  *   W8   3820 is idempotent, and a second apply does not overwrite the record
  *        of the state before the first.
- *   W9   the rollback restores the prior state exactly, from the baseline's
- *        grants and from 2490's; without the record it refuses.
- *   W10  3820's preconditions refuse a state they cannot leave correct.
+ *   W9   apply, apply again, rollback: the prior state is restored exactly,
+ *        from the baseline's grants, from 2490's and from the hosted
+ *        databases' as read on 2026-10-04; without the record the rollback
+ *        refuses.
+ *   W10  3820's preconditions refuse a state they cannot leave correct, naming
+ *        a view outside the nine that reaches either table as its owner.
  *   W11  3820's in-transaction assertion is not decorative: a body that also
  *        took the read, the party policy or the service role's write aborts.
+ *   W12  policies as a Supabase advisor rewrites them — `(select auth.role())`,
+ *        `(select auth.uid())`, `TO authenticated` — neither stop the apply nor
+ *        trip its postcondition, and the rollback recreates the dropped policy
+ *        as it was FOUND.
+ *   W13  the rollback's record survives a comment that has been added to; a
+ *        comment that was REPLACED makes the postcondition raise and the
+ *        rollback refuse, loudly, in both of its blocks.
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -368,9 +383,6 @@ SELECT 'TAGLINE=' || COALESCE(tagline, '(none)') FROM public.rent_buddy_profiles
       ["PUBLIC is granted DELETE on offers", "GRANT DELETE ON public.rent_buddy_offers TO PUBLIC;", /still holds a write privilege: .*rent_buddy_offers:PUBLIC:DELETE/],
       ["a client role is granted TRUNCATE", "GRANT TRUNCATE ON public.rent_buddy_bookings TO anon;", /still holds a write privilege: .*rent_buddy_bookings:anon:TRUNCATE/],
       ["a column-level write grant appears", "GRANT UPDATE (total_usd) ON public.rent_buddy_bookings TO authenticated;", /column-level write privilege: .*rent_buddy_bookings\.total_usd:UPDATE/],
-      ["the traveller INSERT policy returns", "CREATE POLICY rb_booking_traveler_ins ON public.rent_buddy_bookings FOR INSERT WITH CHECK ((auth.uid() = traveler_id));", /still carries a client write policy: rb_booking_traveler_ins/],
-      ["a new client UPDATE policy is added", "CREATE POLICY zz_3820_upd ON public.rent_buddy_bookings FOR UPDATE USING ((auth.uid() = traveler_id));", /still carries a client write policy: zz_3820_upd/],
-      ["a FOR ALL policy for the buddy is added", "CREATE POLICY zz_3820_all ON public.rent_buddy_bookings USING ((auth.uid() = traveler_id));", /still carries a client write policy: zz_3820_all/],
       ["a new owner-rights view reaches bookings", "CREATE VIEW public.zz_3820_door AS SELECT id, total_usd FROM public.rent_buddy_bookings;", /owner's rights.*public\.zz_3820_door/],
       ["an owner-rights view is stacked on an invoker view", "CREATE VIEW public.zz_3820_door2 AS SELECT * FROM public.buddy_bookings;", /owner's rights.*public\.zz_3820_door2/],
       ["a new owner-rights view reaches offers", "CREATE VIEW public.zz_3820_door3 AS SELECT id, proposed_price_usd FROM public.rent_buddy_offers;", /owner's rights.*public\.zz_3820_door3/],
@@ -384,25 +396,109 @@ SELECT 'TAGLINE=' || COALESCE(tagline, '(none)') FROM public.rent_buddy_profiles
       assert.match(out.stderr, expected, `${what}: ${out.stderr}`);
     }
 
-    // A policy that only the service role can use is not a client write policy.
-    const svc = inRolledBackTx(`CREATE POLICY zz_3820_svc ON public.rent_buddy_bookings FOR ALL TO service_role USING (true) WITH CHECK (true);\n${postcondition()}`);
-    assert.equal(svc.status, 0, `a service_role-only policy tripped the postcondition: ${svc.stderr}`);
+    // ── The policy claim: what a client role can DO ───────────────────────────
+    // A privilege that arrives through ROLE MEMBERSHIP is in no ACL entry of
+    // anon, authenticated or PUBLIC, so claims 1 and 2 cannot see it; claim 3
+    // asks has_table_privilege, which can. Each case is then tried for real as
+    // the role, so the catalog verdict is held against the write itself.
+    const VIA = (grant: string) => `CREATE ROLE zz_3820_w NOLOGIN; ${grant} TO zz_3820_w; GRANT zz_3820_w TO authenticated;\n`;
+    const TRY_INSERT = `${as("authenticated", T)}${CLIENT_INSERT(T, "rent_buddy_bookings").replace(/;\s*$/, " RETURNING 'WROTE=' || total_usd;")}`;
+    const TRY_UPDATE = `${as("authenticated", T)}UPDATE public.rent_buddy_bookings SET total_usd = 0.01 WHERE id = '${BK}' RETURNING 'WROTE=' || total_usd;`;
+    const canWrite: Array<[what: string, breakIt: string, expected: RegExp, attempt: string, wrote: RegExp]> = [
+      ["an inherited INSERT privilege meets a policy that admits the traveller",
+        `${VIA("GRANT INSERT ON public.rent_buddy_bookings")}CREATE POLICY zz_3820_ins ON public.rent_buddy_bookings FOR INSERT WITH CHECK ((auth.uid() = traveler_id));`,
+        /a client role can still write: .*rent_buddy_bookings:authenticated:INSERT admitted by policy zz_3820_ins/, TRY_INSERT, /WROTE=0\.01/],
+      ["the admitting policy is the advisor's rewrite, TO authenticated",
+        `${VIA("GRANT INSERT ON public.rent_buddy_bookings")}CREATE POLICY zz_3820_ins ON public.rent_buddy_bookings FOR INSERT TO authenticated WITH CHECK (((SELECT auth.uid()) = traveler_id));`,
+        /rent_buddy_bookings:authenticated:INSERT admitted by policy zz_3820_ins/, TRY_INSERT, /WROTE=0\.01/],
+      ["an inherited UPDATE privilege meets a FOR ALL policy",
+        `${VIA("GRANT UPDATE ON public.rent_buddy_bookings")}CREATE POLICY zz_3820_all ON public.rent_buddy_bookings USING ((auth.uid() = traveler_id));`,
+        /rent_buddy_bookings:authenticated:UPDATE admitted by policy zz_3820_all/, TRY_UPDATE, /WROTE=0\.01/],
+      ["an inherited COLUMN privilege meets an UPDATE policy",
+        `${VIA("GRANT UPDATE (total_usd) ON public.rent_buddy_bookings")}CREATE POLICY zz_3820_upd ON public.rent_buddy_bookings FOR UPDATE USING ((auth.uid() = traveler_id));`,
+        /rent_buddy_bookings:authenticated:UPDATE admitted by policy zz_3820_upd/, TRY_UPDATE, /WROTE=0\.01/],
+      // DELETE has no column form, so this is the one case that rests on has_table_privilege alone.
+      ["an inherited DELETE privilege meets a DELETE policy",
+        `${VIA("GRANT DELETE ON public.rent_buddy_bookings")}CREATE POLICY zz_3820_del ON public.rent_buddy_bookings FOR DELETE USING ((auth.uid() = traveler_id));`,
+        /rent_buddy_bookings:authenticated:DELETE admitted by policy zz_3820_del/,
+        `${as("authenticated", T)}DELETE FROM public.rent_buddy_bookings WHERE id = '${BK}' RETURNING 'WROTE=gone';`, /WROTE=gone/],
+      ["a predicate that only LOOKS like the service one",
+        `${VIA("GRANT UPDATE ON public.rent_buddy_bookings")}CREATE POLICY zz_3820_fake ON public.rent_buddy_bookings FOR UPDATE USING ((auth.role() = 'authenticated'));`,
+        /rent_buddy_bookings:authenticated:UPDATE admitted by policy zz_3820_fake/, TRY_UPDATE, /WROTE=0\.01/],
+      ["row level security is switched off under an inherited privilege",
+        `${VIA("GRANT UPDATE ON public.rent_buddy_bookings")}ALTER TABLE public.rent_buddy_bookings DISABLE ROW LEVEL SECURITY;`,
+        /rent_buddy_bookings:authenticated:UPDATE with row level security off/, TRY_UPDATE, /WROTE=0\.01/],
+      ["rent_buddy_offers: an inherited UPDATE privilege meets rb_offers_buddy",
+        VIA("GRANT UPDATE ON public.rent_buddy_offers"),
+        /rent_buddy_offers:authenticated:UPDATE admitted by policy rb_offers_buddy/,
+        `${as("authenticated", B)}UPDATE public.rent_buddy_offers SET proposed_price_usd = 4000 WHERE id = '${OF}' RETURNING 'WROTE=' || proposed_price_usd;`, /WROTE=4000/],
+    ];
+    for (const [what, breakIt, expected, attempt, wrote] of canWrite) {
+      const out = inRolledBackTx(`${breakIt}\n${postcondition()}`);
+      assert.notEqual(out.status, 0, `the postcondition passed although ${what}`);
+      assert.match(out.stderr, expected, `${what}: ${out.stderr}`);
+      const real = inRolledBackTx(`${FIXTURES}${API_ROWS}${breakIt}\n${attempt}`);
+      assert.equal(real.status, 0, `${what}: the postcondition says the role can write, and the write was refused: ${real.stderr}`);
+      assert.match(real.stdout, wrote, `${what}: the write did not land: ${real.stdout}`);
+    }
+
+    // The other half: a privilege with no policy that admits it, or a policy
+    // with no privilege, is not a client write — and the write really is refused.
+    const cannotWrite: Array<[what: string, state: string, attempt: string, refusal: RegExp, notice: RegExp | null]> = [
+      ["an inherited INSERT privilege meets only the service policy",
+        VIA("GRANT INSERT ON public.rent_buddy_bookings"), TRY_INSERT, /violates row-level security policy/, null],
+      ["…and the service policy is the advisor's rewrite",
+        `${VIA("GRANT INSERT ON public.rent_buddy_bookings")}ALTER POLICY rb_booking_svc ON public.rent_buddy_bookings USING (((SELECT auth.role()) = 'service_role'));`,
+        TRY_INSERT, /violates row-level security policy/, null],
+      ["…or is written the other way round, with a WITH CHECK",
+        `${VIA("GRANT INSERT ON public.rent_buddy_bookings")}ALTER POLICY rb_booking_svc ON public.rent_buddy_bookings USING (('service_role' = (SELECT auth.role()))) WITH CHECK ((auth.role() = 'service_role'));`,
+        TRY_INSERT, /violates row-level security policy/, null],
+      ["an inherited privilege meets a policy for service_role only",
+        `${VIA("GRANT INSERT ON public.rent_buddy_bookings")}CREATE POLICY zz_3820_svc ON public.rent_buddy_bookings FOR ALL TO service_role USING (true) WITH CHECK (true);`,
+        TRY_INSERT, /violates row-level security policy/, null],
+      ["the traveller INSERT policy returns with no privilege behind it",
+        "CREATE POLICY rb_booking_traveler_ins ON public.rent_buddy_bookings FOR INSERT WITH CHECK ((auth.uid() = traveler_id));",
+        TRY_INSERT, /permission denied for table rent_buddy_bookings/, /no privilege reaches: .*rent_buddy_bookings\.rb_booking_traveler_ins/],
+      ["a client UPDATE policy is added with no privilege behind it",
+        "CREATE POLICY zz_3820_upd ON public.rent_buddy_bookings FOR UPDATE TO authenticated USING (((SELECT auth.uid()) = traveler_id));",
+        TRY_UPDATE, /permission denied for table rent_buddy_bookings/, /no privilege reaches: .*rent_buddy_bookings\.zz_3820_upd/],
+    ];
+    for (const [what, state, attempt, refusal, notice] of cannotWrite) {
+      const out = inRolledBackTx(`${state}\n${postcondition()}`);
+      assert.equal(out.status, 0, `the postcondition raised although ${what} — no client role can write: ${out.stderr}`);
+      if (notice) assert.match(out.stderr, notice, `${what}: the closing NOTICE does not name the policy: ${out.stderr}`);
+      const real = inRolledBackTx(`${FIXTURES}${API_ROWS}${state}\n${attempt}`);
+      assert.notEqual(real.status, 0, `${what}: the postcondition says no client role can write, and the write was PERMITTED\n${real.stdout}`);
+      assert.match(real.stderr, refusal, `${what}: refused for another reason: ${real.stderr}`);
+    }
   });
 
-  it("W7b: re-applying 3820 repairs every re-opened door it owns, and refuses the one it will not guess at", () => {
+  it("W7b: re-applying 3820 repairs every re-opened door it owns, reports an unreachable client-write policy, and refuses a view that is not its to alter", () => {
     const repaired = inRolledBackTx(`
 GRANT ALL ON public.rent_buddy_bookings, public.rent_buddy_offers, public.buddy_bookings, public.buddy_booking_requests TO anon, authenticated;
-CREATE POLICY rb_booking_traveler_ins ON public.rent_buddy_bookings FOR INSERT WITH CHECK ((auth.uid() = traveler_id));
-CREATE VIEW public.zz_3820_door AS SELECT id, total_usd FROM public.rent_buddy_bookings;
+CREATE POLICY rb_booking_traveler_ins ON public.rent_buddy_bookings FOR INSERT TO authenticated WITH CHECK (((SELECT auth.uid()) = traveler_id));
 ALTER VIEW public.buddy_profiles RESET (security_invoker);
-${apply()}`);
+${apply()}
+SELECT 'POLICIES=' || string_agg(polname, ',' ORDER BY polname) FROM pg_policy WHERE polrelid = 'public.rent_buddy_bookings'::regclass;
+SELECT 'PROFILE_VIEW=' || reloptions::text FROM pg_class WHERE oid = 'public.buddy_profiles'::regclass;`);
     assert.equal(repaired.status, 0, `a second apply did not converge: ${repaired.stderr}`);
+    assert.match(repaired.stdout, /POLICIES=rb_booking_parties,rb_booking_svc$/m, "the re-created traveller INSERT policy was not dropped again");
+    assert.match(repaired.stdout, /PROFILE_VIEW=\{security_invoker=true\}/, "the compatibility view was not switched back");
 
-    // An unknown client write policy is somebody's decision: 3820 does not drop
-    // what it cannot name, and says so by failing.
+    // A client write policy 3820 does not name is somebody's decision. With no
+    // client privilege behind it, it admits nothing: 3820 applies, and says so.
     const unknown = inRolledBackTx(`CREATE POLICY zz_3820_upd ON public.rent_buddy_bookings FOR UPDATE USING ((auth.uid() = traveler_id));\n${apply()}`);
-    assert.notEqual(unknown.status, 0);
-    assert.match(unknown.stderr, /still carries a client write policy: zz_3820_upd/);
+    assert.equal(unknown.status, 0, `an unreachable client-write policy stopped the apply: ${unknown.stderr}`);
+    assert.match(unknown.stderr, /no privilege reaches: .*rent_buddy_bookings\.zz_3820_upd/);
+
+    // A view outside the nine is not 3820's to alter: it is named and refused,
+    // and it is still an owner-rights view afterwards (the apply never ran).
+    const foreign = inRolledBackTx(`CREATE VIEW public.zz_3820_door AS SELECT id, total_usd FROM public.rent_buddy_bookings;\n${apply()}`);
+    assert.notEqual(foreign.status, 0, "3820 applied over a view it does not own the decision for");
+    assert.match(foreign.stderr, /PRECONDITION FAILED \(3820\): view\(s\) public\.zz_3820_door reach/);
+    // …and once that view runs with the caller's rights, 3820 applies and leaves it alone.
+    const settled = inRolledBackTx(`CREATE VIEW public.zz_3820_door WITH (security_invoker = true) AS SELECT id, total_usd FROM public.rent_buddy_bookings;\n${apply()}`);
+    assert.equal(settled.status, 0, settled.stderr);
   });
 
   it("W8: 3820 is idempotent, and a second apply keeps the record of the state before the first", () => {
@@ -416,25 +512,46 @@ ${apply()}`);
     assert.equal(snapOf(out.stdout, 1), snapOf(out.stdout, 0), "a second apply changed something");
   });
 
-  it("W9: the rollback restores the prior state exactly, from the baseline's grants and from 2490's; without the record it refuses", () => {
-    for (const [posture, prepare] of [
-      ["the baseline's grants (full default set)", ""],
-      // 2490 cannot replay on PostgreSQL 16 (MAINTAIN), so its effect on these
-      // relations is reproduced: the hosted databases' starting point.
-      ["2490's grants (TRUNCATE, REFERENCES, TRIGGER already gone)",
-        `REVOKE TRUNCATE, REFERENCES, TRIGGER ON public.rent_buddy_bookings, public.rent_buddy_offers, public.buddy_bookings, public.buddy_booking_requests FROM anon, authenticated;`],
+  it("W9: apply, apply again, rollback — the prior state is restored exactly, from the baseline's grants, from 2490's and from the hosted state; without the record the rollback refuses", () => {
+    const views = NINE_VIEWS.map((v) => `public.${v}`).join(", ");
+    // 2490 cannot replay on PostgreSQL 16 (MAINTAIN), so its effect on these
+    // relations is reproduced.
+    const AFTER_2490 = `REVOKE TRUNCATE, REFERENCES, TRIGGER ON public.rent_buddy_bookings, public.rent_buddy_offers, ${views} FROM anon, authenticated;\n`;
+    // The hosted databases, as read on 2026-10-04: 2490's grants, and the nine
+    // views already security_invoker, granted to authenticated and not to anon.
+    const HOSTED = `${AFTER_2490}REVOKE ALL ON ${views} FROM anon;\n${NINE_VIEWS.map((v) => `ALTER VIEW public.${v} SET (security_invoker = true);`).join("\n")}\n`;
+    const RECORD = `SELECT 'INVOKER=' || (substring(obj_description('public.rent_buddy_bookings'::regclass, 'pg_class') FROM '<<3820-prior-state (\\{[^\\n]*\\}) 3820-prior-state>>')::jsonb -> 'invoker')::text;`;
+
+    // What the applier writes after a successful apply; the rollback deletes it so that 3820 is applied again later.
+    const LEDGER_ROW = `INSERT INTO public.schema_migration_ledger (filename, checksum, applied_by, notes) VALUES ('3820_rent_buddy_bookings_write_boundary.sql', 'w9', 'manual', 'W9') ON CONFLICT (filename) DO NOTHING;\n`;
+    const LEDGER = `SELECT 'LEDGER=' || count(*) FROM public.schema_migration_ledger WHERE filename = '3820_rent_buddy_bookings_write_boundary.sql';`;
+
+    for (const [posture, prepare, switched] of [
+      ["the baseline's grants (full default set)", "", 9],
+      ["2490's grants (TRUNCATE, REFERENCES, TRIGGER already gone)", AFTER_2490, 9],
+      ["the hosted state (nine views already security_invoker, no anon grant on them)", HOSTED, 0],
+      // Nothing for the rollback to hand back on the table: its closing block must still know that it RAN,
+      // and not mistake an honest "there was no client INSERT before 3820 either" for a rollback that refused.
+      ["a database whose client roles held no write on rent_buddy_bookings to begin with",
+        "REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON public.rent_buddy_bookings FROM anon, authenticated;\n", 9],
     ] as const) {
-      const out = inRolledBackTx(`${reopen()}${prepare}${SNAPSHOT}${apply()}${SNAPSHOT}${reopen()}${SNAPSHOT}`);
+      // The marker of the FIRST rollback (the one that re-opens the baseline for this property) is cleared,
+      // as the rollback file itself clears it before its transaction: each run answers for itself.
+      const out = inRolledBackTx(`${reopen()}SELECT set_config('pay_3820.rolled_back', 'no', false);\n${prepare}${SNAPSHOT}${apply()}${LEDGER_ROW}${SNAPSHOT}${RECORD}${apply()}${SNAPSHOT}${reopen()}${SNAPSHOT}${LEDGER}`);
       assert.equal(out.status, 0, `${posture}: ${out.stderr}`);
-      const [before, applied, restored] = [0, 1, 2].map((n) => snapOf(out.stdout, n));
-      assert.ok(before && applied && restored, `${posture}: three snapshots expected, got ${out.stdout}`);
+      const [before, applied, reapplied, restored] = [0, 1, 2, 3].map((n) => snapOf(out.stdout, n));
+      assert.ok(before && applied && reapplied && restored, `${posture}: four snapshots expected, got ${out.stdout}`);
       assert.notEqual(applied, before, `${posture}: the snapshot does not see what 3820 changes, so equality below would prove nothing`);
+      assert.equal(reapplied, applied, `${posture}: a second apply changed something`);
       assert.equal(restored, before, `${posture}: the rollback did not restore the state before 3820`);
+      const invoker = JSON.parse(/^INVOKER=(.*)$/m.exec(out.stdout)?.[1] ?? "null") as unknown[];
+      assert.equal(invoker.length, switched, `${posture}: 3820 recorded ${invoker.length} view(s) as switched, expected ${switched}`);
+      assert.match(out.stdout, /^LEDGER=0$/m, `${posture}: the rollback left 3820's ledger row, so the applier would never apply it again`);
     }
 
     const twice = inRolledBackTx(`${reopen()}${reopen()}`);
     assert.notEqual(twice.status, 0, "a rollback with no 3820 record to restore from must refuse");
-    assert.match(twice.stderr, /ROLLBACK REFUSED \(3820\)/);
+    assert.match(twice.stderr, /ROLLBACK REFUSED \(3820\): the comment on rent_buddy_bookings carries no 3820 record/);
   });
 
   it("W11: 3820's in-transaction assertion aborts a body that changes anything but the client writes and the one policy", () => {
@@ -471,13 +588,99 @@ ${apply()}`);
         "REVOKE INSERT ON public.rent_buddy_offers FROM service_role;", /PRECONDITION FAILED \(3820\): service_role lacks rent_buddy_offers:INSERT/],
       ["a column-level client write grant exists",
         "GRANT UPDATE (notes) ON public.rent_buddy_bookings TO authenticated;", /PRECONDITION FAILED \(3820\): column-level client write privileges exist \(rent_buddy_bookings\.notes:UPDATE\)/],
-      ["the INSERT policy is not the baseline's",
-        "CREATE POLICY rb_booking_traveler_ins ON public.rent_buddy_bookings FOR INSERT WITH CHECK (true);", /PRECONDITION FAILED \(3820\): policy rb_booking_traveler_ins on rent_buddy_bookings is not the baseline's/],
+      ["a view outside the nine reaches bookings with its owner's rights",
+        "CREATE VIEW public.zz_3820_door AS SELECT id, total_usd FROM public.rent_buddy_bookings;", /PRECONDITION FAILED \(3820\): view\(s\) public\.zz_3820_door reach rent_buddy_bookings or rent_buddy_offers with their owner's rights/],
+      ["such a view is stacked on one of the nine",
+        "CREATE VIEW public.zz_3820_door2 AS SELECT * FROM public.buddy_bookings;", /PRECONDITION FAILED \(3820\): view\(s\) public\.zz_3820_door2 reach/],
+      ["such a view lives in another schema and reaches offers",
+        "CREATE SCHEMA zz_3820; CREATE VIEW zz_3820.door AS SELECT id, proposed_price_usd FROM public.rent_buddy_offers;", /PRECONDITION FAILED \(3820\): view\(s\) zz_3820\.door reach/],
+      ["the applying role does not own a compatibility view it would have to switch",
+        "ALTER VIEW public.buddy_profiles RESET (security_invoker); CREATE ROLE zz_3820_applier NOLOGIN; GRANT USAGE ON SCHEMA public TO zz_3820_applier; SET LOCAL ROLE zz_3820_applier;",
+        /PRECONDITION FAILED \(3820\): zz_3820_applier cannot switch compatibility view\(s\) buddy_profiles/],
     ];
     for (const [what, prepare, expected] of cases) {
       const out = inRolledBackTx(`${prepare}\n${apply()}`);
       assert.notEqual(out.status, 0, `3820 applied although ${what}`);
       assert.match(out.stderr, expected, `${what}: ${out.stderr}`);
+    }
+  });
+
+  it("W12: advisor-rewritten policies neither stop the apply nor trip its postcondition, and the rollback recreates the dropped policy as it was found", () => {
+    // What a Supabase performance advisor makes of the baseline's three
+    // policies: auth.*() wrapped in a scalar subquery, and a role list.
+    const REWRITTEN = `
+DROP POLICY rb_booking_traveler_ins ON public.rent_buddy_bookings;
+CREATE POLICY rb_booking_traveler_ins ON public.rent_buddy_bookings FOR INSERT TO authenticated WITH CHECK (((SELECT auth.uid()) = traveler_id));
+ALTER POLICY rb_booking_svc ON public.rent_buddy_bookings USING (((SELECT auth.role()) = 'service_role'));
+`;
+    const POLICY = `SELECT 'INS=' || COALESCE((SELECT polroles::regrole[]::text || ' ' || pg_get_expr(polwithcheck, polrelid) FROM pg_policy WHERE polrelid = 'public.rent_buddy_bookings'::regclass AND polname = 'rb_booking_traveler_ins'), '(none)');`;
+    const out = inRolledBackTx(`${reopen()}${REWRITTEN}${SNAPSHOT}${POLICY}${apply()}${SNAPSHOT}${POLICY}${apply()}${SNAPSHOT}${reopen()}${SNAPSHOT}${POLICY}`);
+    assert.equal(out.status, 0, `3820 does not apply and roll back over advisor-rewritten policies: ${out.stderr}`);
+    const [before, applied, reapplied, restored] = [0, 1, 2, 3].map((n) => snapOf(out.stdout, n));
+    assert.notEqual(applied, before);
+    assert.equal(reapplied, applied, "a second apply changed something");
+    assert.equal(restored, before, "the rollback did not restore the rewritten policy exactly: it must recreate what it FOUND, not the baseline's text");
+    const ins = [...out.stdout.matchAll(/^INS=(.*)$/gm)].map((m) => m[1]);
+    assert.equal(ins.length, 3);
+    assert.match(ins[0]!, /^\{authenticated\} .*SELECT auth\.uid\(\)/, `the fixture is not the rewritten policy: ${ins[0]}`);
+    assert.equal(ins[1], "(none)", "3820 did not drop the rewritten policy");
+    assert.equal(ins[2], ins[0], "the rollback recreated a different policy from the one 3820 dropped");
+
+    // And the boundary holds over that state: the traveller's insert is refused.
+    assertRefused(inRolledBackTx(`${FIXTURES}${reopen()}${REWRITTEN}${apply()}${as("authenticated", T)}${CLIENT_INSERT(T, "rent_buddy_bookings")}`),
+      "rent_buddy_bookings", "authenticated INSERT after 3820 over rewritten policies");
+
+    // A database with NO traveller INSERT policy: recorded as none, and none is invented on the way back.
+    const none = inRolledBackTx(`${reopen()}DROP POLICY rb_booking_traveler_ins ON public.rent_buddy_bookings;\n${SNAPSHOT}${apply()}${reopen()}${SNAPSHOT}${POLICY}`);
+    assert.equal(none.status, 0, none.stderr);
+    assert.equal(snapOf(none.stdout, 1), snapOf(none.stdout, 0));
+    assert.match(none.stdout, /^INS=\(none\)$/m);
+  });
+
+  it("W13: the rollback's record survives a comment that was added to; a REPLACED comment makes the postcondition raise and the rollback refuse in both its blocks", () => {
+    const COMMENT = `SELECT 'COMMENT=' || replace(COALESCE(obj_description('public.rent_buddy_bookings'::regclass, 'pg_class'), '(null)'), E'\\n', '|');`;
+    const edit = (expr: string) => `DO $edit$ BEGIN EXECUTE format('COMMENT ON TABLE public.rent_buddy_bookings IS %L', ${expr}); END $edit$;\n`;
+    const CURRENT = `obj_description('public.rent_buddy_bookings'::regclass, 'pg_class')`;
+
+    for (const [what, change, left] of [
+      ["text appended after the record", edit(`${CURRENT} || E'\\n\\nAdded later by another migration.'`), "Added later by another migration."],
+      ["text put before 3820's lines", edit(`'An older note.' || E'\\n\\n' || ${CURRENT}`), "An older note."],
+      ["text on both sides", edit(`'An older note.' || E'\\n\\n' || ${CURRENT} || E'\\n\\nAdded later.'`), "An older note.||Added later."],
+      ["text appended to the record's own line", edit(`${CURRENT} || ' trailing words'`), " trailing words"],
+    ] as const) {
+      const post = inRolledBackTx(`${change}${postcondition()}`);
+      assert.equal(post.status, 0, `${what}: 3820's postcondition no longer finds the record: ${post.stderr}`);
+      // A re-apply finds the record too, and does not write a second one over the state AFTER 3820.
+      const again = inRolledBackTx(`${change}${COMMENT}${apply()}${COMMENT}`);
+      assert.equal(again.status, 0, `${what}: ${again.stderr}`);
+      const seen = [...again.stdout.matchAll(/^COMMENT=(.*)$/gm)].map((m) => m[1]);
+      assert.equal(seen[1], seen[0], `${what}: a re-apply rewrote the comment`);
+      // The rollback restores from it, and takes out its own two lines only.
+      const back = inRolledBackTx(`${change}${reopen()}${COMMENT}
+SELECT 'INSERT_BACK=' || has_table_privilege('authenticated', 'public.rent_buddy_bookings', 'INSERT');`);
+      assert.equal(back.status, 0, `${what}: the rollback could not read its record: ${back.stderr}`);
+      assert.match(back.stdout, /INSERT_BACK=true/, `${what}: the rollback ran and restored nothing`);
+      assert.equal(/^COMMENT=(.*)$/m.exec(back.stdout)?.[1], left, `${what}: the rollback did not leave exactly the text that was not 3820's`);
+    }
+
+    const NO_RECORD = /ROLLBACK REFUSED \(3820\): the comment on rent_buddy_bookings carries no 3820 record/;
+    for (const [what, change, refusal] of [
+      ["the comment was replaced", "COMMENT ON TABLE public.rent_buddy_bookings IS 'Bookings.';\n", NO_RECORD],
+      ["the comment was removed", "COMMENT ON TABLE public.rent_buddy_bookings IS NULL;\n", NO_RECORD],
+      ["3820's sentence is there and the record line is not", edit(`split_part(${CURRENT}, E'\\n<<3820-prior-state', 1)`), NO_RECORD],
+      ["the record is no longer JSON", edit(`replace(${CURRENT}, '{"policy"', '{policy')`), /invalid input syntax for type json/],
+      ["the record is JSON that is not 3820's", edit(`regexp_replace(${CURRENT}, '<<3820-prior-state [^\\n]* 3820-prior-state>>', '<<3820-prior-state {"policy": null} 3820-prior-state>>')`), NO_RECORD],
+    ] as const) {
+      const post = inRolledBackTx(`${change}${postcondition()}`);
+      assert.notEqual(post.status, 0, `${what}: 3820's postcondition still passes with nothing to roll back from`);
+      const refused = inRolledBackTx(`${change}${reopen()}`);
+      assert.notEqual(refused.status, 0, `${what}: the rollback did not refuse`);
+      assert.match(refused.stderr, refusal, `${what}: ${refused.stderr}`);
+      // Run without ON_ERROR_STOP the refusal scrolls past and the file carries
+      // on to its last block — which must fail too, not report success.
+      const tail = inRolledBackTx(`${change}SET LOCAL pay_3820.rolled_back TO 'no';\n${parts(ROLLBACK).tail}`);
+      assert.notEqual(tail.status, 0, `${what}: the rollback's closing block passed although the rollback never happened`);
+      assert.match(tail.stderr, /ROLLBACK DID NOT HAPPEN \(3820\)/, `${what}: ${tail.stderr}`);
     }
   });
 });
