@@ -323,7 +323,7 @@ export async function readTrendSnapshot(sc: any, itemIds: readonly string[]): Pr
 import { fetchBlockedSet, submitterIsVisible } from "./blocks.js";
 import { inactiveSubmitterIds, submitterInGoodStanding } from "./discoveryCacheEligibility.js";
 import { loadActiveProtectedZones } from "./protectedZoneStore.js";
-import { applyProtection } from "./protectedLocations.js";
+import { applyProtection, type ProtectedZone } from "./protectedLocations.js";
 import { toCanonicalCategory } from "./placeCategories.js";
 import { normaliseCategoryAffinities } from "./discoveryPde.js";
 import { trailTrendStatesFromRankEvents } from "./discoveryTrailAffinity.js";
@@ -468,6 +468,38 @@ const placeKey = (placeId: string) => placeId.replace(/^db\//, "").toLowerCase()
 interface EligiblePlace { id: string; category: string | null; place_type: string | null }
 
 /**
+ * THE protected-zone decision of this module. Q12 (owner, 2026-10-04) —
+ * "suppress contributions inside protected zones" — makes three legs ask it
+ * (the place lists, Local Pulse, the emerging-Trails fold), and all three must
+ * get the SAME answer. A second copy is exactly the drift lib/protectedZoneStore's
+ * header warns about for this policy, and the copy that drifts LOOSE is the one
+ * nobody notices. So the decision is here, once, and the legs call it.
+ *
+ * FALSE — withhold — when:
+ *   • the policy could not be read (`zones === null`). protectedZoneStore rule 1:
+ *     an unreadable policy is not an absent policy. `[]` means "asked, no
+ *     zones" and permits publishing; null means "could not ask" and must not.
+ *   • applyProtection does not hand the probe back unchanged — the position was
+ *     SUPPRESSED, or COARSENED, or coarsened below the servable line. These
+ *     wires name a thing at full precision or not at all; there is no coarse
+ *     rung on a trend list or a pulse, so a coarsen decision withholds here too.
+ *
+ * TRUE for a row with no usable position: no zone can say where an unpositioned
+ * row stands. Whether an unpositioned row may be named at all is not this
+ * gate's question — the caller's own read already answered it.
+ */
+export function zoneAllowsPosition(
+  id: string, title: string, lat: unknown, lng: unknown, zones: readonly ProtectedZone[] | null,
+): boolean {
+  if (typeof lat !== "number" || typeof lng !== "number") return true;
+  if (zones === null) return false;
+  if (zones.length === 0) return true;
+  const probe: MapObject = { id, kind: "place", geometry: { type: "Point", coordinates: [lng, lat] },
+    title, privacyClass: "place_level", renderingPriority: 0 };
+  return applyProtection([probe], zones).objects[0] === probe;
+}
+
+/**
  * What a list may name, for THIS viewer: an active community place whose
  * submitter the viewer has not blocked (either way) and is in good standing
  * (lib/blocks, lib/discoveryCacheEligibility — the rules GET /discovery applies),
@@ -489,16 +521,10 @@ export async function eligibleListPlaces(sc: any, viewerId: string, placeIds: re
     const zones = await loadActiveProtectedZones(sc);
     for (const r of data as Array<Record<string, unknown>>) {
       if (!submitterIsVisible(r["submitted_by"], blocked) || !submitterInGoodStanding(r["submitted_by"], inactive)) continue;
-      const lat = r["lat"], lng = r["lng"];
-      if (typeof lat === "number" && typeof lng === "number") {
-        if (zones === null) continue;
-        if (zones.length > 0) {
-          const probe: MapObject = { id: String(r["id"]), kind: "place", geometry: { type: "Point", coordinates: [lng, lat] },
-            title: String(r["name"] ?? r["id"]), privacyClass: "place_level", renderingPriority: 0 };
-          const decided = applyProtection([probe], zones).objects[0];
-          if (decided !== probe) continue;   // suppressed or coarsened: not named in a list
-        }
-      }
+      // The ONE zone decision (zoneAllowsPosition), unchanged in behaviour:
+      // suppressed or coarsened — or an unreadable policy over a positioned
+      // row — is not named in a list.
+      if (!zoneAllowsPosition(String(r["id"]), String(r["name"] ?? r["id"]), r["lat"], r["lng"], zones)) continue;
       out.set(String(r["id"]).toLowerCase(), { id: String(r["id"]), category: (r["category"] as string | null) ?? null, place_type: (r["place_type"] as string | null) ?? null });
     }
     return out;
@@ -581,12 +607,87 @@ export async function personalizedTrending(sc: any, viewerId: string, destinatio
 }
 
 /**
+ * Q12 (owner, 2026-10-04), the Local Pulse half: which of these cells may be
+ * published for THIS run — a cell no protected zone fed. Null when a read
+ * failed; the caller then STATES a failure and serves no pulse.
+ *
+ * WHY A CELL IS WITHHELD WHEN *ANY* PLACE BEHIND IT IS
+ * ====================================================
+ * A cell's reading is a sum the database already took: 3477/3497 write one
+ * `area_momentum` row per cell from every place in that cell, and nothing on
+ * the read side can subtract one place's contribution back out of it. So the
+ * only question this gate can answer honestly is whether the sum counted
+ * something a protected zone withholds — and if it did, the sum is not
+ * publishable. That is the rule the emerging-Trails fold below already states
+ * for members a viewer is not served: a number must not count what it
+ * withholds.
+ *
+ * This over-suppresses, and visibly: ONE designated home inside a named
+ * neighbourhood takes that whole neighbourhood's pulse off the wire. That is
+ * the direction lib/protectedLocations chooses on purpose — "a silently-skipped
+ * shelter row is a privacy incident while an over-suppressing one is a visible,
+ * recoverable outage". The precise fix is contribution-side, in the rebuild
+ * that writes the aggregate; it does not exist yet (none of 2892, 3410, 3417,
+ * 3435, 3475-3477, 3497 reads protected_zones), so until it does, a stored
+ * Local Pulse row cannot be shown to exclude a protected zone and is withheld.
+ *
+ * A cell no place of this run accounts for is withheld too: an unattributable
+ * cell is one this gate cannot clear, not one it may wave through. Both tables
+ * are written by the same function from the same context in one statement pair,
+ * so in a real run every cell with a reading has places behind it.
+ */
+async function zoneClearCells(
+  sc: any, computedAt: string, destination: string, cellKeys: readonly string[],
+): Promise<Set<string> | null> {
+  const wanted = new Set(cellKeys);
+  if (wanted.size === 0) return new Set<string>();
+  try {
+    // No cell key goes into a filter: a key is `n:<city>:<neighbourhood>` built
+    // from free text, and a comma or a quote in it would carry a PostgREST
+    // filter delimiter into the expression. The run and the (validated)
+    // destination bound the read; the cells are matched in process.
+    const { data, error } = await sc.from("place_momentum").select("place_id, cell_key")
+      .eq("source_surface", "discovery").eq("computed_at", computedAt).eq("city", destination);
+    if (error || !Array.isArray(data)) return null;
+    const cellsOf = new Map<string, string[]>();   // place key → the wanted cells it fed
+    for (const r of data as Array<Record<string, unknown>>) {
+      const cell = r["cell_key"], pid = r["place_id"];
+      if (typeof cell !== "string" || !wanted.has(cell) || typeof pid !== "string") continue;
+      const key = placeKey(pid);
+      if (!UUID.test(key)) continue;
+      const seen = cellsOf.get(key);
+      if (seen) seen.push(cell); else cellsOf.set(key, [cell]);
+    }
+    const accounted = new Set<string>([...cellsOf.values()].flat());
+    const ids = [...cellsOf.keys()];
+    if (ids.length === 0) return new Set<string>();   // nothing accounted for: nothing cleared
+    const places = await sc.from("discovery_places").select("id, lat, lng, name").in("id", ids);
+    if (places?.error || !Array.isArray(places?.data)) return null;
+    const zones = await loadActiveProtectedZones(sc);
+    // An unreadable policy is a failed read, stated as one. The place lists
+    // drop positioned places silently because a list of places can be short;
+    // a pulse of cells cannot say "this one is missing", so it says 503.
+    if (zones === null) return null;
+    const withheld = new Set<string>();
+    for (const r of places.data as Array<Record<string, unknown>>) {
+      if (zoneAllowsPosition(String(r["id"]), String(r["name"] ?? r["id"]), r["lat"], r["lng"], zones)) continue;
+      for (const c of cellsOf.get(String(r["id"]).toLowerCase()) ?? []) withheld.add(c);
+    }
+    return new Set([...accounted].filter((c) => !withheld.has(c)));
+  } catch {
+    // resolves-not-throws-ok: a throw is a rule that could not be applied.
+    return null;
+  }
+}
+
+/**
  * DV-29 Local Pulse, served: the destination's NAMED neighbourhoods whose
- * area reading is a gain and carries ≥ k travellers in both windows. A grid
- * square is never listed — its key is a coordinate and it has no public name.
+ * area reading is a gain, carries ≥ k travellers in both windows, and which no
+ * protected zone fed (Q12; zoneClearCells). A grid square is never listed —
+ * its key is a coordinate and it has no public name.
  */
 export async function localPulse(sc: any, destination: string, nowMs: number): Promise<
-  { ok: true; body: { destination: string; areas: TrendAreaItem[]; unavailable: TrendListUnavailable | null } } | { ok: false; reason: "trend_store_absent" | "trend_read_failed" }> {
+  { ok: true; body: { destination: string; areas: TrendAreaItem[]; unavailable: TrendListUnavailable | null } } | { ok: false; reason: "trend_store_absent" | "trend_read_failed" | "eligibility_read_failed" }> {
   const head = await readTrendSnapshot(sc, []);
   if (!head.ok) return head;
   const none = (u: TrendListUnavailable) => ({ ok: true as const, body: { destination, areas: [], unavailable: u } });
@@ -598,8 +699,14 @@ export async function localPulse(sc: any, destination: string, nowMs: number): P
       .select("cell_key, cell_label, trend_state, driver, recent_unique_travelers, window_unique_travelers, velocity")
       .eq("source_surface", "discovery").eq("computed_at", head.run.computedAt).eq("city", destination).in("trend_state", [...TREND_LIST_STATES]);
     if (error) return failureOf(error);
-    const areas = ((Array.isArray(data) ? data : []) as TrendAreaRow[])
-      .filter((a) => mayNameNeighbourhood(a))
+    const named = ((Array.isArray(data) ? data : []) as TrendAreaRow[]).filter((a) => mayNameNeighbourhood(a));
+    // Q12 (owner, 2026-10-04): "suppress contributions inside protected
+    // zones". A cell a protected zone fed is not published, and a zone policy
+    // that could not be read is a stated 503 — never a quiet, empty pulse.
+    const clear = await zoneClearCells(sc, head.run.computedAt, destination, named.map((a) => a.cell_key));
+    if (clear === null) return { ok: false, reason: "eligibility_read_failed" };
+    const areas = named
+      .filter((a) => clear.has(a.cell_key))
       .sort((a, b) => (statePriority(a.trend_state) - statePriority(b.trend_state)) || ((b.velocity ?? -1) - (a.velocity ?? -1)) || (a.cell_key < b.cell_key ? -1 : 1))
       .slice(0, TREND_LIST_MAX)
       .flatMap((a): TrendAreaItem[] => {
@@ -622,8 +729,10 @@ export async function localPulse(sc: any, destination: string, nowMs: number): P
  * the destination. Trails: the destination's ACTIVE Trails, each classified by
  * the v2 model over its PLACE members' Discovery rows (lib/discoveryTrailAffinity
  * trailTrendStatesFromRankEvents), listed when `emerging` over ≥ k travellers in
- * both windows. Only place members are folded: a post, event or route plan
- * member may be one this viewer is not served (census §64), and a number must
+ * both windows. Only place members are folded, and only the ones this viewer may
+ * be served: a post, event or route plan member may be one this viewer is not
+ * served (census §64), a place member may be inactive, by a withheld author, or
+ * standing inside a protected zone (Q12, owner 2026-10-04) — and a number must
  * not count what it withholds. A database without 2910 lists no Trails and says so.
  */
 export async function emergingPlacesAndTrails(sc: any, viewerId: string, destination: string, nowMs: number): Promise<
@@ -638,11 +747,11 @@ export async function emergingPlacesAndTrails(sc: any, viewerId: string, destina
     if (eligible === null) return { ok: false, reason: "eligibility_read_failed" };
     items = orderLocated(read.rows, eligible, ["emerging"]).map(listItem).filter((x): x is TrendListItem => x !== null).slice(0, TREND_LIST_MAX);
   }
-  const t = await emergingTrails(sc, destination, nowMs);
+  const t = await emergingTrails(sc, viewerId, destination, nowMs);
   return { ok: true, body: { destination, items, unavailable: read.unavailable, readingProvenance: prov, trails: t.trails, trailsUnavailable: t.unavailable } };
 }
 
-async function emergingTrails(sc: any, destination: string, nowMs: number): Promise<{ trails: TrendTrailItem[]; unavailable: "trails_unavailable" | "trail_read_failed" | null }> {
+async function emergingTrails(sc: any, viewerId: string, destination: string, nowMs: number): Promise<{ trails: TrendTrailItem[]; unavailable: "trails_unavailable" | "trail_read_failed" | null }> {
   try {
     const tr = await sc.from("trails").select("id").eq("destination", destination).eq("lifecycle_status", "active");
     if (tr?.error) return { trails: [], unavailable: isMissingSchemaError(tr.error) ? "trails_unavailable" : "trail_read_failed" };
@@ -650,7 +759,18 @@ async function emergingTrails(sc: any, destination: string, nowMs: number): Prom
     if (trailIds.length === 0) return { trails: [], unavailable: null };
     const ct = await sc.from("content_trails").select("trail_id, source_id").eq("source_type", "place").in("trail_id", trailIds);
     if (ct?.error || !Array.isArray(ct?.data)) return { trails: [], unavailable: "trail_read_failed" };
-    const members = ct.data as Array<{ trail_id: string; source_id: string }>;
+    const allMembers = ct.data as Array<{ trail_id: string; source_id: string }>;
+    // Q12 (owner, 2026-10-04), and the rule the header above already states:
+    // "a number must not count what it withholds". A place member inside a
+    // protected zone is withheld from this viewer, so its activity must not be
+    // folded into a Trail's reading either — a Trail listed on that evidence
+    // publishes the zone it came from. The SAME gate the places leg of this
+    // very response applies (eligibleListPlaces: active, author policy, the one
+    // zone decision), not a second copy of it. Null = a rule could not be
+    // applied, and the Trails half says so rather than listing.
+    const eligible = await eligibleListPlaces(sc, viewerId, allMembers.map((m) => m.source_id));
+    if (eligible === null) return { trails: [], unavailable: "trail_read_failed" };
+    const members = allMembers.filter((m) => eligible.has(placeKey(m.source_id)));
     const served = [...new Set(members.flatMap((m) => [m.source_id, `db/${m.source_id}`]))];
     if (served.length === 0) return { trails: [], unavailable: null };
     const since = new Date(nowMs - MOMENTUM_BASELINE_WINDOW_MS).toISOString();
