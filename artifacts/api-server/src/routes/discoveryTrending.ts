@@ -116,4 +116,15 @@ router.get("/v1/discovery/trending/for-you", listHandler("for-you"));
 router.get("/v1/discovery/trending/emerging", listHandler("emerging"));
 router.get("/v1/discovery/trending/areas", listHandler("areas"));
 
+// Q12 (owner, 2026-10-04) — "at least 15 travellers AND suppress contributions
+// inside protected zones" — applies to all four actions above, not only the
+// ones that name a place: `areas` withholds a neighbourhood a protected zone
+// fed, and the `emerging` Trails fold drops a withheld place member before
+// counting it. An unreadable zone policy on `areas` is that same 503
+// `eligibility_read_failed`, never a 200 with an empty pulse.
+//
+// (It sits BELOW the registrations on purpose: the census cites
+// discoveryTrending.ts by line number, guarded by check:doc-citations, and a
+// comment inserted above them moves the lines another branch's file names.)
+
 export default router;
