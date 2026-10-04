@@ -57,12 +57,14 @@ import {
   type PayoutRequest,
   type ProviderResolution,
 } from "../creators/PayoutProvider.js";
-import type { PaymentProvider, PaymentResult, PayoutHandle, PayoutKind, RecipientEntityType } from "./PaymentProvider.js";
+import type { PaymentProvider, PaymentResult, PayoutHandle, PayoutKind, RecipientEntityType, WebhookEndpoint } from "./PaymentProvider.js";
 import { resolvePaymentProvider, type PaymentProviderAdapterRegistration } from "./providerRegistry.js";
 
 export interface PayoutSeamContext {
   /** Which movement an old-interface "payout" is: platform funds to the recipient's balance, or that balance to their bank. */
   readonly payoutKind: PayoutKind;
+  /** The endpoint the old interface's one webhook entry point is mounted on. Payout events about a recipient's account arrive on `connect`. */
+  readonly webhookEndpoint: WebhookEndpoint;
   /** The creator's provider account, or null when they have none. */
   recipientRefFor(creatorId: string): Promise<string | null>;
   /** What creating a recipient needs that the old request does not carry; null when unknown. */
@@ -151,7 +153,7 @@ export function payoutProviderBehind(provider: PaymentProvider, context: PayoutS
     },
 
     async handleWebhook(rawBody: string, headers: Record<string, string>): Promise<PayoutProviderResult<{ accepted: boolean }>> {
-      const r = await provider.verifyAndParseWebhook({ rawBody, headers });
+      const r = await provider.verifyAndParseWebhook({ rawBody, headers, endpoint: context.webhookEndpoint });
       if (r.status === "ok") return { ok: true, provider: provider.id, value: { accepted: true } };
       return toPayoutRefusal(r);
     },
@@ -159,7 +161,8 @@ export function payoutProviderBehind(provider: PaymentProvider, context: PayoutS
     async reverseOrHold(payoutRef: string, action: "reverse" | "hold"): Promise<PayoutProviderResult<{ status: string }>> {
       const handle = await context.payoutHandleFor(payoutRef);
       if (!handle) return invalid(provider.id, "no such payout is known to the platform");
-      const r = await provider.reverseOrHoldPayout({ idempotencyKey: `${action}:${payoutRef}`, payout: handle, action });
+      // The old interface reverses whole or not at all.
+      const r = await provider.reverseOrHoldPayout({ idempotencyKey: `${action}:${payoutRef}`, payout: handle, action, amountMinor: "full" });
       if (r.status === "ok") return { ok: true, provider: provider.id, value: { status: r.value.state } };
       return toPayoutRefusal(r);
     },
@@ -181,7 +184,7 @@ export function resolvePayoutProviderBehindPayments(
   const resolved = resolvePaymentProvider(env, adapters);
   if (resolved.ok && resolved.kind === "none") return resolvePayoutProvider("none");
   if (!resolved.ok) {
-    return { ok: false, reason: "no_provider_chosen", detail: `payment provider ${JSON.stringify(resolved.name)} cannot be used: ${resolved.reason} — ${resolved.detail}` };
+    return { ok: false, reason: "no_provider_chosen", detail: `the configured payment provider (${resolved.name}) cannot be used: ${resolved.reason} — ${resolved.detail}` };
   }
   if (!context) {
     return { ok: false, reason: "no_provider_chosen", detail: "a payout through a real provider needs a PayoutSeamContext to find the recipient's account" };

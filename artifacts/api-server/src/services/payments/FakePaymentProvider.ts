@@ -13,17 +13,22 @@
  *   • NO I/O. It opens no socket and reads no file. `node:crypto` is used to
  *     sign and verify its own webhooks (HMAC), which is arithmetic.
  *   • IT ENFORCES THE CONTRACT. Every request goes through the same validators
- *     a real adapter must use, idempotency keys replay or conflict, money is
- *     conserved across its balances, and webhooks are signed and verified
- *     through the same verifier the real adapters use.
+ *     a real adapter runs behind — the create-time fee and tax rules, and
+ *     `validateCapturePaymentIntent` for a partial capture's fee — idempotency
+ *     keys replay or conflict, money is conserved across its balances, and
+ *     webhooks are signed and verified through the same verifier the real
+ *     adapters use, with one secret per endpoint.
  *
  * ── WHERE IT MAY RUN ─────────────────────────────────────────────────────────
- * Refused in production, whenever REPLIT_DEPLOYMENT is set, and in any process
- * with no local-run signal — `lib/paymentsMode.ts fakePaymentProviderPermitted`,
- * which IS the mock identity provider's rule (`mockIdentityPermitted`), not a
- * copy of it. The registry refuses to hand the fake out, and — because an
- * instance can be constructed directly — every operation checks again at call
- * time and answers `unavailable / fake_not_permitted`.
+ * Refused in production, whenever REPLIT_DEPLOYMENT is defined (even empty),
+ * and in any process with no local-run signal — `lib/paymentsMode.ts
+ * fakePaymentProviderPermitted`, which IS the mock identity provider's rule
+ * (`mockIdentityPermitted`), not a copy of it. The registry refuses to hand the
+ * fake out, and — because an instance can be constructed directly — every
+ * operation checks again at call time and answers `unavailable /
+ * fake_not_permitted`. THE HOSTED TESTING APP IS A REPLIT DEPLOYMENT, so the
+ * fake cannot run there: testers exercise payments only once a real test-mode
+ * adapter is registered.
  *
  * ── WHAT CAN BE SCRIPTED (`control.script`) ──────────────────────────────────
  *   declineNextConfirm        the next confirm is declined
@@ -33,9 +38,10 @@
  *   returnNextPayout          the next payout is paid, then returned
  *   failNextOperation         the next call of one operation is `unavailable`
  * and through `control`: finish or fail a payer authentication, move a
- * recipient through onboarding, step a payout along its path, open and resolve
- * a dispute, and hand webhook deliveries out late, twice and out of order
- * (`control.webhooks.deliver`), including one that claims `livemode: true`.
+ * recipient through onboarding, step a payout along its path, have the provider
+ * start a payout of its own, open and resolve a dispute, and hand webhook
+ * deliveries out late, twice and out of order (`control.webhooks.deliver`),
+ * including one that claims `livemode: true`.
  *
  * ── FAKE DATA ────────────────────────────────────────────────────────────────
  * The market table and the exchange rates below describe NO real provider and
@@ -51,16 +57,27 @@ import { canonicalJson } from "./paymentEventFold.js";
 import { verifyPaymentWebhookSignature } from "./paymentWebhookSignature.js";
 import {
   isIdempotencyKey,
+  isPaymentWebhookBody,
+  minorUnitExponent,
   paymentDeclined,
   paymentFailed,
   paymentOk,
   paymentRequiresAction,
   paymentUnavailable,
-  platformFeeTotalMinor,
+  resolveCapture,
   unsupportedMarket,
+  validateCancelPaymentIntent,
+  validateCapturePaymentIntent,
+  validateConfirmPaymentIntent,
   validateCreatePaymentIntent,
   validateCreateRecipient,
+  validateRecipientOnboardingLink,
+  validateRefundAgainstIntent,
+  validateRefundPayment,
   validateRequestPayout,
+  validateReverseOrHoldPayout,
+  validateWebhookDelivery,
+  platformFeeTotalMinor,
   type AmountComponents,
   type CancelPaymentIntentRequest,
   type CapturePaymentIntentRequest,
@@ -92,23 +109,25 @@ import {
   type PayoutSnapshot,
   type PayoutState,
   type PlatformFee,
+  type PlatformFeeSettlement,
   type RecipientOnboardingLink,
   type RecipientOnboardingLinkRequest,
   type RecipientOnboardingState,
   type RecipientSnapshot,
   type RefundPaymentRequest,
-  type RefundReason,
   type RefundSnapshot,
   type RequestPayoutRequest,
   type ReverseOrHoldPayoutRequest,
   type SettlementDetails,
   type WebhookDelivery,
+  type WebhookEndpoint,
 } from "./PaymentProvider.js";
 
 export const FAKE_PAYMENT_PROVIDER_ID = "fake" as const;
 
-/** The fake's webhook signing secret. Not a credential: it signs events that never leave the process. */
+/** The fake's webhook signing secrets, one per endpoint. Not credentials: they sign events that never leave the process. */
 export const FAKE_WEBHOOK_SECRET = "whsec_fake_local_run_only";
+export const FAKE_CONNECT_WEBHOOK_SECRET = "whsec_fake_connect_local_run_only";
 export const FAKE_SIGNATURE_HEADER = "fake-signature";
 
 /** 2026-01-01T00:00:00.000Z — where the fake's clock starts. */
@@ -124,13 +143,10 @@ export interface FakeMarket {
 
 /** FAKE DATA — see the header. US and GB offer direct charges; JP offers destination charges only; nowhere else is supported. */
 export const FAKE_DEFAULT_MARKETS: Readonly<Record<string, FakeMarket>> = Object.freeze({
-  US: Object.freeze({ chargeModels: ["direct", "destination"] as const, settlementCurrencies: ["USD"], presentmentCurrencies: ["USD", "EUR", "GBP", "JPY"] }),
+  US: Object.freeze({ chargeModels: ["direct", "destination"] as const, settlementCurrencies: ["USD"], presentmentCurrencies: ["USD", "EUR", "GBP", "JPY", "KWD"] }),
   GB: Object.freeze({ chargeModels: ["direct", "destination"] as const, settlementCurrencies: ["GBP", "EUR"], presentmentCurrencies: ["USD", "EUR", "GBP"] }),
   JP: Object.freeze({ chargeModels: ["destination"] as const, settlementCurrencies: ["JPY"], presentmentCurrencies: ["JPY", "USD"] }),
 });
-
-/** Minor-unit exponents of the currencies the fake knows. A currency absent here cannot be converted. */
-export const FAKE_CURRENCY_EXPONENTS: Readonly<Record<string, number>> = Object.freeze({ USD: 2, EUR: 2, GBP: 2, JPY: 0 });
 
 /** FAKE DATA — decimal strings, major units of the second currency per one of the first. */
 export const FAKE_DEFAULT_RATES: Readonly<Record<string, string>> = Object.freeze({
@@ -140,6 +156,7 @@ export const FAKE_DEFAULT_RATES: Readonly<Record<string, string>> = Object.freez
   "USD>GBP": "0.80",
   "USD>JPY": "150",
   "JPY>USD": "0.0066",
+  "KWD>USD": "3.25",
 });
 
 export const FAKE_CAPABILITIES: PaymentProviderCapabilities = Object.freeze({
@@ -164,6 +181,18 @@ export interface FakePaymentProviderOptions {
   rates?: Readonly<Record<string, string>>;
   /** Override capability flags, e.g. a provider with no direct charges. */
   capabilities?: Partial<PaymentProviderCapabilities>;
+  /**
+   * The fake's OWN processing fee, in basis points of the captured amount
+   * (rounded down). Default 0. Debited from the recipient under direct charges
+   * and from the platform otherwise, and reported as `settlement.providerFee`.
+   */
+  processingFeeBps?: number;
+  /**
+   * The currency of the platform's balance with the fake. Default: none — the
+   * platform's fee stays in each charge's own currency. When set, the fee is
+   * converted and `settlement.platformFeeSettled` carries the rate applied.
+   */
+  platformSettlementCurrency?: string;
 }
 
 export interface FakeDeliveryPlan {
@@ -184,6 +213,8 @@ export interface FakePendingEvent {
   readonly index: number;
   readonly providerEventId: string;
   readonly providerEventType: string;
+  /** The endpoint the event will be delivered on: `connect` for events about a recipient's account. */
+  readonly endpoint: WebhookEndpoint;
 }
 
 export interface FakePaymentScript {
@@ -204,6 +235,8 @@ export interface FakeBalances {
   readonly recipients: Readonly<Record<string, Readonly<Record<string, number>>>>;
   /** Paid out to recipients' banks, by currency. */
   readonly paidOut: Readonly<Record<string, number>>;
+  /** The fake's own processing fees taken, by currency. */
+  readonly providerFees: Readonly<Record<string, number>>;
 }
 
 export interface FakePaymentControl {
@@ -214,6 +247,11 @@ export interface FakePaymentControl {
   setRecipientOnboarding(recipientRef: string, state: RecipientOnboardingState, requirementsDue?: readonly string[]): RecipientSnapshot;
   /** Step a payout one state along its (possibly scripted) path. */
   advancePayout(payoutRef: string): PayoutSnapshot;
+  /**
+   * The PROVIDER starts a payout of a recipient's balance on its own schedule.
+   * The platform did not ask for it, so its snapshot has `reference: null`.
+   */
+  providerInitiatedPayout(recipientRef: string, amountMinor: number): PayoutSnapshot;
   /**
    * Open a dispute on a captured payment, for the amount not yet refunded. The
    * fake REPORTS disputes (as webhook events) and moves no balance for them:
@@ -236,8 +274,8 @@ export interface FakePaymentControl {
     deliver(plan?: FakeDeliveryPlan): WebhookDelivery[];
     /** Sign an already-delivered event again, as a provider retry would. */
     redeliver(providerEventId: string): WebhookDelivery;
-    /** Sign an arbitrary body with the fake's secret — for a verified-but-unreadable delivery. */
-    signRawBody(rawBody: string): WebhookDelivery;
+    /** Sign an arbitrary body with one endpoint's secret — for a verified-but-unreadable delivery. */
+    signRawBody(rawBody: string, endpoint?: WebhookEndpoint): WebhookDelivery;
   };
 }
 
@@ -285,9 +323,12 @@ interface PayoutRecord {
   payoutRef: string;
   kind: PayoutKind;
   recipientRef: string;
-  reference: PaymentReference;
+  reference: PaymentReference | null;
   state: PayoutState;
   amount: Money;
+  amountReversedMinor: number;
+  /** For a transfer: how much of what landed on the recipient's balance has been taken back. */
+  settledReversedMinor: number;
   settlement: SettlementDetails | null;
   failureCode: string | null;
   expectedArrivalAt: string | null;
@@ -312,10 +353,11 @@ interface OutboxEvent {
   providerEventType: string;
   occurredAt: string;
   accountRef: string | null;
+  endpoint: WebhookEndpoint;
   body: PaymentWebhookBody;
 }
 
-type Converted = { ok: true; settlement: SettlementDetails } | { ok: false };
+type Converted = { ok: true; settled: Money; conversion: CurrencyConversion | null } | { ok: false };
 
 const ONBOARDING_REQUIREMENTS = ["fake.identity_document", "fake.payout_account"] as const;
 
@@ -340,6 +382,8 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
   const markets = options.markets ?? FAKE_DEFAULT_MARKETS;
   const capabilities: PaymentProviderCapabilities = Object.freeze({ ...FAKE_CAPABILITIES, ...(options.capabilities ?? {}) });
   const rates = new Map<string, string>(Object.entries(options.rates ?? FAKE_DEFAULT_RATES));
+  const processingFeeBps = options.processingFeeBps ?? 0;
+  const platformCurrency = options.platformSettlementCurrency ?? null;
 
   let clockMs = FAKE_EPOCH_MS;
   const counters: Record<string, number> = {};
@@ -352,6 +396,7 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
   const platformBalance = new Map<string, number>();
   const recipientBalances = new Map<string, Map<string, number>>();
   const paidOut = new Map<string, number>();
+  const providerFees = new Map<string, number>();
   const outbox: OutboxEvent[] = [];
   const history = new Map<string, OutboxEvent>();
 
@@ -385,23 +430,23 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
     return book;
   };
 
+  /** Convert a non-negative amount. A missing rate is a refusal (`ok: false`), never a guess. */
   const convert = (money: Money, toCurrency: string): Converted => {
-    if (money.currency === toCurrency) return { ok: true, settlement: { settled: money, conversion: null } };
+    if (money.currency === toCurrency) return { ok: true, settled: money, conversion: null };
     const rate = rates.get(`${money.currency}>${toCurrency}`);
-    const fromExponent = FAKE_CURRENCY_EXPONENTS[money.currency];
-    const toExponent = FAKE_CURRENCY_EXPONENTS[toCurrency];
-    if (rate === undefined || fromExponent === undefined || toExponent === undefined) return { ok: false };
-    const settledMinor = convertMinor(money.amountMinor, rate, fromExponent, toExponent);
+    if (rate === undefined) return { ok: false };
+    const settledMinor = convertMinor(money.amountMinor, rate, minorUnitExponent(money.currency), minorUnitExponent(toCurrency));
     if (settledMinor === null) return { ok: false };
-    const conversion: CurrencyConversion = {
-      fromCurrency: money.currency,
-      toCurrency,
-      rate,
-      rateSource: id,
-      rateAt: new Date(clockMs).toISOString(),
+    return {
+      ok: true,
+      settled: { amountMinor: settledMinor, currency: toCurrency },
+      conversion: { fromCurrency: money.currency, toCurrency, rate, rateSource: id, rateAt: new Date(clockMs).toISOString() },
     };
-    return { ok: true, settlement: { settled: { amountMinor: settledMinor, currency: toCurrency }, conversion } };
   };
+  /** What an amount in a charge's currency is on the PLATFORM's balance. */
+  const onPlatform = (money: Money): Converted => convert(money, platformCurrency ?? money.currency);
+  const noRate = (from: string, to: string): PaymentRefusal =>
+    paymentUnavailable(id, "unsupported_currency", `no rate from ${from} to ${to}; a missing rate is a refusal, not a guess`);
 
   const intentSnapshot = (r: IntentRecord): PaymentIntentSnapshot =>
     Object.freeze({
@@ -447,6 +492,7 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
       reference: r.reference,
       state: r.state,
       amount: r.amount,
+      amountReversedMinor: r.amountReversedMinor,
       settlement: r.settlement,
       failureCode: r.failureCode,
       expectedArrivalAt: r.expectedArrivalAt,
@@ -465,12 +511,14 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
       updatedAt: r.updatedAt,
     });
 
+  // An event about an object on a RECIPIENT's account is delivered on the connect endpoint.
   const emit = (providerEventType: string, accountRef: string | null, body: PaymentWebhookBody): void => {
     const event: OutboxEvent = {
       providerEventId: nextRef("evt"),
       providerEventType,
       occurredAt: new Date(clockMs).toISOString(),
       accountRef,
+      endpoint: accountRef === null ? "platform" : "connect",
       body,
     };
     outbox.push(event);
@@ -483,10 +531,11 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
   const emitPayout = (type: string, r: PayoutRecord): void =>
     emit(`${r.kind}.${type}`, r.kind === "payout" ? r.recipientRef : null, { kind: "payout", payout: payoutSnapshot(r) });
 
-  const sign = (rawBody: string): WebhookDelivery => {
+  const secretFor = (endpoint: WebhookEndpoint): string => (endpoint === "connect" ? FAKE_CONNECT_WEBHOOK_SECRET : FAKE_WEBHOOK_SECRET);
+  const sign = (rawBody: string, endpoint: WebhookEndpoint): WebhookDelivery => {
     const t = Math.floor(clockMs / 1000);
-    const v1 = crypto.createHmac("sha256", FAKE_WEBHOOK_SECRET).update(`${t}.${rawBody}`, "utf8").digest("hex");
-    return { rawBody, headers: { [FAKE_SIGNATURE_HEADER]: `t=${t},v1=${v1}` } };
+    const v1 = crypto.createHmac("sha256", secretFor(endpoint)).update(`${t}.${rawBody}`, "utf8").digest("hex");
+    return { rawBody, headers: { [FAKE_SIGNATURE_HEADER]: `t=${t},v1=${v1}` }, endpoint };
   };
   const envelope = (e: OutboxEvent, livemode: boolean): string =>
     JSON.stringify({
@@ -539,20 +588,54 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
     }
     return r;
   };
+  const findPayout = (handle: PayoutHandle): PayoutRecord | PaymentRefusal => {
+    const p = handle && typeof handle.payoutRef === "string" ? payouts.get(handle.payoutRef) : undefined;
+    if (!p || p.recipientRef !== handle.recipientRef || p.kind !== handle.kind) return paymentFailed(id, "not_found", "no such payout for this recipient");
+    return p;
+  };
   const isRefusal = (v: object): v is PaymentRefusal => "status" in v;
 
-  /** Money has moved: take the fee, credit the receiving balance, record the settlement. */
-  const settleCapture = (r: IntentRecord, captureMinor: number, feeMinor: number): PaymentRefusal | null => {
-    if (r.chargeModel === "platform") {
-      credit(platformBalance, r.amount.currency, captureMinor);
-      r.settlement = { settled: { amountMinor: captureMinor, currency: r.amount.currency }, conversion: null };
+  /**
+   * Money has moved. Take the platform's fee and the fake's own processing fee,
+   * credit the receiving balance, and record all of it on the settlement.
+   *
+   *   direct       recipient gets capture − platform fee − processing fee
+   *   destination  recipient gets capture − platform fee; the platform pays the processing fee
+   *   platform     the platform gets capture − processing fee
+   */
+  const settleCapture = (r: IntentRecord, captureMinor: number, fee: PlatformFee): PaymentRefusal | null => {
+    const currency = r.amount.currency;
+    const feeMinor = platformFeeTotalMinor(fee);
+    const processingMinor = Number((BigInt(captureMinor) * BigInt(processingFeeBps)) / 10000n);
+    const recipient = r.recipientRef === null ? null : (recipients.get(r.recipientRef) as RecipientRecord);
+    const recipientPays = recipient !== null && r.chargeModel === "direct";
+    const recipientNetMinor = recipient ? captureMinor - feeMinor - (recipientPays ? processingMinor : 0) : 0;
+    if (recipientNetMinor < 0) return paymentFailed(id, "invalid_amount", "the fees exceed the captured amount");
+
+    // Work every conversion out first, so a missing rate changes nothing.
+    const platformIn = platformCurrency ?? currency;
+    const toRecipient = recipient ? convert({ amountMinor: recipientNetMinor, currency }, recipient.settlementCurrency) : null;
+    if (recipient && (!toRecipient || !toRecipient.ok)) return noRate(currency, recipient.settlementCurrency);
+    const toPlatform = onPlatform({ amountMinor: recipient ? feeMinor : captureMinor, currency });
+    if (!toPlatform.ok) return noRate(currency, platformIn);
+    const processing = convert({ amountMinor: processingMinor, currency }, recipientPays && recipient ? recipient.settlementCurrency : platformIn);
+    if (!processing.ok) return noRate(currency, recipientPays && recipient ? recipient.settlementCurrency : platformIn);
+
+    credit(platformBalance, toPlatform.settled.currency, toPlatform.settled.amountMinor);
+    if (!recipientPays) credit(platformBalance, processing.settled.currency, -processing.settled.amountMinor);
+    credit(providerFees, processing.settled.currency, processing.settled.amountMinor);
+    const providerFee = { amount: processing.settled, paidBy: recipientPays ? ("recipient" as const) : ("platform" as const) };
+    if (recipient && toRecipient && toRecipient.ok) {
+      credit(recipientBook(recipient.recipientRef), toRecipient.settled.currency, toRecipient.settled.amountMinor);
+      const platformFeeSettled: PlatformFeeSettlement = { settled: toPlatform.settled, conversion: toPlatform.conversion };
+      r.settlement = { settled: toRecipient.settled, conversion: toRecipient.conversion, providerFee, platformFeeSettled };
     } else {
-      const recipient = recipients.get(r.recipientRef as string) as RecipientRecord;
-      const net = convert({ amountMinor: captureMinor - feeMinor, currency: r.amount.currency }, recipient.settlementCurrency);
-      if (!net.ok) return paymentUnavailable(id, "unsupported_currency", `no rate from ${r.amount.currency} to ${recipient.settlementCurrency}`);
-      credit(recipientBook(recipient.recipientRef), recipient.settlementCurrency, net.settlement.settled.amountMinor);
-      credit(platformBalance, r.amount.currency, feeMinor);
-      r.settlement = net.settlement;
+      r.settlement = {
+        settled: { amountMinor: toPlatform.settled.amountMinor - processing.settled.amountMinor, currency: toPlatform.settled.currency },
+        conversion: toPlatform.conversion,
+        providerFee,
+        platformFeeSettled: null,
+      };
     }
     r.amountCapturedMinor = captureMinor;
     r.amountCapturableMinor = 0;
@@ -565,7 +648,7 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
 
   /** The payer's payment method was accepted: capture now, or hold for a manual capture. */
   const authorise = (r: IntentRecord): PaymentRefusal | null => {
-    if (r.capture === "automatic") return settleCapture(r, r.amount.amountMinor, platformFeeTotalMinor(r.platformFee));
+    if (r.capture === "automatic") return settleCapture(r, r.amount.amountMinor, r.platformFee);
     r.state = "requires_capture";
     r.amountCapturableMinor = r.amount.amountMinor;
     r.updatedAt = tick();
@@ -576,6 +659,30 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
   const requireControl = <T>(found: T | undefined, what: string): T => {
     if (found === undefined) throw new Error(`fake payment provider: unknown ${what}`);
     return found;
+  };
+
+  const newPayout = (recipient: RecipientRecord, amount: Money, reference: PaymentReference | null): PayoutRecord => {
+    credit(recipientBook(recipient.recipientRef), amount.currency, -amount.amountMinor);
+    const script = scripted.payoutPath.shift();
+    const p: PayoutRecord = {
+      payoutRef: nextRef("po"),
+      kind: "payout",
+      recipientRef: recipient.recipientRef,
+      reference,
+      state: "pending",
+      amount: { amountMinor: amount.amountMinor, currency: amount.currency },
+      amountReversedMinor: 0,
+      settledReversedMinor: 0,
+      settlement: null,
+      failureCode: null,
+      expectedArrivalAt: new Date(clockMs + 2 * 86_400_000).toISOString(),
+      path: script ? [...script.path] : ["in_transit", "paid"],
+      pendingFailureCode: script ? script.failureCode : null,
+      updatedAt: tick(),
+    };
+    payouts.set(p.payoutRef, p);
+    emitPayout("created", p);
+    return p;
   };
 
   // ── the provider ──────────────────────────────────────────────────────────
@@ -626,10 +733,9 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
           if (!recipient.chargesEnabled) {
             return paymentDeclined<PaymentIntentSnapshot>(id, "recipient_not_eligible", "the recipient has not completed onboarding and cannot be charged for");
           }
-          if (!convert({ amountMinor: 0, currency: req.amount.currency }, recipient.settlementCurrency).ok) {
-            return paymentUnavailable(id, "unsupported_currency", `no rate from ${req.amount.currency} to ${recipient.settlementCurrency}; a missing rate is a refusal, not a guess`);
-          }
+          if (!convert({ amountMinor: 0, currency: req.amount.currency }, recipient.settlementCurrency).ok) return noRate(req.amount.currency, recipient.settlementCurrency);
         }
+        if (!onPlatform({ amountMinor: 0, currency: req.amount.currency }).ok) return noRate(req.amount.currency, platformCurrency ?? req.amount.currency);
         const intentRef = nextRef("pi");
         const r: IntentRecord = {
           intentRef,
@@ -657,9 +763,9 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
     },
 
     async confirmPaymentIntent(req: ConfirmPaymentIntentRequest): Promise<PaymentResult<PaymentIntentSnapshot>> {
-      const refused = gate("confirmPaymentIntent");
+      const refused = gate("confirmPaymentIntent") ?? validateConfirmPaymentIntent(id, req);
       if (refused) return refused;
-      return once("confirmPaymentIntent", req?.idempotencyKey, req, () => {
+      return once("confirmPaymentIntent", req.idempotencyKey, req, () => {
         const r = findIntent(req.intent);
         if (isRefusal(r)) return r;
         if (r.state !== "requires_confirmation" && r.state !== "requires_payment_method") {
@@ -680,7 +786,8 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
             id,
             "payer_authentication_required",
             "scripted: the payer must authenticate this payment",
-            { kind: "payer_authentication", clientSecret: r.clientSecret, redirectUrl: `https://fake-payments.invalid/authenticate/${r.intentRef}` },
+            // With a return URL the payer is sent off-site and back; without one the client finishes in-app with the secret.
+            { kind: "payer_authentication", clientSecret: r.clientSecret, redirectUrl: req.returnUrl === null ? null : `https://fake-payments.invalid/authenticate/${r.intentRef}` },
             intentSnapshot(r),
           );
         }
@@ -695,34 +802,22 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
       return once("capturePaymentIntent", req?.idempotencyKey, req, () => {
         const r = findIntent(req.intent);
         if (isRefusal(r)) return r;
-        if (r.state !== "requires_capture") return paymentFailed(id, "illegal_state", `a payment intent in state ${r.state} cannot be captured`);
-        const full = req.amountMinor === "full" || req.amountMinor === r.amountCapturableMinor;
-        if (!full) {
-          if (!Number.isSafeInteger(req.amountMinor) || (req.amountMinor as number) <= 0) {
-            return paymentFailed(id, "invalid_amount", "amountMinor must be a positive integer of minor units, or full");
-          }
-          if ((req.amountMinor as number) > r.amountCapturableMinor) {
-            return paymentFailed(id, "amount_exceeds_capturable", "cannot capture more than was authorised");
-          }
-          if (!capabilities.partialCapture) return paymentUnavailable(id, "capability_not_supported", "this provider cannot capture part of an authorisation");
-          if (req.platformFeeMinor === null || !Number.isSafeInteger(req.platformFeeMinor) || req.platformFeeMinor < 0) {
-            return paymentFailed(id, "invalid_request", "a partial capture must restate the platform fee");
-          }
-          if (req.platformFeeMinor > (req.amountMinor as number)) {
-            return paymentFailed(id, "fee_exceeds_commissionable_amount", "the platform fee exceeds the captured amount");
-          }
+        // The SHARED rule: state, amount, and the fee held to the original scaled to what is captured.
+        const invalid = validateCapturePaymentIntent(id, r, req);
+        if (invalid) return invalid;
+        const take = resolveCapture(r, req);
+        if (take.amountMinor !== r.amountCapturableMinor && !capabilities.partialCapture) {
+          return paymentUnavailable(id, "capability_not_supported", "this provider cannot capture part of an authorisation");
         }
-        const captureMinor = full ? r.amountCapturableMinor : (req.amountMinor as number);
-        const feeMinor = full ? platformFeeTotalMinor(r.platformFee) : (req.platformFeeMinor as number);
-        const failed = settleCapture(r, captureMinor, feeMinor);
+        const failed = settleCapture(r, take.amountMinor, take.platformFee);
         return failed ?? paymentOk(id, intentSnapshot(r));
       });
     },
 
     async cancelPaymentIntent(req: CancelPaymentIntentRequest): Promise<PaymentResult<PaymentIntentSnapshot>> {
-      const refused = gate("cancelPaymentIntent");
+      const refused = gate("cancelPaymentIntent") ?? validateCancelPaymentIntent(id, req);
       if (refused) return refused;
-      return once("cancelPaymentIntent", req?.idempotencyKey, req, () => {
+      return once("cancelPaymentIntent", req.idempotencyKey, req, () => {
         const r = findIntent(req.intent);
         if (isRefusal(r)) return r;
         if (r.state === "succeeded" || r.state === "canceled" || r.state === "processing") {
@@ -744,24 +839,18 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
     },
 
     async refundPayment(req: RefundPaymentRequest): Promise<PaymentResult<RefundSnapshot>> {
-      const refused = gate("refundPayment");
+      const refused = gate("refundPayment") ?? validateRefundPayment(id, req);
       if (refused) return refused;
-      return once("refundPayment", req?.idempotencyKey, req, () => {
+      return once("refundPayment", req.idempotencyKey, req, () => {
         const r = findIntent(req.intent);
         if (isRefusal(r)) return r;
-        if (typeof req.refundPlatformFee !== "boolean") {
-          return paymentFailed(id, "invalid_request", "refundPlatformFee must be stated: true or false");
-        }
-        if (r.state !== "succeeded") return paymentFailed(id, "illegal_state", `a payment intent in state ${r.state} has nothing captured to refund`);
+        // The SHARED rule: state, bound and granularity, against the intent.
+        const invalid = validateRefundAgainstIntent(id, r, req);
+        if (invalid) return invalid;
+        const currency = r.amount.currency;
         const remaining = r.amountCapturedMinor - r.amountRefundedMinor;
         const full = req.amountMinor === "full" || req.amountMinor === remaining;
-        if (!full && (!Number.isSafeInteger(req.amountMinor) || (req.amountMinor as number) <= 0)) {
-          return paymentFailed(id, "invalid_amount", "amountMinor must be a positive integer of minor units, or full");
-        }
         const refundMinor = full ? remaining : (req.amountMinor as number);
-        if (refundMinor > remaining || remaining === 0) {
-          return paymentFailed(id, "amount_exceeds_refundable", "cannot refund more than was captured and not yet refunded");
-        }
         if (!full && !capabilities.partialRefund) return paymentUnavailable(id, "capability_not_supported", "this provider cannot refund part of a payment");
         const feeRemaining = r.platformFeeCollectedMinor - r.platformFeeRefundedMinor;
         const feeRefundMinor = !req.refundPlatformFee
@@ -769,15 +858,24 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
           : full
             ? feeRemaining
             : Math.min(feeRemaining, Number((BigInt(r.platformFeeCollectedMinor) * BigInt(refundMinor)) / BigInt(r.amountCapturedMinor)));
-        if (r.chargeModel === "platform") {
-          credit(platformBalance, r.amount.currency, -refundMinor);
-        } else {
-          const recipient = recipients.get(r.recipientRef as string) as RecipientRecord;
-          const debit = convert({ amountMinor: refundMinor - feeRefundMinor, currency: r.amount.currency }, recipient.settlementCurrency);
-          if (!debit.ok) return paymentUnavailable(id, "unsupported_currency", `no rate from ${r.amount.currency} to ${recipient.settlementCurrency}`);
-          credit(recipientBook(recipient.recipientRef), recipient.settlementCurrency, -debit.settlement.settled.amountMinor);
-          credit(platformBalance, r.amount.currency, -feeRefundMinor);
+
+        // Who bears it. Every conversion is worked out before any balance moves.
+        const recipient = r.recipientRef === null ? null : (recipients.get(r.recipientRef) as RecipientRecord);
+        const fromRecipient = recipient !== null && (r.chargeModel === "direct" || req.reverseTransfer);
+        // platform charge: the platform pays it all. direct, or destination with the transfer reversed: the
+        // recipient pays the refund less the returned fee, the platform returns the fee. destination with the
+        // transfer left alone: the platform pays the refund, and a returned fee goes to the recipient.
+        const recipientDeltaMinor = !recipient ? 0 : fromRecipient ? -(refundMinor - feeRefundMinor) : feeRefundMinor;
+        const platformDebitMinor = !recipient ? refundMinor : fromRecipient ? feeRefundMinor : refundMinor + feeRefundMinor;
+        const recipientMove = recipient ? convert({ amountMinor: Math.abs(recipientDeltaMinor), currency }, recipient.settlementCurrency) : null;
+        if (recipientMove && !recipientMove.ok) return noRate(currency, (recipient as RecipientRecord).settlementCurrency);
+        const platformMove = onPlatform({ amountMinor: platformDebitMinor, currency });
+        if (!platformMove.ok) return noRate(currency, platformCurrency ?? currency);
+        if (recipient && recipientMove && recipientMove.ok) {
+          credit(recipientBook(recipient.recipientRef), recipientMove.settled.currency, Math.sign(recipientDeltaMinor) * recipientMove.settled.amountMinor);
         }
+        credit(platformBalance, platformMove.settled.currency, -platformMove.settled.amountMinor);
+
         r.amountRefundedMinor += refundMinor;
         r.platformFeeRefundedMinor += feeRefundMinor;
         r.updatedAt = tick();
@@ -786,10 +884,10 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
           intentRef: r.intentRef,
           recipientRef: r.recipientRef,
           state: "succeeded" as const,
-          amount: { amountMinor: refundMinor, currency: r.amount.currency },
+          amount: { amountMinor: refundMinor, currency },
           platformFeeRefundedMinor: feeRefundMinor,
           fullyRefunded: r.amountRefundedMinor === r.amountCapturedMinor,
-          reason: req.reason as RefundReason,
+          reason: req.reason,
           livemode: false,
           updatedAt: r.updatedAt,
         });
@@ -837,15 +935,18 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
     },
 
     async createRecipientOnboardingLink(req: RecipientOnboardingLinkRequest): Promise<PaymentResult<RecipientOnboardingLink>> {
-      const refused = gate("createRecipientOnboardingLink");
+      const refused = gate("createRecipientOnboardingLink") ?? validateRecipientOnboardingLink(id, req);
       if (refused) return refused;
-      const r = typeof req?.recipientRef === "string" ? recipients.get(req.recipientRef) : undefined;
-      if (!r) return paymentFailed(id, "not_found", "no such recipient");
-      if (r.onboarding === "rejected") return paymentDeclined<RecipientOnboardingLink>(id, "recipient_rejected", "the provider rejected this recipient; onboarding cannot be resumed");
-      return paymentOk(id, {
-        recipientRef: r.recipientRef,
-        url: `https://fake-payments.invalid/onboard/${r.recipientRef}`,
-        expiresAt: new Date(clockMs + 5 * 60_000).toISOString(),
+      // Keyed: a retried request gets the SAME link back, not a second one.
+      return once("createRecipientOnboardingLink", req.idempotencyKey, req, () => {
+        const r = recipients.get(req.recipientRef);
+        if (!r) return paymentFailed(id, "not_found", "no such recipient");
+        if (r.onboarding === "rejected") return paymentDeclined<RecipientOnboardingLink>(id, "recipient_rejected", "the provider rejected this recipient; onboarding cannot be resumed");
+        return paymentOk(id, {
+          recipientRef: r.recipientRef,
+          url: `https://fake-payments.invalid/onboard/${r.recipientRef}/${nextRef("link")}`,
+          expiresAt: new Date(clockMs + 5 * 60_000).toISOString(),
+        });
       });
     },
 
@@ -889,21 +990,25 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
         if (recipient.onboarding !== "verified" || !recipient.payoutsEnabled) {
           return paymentDeclined<PayoutSnapshot>(id, "recipient_not_eligible", "the recipient is not verified for payouts");
         }
-        const base = { recipientRef: recipient.recipientRef, reference: { kind: req.reference.kind, id: req.reference.id }, amount: { amountMinor: req.amount.amountMinor, currency: req.amount.currency } };
+        const reference = { kind: req.reference.kind, id: req.reference.id };
         if (req.kind === "transfer") {
           if ((platformBalance.get(req.amount.currency) ?? 0) < req.amount.amountMinor) {
             return paymentDeclined<PayoutSnapshot>(id, "insufficient_balance", "the platform's balance does not cover this transfer");
           }
           const landed = convert(req.amount, recipient.settlementCurrency);
-          if (!landed.ok) return paymentUnavailable(id, "unsupported_currency", `no rate from ${req.amount.currency} to ${recipient.settlementCurrency}`);
+          if (!landed.ok) return noRate(req.amount.currency, recipient.settlementCurrency);
           credit(platformBalance, req.amount.currency, -req.amount.amountMinor);
-          credit(recipientBook(recipient.recipientRef), recipient.settlementCurrency, landed.settlement.settled.amountMinor);
+          credit(recipientBook(recipient.recipientRef), recipient.settlementCurrency, landed.settled.amountMinor);
           const t: PayoutRecord = {
-            ...base,
             payoutRef: nextRef("tr"),
             kind: "transfer",
+            recipientRef: recipient.recipientRef,
+            reference,
             state: "paid",
-            settlement: landed.settlement,
+            amount: { amountMinor: req.amount.amountMinor, currency: req.amount.currency },
+            amountReversedMinor: 0,
+            settledReversedMinor: 0,
+            settlement: { settled: landed.settled, conversion: landed.conversion, providerFee: null, platformFeeSettled: null },
             failureCode: null,
             expectedArrivalAt: null,
             path: [],
@@ -917,45 +1022,26 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
         if (req.amount.currency !== recipient.settlementCurrency) {
           return paymentFailed(id, "currency_mismatch", `a payout is made in the recipient's settlement currency (${recipient.settlementCurrency})`);
         }
-        const book = recipientBook(recipient.recipientRef);
-        if ((book.get(req.amount.currency) ?? 0) < req.amount.amountMinor) {
+        if ((recipientBook(recipient.recipientRef).get(req.amount.currency) ?? 0) < req.amount.amountMinor) {
           return paymentDeclined<PayoutSnapshot>(id, "insufficient_balance", "the recipient's balance does not cover this payout");
         }
-        credit(book, req.amount.currency, -req.amount.amountMinor);
-        const script = scripted.payoutPath.shift();
-        const p: PayoutRecord = {
-          ...base,
-          payoutRef: nextRef("po"),
-          kind: "payout",
-          state: "pending",
-          settlement: null,
-          failureCode: null,
-          expectedArrivalAt: new Date(clockMs + 2 * 86_400_000).toISOString(),
-          path: script ? [...script.path] : ["in_transit", "paid"],
-          pendingFailureCode: script ? script.failureCode : null,
-          updatedAt: tick(),
-        };
-        payouts.set(p.payoutRef, p);
-        emitPayout("created", p);
-        return paymentOk(id, payoutSnapshot(p));
+        return paymentOk(id, payoutSnapshot(newPayout(recipient, req.amount, reference)));
       });
     },
 
     async getPayoutStatus(handle: PayoutHandle): Promise<PaymentResult<PayoutSnapshot>> {
       const refused = gate("getPayoutStatus");
       if (refused) return refused;
-      const p = handle && typeof handle.payoutRef === "string" ? payouts.get(handle.payoutRef) : undefined;
-      if (!p || p.recipientRef !== handle.recipientRef || p.kind !== handle.kind) return paymentFailed(id, "not_found", "no such payout for this recipient");
-      return paymentOk(id, payoutSnapshot(p));
+      const p = findPayout(handle);
+      return isRefusal(p) ? p : paymentOk(id, payoutSnapshot(p));
     },
 
     async reverseOrHoldPayout(req: ReverseOrHoldPayoutRequest): Promise<PaymentResult<PayoutSnapshot>> {
-      const refused = gate("reverseOrHoldPayout");
+      const refused = gate("reverseOrHoldPayout") ?? validateReverseOrHoldPayout(id, req);
       if (refused) return refused;
-      return once("reverseOrHoldPayout", req?.idempotencyKey, req, () => {
-        const handle = req.payout;
-        const p = handle && typeof handle.payoutRef === "string" ? payouts.get(handle.payoutRef) : undefined;
-        if (!p || p.recipientRef !== handle.recipientRef || p.kind !== handle.kind) return paymentFailed(id, "not_found", "no such payout for this recipient");
+      return once("reverseOrHoldPayout", req.idempotencyKey, req, () => {
+        const p = findPayout(req.payout);
+        if (isRefusal(p)) return p;
         const illegal = () => paymentFailed(id, "illegal_state", `a ${p.kind} in state ${p.state} cannot be ${req.action === "hold" ? "held" : req.action === "release" ? "released" : "reversed"}`);
         if (req.action === "hold") {
           if (!capabilities.payoutHold) return paymentUnavailable(id, "capability_not_supported", "this provider cannot hold a payout");
@@ -964,13 +1050,25 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
         } else if (req.action === "release") {
           if (p.kind !== "payout" || p.state !== "on_hold") return illegal();
           p.state = "pending";
-        } else if (req.action === "reverse") {
+        } else {
           if (!capabilities.payoutReversal) return paymentUnavailable(id, "capability_not_supported", "this provider cannot reverse a payout");
           if (p.kind === "transfer" && p.state === "paid") {
+            // A transfer may come back in parts; the last part takes whatever is left of what landed.
+            const remaining = p.amount.amountMinor - p.amountReversedMinor;
+            const reverseMinor = req.amountMinor === "full" ? remaining : req.amountMinor;
+            if (reverseMinor > remaining) return paymentFailed(id, "amount_exceeds_reversible", "cannot reverse more of a transfer than has not yet been reversed");
             const settled = (p.settlement as SettlementDetails).settled;
-            credit(recipientBook(p.recipientRef), settled.currency, -settled.amountMinor);
-            credit(platformBalance, p.amount.currency, p.amount.amountMinor);
-            p.state = "reversed";
+            let backMinor = settled.amountMinor - p.settledReversedMinor;
+            if (reverseMinor !== remaining) {
+              const part = convert({ amountMinor: reverseMinor, currency: p.amount.currency }, settled.currency);
+              if (!part.ok) return noRate(p.amount.currency, settled.currency);
+              backMinor = part.settled.amountMinor;
+            }
+            credit(recipientBook(p.recipientRef), settled.currency, -backMinor);
+            credit(platformBalance, p.amount.currency, reverseMinor);
+            p.amountReversedMinor += reverseMinor;
+            p.settledReversedMinor += backMinor;
+            if (p.amountReversedMinor === p.amount.amountMinor) p.state = "reversed";
           } else if (p.kind === "payout" && (p.state === "pending" || p.state === "on_hold")) {
             credit(recipientBook(p.recipientRef), p.amount.currency, p.amount.amountMinor);
             p.state = "canceled";
@@ -978,40 +1076,35 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
           } else {
             return illegal();
           }
-        } else {
-          return paymentFailed(id, "invalid_request", "action must be hold, release or reverse");
         }
         p.updatedAt = tick();
-        emitPayout(p.state, p);
+        emitPayout(p.kind === "transfer" && req.action === "reverse" ? "reversed" : p.state, p);
         return paymentOk(id, payoutSnapshot(p));
       });
     },
 
     async verifyAndParseWebhook(delivery: WebhookDelivery): Promise<PaymentResult<PaymentWebhookEvent>> {
-      const refused = gate("verifyAndParseWebhook");
+      const refused = gate("verifyAndParseWebhook") ?? validateWebhookDelivery(id, delivery);
       if (refused) return refused;
-      if (typeof delivery !== "object" || delivery === null || typeof delivery.rawBody !== "string" || typeof delivery.headers !== "object" || delivery.headers === null) {
-        return paymentFailed(id, "webhook_malformed", "a delivery needs the raw body as a string and its headers");
-      }
-      // 1. signature over the RAW body — before a single byte of it is parsed
-      const unverified = verifyPaymentWebhookSignature({ provider: id, delivery, headerName: FAKE_SIGNATURE_HEADER, secret: FAKE_WEBHOOK_SECRET, nowMs: clockMs });
+      // 1. signature over the RAW body, with the secret of the endpoint it arrived on — before a byte of it is parsed
+      const unverified = verifyPaymentWebhookSignature({ provider: id, delivery, headerName: FAKE_SIGNATURE_HEADER, secret: secretFor(delivery.endpoint), nowMs: clockMs });
       if (unverified) return unverified;
-      // 2. parse
+      // 2. parse, and insist on the snapshot the body's kind promises
       let parsed: unknown;
       try {
         parsed = JSON.parse(delivery.rawBody);
       } catch {
         return paymentFailed(id, "webhook_malformed", "the verified body is not JSON");
       }
-      const e = parsed as { id?: unknown; type?: unknown; livemode?: unknown; created?: unknown; account?: unknown; data?: unknown };
-      const body = e?.data as PaymentWebhookBody | undefined;
+      const e = (typeof parsed === "object" && parsed !== null ? parsed : {}) as { id?: unknown; type?: unknown; livemode?: unknown; created?: unknown; account?: unknown; data?: unknown };
       if (
-        typeof parsed !== "object" || parsed === null ||
-        typeof e.id !== "string" || typeof e.type !== "string" || typeof e.created !== "string" ||
-        typeof e.livemode !== "boolean" || (e.account !== null && typeof e.account !== "string") ||
-        typeof body !== "object" || body === null || typeof body.kind !== "string"
+        typeof e.id !== "string" || e.id.length === 0 || typeof e.type !== "string" || typeof e.created !== "string" || !Number.isFinite(Date.parse(e.created)) ||
+        typeof e.livemode !== "boolean" || (e.account !== null && typeof e.account !== "string")
       ) {
         return paymentFailed(id, "webhook_malformed", "the verified body is not an event envelope");
+      }
+      if (!isPaymentWebhookBody(e.data)) {
+        return paymentFailed(id, "webhook_malformed", "the verified event does not carry the object its kind promises");
       }
       // 3. mode — a verified LIVE event is still refused unless live is allowed
       if (webhookLivemodeRefused(e.livemode, env())) {
@@ -1020,11 +1113,12 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
       return paymentOk(id, {
         provider: id,
         providerEventId: e.id,
+        endpoint: delivery.endpoint,
         providerEventType: e.type,
         livemode: e.livemode,
         occurredAt: e.created,
         accountRef: e.account as string | null,
-        body,
+        body: e.data,
       });
     },
   };
@@ -1086,7 +1180,7 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
       if (next === undefined) throw new Error(`fake payment provider: ${payoutRef} is ${p.state} and has nowhere further to go`);
       if (next === "paid") {
         credit(paidOut, p.amount.currency, p.amount.amountMinor);
-        p.settlement = { settled: p.amount, conversion: null };
+        p.settlement = { settled: p.amount, conversion: null, providerFee: null, platformFeeSettled: null };
       }
       if (next === "failed" || next === "returned") {
         if (next === "returned") credit(paidOut, p.amount.currency, -p.amount.amountMinor);
@@ -1098,6 +1192,15 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
       p.updatedAt = tick();
       emitPayout(next, p);
       return payoutSnapshot(p);
+    },
+
+    providerInitiatedPayout(recipientRef, amountMinor) {
+      const recipient = requireControl(recipients.get(recipientRef), `recipient ${recipientRef}`);
+      if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) throw new Error("fake payment provider: pay out a positive integer of minor units");
+      if ((recipientBook(recipientRef).get(recipient.settlementCurrency) ?? 0) < amountMinor) {
+        throw new Error(`fake payment provider: ${recipientRef}'s balance does not cover ${amountMinor}`);
+      }
+      return payoutSnapshot(newPayout(recipient, { amountMinor, currency: recipient.settlementCurrency }, null));
     },
 
     openDispute(intentRef, reasonCode = "fraudulent") {
@@ -1143,6 +1246,7 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
         platform: plain(platformBalance),
         recipients: Object.fromEntries([...recipientBalances.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([ref, book]) => [ref, plain(book)])),
         paidOut: plain(paidOut),
+        providerFees: Object.fromEntries(Object.entries(plain(providerFees)).filter(([, v]) => v !== 0)),
       };
     },
 
@@ -1153,14 +1257,14 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
     },
 
     webhooks: {
-      pending: () => outbox.map((e, index) => ({ index, providerEventId: e.providerEventId, providerEventType: e.providerEventType })),
+      pending: () => outbox.map((e, index) => ({ index, providerEventId: e.providerEventId, providerEventType: e.providerEventType, endpoint: e.endpoint })),
       deliver(plan: FakeDeliveryPlan = {}) {
         const order = plan.order ?? outbox.map((_, i) => i);
         const chosen = order.map((i) => requireControl(outbox[i], `pending event index ${i}`));
         const extra = plan.duplicates ?? 0;
         const deliveries: WebhookDelivery[] = [];
         for (const e of chosen) {
-          for (let n = 0; n <= extra; n += 1) deliveries.push(sign(envelope(e, plan.livemode === true)));
+          for (let n = 0; n <= extra; n += 1) deliveries.push(sign(envelope(e, plan.livemode === true), e.endpoint));
         }
         const handedOut = new Set(chosen);
         for (let i = outbox.length - 1; i >= 0; i -= 1) {
@@ -1169,9 +1273,10 @@ export function createFakePaymentProvider(options: FakePaymentProviderOptions = 
         return deliveries;
       },
       redeliver(providerEventId) {
-        return sign(envelope(requireControl(history.get(providerEventId), `event ${providerEventId}`), false));
+        const e = requireControl(history.get(providerEventId), `event ${providerEventId}`);
+        return sign(envelope(e, false), e.endpoint);
       },
-      signRawBody: (rawBody) => sign(rawBody),
+      signRawBody: (rawBody, endpoint = "platform") => sign(rawBody, endpoint),
     },
   };
 

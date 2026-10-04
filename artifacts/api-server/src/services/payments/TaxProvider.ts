@@ -27,7 +27,17 @@
  *      seller market, and an unconfigured market is `configured: false` with a
  *      reason, never a zero-tax answer. Zero tax is an answer a configured
  *      market gives (`taxMinor: 0`); it is not what absence looks like.
- *   4. Who remits is part of the answer (`remittedBy`). Where the platform must
+ *   4. A COMPUTATION IS ATTESTED BY THE PROVIDER THAT ISSUED IT. Shape is not
+ *      provenance: an object that merely looks like a `TaxComputation` proves
+ *      nothing about any market. Each provider remembers what it issued
+ *      (`attests`), and `providerRegistry.ts` asks the REGISTERED provider to
+ *      attest every computation on a charge — and that the seller's market is
+ *      configured — before the payment provider is reached. A copy, an edited
+ *      copy, a hand-built object and one issued by a different provider are all
+ *      refused; `none` attests nothing. Because attestation is by identity, a
+ *      computation is used in the request that computed it; it is recomputed,
+ *      not rehydrated from storage.
+ *   5. Who remits is part of the answer (`remittedBy`). Where the platform must
  *      collect and remit, the tax is taken through the platform fee; where the
  *      seller remits, it stays with the seller. The contract carries the fact;
  *      it does not decide it — that is a per-country legal determination.
@@ -126,6 +136,12 @@ export interface TaxProvider {
   marketStatus(sellerMarket: string): TaxMarketStatus;
   /** Compute tax for one line. Answers `unavailable / tax_not_configured` for an unconfigured market. */
   computeTax(query: TaxQuery): Promise<TaxResult>;
+  /**
+   * Did THIS provider issue exactly this computation, unaltered? True only for
+   * the very object `computeTax` returned (issued objects are frozen). Never
+   * throws; anything else — a copy, a look-alike, another provider's — is false.
+   */
+  attests(computation: unknown): boolean;
 }
 
 const COUNTRY = /^[A-Z]{2}$/;
@@ -170,6 +186,8 @@ export const NONE_TAX_PROVIDER: TaxProvider = Object.freeze({
       retriable: false,
     });
   },
+  // It issues nothing, so it attests nothing.
+  attests: (): boolean => false,
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -222,6 +240,8 @@ export function createFakeTaxProvider(options: FakeTaxProviderOptions = {}): Tax
   const now = options.now ?? (() => FAKE_TAX_EPOCH_MS);
   const env = (): NodeJS.ProcessEnv => options.env ?? process.env;
   let calculations = 0;
+  // What this instance issued. Private to the closure: nothing outside can add to it.
+  const issued = new WeakSet<object>();
 
   return Object.freeze({
     id: FAKE_TAX_PROVIDER_ID,
@@ -260,25 +280,26 @@ export function createFakeTaxProvider(options: FakeTaxProviderOptions = {}): Tax
       const rateBps = query.productKind === "tip" ? 0 : m.rateBps;
       const taxMinor = taxMinorAtRate(query.amountMinor, rateBps);
       calculations += 1;
-      return Promise.resolve({
-        status: "ok",
+      const value: TaxComputation = Object.freeze({
         provider: FAKE_TAX_PROVIDER_ID,
-        value: Object.freeze({
-          provider: FAKE_TAX_PROVIDER_ID,
-          configured: true as const,
-          sellerMarket: query.sellerMarket,
-          buyerMarket: query.buyerMarket,
-          productKind: query.productKind,
-          taxableMinor: query.amountMinor,
-          taxMinor,
-          currency: query.currency,
-          remittedBy: taxMinor === 0 ? ("none" as const) : m.remittedBy,
-          rateBps,
-          jurisdiction: `FAKE-${query.sellerMarket}`,
-          calculationRef: `fake_taxcalc_${String(calculations).padStart(6, "0")}`,
-          computedAt: new Date(now()).toISOString(),
-        }),
+        configured: true as const,
+        sellerMarket: query.sellerMarket,
+        buyerMarket: query.buyerMarket,
+        productKind: query.productKind,
+        taxableMinor: query.amountMinor,
+        taxMinor,
+        currency: query.currency,
+        remittedBy: taxMinor === 0 ? ("none" as const) : m.remittedBy,
+        rateBps,
+        jurisdiction: `FAKE-${query.sellerMarket}`,
+        calculationRef: `fake_taxcalc_${String(calculations).padStart(6, "0")}`,
+        computedAt: new Date(now()).toISOString(),
       });
+      issued.add(value);
+      return Promise.resolve({ status: "ok", provider: FAKE_TAX_PROVIDER_ID, value });
+    },
+    attests(computation: unknown): boolean {
+      return typeof computation === "object" && computation !== null && issued.has(computation) && fakePaymentProviderPermitted(env());
     },
   });
 }
@@ -293,6 +314,19 @@ export function configuredTaxProvider(env: NodeJS.ProcessEnv = process.env): str
   return name === "" ? NONE_TAX_PROVIDER_ID : name;
 }
 
+/** What an unrecognised configured name is reported as. The raw text is never echoed. */
+export const UNRECOGNISED_VALUE = "unrecognised value" as const;
+
+/**
+ * The configured tax provider's name as it may be LOGGED: itself when it is one
+ * of the names this module knows, otherwise a fixed marker. A secret pasted
+ * into TAX_PROVIDER by mistake therefore never reaches a log line.
+ */
+export function taxProviderLabel(name: string): string {
+  return name === NONE_TAX_PROVIDER_ID || name === FAKE_TAX_PROVIDER_ID ? name : UNRECOGNISED_VALUE;
+}
+
+/** `name` is always safe to log: the configured name when it is a known one, else the fixed marker. */
 export type TaxProviderResolution =
   | { readonly ok: true; readonly name: string; readonly provider: TaxProvider }
   | { readonly ok: false; readonly name: string; readonly reason: TaxUnavailableReason; readonly detail: string };
@@ -322,9 +356,9 @@ export function resolveTaxProvider(env: NodeJS.ProcessEnv = process.env): TaxPro
   }
   return {
     ok: false,
-    name,
+    name: taxProviderLabel(name),
     reason: "tax_provider_not_registered",
-    detail: `tax provider ${JSON.stringify(name)} is not registered; choosing one, and configuring each launch country, is an owner decision`,
+    detail: "TAX_PROVIDER names a tax provider that is not registered; choosing one, and configuring each launch country, is an owner decision",
   };
 }
 

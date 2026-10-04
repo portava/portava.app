@@ -26,6 +26,13 @@
  * Every blocker is reported, most urgent first; `reason` is the first. Nothing
  * here returns or logs a key: the report is names, booleans and enums.
  *
+ * NOR DOES IT ECHO CONFIGURATION. `provider` and `taxProvider` are the
+ * configured names only when they are names this server knows (`none`, `fake`,
+ * a registered adapter, a provider with a known key family); anything else is
+ * reported as "unrecognised value". Invalid PAYMENTS_ENABLED_MARKETS tokens are
+ * COUNTED, never quoted. A secret pasted into one of those variables by mistake
+ * therefore cannot reach the startup log line.
+ *
  * NO ROUTE. Identity readiness has no admin route today (it is consumed by
  * `lib/rentBuddyKycGate.ts` and the verification routes, and logged at
  * startup), so there is no admin auth to reuse and none is invented here. The
@@ -66,7 +73,8 @@ export interface PaymentsReadiness {
   /** At least one market is enabled and tax is configured for every enabled market. */
   readonly taxConfigured: boolean;
   readonly enabledMarkets: readonly string[];
-  readonly invalidMarkets: readonly string[];
+  /** How many PAYMENTS_ENABLED_MARKETS tokens are not country codes. A count: the tokens are never echoed. */
+  readonly invalidMarketCount: number;
   readonly marketsNotSupportedByProvider: readonly string[];
   readonly marketsWithoutTax: readonly string[];
   /** Enabled markets in which the provider offers the direct-charge model. */
@@ -99,20 +107,14 @@ export function paymentsReadiness(
     blockers.push("PAYMENT_PROVIDER is unset or `none`: payments are disabled and nothing is charged, refunded or paid out.");
   } else if (!resolution.ok) {
     if (!(keyRefused && (resolution.reason === "live_key_not_allowed" || resolution.reason === "unknown_key_prefix"))) {
-      blockers.push(`PAYMENT_PROVIDER=${resolution.name} cannot be used (${resolution.reason}): ${resolution.detail}`);
+      blockers.push(`PAYMENT_PROVIDER (${resolution.name}) cannot be used (${resolution.reason}): ${resolution.detail}`);
     }
-  } else if (resolution.kind === "adapter" && !resolution.certified) {
-    blockers.push(
-      `PAYMENT_PROVIDER=${resolution.name} is implemented but not certified against the provider. A sandbox transcript ` +
-        `(onboard -> charge on the recipient's account -> capture -> refund -> payout, with signed webhooks) must be recorded ` +
-        `before its registration is marked certified.`,
-    );
   }
 
   // 4–6. markets and tax
-  const { markets: enabledMarkets, invalid: invalidMarkets } = enabledPaymentMarkets(env);
-  if (invalidMarkets.length > 0) {
-    blockers.push(`PAYMENTS_ENABLED_MARKETS names ${invalidMarkets.length} value(s) that are not ISO 3166-1 alpha-2 codes: ${invalidMarkets.join(", ")}.`);
+  const { markets: enabledMarkets, invalidCount: invalidMarketCount } = enabledPaymentMarkets(env);
+  if (invalidMarketCount > 0) {
+    blockers.push(`PAYMENTS_ENABLED_MARKETS names ${invalidMarketCount} value(s) that are not ISO 3166-1 alpha-2 codes.`);
   }
   if (enabledMarkets.length === 0) {
     blockers.push("PAYMENTS_ENABLED_MARKETS is empty: the platform has enabled payments in no market.");
@@ -133,11 +135,12 @@ export function paymentsReadiness(
   }
 
   const tax = resolveTaxProvider(env);
+  const taxName = tax.name; // already a label: a known name or "unrecognised value", never raw configuration
   const marketsWithoutTax = tax.ok ? enabledMarkets.filter((m) => !tax.provider.marketStatus(m).configured) : [...enabledMarkets];
   if (!tax.ok) {
-    blockers.push(`TAX_PROVIDER=${tax.name} cannot be used (${tax.reason}): ${tax.detail}`);
+    blockers.push(`TAX_PROVIDER (${taxName}) cannot be used (${tax.reason}): ${tax.detail}`);
   } else if (marketsWithoutTax.length > 0) {
-    blockers.push(`tax is not configured for: ${marketsWithoutTax.join(", ")} (TAX_PROVIDER=${tax.name}). Checkout refuses where tax is not configured.`);
+    blockers.push(`tax is not configured for: ${marketsWithoutTax.join(", ")} (TAX_PROVIDER=${taxName}). Checkout refuses where tax is not configured.`);
   }
   const taxConfigured = tax.ok && enabledMarkets.length > 0 && marketsWithoutTax.length === 0;
 
@@ -152,10 +155,10 @@ export function paymentsReadiness(
     keyPresent,
     keyRefused,
     liveAllowed: allowLive,
-    taxProvider: tax.name,
+    taxProvider: taxName,
     taxConfigured,
     enabledMarkets,
-    invalidMarkets,
+    invalidMarketCount,
     marketsNotSupportedByProvider,
     marketsWithoutTax,
     directChargeMarkets,

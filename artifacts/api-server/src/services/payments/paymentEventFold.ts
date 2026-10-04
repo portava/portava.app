@@ -9,15 +9,39 @@
  *
  * Providers deliver at least once and in no promised order. Every
  * `PaymentWebhookEvent` therefore carries the object's FULL snapshot at the
- * moment the provider produced it, and each snapshot carries `updatedAt`, the
- * provider's clock for that object. Two rules follow, and this module is them:
+ * moment the provider produced it. Three rules follow, and this module is them:
  *
  *   1. An event id seen before is a duplicate. It changes nothing.
- *   2. For one object, the snapshot with the latest `updatedAt` is the state.
- *      An older snapshot arriving later is STALE: it is recorded as seen and
- *      changes nothing. Equal instants are broken by a fixed total order (state
- *      rank, then the snapshot's canonical text), so two deliveries of
- *      different events cannot disagree about which wins whichever comes first.
+ *   2. For one object, the LATEST snapshot is the state, and an older snapshot
+ *      arriving later is STALE: it is recorded as seen and changes nothing.
+ *   3. An event that cannot be read — no body, a body whose kind promises a
+ *      snapshot it does not carry — is IGNORED with a reason. It never throws:
+ *      a handler that throws on one bad delivery is a handler a provider will
+ *      retry forever.
+ *
+ * ── WHAT "LATEST" MEANS ──────────────────────────────────────────────────────
+ * `updatedAt` is the provider's time for a snapshot. It never goes backwards
+ * for one object, but it REPEATS: a provider whose event clock has one-second
+ * resolution (and no per-object "updated" stamp) reports the same instant for a
+ * capture and the refund that followed it. So time alone cannot order two
+ * snapshots, and the order between EQUAL instants is decided by what can only
+ * grow, per kind of object:
+ *
+ *   payment intent  refunded amount, then captured amount, then state rank
+ *   refund          state rank (pending before any terminal state)
+ *   payout          reversed amount, then state rank
+ *   dispute         state rank (open before closed)
+ *   recipient       state rank
+ *
+ * and only then by the snapshot's canonical text, so that two different
+ * snapshots can never tie. Two same-instant snapshots of one payment with 900
+ * and 1 000 refunded therefore fold to 1 000 whichever arrives first — not to
+ * whichever sorts first as text.
+ *
+ * A LATER instant always wins over an earlier one, whatever the counters say.
+ * That matters because state can legitimately step back (a failed
+ * authentication returns an intent to `requires_payment_method`) and a counter
+ * can legitimately fall (a refund that fails after it was reported).
  *
  * `applyPaymentEvent` is commutative, associative and idempotent over events —
  * any permutation of any multiset of the same events folds to the same state.
@@ -30,20 +54,21 @@
  * a delivery is new, a duplicate or stale BEFORE anything is booked. It is
  * pure: no I/O, no clock, no ledger import.
  *
- * WHAT AN ADAPTER MUST GUARANTEE for rule 2 to be sound: `updatedAt` never goes
- * backwards for one object. Where a provider's event clock is too coarse to
- * order two changes to the same object, the adapter re-reads the object
- * (`getPaymentIntent`, `getPayoutStatus`, `validateRecipient`) and reports the
- * provider's current state instead of the event's.
+ * WHAT AN ADAPTER MUST DO for rule 2 to be sound: never report an `updatedAt`
+ * earlier than one it already reported for the same object; and where two
+ * changes share an instant and no counter separates them (two state changes in
+ * one second), re-read the object (`getPaymentIntent`, `getPayoutStatus`,
+ * `validateRecipient`) and report the provider's CURRENT state.
  */
 
-import type {
-  DisputeSnapshot,
-  PaymentIntentSnapshot,
-  PaymentWebhookEvent,
-  PayoutSnapshot,
-  RecipientSnapshot,
-  RefundSnapshot,
+import {
+  isPaymentWebhookBody,
+  type DisputeSnapshot,
+  type PaymentIntentSnapshot,
+  type PaymentWebhookEvent,
+  type PayoutSnapshot,
+  type RecipientSnapshot,
+  type RefundSnapshot,
 } from "./PaymentProvider.js";
 
 export interface PaymentEventState {
@@ -59,9 +84,23 @@ export interface PaymentEventState {
  *   applied    the event was new and its snapshot is now the object's state
  *   duplicate  this event id was already seen
  *   stale      the event was new, but a later snapshot of the object is already held
- *   ignored    the event was new and is about nothing this contract models
+ *   ignored    the event changes nothing; `reason` says why
  */
 export type PaymentEventOutcome = "applied" | "duplicate" | "stale" | "ignored";
+
+/**
+ *   unmodelled       a well-formed event about something this contract does not model
+ *   malformed_body   the body is absent, or its kind promises a snapshot it does not carry
+ *   malformed_event  the envelope itself has no event id; it cannot even be recorded as seen
+ */
+export type PaymentEventIgnoredReason = "unmodelled" | "malformed_body" | "malformed_event";
+
+export interface PaymentEventApplication {
+  readonly state: PaymentEventState;
+  readonly outcome: PaymentEventOutcome;
+  /** Set exactly when `outcome` is `ignored`. */
+  readonly reason: PaymentEventIgnoredReason | null;
+}
 
 export function emptyPaymentEventState(): PaymentEventState {
   return { seenEventIds: new Set(), intents: new Map(), refunds: new Map(), recipients: new Map(), payouts: new Map(), disputes: new Map() };
@@ -89,63 +128,87 @@ const PAYOUT_RANK: Record<string, number> = { pending: 0, on_hold: 0, in_transit
 const DISPUTE_RANK: Record<string, number> = { needs_response: 0, under_review: 1, won: 2, lost: 2 };
 const RECIPIENT_RANK: Record<string, number> = { not_started: 0, in_progress: 1, pending_verification: 2, verified: 3, restricted: 3, rejected: 4 };
 
-/** A positive number when `b` is strictly newer than `a` under the fixed total order. */
-function compareSnapshots<T extends { updatedAt: string }>(a: T, b: T, rank: (s: T) => number): number {
+/** The numbers that order two same-instant snapshots, most significant first. Each only grows over an object's life. */
+type Counters<T> = (snapshot: T) => readonly number[];
+
+const intentCounters: Counters<PaymentIntentSnapshot> = (s) => [s.amountRefundedMinor, s.amountCapturedMinor, INTENT_RANK[s.state] ?? 0];
+const refundCounters: Counters<RefundSnapshot> = (s) => [REFUND_RANK[s.state] ?? 0];
+const recipientCounters: Counters<RecipientSnapshot> = (s) => [RECIPIENT_RANK[s.onboarding] ?? 0];
+const payoutCounters: Counters<PayoutSnapshot> = (s) => [s.amountReversedMinor, PAYOUT_RANK[s.state] ?? 0];
+const disputeCounters: Counters<DisputeSnapshot> = (s) => [DISPUTE_RANK[s.state] ?? 0];
+
+/** A positive number when `b` is strictly later than `a`: by time, then by the counters, then by canonical text. */
+function compareSnapshots<T extends { updatedAt: string }>(a: T, b: T, counters: Counters<T>): number {
   const ta = Date.parse(a.updatedAt);
   const tb = Date.parse(b.updatedAt);
-  if (Number.isFinite(ta) && Number.isFinite(tb) && ta !== tb) return tb - ta;
-  const r = rank(b) - rank(a);
-  if (r !== 0) return r;
-  const ca = canonicalJson(a);
-  const cb = canonicalJson(b);
-  return cb > ca ? 1 : cb < ca ? -1 : 0;
+  if (ta !== tb) return tb - ta;
+  const ca = counters(a);
+  const cb = counters(b);
+  for (let i = 0; i < ca.length; i += 1) {
+    const d = (cb[i] ?? 0) - (ca[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  const xa = canonicalJson(a);
+  const xb = canonicalJson(b);
+  return xb > xa ? 1 : xb < xa ? -1 : 0;
 }
 
 function put<T extends { updatedAt: string }>(
   map: ReadonlyMap<string, T>,
   key: string,
   incoming: T,
-  rank: (s: T) => number,
+  counters: Counters<T>,
 ): { map: ReadonlyMap<string, T>; applied: boolean } {
   const held = map.get(key);
-  if (held !== undefined && compareSnapshots(held, incoming, rank) <= 0) return { map, applied: false };
+  if (held !== undefined && compareSnapshots(held, incoming, counters) <= 0) return { map, applied: false };
   const next = new Map(map);
   next.set(key, incoming);
   return { map: next, applied: true };
 }
 
-/** Apply one verified event. Returns the new state and what the event turned out to be. Never mutates `state`. */
-export function applyPaymentEvent(
-  state: PaymentEventState,
-  event: PaymentWebhookEvent,
-): { state: PaymentEventState; outcome: PaymentEventOutcome } {
-  if (state.seenEventIds.has(event.providerEventId)) return { state, outcome: "duplicate" };
+/**
+ * Apply one verified event. Returns the new state, what the event turned out to
+ * be and — when it was ignored — why. Never mutates `state` and never throws,
+ * whatever `event` is.
+ */
+export function applyPaymentEvent(state: PaymentEventState, event: PaymentWebhookEvent): PaymentEventApplication {
+  const id: unknown = typeof event === "object" && event !== null ? (event as { providerEventId?: unknown }).providerEventId : undefined;
+  if (typeof id !== "string" || id.length === 0) return { state, outcome: "ignored", reason: "malformed_event" };
+  if (state.seenEventIds.has(id)) return { state, outcome: "duplicate", reason: null };
   const seenEventIds = new Set(state.seenEventIds);
-  seenEventIds.add(event.providerEventId);
-  const body = event.body;
+  seenEventIds.add(id);
+
+  const body: unknown = (event as { body?: unknown }).body;
+  if (!isPaymentWebhookBody(body)) return { state: { ...state, seenEventIds }, outcome: "ignored", reason: "malformed_body" };
+
+  const done = (next: Partial<PaymentEventState>, applied: boolean): PaymentEventApplication => ({
+    state: { ...state, seenEventIds, ...next },
+    outcome: applied ? "applied" : "stale",
+    reason: null,
+  });
   switch (body.kind) {
     case "payment_intent": {
-      const r = put(state.intents, body.intent.intentRef, body.intent, (s) => INTENT_RANK[s.state] ?? 0);
-      return { state: { ...state, seenEventIds, intents: r.map }, outcome: r.applied ? "applied" : "stale" };
+      const r = put(state.intents, body.intent.intentRef, body.intent, intentCounters);
+      return done({ intents: r.map }, r.applied);
     }
     case "refund": {
-      const r = put(state.refunds, body.refund.refundRef, body.refund, (s) => REFUND_RANK[s.state] ?? 0);
-      return { state: { ...state, seenEventIds, refunds: r.map }, outcome: r.applied ? "applied" : "stale" };
+      const r = put(state.refunds, body.refund.refundRef, body.refund, refundCounters);
+      return done({ refunds: r.map }, r.applied);
     }
     case "recipient": {
-      const r = put(state.recipients, body.recipient.recipientRef, body.recipient, (s) => RECIPIENT_RANK[s.onboarding] ?? 0);
-      return { state: { ...state, seenEventIds, recipients: r.map }, outcome: r.applied ? "applied" : "stale" };
+      const r = put(state.recipients, body.recipient.recipientRef, body.recipient, recipientCounters);
+      return done({ recipients: r.map }, r.applied);
     }
     case "payout": {
-      const r = put(state.payouts, body.payout.payoutRef, body.payout, (s) => PAYOUT_RANK[s.state] ?? 0);
-      return { state: { ...state, seenEventIds, payouts: r.map }, outcome: r.applied ? "applied" : "stale" };
+      const r = put(state.payouts, body.payout.payoutRef, body.payout, payoutCounters);
+      return done({ payouts: r.map }, r.applied);
     }
     case "dispute": {
-      const r = put(state.disputes, body.dispute.disputeRef, body.dispute, (s) => DISPUTE_RANK[s.state] ?? 0);
-      return { state: { ...state, seenEventIds, disputes: r.map }, outcome: r.applied ? "applied" : "stale" };
+      const r = put(state.disputes, body.dispute.disputeRef, body.dispute, disputeCounters);
+      return done({ disputes: r.map }, r.applied);
     }
     default:
-      return { state: { ...state, seenEventIds }, outcome: "ignored" };
+      return { state: { ...state, seenEventIds }, outcome: "ignored", reason: "unmodelled" };
   }
 }
 
