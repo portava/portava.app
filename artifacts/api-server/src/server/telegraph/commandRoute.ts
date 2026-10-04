@@ -40,7 +40,7 @@ import { requireUser, sendError } from "../../lib/http.js";
 import { getServiceClient } from "../../lib/supabase.js";
 import { asyncHandler } from "../../lib/asyncHandler.js";
 import { logger as rootLogger } from "../../lib/logger.js";
-import { publishToThread } from "../../lib/telegraphEvents.js";
+import { publishToThread } from "../../lib/telegraphEvents.js"; import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../../lib/telegraphThreadWrite.js";
 import { messageKernelEnabled } from "../../services/telegraphMessageKernel.js";
 import { createCoordinationSession } from "../../services/telegraph/coordinationSessions.js";
 import { unsendBeforeSeen } from "../../services/telegraph/unsend.js";
@@ -175,7 +175,7 @@ router.post(
       res.status(403).json({ error: "forbidden", reason: "TELEGRAPH_AUTH_NOT_MEMBER" });
       return;
     }
-
+    if (GUARDED_WRITE_COMMANDS.has(type) && (await refuseGuardedWrite(res, sc, type, conversationId, user.id))) return;
     /**
      * §13.1 `CREATE_COORDINATION_SESSION`, handled before the switch because
      * its failure vocabulary is not the switch's.
@@ -416,6 +416,22 @@ async function removeReaction(
   const emoji = validEmoji(params["emoji"]);
   if (emoji === null) return refusal("REMOVE_REACTION", "TELEGRAPH_MEDIA_KIND_NOT_ALLOWED");
 
+  // THE MESSAGE MUST BE IN THE CONVERSATION THE CALLER WAS AUTHORIZED FOR. This
+  // handler used to end `void conversationId;`: the route proved membership of
+  // one conversation and the delete then named a message id from anywhere, so
+  // the membership check authorized nothing. A message in another conversation
+  // answers exactly as ADD_REACTION answers it — not-member — so the two
+  // commands are one existence oracle and not two. A retracted message is NOT
+  // refused here, unlike ADD: taking a reaction back must outlive the message.
+  const { data: msg, error: msgErr } = await sc
+    .from("messages")
+    .select("id")
+    .eq("id", messageId)
+    .eq("thread_id", conversationId)
+    .maybeSingle();
+  if (msgErr) return refusal("REMOVE_REACTION", "TELEGRAPH_DEGRADED_THREAD_UNREADABLE");
+  if (!msg) return refusal("REMOVE_REACTION", "TELEGRAPH_AUTH_NOT_MEMBER");
+
   // Scoped to the caller's OWN reaction. There is no path here that removes
   // somebody else's, and the delete names user_id rather than relying on a
   // policy to enforce it — the service role bypasses policies.
@@ -427,8 +443,59 @@ async function removeReaction(
     .eq("emoji", emoji);
   if (delErr) return refusal("REMOVE_REACTION", "TELEGRAPH_DEGRADED_SCHEMA_ABSENT");
 
-  void conversationId;
   return success("REMOVE_REACTION", { messageId, emoji });
+}
+
+/* ─────────────────── the write guard for commands that WRITE ──────────────────
+ *
+ * The header says "AUTHORIZATION IS HERE *AND* IN THE HANDLER", and for the two
+ * commands below neither place had it. Membership was established and nothing
+ * else was:
+ *
+ *   CREATE_COORDINATION_SESSION inserts a `messages` row carrying a free-text
+ *   title (200 chars) and note (500). With only a membership check, a sender
+ *   the other party had BLOCKED could still write into their 1:1 thread — the
+ *   block guard exists because blocking deliberately does not close a thread —
+ *   the `disable_messaging` stop did not stop it, and in an end-to-end
+ *   encrypted thread the server stored the plaintext it promises never to hold.
+ *   The same command on `POST /threads/:id/coordination` has passed through
+ *   `guardTelegraphThreadWrite` since it was written; this was the weaker door
+ *   into the same row. It is not behind the kernel flag, so it was live.
+ *
+ *   ADD_REACTION puts the sender's mark on another person's message, and a
+ *   reaction is the cheapest message there is. Same three gaps, dark only
+ *   because `message_reactions` (2811) is applied to no database yet.
+ *
+ * WHAT IS DELIBERATELY NOT GUARDED. UNSEND_MESSAGE and REMOVE_REACTION are
+ * RETRACTIONS. A person who has been blocked, or whose thread is paused by the
+ * stop, must still be able to take back what they sent — refusing would keep
+ * content in front of someone precisely when the sender wants it gone.
+ */
+const GUARDED_WRITE_COMMANDS: ReadonlySet<string> = new Set(["CREATE_COORDINATION_SESSION", "ADD_REACTION"]);
+
+/**
+ * Run the shared write guard; answer the request and return true when it refuses.
+ *
+ * `forbidden` keeps THIS endpoint's shape and its redaction: a blocked sender is
+ * told what a non-member is told (`redactForWire` maps the internal code), so
+ * the refusal does not confirm a block. Every other refusal is the guard's own.
+ */
+async function refuseGuardedWrite(
+  res: Parameters<typeof sendError>[0],
+  sc: NonNullable<ReturnType<typeof getServiceClient>>,
+  type: string,
+  conversationId: string,
+  userId: string,
+): Promise<boolean> {
+  const guard = await guardTelegraphThreadWrite(sc, conversationId, userId);
+  if (guard.ok) return false;
+  if (guard.code === "forbidden") {
+    res.status(403).json({ error: "forbidden", command: type, reason: redactForWire("TELEGRAPH_AUTH_BLOCKED") });
+    return true;
+  }
+  log.warn({ conversationId, command: type, code: guard.code }, "command refused by the thread write guard");
+  sendThreadWriteRefusal(res, guard);
+  return true;
 }
 
 export default router;

@@ -52,7 +52,7 @@ import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import express from "express";
 
-import { _setTestClient } from "../lib/http.js";
+import { _setTestClient } from "../lib/http.js"; import { _resetRateLimit } from "../lib/rateLimit.js";
 import telegraphVoiceRouter from "../routes/telegraphVoice.js";
 import telegraphKindsRouter from "../routes/telegraphKinds.js";
 import messagingRouter from "../routes/messaging.js";
@@ -144,7 +144,7 @@ let client: FakeClient;
 
 function install(state: Record<string, any[]> = seed()): FakeClient {
   client = makeFakeClient(state);
-  _setTestClient(client as any, true);
+  _setTestClient(client as any, true); _resetRateLimit(); // the §22 send limiter is PROCESS state and now guards this door too: without this the 21st send in the FILE is a 429 that measures an earlier case
   return client;
 }
 
