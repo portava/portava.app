@@ -214,6 +214,12 @@ export interface FakePaymentControl {
   setRecipientOnboarding(recipientRef: string, state: RecipientOnboardingState, requirementsDue?: readonly string[]): RecipientSnapshot;
   /** Step a payout one state along its (possibly scripted) path. */
   advancePayout(payoutRef: string): PayoutSnapshot;
+  /**
+   * Open a dispute on a captured payment, for the amount not yet refunded. The
+   * fake REPORTS disputes (as webhook events) and moves no balance for them:
+   * who is debited for a dispute depends on the charge model and the account
+   * type, which an adapter — not the fake — must get right.
+   */
   openDispute(intentRef: string, reasonCode?: string): DisputeSnapshot;
   resolveDispute(disputeRef: string, outcome: "won" | "lost"): DisputeSnapshot;
   /** Add available funds to the platform's balance, so a transfer can be made. */

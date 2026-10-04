@@ -251,6 +251,32 @@ describe("FW4 — delivered late and out of order", () => {
     assert.deepEqual(held, JSON.parse(JSON.stringify(truth)));
   });
 
+  it("payout and dispute events fold the same way: failed-after-instruction and a lost dispute survive any order", async () => {
+    const fake = fresh();
+    const { recipientRef, intentRef } = await lifecycle(fake);
+    fake.control.webhooks.deliver(); // the lifecycle's seven are not under test here
+    fake.control.script.failNextPayout("after_instruction", "account_closed");
+    const payout = okValue(await fake.requestPayout({ idempotencyKey: "po1", kind: "payout", recipientRef, amount: { amountMinor: 3000, currency: "USD" }, reference: { kind: "run", id: "1" } }), "payout");
+    fake.control.advancePayout(payout.payoutRef);
+    fake.control.advancePayout(payout.payoutRef);
+    const dispute = fake.control.openDispute(intentRef, "product_not_received");
+    assert.deepEqual([dispute.state, dispute.amount, dispute.intentRef, dispute.reasonCode], ["needs_response", { amountMinor: 10_000, currency: "USD" }, intentRef, "product_not_received"]);
+    assert.equal(fake.control.resolveDispute(dispute.disputeRef, "lost").state, "lost");
+    assert.throws(() => fake.control.resolveDispute(dispute.disputeRef, "won"), /already lost/);
+
+    const events = await parseAll(fake, fake.control.webhooks.deliver());
+    assert.deepEqual(events.map((e) => e.providerEventType), ["payout.created", "payout.in_transit", "payout.failed", "dispute.created", "dispute.closed"]);
+    assert.deepEqual(events.map((e) => e.body.kind), ["payout", "payout", "payout", "dispute", "dispute"]);
+    for (const order of permutations(events)) {
+      const state = foldPaymentEvents([...order, ...order]);
+      const p = state.payouts.get(payout.payoutRef);
+      assert.deepEqual([p?.state, p?.failureCode, p?.amount], ["failed", "account_closed", { amountMinor: 3000, currency: "USD" }]);
+      assert.equal(state.disputes.get(dispute.disputeRef)?.state, "lost");
+    }
+    const unpaid = okValue(await fake.createPaymentIntent(await buildCharge({ key: "c2", recipientRef })), "create");
+    assert.throws(() => fake.control.openDispute(unpaid.intentRef), /only a captured payment can be disputed/);
+  });
+
   it("a decline after an authentication is a step BACK in state and still wins by time, not by rank", async () => {
     const fake = fresh();
     const recipientRef = await verifiedRecipient(fake, { key: "r1" });
