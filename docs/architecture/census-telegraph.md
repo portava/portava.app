@@ -10263,6 +10263,8 @@ places — the three citations of the two lines item 1 replaced, restated above 
   expectation in any of the five changed. The share and coordination suites make at most six
   guarded sends as one user and were left alone.
 
+- NOT-GRADED: artifacts/api-server/src/test/telegraphMessageDoors.test.ts — §42's rule-and-inventory suite; controlled evidence, no Telegraph verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/telegraphMessageDoorRoutes.test.ts — §42's request-level suite, first executed by CI; no Telegraph verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/routes/hiddenGems.ts — §42.2 names it as a weak door owned by the Discovery lane; this lane did not change it and no Telegraph verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/lib/threadMessage.ts — §42.2 names it as a weak door owned by the Layover lane; this lane did not change it and no Telegraph verdict rests on it.
 
