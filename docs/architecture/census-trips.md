@@ -1551,7 +1551,7 @@ here so the next reader can age this section mechanically.
 
 | Field | Value |
 | --- | --- |
-| `head_commit` | `1fe72289b` — RE-DECLARED 2026-09-15 at the squash merge of PR #482. The previous value was `80a8d655a`, a commit on the pre-merge branch. **The squash made it an orphan**: it still exists in a clone that fetched the branch, but it is on no line of history leading to `main`, and `check:census-freshness` refuses an orphan because the check would pass locally and fail in a fresh clone. Nothing about this census was re-measured and NO verdict moves — `1fe72289b` is the commit its previous declaration's tree became, so zero counted files have changed since it. The prior declaration and its reasoning follow. — RE-DECLARED 2026-09-14 by §70, replacing `014a25d5`. §70 re-derived nothing to a new verdict and says so: its finding is that `trip_crew_map_enabled` is TRUE in production, which falsifies a support in four `C` rows without moving them (§70.3), plus two stale "absent from production" claims and TR229's code half. The 6 counted files that changed are that work. It does **NOT** certify the 320 `C` rows, and §1's reading rule applies unchanged. The previous declaration read: `014a25d5` — RE-DECLARED 2026-09-11 from `42aeac38` by §36's from-zero recount, on the same mechanical test: `git diff --name-only 42aeac38 014a25d5` over this census's **34** scoped paths returns **0 files**, so every verdict is exactly as true at one as at the other. `014a25d5` is #481's squash and is the tip of `main`; declaring it is what makes "recounted against merged `main`" a checkable statement rather than a claim. Previously — RE-DECLARED 2026-09-09 from `6c6995e1`, and that move was a measurement rather than a judgement too: `git diff --name-only 6c6995e1 42aeac38` over this census's scoped paths returned **0 files**. It was necessary because `6c6995e1` is a PRE-SQUASH commit — this repository squash-merges, so it is an ancestor of nothing and is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). `42aeac38` is #476's squash, where this document's content actually reached `main`. Measurement lineage unchanged: §29 measured `823b6d67`; §30 re-measured §7.4 at `c3f76a49`; §31 re-measured §9.3 and §14 at `6d3e7a56`; §32 corrected TR261/TR437 at `1ec4d903`; §34 re-read the three §5 read routes at `6c6995e1`; §35 executed the kernel live. ONE declaration, kept current, because `check:census-freshness` reads the first one it finds and a second row further down is a decoration that ages nothing. |
+| `head_commit` | `f71cfb85f` — RE-DECLARED 2026-10-04 by **§80**, which is what §79 deferred to the integrator: §79 was written on a lane branch that would be squashed and declining to declare one of its commits was right. `f71cfb85f` is the merge of #586 on `main`, so unlike every previous value in this row it is an ancestor of every clone that fetches `main` and carries no pre-squash orphan hazard. The 201 counted files that changed since `1fe72289b` are PR #578's own work and twelve other lanes'. **This is a RE-MEASUREMENT of the rows §80 names and NOT of the rest**: §80 re-derived §79's "no verdict letter moves", repointed the stale citations on TR104 and TR296 — both scored `C`, both wrong before #578 as well as after — and moved NO verdict. It does **NOT** certify the other 449 rows, and §1's reading rule applies unchanged. The acknowledgement written against `1fe72289b` is RETIRED, not deleted, in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`. The previous declaration read: `1fe72289b` — RE-DECLARED 2026-09-15 at the squash merge of PR #482. The previous value was `80a8d655a`, a commit on the pre-merge branch. **The squash made it an orphan**: it still exists in a clone that fetched the branch, but it is on no line of history leading to `main`, and `check:census-freshness` refuses an orphan because the check would pass locally and fail in a fresh clone. Nothing about this census was re-measured and NO verdict moves — `1fe72289b` is the commit its previous declaration's tree became, so zero counted files have changed since it. The prior declaration and its reasoning follow. — RE-DECLARED 2026-09-14 by §70, replacing `014a25d5`. §70 re-derived nothing to a new verdict and says so: its finding is that `trip_crew_map_enabled` is TRUE in production, which falsifies a support in four `C` rows without moving them (§70.3), plus two stale "absent from production" claims and TR229's code half. The 6 counted files that changed are that work. It does **NOT** certify the 320 `C` rows, and §1's reading rule applies unchanged. The previous declaration read: `014a25d5` — RE-DECLARED 2026-09-11 from `42aeac38` by §36's from-zero recount, on the same mechanical test: `git diff --name-only 42aeac38 014a25d5` over this census's **34** scoped paths returns **0 files**, so every verdict is exactly as true at one as at the other. `014a25d5` is #481's squash and is the tip of `main`; declaring it is what makes "recounted against merged `main`" a checkable statement rather than a claim. Previously — RE-DECLARED 2026-09-09 from `6c6995e1`, and that move was a measurement rather than a judgement too: `git diff --name-only 6c6995e1 42aeac38` over this census's scoped paths returned **0 files**. It was necessary because `6c6995e1` is a PRE-SQUASH commit — this repository squash-merges, so it is an ancestor of nothing and is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). `42aeac38` is #476's squash, where this document's content actually reached `main`. Measurement lineage unchanged: §29 measured `823b6d67`; §30 re-measured §7.4 at `c3f76a49`; §31 re-measured §9.3 and §14 at `6d3e7a56`; §32 corrected TR261/TR437 at `1ec4d903`; §34 re-read the three §5 read routes at `6c6995e1`; §35 executed the kernel live. ONE declaration, kept current, because `check:census-freshness` reads the first one it finds and a second row further down is a decoration that ages nothing. |
 | Branch | `claude/portava-continuation-uqta94` |
 | Scope re-read | §5.1's twelve tables, §7, §8, §9.1, §9.3, §10, §11, §20.1, §22 |
 | NOT re-read | §1–§3, §6, §12–§19, §21, §23–§25. The headline stays where §26 left it. |
@@ -9807,3 +9807,117 @@ The server edits are line-neutral per handler, so no anchor in another census mo
 | CANNOT-VERIFY | **0** |
 | **CONSTRUCTED%** = (C+W)/451 | **448 / 451 = 99.3 %** |
 | **CORRECT%** = C/451 | **320 / 451 = 70.9 %** |
+
+## §80 Re-census of §79's subject at `f71cfb85f` — NO VERDICT MOVES, two `C` rows repointed, and the reason the corpus `C` did not move is in §79.1 — 2026-10-04
+
+*Written 2026-10-04 by the integrating re-census. §79 declined to re-declare `head_commit` because it
+was on a lane branch that would be squashed; PR #578 is merged and the declaration is moved here, with
+§79's acknowledgement retired. Evidence is the tree at `f71cfb85f` plus the repository's own committed
+production record. **No database was read or written**, and nothing below is production evidence.*
+
+### §80.1 What this pass was opened to test
+
+`check:census-integrity` returns the **same** `C` at `f71cfb85f` as it did 108 commits earlier at
+`626b46b7e` — 2436 across all thirteen censuses, identical — while seventeen PRs merged, nine of them
+onto the five lowest-scoring surfaces. That is either a fact about the tree or a fact about the
+documents. **On this surface it is a fact about the documents, and §79.1 already contains the proof.**
+
+§79.1 classified all 128 `W` rows mechanically, and the line that matters is the first one:
+
+> | code-actionable now | none — BRANCH is 0 (§73.1, held by §74 and §76) | 0 |
+
+**Zero of this census's 128 `W` rows can be closed by writing code.** 108 are built and wait on a
+hosted apply, a flag or production evidence; 9 are owner decisions; 10 need a schema change and then
+the owner's apply; 4 are external. A PR on this surface therefore cannot move a verdict however good
+it is, and #578 is a good one — nine read-honesty defects closed, 45 mutations, one equivalent
+survivor. The unchanged `C` is what a blocked `W` column looks like from the outside, and this census
+measured that before the PR was written rather than discovering it afterwards.
+
+### §80.2 §79's "no verdict letter moves" re-derived
+
+Checked, not accepted. The three things #578 could have moved, and why none did:
+
+- **The co-host join-request queue** (§79.2, §77.6's open item) is a real capability gain:
+  `GET /trips/join-requests` now lists owned AND accepted-co-hosted trips, and an unreadable co-host
+  roster refuses rather than serving the owner's half
+  (`artifacts/api-server/src/routes/trips-expansion.ts:376#const accepted = (coHosted`). **It moves no
+  row because the row that covers it was already `C`** — TR104 grades the PREDICATE pair
+  (`canInviteParticipant` owner-only, `canManageJoinRequests` host-wide) and both predicates were
+  correct all along. **That is worth stating as a blind spot rather than as a pass:** this census
+  graded a predicate `C` while the only surface that consumed it showed an accepted co-host nothing,
+  and no row in the document could see the difference. A predicate with a broken sole consumer is not
+  a satisfied requirement to the person holding the phone.
+- **The invitable-users roster** no longer offers a co-host an invitation to their own trip
+  (`artifacts/api-server/src/routes/trips.ts:648#const groupMemberIds`). Same position: TR104 is `C`
+  on the predicate, and the roster was a second, divergent copy of the membership rule.
+- **The client's failed-vs-empty reads.** No row in this census grades a client screen's failure
+  copy. TR432 (`C`, §23.1 mobile tests cover degraded and offline behaviour) is the nearest, and it is
+  `C` on named offline artifacts — the kept bundle, the queue contract, the replay's decisions, the
+  card's stale and queued states — none of which #578 touched. The row is STRONGER after #578 (four
+  new client failure suites) and moves nothing. It is also worth recording that the trip screen's own
+  "Couldn't load this trip / Try again" branch was **unreachable** at the commit TR432 was granted at,
+  and this census had no row that would notice.
+
+### §80.3 Two `C` rows repointed — the IN-RANGE-BUT-WRONG class, both pre-existing
+
+Both rows' SUBJECTS are what #578 changed, which is why they were opened. Both citations were already
+wrong before #578 — verified by reading the same line numbers at `3fc646cb1^1` — so this is rot the PR
+revealed rather than rot it caused. The verdicts do not move; the evidence now points at the code.
+
+| id | was | now | the repair |
+|---|---|---|---|
+| TR104 | C | **C** | `canInviteParticipant(actor, trip)`. The policy citations are right — lines 185 and 199 of `tripPolicy.ts` are the two functions — but the row says it is called at lines 1180 and 2114 of `routes/trips.ts`, and at this tree line 1180 is a `userId must be a valid UUID` payload guard and line 2114 is `if (kernel) {`. Neither is a call site, and neither was one before #578. The two real call sites, anchored: `artifacts/api-server/src/routes/trips.ts:1197#const invite = await canInviteParticipant(` (POST invite) and `artifacts/api-server/src/routes/trips.ts:2233#const add = await canInviteParticipant(` (add member — adding a participant IS inviting them). `canManageJoinRequests` is consumed at `artifacts/api-server/src/routes/trips-expansion.ts:1060#const approveHost = await canManageJoinRequests(` and `artifacts/api-server/src/routes/trips-expansion.ts:1186#const declineHost = await canManageJoinRequests(`, which the row never named — and the queue surface in front of them is what #578 had to fix. `C` holds: both predicates are called before the write, owner-only and host-wide respectively, kept apart exactly as the kernel keeps them apart. |
+| TR296 | C ⌀ | **C ⌀** | §15.3 automatic replanning may not silently cancel purchases. The row's three citations — lines 335, 527 and 416 of `routes/tripReservations.ts` — land on `ambiguousReferences,`, a `.from("trip_reservations")` fragment and a `res.json({ reservations: … })`. **And the enumeration behind them is incomplete**, which matters more than the offsets: the row says the only reservation state changes are `/confirm`, `/dismiss` and `DELETE`, and this router has SEVEN mutating routes. All seven, read at this tree: import, create, `artifacts/api-server/src/routes/tripReservations.ts:431#router.patch`, `artifacts/api-server/src/routes/tripReservations.ts:506#reservations/:id/confirm`, `artifacts/api-server/src/routes/tripReservations.ts:641#reservations/:id/dismiss`, `artifacts/api-server/src/routes/tripReservations.ts:667#router.delete` and `artifacts/api-server/src/routes/tripReservations.ts:744#reservations/:id/compensation`. **The verdict survives the correction because the requirement is about SIDE EFFECTS, not about the number of routes**: every one of the seven is an explicit request carrying an authorization check, and no code path anywhere cancels a reservation as a consequence of anything else. The `⌀` also survives and for the reason it was given — there is no automatic replanning (TR196) for the prohibition to bite on. **A complete enumeration that holds is worth more than a short one that happened to.** |
+
+### §80.4 §79.5's four open items, re-read — and the one that is worse than §79 says
+
+Recorded because §79 left them deliberately and a re-census that does not re-read what the last pass
+parked is not a re-census.
+
+1. **The nine fire-and-forget push blocks** are still there. One is worse than "unconverted": the
+   legacy PATCH-to-completed path reads the crew with `const { data: members }` and **no error
+   binding**, so an unreadable `trip_members` yields `null`, the `length > 0` guard is false, and
+   **every crew member silently loses their `trip_crew_participation` contribution for that trip**
+   (`artifacts/api-server/src/routes/trips.ts:1014#eventType: "trip_crew_participation",`). It is
+   keyed on the trip so re-completing cannot repair it either. **This is a failed read becoming a
+   permanent omission rather than a wrong value**, which is the quieter half of the class this
+   programme keeps finding. It moves no row in THIS census — no row grades contribution award
+   reliability — and it is named here so the Passport lane can see it.
+2. **`/trips/me` is still unbounded** over `trip_members` with the ids passed to `.in()`. The same
+   shape the Telegraph lane found and fixed on the inbox at PostgREST's 1,000-row cap (census-telegraph
+   §41.1 item 1). No row grades trip-list completeness, so it moves nothing here.
+3. **The offline bundle's `myArrivalState`** is still read without its error, and still rendered
+   nowhere.
+4. **The rest of the BOTH column** is unchanged and is §79.1's blocked population.
+
+### §80.5 Tally — unchanged
+
+Recounted with `check:census-integrity`; the three restated rows move their LINE only, and
+`CENSUS_INTEGRITY_DUMP=ALL` yields the same 451 (id, verdict) pairs before and after this section.
+
+| BUILT-AND-CORRECT | **320** |
+|---|---|
+| BUILT-BUT-WRONG | **128** |
+| NOT-BUILT | **3** |
+| CANNOT-VERIFY | **0** |
+| **CONSTRUCTED%** = (C+W)/451 | **448 / 451 = 99.3 %** |
+| **CORRECT%** = C/451 | **320 / 451 = 70.9 %** |
+
+### §80.6 Freshness
+
+`head_commit` is RE-DECLARED at `f71cfb85f`, the merge of #586 on `main` — a merge commit, so unlike
+every previous value in that row it carries no pre-squash orphan hazard. The census-trips
+acknowledgement written against `1fe72289b` is RETIRED, not deleted, in
+`artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`. Zero counted files have changed
+since the new declaration.
+
+### §80.7 What would turn this red
+
+- Any BRANCH row appearing in §79.1's classification: the claim in §80.1 that no `W` row is
+  code-actionable stops being true and the explanation for the flat `C` has to be rewritten.
+- A fourth consumer of `canInviteParticipant`, or a consumer of `canManageJoinRequests` that is not
+  one of the two named here: TR104's evidence is incomplete again.
+- An eighth mutating reservation route, or any writer of `trip_reservations` outside this router:
+  TR296's enumeration is incomplete again and the `⌀` has to be re-argued.
+- An error binding on the legacy completed path's crew read: §80.4 item 1 is closed and must be
+  deleted from this section rather than left reading as a live defect.

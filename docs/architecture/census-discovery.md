@@ -16790,6 +16790,131 @@ If B, **how long** is the period? No spec gives a value (`04` §11), and 3512 bu
 - 3510 deleting or rewriting a row (E2, G1–G6).
 - Either answer diverging from 3510's guard on rollback (E3).
 
+## §108 — 2026-10-04 (re-census): this surface had NO subject in the 3–4 October wave, PR #582 is not its PR, and `head_commit` is deliberately NOT re-declared
+
+*Written 2026-10-04 by the integrating re-census of the surfaces whose correctness work merged on
+3–4 October. **No verdict moves, no row is restated, and no declaration changes.** This section exists
+because "nothing moved" is a finding that has to be written down with its evidence, or the next pass
+re-derives it — and because the brief this pass was given named a PR that turns out not to belong to
+this census.*
+
+### §108.1 The measurement that opened the pass, and what it means here
+
+`check:census-integrity` returns the same `C` at `f71cfb85f` as at `626b46b7e`, 108 commits earlier:
+**2436 across all thirteen censuses, identical**, while seventeen PRs merged. The pass was asked to
+find out whether that is a fact about the tree or a fact about the documents. For this census it is
+neither: **there was nothing to measure.**
+
+### §108.2 PR #582 is not this census's PR, and it is not even in the interval
+
+The brief attributed PR #582 — *"projection reads every claim, consent failures named"* — to Discovery.
+Three things are wrong with that, and all three are mechanical rather than arguable:
+
+1. **It is an Input Intelligence PR.** Its merge is `343234150`, titled *"Input Intelligence —
+   projection reads every claim, consent failures are named, the Trail screen is usable"*, and the only
+   census file it touched is `docs/architecture/census-input-intelligence.md`. It touched
+   **no file this census grades** and **not one line of this document**.
+2. **It is an ancestor of `626b46b7e`.** `git merge-base --is-ancestor 343234150 626b46b7e` succeeds,
+   so #582 was already inside the BEFORE reading. It cannot be part of an explanation for a figure
+   that did not change between that commit and `f71cfb85f`.
+3. **Its own census section disclaims the work in question.** census-input-intelligence §35 says in
+   its own words that the lane's intel-capture work — the projection pass, the trail read, the
+   aggregator's cohort reads, the capture screens' consent and review states — **moves no row there
+   either**, and was handed to the integration owner as proposed **census-sensing** text because
+   census-sensing.md was in another open PR at the time. `census-sensing.md` is on `main` at
+   `f71cfb85f`, so that hand-off is now unblocked and is **still owed**. It is named here so it is not
+   lost: it is the one piece of integration work the 3–4 October wave left outstanding on this family
+   of surfaces, and it belongs to census-sensing, not to this document.
+
+### §108.3 What DID change under this census's scope, enumerated
+
+`git diff --name-only 626b46b7e f71cfb85f` restricted to this census's 667 declared scope paths returns
+**ten files**, and every one of them is another lane's subject:
+
+| file | whose work | does any row here grade it? |
+| --- | --- | --- |
+| `artifacts/api-server/src/services/interactionPermissions.ts` | #584 | **Yes — DV-76.** See §108.4 |
+| `artifacts/api-server/src/lib/mapProjectionTripRead.ts` | #570 | No row cites it |
+| `artifacts/api-server/src/routes/mediaFeed.ts` | #575 | No row cites it |
+| `artifacts/api-server/src/routes/trips-expansion.ts` | #578 | No row cites it |
+| `artifacts/api-server/src/routes/airport.ts` | #573 | No row cites it |
+| `artifacts/api-server/src/services/airport/LayoverCompassService.ts` | #573 | No row cites it; A13 cites `LayoverSnapshot.ts`, unchanged |
+| `artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts` | #573 | No row cites it |
+| `artifacts/api-server/src/test/layoverSafeReturnAbort.test.ts` | #573 | No row cites it |
+| `.github/workflows/unwired-checks.yml` | #562 | CI; graded by no row |
+| `artifacts/api-server/src/test/ciWorkflowArchitecture.test.ts` | #562 | CI; graded by no row |
+
+This census's scope is wide on purpose (§62.5 says why), and a wide scope means it WATCHES files other
+censuses grade. That is the scope working, not a defect — but it is also why the freshness number for
+this document is a poor proxy for whether anything it measures has moved.
+
+### §108.4 DV-76, the one row with a subject in the interval — re-read, and it stays `W`
+
+`services/interactionPermissions.ts` is the file DV-76 grades from (§62.5 put it in this scope for
+exactly that reason), and #584 changed one line of it: a `Promise.allSettled` rejection used to be
+normalised to a synthetic `42P01`, and now carries `REJECTED`
+(`artifacts/api-server/src/services/interactionPermissions.ts:470#code: "REJECTED"`).
+
+**Why that is a real fix, stated so the row's reader can see it was considered.** `42P01` is what
+`isAbsentTableError` matches, and this module treats an absent table as *"nobody has one of these"*
+rather than as a failure. So before #584 **a thrown read on any of the twelve reads looked like a
+table that does not exist** — including the `profiles` read that carries `tag_permission` itself. The
+consequence was not a widened permission (the engine already returns `ALL_FALSE` when the profile is
+null) but a **fabricated reason**: the caller was told `target_not_found` — a claim about the target —
+when the truth was that the read failed, and the verdict was not marked degraded. The code's own
+comment at that site forbids exactly that fabrication, and the classifier underneath it was quietly
+making it anyway. After #584 the same case reports `target_lookup_failed` and names the read
+(`artifacts/api-server/src/services/interactionPermissions.ts:724#reasonCodes.push(realError(profileRes) ? "target_lookup_failed" : "target_not_found");`).
+
+**DV-76 does not move, and the two reasons are untouched by it.** The row's `W` rests on §11.2 rule 1
+and on two criteria code cannot close: Phase 0 findings #5, #6 and #7 exist in no artifact (owner
+question Q2 is unanswered), and migration 3422 is applied nowhere but the harness. #584 bears on
+neither. The tag switch's own behaviour — `nobody` refuses, an unknown value refuses — is unchanged,
+and its verdict was already `ALL_FALSE` on an unreadable profile, so **nothing this row claims was
+false before #584 and nothing it claims became true after**. What improved is the honesty of the
+reason code, which no row in this census grades.
+
+### §108.5 `head_commit` is NOT re-declared, and that is the honest answer
+
+Four other censuses in this wave moved their declaration to `f71cfb85f`, each saying in the row which
+rows it re-measured and which it did not. **This one does not**, and the reasoning is the opposite of
+convenience:
+
+- The declaration is `1fe72289b`, and **599 counted files have changed since it**. Re-declaring at
+  `f71cfb85f` would make `check:census-freshness` report this census FRESH — a statement that the
+  document has been read against that tree. It has not. This pass read ten files and one row.
+- The acknowledgement in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` is the
+  mechanism built for precisely this state: it names the files and argues them, and it is the weaker,
+  truer claim. It stays, and it is NOT retired.
+- **Declaring a commit is cheap and un-declaring one is not.** A census whose declaration is fresh and
+  whose body is old is the exact failure `checkCensusFreshness.ts`'s own header opens with.
+
+What would make a re-declaration honest: a pass that re-reads the 599 files, or an acknowledgement
+that names them all with an argument per file. Neither is this section.
+
+### §108.6 The headline, unchanged
+
+No row is restated, so `CENSUS_INTEGRITY_DUMP=ALL` over this file is byte-identical before and after
+this section.
+
+| bucket | count |
+| --- | ---: |
+| BUILT-AND-CORRECT | **100** |
+| BUILT-BUT-WRONG | **86** |
+| NOT-BUILT | **2** |
+| CANNOT-VERIFY | **0** |
+
+188 rows parsed against the largest stated denominator of 351; the gap is this census's prose-counted
+population and is reported by `check:census-integrity` rather than hidden.
+
+### §108.7 What would turn this red
+
+- A Discovery-scoped file changing that a row DOES cite: §108.3's table stops being a complete answer.
+- `head_commit` moving to `f71cfb85f` without the 599 files being read: §108.5 is the argument against
+  it, and it should be answered rather than skipped.
+- census-sensing receiving §35's hand-off: §108.2 item 3 is closed and must be deleted from this section
+  rather than left reading as outstanding work.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/lib/capability/prerequisitesCore.ts — §93.8 names its function-granular gate boundary as why the Compass KNOWN entry was struck; it is the prerequisite checker's own machinery, and no Discovery verdict rests on it.
