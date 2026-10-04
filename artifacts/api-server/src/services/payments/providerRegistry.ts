@@ -45,6 +45,9 @@
  *     `assertProviderKeyAllowed` before every fetch, exactly as
  *     services/identityVerification/stripeIdentity.ts `secretKey()` does. The
  *     registry's guard is the second lock, not a replacement for the first.
+ *     A provider whose keys carry no documented test/live prefix cannot be
+ *     registered as it stands: teach `lib/paymentsMode.ts` to tell its sandbox
+ *     key from its live key first (as was done for Persona), then register.
  *  3. Call `validateCreatePaymentIntent` / `validateCreateRecipient` /
  *     `validateRequestPayout` first and return their refusal unchanged. The fee
  *     and tax rules live there; do not re-derive them.
