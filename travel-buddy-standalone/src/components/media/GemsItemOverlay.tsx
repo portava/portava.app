@@ -33,7 +33,7 @@ import { avatar, color, space, radius, type as t } from '../../theme/tokens.ts';
 import type { GemsFeedItem } from '../../hooks/useGemsFeed.ts';
 import { PlaceQuickActions } from '../PlaceQuickActions.tsx';
 import { StampButton } from '../stamps/StampButton.tsx';
-import { GemStateBadge } from '../gems/GemStateBadge.tsx';
+import { GemStateBadge } from '../gems/GemStateBadge.tsx'; import { countSublabel, isKnownFalse } from '../../lib/unreadCount.ts';
 
 // ── Helper: place type display label ─────────────────────────────────────────
 
@@ -143,7 +143,7 @@ export function GemsItemOverlay({
         <StampButton
           entityType="gem"
           entityId={item.id}
-          initialCount={item.stats.likeCount ?? 0}
+          initialCount={item.stats.likeCount} // null = unread (census-media §47): drawn as the mark, never 0
           initialIsStamped={item.viewerState?.hasLiked ?? false}
           iconSize={24} tone="onDark"
           style={styles.stampBtnWrapper}
@@ -152,15 +152,15 @@ export function GemsItemOverlay({
         {onComment && (
           <ActionButton
             icon={<MessageCircle size={26} color={color.onInk} strokeWidth={1.8} />} // census-media §31.13: was label="💬", a colour emoji the source cannot colour
-            sublabel={String(item.stats.commentCount || '')}
+            sublabel={countSublabel(item.stats.commentCount)}
             onPress={() => onComment(item)}
             accessibilityLabel="Comment"
           />
         )}
         <ActionButton
           icon={<Bookmark size={26} color={(isSaved ?? item.viewerState.hasSaved) ? color.signal : color.onInk} fill={(isSaved ?? item.viewerState.hasSaved) ? color.signal : 'transparent'} strokeWidth={(isSaved ?? item.viewerState.hasSaved) ? 0 : 1.8} />} // census-media §31.13: was the emoji swap 🔖 / 🏷; saved is now a filled `signal` bookmark, as on the Watch rail
-          sublabel={String(item.stats.saveCount || '')}
-          active={isSaved ?? item.viewerState.hasSaved}
+          sublabel={countSublabel(item.stats.saveCount)}
+          active={(isSaved ?? item.viewerState.hasSaved) === true}
           onPress={() => onSave?.(item)}
           accessibilityLabel="Save"
         />
@@ -281,7 +281,7 @@ export function GemsItemOverlay({
             ) : null}
           </View>
 
-          {!item.viewerState.isFollowingCreator && (
+          {isKnownFalse(item.viewerState.isFollowingCreator) && ( /* an unread follow state (null, §47) asserts nothing */
             <Pressable
               style={({ pressed }) => [styles.followBtn, pressed && styles.chipPressed]}
               onPress={() => onFollowCreator?.(item.creator.id)}

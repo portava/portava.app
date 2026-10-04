@@ -449,7 +449,7 @@ This is `10` §6.1, and it is the single most surprising piece of the rollout fo
 > A PR adding `2310_whatever.sql` is **red on `schema-drift` from the moment it is pushed** until
 > somebody applies that migration to the CI project.
 
-The mechanism: `audit:schema` runs on **every ref** (`.github/workflows/live-db.yml:727`) and fails
+The mechanism: `audit:schema` runs on **every ref** (`.github/workflows/live-db.yml:853#audit:schema — migrations vs live schema`) and fails
 when a migration file claims an object the live catalog does not have; `db:apply-migrations` runs on
 **main only** (`:705`). Applying an unmerged branch's migrations to the shared CI database would
 leave it ahead of main with no commit accounting for it, so the order is deliberate.
@@ -494,8 +494,8 @@ production press is a separate, deliberate human act (`10` §12). `2182` has bee
 | `run-all-checks.sh:177` | `check:rank-events-surfaces` | a gate, not a check |
 | `live-db.yml:690` | `db:apply-migrations:dry-run` | **every ref including PRs** — turns "cannot be applied atomically" into a red on the PR that introduces it |
 | `live-db.yml:705` | `db:apply-migrations` | main only |
-| `live-db.yml:716` | `certify:migrations` | main only; re-runs each migration's **own postcondition `DO` blocks after the commit** |
-| `live-db.yml:727` | `audit:schema` | every ref — §5.2 |
+| `live-db.yml:839#migrations — certify the apply landed` | `certify:migrations` | main only; re-runs each migration's **own postcondition `DO` blocks after the commit** |
+| `live-db.yml:853#audit:schema — migrations vs live schema` | `audit:schema` | every ref — §5.2 |
 | `live-db.yml:755` | `audit:shadow-append-only` | asserts the **exact** grant set, not a claimed subset |
 | `unwired-checks.yml:247` | `check:api-prefix` | **probation workflow; its verdict is not yet a required status check** — A6 |
 

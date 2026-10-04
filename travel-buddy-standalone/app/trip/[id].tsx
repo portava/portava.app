@@ -51,7 +51,7 @@ import type { TripDetail } from '../../src/types/models';
 import { useSession } from '../../src/context/SessionContext';
 import { useTrip, usePendingTripInvites } from '../../src/hooks/useBackend';
 import { openTripChat } from '../../src/services/messaging';
-import { getTripMemory, createTripMemory, type Memory } from '../../src/services/memories';
+import { TripMemorySection } from '../../src/features/memories/TripMemorySection.tsx';
 import { getEventsNearTrip, type EventSummary } from '../../src/services/events';
 import { createInviteLink, getTripMemberRole, fetchTripPrivatePreview } from '../../src/services/trips'; import { TripLifecycleCard } from '../../src/features/trips/lifecycle/TripLifecycleCard.tsx'; import { runLifecycleAction } from '../../src/features/trips/lifecycle/tripLifecycle.ts'; import { intentKey } from '../../src/features/trips/shared/tripApi.ts';
 import { PrivateTripCard, type PrivateTripPreview } from '../../src/components/privacy/PrivateTripCard';
@@ -264,10 +264,10 @@ function TripDetailScreen() {
     if (!live || !id || !realTrip || shareLoading) return;
     setShareLoading(true);
     try {
-      const link = await createInviteLink(id);
-      const inviteUrl = link
-        ? `travelbuddy://invite/${link.token}`
-        : canonicalUrl(`/trips/${id}`);
+      const link = await createInviteLink(id); // the button is the owner's; a failed link shares NOTHING (§79)
+      if (!link) { Alert.alert('Could not create an invite link', 'Your invite link could not be created right now, so nothing was shared. Try again.'); return; }
+      // It used to fall back to canonicalUrl(`/trips/${id}`), silently: a page a friend cannot join a private trip through.
+      const inviteUrl = `travelbuddy://invite/${link.token}`;
       const tripName = realTrip.title ?? realTrip.destinationCity ?? 'a trip';
       await Share.share({
         title: `Join my trip${realTrip.title ? ` — ${realTrip.title}` : ''}!`,
@@ -603,7 +603,7 @@ function TripDetailScreen() {
             and nothing displayed it. Stale rows are shown rather than hidden —
             §10.4 needs last-known data to remain available — but never drawn
             like live ones. */}
-        {live && trip.id ? <TripCrewPresenceCard tripId={trip.id} /> : null}{live && trip.id && realTrip.ownerId === userId ? <JoinRequestsList tripId={trip.id} onOpenAll={() => router.push('/trip/join-requests' as any)} onApproved={() => setCrewRefreshKey((k) => k + 1)} /> : null}{live && trip.id ? <TripRegroupCard tripId={trip.id} /> : null}{/* TM-live TRIP-F19: regroup + meeting checkpoints */}
+        {live && trip.id ? <TripCrewPresenceCard tripId={trip.id} /> : null}{live && trip.id && (realTrip.ownerId === userId || memberRole === 'co_host') ? <JoinRequestsList tripId={trip.id} onOpenAll={() => router.push('/trip/join-requests' as any)} onApproved={() => setCrewRefreshKey((k) => k + 1)} /> : null}{live && trip.id ? <TripRegroupCard tripId={trip.id} /> : null}{/* TM-live TRIP-F19: regroup + meeting checkpoints */}
 
         {/* ── §8 decisions and risks ───────────────────────────────────────
             The chain §8 describes — goal, decision task, proposals, §7
@@ -1055,138 +1055,6 @@ const gn = StyleSheet.create({
   chipText: { ...t.small, color: color.signal, fontWeight: '700', fontSize: 12 },
 });
 
-function TripMemorySection({
-  tripId, isOwner, tripStatus,
-}: {
-  tripId: string;
-  isOwner: boolean;
-  tripStatus?: string;
-}) {
-  const [memory, setMemory] = useState<Memory | null>(null);
-  const [memLoading, setMemLoading] = useState(true);
-  const [creating, setCreating] = useState(false);
-  const [memoryCoverFailed, setMemoryCoverFailed] = useState(false);
-
-  useEffect(() => {
-    let cancelled = false;
-    getTripMemory(tripId).then((res) => {
-      if (cancelled) return;
-      if (res.ok) setMemory(res.memory);
-      setMemLoading(false);
-    }).catch(() => {
-      if (!cancelled) setMemLoading(false);
-    });
-    return () => { cancelled = true; };
-  }, [tripId]);
-
-  async function handleCreate() {
-    if (creating) return;
-    setCreating(true);
-    const res = await createTripMemory(tripId);
-    if (res.ok) {
-      setMemory(res.memory);
-      router.push(`/memory/${res.memory.id}` as any);
-    } else {
-      Alert.alert('Error', res.message ?? 'Could not create memory');
-    }
-    setCreating(false);
-  }
-
-  if (memLoading) return null;
-
-  return (
-    <View style={tm.wrap}>
-      <View style={tmRecap.row}><Text style={tm.title}>Trip Memory</Text>{memory ? <Pressable testID="trip-open-recap" onPress={() => router.push(`/trip/${tripId}/recap` as any)} accessibilityRole="button" hitSlop={6}><Text style={tmRecap.link}>View trip recap</Text></Pressable> : null}</View>
-      {memory ? (
-        <Pressable style={tm.card} onPress={() => router.push(`/memory/${memory.id}` as any)}>
-          {memory.cover?.mediaUrl && !memoryCoverFailed ? (
-            <CachedImage source={{ uri: memory.cover.mediaUrl }} style={tm.cover} onError={() => setMemoryCoverFailed(true)} />
-          ) : (
-            <View style={[tm.cover, tm.coverEmpty]}>
-              <BookImage size={28} color={color.onInk} />
-            </View>
-          )}
-          <View style={tm.cardBody}>
-            <Text style={tm.cardTitle} numberOfLines={1}>
-              {memory.title ?? 'Untitled Memory'}
-            </Text>
-            {memory.caption ? (
-              <Text style={tm.cardCaption} numberOfLines={2}>{memory.caption}</Text>
-            ) : null}
-            <Text style={tm.cardState}>{memory.state === 'published' ? '✓ Published' : 'Draft'}</Text>
-          </View>
-        </Pressable>
-      ) : isOwner && tripStatus === 'completed' ? (
-        <Pressable
-          style={[tm.createBtn, creating && { opacity: 0.5 }]}
-          onPress={handleCreate}
-          disabled={creating}
-        >
-          {creating ? (
-            <ActivityIndicator size="small" color={color.signal} />
-          ) : (
-            <BookImage size={16} color={color.signal} />
-          )}
-          <Text style={tm.createBtnText}>
-            {creating ? 'Creating…' : 'Create a memory from this trip'}
-          </Text>
-        </Pressable>
-      ) : (
-        <View style={tm.empty}>
-          <BookImage size={22} color={color.faint} />
-          <Text style={tm.emptyText}>No memory for this trip yet</Text>
-        </View>
-      )}
-    </View>
-  );
-}
-
-const tm = StyleSheet.create({
-  wrap: { paddingHorizontal: space.lg, marginTop: space.xl, gap: space.md },
-  title: { ...t.title, color: color.ink, fontSize: 18 },
-  card: {
-    flexDirection: 'row',
-    backgroundColor: color.paperRaised,
-    borderRadius: 12,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: color.haze,
-  },
-  cover: { width: 90, height: 90 },
-  coverEmpty: {
-    backgroundColor: color.deep,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  cardBody: { flex: 1, padding: space.md, gap: 4, justifyContent: 'center' },
-  cardTitle: { ...t.bodyStrong, color: color.ink, fontSize: 14 },
-  cardCaption: { ...t.small, color: color.mute, lineHeight: 16 },
-  cardState: { fontSize: 11, color: color.signal, fontWeight: '600', marginTop: 2 },
-  createBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    borderWidth: 1.5,
-    borderColor: color.signal,
-    borderRadius: 10,
-    paddingHorizontal: space.md,
-    paddingVertical: 12,
-    backgroundColor: '#FFF5F5',
-  },
-  createBtnText: { ...t.body, color: color.signal, fontWeight: '600' },
-  empty: {
-    alignItems: 'center',
-    gap: space.sm,
-    padding: space.xl,
-    backgroundColor: color.paperRaised,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: color.haze,
-    borderStyle: 'dashed',
-  },
-  emptyText: { ...t.small, color: color.faint },
-});
-
 // ── EventsNearTripSection ─────────────────────────────────────────────────────
 
 function formatEventDate(iso: string): string {
@@ -1289,10 +1157,3 @@ export default function TripDetail() {
     </ScreenErrorBoundary>
   );
 }
-
-// Testing mode WP-06 (HM-F15): the "View trip recap" link beside the Trip Memory title.
-// Declared at the TAIL so no line above moves; `const` is read only at render time.
-const tmRecap = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  link: { ...t.small, color: color.deep, fontWeight: '700' },
-});

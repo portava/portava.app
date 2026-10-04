@@ -227,7 +227,7 @@ export function StatTicket({ n, label, onPress, iconOnly, loading }: StatItem & 
       {loading ? (
         <View testID={`passport-stat-skeleton-${label}`} style={st.statSkeleton} />
       ) : (
-        <Text style={[st.statN, { color }]}>{n}</Text>
+        <Text style={[st.statN, { color }]} testID={`passport-stat-n-${label}`}>{n}</Text>
       )}
       {!iconOnly ? (
         <Text style={st.statL}>{label}</Text>
@@ -264,6 +264,7 @@ export function PassportStatsRow({ profile, isOwner, overrideStats, onStatPress,
   onStatsLoadedRef.current = onStatsLoaded;
   const [liveStats, setLiveStats] = useState<PassportStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(isOwner);
+  const [statsFailed, setStatsFailed] = useState(false); // stats unreadable → "—", never 0
 
   useEffect(() => {
     if (!isOwner) {
@@ -273,26 +274,25 @@ export function PassportStatsRow({ profile, isOwner, overrideStats, onStatPress,
     setStatsLoading(true);
     getPassportStats()
       .then((res) => {
+        setStatsFailed(!res.ok || res.data.readFailed === true);
         if (res.ok) {
           setLiveStats(res.data);
           onStatsLoadedRef.current?.(res.data);
         }
       })
-      .catch(() => {})
+      .catch(() => setStatsFailed(true))
       .finally(() => setStatsLoading(false));
   }, [isOwner]);
 
-  // liveStats (from getPassportStats) is the authoritative source for all counts
-  // when isOwner — it includes tripCount/followersCount/followingCount as of the
-  // same fetch that returns stamp/country stats, avoiding a separate profile call.
-  // Fall back to the profile prop values (populated from /api/me/profile) in case
-  // the stats fetch hasn't resolved yet or the flag is disabled (returns 0).
+  // liveStats (getPassportStats) is authoritative when isOwner (trips/followers too); else the profile prop
+  // (/api/me/profile) until it resolves or when the flag is off. Countries/Stamps exist ONLY in the stats
+  // read, so a failed or `readFailed` read shows "—" there, never a confident 0.
   const ownStats: StatItem[] = [
     { n: formatStatN(liveStats?.tripCount      ?? ('tripCount'      in profile ? (profile.tripCount      ?? 0) : 0)), label: 'Trips',     onPress: () => onStatPress?.('Trips')     },
     { n: formatStatN(liveStats?.followersCount ?? ('followersCount' in profile ? (profile.followersCount ?? 0) : 0)), label: 'Followers', onPress: () => onStatPress?.('Followers') },
     { n: formatStatN(liveStats?.followingCount ?? ('followingCount' in profile ? (profile.followingCount ?? 0) : 0)), label: 'Following', onPress: () => onStatPress?.('Following') },
-    { n: liveStats?.countries    ?? 0,                                                                                 label: 'Countries', onPress: () => onStatPress?.('Countries') },
-    { n: liveStats?.totalStamps  ?? 0,                                                                                 label: 'Stamps',    onPress: () => onStatPress?.('Stamps')    },
+    { n: statsFailed ? '—' : (liveStats?.countries   ?? 0),                                                          label: 'Countries', onPress: () => onStatPress?.('Countries') },
+    { n: statsFailed ? '—' : (liveStats?.totalStamps ?? 0),                                                          label: 'Stamps',    onPress: () => onStatPress?.('Stamps')    },
   ];
   const stats = overrideStats ?? ownStats;
   const showStatsLoading = isOwner && !overrideStats && statsLoading;

@@ -103,6 +103,12 @@ export function TripMembersSheet({ type, id, title, onDismiss }: Props) {
   const invitingRef = useRef(false);
   const [invited, setInvited] = useState<FriendUser[]>([]);
   const [inviteError, setInviteError] = useState<string | null>(null);
+  // A read that did not answer is not an empty roster (census-trips §79): the
+  // sheet used to say "1 member · No members yet." and "No friends left to
+  // invite." out of failed requests. `reloadKey` drives "Try again".
+  const [membersError, setMembersError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [candidatesError, setCandidatesError] = useState(false);
 
   // ── Load members (+ ownership for trips) ──
   useEffect(() => {
@@ -122,29 +128,39 @@ export function TripMembersSheet({ type, id, title, onDismiss }: Props) {
       setSearch('');
       setInvitingId(null);
       setCandidatesLoading(false);
+      setCandidatesError(false);
+      setMembersError(false);
 
-      if (type === 'trip') {
-        const res = await getTripMembers(id);
-        if (cancelled) return;
-        if (res.ok && res.data) {
-          setMembers(res.data.members);
-          setInvited(res.data.invited ?? []);
+      try {
+        if (type === 'trip') {
+          const res = await getTripMembers(id);
+          if (cancelled) return;
+          if (res.ok && res.data) {
+            setMembers(res.data.members);
+            setInvited(res.data.invited ?? []);
+          } else {
+            setMembersError(true);
+          }
+          // getTrip throws on a failed read (null = no trip this viewer sees).
+          const trip = await getTrip(id);
+          if (cancelled) return;
+          if (trip) {
+            setOwnerId(trip.ownerId);
+            setCanInvite(!!userId && trip.ownerId === userId);
+          }
+        } else {
+          const res = await getCircleMembers(id);
+          if (cancelled) return;
+          if (res.ok && res.data) setMembers(res.data.members);
+          else setMembersError(true);
         }
-        const trip = await getTrip(id);
-        if (cancelled) return;
-        if (trip) {
-          setOwnerId(trip.ownerId);
-          setCanInvite(!!userId && trip.ownerId === userId);
-        }
-      } else {
-        const res = await getCircleMembers(id);
-        if (cancelled) return;
-        if (res.ok && res.data) setMembers(res.data.members);
+      } catch {
+        if (!cancelled) { setMembersError(true); setCanInvite(false); }
       }
       if (!cancelled) setLoading(false);
     })();
     return () => { cancelled = true; };
-  }, [type, id, userId]);
+  }, [type, id, userId, reloadKey]);
 
   // ── Load invite candidates (trip owners only) ──
   const loadCandidates = useCallback(async () => {
@@ -152,6 +168,7 @@ export function TripMembersSheet({ type, id, title, onDismiss }: Props) {
     setCandidatesLoading(true);
     const res = await getTripInvitableUsers(id);
     if (res.ok && res.data) setCandidates(res.data.otherFollowers);
+    else setCandidatesError(true);
     setCandidatesLoading(false);
     setCandidatesLoaded(true);
   }, [candidatesLoaded, candidatesLoading, id]);
@@ -199,7 +216,7 @@ export function TripMembersSheet({ type, id, title, onDismiss }: Props) {
 
         <View style={s.head}>
           <Text style={s.title}>{sheetTitle}</Text>
-          {!loading && (
+          {!loading && !membersError && (
             <Text style={s.count}>{totalCount} {totalCount === 1 ? 'member' : 'members'}</Text>
           )}
           <View style={{ flex: 1 }} />
@@ -208,6 +225,13 @@ export function TripMembersSheet({ type, id, title, onDismiss }: Props) {
 
         {loading ? (
           <View style={s.center}><ActivityIndicator color={color.signal} /></View>
+        ) : membersError ? (
+          <View style={s.center}>
+            <Text style={s.errorText}>Couldn't load the members.</Text>
+            <Pressable style={s.inviteBtn} onPress={() => setReloadKey((k) => k + 1)} accessibilityRole="button">
+              <Text style={s.inviteBtnText}>Try again</Text>
+            </Pressable>
+          </View>
         ) : (
           <ScrollView style={s.scroll} contentContainerStyle={s.scrollBody} keyboardShouldPersistTaps="handled">
             {members.map((m) => (
@@ -261,6 +285,13 @@ export function TripMembersSheet({ type, id, title, onDismiss }: Props) {
 
                 {candidatesLoading ? (
                   <View style={s.center}><ActivityIndicator color={color.signal} /></View>
+                ) : candidatesError ? (
+                  <View>
+                    <Text style={s.errorText}>Couldn't load your friends.</Text>
+                    <Pressable onPress={() => { setCandidatesError(false); setCandidatesLoaded(false); }} accessibilityRole="button" hitSlop={8}>
+                      <Text style={s.rowReason}>Try again</Text>
+                    </Pressable>
+                  </View>
                 ) : filteredCandidates.length === 0 ? (
                   <Text style={s.emptyNote}>
                     {candidatesLoaded

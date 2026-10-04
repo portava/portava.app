@@ -310,3 +310,35 @@ describe("POST /stories/:id/save-to-highlight — the Highlight is never wider t
     } finally { await app.close(); }
   });
 });
+
+// ── A deleted or moderator-removed Story is gone (lane highlights, 2026-10-03) ──
+//
+// The route selected `state` and never read it, so the owner of a Story they
+// had DELETED — or one a moderator had REMOVED — could still turn it into a
+// fresh, live Highlight with one POST: deletion undone and a removal
+// republished. Both now answer the same not_found as a Story that does not
+// exist, before anything is written.
+describe("POST /stories/:id/save-to-highlight — a deleted or removed Story cannot come back", () => {
+  for (const st of ["deleted", "removed"]) {
+    it(`a ${st} Story is not_found and nothing is written`, async () => {
+      const app = await startApp({ visibility: "public", state: st });
+      try {
+        const r = await save(app.baseUrl, "owner-tok");
+        assert.equal(r.status, 404, JSON.stringify(r.body));
+        assert.equal(r.body?.error, "not_found");
+        assert.equal(app.state.highlights.length, 0, "no Highlight may be made from a " + st + " Story");
+        assert.equal(app.state.writes.length, 0);
+      } finally { await app.close(); }
+    });
+  }
+
+  for (const st of ["expired", "saved"]) {
+    it(`an ${st} Story is still the owner's to keep`, async () => {
+      const app = await startApp({ visibility: "public", state: st, expires_at: new Date(Date.now() - 3_600_000).toISOString() });
+      try {
+        const r = await save(app.baseUrl, "owner-tok");
+        assert.equal(r.status, 201, JSON.stringify(r.body));
+      } finally { await app.close(); }
+    });
+  }
+});

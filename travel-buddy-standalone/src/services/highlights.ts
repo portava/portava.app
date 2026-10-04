@@ -656,18 +656,43 @@ export interface HighlightFeedUser {
 }
 
 /**
- * Fetch highlights from users the current user follows, grouped by user.
- * Used by the Explore tab Highlights strip.
+ * One page of the following feed. `nextCursor` is the server's §12 cursor: the
+ * server sets it only while `highlights_feed_bounded_enabled` caps the feed, and
+ * `null` means it has nothing further (or answered the whole feed at once).
  */
-export async function fetchFollowingHighlightsFeed(): Promise<HighlightResult<HighlightFeedUser[]>> {
-  if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [] };
+export interface HighlightFeedResult extends HighlightResult<HighlightFeedUser[]> {
+  nextCursor: string | null;
+}
+
+/**
+ * Ask for the server's largest page. The server clamps `limit` to its own
+ * maximum and ignores it while the cap is off, so this never makes a response
+ * unbounded; it only keeps the number of sequential round-trips in a cursor
+ * walk (useFollowingHighlights) small.
+ */
+const FOLLOWING_FEED_PAGE_LIMIT = 200;
+
+/**
+ * Fetch highlights from users the current user follows, grouped by user.
+ * Used by the Explore tab Highlights strip, through useFollowingHighlights,
+ * which follows `nextCursor` until the server has nothing further.
+ *
+ * It used to send no cursor and drop `nextCursor`, so with the server's §12
+ * cap on, nothing after the first page could be reached.
+ */
+export async function fetchFollowingHighlightsFeed(cursor: string | null = null): Promise<HighlightFeedResult> {
+  if (!isSupabaseConfigured || !apiBase()) return { ok: true, data: [], nextCursor: null };
   const token = await freshToken();
-  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
+  if (!token) return { ok: false, data: null, errorKind: 'unauthenticated', nextCursor: null };
   try {
-    const res = await fetch(`${apiBase()}/api/highlights/following-feed`, {
+    const qs = new URLSearchParams({ limit: String(FOLLOWING_FEED_PAGE_LIMIT) });
+    if (cursor) qs.set('cursor', cursor);
+    const res = await fetch(`${apiBase()}/api/highlights/following-feed?${qs.toString()}`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (!res.ok) return mapApiError<HighlightFeedUser[]>(res.status, await res.json().catch(() => ({})));
+    if (!res.ok) {
+      return { ...mapApiError<HighlightFeedUser[]>(res.status, await res.json().catch(() => ({}))), nextCursor: null };
+    }
     const body = await res.json();
     return {
       ok: true,
@@ -678,10 +703,11 @@ export async function fetchFollowingHighlightsFeed(): Promise<HighlightResult<Hi
         avatarUrl: u.avatarUrl ?? null,
         highlights: (u.highlights ?? []).map(mapHighlight),
       })),
+      nextCursor: typeof body.nextCursor === 'string' && body.nextCursor ? body.nextCursor : null,
     };
   } catch (e) {
-    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
-    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown' };
+    if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable', nextCursor: null };
+    return { ok: false, data: null, errorKind: 'db_error', message: e instanceof Error ? e.message : 'Unknown', nextCursor: null };
   }
 }
 

@@ -14,7 +14,7 @@ import {
   toFullProfileView,
 } from "../lib/privacy/profileSerializers.js";
 import { computeTrustScore } from "../lib/trustScore.js";
-import { countStampsReceived } from "../services/stamps/ContentStampService.js";
+import { measureStampsEarned, type ReceivedCount } from "../services/stamps/ContentStampService.js";
 import { countUserTrips } from "../domain/trips/services/tripCounts.js";
 import {
   buildPassportProjection,
@@ -369,9 +369,12 @@ router.get("/users/:username/passport", async (req, res) => {
   let trustScore: number | null = null;
   let trustLabel: string | null = null;
   let trustScoreBreakdown: import("../lib/trustScore.js").TrustScoreBreakdown | null = null;
-  let stampsEarned = 0;
-  let milestoneStampsEarned = 0;
-  let contentStampsReceivedForTarget = 0;
+  // `stampsEarned` starts UNAVAILABLE ("not_read") rather than 0, so if the
+  // closure below never assigned it the response could not publish a
+  // confident zero. The closure always assigns it: measureStampsEarned never
+  // rejects. Its shape is a measurement (`count` a number) or an explicit
+  // unknown (`count: null`, `unavailable: true`) — never a placeholder number.
+  let stampsEarned: ReceivedCount = { count: null, unavailable: true, reason: "not_read" };
 
   await Promise.allSettled([
     (async () => {
@@ -394,31 +397,27 @@ router.get("/users/:username/passport", async (req, res) => {
       }
     })(),
     (async () => {
-      try {
-        // Lifetime total across all entity types, excluding revoked stamps.
-        // Fails silently: stamps_earned defaults to 0 if user_stamps table is
-        // absent or the query errors (schema-drift safe).
-        const { count } = await sc
-          .from("user_stamps")
-          .select("id", { count: "exact", head: true })
-          .eq("user_id", targetId)
-          .eq("is_revoked", false);
-        milestoneStampsEarned = count ?? 0;
-      } catch {
-        /* non-critical */
-      }
-    })(),
-    (async () => {
-      try {
-        // Stamps received on this user's own posts/media (Roam/Watch stamp
-        // reactions from others), so STAMPS reflects content reactions too.
-        contentStampsReceivedForTarget = await countStampsReceived(sc, targetId);
-      } catch {
-        /* non-critical */
-      }
+      // STAMPS EARNED — lifetime non-revoked user_stamps PLUS the content
+      // stamps (Roam/Watch reactions) other people placed on this user's own
+      // posts/media, so STAMPS reflects both.
+      //
+      // Either half unreadable is `stampsEarned: null` with
+      // `stampsEarnedUnavailable: true` on the response. It used to be a
+      // silent 0 for the failed half (each half sat in its own try/catch
+      // around a supabase-js call, which RESOLVES on error, so the catch never
+      // ran and `count ?? 0` did the hiding), and the received half read
+      // `posts` with no bound, so PostgREST's 1,000-row cut undercounted
+      // anyone with more posts than that — a partial number shown as measured.
+      //
+      // measureStampsEarned (services/stamps/ContentStampService.ts) walks
+      // posts by keyset to an empty page, binds every error, and never
+      // rejects, so this closure cannot take the passport down with it.
+      // Passport lane, 2026-10-03.
+      //
+      // The client renders the null as "—", never as 0.
+      stampsEarned = await measureStampsEarned(sc, targetId);
     })(),
   ]);
-  stampsEarned = milestoneStampsEarned + contentStampsReceivedForTarget;
 
   res.status(200).json({
     ...profilePayload,
@@ -427,7 +426,8 @@ router.get("/users/:username/passport", async (req, res) => {
     trustScore,
     trustLabel,
     trustScoreBreakdown,
-    stampsEarned,
+    stampsEarned: stampsEarned.count,
+    ...(stampsEarned.unavailable ? { stampsEarnedUnavailable: true } : {}),
   });
 });
 
@@ -1872,8 +1872,7 @@ function sendEventShareRefusal(res: any, reason: string): void {
     case "disabled":
       res.status(200).json({ enabled: false });
       return;
-    case "event_not_found":
-    case "not_found":
+    case "event_not_found": case "not_found":
       sendError(res, "not_found", "Share not found");
       return;
     case "event_not_live":
@@ -1891,6 +1890,7 @@ function sendEventShareRefusal(res: any, reason: string): void {
     case "not_attending":
       sendError(res, "forbidden", "This event Passport is only for people at the event");
       return;
+    case "unavailable": sendError(res, "db_error", "Event Passport is temporarily unavailable — please try again"); return; // a FAILED read/write: retryable, never "not at the event" / "does not exist"
     default:
       sendError(res, "not_found", "Share not found");
   }
@@ -1903,7 +1903,7 @@ router.post("/passport/event-share", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const sc = getServiceClient();
-  if (!sc) { sendError(res, "not_found", "Unavailable"); return; }
+  if (!sc) { sendError(res, "server_not_configured", "Unavailable"); return; }
 
   const parsed = EventShareCreateSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", "eventId must be a uuid"); return; }
@@ -1930,7 +1930,7 @@ router.post("/passport/event-share/:eventId/revoke", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const sc = getServiceClient();
-  if (!sc) { sendError(res, "not_found", "Unavailable"); return; }
+  if (!sc) { sendError(res, "server_not_configured", "Unavailable"); return; }
 
   const eventId = String(req.params.eventId ?? "");
   if (!/^[0-9a-f-]{36}$/i.test(eventId)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
@@ -1952,7 +1952,7 @@ router.get("/passport/event-share/:eventId", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const sc = getServiceClient();
-  if (!sc) { sendError(res, "not_found", "Unavailable"); return; }
+  if (!sc) { sendError(res, "server_not_configured", "Unavailable"); return; }
 
   const eventId = String(req.params.eventId ?? "");
   if (!/^[0-9a-f-]{36}$/i.test(eventId)) { sendError(res, "invalid_payload", "Invalid event id"); return; }
@@ -1982,7 +1982,7 @@ router.get("/passport/event-passport/:token", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
   const sc = getServiceClient();
-  if (!sc) { sendError(res, "not_found", "Unavailable"); return; }
+  if (!sc) { sendError(res, "server_not_configured", "Unavailable"); return; }
 
   try {
     const out = await resolveEventPassport(sc, String(req.params.token ?? ""), auth.user.id);

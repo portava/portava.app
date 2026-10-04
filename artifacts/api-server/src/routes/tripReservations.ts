@@ -111,12 +111,12 @@ async function fetchReservation(
     sendError(res, "invalid_payload", "Invalid reservation id");
     return null;
   }
-  const { data } = await sc
-    .from("trip_reservations")
-    .select("*")
-    .eq("id", reservationId)
-    .eq("trip_id", tripId)
-    .maybeSingle();
+  // `error` bound (census-trips §79). supabase-js RESOLVES on a database error,
+  // so an unread row answered 404 "Reservation not found" to edit, confirm,
+  // dismiss, delete, history and compensation — a non-retryable sentence about
+  // a booking that is still there. Unreadable is 503; absent stays 404.
+  const { data, error } = await sc.from("trip_reservations").select("*").eq("id", reservationId).eq("trip_id", tripId).maybeSingle();
+  if (error) { sendError(res, "degraded_unavailable", "We could not read this reservation right now. Please try again shortly."); return null; }
   if (!data) { sendError(res, "not_found", "Reservation not found"); return null; }
   return data;
 }

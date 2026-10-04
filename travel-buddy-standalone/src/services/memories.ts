@@ -462,41 +462,41 @@ export async function getMemoryFeed(
 // ── Create from trip ──────────────────────────────────────────────────────────
 
 export async function createTripMemory(
-  tripId: string,
-): Promise<{ ok: true; memory: Memory } | { ok: false; message: string }> {
+  tripId: string, operationId?: string | null, // §19: a blind retry of this call reuses one key (operationIdFor); the server also answers an existing trip Memory
+): Promise<MemoryWriteResult<{ memory: Memory; existing?: boolean }>> {
+  const opId = operationIdFor(operationId, 'CREATE_MEMORY_FROM_TRIP', tripId, { tripId });
   try {
-    const headers = { ...(await authHeader()), 'Content-Type': 'application/json' };
+    const headers = { ...(await authHeader()), 'Content-Type': 'application/json', [IDEMPOTENCY_KEY_HEADER]: opId };
     const res = await fetch(`${apiBase()}/api/trips/${tripId}/memory`, {
       method: 'POST',
       headers,
     });
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
-      return { ok: false, message: (j as any).message ?? `HTTP ${res.status}` };
+      return { ok: false, message: (j as any).message ?? `HTTP ${res.status}`, kind: writeErrorKind(res.status, j), operationId: opId };
     }
-    const json = await res.json();
-    return { ok: true, memory: json.memory };
+    const json = await res.json(); return { ok: true, memory: json.memory, existing: json.existing === true, operationId: opId };
   } catch (e: any) {
-    return { ok: false, message: e?.message ?? 'Network error' };
+    return { ok: false, message: e?.message ?? 'Network error', kind: thrownKind(e), operationId: opId };
   }
 }
 
 // ── Get trip memory ───────────────────────────────────────────────────────────
 
-export async function getTripMemory(
+export async function getTripMemory( // `kind` separates "this trip has no Memory" (not_found) from "could not find out"
   tripId: string,
-): Promise<{ ok: true; memory: Memory } | { ok: false; message: string }> {
+): Promise<{ ok: true; memory: Memory } | { ok: false; message: string; kind: MemoryWriteErrorKind }> {
   try {
     const headers = await authHeader();
     const res = await fetch(`${apiBase()}/api/trips/${tripId}/memory`, { headers });
     if (!res.ok) {
       const j = await res.json().catch(() => ({}));
-      return { ok: false, message: (j as any).message ?? `HTTP ${res.status}` };
+      return { ok: false, message: (j as any).message ?? `HTTP ${res.status}`, kind: writeErrorKind(res.status, j) };
     }
     const json = await res.json();
     return { ok: true, memory: json.memory };
   } catch (e: any) {
-    return { ok: false, message: e?.message ?? 'Network error' };
+    return { ok: false, message: e?.message ?? 'Network error', kind: thrownKind(e) };
   }
 }
 

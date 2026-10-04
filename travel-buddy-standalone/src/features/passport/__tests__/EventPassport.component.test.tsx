@@ -22,6 +22,7 @@ import {
   getMyEventPassportShare,
   createEventPassportShare,
   revokeEventPassportShare,
+  resolveEventPassport,
 } from '../eventPassport.ts';
 
 // NOTE: intentionally exhaustive — expo-router needs Expo native navigation
@@ -55,6 +56,7 @@ jest.mock('../eventPassport', () => {
 const mockGetMine = getMyEventPassportShare as unknown as jest.Mock;
 const mockCreate = createEventPassportShare as unknown as jest.Mock;
 const mockRevoke = revokeEventPassportShare as unknown as jest.Mock;
+const mockResolve = resolveEventPassport as unknown as jest.Mock;
 
 const EVENT = 'eeeeeeee-0000-0000-0000-000000000001';
 const IN_TWO_HOURS = () => new Date(Date.now() + 2 * 3_600_000).toISOString();
@@ -196,5 +198,58 @@ describe('EventPassportScreen (viewer side)', () => {
     expect(screen.queryByText('Follow')).toBeNull();
     expect(screen.queryByText(/At this event/)).toBeNull();
     expect(screen.queryByText('Vietnam')).toBeNull();
+  });
+});
+
+// ── An outage is not a refusal (passport lane, 2026-10-03) ───────────────────
+// The server now answers a failed read/write as a retryable 500, and the client
+// result carries `outage`. These pin that the SURFACES act on it: an outage is
+// never "nothing shared" (a Share button over a share that may be live), never a
+// hidden card, and never the "only for people at the event" refusal.
+
+const OUTAGE = { ok: false, enabled: true, data: null, message: 'API 500', outage: true };
+const REFUSED = { ok: false, enabled: true, data: null, message: 'API 403', outage: false };
+
+describe('EventPassportShareCard — outage vs refusal', () => {
+  beforeEach(() => { jest.clearAllMocks(); });
+
+  it('an unreadable own share says so and offers a retry — not a Share button', async () => {
+    mockGetMine.mockResolvedValueOnce(OUTAGE).mockResolvedValueOnce({ ok: true, enabled: true, data: liveShare() });
+    await render(<EventPassportShareCard eventId={EVENT} />);
+    await waitFor(() => expect(screen.getByText("Couldn't check your event Passport.")).toBeTruthy());
+    expect(screen.queryByLabelText('Share my Passport at this event')).toBeNull();
+    fireEvent.press(screen.getByLabelText('Try checking my event Passport again'));
+    await waitFor(() => expect(screen.getByLabelText('Stop sharing my event Passport')).toBeTruthy());
+    expect(mockGetMine).toHaveBeenCalledTimes(2);
+  });
+
+  it('a refused own-share read renders nothing, as a refusal always has', async () => {
+    mockGetMine.mockResolvedValue(REFUSED);
+    await render(<EventPassportShareCard eventId={EVENT} />);
+    await waitFor(() => expect(mockGetMine).toHaveBeenCalled());
+    expect(screen.queryByTestId('event-passport-share-card')).toBeNull();
+  });
+
+  it('a mint that fails as an outage keeps the card and says try again', async () => {
+    mockGetMine.mockResolvedValue({ ok: true, enabled: true, data: null });
+    mockCreate.mockResolvedValue(OUTAGE);
+    await render(<EventPassportShareCard eventId={EVENT} />);
+    fireEvent.press(await screen.findByLabelText('Share my Passport at this event'));
+    await waitFor(() => expect(screen.getByText('Could not share right now. Try again.')).toBeTruthy());
+    expect(screen.getByTestId('event-passport-share-card')).toBeTruthy();
+  });
+});
+
+describe('EventPassportScreen — outage vs refusal', () => {
+  beforeEach(() => { jest.clearAllMocks(); });
+
+  it('an outage is "couldn\'t load", never the at-the-event refusal, and retries', async () => {
+    mockResolve.mockResolvedValueOnce(OUTAGE).mockResolvedValueOnce(REFUSED);
+    await render(<EventPassportScreen token={'a'.repeat(48)} />);
+    await waitFor(() => expect(screen.getByText("Couldn't load this event Passport.")).toBeTruthy());
+    expect(screen.queryByText('This event Passport is not available.')).toBeNull();
+    fireEvent.press(screen.getByLabelText('Try loading this event Passport again'));
+    await waitFor(() => expect(screen.getByText('This event Passport is not available.')).toBeTruthy());
+    expect(mockResolve).toHaveBeenCalledTimes(2);
   });
 });

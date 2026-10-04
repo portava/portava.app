@@ -246,7 +246,7 @@ number is a judgement and neither can be argued into a pass.
 
 **What a FAIL would mean, stated now so it cannot be renegotiated later.** A
 fail does not automatically mean the Wall is wrong: the four windowing constants
-at `travel-buddy-standalone/src/features/wall/components/WallFeed.tsx:151#      initialNumToRender={10}`
+at `travel-buddy-standalone/src/features/wall/components/WallFeed.tsx:175#      initialNumToRender={10}`
 (and the three below it) are the first thing to tune, and only one of the four is
 observable from any existing test. A fail moves W149 to **`W` (BUILT-BUT-WRONG)**,
 not to `X`.
