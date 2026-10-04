@@ -101,12 +101,12 @@ async function buildProfile(
       .select("location_mode, sharing_paused, safe_return_enabled")
       .eq("user_id", userId)
       .maybeSingle(),
-    db.from("blocks")
-      .select("blocked_id")
-      .eq("blocker_id", userId),
-    db.from("blocks")
-      .select("blocker_id")
-      .eq("blocked_id", userId),
+    wholeListResult(() => db.from("blocks")  // census-discovery §123 (DV-83 round 24): each safety list WHOLE, by key; one that cannot be read whole is an error, and the profile fails closed below
+      .select("blocked_id", { count: "exact" })
+      .eq("blocker_id", userId), "blocked_id"),
+    wholeListResult(() => db.from("blocks")
+      .select("blocker_id", { count: "exact" })
+      .eq("blocked_id", userId), "blocker_id"),
     db.from("safe_return_sessions")
       .select("id")
       .eq("user_id", userId)
@@ -121,9 +121,9 @@ async function buildProfile(
       .select("category_weights, ignored_item_ids, muted_hashtags")
       .eq("user_id", userId)
       .maybeSingle(),
-    db.from("user_mutes")
-      .select("muted_id")
-      .eq("muter_id", userId),
+    wholeListResult(() => db.from("user_mutes")
+      .select("muted_id", { count: "exact" })
+      .eq("muter_id", userId), "muted_id"),
   ]);
 
   // Destructure the other results (indices offset by 2 for ownedTrips + memberTrips)
@@ -293,3 +293,6 @@ export async function getCompassProfile(
   if (!profile.locationUnread) _cache.set(userId, { profile, cachedAt: Date.now() });  // census-discovery §107 (D-W11X2-73): a profile built over a failed location read is never cached
   return profile;
 }
+
+// census-discovery §123 (DV-83 round 24): one viewer's list read whole (lib/wholeList.ts). At the foot so no cited line moves; ESM hoists imports.
+import { wholeListResult } from "../lib/wholeList.js";

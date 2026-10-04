@@ -695,9 +695,9 @@ async function refreshHiddenUsers(
 ): Promise<CompassProfile | null> {
   try {
     const [blockedRes, blockerRes, mutedRes] = await Promise.all([
-      sc.from("blocks").select("blocked_id").eq("blocker_id", userId),
-      sc.from("blocks").select("blocker_id").eq("blocked_id", userId),
-      sc.from("user_mutes").select("muted_id").eq("muter_id", userId),
+      wholeListResult(() => sc.from("blocks").select("blocked_id", { count: "exact" }).eq("blocker_id", userId), "blocked_id"),  // census-discovery §123 (DV-83 round 24): each hidden-user list WHOLE, by key; a cut one that cannot be read on is an error, and the snapshot (or the refusal) below takes it
+      wholeListResult(() => sc.from("blocks").select("blocker_id", { count: "exact" }).eq("blocked_id", userId), "blocker_id"),
+      wholeListResult(() => sc.from("user_mutes").select("muted_id", { count: "exact" }).eq("muter_id", userId), "muted_id"),
     ]);
     const blockedUserIds = blockedRes.error
       ? (profile?.blockedUserIds ?? [])
@@ -2577,3 +2577,6 @@ const PLANNED_ITEMS_CUT_INFO = "These are not all of the planned items on the ov
 // `not_enough_capacity_for_group` while a seat was open. It recounts live; when that read fails, a capped event is held
 // back as `capacity_could_not_be_checked`, and this is what the model is told when nothing else could be offered.
 const GROUP_CAPACITY_UNREAD_INFO = "Compass could not check how many people are going to the events it found (a read failed), so it could not tell which have room for the whole group and offered none of those. Say capacity could not be checked; do not say no event has room or that there are none.";
+
+// census-discovery §123 (DV-83 round 24): one viewer's list read whole (lib/wholeList.ts). At the foot so no cited line moves; ESM hoists imports.
+import { wholeListResult } from "../lib/wholeList.js";

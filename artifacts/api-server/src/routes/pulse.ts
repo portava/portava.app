@@ -130,10 +130,10 @@ router.get("/pulse", async (req, res) => {
   // For crew tab we need the followed-user IDs first
   let crewIds: string[] | null = null;
   if (tab === "crew") {
-    const { data: followRows, error: followRowsErr } = await client
+    const { data: followRows, error: followRowsErr } = await wholeListResult(() => client  // census-discovery §123 (DV-83 round 24): everyone the viewer follows, WHOLE, by key
       .from("user_follows")
-      .select("following_id")
-      .eq("follower_id", user.id); if (followRowsErr) { res.json({ posts: [], total: 0, tab, failedSources: ["user_follows"] }); return; }  // census-discovery §119 (DV-83 round 22, sweep): a failed follows read is not "you follow nobody"
+      .select("following_id", { count: "exact" })
+      .eq("follower_id", user.id), "following_id"); if (followRowsErr) { res.json({ posts: [], total: 0, tab, failedSources: ["user_follows"] }); return; }  // census-discovery §119 (DV-83 round 22, sweep): a failed follows read is not "you follow nobody"
     crewIds = (followRows as any[] ?? []).map((r: any) => r.following_id);
     if (crewIds.length === 0) {
       res.json({ posts: [], total: 0, tab });
@@ -1497,10 +1497,10 @@ router.get("/pulse/live", async (req, res) => {
     }
 
     const [travelerRes, buddyProfileRes] = await Promise.all([
-      sc.from("buddy_bookings")
-        .select("id, buddy_id, booking_date, city, status")
+      wholeListResult(() => sc.from("buddy_bookings")  // census-discovery §123 (DV-83 round 24): WHOLE, by key
+        .select("id, buddy_id, booking_date, city, status", { count: "exact" })
         .eq("traveler_id", user.id)
-        .eq("status", "requested"),
+        .eq("status", "requested"), "id"),
       // rent_buddy_profiles is the correct table; gate on admin_status = 'active'
       sc.from("rent_buddy_profiles")
         .select("id")
@@ -1832,10 +1832,10 @@ router.get("/pulse/live", async (req, res) => {
   // Shows events the user saved (event_saves) that are not already in the rail
   // via RSVP. Provides discovery context for plans the user wants to attend.
   try {
-    const { data: saveRows, error: saveRowsErr } = await sc
+    const { data: saveRows, error: saveRowsErr } = await wholeListResult(() => sc  // census-discovery §123 (DV-83 round 24): every saved event, WHOLE, by key
       .from("event_saves")
-      .select("event_id")
-      .eq("user_id", user.id); if (saveRowsErr) liveUnread.add("event_saves");
+      .select("event_id", { count: "exact" })
+      .eq("user_id", user.id), "event_id"); if (saveRowsErr) liveUnread.add("event_saves");
 
     const savedEventIds = ((saveRows as any[]) ?? []).map((r: any) => r.event_id as string);
     // Skip IDs already in the deduplicated items set
@@ -1888,10 +1888,10 @@ router.get("/pulse/live", async (req, res) => {
   // ── 9. Trip join requests — pending requests to join host's trips ─────────
   // Surfaces Action Needed items for trips the user owns with pending requests.
   try {
-    const { data: ownedTrips, error: ownedTripsErr } = await sc
+    const { data: ownedTrips, error: ownedTripsErr } = await wholeListResult(() => sc  // census-discovery §123 (DV-83 round 24): every trip the viewer owns, WHOLE, by key
       .from("trips")
-      .select("id, destination_city")
-      .eq("owner_id", user.id); if (ownedTripsErr) liveUnread.add("trips");
+      .select("id, destination_city", { count: "exact" })
+      .eq("owner_id", user.id), "id"); if (ownedTripsErr) liveUnread.add("trips");
 
     const ownedTripIds = ((ownedTrips as any[]) ?? []).map((t: any) => t.id as string);
     if (ownedTripIds.length > 0) {
@@ -2061,13 +2061,6 @@ async function liveGemSaveCounts(sc: any, gemIds: string[]): Promise<Map<string,
 // list under the cap costs what it did), and when the count says rows were left out, again by key until none remain
 // (`readWhole`, lib/feedReads.ts). A list that cannot be read whole is a failed read, and each caller already fails
 // closed over one and names it (`post_hides`, `blocks`). Declared at the foot so no cited line above moves.
-import { readWhole, afterKey, type Read } from "../lib/feedReads.js";
-
-/** Every row `base()` selects, read whole and keyed by `column` (a column the read's own filter makes unique). */
-function readKeyedWhole(base: () => any, column: string): Promise<Read<Array<Record<string, unknown>>>> {
-  return readWhole<Record<string, unknown>>(
-    (after, size) => afterKey(base().order(column, { ascending: true }).limit(size), column, after),
-    (r) => String(r[column]),
-    { first: base },
-  );
-}
+// `readKeyedWhole` lives in lib/wholeList.ts: the sweep found the same shape on the crew tab's follows and on three of
+// the rail's own lists (saved events, owned trips, requested bookings), and on the events tab and Compass beside them.
+import { readKeyedWhole, wholeListResult } from "../lib/wholeList.js";

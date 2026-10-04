@@ -13,8 +13,8 @@
  *
  *   MB  on each of near-trip, the city alias, /nearby, /search, /following and /circles: the host blocked the viewer
  *       (the blocks read ANSWERS) → the event withheld, no `truncated`
- *   MF  on each of near-trip, the city alias and /nearby: a friends-only event and no friendship (the read ANSWERS)
- *       → the event withheld, no `truncated`
+ *   MF  on each of near-trip, the city alias, /nearby, /search and /following: a friends-only event and no friendship
+ *       (the read ANSWERS) → the event withheld, no `truncated`
  *   ME  on each of the six: the viewer is banned from the event (the ban read ANSWERS) → the event withheld, no `truncated`
  *   MC  CONTROL on each of the six: nothing withholds the event → listed, no `truncated`
  */
@@ -66,7 +66,7 @@ describe("census-discovery §123 (Z4, Z4b, Z4c, Z11): a measured withholding is 
       assert.deepEqual({ status: r.status, listed: r.listed, truncated: r.truncated }, WITHHELD_WHOLE, r.text);
     });
   }
-  for (const [name, path] of ALIASES) {
+  for (const [name, path] of [...ALIASES, ...KEYED.filter(([n]) => n !== "circles")]) {
     it(`MF ${name}: a friends-only event and no friendship (the read answers) → withheld, no truncated`, async () => {
       setup({ ev: { visibility: "friends_only" } }); const r = await get(path);
       assert.deepEqual({ status: r.status, listed: r.listed, truncated: r.truncated }, WITHHELD_WHOLE, r.text);

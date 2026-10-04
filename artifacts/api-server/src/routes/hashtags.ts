@@ -720,11 +720,11 @@ router.get('/me/hashtag-follows', async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
 
-  const { data, error } = await sc
+  const { data, error } = await wholeOrderedListResult<any>(() => sc  // census-discovery §123 (DV-83 round 24): every followed hashtag, WHOLE — past the row cap the list was served short with nothing said
     .from('user_hashtag_follows')
-    .select('hashtag_id, created_at, hashtags(id, slug, name, usage_count)')
-    .eq('user_id', user.id)
-    .order('created_at', { ascending: false });
+    .select('hashtag_id, created_at, hashtags(id, slug, name, usage_count)', { count: 'exact' })
+    .eq('user_id', user.id), (q) => q
+    .order('created_at', { ascending: false }).order('hashtag_id', { ascending: true }));
 
   if (error) {
     req.log.error({ err: error }, 'me/hashtag-follows failed');
@@ -1124,3 +1124,6 @@ function sendTrending(res: import('express').Response, trending: unknown[], scop
   if (!incomplete) { res.status(200).json(body); return; }
   sendDiscoveryRefusal(res, body, discoveryRefusal('transient_db', 'trending_window_incomplete', 'GET /hashtags/trending', trending.length > 0 ? 'partial' : 'nothing', ['hashtag_usage']));
 }
+
+// census-discovery §123 (DV-83 round 24): one viewer's list read whole (lib/wholeList.ts). At the foot so no cited line moves; ESM hoists imports.
+import { wholeOrderedListResult } from '../lib/wholeList.js';

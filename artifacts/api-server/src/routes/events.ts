@@ -1599,9 +1599,9 @@ router.get("/events/me", async (req, res) => {
       .not("state", "in", '("cancelled","archived")')
       .order("starts_at", { ascending: true, nullsFirst: false })
       .limit(limit),
-    sc.from("event_rsvps").select("event_id")
+    wholeListResult(() => sc.from("event_rsvps").select("event_id", { count: "exact" })  // census-discovery §123 (DV-83 round 24): the viewer's going RSVPs WHOLE, by key
       .eq("user_id", user.id)
-      .eq("status", "going"),
+      .eq("status", "going"), "event_id"),
   ]); if ((hostedResult as any).error || (rsvpResult as any).error) { req.log?.error({ err: (hostedResult as any).error ?? (rsvpResult as any).error }, "my events: a read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // census-discovery §118 (DV-83 round 21, B28): a failed read is not "no events"
 
   const hosted = ((hostedResult as any).data ?? []) as any[];
@@ -1672,8 +1672,8 @@ router.get("/events/joined", async (req, res) => {
   const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
   const offset = (page - 1) * limit;
 
-  const { data: rsvps, error: rsvpsErr } = await sc.from("event_rsvps").select("event_id")
-    .eq("user_id", user.id).eq("status", "going"); if (rsvpsErr) { req.log?.error({ err: rsvpsErr }, "joined events: RSVP read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // census-discovery §118 (DV-83 round 21, B28)
+  const { data: rsvps, error: rsvpsErr } = await wholeListResult(() => sc.from("event_rsvps").select("event_id", { count: "exact" })  // census-discovery §123 (DV-83 round 24): WHOLE, by key
+    .eq("user_id", user.id).eq("status", "going"), "event_id"); if (rsvpsErr) { req.log?.error({ err: rsvpsErr }, "joined events: RSVP read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // census-discovery §118 (DV-83 round 21, B28)
 
   const ids = ((rsvps as any[]) ?? []).map((r: any) => r.event_id as string);
   if (ids.length === 0) { res.json({ events: [], page, limit }); return; }
@@ -1706,10 +1706,10 @@ router.get("/events/circles", async (req, res) => {
   // Step 1 — Fetch all circle IDs the viewer belongs to (member or owner).
   // Live table is circle_memberships(user_id = circle owner, other_id = member,
   // status, created_at); a circle's id is its owner's user id.
-  const { data: memberRows, error: memberRowsErr } = await sc
+  const { data: memberRows, error: memberRowsErr } = await wholeListResult(() => sc  // census-discovery §123 (DV-83 round 24): every circle the viewer is in, WHOLE, by key
     .from("circle_memberships")
-    .select("user_id")
-    .eq("other_id", user.id); if (memberRowsErr) { req.log?.error({ err: memberRowsErr }, "circle events: membership read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // census-discovery §118 (DV-83 round 21, B28)
+    .select("user_id", { count: "exact" })
+    .eq("other_id", user.id), "user_id"); if (memberRowsErr) { req.log?.error({ err: memberRowsErr }, "circle events: membership read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // census-discovery §118 (DV-83 round 21, B28)
 
   // The viewer always belongs to their own circle (owner has no self-membership row).
   const circleIds = [...new Set([
@@ -2342,8 +2342,8 @@ router.get("/events/following", async (req, res) => {
   const limit  = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? "20")));
   const cursor = (req.query.cursor as string) ?? null;
 
-  const { data: followRows, error: followRowsErr } = await sc
-    .from("user_follows").select("following_id").eq("follower_id", user.id); if (followRowsErr) { req.log?.error({ err: followRowsErr }, "following events: follows read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // census-discovery §118 (DV-83 round 21, B28)
+  const { data: followRows, error: followRowsErr } = await wholeListResult(() => sc  // census-discovery §123 (DV-83 round 24): everyone the viewer follows, WHOLE, by key
+    .from("user_follows").select("following_id", { count: "exact" }).eq("follower_id", user.id), "following_id"); if (followRowsErr) { req.log?.error({ err: followRowsErr }, "following events: follows read failed — refusing"); sendError(res, "degraded_unavailable", EVENT_LIST_UNAVAILABLE); return; }  // census-discovery §118 (DV-83 round 21, B28)
   const hostIds = [...new Set(((followRows as any[]) ?? []).map((r: any) => r.following_id as string))];
   if (hostIds.length === 0) { res.json({ events: [], cursor: null }); return; }
 
@@ -7187,3 +7187,5 @@ async function viewerSavedEventIds(sc: any, userId: string, eventIds: readonly s
   }
 }
 import { readWhole, afterKey } from "../lib/feedReads.js"; import { viewerCollectionSavedIds } from "../lib/viewerSavedReads.js";  // census-discovery §123 (B44): at the foot so no cited line above moves; ESM hoists imports
+// census-discovery §123 (DV-83 round 24): one viewer's list read whole (lib/wholeList.ts). At the foot so no cited line moves; ESM hoists imports.
+import { wholeListResult } from "../lib/wholeList.js";

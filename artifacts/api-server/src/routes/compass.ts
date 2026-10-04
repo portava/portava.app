@@ -4281,10 +4281,10 @@ router.get("/compass/recommendations", async (req, res) => {
       // Load block list — fail-CLOSED: on any error, return empty to prevent leaking blocked users
       let blockedIds: Set<string>;
       try {
-        const { data: blocks, error: blocksErr } = await sc
+        const { data: blocks, error: blocksErr } = await wholeListResult(() => sc  // census-discovery §123 (DV-83 round 24): the WHOLE block list, by key; one that cannot be read whole takes the refusal below
           .from("blocks")
-          .select("blocked_id")
-          .eq("blocker_id", user.id);
+          .select("blocked_id", { count: "exact" })
+          .eq("blocker_id", user.id), "blocked_id");
         if (blocksErr) {
           req.log.warn({ err: blocksErr }, "compass/recommendations: block-list fetch failed; returning empty");
           sendRecommendationsRefusal(res, { recommendations: [], surface }, "block_check_failed", ["blocks"]);  // census-discovery §104 (DV-83, D-W11X2-55)
@@ -5033,3 +5033,6 @@ function sendTelegraphRefused(res: import("express").Response, city: string | nu
 // A thrown profile read (a failed blocks or mutes read fails `getCompassProfile` closed) dropped the whole
 // circles / bookings / passport block with no line, so the model answered as if the user had none.
 const STRUCTURED_CONTEXT_UNREAD_LINE = "The user's circles, buddy bookings and passport history could not be read right now: do not say the user has none of them.";
+
+// census-discovery §123 (DV-83 round 24): one viewer's list read whole (lib/wholeList.ts). At the foot so no cited line moves; ESM hoists imports.
+import { wholeListResult } from "../lib/wholeList.js";

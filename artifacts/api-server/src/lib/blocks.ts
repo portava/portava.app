@@ -87,13 +87,13 @@ export function submitterIsVisible(
 import { readWhole, afterKey, WHOLE_READ_PAGE_SIZE } from "./feedReads.js";
 
 /** True when a plain `blocks` answer is provably every row its filter matches. */
-function blocksAnswerIsWhole(data: unknown, count: unknown): boolean {
+export function blocksAnswerIsWhole(data: unknown, count: unknown): boolean {
   if (!Array.isArray(data)) return true;  // no rows answered and no error: the empty set, as before
   return typeof count === "number" ? data.length >= count : data.length < WHOLE_READ_PAGE_SIZE;
 }
 
 /** Both directions of `userId`'s blocks, each read whole by key; null when either cannot be. */
-async function fetchBlockedSetByKey(sc: SupabaseClient, userId: string): Promise<Set<string> | null> {
+export async function fetchBlockedSetByKey(sc: SupabaseClient, userId: string): Promise<Set<string> | null> {
   const direction = (mine: "blocker_id" | "blocked_id", other: "blocker_id" | "blocked_id") =>
     readWhole<Record<string, unknown>>(
       (after, size) => afterKey((sc as any).from("blocks").select(other, { count: "exact" }).eq(mine, userId).order(other, { ascending: true }).limit(size), other, after),
