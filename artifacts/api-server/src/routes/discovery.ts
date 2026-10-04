@@ -1584,7 +1584,7 @@ router.get("/discovery", async (req, res) => {
   // the effective destination so context-driven modes (near_me/going_soon) work
   // without requiring the client to geocode first.
   let discoveryCtx: DiscoveryContext | null = null;
-  let callerUserId: string | null = null;
+  let callerUserId: string | null = null; let callerViewerUnresolved = false;  // census-discovery §123 (DV-83 round 24): a token was presented and nobody evaluated it
 
   const authHeader = req.headers.authorization;
   const _authSc = getServiceClient();
@@ -1592,7 +1592,7 @@ router.get("/discovery", async (req, res) => {
     try {
       const token = authHeader.slice(7).trim();
       const sc = _authSc;
-      const { data: authData } = await sc.auth.getUser(token);
+      const { data: authData, error: authErr } = await sc.auth.getUser(token); if (!authData?.user && authErr && authServiceUnreachable(authErr)) callerViewerUnresolved = true;  // §123: a REJECTED token is an anonymous caller; a lookup Auth did not answer leaves the viewer unresolved (D-W11X2-21's one classifier)
       if (authData?.user) {
         callerUserId = authData.user.id;
         const rawMode = (req.query.context as string | undefined) ?? "";
@@ -1616,9 +1616,9 @@ router.get("/discovery", async (req, res) => {
           currentCity, currentCountry,
         });
       }
-    } catch { /* degrade — non-fatal */ }
-  }
-
+    } catch { if (callerUserId === null) callerViewerUnresolved = true; /* degrade — non-fatal */ }  // §123: a lookup that threw evaluated nothing — the viewer is unresolved, never anonymous
+  } else if (authHeader?.startsWith("Bearer ")) callerViewerUnresolved = true;  // §123: a presented token and no service client to resolve it with
+  if (callerViewerUnresolved) { sendDiscoveryRefusal(res, emptyDiscoveryPlacesEnvelope(destinationParam ?? null, null), discoveryViewerRefusal()); return; }  // §123: every gate below (author set, dismissals, Layover, the age seam, the context's city) is this viewer's — refused whole, never the anonymous page
   // Resolve effective destination: explicit query param takes priority; fall back
   // to DiscoveryContext.targetCity so context-driven modes work without client geocoding.
   const destination = destinationParam ?? discoveryCtx?.targetCity ?? undefined;
@@ -2668,7 +2668,7 @@ router.get("/discovery/feed", async (req, res) => {
   }
 
   // ── Fetch places across all requested categories ───────────────────────────
-  try { const eventPostsReadStatus = { readFailed: viewerUnresolved };  // census-discovery §94 (DV-83, hunk §80.7): whether the event-post read FAILED (§98: or was owed to a viewer who could not be resolved) — carried onto the envelope below, never served as a quiet city
+  try { if (viewerUnresolved) placeBlockedIds = null; const eventPostsReadStatus = { readFailed: viewerUnresolved };  // census-discovery §94 (DV-83, hunk §80.7): whether the event-post read FAILED (§98: or was owed to a viewer who could not be resolved) — carried onto the envelope below, never served as a quiet city
     // TODO: denormalize is_event_post flag at write time to avoid per-request join
     const [categoryResults, eventPosts] = await Promise.all([
       Promise.all(
@@ -2714,7 +2714,7 @@ router.get("/discovery/feed", async (req, res) => {
     let totalOsm = 0;
     let totalDb  = 0;
     const failedCats: string[] = [];
-    for (const { cat, osmPlaces, dbPlaces, dbReadFailed, osmReadFailed, merged } of categoryResults) { if (osmReadFailed && !failedCats.includes(DISCOVERY_OVERPASS_SOURCE)) failedCats.push(DISCOVERY_OVERPASS_SOURCE); if ((authorsUnchecked(dbPlaces) || (postsBlocksUnread && eventPosts.length > 0)) && !failedCats.includes(DISCOVERY_AUTHOR_SET_SOURCE)) failedCats.push(DISCOVERY_AUTHOR_SET_SOURCE);  // §94.10 (DV-83); §102 (D-W11X2-37): authored rows withheld for an unreadable block/mute set are named, never a smaller city
+    for (const { cat, osmPlaces, dbPlaces, dbReadFailed, osmReadFailed, merged } of categoryResults) { if (osmReadFailed && !failedCats.includes(DISCOVERY_OVERPASS_SOURCE)) failedCats.push(DISCOVERY_OVERPASS_SOURCE); if ((authorsUnchecked(dbPlaces) || (postsBlocksUnread && eventPosts.length > 0)) && !failedCats.includes(feedAuthorSource(viewerUnresolved))) failedCats.push(feedAuthorSource(viewerUnresolved));  // §94.10 (DV-83); §102 (D-W11X2-37): authored rows withheld for an unreadable block/mute set are named, never a smaller city
       totalOsm += osmPlaces.length;
       totalDb  += dbPlaces.length;
       if (dbReadFailed) failedCats.push(cat);
@@ -2723,7 +2723,7 @@ router.get("/discovery/feed", async (req, res) => {
       }
     }
 
-    const gateF = await layoverGatedPlaces(viewerId, allPlaces, "GET /discovery/feed"); if (!gateF.ok) { sendDiscoveryRefusal(res, emptyFeedEnvelope(destination ?? null, feedSessionId), gateF.refusal); return; } const total     = gateF.places.length;  // A14 — the feed serves the SAME merged discovery_places + OSM rows as GET /discovery, to the same traveller; see layoverGatedPlaces for what is NOT gated here and why.
+    const gateF = await layoverGatedPlaces(viewerId, allPlaces, "GET /discovery/feed", viewerUnresolved); if (!gateF.ok) { sendDiscoveryRefusal(res, emptyFeedEnvelope(destination ?? null, feedSessionId), gateF.refusal); return; } const total     = gateF.places.length;  // A14 — the feed serves the SAME merged discovery_places + OSM rows as GET /discovery, to the same traveller; see layoverGatedPlaces for what is NOT gated here and why.
     const slice     = gateF.places.slice(offset, offset + limit).map(toPublic);
     const nextOff   = offset + limit;
     const nextCursor = nextOff < total ? encodeOffset(nextOff) : null;
@@ -2756,7 +2756,7 @@ router.get("/discovery/feed", async (req, res) => {
       const coverage = feedAnnotated.length === 0 && eventPosts.length === 0 ? "nothing" : "partial";
       sendDiscoveryRefusal(
         res, feedEnvelope,
-        discoveryRefusal(failedCats.some((c) => c !== "event_posts") ? (failedCats.every((c) => c === DISCOVERY_OVERPASS_SOURCE || c === "event_posts") ? "upstream_unavailable" : "transient_db") : viewerUnresolved ? "upstream_unavailable" : "transient_db", failedCats.some((c) => c !== "event_posts") ? (failedCats.every((c) => c === DISCOVERY_OVERPASS_SOURCE || c === "event_posts") ? "overpass_unavailable" : feedPlacesCode(failedCats)) : viewerUnresolved ? "feed_viewer_unresolved" : "feed_event_posts_read_failed", "GET /discovery/feed", coverage, failedCats),  // §94 (D-W11X2-1): an event-post-only failure has its own code, so an alert on the places code is not raised by the posts; §100 (D-W11X2-25): an Overpass-only PLACE failure is the upstream's (upstream_unavailable / overpass_unavailable), as on GET /discovery and the counts
+        discoveryRefusal(failedCats.some((c) => !feedViewerOwed(c)) ? (failedCats.every((c) => c === DISCOVERY_OVERPASS_SOURCE || feedViewerOwed(c)) ? "upstream_unavailable" : "transient_db") : viewerUnresolved ? "upstream_unavailable" : "transient_db", failedCats.some((c) => !feedViewerOwed(c)) ? (failedCats.every((c) => c === DISCOVERY_OVERPASS_SOURCE || feedViewerOwed(c)) ? "overpass_unavailable" : feedPlacesCode(failedCats)) : viewerUnresolved ? "feed_viewer_unresolved" : "feed_event_posts_read_failed", "GET /discovery/feed", coverage, failedCats),  // §94 (D-W11X2-1): an event-post-only failure has its own code, so an alert on the places code is not raised by the posts; §100 (D-W11X2-25): an Overpass-only PLACE failure is the upstream's (upstream_unavailable / overpass_unavailable), as on GET /discovery and the counts
       );
     } else {
       res.json(feedEnvelope);
@@ -3115,7 +3115,7 @@ router.get("/discovery/community", async (req, res) => {
         lng:       row.lng != null ? parseFloat(row.lng) : null,
       };
     });
-    const layoverGate = items.length > 0 ? await discoveryLayoverGate(sc, await resolveCommunityViewer(), items, "GET /discovery/community") : null;  if (layoverGate && !layoverGate.ok) { sendDiscoveryRefusal(res, { items: [], city, total: 0 }, layoverGate.refusal); return; }  const servedItems = layoverGate ? serveUnderLayoverGate(layoverGate, items) : items;  // A14 — only the certified action universe may be shown; a FAILED read refuses instead of shipping a shorter list. See lib/discoveryLayoverMode.ts.
+    const layoverGate = items.length > 0 ? await discoveryLayoverGate(sc, await resolveCommunityViewer(), items, "GET /discovery/community", { viewerUnresolved: communityViewerUnresolved }) : null;  if (layoverGate && !layoverGate.ok) { sendDiscoveryRefusal(res, { items: [], city, total: 0 }, layoverGate.refusal); return; }  const servedItems = layoverGate ? serveUnderLayoverGate(layoverGate, items) : items;  // A14 — only the certified action universe may be shown; a FAILED read refuses instead of shipping a shorter list. See lib/discoveryLayoverMode.ts.
     // Batch-fetch saved state and vote/review aggregates in parallel (both non-fatal)
     const placeIds = servedItems.map((i) => i.id);
     const savedPlaceIds = new Set<string>(); let savedReadFailed: string | null = null;  // census-discovery §122 (DV-83 round 23, B36): the read that left the viewer's saved state unknown
@@ -4006,7 +4006,7 @@ function sendDiscoveryPlacesEnvelope<T extends { total: number }>(
 async function layoverGatedPlaces<T extends { id: string; lat?: number | null; lng?: number | null }>(
   userId: string | null,
   places: T[],
-  route: string,
+  route: string, viewerUnresolved = false,  // census-discovery §123: a token was presented and nobody resolved it — the gate is owed to a traveller it cannot look at
 ): Promise<
   | { ok: false; refusal: DiscoveryRefusal }
   | { ok: true; places: T[]; summary: DiscoveryLayoverSummary | null }
@@ -4015,7 +4015,7 @@ async function layoverGatedPlaces<T extends { id: string; lat?: number | null; l
   // either. Mirrors what GET /discovery/community does with `items.length > 0`.
   if (places.length === 0) return { ok: true, places, summary: null };
   try {
-    const gate = await discoveryLayoverGate(getServiceClient(), userId, places, route);
+    const gate = await discoveryLayoverGate(getServiceClient(), userId, places, route, { viewerUnresolved });
     if (!gate.ok) return { ok: false, refusal: gate.refusal };
     return { ok: true, places: serveUnderLayoverGate(gate, places), summary: gate.summary };
   } catch (err) {
@@ -4604,7 +4604,7 @@ function overpassSourcesCode(failedSources: readonly string[]): string | null {
  * name is NOT a verdict: nothing says the token was evaluated, so it leaves the
  * viewer unresolved (D-W11X2-21, keeping §94.10's fail-closed reading).
  */
-function authServiceUnreachable(error: unknown): boolean {
+export function authServiceUnreachable(error: unknown): boolean {
   const e = error as { name?: unknown; status?: unknown; code?: unknown } | null | undefined;
   if (!e) return false;
   if (e.name === "AuthRetryableFetchError" || e.name === "AuthUnknownError") return true;
@@ -4757,3 +4757,27 @@ import { viewerCollectionSavedIds, viewerSavedPlaceIds } from "../lib/viewerSave
 
 // census-discovery §123 (DV-83 round 24): the one reading of an Overpass body. At the foot so no cited line moves; ESM hoists imports.
 import { overpassBodyUnfinished } from "../lib/overpassAnswer.js";
+
+// ── census-discovery §123 (DV-83 round 24, lane DISC-DV83; the sweep beside B42) ─────────────────────────────────────
+//
+// GET /discovery resolved its optional viewer exactly as the community route did: the lookup's error unread, inside a
+// comment-only catch. A signed-in viewer whose token Auth did not evaluate was served the ANONYMOUS page — a place
+// submitted by someone they blocked, their dismissals not applied, the Layover gate not consulted, and with no
+// `destination` parameter a 400 over a context nobody read. Unlike the community list, nothing on this page is
+// independent of the viewer (the candidate set is gated by their author set, their dismissals and their layover, and
+// ranked for them), so there is no honest partial page: the answer is the D11 envelope, `nothing`, naming `viewer`.
+// It is sent before any cache is read or written, and the client neither caches nor renders a `nothing` page.
+function discoveryViewerRefusal() {
+  return discoveryRefusal("upstream_unavailable", "discovery_viewer_unresolved", "GET /discovery", "nothing", [DISCOVERY_VIEWER_SOURCE]);
+}
+
+// GET /discovery/feed already knew when its viewer was unresolved (§98) and named the event posts. Its community places
+// were still checked against an EMPTY author set. They are now checked against none (null: authored rows withheld, as
+// over an unreadable block set, §102), and the withholding is named `viewer`, which the feed's refusal reads as it reads
+// `event_posts`: a read owed to a viewer nobody resolved, under the same class and code.
+function feedViewerOwed(source: string): boolean {
+  return source === "event_posts" || source === DISCOVERY_VIEWER_SOURCE;
+}
+function feedAuthorSource(viewerUnresolved: boolean): string {
+  return viewerUnresolved ? DISCOVERY_VIEWER_SOURCE : DISCOVERY_AUTHOR_SET_SOURCE;
+}

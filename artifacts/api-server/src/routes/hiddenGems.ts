@@ -255,10 +255,10 @@ async function resolveCallerId(req: any, sc: any): Promise<string | null> {
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
   if (!token) return null;
   try {
-    const { data } = await sc.auth.getUser(token);
+    const { data, error } = await sc.auth.getUser(token); if (!data?.user?.id && error && authServiceUnreachable(error)) _gemViewerUnresolved.add(req);  // census-discovery §123: a REJECTED token is an anonymous caller; a lookup Auth did not answer leaves the viewer unresolved
     return (data?.user?.id as string) ?? null;
   } catch {
-    return null;
+    _gemViewerUnresolved.add(req); return null;  // §123: a lookup that threw evaluated nothing
   }
 }
 
@@ -413,7 +413,7 @@ router.get("/hidden-gems", async (req, res) => {
     sendError(res, "feature_disabled"); return;
   }
 
-  const callerId = await resolveCallerId(req, sc);
+  const callerId = await resolveCallerId(req, sc); if (gemViewerUnresolved(req) && req.query.layoverSafe === "1") { sendError(res, "degraded_unavailable", LAYOVER_WINDOW_UNREADABLE_MESSAGE); return; }  // census-discovery §123: the layover window is this traveller's; nobody resolved them, so it is withheld, never the query's own minutes
   const callerTripId = (req.query.tripId as string) || null;
 
   const opts: any = {
@@ -616,7 +616,7 @@ router.get("/hidden-gems/layover-safe", async (req, res) => {
 
   // census-discovery §56 (A13/A14): in a LIVE layover the window is the certified snapshot's `usableMinutes` and the
   // query figure is ignored — it can neither widen nor narrow it; only a caller who is in no layover states a hypothetical.
-  const callerId = await resolveCallerId(req, sc);
+  const callerId = await resolveCallerId(req, sc); if (gemViewerUnresolved(req)) { sendError(res, "degraded_unavailable", LAYOVER_WINDOW_UNREADABLE_MESSAGE); return; }  // census-discovery §123: as above — an unresolved traveller's layover is unread, not absent
   const window = await layoverGemWindow(sc, callerId);
   if (window.kind === "refused") { sendError(res, "degraded_unavailable", LAYOVER_WINDOW_UNREADABLE_MESSAGE); return; }
   const availableMinutes = window.kind === "certified" ? window.minutes : parseInt(req.query.availableMinutes as string);
@@ -1711,3 +1711,18 @@ function gemStateRefusal(projections: Iterable<{ unreadSources?: string[] } | un
   return failed.length > 0 ? { refusal: discoveryRefusal("transient_db", "gem_state_unread", route, "partial", failed) } : {};
 }
 
+
+// ── census-discovery §123 (DV-83 round 24, lane DISC-DV83; the sweep beside the round-23 verifier's B42) ─────────────
+//
+// `resolveCallerId` answered null both for a caller with no token and for one whose token nobody could evaluate. On the
+// layover-safe reads that made a traveller in a live layover an anonymous caller, and `layoverGemWindow(sc, null)`
+// answers "no layover": the list was served for the query's own `availableMinutes`, the figure §56 (A13/A14) says a
+// live layover ignores. The lookup's error is now read with Discovery's one classifier (D-W11X2-21), the request is
+// marked, and the two layover-safe reads refuse it as they refuse an unreadable snapshot. GET /hidden-gems/:id keeps
+// §122's answer for a token with no viewer (the gem, `savedByMe: null`, `viewer` named). Declared at the foot so no
+// cited line moves; ESM hoists the import.
+import { authServiceUnreachable } from "./discovery.js";
+const _gemViewerUnresolved = new WeakSet<object>();
+function gemViewerUnresolved(req: object): boolean {
+  return _gemViewerUnresolved.has(req);
+}
