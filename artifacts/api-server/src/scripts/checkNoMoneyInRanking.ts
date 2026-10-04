@@ -55,15 +55,34 @@
  * nothing is STALE and fails: an allowlist that only grows stops describing
  * the tree.
  *
- * ── A REAL MONEY INPUT IS NOT ALLOWLISTED: IT IS AN OPEN DECISION, AND FAILS ──
+ * ── A REAL MONEY INPUT IS NOT ALLOWLISTED: IT IS AN OPEN OWNER QUESTION ──────
  * Where a ranker does read a price, this check does not excuse it and does not
  * remove it. Removing it changes what a product does, which is the owner's to
  * decide; allowlisting it would be this check deciding the other way. It is
- * named in OPEN_DECISIONS with the question, and the check FAILS on it until
- * the owner has answered: the answer is then either a justified ALLOWLIST
- * entry citing the ruling, or the input's removal. An entry pins its exact
- * identifiers, so nothing else in that file rides in under it, and an entry
- * whose identifiers are gone is stale and fails.
+ * named in OPEN_DECISIONS with the question.
+ *
+ * NONE IS OPEN. The one there was — the buddy match's price fit, in
+ * services/rentBuddy/CompatibilityScoreService.ts — was ANSWERED 2026-10-04:
+ * "A buddy's list price must not influence calculateCompatibilityScore or the
+ * default ordering in /rent-a-buddy/match." Its ifNot branch was taken (the
+ * terms removed, the entry deleted; see OPEN_DECISIONS below, pull request #596).
+ *
+ * An open question is REPORTED ON EVERY RUN and does NOT fail the check: its
+ * full text is printed, with a GitHub `::warning` annotation on the file. A
+ * guard that is red on a question nobody has answered blocks every lane and is
+ * one `|| true` from being no guard (scripts/run-all-checks.sh says the same
+ * of check:rank-events-surfaces). What keeps this from being an allowlist by
+ * another name:
+ *   * an entry covers the identifiers it names and nothing else — any OTHER
+ *     money identifier in that file, and any money identifier in any other
+ *     file in scope, still fails;
+ *   * an entry naming an identifier its file no longer carries is STALE and
+ *     fails, so an entry cannot be wider than the code;
+ *   * the set of entries is PINNED in src/test/noMoneyInRankingCheck.test.ts
+ *     (PINNED_OPEN_DECISIONS): adding one, widening one or dropping one fails
+ *     that test. An entry leaves in one of two ways only — its identifiers
+ *     move to ALLOWLIST citing the owner's ruling, or the code that reads them
+ *     is removed.
  *
  * ── IT CANNOT QUIETLY STOP LOOKING ───────────────────────────────────────────
  *   * every SCOPE entry must match at least one file — a renamed ranker fails
@@ -83,7 +102,8 @@
  * whether an allowlisted reader is RIGHT — that judgment is a human's and is
  * recorded next to the entry.
  *
- * No database, no network. Exit 0 = clean; 1 = a finding, an open decision, a
+ * No database, no network. Exit 0 = clean (open owner questions, if any, are
+ * printed and annotated, and do not move the exit code); 1 = a finding, a
  * stale or unjustified entry, an unclassified file or an empty scope entry;
  * 2 = the source tree could not be read.
  *
@@ -271,8 +291,9 @@ export const ALLOWLIST: readonly AllowEntry[] = [
 
 /**
  * A money input a ranker really does read, which this check will neither
- * excuse nor remove: whether it may stay is a product decision. The check
- * FAILS on each entry until it is answered.
+ * excuse nor remove: whether it may stay is a product decision. Each entry is
+ * reported on every run, with a warning annotation, and does not fail the
+ * check; everything it does not name still does. The set is pinned in the test.
  */
 export interface OpenDecision {
   /** Relative to src/. */
@@ -286,18 +307,29 @@ export interface OpenDecision {
   /** What to change here for each answer. */
   ifAllowed: string;
   ifNot: string;
+  /** The day it was put to the owner, and where it is tracked until answered. */
+  askedOn: string;
+  trackedIn: string;
 }
 
 // ANSWERED 2026-10-04, so this list is empty rather than absent.
 //
 // It held one question — may a buddy's list price order the buddies a traveller
-// is shown — and the owner ruled it may NOT. The ifNot branch was taken: the
-// budget term (weight 10) and the rate-presence test (weight 2) are gone from
+// is shown — and the owner ruled it may NOT. That entry's own `ifNot` branch is
+// what was done: "remove the budget term (and the rate-presence test) from
+// calculateCompatibilityScore … and delete the entry". The budget term (weight
+// 10) and the rate-presence test (weight 2) are gone from
 // calculateCompatibilityScore, and so are the rate fields themselves, so the
 // scorer is no longer given a price at all. Price stays visible in the
 // response; an existing traveller-selected filter or sort is a separate
 // surface. The entry is deleted rather than allowlisted, which is what this
 // file's own staleOpen rule requires once the identifiers leave the file.
+//
+// Everything that SERVES such an entry is kept, not reverted: the reported-not-
+// failed semantics, the ::warning annotation, the narrow-coverage rule and the
+// staleOpen rule all still work and are still tested. They are how the next
+// open question gets asked without holding every other lane behind a red guard.
+// What is gone is only the answered question.
 export const OPEN_DECISIONS: readonly OpenDecision[] = [];
 
 // ── the scan ──────────────────────────────────────────────────────────────────
@@ -426,9 +458,9 @@ export interface Result {
   findings: Finding[];
   /** Hits the allowlist admitted, for the report. */
   allowed: Finding[];
-  /** Hits an open decision names. They FAIL the check; they are kept apart so the report can say what is being waited for. */
+  /** Hits an open decision names. Reported on every run, never counted as a failure, never counted as allowed. */
   open: Finding[];
-  /** Open decisions none of whose identifiers is in its file any more. */
+  /** Open decisions naming an identifier their file no longer carries: an entry may not be wider than the code. */
   staleOpen: OpenDecision[];
   /** Scope entries that matched no file. */
   emptyScope: ScopeEntry[];
@@ -470,7 +502,8 @@ export function runCheck(src: string, config: Config = { scope: SCOPE, allowlist
       else findings.push(finding);
     }
   }
-  const staleOpen = openDecisions.filter((d) => !open.some((f) => f.file === d.file));
+  const staleOpen = openDecisions.filter((d) => d.identifiers.length === 0
+    || d.identifiers.some((id) => !open.some((f) => f.file === d.file && f.identifier === id)));
 
   const unjustified: string[] = [];
   for (const a of config.allowlist) {
@@ -480,7 +513,7 @@ export function runCheck(src: string, config: Config = { scope: SCOPE, allowlist
     if (o.why.trim().length < MIN_REASON) unjustified.push(`OUT_OF_SCOPE ${o.file}`);
   }
   for (const d of openDecisions) {
-    if ([d.what, d.question, d.ifAllowed, d.ifNot].some((t) => t.trim().length < MIN_REASON)) unjustified.push(`OPEN_DECISIONS ${d.file}`);
+    if ([d.what, d.question, d.ifAllowed, d.ifNot, d.trackedIn].some((t) => t.trim().length < MIN_REASON) || !/^\d{4}-\d{2}-\d{2}$/.test(d.askedOn)) unjustified.push(`OPEN_DECISIONS ${d.file}`);
   }
 
   const out = new Set(config.outOfScope.map((o) => o.file));
@@ -503,8 +536,39 @@ export function runCheck(src: string, config: Config = { scope: SCOPE, allowlist
   };
 }
 
+/**
+ * The lines reported for each open owner question: one `::warning` GitHub
+ * annotation on the file, then the same words in full for a reader of the log.
+ *
+ * Pure, and exported, for one reason: `OPEN_DECISIONS` is EMPTY (the only
+ * question there was, the buddy scorer's price fit, was answered on
+ * 2026-10-04), so no real run prints any of this. Inline in `main` it would be
+ * unreachable code that nobody could test without re-opening a question; here
+ * the next question inherits a reporting path that is still proven.
+ */
+export function openQuestionLines(decisions: readonly OpenDecision[], r: Result): string[] {
+  const out: string[] = [];
+  for (const d of decisions) {
+    const hits = r.open.filter((f) => f.file === d.file);
+    if (hits.length === 0) continue;
+    const at = hits.map((f) => `${f.line} \`${f.identifier}\``).join(", ");
+    // One line, so that GitHub renders it as an annotation on the file; the same words follow in full.
+    out.push(`::warning file=artifacts/api-server/src/${d.file},line=${hits[0]!.line},title=check-no-money-in-ranking open owner question::OPEN OWNER QUESTION, asked ${d.askedOn} and unanswered. ${d.file} reads a money input in a ranker (${at}). ${d.question} Tracked in: ${d.trackedIn}. This is reported, not failed; any other money identifier in this file still fails.`);
+    out.push(`  OPEN      ${d.file} reads a money input in a ranker. Whether it may is an OWNER QUESTION, asked ${d.askedOn} and not yet answered. Reported on every run; it does not fail this check.`);
+    for (const f of hits) out.push(`              ${f.file}:${f.line}  \`${f.identifier}\` (${f.term})`);
+    out.push(`            What it does: ${d.what}`);
+    out.push(`            The question: ${d.question}`);
+    out.push(`            Tracked in:   ${d.trackedIn}.`);
+    out.push(`            If it may stay: ${d.ifAllowed}.`);
+    out.push(`            If it may not:  ${d.ifNot}.`);
+    out.push(`            Do NOT allowlist it or remove it without that answer. Any OTHER money identifier in this file fails.`);
+  }
+  return out;
+}
+
 export function failureCount(r: Result): number {
-  return r.findings.length + r.open.length + r.staleOpen.length + r.emptyScope.length + r.staleAllow.length
+  // r.open is deliberately absent: an open owner question is reported, not failed.
+  return r.findings.length + r.staleOpen.length + r.emptyScope.length + r.staleAllow.length
     + r.unjustified.length + r.unclassified.length + r.staleOutOfScope.length;
 }
 
@@ -528,18 +592,8 @@ function main(): void {
   for (const f of r.findings) {
     console.log(`  MONEY     ${f.file}:${f.line}  \`${f.identifier}\` (${f.term}) in a ${f.group} file — docs/architecture/08_Portava_Revenue_Model.md §6.1 and 09_Payment_Architecture.md §10: no money identifier is read by the ranker, a feature vector, a graph builder or a feed payload. Remove it, or add a justified ALLOWLIST entry if it ENFORCES a non-goal.`);
   }
-  for (const d of OPEN_DECISIONS) {
-    const hits = r.open.filter((f) => f.file === d.file);
-    if (hits.length === 0) continue;
-    console.log(`  OPEN      ${d.file} reads a money input in a ranker, and whether it may is not this check's to decide. It FAILS until the owner answers.`);
-    for (const f of hits) console.log(`              ${f.file}:${f.line}  \`${f.identifier}\` (${f.term})`);
-    console.log(`            What it does: ${d.what}`);
-    console.log(`            The question: ${d.question}`);
-    console.log(`            If it may stay: ${d.ifAllowed}.`);
-    console.log(`            If it may not:  ${d.ifNot}.`);
-    console.log(`            Do NOT allowlist it or remove it without that answer.`);
-  }
-  for (const d of r.staleOpen) console.log(`  STALE     OPEN_DECISIONS ${d.file}: none of its identifiers is in the file any more — the question has been answered in code. Delete the entry.`);
+  for (const line of openQuestionLines(OPEN_DECISIONS, r)) console.log(line);
+  for (const d of r.staleOpen) console.log(`  STALE     OPEN_DECISIONS ${d.file} names an identifier the file no longer carries — the entry is wider than the code. Narrow it to what is still read, or delete it if the question has been answered in code.`);
   for (const e of r.emptyScope) console.log(`  EMPTY     scope entry \`${e.path}\` (${e.group}) matches no file — the file moved or was renamed, and the check would stop looking. Repoint the entry.`);
   for (const u of r.unclassified) console.log(`  UNCLASSIFIED ${u} is named like a ranker, a scorer or a graph builder and is neither in SCOPE nor in OUT_OF_SCOPE. Classify it.`);
   for (const a of r.staleAllow) console.log(`  STALE     ALLOWLIST ${a.file} \`${a.identifier}\` matches nothing — delete the entry.`);
@@ -547,11 +601,12 @@ function main(): void {
   for (const u of r.unjustified) console.log(`  UNJUSTIFIED ${u}: the reason is under ${MIN_REASON} characters. Say why.`);
 
   if (failureCount(r) > 0) {
-    console.log(failureCount(r) === r.open.length ? "RESULT failed (open decision only: nothing else is wrong)" : "RESULT failed");
+    console.log("RESULT failed");
     process.exit(1);
   }
   console.log("  DOES NOT COVER: data flow. A money value passed in under a neutral name, or folded into a column by a view, is invisible to a scan of names; route files are out of scope.");
-  console.log("RESULT clean");
+  const openFiles = new Set(r.open.map((f) => f.file)).size;
+  console.log(openFiles > 0 ? `RESULT clean (${openFiles} open owner question(s) reported above, not failed)` : "RESULT clean");
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
