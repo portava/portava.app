@@ -9115,7 +9115,7 @@ failing citation to be fixed, and for no ratchet to be loosened.
 their grammar from:
 - A directory segment is now either an ordinary run of segment characters or
   a whole parenthesised group followed by `/`. This is
-  `artifacts/api-server/scripts/check-doc-citations.mjs:386#const SEG`, and the
+  `artifacts/api-server/scripts/check-doc-citations.mjs:408#const SEG`, and the
   three path patterns (direct, bare path, whole anchor) use it.
 - A parenthesis is **not** a segment character. If it were, prose that opens a
   parenthesis right before a path, and a markdown link, would swallow that
@@ -16183,3 +16183,104 @@ API-sync effect, so no rendered state differs).
 - NOT-GRADED: artifacts/api-server/scripts/SILENT_SUPABASE_READS_BASELINE.json — §47.2's silent-read counts; a guard baseline, not a graded file.
 - NOT-GRADED: travel-buddy-standalone/src/lib/unreadCount.ts — §47.3's unread-count display rule; no MD verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/src/hooks/useMediaSave.ts — §47.3 cites its seed; no MD verdict rests on it.
+
+## 48. Re-census of the MEDIA lane's subject, 2026-10-04: no row moves, and the 42 non-C rows re-read one at a time rather than inherited
+
+**What this section is.** The re-census pass that `census-layover.md` §49 and `census-trips.md` §79
+belong to was opened on a corpus measurement, not a suspicion: `check:census-integrity` returns the
+same `C` at `f71cfb85f` as it did at `626b46b7e`, 108 commits and seventeen pull requests earlier,
+and nine of those PRs landed on the lowest-scoring surfaces. PR #575 is this census's. Scope: the
+rows whose SUBJECT #575 touched, plus every non-C row, re-read against its own RED WHEN. Nothing
+else is re-read, and a row this section does not name keeps the verdict and the reason it had.
+
+**`head_commit` is NOT re-declared.** 425 counted files are watched here and this pass read
+twenty-two; re-declaring would make `check:census-freshness` report a reading that did not happen.
+This follows `census-discovery.md` §108.5's precedent in the same wave rather than the four
+re-declarations beside it. Documentation only: no code, no migration, no flag, no schema change, and
+**no database was read or written** — every deployment fact below is quoted from the repository's own
+committed capture.
+
+### 48.1 Row moves: none, in either direction
+
+**0 up, 0 down.** That is a measurement and this subsection says what was measured rather than
+asserting it, because a re-census that reports no movement has to show its work twice as carefully as
+one that reports some.
+
+Each of the 42 non-C rows was read against its own stated RED WHEN at this tree:
+
+| class | rows | why no code in this repository moves them |
+| --- | --- | --- |
+| flag-gated (owner decision F1/F2, or a seed) | MD1, MD3, MD11, MD29, MD87, MD215, MD286, MD402, MD408, MD412, MD419, MD424, MD425, MD427, MD435 | §34.5 states the shape exactly: *"Every RED WHEN below asks for the shipped default surface, or the shipped ordering, to change. Each of those changes is a flag flip."* The implementation half is done for every one of the fifteen. |
+| owner product decision | MD37, MD53, MD58, MD65, MD66, MD71, MD77, MD79, MD162, MD175, MD197, MD255, MD370, MD385, MD445, MD446 | §35.4's and §36.4's question sets. MD53, MD58, MD66, MD370 and MD445 each follow MD65, whose questions are a SAFETY decision. |
+| vendor, native module or device | MD63, MD269, MD277, MD280, MD282, MD283, MD284, MD289, MD293 | each is built up to a seam whose other side is a classifier, a transcoder, an ASR source, a native compressor or a handset. |
+| accessibility verification | MD403 | §33.13.1: *"Implementation complete; verification remaining."* |
+| cross-lane | MD2 | §9.5's own cell: the live ranker's boost layer is per-creator and *"Not a client file"* — Lane C's zone plus the integration owner. |
+
+**§47.1's classification therefore HOLDS, and it holds on re-reading rather than on quotation.** Its
+sentence — *"Every one of the 42 non-C rows is an activation, an owner decision or a vendor (the
+lane's classification: 0 code-actionable, 17 awaiting a flag or device evidence, 16 owner-gated,
+9 external)"* — is what this pass found by opening each row. **A PR on this surface cannot move a
+letter however good it is**, and that is a fact about where the work stopped, not about the PR.
+
+### 48.2 The `C` rows #575's own findings bear on, and what changed under them
+
+No verdict moves here. What moves is the honesty of two reasons, and both corrections run in the
+direction a re-census is least likely to notice: a `C` that was partly unearned and is now earned.
+
+| id | was | now | the correction |
+|---|---|---|---|
+| MD62 | C | **C** | The cell reads *"`lib/mediaEligibility.filterEligibleMediaCandidates` + `lib/mediaLocationVisibility.ts:354`, both fail-closed."* Fail-closed ON ERROR was true before #575 and is true now. Fail-closed on COMPLETENESS was not: the gate read both halves of the block list with a plain `.select()`, which PostgREST cuts at `db-max-rows` without an error, so a viewer with more than a thousand blocks was served the blocked creators past the cut — through a gate this row calls fail-closed, with nothing in the response saying so. Both halves are now read whole by key (`artifacts/api-server/src/lib/mediaEligibility.ts:229#const [blockedRes, blockerRes] = await Promise.all([ // census-media §47: both lists WHOLE, by key — a block list past 1,000 rows was cut, and the creators past the cut were served`) through the shared helper §47.2 already names, and an unreadable hard gate names itself (`artifacts/api-server/src/lib/mediaEligibility.ts:244#return { eligible: [], blockFetchFailed: true, failedSource: "blocks" };`). **The row's ground was incomplete for as long as it has been `C` and is whole for the first time at this tree.** |
+| MD273 | C | **C** | *"`filterEligibleMediaCandidates` is the fail-closed distribution gate"* — the same correction, on the row whose whole subject is distribution. This row has already been `C → W → C` once (§11.3 and §12.2, over the moderation-state deny-list), so it is the one row on this surface with a precedent for the move; it does not need it a second time, because the defect is closed rather than open. |
+
+### 48.3 The open item in §47.6 that could have been a down move, and is not
+
+§47.6 leaves one defect named and unfixed: *"the post feed's client … maps `saveCount ?? save_count ?? 0`,
+`commentCount ?? comment_count ?? 0` and `savedByMe ?? false`, so an unread post count falls back to
+the cached column (or 0) and an unread flag to false on the post cards."* That is the client half of
+exactly the defect §47.3 fixed on the media surfaces, still live on the post cards.
+
+**It moves no row, and the reason is declared in this document rather than argued here.** The file is
+`travel-buddy-standalone/src/services/posts.ts`, and this census's own NOT-GRADED block says of it:
+*"the client's generic post service, cited once in §10's table for hidePost … §10.3 rests MD105 on the
+server writer, not on this client function."* A row that was never rested on a file cannot be
+falsified by it. **This is recorded rather than passed over** because "no row grades it" is the
+answer a reader deserves in place of silence, and because the day a Media row IS rested on the post
+cards' counts, this is the paragraph that says the defect was known first.
+
+### 48.4 Why this census's 34 `W` rows cannot be moved by re-reading, stated as a convention rather than a gap
+
+§1 of this document grades a complete implementation behind a flag seeded OFF as BUILT-AND-CORRECT,
+following `census-wall.md`. §9.9 and §9.10 then record that this contradicts the owner's standing
+honesty rule, and that applying the owner's rule *"would move a large fraction of the 288 — the whole
+§44 and §45 telemetry block, the §15 action rail, the §32 Compass affordances and the §4.1 shell —
+from C to W in one edit, and would make this census incomparable with the twelve siblings"*. **Not
+taken here either, and for §9.10's reason rather than for convenience**: it is a corpus-wide
+convention change, and a re-census pass is a worse place to make one than a lane was. The decision is
+still open and still the owner's. It is named here so that this section's "0 up, 0 down" is read as
+*this convention, applied consistently*, and not as *nothing to find*.
+
+### 48.5 Headline, restated from the rows
+
+`check:census-integrity` recounted after this section, not carried forward from §47.
+
+| Measure | §47 | **§48** |
+| --- | ---: | ---: |
+| Denominator | 450 | **450** |
+| BUILT-AND-CORRECT | 408 | **408** |
+| BUILT-BUT-WRONG | 34 | **34** |
+| NOT-BUILT | 8 | **8** |
+| CANNOT-VERIFY | 0 | **0** |
+| CONSTRUCTED% | 98.2 % | **98.2 %** (442 / 450) |
+| CORRECT% raw | 90.7 % | **90.7 %** (408 / 450) |
+
+### 48.6 What would turn this red
+
+- A Media row rested on `travel-buddy-standalone/src/services/posts.ts`, or on the post cards'
+  counts, without §48.3's defect being closed first: the row is born falsified.
+- A feed response's `failedSources` growing to carry anything but a table name. §47.2 cites the
+  collector that assembles it, and the list reaches the client; no MD row prohibits it today, and a
+  row that does would have to be read against what it actually sends.
+- Any of §48.1's fifteen flags flipped in production: the row stops being an activation and has to
+  be re-read as a shipped surface the same day.
+- A gate list read in one request again: MD62 and MD273 go back to being `C` over an incomplete gate.
+
