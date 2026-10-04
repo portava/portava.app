@@ -24,8 +24,6 @@ export interface MatchPreferences {
   vibe?: string | null;
   energy?: string | null;
   language?: string | null;
-  budgetMinUsd?: number | null;
-  budgetMaxUsd?: number | null;
   bookingLength?: string | null;
   safetyPrefs?: Record<string, boolean>;
   groupSize?: number;
@@ -39,9 +37,6 @@ export interface BuddyScoringData {
   city: string;
   categories: string[];
   languages: string[];
-  hourlyRateUsd: number | null;
-  halfDayRateUsd: number | null;
-  fullDayRateUsd: number | null;
   vibeTagsList: string[];
   energyType: string | null;
   buddyLevel: string;
@@ -80,7 +75,6 @@ const WEIGHTS = {
   category:          18,
   availability:      14,
   language:          12,
-  budget:            10,
   vibe:              10,
   safety:             8,
   buddyLevel:         5,
@@ -156,22 +150,14 @@ export function calculateCompatibilityScore(
   }
   breakdown.language = langScore;
 
-  // ── Budget fit ────────────────────────────────────────────────────────────
-  let budgetScore = 50;
-  if ((prefs.budgetMinUsd != null || prefs.budgetMaxUsd != null) && buddy.hourlyRateUsd != null) {
-    const rate = buddy.hourlyRateUsd;
-    const min = prefs.budgetMinUsd ?? 0;
-    const max = prefs.budgetMaxUsd ?? 9999;
-    if (rate >= min && rate <= max) {
-      budgetScore = 100;
-    } else if (rate < min) {
-      budgetScore = 60; // cheaper than expected — still OK
-    } else {
-      const overBy = (rate - max) / max;
-      budgetScore = Math.max(10, 80 - overBy * 200);
-    }
-  }
-  breakdown.budget = budgetScore;
+  // ── Budget fit: REMOVED by owner ruling, 2026-10-04 ───────────────────────
+  // "A buddy's list price must not influence calculateCompatibilityScore or the
+  // default ordering in /rent-a-buddy/match." The budget term carried weight 10
+  // of 100 and read the buddy's hourly rate against the traveller's stated
+  // range. It is gone, and so are the rate fields it read: this function is no
+  // longer GIVEN a price, which is a stronger guarantee than not reading one.
+  // Price stays visible in the response, and an existing traveller-selected
+  // price filter or sort is a separate surface — untouched here.
 
   // ── Vibe / energy match ───────────────────────────────────────────────────
   let vibeScore = 50;
@@ -215,12 +201,12 @@ export function calculateCompatibilityScore(
   breakdown.completedBookings = bkScore;
 
   // ── Preference match (booking length) ─────────────────────────────────────
+  // The half_day / full_day arms tested whether the buddy PUBLISHED a rate of
+  // that shape — a price-derived signal, removed under the same ruling. What
+  // remains depends only on the traveller's own stated length, so it is equal
+  // across every buddy in a request and cannot order them.
   let prefScore = 50;
-  if (prefs.bookingLength) {
-    if (buddy.halfDayRateUsd != null && prefs.bookingLength === 'half_day') prefScore = 100;
-    else if (buddy.fullDayRateUsd != null && prefs.bookingLength === 'full_day') prefScore = 100;
-    else if (prefs.bookingLength === 'under_2h' || prefs.bookingLength === 'custom') prefScore = 70;
-  }
+  if (prefs.bookingLength === 'under_2h' || prefs.bookingLength === 'custom') prefScore = 70;
   breakdown.prefMatch = prefScore;
 
   // ── Past positive interactions (placeholder — always 50 without DB lookup) ─

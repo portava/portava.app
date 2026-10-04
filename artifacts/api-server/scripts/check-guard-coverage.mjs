@@ -1206,6 +1206,25 @@ const EXEMPT = [
   },
 
   {
+    file: 'src/test/rentBuddyBookingWriters.test.ts',
+    // pinnedTestEnv because CI invokes it: the `test` script names this file,
+    // and the CI-surface rule requires the flag of any exemption CI runs.
+    pinnedTestEnv: true,
+    reason:
+      'Structural test behind migration 3820 (PAY-002: only the API, as service_role, writes a Rent-a-Buddy ' +
+      'booking). It is classified reachable because it names SUPABASE_SERVICE_ROLE_KEY — inside a regular ' +
+      'expression it matches against the SOURCE TEXT of src/lib/supabase.ts, to pin that the API\'s one client ' +
+      'is built from the service-role key and not from a user\'s JWT (3820\'s boundary would refuse a ' +
+      'user-scoped client\'s writes). It also greps route sources for `createClient(`. It reads files with ' +
+      'readFileSync and nothing else: it imports no Supabase module, never reads process.env, constructs no ' +
+      'client and issues no request, so no value of the variable it names can reach anything. The name was ' +
+      'first assembled from fragments so the pattern would not see it; that is evading this guard, so the ' +
+      'name is written out and the exemption is taken openly, as guardCoverageReachability.test.ts does. ' +
+      'EXEMPTION MEANS UNGUARDED, NOT SAFE — if this file ever reads the environment or builds a client, the ' +
+      'exemption is void and it must import the guard.',
+  },
+
+  {
     file: 'src/test/snapshotFreshnessGuard.test.ts',
     // pinnedTestEnv because the CI-surface rule requires it of any exemption CI
     // invokes, and because the premise is true here as well: `pnpm test` names
