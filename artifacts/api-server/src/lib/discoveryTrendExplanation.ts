@@ -468,38 +468,6 @@ const placeKey = (placeId: string) => placeId.replace(/^db\//, "").toLowerCase()
 interface EligiblePlace { id: string; category: string | null; place_type: string | null }
 
 /**
- * THE protected-zone decision of this module. Q12 (owner, 2026-10-04) —
- * "suppress contributions inside protected zones" — makes three legs ask it
- * (the place lists, Local Pulse, the emerging-Trails fold), and all three must
- * get the SAME answer. A second copy is exactly the drift lib/protectedZoneStore's
- * header warns about for this policy, and the copy that drifts LOOSE is the one
- * nobody notices. So the decision is here, once, and the legs call it.
- *
- * FALSE — withhold — when:
- *   • the policy could not be read (`zones === null`). protectedZoneStore rule 1:
- *     an unreadable policy is not an absent policy. `[]` means "asked, no
- *     zones" and permits publishing; null means "could not ask" and must not.
- *   • applyProtection does not hand the probe back unchanged — the position was
- *     SUPPRESSED, or COARSENED, or coarsened below the servable line. These
- *     wires name a thing at full precision or not at all; there is no coarse
- *     rung on a trend list or a pulse, so a coarsen decision withholds here too.
- *
- * TRUE for a row with no usable position: no zone can say where an unpositioned
- * row stands. Whether an unpositioned row may be named at all is not this
- * gate's question — the caller's own read already answered it.
- */
-export function zoneAllowsPosition(
-  id: string, title: string, lat: unknown, lng: unknown, zones: readonly ProtectedZone[] | null,
-): boolean {
-  if (typeof lat !== "number" || typeof lng !== "number") return true;
-  if (zones === null) return false;
-  if (zones.length === 0) return true;
-  const probe: MapObject = { id, kind: "place", geometry: { type: "Point", coordinates: [lng, lat] },
-    title, privacyClass: "place_level", renderingPriority: 0 };
-  return applyProtection([probe], zones).objects[0] === probe;
-}
-
-/**
  * What a list may name, for THIS viewer: an active community place whose
  * submitter the viewer has not blocked (either way) and is in good standing
  * (lib/blocks, lib/discoveryCacheEligibility — the rules GET /discovery applies),
@@ -521,9 +489,15 @@ export async function eligibleListPlaces(sc: any, viewerId: string, placeIds: re
     const zones = await loadActiveProtectedZones(sc);
     for (const r of data as Array<Record<string, unknown>>) {
       if (!submitterIsVisible(r["submitted_by"], blocked) || !submitterInGoodStanding(r["submitted_by"], inactive)) continue;
-      // The ONE zone decision (zoneAllowsPosition), unchanged in behaviour:
-      // suppressed or coarsened — or an unreadable policy over a positioned
-      // row — is not named in a list.
+      // THE zone decision, unchanged in behaviour and no longer inline:
+      // zoneAllowsPosition (declared below, beside the two Q12 legs that now
+      // share it — forward references are this file's existing style, cf.
+      // SNAPSHOT_COLUMNS). Suppressed or coarsened, or an unreadable policy
+      // over a positioned row, is not named in a list. It is deliberately NOT
+      // hoisted above this function: the census cites lines in this file by
+      // number (docs/architecture/census-discovery.md, guarded by
+      // check:doc-citations), and moving code down the file breaks citations
+      // that a branch other than this one owns.
       if (!zoneAllowsPosition(String(r["id"]), String(r["name"] ?? r["id"]), r["lat"], r["lng"], zones)) continue;
       out.set(String(r["id"]).toLowerCase(), { id: String(r["id"]), category: (r["category"] as string | null) ?? null, place_type: (r["place_type"] as string | null) ?? null });
     }
@@ -604,6 +578,38 @@ export async function personalizedTrending(sc: any, viewerId: string, destinatio
   const ordered = orderLocated(read.rows, eligible).sort((a, b) => (affinityOf(b) - affinityOf(a)) || byTrend(a, b));
   const items = ordered.map(listItem).filter((x): x is TrendListItem => x !== null).slice(0, TREND_LIST_MAX);
   return { ok: true, basis: affinities ? "affinity" : "none", body: { destination, items, unavailable: null, readingProvenance: prov } };
+}
+
+/**
+ * THE protected-zone decision of this module. Q12 (owner, 2026-10-04) —
+ * "suppress contributions inside protected zones" — makes three legs ask it
+ * (the place lists, Local Pulse, the emerging-Trails fold), and all three must
+ * get the SAME answer. A second copy is exactly the drift lib/protectedZoneStore's
+ * header warns about for this policy, and the copy that drifts LOOSE is the one
+ * nobody notices. So the decision is here, once, and the legs call it.
+ *
+ * FALSE — withhold — when:
+ *   • the policy could not be read (`zones === null`). protectedZoneStore rule 1:
+ *     an unreadable policy is not an absent policy. `[]` means "asked, no
+ *     zones" and permits publishing; null means "could not ask" and must not.
+ *   • applyProtection does not hand the probe back unchanged — the position was
+ *     SUPPRESSED, or COARSENED, or coarsened below the servable line. These
+ *     wires name a thing at full precision or not at all; there is no coarse
+ *     rung on a trend list or a pulse, so a coarsen decision withholds here too.
+ *
+ * TRUE for a row with no usable position: no zone can say where an unpositioned
+ * row stands. Whether an unpositioned row may be named at all is not this
+ * gate's question — the caller's own read already answered it.
+ */
+export function zoneAllowsPosition(
+  id: string, title: string, lat: unknown, lng: unknown, zones: readonly ProtectedZone[] | null,
+): boolean {
+  if (typeof lat !== "number" || typeof lng !== "number") return true;
+  if (zones === null) return false;
+  if (zones.length === 0) return true;
+  const probe: MapObject = { id, kind: "place", geometry: { type: "Point", coordinates: [lng, lat] },
+    title, privacyClass: "place_level", renderingPriority: 0 };
+  return applyProtection([probe], zones).objects[0] === probe;
 }
 
 /**

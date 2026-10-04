@@ -88,12 +88,6 @@ router.get("/v1/discovery/trending/explanations", asyncHandler(async (req: Reque
 // this viewer may be served (active, author policy, protected zones), and
 // carries no number (`11` §4). `11` §9's errors as above; an unapplied rule is a
 // 503 `eligibility_read_failed`, never a list served without it.
-//
-// Q12 (owner, 2026-10-04) — "at least 15 travellers AND suppress contributions
-// inside protected zones" — applies to all four, not only the ones that name a
-// place: `areas` withholds a neighbourhood a protected zone fed, and the
-// `emerging` Trails fold drops a withheld place member before counting it.
-// An unreadable zone policy on `areas` is that same 503, never an empty pulse.
 type ListAction = "places" | "for-you" | "emerging" | "areas";
 function listHandler(action: ListAction) {
   return asyncHandler(async (req: Request, res: Response) => {
@@ -121,5 +115,16 @@ router.get("/v1/discovery/trending/places", listHandler("places"));
 router.get("/v1/discovery/trending/for-you", listHandler("for-you"));
 router.get("/v1/discovery/trending/emerging", listHandler("emerging"));
 router.get("/v1/discovery/trending/areas", listHandler("areas"));
+
+// Q12 (owner, 2026-10-04) — "at least 15 travellers AND suppress contributions
+// inside protected zones" — applies to all four actions above, not only the
+// ones that name a place: `areas` withholds a neighbourhood a protected zone
+// fed, and the `emerging` Trails fold drops a withheld place member before
+// counting it. An unreadable zone policy on `areas` is that same 503
+// `eligibility_read_failed`, never a 200 with an empty pulse.
+//
+// (It sits BELOW the registrations on purpose: the census cites
+// discoveryTrending.ts by line number, guarded by check:doc-citations, and a
+// comment inserted above them moves the lines another branch's file names.)
 
 export default router;
