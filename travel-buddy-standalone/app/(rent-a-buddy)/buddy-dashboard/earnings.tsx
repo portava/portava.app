@@ -233,7 +233,7 @@ export default function BuddyEarnings() {
       {(summary?.completed.unledgeredCount ?? 0) > 0 ? (
         <View style={{ paddingHorizontal: space.lg, marginTop: space.md }}>
           <Text style={{ ...t.small, color: color.warn }} testID="earnings-unledgered-note">
-            {summary?.completed.unledgeredCount} completed booking{summary?.completed.unledgeredCount !== 1 ? 's have' : ' has'} no earnings record and {summary?.completed.unledgeredCount !== 1 ? 'are' : 'is'} not included in the figures above.
+            {summary?.completed.unledgeredCount} completed booking{summary?.completed.unledgeredCount !== 1 ? 's are' : ' is'} not yet in your ledger and {summary?.completed.unledgeredCount !== 1 ? 'are' : 'is'} not included in the figures above.
           </Text>
         </View>
       ) : null}

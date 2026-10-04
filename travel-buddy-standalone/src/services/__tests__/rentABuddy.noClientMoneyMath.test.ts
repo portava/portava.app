@@ -102,6 +102,51 @@ describe('Rent-a-Buddy screens do no money arithmetic', () => {
       '"don\'t promise that fees or deposits are non-refundable"');
   });
 
+  // Owner ruling 2026-10-04: no deposit in the first release. The offer screens
+  // still ASKED a buddy for a deposit amount, computed the cash balance as
+  // price − deposit on the device, and showed the traveller "$X deposit".
+  it('no screen asks for, computes or shows a deposit amount', () => {
+    const offenders: string[] = [];
+    for (const f of FILES) {
+      const src = code(readFileSync(f, 'utf8'));
+      if (/depositAmountUsd|depositUsd\b|deposit_usd|deposit_amount/.test(src)) offenders.push(`${rel(f)}: reads or sends a deposit amount`);
+      if (/Deposit amount|Deposit \+ cash|\bdeposit`|\} deposit\b/.test(src)) offenders.push(`${rel(f)}: deposit wording`);
+      if (/Math\.max\(\s*0\s*,\s*Number\(/.test(src)) offenders.push(`${rel(f)}: a money figure computed by subtraction`);
+      if (/Number\(\w*(?:price|total|amount)\w*[^)]*\)\s*-\s*Number\(/i.test(src)) offenders.push(`${rel(f)}: price − deposit on the device`);
+    }
+    assert.deepEqual(offenders, [],
+      'no deposit is taken in this release: the server stores every booking with a deposit of 0 ' +
+      '(rb_booking_payment_terms, behind the one switch rent_buddy_global_controls.deposits_enabled) and the screens show none');
+  });
+
+  it('the offer screens say "no deposit" and show only the cash figure the server sent', () => {
+    const create = code(readFileSync(join(RAB, 'buddy-dashboard', 'offer-create.tsx'), 'utf8'));
+    assert.match(create, /No deposit is taken\./);
+    assert.equal(/setDeposit|cashDue/.test(create), false, 'the deposit field or its arithmetic is back');
+    const submit = create.slice(create.indexOf('await submitOffer('), create.indexOf('if (!result.ok)'));
+    assert.match(submit, /proposedPriceUsd: Number\(proposedPriceUsd\)/);
+    assert.equal(/deposit|cashBalance/i.test(submit), false, 'the offer request carries a deposit or a cash split');
+
+    const offers = code(readFileSync(join(RAB, 'offers.tsx'), 'utf8'));
+    assert.match(offers, /' · No deposit'/);
+    assert.match(offers, /offer\.cashBalanceUsd\.toFixed\(2\)/);
+  });
+
+  it('the unledgered-bookings note on both earnings screens says what the ledger says', () => {
+    for (const screen of ['earnings.tsx', 'earnings-ledger.tsx']) {
+      const src = readFileSync(join(RAB, 'buddy-dashboard', screen), 'utf8');
+      assert.match(src, /not yet in your ledger and/, `${screen} does not name the completed bookings that are missing from the ledger`);
+      assert.match(src, /not included in the figures above/, screen);
+      assert.match(src, /unledgeredCount/, screen);
+    }
+  });
+
+  it('the payouts screen offers Hold only for a pending payout', () => {
+    const payouts = code(readFileSync(join(RAB, 'admin', 'payouts.tsx'), 'utf8'));
+    assert.match(payouts, /return status === 'pending' \? 'hold' : null;/,
+      'a paid payout offered Hold: paid → on_hold → released would release money that had already left');
+  });
+
   it('the two earnings screens and the checkout read their figures from the service, not from a constant', () => {
     const ledger = code(readFileSync(join(RAB, 'buddy-dashboard', 'earnings-ledger.tsx'), 'utf8'));
     assert.match(ledger, /getEarningsSummary\(\)/);

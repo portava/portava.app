@@ -45,8 +45,8 @@ type Action = 'hold' | 'release';
 /** The server's rule, mirrored only to decide which button to OFFER; the server decides. */
 function offeredAction(status: string): Action | null {
   if (status === 'on_hold') return 'release';
-  if (status === 'released') return null;
-  return 'hold';
+  // pending → on_hold → released. A payout that is paid, failed, cancelled or released cannot be held (the server answers 409).
+  return status === 'pending' ? 'hold' : null;
 }
 
 function money(v: AdminPayout['amount_usd']): string {
@@ -227,7 +227,7 @@ export default function AdminPayouts() {
                     </Pressable>
                   </View>
                 ) : (
-                  <Text style={c.meta}>No further action: a released payout cannot be held or released again.</Text>
+                  <Text style={c.meta} testID={`payout-${item.id}-no-action`}>{item.status === 'released' ? 'No further action: a released payout cannot be held or released again.' : 'No action here: only a pending payout can be held, and only a held one released.'}</Text>
                 )}
               </View>
             );

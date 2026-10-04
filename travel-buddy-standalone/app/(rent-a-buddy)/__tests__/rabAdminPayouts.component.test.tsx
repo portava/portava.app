@@ -123,6 +123,25 @@ describe('payouts queue', () => {
     expect(mockRelease).not.toHaveBeenCalled();
   });
 
+  // paid → on_hold → released would "release" money that had already left. The
+  // server refuses the hold (409); the screen does not offer it.
+  it('P8 only a PENDING payout offers Hold: a paid, failed or cancelled one offers no action', async () => {
+    const PAID = { ...base, id: 'po-paid', amount_usd: 80, status: 'paid' };
+    const FAILED = { ...base, id: 'po-failed', amount_usd: 15, status: 'failed' };
+    const CANCELLED = { ...base, id: 'po-cancelled', amount_usd: 9, status: 'cancelled' };
+    mockList.mockResolvedValue(ok([PENDING, PAID, FAILED, CANCELLED]));
+    const { findByTestId, getByTestId, queryByTestId } = await render(<AdminPayouts />);
+
+    expect(await findByTestId('payout-hold-po-pending', {}, { timeout: 5000 })).toBeTruthy();
+    for (const id of ['po-paid', 'po-failed', 'po-cancelled']) {
+      expect(getByTestId(`payout-${id}`)).toBeTruthy();
+      expect(queryByTestId(`payout-hold-${id}`)).toBeNull();
+      expect(queryByTestId(`payout-release-${id}`)).toBeNull();
+      expect(getByTestId(`payout-${id}-no-action`).props.children).toBe('No action here: only a pending payout can be held, and only a held one released.');
+    }
+    expect(mockHold).not.toHaveBeenCalled();
+  });
+
   it('P5 a held payout offers Release (with its reason); a released one offers no action', async () => {
     mockList.mockResolvedValue(ok([HELD, RELEASED]));
     mockRelease.mockResolvedValue({ ok: true });

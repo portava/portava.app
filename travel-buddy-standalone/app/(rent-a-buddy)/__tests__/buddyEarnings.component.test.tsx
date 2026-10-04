@@ -206,7 +206,7 @@ describe('earnings ledger screen', () => {
     mockLedger.mockResolvedValue(okLedger([entry('bk-1')]));
     const { findByTestId, getByText } = await render(<EarningsLedger />);
     expect(await findByTestId('earnings-unledgered-notice', {}, { timeout: 5000 })).toBeTruthy();
-    expect(getByText(/3 completed bookings have no earnings record and are not included/)).toBeTruthy();
+    expect(getByText(/3 completed bookings are not yet in your ledger and are not included in the figures above/)).toBeTruthy();
   });
 });
 

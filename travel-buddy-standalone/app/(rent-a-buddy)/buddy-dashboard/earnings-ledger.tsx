@@ -98,7 +98,7 @@ function SummaryCard({ summary }: { summary: EarningsSummary }) {
         <View style={sum.notice} testID="earnings-unledgered-notice">
           <AlertCircle size={13} color={color.warn} />
           <Text style={sum.noticeText}>
-            {unledgered} completed booking{unledgered !== 1 ? 's have' : ' has'} no earnings record and {unledgered !== 1 ? 'are' : 'is'} not included in the figures above.
+            {unledgered} completed booking{unledgered !== 1 ? 's are' : ' is'} not yet in your ledger and {unledgered !== 1 ? 'are' : 'is'} not included in the figures above.
           </Text>
         </View>
       ) : null}

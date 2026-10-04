@@ -553,7 +553,7 @@ export default function RentABuddyCheckout() {
           <Info size={13} color={color.deep} />
           {commission.status === 'ready' ? (
             <Text style={styles.paymentNoticeText} testID="checkout-commission-rate">
-              Platform commission: {commission.quote.platformFeePercent}% of the service price, taken from your Buddy's earnings — nothing is added to the price you agree. No commission on tips. No deposit.
+              Platform commission: {commission.quote.platformFeePercent}% of the service price, taken from your Buddy's earnings — nothing is added to the price you agree. No commission on tips.{commission.quote.depositRequired ? '' : ' No deposit.'}
             </Text>
           ) : commission.status === 'loading' ? (
             <Text style={styles.paymentNoticeText}>Loading the platform commission…</Text>

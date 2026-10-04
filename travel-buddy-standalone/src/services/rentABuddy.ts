@@ -5,7 +5,7 @@
  * Pattern: same as tripCrewLocation.ts / hiddenGems.ts —
  * EXPO_PUBLIC_API_BASE_URL + Supabase Bearer token via authHeaders().
  */
-import { freshToken } from './adminApi.ts';
+import { freshToken } from './adminApi.ts'; import { createAttemptRegistry } from './rentABuddyCreation.ts';
 import { cityCoordSpread } from '../lib/cityCoords.ts';
 
 // Booking-refusal classification + copy. Defined in their own import-free module
@@ -250,7 +250,7 @@ async function authHeaders(): Promise<Record<string, string>> {
   };
 }
 
-type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string; /** The server's `gate` field: which gate refused (see rentABuddyGates.ts). */ gate?: string };
+type ApiResult<T> = { ok: true; data: T } | { ok: false; error: string; /** The HTTP status, when the server answered at all (absent = no answer). */ status?: number; /** The server's `gate` field: which gate refused (see rentABuddyGates.ts). */ gate?: string };
 
 async function apiFetch<T>(
   path: string,
@@ -264,7 +264,7 @@ async function apiFetch<T>(
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      return { ok: false, error: (body as any)?.error ?? `HTTP ${res.status}`, ...(typeof (body as any)?.gate === 'string' ? { gate: (body as any).gate as string } : {}) };
+      return { ok: false, error: (body as any)?.error ?? `HTTP ${res.status}`, status: res.status, ...(typeof (body as any)?.gate === 'string' ? { gate: (body as any).gate as string } : {}) };
     }
     const data = await res.json() as T;
     return { ok: true, data };
@@ -353,10 +353,10 @@ export async function createBooking(payload: {
   addonIds?: string[];
   acceptSafety?: boolean;
 }): Promise<ApiResult<{ booking: BuddyBooking | null }>> {
-  return apiFetch('/api/rent-a-buddy/bookings', {
-    method: 'POST',
+  return creationAttempts.send(`book:${payload.buddyId}`, payload, (headers) => apiFetch('/api/rent-a-buddy/bookings', { // one Idempotency-Key per attempt: a retry returns the ORIGINAL booking
+    method: 'POST', headers,
     body: JSON.stringify(payload),
-  });
+  }));
 }
 
 export async function listMyBookings(): Promise<ApiResult<{ bookings: BuddyBooking[] }>> {
@@ -1070,7 +1070,7 @@ export async function getRequestOffers(requestId: string): Promise<ApiResult<{ o
 }
 
 export async function submitOffer(requestId: string, payload: {
-  proposedPriceUsd: number; depositAmountUsd?: number; cashBalanceDue?: number;
+  proposedPriceUsd: number; // no deposit and no cash split: the server stores the database's terms, and no deposit is taken (owner ruling 2026-10-04)
   proposedStart?: string; proposedEnd?: string; meetupLocation?: string; message?: string;
   includedServices?: string[]; addonsOffered?: unknown[]; paymentMode?: string; expiresInHours?: number;
 }): Promise<ApiResult<{ offer: BuddyOffer }>> {
@@ -1082,7 +1082,7 @@ export async function getMyOffers(): Promise<ApiResult<{ offers: BuddyOffer[] }>
 }
 
 export async function acceptOffer(offerId: string): Promise<ApiResult<{ bookingId: string }>> {
-  return apiFetch(`/api/rent-a-buddy/offers/${offerId}/accept`, { method: 'POST' });
+  return creationAttempts.send(`offer:${offerId}`, null, (headers) => apiFetch(`/api/rent-a-buddy/offers/${offerId}/accept`, { method: 'POST', headers }));
 }
 
 export async function declineOffer(offerId: string): Promise<ApiResult<{ ok: boolean }>> {
@@ -1123,7 +1123,7 @@ export async function getPackage(packageId: string): Promise<ApiResult<{ pkg: Ma
 export async function bookPackage(packageId: string, payload: {
   groupSize?: number; bookingDate?: string; notes?: string; paymentMode?: string;
 }): Promise<ApiResult<{ bookingId: string; booking: BuddyBooking }>> {
-  return apiFetch(`/api/rent-a-buddy/packages/${packageId}/book`, { method: 'POST', body: JSON.stringify(payload) });
+  return creationAttempts.send(`package:${packageId}`, payload, (headers) => apiFetch(`/api/rent-a-buddy/packages/${packageId}/book`, { method: 'POST', headers, body: JSON.stringify(payload) }));
 }
 
 // ── Marketplace — Add-ons & Tips ──────────────────────────────────────────────
@@ -1729,10 +1729,10 @@ export async function rebookBooking(
     groupSize?: number;
   },
 ): Promise<ApiResult<{ bookingId: string; booking: Record<string, unknown> }>> {
-  return apiFetch(`/api/buddy-bookings/${originalBookingId}/rebook`, {
-    method: 'POST',
+  return creationAttempts.send(`rebook:${originalBookingId}`, payload, (headers) => apiFetch(`/api/buddy-bookings/${originalBookingId}/rebook`, {
+    method: 'POST', headers,
     body: JSON.stringify(payload),
-  });
+  }));
 }
 
 // ── Testing-mode wiring (lane tm-rab, WP-01) ──────────────────────────────────
@@ -1864,3 +1864,13 @@ export async function getCommissionQuote(buddyId: string, category?: string | nu
   const qs = category ? `?category=${encodeURIComponent(category)}` : '';
   return apiFetch(`/api/rent-a-buddy/buddies/${encodeURIComponent(buddyId)}/commission${qs}`);
 }
+
+// ── Idempotent booking creation (payments PAY-T12) ────────────────────────────
+//
+// Appended at the foot, like the block above. The four functions that CREATE a
+// booking — createBooking, rebookBooking, acceptOffer, bookPackage — send their
+// request through this registry, which gives each ATTEMPT one `Idempotency-Key`
+// and keeps it until the server answers definitely (see rentABuddyCreation.ts).
+// A request whose answer was lost can therefore be sent again without making a
+// second booking: the server returns the original.
+const creationAttempts = createAttemptRegistry();

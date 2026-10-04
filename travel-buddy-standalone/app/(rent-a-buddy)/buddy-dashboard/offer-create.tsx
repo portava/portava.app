@@ -19,9 +19,13 @@ const EXPIRY_OPTIONS = [
   { label: '24 hours', value: 24 },
 ];
 
+// How the traveller pays. No deposit is taken in this release (owner ruling
+// 2026-10-04), so the second mode — `deposit_plus_cash` on the server — is
+// simply "the price, in cash, at the meetup". The server stores the terms; this
+// screen neither asks for a deposit nor computes a cash balance.
 const PAYMENT_MODES = [
   { label: 'Full in-app', value: 'full_in_app' },
-  { label: 'Deposit + cash', value: 'deposit_plus_cash' },
+  { label: 'Cash at meetup', value: 'deposit_plus_cash' },
 ];
 
 export default function OfferCreate() {
@@ -33,7 +37,6 @@ export default function OfferCreate() {
   const [submitting, setSubmitting] = useState(false);
 
   const [proposedPriceUsd, setProposedPriceUsd] = useState('');
-  const [depositAmountUsd, setDepositAmountUsd] = useState('');
   const [meetupLocation, setMeetupLocation] = useState('');
   const [message, setMessage] = useState('');
   const [includedServices, setIncludedServices] = useState('');
@@ -77,10 +80,6 @@ export default function OfferCreate() {
     try {
       const result = await submitOffer(requestId, {
         proposedPriceUsd: Number(proposedPriceUsd),
-        depositAmountUsd: paymentMode === 'deposit_plus_cash' ? Number(depositAmountUsd) || 0 : undefined,
-        cashBalanceDue: paymentMode === 'deposit_plus_cash'
-          ? Math.max(0, Number(proposedPriceUsd) - Number(depositAmountUsd || 0))
-          : 0,
         meetupLocation: meetupLocation.trim() || undefined,
         message: message.trim() || undefined,
         includedServices: includedServices.trim() ? includedServices.split(',').map((sv) => sv.trim()) : [],
@@ -95,13 +94,9 @@ export default function OfferCreate() {
       submitLockRef.current = false;
       setSubmitting(false);
     }
-  }, [requestId, proposedPriceUsd, depositAmountUsd, meetupLocation, message, includedServices, paymentMode, expiresInHours]);
+  }, [requestId, proposedPriceUsd, meetupLocation, message, includedServices, paymentMode, expiresInHours]);
 
   if (loading) return <TravelLoadingState label="Loading request…" />;
-
-  const cashDue = paymentMode === 'deposit_plus_cash'
-    ? Math.max(0, Number(proposedPriceUsd || 0) - Number(depositAmountUsd || 0))
-    : 0;
 
   return (
     <KeyboardSafeScrollView style={[s.root, { paddingTop: insets.top }]}>
@@ -152,25 +147,11 @@ export default function OfferCreate() {
           ))}
         </View>
 
-        {paymentMode === 'deposit_plus_cash' ? (
-          <>
-            <Text style={s.label}>Deposit amount</Text>
-            <View style={s.inputRow}>
-              <Text style={s.currencySign}>$</Text>
-              <TextInput
-                style={[s.input, s.inputFlex]}
-                placeholder="e.g. 20"
-                placeholderTextColor={color.mute}
-                keyboardType="decimal-pad"
-                value={depositAmountUsd}
-                onChangeText={setDepositAmountUsd}
-              />
-            </View>
-            {cashDue > 0 ? (
-              <Text style={s.calcNote}>Cash balance due at meetup: ${cashDue.toFixed(2)}</Text>
-            ) : null}
-          </>
-        ) : null}
+        <Text style={s.calcNote} testID="offer-payment-note">
+          {paymentMode === 'deposit_plus_cash'
+            ? 'No deposit is taken. The traveler pays your price in cash at the meetup.'
+            : 'No deposit is taken, and nothing is charged through the app yet.'}
+        </Text>
 
         <Text style={s.label}>Meetup location</Text>
         <TextInput
