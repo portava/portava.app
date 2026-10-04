@@ -19,6 +19,12 @@
  *                                              "production keys start with
  *                                              persona_production and sandbox
  *                                              keys start with persona_sandbox")
+ *   Sumsub   sbx:                           -> test
+ *            prd:                           -> live
+ *                                              (app-token environment prefix;
+ *                                              see the note on PREFIXES — an
+ *                                              unmatched prefix is `unknown`
+ *                                              and `unknown` is always refused)
  *   anything else                           -> unknown
  *
  * `test` is always allowed. `live` is refused unless PAYMENTS_ALLOW_LIVE is the
@@ -37,7 +43,7 @@
  * must call `assertProviderKeyAllowed` the same way.
  */
 
-export type KeyedProvider = "stripe" | "persona";
+export type KeyedProvider = "stripe" | "persona" | "sumsub";
 export type ProviderKeyMode = "test" | "live" | "unknown";
 export type ProviderKeyRefusal = "key_absent" | "live_key_not_allowed" | "unknown_key_prefix";
 
@@ -53,16 +59,33 @@ export interface ProviderKeyDecision {
 const PREFIXES: Record<KeyedProvider, { test: readonly string[]; live: readonly string[] }> = {
   stripe: { test: ["sk_test_", "rk_test_"], live: ["sk_live_", "rk_live_"] },
   persona: { test: ["persona_sandbox_"], live: ["persona_production_"] },
+  // Sumsub app tokens carry an environment prefix: `sbx:` for the sandbox app,
+  // `prd:` for the production app (docs.sumsub.com, "App Tokens"). This mapping
+  // is the one part of the Sumsub integration that was read off the vendor's
+  // documentation and could not be checked against a real token, because no
+  // credential was added by the change that wrote the adapter.
+  //
+  // THE FAILURE DIRECTION IS THEREFORE THE POINT. If the real format differs,
+  // the prefix matches neither list, `classifyProviderKey` answers `unknown`,
+  // and `unknown` is ALWAYS refused — PAYMENTS_ALLOW_LIVE does not rescue it.
+  // Being wrong here costs a refused call and a clear error, never a live
+  // government-ID check billed against a production app.
+  sumsub: { test: ["sbx:"], live: ["prd:"] },
 };
 
 /** The env var holding each identity provider's secret key. */
 export const IDENTITY_KEY_ENV: Record<KeyedProvider, string> = {
   stripe: "STRIPE_IDENTITY_SECRET_KEY",
   persona: "PERSONA_API_KEY",
+  // Sumsub splits the credential in two: the APP TOKEN identifies the app and
+  // carries the environment prefix this module classifies, and SUMSUB_SECRET_KEY
+  // is the HMAC key that signs each request. The token is what gets classified
+  // because it is the half that says which environment is being addressed.
+  sumsub: "SUMSUB_APP_TOKEN",
 };
 
 export function isKeyedProvider(name: string): name is KeyedProvider {
-  return name === "stripe" || name === "persona";
+  return name === "stripe" || name === "persona" || name === "sumsub";
 }
 
 /** Classify a key by prefix. Case-sensitive and whitespace-sensitive on purpose. */

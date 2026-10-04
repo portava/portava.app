@@ -47,8 +47,22 @@
  * signed webhook received and verified -> the `identity_verifications` row
  * reaches `verified` -> `profiles.verification_level` is set. That run is what
  * proves the payload mapping, which is the half of each adapter no test in this
- * repository can reach. Both adapters are implemented and neither has been run
- * against its vendor, so both stay out.
+ * repository can reach. All three adapters are implemented and none has been
+ * run against its vendor, so all three stay out.
+ *
+ * ── THE ONE LINE THAT ACTIVATES SUMSUB ──────────────────────────────────────
+ * `sumsub` is now the owner's PRIMARY provider and its adapter is written,
+ * tested and unreachable. The single change that makes it reachable is this
+ * set:
+ *
+ *     const IMPLEMENTED_PROVIDERS = new Set<string>(["mock", "sumsub"]);
+ *
+ * Nothing else. With that one edit (plus IDENTITY_PROVIDER=sumsub and the
+ * sandbox credentials in the environment) `identityProviderStatus()` reports
+ * operational and the Rent-a-Buddy booking gate re-opens — subject to the
+ * MARKET gate, which is a second, independent refusal: see
+ * `marketCoverage.ts`. Activation was explicitly out of scope for the change
+ * that wrote the adapter, and it still needs the sandbox transcript above.
  */
 const IMPLEMENTED_PROVIDERS = new Set<string>(["mock"]);
 
@@ -56,6 +70,7 @@ const IMPLEMENTED_PROVIDERS = new Set<string>(["mock"]);
 const REQUIRED_ENV: Record<string, string> = {
   stripe: "STRIPE_IDENTITY_SECRET_KEY",
   persona: "PERSONA_API_KEY",
+  sumsub: "SUMSUB_APP_TOKEN",
 };
 
 export interface IdentityProviderStatus {
@@ -80,7 +95,11 @@ function identityProviderStatusBeforeKeyMode(
   const isProduction = !mockIdentityPermitted(env); // production, a Replit deployment, or no local-run signal
 
   if (!IMPLEMENTED_PROVIDERS.has(provider)) {
-    const known = provider === "stripe" || provider === "persona";
+    // A provider the factory CAN return but IMPLEMENTED_PROVIDERS excludes is
+    // "known": the operator must be told what is missing (a sandbox transcript),
+    // not sent looking for a typo in IDENTITY_PROVIDER. Keep this in step with
+    // the factory's branches in providers.ts.
+    const known = provider === "stripe" || provider === "persona" || provider === "sumsub";
     return {
       operational: false,
       provider,
