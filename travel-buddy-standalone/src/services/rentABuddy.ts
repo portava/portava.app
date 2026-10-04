@@ -906,14 +906,14 @@ export interface WaitlistEntry {
 
 export interface EarningsSummary {
   isEstimated: boolean;
-  warning: string;
+  warning: string | null;
   today: { bookingCount: number; bookings: BuddyBooking[] };
   upcoming: { bookingCount: number; bookings: BuddyBooking[] };
   completed: {
-    count: number; totalUsd: number; depositCollected: number;
-    cashBalanceDue: number; cashBalanceConfirmed: number; inAppAmountCollected: number;
+    count: number; totalUsd: number; /** @deprecated the same figure as inAppAmountCollected: what was COLLECTED (0 today), never the booking's deposit term. */ depositCollected: number;
+    cashBalanceDue: number; cashBalanceConfirmed: number; inAppAmountCollected: number; /** Completed bookings with no ledger entries: counted, not priced. */ unledgeredCount?: number;
   };
-  tips: { total: number; count: number };
+  tips: { total: number; count: number }; /** The commission on this buddy's NEXT booking and where it is configured. */ platformFeePercent?: number; platformFeeSource?: CommissionSource; tipCommissionPercent?: number;
   estimatedPlatformFeeUsd: number;
   estimatedBuddyEarningsUsd: number;
   statusBreakdown: { completed: number; disputed: number; cancelled: number };
@@ -943,7 +943,7 @@ export interface LedgerEntry {
   inAppAmountCollected: number;
   cashBalanceDue: number;
   cashBalanceConfirmed: boolean;
-  isEstimated: boolean;
+  isEstimated: boolean; /** The booking's earning entries were reversed (cancelled, declined, expired, or a dispute upheld against the buddy). */ reversed?: boolean;
   createdAt: string;
 }
 
@@ -1148,8 +1148,8 @@ export async function attachAddonsToBooking(bookingId: string, addonIds: string[
   return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/addons`, { method: 'POST', body: JSON.stringify({ addonIds }) });
 }
 
-export async function leaveTip(bookingId: string, amountUsd: number, note?: string): Promise<ApiResult<{ ok: boolean }>> {
-  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/tip`, { method: 'POST', body: JSON.stringify({ amountUsd, note }) });
+export async function leaveTip(bookingId: string, amountUsd: number, note?: string, idempotencyKey?: string): Promise<ApiResult<{ ok: boolean; totalTipUsd?: number; replayed?: boolean }>> {
+  return apiFetch(`/api/rent-a-buddy/bookings/${bookingId}/tip`, { method: 'POST', body: JSON.stringify({ amountUsd, note, ...(idempotencyKey ? { idempotencyKey } : {}) }) });
 }
 
 // ── Marketplace — Saved & Waitlist ────────────────────────────────────────────
@@ -1835,4 +1835,32 @@ export async function listMyBuddySessions(): Promise<ApiResult<BuddyBooking[]>> 
   out.sort((a, b) =>
     `${a.bookingDate} ${a.startTime ?? ''}`.localeCompare(`${b.bookingDate} ${b.startTime ?? ''}`));
   return { ok: true, data: out };
+}
+
+// ── Commission, shown before checkout (payments PAY-T12) ──────────────────────
+//
+// Appended at the foot: docs cite this file by line, so nothing above moves.
+
+/** Where a commission rate is configured (migration 3824's resolver). */
+export type CommissionSource = 'launch_control' | 'fee_schedule' | 'owner_default';
+
+/**
+ * GET /api/rent-a-buddy/buddies/:buddyId/commission — the platform commission
+ * that would apply to a booking with this buddy, read from the same database
+ * function that prices the booking's ledger. Nothing here is computed in the
+ * app: the screen shows the percentage it is given, or says it could not load.
+ */
+export interface CommissionQuote {
+  platformFeePercent: number;
+  feeSource: CommissionSource;
+  basis: 'pre_tax_service_price';
+  deductedFrom: 'buddy_earnings';
+  tipCommissionPercent: number;
+  depositRequired: boolean;
+  chargedInApp: boolean;
+}
+
+export async function getCommissionQuote(buddyId: string, category?: string | null): Promise<ApiResult<CommissionQuote>> {
+  const qs = category ? `?category=${encodeURIComponent(category)}` : '';
+  return apiFetch(`/api/rent-a-buddy/buddies/${encodeURIComponent(buddyId)}/commission${qs}`);
 }

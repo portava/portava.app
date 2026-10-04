@@ -6,7 +6,7 @@ import React from 'react';
 import { View, Text, ScrollView, Pressable, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Users, BookOpen, ShieldAlert, BarChart2, ClipboardList, Globe, Store, Star, LifeBuoy, AlertTriangle, SlidersHorizontal } from 'lucide-react-native';
+import { ArrowLeft, Users, BookOpen, ShieldAlert, BarChart2, ClipboardList, Globe, Store, Star, LifeBuoy, AlertTriangle, SlidersHorizontal, Wallet } from 'lucide-react-native';
 import { color, space, radius, type as t, shadow } from '../../../src/theme/tokens';
 import { useRentABuddyFlag } from '../../../src/hooks/useRentABuddyFlag';
 
@@ -73,6 +73,13 @@ const SECTIONS = [
     sub: 'Buddies on watch / limited / under review; verification overrides',
     route: '/(rent-a-buddy)/admin/risk',
     accent: color.signal,
+  },
+  {
+    icon: Wallet,
+    label: 'Payouts',
+    sub: 'Payout records by state; hold or release with a reason. No real money moves',
+    route: '/(rent-a-buddy)/admin/payouts',
+    accent: color.deep,
   },
   {
     icon: BarChart2,

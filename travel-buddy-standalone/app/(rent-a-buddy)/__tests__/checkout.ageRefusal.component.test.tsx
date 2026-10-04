@@ -62,16 +62,20 @@ jest.mock('../../../src/components/selectors/GlobalCalendarPicker', () => ({
   },
 }));
 
-// NOTE: intentional stub — the screen's three network calls. The refusal
+// NOTE: intentional stub — the screen's network calls. The refusal
 // classifier is the shipped one, so the class under test is the real class.
+// (`getCommissionQuote` joined them with payments PAY-T12: the checkout shows
+// the platform commission before a request can be sent, so the form here needs
+// a quote to be loaded; checkout.commission.component.test.tsx is its own suite.)
 jest.mock('../../../src/services/rentABuddy', () => ({
   getBuddyProfile: jest.fn(),
   getBuddyBlockedDates: jest.fn(),
+  getCommissionQuote: jest.fn(),
   createBooking: jest.fn(),
   classifyBookingRefusal: jest.requireActual('../../../src/services/rentABuddyBookingErrors').classifyBookingRefusal,
 }));
 
-import { getBuddyProfile, getBuddyBlockedDates, createBooking } from '../../../src/services/rentABuddy';
+import { getBuddyProfile, getBuddyBlockedDates, getCommissionQuote, createBooking } from '../../../src/services/rentABuddy';
 import RentABuddyCheckout from '../checkout';
 
 const BUDDY = {
@@ -88,6 +92,8 @@ async function fillAndBook() {
   await fireEvent.press(screen.getByTestId('pick-date'));
   await fireEvent.changeText(screen.getByPlaceholderText('e.g. Louvre main entrance, near the pyramid'), 'Zócalo, by the flagpole');
   await fireEvent.press(screen.getByText(/I confirm this booking is for cultural, social, or practical travel support only/));
+  // The request cannot be sent until the commission has been shown (PAY-T12).
+  await waitFor(() => expect(screen.getByTestId('checkout-commission-rate')).toBeTruthy());
   await fireEvent.press(screen.getByTestId('checkout-confirm-btn'));
   await waitFor(() => expect(createBooking).toHaveBeenCalledTimes(1));
 }
@@ -100,6 +106,13 @@ beforeEach(async () => {
     data: { buddy: BUDDY, packages: [], addons: [], availability: [], reviews: [], savedByMe: false },
   });
   (getBuddyBlockedDates as jest.Mock).mockResolvedValue({ ok: true, data: { blocked: [] } });
+  (getCommissionQuote as jest.Mock).mockResolvedValue({
+    ok: true,
+    data: {
+      platformFeePercent: 10, feeSource: 'owner_default', basis: 'pre_tax_service_price', deductedFrom: 'buddy_earnings',
+      tipCommissionPercent: 0, depositRequired: false, chargedInApp: false,
+    },
+  });
 });
 
 afterEach(() => {

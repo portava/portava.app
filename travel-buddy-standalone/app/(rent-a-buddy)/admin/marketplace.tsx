@@ -109,7 +109,7 @@ export default function AdminMarketplace() {
 
         <View style={s.revenueRow}>
           <View style={s.revCell}>
-            <Text style={s.revLbl}>Deposit collected</Text>
+            <Text style={s.revLbl}>In-app share of bookings (not collected)</Text>
             <Text style={s.revVal}>${(data?.revenue?.deposit ?? 0).toFixed(2)}</Text>
           </View>
           <View style={s.revCell}>

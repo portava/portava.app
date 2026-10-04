@@ -12,7 +12,7 @@ import { color, space, radius, type as t, shadow, layout, avatar } from '../../s
 import { TravelLoadingState, TravelErrorState } from '../../src/components/primitives';
 import { Stamp } from '../../src/components/ui';
 import {
-  getBuddyProfile, createBooking, getBuddyBlockedDates,
+  getBuddyProfile, createBooking, getBuddyBlockedDates, getCommissionQuote, type CommissionQuote,
   classifyBookingRefusal,
   type BuddyProfile, type BuddyPackage, type BuddyCategory, type BuddyBlockedRange,
   type BookingRefusalAction,
@@ -25,7 +25,7 @@ import { GlobalTimePicker } from '../../src/components/selectors/GlobalTimePicke
 import { DurationPicker, type DurationOption } from '../../src/components/selectors/DurationPicker';
 import {
   fromISODate, fromHHmm, formatDisplayDate, formatDisplayTime, toISODate,
-} from '../../src/lib/dateTime/formatters';
+} from '../../src/lib/dateTime/formatters'; import { bookingErrorCopy } from '../../src/services/rentABuddyBookingErrors';
 
 type AsyncStorageStub = { setItem(k: string, v: string): Promise<void>; getItem(k: string): Promise<string | null> };
 const getStorage = (): AsyncStorageStub | null => {
@@ -135,7 +135,7 @@ function PolicyAccordion() {
       </View>
       {open && (
         <Text style={pol.body}>
-          Cancel up to 24 hours before your booking start time for a full deposit refund. Cancellations within 24 hours forfeit the deposit. Buddy no-shows are fully refunded.
+          No deposit is taken and nothing is charged through the app, so there is no cancellation fee and nothing to forfeit. You can cancel before the session begins. Payment is agreed directly with your Buddy; the app holds no money and cannot refund what you pay them yourself. If your Buddy cancels or doesn't show up, or you have a safety concern, report it from the booking and support will follow up.
         </Text>
       )}
     </Pressable>
@@ -184,7 +184,7 @@ export default function RentABuddyCheckout() {
   // must be able to press it again without rebuilding the whole form.
   // census-trust TV-2a.
   const [actionableRefusal, setActionableRefusal] =
-    useState<{ body: string; action: BookingRefusalAction } | null>(null); const [ineligibleReason, setIneligibleReason] = useState<string | null>(null); // census-trust §31 (TV-5b): an age refusal, persistent, no retry
+    useState<{ body: string; action: BookingRefusalAction } | null>(null); const [ineligibleReason, setIneligibleReason] = useState<string | null>(null); const commission = useCommissionQuote(buddyId, selectedPackage ? selectedPackage.category : category); // census-trust §31 (TV-5b): an age refusal, persistent, no retry · payments PAY-T12: the commission, shown before checkout
 
   const location = zoneIndex != null ? PUBLIC_ZONES[zoneIndex] : customZone;
 
@@ -280,7 +280,7 @@ export default function RentABuddyCheckout() {
   };
 
   const handleBook = async () => {
-    if (!buddy || !policyAccepted || unavailableReason) return;
+    if (!buddy || !policyAccepted || unavailableReason || commission.status !== 'ready') return;
     if (!date.trim()) { Alert.alert('Missing date', 'Please select a booking date.'); return; }
     if (blockedDates.includes(date)) {
       Alert.alert('Date unavailable', 'This Buddy is not available on that date. Please pick another date.');
@@ -543,6 +543,37 @@ export default function RentABuddyCheckout() {
           </Text>
         </View>
 
+        {/* Platform commission — shown BEFORE the request is sent (owner ruling
+            2026-10-04). The percentage is the one the server resolves from
+            configuration for this buddy, market and category, with the same
+            database function that prices the booking's ledger; nothing is
+            calculated here. If it cannot be loaded the screen says so and the
+            request cannot be sent — it does not show a guessed rate. */}
+        <View style={[styles.paymentNotice, { marginHorizontal: space.lg, marginTop: space.md }]} testID="checkout-commission">
+          <Info size={13} color={color.deep} />
+          {commission.status === 'ready' ? (
+            <Text style={styles.paymentNoticeText} testID="checkout-commission-rate">
+              Platform commission: {commission.quote.platformFeePercent}% of the service price, taken from your Buddy's earnings — nothing is added to the price you agree. No commission on tips. No deposit.
+            </Text>
+          ) : commission.status === 'loading' ? (
+            <Text style={styles.paymentNoticeText}>Loading the platform commission…</Text>
+          ) : (
+            <View style={{ flex: 1 }}>
+              <Text style={styles.paymentNoticeText} testID="checkout-commission-error">
+                {bookingErrorCopy(commission.error, "The platform commission couldn't be loaded, so a booking can't be requested yet.")}
+              </Text>
+              <Pressable
+                onPress={commission.retry}
+                accessibilityRole="button"
+                testID="checkout-commission-retry"
+                style={({ pressed }) => [styles.commissionRetry, pressed && { opacity: layout.pressedOpacity }]}
+              >
+                <Text style={styles.commissionRetryText}>Try again</Text>
+              </Pressable>
+            </View>
+          )}
+        </View>
+
         {/* Notice */}
         <View style={styles.confirmNotice}>
           <AlertTriangle size={14} color={color.warn} />
@@ -589,11 +620,11 @@ export default function RentABuddyCheckout() {
         <Pressable
           style={({ pressed }) => [
             styles.confirmBtn,
-            (!policyAccepted || submitting || !!unavailableReason) && styles.confirmBtnDisabled,
+            (!policyAccepted || submitting || !!unavailableReason || commission.status !== 'ready') && styles.confirmBtnDisabled,
             pressed && { opacity: layout.pressedOpacity },
           ]}
           onPress={handleBook}
-          disabled={!policyAccepted || submitting || !!unavailableReason}
+          disabled={!policyAccepted || submitting || !!unavailableReason || commission.status !== 'ready'}
           testID="checkout-confirm-btn"
         >
           <CalendarCheck size={16} color={color.onInk} />
@@ -745,6 +776,8 @@ const styles = StyleSheet.create({
     padding: space.md, borderWidth: 1, borderColor: color.deep,
   },
   paymentNoticeText: { ...t.small, color: color.deep, flex: 1, lineHeight: 18 },
+  commissionRetry: { alignSelf: 'flex-start', marginTop: space.xs, paddingVertical: space.xs, paddingHorizontal: space.md, borderRadius: radius.md, borderWidth: 1, borderColor: color.deep },
+  commissionRetryText: { ...t.small, color: color.deep, fontWeight: '700' },
   confirmNotice: {
     flexDirection: 'row', alignItems: 'flex-start', gap: space.sm,
     marginHorizontal: space.lg, marginTop: space.md,
@@ -816,3 +849,31 @@ const pol = StyleSheet.create({
   title: { ...t.bodyStrong, color: color.ink, flex: 1 },
   body: { ...t.body, color: color.mute, marginTop: space.sm, lineHeight: 20 },
 });
+
+// ── The commission quote (payments PAY-T12) ───────────────────────────────────
+//
+// At the foot so the lines above keep their numbers (docs cite this file by
+// line). Three states and no default: `loading`, `ready` with the server's
+// figure, or `failed` with the reason — never a percentage this file made up.
+
+type CommissionState =
+  | { status: 'loading' }
+  | { status: 'ready'; quote: CommissionQuote }
+  | { status: 'failed'; error: string };
+
+function useCommissionQuote(buddyId: string, category: string | null): CommissionState & { retry: () => void } {
+  const [state, setState] = useState<CommissionState>({ status: 'loading' });
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (!buddyId) return;
+    let alive = true;
+    setState({ status: 'loading' });
+    getCommissionQuote(buddyId, category).then((res) => {
+      if (!alive) return;
+      setState(res.ok ? { status: 'ready', quote: res.data } : { status: 'failed', error: res.error });
+    });
+    return () => { alive = false; };
+  }, [buddyId, category, attempt]);
+  const retry = useCallback(() => setAttempt((n) => n + 1), []);
+  return { ...state, retry };
+}

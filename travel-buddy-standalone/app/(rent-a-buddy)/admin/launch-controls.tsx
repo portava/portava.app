@@ -11,8 +11,16 @@
  * so up front, because adding the first control closes every other location.
  *
  * Payment fields on the row (full_payment_required, min_deposit_pct) are not
- * edited here: no payment is taken through the app, and payment policy waits
- * on an owner decision.
+ * edited here: no payment is taken through the app, and the owner ruled no
+ * deposit in the first release (2026-10-04).
+ *
+ * The COMMISSION OVERRIDE is edited here (payments PAY-T12). The owner's ruling
+ * is a 10 % commission on the pre-tax service price, "configurable by product
+ * and market" — and a launch control is exactly a market (country / city) and a
+ * product (category). With no override on any matching control, the fee
+ * schedule for the buddy's level applies, and then the 10 % default. The value
+ * is stored as typed and applied only by the database when it prices a
+ * booking; nothing is calculated on this screen. Tips carry no commission.
  *
  * A failed read is an error with retry (the server now answers 5xx instead of
  * an empty list); every change is sent to the server and the list re-read —
@@ -94,6 +102,56 @@ function NewControlSheet({ visible, onClose, onCreate }: {
         </View>
       </KeyboardSafeScrollView>
     </Modal>
+  );
+}
+
+/**
+ * The commission override for one control. `percent` is the STORED value (or
+ * null for "no override"); the steppers send the next whole percent to the
+ * server and the list is re-read — nothing is shown as saved that the server
+ * did not confirm, and no fee is calculated here.
+ */
+function CommissionOverrideRow({ id, percent, busy, onChange }: {
+  id: string;
+  percent: number | null;
+  busy: boolean;
+  onChange: (next: number | null) => void;
+}) {
+  if (percent === null) {
+    return (
+      <>
+        <View style={s.switchRow}>
+          <Text style={s.label}>Commission override</Text>
+          <Pressable style={c.btn} disabled={busy} onPress={() => onChange(10)} testID={`lc-${id}-fee-set`}>
+            <Text style={c.btnText}>Set to 10%</Text>
+          </Pressable>
+        </View>
+        <Text style={c.meta}>No override here: the fee schedule for the buddy's level applies, then the 10% default.</Text>
+      </>
+    );
+  }
+  const current: number = percent;
+  return (
+    <>
+      <View style={s.switchRow}>
+        <Text style={s.label}>Commission override</Text>
+        <View style={c.row}>
+          <Pressable style={c.btn} disabled={busy || current <= 0} onPress={() => onChange(current - 1)} testID={`lc-${id}-fee-down`}>
+            <Minus size={14} color={color.ink} />
+          </Pressable>
+          <Text style={s.age} testID={`lc-${id}-fee`}>{current}%</Text>
+          <Pressable style={c.btn} disabled={busy || current >= 100} onPress={() => onChange(current + 1)} testID={`lc-${id}-fee-up`}>
+            <Plus size={14} color={color.ink} />
+          </Pressable>
+          <Pressable style={c.btn} disabled={busy} onPress={() => onChange(null)} testID={`lc-${id}-fee-clear`}>
+            <Text style={c.btnText}>Clear</Text>
+          </Pressable>
+        </View>
+      </View>
+      <Text style={c.meta}>
+        Bookings this control matches are priced at {current}% of the service price, taken from the buddy's earnings. Tips carry no commission.
+      </Text>
+    </>
   );
 }
 
@@ -208,6 +266,12 @@ export default function AdminLaunchControls() {
                     </View>
                   </View>
                 ))}
+                <CommissionOverrideRow
+                  id={item.id}
+                  percent={item.platform_fee_percent === undefined ? null : item.platform_fee_percent}
+                  busy={busy}
+                  onChange={(next) => { void patch(item, { platformFeePercent: next }); }}
+                />
                 {item.notes ? <Text style={c.meta}>Notes: {item.notes}</Text> : null}
                 <Text style={c.meta}>Updated {new Date(item.updated_at).toLocaleString()}</Text>
               </View>

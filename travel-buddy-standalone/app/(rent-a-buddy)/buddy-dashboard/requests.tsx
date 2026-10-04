@@ -318,10 +318,18 @@ function RequestCard({
         <Text style={rc.safetyText}>Non-dating policy applies · Traveller has read safety guidelines</Text>
       </View>
 
-      {/* Earnings estimate */}
+      {/* The service price — the one figure this booking carries. "You earn"
+          used to be `total × 0.9`, computed here: a 10 % commission applied on
+          the screen whatever rate the booking was actually ledgered at
+          (payments PAY-055). The estimate lives in the earnings ledger, which
+          the server folds from the booking's own entries. */}
       <View style={rc.totalRow}>
-        <Text style={rc.totalLabel}>You earn (estimated)</Text>
-        <Text style={rc.totalValue}>${(booking.totalUsd * 0.9).toFixed(2)}</Text>
+        <Text style={rc.totalLabel}>Service price</Text>
+        <Text style={rc.totalValue} testID={`request-service-price-${booking.id}`}>${booking.totalUsd.toFixed(2)}</Text>
+      </View>
+      <View style={rc.safetyRow}>
+        <AlertCircle size={12} color={color.deep} />
+        <Text style={rc.safetyText}>The platform commission comes out of this price. Your estimate for this booking is in the earnings ledger.</Text>
       </View>
 
       {/* Traveller notes */}
