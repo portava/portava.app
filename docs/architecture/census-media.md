@@ -9115,7 +9115,7 @@ failing citation to be fixed, and for no ratchet to be loosened.
 their grammar from:
 - A directory segment is now either an ordinary run of segment characters or
   a whole parenthesised group followed by `/`. This is
-  `artifacts/api-server/scripts/check-doc-citations.mjs:400#const SEG`, and the
+  `artifacts/api-server/scripts/check-doc-citations.mjs:408#const SEG`, and the
   three path patterns (direct, bare path, whole anchor) use it.
 - A parenthesis is **not** a segment character. If it were, prose that opens a
   parenthesis right before a path, and a markdown link, would swallow that
