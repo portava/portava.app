@@ -1018,4 +1018,14 @@ export const GUARDS: readonly GuardEntry[] = [
       "Every table or index a migration creates on a Discovery table carries expected cardinality, index rationale and EXPLAIN evidence in docs/discovery/query-paths.md (`10` §4; census-discovery DC-15).",
     reach: { kind: "check-all", script: "check:discovery-query-paths" },
   },
+  {
+    checker: "src/scripts/checkNoMoneyInRanking.ts",
+    inspects: {
+      countPattern: "(\\d+) ranking, feature-vector, graph and feed-payload files scanned",
+      unit: "ranker, feature-vector, graph-builder and feed-payload files scanned for money identifiers",
+    },
+    responsibility:
+      "No money identifier (price, fee, earnings, payout, commission, tip, revenue, sponsored placement, paid plan) is read by the central ranker, a ranking feature vector, a graph builder or a feed payload, except an allowlisted reader that enforces a non-goal (`08` §6, `09` §10; PAY-019, PAY-074).",
+    reach: { kind: "check-all", script: "check:no-money-in-ranking" },
+  },
 ];

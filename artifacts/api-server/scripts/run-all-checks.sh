@@ -460,6 +460,16 @@ run_check "check:telegraph-inventory" pnpm run check:telegraph-inventory
 # docs/discovery/query-paths.md carries them; this fails when a migration creates
 # a Discovery table or index with no registry row there, or a row goes stale.
 run_check "check:discovery-query-paths" pnpm run check:discovery-query-paths
+
+# check:no-money-in-ranking — `08` §6 (ranking is never purchasable) and `09` §10
+# (no money field in a graph node, a feed payload or a ranking feature vector) held
+# by ABSENCE: nobody had written the line yet. This reads the files that rank, build
+# a feature vector, build a graph node or build a feed payload and fails when a money
+# identifier appears in one — a variable, a selected column, a table name — unless an
+# allowlist entry names it and says why it enforces a non-goal. It also fails when a
+# scope entry stops matching a file or a new file named like a ranker arrives
+# unclassified, so it cannot quietly stop looking. Static: no database.
+run_check "check:no-money-in-ranking" pnpm run check:no-money-in-ranking
 run_gate  "check:rank-events-surfaces" pnpm run check:rank-events-surfaces
 
 echo ""
