@@ -15,7 +15,7 @@ leading blank line and a trailing newline, so the two agree and either may be re
 > | Field | Value |
 > | --- | --- |
 > | `generated_at` | 2026-09-08 |
-> | `head_commit` | `4f89330b9` — RE-DECLARED 2026-09-22 by §W, the same six-lane integration pass. `4f89330b9` is the commit every §W citation was read at, and the four counted files that changed since `1fe72289b` are the HM-SERVER lane's projection and replay work. **This is a RE-MEASUREMENT of the rows §W names and NOT of the rest.** §W reopened the evidence behind H158 and H159 at this tree, moved both `N → W`, and overturned §U.2's determination against `memoryCommandBus.ts`'s own `UPDATE_MEMORY` precedent. It does **NOT** certify the other 264 rows, and §1's reading rule applies unchanged. The acknowledgement written against `1fe72289b` is RETIRED, not deleted, in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`. **IT IS PRE-SQUASH AND CARRIES THE SAME HAZARD EVERY VALUE IN THIS ROW HAS CARRIED**: it is on `claude/portava-continuation-uqta94`, and after a squash-merge it becomes an ancestor of nothing until whoever merges re-declares the squash sha. The previous declaration read: `1fe72289b` — RE-DECLARED 2026-09-15 at the squash merge of PR #482. The previous value was `80a8d655a`, a commit on the pre-merge branch. **The squash made it an orphan**: it still exists in a clone that fetched the branch, but it is on no line of history leading to `main`, and `check:census-freshness` refuses an orphan because the check would pass locally and fail in a fresh clone. Nothing about this census was re-measured and NO verdict moves — `1fe72289b` is the commit its previous declaration's tree became, so zero counted files have changed since it. The prior declaration and its reasoning follow. — RE-DECLARED 2026-09-14 by §K/§L, replacing `338837b44`. §K re-derived eight rows (five `W → C`, three `N → W`) and refused three the lane proposed; §L corrects §K.4's own overstatement of the blast radius and holds H4 and H239 at `W` against the next lane's proposal. The 21 counted files that changed are that work plus the shared files sibling lanes touched. It does **NOT** certify the other 56 `C` rows, and §1's reading rule applies unchanged. The previous declaration read: `338837b44` — RE-DECLARED **2026-09-13 by section H**, which fixed two live disclosures on the two profile reads this census owns, closed a lifecycle write that never re-asserted its own guard, moved H178 from NOT-BUILT to BUILT-BUT-WRONG and repointed every citation its line shift invalidated — so it RE-MEASURED this document rather than only re-pointing it. The value it replaces is `d3b19fa9d`, section D's. **`338837b44` IS ALSO PRE-SQUASH**, so the owner follow-up section B.1 records — re-declare at the squash when this branch lands — is unchanged and still owed; that is now the FIFTH consecutive section to declare a commit that will be unreachable the moment it merges. Section D's own note follows, preserved verbatim. RE-DECLARED **2026-09-13 by section D**, which grouped all 134 BUILT-BUT-WRONG rows by cause, narrowed the Compass graph's §28.10 memory-eligibility gate, built the §28.8 revocation sweep, put §1's truth class on every canonical Memory payload the domain serves, and completed two of §24's three missing log fields — so it RE-MEASURED this document rather than only re-pointing it. The value it replaces is `1ff810e2`, section C's, whose spent acknowledgement moved to `retired` in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` in the same change. **`d3b19fa9d` IS ALSO PRE-SQUASH**, so section B.1's owner follow-up — re-declare at the squash when this branch lands — is unchanged and still owed; that is now the FOURTH consecutive section to declare a commit that will be unreachable the moment it merges, which is a defect of the workflow rather than of any one pass. Section C's own note follows, preserved verbatim. RE-DECLARED **2026-09-13 by section C**, which built §16's eight Compass Memory accessors, §14's fusion boundary and §23's publish predicate, and therefore RE-MEASURED this document rather than only re-pointing it. The value it replaces is `254e1876`, section B's. `check:census-freshness` reads the FIRST `head_commit` row in a file, so an appended section cannot re-declare it and this row is the only place the change can be made. **`1ff810e2` IS ALSO PRE-SQUASH**, so the owner follow-up section B.1 records — re-declare at the squash when this branch lands — is unchanged and still owed. Section B's own note follows, preserved verbatim. RE-DECLARED **2026-09-13 by section B**, which re-measured every row in this document against that commit; the value it replaced was `42aeac38`, and section A's own account of why `42aeac38` replaced `cdfff5995c92f7adfb3ae7880496bc94002717e9` is preserved verbatim below. **`254e1876` IS PRE-SQUASH and will become unreachable when this branch lands** — the same `CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI` failure section A records one paragraph down. Whoever merges must re-declare it to the squash commit, and section B.1 names that as an owner follow-up. The original note follows. RE-DECLARED 2026-09-10 from `cdfff5995c92f7adfb3ae7880496bc94002717e9`, the working-tree commit this census was measured at. It was necessary because `cdfff599` is PRE-SQUASH — this repository squash-merges, so it is an ancestor of nothing, is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). Reproduced 2026-09-10 in a fresh clone of this branch: `git diff cdfff599..HEAD` aborts with `Invalid revision range`, and the check reported this census as unreadable rather than checking it. `42aeac38` is #476's squash, where this document's content reached `main`. **This is a RE-DECLARATION, not a re-measurement.** FOUR counted files changed between `cdfff599` and `42aeac38`: `artifacts/api-server/src/lib/memoryOutbox.ts`, `.../services/memoryProjections/derivativeRegistry.ts`, `.../derivativeRegistryRead.ts`, and `.../services/memoryRetrieval/searchMemories.ts`. The move is defensible only because each was re-verified mechanically on 2026-09-10 over `cdfff599..42aeac38`: `memoryOutbox.ts` adds 48 lines of which ZERO survive a filter for lines that are neither comment nor blank; `searchMemories.ts` changes one import path and nothing else; the other two are a split whose exported-symbol set is IDENTICAL at both commits (18 exports, same names and signatures, diffed) and whose retained half differs by zero non-comment lines — the moved `readRegisteredPayload` no longer delegates to `readRegistration` but inlines that function's body verbatim, table, columns, filters, error mapping and all, because importing back would have closed an ESM cycle. The full per-file argument is preserved under `retired` in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`, where it had been written as an acknowledgement. **Changed by the Trips lane, not this one**, because CI could not run this check against this census at all until it was; nothing else in this document is touched, and reverting it costs only the check. |
+> | `head_commit` | `f71cfb85f` — RE-DECLARED 2026-10-04 by **§AC**, the targeted re-census of the rows PRs #576 and #570 touched. `f71cfb85f` is a MERGE COMMIT ON `main`, not a pre-squash working-tree commit, so it is the first value in this row that carries none of the orphan hazard every previous one did: it is an ancestor of every clone that fetches `main`, and `check:census-freshness` resolves it everywhere. The 45 counted files that changed since `4f89330b9` are eleven integrations' worth of work across this domain and the shared files sibling lanes touched; **§AC re-measured only the three server hunks #576 and #570 changed** and says so in §AC.1. It does **NOT** certify the other 262 rows, and §1's reading rule applies to them unchanged. One row moves (`H180`, `N → W`), three reasons are corrected with the verdict unmoved (`H103`, `H175`, `H130`) and `H204` is HELD at `X` against §AB.4's own recommendation to move it. The acknowledgement written against `4f89330b9` is RETIRED, not deleted, in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`. The previous declaration read: `4f89330b9` — RE-DECLARED 2026-09-22 by §W, the same six-lane integration pass. `4f89330b9` is the commit every §W citation was read at, and the four counted files that changed since `1fe72289b` are the HM-SERVER lane's projection and replay work. **This is a RE-MEASUREMENT of the rows §W names and NOT of the rest.** §W reopened the evidence behind H158 and H159 at this tree, moved both `N → W`, and overturned §U.2's determination against `memoryCommandBus.ts`'s own `UPDATE_MEMORY` precedent. It does **NOT** certify the other 264 rows, and §1's reading rule applies unchanged. The acknowledgement written against `1fe72289b` is RETIRED, not deleted, in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`. **IT IS PRE-SQUASH AND CARRIES THE SAME HAZARD EVERY VALUE IN THIS ROW HAS CARRIED**: it is on `claude/portava-continuation-uqta94`, and after a squash-merge it becomes an ancestor of nothing until whoever merges re-declares the squash sha. The previous declaration read: `1fe72289b` — RE-DECLARED 2026-09-15 at the squash merge of PR #482. The previous value was `80a8d655a`, a commit on the pre-merge branch. **The squash made it an orphan**: it still exists in a clone that fetched the branch, but it is on no line of history leading to `main`, and `check:census-freshness` refuses an orphan because the check would pass locally and fail in a fresh clone. Nothing about this census was re-measured and NO verdict moves — `1fe72289b` is the commit its previous declaration's tree became, so zero counted files have changed since it. The prior declaration and its reasoning follow. — RE-DECLARED 2026-09-14 by §K/§L, replacing `338837b44`. §K re-derived eight rows (five `W → C`, three `N → W`) and refused three the lane proposed; §L corrects §K.4's own overstatement of the blast radius and holds H4 and H239 at `W` against the next lane's proposal. The 21 counted files that changed are that work plus the shared files sibling lanes touched. It does **NOT** certify the other 56 `C` rows, and §1's reading rule applies unchanged. The previous declaration read: `338837b44` — RE-DECLARED **2026-09-13 by section H**, which fixed two live disclosures on the two profile reads this census owns, closed a lifecycle write that never re-asserted its own guard, moved H178 from NOT-BUILT to BUILT-BUT-WRONG and repointed every citation its line shift invalidated — so it RE-MEASURED this document rather than only re-pointing it. The value it replaces is `d3b19fa9d`, section D's. **`338837b44` IS ALSO PRE-SQUASH**, so the owner follow-up section B.1 records — re-declare at the squash when this branch lands — is unchanged and still owed; that is now the FIFTH consecutive section to declare a commit that will be unreachable the moment it merges. Section D's own note follows, preserved verbatim. RE-DECLARED **2026-09-13 by section D**, which grouped all 134 BUILT-BUT-WRONG rows by cause, narrowed the Compass graph's §28.10 memory-eligibility gate, built the §28.8 revocation sweep, put §1's truth class on every canonical Memory payload the domain serves, and completed two of §24's three missing log fields — so it RE-MEASURED this document rather than only re-pointing it. The value it replaces is `1ff810e2`, section C's, whose spent acknowledgement moved to `retired` in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` in the same change. **`d3b19fa9d` IS ALSO PRE-SQUASH**, so section B.1's owner follow-up — re-declare at the squash when this branch lands — is unchanged and still owed; that is now the FOURTH consecutive section to declare a commit that will be unreachable the moment it merges, which is a defect of the workflow rather than of any one pass. Section C's own note follows, preserved verbatim. RE-DECLARED **2026-09-13 by section C**, which built §16's eight Compass Memory accessors, §14's fusion boundary and §23's publish predicate, and therefore RE-MEASURED this document rather than only re-pointing it. The value it replaces is `254e1876`, section B's. `check:census-freshness` reads the FIRST `head_commit` row in a file, so an appended section cannot re-declare it and this row is the only place the change can be made. **`1ff810e2` IS ALSO PRE-SQUASH**, so the owner follow-up section B.1 records — re-declare at the squash when this branch lands — is unchanged and still owed. Section B's own note follows, preserved verbatim. RE-DECLARED **2026-09-13 by section B**, which re-measured every row in this document against that commit; the value it replaced was `42aeac38`, and section A's own account of why `42aeac38` replaced `cdfff5995c92f7adfb3ae7880496bc94002717e9` is preserved verbatim below. **`254e1876` IS PRE-SQUASH and will become unreachable when this branch lands** — the same `CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI` failure section A records one paragraph down. Whoever merges must re-declare it to the squash commit, and section B.1 names that as an owner follow-up. The original note follows. RE-DECLARED 2026-09-10 from `cdfff5995c92f7adfb3ae7880496bc94002717e9`, the working-tree commit this census was measured at. It was necessary because `cdfff599` is PRE-SQUASH — this repository squash-merges, so it is an ancestor of nothing, is on no remote branch, and `check:census-freshness` could resolve it only on the clone that wrote it (`CENSUS_HEAD_COMMITS_UNREACHABLE_IN_CI`). Reproduced 2026-09-10 in a fresh clone of this branch: `git diff cdfff599..HEAD` aborts with `Invalid revision range`, and the check reported this census as unreadable rather than checking it. `42aeac38` is #476's squash, where this document's content reached `main`. **This is a RE-DECLARATION, not a re-measurement.** FOUR counted files changed between `cdfff599` and `42aeac38`: `artifacts/api-server/src/lib/memoryOutbox.ts`, `.../services/memoryProjections/derivativeRegistry.ts`, `.../derivativeRegistryRead.ts`, and `.../services/memoryRetrieval/searchMemories.ts`. The move is defensible only because each was re-verified mechanically on 2026-09-10 over `cdfff599..42aeac38`: `memoryOutbox.ts` adds 48 lines of which ZERO survive a filter for lines that are neither comment nor blank; `searchMemories.ts` changes one import path and nothing else; the other two are a split whose exported-symbol set is IDENTICAL at both commits (18 exports, same names and signatures, diffed) and whose retained half differs by zero non-comment lines — the moved `readRegisteredPayload` no longer delegates to `readRegistration` but inlines that function's body verbatim, table, columns, filters, error mapping and all, because importing back would have closed an ESM cycle. The full per-file argument is preserved under `retired` in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`, where it had been written as an acknowledgement. **Changed by the Trips lane, not this one**, because CI could not run this check against this census at all until it was; nothing else in this document is touched, and reverting it costs only the check. |
 > | `methodology_version` | 2 — **"How I decided what counts" is unchanged and the denominator is still 266.** Buckets unchanged (`BAC` / `BBW` / `NB` / `CV`), including rule 7 for prohibitions. Only verdicts moved, each citing a `file:line` opened at this commit. |
 > | Scanned | `artifacts/api-server/src/lib/memoryCommandBus.ts` (760 lines), `src/lib/memoryOutbox.ts`, `src/lib/highlightPermissions.ts`, `src/services/memory/MemoryDomainService.ts`, `src/services/memoryProjections/` (6 files), `src/services/memoryRetrieval/searchMemories.ts`, `src/services/highlights/` (6 files), `src/routes/memories.ts`, `src/routes/highlights.ts`, migrations `2710`, `2711`, `2720`–`2724`, `2730`, and `src/lib/deletionDispositions.ts` |
 > | Production state | From the repository's own committed artifacts, not a live query: `src/lib/capability/snapshots/20260908-production-schema.json` (watermark `20260908133347`) and `src/lib/capability/production-applied-migrations.json`. |
@@ -6595,6 +6595,151 @@ Any of the following makes the suites above go red:
 - The owner's failed Highlight read shows the empty invitation.
 - A deleted Story becomes a Highlight.
 
+## §AC — 2026-10-04 (re-census): the merged testing-mode work, graded against the code; one row moves `N → W` and CORRECT does not move
+
+**What this section is, and what it is not.** A TARGETED re-census of the rows whose SUBJECT
+PRs **#576** and **#570** touched, read at `f71cfb85f`. It is not a re-reading of the other
+rows: §1's reading rule applies to them unchanged, and a row this section does not name keeps
+the verdict and the reason it had. What prompted it is a corpus measurement rather than a
+suspicion — `check:census-integrity` returns the **same** `C` at `f71cfb85f` as it did 108
+commits earlier at `626b46b7e` (2436 across all thirteen censuses, identical), while seventeen
+PRs merged, nine of them onto the five lowest-scoring surfaces. A census grades its own rows,
+not the code, so an unchanged `C` is evidence about the DOCUMENTS and not yet about the tree.
+This section asks whether it was evidence about this document too.
+
+**The answer, stated before the working.** Mostly no, and the reason is worth more than the
+move. §AB had already graded this lane's own work honestly and said "NO VERDICT MOVES". What it
+had NOT done is re-read the three REASONS that these two PRs' subjects sit on, and two of those
+reasons are false at HEAD — not by the lane's fault, but because the migrations they call
+"unapplied" were applied to production on 2026-09-15 and the document still says otherwise on
+these rows. A reason that names the wrong blocker survives review precisely because the verdict
+it carries is right.
+
+### §AC.1 The entire server surface those two PRs changed, enumerated
+
+Three hunks. Everything else in both PRs is client code or a test, and **no row in this census
+grades a client screen** (the "Cited, not graded" list at the foot records that for each file).
+
+1. **#576 / `POST /trips/:tripId/memory`** — a duplicate guard placed before the §17 dispatch
+   (`artifacts/api-server/src/routes/memories.ts:2592#if (await answerExistingTripMemory(req, res, sc, tripId, user.id)) return;`),
+   implemented at the foot of the file
+   (`artifacts/api-server/src/routes/memories.ts:3464#async function answerExistingTripMemory(req: any, res: any, sc: any, tripId: string, ownerId: string): Promise<boolean> {`).
+2. **#576 / `POST /stories/:id/save-to-highlight`** — one line, a state gate
+   (`artifacts/api-server/src/routes/stories.ts:878#if (!story || (story as any).state === "deleted"`).
+3. **#570 / `GET /highlights/following-feed`** — the cursor is now emitted for a page that
+   filtering shortened or emptied, where before it was emitted only for a full cut page
+   (`artifacts/api-server/src/routes/highlights.ts:2818#const nextCursor = feedLimit == null`).
+
+### §AC.2 Row moves
+
+| id | was | now | why, read at `f71cfb85f` |
+|---|---|---|---|
+| H180 | N | **W** | §19's *"cross-device uploads and notes should converge on one Memory/Episode where evidence supports it"*. The row carried an EMPTY evidence cell — nothing in the tree had ever been aimed at convergence. Something now is: two creates for the same trip by the same owner converge on ONE Memory, on whichever device issues the second, and the guard is reachable with **no flag in front of it** (`artifacts/api-server/src/routes/memories.ts:3464#async function answerExistingTripMemory(req: any, res: any, sc: any, tripId: string, ownerId: string): Promise<boolean> {`), fails closed on an unreadable `memories` rather than writing a second row, and is pinned by a test (`artifacts/api-server/src/test/memoriesTripMemoryDegraded.test.ts:265#a second create answers the existing Memory`). **`W` and not `C`, and the clauses that remain are the spec's own subjects:** the convergence key is `trip_id + owner_id`, not a client operation id, so it converges nothing the trip does not name; §19's `temp client id -> canonical id` reconcile leg does not exist; a Memory created from the app rather than from a trip (`POST /memories`) still has no convergence at all; and **media uploads and notes — the two things the sentence is actually about — converge on nothing**, because `memory_evidence` has no writer (H7). One of five legs, built live, is the whole of what moved. |
+
+**One move, upward, and it is the thinnest move in this document.** It is recorded as such
+rather than dressed up: a reader who thinks a per-trip uniqueness rule is not convergence at all
+has a case, and the counter-case is in the row so it can be reversed without re-deriving it.
+
+### §AC.3 Reasons corrected, verdict unmoved — and two of the three named the wrong blocker
+
+The three rows whose subject these PRs touched. Each is restated so that the LAST statement of
+the row is the corrected one; the verdict is unchanged in all three and no number moves.
+
+| id | was | now | the correction |
+|---|---|---|---|
+| H103 | W | **W** | The reason read *"`highlights_feed_bounded_enabled` (migration 2339), which is **not in the applied list**, so the flag has no row and `isFlagEnabled` fails closed"*. **Both halves are false at HEAD.** 2339 IS in the applied list (`artifacts/api-server/src/lib/capability/production-applied-migrations.json:195#2339_highlights_feed_bound`) and the flag HAS a row, carrying `false` (`artifacts/api-server/src/lib/capability/snapshots/20260922-production-schema.json:6684#highlights_feed_bounded_enabled`). The verdict does not move because the CONSEQUENCE is unchanged and the new reason is worse rather than better: the bound is not absent for want of storage, it is **switched off** (`artifacts/api-server/src/routes/highlights.ts:2696#const bounded = await isFlagEnabled(sc, "highlights_feed_bounded_enabled");`), so `feedLimit` is null, no `.limit()` reaches the query and no cursor is emitted — pinned, flag-off, at `artifacts/api-server/src/test/highlightsFeedFiniteness.test.ts:306#leaves the unbounded (flag OFF) response shape alone`. #570's work is real and is entirely on the ON side of that branch. **A second clause, found reading it and NOT fixed here:** with the flag on, the cursor is a `created_at` value compared with `gt` (`artifacts/api-server/src/routes/highlights.ts:2720#(feedQuery as any) = (feedQuery as any).gt("created_at", feedCursor);`), so every row sharing the boundary instant with the last row of a page is SKIPPED. §AB.5 found the same thing and could not edit the file. A feed that is bounded and lossy is not finite-and-contextual either. |
+| H175 | W | **W** | The reason read *"The receipt table is 2710, **unapplied**"*. 2710 was applied to production on 2026-09-15 (`artifacts/api-server/src/lib/capability/production-applied-migrations.json:183#2710_memory_command_kernel_tables`) and `memory_command_receipts` is in the schema snapshot. The verdict holds on a DIFFERENT blocker, which this pass read to the bottom: `memory_kernel_enabled` is `false` (`artifacts/api-server/src/lib/capability/snapshots/20260922-production-schema.json:6715#memory_kernel_enabled`), and with the kernel absent the dispatcher takes the legacy direct write and returns `duplicate: false` without consulting or writing a receipt (`artifacts/api-server/src/services/memory/MemoryDomainService.ts:505#return { ok: true, body: legacy.body, duplicate: false, commandId, eventId: null, idempotencyKey: input.idempotencyKey };`). The key is now MANDATORY on this route too (`artifacts/api-server/src/routes/memories.ts:2540#const idempotencyKey = requireIdempotencyKey(req, res);`), so the client half of the requirement is built; the server half is a deployed table nothing reads. **A table that exists and is never consulted is a sharper finding than a table that does not exist, and the row had the softer one.** |
+| H130 | W | **W** | Same correction — "2710 unapplied" is false, and the live blocker is the flag, as H175 now states. **And this pass found that #576 moved this row's seam in the wrong direction, by one case.** §17's rule, in `MemoryDomainService`'s own words, is that a command the system did not record is not a success. The duplicate guard answers `200` with `existing: true` BEFORE `dispatchMemoryCommand` is reached (`artifacts/api-server/src/routes/memories.ts:2592#if (await answerExistingTripMemory(req, res, sc, tripId, user.id)) return;`), so a replayed `CREATE_MEMORY` is now a 200 with **no audit line at all** — where before the replay produced a second Memory and an audit line for it. The duplicate row was the worse defect and removing it was right; the audit hole it opened is real, is this row's, and is NOT fixed here because fixing it is a code change and this is a documentation pass. |
+
+### §AC.4 H204 stays `X`, and §AB's recommended `X → C` is declined
+
+§AB.4 recorded a production read showing that `authenticated` and `anon` hold no INSERT or
+UPDATE privilege on `passport_memories.verification_level` and the system-provenance columns,
+and recommended that the next re-measure move H204 `X → C`. **It stays `X`.** Three reasons,
+in order of weight:
+
+1. **The repository's own record does not carry it.** `2150_passport_memories_write_boundary.sql`
+   is still absent from `production-applied-migrations.json`, whose newest entry is
+   `2971_layover_discovery_mode_flag`. The 2026-09-22 schema snapshot records columns, functions, enums and
+   flags and **no privileges at all** (`artifacts/api-server/src/lib/capability/snapshots/20260922-production-schema.json:6#productionMigrationWatermark`),
+   so the boundary is not checkable offline in either direction.
+2. **The controlled half proves it on CI, which is not the question.** `passportMemorySelfVerification`
+   is a live-DB suite gated by the CI guard (`artifacts/api-server/src/test/passportMemorySelfVerification.test.ts:17#ciSupabaseGuard`)
+   and its own header says "Verified on portava-ci". H204's question is specifically whether a
+   PRODUCTION client can self-verify. A suite that cannot run against production cannot answer it.
+3. **This pass may not repeat the read.** Its instructions forbid touching production at all,
+   including reading it. Taking another pass's query on trust and recording the result as a
+   verdict would make `C` mean "somebody said so", which is the failure this census spends most
+   of its length undoing.
+
+| id | was | now | the reason, restated at `f71cfb85f` |
+|---|---|---|---|
+| H204 | X | **X** | Truth levels and inference provenance are server-controlled (§23). The code is read and correct — `2150_passport_memories_write_boundary.sql` revokes the verification and system-provenance columns from `anon` and `authenticated` — and a controlled suite pins it on portava-ci. What is unknown is DEPLOYMENT, and it is unknown from the repository rather than merely unqueried: 2150 is absent from the applied list, and the production capture carries no privileges. §AB.4's production read answers the question for whoever made it; it does not make the answer checkable here, and this pass may not repeat it. `X`, with the reason sharpened from "I was told not to query" to "the repository cannot say". |
+
+**What would settle it, stated so the next pass does not have to re-derive it:** an entry for
+`2150_passport_memories_write_boundary` committed to `production-applied-migrations.json` in the
+same change that applies it — which is that file's own stated contract — or a production schema
+capture extended to carry column privileges. Either makes H204 decidable from the repository.
+Until then `X` is the honest verdict and not a parking space: the code is read and correct, and
+the deployment is unknown.
+
+### §AC.5 Rows read and NOT moved, with what stops each
+
+- **H2** (automatic Memories private-first). #576's change to `routes/stories.ts` is a `state`
+  gate, not a visibility one, and §Z had already falsified this row's visibility evidence. Not
+  this PR's subject; unmoved and unedited.
+- **H5** (every canonical Memory carries its truth class). Re-read because #576 added a NEW
+  response path that returns a canonical Memory. It goes through `mapMemory`, so the class is
+  applied by the serializer exactly as the row claims — the row is **confirmed by a path written
+  after it**, which is the strongest thing that can be said for a `C` row, and it moves nothing.
+- **H264** (§28.11, never swallow a failure into plausible-looking empty history). Both new
+  refusals on this route are structured (`degraded_unavailable`, 503, retryable) and both are
+  pinned red-first. `C` holds for the same reason it was given, now on two more reads.
+- **H178** / **H179** (concurrent edits at command/field level; late evidence must not overwrite
+  edits). A per-trip uniqueness rule is neither. Unmoved at `N`.
+- **H84**, and the fifteen rows §AB.5 lists as carrying stale "2720 / 2721 unapplied" reasons.
+  **Deliberately out of scope**, and said plainly rather than quietly skipped: their subject is
+  not what these two PRs touched, their reasons are stale in the same way H103's and H175's
+  were, and §O already re-read that whole population once when the blocker lifted and found that
+  **none of it reached `C`**. Correcting fifteen reasons belongs to a pass that re-reads fifteen
+  subjects, not to this one. H84 additionally still waits on owner decision D6.
+
+### §AC.6 The recomputed headline
+
+Restated from `check:census-integrity`, not counted by hand, and verified the way §W.4 verified
+its own: `CENSUS_INTEGRITY_DUMP=ALL` over this file before and after this section differs on
+exactly one line, `H180`.
+
+| figure | §W | **now** |
+|---|---:|---:|
+| Denominator | 266 | **266** |
+| BUILT-AND-CORRECT | 69 | **69** |
+| BUILT-BUT-WRONG | 138 | **139** |
+| NOT-BUILT | 57 | **56** |
+| CANNOT-VERIFY | 2 | **2** |
+| CONSTRUCTED% | 77.8 % | **78.2 %** (208 / 266 = 78.2 %) |
+| CORRECT%, raw | 25.9 % | **25.9 %** (69 / 266 = 25.9 %) |
+
+**CORRECT is unchanged, and that is the finding this section was opened to test.** Two PRs
+landed on this surface, both were careful, both were test-first, and both fixed defects a
+traveller would have met. Not one of them moved a requirement of this specification to CORRECT,
+because what they fixed was the honesty of five client reads, one duplicate write and one
+state gate — and the rows in this document are gated on a memory kernel that is deployed and
+switched off. `W` went UP by one, which is the correct direction for work that builds a leg of
+a requirement without finishing it.
+
+### §AC.7 What would turn this red
+
+- An applied-list entry for `2150`, or a privilege-carrying production capture: H204 becomes
+  decidable and this section's refusal to move it becomes the wrong call.
+- `memory_kernel_enabled` flipping to `true`: H130 and H175 both have to be re-read the same
+  day, and H175 could reach `C` on the receipt the dispatcher would then consult.
+- `highlights_feed_bounded_enabled` flipping to `true` without the `gt` cursor being changed to
+  a keyset: H103 stays `W` for the SECOND reason in its row rather than the first, and the
+  document must say which.
+- A `POST /trips/:tripId/memory` replay that writes an audit line: H130's new last clause is
+  closed and must be deleted from the row rather than left reading as a live defect.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/migrations/0067_reviews.sql — Cited once, in the headline's 2026-09-14 attribution restatement, to show that the migration the first headline credited to the Memories scrapbook is a cross-domain review system for trips and bookings. That paragraph moves no verdict, and no row grades reviews.
@@ -6636,4 +6781,4 @@ Any of the following makes the suites above go red:
 - NOT-GRADED: travel-buddy-standalone/src/hooks/useHighlightRingState.ts — §AB.1 cites the shared ring read; client code, no row grades it
 - NOT-GRADED: travel-buddy-standalone/src/components/passport/PassportHighlightsStrip.tsx — §AB.1 cites the owner strip's unreadable state; client code, no row grades it
 - NOT-GRADED: travel-buddy-standalone/app/(tabs)/passport.tsx — §AB.1 cites the line-neutral wiring of the strip's unreadable flag; the profile screen is census-passport's
-- NOT-GRADED: artifacts/api-server/src/test/passportMemorySelfVerification.test.ts — §AB.4 names it as the controlled half of the H204 move it RECOMMENDS and does not make; no verdict in this census rests on it today
+- NOT-GRADED: artifacts/api-server/src/test/passportMemorySelfVerification.test.ts — §AB.4 names it as the controlled half of the H204 move it RECOMMENDS and does not make, and §AC.4 REFUSED that move: the suite is CI-gated, so it cannot answer the production question H204 asks. Still no verdict in this census rests on it, and H204 stays X precisely because none can

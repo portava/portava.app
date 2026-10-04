@@ -1227,7 +1227,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): the evidence for §G's non-temporal endSession, §I.4's red-before-green store assertion, §N.3's presence-evidence select, §P.5's ungated Highlight surfaces and §W.3/§X.2's un-hide applier.
     "artifacts/api-server/src/migrations/2993_highlight_command_boundary.sql",
     "artifacts/api-server/src/services/airport/LayoverSessionService.ts",
-    "artifacts/api-server/src/test/memoriesTripMemoryDegraded.test.ts",
+    "artifacts/api-server/src/test/memoriesTripMemoryDegraded.test.ts", "artifacts/api-server/src/test/highlightsFeedFiniteness.test.ts", "artifacts/api-server/src/lib/capability/snapshots/20260922-production-schema.json", // WIDENED 2026-10-04 by §AC, line-neutral because three censuses cite :1522 below: the flag-OFF finiteness pin behind H103 and the only offline record of the flag VALUES H103/H175/H204 turn on.
     "artifacts/api-server/src/test/stampCriteriaPresenceEvidence.test.ts",
     "artifacts/api-server/src/routes/engagement.ts",
     "artifacts/api-server/src/routes/collections.ts",
