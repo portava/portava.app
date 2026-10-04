@@ -1310,8 +1310,8 @@ router.post("/rent-a-buddy/offers/:offerId/accept", async (req, res) => {
       payment_mode: terms.quote.paymentMode,
       total_usd: terms.quote.totalUsd,
       deposit_usd: terms.quote.depositUsd,
-      cash_balance_usd: terms.quote.cashBalanceUsd,
-      status: "pending", creation_key: creation.key, expires_at: new Date(new Date(now).getTime() + BUDDY_ACCEPT_WINDOW_HOURS * 3600 * 1000).toISOString(), ...depositColumns(terms.quote), // `pending` awaits the buddy: the same 24 h window the canonical route gives, from this handler's one `now`
+      cash_balance_usd: terms.quote.cashBalanceUsd, creation_key: creation.key, expires_at: new Date(new Date(now).getTime() + BUDDY_ACCEPT_WINDOW_HOURS * 3600 * 1000).toISOString(), ...depositColumns(terms.quote), // `pending` (next line) awaits the buddy: the same 24 h window the canonical route gives, from this handler's one `now`
+      status: "pending",
       offer_id: offerId,
       request_id: o.request_id,
     })
