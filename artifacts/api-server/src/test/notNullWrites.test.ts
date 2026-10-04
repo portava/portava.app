@@ -475,6 +475,15 @@ describe("the guard SCRIPT — main() honours migrations, and refuses when it ca
     for (const f of ["checkNotNullWrites.ts", "parseBaselineSchema.ts"]) {
       copyFileSync(join(REAL_SCRIPTS, f), join(root, "src/scripts", f));
     }
+    // The copied guard imports "./parseBaselineSchema.js", which only resolves to
+    // the .ts beside it when node treats the tree as ESM. Node decides that by
+    // walking UP for a package.json, and this tree is under $TMPDIR — so what it
+    // finds depends on where $TMPDIR happens to be. On CI that resolves; on macOS
+    // ($TMPDIR = /var/folders/...) nothing above it declares a type, node falls
+    // back to CJS, and the require fails with MODULE_NOT_FOUND — six cases red for
+    // a reason that has nothing to do with the guard. Declare it here so the tree
+    // carries its own answer and the test means the same thing everywhere.
+    writeFileSync(join(root, "package.json"), JSON.stringify({ type: "module" }));
     writeFileSync(join(root, "baseline/20260819_baseline_structure.sql"), FIXTURE_BASELINE);
     writeFileSync(join(root, "src/routes/w.ts"), opts.source);
     for (const m of opts.migrations) {

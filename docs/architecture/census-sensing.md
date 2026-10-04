@@ -6252,3 +6252,151 @@ Both now refuse or hold. census-trust §31.1 (items 1b and 5) records the fixes,
 and their mutations.
 
 The headline is unchanged: §27's figures stand exactly as written.
+
+## §31 — 2026-10-04: `census-input-intelligence` §35's hand-off, discharged. The intel-capture work of PR #582, graded here. NO ROW MOVES — and three `BC` rows stop being vacuous.
+
+**Why this section exists, and who asked for it.** `census-input-intelligence.md` §35 ends with an
+item it could not close:
+
+> *"The lane's brief described this census as covering intel capture, observations, contributor
+> identity, claims, attribution and rewards. It does not: those are census-sensing's rows. The lane's
+> intel-capture work (the projection pass, the trail read, the aggregator's cohort reads, and the
+> capture screens' consent and review states) moves no row here and is reported to the integration
+> owner as proposed census-sensing text, because census-sensing.md is in another open PR."*
+
+`census-discovery.md` §108.2 recorded it as the 3–4 October wave's one outstanding integration item.
+census-sensing.md is on `main` now. **This is that text, written by the re-census pass rather than
+pasted from the lane's proposal** — every claim below was re-read against the merged tree at
+`f71cfb85f`, which is a different tree from the one the lane measured.
+
+**`head_commit` is NOT re-declared** and no counted file of this census changed in this commit. §30 is
+a DIFFERENT lane's section of the same date (the sensing-trust lane, branch
+`claude/lane-sensing-trust-20261003`); it records none of the work below, which is why the hand-off
+was still owed after it. Documentation only: no code, no migration, no flag, no schema change, and
+**this section read no database** — deployment facts are quoted from the repository's own committed
+capture or from the section that took them.
+
+### 31.1 What the work actually was: four silent-read defects on the intel-capture path
+
+Each was live on `main` before #582 and each is closed at this tree. None of them errored, which is
+why none of them had been found by a refusal taxonomy.
+
+1. **The claim aggregator computed the privacy gate's inputs on a sample and published them as the
+   cohort.** The observation-cohort read, the independence-evidence read and the confirmation-stance
+   read each took every matching row in one request. PostgREST cuts a response at `db-max-rows`
+   (1000 on hosted) **with no error**, so past that cap the distinct-actor count, the plurality value,
+   the agreement score and the §11 group gate were each computed over an arbitrary slice. Each read
+   now asks for an exact count and a short answer withholds the claim
+   (`artifacts/api-server/src/lib/intelProjectionAggregator.ts:706#function wasCut(rows: unknown, count: unknown): boolean {`,
+   applied at
+   `artifacts/api-server/src/lib/intelProjectionAggregator.ts:176#if (obsErr || wasCut(obs, obsCount)) { // a read CUT at the row cap is a sample, not the cohort (wasCut)`,
+   `artifacts/api-server/src/lib/intelProjectionAggregator.ts:243#if (evidenceErr || wasCut(evidence, evidenceCount)) { // cut = the shared media past the cap goes unseen, same fail-OPEN`
+   and
+   `artifacts/api-server/src/lib/intelProjectionAggregator.ts:340#if (confsErr || wasCut(confs, confsCount)) { // a cut stance read drops the disagreements past the cap`).
+   **The evidence read's direction is the one that matters**: with the independence maps short, reporters
+   who share a media asset stop collapsing into one unit, so the independent-group count goes UP and the
+   single-group share goes DOWN — the cut made the gate MORE permissive, never less.
+2. **The five-minute projection pass projected an arbitrary thousand claims and reported it as all of
+   them.** The claim read carried an explicit per-pass limit, which the server's own cap overrides,
+   and no order — so past a thousand live claims each pass refreshed an arbitrary subset and the rest
+   went stale while the pass reported its subject count as if it had read them all. It is keyset-paged
+   now, the per-pass bound is kept, and hitting it is SAID
+   (`artifacts/api-server/src/lib/intelProjectionScheduler.ts:68#EVERY live claim, keyset-paged.`).
+   The expiry reconciliation's two offset-paged reads became keyset reads through the same helper
+   (`artifacts/api-server/src/lib/keysetRead.ts:38#export async function readAllByIdKeyset(`), and the
+   fail-closed rule it already had — never expire on a partial or errored read — is unchanged.
+3. **The trail read turned a consent outage into a consent-coverage fact.** A failed consent read
+   emptied the cohort and answered no refusal with a flag meaning *these rows had no consent*, which
+   is the operator's only view of coverage
+   (`artifacts/api-server/src/lib/trailServe.ts:82#the operator's only view of consent coverage, and an outage reported on it as`).
+   It is now a named refusal
+   (`artifacts/api-server/src/lib/trailServe.ts:115#export type TrailReadRefusal = "no_service_client" | "flag_off" | "blocks_unreadable" | "read_failed" | "consent_unreadable";`,
+   reached at `artifacts/api-server/src/lib/trailServe.ts:331#return empty("consent_unreadable");`).
+   The same read was also unscoped and cut at the cap, so a cohort past row 1000 was simply not
+   counted; and it read consent as a raw id match rather than through the shape-aware reader, which
+   the file records would find nobody at all once rotating contributor tokens are stored in the actor
+   column.
+4. **The capture screens rendered an unreadable consent as "you have never consented".** A 500, a
+   dropped connection or a malformed body put a person who HAD consented in front of the first-use
+   consent gate — whose toggle would then re-stamp a consent they had already given. The screens that
+   SHOW consent now read a three-state answer and render an outage as an outage
+   (`travel-buddy-standalone/src/services/intelConsent.ts:65#export async function readIntelConsent(): Promise<IntelConsentRead> {`),
+   while the callers that only decide whether they may capture keep folding failure to "not granted",
+   which is the correct direction for them.
+
+### 31.2 Row moves: none, in either direction — and the reason is measured, not asserted
+
+**0 up, 0 down.** §35's judgement that this work moves no row was made about `census-input-intelligence`;
+this section had to establish it for `census-sensing`, which is a different question and was open.
+
+**Why nothing moves up.** Every one of the fourteen non-C rows was classified by §30 eight days ago
+against §27.5's acceptance criteria, and the four defects above touch none of those criteria: the
+rows awaiting an apply, a flag or production evidence (S112, S19, S97, S111, S118, S49, S92, S66)
+wait on the identity cutover chain, on `memory_projection` / `experience_session_enabled` /
+`discovery_candidate_projection_enabled`, or on a real `unsafe_density` state; the owner-gated five
+(S39, S24, S18, S32, S26) wait on a consent-v2 approval, an identified-retention ruling or ops; and
+S17 is external. Re-read at this tree, each blocker is still there. **A correctness fix on the capture
+path cannot move a row whose blocker is a deployment or a decision**, which is the same shape
+`census-trips.md` §79.1 measured and `census-media.md` §48.1 confirmed.
+
+**Why nothing moves down, checked rather than assumed.** #582 added no new affordance, no new
+published field and no new permission on this surface: every change narrows what is served or names a
+failure. The one addition a prohibition row could have caught — a new refusal token on the trail
+read — is a refusal, and S34 is the row that asks for exactly that.
+
+### 31.3 Three `BC` rows whose ground was incomplete, and is whole for the first time at this tree
+
+No verdict moves. These are recorded because **a `C` whose stated mechanism was silently fed a
+truncated input is the class of row a re-census exists to find**, and all three would have read as
+correct forever: the defect produced no error, no refusal and no empty answer.
+
+| id | V | the row's own claim | what was actually true until #582 |
+|---|---|---|---|
+| S13 | **BC** | *"≥15 distinct actors, ≥5 independent groups, ≤20 % single-group share, 10-minute publication delay. A missing group count is a refusal, not an exemption."* | The four numbers and the missing-count refusal were — and are — exactly as cited; §8's *"Holds, value for value, at the cited lines"* was never wrong. **The INPUTS were not the cohort.** Past the row cap the actor count and both group figures were computed over an arbitrary slice of the observations, so the gate was arithmetically correct about the wrong population. The gate module is not in #582's diff; 31.1 item 1 is, and it is upstream of every one of the four numbers. |
+| S23 | **BC** | *"shared media, common source and 30-second synchronised-value detectors MERGE units, and merging only ever REDUCES the independent-group count … It can suppress a real signal but cannot manufacture one."* | **True of the merge, false of the pipeline.** The merge is pure and still only reduces. But the evidence read that tells it which units share a media asset was cut at the cap without an error, so for units past the cut the merge never ran — and a merge that does not run raises the group count and lowers the single-group share. That is manufacturing a signal, by omission. §28's restatement (*"the gate's arithmetic and the merge that can only REDUCE the group count … Holds"*) was literally true and is the reason the gap survived three passes. |
+| S34, S114 | **BC** | *"Ingest fails explicitly; never returns a plausible empty world"* / *"Schema/permission/infrastructure failure ≠ no activity"* | Both rows cite the crowd-flow producer's refusal taxonomy and the retention sweep's reason codes, and both citations hold. A SIBLING path on the same surface did the opposite: the trail read answered a consent outage as a coverage fact about the world (31.1 item 3), and a cut cohort read answered a sample as the cohort (item 1). Neither is a refusal and neither is an empty return — **they are the third thing these two rows did not enumerate**, an answer that is well-formed and wrong. 31.1 closes both. |
+
+**The honest reading of this table is that the rows were right about the code they cite and silent
+about the code that feeds it**, and that no reader could have told the difference. It is also why this
+section moves nothing: the defects are closed, so the `C`s are earned at `f71cfb85f`. Had this
+re-census run a day before #582 merged, S13 and S23 would both have been `BC → BW`.
+
+### 31.4 S118's blocker, stated with the capture's own caveat
+
+S118 (*"Anonymous intelligence may not be reverse-linked to a Portava account"*) is `BW` because every
+contribution carries an `actor_id` that references a profile. 31.1 item 3 notes that the trail read
+would find nobody once rotating contributor tokens are stored in that column — which is the shape of
+the fix S118 needs, carried by `3002_intel_contribution_identity.sql` and `3003_intel_identity_bridges.sql`.
+
+**Neither appears in the repository's record of what has been applied to production, and that is
+NOT evidence that they are unapplied.** The capture says so about itself: it is *"a staleness
+tripwire, not an inventory"*, and `census-input-intelligence.md` §31.2 states the same rule — ledger
+absence is not evidence of non-application. So: **the repository holds no record of 3002 or 3003
+being applied, and this pass may not read production to find out.** S118 stays `BW` and §30's
+classification of it stands unchanged. What would settle it is one object probe for the rotating-token
+column, recorded in this document with a date.
+
+### 31.5 Headline
+
+**Unchanged: 127 requirements · 113 BC · 13 BW · 0 NB · 1 CV**, exactly as §27 states and §30 restates.
+113 + 13 + 0 + 1 = 127. Nothing in this section is a verdict; §30's figures stand.
+
+### 31.6 What would turn this red
+
+- A cohort, stance or evidence read on the claim path that takes rows in one request again: S13 and
+  S23 both go to `BW` the same day, and this time the row text says so.
+- A projection pass that reports a subject count it did not read, or an expiry reconciliation that
+  expires on a partial read.
+- Any intel read answering an outage as a fact about the world — the class S34 and S114 name and
+  31.3 shows they did not fully cover.
+- A capture screen putting a consented person in front of the first-use consent gate on a failed
+  read: the toggle re-stamps a consent already given, which is a consent-record defect and not only
+  a copy defect.
+- 3002 or 3003 applied without S118 being re-read: the row's one stated blocker would be gone and the
+  cell would still name it.
+
+- NOT-GRADED: artifacts/api-server/src/lib/intelProjectionScheduler.ts — §31.1 item 2's keyset fix to the five-minute projection pass. No S row grades the pass's scheduling; S67 and S16 grade who WRITES `intel_state_snapshots`, which this does not change.
+- NOT-GRADED: artifacts/api-server/src/lib/trailServe.ts — §31.1 item 3's trail read. No S row cites it; its defect class is the one S34 and S114 name, and §31.3 records that rather than resting a verdict on this file.
+- NOT-GRADED: artifacts/api-server/src/lib/keysetRead.ts — the shared whole-read helper #582 added for the intel paths. Machinery; no S verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/services/intelConsent.ts — §31.1 item 4's client consent read. The server-side consent scope is what S25 and S31 grade; no S row grades a screen's consent copy.
+- NOT-GRADED: artifacts/api-server/src/migrations/3003_intel_identity_bridges.sql — §31.4 names it beside 3002 as the pair that carries the rotating-token shape S118 needs. S118's `BW` rests on the `actor_id` reference that 2130 installs, not on either of these files; neither is applied so far as the repository records, and 3002 is already watched here.

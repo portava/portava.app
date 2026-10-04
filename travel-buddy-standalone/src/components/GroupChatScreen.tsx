@@ -56,7 +56,7 @@ import * as Clipboard from 'expo-clipboard';
 import { MessageEntrance, useMessageEntranceGate } from './MessageEntrance.tsx';
 import { SharedContextRail } from '../features/telegraph/index.ts';
 import { PortavaObjectMessage } from '../features/telegraph/sharing/PortavaObjectMessage.tsx';
-import { TelegraphConnectionBanner } from '../features/telegraph/connection/TelegraphConnectionBanner.tsx'; import { OwnMessageStatusRow } from '../features/telegraph/lifecycle/OwnMessageStatusRow.tsx'; import { useReaderAvatars } from '../features/telegraph/lifecycle/useReaderAvatars.ts'; import type { OwnMessageStatus } from '../features/telegraph/lifecycle/readState.ts';
+import { TelegraphConnectionBanner } from '../features/telegraph/connection/TelegraphConnectionBanner.tsx'; import { OwnMessageStatusRow } from '../features/telegraph/lifecycle/OwnMessageStatusRow.tsx'; import { useReaderAvatars } from '../features/telegraph/lifecycle/useReaderAvatars.ts'; import { failedSendCopy, type OwnMessageStatus, type SendFailure } from '../features/telegraph/lifecycle/readState.ts';
 import { UserIdentityLink } from './interaction/UserIdentityLink.tsx';
 import { localDateKey, localTodayKey } from '../utils/localDate.ts';
 
@@ -299,7 +299,7 @@ function GroupMessageBubble({
   readerAvatars,
   autoTranslate,
   defaultShowOriginal,
-  deliveryStatus,
+  deliveryStatus, sendFailure,
   onRetry,
 }: {
   item: Message;
@@ -311,7 +311,7 @@ function GroupMessageBubble({
   readerAvatars?: string[];
   autoTranslate: boolean;
   defaultShowOriginal: boolean;
-  deliveryStatus?: 'sending' | 'sent' | 'failed' | null;
+  deliveryStatus?: 'sending' | 'sent' | 'failed' | null; sendFailure?: SendFailure | null;
   onRetry?: () => void;
 }) {
   const [showOriginal, setShowOriginal] = useState(defaultShowOriginal || !autoTranslate);
@@ -407,7 +407,7 @@ function GroupMessageBubble({
       {mine && deliveryStatus === 'failed' && (
         <Pressable style={styles.deliveryRow} onPress={onRetry} hitSlop={8}>
           <AlertCircle size={11} color="#EF4444" />
-          <Text style={styles.deliveryFailed}>Tap to retry</Text>
+          <Text style={styles.deliveryFailed} testID="telegraph-send-failed-copy">{failedSendCopy(sendFailure)}</Text>
         </Pressable>
       )}
 
@@ -841,7 +841,7 @@ export function GroupChatScreen({ type, id, title, memberLabel }: Props) {
                 readerAvatars={mine ? readerAvatarsForMsg(m) : undefined}
                 autoTranslate={autoTranslate}
                 defaultShowOriginal={defaultShowOriginal}
-                deliveryStatus={mine ? (m.deliveryStatus ?? null) : null}
+                deliveryStatus={mine ? (m.deliveryStatus ?? null) : null} sendFailure={mine ? (m.sendFailure ?? null) : null}
                 onRetry={mine && m.clientId ? () => retrySend(m.clientId!) : undefined}
               />
             </MessageEntrance>

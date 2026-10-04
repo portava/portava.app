@@ -4,6 +4,8 @@
 
 **Nothing in this page has been done.** No migration of this programme is applied to `portava-ci` or to production. Nothing is deployed, and no Discovery flag has been turned on. Every verdict below rests on controlled evidence: unit suites and a local PostgreSQL 16 harness. None of it is production evidence.
 
+**FOUR OF THE QUESTIONS ARE ANSWERED — 11(a), 12, 15 and 16, by the owner on 2026-10-04.** The answers are recorded verbatim in **§8**, and each of those questions in §5 carries an `ANSWERED` line pointing there. The paragraph above still holds: an answer is not a thing done, and no migration, deploy, flag flip or collection follows from one on its own. **Two of the four are conditional and must not be read as clearances** — 11(a)'s 30 days is a *proposed product default pending the legal review this page itself requires*, and 15 stays **off** *until a privacy notice is written and approved*. The register section is `## OWNER-1004 — the owner's answers to questions 11(a), 12, 15 and 16` in `docs/architecture/discovery-decision-register.md`. Questions **9, 11(b), 11(c), 17, 18, 22 and 25 are still open**, and so is every production activation.
+
 **How to answer.** Each action gives the exact thing to approve. Reply per action number: "approve", "decline", or a value. The four kinds of decision the programme may not make itself are marked:
 - **consent** — real user consent or a new use of someone's data;
 - **financial** — rates, payouts, commercial terms or spend;
@@ -56,12 +58,12 @@ How the 87 open rows split:
 | 8 | Phase F gate 2: PDE serves `for_you` and Cache A; live rank at step M4 | production activation | 12 |
 | 9 | *Q* May ranking read other accounts' saves, ages and follows for anti-abuse? | consent | DV-12, DC-11 (2) |
 | 10 | Turn on the ranker designs and pipeline stages, one flag at a time | production activation | 14 |
-| 11 | *Q* Three retention values: `raw_recent` rows, trend snapshots, Trail stores | retention | 13 |
-| 12 | *Q* May the trend API publish, under the k ≥ 15 floor and protected zones? | consent (disclosure) | DC-21, DV-29, DV-33 (3) |
+| 11 | *Q* Three retention values: `raw_recent` rows, trend snapshots, Trail stores — **(a) ANSWERED 2026-10-04, conditionally: 30 days as a PROPOSED default, pending legal review (§8.1). (b) and (c) are still open, so this action is NOT closed.** | retention | 13 |
+| 12 | *Q* May the trend API publish, under the k ≥ 15 floor and protected zones? — **ANSWERED 2026-10-04: yes to both floors (§8.2). Verified: the k floor is applied on every published leg; the zone floor is NOT applied to the `areas` list, the emerging-Trails leg, or either producer.** | consent (disclosure) | DC-21, DV-29, DV-33 (3) |
 | 13 | Turn on Trending v2, its stored post-after-visit leg and the Trail co-occurrence projection | production activation | 12 |
 | 14 | Turn on the Trails ranking flags | production activation | 4 |
-| 15 | *Q* Collect dwell time on the place sheet? | consent | DV-41, DV-78 (2) |
-| 16 | *Q* People-derived data: (a) circle mates' Memories, (b) circles, crews and visits for trends, (c) itineraries | consent | DC-12, DV-34, DV-72 (3) |
+| 15 | *Q* Collect dwell time on the place sheet? — **ANSWERED 2026-10-04: no — publishing stays OFF until the privacy notice is written and approved (§8.3). The flag stays FALSE.** | consent | DV-41, DV-78 (2) |
+| 16 | *Q* People-derived data: (a) circle mates' Memories, (b) circles, crews and visits for trends, (c) itineraries — **ANSWERED 2026-10-04: no to all three (§8.4).** | consent | DC-12, DV-34, DV-72 (3) |
 | 17 | *Q* May a Trail serve non-public content? | consent | none (DC-20 does not wait on it) |
 | 18 | *Q* Tagging definitions, "Nobody", and Invisible in name search | consent | none |
 | 19 | A bounded debug-sampler window | production activation | DV-52 (1) |
@@ -77,6 +79,8 @@ How the 87 open rows split:
 - 9 no; 10 approve without 2289; 11 your three values; 12 yes; 13–14 approve;
 - 15 not yet; 16 (a) no, (b) no, (c) no; 17 no; 18 as recommended;
 - 19–21 approve; 22 retain-anonymised with your period, and B1–B11 as recommended; 23 and 24 after 22; 25 no.
+
+**What is actually answered (2026-10-04), against that list.** 12 **yes**; 15 **not yet**, with a named condition; 16 (a) **no**, (b) **no**, (c) **no**; 11 **part (a) only** — 30 days, as a proposed default pending legal review, which is *not* the "three values" this action asks for. Everything else on the list above is **unanswered**. §8 holds the four records.
 
 ---
 
@@ -538,7 +542,9 @@ None of these changes the ranked order of the Discovery feed. Turn them on one a
 
 ## 5. The questions — consent, money, retention (9, 11, 12, 15–18, 22, 25)
 
-This page does not answer these. Each gives a recommended answer and what follows from each answer.
+**Four are now answered: 11(a), 12, 15 and 16, by the owner on 2026-10-04.** Each carries an `ANSWERED` line below with the operative wording **verbatim**; the analysis that produced the question follows it unchanged, so the reasoning the decision was taken against stays readable. The full records, with their conditions and consequences, are §8.
+
+This page does not answer the rest — 9, 11(b), 11(c), 17, 18, 22 and 25. Each of those gives a recommended answer and what follows from each answer.
 
 ### Question 9 — engagement-integrity data use · consent
 
@@ -549,6 +555,16 @@ This page does not answer these. Each gives a recommended answer and what follow
 
 ### Question 11 — three retention values · retention
 
+> **ANSWERED (part (a) only) — 2026-10-04 · CONDITIONAL APPROVAL, NOT A CLEARANCE.** *"Set Q11(a) raw behavioural-row retention to 30 days, then delete the identifiable raw rows; retain only irreversibly aggregated data where needed. Treat 30 days as the proposed product default **pending the required legal review**."*
+>
+> **The condition is the gate.** 30 days is a **proposed product default**. The privacy/legal review `04` §11 requires — the review the (a) row below records as mandatory — **has not happened**, and nothing here says it has. A sweep may be designed and tested to that horizon; no retention period may be published to a user or treated as settled policy, and no production row may be deleted under it, until the review has run.
+>
+> **Conflict, unresolved.** `ranking_debug_samples` is already purged at **7 days** in the chain (0203), and the row below recommends keeping that. "30 days" must not be read as authority to **lengthen** that enforced purge. Which horizon governs that one store is **unknown** until the review settles it; the 7-day purge is untouched.
+>
+> **State of the work.** No sweep exists over `recommendations`, `rank_events` or `ranking_debug_samples` at any horizon; `retention_tier` is a label enforced nowhere. So the position after this answer is: a number proposed, a sweep still owed, rows still accumulating.
+>
+> **Parts (b) and (c) are NOT answered.** Action 11 is therefore not closed, and the trend scheduler (13.1) is still gated on (b): DC-06, DC-07, DC-17, DV-28–DV-31, DV-33 and DV-34 continue to wait on it. Record: §8.1, and register `D-OWNER1004-1`.
+
 | part | what is kept | recommended answer | if answered | if not |
 |---|---|---|---|---|
 | (a) W10D-C8 | `raw_recent` behavioural rows: `recommendations` (3376, 3491), `rank_events` dwell rows, `ranking_debug_samples` | **No spec value.** `04` §11: *"Exact retention must be decided with privacy/legal review"*. Choose it with legal. The one number already in the code is the debug-sample purge's 7 days (0203); keeping that for debug samples is recommended | a sweep is built and scheduled to that horizon | rows accumulate, labelled and unswept. Do not turn on dwell (question 15) without it |
@@ -557,6 +573,10 @@ This page does not answer these. Each gives a recommended answer and what follow
 
 ### Question 12 — may the trend API publish? · consent (disclosure)
 
+> **ANSWERED — 2026-10-04 · CLOSED, both floors required.** *"Close Q12 with the threshold of at least 15 travellers and suppress contributions inside protected zones."*
+>
+> **The "The lists already apply both" claim below was verified in code at `f71cfb85f`, and it holds for the place legs only.** The k ≥ 15 floor is applied, in both windows and fail-closed, on every published leg — the place lists, the explanations, the named-neighbourhood sentence and the emerging-Trails fold. **Protected-zone suppression is applied only to `places`, `for-you` and the places half of `emerging`**; `GET /v1/discovery/trending/areas` (Local Pulse, DV-29) and the emerging-Trails leg read no zone at all, and neither momentum producer excludes a contribution made inside a zone. For those legs the answer is **answered-but-not-yet-implemented**: a code gap, named, not a decision. The `file:line` evidence for every clause of this paragraph is in §8.2 and in register `D-OWNER1004-2`.
+
 - **Question** (§58.12 Q1, the first half of W10D-C4): *Must a published trend meet `PRIVACY_THRESHOLD_V1` (at least 15 distinct travellers per window), and be withheld inside protected zones?*
 - The neighbourhood-naming half is decided as routine (D-W10-R1-10): named neighbourhoods only, with at least 15 travellers in both windows.
 - **Recommended answer: yes to both floors.** The lists already apply both.
@@ -564,6 +584,12 @@ This page does not answer these. Each gives a recommended answer and what follow
 - **If no:** `discovery_trending_api_enabled` stays FALSE.
 
 ### Question 15 — collect dwell time? · consent
+
+> **ANSWERED — 2026-10-04 · REFUSED FOR NOW, with a named condition. NOT AN APPROVAL.** *"Keep Q15 dwell-time publishing off until the privacy notice is written and approved."*
+>
+> **The condition is the gate.** `discovery_dwell_telemetry_enabled` stays FALSE: nothing is measured, sent, read or written, and the route answers 404 `feature_disabled`. The draft notice wording is the one printed in the recommendation below. **It is a draft. It has not been written into any notice and it has not been approved, and nothing here approves it.** Who approves it, and whether the consent model also needs an opt-in built, are **unknown**.
+>
+> **Consequence.** DV-41 and DV-78 stay **W** — DV-41's production `place_dwell` row cannot exist while the flag is FALSE, and DV-78 additionally owes the unbuilt Trail-open event. Neither is a defect. Record: §8.3, and register `D-OWNER1004-3`.
 
 - **Question** (D-W10-O-9, W10D-C1): *For a signed-in viewer, on the Discovery place detail sheet only, may Portava record active, passive and idle milliseconds as `rank_events` rows linked to the account?*
   - The 10-second active window, and "passive dwell is never an interest signal", are decided (D-W10-O-8).
@@ -578,6 +604,15 @@ This page does not answer these. Each gives a recommended answer and what follow
 - **If no:** nothing is collected, and the route answers 404 `feature_disabled`.
 
 ### Question 16 — people-derived data · consent (three parts)
+
+> **ANSWERED — 2026-10-04 · NO to all three.** *"Answer Q16 'no' for all three people-derived-data uses."*
+>
+> **The consequences each part states below are this answer working as intended. They are not defects and must not be "fixed".**
+> - **(a) no** → `discovery_circle_candidates_enabled` stays FALSE. **DC-12 stays at 10 of 11 sources, and stays W.** The eleventh source is *refused*, not missing; counting 10 as incomplete coverage re-litigates this answer.
+> - **(b) no** → no lane is authorised to build aggregated circle, crew or visit counts. **DV-34 stays W on those legs.** Its post-after-visit leg is untouched by this answer and still waits on 11(b) and action 13.
+> - **(c) no** → `traveler_affinities`, itinerary-based `place_cooccurrence` and `circle_momentum` are not built from people's data. The Trail-only form (3495) stands and is built. **DV-72 stays W** until a production `place_cooccurrence` run exists; its personal forms are refused permanently, not owed.
+>
+> Record: §8.4, and register `D-OWNER1004-4`.
 
 | part | question | recommended answer | if yes | if no |
 |---|---|---|---|---|
@@ -658,6 +693,13 @@ What "after them" means, once the listed actions are done:
 - **G:** graded on the answer itself.
 
 A lane re-grades each row against its own criterion. This column predicts what is owed, not the verdict.
+
+**Read the `actions` column against §8.** Four of the actions it names are answered (2026-10-04) and the table below is unchanged, so a row that still lists one of them is not still waiting on the owner for it:
+
+- **16 is answered (no).** DC-12, DV-34 and DV-72 no longer wait on it. **They stay W**, for the reasons §8.4 records — the refused legs are refused, not owed. Nobody should "fix" these three rows.
+- **12 is answered (yes).** DC-21, DV-29 and DV-33 no longer wait on it; they wait on 3, 11(b) and 13. DV-29's zone leg is additionally **not implemented** (§8.2).
+- **15 is answered (not yet).** DV-41 and DV-78 no longer wait on an owner answer; they wait on a privacy notice being written and approved, and **stay W** meanwhile.
+- **11 is answered in part (a) only, and conditionally.** Every row listing action 11 still waits on it, because (b) and (c) are open and (a)'s 30 days is a proposal pending legal review (§8.1). DV-06's horizon is proposed, not set.
 
 | row | actions | after them | still owed |
 |---|---|---|---|
@@ -748,3 +790,104 @@ A lane re-grades each row against its own criterion. This column predicts what i
 | DV-78 | 11, 15 | X | the Trail-open event, which is not built (D-1 Q2 is decided; the code is owed) |
 | DV-80 | 3, 4 | E | `report:discovery-ecosystem` run read-only against production |
 | DV-82 | 3, 6, 7 | E | one stop evaluation reading all seven ruled, under a non-legacy mode |
+
+---
+
+## 8. The owner's answers — 2026-10-04
+
+**Four questions were answered by the owner on 2026-10-04: 11(a), 12, 15 and 16.** The operative wording of each is quoted **verbatim** below; the analysis that produced each question is in §5 and is unchanged, so the reasoning a decision was taken against stays readable.
+
+**These answers authorise work. They do NOT move a verdict.** No census row changes on the strength of an answer — each still needs its own acceptance evidence, measured after the change lands. Anyone tempted to mark a row `C` because a decision exists should read this sentence again.
+
+**Nothing was applied, deployed, flipped or enabled to record them.** This section is documentation.
+
+The matching register entries are `D-OWNER1004-1` … `-4`, in the section `## OWNER-1004 — the owner's answers to questions 11(a), 12, 15 and 16` of `docs/architecture/discovery-decision-register.md`, which carries the same records with their `file:line` evidence.
+
+| | question | answer | date | the condition that gates it |
+|---|---|---|---|---|
+| **8.1** | 11(a) — raw behavioural-row retention | 30 days, **proposed** | 2026-10-04 | **pending the required privacy/legal review** — not yet held |
+| **8.2** | 12 — may the trend API publish | **yes**, under both floors | 2026-10-04 | none on the answer; the zone floor is unimplemented on two legs |
+| **8.3** | 15 — dwell-time publishing | **off** | 2026-10-04 | **until a privacy notice is written and approved** — neither done |
+| **8.4** | 16 — people-derived data (a), (b), (c) | **no**, **no**, **no** | 2026-10-04 | none |
+
+### 8.1 Question 11(a) — raw behavioural-row retention · CONDITIONAL, NOT A CLEARANCE
+
+**The answer, verbatim.**
+
+> "Set Q11(a) raw behavioural-row retention to 30 days, then delete the identifiable raw rows; retain only irreversibly aggregated data where needed. Treat 30 days as the proposed product default **pending the required legal review**."
+
+**Stores in scope:** `recommendations` (3376, 3491), `rank_events` dwell rows, `ranking_debug_samples` — the `raw_recent` tier of `04` §11.
+
+**The condition, stated as the condition it is.** 30 days is a **proposed product default**. §5's own row for this question records that *"Exact retention must be decided with privacy/legal review"* and that there is **no spec value**. That review **has not happened**. This record does not say it has, and nothing here may be cited as it having happened. Until it has:
+
+- a sweep may be **designed and tested** to a 30-day horizon;
+- **no** retention period may be published to a user, written into a notice, or treated as settled policy;
+- **no** production row may be deleted under it.
+
+**Conflict with what is already written, recorded and not resolved.** `ranking_debug_samples` is already purged at **7 days** by a function in the migration chain (0203), and §5's recommendation for this question was explicitly to **keep** that 7 days for debug samples. Applying "30 days" to that store would **lengthen** an enforced purge. This record does not authorise that, the 7-day purge is left exactly as it is, and which horizon governs `ranking_debug_samples` is **unknown** until the legal review settles it.
+
+**State of the work, measured at `f71cfb85f`.** `retention_tier` is a label with no enforcement — 3376 says so in terms — and **no sweep exists** over any of the three stores at any horizon. So the position after this answer is: a number proposed, a sweep still owed, rows still accumulating, labelled and unswept.
+
+**What it does not unblock.** Question 15 (dwell): §5's rule is *"Do not turn on dwell (question 15) without it"*, and a conditional answer does not satisfy that — 15 is separately refused in §8.3. Parts **11(b)** and **11(c)** are **still unanswered**, so **action 11 is not closed** and the trend scheduler (13.1) stays gated on (b): DC-06, DC-07, DC-17, DV-28–DV-31, DV-33 and DV-34 continue to wait on it.
+
+### 8.2 Question 12 — may the trend API publish · CLOSED, both floors required
+
+**The answer, verbatim.**
+
+> "Close Q12 with the threshold of at least 15 travellers and suppress contributions inside protected zones."
+
+**What it unblocks.** 13.3 may run. DC-21, DV-29 and DV-33 then need production rows. Recovery is `UPDATE public.feature_flags SET enabled = false WHERE flag IN ('discovery_trending_api_enabled', 'discovery_trend_lists_enabled');` — both are read per request and fail closed, so revoking takes effect on the next request.
+
+**§5 says of the two floors: "The lists already apply both." That claim was verified in code at `f71cfb85f`. It holds for the place legs. It does not hold for two others.**
+
+**The k ≥ 15 floor — HOLDS, on every published leg.** k is reused, not re-chosen: `PRIVACY_THRESHOLD_V1.minUniqueActors` is 15 (`artifacts/api-server/src/lib/intelContracts.ts:733#minUniqueActors: 15,`) and is taken as the disclosure floor at `artifacts/api-server/src/lib/discoveryTrendExplanation.ts:71#export const TREND_DISCLOSURE_MIN_TRAVELERS = PRIVACY_THRESHOLD_V1.minUniqueActors;`. It is required in **both** windows and fails closed on a missing count (`artifacts/api-server/src/lib/discoveryTrendExplanation.ts:136#function travelersOk(v: unknown): boolean {`, `artifacts/api-server/src/lib/discoveryTrendExplanation.ts:145#export function mayDiscloseTrend(row: TrendSnapshotRow): boolean {`). Applied to:
+
+| leg | where the floor is applied |
+|---|---|
+| `places`, `for-you`, `emerging` (places) | `artifacts/api-server/src/lib/discoveryTrendExplanation.ts:531#export function orderLocated(rows: readonly LocatedRow[]` |
+| `areas` (Local Pulse) and the neighbourhood name in a sentence | `artifacts/api-server/src/lib/discoveryTrendExplanation.ts:356#export function mayNameNeighbourhood(area: TrendAreaRow` |
+| `emerging` (Trails) | `artifacts/api-server/src/lib/discoveryTrendExplanation.ts:645#async function emergingTrails(sc: any, destination: string, nowMs: number)` |
+| the explanations route | `artifacts/api-server/src/lib/discoveryTrendExplanation.ts:145#export function mayDiscloseTrend(row: TrendSnapshotRow): boolean {` |
+
+Pinned by `artifacts/api-server/src/test/discoveryTrendingLists.test.ts:227#it("L-D1.` and `artifacts/api-server/src/test/discoveryTrendingLists.test.ts:286#it("L-G1.`.
+
+**Protected-zone suppression — HOLDS for `places`, `for-you` and the places half of `emerging`.** `artifacts/api-server/src/lib/discoveryTrendExplanation.ts:478#export async function eligibleListPlaces(sc: any, viewerId: string, placeIds: readonly string[])` reads the active zones (`artifacts/api-server/src/lib/discoveryTrendExplanation.ts:489#const zones = await loadActiveProtectedZones(sc);`), withholds **every** positioned place when the zone policy is unreadable (`artifacts/api-server/src/lib/discoveryTrendExplanation.ts:494#if (zones === null) continue;`), and drops a place the zone pass suppresses or coarsens (`artifacts/api-server/src/lib/discoveryTrendExplanation.ts:498#const decided = applyProtection([probe], zones).objects[0];`). A list is never served with a rule it could not apply. Pinned by `artifacts/api-server/src/test/discoveryTrendingLists.test.ts:241#it("L-E1.` and `artifacts/api-server/src/test/discoveryTrendingLists.test.ts:259#it("L-E2.`.
+
+**Protected-zone suppression — DOES NOT HOLD on two legs. For these, Q12 is ANSWERED BUT NOT YET IMPLEMENTED.**
+
+1. **`GET /v1/discovery/trending/areas` (Local Pulse, DV-29).** `artifacts/api-server/src/lib/discoveryTrendExplanation.ts:588#export async function localPulse(sc: any, destination: string, nowMs: number)` never calls `eligibleListPlaces`, reads no zone, and filters on the k floor alone. A named neighbourhood inside a protected zone is not withheld by any zone pass.
+2. **The emerging-Trails leg.** `emergingTrails` applies the k floor and reads no zone either.
+
+**No contribution-side suppression exists at either producer.** The answer's words are *"suppress contributions inside protected zones"*. What the tree does is withhold the **output** for a positioned place. It does not exclude a contribution made inside a zone from the momentum computation: no rebuild migration in the chain (2892, 3410, 3417, 3435, 3475–3477, 3497) reads a protected zone, and neither `lib/discoveryTrendNormalised.ts` nor `lib/discoveryLocalMomentum.ts` mentions one. Whether the answer requires input-side exclusion as well as output-side withholding is **unknown**, and is not decided here.
+
+**Consequence for activation.** The place legs are covered by the verification above. Turning on the `areas` list, the emerging-Trails leg, or either producer on the strength of this answer alone would ship a leg whose zone floor is not applied. That is a code gap, named here; it is not a new decision and it does not reopen Q12.
+
+### 8.3 Question 15 — dwell-time publishing · REFUSED FOR NOW, with a named condition
+
+**The answer, verbatim.**
+
+> "Keep Q15 dwell-time publishing off until the privacy notice is written and approved."
+
+**This is a refusal with a condition attached. It is not an approval and it must not be recorded as one.** `discovery_dwell_telemetry_enabled` stays FALSE: nothing is measured, sent, read or written, and the route answers 404 `feature_disabled`. The migration that seeds the flag asserts the OFF state as a postcondition (`artifacts/api-server/src/migrations/3395_discovery_dwell_telemetry_flag.sql:76#WHERE flag = 'discovery_dwell_telemetry_enabled' AND enabled = TRUE;`), and that assertion is untouched.
+
+**The condition, and its state.** A privacy notice must be **written and approved**. §5's recommendation for this question carries **draft** wording for it, beginning *"When you open a place from Discovery, Portava records how long the place stays open on your screen…"*. That draft is referenced here, not adopted: **it has not been written into any notice, it has not been approved, and nothing in this record approves it.** Who approves it, and whether the consent model also needs an opt-in built (the third bullet of §5's recommendation), are **unknown**.
+
+**Consequence.** DV-41 and DV-78 stay **W**. DV-41 owes one production `place_dwell` row, which cannot exist while the flag is FALSE. DV-78 additionally owes the Trail-open event, which is not built. Neither is a defect, and neither is closable by code alone.
+
+### 8.4 Question 16 — people-derived data, all three parts · NO
+
+**The answer, verbatim.**
+
+> "Answer Q16 'no' for all three people-derived-data uses."
+
+**The consequences below are this answer working as intended. They are not defects, and a later pass must not "fix" them.**
+
+| part | refused | consequence, recorded | why it is not a defect |
+|---|---|---|---|
+| **(a)** D-W10-R3-4 | circle mates' published Memories generating Discovery candidates | **DC-12 stays at 10 of 11 sources, and stays W.** `discovery_circle_candidates_enabled` stays FALSE | the eleventh source is **refused**, not missing. Counting 10 sources as incomplete coverage re-litigates this answer |
+| **(b)** AR-W11A-2 | circle and crew membership, and `passport_stamps` / `circle_checkins` / `plan_checkins` visits, counting as independent convergence for a public trend | **DV-34 stays W on those legs.** No aggregated-count lane is authorised | small identified groups and location history, refused as inputs. DV-34's post-after-visit leg is untouched and still waits on 11(b) and action 13 |
+| **(c)** W10D-C5 | `traveler_affinities`, itinerary-based `place_cooccurrence`, `circle_momentum` built from people's data | **DV-72 stays W** until one production `place_cooccurrence` run exists | the Trail-only form (3495) stands, is built and needs no personal data. The personal forms are **refused permanently**, not owed |
+
+**Where the refusal is held in code.** 3480 asserts that both its §85 flags ship OFF (`artifacts/api-server/src/migrations/3480_discovery_candidate_sources_flag.sql:73#SELECT count(*) INTO on_count FROM public.feature_flags WHERE flag IN (`), and the circle retrieval runs only when the caller opts in (`artifacts/api-server/src/lib/discoveryCandidates/generate.ts:119#...(opts.circle ? [retrieveCircleContext(ctx)] : []),` over `artifacts/api-server/src/lib/discoveryCandidates/retrievals.ts:392#export function retrieveCircleContext(ctx: RetrievalContext): Promise<RetrievalOutcome> {`).
+
+**Reversibility.** Each part is a FALSE flag or an unbuilt projection, so "no" leaves today's state. A later "yes" would need its own consent basis named, and 16(a) would additionally need `circle_member_visibility_overrides` honoured in `retrieveCircleContext` before its flag could be turned on at all.

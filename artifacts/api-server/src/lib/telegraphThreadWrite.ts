@@ -1,39 +1,39 @@
 /**
  * The gates every Telegraph write into `messages` passes through.
  *
- * Extracted so the §5 share route and the §6.2 typed-kind route apply the
- * SAME four checks, in the same order, with the same posture as the ordinary
- * send path in `routes/messaging.ts`. A second write endpoint that skipped one
- * of them would be a weaker door into the same table — and the block guard is
- * the one that matters most, because blocking deliberately does not close an
- * existing thread and is re-checked per send instead.
+ * Extracted so every door applies the SAME checks with the same posture as the
+ * ordinary send path in `routes/messaging.ts`. A second write endpoint that
+ * skipped one of them would be a weaker door into the same table — and the
+ * block guard is the one that matters most, because blocking deliberately does
+ * not close an existing thread and is re-checked per send instead.
  *
- * The four, in order:
- *   1. `disable_messaging` kill switch — fail CLOSED on a read error AND on
- *      an absent service client, which is the same fact (see
- *      `messagingStopUnknownRefusal`).
+ * FIVE gates (four until the §22 burst limit joined them — it had been on the
+ * text door alone, so every other door was unlimited):
+ *   1. `disable_messaging` kill switch — fail CLOSED on a read error AND on an
+ *      absent service client, the same fact (`messagingStopUnknownRefusal`).
  *   2. ACTIVE membership (`left_at IS NULL`).
  *   3. 1:1 block guard. An unreadable roster must NOT read as "this is a group
  *      thread, skip the check": that is how a fail-closed guard becomes
  *      unreachable, and `routes/messaging.ts` records the day it happened.
  *   4. E2EE refusal. An E2EE thread's promise is that the server never stores
- *      plaintext; a structured envelope IS plaintext, so it is refused by name
- *      rather than quietly written.
+ *      plaintext; a structured envelope IS plaintext, so it is refused by name.
+ *   5. §22's adaptive send rate limit, LAST, so a send refused by 1–4 never
+ *      spends the sender's allowance. See `sendRateRefusal` at the end of file.
  */
-import type { SupabaseClient } from "@supabase/supabase-js";
-import { getServiceClient } from "./supabase.js";
-import { isKillSwitchEngaged } from "./featureFlags.js";
-import { isBlockedBetween } from "./blockGuard.js";
+import type { SupabaseClient } from "@supabase/supabase-js"; import { sendLimiterId, type SendBucket } from "../domain/telegraph/policies/messageDoorPolicy.js";
+import { getServiceClient } from "./supabase.js"; import { checkSendRateLimit, SEND_LIMITS, SEND_WINDOW_MS } from "../domain/telegraph/policies/sendRateLimit.js";
+import { isKillSwitchEngaged } from "./featureFlags.js"; import { checkRateLimit } from "./rateLimit.js";
+import { isBlockedBetween } from "./blockGuard.js"; import { sendError } from "./http.js";
 
 export type ThreadWriteRefusal =
   | "feature_disabled"
   | "forbidden"
   | "degraded_unavailable"
-  | "e2ee_thread";
+  | "e2ee_thread" | "rate_limited";
 
 export type ThreadWriteGuard =
   | { ok: true; otherMemberIds: string[] }
-  | { ok: false; code: ThreadWriteRefusal; message: string };
+  | { ok: false; code: ThreadWriteRefusal; message: string; retryAfterMs?: number };
 
 /**
  * The refusal for a flag client we do not have.
@@ -81,6 +81,7 @@ export async function guardTelegraphThreadWrite(
   client: SupabaseClient,
   threadId: string,
   userId: string,
+  opts: { sendBucket?: SendBucket } = {},
 ): Promise<ThreadWriteGuard> {
   const flagSc = getServiceClient();
   const stopUnknown = messagingStopUnknownRefusal(flagSc);
@@ -146,5 +147,106 @@ export async function guardTelegraphThreadWrite(
     };
   }
 
+  // 5. The burst limit, last. Everything above is a reason this sender may not
+  // write HERE; this is a reason they may not write YET, and a send that was
+  // never going to be admitted must not cost them one they are entitled to.
+  const rate = await sendRateRefusal(flagSc ?? client, userId, opts.sendBucket ?? "ordinary");
+  if (rate) return rate;
+
   return { ok: true, otherMemberIds };
 }
+
+/* ───────────────────────────── the §22 rate gate ─────────────────────────────
+ *
+ * `domain/telegraph/policies/sendRateLimit.ts` is the limiter and
+ * `routes/messaging.ts` was its only caller: the TEXT door. census T279 graded
+ * §22's adaptive limit C on that one call, and it was true of that one door. The
+ * media door in the same file, and the four doors behind the guard above — typed
+ * kinds, voice, share, coordination — had no limit at all, so the burst the
+ * limiter was written to stop ("a compromised account fanning a scam across a
+ * hundred threads, a script") only had to choose a different endpoint.
+ *
+ * ONE BUCKET, NOT ONE PER DOOR. Every ordinary door counts against the id the
+ * text door already uses. A bucket per door would have multiplied the allowance
+ * by the number of doors, which is the same defect with a limit on it.
+ */
+
+export type SendRateRefusal = { ok: false; code: "rate_limited"; message: string; retryAfterMs: number };
+
+/** The words the text door has always used, so one refusal reads the same at every door. */
+const SEND_RATE_MESSAGE = "You are sending messages very quickly. Please wait a moment.";
+
+/**
+ * The strictest tier's bucket, decided without reading anything.
+ *
+ * `checkSendRateLimit` already falls to this tier when an input RESOLVES with an
+ * error. This is the same answer for the case it cannot see: a read that THROWS.
+ */
+export function strictestSendRate(userId: string, bucket: SendBucket): { allowed: boolean; retryAfterMs: number } {
+  return checkRateLimit(sendLimiterId(bucket, "stranger"), userId, SEND_LIMITS.stranger, SEND_WINDOW_MS);
+}
+
+/**
+ * Count one send against the sender's burst allowance; a refusal if it is spent.
+ *
+ * NEVER FAILS OPEN, AND NEVER FAILS SHUT. A throwing tier read is not "no
+ * limit" — that would switch the abuse control off during exactly the minutes
+ * an attacker would like it off — and it is not a refusal either, because the
+ * strictest tier is still twenty messages in ten minutes: a pause, not a wall.
+ */
+export async function sendRateRefusal(
+  sc: SupabaseClient,
+  userId: string,
+  bucket: SendBucket = "ordinary",
+): Promise<SendRateRefusal | null> {
+  let verdict: { allowed: boolean; retryAfterMs: number };
+  try {
+    verdict = await checkSendRateLimit(sc, userId, undefined, bucket);
+  } catch {
+    // The tier could not be established at all. Strictest tier, same bucket.
+    verdict = strictestSendRate(userId, bucket);
+  }
+  if (verdict.allowed) return null;
+  return { ok: false, code: "rate_limited", message: SEND_RATE_MESSAGE, retryAfterMs: verdict.retryAfterMs };
+}
+
+/**
+ * Write a guard refusal to the response.
+ *
+ * Exists for one header. A 429 without `Retry-After` tells a client it was
+ * refused and not when to come back, and a client that does not know retries
+ * at once — which is the burst again. Every other refusal is `sendError` exactly
+ * as each door called it before.
+ */
+export function sendThreadWriteRefusal(
+  res: Parameters<typeof sendError>[0],
+  refusal: { code: ThreadWriteRefusal; message: string; retryAfterMs?: number },
+): void {
+  if (refusal.code === "rate_limited") {
+    res.setHeader("Retry-After", String(Math.max(1, Math.ceil((refusal.retryAfterMs ?? 0) / 1000))));
+  }
+  sendError(res, refusal.code, refusal.message);
+}
+
+/**
+ * The rate gate for a door that carries its own copies of the other four — the
+ * media door in `routes/messaging.ts`. Returns true when it has ANSWERED the
+ * request, so the caller's whole use of it is `if (await …) return;`.
+ */
+export async function refuseSendOverRate(
+  req: { log?: { warn: (...args: any[]) => unknown } },
+  res: Parameters<typeof sendError>[0],
+  sc: SupabaseClient,
+  userId: string,
+  threadId: string,
+  bucket: SendBucket = "ordinary",
+): Promise<boolean> {
+  const refusal = await sendRateRefusal(sc, userId, bucket);
+  if (!refusal) return false;
+  req.log?.warn({ userId, threadId, bucket }, "telegraph send rate limit reached");
+  sendThreadWriteRefusal(res, refusal);
+  return true;
+}
+
+/** Re-exported so the text door takes its whole door policy from one module. */
+export { resolveClientDiscriminator } from "../domain/telegraph/policies/messageDoorPolicy.js";
