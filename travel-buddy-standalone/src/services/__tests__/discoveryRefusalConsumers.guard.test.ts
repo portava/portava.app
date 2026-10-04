@@ -40,7 +40,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join, dirname, sep } from 'node:path';
-import { fileURLToPath } from 'node:url'; import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'; import { tmpdir } from 'node:os'; import ts from 'typescript';  // census-discovery §115 (GH33–GH40): the source is read through the TypeScript parser; GH40 walks a temporary tree
+import { fileURLToPath } from 'node:url'; import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync, symlinkSync } from 'node:fs'; import { tmpdir } from 'node:os'; import ts from 'typescript';  // census-discovery §115 (GH33–GH40): the source is read through the TypeScript parser; GH40 walks a temporary tree
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');   // travel-buddy-standalone/
 const SERVICE = 'src/services/discovery.ts';
@@ -246,12 +246,12 @@ function walk(dir: string, out: string[], root: string = ROOT): string[] {  // �
 /** Resolve an import specifier to a repo-relative module path (relative and `@/` specifiers only). */
 function resolveSpec(fromFile: string, spec: string): string | null {
   let p: string;
-  if (spec.startsWith('.')) p = join(dirname(fromFile), spec);
+  if (spec.startsWith('.')) p = join(dirname(realModule(fromFile)), spec);  // census-discovery §123 (GH55): Metro resolves a relative specifier from the importer's REAL path
   else if (spec.startsWith('@/')) p = spec.slice(2);
   else if (baseUrlModule(spec) !== null) p = baseUrlModule(spec)!; else return null;  // §111 (D-W11X2-116): a baseUrl (".") specifier resolves from the app root
   p = p.split(sep).join('/');
   const hit = firstExisting(moduleCandidates(p));  // §113 (D-W11X2-133): every extension, platform variant and index Metro resolves
-  if (hit !== null) return hit;
+  if (hit !== null) return realModule(hit);  // census-discovery §123 (GH55): a symlink is the module it points at
   // No candidate exists: the specifier's own path stands for the module.
   return p;
 }
@@ -1267,7 +1267,7 @@ function round16Checks(): void {
 
 /** §113: the first candidate that exists — in the overlay (never cached), or on disk (cached: the tree does not change during a run). */
 function firstExisting(cands: string[]): string | null {
-  for (const c of cands) if (overlayHas(c)) return c;
+  for (const c of cands) if (overlayHas(c) || overlayLinked(c)) return c;  // §123 (GH55): an in-memory link exists where it stands
   const cache = firstExisting as unknown as { disk?: Map<string, string | null> };
   const disk = (cache.disk ??= new Map());
   const key = cands[0]!;
@@ -1897,3 +1897,124 @@ function requireMember(e: ts.Expression): string | null {
   }
   return null;
 }
+
+// ── census-discovery §123 (DV-83 round 24, lane DISC-DV83; the round-23 verifier's B47: guard hole GH55, fixture F8) ──
+//
+// A consumer that reaches a carrier through a SYMLINK was not seen. `resolveSpec` compared the path a specifier names
+// with the carrier module's path; a symlinked file (`src/lib/zzLink.ts -> ../services/discovery.ts`), or a file under a
+// symlinked directory, names another path, so `import { getDiscoveryPlaces } from '../lib/zzLink.ts'` made no consumer.
+// Metro follows symlinks (it bundles the file the link points at, once, under its real path), so the app runs it.
+// `resolveSpec` now answers the REAL module: the file a path leads to once every link on the way is followed. A path
+// that leads outside the app root, or to nothing, stands for itself. The importer's own path is followed too, because
+// Metro (and Node) resolve a relative specifier from the importer's real location.
+// G13's cases need a link without writing one into the tree, so the overlay gains in-memory links beside its files.
+
+/** G13's in-memory symlinks, link path → the path it points at (both repo-relative; a file or a directory). Empty outside the GH55 cases. */
+function overlayLinks(): Map<string, string> {
+  const holder = overlayLinks as unknown as { links?: Map<string, string> };
+  return (holder.links ??= new Map());
+}
+/** Run `fn` with `links` laid over the tree as symlinks. */
+function withLinks<T>(links: Record<string, string>, fn: () => T): T {
+  const m = overlayLinks();
+  for (const [k, v] of Object.entries(links)) m.set(k, v);
+  try { return fn(); } finally { m.clear(); }
+}
+/** `rel` with every in-memory link on its path followed (a linked file, or a linked directory above it). */
+function followOverlayLinks(rel: string): string {
+  let cur = rel;
+  for (let hops = 0; hops < 16; hops++) {
+    let next: string | null = null;
+    for (const [link, to] of overlayLinks()) {
+      if (cur === link) next = to;
+      else if (cur.startsWith(`${link}/`)) next = `${to}${cur.slice(link.length)}`;
+      if (next !== null) break;
+    }
+    if (next === null) return cur;
+    cur = next;
+  }
+  return cur;
+}
+/** Whether `rel` is an in-memory link path whose target exists (in the overlay or on disk). */
+function overlayLinked(rel: string): boolean {
+  if (overlayLinks().size === 0) return false;
+  const to = followOverlayLinks(rel);
+  return to !== rel && (overlayHas(to) || (existsSync(join(ROOT, to)) && statSync(join(ROOT, to)).isFile()));
+}
+/**
+ * The module a path IS: every symlink on the way to it followed, as Metro follows them. In-memory links first; then the
+ * disk (`realpathSync`, relative to the real app root). A path outside the root, or one that does not exist, is itself.
+ */
+function realModule(rel: string, root: string = ROOT): string {
+  const viaOverlay = root === ROOT ? followOverlayLinks(rel) : rel;
+  const cache = realModule as unknown as { disk?: Map<string, string> };
+  const disk = (cache.disk ??= new Map());
+  const key = `${root}\0${viaOverlay}`;
+  const hit = disk.get(key);
+  if (hit !== undefined) return hit;
+  let out = viaOverlay;
+  try {
+    const rootReal = realpathSync(root);
+    const real = realpathSync(join(root, viaOverlay));
+    if (real.startsWith(rootReal + sep)) out = real.slice(rootReal.length + 1).split(sep).join('/');
+  } catch { /* the path does not exist on disk (an overlay file): it stands for itself */ }
+  disk.set(key, out);
+  return out;
+}
+
+const GH23V = {
+  viaLinkedFile: "import { fetchCompassRecommendations } from '../lib/zzLinkGH55.ts';\nexport async function zzRawRecsGH55(): Promise<number> {\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  viaLinkedDir: "import { fetchCompassRecommendations } from '../zzdirGH55/compass.ts';\nexport async function zzRawRecsGH55b(): Promise<number> {\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  discoveryViaLink: "import { getDiscoveryPlaces } from '../lib/zzDiscoveryLinkGH55.ts';\nexport async function zzPlacesGH55c(): Promise<number> {\n  const res = await getDiscoveryPlaces('Lisbon', 'food', {} as never, 1);\n  return res.ok ? res.data.places.length : 0;\n}\n",
+  dynamicViaLink: "export async function zzRawRecsGH55d(): Promise<number> {\n  const { fetchCompassRecommendations } = await import('../lib/zzLinkGH55.ts');\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  viaExtensionless: "import { fetchCompassRecommendations } from " + "'../lib/zzLinkGH55';\nexport async function zzRawRecsGH55e(): Promise<number> {\n  const res = await fetchCompassRecommendations({ surface: 'passport' });\n  return res.ok && res.data ? res.data.recommendations.length : 0;\n}\n",
+  notACarrier: "import { color } from '../lib/zzTokensLinkGH55.ts';\nexport const zzInkGH55f = color.ink;\n",
+};
+
+describe("DV-83 guard reach — the round-23 verifier's GH55 and the shapes beside it (§123)", () => {
+  const COMPASS = 'src/services/compass.ts';
+  it('G13 GH55: a carrier imported through a symlinked file is caught at its importer', () => {
+    assert.throws(() => withLinks({ 'src/lib/zzLinkGH55.ts': COMPASS }, () => withFiles({ 'src/components/zzGH55.tsx': GH23V.viaLinkedFile }, wholeGuard)), /zzGH55\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH55b: a carrier imported through a symlinked directory is caught', () => {
+    assert.throws(() => withLinks({ 'src/zzdirGH55': 'src/services' }, () => withFiles({ 'src/components/zzGH55b.tsx': GH23V.viaLinkedDir }, wholeGuard)), /zzGH55b\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH55c: a services/discovery.ts carrier imported through a symlink is caught', () => {
+    assert.throws(() => withLinks({ 'src/lib/zzDiscoveryLinkGH55.ts': SERVICE }, () => withFiles({ 'src/components/zzGH55c.tsx': GH23V.discoveryViaLink }, wholeGuard)), /zzGH55c\.tsx \(getDiscoveryPlaces\)/);
+  });
+  it('G13 GH55d: an awaited dynamic import through a symlink is caught', () => {
+    assert.throws(() => withLinks({ 'src/lib/zzLinkGH55.ts': COMPASS }, () => withFiles({ 'src/components/zzGH55d.tsx': GH23V.dynamicViaLink }, wholeGuard)), /zzGH55d\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH55e: an extensionless specifier that lands on a symlink is caught', () => {
+    assert.throws(() => withLinks({ 'src/lib/zzLinkGH55.ts': COMPASS }, () => withFiles({ 'src/components/zzGH55e.tsx': GH23V.viaExtensionless }, wholeGuard)), /zzGH55e\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH55f: a link to a link is followed to the carrier', () => {
+    assert.throws(() => withLinks({ 'src/lib/zzLinkGH55.ts': 'src/lib/zzHopGH55.ts', 'src/lib/zzHopGH55.ts': COMPASS }, () => withFiles({ 'src/components/zzGH55f.tsx': GH23V.viaLinkedFile }, wholeGuard)), /zzGH55f\.tsx \(fetchCompassRecommendations\)/);
+  });
+  it('G13 GH55g CONTROL: a symlink to a module that is not a carrier makes no consumer', () => {
+    const u = withLinks({ 'src/lib/zzTokensLinkGH55.ts': 'src/theme/tokens.ts' }, () => withFiles({ 'src/components/zzGH55g.tsx': GH23V.notACarrier }, unregisteredNow));
+    assert.equal(u.has('src/components/zzGH55g.tsx'), false, JSON.stringify([...u]));
+  });
+  it('G13 GH55h: on DISK, a symlinked file and a file under a symlinked directory are the module they point at', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'dv83-gh55-'));
+    try {
+      mkdirSync(join(tmp, 'src', 'services'), { recursive: true }); mkdirSync(join(tmp, 'src', 'lib'), { recursive: true });
+      writeFileSync(join(tmp, 'src', 'services', 'discovery.ts'), 'export const x = 1;\n');
+      symlinkSync(join('..', 'services', 'discovery.ts'), join(tmp, 'src', 'lib', 'zzLink.ts'));        // a linked file
+      symlinkSync('services', join(tmp, 'src', 'zzdir'));                                                // a linked directory
+      symlinkSync(join('..', 'lib', 'zzLink.ts'), join(tmp, 'src', 'services', 'zzHop.ts'));             // a link to a link
+      symlinkSync(join(tmpdir(), 'dv83-gh55-nowhere.ts'), join(tmp, 'src', 'lib', 'zzBroken.ts'));       // a broken link
+      assert.equal(realModule('src/lib/zzLink.ts', tmp), 'src/services/discovery.ts');
+      assert.equal(realModule('src/zzdir/discovery.ts', tmp), 'src/services/discovery.ts');
+      assert.equal(realModule('src/services/zzHop.ts', tmp), 'src/services/discovery.ts');
+      assert.equal(realModule('src/services/discovery.ts', tmp), 'src/services/discovery.ts');  // CONTROL: a plain file is itself
+      assert.equal(realModule('src/lib/zzBroken.ts', tmp), 'src/lib/zzBroken.ts');              // a link to nothing stands for itself
+      assert.equal(realModule('src/lib/zzMissing.ts', tmp), 'src/lib/zzMissing.ts');            // and so does a path that is not there
+    } finally { rmSync(tmp, { recursive: true, force: true }); }
+  });
+  it('G13 GH55i CONTROL: with no link anywhere, every module on disk is itself', () => {
+    assert.equal(realModule(SERVICE), SERVICE);
+    assert.equal(realModule('src/services/compass.ts'), 'src/services/compass.ts');
+    assert.equal(overlayLinked('src/lib/zzLinkGH55.ts'), false);
+  });
+});
