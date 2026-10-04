@@ -577,3 +577,56 @@ Recorded because both read as current otherwise.
   can still INSERT a booking row directly with a client key under that policy, which is why the
   rule that prices are server-computed must eventually be a database CHECK or a
   `SECURITY DEFINER` entry point, not only a convention in `routes/rentABuddy.ts:1577-1580`.
+
+---
+
+## 12. Status addendum, 2026-10-04 — the ledger foundation is in the tree, applied to no database
+
+*Appended, not edited in. Every section above stands as written on 2026-09-07 and its line numbers
+are cited elsewhere; this section records what has since been built against it.*
+
+**The headline still holds: Portava moves no money.** What is no longer true of the *repository* is
+"no double-entry ledger" (headline) and "No migration, no table, no route, no flag" (§11). The
+foundation of §4–§7, and §10's party-scoped read, now exist as code:
+
+| What | Where |
+|---|---|
+| Parties, accounts, transactions, entries; I1–I5, I7 | `artifacts/api-server/src/migrations/3821_payment_ledger.sql` |
+| The posting function, the balance projection, I6 as data | `artifacts/api-server/src/migrations/3822_payment_posting_and_balances.sql` |
+| Attribution vocabulary, party-scoped read, erasure door, retention setting, read flag | `artifacts/api-server/src/migrations/3823_payment_attribution_and_scoped_reads.sql` |
+| The API's one door to all of it | `artifacts/api-server/src/services/payments/PaymentLedger.ts` |
+| `GET /payments/me/accounts`, `GET /payments/me/entries` | `artifacts/api-server/src/routes/payments.ts` |
+| The suites that execute it | `artifacts/api-server/src/test/db/paymentLedger.db.test.ts`, `artifacts/api-server/src/test/db/paymentLedgerRoutes.db.test.ts` |
+
+**Applied to no shared database** (rehearsed on a throwaway PostgreSQL 16 only). The read flag
+`payment_ledger_reads_enabled` is seeded FALSE, and **no producer posts to the ledger yet**: nothing
+charges, captures, refunds or pays out. The ledger records test-mode money only — `livemode` is
+CHECK-constrained false on accounts and transactions.
+
+**Where the build differs from the text above, and why.**
+
+- **§4's "party" is a table.** `payment_accounts.owner_id` is a `payment_parties` id, never a profile
+  id, and the party's `profile_id` is the single link between a person and their money records. This
+  is §10's "account id retained, identity detached", made structural after the owner's 2026-10-04
+  ruling (pseudonymise on erasure, retain what tax, accounting and disputes need): removing the link
+  changes one row and no ledger row.
+- **I4 is two composite foreign keys, not a CHECK.** An entry references its transaction and its
+  account by `(id, currency, livemode)`, so a second currency under one transaction cannot be
+  inserted at all.
+- **I6 is a table, `payment_balance_rules`.** Seeded with the narrowest reading of §9.2: only
+  `user_payable` has its floor enforced, and only a `chargeback` may cross it. A payout, refund or
+  reversal larger than the balance is refused. Who carries that loss is still the owner's question.
+- **§8's settlement rate lives beside the original amount.** Every transaction stores
+  `original_currency` and `original_amount_minor`, and the rate, its source and its time are required
+  exactly when the booked currency differs. No column defaults a currency.
+- **§10 adds no policy.** The payment tables are RLS-enabled with zero policies and no client grant;
+  the scoped read is a function executable by `service_role` only, and its ownership predicate lives
+  in `authz`.
+- **A committed transaction is sealed.** An entry can only be written in the database transaction
+  that wrote its envelope, which §5.3 did not ask for and I1 needs: otherwise a later, self-balancing
+  pair of entries could move money under an attribution frozen for something else.
+
+**Still not built:** every producer (§9: charge, capture, refund, chargeback, payout), the FX
+mechanism of §8 beyond its columns, the reconciliation job of §4, the webhook of §7, the client
+screens, the account-deletion service's call of `payment_party_remove_identity`, and the retention
+period itself — `payment_retention_settings` holds it as one value and it is undecided.
