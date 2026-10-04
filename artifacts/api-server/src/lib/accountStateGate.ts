@@ -33,15 +33,22 @@
  * ── WHERE IT RUNS ───────────────────────────────────────────────────────────
  * requireUser (lib/http.ts, via enforceAccountState), optionalUser (lib/http.ts,
  * via optionalUserFromToken), every route that extracts its own bearer token
- * (passport, profileTabs, follows, og, stamps, passportStamps — optional; the
- * Telegraph SSE stream — required, requireUserFromToken), and the long-lived
- * notification stream's periodic re-check (watchAccountRestriction). It lives
- * beside lib/http.ts rather than in it because the census documents cite
- * lib/http.ts by line.
+ * (passport, profileTabs, follows, og, stamps, passportStamps, hiddenGems —
+ * optional, optionalUserFromToken; discovery's three viewer lookups — optional,
+ * getGatedUser; the Telegraph SSE stream — required, requireUserFromToken), and
+ * the long-lived notification stream's periodic re-check
+ * (watchAccountRestriction). NO route verifies a bearer token any other way:
+ * handRolledAuthAccountState.test.ts scans src/ for `.auth.getUser(` outside
+ * this file and lib/http.ts, with no exemption, and for any `try` whose `catch`
+ * would swallow the refusal these helpers throw. It lives beside lib/http.ts
+ * rather than in it because the census documents cite lib/http.ts by line.
  *
  * ── WHAT EACH ANSWER IS ─────────────────────────────────────────────────────
  *   banned / suspended (in force) → 403 `forbidden`, reason `account_banned` /
- *     `account_suspended`, on REQUIRED and OPTIONAL auth alike. An optional-auth
+ *     `account_suspended`, plus `restriction: { kind, until }` (the end as an
+ *     ISO instant, or null) so a client need not parse the message to tell a
+ *     restricted account from a connection fault or to show when a suspension
+ *     ends — on REQUIRED and OPTIONAL auth alike. An optional-auth
  *     route does NOT downgrade a restricted caller to an anonymous visitor: the
  *     caller identified themselves, the account is restricted, and serving them
  *     the anonymous view would be the restriction silently not applying (the
@@ -64,6 +71,7 @@
 import type { Request, Response } from "express";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { sendError, type ApiErrorCode } from "./http.js";
+import { isPostgrestBackedClient } from "./supabase.js";
 
 // ---------------------------------------------------------------------------
 // The one read path
@@ -151,9 +159,21 @@ export const ACCOUNT_STATE_GATE_SELECT =
  *   embed is an array   → the rows.
  *   embed present but NOT an array (null, an object) → unavailable: not a shape
  *                         a to-many embed can take, so nothing is known.
- *   embed key ABSENT    → no rows. PostgREST always returns the key a select
- *                         names; only a client that did not run this select
- *                         (a test double answering the status alone) omits it.
+ *   embed key ABSENT    → UNAVAILABLE on a PostgREST-backed client (every client
+ *                         getServiceClient builds — lib/supabase.ts records
+ *                         them). PostgREST always returns the key of an embed a
+ *                         select names, `[]` when there are no rows, so a row
+ *                         without it is not this select's answer: the moderation
+ *                         rows were not read, and "not read" is never "no ban".
+ *                         (This used to be `rows: []` for every client — a
+ *                         select that lost its embed, or anything between the
+ *                         API and PostgREST that dropped the key, would have
+ *                         lifted every ban in silence.) Only an injected test
+ *                         double that models the status column alone, which
+ *                         lib/supabase.ts never records, still reads as no rows.
+ *                         An answer that is not a row object at all (an array,
+ *                         a scalar) carries no such key either, and is
+ *                         unavailable by the same rule.
  */
 async function readGateInputs(
   client: SupabaseClient,
@@ -176,7 +196,10 @@ async function readGateInputs(
     if (row == null) return { ok: true, accountStatus: "active", rows: [] };
     const status = row.account_status == null ? "active" : String(row.account_status);
     const embedded = row.user_account_states;
-    if (embedded === undefined) return { ok: true, accountStatus: status, rows: [] };
+    if (embedded === undefined) {
+      if (isPostgrestBackedClient(client)) return { ok: false, reason: "user_account_states embed missing from the profiles row" };
+      return { ok: true, accountStatus: status, rows: [] };
+    }
     if (!Array.isArray(embedded)) return { ok: false, reason: "user_account_states embed is not a row list" };
     return { ok: true, accountStatus: status, rows: embedded };
   } catch (err) {
@@ -220,17 +243,32 @@ export function restrictionRefusal(r: AccountRestriction): { reason: AccountRest
 }
 
 /**
+ * What a 403 for a restricted account says about the restriction, beside the
+ * human `message` and the machine `reason`: which kind, and when it ends (ISO
+ * 8601, or null for one with no end). This is the SERVER CONTRACT a client
+ * needs to tell a restricted account from a connection fault and to show the
+ * end of a suspension without parsing prose (census-trust TV-4b). It decides
+ * nothing about what the client then offers — that is D-SUSPENSION-UX.
+ */
+export interface RestrictionDetail { kind: ModerationRestrictionState; until: string | null }
+
+export function restrictionDetail(r: AccountRestriction): RestrictionDetail | null {
+  return r.kind === "none" ? null : { kind: r.kind, until: r.until };
+}
+
+/**
  * `res` for one refusal: the body sendError writes through it also carries the
- * restriction's machine `reason`. requireUser installs it right before its
- * refusal lines, which stay as the census cites them (lib/http.ts is cited by
- * line AND by anchor text); sendError calls only `status().json()`.
+ * restriction's machine `reason` and its `restriction` detail. requireUser
+ * installs it right before its refusal lines, which stay as the census cites
+ * them (lib/http.ts is cited by line AND by anchor text); sendError calls only
+ * `status().json()`.
  */
 export function withRefusalReason(res: Response, r: AccountRestriction): Response {
   const refusal = restrictionRefusal(r);
   if (!refusal) return res;
   const wrapper = {
     status(code: number) { res.status(code); return wrapper; },
-    json(body: Record<string, unknown>) { return res.json({ ...body, reason: refusal.reason }); },
+    json(body: Record<string, unknown>) { return res.json({ ...body, reason: refusal.reason, restriction: restrictionDetail(r) }); },
   };
   return wrapper as unknown as Response;
 }
@@ -259,10 +297,13 @@ export class AccountRestrictedError extends Error {
   readonly status: number = 403;
   readonly code: ApiErrorCode = "forbidden";
   readonly reason: AccountRestrictionReason;
-  constructor(reason: AccountRestrictionReason, message: string) {
+  /** Kind and end of the restriction (lib/errorEnvelope.ts writes it); absent for the auth service's own refusal, which names neither. */
+  readonly restriction?: RestrictionDetail;
+  constructor(reason: AccountRestrictionReason, message: string, restriction?: RestrictionDetail | null) {
     super(message);
     this.name = "AccountRestrictedError";
     this.reason = reason;
+    if (restriction) this.restriction = restriction;
   }
 }
 
@@ -344,19 +385,75 @@ export async function optionalUserFromToken(
   // not an invalid token: anonymous would be the restriction not applying.
   if (isAuthUserBannedError(error)) throw new AccountRestrictedError(AUTH_BANNED_REFUSAL.reason, AUTH_BANNED_REFUSAL.message);
   if (error || !data?.user) return null;
+  return admitVerifiedOptionalUser(client, data.user as User, opts.log);
+}
 
-  const read = await resolveAccountRestriction(client, data.user.id);
+/**
+ * The optional-auth decision for a token the auth service has ALREADY verified:
+ * the user, `null` for a deleted account, or a THROW — AccountRestrictedError
+ * (403) for an in-force ban or suspension, AccountStatusUnavailableError (503)
+ * when the state cannot be read. One body, so optionalUserFromToken and
+ * getGatedUser cannot drift apart.
+ */
+async function admitVerifiedOptionalUser(client: SupabaseClient, user: User, log?: any): Promise<User | null> {
+  const read = await resolveAccountRestriction(client, user.id);
   if (read.state === "unavailable") {
-    opts.log?.error?.(
-      { userId: data.user.id, reason: read.reason },
+    log?.error?.(
+      { userId: user.id, reason: read.reason },
       "account state unreadable on an optional-auth route — refusing rather than guessing",
     );
     throw new AccountStatusUnavailableError(read.reason);
   }
   const refusal = restrictionRefusal(read.restriction);
-  if (refusal) throw new AccountRestrictedError(refusal.reason, refusal.message);
+  if (refusal) throw new AccountRestrictedError(refusal.reason, refusal.message, restrictionDetail(read.restriction));
   if (OPTIONAL_AUTH_ANONYMOUS_STATUSES.has(read.accountStatus)) return null;
-  return data.user as User;
+  return user;
+}
+
+/**
+ * A DROP-IN for `client.auth.getUser(token)` at a route that resolves its own
+ * optional viewer and reads more of the answer than the user (routes/discovery.ts
+ * reads `error` to tell a rejected token from an unreachable auth service). It
+ * answers `{ data: { user }, error }` exactly as `auth.getUser` does, with these
+ * differences, all of them the gate:
+ *
+ *   an in-force ban or suspension   THROWS AccountRestrictedError (403)
+ *   the auth service's banned refusal (GoTrue `user_banned`)   THROWS the same
+ *   an unreadable account state     THROWS AccountStatusUnavailableError (503)
+ *   a deleted account               `{ data: { user: null }, error: null }` —
+ *                                   anonymous, as optionalUserFromToken answers
+ *
+ * An Auth call that itself throws (network, DNS) still throws what it threw, so
+ * a site that treated that as "viewer unresolved" keeps doing so. The two gate
+ * errors must NOT be swallowed by such a site's catch: pass every caught error
+ * through `rethrowAccountGateRefusal` first.
+ */
+export async function getGatedUser(
+  client: SupabaseClient,
+  token: string,
+  opts: { log?: any } = {},
+): Promise<{ data: { user: User | null }; error: any }> {
+  const { data, error } = await client.auth.getUser(token);
+  if (isAuthUserBannedError(error)) throw new AccountRestrictedError(AUTH_BANNED_REFUSAL.reason, AUTH_BANNED_REFUSAL.message);
+  if (error || !data?.user) return { data: { user: null }, error: error ?? null };
+  const user = await admitVerifiedOptionalUser(client, data.user as User, opts.log);
+  return { data: { user }, error: null };
+}
+
+/** Whether `err` is one of the gate's two refusals (403 restricted, 503 state unreadable). */
+export function isAccountGateRefusal(err: unknown): err is AccountRestrictedError | AccountStatusUnavailableError {
+  return err instanceof AccountRestrictedError || err instanceof AccountStatusUnavailableError;
+}
+
+/**
+ * For the `catch` of a site that degrades a failed viewer lookup to "anonymous":
+ * rethrow the gate's refusals so they reach the global error handler (403 / 503)
+ * instead of being read as "no viewer" — which would serve a banned caller the
+ * anonymous view, the exact bypass the gate exists to close. Anything else
+ * returns, and the site's own degradation proceeds.
+ */
+export function rethrowAccountGateRefusal(err: unknown): void {
+  if (isAccountGateRefusal(err)) throw err;
 }
 
 /**
@@ -410,7 +507,7 @@ export async function enforceAccountState(
   }
   const refusal = restrictionRefusal(read.restriction);
   if (refusal) {
-    sendError(res, "forbidden", refusal.message, { reason: refusal.reason });
+    sendError(withRefusalReason(res, read.restriction), "forbidden", refusal.message);
     return false;
   }
   return true;
@@ -439,7 +536,7 @@ export function _setAccountStateRecheckMsForTest(ms: number | null): void {
 export function watchAccountRestriction(
   client: SupabaseClient,
   userId: string,
-  onEnd: (end: { status: 403 | 503; code: ApiErrorCode; reason?: AccountRestrictionReason; message: string }) => void,
+  onEnd: (end: { status: 403 | 503; code: ApiErrorCode; reason?: AccountRestrictionReason; restriction?: RestrictionDetail | null; message: string }) => void,
   opts: { intervalMs?: number; log?: any } = {},
 ): () => void {
   let stopped = false;
@@ -459,7 +556,7 @@ export function watchAccountRestriction(
         const refusal = restrictionRefusal(read.restriction);
         if (refusal) {
           stop();
-          onEnd({ status: 403, code: "forbidden", reason: refusal.reason, message: refusal.message });
+          onEnd({ status: 403, code: "forbidden", reason: refusal.reason, restriction: restrictionDetail(read.restriction), message: refusal.message });
         }
       })
       .finally(() => { inFlight = false; });

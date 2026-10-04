@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import type { Request, Response } from "express";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
 import { getServiceClient, isServiceClientReady, _setTestServiceClient } from "./supabase";
-export { _setTestServiceClient } from "./supabase"; import { optionalUserFromToken, sendTokenRefusal, resolveAccountRestriction, restrictionRefusal, withRefusalReason } from "./accountStateGate.js"; export { AccountStatusUnavailableError, AccountRestrictedError, optionalUserFromToken, requireUserFromToken, enforceAccountState, resolveAccountRestriction } from "./accountStateGate.js"; // one line: census docs cite this file by line
+export { _setTestServiceClient } from "./supabase"; import { optionalUserFromToken, sendTokenRefusal, resolveAccountRestriction, restrictionRefusal, withRefusalReason } from "./accountStateGate.js"; export { AccountStatusUnavailableError, AccountRestrictedError, optionalUserFromToken, requireUserFromToken, enforceAccountState, resolveAccountRestriction, getGatedUser, rethrowAccountGateRefusal, isAccountGateRefusal } from "./accountStateGate.js"; // one line: census docs cite this file by line
 
 /**
  * Constant-time comparison for shared secrets (internal API keys, webhook

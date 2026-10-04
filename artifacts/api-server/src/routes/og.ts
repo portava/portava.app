@@ -41,7 +41,7 @@
 import { Router } from "express";
 import { getServiceClient } from "../lib/supabase.js";
 import { resolveProfileVisibility, extractBearerToken } from "../lib/profileVisibility.js";
-import { asyncHandler } from "../lib/asyncHandler.js"; import { optionalUserFromToken } from "../lib/http.js"; // one line: cited by line
+import { asyncHandler } from "../lib/asyncHandler.js"; import { optionalUserFromToken, rethrowAccountGateRefusal } from "../lib/http.js"; // one line: cited by line
 import {
   OG_IMAGE_WIDTH,
   OG_IMAGE_HEIGHT,
@@ -491,7 +491,7 @@ router.get("/og/:type/:id/image.png", asyncHandler(async (req, res) => {
     if (!resolved.publicCard) { await sendPng(null); return; }
 
     await sendPng(await resolveOgImageBytes(sc, resolved.publicCard.imageRef));
-  } catch (e: any) {
+  } catch (e: any) { rethrowAccountGateRefusal(e); // a banned / suspended viewer or an unreadable account state is refused (403 / 503, global handler), never answered with the generic card as if nobody had asked
     req.log?.warn?.({ err: e }, "og-image: lookup failed, serving generic card");
     await sendPng(null);
   }

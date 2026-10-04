@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { requireUser, sendError, optionalUserFromToken } from "../lib/http";
+import { requireUser, sendError, optionalUserFromToken, resolveAccountRestriction } from "../lib/http";
 import { nameVisibilitySet, nameVisibleFor, readNameVisibilitySet } from "../lib/publicIdentity";
 import { decideUnfollow, isUuid } from "../lib/followDecisions";
 import { normalizedFriendshipPair } from "../lib/friendDecisions";
@@ -1792,6 +1792,23 @@ router.get("/users/:userId", async (req, res) => {
     return;
   }
 
+  // A ban or suspension is a `user_account_states` row (the one moderation state,
+  // lib/accountStateGate.ts). The guard above compares `profiles.account_status`
+  // to 'banned' / 'suspended' — values its CHECK constraint cannot hold — so it
+  // never fired, and a banned user's passport was served to everyone. The target
+  // is read through the gate's own read path: in force → the same unavailable
+  // sentinel; unreadable → 503, never "this profile exists and is fine".
+  const targetState = await resolveAccountRestriction(sc as any, target);
+  if (targetState.state === "unavailable") {
+    req.log.error({ target, reason: targetState.reason }, "users passport: target account state unreadable — refusing");
+    sendError(res, "degraded_unavailable", "Could not verify this account's status. Please try again.");
+    return;
+  }
+  if (targetState.restriction.kind !== "none") {
+    res.status(404).json({ unavailable: true, reason: "deleted" });
+    return;
+  }
+
   // ── THE BLOCK GATE MUST NOT BE ANSWERED BY A READ THAT FAILED ──────────────
   // `blocks` is an EXCLUSION table: a row means DENY, so "no row" means ALLOW.
   // These two reads are `{ count: "exact", head: true }` and supabase-js
@@ -1913,6 +1930,23 @@ router.get("/users/by-handle/:handle", async (req, res) => {
     return;
   }
   if (acctStatus === "deactivated" && !isOwnProfile) {
+    res.status(404).json({ unavailable: true, reason: "deleted" });
+    return;
+  }
+
+  // A ban or suspension is a `user_account_states` row (the one moderation state,
+  // lib/accountStateGate.ts). The guard above compares `profiles.account_status`
+  // to 'banned' / 'suspended' — values its CHECK constraint cannot hold — so it
+  // never fired, and a banned user's passport was served to everyone. The target
+  // is read through the gate's own read path: in force → the same unavailable
+  // sentinel; unreadable → 503, never "this profile exists and is fine".
+  const targetState = await resolveAccountRestriction(sc as any, target);
+  if (targetState.state === "unavailable") {
+    req.log.error({ target, reason: targetState.reason }, "users passport: target account state unreadable — refusing");
+    sendError(res, "degraded_unavailable", "Could not verify this account's status. Please try again.");
+    return;
+  }
+  if (targetState.restriction.kind !== "none") {
     res.status(404).json({ unavailable: true, reason: "deleted" });
     return;
   }
