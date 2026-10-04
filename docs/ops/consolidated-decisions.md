@@ -10,12 +10,23 @@ evidence, measured after the change lands. Anyone tempted to mark a row `C`
 because a decision exists should read this sentence again.
 
 **This file is the record of those six, and only those six.** It is not the
-repository's register of owner decisions. Discovery's decisions — including the
-owner's answers of **2026-10-04** to questions 11(a), 12, 15 and 16 — are
-recorded in `docs/architecture/discovery-decision-register.md` (section
-`## OWNER-1004`) and in `docs/ops/discovery-owner-approval-request.md` §8.
-Record a new decision in the register that owns its question; do not start a
-second list here.
+repository's register of owner decisions. Discovery's decisions — including all
+**ten** taken on **2026-10-04**: the answers to questions 11(a), 12, 15 and 16,
+plus the Rent-a-Buddy commission, the booking deposit, the identity provider,
+payment mode, the creator-ledger retention **hold** and the **activation
+freeze** — are recorded in `docs/architecture/discovery-decision-register.md`
+(section `## OWNER-1004`, entries `D-OWNER1004-1` … `-10`) and in
+`docs/ops/discovery-owner-approval-request.md` §8. Record a new decision in the
+register that owns its question; do not start a second list here.
+
+**Two of those ten govern what may be done anywhere in the repository, so they
+are named here rather than only there.** `D-OWNER1004-10` **freezes every flag
+flip and every hosted migration** while the deployment is unavailable and hosted
+testing shares production state — both conditions measured TRUE on 2026-10-04.
+`D-OWNER1004-9` **holds PR #592 out of merge and out of application** until a
+legal review that **has not happened** confirms the creator-ledger retention
+period; because the chain's apply step runs on `main` only, **merging that PR is
+the apply**. Neither is an approval of anything.
 
 | | ruling |
 |---|---|

@@ -4,7 +4,7 @@
 
 **Nothing in this page has been done.** No migration of this programme is applied to `portava-ci` or to production. Nothing is deployed, and no Discovery flag has been turned on. Every verdict below rests on controlled evidence: unit suites and a local PostgreSQL 16 harness. None of it is production evidence.
 
-**FOUR OF THE QUESTIONS ARE ANSWERED — 11(a), 12, 15 and 16, by the owner on 2026-10-04.** The answers are recorded verbatim in **§8**, and each of those questions in §5 carries an `ANSWERED` line pointing there. The paragraph above still holds: an answer is not a thing done, and no migration, deploy, flag flip or collection follows from one on its own. **Two of the four are conditional and must not be read as clearances** — 11(a)'s 30 days is a *proposed product default pending the legal review this page itself requires*, and 15 stays **off** *until a privacy notice is written and approved*. The register section is `## OWNER-1004 — the owner's answers to questions 11(a), 12, 15 and 16` in `docs/architecture/discovery-decision-register.md`. Questions **9, 11(b), 11(c), 17, 18, 22 and 25 are still open**, and so is every production activation.
+**FOUR OF THE QUESTIONS ARE ANSWERED — 11(a), 12, 15 and 16, by the owner on 2026-10-04.** The answers are recorded verbatim in **§8**, and each of those questions in §5 carries an `ANSWERED` line pointing there. The paragraph above still holds: an answer is not a thing done, and no migration, deploy, flag flip or collection follows from one on its own. **Two of the four are conditional and must not be read as clearances** — 11(a)'s 30 days is a *proposed product default pending the legal review this page itself requires*, and 15 stays **off** *until a privacy notice is written and approved*. The register section is `## OWNER-1004` in `docs/architecture/discovery-decision-register.md`. Questions **9, 11(b), 11(c), 17, 18, 22 and 25 are still open**. **SIX FURTHER DECISIONS WERE TAKEN THE SAME DAY** — commission, deposit, identity provider, payment mode, the creator-ledger retention hold and an activation freeze — recorded verbatim in **§§8.5–8.10** and summarised immediately below the register-mapping table in §1. **Two of those six govern how the whole of this page may be read: §8.10 FREEZES every production activation here, and §8.9 HOLDS PR #592 out of merge and out of application.** Neither is an approval of anything, and three of the six contradict shipped code. *(This paragraph is kept to one line on purpose: `docs/architecture/census-discovery.md` anchors a citation to a line number below, and that file is owned by another lane.)*
 
 **How to answer.** Each action gives the exact thing to approve. Reply per action number: "approve", "decline", or a value. The four kinds of decision the programme may not make itself are marked:
 - **consent** — real user consent or a new use of someone's data;
@@ -69,9 +69,9 @@ How the 87 open rows split:
 | 19 | A bounded debug-sampler window | production activation | DV-52 (1) |
 | 20 | Retire the old `for_you` path (one commit) | production activation | C32, DC-24 (2) |
 | 21 | 2893 in production: last, or never | production activation | DV-44 (1) |
-| 22 | *Q* Money: C-11 erasure, B1–B11 creator rules, the Buddy payment leg, the Layover routing spend | financial (C-11 is retention too) | 19 |
+| 22 | *Q* Money: C-11 erasure, B1–B11 creator rules, the Buddy payment leg, the Layover routing spend — **(a) ANSWERED 2026-10-04 in SHAPE ONLY (retain, pseudonymised); the PERIOD is undecided, legal review has NOT happened, and PR #592 is held out of merge AND application (§8.9). (b) only B1's commission percentage is answered — 10 %, answered-but-not-yet-implemented (§8.5). B2–B11 are open, so this action is NOT closed.** | financial (C-11 is retention too) | 19 |
 | 23 | Activate Layover mode | production activation | A14 (1) |
-| 24 | Apply the creator ledger (P2); attribution stays off until a rule is published | production activation | 15 |
+| 24 | Apply the creator ledger (P2); attribution stays off until a rule is published — **HELD TWICE 2026-10-04: step 1 by the #592 hold (§8.9) and the whole action by the activation freeze (§8.10). Merging #592 IS the apply.** | production activation | 15 |
 | 25 | *Q* Does G57 cover ß, æ and œ? | product definition (not one of the four) | none (B01 stays C on "no") |
 
 **Taking every recommendation, the reply is:**
@@ -80,7 +80,7 @@ How the 87 open rows split:
 - 15 not yet; 16 (a) no, (b) no, (c) no; 17 no; 18 as recommended;
 - 19–21 approve; 22 retain-anonymised with your period, and B1–B11 as recommended; 23 and 24 after 22; 25 no.
 
-**What is actually answered (2026-10-04), against that list.** 12 **yes**; 15 **not yet**, with a named condition; 16 (a) **no**, (b) **no**, (c) **no**; 11 **part (a) only** — 30 days, as a proposed default pending legal review, which is *not* the "three values" this action asks for. Everything else on the list above is **unanswered**. §8 holds the four records.
+**What is actually answered (2026-10-04), against that list.** 12 **yes**; 15 **not yet**, with a named condition; 16 (a) **no**, (b) **no**, (c) **no**; 11 **part (a) only** — 30 days, as a proposed default pending legal review, which is *not* the "three values" this action asks for. On **22**: (a) is answered in **shape only** — retain, pseudonymised — with the **period undecided and the apply held** (§8.9), so 22 is **not** closed; of (b), only **B1's commission percentage** is answered (10 %, §8.5), and **B2–B11 remain unanswered**. Everything else on the list above is **unanswered**. §8 holds all ten records. **And the approvals on that list cannot be executed yet, whatever their value:** §8.10 freezes every production activation — actions **1–8, 10, 13, 14, 19–21, 23 and 24** — while the deployment is unavailable and hosted testing shares production state, so an "approve" against one of those is a decision about *what to do*, not a clearance to do it today.
 
 ---
 
@@ -125,6 +125,19 @@ How the 87 open rows split:
 | AR-W11X2-1 | 3 (3490), 5d |
 | census §66.9 Q4 (B01) | 25 |
 
+### The six further decisions of 2026-10-04 — commission, deposit, identity, payment mode, the #592 hold, the activation freeze
+
+**None of these six was a question on this page before 2026-10-04, and two of them change how everything above and below may be read.** The verbatim wording, the conditions and the `file:line` evidence are in **§§8.5–8.10**; the register entries are `D-OWNER1004-5` … `-10`.
+
+- **§8.10 — ACTIVATION FREEZE. EVERY PRODUCTION ACTIVATION ON THIS PAGE IS FROZEN.** *"Don't flip flags or apply hosted migrations while the deployment is unavailable and hosted testing still shares production state."* **Both conditions were measured TRUE on 2026-10-04.** Nothing is serving at the configured production origin — `GET https://portava.replit.app/healthz` answers **404** with Replit's `This app isn't live yet` placeholder, which is a deployment-level answer and not a cold start. And `public.feature_flags` keys on `flag` alone (`artifacts/api-server/src/migrations/0037_feature_flags.sql:5#flag`), so **an environment distinction is not representable and there is no separate testing flag state to flip.** Actions **1–8, 10, 13, 14, 19–21, 23 and 24** are all frozen. Their "Recommendation: approve" lines mean *once this lifts*.
+- **§8.9 — THE #592 HOLD. NOT A CLEARANCE.** *"Keep PR #592 out of merge/application until legal review confirms the creator-ledger retention period…"* **The legal review has NOT happened.** Because the chain's apply step runs on `main` only (`.github/workflows/live-db.yml:815#if:`), **merging #592 IS applying `3513`** — there is no later apply to withhold. **PR #594 must land before `3513` is ever applied.** *Seven years after fiscal-year close* is a **proposed product default pending the review**, not an approved period, with jurisdictional rules taking precedence. Question **22(a) is not closed** and **action 24 step 1 may not be taken**.
+- **§8.5 — commission: a flat 10 %, stored in basis points (1000), market overrides only when separately approved. ANSWERED-BUT-NOT-YET-IMPLEMENTED.** The tree seeds **25 / 22 / 15 / 12 / 12 %** by buddy level in an `integer` percent column, so the rate is neither flat nor expressible in basis points. This answers **B1's percentage only**; B2–B11 stay open.
+- **§8.6 — booking deposit is 0 % for the first release; remove the shipped 30 %. ANSWERED-BUT-NOT-YET-IMPLEMENTED.** A hard-coded `0.3` still computes the deposit on the booking path, on `main` and on every open payments branch.
+- **§8.7 — Sumsub as the primary identity provider, failing closed where coverage is unsupported. ANSWERED-BUT-NOT-YET-IMPLEMENTED.** `sumsub` has **zero hits** in the tree; the providers present are Stripe Identity and Persona. Bookings *are* unavailable today, but as a whole-surface closure — **no market-coverage check exists at all.**
+- **§8.8 — payment processing stays in test mode.** No live charges, payouts or payment activation. This ratifies a control the tree already enforces, and bounds the work the three items above imply to a vendor **sandbox**.
+
+**What these six do NOT do.** They move **no census row**, they clear **no production activation**, and the three marked *answered-but-not-yet-implemented* are **not satisfied by having been written down** — each names the code that contradicts it, and that code is unchanged.
+
 ---
 
 ## 3. Step 0 — the `portava-ci` apply (not a decision)
@@ -164,6 +177,10 @@ How the 87 open rows split:
 ---
 
 ## 4. Production activation — actions 1–8, 10, 13, 14, 19–21, 23, 24
+
+> **FROZEN, 2026-10-04 (§8.10). EVERY ACTION IN THIS SECTION IS A FLAG FLIP OR A HOSTED APPLY, AND BOTH ARE REFUSED WHILE THE FREEZE HOLDS.** The owner's words: *"Don't flip flags or apply hosted migrations while the deployment is unavailable and hosted testing still shares production state."* **Both conditions were measured TRUE on 2026-10-04** — nothing is serving at `portava.replit.app` (404, Replit's `This app isn't live yet` placeholder, not a cold start), and `public.feature_flags` keys on `flag` alone (`artifacts/api-server/src/migrations/0037_feature_flags.sql:5#flag`), so an environment distinction is **not representable** and a flag flipped "for testing" is flipped in production.
+>
+> **This section is left unedited on purpose.** Its actions, values, unblock lists and recovery paths are all still correct and will all be needed. Read each **"Recommendation: approve"** as *what to do once the freeze lifts*, never as a clearance to act today. **Action 24 carries a second, independent hold (§8.9) that this freeze lifting would not clear.**
 
 Every production step waits for the gates of `docs/ops/discovery-production-rollout.md` §0:
 - a green `portava-ci` rehearsal (step 0);
@@ -527,6 +544,13 @@ None of these changes the ranked order of the Discovery feed. Turn them on one a
 
 ### Action 24 — the creator ledger (P2) · production activation
 
+> **HELD TWICE, 2026-10-04, and each hold is sufficient on its own.**
+>
+> 1. **§8.9 — step 1 is withheld specifically.** *"Keep PR #592 out of merge/application until legal review confirms the creator-ledger retention period."* **The legal review has NOT happened.** PR #592 promotes the retain-pseudonymised file into the chain as `3513`, and because the chain's apply step runs on `main` only (`.github/workflows/live-db.yml:815#if:`), **merging #592 IS applying `3513`** — there is no later apply step to withhold. **PR #594 must also land before `3513` is ever applied**, because it is the pre-apply fix for the severed-beneficiary coercion that pseudonymisation triggers. Seven years after fiscal-year close is a **proposed product default**, not an approved period.
+> 2. **§8.10 — the whole action is frozen** with the rest of §4 while the deployment is unavailable and hosted testing shares production state.
+>
+> `3510_creator_ledger_erasure_policy_undecided.sql` continues to refuse every ledger deletion in the meantime (`artifacts/api-server/src/migrations/3510_creator_ledger_erasure_policy_undecided.sql:130#CREATE`). **That refusal is the correct state for an undecided policy, not a defect to be cleared by promoting `3513`.**
+
 - **Approve**, only after question 22(a):
   1. The C-11 answer your decision selects: `reconciliation-staging/3511_…delete_on_erasure.sql` or `…/3512_…retain_pseudonymised.sql`, both written and rehearsed (census §107) and held out of the chain. Until then `3510_creator_ledger_erasure_policy_undecided.sql` refuses every ledger deletion, so P2 + 3510 may be applied without this answer (rollout plan §1.5).
   2. Then P2, in order: `2901` (with the fix), `2920`, `2921`, `2922`, `2930`, `3385`, `3386`, `3387`.
@@ -640,6 +664,14 @@ This page does not answer the rest — 9, 11(b), 11(c), 17, 18, 22 and 25. Each 
 
 ### Question 22 — money · financial
 
+> **PARTLY ANSWERED — 2026-10-04. (a) IS NOT CLOSED, AND ITS APPLY IS HELD.** *"Keep PR #592 out of merge/application until legal review confirms the creator-ledger retention period. The proposed product default remains seven years after fiscal-year close, with jurisdictional rules taking precedence and account deletion pseudonymizing the ledger."*
+>
+> **Read this as two answers, one of which does not exist.** The **shape** is chosen — retain, pseudonymised, which is the 3512/3513 branch of (a). The **period is undecided**: the legal review this row itself calls for **has not happened**, and *seven years after fiscal-year close* is a **proposed product default pending it**, with jurisdictional rules taking precedence. **That phrase has zero occurrences anywhere in the tree.** So (a) is **not closed**, action 24 step 1 may **not** be taken, and **PR #592 must not be merged — because the chain's apply step runs on `main` only, merging it IS the apply.** PR #594 must land before `3513` is applied at all. Even after a period is set, **a purge is still owed**: the staged file builds none (`reconciliation-staging/3512_creator_ledger_erasure_retain_pseudonymised.sql:19#statutory`). Record: §8.9, and register `D-OWNER1004-9`.
+>
+> **(b) B1 — the commission percentage only — IS ANSWERED.** *"Set the Rent-a-Buddy commission to a flat 10% across Buddy levels. Store it in basis points (1000); allow market overrides only when separately approved."* This replaces B1's recommended *"no percentage"* below. **It is ANSWERED-BUT-NOT-YET-IMPLEMENTED:** the tree seeds 25/22/15/12/12 % by buddy level in an `integer` percent column (`artifacts/api-server/migrations/0134_rent_buddy_schema_rebuild.sql:1208#INSERT`, `artifacts/api-server/migrations/0134_rent_buddy_schema_rebuild.sql:1191#platform_fee_percent`), so basis points are not representable and the rate is not flat. Record: §8.5, and register `D-OWNER1004-5`. **B2–B11 are still unanswered**, and B1's publishing half is untouched.
+>
+> **Two related rulings sit outside this question's rows.** Payment processing stays in **test mode**, with no live charges, payouts or payment activation (§8.8, `D-OWNER1004-8`); and the booking **deposit is 0 % for the first release**, with the shipped 30 % default to be removed (§8.6, `D-OWNER1004-6`) — also answered-but-not-yet-implemented, the literal still being at `artifacts/api-server/src/routes/rentABuddy.ts:2162#const`.
+
 - **(a) C-11** (W10D-B0; also retention). On account erasure, are a creator's earning records deleted, or retained with the direct identity removed (pseudonymised — census §107.4 shows the rows stay linkable, so not anonymous) for a statutory period?
   - **Recommended: retain, pseudonymised (3512), for the period your legal advice sets** (`09` §6, §11; `04` §11). The period has no spec value, and 3512 builds no purge for it.
   - The answer selects the fix migration of action 24. Either answer can be changed at no cost before any creator row exists.
@@ -694,12 +726,14 @@ What "after them" means, once the listed actions are done:
 
 A lane re-grades each row against its own criterion. This column predicts what is owed, not the verdict.
 
-**Read the `actions` column against §8.** Four of the actions it names are answered (2026-10-04) and the table below is unchanged, so a row that still lists one of them is not still waiting on the owner for it:
+**Read the `actions` column against §8.** Six of the actions it names are touched by the 2026-10-04 decisions — four answered, one answered in part, one held twice — and the table below is unchanged, so a row that still lists one of them is not necessarily still waiting on the owner for it. **And §8.10 freezes every production activation, which no cell in this table reflects:**
 
 - **16 is answered (no).** DC-12, DV-34 and DV-72 no longer wait on it. **They stay W**, for the reasons §8.4 records — the refused legs are refused, not owed. Nobody should "fix" these three rows.
 - **12 is answered (yes).** DC-21, DV-29 and DV-33 no longer wait on it; they wait on 3, 11(b) and 13. DV-29's zone leg is additionally **not implemented** (§8.2).
 - **15 is answered (not yet).** DV-41 and DV-78 no longer wait on an owner answer; they wait on a privacy notice being written and approved, and **stay W** meanwhile.
 - **11 is answered in part (a) only, and conditionally.** Every row listing action 11 still waits on it, because (b) and (c) are open and (a)'s 30 days is a proposal pending legal review (§8.1). DV-06's horizon is proposed, not set.
+- **22 is answered in part, and 24 is held twice.** Every row listing **22** still waits on it: (a) has a shape but no period, and B2–B11 are open (§8.9, §8.5). Every row listing **24** — DC-23, DV-26, DV-56–DV-60, DV-63–DV-68, DV-70 and DV-74 — **stays exactly where it is**, held by the #592 hold (§8.9) *and* by the activation freeze (§8.10). **Clearing one hold does not clear the other, and neither is a defect in these rows.**
+- **Every "after them" cell in this table now has a prerequisite the table does not show: §8.10.** The column predicts what is owed *once an action happens*. While the freeze holds, no action that is a flag flip or a hosted apply happens at all — so a row reading `E` or `C` in that column is reading a conditional, not a forecast with a date.
 
 | row | actions | after them | still owed |
 |---|---|---|---|
@@ -795,20 +829,28 @@ A lane re-grades each row against its own criterion. This column predicts what i
 
 ## 8. The owner's answers — 2026-10-04
 
-**Four questions were answered by the owner on 2026-10-04: 11(a), 12, 15 and 16.** The operative wording of each is quoted **verbatim** below; the analysis that produced each question is in §5 and is unchanged, so the reasoning a decision was taken against stays readable.
+**Ten decisions were taken by the owner on 2026-10-04.** Four answer questions in §5 — 11(a), 12, 15 and 16 (§§8.1–8.4). **Six more, recorded 2026-10-04 in the same section (§§8.5–8.10), are about money, identity, the creator ledger and activation**, and four of those six are not §5 questions at all: they are rulings this page had no row for. The operative wording of each is quoted **verbatim** below; the analysis that produced each §5 question is in §5 and is unchanged, so the reasoning a decision was taken against stays readable.
 
 **These answers authorise work. They do NOT move a verdict.** No census row changes on the strength of an answer — each still needs its own acceptance evidence, measured after the change lands. Anyone tempted to mark a row `C` because a decision exists should read this sentence again.
 
 **Nothing was applied, deployed, flipped or enabled to record them.** This section is documentation.
 
-The matching register entries are `D-OWNER1004-1` … `-4`, in the section `## OWNER-1004 — the owner's answers to questions 11(a), 12, 15 and 16` of `docs/architecture/discovery-decision-register.md`, which carries the same records with their `file:line` evidence.
+**Three of the ten are NOT satisfiable by a setting: they require a code change, and the code today does the opposite.** 8.5 (commission), 8.6 (deposit) and 8.7 (identity provider) are marked **answered-but-not-yet-implemented**, with the contradicting `file:line` named in each. **One of the ten, 8.9, is a HOLD and not a clearance** — it withholds a merge. **One, 8.10, freezes every production activation in §4 of this page** until two measured conditions are cleared; read §8.10 before acting on any action in §4.
 
-| | question | answer | date | the condition that gates it |
+The matching register entries are `D-OWNER1004-1` … `-10`, in the section `## OWNER-1004` of `docs/architecture/discovery-decision-register.md`, which carries the same records with their `file:line` evidence.
+
+| | question or topic | answer | date | the condition that gates it |
 |---|---|---|---|---|
 | **8.1** | 11(a) — raw behavioural-row retention | 30 days, **proposed** | 2026-10-04 | **pending the required privacy/legal review** — not yet held |
 | **8.2** | 12 — may the trend API publish | **yes**, under both floors | 2026-10-04 | none on the answer; the zone floor is unimplemented on two legs |
 | **8.3** | 15 — dwell-time publishing | **off** | 2026-10-04 | **until a privacy notice is written and approved** — neither done |
 | **8.4** | 16 — people-derived data (a), (b), (c) | **no**, **no**, **no** | 2026-10-04 | none |
+| **8.5** | Rent-a-Buddy commission (relates to 22(b) B1) | **flat 10 %**, stored in **basis points (1000)** | 2026-10-04 | market overrides **only when separately approved**. **ANSWERED-BUT-NOT-YET-IMPLEMENTED** — the tree seeds 25/22/15/12/12 in an `integer` percent column |
+| **8.6** | booking deposit, first release | **0 %**; remove the shipped 30 % default | 2026-10-04 | none on the answer. **ANSWERED-BUT-NOT-YET-IMPLEMENTED** — a hard-coded 30 % still ships |
+| **8.7** | primary identity provider | **Sumsub**, behind the provider interface | 2026-10-04 | verify market coverage; **fail closed** where verification is unsupported. **ANSWERED-BUT-NOT-YET-IMPLEMENTED** — Sumsub has zero hits; the tree carries Stripe Identity and Persona |
+| **8.8** | payment processing mode | **test mode only** | 2026-10-04 | no live charges, payouts or payment activation |
+| **8.9** | creator-ledger retention (22(a) / C-11) | **HOLD — NOT CLEARED.** PR #592 stays out of merge **and** out of application | 2026-10-04 | **until legal review confirms the period. The review has NOT happened.** Seven years after fiscal-year close is a **proposed product default**, not an approved period |
+| **8.10** | activation freeze | **no flag flips, no hosted migrations** | 2026-10-04 | **while the deployment is unavailable and hosted testing still shares production state.** Both conditions measured TRUE on 2026-10-04 |
 
 ### 8.1 Question 11(a) — raw behavioural-row retention · CONDITIONAL, NOT A CLEARANCE
 
@@ -891,3 +933,138 @@ Pinned by `artifacts/api-server/src/test/discoveryTrendingLists.test.ts:227#it("
 **Where the refusal is held in code.** 3480 asserts that both its §85 flags ship OFF (`artifacts/api-server/src/migrations/3480_discovery_candidate_sources_flag.sql:73#SELECT count(*) INTO on_count FROM public.feature_flags WHERE flag IN (`), and the circle retrieval runs only when the caller opts in (`artifacts/api-server/src/lib/discoveryCandidates/generate.ts:119#...(opts.circle ? [retrieveCircleContext(ctx)] : []),` over `artifacts/api-server/src/lib/discoveryCandidates/retrievals.ts:392#export function retrieveCircleContext(ctx: RetrievalContext): Promise<RetrievalOutcome> {`).
 
 **Reversibility.** Each part is a FALSE flag or an unbuilt projection, so "no" leaves today's state. A later "yes" would need its own consent basis named, and 16(a) would additionally need `circle_member_visibility_overrides` honoured in `retrieveCircleContext` before its flag could be turned on at all.
+
+### 8.5 Rent-a-Buddy commission · ANSWERED-BUT-NOT-YET-IMPLEMENTED
+
+**The decision, verbatim.**
+
+> "Set the Rent-a-Buddy commission to a flat 10% across Buddy levels. Store it in basis points (1000); allow market overrides only when separately approved."
+
+**What it answers.** The commission half of §5 question 22(b)'s **B1**, whose recommended default on this page is *"no percentage (the spec gives none)"*. A percentage now exists. **22(b)'s other ten parts, B2–B11, are untouched by this decision and remain unanswered.**
+
+**This is not a setting change. The tree contradicts all three clauses, measured at `f71cfb85f`.**
+
+| the clause | what the tree does today | evidence |
+|---|---|---|
+| **flat 10 %** | **25 / 22 / 15 / 12 / 12 % by buddy level**, seeded into `rent_buddy_fee_rules` and read through one resolver | `artifacts/api-server/migrations/0134_rent_buddy_schema_rebuild.sql:1208#INSERT`, then `:1210#(` for `new` at 25 and `:1214#(` for `city_ambassador` at 12; resolver `artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:46#FEE_SCHEDULE_TABLE`, `artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:104#export` |
+| **stored in basis points (1000)** | stored as a **whole percent in an `integer` column**, so 1000 bps is not representable and a fractional rate is not expressible at all | `artifacts/api-server/migrations/0134_rent_buddy_schema_rebuild.sql:1191#platform_fee_percent` |
+| **market overrides only when separately approved** | there is **no market dimension on the fee schedule and no approval gate of any kind**. Configurability today is by **buddy level**, not by market | the schedule's only key is `buddy_level` — `artifacts/api-server/migrations/0134_rent_buddy_schema_rebuild.sql:1190#buddy_level` |
+
+**The branch now implementing it, and the three ways it does not match.** `origin/claude/pay-d-rab-producers-20261004` (PR #603) adds `3824_rent_buddy_ledger_posting.sql`, which resolves the commission in one database function, most-specific first: a per-market launch-control override, then `rent_buddy_fee_rules` for the buddy's level, then `10` as the owner default. **It is the right shape and it is not this decision:**
+
+1. It stores and resolves a **whole percent (`fee_percent := 10`)**, not basis points. **1000 bps is still not representable.**
+2. It **deliberately does not rewrite** the 25/22/15/12/12 seed rows, and its own header says so — so while those rows stand, **they are what applies**, and the rate is not flat across Buddy levels.
+3. Its market override is a nullable column an operator may set, with **no separate-approval gate**. This decision permits market overrides *only when separately approved*; whether a column an operator can write satisfies that is **unknown** and is not decided here.
+
+**Consequence.** The decision is recorded, not satisfied. **No census row moves on it.** Nothing is activated by it either: `rent_buddy_enabled` is forced FALSE in the chain (`artifacts/api-server/src/migrations/2210_rent_buddy_default_off.sql:30#VALUES`), and §8.10 freezes flag flips regardless.
+
+**Reversibility.** Documentation. No rate was changed in any database by this record.
+
+### 8.6 Booking deposit, first release · ANSWERED-BUT-NOT-YET-IMPLEMENTED
+
+**The decision, verbatim.**
+
+> "Set the booking deposit to 0% for the first release. Remove the shipped 30% default."
+
+**The 30 % is real, is hard-coded, and is still there.** A booking created in `deposit_plus_cash` mode computes its deposit from a literal `0.3` in the route, not from configuration:
+
+- `artifacts/api-server/src/routes/rentABuddy.ts:2160#const` reads the hourly rate, and the deposit is computed two lines later at `artifacts/api-server/src/routes/rentABuddy.ts:2162#const` — `totalUsd * 0.3`. The cash balance is derived from it at `artifacts/api-server/src/routes/rentABuddy.ts:2163#const`, and the value is persisted at `artifacts/api-server/src/routes/rentABuddy.ts:2211#deposit_usd:`.
+- **Checked on every open payments branch as well.** The literal survives unchanged on `origin/claude/pay-a-boundaries-20261004`, `…/pay-b-ledger-20261004`, `…/pay-c-provider-contract-20261004`, `…/pay-d-rab-producers-20261004` and `…/dashboard-collected-zero-20261004`. **No branch implements this decision**, and PR #603's own header quotes the ruling's *"Don't add a deposit in the first release"* while leaving the computation alone.
+
+**A SECOND shipped deposit default the decision does not mention, recorded because "remove the shipped 30 %" does not reach it.** `deposit_percent` columns exist on the Rent-a-Buddy tables with **`DEFAULT 20`** — `artifacts/api-server/migrations/0134_rent_buddy_schema_rebuild.sql:824#ADD`, `artifacts/api-server/migrations/0134_rent_buddy_schema_rebuild.sql:885#ADD`, and originally `artifacts/api-server/migrations/0048_rent_buddy_marketplace.sql:32#ADD`. **Those columns are read by nothing on the booking path** — `deposit_percent` has zero hits in `routes/rentABuddy.ts` — so the tree carries **two** shipped deposit defaults, 30 % live in code and 20 % dormant in the schema, and removing only the 30 % would leave the 20 % behind the moment anything starts reading the column. Whether this decision intends the 20 % column default to go to 0 as well is **unknown**.
+
+**Consequence.** Unreachable in production today, because `rent_buddy_enabled` is FALSE — but the decision's own words are *"for the first release"*, and the first release is exactly when it becomes reachable. The work is owed. **No census row moves on this record.**
+
+**Reversibility.** Documentation.
+
+### 8.7 Primary identity provider · ANSWERED-BUT-NOT-YET-IMPLEMENTED
+
+**The decision, verbatim.**
+
+> "Use Sumsub as the primary identity provider behind the provider interface. Verify market coverage; fail closed and keep bookings unavailable where suitable verification is unsupported."
+
+**The provider interface exists; Sumsub does not.** Verified at `f71cfb85f`: **`sumsub` has zero hits** — `git grep -in "sumsub" HEAD` over all tracked files returns nothing, and `git grep -inE "sum[-_ ]?sub" HEAD` returns nothing either. The providers the tree actually carries are **Stripe Identity and Persona**, both real vendor integrations rather than stubs, plus a mock. Neither is Sumsub, and neither is a payment processor.
+
+**"Fail closed … where suitable verification is unsupported" is BUILT AS A WHOLE-SURFACE CLOSURE, NOT AS A MARKET CHECK — and the distinction matters.**
+
+- **The booking gate is closed, for every market at once.** The readiness allowlist contains only `"mock"` (`artifacts/api-server/src/services/identityVerification/readiness.ts:53#const`), the gate reads it (`artifacts/api-server/src/lib/rentBuddyKycGate.ts:58#const`) along with a FALSE override flag seeded in the chain (`artifacts/api-server/src/migrations/2074_rent_buddy_kyc_gate_flag.sql:37#(`), and answers **503** on every booking-creation path (`artifacts/api-server/src/lib/rentBuddyKycGate.ts:78#httpStatus:`). It fails closed on a database error. So "bookings unavailable" holds today — but because *no* provider is live, not because a market was checked.
+- **Market coverage is NOT verified anywhere, and the one signal that could do it is discarded.** There is no country allowlist, no country parameter on a verification session request, and no gate reads a country. `documentCountry` is produced as an **output** of a completed verification (`artifacts/api-server/src/services/identityVerification/stripeIdentity.ts:197#result.documentCountry`, `artifacts/api-server/src/services/identityVerification/persona.ts:151#result.documentCountry`) and persisted (`artifacts/api-server/src/routes/verification.ts:152#document_country:`) — and then consulted by nothing. Worse, the vendor's own unsupported-country signal is **flattened into a generic failure**: `artifacts/api-server/src/services/identityVerification/stripeIdentity.ts:105#if` maps `country_not_supported` to `"other"`, so an unsupported market is indistinguishable from any other failure. **`country_not_supported` has zero other occurrences in the server.**
+
+**Consequence.** Three distinct pieces of work are owed, and none is a setting: a Sumsub adapter behind the existing interface; a market-coverage check that runs **before** a booking is offered rather than after a document is read; and a refusal path that names unsupported coverage instead of collapsing it to `other`. Until then the decision is recorded and unimplemented. **Whether Sumsub's own coverage meets Portava's launch cities is `unknown`** — this record establishes nothing about the vendor, only about the tree.
+
+**Reversibility.** Documentation.
+
+### 8.8 Payment processing stays in test mode
+
+**The decision, verbatim.**
+
+> "Keep payment processing in test mode. No live charges, payouts, or payment activation."
+
+**This decision matches what the tree already enforces, and that is worth stating precisely rather than as reassurance.** The guard is a built control, not a convention:
+
+- Live mode is permitted **only by the exact string `"true"`** on one environment variable, and is unset by default: `artifacts/api-server/src/lib/paymentsMode.ts:78#export` over `artifacts/api-server/src/lib/paymentsMode.ts:79#PAYMENTS_ALLOW_LIVE`.
+- A live provider key **throws before any outbound call** — `artifacts/api-server/src/lib/paymentsMode.ts:138#export` — and an unrecognised key prefix is refused outright rather than assumed to be a test key.
+- A **signature-verified** webhook whose envelope claims `livemode` is refused on the same switch: `artifacts/api-server/src/lib/paymentsMode.ts:153#export`.
+- No charge executes in any case: `pay-deposit` (`artifacts/api-server/src/routes/rentABuddy.ts:2292#router.post(`) and `pay-full` (`artifacts/api-server/src/routes/rentABuddy.ts:2302#router.post(`) answer **503** with no side effects, and `refund-eligibility` answers **501** (`artifacts/api-server/src/routes/rentABuddy.ts:4076#router.get(`).
+- There is **no payout execution to disable**: §3.4 of the payments reconciliation establishes by enumerating all registered workers that none concerns payouts or earnings finalization.
+
+**What this decision therefore does.** It converts a default into a ruling. `PAYMENTS_ALLOW_LIVE` must not be set, no live provider key may be installed, and no payment activation step may be taken. **It also forecloses a step §8.5–8.7's implementation work might otherwise reach for:** an adapter may be written and exercised against a vendor **sandbox** only.
+
+**One thing this record does NOT establish.** Whether `PAYMENTS_ALLOW_LIVE` is currently set in the hosted environment is **unknown** — it is an environment variable on a deployment this page cannot read, and §8.10 records that nothing is deployed there at all. The repository default is unset; the hosted value is unverified.
+
+**Reversibility.** Documentation; and the control it ratifies is one environment variable, reversible at no cost.
+
+### 8.9 Creator-ledger retention · A HOLD. CONDITIONAL, NOT CLEARED. **PR #592 MUST NOT BE MERGED.**
+
+**The decision, verbatim.**
+
+> "Keep PR #592 out of merge/application until legal review confirms the creator-ledger retention period. The proposed product default remains seven years after fiscal-year close, with jurisdictional rules taking precedence and account deletion pseudonymizing the ledger."
+
+**READ THIS BEFORE READING ANYTHING ELSE IN THIS ENTRY. Nothing here clears PR #592, and nothing here authorises applying `3513`.**
+
+- **Legal review has NOT happened.** No legal review of the creator-ledger retention period has been held, and no record of one exists in this repository. This entry does not say it has, and this entry may not be cited as evidence that it has.
+- **Seven years after fiscal-year close is a PROPOSED PRODUCT DEFAULT, pending that review. It is not an approved retention period.** It has **zero occurrences in the tree**: `seven years`, `7 years` and `fiscal year` match nothing in `artifacts/api-server/src/migrations/`, nothing in `reconciliation-staging/`, and nothing in `docs/architecture/09_Payment_Architecture.md`. The number exists only as this proposal.
+- **Jurisdictional rules take precedence over the proposed default.** Where a jurisdiction sets a different period, that period governs; the proposal does not override it, and no jurisdictional mapping exists in the tree.
+- **The retention SHAPE is the one the owner proposes — retain, pseudonymised — and the PERIOD is undecided.** Those are two answers, and only the first has one. §5 question 22(a) is therefore **not closed**, and **action 24 step 1 may not be taken**.
+
+**WHY "DO NOT MERGE" AND "DO NOT APPLY" ARE THE SAME INSTRUCTION. MERGING IS THE APPLY.**
+
+PR #592 does not add a new file beside the staged one — it **renames** `reconciliation-staging/3512_creator_ledger_erasure_retain_pseudonymised.sql` into the canonical chain as `artifacts/api-server/src/migrations/3513_creator_ledger_erasure_retain_pseudonymised.sql`. The chain is applied by CI, and **the apply step runs on the default branch only**: `.github/workflows/live-db.yml:804#THE` states it in terms, and the step itself is conditioned on `.github/workflows/live-db.yml:815#if:`. So the moment #592 lands on `main`, the next live-DB run applies `3513` with no further human step. **There is no separate "apply" button to withhold afterwards.** A reviewer who merges #592 intending to decide the period later has already applied it.
+
+**AND `3513` MUST NOT BE APPLIED BEFORE PR #594 LANDS.** PR #594 (`origin/claude/creator-ledger-nullable-beneficiary-20261004`) is a **pre-apply fix for 3513**: it makes the ledger refuse a severed beneficiary identity instead of coercing it to the string `"null"`, across `lib/creatorLedgerEntries.ts`, `lib/creatorLedgerPlans.ts`, `lib/creatorLedgerStatus.ts`, `services/creators/CreatorAttributionService.ts` and `routes/adminCreatorLedger.ts`. Pseudonymisation is precisely the operation that severs that identity, so applying `3513` without #594 ships the pseudonymiser and the coercion bug together. **The required order is: legal review confirms the period → #594 lands → only then may `3513` be applied.** #594 is itself unmerged at the time of writing.
+
+**What holds the line while this is held, and what it costs.** `3510_creator_ledger_erasure_policy_undecided.sql` is in the chain and refuses every ledger deletion with `CL451`, row-level, so a user with no ledger rows stays deletable: `artifacts/api-server/src/migrations/3510_creator_ledger_erasure_policy_undecided.sql:130#CREATE`. That refusal is the correct state for an undecided policy and it is **not** a defect to be fixed by promoting `3513`.
+
+**No purge exists, and the proposed default does not create one.** The staged migration says so itself: `reconciliation-staging/3512_creator_ledger_erasure_retain_pseudonymised.sql:19#statutory` — deleting retained rows after the statutory period is a purge that file does not build. PR #592's own `3513` header repeats it. So even after a legal review sets a period, **a purge is still owed**; a confirmed number is not an enforced retention.
+
+**Consequence for the census.** No row moves. DC-23, DV-26, DV-56–DV-60, DV-63–DV-68, DV-70 and DV-74 — the fifteen rows action 24 is a precondition of — stay exactly where they are, and they stay there **because this is held**, not because anything is broken.
+
+**Reversibility.** Documentation, and a hold costs nothing to lift: every creator-ledger table ships empty, so either C-11 answer is still free. What is **not** reversible is applying `3513` to a database that later holds creator rows — `2901`'s and `2921`'s rollbacks refuse while their ledgers hold any row, by design, because a true rollback would destroy financial records.
+
+### 8.10 Activation freeze · THIS GATES EVERY PRODUCTION ACTIVATION IN §4
+
+**The decision, verbatim.**
+
+> "Don't flip flags or apply hosted migrations while the deployment is unavailable and hosted testing still shares production state."
+
+**Both conditions were MEASURED on 2026-10-04, and both are TRUE.** The measurements are in `docs/ops/runtime-evidence-20261004.md` on `origin/claude/runtime-evidence-20261004` (PR #605), read-only, with production project `ajrurzioarfkagpuxfnb` not touched.
+
+**Condition 1 — the deployment is unavailable. Nothing is deployed.** `GET https://portava.replit.app/healthz` answered **HTTP 404** with Replit's deployment-level placeholder page, titled `This app isn't live yet`, measured 2026-10-04T12:10:38Z; `/`, `/api/healthz` and `/manifest` answered the same way through 12:16:38Z. That is Replit's edge responding for a hostname with **no live deployment behind it**, not a route-level miss from the application — and it is stronger than a cold start, because a suspended Autoscale deployment wakes on a request and serves it. `portava.replit.app` is the configured production origin, named in `.replit`, in the server's CORS fallback and in all three client build profiles.
+
+**A decoy that must not be mistaken for the opposite.** `https://portava.app/healthz` answers **HTTP 200** — from **Squarespace**, with an empty body, and it answers `200` to *every* path including ones that do not exist. **A health check asserting only on the status code reports that host green while reaching no API at all.** No `200` from `portava.app` is evidence that anything is deployed.
+
+**Condition 2 — hosted testing shares production state, and the flag table makes separating them structurally impossible.** `public.feature_flags` has **`flag` as its sole primary key** — `artifacts/api-server/src/migrations/0037_feature_flags.sql:5#flag` — and both the reader and the audited writer address exactly one global row per flag name. There is no environment, project or tenant column, so **an environment distinction is not representable in the table at all.** The consequence is not an inference and not an operational preference:
+
+> **There is no separate testing flag state to flip. Flipping a flag "for testing" flips it in production, by construction.**
+
+PR #605 records the same answer on all four axes it examined — same database, same flag table, same storage, same auth.
+
+**What this freezes.** Every action in §4 of this page marked *production activation*: **1–8, 10, 13, 14, 19–21, 23 and 24.** Each of those is either a flag flip or a hosted apply, and both are refused by this decision while the two conditions hold. §4 is left **unedited** below — the actions, their values and their recovery paths are all still correct, and will be needed — but **none of them may be executed on the strength of its own "Recommendation: approve" line.** Read that line as *what to do once this freeze lifts*.
+
+**What it does NOT freeze.** Work on a local PostgreSQL harness, work on `portava-ci` (Step 0, §3, which this page already records as not a decision), branch work, tests, and documentation. It freezes **hosted** applies and **flag** flips.
+
+**What would lift it, stated so it is checkable rather than argued.** Condition 1 lifts when a build positively identified as running answers at the configured origin — and note that the repository offers **no way to identify it as a commit**: PR #605 enumerates six channels and finds no version endpoint, no build stamp, no commit sha, no version header, and a static `0.0.0` in `package.json`. Condition 2 lifts only when the flag table can represent an environment, or hosted testing is given its own database. **Neither has a date, and both are `unknown`.**
+
+**Interaction with §8.9.** These are two independent holds and each is sufficient on its own. Even if this freeze lifted tomorrow, `3513` would still be withheld by §8.9; and even if legal review confirmed the period tomorrow, the hosted apply would still be frozen by this entry. **Clearing one does not clear the other.**
+
+**Reversibility.** Documentation. Nothing was flipped or applied to record it — which is the decision operating on itself.
