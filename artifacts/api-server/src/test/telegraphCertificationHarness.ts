@@ -87,7 +87,7 @@ export interface FakeDbOptions {
    * mutate the store between two reads inside one handler — the only way to
    * produce "participant removed mid-send" deterministically.
    */
-  onRead?: (table: string, store: Record<string, any[]>) => void;
+  onRead?: (table: string, store: Record<string, any[]>) => void; /** PostgREST's `db-max-rows` — see `rows()` below. */ maxRows?: number;
 }
 
 export interface Observed {
@@ -250,12 +250,27 @@ export function makeFakeClient(
   function from(table: string): any {
     const filters: Predicate[] = [];
     let _limit: number | null = null;
+    let _range: { from: number; to: number } | null = null;
     let _order: { col: string; asc: boolean } | null = null;
     let _head = false;
+    let _countRequested = false;
+    let _matched = 0;
     let mode: Mode = "select";
     let pendingRows: any[] = [];
     let pendingPatch: any = null;
 
+    /*
+     * `opts.maxRows` is PostgREST's `db-max-rows`: the most rows ONE select may
+     * return, whatever `.limit()` or `.range()` asked for, with no error and no
+     * flag. Supabase ships 1000. Absent means no cap, which is what every fixture
+     * written before the option relies on. It exists because "a read that
+     * silently stops at 1000 rows" cannot be shown red against a fake that
+     * returns everything: the inbox read pulled every message of every thread
+     * with no limit, and on an uncapped fake that read is complete by
+     * construction. A `{ count: 'exact' }` count is NOT capped — the real server
+     * counts every matching row — so a count stays the honest way to size a set
+     * the data cannot carry.
+     */
     const rows = (): any[] => {
       opts.onRead?.(table, store);
       let out = (store[table] ?? []).filter((r) => filters.every((f) => f(r)));
@@ -267,7 +282,11 @@ export function makeFakeClient(
           return asc ? x - y : y - x;
         });
       }
-      return _limit !== null ? out.slice(0, _limit) : out;
+      _matched = out.length;
+      if (_range !== null) out = out.slice(_range.from, _range.to + 1);
+      if (_limit !== null) out = out.slice(0, _limit);
+      if (opts.maxRows !== undefined) out = out.slice(0, opts.maxRows);
+      return out;
     };
 
     /** Apply the pending write and return the affected rows. */
@@ -312,7 +331,9 @@ export function makeFakeClient(
       if (err) return { data: null, error: err, count: null };
       if (mode === "select") {
         const out = rows();
-        return { data: _head ? null : out, error: null, count: out.length };
+        // `{ count: 'exact' }` counts every MATCHING row, as PostgREST does —
+        // not the page the data carries.
+        return { data: _head ? null : out, error: null, count: _countRequested ? _matched : out.length };
       }
       const written = applyWrite();
       return { data: written, error: null, count: written.length };
@@ -322,6 +343,7 @@ export function makeFakeClient(
       select(sel?: string, o?: any) {
         if (mode === "select") observed.selects.push({ table, sel: sel ?? "" });
         if (o?.head) _head = true;
+        if (o?.count) _countRequested = true;
         return proxy;
       },
       insert(r: any) {
@@ -373,6 +395,7 @@ export function makeFakeClient(
       },
       order(col: string, o?: any) { _order = { col, asc: o?.ascending !== false }; return proxy; },
       limit(n: number) { _limit = n; return proxy; },
+      range(from: number, to: number) { _range = { from, to }; return proxy; },
       maybeSingle() {
         const s = settle();
         return Promise.resolve({ data: s.error ? null : (Array.isArray(s.data) ? s.data[0] ?? null : s.data), error: s.error });

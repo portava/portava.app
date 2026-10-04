@@ -20,7 +20,7 @@
  * Fail-closed: if blocks cannot be fetched, return empty (never risk surfacing
  * content from blocked users).
  */
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js"; import { readWholeColumn, asResult } from "./feedReads.js"; // census-media §47: gate lists read whole, by key
 
 export type FeedType = "for_you" | "following";
 
@@ -150,7 +150,7 @@ export interface EligibilityResult {
    * touched to widen it. `gateFetchFailed` is the honest name; renaming it is
    * follow-up work, not a behaviour question.
    */
-  blockFetchFailed: boolean;
+  blockFetchFailed: boolean; /** census-media §47: WHICH hard-gate read failed when blockFetchFailed, so a caller can NAME it rather than serve a silent empty page. */ failedSource?: "blocks" | "profiles"; /** census-media §47: fail-soft reads that failed (their gate was OFF for this call): "user_mutes", "post_hides". */ softFailedSources?: string[];
 }
 
 /** Minimal shape of a candidate row from the DB. */
@@ -226,32 +226,32 @@ export async function filterEligibleMediaCandidates(
   let blockFetchFailed = false;
   const blockedSet = new Set<string>();
   try {
-    const [blockedRes, blockerRes] = await Promise.all([
-      sc.from("blocks").select("blocked_id").eq("blocker_id", viewerCtx.viewerUserId),
-      sc.from("blocks").select("blocker_id").eq("blocked_id", viewerCtx.viewerUserId),
+    const [blockedRes, blockerRes] = await Promise.all([ // census-media §47: both lists WHOLE, by key — a block list past 1,000 rows was cut, and the creators past the cut were served
+      readWholeColumn(sc, "blocks", "blocked_id", (q: any) => q.eq("blocker_id", viewerCtx.viewerUserId)).then(asResult),
+      readWholeColumn(sc, "blocks", "blocker_id", (q: any) => q.eq("blocked_id", viewerCtx.viewerUserId)).then(asResult),
     ]);
     if (blockedRes.error || blockerRes.error) {
       blockFetchFailed = true;
     } else {
-      for (const r of (blockedRes.data as any[]) ?? []) blockedSet.add(r.blocked_id as string);
-      for (const r of (blockerRes.data as any[]) ?? []) blockedSet.add(r.blocker_id as string);
+      for (const id of (blockedRes.data as string[]) ?? []) blockedSet.add(id);
+      for (const id of (blockerRes.data as string[]) ?? []) blockedSet.add(id);
     }
   } catch {
     blockFetchFailed = true;
   }
 
   if (blockFetchFailed) {
-    return { eligible: [], blockFetchFailed: true };
+    return { eligible: [], blockFetchFailed: true, failedSource: "blocks" };
   }
 
   // ── Step 2: Mutes ──────────────────────────────────────────────────────────
-  let muteSet = mutedCreatorIds ?? new Set<string>();
+  let muteSet = mutedCreatorIds ?? new Set<string>(); const softFailed: string[] = []; // census-media §47: fail-soft reads that failed, named to the caller
   if (mutedCreatorIds === null || mutedCreatorIds === undefined) {
     try {
-      const { data: muteRows, error: muteErr } = await sc
-        .from("user_mutes")
-        .select("muted_id")
-        .eq("muter_id", viewerCtx.viewerUserId);
+      const muteRead = await readWholeColumn(sc, "user_mutes", "muted_id", (q: any) => q.eq("muter_id", viewerCtx.viewerUserId));
+      const muteErr = muteRead.ok ? null : muteRead.error; // census-media §47: the WHOLE mute list, by key — never the first 1,000
+      const muteRows = muteRead.ok ? muteRead.value.map((muted_id) => ({ muted_id })) : null;
+      if (muteErr) softFailed.push("user_mutes"); // §47: and NAMED to the caller, not only logged
       // "No mutes" and "the mute query was rejected" both leave muteSet empty,
       // and the difference is the whole gate: on a schema/query error every
       // muted creator's media becomes eligible again. PostgREST returns such
@@ -265,7 +265,7 @@ export async function filterEligibleMediaCandidates(
       }
       for (const r of (muteRows as any[]) ?? []) muteSet.add(r.muted_id as string);
     } catch (err) {
-      console.warn(
+      softFailed.push("user_mutes"); console.warn(
         "filterEligibleMediaCandidates: user_mutes read rejected — mute gate is OFF for this request",
         { viewerUserId: viewerCtx.viewerUserId, err },
       );
@@ -299,7 +299,7 @@ export async function filterEligibleMediaCandidates(
           "filterEligibleMediaCandidates: profiles account_status read failed — suspended/banned gate could not be evaluated, failing closed to an empty feed",
           { creatorCount: creatorIds.length, code: (statusErr as any)?.code, message: (statusErr as any)?.message },
         );
-        return { eligible: [], blockFetchFailed: true };
+        return { eligible: [], blockFetchFailed: true, failedSource: "profiles" };
       }
       for (const r of (profileRows as any[]) ?? []) {
         suspendedCreatorIds.add(r.id as string);
@@ -309,7 +309,7 @@ export async function filterEligibleMediaCandidates(
         "filterEligibleMediaCandidates: profiles account_status read rejected — suspended/banned gate could not be evaluated, failing closed to an empty feed",
         { creatorCount: creatorIds.length, err },
       );
-      return { eligible: [], blockFetchFailed: true };
+      return { eligible: [], blockFetchFailed: true, failedSource: "profiles" };
     }
   }
 
@@ -338,10 +338,10 @@ export async function filterEligibleMediaCandidates(
   // The asymmetry is deliberate and is the same one this file argues for mutes.
   const hiddenPostIds = new Set<string>();
   try {
-    const { data: hideRows, error: hideErr } = await sc
-      .from("post_hides")
-      .select("post_id")
-      .eq("user_id", viewerCtx.viewerUserId);
+    const hideRead = await readWholeColumn(sc, "post_hides", "post_id", (q: any) => q.eq("user_id", viewerCtx.viewerUserId));
+    const hideErr = hideRead.ok ? null : hideRead.error; // census-media §47: the WHOLE hide list, by key — never the first 1,000
+    const hideRows = hideRead.ok ? hideRead.value.map((post_id) => ({ post_id })) : null;
+    if (hideErr) softFailed.push("post_hides"); // §47: and NAMED to the caller, not only logged
     if (hideErr) {
       console.warn(
         "filterEligibleMediaCandidates: post_hides read failed — viewer hide gate is OFF for this request",
@@ -350,7 +350,7 @@ export async function filterEligibleMediaCandidates(
     }
     for (const r of (hideRows as any[]) ?? []) hiddenPostIds.add(r.post_id as string);
   } catch (err) {
-    console.warn(
+    softFailed.push("post_hides"); console.warn(
       "filterEligibleMediaCandidates: post_hides read rejected — viewer hide gate is OFF for this request",
       { viewerUserId: viewerCtx.viewerUserId, err },
     );
@@ -476,7 +476,7 @@ export async function filterEligibleMediaCandidates(
     return true;
   });
 
-  return { eligible, blockFetchFailed: false };
+  return { eligible, blockFetchFailed: false, ...(softFailed.length > 0 ? { softFailedSources: softFailed } : {}) }; // census-media §47
 }
 
 /** Trip roles that count as genuine membership. Mirrors circleAccessGuard. */

@@ -34,6 +34,7 @@ import { tmpdir } from "node:os";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hasRealTreeControl } from "../scripts/checkGuardReachability.js";
+import { GUARDS as REAL_GUARDS } from "../scripts/guardRegistry.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const API_ROOT = resolve(HERE, "..", "..");
@@ -428,5 +429,67 @@ describe("test-control — the four shapes, on synthetic sources", () => {
     const r = check(`it("unrelated", () => { assert.equal(1, 1); });`);
     assert.equal(r.ok, false);
     assert.match(r.why, /no it\(\)\/test\(\) case runs the checker at all/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE INSPECTION PROOF MUST NOT REPAIR WHAT IT INSPECTS.
+//
+// checkGuardReachability proves a guard LOOKED by running it and reading a
+// count out of its output. Two registered checkers WRITE the artifact they
+// gate when invoked with no arguments, so running them bare to prove they
+// looked regenerates the file instead of reporting its drift — and every later
+// gate in the same check:all then compares a file this process just wrote.
+//
+// MEASURED on main at 0fa752ece: the committed Phase 0 inventory read
+// `25 of 681 migration files` against a tree of 682 (migration 3510 arrived
+// without a regeneration), and CI reported `check:telegraph-inventory PASSED`
+// because check:guard-reachability (run-all-checks.sh:141) had rewritten the
+// file 67 seconds before the gate (run-all-checks.sh:456) read it. In a
+// worktree of that commit, with these args removed, the guard reports
+// `MUTATED the working tree`; with them present the gate exits 1 on the real
+// drift, which is the first time it could.
+//
+// A static "this checker calls writeFileSync, so pin its args" rule would be
+// wrong: scripts/check-compiler-authentic.mjs writes too, into a mkdtemp
+// directory it then removes. Mutating a TRACKED file is the defect, and
+// checkGuardReachability asserts that at runtime. These two entries are the
+// known cases, and this test is what stops the pin being dropped.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("a checker whose default mode writes its own artifact runs pinned to --check", () => {
+  for (const checker of [
+    "src/scripts/generateTelegraphInventory.ts",
+    "src/scripts/tripWritePathInventory.ts",
+  ]) {
+    it(`${checker} declares inspects.args = ["--check"]`, () => {
+      const g = REAL_GUARDS.find((e) => e.checker === checker);
+      assert.ok(g, `${checker} is no longer in the registry — if it was renamed, move this pin with it.`);
+      assert.ok(
+        g.inspects,
+        `${checker} lost its inspection proof. It needs one, and it needs the --check pin with it.`,
+      );
+      assert.deepEqual(
+        [...(g.inspects.args ?? [])],
+        ["--check"],
+        `${checker} must be proved in its CHECKING mode. Unpinned, checkGuardReachability runs it bare, ` +
+          `which REWRITES the artifact it gates and makes the gate unable to fail.`,
+      );
+    });
+  }
+
+  it("the proof of each one reads a real count, so neither needs a zeroIsProved escape", () => {
+    for (const checker of [
+      "src/scripts/generateTelegraphInventory.ts",
+      "src/scripts/tripWritePathInventory.ts",
+    ]) {
+      const g = REAL_GUARDS.find((e) => e.checker === checker);
+      assert.ok(g?.inspects, checker);
+      assert.equal(
+        g.inspects.zeroIsProved,
+        undefined,
+        `${checker} declares zeroIsProved. Its --check pass line now carries a count, so the escape is a ` +
+          `licence nobody is using — and an unused escape is one somebody later leans on.`,
+      );
+    }
   });
 });

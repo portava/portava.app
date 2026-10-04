@@ -23,7 +23,8 @@
  *   6. the owner leaving disbands, so no crew outlives the layover that made it;
  *   7. an unreadable crew read refuses instead of answering "you are in no crew";
  *   8. a blocked crewmate gets no card but is STILL COUNTED and still binds the
- *      deadline — the count and the faces are different questions;
+ *      deadline — the count and the faces are different questions — and, since
+ *      census-layover §48, is not NAMED in the solver either;
  *   9. an unreadable `blocks` table publishes NO cards rather than all of them.
  *
  * WHAT THIS DOES NOT PROVE — AND THE HALF OF IT THAT IS NO LONGER TRUE.
@@ -420,8 +421,22 @@ describe("an outage is not an empty crew, and membership is not entitlement", ()
     assert.equal(read.status, 200, JSON.stringify(read.body));
     assert.equal(read.body.members.length, 0, "a blocked crewmate must not get a card");
     assert.equal(read.body.crew.memberCount, 2, "…and must still be counted");
-    assert.deepEqual(read.body.solution.bindingMemberIds, [USER_B],
-      "…and must still bind the shared deadline");
+    // …and must still bind the shared deadline. Proved by the DEADLINE rather
+    // than by the id, which is the change census-layover §48 records: this line
+    // used to read `bindingMemberIds` deepEqual `[USER_B]`, i.e. it asserted
+    // that the person A blocked is NAMED to A beside a card gate that hid them.
+    // B departs at 5h and A at 9h, so a shared deadline earlier than A's own
+    // can only be B's — the binding is pinned without publishing who binds.
+    const own = read.body.solution.members.find((m: any) => m.userId === USER_A);
+    assert.ok(own?.requiredReturnBy, JSON.stringify(read.body.solution));
+    assert.ok(
+      Date.parse(read.body.solution.sharedReturnBy) < Date.parse(own.requiredReturnBy),
+      "…and must still bind the shared deadline",
+    );
+    assert.equal(read.body.solution.bindingMemberHidden, true,
+      "…and the binding is disclosed as belonging to a crewmate A cannot see");
+    assert.deepEqual(read.body.solution.bindingMemberIds, [],
+      "…without naming the person A blocked");
   });
 
   it("an unreadable blocks table publishes NO cards rather than all of them", async () => {

@@ -54,7 +54,7 @@ async function renderCard(presence: LayoverPresenceAnswer) {
       shareEnabled
       shareBusy={false}
       presence={presence}
-      buddies={[]}
+      buddies={null}
       canEdit
       onToggleShare={() => {}}
       onOpenBuddy={() => {}}

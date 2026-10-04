@@ -15,6 +15,7 @@
  * card says "can't tell", never "not yet".
  */
 import React, { useCallback, useEffect, useState } from 'react';
+import { useLatestRead } from '../shared/latestRead.ts';
 import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import { CheckCircle2, XCircle, HelpCircle, CloudOff, AlertTriangle } from 'lucide-react-native';
 
@@ -82,14 +83,18 @@ function RecommendationRow({ rec, board }: { rec: Recommendation; board: Decisio
 export function TripDecisionsCard({ tripId, load = fetchTripDecisions }: Props) {
   const [read, setRead] = useState<DecisionRead | undefined>(undefined);
 
+  // Latest read wins: a slower answer for a previous trip id is not drawn (§79).
+  const begin = useLatestRead();
   const run = useCallback(async () => {
+    const current = begin();
     setRead(undefined);
     try {
-      setRead(await load(tripId));
+      const r = await load(tripId);
+      if (current()) setRead(r);
     } catch (e: any) {
-      setRead({ state: 'unavailable', detail: String(e?.message ?? 'unexpected error') });
+      if (current()) setRead({ state: 'unavailable', detail: String(e?.message ?? 'unexpected error') });
     }
-  }, [tripId, load]);
+  }, [tripId, load, begin]);
 
   useEffect(() => { void run(); }, [run]);
 

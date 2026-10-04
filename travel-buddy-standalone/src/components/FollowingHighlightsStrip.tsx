@@ -33,6 +33,10 @@ interface Props {
    * picture: the server refuses with `degraded_unavailable` rather than
    * answering `{ users: [] }` from a follow-graph lookup that failed, and this
    * tray disappearing was that refusal being re-stated as the claim.
+   *
+   * With `users` non-empty it means the read stopped part-way (a later page of
+   * the server's §12 cursor walk was refused): the tray holds what was read and
+   * ends with a notice, rather than looking complete.
    */
   unreadable?: HighlightErrorKind | null;
   /** Retry the feed read. Only offered for a failure that can be retried. */
@@ -168,6 +172,26 @@ export function FollowingHighlightsStrip({
             </Pressable>
           );
         })}
+        {unreadable ? (
+          // §28.11, the PARTIAL case: these rings are what was read, not
+          // everyone. `feature_disabled` cannot occur after a page was read,
+          // but the retry rule is the same as the empty case above.
+          <View style={styles.partialItem} testID="following-highlights-partial">
+            <Text style={styles.partialText} numberOfLines={3}>
+              We could not load all Highlights from people you follow.
+            </Text>
+            {unreadable !== 'feature_disabled' && onRetry ? (
+              <Pressable
+                onPress={onRetry}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="Retry loading highlights"
+              >
+                <Text style={styles.unreadableRetry}>Retry</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
       </ScrollView>
 
       {viewingUser && (
@@ -240,5 +264,14 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: color.signal,
+  },
+  partialItem: {
+    width: 140,
+    justifyContent: 'center',
+    gap: space.xs,
+  },
+  partialText: {
+    fontSize: 12,
+    color: color.mute,
   },
 });

@@ -37,6 +37,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { loadViewerSuppressions, SUPPRESSION_WINDOW_MS } from "../routes/wall.js";
 import { RankingEvent } from "../services/ranking/rankingAnalytics.js";
+import { makeFailClosedClient } from "./helpers/failClosedSupabase.js";
 import {
   projectObjects,
   type ProjectViewerContext,
@@ -172,6 +173,27 @@ describe("§41 return leg — a hide is read BACK, on the deployed store", () =>
       assert.equal(set.size, 0, "degrades to no suppressions rather than throwing");
     }
     assert.equal((await loadViewerSuppressions(null as any, VIEWER)).size, 0);
+  });
+
+  // census-wall §19. The read is capped (MAX_SUPPRESSIONS = 500) and was
+  // UNORDERED, so for a viewer past the cap WHICH 500 hides came back was the
+  // planner's choice — the one they just made could be the one left out, and a
+  // "not interested" tapped a minute ago came straight back. Capped, it must be
+  // the NEWEST hides that are kept.
+  it("past the cap, the NEWEST hides are the ones read back", async () => {
+    const rows = Array.from({ length: 600 }, (_, i) =>
+      hideRow({
+        item_id: `post-${i}`,
+        // Stored oldest-first: row 599 is the hide made a second ago.
+        served_at: new Date(NOW.getTime() - (600 - i) * 1000).toISOString(),
+      }),
+    );
+    const set = await loadViewerSuppressions(makeFailClosedClient({ rows: { rank_events: rows } }), VIEWER, {
+      now: NOW,
+    });
+    assert.equal(set.size, 500, "vacuity guard: the cap is in force");
+    assert.ok(set.has("post-599"), "the hide made a second ago must be honoured");
+    assert.ok(!set.has("post-0"), "…and it is the OLDEST that fall outside the cap");
   });
 });
 

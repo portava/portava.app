@@ -34,7 +34,7 @@
  * `members`, and where they differ this section says so rather than quietly
  * showing a smaller crew.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator, TextInput } from 'react-native';
 import { Users, UserPlus, LogOut, AlertTriangle, RefreshCw } from 'lucide-react-native';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
@@ -89,8 +89,15 @@ export function LayoverCrewSection({ sessionId, timezone, refreshKey = 0 }: Prop
   const [title, setTitle] = useState('');
   const [meetingPoint, setMeetingPoint] = useState('');
 
+  // Every read takes a ticket and only the newest may land. The section reads
+  // on mount, on every dashboard refresh and after its own actions, so two
+  // reads overlap; the one that ANSWERED last used to win, and a slow read
+  // from before a join could put "you are in no crew" back on the screen.
+  const readTicket = useRef(0);
   const refresh = useCallback(async () => {
+    const ticket = ++readTicket.current;
     const state = await getLayoverCrew(sessionId);
+    if (ticket !== readTicket.current) return;
     // `null` is a FAILED READ, not "you are in no crew" — see the header.
     setLoad(state ? { kind: 'ready', state } : { kind: 'unavailable' });
   }, [sessionId]);

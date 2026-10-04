@@ -27,6 +27,7 @@ import { projectAndStore } from "./intelProjection.js";
 import { assembleClaimInput, type ClaimRow } from "./intelProjectionAggregator.js";
 import { LIVE_ELIGIBLE_CLAIM_STATUSES } from "./intelContracts.js";
 import { captureSnapshotStates, emitStateChangedEvents, type SnapshotRow } from "./intelDomainEvents.js";
+import { readAllByIdKeyset } from "./keysetRead.js";
 
 const STARTUP_DELAY_MS = 3 * 60 * 1000;
 const INTERVAL_MS = 5 * 60 * 1000; // spec §24: aggregate live state every five minutes
@@ -64,16 +65,29 @@ export async function runIntelProjectionPass(opts: { client?: SupabaseClient | n
 
   const now = opts.now ?? new Date();
   try {
-    const { data, error } = await db
-      .from("intel_claims")
-      // updated_at + version (2274) are what Table 17's input_claim_versions cites.
-      .select("id, subject_id, zone_id, claim_type, value, status, observed_at, updated_at, version")
-      .in("status", LIVE_ELIGIBLE_CLAIM_STATUSES as unknown as string[])
-      .limit(MAX_CLAIMS_PER_PASS);
-    if (error) {
-      logger.warn({ err: error }, "intelProjection pass: claim read failed");
+    // EVERY live claim, keyset-paged. This was `.limit(MAX_CLAIMS_PER_PASS)` with
+    // no order: the server's 1000-row cap overrides an explicit limit, so past
+    // 1000 live claims each pass projected an arbitrary 1000 and the rest went
+    // stale — silently, since the pass reported `subjects` as if it had read
+    // them all. The per-pass bound is kept, and hitting it is now SAID.
+    const claimRead = await readAllByIdKeyset(
+      () => db
+        .from("intel_claims")
+        // updated_at + version (2274) are what Table 17's input_claim_versions cites.
+        .select("id, subject_id, zone_id, claim_type, value, status, observed_at, updated_at, version")
+        .in("status", LIVE_ELIGIBLE_CLAIM_STATUSES as unknown as string[]),
+      MAX_CLAIMS_PER_PASS,
+    );
+    if (!claimRead.ok) {
+      // A failure on ANY page, not only the first: projecting a prefix would
+      // report a smaller pass as the whole one.
+      logger.warn({ err: claimRead.error }, "intelProjection pass: claim read failed");
       return { ...base, reason: "error" };
     }
+    if (claimRead.truncated) {
+      logger.warn({ maxClaimsPerPass: MAX_CLAIMS_PER_PASS }, "intelProjection pass: more live claims than one pass projects; the rest wait for the next pass");
+    }
+    const data = claimRead.rows;
 
     // Group by (subject_id, zone_id): projectAndStore applies one zone per call,
     // and the snapshot key is (subject_id, zone_id, claim_type).
@@ -121,46 +135,34 @@ export async function runIntelProjectionPass(opts: { client?: SupabaseClient | n
     // ends it, and if ANY page errors the whole reconciliation aborts WITHOUT
     // expiring anything (fail-closed: never expire on a partial/errored read).
     try {
-      const PAGE = 1000;
-
-      // Full live-key set, paginated. A short (or empty) page ends the loop.
+      // Full live-key set and full servable-snapshot set, each keyset-paged to
+      // an EMPTY page (readAllByIdKeyset). If ANY page errors the whole
+      // reconciliation aborts WITHOUT expiring anything (fail-closed: never
+      // expire on a partial/errored read).
       const liveKeys = new Set<string>();
-      let liveKeysComplete = true;
-      for (let offset = 0; ; offset += PAGE) {
-        const { data, error } = await db
-          .from("intel_claims")
-          .select("subject_id, zone_id, claim_type")
-          .in("status", LIVE_ELIGIBLE_CLAIM_STATUSES as unknown as string[])
-          .range(offset, offset + PAGE - 1);
-        if (error) {
-          liveKeysComplete = false;
-          logger.warn({ err: error }, "intelProjection pass: live-key page read failed; skipping expiry (fail-closed)");
-          break;
-        }
-        const rows = (data as any[]) ?? [];
-        for (const c of rows) liveKeys.add(JSON.stringify([c.subject_id, c.zone_id ?? "", c.claim_type]));
-        if (rows.length < PAGE) break;
+      const liveRead = await readAllByIdKeyset(() => db
+        .from("intel_claims")
+        .select("id, subject_id, zone_id, claim_type")
+        .in("status", LIVE_ELIGIBLE_CLAIM_STATUSES as unknown as string[]));
+      const liveKeysComplete = liveRead.ok;
+      if (!liveRead.ok) {
+        logger.warn({ err: liveRead.error }, "intelProjection pass: live-key page read failed; skipping expiry (fail-closed)");
+      } else {
+        for (const c of liveRead.rows) liveKeys.add(JSON.stringify([c.subject_id, c.zone_id ?? "", c.claim_type]));
       }
 
-      // Full servable-snapshot set, paginated (the same silent cap applies).
-      const servable: any[] = [];
-      let servableComplete = true;
-      for (let offset = 0; ; offset += PAGE) {
-        const { data, error } = await db
+      const servableRead = liveKeysComplete
+        ? await readAllByIdKeyset(() => db
           .from("intel_state_snapshots")
           .select("id, subject_id, zone_id, claim_type")
           .eq("privacy_eligible", true)
-          .gt("expires_at", now.toISOString())
-          .range(offset, offset + PAGE - 1);
-        if (error) {
-          servableComplete = false;
-          logger.warn({ err: error }, "intelProjection pass: servable page read failed; skipping expiry (fail-closed)");
-          break;
-        }
-        const rows = (data as any[]) ?? [];
-        servable.push(...rows);
-        if (rows.length < PAGE) break;
+          .gt("expires_at", now.toISOString()))
+        : null;
+      const servableComplete = servableRead?.ok === true;
+      if (servableRead && !servableRead.ok) {
+        logger.warn({ err: servableRead.error }, "intelProjection pass: servable page read failed; skipping expiry (fail-closed)");
       }
+      const servable: any[] = servableRead && servableRead.ok ? servableRead.rows : [];
 
       // Expire only when BOTH sets were read IN FULL. A partial live-key read
       // cannot tell a real orphan from a key it simply did not read, so a

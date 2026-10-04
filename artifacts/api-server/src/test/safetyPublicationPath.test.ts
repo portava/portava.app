@@ -102,7 +102,7 @@ function makeWriterDb(cfg: any) {
   function from(table: string) {
     let op = "select"; let payload: any = null;
     const eqs: any[] = []; const gts: any[] = [];
-    let inF: any = null; let lim = Infinity; let rangeF: any = null;
+    let inF: any = null; let lim = Infinity; let rangeF: any = null; let orderF: any = null;
     const src = (): any[] => (({
       intel_claims: cfg.claims,
       intel_observations: (cfg.observations ?? []).map((o: any) => ({ moderation_state: "allowed", ...o })),
@@ -117,7 +117,9 @@ function makeWriterDb(cfg: any) {
       && gts.every(([c, v]: any) => r[c] != null && r[c] > v)
       && (!inF || inF[1].includes(r[inF[0]]));
     const rows = () => {
-      const f = src().filter(match);
+      let f = src().filter(match);
+      // The projection pass reads by keyset (ORDER BY id, id > cursor).
+      if (orderF) { const [c, asc] = orderF; f = [...f].sort((a, b) => (a[c] < b[c] ? -1 : a[c] > b[c] ? 1 : 0) * (asc ? 1 : -1)); }
       if (rangeF) return f.slice(rangeF[0], rangeF[1] + 1);
       if (lim !== Infinity) return f.slice(0, lim);
       return f.slice(0, 1000);
@@ -146,6 +148,7 @@ function makeWriterDb(cfg: any) {
       gt(c: any, v: any) { gts.push([c, v]); return b; },
       is(c: any, v: any) { eqs.push([c, v]); return b; },
       in(c: any, v: any) { inF = [c, v]; return b; },
+      order(c: any, o?: { ascending?: boolean }) { orderF = [c, o?.ascending !== false]; return b; },
       range(f: number, t: number) { rangeF = [f, t]; return Promise.resolve(run()); },
       limit(n: number) { lim = n; return Promise.resolve(run()); },
       maybeSingle() { return Promise.resolve(run()); },

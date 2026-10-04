@@ -32,16 +32,29 @@ const POSTGREST_IMPLICIT_CAP = 1000;
 
 function makeDb(cfg: {
   flags: Record<string, boolean>; claims?: any[]; observations?: any[]; confirmations?: any[];
-  policies?: any[]; snapshots?: any[]; errorTable?: string; withdrawnActors?: string[];
+  policies?: any[]; snapshots?: any[]; errorTable?: string; withdrawnActors?: string[]; evidence?: any[];
   // Inject an error on a specific PAGINATED page of `table`, but only once the
   // window has advanced to (or past) `minOffset` — lets a test succeed on page 1
   // and fail on a later page, proving a PARTIAL read expires nothing.
-  rangeError?: { table: string; minOffset?: number };
+  // `columns` narrows it to the read whose select list matches, for a test
+  // about ONE of several paged reads of the same table.
+  rangeError?: { table: string; minOffset?: number; columns?: RegExp };
   // Reject every UPDATE against this table. supabase-js RESOLVES on a database
   // error, so the rejected update must come back as `{ error }` and mutate
   // NOTHING — modelling a throw here would test a shape the real client never
   // produces.
   updateError?: { table: string };
+  // PostgREST's db-max-rows (Supabase "Max rows", 1000 on hosted) caps EVERY
+  // response — an explicit .limit(5000) or .range(0, 4999) still returns at most
+  // this many rows, with no error. Opt-in so the fixtures above keep their
+  // existing semantics; the DV-83 cases below set it.
+  serverMaxRows?: number;
+  // Without an ORDER BY, PostgreSQL promises no row order, and two requests for
+  // consecutive OFFSET windows can each see a DIFFERENT order — so offset pages
+  // overlap and skip. Opt-in: an unordered page past the first (OFFSET > 0, or
+  // a cursor on id) is served in the reverse of the first page's order, one
+  // legal answer the real database may give.
+  unstableUnorderedPages?: boolean;
 }) {
   const snaps: any[] = [...(cfg.snapshots ?? [])];
   // I1: every snapshot write is preceded by an append to the version table.
@@ -60,24 +73,46 @@ function makeDb(cfg: {
     let op: "select" | "upsert" | "update" | "insert" = "select"; let payload: any = null;
     const eqs: [string, any][] = []; const gts: [string, any][] = [];
     let inF: [string, any[]] | null = null; let lim = Infinity; let rangeF: [number, number] | null = null;
+    let orderF: [string, boolean] | null = null; let cols = ""; let wantCount = false;
     // Observations default to moderation_state 'allowed' (explicit values override),
     // so fixtures that don't care about moderation still pass the aggregator's
     // pilot-claimable .in() filter; a fixture can set 'blocked'/'removed' to test exclusion.
-    const src = (): any[] => (({ intel_claims: cfg.claims, intel_observations: (cfg.observations ?? []).map((o: any) => ({ moderation_state: "allowed", ...o })), intel_confirmations: cfg.confirmations, freshness_policies: cfg.policies, intel_state_snapshots: snaps, intel_contribution_consent: consentRows } as any)[table] ?? []);
+    const src = (): any[] => (({ intel_claims: cfg.claims, intel_observations: (cfg.observations ?? []).map((o: any) => ({ moderation_state: "allowed", ...o })), intel_confirmations: cfg.confirmations, freshness_policies: cfg.policies, intel_state_snapshots: snaps, intel_contribution_consent: consentRows, intel_evidence: cfg.evidence } as any)[table] ?? []);
     const match = (r: any) =>
       eqs.every(([c, v]) => r[c] === v)
       && gts.every(([c, v]) => r[c] != null && r[c] > v)
       && (!inF || inF[1].includes(r[inF[0]]));
     const rows = () => {
-      const filtered = src().filter(match);
-      if (rangeF) return filtered.slice(rangeF[0], rangeF[1] + 1);       // explicit pagination — exact slice
-      if (lim !== Infinity) return filtered.slice(0, lim);               // explicit limit — honored as-is
-      return filtered.slice(0, POSTGREST_IMPLICIT_CAP);                  // range-less/limit-less — silently capped
+      let filtered = src().filter(match);
+      if (orderF) {
+        const [c, asc] = orderF;
+        filtered = [...filtered].sort((a, b) => (a[c] < b[c] ? -1 : a[c] > b[c] ? 1 : 0) * (asc ? 1 : -1));
+      } else if (cfg.unstableUnorderedPages && ((rangeF && rangeF[0] > 0) || gts.some(([c]) => c === "id"))) {
+        // A later OFFSET window sees the rows in the opposite order to the first
+        // one did — legal with no ORDER BY, and the worst case for offset paging:
+        // the second page re-serves rows the first already had and never reaches
+        // the ones neither served.
+        filtered = [...filtered].reverse();
+      }
+      const cap = (xs: any[]) => (cfg.serverMaxRows !== undefined ? xs.slice(0, cfg.serverMaxRows) : xs);
+      if (rangeF) return cap(filtered.slice(rangeF[0], rangeF[1] + 1)); // explicit pagination — exact slice
+      if (lim !== Infinity) return cap(filtered.slice(0, lim));         // explicit limit — honored as-is
+      return filtered.slice(0, cfg.serverMaxRows ?? POSTGREST_IMPLICIT_CAP); // range-less/limit-less — silently capped
+    };
+    // How far into the ordered result a keyset page starts: the rows at or
+    // before its cursor. Lets `rangeError.minOffset` mean the same thing for a
+    // keyset page as for an OFFSET page.
+    const keysetOffset = (): number | null => {
+      const cursor = gts.find(([c]) => orderF && c === orderF[0]);
+      if (!cursor) return null;
+      return src().filter((r) => eqs.every(([c, v]) => r[c] === v) && (!inF || inF[1].includes(r[inF[0]])) && r[cursor[0]] <= cursor[1]).length;
     };
     const run = () => {
       if (table === "feature_flags") { const f = eqs.find(([c]) => c === "flag")?.[1]; return { data: { enabled: Boolean(cfg.flags[f]) }, error: null }; }
       if (cfg.errorTable === table) return { data: null, error: { message: "boom" } };
-      if (cfg.rangeError && cfg.rangeError.table === table && rangeF && rangeF[0] >= (cfg.rangeError.minOffset ?? 0)) {
+      const pageStart = rangeF ? rangeF[0] : keysetOffset();
+      if (cfg.rangeError && cfg.rangeError.table === table && pageStart !== null && pageStart >= (cfg.rangeError.minOffset ?? 0)
+        && (cfg.rangeError.columns === undefined || cfg.rangeError.columns.test(cols.trim()))) {
         return { data: null, error: { message: "range boom" } };
       }
       if (op === "upsert") { snaps.push(...(Array.isArray(payload) ? payload : [payload])); return { data: null, error: null }; }
@@ -97,10 +132,12 @@ function makeDb(cfg: {
         updates.push({ table, ids, patch: payload });
         return { data: null, error: null };
       }
-      return { data: rows(), error: null };
+      // `count: "exact"` reports the size of the WHOLE filtered set, which is
+      // how a reader learns that the rows it was handed were capped.
+      return wantCount ? { data: rows(), error: null, count: src().filter(match).length } : { data: rows(), error: null };
     };
     const b: any = {
-      select() { return b; },
+      select(c?: string, o?: { count?: string }) { cols = String(c ?? ""); wantCount = !!o?.count; return b; },
       upsert(row: any) { op = "upsert"; payload = row; return Promise.resolve(run()); },
       insert(row: any) { op = "insert"; payload = row; return Promise.resolve(run()); },
       update(patch: any) { op = "update"; payload = patch; return b; },
@@ -108,6 +145,7 @@ function makeDb(cfg: {
       gt(c: string, v: any) { gts.push([c, v]); return b; },
       is(c: string, v: any) { eqs.push([c, v]); return b; },
       in(c: string, v: any[]) { inF = [c, v]; return b; },
+      order(c: string, o?: { ascending?: boolean }) { orderF = [c, o?.ascending !== false]; return b; },
       range(from: number, to: number) { rangeF = [from, to]; return Promise.resolve(run()); },
       limit(n: number) { lim = n; return Promise.resolve(run()); },
       maybeSingle() { return Promise.resolve(run()); },
@@ -219,6 +257,40 @@ describe("intelProjection aggregator — assembleClaimInput (real evidence)", ()
     evidenceCase("intel_contribution_consent", "a consent read that FAILED is not a consent that was refused");
     evidenceCase("intel_evidence", "this one failed OPEN — no clustering means MORE independent groups");
     evidenceCase("intel_confirmations", "zero stances reads as 'nobody disagreed', not as 'we could not look'");
+
+    // DV-83: a read the server CUT is not a read that failed — it resolves with
+    // no error and 1000 rows — and it is not the cohort either. The aggregator
+    // filters freshness in memory over EVERY observation ever stored for the
+    // (subject, claim type), so a busy venue passes 1000 long before its fresh
+    // cohort does; the server then hands back an arbitrary 1000 and the actor
+    // count, the plurality value and the §11 gate are all computed on a sample.
+    const cohort = (n: number) => Array.from({ length: n }, (_, i) => ({
+      id: `oc-${String(i).padStart(5, "0")}`, actor_id: `ac-${i}`, subject_id: "place-dn-1", claim_type: "crowd.level",
+      presence_level: "P0", source_class: "firsthand_unverified", expires_at: null, observed_at: OBSERVED, group_key: `g-${i}`,
+    }));
+    it("intel_observations: a cohort read CUT at the server's row cap withholds the claim", async () => {
+      const db = makeDb({ flags: {}, observations: cohort(1200), confirmations: [], policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }], serverMaxRows: 1000 });
+      const input = await assembleClaimInput(db as any, claim, NOW);
+      assert.equal(input.evidenceComplete, false, "1000 of 1200 observations were scored as the whole cohort");
+    });
+    it("intel_confirmations: a stance read CUT at the server's row cap withholds the claim", async () => {
+      const confirmations = Array.from({ length: 1200 }, (_, i) => ({ claim_id: "c1", stance: i < 1000 ? "agree" : "disagree" }));
+      const db = makeDb({ flags: {}, observations: cohort(3), confirmations, policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }], serverMaxRows: 1000 });
+      const input = await assembleClaimInput(db as any, claim, NOW);
+      assert.equal(input.evidenceComplete, false, "the 200 disagreements past the cap were read as 'nobody disagreed'");
+    });
+    it("intel_evidence: an independence-evidence read CUT at the cap withholds — the rows past it are the shared media that collapse a crew", async () => {
+      const evidence = Array.from({ length: 1200 }, (_, i) => ({ observation_id: `oc-0000${i % 3}`, evidence_kind: "media", media_asset_id: `m-${i}`, detail: {} }));
+      const db = makeDb({ flags: {}, observations: cohort(3), confirmations: [], evidence, policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }], serverMaxRows: 1000 });
+      const input = await assembleClaimInput(db as any, claim, NOW);
+      assert.equal(input.evidenceComplete, false);
+    });
+    it("a cohort and stance set UNDER the cap are complete under the same server rules — the guard is the cut, not the size", async () => {
+      const confirmations = Array.from({ length: 999 }, () => ({ claim_id: "c1", stance: "agree" }));
+      const db = makeDb({ flags: {}, observations: cohort(999), confirmations, policies: [{ claim_type: "crowd.level", ttl_seconds: 2700, note: null }], serverMaxRows: 1000 });
+      const input = await assembleClaimInput(db as any, claim, NOW);
+      assert.equal(input.evidenceComplete, true);
+    });
 
     it("with every table readable the same fixture is evidenceComplete — so the flag is the error, not the fixture", async () => {
       const db = makeDb({
@@ -658,7 +730,10 @@ describe("intelProjection scheduler — runIntelProjectionPass (flag-gated, fail
       confirmations: [],
       policies: [],
       snapshots: [tailSnapshot()],
-      rangeError: { table: "intel_claims", minOffset: 1000 },
+      // The live-key read selects the key and nothing else; the pass's own claim
+      // read selects `value` too, and is not this test's subject (it has its own
+      // case below).
+      rangeError: { table: "intel_claims", minOffset: 1000, columns: /^(id, )?subject_id, zone_id, claim_type$/ },
     });
     const r = await runIntelProjectionPass({ client: db as any, now: NOW });
     assert.equal(r.reason, null, "pass still completes (reconciliation failure is non-fatal)");
@@ -723,5 +798,80 @@ describe("intelProjection scheduler — runIntelProjectionPass (flag-gated, fail
     try { await runIntelProjectionPass({ client: db as any, now: NOW }); } finally { m.mock.restore(); }
     assert.ok(records.some((x) => x?.event === "intel.correction.invalidation.completed"), "completion log missing on the happy path");
     assert.equal(db._events.filter((e: any) => e?.payload?.intel?.transition === "expired").length, 1);
+  });
+
+  // ── DV-83: the reads that decide what is projected and what is expired ──────
+  // The fixtures above model PostgREST's implicit cap on a range-less read but
+  // treat an explicit .limit()/.range() as uncapped, and every read as stably
+  // ordered. Neither is true of the real server: db-max-rows caps EVERY response,
+  // and a read with no ORDER BY has no defined order, so consecutive OFFSET pages
+  // may overlap and skip. These cases set both and pin the consequences.
+  describe("DV-83 — full, ordered reads under the real server's rules", () => {
+    // reconClaims' ids are unpadded, so in id order `rc-1200` sorts before
+    // `rc-2` and the tail key would sit in the FIRST page of a keyset read —
+    // making every case below vacuous. Padded, the tail is row 1201 of 1500 in
+    // id order as well as in insertion order.
+    const reconClaimsById = () => reconClaims().map((c, i) => ({ ...c, id: `rc-${String(i).padStart(4, "0")}` }));
+    it("projects EVERY live claim when there are more than db-max-rows of them (the claim read is not cut at 1000)", async () => {
+      const claims = Array.from({ length: 1200 }, (_, i) => ({
+        id: `mc-${String(i).padStart(5, "0")}`, subject_id: `subj-${i}`, zone_id: null,
+        claim_type: "crowd.level", value: { level: "busy" }, status: "active", observed_at: OBSERVED,
+      }));
+      const db = makeDb({ flags: { intel_claim_projection_crowd: true }, claims, observations: [], confirmations: [], policies: [], serverMaxRows: 1000 });
+      const r = await runIntelProjectionPass({ client: db as any, now: NOW });
+      assert.equal(r.reason, null);
+      assert.equal(r.subjects, 1200, "every live claim's subject is projected — a 5000 .limit() does not lift the 1000-row server cap");
+    });
+
+    it("a claim-read page that FAILS after the first is an error, not a smaller pass", async () => {
+      const claims = Array.from({ length: 1200 }, (_, i) => ({
+        id: `mc-${String(i).padStart(5, "0")}`, subject_id: `subj-${i}`, zone_id: null,
+        claim_type: "crowd.level", value: { level: "busy" }, status: "active", observed_at: OBSERVED,
+      }));
+      const db = makeDb({
+        flags: { intel_claim_projection_crowd: true }, claims, observations: [], confirmations: [], policies: [],
+        serverMaxRows: 1000, rangeError: { table: "intel_claims", minOffset: 1, columns: /value/ },
+      });
+      const r = await runIntelProjectionPass({ client: db as any, now: NOW });
+      assert.equal(r.reason, "error", "a partial claim read must not be reported as a complete pass");
+      assert.equal(r.subjects, 0);
+    });
+
+    it("does NOT expire a live-backed snapshot when unordered OFFSET pages would overlap and skip its key", async () => {
+      const db = makeDb({
+        flags: { intel_claim_projection_crowd: true }, claims: reconClaimsById(), observations: [], confirmations: [],
+        policies: [], snapshots: [tailSnapshot()], serverMaxRows: 1000, unstableUnorderedPages: true,
+      });
+      const r = await runIntelProjectionPass({ client: db as any, now: NOW });
+      assert.equal(r.reason, null);
+      assert.equal(db._updates.some((u) => u.ids.includes("snap-tail")), false,
+        "the tail snapshot's claim is live; a page that skipped its key must not delete live intelligence");
+      assert.equal(db._snaps.find((s: any) => s.id === "snap-tail").privacy_eligible, true);
+    });
+
+    it("does NOT treat a page shortened by a server cap BELOW the page size as the last page", async () => {
+      // A Max-rows setting of 500 makes every page short. Ending on a short page
+      // reads 500 keys, calls the set complete, and expires the snapshot whose
+      // key was in rows 501–1500.
+      const db = makeDb({
+        flags: { intel_claim_projection_crowd: true }, claims: reconClaimsById(), observations: [], confirmations: [],
+        policies: [], snapshots: [tailSnapshot()], serverMaxRows: 500,
+      });
+      const r = await runIntelProjectionPass({ client: db as any, now: NOW });
+      assert.equal(r.reason, null);
+      assert.equal(db._updates.some((u) => u.ids.includes("snap-tail")), false,
+        "a capped page is not the end of the set; expiring on it deletes live intelligence");
+    });
+
+    it("STILL expires a genuine orphan under the same server rules — the guard is the read, not a refusal to expire", async () => {
+      const orphan = { ...tailSnapshot(), id: "snap-orphan", claim_type: "ct-9999" };
+      const db = makeDb({
+        flags: { intel_claim_projection_crowd: true }, claims: reconClaimsById(), observations: [], confirmations: [],
+        policies: [], snapshots: [tailSnapshot(), orphan], serverMaxRows: 500, unstableUnorderedPages: true,
+      });
+      await runIntelProjectionPass({ client: db as any, now: NOW });
+      assert.ok(db._updates.some((u) => u.ids.includes("snap-orphan")), "the orphan (no live claim behind it) is expired");
+      assert.equal(db._updates.some((u) => u.ids.includes("snap-tail")), false, "the live-backed one is not");
+    });
   });
 });

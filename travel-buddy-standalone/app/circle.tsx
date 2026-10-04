@@ -187,7 +187,7 @@ export default function Circle() {
     let active = true;
     getTrip(tripId).then((t) => {
       if (active) setTripTitle(t?.title ?? null);
-    });
+    }).catch(() => { /* the title is a label only; getTrip throws on a failed read (§79) */ });
     return () => { active = false; };
   }, [tripId]);
 
