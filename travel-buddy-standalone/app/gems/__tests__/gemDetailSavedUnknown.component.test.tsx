@@ -10,6 +10,11 @@
  *   GD0 getGem: savedByMe null → null, never false; GD0c CONTROL true / false carried
  *   GD1 useGemDetail: savedByMe null → null, and toggleSave saves and unsaves nothing
  *   GD2 the screen: savedByMe null → "Couldn't check if saved", never "Save", and a tap toggles nothing; GD2c CONTROL false → "Save"
+ *
+ * census-discovery §123 (DV-83 round 24, B41; the round-23 verifier's GU1): the unknown state is DRAWN, not only
+ * labelled. Ionicons is replaced by a stand-in that renders `ion-<name>`, so the drawn icon is observable:
+ *   GU1 savedByMe null → `help-circle-outline` is drawn; neither `bookmark-outline` (the "not saved" drawing) nor `bookmark` is
+ *   GU0 CONTROL: savedByMe false → `bookmark-outline`, no question mark; GU0b savedByMe true → `bookmark`, no question mark
  */
 import React from 'react';
 import { render, screen, act, renderHook, waitFor, cleanup, fireEvent } from '@testing-library/react-native';
@@ -89,6 +94,12 @@ jest.mock('../../../src/components/stamps/StampButton', () => ({ StampButton: ()
 jest.mock('../../../src/components/ReasonPromptModal', () => ({ ReasonPromptModal: () => null }));
 // NOTE: exhaustive on purpose — see above.
 jest.mock('../../../src/hooks/useNavBarCollapse', () => ({ useNavBarScrollHandler: () => undefined }));
+// The stand-in for every Ionicons glyph: a Text whose testID names the icon (the real font glyph says nothing a test can read).
+jest.mock('@expo/vector-icons', () => {
+  const React = require('react');
+  const { Text } = require('react-native');
+  return { Ionicons: ({ name }: { name: string }) => React.createElement(Text, { testID: `ion-${name}` }) };
+});
 import GemDetailScreen from '../[id].tsx';
 
 describe('census-discovery §122 (B36): the gem detail screen over an unread save state', () => {
@@ -110,5 +121,32 @@ describe('census-discovery §122 (B36): the gem detail screen over an unread sav
     expect(screen.getByLabelText('Save')).toBeTruthy();
     await fireEvent.press(screen.getByLabelText('Save'));
     expect(toggleSave).toHaveBeenCalledTimes(1);
+  });
+  // §123 (B41): the save button's own icon. The header holds one save button; `bookmark-outline` also labels the
+  // "Save to a trip" row lower on the screen (drawn for every state), so the counts are compared between states.
+  const drawn = () => ({ unknown: screen.queryAllByTestId('ion-help-circle-outline').length, outline: screen.queryAllByTestId('ion-bookmark-outline').length, filled: screen.queryAllByTestId('ion-bookmark').length });
+  it('GU1 savedByMe null → the question mark is drawn in place of the outline bookmark', async () => {
+    detail(false);
+    await render(<GemDetailScreen />);
+    const notSaved = drawn();
+    cleanup();
+    detail(null);
+    await render(<GemDetailScreen />);
+    const unknown = drawn();
+    expect(unknown.unknown).toBe(1);
+    expect(unknown.filled).toBe(0);
+    expect(unknown.outline).toBe(notSaved.outline - 1);  // the save button no longer draws the "not saved" outline
+  });
+  it('GU0 CONTROL: savedByMe false → the outline bookmark, no question mark; true → the filled bookmark', async () => {
+    detail(false);
+    await render(<GemDetailScreen />);
+    expect(drawn().unknown).toBe(0);
+    expect(drawn().filled).toBe(0);
+    expect(drawn().outline).toBeGreaterThan(0);
+    cleanup();
+    detail(true);
+    await render(<GemDetailScreen />);
+    expect(drawn().unknown).toBe(0);
+    expect(drawn().filled).toBe(1);
   });
 });

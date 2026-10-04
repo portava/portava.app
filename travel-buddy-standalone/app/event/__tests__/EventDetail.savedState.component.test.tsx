@@ -12,6 +12,11 @@
  *   ES0 isSaved true → "Remove from saved"
  *   ES1 isSaved null, event_saves named → "Couldn't check if saved"; a tap saves and unsaves nothing
  *   ES2 CONTROL: isSaved false → "Save event"; a tap saves
+ *
+ * census-discovery §123 (DV-83 round 24, B41; the round-23 verifier's EU1): the unknown state is DRAWN, not only
+ * labelled. The lucide mock renders an icon as a View with testID `icon-<Name>`:
+ *   EU1 isSaved null → the question mark (CircleHelp) is drawn; neither Bookmark nor BookmarkCheck is
+ *   EU0 CONTROL: isSaved false → Bookmark, no question mark; EU0b isSaved true → BookmarkCheck, no question mark
  */
 import React from 'react';
 import { render, act, waitFor, fireEvent } from '@testing-library/react-native';
@@ -239,5 +244,20 @@ describe('census-discovery §122 (SW30): the event screen\'s bookmark over an un
     const ui = await screen(false);
     await act(async () => { fireEvent.press(ui.getByLabelText('Save event')); });
     expect(mockSaveEvent).toHaveBeenCalledWith('event-attendees-test');
+  });
+});
+
+describe("census-discovery §123 (B41): the event screen draws an unread saved state as unknown", () => {
+  const icons = (ui: Awaited<ReturnType<typeof screen>>) => ({
+    bookmark: ui.queryAllByTestId('icon-Bookmark').length, check: ui.queryAllByTestId('icon-BookmarkCheck').length, unknown: ui.queryAllByTestId('icon-CircleHelp').length,
+  });
+  it('EU1 isSaved null → the question mark is drawn; no bookmark of either kind', async () => {
+    expect(icons(await screen(null))).toEqual({ bookmark: 0, check: 0, unknown: 1 });
+  });
+  it('EU0 CONTROL: isSaved false → the bookmark, no question mark', async () => {
+    expect(icons(await screen(false))).toEqual({ bookmark: 1, check: 0, unknown: 0 });
+  });
+  it('EU0b CONTROL: isSaved true → the checked bookmark, no question mark', async () => {
+    expect(icons(await screen(true))).toEqual({ bookmark: 0, check: 1, unknown: 0 });
   });
 });

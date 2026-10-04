@@ -34,7 +34,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   ArrowLeft, MapPin, CalendarClock, Users, Clock, Check,
   ChevronDown, MessageSquare, Shield, Star, Link, Settings,
-  Bookmark, BookmarkCheck, MoreVertical, Flag,
+  Bookmark, BookmarkCheck, MoreVertical, Flag, CircleHelp,
   Bell, Briefcase, Compass, Map, Lock,
 } from 'lucide-react-native';
 import { PortavaShareIcon } from '../../src/components/icons/PortavaShareIcon.tsx';
@@ -750,7 +750,7 @@ export default function EventDetailScreen() {
                 <Pressable style={styles.headerBtn} onPress={handleSaveToggle} disabled={saveLoading} hitSlop={8} accessibilityRole="button" accessibilityLabel={isSaved === null ? "Couldn't check if saved" : isSaved ? 'Remove from saved' : 'Save event'}>
                   {saveLoading
                     ? <ActivityIndicator size="small" color={color.mute} />
-                    : isSaved
+                    : isSaved === null ? <CircleHelp size={20} color={color.mute} /> : isSaved  /* census-discovery §123 (DV-83 round 24, B41): unknown is drawn as unknown, not as the outline that means "not saved" */
                       ? <BookmarkCheck size={20} color={color.signal} />
                       : <Bookmark size={20} color={color.mute} />}
                 </Pressable>

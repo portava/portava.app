@@ -12,6 +12,12 @@
  *   SU3 savedUnknown beside the viewer's own toggle in the cache → "Unsave" (the toggle is measured)
  *   SU4 savedUnknown with no initial value → unknown at once, no spinner and no round-trip whose failure would say "Save"
  *   SU5 savedUnknown, then the viewer saves from the collection picker (long press) → "Unsave": their own save is measured
+ *
+ * census-discovery §123 (DV-83 round 24, B41): the unknown state is DRAWN, not only labelled. The lucide mock renders an
+ * icon as a View with testID `icon-<Name>`:
+ *   SU6 savedUnknown → the question mark (CircleHelp) is drawn and no bookmark is
+ *   SU7 CONTROL: known not saved → the bookmark is drawn, no question mark
+ *   SU8 savedUnknown, then the viewer's own save → the bookmark again
  */
 import React from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
@@ -80,5 +86,23 @@ describe('census-discovery §122 (B36): SaveButton over an unread save state', (
     await fireEvent(screen.getByLabelText("Couldn't check if saved"), 'longPress');
     await act(async () => { mockSheetOnSaved?.('col-1'); });
     expect(screen.getByLabelText('Unsave')).toBeTruthy();
+  });
+});
+
+describe('census-discovery §123 (B41): SaveButton draws an unread save state as unknown', () => {
+  const icons = () => ({ bookmark: screen.queryAllByTestId('icon-Bookmark').length, unknown: screen.queryAllByTestId('icon-CircleHelp').length });
+  it('SU6 savedUnknown → the question mark is drawn and no bookmark is', async () => {
+    await render(<SaveButton entityType="post" entityId="p1" initialSaved={false} savedUnknown />);
+    expect(icons()).toEqual({ bookmark: 0, unknown: 1 });
+  });
+  it('SU7 CONTROL: known not saved → the bookmark, no question mark', async () => {
+    await render(<SaveButton entityType="post" entityId="p1" initialSaved={false} />);
+    expect(icons()).toEqual({ bookmark: 1, unknown: 0 });
+  });
+  it("SU8 savedUnknown, then the viewer's own save from the picker → the bookmark again", async () => {
+    await render(<SaveButton entityType="post" entityId="p1" initialSaved={false} savedUnknown />);
+    await fireEvent(screen.getByLabelText("Couldn't check if saved"), 'longPress');
+    await act(async () => { mockSheetOnSaved?.('col-1'); });
+    expect(icons()).toEqual({ bookmark: 1, unknown: 0 });
   });
 });

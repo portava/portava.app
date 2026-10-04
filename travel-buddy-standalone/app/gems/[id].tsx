@@ -370,7 +370,7 @@ export default function GemDetailScreen() {
           </TouchableOpacity>
           <TouchableOpacity onPress={savedByMe === null ? undefined : toggleSave} accessibilityRole="button" accessibilityLabel={savedByMe === null ? "Couldn't check if saved" : savedByMe ? 'Unsave' : 'Save'} style={styles.saveBtn}>{/* census-discovery §122 (B36): an unread save state is said, never drawn as "not saved" */}
             <Ionicons
-              name={savedByMe ? 'bookmark' : 'bookmark-outline'}
+              name={savedByMe === null ? 'help-circle-outline' : savedByMe ? 'bookmark' : 'bookmark-outline'}
               size={22}
               color={savedByMe ? '#4C8BF5' : '#8A9BB5'}
             />

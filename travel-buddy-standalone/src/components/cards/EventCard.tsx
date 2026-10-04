@@ -8,7 +8,7 @@
  */
 import React, { useState } from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { CalendarClock, MapPin, Users, Bookmark } from 'lucide-react-native';
+import { CalendarClock, MapPin, Users, Bookmark, CircleHelp } from 'lucide-react-native';
 import { CachedImage, withStorageParams } from '../CachedImage.tsx';
 import { useEntityHeaderImage } from '../../hooks/useEntityHeaderImage.ts';
 import { useHydratedMedia } from '../../services/mediaUrl.ts';
@@ -153,11 +153,11 @@ export function EventCard({
               accessibilityLabel={savedUnknown ? "Couldn't check if saved" : isSaved ? 'Unsave event' : 'Save event'}
               hitSlop={8}
             >
-              <Bookmark
+              {savedUnknown ? <CircleHelp size={16} color={color.mute} /> : <Bookmark
                 size={16}
                 color={isSaved ? color.signal : color.mute}
                 fill={isSaved ? color.signal : 'transparent'}
-              />
+              />}{/* census-discovery §123 (DV-83 round 24, B41): a saved state the list could not read is DRAWN as unknown (a question mark), never as the outline that means "not saved" */}
             </Pressable>
           ) : null}
           {isOpen && !myRsvp && onRsvp ? (

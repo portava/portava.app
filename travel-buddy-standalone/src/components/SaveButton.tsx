@@ -16,7 +16,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Pressable, StyleSheet, ActivityIndicator, Platform,
 } from 'react-native';
-import { Bookmark } from 'lucide-react-native';
+import { Bookmark, CircleHelp } from 'lucide-react-native';
 import type { EntityType } from '../services/collections.ts';
 import { saveItem, unsaveItem, checkSaved } from '../services/collections.ts';
 import { color } from '../theme/tokens.ts';
@@ -153,14 +153,14 @@ export function SaveButton({
       >
         {loading ? (
           <ActivityIndicator size="small" color={iconColor} />
+        ) : unknown ? (
+          <CircleHelp size={size} color={tint ?? color.mute} />
         ) : (
           <Bookmark
             size={size}
             color={iconColor}
-            fill={saved && !unknown ? iconColor : 'none'}
-            strokeWidth={saved && !unknown ? 0 : 1.8}
-            strokeDasharray={unknown ? '3 3' : undefined}
-          />
+            fill={saved ? iconColor : 'none'}
+            strokeWidth={saved ? 0 : 1.8} />
         )}
       </Pressable>
 
