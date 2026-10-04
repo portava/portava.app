@@ -75,7 +75,12 @@ describe("§120 — the serve-log testing retention on a real database", { skip:
     creator = seedUser("r3501c");
     flagBefore = scalar(`SELECT enabled::text || '|' || metadata::text FROM public.feature_flags WHERE flag = '${FLAG}'`) ?? "";
     // A run that died before its after() leaves the fixture behind; clear it rather than collide with it.
-    exec(`DELETE FROM public.creator_attributions WHERE rule_version = ${lit(RULE_VERSION)};
+    // The attribution delete needs replica mode: 3510's row-level guard refuses every DELETE of a creator
+    // ledger row until the owner decides C-11, so a crashed run's leftover row cannot be cleared without it.
+    // Same device, same reason, as creatorLedgerErasurePolicy.db.test.ts's purgeSyntheticSql().
+    exec(`SET session_replication_role = replica;
+          DELETE FROM public.creator_attributions WHERE rule_version = ${lit(RULE_VERSION)};
+          SET session_replication_role = origin;
           DELETE FROM public.creator_rule_versions WHERE rule_version = ${lit(RULE_VERSION)};
           INSERT INTO public.creator_rule_versions (creator_type, rule_version, params, effective_from, note) VALUES ('discovery_creator', ${lit(RULE_VERSION)}, '{}'::jsonb, now() - interval '1 second', ${lit(RULE_NOTE)});`);
     b = bridge({
@@ -90,7 +95,9 @@ describe("§120 — the serve-log testing retention on a real database", { skip:
 
   after(() => {
     if (flagBefore) exec(`UPDATE public.feature_flags SET enabled = ${flagBefore.split("|")[0] === "true"}, metadata = ${lit(flagBefore.slice(flagBefore.indexOf("|") + 1))}::jsonb WHERE flag = '${FLAG}';`);
-    exec(`DELETE FROM public.creator_attributions WHERE beneficiary_user_id = '${creator}' OR rule_version = ${lit(RULE_VERSION)};
+    exec(`SET session_replication_role = replica;
+          DELETE FROM public.creator_attributions WHERE beneficiary_user_id = '${creator}' OR rule_version = ${lit(RULE_VERSION)};
+          SET session_replication_role = origin;
           DELETE FROM public.creator_rule_versions WHERE rule_version = ${lit(RULE_VERSION)};
           DELETE FROM public.rank_event_outcome_receipts WHERE user_id = '${viewer}';
           DELETE FROM public.rank_events WHERE user_id = '${viewer}';
