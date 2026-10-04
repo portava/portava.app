@@ -170,6 +170,20 @@ export const COVERED = [
     dir: 'docs/architecture',
   },
   {
+    // THE DEPLOY DOCUMENT — one file, adopted 2026-10-04 after its citations
+    // were read against `f71cfb85f`, the way the Wall and Trips censuses were.
+    // A directory entry over docs/ was NOT taken: it would sweep in unvetted
+    // files and go red on day one, the state this registry exists to avoid.
+    // It is the document a human reads with a terminal open immediately before
+    // deploying — the healthz URLs to curl, the admin routes to probe, the
+    // flags to toggle — so a stale number here is a deploy-time wrong turn.
+    // MEASURED: 18 of its 56 citations were wrong — 16 broken anchors plus 2
+    // bare `path:line` that were IN RANGE and named the wrong code
+    // (`PassportMapService.ts:452` for a `readFailed: true` at 490). Both bare
+    // ones were ANCHORED, not just repointed, so adoption adds ZERO unanchored.
+    file: 'docs/deployment-readiness.md',
+  },
+  {
     // Source, not documentation — and covered for exactly the reason the docs
     // are. This module's header explains WHY `served: false` must replace the
     // Supabase client rather than gate this module's own emitters, and the

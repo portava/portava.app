@@ -111,10 +111,30 @@ if (!existsSync(tsc)) {
   process.exit(2);
 }
 
+// THE COMPILER NEEDS A HEAP IT CAN FINISH IN.
+//
+// `tsc` is a node program, and node's default old-space on the CI runner is
+// ~4 GB. The api-server test program crossed it: the compiler died with
+// "FATAL ERROR: Ineffective mark-compacts near heap limit" after ~100 s, which
+// this script correctly refused to score ("exited null but produced no
+// parseable diagnostics") — so the job was red with no diagnostic to act on,
+// and the only way to make it green by editing code would have been to DELETE
+// test files from the program. Measured: that program peaks at ~4.2 GB RSS and
+// finishes in ~36 s with the ceiling below, on a runner that has 16 GB. An
+// explicit NODE_OPTIONS from the caller wins, so this can still be tuned
+// without editing the script.
+const heap = '--max-old-space-size=8192';
+const inherited = process.env.NODE_OPTIONS ?? '';
 const run = spawnSync(tsc, ['-p', projectPath, '--noEmit'], {
   cwd: pkgPath,
   encoding: 'utf8',
   maxBuffer: 128 * 1024 * 1024,
+  env: {
+    ...process.env,
+    NODE_OPTIONS: inherited.includes('--max-old-space-size')
+      ? inherited
+      : `${inherited} ${heap}`.trim(),
+  },
 });
 
 if (run.error) {
