@@ -26,10 +26,12 @@
  * nine have NO PRODUCER in the taxonomy, and each is returned as an explicit
  * refusal naming what is missing rather than as a rate over an empty numerator:
  *
- *   - wrong-selection reversal (G368): no event records that a resolved field
- *     was later un-resolved. Adding one means a new name in
- *     INPUT_TELEMETRY_EVENT_NAMES *and* in migration 2950's
- *     `iate_event_name_known` CHECK, i.e. a follow-on migration.
+ *   - wrong-selection reversal (G368) WAS refused here: no event recorded that
+ *     a resolved field was later un-resolved. It is now computed below, over
+ *     `selection_reversed` (the fifteenth §44 name; migration 4121 widens 2950's
+ *     `iate_event_name_known` CHECK to admit it). Until 4121 is applied to a
+ *     database, an insert carrying that name fails there — the number is
+ *     computable from the tree and measurable nowhere yet.
  *   - downstream task completion (G370): `downstream_task_completed` has an
  *     exported emitter and no caller. The screens that complete a task —
  *     app/trip/new.tsx, app/events/create/index.tsx, app/telegraph/new.tsx —
@@ -105,7 +107,7 @@ export interface InputSuccessMetrics {
   validEntityResolutionRate: Metric;
   /** G367 — episodes that ended in the user's own text, over episodes that resolved either way. */
   manualFallbackRate: Metric;
-  /** G368 — no producer. */
+  /** G368 — entity-resolving selections later edited away from, over entity-resolving selections. */
   wrongSelectionReversalRate: Metric;
   /** G369 — `disambiguation_selected` rows that resolved to an EXISTING entity. */
   duplicateCreationPrevented: Metric;
@@ -138,10 +140,6 @@ const ENTITY_RESOLVING: ReadonlySet<string> = new Set([
   'disambiguation',
 ]);
 
-const BLOCKED_REVERSAL =
-  'no event records that a resolved field was later un-resolved; a reversal signal ' +
-  'needs a new name in INPUT_TELEMETRY_EVENT_NAMES and in migration 2950\'s ' +
-  'iate_event_name_known CHECK (census G368)';
 const BLOCKED_DOWNSTREAM =
   'downstream_task_completed has an exported emitter and no caller; only the screens ' +
   'that complete a task (app/trip/new.tsx, app/events/create/index.tsx, ' +
@@ -293,6 +291,39 @@ export function computeInputSuccessMetrics(
     else if (manual) manualEpisodes += 1;
   }
 
+  // ── G368 wrong-selection reversal rate ──────────────────────────────────────
+  // PER SELECTION, over each (session, field) stream — NOT per episode. A user
+  // who picks "Paris", leaves the field, comes back and edits it has started a
+  // new episode (a new `input_opened`), and an episode-scoped count would file
+  // that reversal under an episode with no selection in it and lose it. So each
+  // entity-resolving `suggestion_selected` opens a pending resolution; the next
+  // `selection_reversed` on the same stream reverses it; the next
+  // `suggestion_selected` closes it as kept. A reversal with nothing pending —
+  // the selection fell outside the window, or was not entity-resolving — is
+  // counted nowhere: it cannot be attributed to a selection in this sample.
+  let resolvingSelections = 0;
+  let reversedSelections = 0;
+  const streams = new Map<string, MetricRow[]>();
+  for (const ep of episodes) {
+    const key = `${ep.sessionId}\u0000${ep.fieldId}`;
+    const list = streams.get(key);
+    if (list) list.push(...ep.events);
+    else streams.set(key, [...ep.events]);
+  }
+  for (const stream of streams.values()) {
+    let pending = false;
+    for (const e of stream) {
+      if (e.event_name === 'suggestion_selected') {
+        const t = e.props.suggestionType;
+        pending = typeof t === 'string' && ENTITY_RESOLVING.has(t);
+        if (pending) resolvingSelections += 1;
+      } else if (e.event_name === 'selection_reversed' && pending) {
+        reversedSelections += 1;
+        pending = false;
+      }
+    }
+  }
+
   // ── G369 duplicate creation prevented ───────────────────────────────────────
   const duplicatesPrevented = scoped.filter(
     (r) => r.event_name === 'disambiguation_selected' && r.props.resolvedExisting === true,
@@ -333,7 +364,7 @@ export function computeInputSuccessMetrics(
     timeToValidSelectionMs: latency(ttvs),
     validEntityResolutionRate: rate(entityResolutions, impressions),
     manualFallbackRate: rate(manualEpisodes, manualEpisodes + resolvedEpisodes),
-    wrongSelectionReversalRate: { value: null, n: 0, blocked: BLOCKED_REVERSAL },
+    wrongSelectionReversalRate: rate(reversedSelections, resolvingSelections),
     // A COUNT, not a rate: §57 asks "duplicate creation prevented", and there is
     // no honest denominator (the duplicates the user never saw are unobservable).
     duplicateCreationPrevented: { value: duplicatesPrevented, n: duplicatesPrevented },

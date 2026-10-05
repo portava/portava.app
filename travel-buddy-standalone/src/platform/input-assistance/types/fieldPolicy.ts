@@ -98,7 +98,11 @@ export type InputTelemetryEventName =
   | 'correction_accepted'
   | 'disambiguation_selected'
   | 'action_completed'
-  | 'downstream_task_completed';
+  | 'downstream_task_completed'
+  // §57 wrong-selection reversal (census G368): a resolved field edited away
+  // from the accepted text. Admitted by the server's ingest and by migration
+  // 4121's widened `iate_event_name_known` CHECK.
+  | 'selection_reversed';
 
 /**
  * §6 — the field policy contract. Registered against a `fieldId` in the

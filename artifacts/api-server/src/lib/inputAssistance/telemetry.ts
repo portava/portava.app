@@ -105,6 +105,12 @@ export const INPUT_TELEMETRY_EVENT_NAMES = [
   'disambiguation_selected',
   'action_completed',
   'downstream_task_completed',
+  // §57 "wrong-selection reversal rate" (census G368). The fifteenth name, and
+  // the first added after 2950: migration 4121 widens `iate_event_name_known`
+  // to admit it, and `inputTelemetryVocabularyParity.test.ts` pins this list to
+  // the NEWEST migration that defines that CHECK, so the two copies cannot
+  // drift apart silently again.
+  'selection_reversed',
 ] as const;
 
 export type InputTelemetryEventName = (typeof INPUT_TELEMETRY_EVENT_NAMES)[number];
@@ -187,6 +193,11 @@ export const TELEMETRY_EVENT_PROPS: Record<InputTelemetryEventName, Record<strin
   disambiguation_selected: { entityType: 'token', confidence: 'unit', resolvedExisting: 'bool' },
   action_completed: { actionType: 'token', ok: 'bool' },
   downstream_task_completed: { task: 'token', ok: 'bool' },
+  // G368: a field the user RESOLVED from a suggestion was edited away from the
+  // accepted text before it was used. The type of the row that had resolved it
+  // (so §57 can restrict the rate to entity-resolving types) and how long the
+  // resolution lasted, in whole seconds. No identifier, no text.
+  selection_reversed: { suggestionType: 'token', secondsSinceSelect: 'int' },
 };
 
 /**

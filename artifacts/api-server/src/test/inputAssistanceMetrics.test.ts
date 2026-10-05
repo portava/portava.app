@@ -332,16 +332,20 @@ describe("§57/G372 suggest latency", () => {
   });
 });
 
-describe("§57 — the four metrics with no producer are REFUSED, not estimated", () => {
+describe("§57 — the metrics with no producer are REFUSED, not estimated", () => {
   const m = computeInputSuccessMetrics([
     row(0, "input_opened"),
     row(10, "suggestion_rendered", { count: 3 }),
     row(20, "suggestion_selected", { suggestionType: "entity" }),
   ]);
 
-  it("G368 wrong-selection reversal names the missing event and the migration it needs", () => {
-    assert.equal(m.wrongSelectionReversalRate.value, null);
-    assert.match(m.wrongSelectionReversalRate.blocked ?? "", /iate_event_name_known/);
+  it("G368 wrong-selection reversal is NOT refused any more — one kept selection is 0/1, with no blocker", () => {
+    // It was refused while no event recorded an un-resolution. `selection_reversed`
+    // now exists (4121 admits it), so over these rows — one entity selection,
+    // never edited away from — the honest answer is a rate of 0 over 1.
+    assert.equal(m.wrongSelectionReversalRate.value, 0);
+    assert.equal(m.wrongSelectionReversalRate.n, 1);
+    assert.equal(m.wrongSelectionReversalRate.blocked, undefined);
   });
 
   it("G370 downstream task completion names the screens that must emit it", () => {
@@ -370,13 +374,78 @@ describe("§57 — the four metrics with no producer are REFUSED, not estimated"
 
   it("every refusal is a string a reader can act on, not an empty flag", () => {
     for (const metric of [
-      m.wrongSelectionReversalRate,
       m.downstreamTaskCompletionRate,
       m.privacyIncidents,
     ]) {
       assert.equal(metric.value, null);
       assert.ok((metric.blocked ?? "").length > 40, "a blocker must say what is missing");
     }
+  });
+});
+
+describe("§57 G368 wrong-selection reversal rate — per entity-resolving selection, per (session, field) stream", () => {
+  it("counts a selection edited away from as reversed, and one kept as kept", () => {
+    const m = computeInputSuccessMetrics([
+      row(0, "input_opened"),
+      row(10, "suggestion_selected", { suggestionType: "entity" }),
+      row(20, "selection_reversed", { suggestionType: "entity", secondsSinceSelect: 0 }),
+      row(30, "suggestion_selected", { suggestionType: "entity" }),
+    ]);
+    // Two resolutions; the first was taken back, the second kept.
+    assert.equal(m.wrongSelectionReversalRate.n, 2);
+    assert.equal(m.wrongSelectionReversalRate.value, 0.5);
+  });
+
+  it("follows the selection ACROSS a re-open of the field — a reversal after refocus is still that selection's", () => {
+    // MUTATION: compute per episode instead of per stream and this goes to 0/1,
+    // because the reversal lands in the second episode, which has no selection.
+    const m = computeInputSuccessMetrics([
+      row(0, "input_opened"),
+      row(10, "suggestion_selected", { suggestionType: "entity" }),
+      row(5_000, "input_opened"),
+      row(5_010, "selection_reversed", { suggestionType: "entity", secondsSinceSelect: 5 }),
+    ]);
+    assert.equal(m.wrongSelectionReversalRate.n, 1);
+    assert.equal(m.wrongSelectionReversalRate.value, 1);
+  });
+
+  it("does not attribute a reversal to a NON-resolving row (a completion or an action resolves nothing)", () => {
+    const m = computeInputSuccessMetrics([
+      row(0, "input_opened"),
+      row(10, "suggestion_selected", { suggestionType: "completion" }),
+      row(20, "selection_reversed", { suggestionType: "completion", secondsSinceSelect: 0 }),
+    ]);
+    assert.equal(m.wrongSelectionReversalRate.value, null, "no entity resolution happened, so there is no rate");
+    assert.equal(m.wrongSelectionReversalRate.n, 0);
+  });
+
+  it("counts one reversal per resolution — a second edit with nothing pending is not a second reversal", () => {
+    const m = computeInputSuccessMetrics([
+      row(0, "input_opened"),
+      row(10, "suggestion_selected", { suggestionType: "recent" }),
+      row(20, "selection_reversed", { suggestionType: "recent", secondsSinceSelect: 0 }),
+      row(30, "selection_reversed", { suggestionType: "recent", secondsSinceSelect: 0 }),
+    ]);
+    assert.equal(m.wrongSelectionReversalRate.n, 1);
+    assert.equal(m.wrongSelectionReversalRate.value, 1, "a rate above 1 would mean the numerator outran its own denominator");
+  });
+
+  it("keeps two fields apart — a reversal on one field never reverses a selection on another", () => {
+    const m = computeInputSuccessMetrics([
+      row(0, "input_opened"),
+      row(10, "suggestion_selected", { suggestionType: "entity" }),
+      row(20, "input_opened", {}, { field_id: "trip.destination", context: "global_search" }),
+      row(30, "selection_reversed", { suggestionType: "entity", secondsSinceSelect: 0 }, { field_id: "trip.destination", context: "global_search" }),
+    ]);
+    assert.equal(m.wrongSelectionReversalRate.n, 1);
+    assert.equal(m.wrongSelectionReversalRate.value, 0);
+  });
+
+  it("0/0 is null with no blocker — an empty sample is not a zero and not a refusal", () => {
+    const m = computeInputSuccessMetrics([row(0, "input_opened")]);
+    assert.equal(m.wrongSelectionReversalRate.value, null);
+    assert.equal(m.wrongSelectionReversalRate.n, 0);
+    assert.equal(m.wrongSelectionReversalRate.blocked, undefined);
   });
 });
 

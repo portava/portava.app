@@ -74,6 +74,7 @@ const STANDARD_TELEMETRY: InputTelemetryPolicy = {
     'disambiguation_selected',
     'action_completed',
     'downstream_task_completed',
+    'selection_reversed',
   ],
 };
 
