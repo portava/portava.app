@@ -6604,34 +6604,34 @@ Any of the following makes the suites above go red:
 ### §AC.1 What was built
 
 1. **Executable Memories (§14, §27 `MemoryActionService`).**
-   - The service: `artifacts/api-server/src/services/memory/memoryActionService.ts:731#export async function compileDoAgain`, with `:813#export function compileAddToTrip` and `:831#export function compileTakeMeBack` — §27's three methods — and `:875#export async function compileBringForward`.
-   - Every operational fact is read when the action is compiled, from the system that owns it. The catalog row is read now: a merge is followed to its successor (`:356#while (row.merged_into_place_id`) and a closed place is refused (`:371#if (place.status === "closed") return`).
-   - A live source answers, or the plan says nobody can tell whether the place is open. §14's fusion stays a juxtaposition (`:750#fuseHistoricalWithCurrent(historicalOf`).
-   - Free time comes from the Trips Temporal Freedom Engine and is never computed here (`:287#readTripWindows(sc, tripId, viewerId, { now })`).
-   - A non-owner is never handed a venue that the owner's §10 rung or a protected Hidden Gem withholds (`:396#export async function mayDiscloseVenue`). A non-owner is never handed the Memory's raw coordinate either.
-   - Three of §14's eight are declared and refused by name (`:144#export const DECLARED_UNBUILT`).
-   - The routes: `artifacts/api-server/src/routes/memoryActions.ts:91#router.get("/memories/:id/actions"` and `:124#router.get("/memories/:id/actions/:action"`. They are read-only. Add to Trip compiles the current place for the trip's own write path (`POST /trips/:tripId/saved-places`) and writes no trip table.
+   - The service: `artifacts/api-server/src/services/memory/memoryActionService.ts:731#export async function compileDoAgain`, with `artifacts/api-server/src/services/memory/memoryActionService.ts:813#export function compileAddToTrip` and `artifacts/api-server/src/services/memory/memoryActionService.ts:831#export function compileTakeMeBack` — §27's three methods — and `artifacts/api-server/src/services/memory/memoryActionService.ts:875#export async function compileBringForward`.
+   - Every operational fact is read when the action is compiled, from the system that owns it. The catalog row is read now: a merge is followed to its successor (`artifacts/api-server/src/services/memory/memoryActionService.ts:356#while (row.merged_into_place_id`) and a closed place is refused (`artifacts/api-server/src/services/memory/memoryActionService.ts:371#if (place.status === "closed") return`).
+   - A live source answers, or the plan says nobody can tell whether the place is open. §14's fusion stays a juxtaposition (`artifacts/api-server/src/services/memory/memoryActionService.ts:750#fuseHistoricalWithCurrent(historicalOf`).
+   - Free time comes from the Trips Temporal Freedom Engine and is never computed here (`artifacts/api-server/src/services/memory/memoryActionService.ts:287#readTripWindows(sc, tripId, viewerId, { now })`).
+   - A non-owner is never handed a venue that the owner's §10 rung or a protected Hidden Gem withholds (`artifacts/api-server/src/services/memory/memoryActionService.ts:396#export async function mayDiscloseVenue`). A non-owner is never handed the Memory's raw coordinate either.
+   - Three of §14's eight are declared and refused by name (`artifacts/api-server/src/services/memory/memoryActionService.ts:144#export const DECLARED_UNBUILT`).
+   - The routes: `artifacts/api-server/src/routes/memoryActions.ts:91#router.get("/memories/:id/actions"` and `artifacts/api-server/src/routes/memoryActions.ts:124#router.get("/memories/:id/actions/:action"`. They are read-only. Add to Trip compiles the current place for the trip's own write path (`POST /trips/:tripId/saved-places`) and writes no trip table.
    - The client is `MemoryActionBar` on the Memory screen.
-   - Evidence: `artifacts/api-server/src/test/memoryActions.test.ts:414#compiles a plan on the trip going THERE`, `:278#refuses every venue action on a place the catalog says has CLOSED`, `:341#withholds a protected Hidden Gem` and `:583#BOOK_AGAIN, NEW_TRIP_WITH_CREW and USE_AS_INSPIRATION`. That is 31 cases, and 28 mutants were each seen to kill.
+   - Evidence: `artifacts/api-server/src/test/memoryActions.test.ts:414#compiles a plan on the trip going THERE`, `artifacts/api-server/src/test/memoryActions.test.ts:278#refuses every venue action on a place the catalog says has CLOSED`, `artifacts/api-server/src/test/memoryActions.test.ts:341#withholds a protected Hidden Gem` and `artifacts/api-server/src/test/memoryActions.test.ts:583#BOOK_AGAIN, NEW_TRIP_WITH_CREW and USE_AS_INSPIRATION`. That is 31 cases, and 28 of 28 mutants were killed.
 2. **§12's Highlight verbs.**
    - The route: `artifacts/api-server/src/routes/highlights.ts:2910#router.get("/highlights/:id/actions"`. It sits behind the same `resolveViewAccess` gate as every engagement route.
    - The venue verbs run on the Memory the Highlight projects, under the MEMORY's read gate for this viewer (`artifacts/api-server/src/services/highlights/highlightActions.ts:162#const loaded = await loadMemoryForViewer`).
-   - ASK is offered on the same verdict that the reply route enforces (`:123#const verdict = await canMessage(sc, viewerId`).
-   - MEET is refused by name (`:145#const meet = refusedH("MEET", "CONSUMER_UNAVAILABLE")`).
+   - ASK is offered on the same verdict that the reply route enforces (`artifacts/api-server/src/services/highlights/highlightActions.ts:123#const verdict = await canMessage(sc, viewerId`).
+   - MEET is refused by name (`artifacts/api-server/src/services/highlights/highlightActions.ts:145#const meet = refusedH("MEET", "CONSUMER_UNAVAILABLE")`).
    - Evidence: `artifacts/api-server/src/test/highlightActions.test.ts:150#seeing the Highlight is not being shown the Memory` (8 cases; 9 of 9 mutants killed).
 3. **A pin outranks automatic order on every surface that orders Highlights.**
-   - The profile (`artifacts/api-server/src/routes/highlights.ts:996#const highlights = pinnedFirst`) and `/active` (`:1285#rankHighlightRows(permitted`) already did this.
-   - This pass adds the following-feed's per-person groups (`:2893#highlights: pinnedFirst(g.highlights)`) and the archive (`:2210#highlights: pinnedFirst((rows`).
+   - The profile (`artifacts/api-server/src/routes/highlights.ts:996#const highlights = pinnedFirst`) and `/active` (`artifacts/api-server/src/routes/highlights.ts:1285#rankHighlightRows(permitted`) already did this.
+   - This pass adds the following-feed's per-person groups (`artifacts/api-server/src/routes/highlights.ts:2893#highlights: pinnedFirst(g.highlights)`) and the archive (`artifacts/api-server/src/routes/highlights.ts:2210#highlights: pinnedFirst((rows`).
    - The feed's cursor is taken from the page before the regroup, so a pin cannot make the cursor skip a row.
    - Evidence: `artifacts/api-server/src/test/highlightPinnedEverySurface.test.ts:39#the following-feed plays a person's pinned`.
 4. **The §7 candidate inbox on 2320.** This is the first writer of `memory_episodes` / `memory_evidence`, and the first production caller of `evidence.ts`, `episodeDetection.ts` and `significance.ts`.
-   - Detection runs only when the OWNER asks (`artifacts/api-server/src/services/memory/episodeCandidates.ts:246#export async function detectTripCandidates`). It reads only their own timed, unflagged, user-sourced captures inside a trip they are on, and skips captures already in a Memory (`:287#const fresh = timed.filter`). The gate runs in USER_INITIATED mode (`:314#evaluateEligibility(evidence, { mode: "USER_INITIATED" })`).
-   - Late evidence never overwrites a decision. A window the owner rejected is never proposed again (`:359#if (episodeRow && (episodeRow.state === "rejected"`).
-   - Confirming a candidate records `user_affirmed` with §8's score (`:728#significance_basis: "user_affirmed"`). It creates ONE private Memory through §17, which reports itself as a candidate's Memory (`:647#fromCandidate: true`, counted at `artifacts/api-server/src/services/memory/MemoryDomainService.ts:243#countAcceptedCommand(a.commandType, a.fromCandidate === true)`).
+   - Detection runs only when the OWNER asks (`artifacts/api-server/src/services/memory/episodeCandidates.ts:246#export async function detectTripCandidates`). It reads only their own timed, unflagged, user-sourced captures inside a trip they are on, and skips captures already in a Memory (`artifacts/api-server/src/services/memory/episodeCandidates.ts:287#const fresh = timed.filter`). The gate runs in USER_INITIATED mode (`artifacts/api-server/src/services/memory/episodeCandidates.ts:314#evaluateEligibility(evidence, { mode: "USER_INITIATED" })`).
+   - Late evidence never overwrites a decision. A window the owner rejected is never proposed again (`artifacts/api-server/src/services/memory/episodeCandidates.ts:359#if (episodeRow && (episodeRow.state === "rejected"`).
+   - Confirming a candidate records `user_affirmed` with §8's score (`artifacts/api-server/src/services/memory/episodeCandidates.ts:728#significance_basis: "user_affirmed"`). It creates ONE private Memory through §17, which reports itself as a candidate's Memory (`artifacts/api-server/src/services/memory/episodeCandidates.ts:647#fromCandidate: true`, counted at `artifacts/api-server/src/services/memory/MemoryDomainService.ts:243#countAcceptedCommand(a.commandType, a.fromCandidate === true)`).
    - A half-finished confirm cannot be rejected out from under its Memory (`artifacts/api-server/src/services/memory/episodeCandidates.ts:566#if (link.memoryId) return`).
    - The routes start at `artifacts/api-server/src/routes/memoryCandidates.ts:53#router.get("/me/memory-candidates"`.
    - The client is `CandidateInbox` on the owner's timeline.
-   - Evidence: `artifacts/api-server/src/test/memoryCandidates.test.ts:215#stores one PRIVATE candidate per cluster`, `:254#LATE EVIDENCE`, `:347#confirm scores it` and `:402#reject moves candidate`. That is 19 cases over a fake that models 2320's replay key, its dedupe key and `memory_episodes_eligibility_check`; 20 of 20 mutants were killed.
+   - Evidence: `artifacts/api-server/src/test/memoryCandidates.test.ts:215#stores one PRIVATE candidate per cluster`, `artifacts/api-server/src/test/memoryCandidates.test.ts:254#LATE EVIDENCE`, `artifacts/api-server/src/test/memoryCandidates.test.ts:347#confirm scores it` and `artifacts/api-server/src/test/memoryCandidates.test.ts:402#reject moves candidate`. That is 19 cases over a fake that models 2320's replay key, its dedupe key and `memory_episodes_eligibility_check`; 20 of 20 mutants were killed.
 
 ### §AC.2 Row moves
 
@@ -6680,6 +6680,14 @@ This table RESTATES no verdict. The `standing` column is spelled out, which is �
 | H244 | BUILT-BUT-WRONG | 2710 is applied (stale reason); memory_kernel_enabled is FALSE, so nothing is emitted for a consumer to tolerate |
 
 ### §AC.4 Recomputed headline
+
+| bucket | was (§W.4) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 69 | 71 |
+| BUILT-BUT-WRONG | 138 | 150 |
+| NOT-BUILT | 57 | 43 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
 
 **266 = 71 C / 150 W / 43 N / 2 X**, from the parsed rows before this section: 69 C / 138 W / 57 N / 2 X. The changes are:
 
@@ -6751,6 +6759,3 @@ The suites in §AC.1 assert each of these.
 - NOT-GRADED: travel-buddy-standalone/app/(tabs)/passport.tsx — §AB.1 cites the line-neutral wiring of the strip's unreadable flag; the profile screen is census-passport's
 - NOT-GRADED: artifacts/api-server/src/test/passportMemorySelfVerification.test.ts — §AB.4 names it as the controlled half of the H204 move it RECOMMENDS and does not make; no verdict in this census rests on it today
 - NOT-GRADED: artifacts/api-server/src/routes/index.ts — §AC.6 names the one tail line that registers the two new routers; the route registry is shared wiring, and the routes themselves are graded through `routes/memoryActions.ts` and `routes/memoryCandidates.ts`
-- NOT-GRADED: artifacts/api-server/package.json — §AC.6 names the four registered test paths; test registration is check:test-registration's, not a requirement here
-- NOT-GRADED: artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json — named in the head_commit row and §AC as where the retired acknowledgement lives; ledger machinery, not a subject
-- NOT-GRADED: artifacts/api-server/src/scripts/checkCensusFreshness.ts — §AC.6 names the scope entries appended for §AC's evidence; checker machinery, not a subject
