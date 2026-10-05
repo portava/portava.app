@@ -2992,3 +2992,80 @@ C earlier, M43 moves here, and M123 was never code.
 written. The new test file is inside this census's watched paths, so
 `CENSUS_STALENESS_ACKNOWLEDGED.json` names it, with the argument that it is
 evidence for the regrade this section takes.
+
+## §48 — 2026-10-05 (lane L): M256's "missing harness" exists; M65 overstates by one family and its criterion is unsatisfiable as written; the classification of every open row. NO VERDICT MOVES
+
+*Measured on branch `claude/mission-l-lead-residual-20261005` (cut from `13170305f`, which
+carries §47). No code changes in this section; `head_commit` is not re-declared.*
+
+### 48.1 M256 — the server half is written, registered and passing
+
+M256's cell says its server half is *"a missing harness nobody has written"* and that this lane
+*"can see no such harness anywhere under `artifacts/api-server/src/test/`"*. It was written on
+2026-09-20/21 (`c36aac77d`, `62bee1776`) and is in the api-server `test` script:
+`artifacts/api-server/src/test/mapProjectionPerf.test.ts:266#describe("M256(a) — GET /api/map/projection, 50 warm-cache requests"`,
+gating p95 at the top of the band (`artifacts/api-server/src/test/mapProjectionPerf.test.ts:131#const P95_BUDGET_MS = 800;`)
+with four anti-vacuity guards that make a route which stops reading fail rather than get faster.
+Re-run on this tree: 9 / 9, in-process arm **p50 4.2 ms / p95 54.7 ms** over 50 warm requests.
+
+**M256 stays `?`**, for the reason the harness states about itself: the in-process arm runs over
+the PostgREST-shaped double and is a regression gate on route work, not the criterion's latency.
+Its live arm needs a disposable local PostgreSQL, which this machine does not have, and the row's
+device half (camera-settle to first paint) needs a handset and M133's gateway serving. What
+changes is the blocker: not "nobody has written it" but "run its live arm, and run the device".
+
+### 48.2 M65 — four families are unfed, not five, and "names all seven" can never be true
+
+The row: *"five families produce nothing"*, turning red when *"`WIRED_SIGNAL_SOURCES` names all
+seven families"*. Read family by family:
+
+- Fed and observed: `next_stop_contribution`, `accepted_plan`
+  (`artifacts/api-server/src/lib/crowdFlowProducer.ts:290#export const WIRED_SIGNAL_SOURCES`).
+- Fed, CAUSE-ONLY by design: `event_context`
+  (`artifacts/api-server/src/lib/crowdFlowProducer.ts:278#export const CAUSE_ONLY_SIGNAL_FAMILIES`),
+  produced and attached on the projection route
+  (`artifacts/api-server/src/routes/mapProjection.ts:935#causeHypotheses: causes.hypotheses,`).
+  It is not "producing nothing", and it can never enter `WIRED_SIGNAL_SOURCES`, because an event
+  is a hypothesis about WHY a flow exists, never evidence that anybody moved (§10).
+- Unfed, each with its named finding
+  (`artifacts/api-server/src/lib/crowdFlowProducer.ts:346#export const UNFED_FAMILY_BLOCKERS`):
+  `coarse_transition` (its table is not in this repository's migrations; the purpose that claims
+  it is declared precise, 24 h, research-only), `arrival` and `navigation_start` (their sources
+  carry a destination only — an origin would have to be taken from a stored position, which §10
+  forbids), `aggregate_presence` (presence, not a transition).
+
+So the criterion should read *six observed families* fed, plus the cause family attached. Three of
+the four unfed families need a PRODUCT decision about which user act may declare an origin zone —
+recorded in lane L's owner-decision list as Q-L5, under OD-MAP-1's opt-in and OD-MAP-7's 180-day
+cap — and the fourth needs a migration and a device capture. **M65 stays `W`;** its blocker moves
+from "capture nobody has written" to "an owner decision, then capture".
+
+### 48.3 The open rows, classified against the code (lane L triage)
+
+Every non-`C` row was opened at its cited code on this tree. The full ledger, one line per row
+with its anchor, is the lane's working file; the shape is:
+
+| class | rows |
+| --- | --- |
+| a flag, an unapplied migration or an ops load — code complete | M5, M7, M10, M67, M83, M85–M87, M90–M94, M119, M123, M133, M139, M179, M221–M223, M259–M275, M278–M280, M282 |
+| a native module plus a device run | M88, M89 |
+| a device or seeded-environment measurement | M254, M255, M256 (device half and live arm), M258, M292 |
+| an owner product decision (new object kinds, a data source) | M122, M129, M130, M65 (§48.2) |
+| descoped by the owner (Phase 6, 2026-10-04 12:05 UTC) | M281 |
+
+Two stale sentences recorded so they are not re-quoted: the M7 family's *"Table absent"* (§43/§44
+measured all four `locate_friends_*` tables present in production; the blocker is
+`locate_friends_enabled`, FALSE), and the telemetry rows' *"absent in production"* (§43.1: both
+telemetry tables present; the blocker is `map_telemetry_enabled`, seeded OFF). Lane L asks the
+owner (Q-L6) whether per-user Map telemetry should keep its 90-day retention or follow the 30-day
+default set for raw behavioural rows in Q11(a), before collection is ever switched on.
+
+**No row in this census is code-fixable inside this repository without an owner decision, an
+applied migration, a flag, a native build or a device.**
+
+### 48.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| M256 | ? | **?** | §48.1. The server harness exists and passes; the row's own measurement still needs its live arm and a device. Blocker corrected. |
+| M65 | W | **W** | §48.2. Four observed families unfed, not five; `event_context` is fed as a cause; the "all seven" criterion is unsatisfiable by design. Blocker corrected to an owner decision. |
