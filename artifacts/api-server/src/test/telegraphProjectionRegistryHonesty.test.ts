@@ -181,9 +181,9 @@ describe("GET /threads/:id/capabilities — the conversation facts (T295)", () =
     _setTestClient(makeFakeClient(seed()), true);
     const group = await call(h.base, "GET", `/threads/${TRIP_THREAD}/capabilities`, ALICE);
     assert.equal(group.status, 200);
-    assert.deepEqual(group.body.conversation, { memberCount: 3, isE2ee: false, degraded: false });
+    assert.deepEqual(group.body.conversation, { memberCount: 3, isE2ee: false, transportClass: "SMALL_GROUP", degraded: false });
     const dm = await call(h.base, "GET", `/threads/${E2EE_DM}/capabilities`, ALICE);
-    assert.deepEqual(dm.body.conversation, { memberCount: 2, isE2ee: true, degraded: false });
+    assert.deepEqual(dm.body.conversation, { memberCount: 2, isE2ee: true, transportClass: "PRIVATE_CONVERSATION", degraded: false });
   });
 
   it("the count is EXACT past PostgREST's row cap — not the length of a capped page", async () => {
@@ -199,7 +199,7 @@ describe("GET /threads/:id/capabilities — the conversation facts (T295)", () =
     const missing = await call(h.base, "GET", `/threads/00000000-0000-4000-8000-0000000000ff/capabilities`, ALICE);
     for (const r of [departed, outsider, missing]) {
       assert.equal(r.status, 200);
-      assert.deepEqual(r.body.conversation, { memberCount: null, isE2ee: null, degraded: false });
+      assert.deepEqual(r.body.conversation, { memberCount: null, isE2ee: null, transportClass: null, degraded: false });
     }
   });
 

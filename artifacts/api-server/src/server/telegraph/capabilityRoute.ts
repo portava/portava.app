@@ -49,6 +49,7 @@ import {
 import { redactForWire } from "../../domain/telegraph/contracts/telegraphReasonCodes.js";
 import { resolveConversationCapabilities } from "../../domain/telegraph/policies/conversationCapabilityPolicy.js";
 import { readConversationFacts } from "./conversationFacts.js";
+import { transportClassFor } from "../../domain/telegraph/policies/transportClass.js";
 
 const router = Router();
 const log = rootLogger.child({ route: "telegraphCapabilities" });
@@ -102,7 +103,16 @@ router.get(
       inputsRead: resolved.inputsRead,
       degraded: resolved.degraded,
       degradedReasons: resolved.degradedReasons.map(redactForWire),
-      conversation: { memberCount: facts.memberCount, isE2ee: facts.isE2ee, degraded: facts.degraded },
+      conversation: {
+        memberCount: facts.memberCount,
+        isE2ee: facts.isE2ee,
+        // §30A.12 (census T415): the scale class, from the same table the fan-out
+        // and receipt routes use. Null when the roster could not be counted.
+        transportClass: facts.memberCount === null
+          ? null
+          : transportClassFor({ threadType: resolved.conversationType, activeMembers: facts.memberCount }),
+        degraded: facts.degraded,
+      },
     });
   }),
 );
