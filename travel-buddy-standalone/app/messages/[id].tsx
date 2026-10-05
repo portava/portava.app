@@ -58,7 +58,7 @@ import { TypedMessageRenderer, rendersTypedKind } from '../../src/features/teleg
 import { rendersKnownMessageType, safeUnknownBody } from '../../src/features/telegraph/kinds/unsupportedPayload.ts';
 import { parseKindEnvelope as parseTelegraphKindEnvelope } from '../../src/features/telegraph/kinds/kindsApi.ts';
 import { useAnnouncementAcknowledgement } from '../../src/features/telegraph/kinds/useAnnouncementAcknowledgement.ts';
-import { CoordinationPanel } from '../../src/features/telegraph/coordination/CoordinationPanel.tsx'; import { SafetyModeBar } from '../../src/features/telegraph/safety/SafetyModeBar.tsx'; // §15.2 — shares a line: nothing below this import moves
+import { CoordinationPanel } from '../../src/features/telegraph/coordination/CoordinationPanel.tsx'; import { SafetyModeBar } from '../../src/features/telegraph/safety/SafetyModeBar.tsx'; import { SemanticLayersStrip } from '../../src/features/telegraph/layers/SemanticLayersStrip.tsx'; // §15.2, §2.3 — share a line: nothing below this import moves
 import { ContentDrawerSheet } from '../../src/features/telegraph/drawer/ContentDrawerSheet.tsx';
 import { RecapSheet } from '../../src/features/telegraph/memory/RecapSheet.tsx';
 import { useThreadRecap } from '../../src/features/telegraph/memory/useThreadRecap.ts';
@@ -1220,7 +1220,7 @@ export default function TelegraphThread() {
   const [isCircleMember, setIsCircleMember] = useState<boolean | null>(null);
   const [plannedByName, setPlannedByName] = useState<string | undefined>(undefined);
   const [blockingUser, setBlockingUser] = useState(false);
-  const [showSafetySheet, setShowSafetySheet] = useState(false);
+  const [showSafetySheet, setShowSafetySheet] = useState(false); const [layeredIds, setLayeredIds] = useState<ReadonlySet<string>>(() => new Set()); // §2.3: ids drawn in the PLAN/NOW strip leave the stream
   const [hideAiSuggestions, setHideAiSuggestions] = useState(false);
   const [threadIsMuted, setThreadIsMuted] = useState(muted === '1'); // the inbox passes the server's mutedAt; it used to start "unmuted" always
   // E-2: whether the thread uses end-to-end encryption
@@ -1545,24 +1545,24 @@ export default function TelegraphThread() {
     | { _t: 'day'; label: string; key: string };
 
   const listItems = useMemo<ListItem[]>(() => {
-    const items: ListItem[] = [];
+    const items: ListItem[] = []; const stream = layeredIds.size > 0 ? messages.filter((x) => !layeredIds.has(x.id)) : messages; // §2.3: what the layers draw leaves the stream
     let lastDay = '';
-    for (let i = 0; i < messages.length; i++) {
-      const m = messages[i];
+    for (let i = 0; i < stream.length; i++) {
+      const m = stream[i];
       const day = localDateKey(m.createdAt);
       const dayBreak = day !== lastDay;
       if (dayBreak) {
         lastDay = day;
         items.push({ _t: 'day', label: formatDayLabel(day), key: `day-${day}` });
       }
-      const prev = messages[i - 1];
-      const next = messages[i + 1];
+      const prev = stream[i - 1];
+      const next = stream[i + 1];
       const sameSenderPrev = !dayBreak && prev && prev.senderId === m.senderId && prev.msgType === m.msgType && m.msgType === 'text';
       const sameSenderNext = next && next.senderId === m.senderId && next.createdAt.slice(0, 10) === day && next.msgType === m.msgType && m.msgType === 'text';
       items.push({ _t: 'msg', data: m, groupStart: !sameSenderPrev, groupEnd: !sameSenderNext });
     }
     return items;
-  }, [messages]);
+  }, [messages, layeredIds]);
 
   // Scroll-to-bottom FAB — shown when the user has scrolled away from newest
   const [showJumpFab, setShowJumpFab] = useState(false);
@@ -2091,7 +2091,7 @@ export default function TelegraphThread() {
       {/* Telegraph §2.2's optional coordination panel / §9's coordination
           mode. Renders only while the thread is actually coordinating, or
           while a decision or commitment is unresolved. */}
-      {id ? <CoordinationPanel threadId={id} viewerId={userId ?? null} onOpenRecap={threadRecap.available ? () => setShowRecap(true) : undefined} onShareLocation={() => setTypedCompose('LOCATION')} /> : null}
+      {id ? <CoordinationPanel threadId={id} viewerId={userId ?? null} onOpenRecap={threadRecap.available ? () => setShowRecap(true) : undefined} onShareLocation={() => setTypedCompose('LOCATION')} /> : null}{id ? <SemanticLayersStrip threadId={id} viewerId={userId ?? null} messages={messages} refreshKey={messages[messages.length - 1]?.id ?? null} dataSaver={!dataSaver.mayLoad('mediaPreview')} onLayeredIdsChange={setLayeredIds} /> : null}
 
       <FlatList
         windowSize={9}
