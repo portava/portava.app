@@ -27,7 +27,7 @@
  * key"): the retired override flag is not read, and a sandbox (test) identity
  * key keeps bookings closed too (verificationIsBookingGrade, at the foot).
  */
-import { configuredIdentityProvider, identityKeyDecision, mockIdentityPermitted } from "./paymentsMode.js";
+import { configuredIdentityProvider, identityKeyDecision, mockIdentityPermitted, mockVerificationIsBookingGrade } from "./paymentsMode.js";
 import { identityProviderStatus } from "../services/identityVerification/readiness.js";
 import { logger as rootLogger } from "./logger.js";
 
@@ -108,7 +108,7 @@ export async function requireBookingKyc(sc: any, res: any): Promise<boolean> {
 // refuses a sandbox-mode verification row; this is the deployment-level half.
 export function verificationIsBookingGrade(env: NodeJS.ProcessEnv = process.env): boolean {
   const provider = configuredIdentityProvider(env);
-  if (provider === "mock") return mockIdentityPermitted(env);
+  if (provider === "mock") return mockVerificationIsBookingGrade(env); // under node --test only, never by NODE_ENV (Step 5(d))
   const decision = identityKeyDecision(env);
   return decision !== null && decision.allowed && decision.mode === "live";
 }

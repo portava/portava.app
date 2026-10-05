@@ -49,7 +49,7 @@
  * `unreadable`, never "not verified" and never "verified". A caller must refuse
  * on `unreadable` (503), not treat it as a definitive "no".
  */
-import { identityKeyDecision, mockIdentityPermitted } from "../../lib/paymentsMode.js";
+import { identityKeyDecision, mockIdentityPermitted, mockVerificationIsBookingGrade } from "../../lib/paymentsMode.js";
 
 /** The mode a verification attempt ran in, recorded on the row at session creation (migration 3930). */
 export type IdentityProviderMode = "test" | "live" | "local_mock";
@@ -78,7 +78,7 @@ export function sessionProviderMode(provider: string, env: NodeJS.ProcessEnv = p
 /** Does an attempt in this mode count as a REAL verification in this process? */
 export function providerModeCounts(mode: unknown, env: NodeJS.ProcessEnv = process.env): boolean {
   if (mode === "live") return true;
-  if (mode === "local_mock") return mockIdentityPermitted(env);
+  if (mode === "local_mock") return mockVerificationIsBookingGrade(env); // under node --test only (Step 5(d))
   return false;
 }
 

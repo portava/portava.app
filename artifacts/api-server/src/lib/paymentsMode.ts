@@ -363,3 +363,21 @@ export function fakePaymentProviderPermitted(env: NodeJS.ProcessEnv = process.en
 //
 // One function decides this for identity (mock provider, unsigned webhook) and
 // payments (fake payment and tax providers) alike.
+
+// ── Is a MOCK identity approval booking-grade? (lane B wave 2, Step 5(d)) ─────
+// Appended at the foot so every cited line above keeps its number.
+//
+// `mockIdentityPermitted` answers "may the unsigned mock RUN in this process?"
+// and allows `pnpm dev` (NODE_ENV=development). That is the right answer for
+// running it and the wrong one for COUNTING it: the workspace environment
+// points at the production Supabase project, so a dev server could write
+// self-approved `local_mock` rows into the table real users' rows land in, and
+// the same process would then treat them as booking-grade. So a mock approval
+// counts for bookings only under `node --test` (NODE_TEST_CONTEXT, set in each
+// test file's process), and never where the mock may not run at all.
+// NODE_ENV alone never makes it count.
+export function mockVerificationIsBookingGrade(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (!mockIdentityPermitted(env)) return false;
+  const testContext = env["NODE_TEST_CONTEXT"];
+  return typeof testContext === "string" && testContext.length > 0;
+}

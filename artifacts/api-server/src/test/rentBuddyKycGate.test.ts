@@ -194,8 +194,8 @@ describe("verificationIsBookingGrade", () => {
     assert.equal(verificationIsBookingGrade({ IDENTITY_PROVIDER: "stripe", STRIPE_IDENTITY_SECRET_KEY: "sk_live_x", PAYMENTS_ALLOW_LIVE: "true", NODE_ENV: "production" } as any), true);
   });
 
-  it("the mock is booking-grade in a local run only, never on a hosted deployment", () => {
-    assert.equal(verificationIsBookingGrade({ IDENTITY_PROVIDER: "mock", NODE_ENV: "test" } as any), true);
+  it("the mock is booking-grade under node --test only — never by NODE_ENV alone, never on a hosted deployment", () => {
+    assert.equal(verificationIsBookingGrade({ IDENTITY_PROVIDER: "mock", NODE_TEST_CONTEXT: "child-v8" } as any), true); assert.equal(verificationIsBookingGrade({ IDENTITY_PROVIDER: "mock", NODE_ENV: "test" } as any), false, "Step 5(d)");
     assert.equal(verificationIsBookingGrade({ IDENTITY_PROVIDER: "mock", NODE_ENV: "test", REPLIT_DEPLOYMENT: "1" } as any), false);
     assert.equal(verificationIsBookingGrade({ IDENTITY_PROVIDER: "mock", NODE_ENV: "production" } as any), false);
   });

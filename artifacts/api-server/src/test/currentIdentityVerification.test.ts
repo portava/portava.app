@@ -49,7 +49,7 @@ function db(seed: { identity_verifications?: Row[]; profiles?: Row[] }, fail: { 
 }
 
 const LOCAL = { NODE_ENV: "test" } as unknown as NodeJS.ProcessEnv;
-const HOSTED = { NODE_ENV: "production", REPLIT_DEPLOYMENT: "1" } as unknown as NodeJS.ProcessEnv;
+const HOSTED = { NODE_ENV: "production", REPLIT_DEPLOYMENT: "1" } as unknown as NodeJS.ProcessEnv; const UNDER_NODE_TEST = { NODE_TEST_CONTEXT: "child-v8" } as unknown as NodeJS.ProcessEnv; // Step 5(d): only this makes a mock approval count
 
 const U = "11111111-1111-4111-8111-111111111111";
 const attempt = (o: Row): Row => ({
@@ -92,9 +92,9 @@ describe("readCurrentIdentityVerification — every way it is NOT verified", () 
     assert.deepEqual(r, { state: "not_verified", reason: "mode_unrecorded" });
   });
 
-  it("a local-mock approval counts in a local run and NOT on a hosted deployment", async () => {
+  it("a local-mock approval counts under node --test only — not by NODE_ENV=test alone, and NOT on a hosted deployment", async () => {
     const seed = { identity_verifications: [attempt({ provider: "mock", provider_mode: "local_mock" })], profiles: [profile("id_verified")] };
-    assert.equal((await readCurrentIdentityVerification(db(seed), U, LOCAL)).state, "verified");
+    assert.equal((await readCurrentIdentityVerification(db(seed), U, UNDER_NODE_TEST)).state, "verified"); assert.deepEqual(await readCurrentIdentityVerification(db(seed), U, LOCAL), { state: "not_verified", reason: "mock_verification" });
     assert.deepEqual(await readCurrentIdentityVerification(db(seed), U, HOSTED), { state: "not_verified", reason: "mock_verification" });
   });
 
@@ -167,9 +167,9 @@ describe("sessionProviderMode — what a session created now is recorded as", ()
     assert.equal(sessionProviderMode("mock", HOSTED), null);
   });
 
-  it("providerModeCounts: live always; local_mock only locally; test and unknown never", () => {
+  it("providerModeCounts: live always; local_mock only under node --test; test and unknown never", () => {
     assert.equal(providerModeCounts("live", HOSTED), true);
-    assert.equal(providerModeCounts("local_mock", LOCAL), true);
+    assert.equal(providerModeCounts("local_mock", UNDER_NODE_TEST), true); assert.equal(providerModeCounts("local_mock", LOCAL), false, "NODE_ENV=test alone does not count (Step 5(d))");
     assert.equal(providerModeCounts("local_mock", HOSTED), false);
     assert.equal(providerModeCounts("test", LOCAL), false);
     assert.equal(providerModeCounts(null, LOCAL), false);
