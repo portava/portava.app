@@ -470,7 +470,16 @@ export async function buildCompassHomeProjection(
         // Circle activity — Phase 9 who's-around, consent-gated per target
         (async () => {
           try {
-            const { people } = await getWhosAround(sc, userId, hiddenUserIds(profile));
+            const { people, unreadSources } = await getWhosAround(sc, userId, hiddenUserIds(profile));
+            // census-compass CT-02. The `catch` below says reporting an
+            // unresolved presence lookup as "nobody is around" is the most
+            // misleading thing this endpoint can do — and it could not catch
+            // the common case: supabase-js RESOLVES `{data, error}`, so an
+            // unreadable `trip_members` never threw, `people` came back empty
+            // and this returned `sourced(null)`, which the card renders as
+            // nobody around. `unreadSources` is that case, routed to the
+            // `unusable` channel the comment was written for.
+            if (unreadSources.length > 0) return unusable(null);
             if (people.length === 0) return sourced(null);
             return sourced({
               people: people.slice(0, 5).map((p: any) => ({
