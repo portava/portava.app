@@ -846,3 +846,124 @@ describe("H. Proposal confirmation flow", () => {
     assert.deepEqual(client._getInserts()["trip_plan_items"] ?? [], []);
   });
 });
+
+// ── H2. census-trust TRV2-08 / OD-TRUST-5 — restrictions reach Compass's own
+// write routes (compass/CompassRestrictionGate.ts). The mapping is lane L's
+// reading; compassRestrictionGate.test.ts pins it, these cases pin the wire.
+describe("H2. Trust restrictions reach the confirm and the visibility boost (TRV2-08)", () => {
+  function seededDb(proposalId: string, restrictions: any[] = []): Db {
+    return makeDb({
+      compass_conversations: [{ id: CONV_ID, user_id: ALICE_ID, last_active_at: new Date().toISOString() }],
+      compass_conversation_messages: [{
+        id: "m1", conversation_id: CONV_ID, role: "assistant", content: "confirm?",
+        payload: { pendingProposals: [{ proposalId, tripId: TRIP_ID, tripTitle: "Cebu trip", placeId: PLACE_ID, title: "Lantaw Cafe", category: "cafe", dayDate: null, status: "pending_confirmation" }] },
+        created_at: new Date().toISOString(),
+      }],
+      trips: [{ id: TRIP_ID, owner_id: ALICE_ID, title: "Cebu trip", plan_edit_permission: "all_members", status: "upcoming" }],
+      trip_members: [{ trip_id: TRIP_ID, user_id: ALICE_ID, role: "owner", status: "accepted" }],
+      discovery_places: [{ id: PLACE_ID, name: "Lantaw Cafe", category: "cafe", city: "Cebu" }],
+      trust_restrictions: restrictions,
+    });
+  }
+  /** The same client, with `trust_restrictions` answering a database error. */
+  function unreadableRestrictions(client: any): any {
+    const realFrom = client.from;
+    client.from = (t: string) => {
+      if (t !== "trust_restrictions") return realFrom(t);
+      const f: any = {
+        select: () => f, eq: () => f, is: () => f, or: () => f,
+        then: (ok: any) => ok({ data: null, error: { message: "trust_restrictions unavailable", code: "XX000" } }),
+      };
+      return f;
+    };
+    return client;
+  }
+  /** Records the boost upsert the fake builder does not model. */
+  function recordBoost(client: any): any[] {
+    const writes: any[] = [];
+    const realFrom = client.from;
+    client.from = (t: string) => t === "compass_active_user_scores"
+      ? { upsert: (row: any) => { writes.push(row); return Promise.resolve({ error: null }); } }
+      : realFrom(t);
+    return writes;
+  }
+  async function put(path: string, body: Record<string, unknown>) {
+    const r = await fetch(`http://127.0.0.1:${port}${path}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer test-token" },
+      body: JSON.stringify(body),
+    });
+    return { status: r.status, body: (await r.json()) as Record<string, unknown> };
+  }
+  const HOSTING = { user_id: ALICE_ID, restriction_type: "hosting", lifted_at: null, expires_at: null };
+  const MESSAGING = { user_id: ALICE_ID, restriction_type: "messaging", lifted_at: null, expires_at: null };
+
+  it("confirm under a HOSTING restriction → 403 trust_restriction and no plan write; lifted, the SAME proposal confirms", async () => {
+    const pid = "82345678-1234-1234-1234-123456789abc";
+    const db = seededDb(pid, [{ ...HOSTING }]);
+    const client = makeClient(db);
+    _setTestClient(client, "test-token");
+
+    const refused = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
+    assert.equal(refused.status, 403);
+    assert.equal(refused.body.error, "trust_restriction");
+    assert.deepEqual(refused.body.restrictionTypes, ["hosting"]);
+    assert.deepEqual(client._getInserts()["trip_plan_items"] ?? [], [], "a restricted confirm wrote a plan item");
+
+    db.trust_restrictions[0].lifted_at = "2026-10-05T00:00:00Z";
+    const after = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
+    assert.equal(after.status, 201, "the refusal must not have consumed the proposal");
+    assert.equal(client._getInserts()["trip_plan_items"].length, 1);
+  });
+
+  it("confirm under a MESSAGING-only restriction still confirms — the restriction is limited to what it is for", async () => {
+    const pid = "92345678-1234-1234-1234-123456789abc";
+    const client = makeClient(seededDb(pid, [{ ...MESSAGING }]));
+    _setTestClient(client, "test-token");
+    const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
+    assert.equal(r.status, 201);
+  });
+
+  it("confirm with an UNREADABLE trust_restrictions → 503, retryable, not worded as a restriction, no write", async () => {
+    const pid = "a2345678-1234-1234-1234-123456789abc";
+    const client = unreadableRestrictions(makeClient(seededDb(pid)));
+    _setTestClient(client, "test-token");
+    const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
+    assert.equal(r.status, 503);
+    assert.equal(r.body.error, "degraded_unavailable");
+    assert.doesNotMatch(String(r.body.message), /restrict/i);
+    assert.deepEqual(client._getInserts()["trip_plan_items"] ?? [], []);
+  });
+
+  it("boost ON under a MESSAGING restriction → 403 and nothing saved; boost OFF under the same restriction is saved", async () => {
+    const client = makeClient(makeDb({ trust_restrictions: [{ ...MESSAGING }] }));
+    const writes = recordBoost(client);
+    _setTestClient(client, "test-token");
+
+    const on = await put("/api/compass/me/boost-visibility", { enabled: true });
+    assert.equal(on.status, 403);
+    assert.equal(on.body.error, "trust_restriction");
+    assert.deepEqual(writes, [], "a refused boost was persisted");
+
+    const off = await put("/api/compass/me/boost-visibility", { enabled: false });
+    assert.equal(off.status, 200);
+    assert.deepEqual(writes, [{ user_id: ALICE_ID, boost_visibility_enabled: false }]);
+  });
+
+  it("boost ON with an UNREADABLE trust_restrictions → 503 and nothing saved; a clean record saves it", async () => {
+    const unreadable = unreadableRestrictions(makeClient(makeDb({})));
+    const lost = recordBoost(unreadable);
+    _setTestClient(unreadable, "test-token");
+    const r = await put("/api/compass/me/boost-visibility", { enabled: true });
+    assert.equal(r.status, 503);
+    assert.doesNotMatch(String(r.body.message), /restrict/i);
+    assert.deepEqual(lost, []);
+
+    const fine = makeClient(makeDb({}));
+    const saved = recordBoost(fine);
+    _setTestClient(fine, "test-token");
+    const ok = await put("/api/compass/me/boost-visibility", { enabled: true });
+    assert.equal(ok.status, 200);
+    assert.deepEqual(saved, [{ user_id: ALICE_ID, boost_visibility_enabled: true }]);
+  });
+});

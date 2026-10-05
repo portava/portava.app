@@ -44,6 +44,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassItem, CompassProfile } from "./types.js";
 import { stripCoordinateFields, wrapUgc, buildStructuredCompassContext } from "./CompassStructuredContext.js";
 import { proposalContractPayload } from "../domain/trips/contracts/TripProposalContract.js";
+import { checkCompassActionRestriction, compassRestrictionToolInfo } from "./CompassRestrictionGate.js";
 import { isAcceptedTripMember, canEditPlan, TripAccessUnavailableError } from "../lib/http.js";
 import { buildTripCompassProjection } from "../domain/trips/projections/TripCompassProjection.js";
 import { resolveCurrentTrip, resolveUserTrips, TOOL_TRIP_STATUSES, isWellFormedTripId, MALFORMED_TRIP_ID_INFO } from "./CompassCurrentTrip.js";
@@ -1467,6 +1468,12 @@ export async function toolCreateProposal(sc: SupabaseClient, userId: string, arg
   if (!change) return { proposal: null, info: "change must be an object" };
   const rule = ["host", "majority", "unanimous", "anyone"].includes(String(args.decisionRule)) ? String(args.decisionRule) : "host";
   if (!(await isKernelFlagEnabled(sc, "trip_kernel_enabled"))) return { proposal: null, info: "Proposals go through the Trip Kernel, which is not enabled for this deployment (trip_kernel_enabled is false). Describe the change to the user instead." };
+  // census-trust TRV2-08 / OD-TRUST-5: a proposal organises the crew and puts
+  // text on their screens in this person's name, so a hosting or messaging
+  // restriction refuses it, and an unreadable restriction state refuses it
+  // retryably (compass/CompassRestrictionGate.ts).
+  const restriction = await checkCompassActionRestriction(sc, userId, "create_proposal");
+  if (!restriction.allowed) return { proposal: null, info: compassRestrictionToolInfo(restriction) };
   const r = await executeTripCommand(sc, {
     commandId: newCommandId(), tripId: t.id, actorUserId: userId, actorRole: "user",
     idempotencyKey: `compass:proposal:${userId}:${proposalType}:${JSON.stringify(change).slice(0, 120)}`, type: "CREATE_PROPOSAL",

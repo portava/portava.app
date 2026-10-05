@@ -137,6 +137,10 @@ function makeClient(store: Record<string, Row[]>, opts: { kernelOk?: boolean } =
       },
       order: () => api,
       limit: () => api,
+      // The confirm route now reads trust_restrictions (census-trust TRV2-08),
+      // whose expiry filter is a PostgREST `or`. Modelled as a pass-through, as
+      // the other Compass fakes do: rows in this store never carry an expiry.
+      or: () => api,
       maybeSingle: async () => { flush(); return { data: matching()[0] ?? null, error: null }; },
       single: async () => { flush(); return { data: matching()[0] ?? null, error: null }; },
       then: (ok: any, bad: any) => {
@@ -402,6 +406,40 @@ describe("CT-01 — a confirm the kernel could not carry out is not recorded as 
     assert.equal(commands(sc).length, 1, "the confirm went through the kernel");
     assert.deepEqual(canonicalWrites(sc), []);
     assert.equal(sc._store.trip_autopilot_proposals![0]!.status, "confirmed");
+  });
+
+  // census-trust TRV2-08 / OD-TRUST-5 (compass/CompassRestrictionGate.ts): a
+  // HOSTING restriction refuses the confirm before anything is applied, and the
+  // proposal survives for when the restriction is lifted.
+  it("TRV2-08: a hosting restriction → 403, nothing applied, no kernel command, the proposal stays PENDING", async () => {
+    seed(true);
+    sc._store.trust_restrictions = [{ user_id: USER, restriction_type: "hosting", lifted_at: null, expires_at: null }];
+    const r = await confirm();
+    assert.equal(r.status, 403, JSON.stringify(r.json));
+    assert.equal(r.json.error, "trust_restriction");
+    assert.deepEqual(r.json.restrictionTypes, ["hosting"]);
+    assert.equal(commands(sc).length, 0, "a restricted confirm reached the kernel");
+    assert.deepEqual(canonicalWrites(sc), []);
+    assert.equal(sc._store.trip_autopilot_proposals![0]!.status, "pending");
+  });
+
+  it("TRV2-08: an UNREADABLE trust_restrictions → 503, retryable, never worded as a restriction, nothing applied", async () => {
+    seed(true);
+    const realFrom = sc.from;
+    sc.from = (t: string) => {
+      if (t !== "trust_restrictions") return realFrom(t);
+      const f: any = {
+        select: () => f, eq: () => f, is: () => f, or: () => f,
+        then: (ok: any, bad: any) => Promise.resolve({ data: null, error: { message: "trust_restrictions unavailable", code: "XX000" } }).then(ok, bad),
+      };
+      return f;
+    };
+    const r = await confirm();
+    assert.equal(r.status, 503, JSON.stringify(r.json));
+    assert.equal(r.json.error, "degraded_unavailable");
+    assert.doesNotMatch(String(r.json.message), /restrict/i);
+    assert.equal(commands(sc).length, 0);
+    assert.equal(sc._store.trip_autopilot_proposals![0]!.status, "pending");
   });
 });
 

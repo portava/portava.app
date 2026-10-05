@@ -23,6 +23,7 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireUser, sendError, isAcceptedTripMember, canEditPlan } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isCompassEnabled } from "../compass/flags.js";
+import { checkCompassActionRestriction, sendCompassRestrictionRefusal } from "../compass/CompassRestrictionGate.js";
 import {
   getAutopilotSettings,
   upsertAutopilotSettings,
@@ -224,6 +225,13 @@ router.post("/autopilot/proposals/:id/confirm", asyncHandler(async (req, res) =>
   const permitted = await canEditPlan(sc, (proposal as any).trip_id, auth.user.id);
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
   if (!permitted) { sendError(res, "forbidden", "You don't have permission to edit this trip's plan"); return; }
+
+  // census-trust TRV2-08 / OD-TRUST-5: moving or cancelling a shared plan is
+  // refused under a hosting restriction, and refused retryably — the proposal
+  // left pending — when the restriction state cannot be read. /decline is not
+  // gated: declining changes nothing for anyone else.
+  const restriction = await checkCompassActionRestriction(sc, auth.user.id, "confirm_autopilot_proposal");
+  if (!restriction.allowed) { sendCompassRestrictionRefusal(res, restriction); return; }
 
   const { applied, blocked, evidence, kernelAvailable } = await applyProposal(sc, proposal);
 
