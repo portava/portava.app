@@ -93,7 +93,7 @@ function RuleEditor({ rule, onChange }: { rule: FeeRule; onChange: (r: FeeRule) 
       </View>
 
       <Text style={ed.example}>
-        Example $100 booking: Buddy earns ${(100 * (1 - rule.platform_fee_percent / 100)).toFixed(2)} · Platform ${(100 * rule.platform_fee_percent / 100).toFixed(2)} · Traveler pays ${(100 + rule.traveler_service_fee_usd).toFixed(2)}
+        Bookings with a buddy at this level are ledgered at {rule.platform_fee_percent}% commission on the service price, taken from the buddy's earnings — unless a launch control sets an override for the market or category. Tips carry no commission. The traveller-side service fee is stored here but is not charged or ledgered in this release.
       </Text>
     </View>
   );

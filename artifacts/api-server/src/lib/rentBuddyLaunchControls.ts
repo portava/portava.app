@@ -142,3 +142,33 @@ export async function upsertLaunchControlRow(
     .maybeSingle();
   return { data: res?.data ?? null, error: res?.error ?? null };
 }
+
+// ── The commission override on a launch control (migration 3824) ─────────────
+//
+// Owner ruling 2026-10-04: the 10 % commission is "configurable by product and
+// market". A launch control is keyed by exactly that — (country, city) is the
+// market and category is the product — so the override is a column on this
+// table, `platform_fee_percent`, read only by rb_resolve_platform_fee_percent.
+
+export const PLATFORM_FEE_OVERRIDE_MESSAGE =
+  "platformFeePercent must be a whole number from 0 to 100, or null to clear the override.";
+
+/**
+ * Read `platformFeePercent` off an admin launch-control write.
+ *
+ *   undefined        → not part of this write (`provided: false`)
+ *   null             → clear the override
+ *   integer 0..100   → set it
+ *   anything else    → `invalid`
+ *
+ * No arithmetic: the value is stored as given and applied only by
+ * rb_resolve_platform_fee_percent in the database.
+ */
+export function parsePlatformFeeOverride(raw: unknown): { provided: boolean; value: number | null; invalid: boolean } {
+  if (raw === undefined) return { provided: false, value: null, invalid: false };
+  if (raw === null) return { provided: true, value: null, invalid: false };
+  if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 0 || raw > 100) {
+    return { provided: true, value: null, invalid: true };
+  }
+  return { provided: true, value: raw, invalid: false };
+}

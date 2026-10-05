@@ -16,7 +16,7 @@ import { checkRentBuddyAccess } from "./rentABuddyRollout.js";
 import { loadTravelerIdentity } from "../lib/travelerVerification.js";
 import { isPrivateLocation } from "../lib/rentaBuddyScanner.js";
 import { normalizeLaunchControlKey, upsertLaunchControlRow } from "../lib/rentBuddyLaunchControls.js";
-import { createEarningsLedgerEntry } from "../lib/rentBuddyEarningsLedger.js";
+import { beginIdempotentCreation, sendBookingLedgerRefusal, settleBookingLedger } from "../lib/rentBuddyEarningsLedger.js"; import { sendMoneyRpcFailure, transitionPayout, type PayoutAction } from "../lib/rentBuddyLedgerPosting.js"; import { BUDDY_ACCEPT_WINDOW_HOURS } from "../lib/rentBuddyBookingStatus.js"; // one line: docs cite this file by line
 import { isBlockedBetween } from "../lib/blockGuard.js";
 import { affectedRows } from "../lib/affectedRows.js";
 
@@ -671,7 +671,7 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
   const blocking = await findBlockingAvailabilityException(serviceClient, buddyId, bookingDate);
   if (blocking) return sendBuddyUnavailable(res, blocking.exception_type);
 
-  const now = new Date().toISOString();
+  const now = new Date().toISOString(); const creation = await beginIdempotentCreation(req, res, serviceClient, auth.user.id, `request:${buddyId}`, (b) => ({ booking: b })); if (creation.done) return; // a request retried with the same Idempotency-Key returns the ORIGINAL booking
   const { data, error } = await serviceClient
     .from("rent_buddy_bookings")
     .insert({
@@ -687,18 +687,18 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
       route_plan: [],
       total_usd: 0,
       deposit_usd: 0,
-      status: "pending",
+      status: "pending", creation_key: creation.key, expires_at: new Date(new Date(now).getTime() + BUDDY_ACCEPT_WINDOW_HOURS * 3600 * 1000).toISOString(), // awaiting the buddy: the same 24 h window as the canonical route, from the row's own `now`
       created_at: now,
       updated_at: now,
     })
     .select()
     .single();
 
-  if (error) return sendError(res, "db_error", error.message);
+  if (error) { if (await creation.replayOnConflict(error)) return; return sendError(res, "db_error", error.message); }
 
-  // Estimated earnings-ledger row — the third of the three booking-creation
-  // paths that never wrote one. See lib/rentBuddyEarningsLedger.ts.
-  if (data) await createEarningsLedgerEntry(serviceClient, data, buddyId).catch(() => {});
+  // The booking's earnings ledger, entries and summary in one transaction. Not best-effort (PAY-050): an unanswered call is confirmed by re-posting, and
+  // only a booking whose row is really gone is refused by name; one that could not be withdrawn exists and is returned. See lib/rentBuddyEarningsLedger.ts.
+  if (data) { const settled = await settleBookingLedger(serviceClient, data, buddyId); if (settled.outcome === "withdrawn") return sendBookingLedgerRefusal(res, settled.ledger); }
 
   return res.status(201).json({ booking: data });
 }));
@@ -2366,175 +2366,163 @@ router.post("/rent-a-buddy/admin/category-status/:category", asyncHandler(async 
   return res.json({ category: data });
 }));
 
-// ── admin payout hold / release ────────────────────────────────────────────────
+// ── admin payouts: list, hold, release ─────────────────────────────────────────
 //
-// M13/M3 — BOTH TRANSITIONS ARE COMPARE-AND-SWAP.
+// NO MONEY MOVES HERE. `rent_buddy_payouts` is a status ledger over rows that
+// nothing in this tree inserts (09 §1.4; the lifecycle that creates one from a
+// balance is PAY-T11). `released` is a status, not a disbursement: no processor
+// is installed and nothing is paid to anyone.
 //
-// THE DEFECT (09 §1.4, 12 §3.1 M3). Both routes used to be a bare
-// `.update({ status }).eq("id", payoutId)` with NO predicate on the payout's
-// current status. Releasing an already-released payout, or holding one that is
-// already on hold or already released, matched a row, wrote the same status
-// again, stamped a fresh released_by/released_at over the original operator and
-// timestamp, appended a second rent_buddy_admin_actions row — and returned 200.
-// Two admins acting at once both "succeeded", and the audit trail recorded the
-// LOSER's identity. On a money row that is not a cosmetic problem: released_by
-// and released_at are the only record of who authorised the movement.
+// ── THE TRANSITION AND ITS AUDIT ROW ARE ONE TRANSACTION (PAY-075) ───────────
 //
-// THE FIX (09 §9.1: "Every transition is a compare-and-swap ... a zero-row
-// result is a 409, not a success"). The expected current status travels in the
-// same UPDATE as the new one, so the check and the write cannot be separated by
-// another transaction. PostgREST returns the rows it actually updated, so an
-// empty array IS the "somebody else got there first" signal.
+// THE DEFECT. Hold and release were an UPDATE of the payout followed by a
+// SEPARATE `rent_buddy_admin_actions` INSERT whose result was never read. A
+// failed audit insert therefore left an unlogged hold or release — the status
+// had moved, the 200 had been sent, and the only record of who authorised a
+// money transition did not exist. 09 §10: "the audit row is inside the same
+// transaction as the entries; if it cannot be written, the money does not move."
 //
-// The predicates are stated as a DENYLIST, not an allowlist, and that is
-// deliberate. `rent_buddy_payouts.status` is free text whose value set exists
-// only in a SQL comment (09 §9.1), and NOTHING in the repository inserts a
-// payout row (M2 — a capability awaiting a ruling, explicitly not this work).
-// An allowlist would therefore have to invent the vocabulary M2 is going to
-// define, and would reject rows carrying any status this file guessed wrong.
-// The denylist refuses exactly the transitions that are known-wrong today and
-// stays correct whatever M2 decides the rest of the ladder is called.
+// THE FIX. Both routes call `rb_admin_payout_transition` (migration 3824),
+// which takes the payout's row lock, applies the transition and inserts the
+// audit row in one function call — one transaction. If the insert raises, the
+// UPDATE is rolled back with it and the caller gets a 503.
 //
-// Zero rows is ambiguous on its own — the payout may not exist at all — so the
-// row is read back once to tell 404 from 409. That read is NOT the guard; it
-// only picks the status code after the guard has already refused the write.
+// ── STILL COMPARE-AND-SWAP (M3, 09 §9.1) ─────────────────────────────────────
+// The state rules are unchanged, and now run under the row lock instead of as
+// PostgREST predicates:
+//   hold     from any status except `on_hold` and `released`
+//   release  from `on_hold` only
+// A transition that does not apply is a 409 carrying the status the payout IS
+// in; the row, `held_by` / `released_by` and the audit trail are untouched. The
+// hold rule stays a DENYLIST on purpose: `status` is free text whose vocabulary
+// PAY-T11 will define, and an allowlist here would have to invent it.
+//
+// ── A REASON IS REQUIRED ─────────────────────────────────────────────────────
+// Both transitions now refuse (400 `reason_required`) without one. An audit row
+// that says who and not why is half a record. Release used to call the field
+// `notes`; it is still read, so an existing caller keeps working.
+//
+// ── NO FALLBACK ──────────────────────────────────────────────────────────────
+// With the function absent the transition is REFUSED — 503 `ledger_unavailable`
+// — and is not retried as an UPDATE from here.
 
-/** Statuses a hold may not be applied over. See the block comment above. */
-const PAYOUT_NOT_HOLDABLE_FROM = ["on_hold", "released"] as const;
-/** The single status a release may be applied over. */
-const PAYOUT_RELEASABLE_FROM = "on_hold";
+/** A uuid, which is what `rent_buddy_payouts.id` is. */
+const PAYOUT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const PAYOUT_REASON_MAX_LENGTH = 1000;
 
-/**
- * Turn a zero-row compare-and-swap into the right status code.
- *
- * 404 — no such payout.
- * 409 — the payout exists but was not in the state this transition requires;
- *       the caller is told what state it IS in, so a UI can re-render rather
- *       than retry a transition that will never apply.
- */
-async function sendPayoutCasFailure(
-  serviceClient: any,
-  res: any,
-  payoutId: string,
-  expected: string,
-): Promise<void> {
-  const { data: current, error } = await serviceClient
-    .from("rent_buddy_payouts")
-    .select("id, status")
-    .eq("id", payoutId)
-    .maybeSingle();
+/** The columns the admin payouts screen renders. */
+const PAYOUT_LIST_COLUMNS =
+  "id, booking_id, buddy_id, amount_usd, status, hold_reason, held_by, held_at, released_by, released_at, notes, created_at, updated_at";
 
-  // A failed read here must not be reported as "not found" — that is the
-  // fail-open shape 11 §"Authorization guards fail closed" exists to stop.
-  if (error) {
-    res.status(500).json({ error: "db_error", message: error.message });
-    return;
-  }
-  if (!current) {
+async function applyPayoutTransition(req: any, res: any, action: PayoutAction): Promise<void> {
+  // The shared admin guard (lib/requireAdmin.ts): 401 / 403 / 503 already sent
+  // when it returns null. The SQL function re-checks the role as well.
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc: serviceClient, userId: adminId } = admin;
+
+  const { payoutId } = req.params;
+  // Not a uuid ⇒ it cannot name a payout. Answered here because the function's
+  // parameter is a uuid and PostgREST would otherwise report a cast error.
+  if (typeof payoutId !== "string" || !PAYOUT_ID_RE.test(payoutId)) {
     res.status(404).json({ error: "not_found" });
     return;
   }
-  res.status(409).json({
-    error: "conflict",
-    message: `Payout is ${(current as any).status}; this transition requires ${expected}.`,
-    currentStatus: (current as any).status,
+
+  const body = req.body ?? {};
+  const rawReason = action === "hold" ? body.reason : (body.reason ?? body.notes);
+  const reason = typeof rawReason === "string" ? rawReason.trim() : "";
+  if (reason.length === 0 || reason.length > PAYOUT_REASON_MAX_LENGTH) {
+    res.status(400).json({
+      error: "reason_required",
+      message: `A reason of 1-${PAYOUT_REASON_MAX_LENGTH} characters is required to ${action} a payout.`,
+    });
+    return;
+  }
+
+  const result = await transitionPayout(serviceClient, { payoutId, action, adminId, reason });
+
+  if (result.status === "unavailable" || result.status === "failed") {
+    req.log?.error?.(
+      { payoutId, action, error: result.error, rpc: result.rpc, detail: result.detail },
+      "payout transition was NOT applied: the transition function is unavailable or failed — nothing was changed and nothing was audited",
+    );
+    sendMoneyRpcFailure(res, result, "The payout was not changed. Please try again.");
+    return;
+  }
+
+  if (result.status === "refused") {
+    if (result.refusal === "not_found") { res.status(404).json({ error: "not_found" }); return; }
+    if (result.refusal === "not_admin") { res.status(403).json({ error: "forbidden" }); return; }
+    if (result.refusal === "reason_required") {
+      res.status(400).json({ error: "reason_required", message: result.detail });
+      return;
+    }
+    if (result.refusal === "conflict") {
+      res.status(409).json({ error: "conflict", message: result.detail, currentStatus: result.currentStatus });
+      return;
+    }
+    res.status(409).json({ error: "payout_transition_refused", refusal: result.refusal, message: result.detail });
+    return;
+  }
+
+  res.json({
+    payout: result.payout,
+    fromStatus: result.fromStatus,
+    toStatus: result.toStatus,
+    auditId: result.auditId,
   });
 }
+
+// GET /api/rent-a-buddy/admin/payouts?status=<state>&limit=&offset=
+//
+// The admin payouts queue. Lists payout rows newest first, optionally filtered
+// to one state, with the exact count for that filter. A failed read is a 500,
+// never an empty list: "there are no payouts" and "the payouts could not be
+// read" are different answers and an admin acts differently on each.
+router.get("/rent-a-buddy/admin/payouts", asyncHandler(async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { sc: serviceClient } = admin;
+
+  const rawStatus = typeof req.query.status === "string" ? req.query.status.trim() : "";
+  const status = rawStatus.length > 0 && rawStatus !== "all" ? rawStatus : null;
+  const limit = Math.min(Math.max(Math.trunc(Number(req.query.limit ?? 50)) || 50, 1), 200);
+  const offset = Math.max(Math.trunc(Number(req.query.offset ?? 0)) || 0, 0);
+
+  let query: any = serviceClient
+    .from("rent_buddy_payouts")
+    .select(PAYOUT_LIST_COLUMNS, { count: "exact" });
+  if (status) query = query.eq("status", status);
+  const { data, error, count } = await query
+    .order("created_at", { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (error) {
+    req.log?.error?.({ err: error, status }, "admin payouts: list read failed");
+    return sendError(res, "db_error", error.message);
+  }
+
+  return res.json({
+    payouts: data ?? [],
+    total: count ?? (Array.isArray(data) ? data.length : 0),
+    status: status ?? "all",
+    // Said in the payload as well as on the screen, so no consumer can mistake
+    // this queue for a disbursement surface.
+    movesMoney: false,
+  });
+}));
 
 // POST /api/rent-a-buddy/admin/payouts/:payoutId/hold
 // Also accessible at /api/admin/buddy-payouts/:payoutId/hold via app.ts URL alias
 router.post("/rent-a-buddy/admin/payouts/:payoutId/hold", asyncHandler(async (req, res) => {
-  const auth = await requireUser(req, res);
-  if (!auth) return;
-  const serviceClient = sc(auth.client);
-  const { data: profile } = await serviceClient.from("profiles").select("role").eq("id", auth.user.id).maybeSingle();
-  if ((profile as any)?.role !== "admin") return res.status(403).json({ error: "forbidden" });
-
-  const { payoutId } = req.params;
-  const { reason } = req.body ?? {};
-
-  // Compare-and-swap: the status predicates ride in the SAME statement as the
-  // write, so no second admin can slip a transition in between the check and
-  // the update. `.select()` (not `.single()`) because zero updated rows is an
-  // expected outcome here, not an error.
-  let casQuery: any = serviceClient
-    .from("rent_buddy_payouts")
-    .update({
-      status: "on_hold",
-      hold_reason: reason ?? null,
-      held_by: auth.user.id,
-      held_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", payoutId);
-  for (const forbidden of PAYOUT_NOT_HOLDABLE_FROM) casQuery = casQuery.neq("status", forbidden);
-  const { data, error } = await casQuery.select();
-
-  if (error) return res.status(500).json({ error: "db_error", message: error.message });
-
-  const held = Array.isArray(data) ? data[0] : (data ?? null);
-  if (!held) {
-    await sendPayoutCasFailure(serviceClient, res, payoutId, `a status other than ${PAYOUT_NOT_HOLDABLE_FROM.join(" or ")}`);
-    return;
-  }
-
-  // Only a transition that actually happened is written to the audit trail.
-  await serviceClient.from("rent_buddy_admin_actions").insert({
-    admin_id: auth.user.id,
-    target_type: "payout",
-    target_id: payoutId,
-    action: "payout_held",
-    notes: reason ?? null,
-  });
-
-  return res.json({ payout: held });
+  await applyPayoutTransition(req, res, "hold");
 }));
 
 // POST /api/rent-a-buddy/admin/payouts/:payoutId/release
 // Also accessible at /api/admin/buddy-payouts/:payoutId/release via app.ts URL alias
 router.post("/rent-a-buddy/admin/payouts/:payoutId/release", asyncHandler(async (req, res) => {
-  const auth = await requireUser(req, res);
-  if (!auth) return;
-  const serviceClient = sc(auth.client);
-  const { data: profile } = await serviceClient.from("profiles").select("role").eq("id", auth.user.id).maybeSingle();
-  if ((profile as any)?.role !== "admin") return res.status(403).json({ error: "forbidden" });
-
-  const { payoutId } = req.params;
-  const { notes } = req.body ?? {};
-
-  // Compare-and-swap. A release may only be applied to a payout that is
-  // currently on hold — releasing an already-released one is the exact silent
-  // success 09 §1.4 names, and it overwrote released_by/released_at with the
-  // second operator's identity.
-  const { data, error } = await serviceClient
-    .from("rent_buddy_payouts")
-    .update({
-      status: "released",
-      released_by: auth.user.id,
-      released_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", payoutId)
-    .eq("status", PAYOUT_RELEASABLE_FROM)
-    .select();
-
-  if (error) return res.status(500).json({ error: "db_error", message: error.message });
-
-  const released = Array.isArray(data) ? data[0] : (data ?? null);
-  if (!released) {
-    await sendPayoutCasFailure(serviceClient, res, payoutId, PAYOUT_RELEASABLE_FROM);
-    return;
-  }
-
-  await serviceClient.from("rent_buddy_admin_actions").insert({
-    admin_id: auth.user.id,
-    target_type: "payout",
-    target_id: payoutId,
-    action: "payout_released",
-    notes: notes ?? null,
-  });
-
-  return res.json({ payout: released });
+  await applyPayoutTransition(req, res, "release");
 }));
 
 export default router;

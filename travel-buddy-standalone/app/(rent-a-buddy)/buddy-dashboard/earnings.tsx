@@ -1,10 +1,32 @@
+/**
+ * Rent a Buddy — the buddy's earnings screen (payments PAY-T12; requirement
+ * rows PAY-009, PAY-055).
+ *
+ * Every money figure here arrives from the server; this screen adds, multiplies
+ * and defaults nothing.
+ *
+ *   - The headline figures (earnings after commission, commission, tips, and
+ *     what was collected in the app — $0.00 until in-app payment exists) are
+ *     the ledger totals the database folds (GET /me/earnings/summary).
+ *   - Each completed booking's commission and net are that booking's own ledger
+ *     row. They used to be `total × 0.1` and `total × 0.9`, computed here,
+ *     whatever rate the booking had actually been ledgered at.
+ *   - "Est. this week" was `this month ÷ 4`. It is gone: no such figure exists.
+ *
+ * A failed read is a failure with retry. The bookings read used to fail
+ * silently into "No pending earnings" / "No completed bookings"; any of the
+ * reads failing now shows the error state, because an empty list and an
+ * unreadable list are different answers on a money screen. The per-booking
+ * ledger read is the one exception: if only it fails, the lists still show and
+ * each booking says its breakdown could not be loaded, with a retry.
+ */
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   View, Text, ScrollView, StyleSheet, Pressable, RefreshControl, Alert,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, AlertCircle, DollarSign, Clock, TrendingUp, Flag } from 'lucide-react-native';
+import { ArrowLeft, AlertCircle, DollarSign, Clock, TrendingUp, Flag, ChevronRight } from 'lucide-react-native';
 import {
   TravelCard, TravelSectionHeader, TravelLoadingState, TravelErrorState,
   TravelEmptyState,
@@ -12,16 +34,21 @@ import {
 import { Stamp } from '../../../src/components/ui';
 import { color, space, radius, type as t, shadow } from '../../../src/theme/tokens';
 import * as rentABuddy from '../../../src/services/rentABuddy';
-import type { BuddyEarnings, BuddyBooking } from '../../../src/services/rentABuddy';
+import type { BuddyEarnings, BuddyBooking, EarningsSummary, LedgerEntry } from '../../../src/services/rentABuddy';
 import { bookingErrorCopy } from '../../../src/services/rentABuddyBookingErrors';
 
-function EarningBanner() {
+/** How many ledger rows are read to pair with the completed-bookings list (the route's own maximum). */
+const LEDGER_PAGE = 200;
+
+const usd = (n: number | null | undefined, digits = 2): string =>
+  typeof n === 'number' && Number.isFinite(n) ? `$${n.toFixed(digits)}` : '—';
+
+function EarningBanner({ warning }: { warning: string | null | undefined }) {
   return (
-    <View style={banner.wrap}>
+    <View style={banner.wrap} testID="earnings-estimate-banner">
       <AlertCircle size={16} color={color.warn} />
       <Text style={banner.text}>
-        Payouts are not yet connected — all figures are estimates only.
-        Cash balance is tracked but not processed.
+        {warning ?? 'All figures are estimates. Nothing has been collected through the app: in-app payment is not live, no deposit is taken, and payouts are not connected. Cash balances are tracked, not charged.'}
       </Text>
     </View>
   );
@@ -72,21 +99,39 @@ export default function BuddyEarnings() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [earnings, setEarnings] = useState<BuddyEarnings | null>(null);
+  const [summary, setSummary] = useState<EarningsSummary | null>(null);
   const [bookings, setBookings] = useState<BuddyBooking[]>([]);
+  // bookingId → that booking's ledger row; null when the ledger read FAILED
+  // (which is not the same as a booking that has no row).
+  const [ledgerByBooking, setLedgerByBooking] = useState<Record<string, LedgerEntry> | null>({});
   const [filter, setFilter] = useState('This month');
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     setError(null);
-    const [earningsRes, bookingsRes] = await Promise.all([
+    const [earningsRes, summaryRes, bookingsRes, ledgerRes] = await Promise.all([
       rentABuddy.getDashboardEarnings(),
+      rentABuddy.getEarningsSummary(),
       rentABuddy.listMyBookings(),
+      rentABuddy.getEarningsLedger(LEDGER_PAGE, 0),
     ]);
     if (!silent) setLoading(false);
-    if (earningsRes.ok) setEarnings(earningsRes.data);
-    else setError(earningsRes.error);
-    if (bookingsRes.ok) setBookings(bookingsRes.data.bookings);
+    // Any of the three reads the screen is BUILT from failing is a failure of
+    // the screen: zeros or empty lists here would read as "you earned nothing".
+    if (!earningsRes.ok) { setError(earningsRes.error); return; }
+    if (!summaryRes.ok) { setError(summaryRes.error); return; }
+    if (!bookingsRes.ok) { setError(bookingsRes.error); return; }
+    setEarnings(earningsRes.data);
+    setSummary(summaryRes.data);
+    setBookings(bookingsRes.data.bookings);
+    if (ledgerRes.ok) {
+      const map: Record<string, LedgerEntry> = {};
+      for (const row of ledgerRes.data.ledger) map[row.bookingId] = row;
+      setLedgerByBooking(map);
+    } else {
+      setLedgerByBooking(null);
+    }
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -98,7 +143,15 @@ export default function BuddyEarnings() {
   }, [load]);
 
   if (loading) return <TravelLoadingState label="Loading earnings…" />;
-  if (error) return <TravelErrorState title="Couldn't load earnings" sub={error} onRetry={() => load()} />;
+  if (error) {
+    return (
+      <TravelErrorState
+        title="Couldn't load earnings"
+        sub={bookingErrorCopy(error, 'Your earnings could not be loaded — this is not a zero balance. Try again.')}
+        onRetry={() => load()}
+      />
+    );
+  }
 
   // Completed list honors the date-range filter chips (previously a no-op).
   const filterCutoff = (() => {
@@ -118,8 +171,6 @@ export default function BuddyEarnings() {
   });
   const pending = bookings.filter((b) => b.status === 'scheduled' || b.status === 'in_progress');
   const disputed = bookings.filter((b) => b.status === 'disputed');
-
-  const estimatedWeek = (earnings?.thisMonthUsd ?? 0) / 4;
 
   return (
     <ScrollView
@@ -141,34 +192,61 @@ export default function BuddyEarnings() {
 
       {/* Payout warning banner */}
       <View style={{ paddingHorizontal: space.lg, marginTop: space.lg }}>
-        <EarningBanner />
+        <EarningBanner warning={summary?.warning} />
       </View>
 
-      {/* Summary grid */}
+      {/* Summary grid — the ledger totals, as the server folded them. */}
       <View style={s.grid}>
         <StatBlock
-          label="Est. this week"
-          value={`$${estimatedWeek.toFixed(0)}`}
-          sub="Estimate only"
+          label="Est. earnings"
+          value={usd(summary?.estimatedBuddyEarningsUsd)}
+          sub="After commission · estimate"
           accent={color.success}
         />
         <StatBlock
-          label="Est. this month"
-          value={`$${(earnings?.thisMonthUsd ?? 0).toFixed(0)}`}
-          sub="Estimate only"
-          accent={color.success}
+          label="Platform commission"
+          value={usd(summary?.estimatedPlatformFeeUsd)}
+          sub={typeof summary?.platformFeePercent === 'number' ? `${summary.platformFeePercent}% on your next booking` : 'Estimate only'}
         />
         <StatBlock
-          label="All-time est."
-          value={`$${(earnings?.totalUsd ?? 0).toFixed(0)}`}
-          sub="Estimate only"
+          label="Tips"
+          value={usd(summary?.tips.total)}
+          sub="No commission on tips"
         />
         <StatBlock
           label="Completed"
-          value={String(earnings?.completedBookings ?? 0)}
+          value={String(summary?.completed.count ?? earnings?.completedBookings ?? 0)}
           sub="bookings"
         />
+        <StatBlock
+          label="Collected in app"
+          value={usd(summary?.completed.inAppAmountCollected)}
+          sub="In-app payment is not live; no deposit is taken"
+        />
+        <StatBlock
+          label="Booked this month"
+          value={usd(earnings?.thisMonthUsd, 0)}
+          sub="Before commission"
+        />
       </View>
+
+      {(summary?.completed.unledgeredCount ?? 0) > 0 ? (
+        <View style={{ paddingHorizontal: space.lg, marginTop: space.md }}>
+          <Text style={{ ...t.small, color: color.warn }} testID="earnings-unledgered-note">
+            {summary?.completed.unledgeredCount} completed booking{summary?.completed.unledgeredCount !== 1 ? 's are' : ' is'} not yet in your ledger and {summary?.completed.unledgeredCount !== 1 ? 'are' : 'is'} not included in the figures above.
+          </Text>
+        </View>
+      ) : null}
+
+      <Pressable
+        style={ledgerLink.row}
+        onPress={() => router.push('/(rent-a-buddy)/buddy-dashboard/earnings-ledger' as any)}
+        accessibilityRole="button"
+        testID="earnings-open-ledger"
+      >
+        <Text style={ledgerLink.text}>See every booking's commission and net in the earnings ledger</Text>
+        <ChevronRight size={16} color={color.deep} />
+      </Pressable>
 
       {/* Pending earnings */}
       <TravelSectionHeader title="Pending clearance" kicker="AWAITING" />
@@ -220,23 +298,37 @@ export default function BuddyEarnings() {
         <TravelEmptyState title="No completed bookings" sub="Your completed booking history will appear here." />
       ) : (
         <View style={s.cardList}>
-          {completed.map((b) => (
-            <TravelCard key={b.id} style={{ padding: space.md }}>
-              <BookingRow booking={b} />
-              <View style={bk.breakdown}>
-                {[
-                  { label: 'Gross', value: `$${b.totalUsd.toFixed(2)}` },
-                  { label: 'Platform fee (est.)', value: `-$${(b.totalUsd * 0.1).toFixed(2)}` },
-                  { label: 'You keep (est.)', value: `$${(b.totalUsd * 0.9).toFixed(2)}`, bold: true },
-                ].map(({ label, value, bold }) => (
-                  <View key={label} style={bk.breakRow}>
-                    <Text style={[bk.breakLabel, bold && { fontWeight: '600' }]}>{label}</Text>
-                    <Text style={[bk.breakVal, bold && { color: color.success, fontWeight: '700' }]}>{value}</Text>
-                  </View>
-                ))}
-              </View>
-            </TravelCard>
-          ))}
+          {completed.map((b) => {
+            // The booking's OWN ledger row — the commission it was actually
+            // ledgered at. Never a percentage applied here.
+            const entry = ledgerByBooking ? ledgerByBooking[b.id] : undefined;
+            return (
+              <TravelCard key={b.id} style={{ padding: space.md }}>
+                <BookingRow booking={b} />
+                <View style={bk.breakdown} testID={`earnings-breakdown-${b.id}`}>
+                  {ledgerByBooking === null ? (
+                    <Pressable onPress={() => { void load(true); }} accessibilityRole="button" testID={`earnings-breakdown-retry-${b.id}`}>
+                      <Text style={bk.breakLabel}>Commission and net could not be loaded. Tap to try again.</Text>
+                    </Pressable>
+                  ) : entry ? (
+                    [
+                      { label: 'Gross', value: usd(entry.totalBookingUsd) },
+                      { label: `Platform commission${entry.platformFeePercent != null ? ` (${entry.platformFeePercent}%, est.)` : ' (est.)'}`, value: `-${usd(entry.platformFeeAmount)}` },
+                      ...(entry.tipUsd > 0 ? [{ label: 'Tip (no commission)', value: `+${usd(entry.tipUsd)}` }] : []),
+                      { label: 'You keep (est.)', value: usd(entry.buddyNetEstimatedAmount), bold: true },
+                    ].map(({ label, value, bold }: { label: string; value: string; bold?: boolean }) => (
+                      <View key={label} style={bk.breakRow}>
+                        <Text style={[bk.breakLabel, bold && { fontWeight: '600' }]}>{label}</Text>
+                        <Text style={[bk.breakVal, bold && { color: color.success, fontWeight: '700' }]}>{value}</Text>
+                      </View>
+                    ))
+                  ) : (
+                    <Text style={bk.breakLabel}>Commission and net for this booking are in the earnings ledger.</Text>
+                  )}
+                </View>
+              </TravelCard>
+            );
+          })}
         </View>
       )}
 
@@ -277,7 +369,7 @@ export default function BuddyEarnings() {
       {/* Monthly breakdown */}
       {earnings?.breakdown && earnings.breakdown.length > 0 && (
         <>
-          <TravelSectionHeader title="Monthly breakdown" kicker="ESTIMATES" />
+          <TravelSectionHeader title="Booked value by month" kicker="BEFORE COMMISSION" />
           <View style={s.cardList}>
             <TravelCard padded={false}>
               {earnings.breakdown.map((m, i) => (
@@ -361,6 +453,15 @@ const month = StyleSheet.create({
   label: { ...t.bodyStrong, color: color.ink, flex: 1 },
   bookings: { ...t.small, color: color.mute, marginRight: space.lg },
   amount: { ...t.bodyStrong, color: color.success },
+});
+
+const ledgerLink = StyleSheet.create({
+  row: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.sm,
+    marginHorizontal: space.lg, marginTop: space.lg, padding: space.md,
+    borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paperRaised,
+  },
+  text: { ...t.small, color: color.deep, fontWeight: '600', flex: 1 },
 });
 
 const disp = StyleSheet.create({

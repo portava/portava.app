@@ -15,14 +15,38 @@
  * at 22 % on this one. `08` §2.3.
  *
  * ── WHAT THIS PINS ──────────────────────────────────────────────────────────
- *   1. The percentage comes from `rent_buddy_fee_rules` keyed on THIS buddy's
- *      level — not from a ledger row, not from a literal.
- *   2. A level with no fee row is a 409, not a silent 22 %.
- *   3. An unreadable fee table is a 500, not a silent 22 %.
- *   4. Those two failures are distinguishable from each other.
+ *   1. The percentage comes from CONFIGURATION, resolved by the database
+ *      (`rb_quote_booking`, migration 3824 — the function checkout quotes with
+ *      and the one creation prices with) for THIS buddy's level and market —
+ *      not from a ledger row, not from a literal — and the response says which
+ *      configuration it came from (`platformFeeSource`). The MARKET is the
+ *      buddy's own profile, resolved in SQL; the route passes no city.
+ *   2. The fee AMOUNT is the fold of the buddy's ledger entries
+ *      (`rb_buddy_ledger_totals`). It is not `percent × total` computed here: a
+ *      booking priced at an earlier rate keeps the fee it was ledgered with.
+ *   3. A level with no fee row is the owner's default of 10 %, and SAYS it is
+ *      the default (`platformFeeSource: "owner_default"`).
+ *   4. A commission or a total that cannot be read is a 503 with a named error
+ *      and NO fee figure — never a silent default.
  *
- * The third and fourth are the M10 lesson: the absence of a row must never be
- * indistinguishable from a deliberate value.
+ * ── WHAT CHANGED IN (3), AND WHY IT IS NOT THE OLD DEFECT COMING BACK ───────
+ * This file used to assert that a level with no fee row was a 409 ("an
+ * unconfigured take rate is refused, not guessed"). The lesson it encoded (M10)
+ * is that the absence of a row must never be INDISTINGUISHABLE from a deliberate
+ * value: the old code answered 22 % for both.
+ *
+ * On 2026-10-04 the owner ruled a 10 % commission "as a starting value",
+ * configurable by product and market. So "no row" now has a ruled answer, and
+ * the M10 lesson is kept the other way round: the answer carries its SOURCE.
+ * `owner_default` is distinguishable from `fee_schedule` (an operator's row for
+ * the level) and from `launch_control` (a market / product override), in the
+ * response and in the ledger posting's own result. The two FAILURES — the
+ * function is missing, the function errored — are still distinguishable from
+ * each other and from every success.
+ *
+ * The stored schedule (25 / 22 / 15 / 12 / 12 by level) is NOT changed by this
+ * work: while those rows exist they apply. That the stored values differ from
+ * the ruled 10 % is reported to the owner, not resolved here.
  *
  * Run: node --import tsx/esm --test src/test/rentBuddyEarningsSummaryFeeSource.test.ts
  */
@@ -32,18 +56,27 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
-import marketplaceRouter from "../routes/rentABuddyMarketplace.js";
+import { logger } from "../lib/logger.js";
+import { NOTHING_COLLECTED_WARNING } from "../lib/rentBuddyCollectedMoney.js";
+import marketplaceRouter, { EARNINGS_NOT_COLLECTED_WARNING } from "../routes/rentABuddyMarketplace.js";
+import { emptyLedgerDb, fakeLedgerRpc, type FakeLedgerDb } from "./helpers/fakeRentBuddyLedgerRpc.js";
 
 const USER_TOKEN = "earnings-fee-source-token";
 const USER_ID = "earnings-fee-source-user";
 const BUDDY_PROFILE_ID = "earnings-fee-source-profile";
 
-/** Per-test knobs the fake service client reads. */
-let feeRuleRow: any = null;
-let feeRuleError: any = null;
+/**
+ * The world behind the fake service client. The two SQL functions the handler
+ * calls are the model in helpers/fakeRentBuddyLedgerRpc.ts, over this object;
+ * the functions themselves are executed by
+ * src/test/db/rentBuddyLedgerPosting.db.test.ts (L1, L2, C6).
+ */
+let db: FakeLedgerDb;
 let buddyLevel: string | null = "pro";
-/** Completed bookings the buddy has. One 200.00 booking keeps the arithmetic legible. */
-let bookings: any[] = [];
+/** Functions to answer as absent ("3824 is not applied"). */
+let absent: string[] = [];
+/** A function to answer with an error instead. */
+let erroring: string | null = null;
 
 function builder(single: any, list: any[] = []): any {
   const b: any = {
@@ -61,20 +94,18 @@ function builder(single: any, list: any[] = []): any {
   return b;
 }
 
-function feeRuleBuilder(): any {
-  const b: any = {
-    select: () => b,
-    eq: () => b,
-    maybeSingle: () => Promise.resolve({ data: feeRuleRow, error: feeRuleError }),
-    then: (resolve: (r: any) => any) =>
-      Promise.resolve({ data: feeRuleRow ? [feeRuleRow] : [], error: feeRuleError }).then(resolve),
-  };
-  return b;
-}
+/** Tables the handler must NOT read any more: the fee schedule and the tips. */
+let forbiddenReads: string[] = [];
 
 function serviceClient(): any {
   return {
     auth: { getUser: () => Promise.resolve({ data: { user: null }, error: null }) },
+    rpc: (fn: string, args: any) => {
+      if (erroring === fn) {
+        return Promise.resolve({ data: null, error: { code: "XX000", message: `internal error in ${fn} reading rent_buddy_fee_rules` } });
+      }
+      return fakeLedgerRpc(db, { absent })(fn, args);
+    },
     from(table: string) {
       switch (table) {
         case "rent_buddy_profiles":
@@ -83,15 +114,18 @@ function serviceClient(): any {
             user_id: USER_ID,
             status: "active",
             buddy_level: buddyLevel,
+            country: "Testland", city: "Cebu",
             profile_views: 4, search_appearances: 9, repeat_client_count: 1,
             city_ranking: null, average_rating: 4.8, review_count: 3,
           });
         case "rent_buddy_fee_rules":
-          return feeRuleBuilder();
-        case "rent_buddy_bookings":
-          return builder(null, bookings);
         case "rent_buddy_tips":
+        case "rent_buddy_earnings_ledger":
+        case "rent_buddy_earnings_entries":
+          forbiddenReads.push(table);
           return builder(null, []);
+        case "rent_buddy_bookings":
+          return builder(null, Object.values(db.bookings));
         case "trust_profiles":
           return builder({ overall_score: 70, public_level: "trusted" });
         case "feature_flags":
@@ -154,36 +188,58 @@ after(() => new Promise<void>((resolve, reject) =>
   server.close((err) => (err ? reject(err) : resolve()))
 ));
 
+const post = (bookingId: string, event: string, key: string | null = null, args: any = {}) =>
+  fakeLedgerRpc(db)("rb_post_booking_ledger", { p_booking_id: bookingId, p_event: event, p_event_key: key, p_args: args });
+
+/** A completed booking of this buddy's, as the bookings table would hold it. */
+function completedBooking(id: string, totalUsd: number, over: Record<string, unknown> = {}) {
+  db.bookings[id] = {
+    id, buddy_id: BUDDY_PROFILE_ID, traveler_id: "traveller-1", status: "completed", total_usd: totalUsd,
+    deposit_usd: 60, cash_balance_usd: totalUsd - 60, cash_balance_confirmed_by_buddy: false,
+    booking_date: "2026-01-01", category: "city", city: "Cebu", country_code: "Testland",
+    duration_h: 4, tip_usd: 0, pricing_type: "hourly", ...over,
+  };
+}
+
 beforeEach(() => {
-  feeRuleRow = null;
-  feeRuleError = null;
   buddyLevel = "pro";
-  bookings = [{
-    id: "bk-1", status: "completed", total_usd: 200, deposit_usd: 60,
-    cash_balance_usd: 140, cash_balance_confirmed_by_buddy: false,
-    booking_date: "2026-01-01", category: "city", city: "Cebu",
-    duration_h: 4, tip_usd: 0, pricing_type: "hourly",
-  }];
+  absent = [];
+  erroring = null;
+  forbiddenReads = [];
+  db = emptyLedgerDb({
+    buddyProfiles: { [BUDDY_PROFILE_ID]: { user_id: USER_ID, buddy_level: "pro", country: "Testland" } },
+  });
 });
+
+/** Give the buddy a level, in the profile the route reads AND the one the ledger prices from. */
+function setLevel(level: string) {
+  buddyLevel = level;
+  db.buddyProfiles[BUDDY_PROFILE_ID].buddy_level = level;
+}
 
 const SUMMARY = "/api/rent-a-buddy/me/earnings/summary";
 
-describe("the fee percentage comes from the schedule of record", () => {
-  it("prices from the buddy's OWN level, and publishes which rate applied", async () => {
-    buddyLevel = "pro";
-    feeRuleRow = { buddy_level: "pro", platform_fee_percent: 15, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 };
+describe("the fee percentage comes from configuration, and says which", () => {
+  it("prices from the buddy's OWN level's schedule row, and publishes which rate applied", async () => {
+    setLevel("pro");
+    db.feeRules = { pro: 15, new: 25 };
+    completedBooking("bk-1", 200);
+    await post("bk-1", "booking_created");
 
     const res = await get(SUMMARY);
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(res.body.buddyLevel, "pro");
     assert.equal(res.body.platformFeePercent, 15);
-    assert.equal(res.body.estimatedPlatformFeeUsd, 30);   // 15 % of 200
+    assert.equal(res.body.platformFeeSource, "fee_schedule");
+    assert.equal(res.body.estimatedPlatformFeeUsd, 30);   // 15 % of 200, as LEDGERED
     assert.equal(res.body.estimatedBuddyEarningsUsd, 170);
   });
 
   it("follows the schedule when the operator changes it — no deploy, no literal", async () => {
-    buddyLevel = "new";
-    feeRuleRow = { buddy_level: "new", platform_fee_percent: 25, traveler_service_fee_usd: 0, traveler_service_fee_pct: 5 };
+    setLevel("new");
+    db.feeRules = { new: 25 };
+    completedBooking("bk-1", 200);
+    await post("bk-1", "booking_created");
 
     const res = await get(SUMMARY);
     assert.equal(res.status, 200, JSON.stringify(res.body));
@@ -192,55 +248,325 @@ describe("the fee percentage comes from the schedule of record", () => {
     assert.notEqual(res.body.platformFeePercent, 22, "22 was the deleted dashboard literal");
     assert.notEqual(res.body.platformFeePercent, 15, "15 was the deleted earnings-summary literal");
   });
+
+  it("a market override beats the level's row, and is named as the source", async () => {
+    setLevel("pro");
+    db.feeRules = { pro: 15 };
+    db.feeOverrides = [{ country_code: "Testland", city: null, category: null, platform_fee_percent: 8 }];
+
+    const res = await get(SUMMARY);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual([res.body.platformFeePercent, res.body.platformFeeSource], [8, "launch_control"]);
+  });
+
+  it("a level with NO fee row is the owner's default of 10 — and says it is the default", async () => {
+    // 'standard' is settable by the admin level route and has no schedule row.
+    setLevel("standard");
+    db.feeRules = { pro: 15 };
+    completedBooking("bk-1", 200);
+    await post("bk-1", "booking_created");
+
+    const res = await get(SUMMARY);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.platformFeePercent, 10);
+    assert.equal(res.body.platformFeeSource, "owner_default",
+      "the absence of a row must never be indistinguishable from a configured rate (M10)");
+    assert.equal(res.body.estimatedPlatformFeeUsd, 20);
+    assert.equal(res.body.estimatedBuddyEarningsUsd, 180);
+  });
+
+  it("never reads the fee schedule, the tips or the ledger tables from JavaScript", async () => {
+    setLevel("pro");
+    db.feeRules = { pro: 15 };
+    completedBooking("bk-1", 200);
+    await post("bk-1", "booking_created");
+    await get(SUMMARY);
+    assert.deepEqual(forbiddenReads, [],
+      "the handler read a money table itself — the fold and the commission belong to the two SQL functions");
+  });
 });
 
-describe("an unconfigured take rate is refused, not guessed", () => {
-  it("409s when the buddy's level has no fee row", async () => {
-    // 'standard' is settable by the admin level route and has no schedule row.
-    buddyLevel = "standard";
-    feeRuleRow = null;
+describe("ONE market: the rate quoted and the rate posted are resolved for the same place", () => {
+  // The defect (independent verification of PR #603): the quote resolved the
+  // rate for the buddy's PROFILE city while the posting resolved it for the
+  // city on the BOOKING row, which the canonical route takes from the request.
+  // A market override could then make the rate shown and the rate charged two
+  // different numbers. Both now resolve the market in SQL from the buddy.
+  it("a booking whose own city differs from the buddy's is posted at the rate the buddy is quoted", async () => {
+    setLevel("pro");
+    db.feeRules = { pro: 15 };
+    db.buddyProfiles[BUDDY_PROFILE_ID].city = "Cebu";
+    // An override for the city the REQUEST named, not the buddy's.
+    db.feeOverrides = [{ country_code: "Testland", city: "Elsewhere", category: null, platform_fee_percent: 3 }];
+    completedBooking("bk-1", 200, { city: "Elsewhere" });
+    const posted = await post("bk-1", "booking_created");
 
     const res = await get(SUMMARY);
-    assert.equal(res.status, 409, JSON.stringify(res.body));
-    assert.equal(res.body.error, "conflict");
-    assert.equal(
-      res.body.estimatedPlatformFeeUsd, undefined,
-      "no fee figure may be published when no fee is configured",
-    );
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(posted.data.fee_percent, res.body.platformFeePercent, "the rate posted differs from the rate quoted");
+    assert.equal(res.body.platformFeePercent, 15);
+    assert.equal(res.body.estimatedPlatformFeeUsd, 30, "the amount ledgered is the quoted rate of the price: 15 % of 200");
   });
 
-  it("500s when the fee table cannot be read", async () => {
-    feeRuleError = { message: "permission denied for table rent_buddy_fee_rules" };
+  it("an override on the BUDDY's city applies to both", async () => {
+    setLevel("pro");
+    db.feeRules = { pro: 15 };
+    db.buddyProfiles[BUDDY_PROFILE_ID].city = "Cebu";
+    db.feeOverrides = [{ country_code: "Testland", city: "Cebu", category: null, platform_fee_percent: 8 }];
+    completedBooking("bk-1", 200, { city: "Elsewhere", country_code: "Otherland" });
+    const posted = await post("bk-1", "booking_created");
 
     const res = await get(SUMMARY);
-    assert.equal(res.status, 500, JSON.stringify(res.body));
-    assert.equal(res.body.error, "db_error");
+    assert.deepEqual([res.body.platformFeePercent, res.body.platformFeeSource], [8, "launch_control"]);
+    assert.equal(posted.data.fee_percent, 8);
+    assert.equal(res.body.estimatedPlatformFeeUsd, 16);
   });
 
-  it("the two failures are distinguishable — that is the whole point", async () => {
-    buddyLevel = "standard";
-    feeRuleRow = null;
-    const absent = await get(SUMMARY);
-
-    feeRuleRow = null;
-    feeRuleError = { message: "connection reset" };
-    const unreadable = await get(SUMMARY);
-
-    assert.notEqual(
-      absent.status, unreadable.status,
-      "'no such level' and 'could not read the table' must not collapse into one answer — " +
-      "collapsing them is how a missing row became a deliberate 22 %",
-    );
+  it("the route sends the function no market at all", async () => {
+    const calls: Array<{ fn: string; args: any }> = [];
+    const seen = fakeLedgerRpc(db, { calls });
+    _setTestServiceClient({ ...serviceClient(), rpc: seen });
+    try {
+      const res = await get(SUMMARY);
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      const quote = calls.find((c) => c.fn === "rb_quote_booking");
+      assert.ok(quote, "the summary must read the rate from rb_quote_booking");
+      assert.equal(quote!.args.p_buddy_profile_id, BUDDY_PROFILE_ID);
+      assert.equal(quote!.args.p_unit_price_usd, null, "rate only: the summary prices nothing");
+      for (const k of Object.keys(quote!.args)) assert.equal(/city|country|market/i.test(k), false, `the route passed a market argument: ${k}`);
+    } finally {
+      _setTestServiceClient(serviceClient());
+    }
   });
+});
 
-  it("does not leak the schedule's table name to the client", async () => {
-    feeRuleError = { message: "permission denied for table rent_buddy_fee_rules" };
+describe("the fee AMOUNT is the fold of what was ledgered, not percent × total", () => {
+  it("a booking ledgered at an earlier rate keeps its fee when the schedule changes (M1)", async () => {
+    // M1 was "an ARBITRARY ledger row's rate applied to every completed
+    // booking". The mirror-image defect would be TODAY's rate applied to every
+    // completed booking. Neither: each booking carries the fee it was priced at.
+    setLevel("pro");
+    db.feeRules = { pro: 25 };
+    completedBooking("bk-old", 200);
+    await post("bk-old", "booking_created");      // ledgered at 25 → 50.00
+
+    db.feeRules = { pro: 15 };                    // the operator lowers the rate
+    completedBooking("bk-new", 100);
+    await post("bk-new", "booking_created");      // ledgered at 15 → 15.00
+
     const res = await get(SUMMARY);
-    assert.equal(String(res.body.message ?? "").includes("rent_buddy_fee_rules"), false);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.platformFeePercent, 15, "the rate quoted is the one that applies to the NEXT booking");
+    assert.equal(res.body.estimatedPlatformFeeUsd, 65, "50 + 15 as ledgered — not 15 % of 300 (45) and not 25 % of 300 (75)");
+    assert.equal(res.body.estimatedBuddyEarningsUsd, 235);
+    assert.equal(res.body.completed.totalUsd, 300);
+  });
 
-    buddyLevel = "standard";
-    feeRuleError = null;
-    const conflict = await get(SUMMARY);
-    assert.equal(String(conflict.body.message ?? "").includes("rent_buddy_fee_rules"), false);
+  it("a completed booking with no ledger is COUNTED and contributes no money — it is not priced on the fly", async () => {
+    setLevel("pro");
+    db.feeRules = { pro: 15 };
+    completedBooking("bk-1", 200);
+    await post("bk-1", "booking_created");
+    completedBooking("bk-unledgered", 500);       // no posting
+
+    const res = await get(SUMMARY);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.completed.count, 2);
+    assert.equal(res.body.completed.unledgeredCount, 1);
+    assert.equal(res.body.estimatedPlatformFeeUsd, 30, "the unledgered 500 was priced at a rate nobody recorded for it");
+    assert.equal(res.body.estimatedBuddyEarningsUsd, 170);
+  });
+
+  it("a summary ROW with no entries is still unledgered — counted by entries, not by rows", async () => {
+    // The defect: the count was `completed bookings with no summary row`. A
+    // booking with a summary row and no entries contributes $0 to every figure
+    // here and was not counted, so the buddy was shown a total that silently
+    // omitted it.
+    setLevel("pro");
+    db.feeRules = { pro: 15 };
+    completedBooking("bk-1", 200);
+    await post("bk-1", "booking_created");
+    completedBooking("bk-row-only", 500);
+    db.ledger["bk-row-only"] = { booking_id: "bk-row-only", total_booking_usd: 500, platform_fee_amount: 75 };   // a pre-2901 summary row
+
+    const res = await get(SUMMARY);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.completed.count, 2);
+    assert.equal(res.body.completed.unledgeredCount, 1, "a booking with a summary row and no entries was not counted");
+    assert.equal(res.body.estimatedPlatformFeeUsd, 30, "its row was not folded: the entries are the record");
+    assert.equal(res.body.isEstimated, true);
+  });
+
+  it("a completed booking with a price of 0 has no entries by design and is NOT counted as unledgered", async () => {
+    setLevel("pro");
+    completedBooking("bk-free", 0, { deposit_usd: 0, cash_balance_usd: 0 });
+    await post("bk-free", "booking_created");
+    const res = await get(SUMMARY);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.completed.count, 1);
+    assert.equal(res.body.completed.unledgeredCount, 0);
+  });
+
+  it("no commission on tips: a tip raises the tips total and leaves the fee alone (owner ruling 2026-10-04)", async () => {
+    setLevel("pro");
+    db.feeRules = { pro: 15 };
+    completedBooking("bk-1", 200);
+    await post("bk-1", "booking_created");
+    const tipped = await post("bk-1", "tip", "tip-1", { traveler_id: "traveller-1", amount_usd: 20, note: null });
+    assert.equal(tipped.data.ok, true, JSON.stringify(tipped.data));
+
+    const res = await get(SUMMARY);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual(res.body.tips, { total: 20, count: 1 });
+    assert.equal(res.body.tipCommissionPercent, 0);
+    assert.equal(res.body.estimatedPlatformFeeUsd, 30);
+    assert.equal(res.body.estimatedBuddyEarningsUsd, 170, "service earnings; the tip is reported beside them, whole");
+  });
+
+  it("reports NOTHING as collected — not the sum of deposit_usd (PAY-009)", async () => {
+    setLevel("pro");
+    db.feeRules = { pro: 15 };
+    completedBooking("bk-1", 200, { deposit_usd: 200, cash_balance_usd: 0 });   // full_in_app: the worst case
+    await post("bk-1", "booking_created");
+
+    const res = await get(SUMMARY);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.completed.inAppAmountCollected, 0);
+    assert.equal(res.body.completed.depositCollected, 0,
+      "the deprecated alias must carry what was collected, never the booking's deposit term");
+    // The deposit this (pre-3824-shaped) booking NAMES is still published, under
+    // #610's name for it — which proves the rows were read, and that the zeros
+    // above are not an empty answer.
+    assert.equal(res.body.completed.depositScheduled, 200);
+    assert.equal(res.body.completed.totalUsd, 200);
+    assert.equal(res.body.isEstimated, true);
+    assert.equal(res.body.warning, EARNINGS_NOT_COLLECTED_WARNING);
+    // The sentence about the CHARGE is #610's (lib/rentBuddyCollectedMoney.ts):
+    // one wording on every surface that reports a money total.
+    assert.ok(res.body.warning.includes(NOTHING_COLLECTED_WARNING), res.body.warning);
+    assert.match(res.body.warning, /No payment has been collected/);
+    assert.match(res.body.warning, /No deposit is taken/);
+    assert.match(res.body.warning, /Payout system not connected/);
+  });
+
+  // Reconciliation with #610. That change took "collected" from ONE module and
+  // this one took it from the fold of settlement entries; both are 0 today. The
+  // route publishes the module's answer, and SAYS SO if the fold ever disagrees
+  // — it must not quietly publish either a second definition or a swallowed
+  // settlement.
+  it("publishes the collected-money module's answer even if the fold reports a settlement, and logs the disagreement", async () => {
+    setLevel("pro");
+    db.feeRules = { pro: 15 };
+    completedBooking("bk-1", 200, { deposit_usd: 200, cash_balance_usd: 0 });
+    await post("bk-1", "booking_created");
+    const logged: any[] = [];
+    const original = logger.error.bind(logger);
+    (logger as any).error = (...a: any[]) => { logged.push(a); };
+    try {
+      _setTestServiceClient({
+        ...serviceClient(),
+        rpc: async (fn: string, args: any) => {
+          const r = await fakeLedgerRpc(db)(fn, args);
+          return fn === "rb_buddy_ledger_totals" ? { ...r, data: { ...r.data, inAppAmountCollectedUsd: 50 } } : r;
+        },
+      });
+      const res = await get(SUMMARY);
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assert.equal(res.body.completed.inAppAmountCollected, 0);
+      assert.equal(res.body.completed.depositCollected, 0);
+      assert.equal(res.body.estimatedBuddyEarningsUsd, 170, "the totals are still the fold's");
+    } finally {
+      (logger as any).error = original;
+      _setTestServiceClient(serviceClient());
+    }
+    const hit = logged.find((a) => /settlement entries that lib\/rentBuddyCollectedMoney\.ts does not read/.test(String(a[1])));
+    assert.ok(hit, `the disagreement was not logged: ${JSON.stringify(logged)}`);
+    assert.deepEqual([hit[0].ledgerSettledUsd, hit[0].published], [50, 0]);
+  });
+
+  // 3824 stores deposit_usd = 0 while no deposit is taken. The summary must
+  // carry that 0 as the scheduled deposit and still report the fold's earnings
+  // — a figure derived from the stored deposit would have gone to zero or below.
+  it("a booking made while no deposit is taken: depositScheduled 0, earnings unchanged, nothing collected", async () => {
+    setLevel("pro");
+    db.feeRules = { pro: 15 };
+    completedBooking("bk-new", 200, { deposit_usd: 0, cash_balance_usd: 0, payment_mode: "full_in_app" });
+    await post("bk-new", "booking_created");
+    const res = await get(SUMMARY);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual(
+      [res.body.completed.count, res.body.completed.totalUsd, res.body.completed.depositScheduled, res.body.completed.inAppAmountCollected, res.body.completed.depositCollected],
+      [1, 200, 0, 0, 0]);
+    assert.deepEqual([res.body.estimatedPlatformFeeUsd, res.body.estimatedBuddyEarningsUsd], [30, 170]);
+  });
+});
+
+describe("a commission or a total that cannot be read is refused, not guessed", () => {
+  it("503 ledger_unavailable when the totals function is absent — and no money figure at all", async () => {
+    absent = ["rb_buddy_ledger_totals"];
+    completedBooking("bk-1", 200);
+    const res = await get(SUMMARY);
+    assert.equal(res.status, 503, JSON.stringify(res.body));
+    assert.equal(res.body.error, "ledger_unavailable");
+    assert.equal(res.body.retryable, true);
+    for (const k of ["estimatedPlatformFeeUsd", "estimatedBuddyEarningsUsd", "platformFeePercent", "completed", "tips"]) {
+      assert.equal(res.body[k], undefined, `${k} was published although nothing could be read`);
+    }
+  });
+
+  it("503 ledger_unavailable when the commission function is absent", async () => {
+    absent = ["rb_quote_booking"];
+    const res = await get(SUMMARY);
+    assert.equal(res.status, 503, JSON.stringify(res.body));
+    assert.equal(res.body.error, "ledger_unavailable");
+    assert.equal(res.body.platformFeePercent, undefined, "no rate may be published when none could be resolved");
+  });
+
+  it("503 ledger_write_failed when a function errors", async () => {
+    erroring = "rb_quote_booking";
+    const res = await get(SUMMARY);
+    assert.equal(res.status, 503, JSON.stringify(res.body));
+    assert.equal(res.body.error, "ledger_write_failed");
+    assert.equal(res.body.platformFeePercent, undefined);
+  });
+
+  it("the two failures are distinguishable — and neither looks like the default", async () => {
+    absent = ["rb_quote_booking"];
+    const missing = await get(SUMMARY);
+    absent = [];
+    erroring = "rb_quote_booking";
+    const errored = await get(SUMMARY);
+    erroring = null;
+    setLevel("standard");
+    const defaulted = await get(SUMMARY);
+
+    assert.notEqual(missing.body.error, errored.body.error,
+      "'the function is not there' and 'the function failed' must not collapse into one answer");
+    assert.equal(defaulted.status, 200);
+    assert.equal(defaulted.body.platformFeeSource, "owner_default");
+    assert.notEqual(missing.status, defaulted.status,
+      "collapsing a failure into the default is how a missing row became a deliberate 22 %");
+  });
+
+  it("a buddy the database cannot place is a 4xx ledger_refused, retryable:false — not a 503 to retry for ever", async () => {
+    db.buddyProfiles = {};                       // rb_booking_market finds no payee
+    const res = await get(SUMMARY);
+    assert.equal(res.status, 404, JSON.stringify(res.body));
+    assert.equal(res.body.error, "ledger_refused");
+    assert.equal(res.body.refusal, "buddy_not_found");
+    assert.equal(res.body.retryable, false);
+    assert.equal(res.body.platformFeePercent, undefined);
+  });
+
+  it("does not leak the schedule's table name or the database's detail to the client", async () => {
+    erroring = "rb_quote_booking";
+    const res = await get(SUMMARY);
+    assert.equal(JSON.stringify(res.body).includes("rent_buddy_fee_rules"), false);
+    assert.equal("detail" in res.body, false);
+
+    erroring = "rb_buddy_ledger_totals";
+    const totals = await get(SUMMARY);
+    assert.equal(totals.status, 503);
+    assert.equal(JSON.stringify(totals.body).includes("rent_buddy_fee_rules"), false);
   });
 });

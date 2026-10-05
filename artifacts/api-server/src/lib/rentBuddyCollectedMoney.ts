@@ -26,8 +26,8 @@
  *
  * So the ledger row said nothing was collected while four aggregates over the
  * same bookings said a deposit was — and for `payment_mode = 'full_in_app'`,
- * `deposit_usd` IS the whole booking total
- * (`artifacts/api-server/src/routes/rentABuddy.ts:2162#const depositUsd`), so
+ * `deposit_usd` WAS the whole booking total on every booking written before
+ * migration 3824 (the booking route set `depositUsd = totalUsd`; see the foot), so
  * they claimed the ENTIRE booking value had been charged. Nothing had:
  * `pay-deposit` and `pay-full` both return 503 `payment_stub:true`, there is no
  * processor, and no row in this tree can record a settlement.
@@ -135,4 +135,35 @@ export function withNothingCollected(agg: Record<string, any>): Record<string, a
       };
     }),
   };
+}
+
+/**
+ * What ONE booking says would be charged in app — the "scheduled" figure the
+ * aggregates keep beside the collected zero.
+ *
+ * ── WHY IT IS NOT SIMPLY `deposit_usd` ──────────────────────────────────────
+ * It was, and for every booking written before migration 3824 the two are the
+ * same number: a `full_in_app` booking stored its whole price as `deposit_usd`
+ * (see the header), and a `deposit_plus_cash` booking stored its deposit share.
+ *
+ * 3824 changed what is STORED. Under the owner's ruling of 2026-10-04 no
+ * deposit is taken in the first release, so a new booking carries
+ * `deposit_usd = 0` in either mode (`rb_booking_payment_terms`). For
+ * `deposit_plus_cash` that is the truth: the whole price is cash. For
+ * `full_in_app` it left nothing saying the price is due in app — and the
+ * breakdown's net, `scheduled + cash - fees`, would have come out NEGATIVE for
+ * exactly the buddies whose bookings are paid entirely in app. That is the
+ * wrong answer the paragraph above ("WHAT IS NOT ZEROED") exists to prevent,
+ * arriving by a different road.
+ *
+ * So the in-app share is read from the payment MODE: the whole price for
+ * `full_in_app`, the stored deposit otherwise. This is the expression the
+ * operator analytics already used for the same figure; it now has one home.
+ * `rb_buddy_earnings_summary` carries the same CASE in SQL (3824, replacing
+ * 3530's body), so the two paths of the breakdown still answer alike.
+ */
+export function scheduledInAppUsd(booking: { payment_mode?: unknown; total_usd?: unknown; deposit_usd?: unknown }): number {
+  return booking.payment_mode === "full_in_app"
+    ? Number(booking.total_usd ?? 0)
+    : Number(booking.deposit_usd ?? 0);
 }

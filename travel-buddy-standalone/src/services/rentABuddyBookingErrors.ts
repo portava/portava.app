@@ -133,7 +133,7 @@ export function bookingErrorCopy(
     const known = BOOKING_UNAVAILABLE_COPY[code];
     if (known) return known;
     const actionable = BOOKING_ACTIONABLE_COPY[code];
-    if (actionable) return actionable; const ineligible = BOOKING_INELIGIBLE_COPY[code]; if (ineligible) return ineligible; const knownFailure = BOOKING_FAILURE_COPY[code]; if (knownFailure) return knownFailure; // census-trust §31: one line, so cited lines keep their numbers
+    if (actionable) return actionable; const ineligible = BOOKING_INELIGIBLE_COPY[code]; if (ineligible) return ineligible; const knownFailure = BOOKING_FAILURE_COPY[code]; if (knownFailure) return knownFailure; const ledger = ledgerErrorCopy(code, fallback); if (ledger) return ledger; // census-trust §31 · payments PAY-T12: one line, so cited lines keep their numbers
   }
   return errorCopy(code, fallback ?? GENERIC_BOOKING_ERROR);
 }
@@ -212,3 +212,44 @@ const BOOKING_FAILURE_COPY: Record<string, string> = {
 // BOOKING_ACTIONABLE_COPY above) — the location checks age and no date of
 // birth was found on the profile. "Couldn't find", not "has none": the server
 // sends the same code when it could not read one.
+
+// ── The money record's own codes (payments PAY-T12) ──────────────────────────
+//
+// Since migration 3824 a booking's price, its earnings ledger, a tip, add-ons
+// and a payout hold/release are each ONE database function, and the API answers
+// by name when one cannot be done:
+//
+//   503 `ledger_unavailable`   the function is not there (the migration is not
+//                              applied yet). Nothing was changed. Retryable.
+//   503 `ledger_write_failed`  the call errored. Nothing was changed. Retryable.
+//   4xx `ledger_refused`       the database looked and said NO — a permanent
+//                              answer for the request as sent. NOT retryable.
+//
+// None of the three was in any map above, so each fell through to
+// GENERIC_BOOKING_ERROR: "Something went wrong on our side … Please try again."
+// For the first two that hid the one fact that matters on a money screen
+// (nothing was charged); for the third it invited a retry that can never work.
+//
+// The two retryable codes defer to the CALLER's sentence when it has one — the
+// earnings screen's "this is not a zero balance" and the checkout's "the
+// commission couldn't be loaded" say more than anything generic can. The
+// permanent one never defers: a caller's fallback usually ends "try again".
+export const LEDGER_ERROR_COPY: Readonly<Record<string, string>> = {
+  ledger_unavailable:
+    "Rent a Buddy's records aren't available right now, so nothing was changed or charged. Please try again in a little while.",
+  ledger_write_failed:
+    "We couldn't reach Rent a Buddy's records just now, so nothing was changed or charged. Please try again.",
+  ledger_refused:
+    "This can't be done as it stands, and trying again won't change that. Nothing was changed or charged. If that looks wrong, please contact support.",
+};
+
+/** A `ledger_*` code after which trying again cannot help. */
+export function isLedgerRefusal(code: string | null | undefined): boolean {
+  return code === 'ledger_refused';
+}
+
+function ledgerErrorCopy(code: string, fallback?: string): string | null {
+  if (!Object.prototype.hasOwnProperty.call(LEDGER_ERROR_COPY, code)) return null;
+  if (isLedgerRefusal(code)) return LEDGER_ERROR_COPY[code]!;
+  return fallback ?? LEDGER_ERROR_COPY[code]!;
+}

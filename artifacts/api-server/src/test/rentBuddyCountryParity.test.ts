@@ -30,6 +30,7 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
+import { acceptingLedgerRpc } from "./helpers/fakeRentBuddyLedgerRpc.js";
 import rentABuddyRouter from "../routes/rentABuddy.js";
 import rentABuddyMarketplaceRouter from "../routes/rentABuddyMarketplace.js";
 import rentABuddySpecRouter from "../routes/rentABuddySpec.js";
@@ -316,6 +317,11 @@ function makeClient() {
 
   return {
     from: (table: string) => fakeTable(table),
+    // The earnings ledger is one SQL function since migration 3824, and a
+    // booking whose ledger cannot be posted is REFUSED (there is no JavaScript
+    // fallback). This suite is not about the ledger, so the function answers
+    // "posted"; every other function stays absent, as it was with no `.rpc`.
+    rpc: acceptingLedgerRpc(),
     auth: {
       getUser: async (token: string) => {
         if (token === TRAVELER_TOKEN) return { data: { user: { id: TRAVELER_ID } }, error: null };

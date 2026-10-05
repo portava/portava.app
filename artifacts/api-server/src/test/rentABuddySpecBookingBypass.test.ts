@@ -38,6 +38,7 @@ import express from "express";
 import { _setTestClient, _clearTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import { makeFailClosedClient, type FakeClientSpec } from "./helpers/failClosedSupabase.js";
+import { acceptedLedgerPosting } from "./helpers/fakeRentBuddyLedgerRpc.js";
 
 const TOKEN    = "spec-bypass-token";
 const TRAVELER = "aaaa0000-0000-4000-8000-00000000000a";
@@ -88,6 +89,10 @@ function world(w: World): FakeClientSpec {
       identity_verifications: w.verifications ?? [],
     },
     inserted: {}, updated: {},
+    // The earnings ledger is one SQL function since migration 3824, and a
+    // booking whose ledger cannot be posted is REFUSED. This suite is about the
+    // identity gate, so the function answers "posted".
+    rpc: { rb_post_booking_ledger: acceptedLedgerPosting },
   };
   if (w.verificationsUnreadable) {
     spec.failOn = (ctx) => (ctx.table === "identity_verifications" ? { message: "down", code: "57P01" } : null);
@@ -101,6 +106,27 @@ function withIlike(c: any) {
   c.from = (table: string) => {
     const b = from(table);
     if (typeof b.ilike !== "function") b.ilike = (col: string, val: unknown) => b.filter(col, "ilike", val);
+    return b;
+  };
+  return c;
+}
+
+/**
+ * A real `INSERT … RETURNING` always carries the generated primary key; this
+ * double hands back the payload as given, with none. The route posts the
+ * booking's earnings ledger by that id (migration 3824) and refuses a booking
+ * it cannot ledger, so the double is given the id a database would have minted.
+ */
+function withGeneratedBookingIds(c: any) {
+  const from = c.from.bind(c);
+  let n = 0;
+  const withId = (row: any) => (row && row.id === undefined ? Object.assign(row, { id: `dddd0000-0000-4000-8000-${String(++n).padStart(12, "0")}` }) : row);
+  c.from = (table: string) => {
+    const b = from(table);
+    if (table === "rent_buddy_bookings") {
+      const insert = b.insert.bind(b);
+      b.insert = (payload: any) => insert(Array.isArray(payload) ? payload.map(withId) : withId(payload));
+    }
     return b;
   };
   return c;
@@ -135,7 +161,7 @@ after(async () => {
 afterEach(() => { _clearTestClient(); _setTestServiceClient(null); });
 
 async function requestBooking(spec: FakeClientSpec, body: Record<string, unknown> = {}) {
-  const c = withIlike(makeFailClosedClient(spec));
+  const c = withGeneratedBookingIds(withIlike(makeFailClosedClient(spec)));
   _setTestClient(c, true);
   _setTestServiceClient(c);
   const res = await fetch(`${base}/rent-a-buddy/buddies/${BUDDY_PROF}/request`, {
@@ -241,7 +267,7 @@ describe("GET /rent-a-buddy/me/eligibility — the reason it reports during an o
   });
 
   async function eligibility(spec: FakeClientSpec) {
-    const c = withIlike(makeFailClosedClient(spec));
+    const c = withGeneratedBookingIds(withIlike(makeFailClosedClient(spec)));
     _setTestClient(c, true);
     _setTestServiceClient(c);
     const res = await fetch(`${elBase}/rent-a-buddy/me/eligibility?city=Seoul&category=city`, {

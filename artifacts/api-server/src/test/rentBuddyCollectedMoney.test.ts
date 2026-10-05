@@ -87,8 +87,9 @@ import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import rentABuddyRouter, { foldEarningsRows } from "../routes/rentABuddy.js";
 import marketplaceRouter from "../routes/rentABuddyMarketplace.js";
-import { collectedInAppUsd, withNothingCollected } from "../lib/rentBuddyCollectedMoney.js";
+import { collectedInAppUsd, scheduledInAppUsd, withNothingCollected } from "../lib/rentBuddyCollectedMoney.js";
 import { createEarningsLedgerEntry } from "../lib/rentBuddyEarningsLedger.js";
+import { emptyLedgerDb, fakeLedgerRpc, type FakeLedgerDb } from "./helpers/fakeRentBuddyLedgerRpc.js";
 
 process.env.TZ = "UTC";
 
@@ -232,9 +233,36 @@ const S1_BOOKINGS = [
   fullInAppBooking("s1-b", 400),
 ];
 
-function marketplaceClient(bookings: any[]): any {
+/**
+ * The ledger behind S1 — ADDED WHEN THIS FILE MET MIGRATION 3824 (PR #603).
+ *
+ * When these cases were written the summary route summed booking rows in
+ * JavaScript and the ledger writer upserted a row from JavaScript, so a client
+ * that answered `from()` was the whole world. 3824 moved both into SQL: the
+ * route reads `rb_buddy_ledger_totals` (the fold of the ledger entries) and the
+ * writer is `rb_post_booking_ledger`. A client with no `rpc` now gets the
+ * route's REFUSAL (503), which would satisfy none of the assertions below — so
+ * the fixture, and only the fixture, grew an `rpc`.
+ *
+ * It is helpers/fakeRentBuddyLedgerRpc.ts, the in-memory model of those
+ * functions, over the SAME bookings at the SAME 20 % rate. Every assertion in
+ * S1 is the one #610 wrote, with the same numbers. The functions themselves are
+ * executed against PostgreSQL — after 3530 and 3824 are both applied — by
+ * src/test/db/rentBuddyLedgerPosting.db.test.ts, group N.
+ */
+function s1Ledger(bookings: any[]): FakeLedgerDb {
+  const db = emptyLedgerDb({
+    buddyProfiles: { [BUDDY_PROFILE_ID]: { user_id: USER_ID, buddy_level: "new" } },
+    feeRules: { [FEE_ROW.buddy_level]: FEE_ROW.platform_fee_percent },
+  });
+  for (const b of bookings) db.bookings[b.id] = { ...b, buddy_id: BUDDY_PROFILE_ID, traveler_id: "traveller-1" };
+  return db;
+}
+
+function marketplaceClient(bookings: any[], ledger: FakeLedgerDb = s1Ledger(bookings)): any {
   return {
     auth: { getUser: () => Promise.resolve({ data: { user: null }, error: null }) },
+    rpc: (fn: string, args: any) => fakeLedgerRpc(ledger)(fn, args),
     from(table: string) {
       switch (table) {
         case "feature_flags":
@@ -261,9 +289,19 @@ function marketplaceClient(bookings: any[]): any {
 }
 
 describe("S1 — GET /me/earnings/summary reports nothing collected", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     _setTestClient(userClient(), true);
-    _setTestServiceClient(marketplaceClient(S1_BOOKINGS));
+    // The two bookings are LEDGERED, by the real writer, before the route is
+    // asked about them — as every booking is since 3824 (creation posts its
+    // ledger or is refused). An unledgered booking would be counted and priced
+    // by nothing, and (3) below would read 0, not 180 / 720.
+    const ledger = s1Ledger(S1_BOOKINGS);
+    const client = marketplaceClient(S1_BOOKINGS, ledger);
+    for (const booking of S1_BOOKINGS) {
+      const posted = await createEarningsLedgerEntry(client, ledger.bookings[booking.id], BUDDY_PROFILE_ID);
+      assert.equal(posted.status, "written", JSON.stringify(posted));
+    }
+    _setTestServiceClient(client);
   });
 
   it("inAppAmountCollected is 0, not the $900 of full-in-app bookings", async () => {
@@ -311,38 +349,25 @@ describe("S1 — GET /me/earnings/summary reports nothing collected", () => {
     // `createEarningsLedgerEntry` is driven over the same two bookings and its
     // upserted rows are summed; the aggregate is asked the same question. The
     // numbers disagreed before this change: 0 against 900.
-    const writes: Array<{ table: string; payload: any }> = [];
-    const recorder: any = {
-      from(t: string) {
-        const b: any = {
-          select: () => b, eq: () => b,
-          maybeSingle: () => Promise.resolve(
-            t === "rent_buddy_profiles"
-              ? { data: { user_id: USER_ID, buddy_level: "new" }, error: null }
-              : { data: t === "rent_buddy_fee_rules" ? FEE_ROW : null, error: null },
-          ),
-          upsert(payload: any) { writes.push({ table: t, payload }); return b; },
-          then: (res: (v: any) => any) => Promise.resolve(
-            t === "rent_buddy_fee_rules"
-              ? { data: FEE_ROW, error: null }
-              : { data: null, error: null },
-          ).then(res),
-        };
-        return b;
-      },
-    };
+    //
+    // (PR #603) The writer no longer upserts from JavaScript: it is ONE call to
+    // rb_post_booking_ledger, which writes the row in the database. So the rows
+    // are read from the ledger that call wrote into, instead of from a recorder
+    // of `upsert` payloads. Same writer function, same bookings, same columns,
+    // same expected numbers.
+    const ledger = s1Ledger(S1_BOOKINGS);
+    const client = marketplaceClient(S1_BOOKINGS, ledger);
 
     for (const booking of S1_BOOKINGS) {
       const result = await createEarningsLedgerEntry(
-        recorder, { ...booking, traveler_id: "traveller-1" }, BUDDY_PROFILE_ID,
+        client, ledger.bookings[booking.id], BUDDY_PROFILE_ID,
       );
       assert.equal(result.status, "written", JSON.stringify(result));
     }
 
-    const ledgerRows = writes
-      .filter((w) => w.table === "rent_buddy_earnings_ledger")
-      .map((w) => w.payload);
+    const ledgerRows = S1_BOOKINGS.map((b) => ledger.ledger[b.id]).filter(Boolean);
     assert.equal(ledgerRows.length, 2, "both bookings must have produced a ledger row");
+    _setTestServiceClient(client);
 
     const ledgerCollected = ledgerRows.reduce((n, r) => n + Number(r.in_app_amount_collected), 0);
     const ledgerScheduled = ledgerRows.reduce((n, r) => n + Number(r.deposit_amount), 0);
@@ -416,6 +441,51 @@ describe("S2a — foldEarningsRows (the pagination path)", () => {
     assert.equal(summary.totalCashConfirmedUsd, 0);
     assert.equal(summary.totalNetUsd, 480);
     assert.ok(summary.totalNetUsd > 0, "a net derived from the collected zero would be -120");
+  });
+
+  // ── Added with migration 3824 (PR #603) ────────────────────────────────────
+  // The case above is green for a booking that STORES its whole price as
+  // `deposit_usd`. 3824 stops storing that: under the owner's ruling of
+  // 2026-10-04 no deposit is taken, so a new booking carries `deposit_usd = 0`
+  // in either mode, and a full-in-app one carries `cash_balance_usd = 0` too.
+  // Reading the scheduled amount from `deposit_usd` would then give
+  // `0 + 0 - 120` — the same negative balance, by a different road, with the
+  // case above still passing. MEASURED before the fold was changed: -120.
+  it("a negative net is impossible for a full-in-app booking stored with NO deposit either", () => {
+    const summary = foldEarningsRows(
+      [fullInAppBooking("no-deposit", 600, { deposit_usd: 0 })], 0.2, new Date("2026-06-01T00:00:00Z"),
+    );
+    assert.equal(summary.totalInAppUsd, 0, "still nothing collected");
+    assert.equal(summary.totalInAppScheduledUsd, 600, "the whole price is due in app: that is what full_in_app means");
+    assert.equal(summary.totalCashConfirmedUsd, 0);
+    assert.equal(summary.totalNetUsd, 480);
+    assert.notEqual(summary.totalNetUsd, -120, "-120 is what `deposit_usd + cash - fees` gives for this row");
+    assert.equal(summary.monthlyBreakdown[0].inApp, 0);
+    assert.equal(summary.monthlyBreakdown[0].inAppScheduled, 600);
+    assert.equal(round2(summary.monthlyBreakdown[0].totalUsd), 480);
+  });
+
+  it("a deposit-plus-cash booking stored with no deposit is ALL cash: scheduled 0, net unchanged", () => {
+    const summary = foldEarningsRows([
+      { id: "dpc", status: "completed", payment_mode: "deposit_plus_cash",
+        total_usd: 500, deposit_usd: 0, cash_balance_usd: 500,
+        completed_at: "2026-03-20T10:00:00+00:00", booking_date: "2026-03-20" },
+    ], 0.2, new Date("2026-06-01T00:00:00Z"));
+    assert.deepEqual(
+      [summary.totalInAppUsd, summary.totalInAppScheduledUsd, summary.totalCashConfirmedUsd, summary.totalNetUsd],
+      [0, 0, 500, 400]);
+  });
+
+  it("for every booking written BEFORE 3824 the scheduled amount is the number it always was", () => {
+    // The mode-based reading must not move any existing figure: a full-in-app
+    // row stored deposit = total, a deposit-plus-cash row stored its share, and
+    // a row with no payment mode at all falls back to its stored deposit.
+    assert.equal(scheduledInAppUsd(fullInAppBooking("old", 600)), 600);
+    assert.equal(scheduledInAppUsd({ payment_mode: "deposit_plus_cash", total_usd: 500, deposit_usd: 150 }), 150);
+    assert.equal(scheduledInAppUsd({ payment_mode: null, total_usd: 500, deposit_usd: 150 }), 150);
+    assert.equal(scheduledInAppUsd({ total_usd: 500 }), 0);
+    // …and the three-row fixture above still sums to the 1050 it always did.
+    assert.equal(ROWS.reduce((n, r) => n + scheduledInAppUsd(r), 0), 1050);
   });
 });
 
@@ -629,6 +699,48 @@ describe("S3 — rb_buddy_earnings_summary's installed body claims no collection
       "a newly created function is EXECUTE-to-PUBLIC by default");
     assertSql(sql, file, /GRANT EXECUTE ON FUNCTION public\.rb_buddy_earnings_summary\(uuid, numeric\) TO service_role;/,
       "service_role must keep being able to call it");
+  });
+
+  // ── Added with migration 3824 (PR #603) ────────────────────────────────────
+  // 3824 sorts after 3530 and re-states the function, so the four cases around
+  // this one now read 3824's body — which is what they were written to catch: a
+  // later file replacing the definition. These pin what 3824 is ALLOWED to
+  // differ in, and that 3530 itself was not edited to make room.
+  it("the last definition reads the in-app share from the payment MODE, from a qualified table, with pg_temp last", () => {
+    const { file, sql } = lastDefinitionOfEarningsSummary();
+    const start = sql.indexOf("CREATE OR REPLACE FUNCTION public.rb_buddy_earnings_summary");
+    const body = sql.slice(start, sql.indexOf("\n$$;", start));
+
+    // 3824 stores deposit_usd = 0 while no deposit is taken; a scheduled amount
+    // read from deposit_usd alone makes totalNetUsd negative for full_in_app.
+    assertSql(body, file, /CASE WHEN b\.payment_mode::text = 'full_in_app'\s+THEN COALESCE\(b\.total_usd, 0\)::numeric\s+ELSE COALESCE\(b\.deposit_usd, 0\)::numeric\s+END\s+AS in_app_scheduled/,
+      "the in-app share must be the whole price for full_in_app and the stored deposit otherwise");
+    assertSql(body, file, /FROM public\.rent_buddy_bookings b/, "the table must be schema-qualified");
+    assertSql(body, file, /SET search_path TO 'public', pg_temp\n/,
+      "pg_temp must be spelled out LAST: with `public` alone it is searched first for relations");
+    // The assertions above this case test the whole FILE. These repeat the
+    // three that matter on the function's own text, so that some other
+    // function in the same file cannot satisfy them on its behalf.
+    assertSql(body, file, /SECURITY DEFINER/, "this function, not a neighbour, must be SECURITY DEFINER");
+    assertSql(body, file, /'totalInAppUsd',\s*0::numeric/, "this function's collected total must be a literal 0");
+    assertSql(body, file, /'totalNetUsd',\s*t\.total_in_app_scheduled \+ t\.total_cash - t\.total_fees/,
+      "this function's net must keep deriving from the scheduled amount");
+  });
+
+  it("3530's own definition was not edited to make room, and it is exactly what 3824's rollback restores", () => {
+    const m3530 = readFileSync(join(MIGRATIONS_DIR, "3530_rb_earnings_summary_nothing_collected.sql"), "utf8");
+    const rollback = readFileSync(
+      resolve(MIGRATIONS_DIR, "../../../../db/rollback/2026-10-04-3824-rent-buddy-ledger-posting-rollback.sql"), "utf8");
+    const def = /CREATE OR REPLACE FUNCTION public\.rb_buddy_earnings_summary\([\s\S]*?\n\$\$;\n/;
+    const in3530: string = def.exec(m3530)?.[0] ?? "";
+    const inRollback: string = def.exec(rollback)?.[0] ?? "";
+    assert.ok(in3530 !== "" && inRollback !== "", "the function must be defined in 3530 and restored by 3824's rollback");
+
+    assertSql(in3530, "3530", /COALESCE\(b\.deposit_usd, 0\)::numeric\s+AS in_app_scheduled/,
+      "3530 reads deposit_usd, as merged; the mode-based reading belongs to 3824");
+    assertNotSql(in3530, "3530", /payment_mode/, "3530's function must not have been edited to carry 3824's change");
+    assertSql(in3530, "3530", /SET search_path TO 'public'\n/, "3530's pin is the one it was merged with");
+    assert.equal(inRollback, in3530, "3824's rollback must restore 3530's definition exactly, not a retyped copy");
   });
 
   it("2330's own bytes are untouched — an applied migration is a frozen artifact", () => {

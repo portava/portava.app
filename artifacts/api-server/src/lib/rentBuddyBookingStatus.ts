@@ -98,3 +98,21 @@ export const THREAD_ALLOWED_STATUSES = [
 export function isOneOf(statuses: readonly string[], status: unknown): boolean {
   return typeof status === "string" && statuses.includes(status);
 }
+
+/**
+ * How long a buddy has to answer a booking request before the request sweeper
+ * (lib/rentBuddyRequestSweeper.ts) moves it to `expired`.
+ *
+ * ── ROUTINE DECISION, 2026-10-04 (docs/rent-buddy-product.md, REV-050) ──────
+ * The product document said 24 hours; the canonical route
+ * (POST /rent-a-buddy/bookings) wrote 48. They now agree on 24, for three
+ * reasons: the only shared helper, `getBookingExpiresAt` (package bookings),
+ * already capped a request at 24 hours, so 48 was one path disagreeing with
+ * the other; a traveller planning a trip gets an answer a day sooner; and when
+ * a payment hold exists (PAY-T09) this window is how long a traveller's card
+ * authorisation is kept waiting on someone else's reply — shorter is the
+ * conservative bound. Package bookings may expire SOONER (15 minutes for a
+ * buddy who is available now, 1 hour for a same-day booking); nothing expires
+ * later.
+ */
+export const BUDDY_ACCEPT_WINDOW_HOURS = 24;

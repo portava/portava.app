@@ -37,6 +37,7 @@ import express from "express";
 import { createClient } from "@supabase/supabase-js";
 import { _setTestClient, _clearTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
+import { acceptedLedgerPosting } from "./helpers/fakeRentBuddyLedgerRpc.js";
 
 const SUPA_URL = "http://supabase.test";
 const SUPA_KEY = "test-service-role-key";
@@ -184,8 +185,19 @@ function responder(f: Fixture): Responder {
     }
     if (c.path === "/rest/v1/buddy_availability_exceptions") return [];
     if (c.path === "/rest/v1/rent_buddy_bookings" && c.method === "POST") {
-      return [{ id: "new-booking-1", city: CITY, category: "city" }];
+      // ONE OBJECT, not a one-row array: the route's insert is `.select().single()`,
+      // for which PostgREST answers a single object. An array here left the route
+      // holding a "booking" with no `id` — harmless while nothing after the insert
+      // needed the id, and a refusal now that the ledger is posted for it.
+      return { id: "new-booking-1", city: CITY, category: "city" };
     }
+    // The booking's earnings ledger is posted by one SQL function before the
+    // route answers (migration 3824), and a booking whose ledger cannot be
+    // posted is withdrawn and refused. This file is about the policy reads, so
+    // the function answers "posted" — what PostgREST returns for a jsonb
+    // function is the object itself. Without this line the catch-all `[]` below
+    // is a MALFORMED answer and both "allowed" cases would be the 503 refusal.
+    if (c.path === "/rest/v1/rpc/rb_post_booking_ledger" && c.method === "POST") return acceptedLedgerPosting(c.body).data;
     return [];
   };
 }
@@ -228,6 +240,11 @@ describe("A: the shorthand creation path reads rent_buddy_city_restrictions", ()
 
     assert.equal(res.status, 201, `expected 201, got ${res.status}: ${JSON.stringify(res.body)}`);
     assert.equal(bookingsInserted().length, 1);
+    assert.deepEqual(
+      calls.filter((c) => c.path === "/rest/v1/rpc/rb_post_booking_ledger").map((c) => c.body),
+      [{ p_booking_id: "new-booking-1", p_event: "booking_created", p_event_key: null, p_args: {} }],
+      "the booking's ledger is posted once, for the row that was inserted",
+    );
   });
 
   it("an UNREADABLE restrictions table refuses this booking rather than allowing it", async () => {

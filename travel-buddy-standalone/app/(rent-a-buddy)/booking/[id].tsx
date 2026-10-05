@@ -475,9 +475,12 @@ export default function BookingDetail() {
   const isActive = booking.status === 'in_progress';
   const isCompleted = booking.status === 'completed';
   const isCancellable = booking.status === 'requested' || booking.status === 'scheduled';
-  const cashBalance = Math.round(booking.totalUsd * 0.7);
-  const deposit = Math.round(booking.totalUsd * 0.3);
-  const serviceFee = Math.round(booking.totalUsd * 0.12);
+  // Payments PAY-055 / PAY-009. Three figures used to be INVENTED here — a
+  // "deposit" of 30 %, a "service fee" of 12 % and a "cash to Buddy" of 70 % of
+  // the total — none of which the server holds in that form, and two of which
+  // describe money this release does not take: there is no deposit (owner
+  // ruling 2026-10-04) and nothing is charged through the app. The summary now
+  // shows the one figure the booking carries, and says what is and is not taken.
 
   return (
     <View style={styles.page}>
@@ -537,46 +540,27 @@ export default function BookingDetail() {
         {/* Meetup plan: map placeholder + route steps */}
         <MeetupBlock city={booking.city} />
 
-        {/* Cash balance reminder */}
-        {cashBalance > 0 && booking.status !== 'cancelled' && (
-          <View style={[styles.cashBanner, { marginHorizontal: space.lg, marginTop: space.md }]}>
-            <AlertTriangle size={16} color={color.warn} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.cashTitle}>Cash balance reminder</Text>
-              <Text style={styles.cashSub}>
-                ${cashBalance} is due in cash to your Buddy at the end of the meetup. Keep exact change if possible.
-              </Text>
-            </View>
-          </View>
-        )}
-
         {/* Payment summary */}
         <View style={{ paddingHorizontal: space.lg, marginTop: space.lg }}>
           <Text style={styles.sectionHeading}>Payment summary</Text>
           <TravelCard style={{ marginTop: space.sm }}>
             <View style={styles.priceRow}>
-              <Text style={styles.priceKey}>Subtotal</Text>
-              <Text style={styles.priceVal}>${booking.totalUsd}</Text>
+              <Text style={styles.priceKey}>Service price</Text>
+              <Text style={styles.priceVal} testID="booking-service-price">${booking.totalUsd}</Text>
             </View>
             <View style={styles.priceRow}>
               <Text style={styles.priceKey}>Deposit</Text>
-              <Text style={styles.priceVal}>${deposit}</Text>
+              <Text style={styles.priceVal} testID="booking-deposit">None taken</Text>
             </View>
             <View style={styles.priceRow}>
-              <Text style={styles.priceKey}>Service fee</Text>
-              <Text style={styles.priceVal}>${serviceFee}</Text>
+              <Text style={styles.priceKey}>Charged through the app</Text>
+              <Text style={styles.priceVal} testID="booking-charged-in-app">$0</Text>
             </View>
-            {cashBalance > 0 && (
-              <View style={styles.priceRow}>
-                <Text style={[styles.priceKey, { color: color.warn }]}>Cash to Buddy</Text>
-                <Text style={[styles.priceVal, { color: color.warn }]}>${cashBalance}</Text>
-              </View>
-            )}
           </TravelCard>
           <View style={styles.paymentDisclosure}>
             <Info size={12} color={color.deep} />
             <Text style={styles.paymentDisclosureText}>
-              No payment is charged through the app. Payment is agreed directly with your Buddy after booking confirmation.
+              No payment is charged through the app and no deposit is taken. Payment is agreed directly with your Buddy after booking confirmation. The platform commission comes out of your Buddy's earnings — nothing is added to this price.
             </Text>
           </View>
         </View>

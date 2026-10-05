@@ -1,5 +1,5 @@
 /**
- * rent_buddy_earnings_ledger — the single per-booking fee-breakdown writer.
+ * rent_buddy_earnings_ledger — the booking-creation side of the earnings ledger.
  *
  * ── WHY THIS IS A SHARED MODULE ─────────────────────────────────────────────
  * Five routes INSERT into rent_buddy_bookings:
@@ -10,208 +10,358 @@
  *   rentABuddyMarketplace.ts offer-accept
  *   rentABuddyMarketplace.ts package-book
  *
- * The ledger writer lived as a module-private helper inside
- * rentABuddyMarketplace.ts and was therefore reachable only from the last two.
- * `GET /rent-a-buddy/me/earnings/ledger` reads that table and nothing else, so
- * for a buddy whose bookings came through the canonical route — which is the
- * ordinary way a booking is made — the ledger was permanently empty and the
- * endpoint returned `{ ledger: [], total: 0 }` no matter how much work they did.
+ * The ledger writer once lived as a module-private helper inside
+ * rentABuddyMarketplace.ts and was reachable only from the last two, so a buddy
+ * booked the ordinary way saw a permanently empty ledger. All five share this.
  *
- * Extracting it here makes all five paths share one implementation, so the fee
- * percentages, the traveller service fee and the gross/net arithmetic cannot
- * drift between them.
+ * ── WHAT CHANGED (payments PAY-050 / PAY-055 / PAY-018) ─────────────────────
+ * This function used to DO the ledger: it read `rent_buddy_fee_rules`, computed
+ * the fee and the net in JavaScript floats, upserted the entries, and then
+ * upserted the summary row in a SECOND statement — after the booking had
+ * committed, with every caller swallowing the result
+ * (`.catch(() => {})`). So the entries could exist without their summary, a
+ * booking could exist with neither, and the split was arithmetic done in the
+ * API process.
  *
- * ── THE TAKE RATE COMES FROM ONE PLACE, AND IT CAN REFUSE (M1 / M10) ────────
- * This module used to carry `DEFAULT_PLATFORM_FEE_PERCENT = 22` and price a
- * booking at it whenever the buddy's level had no fee row. That literal is
- * gone. `lib/rentBuddyFeeSchedule.ts` is now the only reader of
- * `rent_buddy_fee_rules`, and it returns a three-state result; a booking whose
- * fee cannot be resolved gets NO ledger row rather than a row priced on a
- * guess. See that module's header for why a numeric fallback is the defect and
- * not the safety net.
+ * Now it makes ONE call. `public.rb_post_booking_ledger` (migration
+ * `3824_rent_buddy_ledger_posting.sql`) prices the booking from configuration,
+ * appends its entries and derives the summary row by folding them, in one
+ * database transaction, idempotent per booking. Nothing here reads a fee,
+ * multiplies, subtracts or rounds.
  *
- * ── THIS IS NOT PAYMENT, AND THE ROW NO LONGER CLAIMS OTHERWISE ────────────
- * The row is an ESTIMATE (`is_estimated: true`): `pay-deposit` / `pay-full`
- * return 503 `payment_stub:true`, and nothing here clears `is_estimated` (M6).
- * One mutable summary row per booking is also why `09` §1.3.1 says *"It records
- * money as collected that was never collected."* Migration 2901 adds the
- * append-only source; `lib/creatorLedgerEntries.ts` argues it in full. Those
- * entries are the truth, THIS ROW IS THEIR PROJECTION, and it is not written
- * unless they were. A replay appends nothing (`ignoreDuplicates`), and the
- * booking is already committed when this runs, so a failure is logged and
- * swallowed rather than failing the booking.
+ * ── A BOOKING IS NOT LEFT WITHOUT ITS LEDGER, AND IS NEVER DENIED ───────────
+ * The result is not best-effort. Every creation path calls `settleBookingLedger`:
+ * an UNKNOWN result (the call errored — it may have committed) is confirmed by
+ * re-posting, which is idempotent; only then is the booking withdrawn and a
+ * NAMED error answered. If the booking cannot be withdrawn it EXISTS, and the
+ * caller is given the booking — never "not created" about a row that is there.
+ * With the SQL function absent creation is refused: the alternative is the
+ * read-modify-write fallback `09` §3 refusal 2 forbids for money.
+ *
+ * ── THIS IS NOT PAYMENT ────────────────────────────────────────────────────
+ * The row is an ESTIMATE. `pay-deposit` / `pay-full` return 503, nothing is
+ * collected (`in_app_amount_collected` is the fold of settlement entries, of
+ * which there are none), and `is_estimated` is cleared only by a settlement
+ * entry that no route can write.
  */
 import { logger } from "./logger.js";
-import { buildBookingEntries, fromMinor, reconstructBalances } from "./creatorLedgerEntries.js";
-import { RENT_BUDDY_FEE_RULE_VERSION, toEarningsEntryRow } from "./creatorLedgerRows.js";
 import {
-  describeFeeScheduleFailure,
-  platformFeeUsdFor,
-  resolveFeeSchedule,
-  travelerServiceFeeIsChargeable,
-  travelerServiceFeeUsdFor,
-} from "./rentBuddyFeeSchedule.js";
+  LEDGER_UNAVAILABLE, LEDGER_WRITE_FAILED,
+  postBookingLedgerEvent,
+  sendLedgerRefusal,
+} from "./rentBuddyLedgerPosting.js";
 
 /**
- * What happened to the ledger row for one booking.
+ * What happened to the ledger for one booking.
  *
- * Every caller today is `await createEarningsLedgerEntry(...).catch(() => {})`
- * — deliberately best-effort, because the booking is already committed. The
- * result is returned anyway so that a caller which DOES care (and the tests)
- * can tell the three outcomes apart instead of inferring them from silence.
- *
- * `fee_unresolved` and the two `entries_*` refusals are the ones that matter:
- * each means the booking exists and has no ledger row. That is the intended
- * behaviour — see the module header — and all three are logged at error level.
+ *   written      the entries and the summary exist (or already existed: a
+ *                replay appends nothing and is still `written`)
+ *   skipped      the caller passed nothing to post
+ *   refused      the database looked and said no — `refusal` names why
+ *   unavailable  `rb_post_booking_ledger` is not there. NAMED
+ *                `ledger_unavailable`; nothing was written and nothing was
+ *                attempted a second way.
+ *   failed       the call errored. NAMED `ledger_write_failed`.
  */
 export type LedgerWriteResult =
-  | { status: "written"; bookingId: string; platformFeePercent: number }
-  | { status: "skipped"; reason: "missing_arguments" | "buddy_not_found" }
-  | { status: "fee_unresolved"; reason: "no_such_level" | "read_failed"; detail: string }
-  | { status: "entries_refused"; reason: string; detail: string }
-  | { status: "entries_write_failed"; detail: string }
-  | { status: "write_failed"; detail: string };
+  | { status: "written"; bookingId: string; platformFeePercent: number | null; replayed: boolean }
+  | { status: "skipped"; reason: "missing_arguments" }
+  | { status: "refused"; refusal: string; detail: string }
+  | { status: "unavailable"; error: typeof LEDGER_UNAVAILABLE; detail: string }
+  | { status: "failed"; error: typeof LEDGER_WRITE_FAILED; detail: string };
 
 /**
- * Write (or refresh) the estimated earnings-ledger row for one booking.
+ * Post the estimated earnings ledger for one just-inserted booking.
  *
  * @param svc            service-role client
  * @param booking        the just-inserted rent_buddy_bookings row
- * @param buddyProfileId rent_buddy_profiles.id of the buddy being booked
+ * @param buddyProfileId rent_buddy_profiles.id of the buddy being booked. Kept
+ *                       in the signature for the five call sites and the logs;
+ *                       the DATABASE derives the payee from the booking row,
+ *                       never from this argument.
  */
 export async function createEarningsLedgerEntry(
   svc: any,
   booking: any,
   buddyProfileId: string,
 ): Promise<LedgerWriteResult> {
-  if (!svc || !booking || !buddyProfileId) {
+  if (!svc || !booking || !booking.id || !buddyProfileId) {
     return { status: "skipped", reason: "missing_arguments" };
   }
 
-  const { data: buddy } = await svc
-    .from("rent_buddy_profiles")
-    .select("user_id, buddy_level")
-    .eq("id", buddyProfileId)
-    .maybeSingle();
-  if (!buddy) return { status: "skipped", reason: "buddy_not_found" };
+  const posted = await postBookingLedgerEvent(svc, booking.id, "booking_created");
 
-  const buddyLevel = (buddy as any).buddy_level ?? null;
-  const schedule = await resolveFeeSchedule(svc, buddyLevel);
-
-  if (schedule.status !== "resolved") {
-    // NO ROW IS WRITTEN. The previous behaviour was to price the booking at a
-    // hard-coded 22 %, which produced a money record indistinguishable from one
-    // an operator had configured. An absent ledger row is visibly absent; a row
-    // carrying a fee nobody chose is not. `08` §2.3, §2.6.
-    const detail = describeFeeScheduleFailure(schedule);
-    logger.error(
-      { bookingId: booking.id, buddyProfileId, buddyLevel, feeScheduleStatus: schedule.status, detail },
-      "earnings ledger NOT written: platform fee could not be resolved from rent_buddy_fee_rules",
-    );
-    return { status: "fee_unresolved", reason: schedule.status, detail };
+  if (posted.status === "posted") {
+    return {
+      status: "written",
+      bookingId: booking.id,
+      platformFeePercent: posted.summary?.platformFeePercent ?? posted.feePercent,
+      replayed: posted.replayed,
+    };
   }
 
-  const rule = schedule.rule;
-  const total = Number(booking.total_usd ?? 0);
-  const platformFeeAmount = platformFeeUsdFor(total, rule);
-
-  // M4 (mismatch half). The schedule amount now reads BOTH fee columns, so an
-  // admin-set `_pct` is no longer invisible. Whether it is applied is gated:
-  // while `rent_buddy_enabled` is off — which it is in production — the
-  // recorded amount is 0, exactly as it is today. Charging travellers is
-  // Stage 4 and requires ruling R1; see travelerServiceFeeIsChargeable.
-  const scheduledTravelerFee = travelerServiceFeeUsdFor(total, rule);
-  const chargeable = await travelerServiceFeeIsChargeable(svc);
-  const travelerServiceFeeAmount = chargeable ? scheduledTravelerFee : 0;
-
-  // ── 1. The append-only entries. These are the truth. ──────────────────────
-  //
-  // `collectedMinor: 0` is not decoration: it is the caller stating, in the one
-  // place the builder will check, that nothing was collected. A non-zero value
-  // is REFUSED rather than recorded (`09` §1; pay-deposit / pay-full are 503s).
-  const built = buildBookingEntries({
-    bookingId: booking.id,
-    beneficiaryUserId: (buddy as any).user_id,
-    ruleVersion: RENT_BUDDY_FEE_RULE_VERSION,
-    totalUsd: total,
-    tipUsd: Number(booking.tip_usd ?? 0),
-    platformFeeUsd: platformFeeAmount,
-    travelerServiceFeeUsd: travelerServiceFeeAmount,
-    collectedMinor: 0,
-  });
-  if (built.status !== "built") {
+  if (posted.status === "refused") {
     logger.error(
-      { bookingId: booking.id, buddyProfileId, reason: built.reason, detail: built.detail },
-      "earnings entries NOT written: the priced breakdown is not a bookable entry set",
+      { bookingId: booking.id, buddyProfileId, refusal: posted.refusal, detail: posted.detail },
+      "earnings ledger NOT written: rb_post_booking_ledger refused the booking",
     );
-    return { status: "entries_refused", reason: built.reason, detail: built.detail };
+    return { status: "refused", refusal: posted.refusal, detail: posted.detail };
   }
 
-  const { error: entriesErr } = await svc
-    .from("rent_buddy_earnings_entries")
-    .upsert(built.entries.map((e) => toEarningsEntryRow(e, booking.id)), {
-      // Append-only: a replay DOES NOTHING. `ignoreDuplicates` is what makes
-      // this an INSERT … ON CONFLICT DO NOTHING rather than an overwrite, and
-      // the index it infers (rbee_idempotency_key_once) is TOTAL, so inference
-      // matches it — see 2180:17-19 for why a partial index would not.
-      onConflict: "idempotency_key",
-      ignoreDuplicates: true,
-    });
-  if (entriesErr) {
-    logger.error(
-      { err: entriesErr, bookingId: booking.id },
-      "earnings entries append failed — the summary row is deliberately NOT written",
-    );
-    return { status: "entries_write_failed", detail: entriesErr.message ?? String(entriesErr) };
-  }
-
-  // ── 2. The summary row, DERIVED by folding those entries. ─────────────────
-  //
-  // Every money figure below comes from one arithmetic path. `09` §1.3.3's
-  // defect is three call sites computing net three ways; this is the one that
-  // writes it, and it no longer computes anything twice.
-  const balances = reconstructBalances(built.entries);
-
-  // NET = the buddy_payable balance: what the platform would owe, after the fee
-  // was debited from it. GROSS = the credits into that account before the fee —
-  // the booking total plus the tip — read off the same entries rather than
-  // recomputed from the inputs.
-  const buddyNet = fromMinor(balances.buddy_payable);
-  const buddyGross = fromMinor(
-    built.entries
-      .filter((e) => e.account === "buddy_payable" && e.amountMinor > 0)
-      .reduce((n, e) => n + e.amountMinor, 0),
+  logger.error(
+    { bookingId: booking.id, buddyProfileId, error: posted.error, rpc: posted.rpc, detail: posted.detail },
+    posted.status === "unavailable"
+      ? "earnings ledger NOT written: rb_post_booking_ledger is unavailable (is migration 3824 applied?) — no fallback is attempted"
+      : "earnings ledger NOT written: rb_post_booking_ledger failed",
   );
+  // Nothing is priced here any more, so nothing here asks whether a traveller
+  // fee is chargeable: the posting function books no traveller service fee at
+  // all (owner question R1 is unruled). This module therefore no longer reads
+  // `rent_buddy_enabled`, which is seeded FALSE (2210) and off in production, `08` §1.1.
+  return posted.status === "unavailable"
+    ? { status: "unavailable", error: posted.error, detail: posted.detail }
+    : { status: "failed", error: posted.error, detail: posted.detail };
+}
 
-  const { error: ledgerErr } = await svc.from("rent_buddy_earnings_ledger").upsert({
-    booking_id: booking.id,
-    buddy_user_id: (buddy as any).user_id,
-    traveler_id: booking.traveler_id,
-    pricing_type: booking.pricing_type ?? "hourly",
-    total_booking_usd: total,
-    addons_usd: Number(booking.addons_total_usd ?? 0),
-    tip_usd: Number(booking.tip_usd ?? 0),
-    platform_fee_percent: rule.platformFeePercent,
-    platform_fee_amount: platformFeeAmount,
-    traveler_service_fee_amount: travelerServiceFeeAmount,
-    buddy_gross_amount: buddyGross,
-    buddy_net_estimated_amount: buddyNet,
-    deposit_amount: Number(booking.deposit_usd ?? 0),
-    // M5 / `09` §1.3.1. Derived from the entries, and NO entry can assert a
-    // settlement (`cash_settled_minor = 0` is CHECK-enforced by 2901), so this
-    // is 0 — where it used to be `deposit_usd`, i.e. money nobody paid.
-    in_app_amount_collected: fromMinor(0),
-    cash_balance_due: Number(booking.cash_balance_usd ?? 0),
-    // Neither of these is ever cleared by anything in this tree (M6). They are
-    // written true/false here and no settlement writer exists to change them.
-    cash_balance_confirmed: false,
-    is_estimated: true,
-  }, { onConflict: "booking_id" });
+/**
+ * Undo the INSERT of a booking whose ledger could not be posted.
+ *
+ * The ledger call is the first thing every creation path does after its insert,
+ * so nothing references the row yet: no event, no notification, no thread. A
+ * status guard is not needed for the same reason — nobody else has seen it.
+ *
+ * Returns whether the row is gone. `false` means the booking STILL EXISTS — in
+ * practice because its ledger entries exist too (the posting committed and its
+ * answer was lost) and migration 3510 refuses to cascade a DELETE over
+ * append-only ledger entries. The caller must then treat the booking as
+ * created; see `settleBookingLedger`.
+ */
+export async function withdrawUnledgeredBooking(svc: any, bookingId: string): Promise<boolean> {
+  if (!svc || !bookingId) return false;
+  try {
+    const { error } = await svc.from("rent_buddy_bookings").delete().eq("id", bookingId);
+    if (error) {
+      logger.error(
+        { err: error, bookingId },
+        "a booking whose ledger call did not answer could NOT be withdrawn — the booking exists and is treated as created",
+      );
+      return false;
+    }
+    return true;
+  } catch (err) {
+    logger.error(
+      { err, bookingId },
+      "withdrawing a booking threw — the booking may exist and is treated as created",
+    );
+    return false;
+  }
+}
 
-  if (ledgerErr) {
-    logger.error({ err: ledgerErr, bookingId: booking.id }, "earnings ledger upsert failed (best-effort)");
-    return { status: "write_failed", detail: ledgerErr.message ?? String(ledgerErr) };
+/**
+ * What became of a just-inserted booking and its ledger.
+ *
+ *   ledgered   the booking and its ledger both exist. Proceed.
+ *   kept       the ledger call did not answer `written`, and the booking could
+ *              NOT be withdrawn — so it exists. Proceed, and return it: the
+ *              caller must not answer "not created", must not release an offer
+ *              claim, and must not let a retry make a second booking.
+ *   withdrawn  the booking row is gone. Answer `sendBookingLedgerRefusal`.
+ */
+export type BookingLedgerSettlement =
+  | { outcome: "ledgered"; ledger: Extract<LedgerWriteResult, { status: "written" }>; confirmedOnRetry: boolean }
+  | { outcome: "kept"; ledger: Exclude<LedgerWriteResult, { status: "written" }> }
+  | { outcome: "withdrawn"; ledger: Exclude<LedgerWriteResult, { status: "written" }> };
+
+/**
+ * Post a just-inserted booking's ledger and decide, truthfully, what the caller
+ * may tell the traveller.
+ *
+ * THE DEFECT THIS REPLACES. Each creation path did `post → if not written,
+ * DELETE the booking → 503 "not created, try again"`. When the posting had in
+ * fact COMMITTED and only its answer was lost, the DELETE was refused (3510
+ * will not cascade over ledger entries), the booking and its ledger stayed, the
+ * traveller was told nothing had been created — and tried again, making a
+ * second booking. On offer-accept the claim was released as well, so one offer
+ * produced two bookings and two ledgers.
+ *
+ * NOW:
+ *   1. post.
+ *   2. An UNKNOWN result (`failed`: the call errored and may have committed) is
+ *      CONFIRMED by posting again. `rb_post_booking_ledger` is idempotent per
+ *      booking, so a posting that had committed answers `replayed` and nothing
+ *      is written twice; one that had not is simply made now.
+ *   3. Only a booking that is still unledgered is withdrawn.
+ *   4. If the withdrawal fails the booking exists: `kept`.
+ * A `refused` or `unavailable` first answer is definite — the database said
+ * nothing was written, or the function is not there — and is not re-posted.
+ */
+export async function settleBookingLedger(
+  svc: any,
+  booking: any,
+  buddyProfileId: string,
+): Promise<BookingLedgerSettlement> {
+  let ledger = await createEarningsLedgerEntry(svc, booking, buddyProfileId);
+  if (ledger.status === "written") return { outcome: "ledgered", ledger, confirmedOnRetry: false };
+
+  if (ledger.status === "failed") {
+    const confirmed = await createEarningsLedgerEntry(svc, booking, buddyProfileId);
+    if (confirmed.status === "written") {
+      logger.warn(
+        { bookingId: booking?.id, buddyProfileId, replayed: confirmed.replayed },
+        "earnings ledger confirmed on re-post after an unanswered call — the booking is created",
+      );
+      return { outcome: "ledgered", ledger: confirmed, confirmedOnRetry: true };
+    }
+    ledger = confirmed;
   }
 
-  return { status: "written", bookingId: booking.id, platformFeePercent: rule.platformFeePercent };
+  const gone = await withdrawUnledgeredBooking(svc, booking?.id);
+  if (gone) return { outcome: "withdrawn", ledger };
+  logger.error(
+    { bookingId: booking?.id, buddyProfileId, ledgerStatus: ledger.status },
+    "booking kept: its ledger call did not answer `written` and the booking could not be withdrawn — returned to the caller as created; check its ledger",
+  );
+  return { outcome: "kept", ledger };
+}
+
+/**
+ * Answer a booking-creation request whose booking was WITHDRAWN.
+ *
+ *   refused                        the database said no (buddy_not_found,
+ *                                  invalid_total, …). Permanent for this
+ *                                  request: 4xx, `retryable: false`, with the
+ *                                  refusal named.
+ *   unavailable / failed / skipped the function is missing or the call errored:
+ *                                  503, `retryable: true`, a NAMED error.
+ * Never a generic database error, and never a booking that was made.
+ */
+export function sendBookingLedgerRefusal(
+  res: any,
+  result: Exclude<LedgerWriteResult, { status: "written" }>,
+): void {
+  if (result.status === "refused") {
+    sendLedgerRefusal(
+      res, result.refusal,
+      "Your booking was not created: it cannot be given an earnings record. Nothing was charged. Trying again will not help — please contact support.",
+    );
+    return;
+  }
+  res.status(503).json({
+    error: result.status === "unavailable" || result.status === "failed" ? result.error : LEDGER_WRITE_FAILED,
+    retryable: true,
+    message: "Your booking was not created: its earnings record could not be written. Nothing was charged. Please try again shortly.",
+  });
+}
+
+// ── Idempotent creation ──────────────────────────────────────────────────────
+//
+// The repair above covers an answer lost between the API and the database. An
+// answer lost between the APP and the API is the client's to retry, and a retry
+// must not make a second booking. A client sends `Idempotency-Key` (generated
+// once per attempt and re-sent on every retry of it); the key is stored on the
+// booking, scoped by the acting traveller and the resource being booked, behind
+// a unique index (`rbb_creation_key_once`, migration 3824).
+
+/** What a client may send: 8–120 characters of [A-Za-z0-9_.:-]. */
+export const CREATION_KEY_RE = /^[A-Za-z0-9_.:-]{8,120}$/;
+export const CREATION_KEY_MESSAGE = "Idempotency-Key must be 8-120 characters of letters, digits, '_', '.', ':' or '-'.";
+
+/**
+ * The creation key for this request, or `null` when the client sent none.
+ * `invalid` for a key that WAS sent and is unusable: it is refused rather than
+ * dropped, because a client that sent a key believes its retry is safe.
+ *
+ * `scope` names the path and the resource ("book:<buddy id>", "offer:<offer
+ * id>", …), so one client key cannot collide across two different things.
+ */
+export function readCreationKey(req: any, scope: string): { status: "none" } | { status: "invalid" } | { status: "key"; key: string } {
+  const supplied = req?.get?.("Idempotency-Key") ?? req?.body?.idempotencyKey;
+  if (supplied === undefined || supplied === null || supplied === "") return { status: "none" };
+  if (typeof supplied !== "string" || !CREATION_KEY_RE.test(supplied)) return { status: "invalid" };
+  return { status: "key", key: `${scope}:${supplied}` };
+}
+
+/** PostgreSQL's unique-violation on the creation-key index: a concurrent retry won. */
+export function isCreationKeyConflict(error: any): boolean {
+  return String(error?.code ?? "") === "23505" && /rbb_creation_key_once/.test(`${error?.message ?? ""} ${error?.details ?? ""}`);
+}
+
+export type PriorBookingLookup =
+  | { status: "none" }
+  | { status: "found"; booking: any }
+  | { status: "error"; message: string };
+
+/** The booking this traveller already created with this key, if any. */
+export async function findBookingByCreationKey(svc: any, travelerId: string, creationKey: string): Promise<PriorBookingLookup> {
+  const { data, error } = await svc
+    .from("rent_buddy_bookings")
+    .select("*")
+    .eq("traveler_id", travelerId)
+    .eq("creation_key", creationKey)
+    .limit(1);
+  if (error) return { status: "error", message: String(error.message ?? error) };
+  const row = Array.isArray(data) ? data[0] : data;
+  return row ? { status: "found", booking: row } : { status: "none" };
+}
+
+/**
+ * The idempotent-creation half every creation path shares.
+ *
+ * `begin` reads the key and looks for the original booking. If it finds one it
+ * makes sure that booking's ledger exists (the posting is idempotent), ANSWERS
+ * with `respond(booking)` — status 200, `idempotentReplay: true` — and returns
+ * `done: true`: the handler must stop. Otherwise the handler carries on and
+ * stores `key` on the row it inserts.
+ *
+ * `replayOnConflict` is for the insert's error path: when two retries race, the
+ * loser's INSERT hits the unique index, and it answers with the winner's
+ * booking instead of an error.
+ */
+export interface IdempotentCreation {
+  done: boolean;
+  /** The value for `rent_buddy_bookings.creation_key`; null when no key was sent. */
+  key: string | null;
+  replayOnConflict(insertError: any): Promise<boolean>;
+}
+
+export async function beginIdempotentCreation(
+  req: any,
+  res: any,
+  svc: any,
+  travelerId: string,
+  scope: string,
+  respond: (booking: any) => Record<string, unknown>,
+): Promise<IdempotentCreation> {
+  const read = readCreationKey(req, scope);
+  if (read.status === "invalid") {
+    res.status(400).json({ error: "invalid_idempotency_key", message: CREATION_KEY_MESSAGE });
+    return { done: true, key: null, replayOnConflict: async () => false };
+  }
+  if (read.status === "none") return { done: false, key: null, replayOnConflict: async () => false };
+
+  const key = read.key;
+  const replay = async (): Promise<"sent" | "none"> => {
+    const prior = await findBookingByCreationKey(svc, travelerId, key);
+    if (prior.status === "error") {
+      logger.error({ travelerId, scope, detail: prior.message }, "idempotent creation: the original booking could not be looked up");
+      res.status(503).json({ error: "db_error", retryable: true, message: "We couldn't check whether this booking was already made. Please try again." });
+      return "sent";
+    }
+    if (prior.status === "none") return "none";
+    // The original may be the one whose ledger answer was lost. Posting again
+    // is idempotent: it confirms the ledger or makes it.
+    const ledger = await createEarningsLedgerEntry(svc, prior.booking, prior.booking.buddy_id);
+    if (ledger.status !== "written") {
+      logger.error({ bookingId: prior.booking.id, ledgerStatus: ledger.status }, "idempotent replay: the original booking's ledger could not be confirmed");
+    }
+    res.status(200).json({ ...respond(prior.booking), idempotentReplay: true });
+    return "sent";
+  };
+
+  if ((await replay()) === "sent") return { done: true, key, replayOnConflict: async () => false };
+  return {
+    done: false,
+    key,
+    replayOnConflict: async (insertError: any) => isCreationKeyConflict(insertError) && (await replay()) === "sent",
+  };
 }

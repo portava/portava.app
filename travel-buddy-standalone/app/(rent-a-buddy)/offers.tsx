@@ -53,11 +53,11 @@ function OfferCard({ offer, onAccept, onDecline, accepting }: {
       <View style={card.priceRow}>
         <DollarSign size={16} color={color.deep} />
         <Text style={card.price}>${offer.proposedPriceUsd.toFixed(2)}</Text>
-        <Text style={card.priceSub}>
-          {offer.depositAmountUsd > 0
-            ? ` · $${offer.depositAmountUsd.toFixed(2)} deposit`
-            : ' · Full in-app'}
-          {offer.cashBalanceUsd > 0 ? ` + $${offer.cashBalanceUsd.toFixed(2)} cash` : ''}
+        <Text style={card.priceSub} testID={`offer-terms-${offer.id}`}>
+          {/* No deposit is taken in this release (owner ruling 2026-10-04): none is shown, */}
+          {/* whatever an offer stored before the ruling carries. The cash figure is the server's. */}
+          {' · No deposit'}
+          {offer.cashBalanceUsd > 0 ? ` · $${offer.cashBalanceUsd.toFixed(2)} in cash at the meetup` : ''}
         </Text>
       </View>
 
@@ -159,7 +159,7 @@ export default function Offers() {
               );
               return;
             }
-            Alert.alert('Booking Created!', 'Your booking is confirmed.', [
+            Alert.alert('Booking created', 'Your Buddy has 24 hours to accept it.', [
               { text: 'OK', onPress: () => router.back() },
             ]);
           },

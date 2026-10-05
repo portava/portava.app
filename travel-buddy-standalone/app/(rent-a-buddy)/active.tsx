@@ -322,7 +322,9 @@ export default function RentABuddyActive() {
 
   const totalDurationS = ((booking?.durationH ?? 1) + addedH) * 3600;
   const remaining = Math.max(0, totalDurationS - elapsed);
-  const cashBalance = booking ? Math.round(booking.totalUsd * 0.7) : 0;
+  // (A "cash balance" of `total × 0.7` used to be computed here and shown as an
+  // amount owed. The booking carries no such figure on this screen and nothing
+  // is charged through the app; the reminder below states the rule, not a sum.)
 
   // "End session" COMPLETES the booking on the server (the traveller's completion
   // is final; the buddy's opens the traveller's confirmation window). It used to
@@ -476,16 +478,14 @@ export default function RentABuddyActive() {
           </View>
         </View>
 
-        {/* Cash reminder */}
-        {cashBalance > 0 && (
-          <View style={[styles.cashBanner, { marginHorizontal: space.lg }]}>
-            <AlertTriangle size={16} color={color.warn} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.cashTitle}>Cash balance: ${cashBalance}</Text>
-              <Text style={styles.cashSub}>Pay your Buddy in cash at the end of the session. Never pay upfront.</Text>
-            </View>
+        {/* Payment reminder */}
+        <View style={[styles.cashBanner, { marginHorizontal: space.lg }]} testID="active-payment-reminder">
+          <AlertTriangle size={16} color={color.warn} />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.cashTitle}>Paying your Buddy</Text>
+            <Text style={styles.cashSub}>Nothing is charged through the app. Pay what you agreed with your Buddy at the end of the session. Never pay upfront.</Text>
           </View>
-        )}
+        </View>
 
         {/* Meetup location */}
         <View style={[styles.locationCard, { marginHorizontal: space.lg, marginTop: space.md }]}>

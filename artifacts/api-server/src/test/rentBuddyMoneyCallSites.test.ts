@@ -22,10 +22,23 @@
  *       FAILS THE REQUEST — a silently dropped money write reported as
  *       `{ ok: true }` is the whole defect.
  *
+ *       Payments PAY-014 / PAY-018 (migration 3824): that one call now posts
+ *       ledger ENTRIES through rb_post_booking_ledger, and it has no fallback.
+ *       The "non-atomic fallback path" half of this suite is therefore inverted
+ *       — with the function absent the tip is a 503 `ledger_unavailable` and
+ *       the route issues no table write — and cases are added for the event
+ *       key and for "no commission on tips".
+ *
  *   M7  GET /rent-a-buddy/me/earnings/summary summed an unpaginated select of
  *       bookings AND an unpaginated select of tips in JavaScript, and turned a
  *       failed read into `[]` — so a buddy past PostgREST's row cap was shown a
  *       silently short total, and an outage was shown a confident $0.
+ *
+ *       Payments PAY-055 / PAY-009: the money is folded in SQL now
+ *       (rb_buddy_ledger_totals), where no row cap exists, so the JavaScript
+ *       sum this suite guarded is gone. What is asserted is that the figures
+ *       are the database's, that the LIST read the screen still makes is
+ *       exhaustive, and that a fold that cannot be read is a named 503.
  *
  * ── HOW EACH CASE IS KEPT FROM BEING VACUOUS ────────────────────────────────
  * .agents/memory/prove-the-test-fails-before-trusting-it.md. Every assertion
@@ -52,6 +65,7 @@ import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import rentABuddyRouter from "../routes/rentABuddy.js";
 import marketplaceRouter from "../routes/rentABuddyMarketplace.js";
+import { emptyLedgerDb, fakeLedgerRpc, type FakeLedgerDb } from "./helpers/fakeRentBuddyLedgerRpc.js";
 
 process.env.TZ = "UTC";
 
@@ -71,6 +85,7 @@ function request(
   method: "GET" | "POST",
   path: string,
   body?: unknown,
+  headers: Record<string, string> = {},
 ): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
     const url = new URL(path, base);
@@ -84,6 +99,7 @@ function request(
         headers: {
           authorization: `Bearer ${USER_TOKEN}`,
           ...(payload ? { "content-type": "application/json", "content-length": String(payload.length) } : {}),
+          ...headers,
         },
       },
       (inRes) => {
@@ -384,56 +400,50 @@ const REAL_BUDDY_USER = "money-call-sites-buddy-user";
 /** What the joined `buddy:rent_buddy_profiles(user_id, …)` claims. */
 const JOINED_BUDDY_USER = "money-call-sites-joined-user";
 
-interface TipDb {
-  bookings: Record<string, any>;
-  profiles: Record<string, any>;
-  tips: Record<string, any>;
-  ledger: Record<string, any>;
-  onConflict?: string;
-}
+/** Every table WRITE the tip route issued itself. Must stay empty. */
+let tipTableWrites: Array<{ table: string; op: string }> = [];
+let tipRpcCalls: Array<{ fn: string; args: any }> = [];
 
-function seedTipDb(): TipDb {
-  return {
+function seedTipDb(): FakeLedgerDb {
+  return emptyLedgerDb({
     bookings: {
       [BOOKING_ID]: {
         id: BOOKING_ID, traveler_id: USER_ID, buddy_id: REAL_BUDDY_PROFILE,
-        status: "completed", city: "Cebu", category: "city", tip_usd: null,
+        status: "completed", city: "Cebu", category: "city", tip_usd: null, total_usd: 100,
       },
     },
-    profiles: { [REAL_BUDDY_PROFILE]: { id: REAL_BUDDY_PROFILE, user_id: REAL_BUDDY_USER } },
-    tips: {},
-    ledger: { [BOOKING_ID]: { booking_id: BOOKING_ID, tip_usd: 0 } },
-  };
+    buddyProfiles: { [REAL_BUDDY_PROFILE]: { id: REAL_BUDDY_PROFILE, user_id: REAL_BUDDY_USER, buddy_level: "new" } },
+  });
 }
 
-function tipClient(db: TipDb, opts: { rpc?: boolean; tipsReadError?: any; tipsWriteError?: any } = {}): any {
+/**
+ * The service client the tip route sees. Tables are READ-ONLY as far as the
+ * route is concerned: every upsert / update / insert on a money table is
+ * recorded in `tipTableWrites`, which each case asserts is empty. `rpc` is the
+ * model of rb_post_booking_ledger unless `opts.rpc` says otherwise.
+ */
+function tipClient(
+  db: FakeLedgerDb,
+  opts: { absent?: boolean; rpcError?: any } = {},
+): any {
+  const MONEY_TABLES = ["rent_buddy_tips", "rent_buddy_earnings_ledger", "rent_buddy_earnings_entries", "rent_buddy_bookings"];
   const client: any = {
     auth: { getUser: () => Promise.resolve({ data: { user: null }, error: null }) },
     from(table: string) {
       let cols = "";
       const eqs: Array<[string, any]> = [];
       const eqVal = (c: string) => eqs.find(([k]) => k === c)?.[1];
+      const write = (op: string) => {
+        if (MONEY_TABLES.includes(table)) tipTableWrites.push({ table, op });
+        return Promise.resolve({ data: null, error: null });
+      };
 
       const b: any = {
         select(c = "") { cols = c; return b; },
         eq(c: string, v: any) { eqs.push([c, v]); return b; },
-        insert: () => Promise.resolve({ data: null, error: null }),
-        upsert(row: any, o: any) {
-          if (table !== "rent_buddy_tips") return Promise.resolve({ data: null, error: null });
-          if (opts.tipsWriteError) return Promise.resolve({ data: null, error: opts.tipsWriteError });
-          db.onConflict = o?.onConflict;
-          db.tips[row.booking_id] = { id: `tip-${row.booking_id}`, ...(db.tips[row.booking_id] ?? {}), ...row };
-          return Promise.resolve({ data: null, error: null });
-        },
-        update(patch: any) {
-          return {
-            eq(c: string, v: any) {
-              if (table === "rent_buddy_earnings_ledger") Object.assign(db.ledger[v] ?? (db.ledger[v] = {}), patch);
-              if (table === "rent_buddy_bookings" && db.bookings[v]) Object.assign(db.bookings[v], patch);
-              return Promise.resolve({ data: null, error: null });
-            },
-          };
-        },
+        insert: () => write("insert"),
+        upsert: () => write("upsert"),
+        update: () => ({ eq: () => write("update") }),
         maybeSingle() {
           switch (table) {
             case "feature_flags":
@@ -441,8 +451,9 @@ function tipClient(db: TipDb, opts: { rpc?: boolean; tipsReadError?: any; tipsWr
             case "rent_buddy_bookings": {
               const row = db.bookings[eqVal("id")] ?? null;
               if (!row) return Promise.resolve({ data: null, error: null });
-              // The route's own read joins the buddy profile; the primitive's
-              // read does not. The join deliberately reports a DIFFERENT user.
+              // The route's own read joins the buddy profile. The join
+              // deliberately reports a DIFFERENT user from the one the booking
+              // really points at.
               return Promise.resolve({
                 data: cols.includes("buddy:")
                   ? { ...row, buddy: { user_id: JOINED_BUDDY_USER, city: row.city, buddy_level: "new" } }
@@ -450,11 +461,6 @@ function tipClient(db: TipDb, opts: { rpc?: boolean; tipsReadError?: any; tipsWr
                 error: null,
               });
             }
-            case "rent_buddy_profiles":
-              return Promise.resolve({ data: db.profiles[eqVal("id")] ?? null, error: null });
-            case "rent_buddy_tips":
-              if (opts.tipsReadError) return Promise.resolve({ data: null, error: opts.tipsReadError });
-              return Promise.resolve({ data: db.tips[eqVal("booking_id")] ?? null, error: null });
             default:
               return Promise.resolve({ data: null, error: null });
           }
@@ -464,147 +470,317 @@ function tipClient(db: TipDb, opts: { rpc?: boolean; tipsReadError?: any; tipsWr
     },
   };
 
-  // Migration 2330's rb_accumulate_booking_tip, modelled on the one property
-  // the SQL buys: no await between the read and the write.
   client.rpc = async (fn: string, args: any) => {
-    if (!opts.rpc || fn !== "rb_accumulate_booking_tip") {
-      return { data: null, error: { message: "Could not find the function public." + fn } };
-    }
-    const bk = db.bookings[args.p_booking_id];
-    if (!bk) return { data: null, error: { message: "booking not found" } };
-    if (bk.traveler_id !== args.p_traveler_id) return { data: null, error: { message: "not the traveller" } };
-    const bp = db.profiles[bk.buddy_id];
-    if (!bp) return { data: null, error: { message: "no buddy profile" } };
-    const existing = db.tips[args.p_booking_id];
-    const total = round2(Number(existing?.amount_usd ?? 0) + Number(args.p_amount_usd));
-    db.tips[args.p_booking_id] = {
-      id: existing?.id ?? `tip-${args.p_booking_id}`,
-      booking_id: args.p_booking_id,
-      traveler_id: args.p_traveler_id,
-      buddy_user_id: bp.user_id,
-      amount_usd: total,
-      note: args.p_note ?? null,
-    };
-    db.ledger[args.p_booking_id] = { ...(db.ledger[args.p_booking_id] ?? {}), tip_usd: total };
-    bk.tip_usd = total;
-    return { data: [{ total_tip_usd: total }], error: null };
+    tipRpcCalls.push({ fn, args });
+    if (opts.rpcError) return { data: null, error: opts.rpcError };
+    return fakeLedgerRpc(db, { absent: opts.absent ? ["rb_post_booking_ledger"] : [] })(fn, args);
   };
 
   return client;
 }
 
+const tipEntriesOf = (db: FakeLedgerDb) => db.entries.filter((e) => e.booking_id === BOOKING_ID && e.entry_reason === "tip");
+
 describe("M8 — a second tip is ADDED, never substituted", () => {
-  for (const mode of ["the atomic RPC path", "the non-atomic fallback path"] as const) {
-    const rpc = mode === "the atomic RPC path";
+  beforeEach(() => { tipTableWrites = []; tipRpcCalls = []; });
 
-    it(`${mode}: $5 then $20 leaves $25 on the booking`, async () => {
-      const db = seedTipDb();
-      _setTestServiceClient(tipClient(db, { rpc }));
+  it("$5 then $20 leaves $25 on the booking — in the entries and in every copy", async () => {
+    const db = seedTipDb();
+    _setTestServiceClient(tipClient(db));
 
-      const first = await request("POST", TIP_PATH, { amountUsd: 5 });
-      assert.equal(first.status, 200, JSON.stringify(first.body));
-      assert.equal(first.body.totalTipUsd, 5);
+    const first = await request("POST", TIP_PATH, { amountUsd: 5 });
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    assert.equal(first.body.totalTipUsd, 5);
 
-      const second = await request("POST", TIP_PATH, { amountUsd: 20 });
-      assert.equal(second.status, 200, JSON.stringify(second.body));
+    const second = await request("POST", TIP_PATH, { amountUsd: 20 });
+    assert.equal(second.status, 200, JSON.stringify(second.body));
 
-      assert.equal(
-        db.tips[BOOKING_ID].amount_usd, 25,
-        "the pre-fix upsert on conflict target booking_id left 20 here — the $5 was destroyed, " +
-        "and there is no other copy of it anywhere",
-      );
-      assert.equal(second.body.totalTipUsd, 25, "the response reports the RUNNING TOTAL");
-      assert.equal(second.body.atomic, rpc, "and says whether the write was atomic");
-    });
+    assert.equal(
+      db.tips[BOOKING_ID].amount_usd, 25,
+      "the pre-fix upsert on conflict target booking_id left 20 here — the $5 was destroyed, " +
+      "and there is no other copy of it anywhere",
+    );
+    assert.equal(second.body.totalTipUsd, 25, "the response reports the RUNNING TOTAL");
+    assert.equal(second.body.atomic, true, "there is no non-atomic path any more");
+    assert.equal(second.body.replayed, false);
 
-    it(`${mode}: both denormalised copies carry the running total, not the last amount`, async () => {
-      const db = seedTipDb();
-      _setTestServiceClient(tipClient(db, { rpc }));
+    assert.equal(db.ledger[BOOKING_ID].tip_usd, 25,
+      "the ledger's tip_usd used to be UPDATEd with the single amount");
+    assert.equal(db.bookings[BOOKING_ID].tip_usd, 25,
+      "and so did the booking's — three copies that could disagree");
 
-      await request("POST", TIP_PATH, { amountUsd: 5 });
-      await request("POST", TIP_PATH, { amountUsd: 20 });
+    // PAY-014 — and now a fourth place, which is the source of the other three.
+    const entries = tipEntriesOf(db);
+    assert.equal(entries.length, 4, "two tips are two balanced pairs");
+    assert.equal(entries.reduce((n, e) => n + e.amount_minor, 0), 0);
+    assert.equal(entries.filter((e) => e.account === "buddy_payable").reduce((n, e) => n + e.amount_minor, 0), 2500);
+  });
 
-      assert.equal(db.ledger[BOOKING_ID].tip_usd, 25,
-        "the ledger's tip_usd used to be UPDATEd with the single amount");
-      assert.equal(db.bookings[BOOKING_ID].tip_usd, 25,
-        "and so did the booking's — three copies that could disagree");
-    });
+  it("the ROUTE writes no money table itself — one function call per tip, and nothing beside it", async () => {
+    const db = seedTipDb();
+    _setTestServiceClient(tipClient(db));
+    await request("POST", TIP_PATH, { amountUsd: 5 });
+    await request("POST", TIP_PATH, { amountUsd: 20 });
 
-    it(`${mode}: the payee is derived from the booking, not taken from the caller's join`, async () => {
-      const db = seedTipDb();
-      _setTestServiceClient(tipClient(db, { rpc }));
+    assert.deepEqual(tipTableWrites, [],
+      "an upsert or UPDATE from the route is a second statement outside the tip's transaction");
+    assert.deepEqual(tipRpcCalls.map((c) => c.fn), ["rb_post_booking_ledger", "rb_post_booking_ledger"]);
+    assert.deepEqual(
+      tipRpcCalls.map((c) => [c.args.p_event, c.args.p_args.traveler_id, c.args.p_args.amount_usd]),
+      [["tip", USER_ID, 5], ["tip", USER_ID, 20]],
+    );
+  });
 
-      await request("POST", TIP_PATH, { amountUsd: 10 });
+  it("the payee is derived from the booking, not taken from the caller's join", async () => {
+    const db = seedTipDb();
+    _setTestServiceClient(tipClient(db));
 
-      assert.equal(
-        db.tips[BOOKING_ID].buddy_user_id, REAL_BUDDY_USER,
-        "the route used to write bk.buddy.user_id straight from its own joined select; " +
-        "the tips row names who is owed money, so it is resolved from the booking",
-      );
-      assert.notEqual(db.tips[BOOKING_ID].buddy_user_id, JOINED_BUDDY_USER);
-    });
-  }
+    await request("POST", TIP_PATH, { amountUsd: 10 });
+
+    assert.equal(
+      db.tips[BOOKING_ID].buddy_user_id, REAL_BUDDY_USER,
+      "the route used to write bk.buddy.user_id straight from its own joined select; " +
+      "the tips row names who is owed money, so it is resolved from the booking",
+    );
+    assert.notEqual(db.tips[BOOKING_ID].buddy_user_id, JOINED_BUDDY_USER);
+    assert.equal(JSON.stringify(tipRpcCalls).includes(JOINED_BUDDY_USER), false, "no payee is passed to the function at all");
+    assert.ok(tipEntriesOf(db).filter((e) => e.account === "buddy_payable").every((e) => e.beneficiary_user_id === REAL_BUDDY_USER));
+  });
+
+  it("NO COMMISSION ON A TIP: the fee stays the booking's own (owner ruling 2026-10-04)", async () => {
+    const db = seedTipDb();
+    _setTestServiceClient(tipClient(db));
+    await fakeLedgerRpc(db)("rb_post_booking_ledger", { p_booking_id: BOOKING_ID, p_event: "booking_created", p_event_key: null, p_args: {} });
+    const feeBefore = JSON.stringify(db.entries.filter((e) => e.entry_reason === "platform_fee"));
+    assert.equal(db.ledger[BOOKING_ID].platform_fee_amount, 10);
+
+    const res = await request("POST", TIP_PATH, { amountUsd: 50 });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(JSON.stringify(db.entries.filter((e) => e.entry_reason === "platform_fee")), feeBefore, "the tip added a fee entry");
+    assert.equal(db.ledger[BOOKING_ID].platform_fee_amount, 10);
+    assert.equal(db.ledger[BOOKING_ID].buddy_net_estimated_amount, 140, "100 − 10 + the whole 50");
+  });
+});
+
+describe("M8 — a retried tip is the SAME tip (`09` §7.1)", () => {
+  beforeEach(() => { tipTableWrites = []; tipRpcCalls = []; });
+
+  it("the same Idempotency-Key twice records one tip and says the second was a replay", async () => {
+    const db = seedTipDb();
+    _setTestServiceClient(tipClient(db));
+
+    const first = await request("POST", TIP_PATH, { amountUsd: 5 }, { "Idempotency-Key": "tip-abc-1" });
+    const retry = await request("POST", TIP_PATH, { amountUsd: 5 }, { "Idempotency-Key": "tip-abc-1" });
+    assert.deepEqual([first.status, retry.status], [200, 200], JSON.stringify([first.body, retry.body]));
+    assert.deepEqual([first.body.replayed, retry.body.replayed], [false, true]);
+    assert.equal(retry.body.totalTipUsd, 5);
+    assert.equal(db.tips[BOOKING_ID].amount_usd, 5, "the retry was recorded as a second tip");
+    assert.equal(tipEntriesOf(db).length, 2);
+  });
+
+  it("the key may arrive in the body, and is the key the function is given", async () => {
+    const db = seedTipDb();
+    _setTestServiceClient(tipClient(db));
+    await request("POST", TIP_PATH, { amountUsd: 5, idempotencyKey: "body-key-9" });
+    await request("POST", TIP_PATH, { amountUsd: 5, idempotencyKey: "body-key-9" });
+    assert.deepEqual(tipRpcCalls.map((c) => c.args.p_event_key), ["body-key-9", "body-key-9"]);
+    assert.equal(db.tips[BOOKING_ID].amount_usd, 5);
+  });
+
+  it("the same key with a DIFFERENT amount is a 409, and the first tip stands", async () => {
+    const db = seedTipDb();
+    _setTestServiceClient(tipClient(db));
+    await request("POST", TIP_PATH, { amountUsd: 5 }, { "Idempotency-Key": "tip-abc-2" });
+    const res = await request("POST", TIP_PATH, { amountUsd: 20 }, { "Idempotency-Key": "tip-abc-2" });
+    assert.equal(res.status, 409, JSON.stringify(res.body));
+    assert.equal(res.body.error, "idempotency_key_reused");
+    assert.equal(db.tips[BOOKING_ID].amount_usd, 5);
+  });
+
+  it("a malformed key is refused — never silently replaced by a minted one", async () => {
+    const db = seedTipDb();
+    _setTestServiceClient(tipClient(db));
+    for (const bad of ["has spaces", "x".repeat(121), "semi;colon"]) {
+      const res = await request("POST", TIP_PATH, { amountUsd: 5, idempotencyKey: bad });
+      assert.equal(res.status, 400, `${bad} → ${JSON.stringify(res.body)}`);
+    }
+    const nonString = await request("POST", TIP_PATH, { amountUsd: 5, idempotencyKey: 12345 });
+    assert.equal(nonString.status, 400);
+    assert.deepEqual(tipRpcCalls, []);
+    assert.deepEqual(db.tips, {});
+  });
+
+  it("with NO key each request is its own tip, under a key minted per request", async () => {
+    const db = seedTipDb();
+    _setTestServiceClient(tipClient(db));
+    await request("POST", TIP_PATH, { amountUsd: 5 });
+    await request("POST", TIP_PATH, { amountUsd: 5 });
+    const keys = tipRpcCalls.map((c) => c.args.p_event_key);
+    assert.equal(new Set(keys).size, 2);
+    assert.ok(keys.every((k) => typeof k === "string" && k.length >= 16));
+    assert.equal(db.tips[BOOKING_ID].amount_usd, 10);
+  });
 });
 
 describe("M8 — a tip that cannot be applied FAILS THE REQUEST", () => {
-  it("a failed read of the existing tip is a 500, not a total derived from it", async () => {
-    // The pre-fix route never read the existing row at all: it upserted the
-    // single amount and answered { ok: true }. Answering 200 here would mean
-    // the running total was computed from a read that did not happen.
+  beforeEach(() => { tipTableWrites = []; tipRpcCalls = []; });
+
+  // INVERTED (PAY-018). This case was `the non-atomic fallback path: $5 then $20
+  // leaves $25`: with the function absent the route read the tips row, added in
+  // JavaScript and wrote three tables. That path is the defect now.
+  it("with the posting function ABSENT the tip is a 503 `ledger_unavailable` — and the route writes nothing a second way", async () => {
     const db = seedTipDb();
-    _setTestServiceClient(tipClient(db, { rpc: false, tipsReadError: { message: "connection reset" } }));
+    _setTestServiceClient(tipClient(db, { absent: true }));
 
     const res = await request("POST", TIP_PATH, { amountUsd: 10 });
-    assert.equal(res.status, 500, JSON.stringify(res.body));
-    assert.equal(res.body.error, "db_error");
+    assert.equal(res.status, 503, JSON.stringify(res.body));
+    assert.equal(res.body.error, "ledger_unavailable");
+    assert.equal(res.body.retryable, true);
     assert.equal(res.body.ok, undefined, "no success envelope on a money write that did not land");
+    assert.match(res.body.message, /Nothing was charged/);
+
+    assert.deepEqual(tipTableWrites, [], "the route fell back to writing the tips row / ledger / booking itself");
+    assert.deepEqual(tipRpcCalls.map((c) => c.fn), ["rb_post_booking_ledger"],
+      "2330's rb_accumulate_booking_tip must not be tried instead: it writes no ledger entry");
     assert.deepEqual(db.tips, {}, "and nothing was written");
+    assert.equal(db.bookings[BOOKING_ID].tip_usd, null);
+    assert.equal(db.entries.length, 0);
   });
 
-  it("a failed tip write is a 500 and leaves the record untouched", async () => {
+  it("a failed posting is a 503 `ledger_write_failed` and leaves the record untouched", async () => {
     const db = seedTipDb();
-    _setTestServiceClient(tipClient(db, { rpc: false, tipsWriteError: { message: "deadlock detected" } }));
+    _setTestServiceClient(tipClient(db, { rpcError: { code: "40P01", message: "deadlock detected" } }));
 
     const res = await request("POST", TIP_PATH, { amountUsd: 10 });
-    assert.equal(res.status, 500, JSON.stringify(res.body));
+    assert.equal(res.status, 503, JSON.stringify(res.body));
+    assert.equal(res.body.error, "ledger_write_failed");
+    assert.equal(res.body.ok, undefined);
     assert.deepEqual(db.tips, {});
-    assert.equal(db.ledger[BOOKING_ID].tip_usd, 0, "no half-applied tip");
+    assert.deepEqual(tipTableWrites, [], "no half-applied tip");
     assert.equal(db.bookings[BOOKING_ID].tip_usd, null);
   });
 
   it("does not leak the database's message to the traveller", async () => {
     const db = seedTipDb();
-    _setTestServiceClient(tipClient(db, { rpc: false, tipsWriteError: { message: "deadlock detected" } }));
+    _setTestServiceClient(tipClient(db, { rpcError: { code: "40P01", message: "deadlock detected" } }));
 
     const res = await request("POST", TIP_PATH, { amountUsd: 10 });
-    assert.equal(String(res.body.message ?? "").includes("deadlock"), false);
+    assert.equal(JSON.stringify(res.body).includes("deadlock"), false);
   });
 
   it("still rejects a tip on someone else's booking", async () => {
     const db = seedTipDb();
     db.bookings[BOOKING_ID].traveler_id = "somebody-else";
-    _setTestServiceClient(tipClient(db, { rpc: true }));
+    _setTestServiceClient(tipClient(db));
 
     const res = await request("POST", TIP_PATH, { amountUsd: 10 });
     assert.equal(res.status, 403, JSON.stringify(res.body));
+    assert.deepEqual(db.tips, {});
+    assert.equal(db.entries.length, 0);
+  });
+
+  it("still rejects a tip on a booking that is not completed, and a non-positive amount", async () => {
+    const db = seedTipDb();
+    _setTestServiceClient(tipClient(db));
+    for (const amountUsd of [0, -5, "abc"]) {
+      const res = await request("POST", TIP_PATH, { amountUsd });
+      assert.equal(res.status, 400, `${amountUsd} → ${JSON.stringify(res.body)}`);
+    }
+    db.bookings[BOOKING_ID].status = "in_progress";
+    const early = await request("POST", TIP_PATH, { amountUsd: 10 });
+    assert.equal(early.status, 400, JSON.stringify(early.body));
+    assert.deepEqual(db.tips, {});
+    assert.deepEqual(tipRpcCalls, []);
+  });
+
+  // Independent verification of PR #603. NaN compares false against everything,
+  // so `Number(x) <= 0` let it through; in PostgreSQL NaN and an amount at or
+  // above 10^8 then failed as an EXCEPTION, which the route reported as a 503
+  // "try again" — a retry loop on a request that can never succeed.
+  it("NaN, ±Infinity and an amount no money column can hold are a 400 VALIDATION error — never a 503, and never sent to the database", async () => {
+    const db = seedTipDb();
+    _setTestServiceClient(tipClient(db));
+    for (const amountUsd of ["NaN", "Infinity", "-Infinity", 100_000_000, 1e300, "1e9", [5], { v: 5 }, true]) {
+      const res = await request("POST", TIP_PATH, { amountUsd });
+      assert.equal(res.status, 400, `${JSON.stringify(amountUsd)} → ${res.status} ${JSON.stringify(res.body)}`);
+      assert.equal(res.body.error, "invalid_payload");
+      assert.equal(res.body.retryable, undefined);
+    }
+    assert.deepEqual(tipRpcCalls, [], "an amount that is not a chargeable number reached the posting function");
+    assert.deepEqual(db.tips, {});
+    assert.equal(db.entries.length, 0);
+  });
+
+  it("the database refuses the same amounts by NAME (`invalid_amount`) if a caller reaches it anyway", async () => {
+    const db = seedTipDb();
+    for (const amount_usd of [Number.NaN, Number.POSITIVE_INFINITY, 100_000_000, 0.004]) {
+      const r = await fakeLedgerRpc(db)("rb_post_booking_ledger", {
+        p_booking_id: BOOKING_ID, p_event: "tip", p_event_key: "direct-1", p_args: { traveler_id: USER_ID, amount_usd, note: null },
+      });
+      assert.deepEqual([r.error, r.data.ok, r.data.refusal], [null, false, "invalid_amount"], String(amount_usd));
+    }
+    assert.equal(db.entries.length, 0);
+  });
+
+  // `carried-over` is the transaction a pre-3824 tips row is carried into the
+  // entries under. A client that sent it as its key, on a booking with such a
+  // row, collided with that transaction: the new tip was DROPPED (ON CONFLICT DO
+  // NOTHING) and the call still answered ok.
+  it("the reserved key `carried-over` is refused (400) in any case — the tip is not silently dropped", async () => {
+    const db = seedTipDb();
+    db.tips[BOOKING_ID] = { id: "legacy", booking_id: BOOKING_ID, traveler_id: USER_ID, buddy_user_id: REAL_BUDDY_USER, amount_usd: 7, note: null };
+    _setTestServiceClient(tipClient(db));
+    for (const key of ["carried-over", "CARRIED-OVER", "Carried-Over"]) {
+      const header = await request("POST", TIP_PATH, { amountUsd: 5 }, { "Idempotency-Key": key });
+      assert.equal(header.status, 400, `${key} → ${JSON.stringify(header.body)}`);
+      assert.match(header.body.message, /reserved/);
+      const body = await request("POST", TIP_PATH, { amountUsd: 5, idempotencyKey: key });
+      assert.equal(body.status, 400, `${key} (body) → ${JSON.stringify(body.body)}`);
+    }
+    assert.deepEqual(tipRpcCalls, [], "the reserved key reached the posting function");
+    assert.equal(db.tips[BOOKING_ID].amount_usd, 7, "the legacy tip is untouched");
+
+    // …and the function refuses it too, by name, writing nothing.
+    const direct = await fakeLedgerRpc(db)("rb_post_booking_ledger", {
+      p_booking_id: BOOKING_ID, p_event: "tip", p_event_key: "carried-over", p_args: { traveler_id: USER_ID, amount_usd: 5, note: null },
+    });
+    assert.deepEqual([direct.data.ok, direct.data.refusal], [false, "event_key_reserved"]);
+    assert.equal(db.entries.length, 0);
+  });
+
+  it("a PERMANENT refusal the route has no older status for is a 4xx `ledger_refused`, retryable:false — not a 503", async () => {
+    const db = seedTipDb();
+    delete db.buddyProfiles[REAL_BUDDY_PROFILE];      // the booking has no payee
+    _setTestServiceClient(tipClient(db));
+    const res = await request("POST", TIP_PATH, { amountUsd: 10 });
+    assert.equal(res.status, 404, JSON.stringify(res.body));
+    assert.deepEqual([res.body.error, res.body.refusal, res.body.retryable], ["ledger_refused", "buddy_not_found", false]);
+    assert.match(res.body.message, /Nothing was charged/);
     assert.deepEqual(db.tips, {});
   });
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-// M7 — GET /rent-a-buddy/me/earnings/summary reads EVERY row, or says it cannot
+// M7 — GET /rent-a-buddy/me/earnings/summary: the money is the database's fold,
+// the lists are read exhaustively, and a fold that cannot be read is a failure
 // ═════════════════════════════════════════════════════════════════════════════
 
 const MARKETPLACE_SUMMARY = "/api/rent-a-buddy/me/earnings/summary";
 
-let mktBookings: any[] = [];
+let mktDb: FakeLedgerDb = emptyLedgerDb();
 let mktBookingsError: any = null;
-let mktTips: any[] = [];
-let mktTipsError: any = null;
+let mktAbsent: string[] = [];
+let mktRpcError: Record<string, any> = {};
+/** Money tables the handler read through `.from()` — it must read none. */
+let mktMoneyReads: string[] = [];
 
 function marketplaceClient(): any {
   return {
     auth: { getUser: () => Promise.resolve({ data: { user: null }, error: null }) },
+    rpc: async (fn: string, args: any) => {
+      if (mktRpcError[fn]) return { data: null, error: mktRpcError[fn] };
+      return fakeLedgerRpc(mktDb, { absent: mktAbsent })(fn, args);
+    },
     from(table: string) {
       switch (table) {
         case "feature_flags":
@@ -616,11 +792,13 @@ function marketplaceClient(): any {
             city_ranking: null, average_rating: null, review_count: 0,
           });
         case "rent_buddy_fee_rules":
-          return stub(feeRow("new", 25));
-        case "rent_buddy_bookings":
-          return pagedTable(() => mktBookings, () => mktBookingsError);
         case "rent_buddy_tips":
-          return pagedTable(() => mktTips, () => mktTipsError);
+        case "rent_buddy_earnings_ledger":
+        case "rent_buddy_earnings_entries":
+          mktMoneyReads.push(table);
+          return stub(null, []);
+        case "rent_buddy_bookings":
+          return pagedTable(() => Object.values(mktDb.bookings), () => mktBookingsError);
         case "trust_profiles":
           return stub({ overall_score: 70, public_level: "trusted" });
         default:
@@ -630,25 +808,41 @@ function marketplaceClient(): any {
   };
 }
 
-function completedBookings(count: number) {
-  return Array.from({ length: count }, (_, i) => ({
-    id: `bk-${String(i).padStart(6, "0")}`,
-    status: "completed", total_usd: 100, deposit_usd: 30, cash_balance_usd: 70,
-    cash_balance_confirmed_by_buddy: false, booking_date: "2026-03-15",
-    category: "city", city: "Cebu", duration_h: 2, tip_usd: 0, pricing_type: "hourly",
-  }));
+/**
+ * `count` completed bookings of 100.00, each LEDGERED (at the level's 25 %) and
+ * each tipped 1.00 — the state the SQL fold totals.
+ */
+async function seedLedgeredBookings(count: number, extra: any[] = []) {
+  mktDb = emptyLedgerDb({
+    buddyProfiles: { [BUDDY_PROFILE_ID]: { user_id: USER_ID, buddy_level: "new" } },
+    feeRules: { new: 25 },
+  });
+  const rpc = fakeLedgerRpc(mktDb);
+  for (let i = 0; i < count; i++) {
+    const id = `bk-${String(i).padStart(6, "0")}`;
+    mktDb.bookings[id] = {
+      id, buddy_id: BUDDY_PROFILE_ID, traveler_id: "trav-1",
+      status: "completed", total_usd: 100, deposit_usd: 30, cash_balance_usd: 70,
+      cash_balance_confirmed_by_buddy: false, booking_date: "2026-03-15",
+      category: "city", city: "Cebu", duration_h: 2, tip_usd: 0, pricing_type: "hourly",
+    };
+    await rpc("rb_post_booking_ledger", { p_booking_id: id, p_event: "booking_created", p_event_key: null, p_args: {} });
+    await rpc("rb_post_booking_ledger", { p_booking_id: id, p_event: "tip", p_event_key: `tip-${i}`, p_args: { traveler_id: "trav-1", amount_usd: 1, note: null } });
+  }
+  for (const b of extra) mktDb.bookings[b.id] = { buddy_id: BUDDY_PROFILE_ID, traveler_id: "trav-1", ...b };
 }
 
-describe("M7 — the marketplace earnings dashboard is exhaustive", () => {
-  beforeEach(() => {
+describe("M7 — the marketplace earnings dashboard is exhaustive, and the money is folded in the database", () => {
+  beforeEach(async () => {
     _setTestServiceClient(marketplaceClient());
-    mktBookings = completedBookings(1201);
     mktBookingsError = null;
-    mktTips = Array.from({ length: 1201 }, (_, i) => ({ id: `tip-${i}`, amount_usd: 1 }));
-    mktTipsError = null;
+    mktAbsent = [];
+    mktRpcError = {};
+    mktMoneyReads = [];
   });
 
-  it("totals all 1201 bookings past a 1000-row cap, not the first page", async () => {
+  it("totals all 1201 bookings — the figures are the fold's, past any row cap", async () => {
+    await seedLedgeredBookings(1201);
     const res = await request("GET", MARKETPLACE_SUMMARY);
     assert.equal(res.status, 200, JSON.stringify(res.body));
 
@@ -660,23 +854,54 @@ describe("M7 — the marketplace earnings dashboard is exhaustive", () => {
     );
     assert.equal(res.body.estimatedPlatformFeeUsd, round2(1201 * 100 * 0.25));
     assert.equal(res.body.estimatedBuddyEarningsUsd, round2(1201 * 100 * 0.75));
+    assert.equal(res.body.completed.unledgeredCount, 0);
   });
 
-  it("totals all 1201 tips too — the other unpaginated select in the same Promise.all", async () => {
+  it("totals all 1201 tips too, from the entries — and no commission came out of them", async () => {
+    await seedLedgeredBookings(1201);
     const res = await request("GET", MARKETPLACE_SUMMARY);
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(res.body.tips.count, 1201);
     assert.equal(res.body.tips.total, 1201);
     assert.notEqual(res.body.tips.count, 1000, "the tips read was capped exactly like the bookings read");
+    assert.equal(res.body.tipCommissionPercent, 0);
+    assert.equal(res.body.estimatedPlatformFeeUsd, round2(1201 * 100 * 0.25), "the fee is 25 % of the SERVICE price only");
   });
 
-  it("counts every row once — a client that ignores `range` must not double-count", async () => {
+  it("sums no money column in JavaScript: the handler reads no tips, fee or ledger table", async () => {
+    await seedLedgeredBookings(3);
     const res = await request("GET", MARKETPLACE_SUMMARY);
-    assert.equal(res.body.completed.count, 1201);
-    assert.ok(res.body.completed.count <= mktBookings.length);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual(mktMoneyReads, []);
+  });
+
+  it("the LIST read is still exhaustive: a booking on the second page is counted", async () => {
+    // The screen's lists and status counts still come from a paged read of the
+    // bookings. Ids sort after every `bk-…`, so these land past the 1000-row cap.
+    await seedLedgeredBookings(1201, [
+      { id: "zz-cancelled", status: "cancelled_by_traveler", total_usd: 50, booking_date: "2026-03-16" },
+      { id: "zz-disputed", status: "disputed", total_usd: 50, booking_date: "2026-03-16" },
+    ]);
+    const res = await request("GET", MARKETPLACE_SUMMARY);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual(
+      [res.body.statusBreakdown.cancelled, res.body.statusBreakdown.disputed, res.body.statusBreakdown.completed],
+      [1, 1, 1201],
+      "a read that stopped at the first page reports 0 cancelled and 0 disputed",
+    );
+  });
+
+  it("reports NOTHING as collected, for 1201 bookings that each name a 30.00 deposit (PAY-009)", async () => {
+    await seedLedgeredBookings(1201);
+    const res = await request("GET", MARKETPLACE_SUMMARY);
+    assert.equal(res.body.completed.inAppAmountCollected, 0);
+    assert.equal(res.body.completed.depositCollected, 0,
+      "36030 is sum(deposit_usd) — the figure this field used to carry, for money nobody paid");
+    assert.equal(res.body.isEstimated, true);
   });
 
   it("a failed booking read is a distinguishable failure, never a confident zero", async () => {
+    await seedLedgeredBookings(3);
     mktBookingsError = { message: "connection reset by peer" };
 
     const res = await request("GET", MARKETPLACE_SUMMARY);
@@ -689,30 +914,46 @@ describe("M7 — the marketplace earnings dashboard is exhaustive", () => {
     );
   });
 
-  it("a failed tip read is a failure too, not tips.total = 0", async () => {
-    mktTipsError = { message: "statement timeout" };
+  it("a fold that cannot be read is a failure too — named, and not tips.total = 0", async () => {
+    await seedLedgeredBookings(3);
+    mktRpcError = { rb_buddy_ledger_totals: { code: "57014", message: "canceling statement due to statement timeout" } };
 
-    const res = await request("GET", MARKETPLACE_SUMMARY);
-    assert.equal(res.status, 500, JSON.stringify(res.body));
-    assert.equal(res.body.error, "db_error");
-    assert.equal(res.body.tips, undefined);
+    const failed = await request("GET", MARKETPLACE_SUMMARY);
+    assert.equal(failed.status, 503, JSON.stringify(failed.body));
+    assert.equal(failed.body.error, "ledger_write_failed");
+    assert.equal(failed.body.tips, undefined);
+    assert.equal(failed.body.completed, undefined);
+
+    mktRpcError = {};
+    mktAbsent = ["rb_buddy_ledger_totals"];
+    const absent = await request("GET", MARKETPLACE_SUMMARY);
+    assert.equal(absent.status, 503, JSON.stringify(absent.body));
+    assert.equal(absent.body.error, "ledger_unavailable", "'3824 is not applied' has its own name");
+    assert.equal(absent.body.estimatedBuddyEarningsUsd, undefined);
   });
 
   it("does not leak the underlying database message", async () => {
+    await seedLedgeredBookings(3);
     mktBookingsError = { message: "permission denied for relation rent_buddy_bookings" };
     const res = await request("GET", MARKETPLACE_SUMMARY);
     assert.equal(String(res.body.message ?? "").includes("permission denied"), false);
+
+    mktBookingsError = null;
+    mktRpcError = { rb_buddy_ledger_totals: { code: "42501", message: "permission denied for table rent_buddy_earnings_entries" } };
+    const fold = await request("GET", MARKETPLACE_SUMMARY);
+    assert.equal(JSON.stringify(fold.body).includes("permission denied"), false);
   });
 
   it("an empty booking set is still an honest 200 with zeros", async () => {
-    // The point of the null/[] distinction: a genuine zero must survive it.
-    mktBookings = [];
-    mktTips = [];
+    // The point of the failure/zero distinction: a genuine zero must survive it.
+    await seedLedgeredBookings(0);
 
     const res = await request("GET", MARKETPLACE_SUMMARY);
     assert.equal(res.status, 200, JSON.stringify(res.body));
     assert.equal(res.body.completed.count, 0);
     assert.equal(res.body.completed.totalUsd, 0);
     assert.equal(res.body.tips.total, 0);
+    assert.equal(res.body.estimatedBuddyEarningsUsd, 0);
+    assert.equal(res.body.isEstimated, true, "zero is still an estimate, not a claim that anything settled");
   });
 });

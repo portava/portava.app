@@ -112,6 +112,45 @@ describe('launch controls', () => {
     const { findByText } = await render(<AdminLaunchControls />);
     expect(await findByText('Admin only', {}, { timeout: 5000 })).toBeTruthy();
   });
+
+  // Payments PAY-T12 — the commission is configurable by product and market
+  // (owner ruling 2026-10-04), and a launch control is a market and a product.
+  it('A7 with no override the card says what applies instead, and "Set" PATCHes platformFeePercent', async () => {
+    mockLC.mockResolvedValue({ ok: true, data: [LC] });
+    mockLCUpdate.mockResolvedValue({ ok: true });
+    const { findByTestId, getByText, queryByTestId } = await render(<AdminLaunchControls />);
+    await fireEvent.press(await findByTestId('lc-lc1-fee-set', {}, { timeout: 5000 }));
+    expect(getByText(/No override here: the fee schedule for the buddy's level applies, then the 10% default\./)).toBeTruthy();
+    expect(queryByTestId('lc-lc1-fee')).toBeNull();
+    await waitFor(() => expect(mockLCUpdate).toHaveBeenCalledWith('lc1', { platformFeePercent: 10 }));
+    await waitFor(() => expect(mockLC).toHaveBeenCalledTimes(2));
+  });
+
+  it('A7 an override is shown as stored; the steppers PATCH the next whole percent and Clear PATCHes null', async () => {
+    mockLC.mockResolvedValue({ ok: true, data: [{ ...LC, platform_fee_percent: 8 }] });
+    mockLCUpdate.mockResolvedValue({ ok: true });
+    const { findByTestId, getByTestId, getByText } = await render(<AdminLaunchControls />);
+    expect((await findByTestId('lc-lc1-fee', {}, { timeout: 5000 })).props.children).toEqual([8, '%']);
+    expect(getByText(/priced at 8% of the service price.*Tips carry no commission\./)).toBeTruthy();
+
+    await fireEvent.press(getByTestId('lc-lc1-fee-up'));
+    await waitFor(() => expect(mockLCUpdate).toHaveBeenCalledWith('lc1', { platformFeePercent: 9 }));
+    await waitFor(() => expect(mockLC).toHaveBeenCalledTimes(2));
+    // The card is locked while a change is in flight; wait for it to finish.
+    await waitFor(() => expect(getByTestId('lc-lc1-fee-clear').props.accessibilityState?.disabled).toBeFalsy());
+
+    await fireEvent.press(getByTestId('lc-lc1-fee-clear'));
+    await waitFor(() => expect(mockLCUpdate).toHaveBeenCalledWith('lc1', { platformFeePercent: null }));
+  });
+
+  it('A7 a commission change the server refuses is reported, not shown as saved', async () => {
+    mockLC.mockResolvedValue({ ok: true, data: [LC] });
+    mockLCUpdate.mockResolvedValue({ ok: false, error: 'platformFeePercent must be a whole number from 0 to 100, or null to clear the override.' });
+    const { findByTestId } = await render(<AdminLaunchControls />);
+    await fireEvent.press(await findByTestId('lc-lc1-fee-set', {}, { timeout: 5000 }));
+    await waitFor(() => expect(Alert.alert).toHaveBeenCalledWith("That didn't save", expect.stringMatching(/whole number from 0 to 100/)));
+    expect(mockLC).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('review moderation', () => {

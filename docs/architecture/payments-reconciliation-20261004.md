@@ -153,7 +153,7 @@ vocabulary admits three of `09` §3's eight states and can never produce `payabl
 | `routes/adminCreatorLedger.ts` | 5: audit read, hold, release, recompute, `artifacts/api-server/src/routes/adminCreatorLedger.ts:101#asyncHandler(async` | `artifacts/api-server/src/routes/adminCreatorLedger.ts:85#requireAdmin(req,` + the flag re-checked in every service function |
 | `routes/rentABuddy.ts` pay | `pay-deposit` / `pay-full`, both **503**, no side effects (`artifacts/api-server/src/routes/rentABuddy.ts:2298#async`) | none needed — constant responses |
 | `routes/rentABuddy.ts` refund | `refund-eligibility`, **501** (`artifacts/api-server/src/routes/rentABuddy.ts:4082#async`) | none |
-| `routes/rentABuddySpec.ts` payouts | hold (`artifacts/api-server/src/routes/rentABuddySpec.ts:2446#asyncHandler(async`), release (`:2495#asyncHandler(async`) | `requireAdmin`; now **compare-and-swap** (§3) |
+| `routes/rentABuddySpec.ts` payouts | hold (`artifacts/api-server/src/routes/rentABuddySpec.ts:2518#asyncHandler(async`), release (`:2524#asyncHandler(async`) | `requireAdmin`; now **one row-locked SQL transition** (§3; PR #603) |
 | `routes/verification.ts` | session create, status, webhook | rate-limited, signature-enforced, key-mode-gated |
 
 **Three independent locks hold the creator ledger closed**, all currently shut:
@@ -449,11 +449,11 @@ every booking sits at that default forever.
 Recorded because §11's body is left unedited and a reader would otherwise inherit them. These are
 about §1 and §11's framing, not new defects:
 
-1. **Payout hold/release are no longer unguarded transitions.** Both are now compare-and-swap with
-   the predicate in the same statement as the write
-   (`artifacts/api-server/src/routes/rentABuddySpec.ts:2403#PAYOUT_NOT_HOLDABLE_FROM`), answering
-   404/409 on zero rows and writing the audit row only when a transition happened. The predicates
-   are a denylist rather than an allowlist because `status` is still free text.
+1. **Payout hold/release are no longer unguarded transitions.** Both are now one SQL function that
+   checks the status under the payout's row lock and writes the audit row in the same transaction
+   (`artifacts/api-server/src/migrations/3824_rent_buddy_ledger_posting.sql:1395#rb_admin_payout_transition`; PR #603), answering
+   404/409 when it refuses and writing the audit row only when a transition happened. The predicates
+   are an allowlist — hold from `pending` only, release from `on_hold` only — though `status` is still free text.
 2. **The tip path is no longer three non-transactional writes with an overwriting upsert.** It is
    one RPC in one transaction that accumulates, with the payee derived database-side. The fallback
    path also accumulates and self-reports `atomic: false`; two sharp edges remain there (two

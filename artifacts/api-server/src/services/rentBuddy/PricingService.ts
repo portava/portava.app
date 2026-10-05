@@ -4,8 +4,8 @@
  * Two key functions:
  *   1. getPricingSuggestion — returns a human-readable suggested range label
  *      (shown to Buddy only, never enforced)
- *   2. calculateDeposit — applies risk rules to compute deposit amount and
- *      payment mode; returns deposit_rule_applied, deposit_percent, deposit_reason
+ *   2. calculateDeposit — applies risk rules to choose the payment mode and the deposit PERCENTAGE (policy only; no amount:
+ *      rb_quote_booking / rb_booking_payment_terms, migration 3824, compute the money); returns deposit_rule_applied, deposit_percent, deposit_reason
  */
 
 export interface PricingSuggestionResult {
@@ -27,13 +27,13 @@ export interface DepositCalculationInput {
   disableDepositCash: boolean;
   buddyCashBalanceAccepted: boolean;
   riskHold: boolean;
-  totalUsd: number;
+  // (no `totalUsd`: this function prices nothing)
 }
 
 export interface DepositCalculationResult {
   depositPercent: number;
-  depositUsd: number;
-  cashBalanceDue: number;
+  // (no `depositUsd` / `cashBalanceDue`: they were totalUsd × percent in JavaScript floats. The split is
+  // SQL's now, in integer minor units, and is 0 while the owner's switch `rent_buddy_global_controls.deposits_enabled` is off.)
   paymentMode: 'full_in_app' | 'deposit_plus_cash';
   depositRuleApplied: string;
   depositReason: string;
@@ -163,8 +163,8 @@ export function calculateDeposit(input: DepositCalculationInput): DepositCalcula
   if (input.riskHold || input.cashBalanceDisabled || input.fullInAppRequired) {
     return {
       depositPercent: 100,
-      depositUsd: input.totalUsd,
-      cashBalanceDue: 0,
+      // full in-app: the whole price is the in-app share (when deposits are on), and no
+      // cash balance is due — amounts the database derives from the mode, not this function.
       paymentMode: 'full_in_app',
       depositRuleApplied: input.riskHold ? 'risk_hold' : 'admin_full_in_app',
       depositReason: input.riskHold ? 'Risk hold — full in-app required' : 'Admin restriction — full in-app required',
@@ -172,24 +172,24 @@ export function calculateDeposit(input: DepositCalculationInput): DepositCalcula
     };
   }
 
-  const depositUsd = Math.round(input.totalUsd * depositPercent / 100 * 100) / 100;
-  const cashBalanceDue = Math.round((input.totalUsd - depositUsd) * 100) / 100;
+  // (The deposit and the cash balance used to be computed here, as
+  // Math.round(totalUsd * percent / 100 * 100) / 100 — float money. Removed.)
 
   // Step 6: payment mode eligibility
   const canUseDpC =
     !input.disableDepositCash &&
     input.buddyCashBalanceAccepted &&
-    cashBalanceDue > 0 &&
+    // (was also `cashBalanceDue > 0`: true for any price > 0, since every percentage above is below 100)
     depositPercent < 100;
 
   const paymentMode: 'full_in_app' | 'deposit_plus_cash' = canUseDpC ? 'deposit_plus_cash' : 'full_in_app';
-  const actualCashBalance = paymentMode === 'full_in_app' ? 0 : cashBalanceDue;
-  const actualDeposit = paymentMode === 'full_in_app' ? input.totalUsd : depositUsd;
+  // The amounts for the chosen mode are rb_booking_payment_terms' (3824):
+  // nothing is multiplied, subtracted or rounded in this function.
 
   return {
     depositPercent: paymentMode === 'full_in_app' ? 100 : depositPercent,
-    depositUsd: actualDeposit,
-    cashBalanceDue: actualCashBalance,
+    // deposit and cash balance: the caller reads them from rb_quote_booking
+    // (creation) or rb_post_booking_ledger's `addons` answer.
     paymentMode,
     depositRuleApplied: ruleApplied,
     depositReason: reason,

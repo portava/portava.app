@@ -18,6 +18,7 @@ import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import rentABuddyRouter from "../routes/rentABuddy.js";
 import { specAliasRewrite } from "../lib/specAliasRewrite.js";
+import { acceptingLedgerRpc } from "./helpers/fakeRentBuddyLedgerRpc.js";
 
 // ── Test server ───────────────────────────────────────────────────────────────
 
@@ -67,9 +68,11 @@ interface SpecState {
   bookings: Record<string, any>;
   availabilityExceptions: any[];
   insertedBookings: any[];
+  /** Every `.rpc()` the route made, in order. */
+  rpcCalls: Array<{ fn: string; args: any }>;
 }
 
-let state: SpecState = { bookings: {}, availabilityExceptions: [], insertedBookings: [] };
+let state: SpecState = { bookings: {}, availabilityExceptions: [], insertedBookings: [], rpcCalls: [] };
 
 function makeClient() {
   function fakeTable(table: string) {
@@ -178,6 +181,13 @@ function makeClient() {
 
   return {
     from: (table: string) => fakeTable(table),
+    // A rebook is a booking, and since migration 3824 a booking's earnings
+    // ledger is posted by one SQL function before the route answers; a booking
+    // whose ledger cannot be posted is withdrawn and refused (PAY-050). This
+    // suite is about blocked dates, so the function answers "posted"; the
+    // refusal is rentABuddyGateConsolidation.test.ts's and
+    // rentBuddyEarningsLedgerCoverage.test.ts's subject.
+    rpc: (fn: string, args: any) => acceptingLedgerRpc(state.rpcCalls)(fn, args),
     auth: {
       getUser: async (token: string) => {
         if (token === FAKE_TOKEN) return { data: { user: { id: USER_ID } }, error: null };
@@ -224,6 +234,7 @@ beforeEach(() => {
     },
     availabilityExceptions: [],
     insertedBookings: [],
+    rpcCalls: [],
   };
   const client = makeClient();
   _setTestClient(client as any, true);
@@ -278,6 +289,11 @@ describe("Rebook via /api/buddy-bookings alias — blocked-date enforcement", ()
     assert.equal(r.body.booking?.status, "pending");
     assert.ok(r.body.bookingId, "should return new bookingId");
     assert.equal(state.insertedBookings.length, 1);
+    assert.deepEqual(
+      state.rpcCalls.filter((c) => c.fn === "rb_post_booking_ledger").map((c) => c.args),
+      [{ p_booking_id: state.insertedBookings[0].id, p_event: "booking_created", p_event_key: null, p_args: {} }],
+      "the rebooked booking's ledger is posted once, for the row that was inserted",
+    );
   });
 
   it("rejects rebook of a no_show_pending (mid-escalation) booking with 400 and creates no row", async () => {

@@ -339,7 +339,7 @@ export interface LaunchControl {
   require_phone_verification: boolean;
   full_payment_required: boolean;
   min_deposit_pct: number;
-  notes: string | null;
+  notes: string | null; /** Commission override, whole percent 0–100; null/absent = none (migration 3824). */ platform_fee_percent?: number | null;
   updated_at: string;
 }
 
@@ -398,7 +398,7 @@ export interface LaunchControlInput {
   nightlifeMinAge?: number;
   requireIdVerification?: boolean;
   requirePhoneVerification?: boolean;
-  notes?: string | null;
+  notes?: string | null; /** Commission override for this market / product: a whole percentage 0–100, or null for none (migration 3824). */ platformFeePercent?: number | null;
 }
 
 // ── Review moderation (PLAT-F49) ───────────────────────────────────────────────
@@ -438,5 +438,53 @@ export async function approveReview(reviewId: string): Promise<{ ok: boolean; er
 
 export async function rejectReview(reviewId: string, reason?: string): Promise<{ ok: boolean; error?: string }> {
   const res = await adminPost(`/api/rent-a-buddy/admin/reviews/${reviewId}/reject`, { reason: reason ?? null });
+  return res.ok ? { ok: true } : { ok: false, error: res.error };
+}
+
+// ── Payouts queue (payments PAY-T21) ───────────────────────────────────────────
+//
+// NO MONEY MOVES through any of these. `rent_buddy_payouts` is a status record:
+// no payment processor is connected and nothing is paid to anyone. A hold or a
+// release changes a status and writes its audit row in the same database
+// transaction (rb_admin_payout_transition); if the audit row cannot be written
+// the status does not change and the call fails.
+
+export type PayoutStateFilter = 'all' | 'pending' | 'on_hold' | 'released';
+
+/** A rent_buddy_payouts row as GET /admin/payouts returns it (raw columns). */
+export interface AdminPayout {
+  id: string;
+  booking_id: string | null;
+  buddy_id: string | null;
+  amount_usd: number | string | null;
+  status: string;
+  hold_reason: string | null;
+  held_by: string | null;
+  held_at: string | null;
+  released_by: string | null;
+  released_at: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export async function listAdminPayouts(
+  state: PayoutStateFilter = 'all',
+): Promise<AdminApiResult<{ payouts: AdminPayout[]; total: number }>> {
+  const res = await adminGet<{ payouts: AdminPayout[]; total: number }>(
+    `/api/rent-a-buddy/admin/payouts?status=${encodeURIComponent(state)}`,
+  );
+  return res.ok ? { ok: true, data: { payouts: res.data?.payouts ?? [], total: res.data?.total ?? 0 } } : res;
+}
+
+/** Hold a payout. `reason` is required by the server and is kept in the admin log. */
+export async function holdPayout(payoutId: string, reason: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await adminPost(`/api/rent-a-buddy/admin/payouts/${payoutId}/hold`, { reason });
+  return res.ok ? { ok: true } : { ok: false, error: res.error };
+}
+
+/** Release a held payout. A status change only — nothing is paid. `reason` is required. */
+export async function releasePayout(payoutId: string, reason: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await adminPost(`/api/rent-a-buddy/admin/payouts/${payoutId}/release`, { reason });
   return res.ok ? { ok: true } : { ok: false, error: res.error };
 }
