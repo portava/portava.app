@@ -3848,7 +3848,7 @@ router.delete("/airport/sessions/:id", async (req, res) => {
     elected: electedStamp,
   });
 
-  res.json({ ok: true, session, outcome, passportStamp });
+  const outcomeRecord = await recordLayoverOutcome(sc, { sessionId: session.id, outcome, nowMs: Date.now() }); res.json({ ok: true, session, outcome, passportStamp, outcomeRecord }); // census L32: the close's answer stored as an OUTCOME, behind 2992's write gate — never fails the close
 });
 
 // ── Admin: POST /api/admin/airport/profiles ───────────────────────────────────
@@ -4351,3 +4351,6 @@ async function bandPlanStops(
     };
   });
 }
+
+// Imported at the TAIL so no cited line above moves; ESM hoists it.
+import { recordLayoverOutcome } from "../services/layover/LayoverOutcomeStore.js";
