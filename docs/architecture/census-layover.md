@@ -8614,10 +8614,10 @@ touched, no migration was added or applied, and nothing was written to or read f
    see it. The guard is appended at the END of the file and the two in-function edits are
    line-neutral, so no line any census cites moved.
 2. **Decision-diff CI** (L241). The diff primitive existed (`layoverReplay.decisionDiffCorpus`) and had
-   nothing to run over. `artifacts/api-server/src/services/layover/replay/layoverScenarioCorpus.ts:113#export const LAYOVER_SCENARIOS`
+   nothing to run over. `artifacts/api-server/src/services/layover/replay/layoverScenarioCorpus.ts:125#export const LAYOVER_SCENARIOS`
    is 24 deterministic scenarios — every §21.1 row the engine can represent, the L220 generic/curated
    pair and the full return ladder on one session — and
-   `artifacts/api-server/src/services/layover/replay/layoverScenarioCorpus.ts:177#export const UNREPRESENTED_SCENARIOS`
+   `artifacts/api-server/src/services/layover/replay/layoverScenarioCorpus.ts:208#export const UNREPRESENTED_SCENARIOS`
    names the five §21.1 rows it cannot represent rather than faking them. `check:layover-decision-diff`
    compares the tree with a recorded golden
    (`artifacts/api-server/src/scripts/checkLayoverDecisionDiff.ts:64#const report = compareToGolden(`) and is
@@ -8707,6 +8707,101 @@ reads the overview before and after one. Tests: `artifacts/api-server/src/test/l
 - **L32's two observed columns** (`left_airport`, `actual_airport_return_at`) now have a source. The row
   stays N for 49.3's reason.
 
+## §50 — 2026-10-05 (mission lane A, after merging main `e3daeb739` with #588): L3 and L101 go BACK to W, the decision golden is regenerated with every change explained, and the layover Memory stops claiming its trip
+
+Same branch and same rules as §49. `head_commit` is not re-declared (§48.8). Controlled evidence only;
+no flag, no migration, no database.
+
+### 50.1 L3 and L101 move back `C → W`, withdrawing §49's grade
+
+The requirements, verbatim from §2.1 and §12:
+
+- **L3** — *"Hard safety constraints are deterministic and cannot be overridden by Compass/LLM output"*
+- **L101** — *"Compass **cannot invent or widen** the certified safe envelope, return deadline, visa/entry status, operational state or risk band"*
+
+Both are statements about what the model CANNOT do. §49 graded them C on a guard that is a DENY-LIST of
+phrasings — `artifacts/api-server/src/services/airport/LayoverCompassService.ts:626#const SAFE_TO_LEAVE =`
+and `artifacts/api-server/src/services/airport/LayoverCompassService.ts:1113#export function operationalStateViolations(`.
+A deny-list shows that the phrasings it lists are refused. It cannot show that the model cannot widen,
+because the published answer is still the model's own free prose whenever no listed phrase matched
+(`artifacts/api-server/src/services/airport/LayoverCompassService.ts:238#const boundedText = bounded.ok`).
+Measured on this tree, on a session whose CERTIFIED verdict is `no`, each of these returns NO violation and
+would be published:
+
+- "You've got loads of time, so head into the city."
+- "Lines at passport control are tiny tonight."
+- "No need to rush back, the queues are a breeze."
+- "Your plane leaves late, so stay out longer."
+
+The first is the body's own L3 example with one word changed. **There is no structural guarantee**: the
+answer is not assembled from fields the server holds, and free prose is neither stripped nor validated
+against them. So both rows are `W`, and §19.5's "four of five nouns are enforced" is withdrawn in the same
+breath — the same argument applies to the four nouns it counted.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L3 | C | W | The structured safety fields are server-computed and the model cannot change them, but the prose a traveller reads beside them is model text filtered by a phrase deny-list, and the four sentences above pass it. "Cannot be overridden" is not shown by a filter that a paraphrase defeats. |
+| L101 | C | W | Five nouns each have a deny-list check; none has a guarantee. Same four sentences. What would make it `C`: an answer composed from certified fields (the deterministic answer already is) with model text confined to non-safety content and refused when it names any of the five nouns at all — or validated against the certified record by something other than phrase matching. |
+
+The guard stays. It narrows the gap — "your flight is delayed an hour" and "plenty of time" are refused —
+and its tests stay; what was wrong was the grade.
+
+### 50.2 The decision-diff golden after #588, every change explained
+
+Merging `e3daeb739` turned `check:layover-decision-diff` red on all 24 scenarios. Compared field by field
+and order-insensitively against the previous golden, the ONLY fields that changed were `inputHash` and
+`snapshotId`, on all 24. No verdict, confidence, tier, return state, window rating, hard return, buffer,
+usable minutes, shortfall, reason code, rule or input fact changed.
+
+The cause is #588's version bump, `artifacts/api-server/src/services/airport/LayoverFeasibility.ts:84#export const LAYOVER_FEASIBILITY_VERSION`
+("2026.09.14-1" → "2026.10.04-1"), which `feasibilityInputs` writes into the named inputs
+(`artifacts/api-server/src/services/airport/LayoverFeasibility.ts:362#feasibilityVersion: LAYOVER_FEASIBILITY_VERSION,`)
+and `feasibilityInputHash` hashes; `snapshotId` derives from the hash. Same decisions under a new rules
+version is the correct answer (L5: versioned, replayable).
+
+#588 also made two of the rows §49 listed as unrepresentable representable, so six scenarios were added
+(`artifacts/api-server/src/services/layover/replay/layoverScenarioCorpus.ts:208#export const UNREPRESENTED_SCENARIOS`
+now names three; §49.1's "24" and "five" are superseded by 30 and three):
+
+| case | decision | the spec | correct |
+| --- | --- | --- | --- |
+| s25 unknown baggage, 4h45m | `no`, BAGGAGE_STATUS_CRITICAL_UNKNOWN, `gate.baggage_unknown` | App B.2 step 4; §21.1 "fail closed if critical" | yes |
+| s26 same, CHECKED_THROUGH | `tight`, no gate rule | App B.2 step 5 | yes |
+| s27 airport change, 6h | `no`, AIRPORT_CHANGE_REQUIRED, `gate.airport_change` | §21.1 "exploration subordinate to transfer" | yes |
+| s28 declared self-transfer recheck, 5h | `no`, SELF_TRANSFER_FRICTION | §21.1 "recheck friction included" | yes |
+| s29 entry unresolved, owner's entry policy ON | `no`, `gate.entry_unconfirmed` | §21.1 "no landside recommendation" | yes |
+| s30 constraint store unreadable, 6h | `yes`, bag charged (+15 buffer), gate open | L35 never "no bags"; §6.1 fails closed only when the unknown can change the verdict | yes |
+
+The same table is the golden's own regeneration note. `artifacts/api-server/src/test/layoverDecisionDiffCheck.test.ts`
+gains three cases on the new pairs (2 corpus mutants, 2 killed). L241 stays `W` (historical half).
+
+### 50.3 L275's evidence corrected: the layover Memory no longer carries `trip_id`
+
+Lead review found that §49's layover Memory wrote `trip_id`, and that `memories` has no kind column: the
+trip-Memory readers take "the newest live row with this trip_id and owner" as THE trip Memory. A kept
+layover therefore made the real trip Memory impossible to create (`POST /trips/:tripId/memory` answered
+`existing: true` with "Layover in …") and displaced an existing one (the owner got the draft, a crew member
+got "No memory for this trip"). Reproduced red first in `artifacts/api-server/src/test/memoryFromLayover.test.ts`
+("Lead review item 1"), fixed by not writing `trip_id` at all and adding it to the row's forbidden keys
+(`artifacts/api-server/src/services/memory/layoverMemory.ts`); restoring the write fails 11 cases through
+the guard and 4 behavioural cases with the guard also removed. The duplicate check now matches the
+deterministic title as well as the two instants, so an unrelated Memory sharing them is not answered as the
+layover's. **L275 stays W** (the postcard half). A link from a layover Memory to its trip needs a column
+that says what kind of Memory a row is — a migration on lane A2's table.
+
+### 50.4 The headline
+
+`check:census-integrity` reads **C=84 W=145 N=67 X=0** (§49: 86/143/67/0; L3 and L101 `C → W`).
+
+| Measure | §49 | **§50** |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 86 | **84** |
+| BUILT-BUT-WRONG | 143 | **145** |
+| NOT-BUILT | 67 | **67** |
+| CANNOT-VERIFY | 0 | **0** |
+| CONSTRUCTED% | 77.4 % | **77.4 %** |
+| CORRECT% raw | 29.1 % | **28.4 %** |
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/test/docCitations.test.ts — The citation guard's own suite. §27.10 names its case 9 and §30.4 names it as npm test's one failing test; both report on the guard that measured this census. It is machinery this census reports on, not a subject it grades.
@@ -8720,3 +8815,4 @@ reads the overview before and after one. Tests: `artifacts/api-server/src/test/l
 - NOT-GRADED: travel-buddy-standalone/app/admin/__tests__/AdminConsoleScreens.component.test.tsx — §47.3's admin-screen suite; no verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/src/services/__tests__/adminConsole.services.component.test.ts — §47.3's service suite; no verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/routes/memories.ts — §49.1 item 3 cites the from-layover route that builds L275's memory half; the router is census-highlights-memories' subject, and L275's held W rests on the missing postcard, not on this file.
+- NOT-GRADED: artifacts/api-server/src/services/memory/layoverMemory.ts — §50.3 cites the layover Memory row builder to record the trip_id fix; the module is census-highlights-memories' (lane A2) subject, and L275's held W rests on the missing postcard, not on this file.
