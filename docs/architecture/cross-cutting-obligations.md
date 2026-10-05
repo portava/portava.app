@@ -481,7 +481,7 @@ Per originating spec:
 The censuses are not wrong. Each one measured its spec faithfully, and Passport's, Layover's and
 Input Intelligence's went out of their way to record cross-surface adoption honestly
 (`census-passport.md:305-315`, `census-layover.md:710-702`,
-`census-input-intelligence.md:335` G6, `census-trips.md` TR133/TR165). The failure is **filing**,
+`census-input-intelligence.md:386#One platform layer` G6, `census-trips.md` TR133/TR165). The failure is **filing**,
 and it has three forms:
 
 **Form 1 — misattribution (106 obligations).** Spec A requires surface B to do something. Census A

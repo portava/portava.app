@@ -3080,6 +3080,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // paths resolve) and the most client-weighted: its subject is the typing
   // surface, so the hooks ARE the measurement, not evidence about it.
   "census-input-intelligence.md": [
+    // ── ADDED 2026-10-05 by lane D (§37) ────────────────────────────────────
+    // The proving tests §37's moves rest on: G320/G370 and the outcome term
+    // (OD-INPUT-1/2), G25 (OD-INPUT-3), and G368's vocabulary pin. Cited as
+    // evidence for verdicts, so watched rather than declared NOT-GRADED.
+    "artifacts/api-server/src/test/inputOutcomeLearning.test.ts",
+    "artifacts/api-server/src/test/inputMemoryContext.test.ts",
+    "artifacts/api-server/src/test/inputTelemetryVocabularyParity.test.ts",
     // ── ADDED 2026-09-29 by §34 (testing-mode lane tm-ii, WP-19) ─────────────
     // §34 moves G154–G157, G160–G163, G133 and G362 on these files' evidence:
     // the two server suites that prove paste and "meet at" through the real
