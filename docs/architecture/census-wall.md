@@ -2322,3 +2322,80 @@ is the reason §19.5 gives for recording the fail-open rather than closing it.
 
 - NOT-GRADED: travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts — as above: §20.2 cites its header, which names this census as its reason, and its refusing default. The recognizer is the sibling census's to grade.
 - NOT-GRADED: travel-buddy-standalone/src/platform/input-assistance/voice/VoiceDictationButton.tsx — as above: §20.2 cites it only to show the producer has a mounted surface. No Wall row grades a dictation control.
+
+## §21 — 2026-10-05 (lane L): W71 under OD-TRUST-8 — the Wall gets a push-to-talk microphone on the shared engine; what still needs a native build is named. NO ROW MOVES
+
+*Measured on branch `claude/mission-l-lead-residual-20261005` (cut from `13170305f`).
+`head_commit` is not re-declared. Client code changes only; no flag, migration, deployment
+or database was touched.*
+
+### 21.1 What the owner decided, and what it changed about W71
+
+§20.2 moved W71 `?` → `W` on *"a native module the owner has not approved"*. The owner has since
+answered the Wall's speech question (OD-TRUST-8, `docs/ops/owner-decisions-20261004.md`): *"On-device
+recognition by default. Use push-to-talk; ask separately before any audio leaves the device, and don't
+retain raw audio by default."* That approves the direction and adds two requirements the tree did not
+meet: PUSH-TO-TALK (the only voice control in the app is the platform `VoiceDictationButton`, which is
+tap-to-toggle), and a voice control ON THE WALL at all (that button's only mount is the trip
+destination editor — the Wall steer bar had none).
+
+### 21.2 What was built
+
+- `travel-buddy-standalone/src/features/wall/components/WallPushToTalk.tsx:84#export function WallPushToTalk({`
+  — listening runs only while the control is held: press-in starts the platform recognizer, release
+  aborts it and whatever was final is used (`travel-buddy-standalone/src/features/wall/components/WallPushToTalk.tsx:100#const onPressOut = () => {`).
+  It names no provider and installs none; it consumes lane D's `useVoiceDictation` unchanged.
+- A release that lands before the recognizer has started starts nothing
+  (`travel-buddy-standalone/src/features/wall/components/WallPushToTalk.tsx:69#export function pushToTalkPort(inner: SpeechRecognizerPort): SpeechRecognizerPort {`):
+  both platform adapters attach their abort listener only when they start, so a signal that fired
+  during the availability check was never seen and the recognizer would have kept listening after the
+  finger lifted.
+- Mounted in the Wall steer bar beside the shared input
+  (`travel-buddy-standalone/src/features/wall/components/WallHeader.tsx:172#<WallPushToTalk`); the
+  transcript lands in that field as if typed and is NOT submitted — the person presses search, and
+  from there it is the same Global Input Intelligence path typing takes, which is W71's own sentence.
+- Every state in words; a build with no recognizer shows the control struck through and says why;
+  a screen-reader hint says how to use it and that recognition is on the device.
+
+**Tests** — `WallPushToTalk.component.test.tsx`, 7 / 7, driving the real `WallHeader` →
+`WallPushToTalk` → `useVoiceDictation` → `voiceIntake` path with an injected recognizer that keeps
+listening until its signal aborts (`travel-buddy-standalone/src/features/wall/components/__tests__/WallPushToTalk.component.test.tsx:95#it('is not a toggle`,
+`travel-buddy-standalone/src/features/wall/components/__tests__/WallPushToTalk.component.test.tsx:115#it('a release that lands before`).
+The other Wall component suites (25 suites, 166 tests) and the standalone typecheck pass.
+
+**Mutations, each seen red, file restored byte-identical (`cmp`):**
+
+| mutation | result |
+| --- | --- |
+| hold replaced by tap-to-toggle (the platform button's behaviour) | 3 red |
+| the transcript not handed to the steer field | 1 red |
+| the pre-start release guard removed | 1 red |
+| both `disabled` guards removed (one alone is masked by the other) | 1 red |
+
+### 21.3 Why W71 stays `W`, exactly
+
+OD-TRUST-8's three clauses, against this tree:
+
+| clause | state |
+| --- | --- |
+| on-device by default | the native adapter asks for on-device recognition (`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:260#requiresOnDeviceRecognition: config.requiresOnDeviceRecognition,`), but **no speech module is a dependency of this app**, so on the hosted iOS/Android build the control answers "unavailable". Lane D's branch makes both adapters refuse rather than fall back to a server (its OD-INPUT-5 commit); not on this tree. |
+| push-to-talk | built and pinned (§21.2) |
+| separate ask before audio leaves; no raw audio kept | no path on the Wall can send audio off the device and nothing receives audio at all — the port returns text. If a cloud path is ever added, its separate consent belongs in front of it. |
+
+So `C` needs: a native speech module added to the standalone build (`expo-speech-recognition` is the
+module the adapter is written against), an EAS build, and a device run showing that release ends
+capture at once, the OS microphone indicator clears, and recognition runs offline. **W71 stays `W`
+on that, and on nothing else.**
+
+### 21.4 Found, recorded for lane D (not this lane's file)
+
+Both adapters in `platform/input-assistance/voice/speechRecognizer.ts` attach the abort listener after
+an await (the native one awaits the permission prompt), so an already-aborted signal starts capture
+anyway. The Wall closes the larger window itself (§21.2); the adapter-side fix is one check of
+`signal.aborted` immediately before `start()` in each adapter.
+
+### 21.5 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| W71 | W | **W** | §21.3. Push-to-talk and a Wall voice control are built and pinned under OD-TRUST-8; the row waits on a native speech module, an EAS build and a device run. |
