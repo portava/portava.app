@@ -144,7 +144,7 @@ import { airportPoint } from "../services/airport/LayoverTravelTime.js";
 // The session→airport lookup itself, published by the Layover contract. This
 // router had its own copy of the rule until it was collapsed into that one;
 // see `resolveAirportForSession` below.
-import { resolveSessionAirport, consumerLayoverRecord, consumerLayoverSnapshot } from "../services/airport/LayoverSnapshot.js"; import { upsertCuratedDwell, deleteCuratedDwell, DWELL_SOURCE_CLASSES, DWELL_CONFIDENCE, DWELL_MIN_MINUTES, DWELL_MAX_MINUTES } from "../services/airport/LayoverPlaceDwell.js";
+import { resolveSessionAirport, consumerLayoverRecord, consumerLayoverSnapshot } from "../services/airport/LayoverSnapshot.js"; import { upsertCuratedDwell, deleteCuratedDwell, DWELL_SOURCE_CLASSES, DWELL_CONFIDENCE, DWELL_MIN_MINUTES, DWELL_MAX_MINUTES } from "../services/airport/LayoverPlaceDwell.js"; import { declareConstraintsAtCreation, sessionPatchConstraintRefusal } from "./layoverConstraints.js"; import { BAGGAGE_MODES, baggageChargesBags, layoverStateOf } from "../services/airport/LayoverConstraints.js";
 // Every feasibility number this file publishes comes from ONE call to
 // `certifySessionFeasibility` per request. `assess`, `computeWindow` and
 // `adviseLeaving` are deliberately NOT imported here any more: four handlers
@@ -422,7 +422,7 @@ const createSessionSchema = z.object({
   boardingLocal:       z.string().regex(WALL_TIME_RE).optional().nullable(),
   flightType:          z.enum(["domestic", "international"]).optional().default("domestic"),
   immigrationRequired: z.boolean().optional().default(false),
-  checkedBags:         z.boolean().optional().default(false),
+  checkedBags:         z.boolean().optional().default(false), /** §4 the declared constraint set (census L22/L35) — see routes/layoverConstraints.ts. A `baggageMode` wins over `checkedBags`. */ baggageMode: z.enum(BAGGAGE_MODES).optional(), recheckRequired: z.boolean().nullable().optional(), airportChangeRequired: z.boolean().nullable().optional(),
   loungeAccess:        z.boolean().optional().default(false),
   wantsToLeave:        z.boolean().optional().default(true),
   comfortLevel:        z.enum(["safe_only", "moderate", "adventurous"]).optional().default("moderate"),
@@ -702,7 +702,7 @@ router.post("/airport/sessions", async (req, res) => {
     boardingTime:        boardingIso,
     flightType:          p.flightType,
     immigrationRequired: p.immigrationRequired,
-    checkedBags:         p.checkedBags,
+    checkedBags:         p.baggageMode ? baggageChargesBags(p.baggageMode) : p.checkedBags, // L35: UNKNOWN is stored as the CAUTIOUS boolean, never as "no bags"
     loungeAccess:        p.loungeAccess,
     wantsToLeave:        p.wantsToLeave,
     comfortLevel:        p.comfortLevel,
@@ -767,7 +767,7 @@ router.post("/airport/sessions", async (req, res) => {
   // Trip timeline mirror (best-effort)
   await mirrorSessionToTrip(sc, auth.client, session, airport, user.id);
 
-  res.status(201).json({ ok: true, session, safeReturnSuggested: suggest, safeReturnReasons: reasons });
+  res.status(201).json({ ok: true, session, safeReturnSuggested: suggest, safeReturnReasons: reasons, ...(await declareConstraintsAtCreation(sc, session, p)) });
 });
 
 // ── PATCH /api/airport/sessions/:id ──────────────────────────────────────────
@@ -805,7 +805,7 @@ router.patch("/airport/sessions/:id", async (req, res) => {
     sendError(res, "not_found", "Session not found or already closed");
     return;
   }
-  const p = parsed.data;
+  const p = parsed.data; { const refusal = sessionPatchConstraintRefusal(p, current); if (refusal) { sendError(res, "invalid_payload", refusal); return; } } // L172: constraints are edited on their own route, never accepted here and dropped
   const patch: Parameters<typeof updateSession>[3] = { ...p };
   delete (patch as any).arrivalLocal;
   delete (patch as any).departureLocal;
@@ -1136,7 +1136,7 @@ router.get("/airport/sessions/:id/safety", async (req, res) => {
     },
     // Spec §2.1 "versioned, explainable and replayable" — the fields that let
     // a stored answer be traced to the rules and inputs that produced it.
-    certification: certificationHeader(record),
+    certification: certificationHeader(record), landsideGate: record.landsideGate, // §5 the one landside guard, from the same record
     // Appendix C5 / census L296: *"Never certify a recommendation against a
     // snapshot other than the one returned with it."* The id travels WITH the
     // answer, so a client holding this payload can name the computation behind
@@ -2277,7 +2277,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
       disclaimer:  record.disclaimer,
       engineVersion: record.engineVersion,
     },
-    certification: certificationHeader(record),
+    certification: certificationHeader(record), landsideGate: record.landsideGate, layoverState: layoverStateOf(record, session.status, stops.some((s: { insideAirport?: boolean }) => s.insideAirport !== true)), // §5 the guard and §4.1 the state it decides, from the same record
     estimates:     record.estimates, snapshotId: snapshotIdFor(session.id, record.inputHash), persisted: persisted.ok ? { state: persisted.state, unwritten: persisted.unwritten } : { state: "not_stored" as const, reason: persisted.reason }, // §20 — the SAME three-valued shape GET /:id/safety publishes; "stored", "off" and "could not store" are different facts and a client showing one thing for all three repeats §23.1 a layer up
     // The dashboard's copy of the §2.1/§22 disclosure — see GET /:id/safety.
     airportIntelligence: airportIntelligence(record),

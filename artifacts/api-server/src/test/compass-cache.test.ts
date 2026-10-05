@@ -1101,7 +1101,7 @@ describe("top_events — live-schema column check", () => {
 //
 // Verified 2026-07-17 via Supabase Management API (information_schema.columns):
 //   buddy_profiles: user_id (uuid), display_name (text), tagline (text),
-//                   city (text), hourly_rate_usd (numeric), average_rating (numeric)
+//                   city (text), average_rating (numeric) — hourly_rate_usd exists too and is NOT selected (PAY-074)
 // A wrong column name in .select() causes PostgREST to fail the whole query;
 // the catch block silently returns [] — emptying top_buddies on every app open.
 
@@ -1145,8 +1145,8 @@ describe("top_buddies — live-schema column check", () => {
       "tagline (live column name) must be returned");
     assert.strictEqual(row["city"],            "Porto",
       "city (live column name) must be returned");
-    assert.strictEqual(row["hourly_rate_usd"], 25,
-      "hourly_rate_usd (live column name) must be returned");
+    assert.ok(!("hourly_rate_usd" in row), // PAY-074: the seeded row carries a price and the fake returns whole rows, so this bites
+      "top_buddies must not carry the buddy's list price: no money field rides a feed payload (09 §10)");
     assert.strictEqual(row["average_rating"],  4.9,
       "average_rating (live column name) must be returned");
   });

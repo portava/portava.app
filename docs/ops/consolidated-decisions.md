@@ -9,6 +9,38 @@ row changes on the strength of a ruling — each still needs its own acceptance
 evidence, measured after the change lands. Anyone tempted to mark a row `C`
 because a decision exists should read this sentence again.
 
+**This file is the record of those six, and only those six.** It is not the
+repository's register of owner decisions. Discovery's decisions — including all
+**fourteen** taken on **2026-10-04**: the answers to questions 11(a), 12, 15 and
+16, plus the Rent-a-Buddy commission, the booking deposit, the identity
+provider, payment mode, the creator-ledger retention **hold** and the
+**activation freeze**, and then **C-11 / question 22(a) answered B**, the
+`standard` commission seed, the fee-rule version and a **certification
+constraint** — are recorded in
+`docs/architecture/discovery-decision-register.md` (section `## OWNER-1004`,
+entries `D-OWNER1004-1` … `-14`) and in
+`docs/ops/discovery-owner-approval-request.md` §8. Record a new decision in the
+register that owns its question; do not start a second list here.
+
+**Four of those fourteen govern what may be done anywhere in the repository, so
+they are named here rather than only there.** `D-OWNER1004-10` **freezes every
+flag flip and every hosted migration** while the deployment is unavailable and
+hosted testing shares production state — both conditions measured TRUE on
+2026-10-04. `D-OWNER1004-9` **holds PR #592 out of merge and out of
+application** until legal confirmation of the creator-ledger retention period,
+which **has not happened**; because the chain's apply step runs on `main` only,
+**merging that PR is the apply**. `D-OWNER1004-11` **answers the question behind
+that hold — C-11 / 22(a) is CLOSED, answer B, retain pseudonymised, seven years
+after fiscal year-end as the product default with jurisdiction-specific legal
+retention periods overriding it — and it does NOT lift the hold**: legal
+confirmation remains a precondition of the merge and the apply, and **decided is
+not cleared**. `D-OWNER1004-14` records that **a complete count of green checks
+is not a certification when the live-database tier did not run** — measured, for
+PR #612, as **zero** database-tier jobs out of eleven checks — and **holds
+migration `3520` out of merge and apply**, `3520` existing only on PR #616's
+branch, where merging is likewise the apply. **None of the four is an approval of
+anything.**
+
 | | ruling |
 |---|---|
 | **Q1** | **APPROVED — nullable trust scores.** The nine category columns and `overall_score` become nullable, NULL = not scored. Remove fabricated neutral defaults; update calculations and consumers. An unmeasured category must not contribute an invented 50. **Preserve legitimate measured values — do NOT mass-convert existing 50s without evidence of their origin.** Rehearse the migration and verify partially measured, entirely unmeasured, and negative-evidence cases before enabling the engine. |
@@ -76,7 +108,7 @@ null and documents that contract, `lib/trustScore` types the score
 are `NOT NULL DEFAULT 50.00`
 (`artifacts/api-server/baseline/20260819_baseline_structure.sql:10940#overall_score numeric(5,2)`),
 and the scorer still substitutes the same constant for a category with no
-events (`artifacts/api-server/src/services/trust/TrustScoreService.ts:229#function computeCategoryScore`).
+events (`artifacts/api-server/src/services/trust/TrustScoreService.ts:331#function computeCategoryScore`).
 #449's don't-persist guard is NOT on main. So a user with one negative event is
 dragged back toward 50 by eight fabricated neutrals.
 
@@ -104,9 +136,9 @@ idle one at the call site?
 **Current main — this is what changes the answer.** #450's two headline defects
 are already fixed on main by a DIFFERENT implementation than the PR's. The
 function has the caller it lacked
-(`artifacts/api-server/src/lib/trustMaintenanceScheduler.ts:653#restrictionsExpired = await expireOldRestrictions(db);`)
+(`artifacts/api-server/src/lib/trustMaintenanceScheduler.ts:679#const sweep = await expireOldRestrictions(db);`)
 and it does now bind its error
-(`artifacts/api-server/src/services/trust/TrustRestrictionService.ts:333#export async function expireOldRestrictions(`).
+(`artifacts/api-server/src/services/trust/TrustRestrictionService.ts:391#export async function expireOldRestrictions(`).
 But it returns `0` on that error into a bare `Promise<number>`, and the
 scheduler assigns that to `restrictionsExpired`. **A failed sweep still reports
 as a clean sweep that found nothing.** Main's version is also unbounded — no
@@ -130,10 +162,10 @@ measurement pattern this whole workstream exists to remove.
 **Current main.** #467's central addition already landed: `getTrustProfileResult`
 is imported by the projection service. Main ALSO shipped a vocabulary #467 never
 proposed — `measured | partial | substituted | unavailable | not_applicable`
-(`artifacts/api-server/src/services/passport/PassportProjectionService.ts:273#export type DomainTrustBasis`)
+(`artifacts/api-server/src/services/passport/PassportProjectionService.ts:279#export type DomainTrustBasis`)
 — and renders it as a note beside the word. But main still substitutes 50, still
 calls it "Established"
-(`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1109#function presentationWord`),
+(`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1129#function presentationWord`),
 and still hardcodes `applicable: true` on five of the six domains.
 
 **Why neither option as written.**
@@ -252,7 +284,7 @@ the member's earliest message also returns every OTHER sender's message after
 that instant, which is most of the gap §14.3 exists to deny.
 
 **What accepting it commits to, measured.**
-`artifacts/api-server/src/services/groupChatHistoryBound.ts:93#export function withinWindow`
+`artifacts/api-server/src/services/groupChatHistoryBound.ts:109#export function withinWindow`
 has **31 call sites across 13 files**, but it is one predicate, so all 31
 inherit the carve-out untouched. **18 of those paths also push the bound into
 the query first** as a `created_at` `.gte`, so a carve-out written only in
