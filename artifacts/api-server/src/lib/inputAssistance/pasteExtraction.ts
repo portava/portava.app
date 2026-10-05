@@ -99,6 +99,50 @@ export function sanitizePastedText(raw: unknown): string {
     .slice(0, PASTE_MAX_CHARS);
 }
 
+/**
+ * §47 "Sanitize pasted URLs … before rendering" (census G337) — the URL half.
+ *
+ * `sanitizePastedText` above makes a line safe to render as TEXT. A pasted URL
+ * needs one more step before it is echoed back as an item's `raw`, which the
+ * review screen shows whenever no place could be read from it (a shortened
+ * link, an unknown host): the URL a person copies from a browser or a booking
+ * e-mail routinely carries things that must not be repeated onto a screen —
+ * credentials in the userinfo (`https://user:secret@…`), session and tracking
+ * tokens in the query (`?token=…&utm_source=…`), state in the fragment.
+ *
+ * The DISPLAY form keeps what lets the person recognise the link — scheme,
+ * host, port and path — and replaces any query or fragment with a single "…".
+ * It is applied only to what is RENDERED (`raw`): parsing (`parseMapLink`) still
+ * reads the full URL, so a Google Maps `?q=` or Apple `ll=` still resolves.
+ * A string that is not an http(s) URL is returned unchanged (a `geo:` URI holds
+ * only coordinates and a label, both already sanitized as text).
+ */
+export function displaySafeUrl(text: string): string {
+  const s = (text ?? '').trim();
+  if (!/^https?:\/\//i.test(s)) return text;
+  let url: URL;
+  try {
+    url = new URL(s);
+  } catch {
+    // Not parseable as a URL: never echo what might be a userinfo segment.
+    return s.replace(/^(https?:\/\/)[^/@\s]*@/i, '$1');
+  }
+  const port = url.port ? `:${url.port}` : '';
+  const path = url.pathname === '/' ? '' : url.pathname.slice(0, 120);
+  const trailing = url.search || url.hash ? '…' : '';
+  return `${url.protocol}//${url.hostname}${port}${path}${trailing}`;
+}
+
+/** Every http(s) URL inside a rendered line, in its display-safe form. */
+export function redactUrlsForDisplay(line: string): string {
+  return (line ?? '').replace(/\bhttps?:\/\/\S+/gi, (m) => displaySafeUrl(m));
+}
+
+/** What an item's `raw` may hold: sanitized text with every URL display-safe, bounded. */
+function displayRaw(line: string): string {
+  return redactUrlsForDisplay(line).slice(0, 200);
+}
+
 // ── Coordinates (G157) ─────────────────────────────────────────────────────────
 
 function inRange(lat: number, lng: number): boolean {
@@ -318,10 +362,16 @@ function textItems(line: string, dayLabel: string | null): Array<Omit<PasteItem,
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
   for (const part of parts.length > 0 ? parts : [line]) {
-    const { query, timeHint } = stripTime(part);
+    const { query: timed, timeHint } = stripTime(part);
+    // A URL inside a text line is never part of a place name, and its query
+    // string is exactly what G337 forbids repeating — the query is rendered (as
+    // the item's label and in "No place matched “…”") and is sent to search.
+    // So the URL is taken out of the QUERY entirely; `raw` keeps its
+    // display-safe form so the person can still see what they pasted.
+    const query = timed.replace(/\bhttps?:\/\/\S+/gi, ' ').replace(/\s+/g, ' ').trim();
     if (!query) continue;
     out.push({
-      raw: part.slice(0, 200),
+      raw: displayRaw(part),
       source: 'text',
       provider: null,
       query: query.slice(0, MAX_QUERY_CHARS),
@@ -338,16 +388,16 @@ function textItems(line: string, dayLabel: string | null): Array<Omit<PasteItem,
 function lineItems(line: string, dayLabel: string | null): Array<Omit<PasteItem, 'index'>> {
   const coords = parseCoordinates(line);
   if (coords) {
-    return [{ raw: line.slice(0, 200), source: 'coordinates', provider: null, query: null, ...coords, timeHint: null, dayLabel, unsupported: null }];
+    return [{ raw: displayRaw(line), source: 'coordinates', provider: null, query: null, ...coords, timeHint: null, dayLabel, unsupported: null }];
   }
   if (isUrlLine(line)) {
     const link = parseMapLink(line);
     if (!link) return [];
     if (link.unsupported || link.stops.length === 0) {
-      return [{ raw: line.slice(0, 200), source: 'map_link', provider: link.provider, query: null, lat: null, lng: null, timeHint: null, dayLabel, unsupported: link.unsupported ?? 'unsupported_link' }];
+      return [{ raw: displayRaw(line), source: 'map_link', provider: link.provider, query: null, lat: null, lng: null, timeHint: null, dayLabel, unsupported: link.unsupported ?? 'unsupported_link' }];
     }
     return link.stops.map((stop) => ({
-      raw: line.slice(0, 200),
+      raw: displayRaw(line),
       source: 'map_link' as const,
       provider: link.provider,
       query: stop.query,

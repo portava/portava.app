@@ -36,6 +36,8 @@ import {
   parseCoordinates,
   parseMapLink,
   sanitizePastedText,
+  displaySafeUrl,
+  redactUrlsForDisplay,
   PASTE_MAX_ITEMS,
 } from "../lib/inputAssistance/pasteExtraction.js";
 
@@ -229,6 +231,55 @@ describe("classifyPaste — the shapes §24 names", () => {
 });
 
 // ═══ 2. The route, through the real gateway ══════════════════════════════════
+describe("§47 sanitize pasted URLs before rendering (G337) — what `raw` may echo back", () => {
+  it("drops credentials, query and fragment; keeps what lets a person recognise the link", () => {
+    assert.equal(
+      displaySafeUrl("https://alice:hunter2@maps.example.com/place/Dragon-Bridge?token=s3cr3t&utm_source=mail#frag"),
+      "https://maps.example.com/place/Dragon-Bridge…",
+    );
+    assert.equal(displaySafeUrl("https://maps.app.goo.gl/AbCdEf123"), "https://maps.app.goo.gl/AbCdEf123");
+    assert.equal(displaySafeUrl("http://example.com:8080/x"), "http://example.com:8080/x");
+    assert.equal(displaySafeUrl("Hội An"), "Hội An", "a non-URL is untouched");
+  });
+
+  it("an unparseable http string still never echoes a userinfo segment", () => {
+    assert.ok(!displaySafeUrl("https://bob:pw@exa mple.com").includes("pw"));
+  });
+
+  it("a URL inside a text line is redacted in place, the words around it kept", () => {
+    assert.equal(
+      redactUrlsForDisplay("Dinner here https://booking.example.com/r/123?session=abc then bar"),
+      "Dinner here https://booking.example.com/r/123… then bar",
+    );
+  });
+
+  it("classifyPaste: an UNREADABLE link shows its display form, never its token", () => {
+    const c = classifyPaste("https://user:pw@example.com/itinerary?share_token=XYZ");
+    const item = c.items[0]!;
+    assert.equal(item.unsupported, "unsupported_link", "still reported, not dropped");
+    assert.equal(item.raw, "https://example.com/itinerary…");
+    assert.ok(!/pw|XYZ/.test(item.raw));
+  });
+
+  it("classifyPaste: a READABLE link still resolves from the FULL url — only the display is trimmed", () => {
+    const c = classifyPaste("https://www.google.com/maps/search/?api=1&query=Dragon+Bridge&g_ep=tracking123");
+    const item = c.items[0]!;
+    assert.equal(item.query, "Dragon Bridge", "parsing read the query string");
+    assert.ok(!item.raw.includes("tracking123"), "the display form does not repeat it");
+  });
+
+  it("through the route: the response a review screen renders carries no credential or token", async () => {
+    const r = await extract({
+      context: "trip_destination",
+      fieldId: "trip.destination",
+      text: "https://alice:hunter2@maps.app.goo.gl/AbC?token=s3cr3t\nDa Nang https://t.co/x?ref=y",
+    });
+    assert.equal(r.status, 200);
+    const text = JSON.stringify(await r.json());
+    assert.ok(!/hunter2|s3cr3t|ref=y/.test(text), text);
+  });
+});
+
 describe("POST /input-assistance/extract — resolution through the shared gateway (G154)", () => {
   it("a pasted list resolves each stop to its CANONICAL city and reports an honest no-match", async () => {
     const r = await extract({ context: "trip_destination", fieldId: "trip.destination", text: "danang\nhcmc\nAtlantis" });
