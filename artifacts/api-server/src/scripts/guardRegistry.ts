@@ -1028,4 +1028,27 @@ export const GUARDS: readonly GuardEntry[] = [
       "No money identifier (price, fee, earnings, payout, commission, tip, revenue, sponsored placement, paid plan) is read by a ranker (Discovery, the Wall, media, the Compass pipeline, the buddy match scorer), a ranking feature vector, a graph builder or a feed payload, except an allowlisted identifier that enforces a non-goal or is not money where it stands. A real money input is neither excused nor removed by the check: it is a recorded open owner question, reported with a warning on every run and not failed, covering only the identifiers it names; the set of such questions is pinned in the check's test (`08` §6, `09` §10; PAY-019, PAY-074).",
     reach: { kind: "check-all", script: "check:no-money-in-ranking" },
   },
+  // Appended rather than filed with the other test-control entries above:
+  // docs/architecture/census-highlights-memories.md and census-trips.md anchor
+  // citations at line numbers in THIS file, and inserting mid-array moves them.
+  // check:doc-citations catches that; a new entry at the end costs nothing.
+  {
+    checker: "src/scripts/checkBlockListFailOpen.ts",
+    responsibility:
+      "A `blocks` read is written only in the shared helpers, never flattens its answer before its error is " +
+      "consulted, and concludes that nobody is blocked only from an actual empty array or an exact count of zero.",
+    reach: {
+      // NOT check-all, and that is the point of the entry. `check:all` reaches
+      // CI only through live-db.yml, the credentialed tier that goes missing
+      // from a rollup when runs are cancelled or slot-starved; unwired-checks.yml
+      // is a probation tier `check:all` does not run either. This guard reads
+      // .ts files off disk, so its enforcement belongs in `pnpm test` —
+      // ci.yml's `api-server-tests` job, `needs: preflight`, no `environment:`,
+      // no secrets, nothing that can starve it. The package script exists for
+      // running it by hand.
+      kind: "test-control",
+      test: "src/test/blockListFailOpenGuard.test.ts",
+      seams: ["BLOCK_FAIL_OPEN_SRC_ROOT", "BLOCK_FAIL_OPEN_BASELINE"],
+    },
+  },
 ];
