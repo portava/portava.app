@@ -129,7 +129,7 @@ const WINDOW = 2;
 const GAP = 3;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
-const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md']);
+const PINNED_DOCS = new Set(['docs/architecture/mobile-reachability-ledger.md', 'docs/architecture/trust-unproduced-vocabulary.md']);
 
 /** A backticked token that is a code identifier and not a phrase or a path. */
 const SYMBOL_RE = /^`([A-Za-z_$][A-Za-z0-9_$.]{2,60})`/;
