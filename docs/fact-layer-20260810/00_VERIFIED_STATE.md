@@ -780,7 +780,7 @@ directly via `isFlagEnabled` **does not** get this resolution. **[CLONE 13dcfe3]
 `disable_media_uploads` (`:2000`, `routes/postcards.ts:381`, `routes/posts.ts:92`,
 `routes/profile.ts:1019`, `:1092`, `routes/events.ts:5285`),
 `disable_location_sharing` (`routes/location.ts:94`),
-`disable_rent_buddy_booking` + `disable_rab_bookings` (`routes/rentABuddy.ts:1005-1006`),
+`disable_rent_buddy_booking` + `disable_rab_bookings` (`routes/rentABuddy.ts:1011-1012`),
 `disable_profile_search` (`routes/follows.ts:535`),
 `disable_posting` (`routes/posts.ts:339`),
 `disable_new_event_creation` (`routes/meetups.ts:133`),

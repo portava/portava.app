@@ -99,6 +99,7 @@ export default function AdminMarketplace() {
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(true); }} />}
       >
         <Text style={s.period}>Last 30 days</Text>
+        {data?.warning ? <Text style={s.period}>{data.warning}</Text> : null}
 
         <View style={s.statsGrid}>
           <StatCard icon={<BarChart2 size={20} color={color.deep} />} label="Total Bookings" value={data?.bookings?.total ?? 0} />
@@ -108,8 +109,16 @@ export default function AdminMarketplace() {
         </View>
 
         <View style={s.revenueRow}>
+          {/*
+            Was "Deposit collected" over `revenue.deposit`, which is the sum of
+            `deposit_usd` across booked bookings — booked value, never money
+            received. An operator reading a launch decision off this cell was
+            reading pipeline as cash. The API publishes `revenue.depositCollected`
+            at 0 alongside it; this cell shows the booked figure under a name
+            that matches it.
+          */}
           <View style={s.revCell}>
-            <Text style={s.revLbl}>Deposit collected</Text>
+            <Text style={s.revLbl}>Deposit scheduled</Text>
             <Text style={s.revVal}>${(data?.revenue?.deposit ?? 0).toFixed(2)}</Text>
           </View>
           <View style={s.revCell}>
