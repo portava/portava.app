@@ -1355,3 +1355,41 @@ describe("§61 — creation fails closed without 3415, and attach names content 
     assert.equal(db._writes.filter((w) => w.table === "content_trails").length, 0);
   });
 });
+
+// ── Owner decision 2026-10-04 (lane C): the Follow control opens on the truth ──
+//
+// GET /v1/discovery/trails/:id/follow. Before it, the client could follow and
+// unfollow but could not ask, so a Follow button opened showing a guess.
+// SHOWN RED: the route did not exist at 2e46835263 (express 404 for F1–F3).
+describe("GET /v1/discovery/trails/:id/follow — the viewer's own follow state, read back", () => {
+  it("F1. false, then true after PUT, then false after DELETE — each answer read from trail_follows", async () => {
+    const db = withDb();
+    const before = await call("GET", `/v1/discovery/trails/${T_DARK}/follow`, USER);
+    assert.equal(before.status, 200, JSON.stringify(before.body));
+    assert.equal(before.body.following, false);
+    await call("PUT", `/v1/discovery/trails/${T_DARK}/follow`, USER);
+    const on = await call("GET", `/v1/discovery/trails/${T_DARK}/follow`, USER);
+    assert.equal(on.body.following, true);
+    assert.equal(db._tables.trail_follows.length, 1);
+    const other = await call("GET", `/v1/discovery/trails/${T_DARK}/follow`, OTHER);
+    assert.equal(other.body.following, false, "one person's follow is not another's");
+    await call("DELETE", `/v1/discovery/trails/${T_DARK}/follow`, USER);
+    const off = await call("GET", `/v1/discovery/trails/${T_DARK}/follow`, USER);
+    assert.equal(off.body.following, false);
+  });
+
+  it("F2. an unreadable trail_follows is a server error (the Trail refusal map's db_error) — never a `following` answer", async () => {
+    withDb(SEED(), [], "postgres", ["trail_follows"]);
+    const r = await call("GET", `/v1/discovery/trails/${T_DARK}/follow`, USER);
+    assert.ok(r.status >= 500, JSON.stringify(r.body));
+    assert.equal("following" in (r.body ?? {}), false);
+  });
+
+  it("F3. an unknown Trail is 404, and signed-out is 401", async () => {
+    withDb();
+    const unknown = await call("GET", "/v1/discovery/trails/99999999-9999-4999-8999-999999999999/follow", USER);
+    assert.equal(unknown.status, 404, JSON.stringify(unknown.body));
+    const anon = await call("GET", `/v1/discovery/trails/${T_DARK}/follow`, null);
+    assert.equal(anon.status, 401);
+  });
+});

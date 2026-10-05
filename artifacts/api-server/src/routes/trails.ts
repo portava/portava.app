@@ -576,4 +576,19 @@ import {
   settleTrailModulesServe,
 } from "../services/trails/TrailService.js";
 
+// ── Owner decision 2026-10-04 (Trails are a user-facing feature): the client's
+// Follow control opens on the viewer's real state. Lane C, appended below every
+// cited line. A failed read answers through the shared refusal map (503),
+// never `following: false`.
+import { readTrailFollow } from "../services/trails/TrailService.js";
+router.get("/v1/discovery/trails/:id/follow", asyncHandler(async (req: Request, res: Response) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const id = uuid.safeParse(req.params.id);
+  if (!id.success) return sendError(res, "invalid_payload", "trail id must be a uuid");
+  const r = await readTrailFollow(getServiceClient(), id.data, auth.user.id);
+  if (r.refusal) return sendTrailRefusal(res, r.refusal);
+  res.json({ following: r.following });
+}));
+
 export default router;

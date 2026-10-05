@@ -2425,3 +2425,26 @@ export async function decideSuggestion(
   if (upd.error) return { refusal: refusalFor(upd.error, "decideSuggestion.update"), state: null, attach };
   return { refusal: null, state: decision === "accept" ? "accepted" : "declined", ...(attach ? { attach } : {}) };
 }
+
+/**
+ * Does this viewer follow this Trail? (owner decision 2026-10-04: Trails are a
+ * user-facing feature — a Follow control must open showing the truth.)
+ *
+ * A failed read is a refusal, never `false`: "you do not follow this" from an
+ * outage would invite a second follow and misstate the person's own choice.
+ */
+export async function readTrailFollow(
+  sc: any, trailId: string, userId: string,
+): Promise<{ refusal: TrailRefusal; following: boolean }> {
+  if (!sc) return { refusal: "no_service_client", following: false };
+  const t = await readTrail(sc, trailId);
+  if (t.refusal || !t.trail) return { refusal: t.refusal ?? "unknown_trail", following: false };
+  const { data, error } = await sc
+    .from("trail_follows")
+    .select("trail_id")
+    .eq("trail_id", trailId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) return { refusal: refusalFor(error, "follow_read"), following: false };
+  return { refusal: null, following: !!data };
+}
