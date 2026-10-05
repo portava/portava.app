@@ -444,10 +444,28 @@ router.get("/verification/status", asyncHandler(async (req, res) => {
     return;
   }
 
+  // The DEFINED current state (owner 2026-10-04, "Verified badge: Yes, for a
+  // defined, current verification state only. Make criteria visible; don't
+  // sell the badge or present it as an endorsement"): one definition, shared
+  // with the booking gate (services/identityVerification/currentVerification.ts).
+  const currentState = await readCurrentIdentityVerification(sc, user.id);
+  if (currentState.state === "unreadable") {
+    sendError(res, "db_error", "Could not read your verification state");
+    return;
+  }
+
   res.status(200).json({
     verificationRow:   current ?? null,
     verificationLevel: (profile as any)?.verification_level ?? "none",
     verifiedAt:        (profile as any)?.verified_at ?? null,
+    badge: {
+      verified: currentState.state === "verified",
+      adult: currentState.state === "verified" ? currentState.adult : false,
+      // Why not, in a code the app maps to plain words — never a vendor or key-mode detail.
+      reason: currentState.state === "verified" ? null : currentState.reason,
+      criteria: VERIFIED_BADGE_CRITERIA,
+      statement: VERIFIED_BADGE_STATEMENT,
+    },
   });
 }));
 
@@ -568,4 +586,4 @@ async function refreshPendingFromProvider(
 // a real one: `services/identityVerification/currentVerification.ts` counts
 // `live` (and `local_mock` only in a local run), and nothing else. Null — a
 // provider or key this process cannot classify — never counts.
-import { sessionProviderMode } from "../services/identityVerification/currentVerification.js";
+import { readCurrentIdentityVerification, sessionProviderMode, VERIFIED_BADGE_CRITERIA, VERIFIED_BADGE_STATEMENT } from "../services/identityVerification/currentVerification.js";

@@ -143,10 +143,10 @@ export function classifyTripMembershipRestoration(
     return {
       owed: true,
       requiredCommand: "ADMIN_RESTORE_PARTICIPANT",
-      blockedOn: RESTORE_SEMANTICS_DECISION,
+      blockedOn: null, // decided 2026-10-04 (adminRestoreParticipant.ts APPEAL_RESTORE_RULING); what is missing is the kernel command
       reason:
-        "trip_members row absent (member was removed by DELETE); restoring it requires " +
-        `ADMIN_RESTORE_PARTICIPANT and the owner decision ${RESTORE_SEMANTICS_DECISION}`,
+        "trip_members row absent (member was removed by DELETE); restoring it requires the Trip Kernel command " +
+        `ADMIN_RESTORE_PARTICIPANT, which does not exist (${RESTORE_SEMANTICS_DECISION} was decided 2026-10-04: restore the role at removal)`,
     };
   }
   const role = memberRow.role ?? null;
@@ -154,10 +154,10 @@ export function classifyTripMembershipRestoration(
     return {
       owed: true,
       requiredCommand: "ADMIN_RESTORE_PARTICIPANT",
-      blockedOn: RESTORE_SEMANTICS_DECISION,
+      blockedOn: null, // no removal is recorded for a member who is still present, so nothing is restorable under the ruling
       reason:
         `trip_members row present with role '${role}' — nothing was removed, and rewriting ` +
-        `that role would be choosing a restoration role (owner decision ${RESTORE_SEMANTICS_DECISION})`,
+        `that role would be inventing a restoration the ${RESTORE_SEMANTICS_DECISION} ruling (restore exactly what was removed) does not cover`,
     };
   }
   return { owed: false };
@@ -405,7 +405,7 @@ export async function resolveAppeal(
         return deferRestoration(
           appeal,
           "trip_members row disappeared between read and write; the update matched zero rows " +
-          `(restoring it requires ADMIN_RESTORE_PARTICIPANT and the owner decision ${RESTORE_SEMANTICS_DECISION})`,
+          `(restoring it requires the Trip Kernel command ADMIN_RESTORE_PARTICIPANT, which does not exist; ${RESTORE_SEMANTICS_DECISION} was decided 2026-10-04)`,
         );
       }
 
