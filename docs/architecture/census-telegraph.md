@@ -10283,7 +10283,7 @@ allowlist that no client file sends, or sent by a client file and not allowed; t
 ahead of the other four; a throwing tier read treated as "no limit"; a weak door closed without
 the ceiling falling.
 
-## §43 — TELEGRAPH lane T1 (2026-10-05): §9's state cells, safety mode on screen, the inbox's context bands, a measured bandwidth signal, privacy zones on Nearby, and §1.2 guarded
+## §44 — TELEGRAPH lane T1 (2026-10-05): §9's state cells, safety mode on screen, the inbox's context bands, a measured bandwidth signal, privacy zones on Nearby, and §1.2 guarded
 
 Written 2026-10-05 by mission lane T1 (requirements T1–T239; branch
 `claude/mission-t1-telegraph-core-20261005`, cut from `main` at `800516a2f`, `main` merged at
@@ -10293,9 +10293,10 @@ with that argument. **All evidence is CONTROLLED** — in-process route tests ov
 component tests against stubbed services, source-level wiring assertions, and mutations. No flag
 was touched, no migration was added, nothing was written to any database, and no row below was
 observed in production. Lane T2 (T262–T451) works the same surface in parallel and appends its own
-section; this one moves only rows in T1–T239.
+section; this one moves only rows in T1–T239. Numbered §44 because lane C's branch carries a §43
+(T242) not yet on `main`; if the lead merges them in another order the numbers are the lead's to settle.
 
-### 43.1 What was wrong, verified against the tree before each change
+### 44.1 What was wrong, verified against the tree before each change
 
 | # | Row | What the tree did |
 | --- | --- | --- |
@@ -10307,7 +10308,7 @@ section; this one moves only rows in T1–T239.
 | 6 | T239 | The data-saver ladder moved only on a person's setting; nothing measured the connection. |
 | 7 | T1 | No guard stood between Telegraph and a streak, time-in-chat or volume objective. |
 
-### 43.2 What was built
+### 44.2 What was built
 
 - **Privacy zones on Nearby.** The read layer asks the policy, through its one reader, about every
   raw position before a coarse point is made (`artifacts/api-server/src/services/telegraph/reachablePeopleQuery.ts:258#export function positionInProtectedZone(`);
@@ -10338,7 +10339,7 @@ section; this one moves only rows in T1–T239.
   and on a LOCATION message (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:270#export function locationDestination(`)
   hand off to the device's maps app at the sender's precision — coordinates only for an EXACT
   share — and post nothing (starting navigation is not "on my way", §9.1).
-- **Safety mode, on screen.** `travel-buddy-standalone/src/features/telegraph/safety/SafetyModeBar.tsx:120#for (const id of data.affordances.promoted) {`
+- **Safety mode, on screen.** `travel-buddy-standalone/src/features/telegraph/safety/SafetyModeBar.tsx:122#for (const id of data.affordances.promoted) {`
   draws §15.2's affordances in the SERVED order while the mode is raised (trusted contacts, I'm OK /
   I need help, emergency help, Safe Return, call, block or report, share location), skips an id it
   does not know, draws nothing it cannot perform, says when a status post fails, keeps a raised bar
@@ -10361,22 +10362,22 @@ section; this one moves only rows in T1–T239.
   naming the act that triggers each, any template whose rendered words nag, and streak /
   time-in-chat / session-length vocabulary in Telegraph code (server and client, comments stripped).
 
-### 43.3 Row moves
+### 44.3 Row moves
 
 | id | Was | Now | Why |
 | --- | --- | --- | --- |
 | T6 | W | **C** | **Pillar Act — messages/shared objects become plans, votes, meetups, navigation, coordination sessions.** The row's one remainder was "Navigation handoff still does not exist"; coordination sessions became entities under T168 (C). A meeting point and a LOCATION message now hand off to navigation (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:270#export function locationDestination(`, `travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:529#telegraph-rendezvous-directions`), proven by `travel-buddy-standalone/src/features/telegraph/__tests__/locationDirections.component.test.tsx` and `travel-buddy-standalone/src/features/telegraph/__tests__/coordinationStages.component.test.tsx`. |
 | T107 | W | **C** | **Returning UI: heading back, Safe Return, shared transport, return checkpoint.** Heading back (§9.1) and the return checkpoint (RENDEZVOUS) already were; in RETURNING the panel now offers Safe Return setup and a shared ride people join or leave, served by `artifacts/api-server/src/services/telegraph/coordinationStages.ts:236#export function projectSharedRides(` and drawn at `travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:377#telegraph-coordination-propose-ride`. Stated rather than smoothed: a Safe Return SESSION is still Safe Return's subsystem — the conversation offers it, it does not become one — and a shared ride is a §8.1 proposal people answer, not a booking. |
 | T108 | W | **C** | **Complete UI: closeout, media grouping, explicit Memory/recap options.** The remainder was "no closeout surface". `artifacts/api-server/src/services/telegraph/coordinationStages.ts:312#export function projectCloseout(` offers one for a bounded window and the panel draws it (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:272#telegraph-closeout`); media grouping (MEDIA_ALBUM) and the recap/Memory options were already C-grade evidence (T119, T121). |
-| T218 | W | **C** | **Safety mode promotes trusted contact, status, help, route/return, call, block/report; de-prioritizes entertainment.** The remainder was "nothing reorders". `travel-buddy-standalone/src/features/telegraph/safety/SafetyModeBar.tsx:120#for (const id of data.affordances.promoted) {` renders the served list top to bottom (a reversed list renders reversed in the test), each entry wired to a working action. One judgement the lead should check: "entertainment" is applied as collapsing the shared-context rail, the only non-safety content above the stream; GIFs have no provider (T64) and so nothing else was there to demote. |
+| T218 | W | **C** | **Safety mode promotes trusted contact, status, help, route/return, call, block/report; de-prioritizes entertainment.** The remainder was "nothing reorders". `travel-buddy-standalone/src/features/telegraph/safety/SafetyModeBar.tsx:122#for (const id of data.affordances.promoted) {` renders the served list top to bottom (a reversed list renders reversed in the test), each entry wired to a working action. One judgement the lead should check: "entertainment" is applied as collapsing the shared-context rail, the only non-safety content above the stream; GIFs have no provider (T64) and so nothing else was there to demote. |
 | T8 | W | **C** | **Inbox is not a generic notification feed.** §2.1's bands exist above the conversations (`travel-buddy-standalone/src/features/telegraph/inbox/InboxContextBands.tsx:87#export function InboxContextBands(`), proven by `travel-buddy-standalone/src/features/telegraph/__tests__/inboxContextBands.component.test.tsx`. Stated rather than smoothed: AVAILABLE NEARBY is absent on every deployment today because `nearby_reachable_enabled` is off (T5), and YOUR STATUS speaks only for a set status because `GET /me/quick-availability` does not check its own read's error (recorded for its owner). |
 | T239 | W | **C** | **§17.4 low-bandwidth degradation.** The remainder was "no bandwidth SIGNAL … nothing degrades automatically when the network gets bad". `travel-buddy-standalone/src/features/telegraph/connection/bandwidthSignal.ts:53#export function deriveBandwidthSignal(` is now that signal and `travel-buddy-standalone/src/features/telegraph/hooks/useDataSaver.ts:113#export function effectiveDataSaverLevel(` applies it, end to end from the transport's timing (`travel-buddy-standalone/src/features/telegraph/__tests__/bandwidthSignal.component.test.tsx`). The signal is what the app observed its own API answers doing (latency and reliability), not a link-speed reading; the app has no device network API. |
-| T153 | W | **C** | **`conversation_reports` / `blocks`.** §32's lead ruling: "THE REQUIREMENT IS SATISFIED BY THE UNIFIED STORAGE", with no row moved then. Both Telegraph report doors write the unified table (`artifacts/api-server/src/routes/messaging.ts:4138#.from('reports')`, `artifacts/api-server/src/routes/messaging.ts:4391#.from('reports')`) and `blocks` is the cascading store T174 grades C. Proven by §39's reporter suite (named in §43.4), whose two filing cases go red when either door writes `thread_reports` / `message_reports` instead. |
-| T1 | N | **W** | **North star.** The unguarded absence is a guarded one — the north-star guard named in §43.2 and §43.4. W, not C: the POSITIVE half — optimizing for successful coordinated real-world actions — rests on T354, whose only metric is SLO-09, a labelled proxy. |
+| T153 | W | **C** | **`conversation_reports` / `blocks`.** §32's lead ruling: "THE REQUIREMENT IS SATISFIED BY THE UNIFIED STORAGE", with no row moved then. Both Telegraph report doors write the unified table (`artifacts/api-server/src/routes/messaging.ts:4138#.from('reports')`, `artifacts/api-server/src/routes/messaging.ts:4391#.from('reports')`) and `blocks` is the cascading store T174 grades C. Proven by §39's reporter suite (named in §44.4), whose two filing cases go red when either door writes `thread_reports` / `message_reports` instead. |
+| T1 | N | **W** | **North star.** The unguarded absence is a guarded one — the north-star guard named in §44.2 and §44.4. W, not C: the POSITIVE half — optimizing for successful coordinated real-world actions — rests on T354, whose only metric is SLO-09, a labelled proxy. |
 | T31 | W | W | **Privacy zones suppress discovery.** Same verdict, narrower remainder: §24's policy zones now withhold a person's position on Nearby (`artifacts/api-server/src/services/telegraph/reachablePeopleQuery.ts:258#export function positionInProtectedZone(`). Still W for two stated reasons: there is no store for USER-designated places (OD-MAP-3 decided users designate home/work/school; the store is the Map lane's), and the only consumer is the flag-dark route. |
 | T106 | W | W | **Active UI: minimal conversation, next step, crew state, optional location scope.** Same verdict, narrower remainder: next step (`artifacts/api-server/src/services/telegraph/coordinationStages.ts:140#export function projectNextStep(`) and an in-thread scoped location share entry now exist. Still W for "minimal conversation", which is T12's undrawn NOW layer. |
 
-### 43.4 Tests, and mutations
+### 44.4 Tests, and mutations
 
 Every mutation below was applied alone to the COMMITTED file, the named suite run, and the file
 restored with `git checkout` and checked clean. Survivors are reported with what closed them.
@@ -10401,11 +10402,11 @@ restored with `git checkout` and checked clean. Survivors are reported with what
 - T153's evidence: `artifacts/api-server/src/test/reportReporterMembership.test.ts` 12/12; pointing either door at
   its legacy table kills it.
 
-- NOT-GRADED: artifacts/api-server/src/test/reachablePeopleProtectedZones.test.ts — §43's evidence suite for T31; the verdict rests on the cited source lines, which are in scope.
-- NOT-GRADED: artifacts/api-server/src/test/telegraphCoordinationStages.test.ts — §43's evidence suite for T106–T108; the verdicts rest on the cited source lines.
-- NOT-GRADED: artifacts/api-server/src/test/telegraphNorthStarGuard.test.ts — §43's guard for T1's negative half; the guard is evidence, not a graded surface.
+- NOT-GRADED: artifacts/api-server/src/test/reachablePeopleProtectedZones.test.ts — §44's evidence suite for T31; the verdict rests on the cited source lines, which are in scope.
+- NOT-GRADED: artifacts/api-server/src/test/telegraphCoordinationStages.test.ts — §44's evidence suite for T106–T108; the verdicts rest on the cited source lines.
+- NOT-GRADED: artifacts/api-server/src/test/telegraphNorthStarGuard.test.ts — §44's guard for T1's negative half; the guard is evidence, not a graded surface.
 
-### 43.5 Not done in this lane, and why
+### 44.5 Not done in this lane, and why
 
 - **T11 / T12** (draw the PLAN and NOW layers): the server partition exists; drawing it means
   taking items out of the conversation stream on the busiest screen in the app, and the NOW
@@ -10421,7 +10422,7 @@ restored with `git checkout` and checked clean. Survivors are reported with what
   flag-dark), **T212 / T213 / T201** (needs a `group` thread type — a migration that touches every
   thread-type reader), **T62 / T222–T224** (media pipeline, lead), **T225** (no audio decoder).
 
-### 43.6 What would turn this red
+### 44.6 What would turn this red
 
 A Nearby bucket computed from a position inside a protected zone, or an unreadable policy read as
 "no zones"; a next step presented as a declaration; a rider counted after leaving; a closeout for a
@@ -10430,7 +10431,7 @@ sender did not choose to share; a safety bar that orders affordances itself or d
 a failed refresh; an inbox band that says "nothing" after a failed read; a data-saver setting
 rewritten by the bandwidth signal; a Telegraph streak, nag or volume objective.
 
-### 43.7 The headline, restated from the rows
+### 44.7 The headline, restated from the rows
 
 Eight rows changed bucket: T6, T107, T108, T218, T8, T239 and T153 `W → C`; T1 `N → W`. T31 and
 T106 were restated in place. Counted with `check:census-integrity` on this branch, not by arithmetic
