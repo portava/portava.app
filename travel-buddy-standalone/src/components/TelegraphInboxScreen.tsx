@@ -30,7 +30,7 @@ import { errorCopy } from '../lib/errorCopy.ts'; import { typedKindPreviewLabel 
 // Telegraph §21 — object-aware, authorization-scoped message search. A
 // different question from this screen's own thread filter; see the row that
 // opens it.
-import { TelegraphSearchScreen } from '../features/telegraph/components/TelegraphSearchScreen.tsx'; import { InboxHeaderActions } from '../features/telegraph/components/InboxHeaderActions.tsx'; import { InboxContextBands } from '../features/telegraph/inbox/InboxContextBands.tsx'; // §2.1 bands — shares a line so no cited line moves
+import { TelegraphSearchScreen } from '../features/telegraph/components/TelegraphSearchScreen.tsx'; import { InboxHeaderActions } from '../features/telegraph/components/InboxHeaderActions.tsx'; import { InboxContextBands } from '../features/telegraph/inbox/InboxContextBands.tsx'; import { translatedPreviewText } from '../features/telegraph/inbox/translatedPreview.ts'; // §2.1 bands, §18.2 preview — share a line so no cited line moves
 
 type FilterKey = 'all' | 'direct' | 'trips' | 'circles' | 'unread' | 'requests';
 
@@ -76,7 +76,7 @@ export function systemMessageInboxPreview(
   if (label) {
     return isMine ? `You: ${label}` : label;
   }
-  return isMine ? lmp.body : (lmp.displayBody ?? lmp.body);
+  return isMine ? lmp.body : translatedPreviewText(lmp); // §18.2 T242: a translation is marked, and an uncertain one keeps its original
 }
 
 function timeAgo(iso: string): string {

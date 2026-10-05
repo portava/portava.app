@@ -103,7 +103,7 @@ export interface ThreadSummary {
     senderId: string;
     createdAt: string;
     msgType?: string;
-    subtype?: string | null;
+    subtype?: string | null; translated?: boolean; showOriginalAlongside?: boolean; // §18.2 T242: the server's display decision; absent on an older server
   } | null;
   unreadCount?: number;
   /**
