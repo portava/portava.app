@@ -22,7 +22,7 @@
  *   2. That attempt ran in a mode that counts: `live` — a real provider with a
  *      live key. A `test` (sandbox-key) attempt NEVER counts: the owner ruled
  *      out a sandbox verification key. The unsigned `local_mock` counts only in
- *      a positively-evidenced local run (`mockIdentityPermitted`), never on a
+ *      a test process (`node --test`; mockVerificationIsBookingGrade), never on a
  *      hosted deployment. An attempt whose mode was not recorded (every row
  *      written before migration 3930) does not count: an unknown mode is not a
  *      live one.
@@ -89,7 +89,7 @@ export type NotVerifiedReason =
   | "latest_attempt_not_verified"
   /** The verified attempt ran with a sandbox (test) key. The owner ruled these out. */
   | "sandbox_verification"
-  /** The verified attempt ran on the unsigned local mock, outside a local run. */
+  /** The verified attempt ran on the unsigned local mock, outside a `node --test` process. */
   | "mock_verification"
   /** The verified attempt's mode was never recorded (written before migration 3930). */
   | "mode_unrecorded"

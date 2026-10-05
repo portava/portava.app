@@ -51,7 +51,7 @@ export interface KycGateResult {
 /**
  * Decide whether a booking may be created right now: `{ allowed: true }` only
  * when identity verification is operational AND booking-grade (a live key, or
- * the mock in a local run). There is no override (owner, 2026-10-04: no tester
+ * the mock under node --test). There is no override (owner, 2026-10-04: no tester
  * bypass).
  */
 export async function checkBookingKycGate(_sc: any): Promise<KycGateResult> {
@@ -103,7 +103,7 @@ export async function requireBookingKyc(sc: any, res: any): Promise<boolean> {
 // BOOKINGS the gate additionally requires the configured provider's key to be a
 // LIVE key that this process is allowed to use (lib/paymentsMode.ts:
 // PAYMENTS_ALLOW_LIVE exactly "true"), or the unsigned mock in a positively
-// evidenced local run (tests, `pnpm dev`) — never on a hosted deployment. Every
+// evidenced test run (`node --test` only, never `pnpm dev`) — never hosted. Every
 // per-person check (services/identityVerification/currentVerification.ts) also
 // refuses a sandbox-mode verification row; this is the deployment-level half.
 export function verificationIsBookingGrade(env: NodeJS.ProcessEnv = process.env): boolean {
