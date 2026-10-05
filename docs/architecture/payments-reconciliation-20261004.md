@@ -358,7 +358,7 @@ of it.
   none of the five new ledger/attribution/audit tables appeared in `lib/deletionDispositions.ts` at
   all — not in `RETAINED_WITH_REASON`, not even in `UNCLASSIFIED_BACKLOG`, which that file is
   explicit is *"NOT a decision"* — while the three legacy money tables *are* in that backlog
-  (`artifacts/api-server/src/lib/deletionDispositions.ts:544#rent_buddy_earnings_ledger`,
+  (`artifacts/api-server/src/lib/deletionDispositions.ts:615#rent_buddy_earnings_ledger`,
   `:551#rent_buddy_payouts`, `:559#rent_buddy_tips`). All five are now classified: the four ledgers
   in a new `AWAITING_OWNER_DECISION` bucket that records C-11 without answering it, and
   `creator_rule_versions` in `RETAINED_WITH_REASON` (it carries no beneficiary and no actor, so it
@@ -597,19 +597,19 @@ OD-INPUT-4, OD-TRUST-2/3/5, OD-TRIP-1) and the hash-verified `docs/specs/discove
 
 | decision | built | where |
 |---|---|---|
-| OD-PAY-1/2 provider interface, buddy is the seller | direct charge on the buddy's account, commission as a separate platform fee; a market without direct charges is **refused**, never silently made a destination charge | `artifacts/api-server/src/services/payments/bookingPayments/checkout.ts:189#const model = selectChargeModel(deps.provider.capabilities(), market, "refuse");` |
+| OD-PAY-1/2 provider interface, buddy is the seller | direct charge on the buddy's account, commission as a separate platform fee; a market without direct charges is **refused**, never silently made a destination charge | `artifacts/api-server/src/services/payments/bookingPayments/checkout.ts:193#const model = selectChargeModel(deps.provider.capabilities(), market, "refuse");` |
 | OD-PAY-3 10 % on the pre-tax price, shown first, none on tips, no deposit | 1000 bps, versioned, by product and market (no market rule decided, none configured); the quote shows the commission as taken FROM the price | `artifacts/api-server/src/services/payments/bookingPayments/commissionPolicy.ts:54#bps: 1000,`, `artifacts/api-server/src/services/payments/bookingPayments/bookingQuote.ts:110#const commission = commissionMinor(input.serviceMinor, rule.bps);` |
-| OD-PAY-4 monthly, finalised, completed, verified; carry forward | plan / hold / release / execute; finalised = dispute window closed; a currency with **no configured minimum pays nothing** (the owner named no number) | `artifacts/api-server/src/services/payments/bookingPayments/payouts.ts:159#const carryReason = minimum === undefined` |
+| OD-PAY-4 monthly, finalised, completed, verified; carry forward | plan / hold / release / execute; finalised = dispute window closed; a currency with **no configured minimum pays nothing** (the owner named no number) | `artifacts/api-server/src/services/payments/bookingPayments/payouts.ts:165#const carryReason = minimum === undefined` |
 | OD-PAY-5 refunds | the owner's table; fees returned in proportion; an uncaptured payment is cancelled, not refunded | `artifacts/api-server/src/services/payments/bookingPayments/refunds.ts:66#case "cancelled_before_service": {` |
-| OD-PAY-6 original currency and conversion | stored as charged and as the provider reports settlement; **local-currency pricing is NOT built** — prices are stored only as `total_usd` | `artifacts/api-server/src/migrations/3931_rent_buddy_payments.sql:111#amount_minor                 bigint      NOT NULL CHECK (amount_minor > 0),` |
+| OD-PAY-6 original currency and conversion | stored as charged and as the provider reports settlement; **local-currency pricing is NOT built** — prices are stored only as `total_usd` | `artifacts/api-server/src/migrations/3931_rent_buddy_payments.sql:141#amount_minor                 bigint      NOT NULL CHECK (amount_minor > 0),` |
 | OD-PAY-7 tax configured per market before checkout | checkout refuses where the registered tax provider has not configured the market | `artifacts/api-server/src/services/payments/bookingPayments/bookingQuote.ts:100#return r.reason === "tax_not_configured"` |
-| OD-PAY-11 test mode until readiness | `livemode` CHECK false on every provider-mirroring table; readiness gate; live events refused | `artifacts/api-server/src/migrations/3931_rent_buddy_payments.sql:133#CONSTRAINT rbbp_test_mode_only CHECK (livemode = false)` |
+| OD-PAY-11 test mode until readiness | `livemode` CHECK false on every provider-mirroring table; readiness gate; live events refused | `artifacts/api-server/src/migrations/3931_rent_buddy_payments.sql:166#CONSTRAINT rbbp_test_mode_only CHECK (livemode = false)` |
 | `09` §2/§6/§10 ledger first, reversals, signed webhooks | money is posted to the ledger BEFORE state changes; the event is marked processed LAST | `artifacts/api-server/src/services/payments/bookingPayments/webhookProcessor.ts:142#const failure = await postAll(deps, [...planPaymentPostings(` |
 
-**The production ledger binding is `LEDGER_NOT_AVAILABLE`**
-(`artifacts/api-server/src/routes/rentABuddyPayments.ts:52#ledger: LEDGER_NOT_AVAILABLE,`): the only
-ledger that can record settled money is PR #598's. Until it is merged and applied, every webhook that must
-book money answers 503 and the provider retries, so this tree never acknowledges unbooked money. Every
+**The production ledger binding is PR #598's `payment_post_transaction`** (wave 2, through
+`services/payments/bookingPayments/ledgerAdapter.ts`; `artifacts/api-server/src/routes/rentABuddyPayments.ts:55#ledger: paymentLedgerAdapter(sc),`).
+Until 3821-3823 are applied it answers `ledger_unavailable`, so every webhook that must
+book money answers 503 and the provider retries, and this tree never acknowledges unbooked money. Every
 end-to-end proof is therefore against the deterministic fake provider with an in-memory store and ledger
 (`artifacts/api-server/src/test/rentBuddyPaymentSlice.test.ts:1#/**`, 42 cases;
 `artifacts/api-server/src/test/rentBuddyPaymentRoutes.test.ts:1#/**`, the real routers and the raw-body

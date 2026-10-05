@@ -3659,8 +3659,8 @@ owner's 2026-10-04 answers are cited by their ids in `docs/ops/owner-decisions-2
 1. **Two-sided booking eligibility on all five creation paths** (OD-PAY-10, OD-INPUT-4, OD-TRUST-5).
    `artifacts/api-server/src/lib/rentBuddyIdentityEligibility.ts:151#if (!travelerRestrictions.canJoinPrivatePlans) {`
    refuses a traveller under a `private_plan_access` restriction, telling them where to see it and
-   appeal; `artifacts/api-server/src/lib/rentBuddyIdentityEligibility.ts:163#if (buddy.state !== "verified" || !buddy.adult || !buddyRestrictions.canHost) return BUDDY_UNAVAILABLE;`
-   makes a buddy under a `hosting` restriction (or unverified, or not a verified adult) unbookable, with
+   appeal; `artifacts/api-server/src/lib/rentBuddyIdentityEligibility.ts:163#if (buddy.state !== "verified" || !buddy.adult || !buddyRestrictions.canHost || buddyPayments.state !== "ready") return BUDDY_UNAVAILABLE;`
+   makes a buddy under a `hosting` restriction (or unverified, not a verified adult, or without payment-provider verification, OD-PAY-10) unbookable, with
    one opaque answer so the traveller learns nothing about why. An unreadable restriction state
    (`fail_closed`) is a 503 "try again", never a restriction message
    (`artifacts/api-server/src/lib/rentBuddyIdentityEligibility.ts:128#if (travelerRestrictions.degradedReason === "fail_closed"`).
