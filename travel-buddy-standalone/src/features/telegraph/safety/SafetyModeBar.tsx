@@ -121,7 +121,7 @@ export function SafetyModeBar({
     switch (id) {
       case 'TRUSTED_CONTACT':
         controls.push(
-          <Chip key={id} id={id} label="Trusted contacts" styles={styles} onPress={() => router.push(EMERGENCY_CONTACTS_ROUTE as any)} />,
+          <Chip key={id} id={id} label="Trusted contacts" styles={styles} onPress={() => router.push(EMERGENCY_CONTACTS_ROUTE)} />,
         );
         break;
       case 'CURRENT_STATUS':
@@ -166,7 +166,7 @@ export function SafetyModeBar({
         onClose={() => setHelpOpen(false)}
         onMessageTrustedCircle={() => {
           setHelpOpen(false);
-          router.push(EMERGENCY_CONTACTS_ROUTE as any);
+          router.push(EMERGENCY_CONTACTS_ROUTE);
         }}
       />
       <SafeReturnSetupSheet

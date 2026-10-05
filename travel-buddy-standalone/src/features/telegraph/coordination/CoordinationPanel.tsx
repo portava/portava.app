@@ -67,10 +67,11 @@ export function closeoutDismissKey(threadId: string, planObjectId: string): stri
 }
 
 /** The query a maps app is handed for a meeting point: the checkpoint, then the landmark. */
-export function rendezvousDestination(payload: any): { name: string; city: string | null } | null {
-  const checkpoint = typeof payload?.checkpoint === 'string' ? payload.checkpoint.trim() : '';
+export function rendezvousDestination(payload: unknown): { name: string; city: string | null } | null {
+  const p = payload !== null && typeof payload === 'object' ? (payload as { checkpoint?: unknown; landmark?: unknown }) : null;
+  const checkpoint = typeof p?.checkpoint === 'string' ? p.checkpoint.trim() : '';
   if (!checkpoint) return null;
-  const landmark = typeof payload?.landmark === 'string' && payload.landmark.trim() ? payload.landmark.trim() : null;
+  const landmark = typeof p?.landmark === 'string' && p.landmark.trim() ? p.landmark.trim() : null;
   return { name: checkpoint, city: landmark };
 }
 

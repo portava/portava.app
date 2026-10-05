@@ -30,7 +30,7 @@ import { errorCopy } from '../lib/errorCopy.ts'; import { typedKindPreviewLabel 
 // Telegraph §21 — object-aware, authorization-scoped message search. A
 // different question from this screen's own thread filter; see the row that
 // opens it.
-import { TelegraphSearchScreen } from '../features/telegraph/components/TelegraphSearchScreen.tsx'; import { InboxHeaderActions } from '../features/telegraph/components/InboxHeaderActions.tsx';
+import { TelegraphSearchScreen } from '../features/telegraph/components/TelegraphSearchScreen.tsx'; import { InboxHeaderActions } from '../features/telegraph/components/InboxHeaderActions.tsx'; import { InboxContextBands } from '../features/telegraph/inbox/InboxContextBands.tsx'; // §2.1 bands — shares a line so no cited line moves
 
 type FilterKey = 'all' | 'direct' | 'trips' | 'circles' | 'unread' | 'requests';
 
@@ -471,7 +471,7 @@ export function TelegraphInboxScreen({ topInset = 0 }: Props) {
       </View>
 
       {isAuthed && (
-        <>
+        <><InboxContextBands onOpenThread={(threadId) => router.push(`/messages/${threadId}`)} />
           <View style={s.searchWrap}>
             <Search size={16} color={color.faint} style={s.searchIcon} />
             <TextInput
