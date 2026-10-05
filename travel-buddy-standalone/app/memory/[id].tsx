@@ -371,6 +371,8 @@ export default function MemoryDetailScreen() {
 
           {/* Like / save / share (HM-F09, HM-F13), people (HM-F12), own history (HM-F11) */}
           <MemorySocialBar memory={memory} isOwner={isOwner} />
+          {/* §14 Executable Memories: Do this again / Add to trip / Take me back, compiled against the world now */}
+          <MemoryActionBar memoryId={memory.id} />
           <MemoryParticipantsSection
             memoryId={memory.id}
             participants={(memory as MemoryWithParticipants).tags ?? []}
@@ -484,3 +486,4 @@ const s = StyleSheet.create({
 import { MemoryParticipantsSection, MemoryTagConsentFallback } from '../../src/features/memories/social/MemoryParticipantsSection.tsx';
 import { MemoryBrowseLinks } from '../../src/features/memories/social/MemoryBrowseLinks.tsx';
 import type { MemoryWithParticipants } from '../../src/services/memorySocial.ts';
+import { MemoryActionBar } from '../../src/features/memories/actions/MemoryActionBar.tsx';

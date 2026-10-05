@@ -435,4 +435,5 @@ router.use(postcardMediaTransportRouter);
 import mediaVideoPosterRouter from "./mediaVideoPoster.js";
 router.use(mediaVideoPosterRouter);
 import discoveryOutputKindsRouter from "./discoveryOutputKinds.js"; router.use(discoveryOutputKindsRouter); /* census-discovery §91 (DC-01): the three §85 output kinds, behind discovery_output_kinds_enabled; on this line so no cited line moves */ import discoveryTrendingRouter from "./discoveryTrending.js"; router.use(discoveryTrendingRouter); // census-discovery §58 (DC-21): `11` §4 trend explanation, read-only, behind discovery_trending_api_enabled. Written over the blank line that stood here, so the file keeps its 439 lines and no cited line moves.
+import memoryActionsRouter from "./memoryActions.js"; router.use(memoryActionsRouter); // census-highlights-memories H16/H107/H108/H259: §14 executable Memories, read-only compiles; tail-registered so no cited line moves.
 export default router;
