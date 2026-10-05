@@ -2214,7 +2214,7 @@ nothing went red, and two of five requirements were unreachable.
 
 The fix is not the two missing entries — that would restore the cause.
 `lib/discoveryEngineMode.ts:148#ACCEPTED_ENGINE_MODE_SPELLINGS` is derived from
-the resolver's own alias map and `routes/admin.ts:871` consumes it.
+the resolver's own alias map and `routes/admin.ts:872` consumes it.
 `src/test/discoveryEngineModeAdminReach.test.ts` pins the property in both
 directions and was mutated to prove it bites: re-typing the literal → RED;
 deleting `["partial","partial"]` from the alias map → RED with *"state
