@@ -41,8 +41,8 @@
  * `AIRPORT_MATURITY_LIMITED` at an uncurated airport — which is all 3,206 of
  * them. Six more are emitted only when a fact is supplied that nothing on the
  * tree produces (`SECURITY_WAIT_HIGH`, `TRAFFIC_DEGRADED`, `DATA_STALE`,
- * `SOURCE_CONFLICT`, and the two flight-change codes), and five are declared
- * and never emitted. This module renders all fifteen so that a server that
+ * `SOURCE_CONFLICT`, and the two flight-change codes), three only from a set the traveller DECLARED (bags unknown, airport change, separate tickets — `LayoverConstraints.ts`), and the rest
+ * wait for an emitter or a fact. This module renders all fifteen so that a server that
  * starts emitting one needs no client change — it does NOT claim they are live,
  * and the census rows for the unemitted ones do not move because of this file.
  */
