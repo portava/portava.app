@@ -23,10 +23,10 @@ const verified = (adult = true): CurrentIdentityVerification => ({
 });
 const clear = (): RestrictionState => ({ canHost: true, canJoinPrivatePlans: true, canMessage: true, canJoinLocationPlans: true, activeRestrictions: [] });
 
-function deps(v: Record<string, CurrentIdentityVerification>, r: Record<string, RestrictionState> = {}) {
+function deps(v: Record<string, CurrentIdentityVerification>, r: Record<string, RestrictionState> = {}, pay: BuddyPaymentReadiness = { state: "ready" }) {
   return {
     readVerification: async (_db: unknown, id: string) => v[id] ?? { state: "not_verified" as const, reason: "no_verification" as const },
-    readRestrictions: async (_db: unknown, id: string) => r[id] ?? clear(),
+    readRestrictions: async (_db: unknown, id: string) => r[id] ?? clear(), readPaymentReadiness: async () => pay, // the buddy's payment-provider state (OD-PAY-10); "ready" unless a test says otherwise
   };
 }
 
@@ -130,5 +130,77 @@ describe("requireVerifiedBookingParties writes the refusal in the house shape", 
     const res2 = { status(s: number) { rec2.status = s; return this; }, json() { return this; } };
     assert.equal(await requireVerifiedBookingParties({}, res2, { travelerId: T, buddyUserId: B }, deps({ [T]: verified(), [B]: verified() })), true);
     assert.equal(rec2.status, undefined);
+  });
+});
+
+// ── OD-PAY-10, second half: the buddy's payment-provider verification ─────────
+// "Require identity and payment-provider verification before someone can offer
+// or book the service." Appended at the foot so every cited line keeps its number.
+import type { BuddyPaymentReadiness } from "../services/payments/bookingPayments/recipientReadiness.js";
+import { readBuddyPaymentReadiness } from "../services/payments/bookingPayments/recipientReadiness.js";
+
+describe("the buddy's payment-provider verification is part of the booking decision (OD-PAY-10)", () => {
+  const both = { [T]: verified(), [B]: verified() };
+
+  it("every not-ready state -> the SAME opaque 403 buddy_unavailable, nothing about payouts", async () => {
+    for (const why of ["no_party", "no_recipient", "onboarding_incomplete", "charges_disabled"] as const) {
+      const r = await checkBookingParties({}, { travelerId: T, buddyUserId: B }, deps(both, {}, { state: "not_ready", why }));
+      assert.equal(r.allowed, false, why);
+      if (r.allowed) continue;
+      assert.equal(r.httpStatus, 403, why);
+      assert.equal(r.code, "buddy_unavailable", why);
+      assert.equal(r.message, "This Buddy can't take bookings right now.", why);
+      assert.doesNotMatch(r.message, /pay|onboard|charge|verif/i, why);
+    }
+  });
+
+  it("an UNREADABLE recipient -> 503, never a verdict about the buddy", async () => {
+    const r = await checkBookingParties({}, { travelerId: T, buddyUserId: B }, deps(both, {}, { state: "unreadable" }));
+    assert.equal(r.allowed, false);
+    if (r.allowed) return;
+    assert.equal(r.httpStatus, 503);
+    assert.equal(r.code, "payment_verification_unavailable");
+    assert.equal(r.side, null);
+    assert.doesNotMatch(r.message, /buddy|pay|onboard/i);
+  });
+
+  it("the traveller still learns what THEY must do first: an unverified traveller is told to verify, not that the buddy is unavailable", async () => {
+    const r = await checkBookingParties({}, { travelerId: T, buddyUserId: B }, deps({ [B]: verified() }, {}, { state: "not_ready", why: "no_recipient" }));
+    assert.equal(r.allowed, false);
+    if (!r.allowed) assert.equal(r.code, "identity_verification_required");
+  });
+
+  it("ready + both verified -> allowed (the positive control)", async () => {
+    assert.deepEqual(await checkBookingParties({}, { travelerId: T, buddyUserId: B }, deps(both, {}, { state: "ready" })), { allowed: true });
+  });
+});
+
+describe("readBuddyPaymentReadiness reads the stored recipient row", () => {
+  const rec = (o: Record<string, unknown> = {}) => ({
+    partyId: "p-1", provider: "fake", recipientRef: "fake_acct_1", country: "US", settlementCurrency: "USD",
+    onboarding: "verified", chargesEnabled: true, payoutsEnabled: true, requirementsDue: [], providerUpdatedAt: null, ...o,
+  }) as any;
+  const store = (party: any, recipient: any) => ({
+    partyForProfile: async () => party,
+    getRecipient: async () => recipient,
+  });
+  const ok = (v: unknown) => ({ ok: true as const, value: v as any });
+  const fail = { ok: false as const, detail: "relation does not exist" };
+
+  it("verified + charges enabled -> ready", async () => {
+    assert.deepEqual(await readBuddyPaymentReadiness(store(ok("p-1"), ok(rec())), B), { state: "ready" });
+  });
+  it("no party / no recipient / onboarding not verified / charges disabled -> not_ready, each named", async () => {
+    assert.deepEqual(await readBuddyPaymentReadiness(store(ok(null), ok(null)), B), { state: "not_ready", why: "no_party" });
+    assert.deepEqual(await readBuddyPaymentReadiness(store(ok("p-1"), ok(null)), B), { state: "not_ready", why: "no_recipient" });
+    for (const onboarding of ["not_started", "in_progress", "pending_verification", "restricted", "rejected"]) {
+      assert.deepEqual(await readBuddyPaymentReadiness(store(ok("p-1"), ok(rec({ onboarding }))), B), { state: "not_ready", why: "onboarding_incomplete" }, onboarding);
+    }
+    assert.deepEqual(await readBuddyPaymentReadiness(store(ok("p-1"), ok(rec({ chargesEnabled: false }))), B), { state: "not_ready", why: "charges_disabled" });
+  });
+  it("either read failing, or throwing, -> unreadable", async () => {
+    assert.deepEqual(await readBuddyPaymentReadiness(store(fail, ok(null)), B), { state: "unreadable" });
+    assert.deepEqual(await readBuddyPaymentReadiness(store(ok("p-1"), fail), B), { state: "unreadable" });
+    assert.deepEqual(await readBuddyPaymentReadiness({ partyForProfile: async () => { throw new Error("x"); }, getRecipient: async () => ok(null) } as any, B), { state: "unreadable" });
   });
 });

@@ -37,9 +37,9 @@
  *      in-person plan). This mapping of the four existing restriction types
  *      onto booking is THIS module's reading of "limit each restriction to the
  *      actions needed"; it is recorded as such, not as an owner ruling.
- * Payment-provider verification (the buddy's onboarding) is the payments
- * slice's gate at checkout and at payout (services/payments/bookingPayments/),
- * because it is the payment provider's answer, not identity's.
+ *   4. the BUDDY's payment-provider verification (OD-PAY-10, second half): a
+ *      recipient row with onboarding 'verified' and charges enabled
+ *      (services/payments/bookingPayments/recipientReadiness.ts; foot of file).
  *
  * ── FAIL-CLOSED ──────────────────────────────────────────────────────────────
  * An unreadable verification or restriction state answers 503 and refuses THIS
@@ -62,7 +62,7 @@ export type BookingPartyRefusal = {
     | "age_requirement"
     | "account_restricted"
     | "buddy_unavailable"
-    | "verification_unavailable";
+    | "verification_unavailable" | "payment_verification_unavailable";
   /** Which side the refusal is about. The buddy side is never explained further to the traveller. */
   readonly side: "traveler" | "buddy" | "both" | null;
   readonly message: string;
@@ -93,7 +93,7 @@ export interface BookingPartiesInput {
 
 export interface BookingPartiesDeps {
   readVerification?: (db: any, userId: string) => Promise<CurrentIdentityVerification>;
-  readRestrictions?: (db: any, userId: string) => Promise<RestrictionState>;
+  readRestrictions?: (db: any, userId: string) => Promise<RestrictionState>; readPaymentReadiness?: (db: any, buddyUserId: string) => Promise<BuddyPaymentReadiness>;
 }
 
 /** Decide, without writing a response. Never throws. */
@@ -103,7 +103,7 @@ export async function checkBookingParties(
   deps: BookingPartiesDeps = {},
 ): Promise<BookingPartyEligibility> {
   const readVerification = deps.readVerification ?? ((d: any, u: string) => readCurrentIdentityVerification(d, u));
-  const readRestrictions = deps.readRestrictions ?? ((d: any, u: string) => getRestrictionState(d, u));
+  const readRestrictions = deps.readRestrictions ?? ((d: any, u: string) => getRestrictionState(d, u)); const readPaymentReadiness = deps.readPaymentReadiness ?? buddyPaymentReadiness;
   const buddyUserId = input.buddyUserId;
   // A buddy profile with no user behind it cannot be verified, so it cannot be booked.
   if (typeof buddyUserId !== "string" || buddyUserId.length === 0) return BUDDY_UNAVAILABLE;
@@ -111,13 +111,13 @@ export async function checkBookingParties(
   let traveler: CurrentIdentityVerification;
   let buddy: CurrentIdentityVerification;
   let travelerRestrictions: RestrictionState;
-  let buddyRestrictions: RestrictionState;
+  let buddyRestrictions: RestrictionState; let buddyPayments: BuddyPaymentReadiness;
   try {
-    [traveler, buddy, travelerRestrictions, buddyRestrictions] = await Promise.all([
+    [traveler, buddy, travelerRestrictions, buddyRestrictions, buddyPayments] = await Promise.all([
       readVerification(db, input.travelerId),
       readVerification(db, buddyUserId),
       readRestrictions(db, input.travelerId),
-      readRestrictions(db, buddyUserId),
+      readRestrictions(db, buddyUserId), readPaymentReadiness(db, buddyUserId),
     ]);
   } catch {
     return UNAVAILABLE;
@@ -125,7 +125,7 @@ export async function checkBookingParties(
 
   if (traveler.state === "unreadable" || buddy.state === "unreadable") return UNAVAILABLE;
   // fail_closed = the restriction table could not be read: the check did not run. Never a restriction message.
-  if (travelerRestrictions.degradedReason === "fail_closed" || buddyRestrictions.degradedReason === "fail_closed") return UNAVAILABLE;
+  if (travelerRestrictions.degradedReason === "fail_closed" || buddyRestrictions.degradedReason === "fail_closed") return UNAVAILABLE; if (buddyPayments.state === "unreadable") return PAYMENTS_UNAVAILABLE; // the payment check did not run
 
   if (traveler.state !== "verified") {
     return {
@@ -160,7 +160,7 @@ export async function checkBookingParties(
     };
   }
 
-  if (buddy.state !== "verified" || !buddy.adult || !buddyRestrictions.canHost) return BUDDY_UNAVAILABLE;
+  if (buddy.state !== "verified" || !buddy.adult || !buddyRestrictions.canHost || buddyPayments.state !== "ready") return BUDDY_UNAVAILABLE;
 
   return { allowed: true };
 }
@@ -180,3 +180,18 @@ export async function requireVerifiedBookingParties(
   res.status(r.httpStatus).json({ error: r.code, side: r.side, message: r.message });
   return false;
 }
+
+// ── OD-PAY-10, second half: the buddy's payment-provider verification ─────────
+// Appended at the foot so every cited line above keeps its number. Read with
+// the identity reads, decided last: the traveller learns what THEY must do
+// first, and about the buddy only that this Buddy can't take bookings right now.
+import { buddyPaymentReadiness, type BuddyPaymentReadiness } from "../services/payments/bookingPayments/recipientReadiness.js";
+
+/** The buddy's payout status could not be read: the check did not run. Says nothing about the buddy. */
+const PAYMENTS_UNAVAILABLE: BookingPartyRefusal = {
+  allowed: false,
+  httpStatus: 503,
+  code: "payment_verification_unavailable",
+  side: null,
+  message: "We couldn't complete this booking's checks right now, so it was not made. Please try again shortly.",
+};

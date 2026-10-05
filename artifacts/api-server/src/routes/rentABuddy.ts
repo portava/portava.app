@@ -5121,7 +5121,7 @@ router.post("/rent-a-buddy/dashboard/packages", async (req, res) => {
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { data: bp } = await serviceClient.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
-  if (!bp) return res.status(404).json({ error: "profile_not_found" });
+  if (!bp) return res.status(404).json({ error: "profile_not_found" }); if (!await requireBuddyPaymentReadyToPublish(serviceClient, res, auth.user.id)) return; // OD-PAY-10: payment-provider verification before publishing (foot of file)
 
   const pkgCreateRollout = await checkRentBuddyAccess({ sc: serviceClient, userId: auth.user.id, action: "read" });
   if (!pkgCreateRollout.allowed) return res.status(pkgCreateRollout.httpStatus).json({ error: pkgCreateRollout.code, message: pkgCreateRollout.message });
@@ -5150,7 +5150,7 @@ router.patch("/rent-a-buddy/dashboard/packages/:packageId", async (req, res) => 
   if (!await requireRentBuddyEnabled(serviceClient, res)) return;
 
   const { data: bp } = await serviceClient.from("rent_buddy_profiles").select("id").eq("user_id", auth.user.id).maybeSingle();
-  if (!bp) return res.status(404).json({ error: "profile_not_found" });
+  if (!bp) return res.status(404).json({ error: "profile_not_found" }); if (req.body?.isActive === true && !await requireBuddyPaymentReadyToPublish(serviceClient, res, auth.user.id)) return; // OD-PAY-10: payment-provider verification before publishing (foot of file)
 
   const body = req.body ?? {};
   const patch: Record<string, any> = { updated_at: new Date().toISOString() };
@@ -8260,4 +8260,4 @@ const RENT_BUDDY_CHECKIN_TYPES: readonly string[] = [
 // categories. The call sits on the verified-minor line, before launch controls,
 // for the same reason that refusal does: a location policy must not be able to
 // waive it. rentABuddySpec.ts (the fifth creation path) calls the same helper.
-import { requireVerifiedBookingParties } from "../lib/rentBuddyIdentityEligibility.js";
+import { requireVerifiedBookingParties } from "../lib/rentBuddyIdentityEligibility.js"; import { requireBuddyPaymentReadyToPublish } from "../services/payments/bookingPayments/recipientReadiness.js"; // OD-PAY-10 publish doors
