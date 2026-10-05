@@ -276,7 +276,10 @@ describe("C. every writer into `messages` is declared, and a user door holds its
       // guard through a helper — matching the helper's DEFINITION would pass
       // with the call deleted, which is exactly how this case first survived a
       // mutation.
-      const files = d.file === "services/telegraph/coordinationSessions.ts" ? ["routes/telegraphCoordination.ts"] : [d.file];
+      const files =
+        d.file === "services/telegraph/coordinationSessions.ts" ? ["routes/telegraphCoordination.ts"]
+        : d.file === "services/telegraph/threadEnvelopeWrites.ts" ? ["routes/telegraphKinds.ts", "routes/telegraphCoordination.ts"]
+        : [d.file];
       for (const f of files) {
         assert.match(
           read(f),
