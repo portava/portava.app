@@ -2254,7 +2254,7 @@ is how a hold outlives its own scope.
    versioned, append-only, non-cash earnings ledger, with `ledger_version` NOT
    NULL at `:41`, and its flag TRUE in production. What is absent is a
    *Discovery-surface* creator→value link, which is a different sentence. The
-   disposition is `docs/architecture/09_Payment_Architecture.md:575#Payments are not a discovery workstream` —
+   disposition is `docs/architecture/09_Payment_Architecture.md:602#Payments are not a discovery workstream` —
    *"Payments are not a discovery workstream."*
 2. **A21** — *"no registration mechanism exists to register into."* **False.**
    `artifacts/api-server/src/services/telegraph/actionRegistry.ts:55` declares
@@ -6046,9 +6046,9 @@ about what it owed and it paid it.
 
 `B05`'s cell at §91 carries two BARE inherited pointers whose anchors contain a
 double quote. **`check:doc-citations` cannot see either of them.** `ANCHOR` at
-`artifacts/api-server/scripts/check-doc-citations.mjs:405#const ANCHOR` stops at
+`artifacts/api-server/scripts/check-doc-citations.mjs:413#const ANCHOR` stops at
 the first `"`, and `INHERITED_RE` at
-`artifacts/api-server/scripts/check-doc-citations.mjs:413#export const INHERITED_RE`
+`artifacts/api-server/scripts/check-doc-citations.mjs:421#export const INHERITED_RE`
 then demands a closing backtick that is not there, so the citation matches
 nothing: not counted, not checked, not reported. The sibling hazard with a SPACE
 in the anchor IS refused, by `UNBINDABLE_INHERITED_RE`; the quote form falls

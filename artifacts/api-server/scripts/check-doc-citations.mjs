@@ -184,6 +184,14 @@ export const COVERED = [
     file: 'docs/deployment-readiness.md',
   },
   {
+    // The owner-decision record, adopted 2026-10-04. MEASURED BEFORE ADOPTING:
+    // six stale anchors, all pre-existing rot nothing was looking at because
+    // `docs/ops/` was outside this registry. Five were repoints; the sixth's
+    // anchor TEXT was wrong, a caller's variable having been renamed
+    // `restrictionsExpired` -> `sweep`. Adoption adds ZERO unanchored.
+    file: 'docs/ops/consolidated-decisions.md',
+  },
+  {
     // Source, not documentation — and covered for exactly the reason the docs
     // are. This module's header explains WHY `served: false` must replace the
     // Supabase client rather than gate this module's own emitters, and the

@@ -5,7 +5,7 @@
  * (active → completed / cancelled / expired) and emits layover_events rows.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { logger as rootLogger } from "../../lib/logger.js";
+import { logger as rootLogger } from "../../lib/logger.js"; import type { SessionConstraintContext } from "./LayoverConstraints.js"; import { attachConstraintContext, attachConstraintContexts } from "../layover/LayoverConstraintStore.js"; // same line: this file's lines are citation-anchored
 
 const logger = rootLogger.child({ service: "LayoverSessionService" });
 
@@ -93,7 +93,7 @@ export interface LayoverSession {
   returnReminderAt: string | null;
   status: "active" | "returning" | "completed" | "cancelled" | "expired";
   createdAt: string;
-  updatedAt: string;
+  updatedAt: string; /** §4 the declared constraint set and the entry policy, ATTACHED BY THE LOADERS BELOW — absent when both flags are off, so a session serialises exactly as it did. Every certification reads it off the session; see LayoverConstraints.ts. */ constraints?: SessionConstraintContext;
 }
 
 function rowToSession(row: any): LayoverSession {
@@ -244,7 +244,7 @@ export async function updateSession(
     return { ok: false, message: String(error.message ?? "layover_sessions unwritable") };
   }
   if (!data) return { ok: true, session: null };
-  const session = rowToSession(data);
+  const session = await attachConstraintContext(db, rowToSession(data)); // the edited session certifies under the same declared set as the one it replaced
   await emitEvent(db, session.id, userId, "session_updated");
   return { ok: true, session };
 }
@@ -349,7 +349,7 @@ export async function getSession(
     logger.warn({ err: error, sessionId }, "layover session read failed — refusing rather than reporting 'not found'");
     return { ok: false, message: String(error.message ?? "layover_sessions unreadable") };
   }
-  return { ok: true, session: data ? rowToSession(data) : null };
+  return { ok: true, session: data ? await attachConstraintContext(db, rowToSession(data)) : null };
 }
 
 export async function getActiveSession(
@@ -368,7 +368,7 @@ export async function getActiveSession(
     logger.warn({ err: error, userId }, "active layover session read failed — refusing rather than reporting 'no active layover'");
     return { ok: false, message: String(error.message ?? "layover_sessions unreadable") };
   }
-  return { ok: true, session: data ? rowToSession(data) : null };
+  return { ok: true, session: data ? await attachConstraintContext(db, rowToSession(data)) : null };
 }
 
 /** List a user's sessions, newest first. Optional status filter. */
@@ -390,7 +390,7 @@ export async function listSessions(
     logger.warn({ err: error, userId, status }, "layover session list read failed — refusing rather than reporting 'no layovers'");
     return { ok: false, message: String(error.message ?? "layover_sessions unreadable") };
   }
-  return { ok: true, sessions: (data ?? []).map(rowToSession) };
+  return { ok: true, sessions: await attachConstraintContexts(db, (data ?? []).map(rowToSession)) };
 }
 
 /**
@@ -433,7 +433,7 @@ export async function readSessionsByIds(
     logger.warn({ err: error, count: sessionIds.length }, "layover session batch read failed — refusing rather than reporting an empty crew");
     return { ok: false, message: String(error.message ?? "layover_sessions unreadable") };
   }
-  return { ok: true, sessions: (data ?? []).map(rowToSession) };
+  return { ok: true, sessions: await attachConstraintContexts(db, (data ?? []).map(rowToSession)) }; // a crewmate's deadline is computed from THEIR declared bags, and only the deadline is ever published
 }
 
 /** Toggle opt-in city-level layover visibility for a session. */
@@ -566,4 +566,45 @@ export async function emitLayoverEvent(
   metadata: Record<string, unknown> = {},
 ): Promise<void> {
   await emitEvent(db, sessionId, userId, eventType, metadata);
+}
+
+/**
+ * §4 / census L35 — keep `checked_bags` in step with a DECLARED baggage mode.
+ *
+ * The declared set is the truth the engine computes with while
+ * `layover_constraints_enabled` is on. This boolean is what it computes with
+ * when that flag is off — on a database that does not have 2992 yet, or after
+ * the flag is turned off again — so it is written to the CONSERVATIVE reading
+ * of the mode (`baggageChargesBags`): a traveller who said "not sure" is never
+ * silently downgraded to "no bags" by a flag flip.
+ *
+ * ONE write and ONE audit event, carrying what was declared. `updateSession`
+ * would have been two events for one act, the second with no metadata.
+ *
+ * `active` sessions only — the same predicate every other session edit uses.
+ * `ok: true, session: null` means the statement ran and matched no active row.
+ */
+export async function syncSessionBaggage(
+  db: SupabaseClient,
+  sessionId: string,
+  userId: string,
+  checkedBags: boolean,
+  metadata: Record<string, unknown>,
+): Promise<SessionWrite> {
+  const { data, error } = await db
+    .from("layover_sessions")
+    .update({ checked_bags: checkedBags, updated_at: new Date().toISOString() })
+    .eq("id", sessionId)
+    .eq("user_id", userId)
+    .eq("status", "active")
+    .select("*")
+    .maybeSingle();
+  if (error) {
+    logger.warn({ err: error, sessionId }, "layover session baggage sync failed — the declared set (if stored) still governs the engine");
+    return { ok: false, message: String(error.message ?? "layover_sessions unwritable") };
+  }
+  if (!data) return { ok: true, session: null };
+  const session = await attachConstraintContext(db, rowToSession(data));
+  await emitEvent(db, session.id, userId, "session_updated", metadata);
+  return { ok: true, session };
 }
