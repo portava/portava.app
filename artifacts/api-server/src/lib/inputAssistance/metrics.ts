@@ -29,8 +29,8 @@
  *
  *   - wrong-selection reversal (G368) WAS refused here: no event recorded that
  *     a resolved field was later un-resolved. It is now computed below, over
- *     `selection_reversed` (the fifteenth §44 name; migration 4121 widens 2950's
- *     `iate_event_name_known` CHECK to admit it). Until 4121 is applied to a
+ *     `selection_reversed` (the fifteenth §44 name; migration 3781 widens 2950's
+ *     `iate_event_name_known` CHECK to admit it). Until 3781 is applied to a
  *     database, an insert carrying that name fails there — the number is
  *     computable from the tree and measurable nowhere yet.
  *   - downstream task completion (G370) WAS refused: `downstream_task_completed`

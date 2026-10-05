@@ -341,7 +341,7 @@ describe("§57 — the metrics with no producer are REFUSED, not estimated", () 
 
   it("G368 wrong-selection reversal is NOT refused any more — one kept selection is 0/1, with no blocker", () => {
     // It was refused while no event recorded an un-resolution. `selection_reversed`
-    // now exists (4121 admits it), so over these rows — one entity selection,
+    // now exists (3781 admits it), so over these rows — one entity selection,
     // never edited away from — the honest answer is a rate of 0 over 1.
     assert.equal(m.wrongSelectionReversalRate.value, 0);
     assert.equal(m.wrongSelectionReversalRate.n, 1);

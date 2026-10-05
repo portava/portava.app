@@ -583,7 +583,7 @@ export const RETENTION_PASSES: readonly RetentionPass[] = [
   { name: "intel_retention_sweep", flag: "intel_retention_sweep_enabled", run: runIntelRetentionSweep },
   { name: "intel_contribution_retention", flag: "intel_contribution_retention_enabled", run: runIntelContributionRetentionSweep },
   { name: "input_telemetry_retention", flag: null, run: runInputTelemetryRetentionSweep },
-  // OD-INPUT-2: per-user outcome counters, deleted 30 days after their day (4120). Flagless — see the sweep.
+  // OD-INPUT-2: per-user outcome counters, deleted 30 days after their day (3780). Flagless — see the sweep.
   { name: "input_outcome_retention", flag: null, run: runInputOutcomeRetentionSweep },
   { name: "map_telemetry_retention", flag: "map_telemetry_retention_enabled", run: runMapTelemetryRetentionSweep },
   { name: "presence_cleanup", flag: "presence_cleanup_enabled", run: runPresenceCleanup },

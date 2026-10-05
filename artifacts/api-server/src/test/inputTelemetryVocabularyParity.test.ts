@@ -3,7 +3,7 @@
  * compared the ones that can break a write:
  *
  *   1. the database — the `iate_event_name_known` CHECK on
- *      input_assistance_telemetry_events (2950, widened by 4121);
+ *      input_assistance_telemetry_events (2950, widened by 3781);
  *   2. the ingest — `INPUT_TELEMETRY_EVENT_NAMES` in lib/inputAssistance/telemetry.ts;
  *   3. the client's type — `InputTelemetryEventName` in
  *      travel-buddy-standalone/src/platform/input-assistance/types/fieldPolicy.ts;
@@ -92,7 +92,7 @@ describe("§44 event vocabulary — database, ingest and client agree (census G3
     );
   });
 
-  it("the newest CHECK is the one that admits selection_reversed (4121), not 2950", () => {
+  it("the newest CHECK is the one that admits selection_reversed (3781), not 2950", () => {
     const { file, names } = newestEventNameCheck();
     assert.ok(names.includes("selection_reversed"), `${file} does not admit selection_reversed`);
     assert.ok(parseInt(file, 10) > 2950, `the newest CHECK is still ${file}`);

@@ -1,4 +1,4 @@
--- 4121 — §57 "wrong-selection reversal rate" (census G368): admit the fifteenth
+-- 3781 — §57 "wrong-selection reversal rate" (census G368): admit the fifteenth
 -- §44 event name, `selection_reversed`, into input_assistance_telemetry_events.
 --
 -- WHY A MIGRATION. 2950's `iate_event_name_known` CHECK enumerates the fourteen
@@ -32,7 +32,7 @@ BEGIN;
 DO $$
 BEGIN
   IF to_regclass('public.input_assistance_telemetry_events') IS NULL THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (4121): input_assistance_telemetry_events (2950) does not exist.';
+    RAISE EXCEPTION 'PRECONDITION FAILED (3781): input_assistance_telemetry_events (2950) does not exist.';
   END IF;
 END $$;
 
@@ -67,13 +67,13 @@ BEGIN
    WHERE c.conrelid = 'public.input_assistance_telemetry_events'::regclass
      AND c.conname = 'iate_event_name_known';
   IF def IS NULL THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (4121): iate_event_name_known is missing.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3781): iate_event_name_known is missing.';
   END IF;
   IF position('selection_reversed' in def) = 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (4121): iate_event_name_known does not admit selection_reversed.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3781): iate_event_name_known does not admit selection_reversed.';
   END IF;
   IF position('downstream_task_completed' in def) = 0 OR position('input_opened' in def) = 0 THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (4121): iate_event_name_known lost a name 2950 admitted.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3781): iate_event_name_known lost a name 2950 admitted.';
   END IF;
   -- 2950's no-actor rule, re-asserted where a later edit would break it.
   IF EXISTS (
@@ -82,7 +82,7 @@ BEGIN
        AND table_name = 'input_assistance_telemetry_events'
        AND column_name IN ('user_id', 'viewer_id', 'actor_id', 'profile_id', 'author_id', 'account_id')
   ) THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (4121): input_assistance_telemetry_events carries an account column.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3781): input_assistance_telemetry_events carries an account column.';
   END IF;
 END $post$;
 

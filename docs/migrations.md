@@ -3771,3 +3771,43 @@ the function. `rent_buddy_enabled` is FALSE in production and this file does not
 
 **Rollback:** re-apply `2330`'s definition of the function. There is no dependent object, so the revert
 is one statement and loses nothing.
+
+## 2026-10-05 — `3780`, `3781`, `3782` (Input Intelligence, lane D), written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3780_input_outcome_learning.sql` | **not applied** | **not applied** |
+| `3781_input_telemetry_selection_reversed.sql` | **not applied** | **not applied** |
+| `3782_input_memory_context_consent.sql` | **not applied** | **not applied** |
+
+**`3780` — outcome learning (owner decisions OD-INPUT-1, OD-INPUT-2; census G320/G370/G5/G14/G322/G323).**
+`input_outcome_consent` (one row per user, service_role only, server-stamped disclosure version and
+timestamps, absent = off), `input_outcome_counters` (per user, input context, canonical entity and UTC
+DAY, so each completion is deleted whole 30 days after its day), `input_record_outcome(uuid, text,
+text, text)` (SECURITY DEFINER, service_role only, re-checks the consent itself and records nothing
+without it), and the flag `input_outcome_learning_enabled` seeded FALSE. Both tables cascade from
+`auth.users`. The 30-day deletion is `runInputOutcomeRetentionSweep`, registered flagless on the existing
+retention timer.
+
+**`3781` — §57 wrong-selection reversal (census G368).** Replaces 2950's `iate_event_name_known` CHECK
+with the same fourteen names plus `selection_reversed`: a strict superset, so every existing row still
+satisfies it. Must ship with (not after) the ingest change that admits the name, or batches carrying it
+fail at the database; `src/test/inputTelemetryVocabularyParity.test.ts` pins the newest CHECK to the
+code's vocabulary.
+
+**`3782` — Compass memory opt-in (owner decision OD-INPUT-3; census G25).** `input_memory_context_consent`
+(same shape as 3780's consent, a separate table so one purpose's grant is never another's) and the flag
+`input_memory_context_enabled` seeded FALSE. Stores no memory; it governs only whether Input
+Intelligence may read the person's own `CompassMemoryProjection`.
+
+**Flags:** both new capability flags ship FALSE; turning either on is an owner decision after approving
+the disclosure text (`lib/inputAssistance/outcomeLearning.ts`, `lib/inputAssistance/memoryContext.ts`).
+
+**Rollback:** `db/rollback/2026-10-05-3780-input-outcome-learning-rollback.sql`,
+`db/rollback/2026-10-05-3781-input-telemetry-selection-reversed-rollback.sql` and
+`db/rollback/2026-10-05-3782-input-memory-context-consent-rollback.sql`. Each REFUSES rather than
+discarding a decision: 3780/3782 while their flag is TRUE or any consent row exists, 3781 while any
+`selection_reversed` row exists.
+
+**Numbering:** first written as 4120–4122; renumbered into lane D's corrected band 3780–3799 before
+anything was applied anywhere (lead correction, 2026-10-05).

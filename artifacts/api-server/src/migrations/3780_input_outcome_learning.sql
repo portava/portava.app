@@ -1,4 +1,4 @@
--- 4120 — Input Intelligence outcome learning: the opt-in, the per-user outcome
+-- 3780 — Input Intelligence outcome learning: the opt-in, the per-user outcome
 -- counters, and the flag that keeps both dark until the owner turns them on.
 -- Census G320/G370 (the outcome event) and G5/G14/G322/G323 (a rank term whose
 -- input is an OUTCOME rather than an acceptance).
@@ -51,10 +51,10 @@ BEGIN;
 DO $$
 BEGIN
   IF to_regclass('auth.users') IS NULL THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (4120): auth.users is missing — the erasure cascade cannot be created.';
+    RAISE EXCEPTION 'PRECONDITION FAILED (3780): auth.users is missing — the erasure cascade cannot be created.';
   END IF;
   IF to_regclass('public.feature_flags') IS NULL THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (4120): public.feature_flags does not exist.';
+    RAISE EXCEPTION 'PRECONDITION FAILED (3780): public.feature_flags does not exist.';
   END IF;
 END $$;
 
@@ -159,16 +159,16 @@ COMMIT;
 DO $post$
 BEGIN
   IF to_regclass('public.input_outcome_consent') IS NULL OR to_regclass('public.input_outcome_counters') IS NULL THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (4120): a table was not created.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3780): a table was not created.';
   END IF;
   IF to_regprocedure('public.input_record_outcome(uuid, text, text, text)') IS NULL THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (4120): input_record_outcome was not created.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3780): input_record_outcome was not created.';
   END IF;
   -- Keyed by a caller-supplied user id: an anon/authenticated grant would let
   -- any caller write another user's outcomes (the 2190/2214 lesson).
   IF has_function_privilege('anon', 'public.input_record_outcome(uuid, text, text, text)', 'EXECUTE')
      OR has_function_privilege('authenticated', 'public.input_record_outcome(uuid, text, text, text)', 'EXECUTE') THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (4120): input_record_outcome is executable by anon/authenticated.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3780): input_record_outcome is executable by anon/authenticated.';
   END IF;
   IF has_table_privilege('anon', 'public.input_outcome_consent', 'SELECT')
      OR has_table_privilege('authenticated', 'public.input_outcome_consent', 'SELECT')
@@ -176,16 +176,16 @@ BEGIN
      OR has_table_privilege('anon', 'public.input_outcome_counters', 'SELECT')
      OR has_table_privilege('authenticated', 'public.input_outcome_counters', 'SELECT')
      OR has_table_privilege('authenticated', 'public.input_outcome_counters', 'INSERT') THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (4120): an outcome table is reachable by anon/authenticated — service_role only.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3780): an outcome table is reachable by anon/authenticated — service_role only.';
   END IF;
   IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.input_outcome_consent'::regclass)
      OR NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.input_outcome_counters'::regclass) THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (4120): row level security is off on an outcome table.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3780): row level security is off on an outcome table.';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM public.feature_flags WHERE flag = 'input_outcome_learning_enabled') THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (4120): input_outcome_learning_enabled absent.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3780): input_outcome_learning_enabled absent.';
   END IF;
   IF EXISTS (SELECT 1 FROM public.feature_flags WHERE flag = 'input_outcome_learning_enabled' AND enabled = TRUE) THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (4120): input_outcome_learning_enabled is ON — it must ship OFF.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3780): input_outcome_learning_enabled is ON — it must ship OFF.';
   END IF;
 END $post$;

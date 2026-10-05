@@ -14,8 +14,8 @@
  * THE THREE GATES, in the order they are checked — each one a reason to read
  * NOTHING, so a field, a deployment and a person can each say no on their own:
  *   1. the field's POLICY: `allowMemoryContext` (only `compass_prompt` sets it);
- *   2. the FLAG `input_memory_context_enabled` (migration 4122, seeded FALSE);
- *   3. the person's OPT-IN, `input_memory_context_consent` (4122) — separate
+ *   2. the FLAG `input_memory_context_enabled` (migration 3782, seeded FALSE);
+ *   3. the person's OPT-IN, `input_memory_context_consent` (3782) — separate
  *      from every other consent, off by default, server-stamped.
  * Only then is the person's own CompassMemoryProjection read, through the
  * memory layer's retrieval service (`services/memoryRetrieval/searchMemories`):

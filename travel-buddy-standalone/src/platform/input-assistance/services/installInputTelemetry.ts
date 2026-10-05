@@ -67,7 +67,7 @@
  * opt-in, off by default, purpose-limited, and separated from core
  * assistance"), so it is NOT routed through D4 — D4 is consent to contribute to
  * shared place intelligence, a different purpose — but through its own opt-in,
- * `input_outcome_consent` (migration 4120). The per-name filter in front of the
+ * `input_outcome_consent` (migration 3780). The per-name filter in front of the
  * sink is `outcomeLearning.ts#gateOutcomeEvents`, applied below.
  *
  * ══════════════════════════════════════════════════════════════════════════════

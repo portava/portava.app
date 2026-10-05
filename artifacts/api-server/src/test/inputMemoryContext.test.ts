@@ -10,7 +10,7 @@
  * where the retrieval service reads it, so "zero memory reads" is asserted on
  * the table the memory layer would actually touch.
  *
- * NOT exercised: 4122's SQL (no local Postgres) and the projection BUILDER that
+ * NOT exercised: 3782's SQL (no local Postgres) and the projection BUILDER that
  * fills the registry in production (the memory lane's; read-only here).
  *
  * Run: node --import tsx/esm --test src/test/inputMemoryContext.test.ts
@@ -63,7 +63,7 @@ function makeFakeClient(state: FakeState) {
       state.__rpc!.push({ name, args });
       if (fail(`rpc:${name}`)) return { data: null, error: { message: "boom" } };
       if (name === "input_record_outcome") {
-        // Models 4120: re-check consent in the database, then upsert-increment
+        // Models 3780: re-check consent in the database, then upsert-increment
         // today's bucket.
         const c = (state.input_outcome_consent ?? []).find((r: any) => r.user_id === args.p_user_id);
         if (!c || !c.enabled || c.withdrawn_at) return { data: false, error: null };

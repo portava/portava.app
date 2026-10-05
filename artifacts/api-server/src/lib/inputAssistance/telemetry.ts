@@ -106,7 +106,7 @@ export const INPUT_TELEMETRY_EVENT_NAMES = [
   'action_completed',
   'downstream_task_completed',
   // §57 "wrong-selection reversal rate" (census G368). The fifteenth name, and
-  // the first added after 2950: migration 4121 widens `iate_event_name_known`
+  // the first added after 2950: migration 3781 widens `iate_event_name_known`
   // to admit it, and `inputTelemetryVocabularyParity.test.ts` pins this list to
   // the NEWEST migration that defines that CHECK, so the two copies cannot
   // drift apart silently again.

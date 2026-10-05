@@ -101,7 +101,7 @@ export type InputTelemetryEventName =
   | 'downstream_task_completed'
   // §57 wrong-selection reversal (census G368): a resolved field edited away
   // from the accepted text. Admitted by the server's ingest and by migration
-  // 4121's widened `iate_event_name_known` CHECK.
+  // 3781's widened `iate_event_name_known` CHECK.
   | 'selection_reversed';
 
 /**

@@ -22,7 +22,7 @@
  * ══════════════════════════════════════════════════════════════════════════════
  * HOW EACH CLAUSE OF THE DECISIONS IS MET
  * ══════════════════════════════════════════════════════════════════════════════
- *  - EXPLICIT OPT-IN: `input_outcome_consent` (4120), written only here, only on
+ *  - EXPLICIT OPT-IN: `input_outcome_consent` (3780), written only here, only on
  *    a request that names the disclosure version the client DISPLAYED, which
  *    must equal the version the server stamps (the D4 rule, intelConsent.ts).
  *  - OFF BY DEFAULT: an absent row is off; the flag `input_outcome_learning_enabled`
@@ -40,7 +40,7 @@
  *    applies the same window so a late sweep cannot make an expired completion
  *    count. Withdrawing the consent deletes the user's counters at once.
  *
- * The database re-checks consent inside `input_record_outcome` (4120), so a
+ * The database re-checks consent inside `input_record_outcome` (3780), so a
  * future caller that forgets `hasValidOutcomeConsent` still cannot write.
  *
  * FAILURE HONESTY. supabase-js RESOLVES `{ data, error }`; every read here
@@ -64,7 +64,7 @@ import {
   type InputConsentState,
 } from './inputConsent';
 
-/** The feature flag (4120, seeded FALSE). */
+/** The feature flag (3780, seeded FALSE). */
 export const INPUT_OUTCOME_FLAG = 'input_outcome_learning_enabled';
 
 /**

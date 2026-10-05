@@ -7,7 +7,7 @@
  * What is driven: the REAL router (consent GET/PUT, outcome POST, the §44
  * ingest, the suggest gateway) over a fake Supabase client that APPLIES writes,
  * logs every read by table, and can be told to fail a table. The SQL itself
- * (4120's consent re-check inside input_record_outcome, the CHECKs, the grants)
+ * (3780's consent re-check inside input_record_outcome, the CHECKs, the grants)
  * is NOT exercised here — no Postgres on this machine; that is CI's live-DB tier.
  *
  * Run: node --import tsx/esm --test src/test/inputOutcomeLearning.test.ts
@@ -65,7 +65,7 @@ function makeFakeClient(state: FakeState) {
       state.__rpc!.push({ name, args });
       if (fail(`rpc:${name}`)) return { data: null, error: { message: "boom" } };
       if (name === "input_record_outcome") {
-        // Models 4120: re-check consent in the database, then upsert-increment
+        // Models 3780: re-check consent in the database, then upsert-increment
         // today's bucket.
         const c = (state.input_outcome_consent ?? []).find((r: any) => r.user_id === args.p_user_id);
         if (!c || !c.enabled || c.withdrawn_at) return { data: false, error: null };

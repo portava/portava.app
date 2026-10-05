@@ -42,7 +42,7 @@ test("every retention pass is registered on the scheduler's timer", () => {
     // retention bound. Registered FLAGLESS on purpose — see the sweep's own header:
     // a retention flag shipped unseeded declares a 90-day promise and never keeps it.
     input_telemetry_retention: runInputTelemetryRetentionSweep,
-    // ADDED 2026-10-05 with the §45 outcome counters (migration 4120). OD-INPUT-2:
+    // ADDED 2026-10-05 with the §45 outcome counters (migration 3780). OD-INPUT-2:
     // "retain for 30 days, then delete". FLAGLESS for the same reason as the line
     // above — the feature flag decides whether counters are written, never
     // whether expired ones are deleted.

@@ -1,4 +1,4 @@
--- 4122 — Compass memory for input assistance: the SEPARATE opt-in, and the flag
+-- 3782 — Compass memory for input assistance: the SEPARATE opt-in, and the flag
 -- that keeps it dark until the owner turns it on. Census G25 (`allowMemoryContext`).
 --
 -- ── THE OWNER'S DECISION THIS IMPLEMENTS (docs/ops/owner-decisions-20261004.md) ──
@@ -7,7 +7,7 @@
 --            revoke it."
 --
 -- ── input_memory_context_consent ───────────────────────────────────────────────
--- The same shape as 4120's input_outcome_consent and D4's intel_contribution_consent
+-- The same shape as 3780's input_outcome_consent and D4's intel_contribution_consent
 -- (2172), deliberately a DIFFERENT TABLE: one switch per purpose, so a grant for
 -- outcome learning can never be read as a grant to use memories, and neither can
 -- be read as D4. Written ONLY by service_role; the SERVER stamps the disclosure
@@ -33,10 +33,10 @@ BEGIN;
 DO $$
 BEGIN
   IF to_regclass('auth.users') IS NULL THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (4122): auth.users is missing — the erasure cascade cannot be created.';
+    RAISE EXCEPTION 'PRECONDITION FAILED (3782): auth.users is missing — the erasure cascade cannot be created.';
   END IF;
   IF to_regclass('public.feature_flags') IS NULL THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (4122): public.feature_flags does not exist.';
+    RAISE EXCEPTION 'PRECONDITION FAILED (3782): public.feature_flags does not exist.';
   END IF;
 END $$;
 
@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS public.input_memory_context_consent (
 );
 
 COMMENT ON TABLE public.input_memory_context_consent IS
-  'OD-INPUT-3: the separate, off-by-default opt-in that lets Input Intelligence read the person''s own CompassMemoryProjection to suggest Compass prompts. Separate from outcome learning (4120) and D4. Service_role only; server-stamped. Absent row = off; withdrawal = revoke.';
+  'OD-INPUT-3: the separate, off-by-default opt-in that lets Input Intelligence read the person''s own CompassMemoryProjection to suggest Compass prompts. Separate from outcome learning (3780) and D4. Service_role only; server-stamped. Absent row = off; withdrawal = revoke.';
 
 ALTER TABLE public.input_memory_context_consent ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.input_memory_context_consent FROM PUBLIC, anon, authenticated, service_role;
@@ -71,20 +71,20 @@ COMMIT;
 DO $post$
 BEGIN
   IF to_regclass('public.input_memory_context_consent') IS NULL THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (4122): input_memory_context_consent was not created.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3782): input_memory_context_consent was not created.';
   END IF;
   IF has_table_privilege('anon', 'public.input_memory_context_consent', 'SELECT')
      OR has_table_privilege('authenticated', 'public.input_memory_context_consent', 'SELECT')
      OR has_table_privilege('authenticated', 'public.input_memory_context_consent', 'INSERT') THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (4122): input_memory_context_consent is reachable by anon/authenticated — service_role only.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3782): input_memory_context_consent is reachable by anon/authenticated — service_role only.';
   END IF;
   IF NOT (SELECT relrowsecurity FROM pg_class WHERE oid = 'public.input_memory_context_consent'::regclass) THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (4122): row level security is off on input_memory_context_consent.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3782): row level security is off on input_memory_context_consent.';
   END IF;
   IF NOT EXISTS (SELECT 1 FROM public.feature_flags WHERE flag = 'input_memory_context_enabled') THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (4122): input_memory_context_enabled absent.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3782): input_memory_context_enabled absent.';
   END IF;
   IF EXISTS (SELECT 1 FROM public.feature_flags WHERE flag = 'input_memory_context_enabled' AND enabled = TRUE) THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (4122): input_memory_context_enabled is ON — it must ship OFF.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3782): input_memory_context_enabled is ON — it must ship OFF.';
   END IF;
 END $post$;

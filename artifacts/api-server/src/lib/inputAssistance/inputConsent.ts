@@ -14,7 +14,7 @@
  *   - a failed read is `{ ok: false }` ("unreadable"), never "not consented":
  *     supabase-js RESOLVES `{ data, error }`, so the error is checked, not caught.
  *
- * Tables using it: input_outcome_consent (4120), input_memory_context_consent (4122).
+ * Tables using it: input_outcome_consent (3780), input_memory_context_consent (3782).
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 
