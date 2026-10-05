@@ -98,3 +98,81 @@ export function ownsShareableAnchor(
   }
   return { ok: true };
 }
+
+// ── Every reader of a plan item's location, not only the map ─────────────────
+//
+// Wave 1 enforced the owner-only rule on `GET /trips/:id/map-projection` alone;
+// an independent verifier found the same private places leaving the server on
+// the route chain, Pulse, the route-plan accommodation, the plan list, Today,
+// the offline bundle and more. This is the ONE rule every such reader applies
+// (census-trips §81). An anchor is a plan item whose `location_is_private` is
+// not FALSE; its owner is `creator_id`.
+//
+// WHAT A VIEWER WHO MAY NOT SEE IT RECEIVES — the lead's reading of
+// "owner-only", chosen as the safe direction and recorded for the owner to
+// confirm: the slot, not the place. No coordinates, no address, no place or
+// source id, no location name, and no title, notes or description (a hotel's
+// name is its location). The time window, status, category and the item's id
+// stay, so the shared plan still shows that the time is taken. Derived values
+// must not carry it either: a withheld row has no coordinates, so no distance,
+// travel time, centre of gravity or route hop can be computed to or from it.
+//
+// FAIL CLOSED. A row that does not carry `location_is_private` is treated as
+// private, and one without `creator_id` as nobody's — so a reader that forgot
+// to select the two columns over-withholds in its tests instead of leaking.
+
+/** The two columns every reader must select for the rule to decide. */
+export const PLAN_ITEM_PRIVACY_COLUMNS = "creator_id, location_is_private";
+
+/** What a withheld item is called. Neutral: it says a slot is taken, not where or what. */
+export const WITHHELD_PLAN_TITLE = "Private plan";
+
+/** The fields that locate or name a plan item. Each is nulled when withheld. */
+export const WITHHELD_LOCATION_FIELDS = [
+  "lat", "lng", "location_name", "address", "place_id", "google_place_id", "source_id",
+  "route_stop_id", "notes", "description", "structured_location",
+] as const;
+
+/**
+ * What one viewer may see on one trip, as read. `grants` maps a granted item id
+ * to the owner the grant was made by; it holds only grants that are VALID now
+ * (sharing on, the owner and the viewer both accepted members). `unread`: some
+ * input could not be read, so `grants` is empty and every private item of
+ * another member is withheld — the safe answer, and named.
+ */
+export interface PlanItemAccess {
+  viewerId: string;
+  status: "ok" | "unread";
+  reason?: string;
+  grants: ReadonlyMap<string, string>;
+}
+
+export function ownerOnlyAccess(viewerId: string, status: "ok" | "unread" = "ok", reason?: string): PlanItemAccess {
+  return { viewerId, status, ...(reason ? { reason } : {}), grants: new Map() };
+}
+
+type PlanRowLike = Record<string, unknown> & { id?: unknown; creator_id?: unknown; location_is_private?: unknown; removed_at?: unknown };
+
+/** May this viewer see this plan item's location and name? */
+export function canSeePlanItemLocation(access: PlanItemAccess, row: PlanRowLike): boolean {
+  if (row.location_is_private === false) return true;
+  const owner = typeof row.creator_id === "string" ? row.creator_id : null;
+  if (owner !== null && owner === access.viewerId) return true;
+  if (row.removed_at !== undefined && row.removed_at !== null) return false;
+  const grantOwner = typeof row.id === "string" ? access.grants.get(row.id) : undefined;
+  return owner !== null && grantOwner === owner;
+}
+
+/** The row as a viewer who may not see it receives it: the slot, not the place. */
+export function redactWithheldPlanItem<T extends PlanRowLike>(row: T): T {
+  const out: Record<string, unknown> = { ...row };
+  for (const k of WITHHELD_LOCATION_FIELDS) if (k in out) out[k] = null;
+  if ("title" in out) out.title = WITHHELD_PLAN_TITLE;
+  out.location_withheld = true;
+  return out as T;
+}
+
+/** Apply the rule to a list of plan rows read for this viewer. */
+export function withholdPrivatePlanItems<T extends PlanRowLike>(rows: readonly T[], access: PlanItemAccess): T[] {
+  return rows.map((r) => (canSeePlanItemLocation(access, r) ? r : redactWithheldPlanItem(r)));
+}
