@@ -2898,4 +2898,29 @@ router.get("/highlights/following-feed", async (req, res) => {
   res.status(200).json(feedLimit != null ? { users, nextCursor } : { users });
 });
 
+// ── GET /highlights/:id/actions — §12 DO THIS / SAVE / ADD TO TRIP / VIEW PLACE / ASK / MEET (census H102)
+//
+// Appended at the tail, imports included (ESM hoists them), so no cited line in
+// this file moves. The view gate is the same `resolveViewAccess` every
+// engagement route uses — blocks, visibility, circle/trip membership and the
+// owner's §10/§11 public_projection controls — so a Highlight this viewer may
+// not see is the same 404 here. The venue actions are the Memory's, on the
+// Memory this Highlight projects, under the MEMORY's read gate for this viewer:
+// see services/highlights/highlightActions.ts. Read-only.
+router.get("/highlights/:id/actions", asyncHandler(async (req: Request, res: Response) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const id = String(req.params.id ?? "");
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  const access = await resolveViewAccess(sc, user.id, id, res, req.log);
+  if (!access) return;
+  res.json({ menu: await buildHighlightActionMenu(sc, access.h, user.id) });
+}));
+import { asyncHandler } from "../lib/asyncHandler.js";
+import type { Request } from "express";
+import { buildHighlightActionMenu } from "../services/highlights/highlightActions.js";
+
 export default router;

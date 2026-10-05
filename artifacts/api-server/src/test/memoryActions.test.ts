@@ -150,10 +150,13 @@ function makeClient(store: Record<string, any[]>, failReads: Set<string>, failIn
     const filters: Array<(r: any) => boolean> = [];
     let usedIn = false;
     let single = false;
+    // The column list is honoured, as PostgREST would: a column the route did
+    // not select is not in the row it gets back.
+    let columns: string[] | null = null;
     let isWrite = false;
     let limitN: number | null = null;
     const obj: any = {
-      select() { return obj; },
+      select(cols?: string) { if (typeof cols === "string" && cols.trim() !== "*") columns = cols.split(",").map((c) => c.trim()); return obj; },
       insert() { isWrite = true; return obj; },
       update() { isWrite = true; return obj; },
       upsert() { isWrite = true; return obj; },
@@ -176,8 +179,9 @@ function makeClient(store: Record<string, any[]>, failReads: Set<string>, failIn
       if (failReads.has(table) || (usedIn && failInReads.has(table))) return { data: null, error: { message: `${table} unavailable` } };
       let rows = (store[table] ?? []).filter((r) => filters.every((f) => f(r)));
       if (limitN != null) rows = rows.slice(0, limitN);
-      if (single) return { data: rows[0] ?? null, error: null };
-      return { data: rows.map((r) => ({ ...r })), error: null };
+      const project = (r: any) => (columns ? Object.fromEntries(columns.filter((c) => c in r).map((c) => [c, r[c]])) : { ...r });
+      if (single) return { data: rows[0] ? project(rows[0]) : null, error: null };
+      return { data: rows.map(project), error: null };
     }
     return obj;
   }
@@ -363,6 +367,18 @@ describe("GET /memories/:id/actions — the menu, judged against the world now",
     assert.equal(byAction(friend.body.menu).ADD_TO_TRIP.reason, "PLACE_WITHHELD");
     const own = await get(app, `/api/memories/${MEM_CATALOG}/actions`, OWNER);
     assert.equal(byAction(own.body.menu).ADD_TO_TRIP.available, true, "the owner's own precision never withholds from the owner");
+  });
+
+  it("with the precision gate on, an owner's 'venue' rung lets a reader act on the venue — the rung is READ, not assumed", async () => {
+    app = await startApp({
+      mutate: (s) => {
+        s.feature_flags.push({ flag: "memory_location_precision_enabled", enabled: true });
+        s.memories.find((m) => m.id === MEM_CATALOG).location_precision = "venue";
+      },
+    });
+    const friend = await get(app, `/api/memories/${MEM_CATALOG}/actions`, FRIEND);
+    assert.equal(byAction(friend.body.menu).ADD_TO_TRIP.available, true,
+      "a gate-on read that did not select location_precision would withhold every venue (fail-closed 'hidden')");
   });
 
   it("a provider id the catalog cannot resolve is PLACE_NOT_IN_CATALOG; the owner may still be taken back to their own coordinate", async () => {

@@ -270,3 +270,21 @@ it('Saved from that trip lists what is still waiting, says why the rest stayed b
   await press('bring-forward-add-tsukiji');
   expect(await screen.findByText('picker:tsukiji')).toBeTruthy();
 });
+
+it('an autoAction the server offers starts once, without a press (a Highlight\'s "Do this")', async () => {
+  mockGetMenu.mockResolvedValueOnce(menu());
+  mockDoAgain.mockResolvedValueOnce(plan());
+  await render(<MemoryActionBar memoryId={MEM} autoAction="DO_AGAIN" />);
+  expect(await screen.findByTestId('do-again-sheet')).toBeTruthy();
+  expect(mockDoAgain).toHaveBeenCalledTimes(1);
+});
+
+it('an autoAction the server refuses does not start — the menu\'s own refusal stands', async () => {
+  mockGetMenu.mockResolvedValueOnce(menu({
+    place: null,
+    actions: ['DO_AGAIN', 'TAKE_ME_BACK', 'ADD_TO_TRIP', 'VIEW_PLACE'].map((a) => d(a, false, 'PLACE_CLOSED', 'This place has closed.')),
+  }));
+  await render(<MemoryActionBar memoryId={MEM} autoAction="ADD_TO_TRIP" />);
+  expect(await screen.findByText('This place has closed.')).toBeTruthy();
+  expect(mockAddToTrip).not.toHaveBeenCalled();
+});

@@ -24,14 +24,10 @@ import { Router, type Request, type Response } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { isFlagEnabled } from "../lib/featureFlags.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { canReadMemory, isBlocked } from "../services/memory/memoryReadPolicy.js";
 import {
   ACTION_UNAVAILABLE_MESSAGE,
   DECLARED_UNBUILT,
-  MEMORY_ACTION_COLUMNS,
-  MEMORY_ACTION_COLUMNS_WITH_PRECISION,
   buildActionMenu,
   compileAddToTrip,
   compileBringForward,
@@ -39,6 +35,7 @@ import {
   compileTakeMeBack,
   isCompilableAction,
   isMemoryAction,
+  loadMemoryForViewer,
   readCurrentTrips,
   resolveCurrentPlace,
   viewerPlaceFor,
@@ -48,38 +45,26 @@ import {
 
 const router = Router();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const PRECISION_FLAG = "memory_location_precision_enabled";
 
 type Loaded =
   | { ok: true; memory: MemoryForAction; precisionGateOn: boolean }
   | { ok: false };
 
 /**
- * Read the Memory and decide whether this viewer may act on it. Answers the
- * response itself on every refusal, so a caller only continues on `ok`.
+ * Read the Memory and decide whether this viewer may act on it
+ * (`loadMemoryForViewer`). Answers the response itself on every refusal, so a
+ * caller only continues on `ok`. A Memory this viewer may not read is the same
+ * 404 as a missing one; one that could not be read is 503.
  */
 async function loadReadableMemory(req: Request, res: Response, sc: SupabaseClient, memoryId: string, viewerId: string): Promise<Loaded> {
-  const precisionGateOn = await isFlagEnabled(sc, PRECISION_FLAG);
-  const { data, error } = await sc
-    .from("memories")
-    .select(precisionGateOn ? MEMORY_ACTION_COLUMNS_WITH_PRECISION : MEMORY_ACTION_COLUMNS)
-    .eq("id", memoryId)
-    .neq("state", "deleted")
-    .maybeSingle();
-  if (error) {
-    req.log.error({ err: error, memoryId }, "memory actions: memory read failed — refusing rather than answering not_found");
+  const loaded = await loadMemoryForViewer(sc, memoryId, viewerId);
+  if (loaded.state === "unreadable") {
+    req.log.error({ memoryId }, "memory actions: memory read failed — refusing rather than answering not_found");
     sendError(res, "degraded_unavailable", "Could not read this Memory. Please try again.");
     return { ok: false };
   }
-  const memory = data as MemoryForAction | null;
-  if (!memory) { sendError(res, "not_found", "Memory not found"); return { ok: false }; }
-  if (memory.owner_id !== viewerId) {
-    // Fail closed in both limbs: an unreadable blocks table is "blocked", and
-    // an unreadable audience gate is "may not read" (memoryReadPolicy).
-    if (await isBlocked(sc, viewerId, memory.owner_id)) { sendError(res, "not_found", "Memory not found"); return { ok: false }; }
-    if (!(await canReadMemory(sc, memory, viewerId, "single"))) { sendError(res, "not_found", "Memory not found"); return { ok: false }; }
-  }
-  return { ok: true, memory, precisionGateOn };
+  if (loaded.state === "not_found") { sendError(res, "not_found", "Memory not found"); return { ok: false }; }
+  return { ok: true, memory: loaded.memory, precisionGateOn: loaded.precisionGateOn };
 }
 
 function refuse(res: Response, reason: ActionUnavailableReason | "trip_not_eligible") {

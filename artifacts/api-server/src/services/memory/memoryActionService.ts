@@ -74,6 +74,8 @@ import {
   type FusedAnswer,
 } from "./historicalTruth.js";
 import { readTripWindows, type TripWindowsRead } from "../../domain/trips/services/TripFreedomConsumers.js";
+import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { canReadMemory, isBlocked } from "./memoryReadPolicy.js";
 
 const log = rootLogger.child({ mod: "memoryActionService" });
 
@@ -170,6 +172,40 @@ export interface MemoryForAction {
   state: string;
   created_at: string;
   location_precision?: unknown;
+}
+
+/**
+ * Read a Memory and decide whether THIS viewer may act on it — the same §23
+ * ladder GET /memories/:id uses (`canReadMemory(..., "single")`) plus the
+ * bidirectional block check, both fail-closed. Three answers, never two: a
+ * Memory that could not be READ is `unreadable`, not `not_found`.
+ */
+export type ViewerMemory =
+  | { state: "ok"; memory: MemoryForAction; precisionGateOn: boolean }
+  | { state: "not_found" }
+  | { state: "unreadable" };
+
+export const MEMORY_LOCATION_PRECISION_FLAG = "memory_location_precision_enabled";
+
+export async function loadMemoryForViewer(sc: SupabaseClient, memoryId: string, viewerId: string): Promise<ViewerMemory> {
+  const precisionGateOn = await isFlagEnabled(sc, MEMORY_LOCATION_PRECISION_FLAG);
+  const { data, error } = await sc
+    .from("memories")
+    .select(precisionGateOn ? MEMORY_ACTION_COLUMNS_WITH_PRECISION : MEMORY_ACTION_COLUMNS)
+    .eq("id", memoryId)
+    .neq("state", "deleted")
+    .maybeSingle();
+  if (error) {
+    log.error({ err: error, memoryId }, "memory actions: memory read failed — unreadable, not absent");
+    return { state: "unreadable" };
+  }
+  const memory = data as MemoryForAction | null;
+  if (!memory) return { state: "not_found" };
+  if (memory.owner_id !== viewerId) {
+    if (await isBlocked(sc, viewerId, memory.owner_id)) return { state: "not_found" };
+    if (!(await canReadMemory(sc, memory, viewerId, "single"))) return { state: "not_found" };
+  }
+  return { state: "ok", memory, precisionGateOn };
 }
 
 /** `places` as an action reads it. Every field is a CURRENT catalog fact. */

@@ -21,7 +21,7 @@
  * never an empty bar. A place the catalog says has closed, or could not be
  * checked, is SAID (testID memory-actions-note), not silently dropped.
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, Modal, ScrollView, ActivityIndicator, Alert, Linking, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { Repeat, ListPlus, Navigation, MapPin, History } from 'lucide-react-native';
@@ -68,7 +68,13 @@ function formatWindow(beginsAt: string, endsAt: string): string {
   return `${day}, ${hm(b)}–${hm(e)}`;
 }
 
-export function MemoryActionBar({ memoryId }: { memoryId: string }) {
+/** An action to start as soon as the menu says it is offered — e.g. from a Highlight's "Do this". */
+export type AutoAction = 'DO_AGAIN' | 'ADD_TO_TRIP';
+export function isAutoAction(v: unknown): v is AutoAction {
+  return v === 'DO_AGAIN' || v === 'ADD_TO_TRIP';
+}
+
+export function MemoryActionBar({ memoryId, autoAction = null }: { memoryId: string; autoAction?: AutoAction | null }) {
   const [menu, setMenu] = useState<MenuState>({ state: 'loading' });
   const [busy, setBusy] = useState<MemoryActionName | null>(null);
   const [plan, setPlan] = useState<DoAgainPlan | null>(null);
@@ -82,6 +88,11 @@ export function MemoryActionBar({ memoryId }: { memoryId: string }) {
   }, [memoryId]);
 
   useEffect(() => { void load(); }, [load]);
+
+  // Run a requested action ONCE, and only if the server offers it on this
+  // Memory now — a "Do this" that arrives for a closed place lands on the
+  // menu's own refusal, not on a plan.
+  const autoRan = useRef(false);
 
   const fail = (message: string) => Alert.alert('Could not do that', message);
 
@@ -120,6 +131,14 @@ export function MemoryActionBar({ memoryId }: { memoryId: string }) {
     }
     setBusy(null);
   }, [memoryId, runDoAgain]);
+
+  useEffect(() => {
+    if (menu.state !== 'ok' || !autoAction || autoRan.current) return;
+    const d = menu.menu.actions.find((a) => a.action === autoAction);
+    if (!d?.available) return;
+    autoRan.current = true;
+    void onPress(d, menu.menu);
+  }, [menu, autoAction, onPress]);
 
   if (menu.state === 'loading') {
     return <View style={s.wrap} testID="memory-actions-loading"><ActivityIndicator size="small" color={color.signal} /></View>;
