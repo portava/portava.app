@@ -643,3 +643,66 @@ describe("monthly payouts: finalised, completed, verified; small balances carrie
     assert.equal((await planMonthlyPayouts(w.deps, { minimumByCurrency: { USD: 1 } }, "2026-08")).httpStatus, 409);
   });
 });
+
+// ── Step 5(b): a DECLINED confirmation cancels the provider's intent ──────────
+// A declined confirm leaves the provider's intent open (requires_payment_method):
+// the payer's card form could still complete it later against a booking this
+// tree has marked failed. The slice now cancels it through the contract
+// (cancelPaymentIntent, reason "abandoned", key `<attempt key>:cancel`). A
+// cancel that fails is RECORDED (provider_cancel_owed) and retried on the next
+// checkout for the booking, under the same key.
+describe("Step 5(b): a declined confirmation cancels the intent through the contract", () => {
+  const intentOf = async (p: { intentRef: string | null; chargeModel: any; recipientRef: string }) => {
+    const r = await w.deps.provider.getPaymentIntent({ intentRef: p.intentRef as string, chargeModel: p.chargeModel, recipientRef: p.recipientRef });
+    assert.equal(r.status, "ok", JSON.stringify(r));
+    return r.status === "ok" ? r.value.state : null;
+  };
+  const declined = async () => {
+    seedBooking(w);
+    await onboardBuddy(w);
+    await startBookingCheckout(w.deps, { bookingId: BOOKING, actorUserId: TRAVELER });
+    w.fake.control.script.declineNextConfirm("card_declined");
+    return confirmBookingPayment(w.deps, { bookingId: BOOKING, actorUserId: TRAVELER, paymentMethodRef: "fake_pm_bad", returnUrl: null });
+  };
+
+  it("B1 the declined attempt's intent is CANCELED at the provider, and nothing is owed", async () => {
+    const f = await declined();
+    assert.equal(f.httpStatus, 402);
+    const p = [...w.store.payments.values()][0]!;
+    assert.equal(await intentOf(p), "canceled");
+    assert.equal(p.providerCancelOwed, false);
+    assert.equal(p.state, "failed");
+  });
+
+  it("B2 a cancel that FAILS is recorded (provider_cancel_owed) and the traveller still gets the decline", async () => {
+    w.fake.control.script.failNextOperation("cancelPaymentIntent", "provider_unreachable");
+    const f = await declined();
+    assert.equal(f.httpStatus, 402, JSON.stringify(f.body));
+    assert.equal(f.body["error"], "payment_declined");
+    const p = [...w.store.payments.values()][0]!;
+    assert.equal(p.providerCancelOwed, true, "the owed cancellation is recorded");
+    assert.notEqual(await intentOf(p), "canceled");
+  });
+
+  it("B3 the owed cancel is RETRIED on the next checkout (same key), then cleared; the new attempt proceeds", async () => {
+    w.fake.control.script.failNextOperation("cancelPaymentIntent", "provider_unreachable");
+    await declined();
+    const first = [...w.store.payments.values()][0]!;
+    const retry = await startBookingCheckout(w.deps, { bookingId: BOOKING, actorUserId: TRAVELER });
+    assert.equal(retry.httpStatus, 201, JSON.stringify(retry.body));
+    const after = w.store.payments.get(first.id)!;
+    assert.equal(await intentOf(after), "canceled");
+    assert.equal(after.providerCancelOwed, false);
+    assert.equal(w.store.payments.size, 2);
+  });
+
+  it("B4 while the provider still refuses the cancel, the next checkout does NOT open a second intent (one open intent per booking at most)", async () => {
+    w.fake.control.script.failNextOperation("cancelPaymentIntent", "provider_unreachable");
+    await declined();
+    w.fake.control.script.failNextOperation("cancelPaymentIntent", "provider_unreachable");
+    const retry = await startBookingCheckout(w.deps, { bookingId: BOOKING, actorUserId: TRAVELER });
+    assert.equal(retry.httpStatus, 503, JSON.stringify(retry.body));
+    assert.equal(w.store.payments.size, 1, "no second attempt while the first intent is still open");
+    assert.equal([...w.store.payments.values()][0]!.providerCancelOwed, true);
+  });
+});

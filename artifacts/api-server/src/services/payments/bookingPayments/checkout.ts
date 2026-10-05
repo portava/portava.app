@@ -175,7 +175,7 @@ export async function startBookingCheckout(deps: PaymentSliceDeps, req: StartChe
   if (isOutcome(loaded)) return loaded;
   const { booking, payments } = loaded;
   if (payments.some((p) => PAID_STATES.includes(p.state))) return refusal(409, "already_paid", "This booking has already been paid for.");
-  if (!payableNow(booking)) return refusal(409, "booking_not_payable", "This booking can't be paid for in its current state.");
+  if (!payableNow(booking)) return refusal(409, "booking_not_payable", "This booking can't be paid for in its current state."); const owed = await settleOwedCancels(deps, payments); if (owed) return owed; // Step 5(b): an earlier declined intent is closed first
 
   const parties = await deps.bookingParties(booking);
   if (!parties.allowed) return refusal(parties.httpStatus, parties.code, parties.message, { side: parties.side });
@@ -295,6 +295,7 @@ async function answerIntent(
     });
     if (!write.ok) return READ_FAILED();
     if (r.status === "declined") {
+      const cancelled = await cancelDeclinedIntent(deps, { ...record, intentRef: snap.intentRef }); const cw = await deps.store.updatePayment(record.id, { intentState: cancelled ? "canceled" : snap.state, providerCancelOwed: !cancelled, updatedAt: now }); if (!cw.ok) return READ_FAILED();
       return refusal(402, "payment_declined", "Your payment was declined. No charge was made. You can try another payment method.", { paymentId: record.id });
     }
     return outcome(r.status === "requires_action" ? 202 : 201, {
@@ -367,7 +368,7 @@ export async function confirmBookingPayment(deps: PaymentSliceDeps, req: Confirm
     });
   }
   if (r.status === "declined") {
-    const w = await deps.store.updatePayment(open.id, { state: "failed", failureReason: r.reason, intentState: r.value?.state ?? open.intentState, updatedAt: now });
+    const cancelled = await cancelDeclinedIntent(deps, open); const w = await deps.store.updatePayment(open.id, { state: "failed", failureReason: r.reason, intentState: cancelled ? "canceled" : (r.value?.state ?? open.intentState), providerCancelOwed: !cancelled, updatedAt: now });
     if (!w.ok) return READ_FAILED();
     const s = await deps.store.setBookingPaymentStatus(open.bookingId, "failed");
     if (!s.ok) return READ_FAILED();
@@ -376,4 +377,42 @@ export async function confirmBookingPayment(deps: PaymentSliceDeps, req: Confirm
   return r.status === "unavailable"
     ? refusal(503, "payments_unavailable", "Payments are not available right now. No charge was made.", { reason: r.reason })
     : refusal(r.retriable ? 503 : 422, "payment_failed", "The payment could not be confirmed. No charge was made.", { reason: r.reason });
+}
+
+// ── Step 5(b): a declined attempt's intent is cancelled through the contract ──
+// A declined confirmation leaves the provider's intent open
+// (requires_payment_method), so the payer's card form could still complete it
+// later against an attempt this slice has marked failed. It is cancelled here,
+// reason "abandoned", under a key derived from the ATTEMPT (`<key>:cancel`), so
+// a retry is the same request. A cancel that does not go through is recorded
+// on the row (provider_cancel_owed, 3931) and retried by the next checkout for
+// the booking, which opens no new intent while one is still owed: at most one
+// open intent per booking.
+
+/** True when the intent is closed (cancelled now, or no longer cancellable because it already ended). */
+async function cancelDeclinedIntent(deps: PaymentSliceDeps, p: Pick<BookingPaymentRecord, "idempotencyKey" | "intentRef" | "chargeModel" | "recipientRef">): Promise<boolean> {
+  if (!p.intentRef) return true;
+  const r = await deps.provider.cancelPaymentIntent({
+    idempotencyKey: `${p.idempotencyKey}:cancel`,
+    intent: intentHandle({ intentRef: p.intentRef, chargeModel: p.chargeModel, recipientRef: p.recipientRef }),
+    reason: "abandoned",
+  });
+  if (r.status === "ok") return true;
+  // illegal_state: the intent already ended (cancelled, or captured — which the
+  // signed webhook reconciles as money). Nothing is left to cancel.
+  return r.status === "failed" && r.reason === "illegal_state";
+}
+
+/** Retry every owed cancellation for the booking; a refusal while one is still owed, else null. */
+async function settleOwedCancels(deps: PaymentSliceDeps, payments: readonly BookingPaymentRecord[]): Promise<SliceOutcome | null> {
+  for (const p of payments) {
+    if (!p.providerCancelOwed) continue;
+    const done = await cancelDeclinedIntent(deps, p);
+    if (!done) {
+      return refusal(503, "payments_unavailable", "A previous payment attempt for this booking is still being closed. No charge was made. Please try again shortly.", { reason: "provider_cancel_owed" });
+    }
+    const w = await deps.store.updatePayment(p.id, { providerCancelOwed: false, intentState: "canceled", updatedAt: deps.now().toISOString() });
+    if (!w.ok) return READ_FAILED();
+  }
+  return null;
 }
