@@ -86,7 +86,7 @@ export const MEMORY_METRICS_NOT_MEASURABLE = {
   resurfacing_suppression_violations:
     "§24 says this must be zero. Detecting a violation requires a resurfacing feed to observe, and the proactive feeds live in routes/highlights.ts and services/highlights/, owned by another lane. This module cannot count what it cannot see, and a zero emitted from here would be a claim about code it never ran.",
   do_again_conversion:
-    "There is no do-again feature to convert (census H107/H108: a repository-wide grep for doAgain / do_again / takeMeBack returns nothing at all).",
+    "Do Again exists (services/memory/memoryActionService.ts compileDoAgain) but its CONVERSION — the trip save that follows a plan — is written by the Trips route from the client's picker, and nothing ties that save back to the compile; a count of compiles alone would be a denominator presented as a rate (census H107/H222).",
 } as const;
 
 export type MemoryMetricNotMeasurable = keyof typeof MEMORY_METRICS_NOT_MEASURABLE;
