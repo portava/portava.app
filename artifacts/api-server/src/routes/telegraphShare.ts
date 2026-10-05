@@ -34,7 +34,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { guardTelegraphThreadWrite } from "../lib/telegraphThreadWrite.js";
+import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js";
 import { publishToThread } from "../lib/telegraphEvents.js";
 import { logger as rootLogger } from "../lib/logger.js";
 import {
@@ -105,7 +105,7 @@ router.post(
 
     const guard = await guardTelegraphThreadWrite(client, threadId, user.id);
     if (!guard.ok) {
-      sendError(res, guard.code, guard.message);
+      sendThreadWriteRefusal(res, guard);
       return;
     }
     const sc = client;

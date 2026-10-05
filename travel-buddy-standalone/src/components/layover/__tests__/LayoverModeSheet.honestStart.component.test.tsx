@@ -195,3 +195,57 @@ describe('LayoverModeSheet — the airport search', () => {
     expect(screen.getByText('Taiwan Taoyuan International')).toBeTruthy();
   });
 });
+
+/**
+ * census-layover L35 / L22 — THE BAG QUESTION IS FOUR-WAY AND STARTS AT
+ * "NOT SURE".
+ *
+ * The sheet had a switch, "I have checked bags", that started OFF. A traveller
+ * who did not touch it — or did not know — was sent as `checkedBags: false`,
+ * and the engine charged no bag time. The sheet now sends §4's `baggageMode`,
+ * and beside it the boolean an OLDER server reads, which must be the cautious
+ * one. Against the old sheet case 8 fails on `baggageMode` being absent and
+ * `checkedBags` being false; case 9 fails because the options do not exist.
+ */
+describe('LayoverModeSheet — the bag question', () => {
+  const created = { ok: true, session: { id: 'sess-9' }, safeReturnSuggested: false, safeReturnReasons: [] };
+
+  it('8. untouched, the sheet sends UNKNOWN and the CAUTIOUS boolean — never "no bags"', async () => {
+    await mount();
+    await pickAirportAndTimes();
+    mockCreate.mockResolvedValue(created);
+    await fireEvent.press(screen.getByText('Start layover'));
+    await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1));
+    const payload = mockCreate.mock.calls[0][0];
+    expect(payload.baggageMode).toBe('UNKNOWN');
+    expect(payload.checkedBags).toBe(true);
+    // The old switch is gone: there is no second, contradicting control.
+    expect(screen.queryByText('I have checked bags')).toBeNull();
+  });
+
+  it('9. each choice is sent as itself, with the boolean the server\'s own table gives it', async () => {
+    const table: Array<[string, boolean]> = [
+      ['CARRY_ON_ONLY', false],
+      ['CHECKED_THROUGH', false],
+      ['COLLECT_RECHECK', true],
+      ['UNKNOWN', true],
+    ];
+    await mount();
+    await pickAirportAndTimes();
+    mockCreate.mockResolvedValue(created);
+    let started = 0;
+    for (const [mode, charged] of table) {
+      mockCreate.mockClear();
+      await fireEvent.press(screen.getByTestId(`layover-start-baggage-${mode}`));
+      await fireEvent.press(screen.getByText('Start layover'));
+      await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1));
+      expect(mockCreate.mock.calls[0][0].baggageMode).toBe(mode);
+      expect(mockCreate.mock.calls[0][0].checkedBags).toBe(charged);
+      // The create has SETTLED (the push is its last act) before the next press,
+      // so the button is not still disabled by the previous submit.
+      started += 1;
+      await waitFor(() => expect(mockPush).toHaveBeenCalledTimes(started));
+      await waitFor(() => expect(screen.getByText('Start layover')).toBeTruthy());
+    }
+  });
+});
