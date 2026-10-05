@@ -589,7 +589,7 @@ export interface LayoverOverview {
    */
   safeEnvelope: LayoverSafeEnvelope | null;
   returnReminderAt: string | null;
-  localTimes: LayoverLocalTimes;
+  localTimes: LayoverLocalTimes; /** §20 — the decision store's state. `{ state: 'not_stored', reason: 'persistence_disabled' }` means 2992's write gate is OFF (census L30's checkpoints sit behind it). Optional: an older server sends none. */ persisted?: { state: string; reason?: string; unwritten?: string[] } | null;
 }
 
 export interface PresenceTraveler {
@@ -2025,4 +2025,92 @@ export async function createMemoryFromLayover(sessionId: string): Promise<Layove
   if (res.status === 404) return { ok: false, reason: 'gone', message: serverMessage ?? 'This layover could not be found.' };
   if (res.status === 503) return { ok: false, reason: 'unavailable', message: serverMessage ?? 'The Memory could not be saved right now.' };
   return { ok: false, reason: 'refused', message: serverMessage ?? 'The Memory could not be saved.' };
+}
+
+// ── census-layover L30 / L173 — the traveller's own "left / back" reports ──────
+//
+// `GET` / `POST /api/airport/sessions/:id/checkpoints`. The store is migration
+// 2992's and sits behind its write gate, so "OFF" is an answer of its own
+// (`available: false`) and never an empty list. A report is the traveller's,
+// and it never moves the certified deadline — the server says so and so must
+// every surface that renders one.
+
+export type TravellerCheckpointType = 'LANDSIDE_EXIT' | 'AIRPORT_REENTRY';
+export type AirportPresence = 'landside' | 'airside' | 'unreported';
+
+export interface LayoverCheckpointView {
+  id: string;
+  type: string;
+  observedAt: string;
+}
+
+export type LayoverCheckpointsRead =
+  | { ok: true; available: false }
+  | { ok: true; available: true; checkpoints: LayoverCheckpointView[]; airportPresence: AirportPresence }
+  | { ok: false; reason: 'unavailable' | 'unreachable' | 'refused'; message: string };
+
+const CHECKPOINT_PRESENCES: readonly AirportPresence[] = ['landside', 'airside', 'unreported'];
+const CHECKPOINTS_UNREACHABLE = 'Could not reach Portava to load your check-ins.';
+
+/** census L30 — what the store is, or why it could not be read. Never `[]` for a failure. */
+export async function getLayoverCheckpoints(sessionId: string): Promise<LayoverCheckpointsRead> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'checkpoints'));
+  } catch {
+    return { ok: false, reason: 'unreachable', message: CHECKPOINTS_UNREACHABLE };
+  }
+  let json: any = null;
+  try { json = await res.json(); } catch { json = null; }
+  const message = typeof json?.message === 'string' ? json.message : 'Your check-ins could not be loaded.';
+  if (!res.ok) return { ok: false, reason: res.status === 503 ? 'unavailable' : 'refused', message };
+  if (json?.available === false) return { ok: true, available: false };
+  // A 200 that claims the store is on must carry the list and a presence it
+  // recognises; anything else is a contract mismatch, not "nothing reported".
+  if (json?.available !== true || !Array.isArray(json.checkpoints) || !CHECKPOINT_PRESENCES.includes(json.airportPresence)) {
+    return { ok: false, reason: 'refused', message: 'Your check-ins could not be read.' };
+  }
+  const checkpoints: LayoverCheckpointView[] = [];
+  for (const c of json.checkpoints as unknown[]) {
+    const o = c as Record<string, unknown> | null;
+    if (o && typeof o.id === 'string' && typeof o.type === 'string' && typeof o.observedAt === 'string') {
+      checkpoints.push({ id: o.id, type: o.type, observedAt: o.observedAt });
+    }
+  }
+  return { ok: true, available: true, checkpoints, airportPresence: json.airportPresence as AirportPresence };
+}
+
+export type LayoverCheckpointReport =
+  | { ok: true; duplicate: boolean; airportPresence: AirportPresence | null }
+  | { ok: false; reason: 'off' | 'ended' | 'unavailable' | 'unreachable' | 'refused'; message: string };
+
+/**
+ * census L173 — report one checkpoint. `operationId` is the CALLER's and must
+ * be reused on a retry of the same tap, so a lost response is one row.
+ */
+export async function reportLayoverCheckpoint(
+  sessionId: string,
+  type: TravellerCheckpointType,
+  operationId: string,
+): Promise<LayoverCheckpointReport> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'checkpoints'), {
+      method: 'POST',
+      body: JSON.stringify({ type, operationId }),
+    });
+  } catch {
+    return { ok: false, reason: 'unreachable', message: 'Could not reach Portava. Your check-in was not saved — try again.' };
+  }
+  let json: any = null;
+  try { json = await res.json(); } catch { json = null; }
+  const message = typeof json?.message === 'string' ? json.message : 'Your check-in was not saved.';
+  if (res.ok && json?.ok === true) {
+    const presence = CHECKPOINT_PRESENCES.includes(json.airportPresence) ? (json.airportPresence as AirportPresence) : null;
+    return { ok: true, duplicate: json.duplicate === true, airportPresence: presence };
+  }
+  if (json?.error === 'feature_disabled') return { ok: false, reason: 'off', message };
+  if (res.status === 409) return { ok: false, reason: 'ended', message };
+  if (res.status === 503) return { ok: false, reason: 'unavailable', message };
+  return { ok: false, reason: 'refused', message };
 }

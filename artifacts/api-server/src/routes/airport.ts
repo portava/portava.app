@@ -4354,3 +4354,95 @@ async function bandPlanStops(
 
 // Imported at the TAIL so no cited line above moves; ESM hoists it.
 import { recordLayoverOutcome } from "../services/layover/LayoverOutcomeStore.js";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TRAVELLER CHECKPOINTS — census-layover L30 / L173 / L43
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Registered at the TAIL of the module, after `export default router`, so that
+// no line any census cites moves. Express routes attach when this module is
+// evaluated, which is before the router is mounted anywhere, so position in the
+// file changes nothing about matching; the two paths overlap no other route.
+//
+// "I've left the airport" / "I'm back at the airport", reported by the traveller
+// — the only observer this tree has (see LayoverCheckpointStore's header). A
+// report FEEDS the outcome row and is published back as `airportPresence`; it
+// never moves the certified deadline, verdict or return state.
+
+router.get("/airport/sessions/:id/checkpoints", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+  if (!await isFlagEnabled(sc, "airport_mode_enabled")) { sendError(res, "feature_disabled"); return; }
+  const session = await ownedSessionOr(res, sc, req.params.id, auth.user.id);
+  if (!session) return;
+
+  const read = await readTravellerCheckpoints(sc, session.id, Date.now());
+  if (!read.ok && read.reason === "read_failed") {
+    sendError(res, "degraded_unavailable", "Your checkpoints could not be loaded. Please try again.");
+    return;
+  }
+  if (!read.ok) {
+    // OFF is not "none": `checkpoints` is null, never [], so a client cannot
+    // render "you have not reported anything" for a store that does not exist.
+    res.json({ ok: true, available: false, reason: read.reason, checkpoints: null, airportPresence: null });
+    return;
+  }
+  res.json({ ok: true, available: true, checkpoints: read.checkpoints, airportPresence: airportPresenceFrom(read.checkpoints) });
+});
+
+router.post("/airport/sessions/:id/checkpoints", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const type = req.body?.type;
+  const operationId = req.body?.operationId;
+  if (!isTravellerCheckpointType(type)) {
+    sendError(res, "invalid_payload", `type must be one of ${TRAVELLER_CHECKPOINT_TYPES.join(", ")}`);
+    return;
+  }
+  if (!isOperationId(operationId)) {
+    sendError(res, "invalid_payload", "operationId is required (1-120 characters) so a retried tap is the same checkpoint");
+    return;
+  }
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+  if (!await isFlagEnabled(sc, "airport_mode_enabled")) { sendError(res, "feature_disabled"); return; }
+  const session = await ownedSessionOr(res, sc, req.params.id, auth.user.id);
+  if (!session) return;
+  if (!(LAYOVER_LIVE_SESSION_STATUSES as readonly string[]).includes(session.status)) {
+    sendError(res, "conflict", "This layover has ended, so there is nothing to report.");
+    return;
+  }
+
+  const nowMs = Date.now();
+  const written = await recordTravellerCheckpoint(sc, {
+    sessionId: session.id, type, operationId, nowMs, departureTime: session.departureTime,
+  });
+  if (!written.ok) {
+    if (written.reason === "persistence_disabled") {
+      sendError(res, "feature_disabled", "Checkpoints are not switched on yet.");
+    } else {
+      sendError(res, "degraded_unavailable", "Your checkpoint was not saved. Please try again.");
+    }
+    return;
+  }
+  // The presence AFTER this report. A failed re-read is reported as unknown,
+  // never derived from the one row just written as if it were the whole story.
+  const read = await readTravellerCheckpoints(sc, session.id, nowMs);
+  res.status(written.duplicate ? 200 : 201).json({
+    ok: true,
+    checkpoint: written.checkpoint,
+    duplicate: written.duplicate,
+    airportPresence: read.ok ? airportPresenceFrom(read.checkpoints) : null,
+  });
+});
+
+import {
+  TRAVELLER_CHECKPOINT_TYPES,
+  airportPresenceFrom,
+  isOperationId,
+  isTravellerCheckpointType,
+  readTravellerCheckpoints,
+  recordTravellerCheckpoint,
+} from "../services/layover/LayoverCheckpointStore.js";

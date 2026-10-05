@@ -24,16 +24,21 @@
  *   completed_at       the close instant for a completed layover; NULL for one
  *                      ended early — nothing was completed.
  *
- *   left_airport, actual_airport_return_at, completed_experience,
- *   met_people_count, comfort_rating, plan_change_reason
- *                      ALL NULL. Nothing on this tree observes them: there is
- *                      no checkpoint writer (L30), the plan has no "done" state
- *                      and the sheet asks no rating. NULL is "not observed",
- *                      which is what the schema's nullable columns are for. A
- *                      `false` here would be a claim — "did not leave the
- *                      airport" — made from the absence of a report, which is
- *                      exactly the failed-read-as-a-value this repository's
- *                      master invariant forbids.
+ *   left_airport, actual_airport_return_at
+ *                      From the traveller's OWN checkpoints
+ *                      (`LayoverCheckpointStore.observedReturnFrom`): TRUE and
+ *                      the first re-entry after the last exit when they reported
+ *                      leaving; NULL when they reported nothing, or when the
+ *                      checkpoints could not be read. Never FALSE: "did not leave
+ *                      the airport" would be a claim made from the absence of a
+ *                      report, which is exactly the failed-read-as-a-value this
+ *                      repository's master invariant forbids.
+ *
+ *   completed_experience, met_people_count, comfort_rating, plan_change_reason
+ *                      ALL NULL. Nothing on this tree observes them: the plan has
+ *                      no "done" state and the sheet asks no rating. NULL is "not
+ *                      observed", which is what the schema's nullable columns
+ *                      are for.
  *
  * No coordinate is written; the table has no coordinate column and 2992's
  * postcondition asserts it never will.
@@ -59,6 +64,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { DECISION_PERSISTENCE_FLAG } from "./LayoverDecisionStore.js";
+import { observedReturnFrom, readTravellerCheckpoints } from "./LayoverCheckpointStore.js";
 
 const logger = rootLogger.child({ service: "LayoverOutcomeStore" });
 
@@ -83,15 +89,16 @@ export function layoverOutcomeRow(
   sessionId: string,
   outcome: LayoverCloseOutcome,
   nowMs: number,
+  observed: { leftAirport: boolean | null; actualAirportReturnAt: string | null } = { leftAirport: null, actualAirportReturnAt: null },
 ): Record<string, unknown> {
   const now = new Date(nowMs).toISOString();
   return {
     session_id: sessionId,
     completed_at: outcome === "completed" ? now : null,
-    left_airport: null,
+    left_airport: observed.leftAirport,
     completed_experience: null,
     met_people_count: null,
-    actual_airport_return_at: null,
+    actual_airport_return_at: observed.actualAirportReturnAt,
     boarding_outcome: outcome === "completed" ? "BOARDED" : "UNKNOWN",
     comfort_rating: null,
     plan_change_reason: null,
@@ -111,7 +118,9 @@ export async function recordLayoverOutcome(
     if (!(await isFlagEnabled(db, OUTCOME_WRITE_FLAG))) {
       return { recorded: false, reason: "persistence_disabled" };
     }
-    const row = layoverOutcomeRow(args.sessionId, args.outcome, args.nowMs);
+    // A failed or disabled checkpoint read is NOT OBSERVED, never "stayed airside".
+    const observed = observedReturnFrom(await readTravellerCheckpoints(db, args.sessionId, args.nowMs));
+    const row = layoverOutcomeRow(args.sessionId, args.outcome, args.nowMs, observed);
     // `.from("<literal>")`, not a constant: check:write-path-columns resolves a
     // write site only when it can see the table name (LayoverDecisionStore's
     // note on the same hazard).
