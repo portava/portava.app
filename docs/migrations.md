@@ -3735,3 +3735,39 @@ So every migration changed here is unapplied everywhere.
     cd artifacts/api-server
     grep -c 'DO \$pre\$' src/migrations/336[2-5]_*.sql src/migrations/342[12]_*.sql   # 1 each
     grep -c 'schema_migration_ledger' ../../db/rollback/2026-09-2?-33[3-5][0-9]-*-rollback.sql   # >= 2 each
+
+## 2026-10-04 — `3530_rb_earnings_summary_nothing_collected.sql`, written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3530_rb_earnings_summary_nothing_collected.sql` | **not applied** | **not applied** |
+
+**What it is.** `CREATE OR REPLACE FUNCTION public.rb_buddy_earnings_summary(uuid, numeric)` — the SQL
+half of M5 / `docs/architecture/09_Payment_Architecture.md` §1.3.1. The body `2330` installed builds
+`totalInAppUsd` from `SUM(deposit_usd)`, i.e. it reports money as collected that no payment path ever
+collected. The replacement reports `totalInAppUsd` and `monthlyBreakdown[].inApp` as a literal `0` and
+carries the deposit sum under `totalInAppScheduledUsd` / `inAppScheduled`. Every other key, including
+`totalNetUsd`, is unchanged.
+
+**`2330` was not edited, deliberately.** Its bytes are a record of what ran; "An applied migration is a
+historical artifact: do not annotate it", above, is the rule and the reason. A test asserts `2330` still
+contains its original expression
+(`artifacts/api-server/src/test/rentBuddyCollectedMoney.test.ts:1#/**`, the last case of S3).
+
+**Whether `2330` itself is applied is still unknown** — it is one of the files
+`docs/architecture/payments-reconciliation-20261004.md` §1.1 lists as "unknown — see §5". `3530` does not
+depend on the answer: `CREATE OR REPLACE` creates the function when it is absent, so the file is
+self-sufficient either way.
+
+**Nothing waits on the press.** `routes/rentABuddy.ts` re-states whatever the deployed function returns
+through `lib/rentBuddyCollectedMoney.ts:withNothingCollected`, which maps `2330`'s key shape onto the
+honest one. The route is correct before this file is applied and after; applying it makes the database
+agree rather than making the API honest. That is also why this was not held back waiting for an apply
+window.
+
+**No data, no flag, no grant widened.** One `CREATE OR REPLACE`, the same revoke/grant pair `2330`
+carries, one `COMMENT`, and two `DO` postcondition blocks that only read `pg_proc` and `SELECT` through
+the function. `rent_buddy_enabled` is FALSE in production and this file does not read it.
+
+**Rollback:** re-apply `2330`'s definition of the function. There is no dependent object, so the revert
+is one statement and loses nothing.
