@@ -1978,3 +1978,51 @@ export async function getLayoverDiscovery(
   }
   return { ok: true, gems };
 }
+
+// ── census-layover L275 — keep a completed layover as a private Memory ────────
+//
+// Layover spec §25: "convert a COMPLETED session into an optional
+// stamp/postcard/memory". The stamp rides on the DELETE above; the Memory is
+// its own request to `POST /api/memories/from-layover/:id`, made only when the
+// traveller ticked the box on the end sheet and only after the server said the
+// layover is `completed`.
+//
+// The §19 key is DETERMINISTIC per layover, so a retry after a lost response is
+// the same command; the server also answers an existing Memory for the same
+// layover, so a second tap cannot make a second one.
+
+export type LayoverMemoryFailure = 'not_completed' | 'gone' | 'unavailable' | 'unreachable' | 'refused';
+
+export type LayoverMemoryResult =
+  | { ok: true; memoryId: string; existing: boolean }
+  | { ok: false; reason: LayoverMemoryFailure; message: string };
+
+export function layoverMemoryIdempotencyKey(sessionId: string): string {
+  return `CREATE_MEMORY_FROM_LAYOVER:${sessionId}`;
+}
+
+export async function createMemoryFromLayover(sessionId: string): Promise<LayoverMemoryResult> {
+  let res: Response;
+  try {
+    res = await authedFetch(`${apiBase()}/api/memories/from-layover/${encodeURIComponent(sessionId)}`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': layoverMemoryIdempotencyKey(sessionId) },
+      body: '{}',
+    });
+  } catch {
+    return { ok: false, reason: 'unreachable', message: 'Could not reach Portava to save the Memory.' };
+  }
+  let json: any = null;
+  try { json = await res.json(); } catch { json = null; }
+  const serverMessage = typeof json?.message === 'string' ? json.message : null;
+  if (res.ok) {
+    const memoryId = typeof json?.memory?.id === 'string' ? json.memory.id : null;
+    // A 2xx without the Memory it promises is a contract mismatch, not a saved Memory.
+    if (!memoryId) return { ok: false, reason: 'refused', message: 'The Memory could not be confirmed.' };
+    return { ok: true, memoryId, existing: json?.existing === true };
+  }
+  if (res.status === 409) return { ok: false, reason: 'not_completed', message: serverMessage ?? 'Only a layover that ended with your flight can be kept as a Memory.' };
+  if (res.status === 404) return { ok: false, reason: 'gone', message: serverMessage ?? 'This layover could not be found.' };
+  if (res.status === 503) return { ok: false, reason: 'unavailable', message: serverMessage ?? 'The Memory could not be saved right now.' };
+  return { ok: false, reason: 'refused', message: serverMessage ?? 'The Memory could not be saved.' };
+}

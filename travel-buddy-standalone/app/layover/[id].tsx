@@ -30,7 +30,7 @@ import { color, space, radius, type as t, avatar } from '../../src/theme/tokens'
 import { ConfirmSheet } from '../../src/components/ui/ConfirmSheet';
 import {
   addStopFromRecommendation,
-  endLayoverSession,
+  endLayoverSession, createMemoryFromLayover,
   getLayoverBuddies,
   getLayoverOverview,
   getLayoverPresence,
@@ -61,7 +61,7 @@ import { LayoverPeopleSection } from '../../src/components/layover/LayoverPeople
 import { LayoverCrewSection } from '../../src/components/layover/LayoverCrewSection';
 import { LayoverDiscoveryCard } from '../../src/components/layover/LayoverDiscoveryCard';
 import { LayoverSafeReturnCard } from '../../src/components/layover/LayoverSafeReturnCard';
-import { LayoverEndSheet } from '../../src/components/layover/LayoverEndSheet';
+import { LayoverEndSheet } from '../../src/components/layover/LayoverEndSheet'; import { endLayoverToast } from '../../src/components/layover/layoverEndToast';
 import { useSafeReturnAbort } from '../../src/components/layover/useSafeReturnAbort';
 import { LayoverCompassCard } from '../../src/components/layover/LayoverCompassCard';
 import { LayoverFlightChangeCard } from '../../src/components/layover/LayoverFlightChangeCard';
@@ -534,17 +534,17 @@ export default function LayoverDashboardScreen() {
    * `passportStamp.reason` is what the toast says — this screen does not
    * re-derive whether a stamp was written.
    */
-  const doEndLayover = useCallback(async (choice: { outcome: 'completed' | 'cancelled'; passportStamp: boolean }) => {
+  const doEndLayover = useCallback(async (choice: { outcome: 'completed' | 'cancelled'; passportStamp: boolean; keepMemory?: boolean }) => {
     if (!id) return;
     setEndConfirmOpen(false);
     setEndBusy(true);
     try {
-      const result = await endLayoverSession(id, choice);
+      const result = await endLayoverSession(id, { outcome: choice.outcome, passportStamp: choice.passportStamp });
       if (result.ok) {
-        await cancelScheduledNotification(notifIdRef.current);
-        if (choice.passportStamp && result.passportStamp && !result.passportStamp.written) {
-          showToast('Layover ended — the Passport stamp could not be saved');
-        }
+        await cancelScheduledNotification(notifIdRef.current); const memory = choice.keepMemory === true && result.outcome === 'completed' ? await createMemoryFromLayover(id) : null; // census L275 — only a layover the SERVER recorded as completed
+        const endToast = endLayoverToast(Boolean(choice.passportStamp && result.passportStamp && !result.passportStamp.written), memory);
+        if (endToast) showToast(endToast);
+        // ↑ census L19/L162 (the stamp) and L275 (the Memory): ONE sentence from both of the server's answers.
         router.back();
       } else {
         showToast('Could not end the layover');

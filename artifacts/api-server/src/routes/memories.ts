@@ -3484,4 +3484,116 @@ async function answerExistingTripMemory(req: any, res: any, sc: any, tripId: str
 // Imported at the TAIL so no line above moves; ESM hoists it.
 import { asyncHandler } from "../lib/asyncHandler.js";
 
+// ── POST /memories/from-layover/:sessionId — census-layover L275 ─────────────
+//
+// Layover spec §25: "convert a COMPLETED session into an optional
+// stamp/postcard/memory". The stamp half is the elected Passport seam on
+// `DELETE /airport/sessions/:id`; this is the memory half, asked for by the
+// traveller from the end-of-layover sheet and never written on their behalf.
+// What the row may and may not carry is services/memory/layoverMemory.ts's
+// header: a city, a country and the layover's window — never a coordinate.
+//
+// Shaped exactly like `POST /trips/:tripId/memory`, the path it mirrors: every
+// read binds `.error` (an unreadable table is 503, never "not found" and never
+// a write), the create crosses the §17 boundary with the §19 key, and one live
+// Memory per layover — a retry or a second tap answers the existing one.
+router.post("/memories/from-layover/:sessionId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { sessionId } = req.params;
+  if (!isUuid(sessionId)) { sendError(res, "invalid_payload", "Invalid layover id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const idempotencyKey = requireIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
+
+  const { data: session, error: sessionErr } = await sc
+    .from("layover_sessions")
+    .select(LAYOVER_MEMORY_SESSION_SELECT)
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (sessionErr) {
+    req.log.error({ err: sessionErr, sessionId }, "memory-from-layover: layover_sessions read failed — refusing rather than answering not_found");
+    sendError(res, "degraded_unavailable", "Could not read the layover. Please try again.");
+    return;
+  }
+  const eligible = layoverMemoryEligibility(session as unknown as LayoverSessionForMemory | null, user.id);
+  if (!eligible.ok) {
+    if (eligible.code === "not_found") { sendError(res, "not_found", "Layover not found"); return; }
+    sendError(res, "conflict", "Only a layover that ended with your flight can be kept as a Memory.", {
+      exposeDetail: true, reason: "layover_not_completed",
+    });
+    return;
+  }
+
+  const row = layoverMemoryRow(session as unknown as LayoverSessionForMemory, user.id);
+  for (const k of LAYOVER_MEMORY_FORBIDDEN_KEYS) {
+    // Belt and braces for §3 L19: a future edit to the builder that starts
+    // carrying a coordinate fails here, loudly, instead of persisting one.
+    if (k in row) { sendError(res, "db_error", "Refused to persist operational location data"); return; }
+  }
+
+  const { data: existingRows, error: existingErr } = await sc
+    .from("memories")
+    .select(MEMORY_CREATE_SELECT)
+    .eq("owner_id", user.id)
+    .eq("starts_at", row.starts_at)
+    .eq("ends_at", row.ends_at)
+    .neq("state", "deleted")
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (existingErr) {
+    req.log.error({ err: existingErr, sessionId }, "memory-from-layover: existing Memory unreadable — refusing BEFORE the write");
+    sendError(res, "degraded_unavailable", "Could not check for this layover's Memory. Please try again.");
+    return;
+  }
+  const existing = ((existingRows ?? []) as any[])[0];
+  if (existing) {
+    res.status(200).json({ memory: mapMemory(existing, user.id), existing: true });
+    return;
+  }
+
+  const created = await dispatchMemoryCommand<any>({
+    sc,
+    commandType: "CREATE_MEMORY",
+    memoryId: null,
+    actorUserId: user.id,
+    idempotencyKey,
+    payload: {
+      to_state: lifecycleStateOf("draft"),
+      visibility: "only_me",
+      write: row,
+      select: MEMORY_CREATE_SELECT,
+    },
+    legacy: async () => {
+      const { data, error } = await sc
+        .from("memories")
+        .insert(row)
+        .select(MEMORY_CREATE_SELECT)
+        .single();
+      if (error) {
+        req.log.error({ err: error, sessionId }, "memory-from-layover: insert failed");
+        return { ok: false, http: { code: "db_error", message: error.message } };
+      }
+      return { ok: true, body: data };
+    },
+  });
+  if (!created.ok) { sendCommandFailure(req, res, created); return; }
+
+  res.status(201).json({ memory: mapMemory(created.body, user.id), existing: false });
+});
+
+// Imported at the TAIL with the route that uses them, so no line above moves.
+import {
+  LAYOVER_MEMORY_SESSION_SELECT,
+  LAYOVER_MEMORY_FORBIDDEN_KEYS,
+  layoverMemoryEligibility,
+  layoverMemoryRow,
+  type LayoverSessionForMemory,
+} from "../services/memory/layoverMemory.js";
+
 export default router;

@@ -186,7 +186,7 @@ jest.mock('../../../src/services/layover', () => ({
     ok: true, outcome: 'cancelled',
     passportStamp: { requested: false, written: false, reason: 'not_elected' },
   })),
-  sendLayoverTelegraph: jest.fn(async () => null),
+  sendLayoverTelegraph: jest.fn(async () => null), createMemoryFromLayover: jest.fn(async () => ({ ok: true, memoryId: 'm-1', existing: false })), // census L275
   setReturnDeadline: jest.fn(async () => null),
   setShareCityStatus: jest.fn(async () => null),
   returnToAirportNow: jest.fn(async () => ({ kind: 'offline' })),
@@ -286,4 +286,56 @@ test('a stamp the server refused is reported, not swallowed', async () => {
   await act(async () => { fireEvent.press(screen.getByTestId('layover-end-stamp-election')); });
   await act(async () => { fireEvent.press(screen.getByTestId('layover-end-completed')); });
   await waitFor(() => expect(screen.getByText(/Passport stamp could not be saved/)).toBeTruthy());
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// census L275 — the third answer: a private Memory of a COMPLETED layover
+// ══════════════════════════════════════════════════════════════════════════
+
+const COMPLETED = {
+  ok: true, outcome: 'completed',
+  passportStamp: { requested: false, written: false, reason: 'not_elected' },
+};
+
+test('L275 — a ticked Memory is asked for once, AFTER the server records the layover completed', async () => {
+  layoverService.endLayoverSession.mockResolvedValueOnce(COMPLETED);
+  await openEndSheet();
+  layoverService.createMemoryFromLayover.mockClear();
+  await act(async () => { fireEvent.press(screen.getByTestId('layover-end-memory-election')); });
+  await act(async () => { fireEvent.press(screen.getByTestId('layover-end-completed')); });
+  await waitFor(() => expect(layoverService.createMemoryFromLayover).toHaveBeenCalledTimes(1));
+  expect(layoverService.createMemoryFromLayover).toHaveBeenCalledWith('sess-1');
+  // The close itself is unchanged: the Memory election never rides on the DELETE.
+  expect(layoverService.endLayoverSession).toHaveBeenCalledWith('sess-1', { outcome: 'completed', passportStamp: false });
+  await waitFor(() => expect(screen.getByText(/kept as a private Memory/)).toBeTruthy());
+});
+
+test('L275 — untouched, no Memory is requested', async () => {
+  layoverService.endLayoverSession.mockResolvedValueOnce(COMPLETED);
+  await openEndSheet();
+  layoverService.createMemoryFromLayover.mockClear();
+  await act(async () => { fireEvent.press(screen.getByTestId('layover-end-completed')); });
+  await waitFor(() => expect(layoverService.endLayoverSession).toHaveBeenCalledTimes(1));
+  expect(layoverService.createMemoryFromLayover).not.toHaveBeenCalled();
+});
+
+test('L275 — the SERVER\'s outcome decides: a close it recorded as cancelled never makes a Memory', async () => {
+  // An older server that ignores `outcome` answers "cancelled"; the client's
+  // hope must not turn an abandonment into a kept Memory.
+  layoverService.endLayoverSession.mockResolvedValueOnce({ ...COMPLETED, outcome: 'cancelled' });
+  await openEndSheet();
+  layoverService.createMemoryFromLayover.mockClear();
+  await act(async () => { fireEvent.press(screen.getByTestId('layover-end-memory-election')); });
+  await act(async () => { fireEvent.press(screen.getByTestId('layover-end-completed')); });
+  await waitFor(() => expect(layoverService.endLayoverSession).toHaveBeenCalledTimes(1));
+  expect(layoverService.createMemoryFromLayover).not.toHaveBeenCalled();
+});
+
+test('L275 — a Memory the server refused is reported with its sentence, not swallowed', async () => {
+  layoverService.endLayoverSession.mockResolvedValueOnce(COMPLETED);
+  layoverService.createMemoryFromLayover.mockResolvedValueOnce({ ok: false, reason: 'unavailable', message: 'Could not read the layover. Please try again.' });
+  await openEndSheet();
+  await act(async () => { fireEvent.press(screen.getByTestId('layover-end-memory-election')); });
+  await act(async () => { fireEvent.press(screen.getByTestId('layover-end-completed')); });
+  await waitFor(() => expect(screen.getByText(/the Memory could not be saved\. Could not read the layover/)).toBeTruthy());
 });
