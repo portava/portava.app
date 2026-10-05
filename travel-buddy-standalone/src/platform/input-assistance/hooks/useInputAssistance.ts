@@ -38,6 +38,7 @@ import { createSequenceGuard } from '../services/raceGuard.ts';
 import { finalizeSuggestions, narrowToQuery } from '../services/suggestionRanking.ts';
 import { localZeroState } from '../services/localZeroState.ts';
 import { offlineLocalRows, immediateDictionaryRows } from '../services/localDictionary.ts';
+import { outcomeLearningConsented } from '../services/outcomeLearning.ts';
 import { emitInputEvent } from '../services/inputTelemetry.ts';
 
 export interface UseInputAssistanceOptions {
@@ -310,6 +311,8 @@ export function useInputAssistance(
           sessionContext,
           // §22 opt-in + §29 coarse context — only forwarded when opted in.
           aiAssist: aiAssist === true ? true : undefined,
+          // §45: the hint goes out only while THIS account's opt-in gate is open.
+          outcomeLearning: outcomeLearningConsented() ? true : undefined,
           city: aiAssist === true ? city : undefined,
           draft: aiAssist === true ? draft : undefined,
           tz: aiAssist === true ? tz : undefined,

@@ -226,6 +226,13 @@ export interface GenerateParams {
   tz?: string | null;
   /** §22 per-request opt-in for AI-assisted writing (default false). */
   aiAssist?: boolean; /** census-discovery §80: an optional coverage sink; absent ⇒ exactly as before. */ coverage?: GatewayCoverage;
+  /**
+   * §45 / OD-INPUT-1: the device says its account opted in to outcome learning.
+   * A HINT, never a grant — the gateway still checks the flag and the stored
+   * consent before reading anything. Absent (every non-consenting device) ⇒ the
+   * serve issues no outcome read at all and ranks acceptance-only.
+   */
+  outcomeLearning?: boolean;
 }
 
 function uniq<T>(arr: T[]): T[] {
@@ -240,7 +247,7 @@ export async function generateSuggestions(
   sc: any,
   params: GenerateParams,
 ): Promise<InputSuggestion[]> {
-  const { context, policy, text, userId, limit, sessionContext, lat, lng, city, draft, tz, aiAssist, coverage } = params;
+  const { context, policy, text, userId, limit, sessionContext, lat, lng, city, draft, tz, aiAssist, coverage, outcomeLearning } = params;
 
   // no_assistance fields produce nothing (§6). generic_text lands here.
   if (policy.mode === 'no_assistance') return [];
@@ -308,10 +315,12 @@ export async function generateSuggestions(
     ? await fetchSelectionMemory(sc, { userId, context, max: 200 }).catch(() => emptyMemory())
     : emptyMemory();
   // §45 OUTCOME LEARNING (OD-INPUT-1/2). Only for a field that already allows
-  // personalization, and only when the flag is on AND this user opted in. Any
-  // other state — including a failed read — keeps acceptance-only ranking, the
-  // behaviour of a user without the feature (logged, never hidden).
-  const memory: SelectionMemory = personalizationOn
+  // personalization, only when the device HINTS that its account opted in, and
+  // then only if the flag is on AND the stored consent is valid. The hint keeps
+  // the hot path free of extra round trips for everyone who never opted in
+  // (OD-INPUT-7's latency rule); it can only cost a ranking boost, never grant
+  // one. Any other state — including a failed read — is acceptance-only.
+  const memory: SelectionMemory = personalizationOn && outcomeLearning === true
     ? await attachOutcomeMemory(sc, acceptanceMemory, userId, context)
     : acceptanceMemory;
   const personalQueryKey = selectionQueryKey(trimmed);

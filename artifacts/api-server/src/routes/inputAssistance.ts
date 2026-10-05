@@ -239,6 +239,8 @@ router.post(
     // (absent, false, truthy non-boolean) means NOT opted in, so AI writing is
     // never enabled by an ambiguous value.
     const aiAssist = body.aiAssist === true;
+    // §45 hint: only a literal true; it grants nothing (the gateway re-checks flag + consent).
+    const outcomeLearning = body.outcomeLearning === true;
 
     // ── §48 capability handshake (census G343) ────────────────────────────────
     // Absent ⇒ null ⇒ served exactly as before this block existed. A
@@ -295,6 +297,7 @@ router.post(
         draft,
         tz,
         aiAssist,
+        outcomeLearning,
       });
 
       // The second half of the handshake: a row the client has told us it

@@ -463,8 +463,9 @@ describe("the outcome term weighs a completed task against a bare acceptance", (
   });
 });
 
-function suggest(tok = A_TOK) {
-  return call("POST", "/input-assistance/suggest", { context: "city_picker", text: "sant" }, tok);
+/** A device whose opt-in gate is open sends the hint; the server still checks everything. */
+function suggest(tok = A_TOK, hint = true) {
+  return call("POST", "/input-assistance/suggest", { context: "city_picker", text: "sant", ...(hint ? { outcomeLearning: true } : {}) }, tok);
 }
 const conf = (body: any, id: string) => body.suggestions.find((s: any) => s.entityId === id)?.confidence;
 
@@ -496,6 +497,25 @@ describe("POST /suggest — outcome learning reaches the rank only for a consent
     assert.ok(conf(body, SANTA_ANA.id) > conf(body, SANTA_ROSA.id));
     assert.ok(!state.__reads!.includes("input_outcome_counters"));
     assert.ok(!state.__reads!.includes("input_outcome_consent"));
+  });
+
+  it("NO HINT (every device that never opted in): no flag, consent or counter read at all — even for an opted-in user", async () => {
+    // OD-INPUT-7's latency rule: the people who never opted in must not pay a
+    // round trip for a feature they do not use. A missing hint only costs the
+    // boost; it can never grant one.
+    setup({ ...base(), feature_flags: [flag(true)], input_outcome_consent: [consentRow(USER_A)] });
+    const body = (await (await suggest(A_TOK, false)).json()) as any;
+    assert.ok(conf(body, SANTA_ANA.id) > conf(body, SANTA_ROSA.id), "acceptance-only without the hint");
+    for (const t of ["feature_flags", "input_outcome_consent", "input_outcome_counters"]) {
+      assert.ok(!state.__reads!.includes(t), `${t} was read without the hint`);
+    }
+  });
+
+  it("the HINT grants nothing: hinted, flag on, but no consent row → acceptance-only", async () => {
+    setup({ ...base(), feature_flags: [flag(true)] });
+    const body = (await (await suggest(A_TOK, true)).json()) as any;
+    assert.ok(conf(body, SANTA_ANA.id) > conf(body, SANTA_ROSA.id));
+    assert.ok(!state.__reads!.includes("input_outcome_counters"));
   });
 
   it("another user's outcomes never move this user's rank", async () => {

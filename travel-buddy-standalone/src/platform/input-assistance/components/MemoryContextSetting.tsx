@@ -160,5 +160,5 @@ const styles = StyleSheet.create({
   section: { gap: space.xs, paddingTop: space.sm },
   actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: space.xl },
   link: { ...t.bodyStrong, color: color.deep },
-  primary: { ...t.bodyStrong, color: color.signalStrong },
+  primary: { ...t.bodyStrong, color: color.ink },
 });
