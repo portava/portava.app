@@ -10,12 +10,36 @@ evidence, measured after the change lands. Anyone tempted to mark a row `C`
 because a decision exists should read this sentence again.
 
 **This file is the record of those six, and only those six.** It is not the
-repository's register of owner decisions. Discovery's decisions — including the
-owner's answers of **2026-10-04** to questions 11(a), 12, 15 and 16 — are
-recorded in `docs/architecture/discovery-decision-register.md` (section
-`## OWNER-1004`) and in `docs/ops/discovery-owner-approval-request.md` §8.
-Record a new decision in the register that owns its question; do not start a
-second list here.
+repository's register of owner decisions. Discovery's decisions — including all
+**fourteen** taken on **2026-10-04**: the answers to questions 11(a), 12, 15 and
+16, plus the Rent-a-Buddy commission, the booking deposit, the identity
+provider, payment mode, the creator-ledger retention **hold** and the
+**activation freeze**, and then **C-11 / question 22(a) answered B**, the
+`standard` commission seed, the fee-rule version and a **certification
+constraint** — are recorded in
+`docs/architecture/discovery-decision-register.md` (section `## OWNER-1004`,
+entries `D-OWNER1004-1` … `-14`) and in
+`docs/ops/discovery-owner-approval-request.md` §8. Record a new decision in the
+register that owns its question; do not start a second list here.
+
+**Four of those fourteen govern what may be done anywhere in the repository, so
+they are named here rather than only there.** `D-OWNER1004-10` **freezes every
+flag flip and every hosted migration** while the deployment is unavailable and
+hosted testing shares production state — both conditions measured TRUE on
+2026-10-04. `D-OWNER1004-9` **holds PR #592 out of merge and out of
+application** until legal confirmation of the creator-ledger retention period,
+which **has not happened**; because the chain's apply step runs on `main` only,
+**merging that PR is the apply**. `D-OWNER1004-11` **answers the question behind
+that hold — C-11 / 22(a) is CLOSED, answer B, retain pseudonymised, seven years
+after fiscal year-end as the product default with jurisdiction-specific legal
+retention periods overriding it — and it does NOT lift the hold**: legal
+confirmation remains a precondition of the merge and the apply, and **decided is
+not cleared**. `D-OWNER1004-14` records that **a complete count of green checks
+is not a certification when the live-database tier did not run** — measured, for
+PR #612, as **zero** database-tier jobs out of eleven checks — and **holds
+migration `3520` out of merge and apply**, `3520` existing only on PR #616's
+branch, where merging is likewise the apply. **None of the four is an approval of
+anything.**
 
 | | ruling |
 |---|---|

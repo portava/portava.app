@@ -53,7 +53,7 @@ import {
 import { AirportEssentialsCard } from '../../src/components/layover/AirportEssentialsCard';
 import { AirportConditionsCard } from '../../src/components/layover/AirportConditionsCard';
 import { LayoverHero } from '../../src/components/layover/LayoverHero';
-import { CanILeaveCard } from '../../src/components/layover/CanILeaveCard';
+import { CanILeaveCard } from '../../src/components/layover/CanILeaveCard'; import { LayoverConstraintsCard } from '../../src/components/layover/LayoverConstraintsCard';
 import { LayoverPlanSection } from '../../src/components/layover/LayoverPlanSection';
 import { LayoverRecsSection } from '../../src/components/layover/LayoverRecsSection';
 import { LayoverMapCard } from '../../src/components/layover/LayoverMapCard';
@@ -794,7 +794,7 @@ export default function LayoverDashboardScreen() {
           window={win}
           airport={airport}
           airportIntelligence={overview.airportIntelligence ?? null}
-        />
+        /><LayoverConstraintsCard sessionId={session.id} canEdit={!!canEdit} refreshKey={dataEpoch} onChanged={() => load(true)} />{/* §4/§5/§12.1 (census L22, L35, L49): the declared bags and connection, and the one question when the answer could change the verdict. */}
         {/* The one §11 event producer this tree has: the traveller. A flight
             time the gate agent just announced is a fact no feed here carries,
             and the server runs the whole §11.1 pipeline over it. */}

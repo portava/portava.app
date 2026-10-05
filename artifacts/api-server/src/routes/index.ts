@@ -71,7 +71,7 @@ import phoneVerificationRouter from "./phoneVerification";
 import passportStampsRouter from "./passportStamps";
 import hiddenGemsRouter from "./hiddenGems";
 import notificationsRouter from "./notifications";
-import airportRouter from "./airport";import layoverEventsRouter from "./layoverEvents"; // eslint-disable-line -- same-line to keep this file line-count-stable; 27 doc citations anchor on line numbers here
+import airportRouter from "./airport";import layoverEventsRouter from "./layoverEvents";import layoverConstraintsRouter from "./layoverConstraints"; // eslint-disable-line -- same-line to keep this file line-count-stable; 27 doc citations anchor on line numbers here
 import featureFlagsRouter from "./featureFlags";
 import tagsRouter from "./tags";
 import hashtagsRouter from "./hashtags";
@@ -237,7 +237,7 @@ router.use(trustAdminRouter);
 router.use(phoneVerificationRouter);
 router.use(hiddenGemsRouter);
 router.use(notificationsRouter);
-router.use(airportRouter); router.use(layoverEventsRouter); // §11 producer ingest, separate router — see routes/layoverEvents.ts
+router.use(airportRouter); router.use(layoverEventsRouter); router.use(layoverConstraintsRouter); // §11 producer ingest, separate router — see routes/layoverEvents.ts
 router.use(featureFlagsRouter);
 router.use(tagsRouter);
 router.use(hashtagsRouter);
