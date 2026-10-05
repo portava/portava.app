@@ -434,9 +434,5 @@ router.use(postcardMediaTransportRouter);
 // ── Media §37: the poster for a video uploaded through POST /media/upload ─────
 import mediaVideoPosterRouter from "./mediaVideoPoster.js";
 router.use(mediaVideoPosterRouter);
-import discoveryOutputKindsRouter from "./discoveryOutputKinds.js"; router.use(discoveryOutputKindsRouter); /* census-discovery §91 (DC-01): the three §85 output kinds, behind discovery_output_kinds_enabled; on this line so no cited line moves */ import discoveryTrendingRouter from "./discoveryTrending.js"; router.use(discoveryTrendingRouter); // census-discovery §58 (DC-21): `11` §4 trend explanation, read-only, behind discovery_trending_api_enabled. Written over the blank line that stood here, so the file keeps its 439 lines and no cited line moves.
-// ── Trips §14.1: private-anchor sharing (census-trips TR256, lane C) ─────────
-// Registered at the tail so no cited line above moves.
-import tripAnchorSharesRouter from "./tripAnchorShares.js";
-router.use(tripAnchorSharesRouter);
+import discoveryOutputKindsRouter from "./discoveryOutputKinds.js"; router.use(discoveryOutputKindsRouter); /* census-discovery §91 (DC-01): the three §85 output kinds, behind discovery_output_kinds_enabled; on this line so no cited line moves */ import discoveryTrendingRouter from "./discoveryTrending.js"; router.use(discoveryTrendingRouter); // census-discovery §58 (DC-21): `11` §4 trend explanation, read-only, behind discovery_trending_api_enabled. Written over the blank line that stood here, so the file keeps its 439 lines and no cited line moves. import tripAnchorSharesRouter from "./tripAnchorShares.js"; router.use(tripAnchorSharesRouter); // census-trips §80 (TR256, lane C): private-anchor grants, on this line for the same reason
 export default router;
