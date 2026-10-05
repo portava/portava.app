@@ -228,5 +228,5 @@ const s = StyleSheet.create({
   indent: { paddingHorizontal: space.lg + space.lg, paddingBottom: space.sm },
   title: { ...t.small, fontWeight: '600', color: color.ink },
   detail: { ...t.stamp, color: color.mute, marginTop: 2 },
-  action: { ...t.small, fontWeight: '600', color: color.signalStrong, paddingHorizontal: space.lg, paddingVertical: space.xs },
+  action: { ...t.small, fontWeight: '600', color: color.deep, paddingHorizontal: space.lg, paddingVertical: space.xs },
 });
