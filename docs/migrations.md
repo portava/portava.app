@@ -3771,3 +3771,24 @@ the function. `rent_buddy_enabled` is FALSE in production and this file does not
 
 **Rollback:** re-apply `2330`'s definition of the function. There is no dependent object, so the revert
 is one statement and loses nothing.
+
+**Re-stated by `3824_rent_buddy_ledger_posting.sql` (PR #603) — apply `3530` first.** `3824` sorts after this
+file and carries its own `CREATE OR REPLACE` of the same function. It is `3530`'s body with one expression
+changed: the scheduled in-app amount is the whole price for `payment_mode = 'full_in_app'` and the stored
+`deposit_usd` otherwise, instead of `deposit_usd` alone. The reason is in the data, not in `3530`: `3824`
+stores `deposit_usd = 0` on every new booking (no deposit is taken in the first release), and for a
+`full_in_app` booking stored that way `3530`'s body computes `totalNetUsd = 0 + 0 - fees` — the negative
+balance this file exists to prevent. For every booking written before `3824` the two bodies give the same
+answer. Both literal zeros, the scheduled names, the net formula, the grants and `SECURITY DEFINER` are kept;
+`search_path` gains an explicit trailing `pg_temp` and the table is schema-qualified.
+
+Consequences for whoever applies them, both rehearsed on a throwaway PostgreSQL 16
+(`artifacts/api-server/src/test/db/rentBuddyLedgerPosting.db.test.ts`, group N and M3):
+
+- **Order.** `3530`, then `3824`. If `3530` is applied *after* `3824` it replaces `3824`'s body and the
+  negative net returns for new `full_in_app` bookings (test N7 shows `-150` on a 600 booking at 25 %);
+  re-applying `3824` repairs it. Nothing is reported as collected in either order.
+- **Rollback of `3824`** puts this file's definition back, copied from this file byte for byte (a test
+  compares them). It does not drop the function and does not restore `2330`'s.
+- **Rollback of this file** ("re-apply `2330`'s definition", above) must not be run while `3824` is
+  applied: it would restore the collecting body over `3824`'s. Roll `3824` back first.

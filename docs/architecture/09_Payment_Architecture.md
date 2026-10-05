@@ -24,8 +24,8 @@
 >
 > **Three §1 claims have also gone stale, all in the safe direction.** §1.3.3's three disagreeing
 > fee constants are gone (one resolver, no numeric fallback). §1.4's *"unguarded transitions"* is
-> fixed — payout hold and release are compare-and-swap
-> (`artifacts/api-server/src/routes/rentABuddySpec.ts:2403#PAYOUT_NOT_HOLDABLE_FROM`). The tip path
+> fixed — payout hold and release are one row-locked SQL transition that writes its own audit row
+> (`artifacts/api-server/src/migrations/3824_rent_buddy_ledger_posting.sql:1395#rb_admin_payout_transition`). The tip path
 > is one accumulating transaction, not three best-effort writes.
 >
 > **What §11 still gets right, and why.** Portava moves no money. No payment processor is installed
@@ -128,8 +128,8 @@ shape, and each one is a reason section 5 chooses double-entry instead:
    dashboard built from `rent_buddy_bookings` still said a deposit had been taken. All five now
    answer through one producer,
    `artifacts/api-server/src/lib/rentBuddyCollectedMoney.ts:71#export function collectedInAppUsd(`:
-   - the writer — `artifacts/api-server/src/lib/rentBuddyEarningsLedger.ts:203#    in_app_amount_collected: fromMinor(0),`,
-     derived from entries `2901` CHECK-constrains to record no settlement;
+   - the writer — since migration 3824 the SQL posting function, `artifacts/api-server/src/migrations/3824_rent_buddy_ledger_posting.sql:1182#f.settled_minor / 100.0,`:
+     the sum of settlement entries, which is 0 because no route can post one (`2901` still CHECKs `cash_settled_minor = 0`);
    - `GET /rent-a-buddy/me/earnings/summary` — `completed.depositCollected` and
      `completed.inAppAmountCollected`, which answered **900** over two full-in-app bookings;
    - `GET /rent-a-buddy/dashboard/earnings/summary` — `totalInAppUsd` and
@@ -154,7 +154,7 @@ shape, and each one is a reason section 5 chooses double-entry instead:
    creation (`lib/rentBuddyEarningsLedger.ts:89-90`) and no writer ever changes them —
    `createEarningsLedgerEntry` is the only writer in the tree; every other reference is a SELECT
    (`routes/rentABuddyMarketplace.ts:1905`, `:2156`, `:2301`). The `is_estimated` flag the read
-   path branches on (`routes/rentABuddyMarketplace.ts:2280`) can therefore never be false.
+   path branches on (`artifacts/api-server/src/routes/rentABuddyMarketplace.ts:2384#LEDGER_NOT_SETTLED_WARNING`) can therefore never be false.
 3. **Three call sites compute net earnings three different ways, from two different fee
    constants.** `lib/rentBuddyEarningsLedger.ts:37,66` reads `rent_buddy_fee_rules` with a default
    of **22 %**; `routes/rentABuddyMarketplace.ts:2191-2195` takes `ledger[0].platform_fee_percent`

@@ -56,6 +56,8 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
+import { logger } from "../lib/logger.js";
+import { NOTHING_COLLECTED_WARNING } from "../lib/rentBuddyCollectedMoney.js";
 import marketplaceRouter, { EARNINGS_NOT_COLLECTED_WARNING } from "../routes/rentABuddyMarketplace.js";
 import { emptyLedgerDb, fakeLedgerRpc, type FakeLedgerDb } from "./helpers/fakeRentBuddyLedgerRpc.js";
 
@@ -432,10 +434,70 @@ describe("the fee AMOUNT is the fold of what was ledgered, not percent × total"
     assert.equal(res.body.completed.inAppAmountCollected, 0);
     assert.equal(res.body.completed.depositCollected, 0,
       "the deprecated alias must carry what was collected, never the booking's deposit term");
+    // The deposit this (pre-3824-shaped) booking NAMES is still published, under
+    // #610's name for it — which proves the rows were read, and that the zeros
+    // above are not an empty answer.
+    assert.equal(res.body.completed.depositScheduled, 200);
+    assert.equal(res.body.completed.totalUsd, 200);
     assert.equal(res.body.isEstimated, true);
     assert.equal(res.body.warning, EARNINGS_NOT_COLLECTED_WARNING);
-    assert.match(res.body.warning, /Nothing has been collected/);
-    assert.match(res.body.warning, /no deposit is taken/);
+    // The sentence about the CHARGE is #610's (lib/rentBuddyCollectedMoney.ts):
+    // one wording on every surface that reports a money total.
+    assert.ok(res.body.warning.includes(NOTHING_COLLECTED_WARNING), res.body.warning);
+    assert.match(res.body.warning, /No payment has been collected/);
+    assert.match(res.body.warning, /No deposit is taken/);
+    assert.match(res.body.warning, /Payout system not connected/);
+  });
+
+  // Reconciliation with #610. That change took "collected" from ONE module and
+  // this one took it from the fold of settlement entries; both are 0 today. The
+  // route publishes the module's answer, and SAYS SO if the fold ever disagrees
+  // — it must not quietly publish either a second definition or a swallowed
+  // settlement.
+  it("publishes the collected-money module's answer even if the fold reports a settlement, and logs the disagreement", async () => {
+    setLevel("pro");
+    db.feeRules = { pro: 15 };
+    completedBooking("bk-1", 200, { deposit_usd: 200, cash_balance_usd: 0 });
+    await post("bk-1", "booking_created");
+    const logged: any[] = [];
+    const original = logger.error.bind(logger);
+    (logger as any).error = (...a: any[]) => { logged.push(a); };
+    try {
+      _setTestServiceClient({
+        ...serviceClient(),
+        rpc: async (fn: string, args: any) => {
+          const r = await fakeLedgerRpc(db)(fn, args);
+          return fn === "rb_buddy_ledger_totals" ? { ...r, data: { ...r.data, inAppAmountCollectedUsd: 50 } } : r;
+        },
+      });
+      const res = await get(SUMMARY);
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assert.equal(res.body.completed.inAppAmountCollected, 0);
+      assert.equal(res.body.completed.depositCollected, 0);
+      assert.equal(res.body.estimatedBuddyEarningsUsd, 170, "the totals are still the fold's");
+    } finally {
+      (logger as any).error = original;
+      _setTestServiceClient(serviceClient());
+    }
+    const hit = logged.find((a) => /settlement entries that lib\/rentBuddyCollectedMoney\.ts does not read/.test(String(a[1])));
+    assert.ok(hit, `the disagreement was not logged: ${JSON.stringify(logged)}`);
+    assert.deepEqual([hit[0].ledgerSettledUsd, hit[0].published], [50, 0]);
+  });
+
+  // 3824 stores deposit_usd = 0 while no deposit is taken. The summary must
+  // carry that 0 as the scheduled deposit and still report the fold's earnings
+  // — a figure derived from the stored deposit would have gone to zero or below.
+  it("a booking made while no deposit is taken: depositScheduled 0, earnings unchanged, nothing collected", async () => {
+    setLevel("pro");
+    db.feeRules = { pro: 15 };
+    completedBooking("bk-new", 200, { deposit_usd: 0, cash_balance_usd: 0, payment_mode: "full_in_app" });
+    await post("bk-new", "booking_created");
+    const res = await get(SUMMARY);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual(
+      [res.body.completed.count, res.body.completed.totalUsd, res.body.completed.depositScheduled, res.body.completed.inAppAmountCollected, res.body.completed.depositCollected],
+      [1, 200, 0, 0, 0]);
+    assert.deepEqual([res.body.estimatedPlatformFeeUsd, res.body.estimatedBuddyEarningsUsd], [30, 170]);
   });
 });
 

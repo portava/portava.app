@@ -64,7 +64,7 @@ function summary(over: Record<string, unknown> = {}) {
     warning: WARNING,
     today: { bookingCount: 0, bookings: [] },
     upcoming: { bookingCount: 0, bookings: [] },
-    completed: { count: 2, totalUsd: 300, unledgeredCount: 0, cashBalanceDue: 140, cashBalanceConfirmed: 0, inAppAmountCollected: 0, depositCollected: 0 },
+    completed: { count: 2, totalUsd: 300, unledgeredCount: 0, depositScheduled: 160, cashBalanceDue: 140, cashBalanceConfirmed: 0, inAppAmountCollected: 0, depositCollected: 0 },
     tips: { total: 15, count: 1 },
     buddyLevel: 'new',
     platformFeePercent: 25,
@@ -139,6 +139,12 @@ describe('earnings ledger screen', () => {
     expect((await findByTestId('earnings-collected-in-app', {}, { timeout: 5000 })).props.children).toBe('$0.00');
     expect(queryByText('Deposit collected')).toBeNull();
     expect(queryByText(/Deposit collected/i)).toBeNull();
+    // The API also carries the deposit older bookings NAMED (`depositScheduled`,
+    // 160 here; `depositAmount` 60 on the row). No deposit is taken in this
+    // release, so neither is put on the screen under any label.
+    expect(queryByText(/Deposit scheduled/i)).toBeNull();
+    expect(queryByText(/In-app due/i)).toBeNull();
+    expect(queryByText(/\$160\.00/)).toBeNull();
     expect(getByText('Collected in app')).toBeTruthy();
     expect(getByText('In-app payment is not live and no deposit is taken.')).toBeTruthy();
     // The server's own sentence, not one the screen made up.
