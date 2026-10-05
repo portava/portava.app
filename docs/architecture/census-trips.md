@@ -9807,3 +9807,110 @@ The server edits are line-neutral per handler, so no anchor in another census mo
 | CANNOT-VERIFY | **0** |
 | **CONSTRUCTED%** = (C+W)/451 | **448 / 451 = 99.3 %** |
 | **CORRECT%** = C/451 | **320 / 451 = 70.9 %** |
+
+## §80 Lane C (2026-10-05): private anchors become their owner's, and the Routes API reaches the Trips seams behind a quota and a hard budget — NO ROW MOVES BUCKET
+
+*Written 2026-10-05 by lane C (branch `claude/mission-c-discovery-telegraph-trips-20261005`, cut from
+`main` at `2e46835263`). `head_commit` is NOT re-declared; the files changed are named in the
+census-trips acknowledgement. Every piece of evidence is **controlled** (node and jest suites over the
+certification harness and fakes). Two migrations were WRITTEN (3970, 3971) and applied nowhere; no flag
+was touched; nothing was written to any database. The owner's Trips decisions of 2026-10-04 are cited
+by their words; their register ids are in `docs/ops/owner-decisions-20261004.md`.*
+
+### §80.1 TR256 — the map projection stops serving every member's private places to every member
+
+**What was wrong, verified first.** `GET /trips/:tripId/map-projection` put every
+`location_is_private` plan item into the `privateAnchors` layer and nowhere else — and then served
+that layer, exact coordinates included, to every accepted member of the trip. The client never drew it
+(§31.3.1); the wire carried it. The owner's decision: *"Private anchors: Owner-only by default. The
+owner can share an individual anchor with selected trip members; trip membership or organizer status
+alone does not grant access."*
+
+**What was built.** The rule is pure and has no parameter a role could arrive in:
+`artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:53#export function anchorsVisibleTo<`.
+The projection applies it unconditionally — no flag weakens the owner-only default —
+`artifacts/api-server/src/server/trips/readRoutes/tripMapProjection.ts:227#privateAnchors = await visiblePrivateAnchorLayer(`.
+Per-anchor grants are written only by the anchor's owner, to accepted members of the same trip,
+`artifacts/api-server/src/routes/tripAnchorShares.ts:89#router.post("/trips/:tripId/anchors/:itemId/shares"`,
+into `artifacts/api-server/src/migrations/3970_trip_private_anchor_shares.sql:68#CREATE TABLE public.trip_private_anchor_shares (`
+behind `trip_private_anchor_sharing_enabled` (seeded FALSE); a revoke is honoured with the flag off.
+With 3970 absent the reader treats 42P01 as zero grants, which is the owner-only default exactly. The
+app shows a traveller's own private places and the ones shared with them, with a per-person switch
+(`travel-buddy-standalone/src/features/trips/anchors/PrivatePlacesCard.tsx:47#export function PrivatePlacesCard(`).
+
+**A finding beside it, not fixed here.** `routes/tripReservations.ts` adds a reservation to the plan as
+`location_is_private: false` with the reservation's `location_name` and its confirmation reference in
+`notes`, visible to the whole crew. It is an explicit "add to plan", so it is recorded rather than
+changed; whether a lodging reservation should be added as a private anchor is a product question.
+
+### §80.2 TR128, TR267, TR341, TR412 — routed travel time, bounded
+
+**What was true.** The Google Routes adapter was PREPARED, NOT WIRED; every Trips seam bound the
+straight-line provider by design, and there was no spend ceiling anywhere in the repository. The
+owner's decision: *"Routes API: Yes, for a bounded rollout ... Put calls behind a server-side provider
+interface, set daily quotas and a hard budget, and fall back gracefully when the limit is reached."*
+
+**What was built.** The three seams bind one provider:
+`artifacts/api-server/src/routes/tripFeasibility.ts:111#const PROVIDER = TRIP_TRAVEL_TIME_PROVIDER;`,
+`artifacts/api-server/src/domain/trips/projections/TripFreedomProjection.ts:45#const BOUND_PROVIDER = TRIP_TRAVEL_TIME_PROVIDER;`,
+`artifacts/api-server/src/domain/trips/projections/TripRouteChainProjection.ts:42#const BOUND_PROVIDER = TRIP_TRAVEL_TIME_PROVIDER;`.
+It is `artifacts/api-server/src/domain/trips/contracts/GatedRoutedTravelTimeProvider.ts:37#export function createGatedRoutedTravelTimeProvider(`:
+a cached routed answer, else one unit from the spend gate, else the straight-line bound naming why
+(`routes-api-fallback:<reason>`). The gate's numbers come from deployment configuration only —
+`artifacts/api-server/src/domain/trips/contracts/RoutesSpendGate.ts:57#export function readRoutesSpendConfig(` —
+and the allowance is shared across instances and taken under a row lock by
+`artifacts/api-server/src/migrations/3971_trip_routes_api_spend_gate.sql:70#CREATE OR REPLACE FUNCTION public.routes_api_try_spend(`.
+A routed answer is marked per result, so the departure band is never stacked on a live route and never
+stripped from a fallback (`artifacts/api-server/src/domain/trips/services/TripDepartureAssumptions.ts:142#if (inner.routed || r.assumption === null)`).
+The feasibility and freedom-window disclosure now says what the hops were; with none routed it is
+the old sentence word for word.
+
+**Assertions that changed, named.** Four existing assertions pinned the pre-decision wiring — the
+provider id `"straight-line"` and the seam's source text — and now pin the gated provider; the
+behaviour they guarded (no paid call, the straight-line number, the band) is asserted behaviourally in
+lane C's new suite and by the untouched surrounding assertions. Two citations of the old seam text in
+this document (§69.1, §76) were retired in place: the range citation is kept and the old text quoted.
+
+### §80.3 Row statements — the verdicts hold, and why
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| TR256 | W | W | **Stronger again, still W.** Owner-only is now enforced on the wire for every viewer, and per-anchor grants exist end to end (§80.1). It stays W on §31.3.1's own condition — an anchor that writers cannot fail to set, rather than a boolean on a plan item — and because the grants need 3970 and a flag the owner holds. |
+| TR128 | W | W | **The NEITHER/BOTH reason is gone; an OWNER reason replaces it.** A routed provider is wired at every Trips seam behind the quota and hard budget the owner asked for (§80.2). FEASIBLE becomes reachable the moment a routed answer arrives; none can until the owner applies 3971, turns `trip_routes_api_enabled` on and sets the key, the daily quota, the daily budget and the per-call price. |
+| TR267 | W | W | As TR128: the departure-time term is a live traffic-aware route when the gate grants one, and the static band otherwise, said per hop. |
+| TR341 | W | W | As TR128. |
+| TR412 | W | W | As TR128. |
+| TR427 | W | W | **Stated reason corrected.** §68.2's NEITHER — *"recurring commitments and routine-aware context do not exist in any form"* — is false: `artifacts/api-server/src/migrations/2797_trip_commitment_recurrences.sql:1#-- 2797_trip_commitment_recurrences.sql` is the recurrence rule (with 2798's kernel family and 2799's snapshot vocabulary), approved in principle by the owner on 2026-10-04 and applied nowhere. W for that apply. |
+
+### §80.4 TR116 — a finding against §75.2, recorded rather than built
+
+§75.2 graded TR116's code half done. Re-read on this tree: **no reader enforces the narrower scopes.**
+`privacy_scope` is stored and returned, but nothing in `routes/plan.ts`, `routes/trips.ts`,
+`server/trips/` or the trip projections filters a `private` or `selected_participants` plan out of
+another member's view, and the app never writes or reads `privacyScope`. Offering the six scopes in
+the app today would tell a person their plan is private while the crew still sees it. The fix is
+reader-side enforcement across the plan, timeline, Today, map, offline bundle and Compass reads, then
+the picker; it was not built in this pass. TR116 stays W, for that reason as well as §75's.
+
+### §80.5 Tests, mutations, and what was not run
+
+The suites are `artifacts/api-server/src/test/tripPrivateAnchorAccess.test.ts` (21 cases; all 7
+projection cases red with the route at `2e46835263`; five mutants killed),
+`artifacts/api-server/src/test/tripRoutedTravelTime.test.ts` (16 cases; seven mutants killed),
+`travel-buddy-standalone/src/features/trips/anchors/__tests__/privateAnchors.test.ts` (7) and
+`travel-buddy-standalone/src/features/trips/anchors/__tests__/PrivatePlacesCard.component.test.tsx`
+(4; four mutants killed). 467 trip, travel and layover cases green on the final tree. 3970 and 3971
+were not executed: there is no Postgres on this machine, so CI is their first execution.
+
+- NOT-GRADED: artifacts/api-server/src/test/tripPrivateAnchorAccess.test.ts — §80.1's suite; TR256's verdict rests on the policy, route and projection files the row cites.
+- NOT-GRADED: artifacts/api-server/src/test/tripRoutedTravelTime.test.ts — §80.2's suite; the four rows rest on the seam and provider files they cite.
+
+### §80.6 Tally — unchanged
+
+| BUILT-AND-CORRECT | **320** |
+|---|---|
+| BUILT-BUT-WRONG | **128** |
+| NOT-BUILT | **3** |
+| CANNOT-VERIFY | **0** |
+| **CONSTRUCTED%** = (C+W)/451 | **448 / 451 = 99.3 %** |
+| **CORRECT%** = C/451 | **320 / 451 = 70.9 %** |

@@ -10282,3 +10282,79 @@ calling the guard; the command door dispatching before the guard; a client subty
 allowlist that no client file sends, or sent by a client file and not allowed; the rate gate moved
 ahead of the other four; a throwing tier read treated as "no limit"; a weak door closed without
 the ceiling falling.
+
+## §43 — Lane C (2026-10-05): a translation the server cannot call certain shows its original, and two more doors hold the five gates. ONE ROW MOVES (T242 W → C)
+
+Written 2026-10-05 by lane C (branch `claude/mission-c-discovery-telegraph-trips-20261005`, cut from
+`main` at `2e46835263`). Telegraph has since moved to lanes T1/T2; this section covers only the rows
+lane C built before the hand-over, and lane C writes no further Telegraph section. `head_commit` is NOT
+re-declared; the files changed are named in the census-telegraph acknowledgement. **All evidence is
+CONTROLLED** — the certification harness's fake client, node and jest suites — no production evidence,
+no flag touched, no migration added, nothing written to any database.
+
+### 43.1 What was wrong, verified before each fix
+
+| # | Defect | Where | What a person met |
+| --- | --- | --- | --- |
+| 1 | §18.2's show-both decision computed and discarded | both thread readers selected four fields and `status` from `message_translations` and copied seven fields out of the display object | `confidence` never reached `buildDisplayFields`; `showOriginalAlongside` never reached the app, and no client file read it |
+| 2 | §42.2 KNOWN WEAK door: gem share | `POST /hidden-gems/:id/share-telegraph` | membership only (its read error dropped — an outage said "not a member"); plaintext JSON into an E2EE thread; no stop, block or burst gate; a refused insert answered `ok: true` |
+| 3 | §42.2 KNOWN WEAK door: poll | `POST /threads/:id/telegraph/suggestions/:id/start-poll` | a person the other side had blocked could still post a poll card into their 1:1 thread; the stop and the burst limit did not apply |
+
+### 43.2 What was built
+
+- **One translation reader for both routes.** `artifacts/api-server/src/services/messageTranslation.ts:1256#export async function readRecipientTranslations(`
+  asks for `confidence` (migration 2991) and, on a database without the column (42703/PGRST204, the
+  writer's own narrow predicate), repeats the read without it and returns `confidence: null`, which the
+  decision treats as not-high. Any other error goes to the caller's existing failed-read arm. Both
+  readers use it (`artifacts/api-server/src/routes/messaging.ts:2365#const { rows: tRows, error: tErr } = await readRecipientTranslations(`,
+  `artifacts/api-server/src/routes/groupChat.ts:197#const { rows: tRows, error: tErr } = await readRecipientTranslations(`)
+  and forward both fields (`artifacts/api-server/src/routes/messaging.ts:2566#canShowOriginal: display.canShowOriginal, translationConfidence: display.translationConfidence, showOriginalAlongside: display.showOriginalAlongside`,
+  `artifacts/api-server/src/routes/groupChat.ts:274#canShowOriginal: display.canShowOriginal, translationConfidence: display.translationConfidence, showOriginalAlongside: display.showOriginalAlongside`).
+- **The app draws it.** `travel-buddy-standalone/src/features/telegraph/translation/originalAlongside.ts:36#export function originalAlongsideText(`
+  decides per bubble (never the reader's own message, only while the translation is what is on screen,
+  never an absent flag); `OriginalAlongside` is mounted on the thread screen and the trip/circle chat.
+- **The two doors.** Both call the shared guard:
+  `artifacts/api-server/src/routes/hiddenGems.ts:1186#const guard = await guardTelegraphThreadWrite(client, threadId, user.id);`
+  (in place of its membership read; a refused insert is now `db_error`,
+  `artifacts/api-server/src/routes/hiddenGems.ts:1240#if (insertErr)`) and
+  `artifacts/api-server/src/routes/telegraphChat.ts:602#const guard = await guardTelegraphThreadWrite(client, threadId, user.id);`
+  (last, immediately before its insert). Both are declared `guard: "shared"` and the ceiling fell:
+  `artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:321#export const KNOWN_WEAK_DOOR_CEILING = 2;`.
+  The two doors left are `routes/highlights.ts` (lane A2) and `lib/threadMessage.ts` (lane A).
+
+### 43.3 Row moves
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T242 | W | **C** | §18.2 **low-confidence operational translation shows original plus translation** — the row's stated ceiling was "no reader forwards it". Both readers now forward the decision and the app draws the original under the translation. It holds on today's databases too: with 2991 absent every stored confidence is unknown, and an unknown confidence is treated as not-high, so every translation is shown with its original — the rule's conservative side, not a fallback that hides it. Controlled evidence: §43.4's server suite (8 cases over the real routes; all 8 red with the two route files at `2e46835263`; two reader mutants killed) and `travel-buddy-standalone/src/features/telegraph/__tests__/originalAlongside.test.ts` (7; six mutants killed). What 2991 adds when applied is precision — a HIGH reading then hides the original — not correctness. |
+| T418 | W | W | **Same verdict, two fewer gaps.** The gem-share and poll doors now hold the stop, the block, the E2EE refusal and the burst limit (§43.4's door suite, 11 cases, 7 red at `2e46835263`). Still W: two weak doors remain in other lanes' files and the Nearby-side signals are unchanged. |
+| T419 | W | W | Same verdict. The burst limit now also bounds the gem-share and poll doors; the Nearby half is untouched. |
+
+### 43.4 Checks, and what was not run
+
+The two server suites are `artifacts/api-server/src/test/telegraphTranslationConfidenceForwarded.test.ts` (T242) and
+`artifacts/api-server/src/test/telegraphWeakDoorsClosed.test.ts` (the two doors). Focused suites green on the final tree: translation/messaging/groupChat/inbox 175/175; doors
+(`telegraphMessageDoors`, `telegraphMessageDoorRoutes`, `hiddenGems`, `telegraphChat`,
+`telegraphChatOutageHonesty`) 179/179. `telegraphChat.test.ts`'s fake gained PostgREST's `neq` (the
+guard's roster read uses it); no assertion changed. `telegraph:inventory` regenerated. The full suite
+and the static tier are recorded in lane C's report, not here.
+
+- NOT-GRADED: artifacts/api-server/src/test/telegraphTranslationConfidenceForwarded.test.ts — §43's server suite for T242 (8 request-level cases); it is the evidence named in prose above, and the verdict rests on the route and client files the row cites.
+- NOT-GRADED: artifacts/api-server/src/test/telegraphWeakDoorsClosed.test.ts — §43's request-level suite for the two closed doors (11 cases); T418/T419 keep their verdicts.
+
+### 43.5 The headline, restated from the rows
+
+One row changed bucket: T242 `W → C`. Counted with `check:census-integrity`, not by arithmetic: see
+§43.6 below for the numbers it printed on this tree.
+
+### 43.6 Counted
+
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **240** |
+| BUILT-BUT-WRONG | **176** |
+| NOT-BUILT | **33** |
+| CANNOT-VERIFY | **2** |
+
+451 rows. CONSTRUCTED (C + W) is 416 of 451 = 92.2 %; CORRECT is 240 of 451 = 53.2 %. The one move
+(T242) needs no migration and no flag; its evidence is controlled, not production.

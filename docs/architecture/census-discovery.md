@@ -16850,3 +16850,63 @@ If B, **how long** is the period? No spec gives a value (`04` §11), and 3512 bu
 - NOT-GRADED: travel-buddy-standalone/app/discover.tsx — §106 records Find Travelers' failed-search state and generation guard; the screen is the follows people search, and no Discovery row grades it.
 - NOT-GRADED: travel-buddy-standalone/app/close-friends.tsx — §106 cites the exact-handle match (D-TMP-4); Close Friends is not a Discovery surface.
 - NOT-GRADED: travel-buddy-standalone/app/__tests__/discover.searchFailureHonesty.component.test.tsx — §106's client evidence for a surface no Discovery row grades.
+
+## §108 — Trails and Trending reach the app (lane C, 2026-10-05): the owner's "user-facing screens and flows", built and gated; no row changes bucket
+
+*Written 2026-10-05 by lane C (branch `claude/mission-c-discovery-telegraph-trips-20261005`, cut from
+`main` at `2e46835263`). `head_commit` is NOT re-declared. Evidence is controlled (node and jest
+suites, the route suite's fake database). No flag touched, no migration added, nothing written to any
+database.*
+
+### 108.1 What was true
+
+Every `/v1/discovery/trails` route and every `/v1/discovery/trending` list existed on the server, and
+**no file in the app called any of them** (`grep -rn "discovery/trails\|discovery/trending"` over
+`travel-buddy-standalone/src` and `travel-buddy-standalone/app` returned nothing). The owner's decision
+of 2026-10-04: *"Trails and Trending: Yes, they're in scope as user-facing features as well as APIs.
+Build the screens and flows; keep any feature that depends on unresolved decisions or migrations
+gated."*
+
+### 108.2 What was built
+
+- **Trails.** Browse and search, open a Trail (its modules with place names, related Trails), Follow
+  on the viewer's real state, report one of `02` §15's five reasons, and start a Trail — a proposal
+  the catalogue refuses names the §5 check and offers §6's suggested parent. Screens `/trails`,
+  `/trails/[id]`, `/trails/new`.
+- **Trending.** `/trending`: popular now, for you, emerging (places and Trails) and neighbourhoods
+  for a city. Each row is the state and the server's own reason sentence and nothing else — no count,
+  no score (`11` §4), and nothing the server withheld under Q12's floors.
+- **Entry.** Trails and Trending chips on the Discovery tab, carrying the tab's city.
+- **One server route.** The Follow control needed the viewer's state:
+  `artifacts/api-server/src/routes/trails.ts:584#router.get("/v1/discovery/trails/:id/follow"` over
+  `artifacts/api-server/src/services/trails/TrailService.ts:2436#export async function readTrailFollow(`;
+  a failed read is the refusal map's server error, never `following: false`.
+
+Every read in the app is three-valued — ok, off (feature_disabled), unavailable with the server's
+words — and none of the off/failed/no-current-run states is drawn as "no Trails" or "nothing is
+trending".
+
+### 108.3 Gating, and why no row moves
+
+Trails need 2910, which production has; the screens work against today's production API on that
+count. Trending answers `feature_disabled` until the owner turns on `discovery_trending_api_enabled`
+and `discovery_trend_lists_enabled` (both seeded FALSE), and the screen says Trending isn't available
+until then. The rows these screens serve — DC-21, DV-21, DV-22, DC-04, DC-05, DV-24 and DC-20 — are W
+on flags, migrations and production evidence (their last statements, §84–§87), not on a missing
+client, so none moves. What changes is that, once the owner acts, a person can reach each of them.
+
+### 108.4 Tests and mutations
+
+The server suite gained F1–F3 in `artifacts/api-server/src/test/discoveryTrailRoutes.test.ts` (follow
+state read back across PUT/DELETE and across viewers; an unreadable `trail_follows` is a server error,
+never `following:false`; 404/401) — the route did not exist at `2e46835263`; one mutant killed. The
+client suites are `travel-buddy-standalone/src/features/discovery/trails/__tests__/trailsApi.test.ts`,
+`travel-buddy-standalone/src/features/discovery/trending/__tests__/trendingApi.test.ts`,
+`travel-buddy-standalone/src/features/discovery/trails/__tests__/TrailsScreens.component.test.tsx` and
+`travel-buddy-standalone/src/features/discovery/trending/__tests__/TrendingView.component.test.tsx`
+(28 cases; 13 mutants killed).
+
+- NOT-GRADED: travel-buddy-standalone/src/features/discovery/trails/__tests__/trailsApi.test.ts — §108's client service suite; no verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/features/discovery/trending/__tests__/trendingApi.test.ts — §108's client service suite; no verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/features/discovery/trails/__tests__/TrailsScreens.component.test.tsx — §108's screen suite; no verdict rests on it.
+- NOT-GRADED: travel-buddy-standalone/src/features/discovery/trending/__tests__/TrendingView.component.test.tsx — §108's screen suite; no verdict rests on it.
