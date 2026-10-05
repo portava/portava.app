@@ -93,14 +93,25 @@ describe('the bands, drawn', () => {
     expect(screen.queryByText(/nobody|no one/i)).toBeNull();
   });
 
-  it('every read failed: nothing is drawn at all — an outage is not "no plans"', async () => {
+  it('every read failed: only the person\'s own status speaks, and it says it could not be loaded — no "no plans"', async () => {
     await render(<InboxContextBands initialData={{ status: null, nearby: null, now: null, upcoming: null }} nowMs={NOW} />);
-    expect(screen.queryByTestId('telegraph-inbox-bands')).toBeNull();
+    expect(screen.getByTestId('telegraph-band-status-failed')).toBeTruthy();
+    expect(screen.getByText("Couldn't load your status")).toBeTruthy();
+    expect(screen.queryByTestId('telegraph-band-nearby')).toBeNull();
+    expect(screen.queryByTestId('telegraph-band-now')).toBeNull();
+    expect(screen.queryByTestId('telegraph-band-upcoming')).toBeNull();
   });
 
-  it('no status set draws no status band (the read cannot tell unset from failed)', async () => {
+  it('a status read that failed says so even beside other bands', async () => {
+    await render(<InboxContextBands initialData={full({ status: null })} nowMs={NOW} />);
+    expect(screen.getByTestId('telegraph-band-status-failed')).toBeTruthy();
+    expect(screen.getByTestId('telegraph-band-now')).toBeTruthy();
+  });
+
+  it('no status SET (a real answer) draws no status band and no failure', async () => {
     await render(<InboxContextBands initialData={full({ status: { status: null, expiresAt: null } })} nowMs={NOW} />);
     expect(screen.queryByTestId('telegraph-band-status')).toBeNull();
+    expect(screen.queryByTestId('telegraph-band-status-failed')).toBeNull();
     expect(screen.getByTestId('telegraph-band-now')).toBeTruthy();
   });
 
@@ -146,6 +157,31 @@ describe('the four reads are independent', () => {
     expect(d.status).toEqual({ status: 'free_now', expiresAt: later(1) });
     expect(d.nearby).toEqual({ enabled: false, count: 0, availableNow: 0 });
     expect(d.upcoming?.map((m) => m.id)).toEqual(['m1']);
+  });
+});
+
+describe('the status read: a 503 is a failure, a 200 with no status is an answer', () => {
+  const realFetch = global.fetch;
+  afterAll(() => { global.fetch = realFetch; });
+  const respond = (status: number, body: unknown) => {
+    global.fetch = jest.fn(async (url: RequestInfo | URL) => {
+      const own = String(url).includes('/me/quick-availability');
+      return { ok: own ? status < 400 : false, status: own ? status : 503, json: async () => (own ? body : null) } as Response;
+    }) as typeof fetch;
+  };
+
+  it('503 from /me/quick-availability → status null (failed), and the band says so', async () => {
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
+    respond(503, { error: 'degraded_unavailable' });
+    const d = await fetchInboxBands(NOW);
+    expect(d.status).toBeNull();
+  });
+
+  it('200 { status: null } → an answer: no status set', async () => {
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.test';
+    respond(200, { status: null, expiresAt: null });
+    const d = await fetchInboxBands(NOW);
+    expect(d.status).toEqual({ status: null, expiresAt: null });
   });
 });
 

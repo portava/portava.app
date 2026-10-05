@@ -25,11 +25,11 @@
  * outage into a statement that you have no plans or that nobody is around. An
  * EMPTY answer draws no band either, so no band ever asserts an absence.
  *
- * YOUR STATUS speaks only when a status is SET. It does not offer "Set your
- * status" on an empty answer, because `GET /me/quick-availability` does not
- * check its own read's error and answers `status: null` for a failed read as
- * well as for no status — so from here "you have not said" and "we could not
- * ask" are the same bytes (recorded for the route's owner).
+ * YOUR STATUS is the person's own state, so its failure is SAID rather than
+ * left blank: `GET /me/quick-availability` now answers a failed read with a 503
+ * (it used to answer `status: null`, the same bytes as "no status set"), and
+ * this band says "Couldn't load your status" — while an unset status, a real
+ * answer, draws nothing.
  *
  * AVAILABLE NEARBY speaks only when the server says the surface is ENABLED.
  * `enabled: false` is the flag answering, not an empty neighbourhood, and the
@@ -108,15 +108,22 @@ export function InboxContextBands({ onOpenThread, initialData = null, nowMs }: I
   const sessions = data.now ?? [];
   const upcoming = data.upcoming ?? [];
 
-  const anything = status !== null || nearby || sessions.length > 0 || upcoming.length > 0;
+  const statusFailed = data.status === null; // the read failed — distinct from a status that is not set
+  const anything = status !== null || statusFailed || nearby || sessions.length > 0 || upcoming.length > 0;
   if (!anything) return null;
 
   return (
     <View style={styles.wrap} testID="telegraph-inbox-bands">
-      {status !== null ? (
+      {status !== null || statusFailed ? (
         <View testID="telegraph-band-status">
           <Text style={styles.label}>YOUR STATUS</Text>
-          <Text style={styles.line}>{status}</Text>
+          {statusFailed ? (
+            <Text style={styles.failed} testID="telegraph-band-status-failed">
+              Couldn't load your status
+            </Text>
+          ) : (
+            <Text style={styles.line}>{status}</Text>
+          )}
         </View>
       ) : null}
 
@@ -190,6 +197,7 @@ function makeStyles(p: TelegraphPalette) {
     },
     label: { ...t.small, color: p.mute, letterSpacing: 0.6, fontWeight: '700' },
     line: { ...t.body, color: p.recvText },
+    failed: { ...t.body, color: p.mute },
   });
 }
 
