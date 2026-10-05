@@ -490,7 +490,11 @@ export async function loadReachablePeople(
   // receives no bucket, and inside a zone nobody publishes one.
   const viewerInZone =
     !viewerState.error &&
-    positionInProtectedZone((viewerState.data as any)?.lat, (viewerState.data as any)?.lng, zones);
+    positionInProtectedZone(
+      (viewerState.data as { lat?: unknown } | null)?.lat,
+      (viewerState.data as { lng?: unknown } | null)?.lng,
+      zones,
+    );
   const viewerPoint: CoarsePoint | null =
     viewerState.error || !viewerVisibility || viewerFresh === "stale" || viewerInZone
       ? null

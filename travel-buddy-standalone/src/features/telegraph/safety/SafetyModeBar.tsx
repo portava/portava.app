@@ -91,7 +91,9 @@ export function SafetyModeBar({
   // passes an inline arrow is not re-told on every render — which would fight
   // a person who has deliberately re-opened what was put away.
   const onModeChangeRef = useRef(onModeChange);
-  onModeChangeRef.current = onModeChange;
+  useEffect(() => {
+    onModeChangeRef.current = onModeChange;
+  });
   useEffect(() => {
     onModeChangeRef.current?.({ raised, deprioritizeEntertainment: deprioritize });
   }, [raised, deprioritize]);

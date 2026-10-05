@@ -51,7 +51,7 @@ export async function fetchSafetyMode(threadId: string): Promise<SafetyModeResul
       headers: { Authorization: `Bearer ${token}` },
     });
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}) as any);
+      const body = (await res.json().catch(() => ({}))) as { error?: unknown; message?: string };
       return { ok: false, error: String(body?.error ?? res.status), message: body?.message };
     }
     return { ok: true, data: (await res.json()) as SafetyModeResponse };

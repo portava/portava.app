@@ -88,6 +88,8 @@ export function InboxContextBands({ onOpenThread, initialData = null, nowMs }: I
   const palette = useTelegraphPalette();
   const styles = useMemo(() => makeStyles(palette), [palette]);
   const [data, setData] = useState<InboxBandsData | null>(initialData);
+  // The instant the time words are measured from: read once, not on every render.
+  const [mountedAt] = useState(() => Date.now());
 
   useEffect(() => {
     if (initialData !== null) return;
@@ -100,7 +102,7 @@ export function InboxContextBands({ onOpenThread, initialData = null, nowMs }: I
   }, [initialData]);
 
   if (!data) return null;
-  const now = nowMs ?? Date.now();
+  const now = nowMs ?? mountedAt;
   const status = statusLine(data.status, now);
   const nearby = data.nearby && data.nearby.enabled && data.nearby.count > 0 ? data.nearby : null;
   const sessions = data.now ?? [];
