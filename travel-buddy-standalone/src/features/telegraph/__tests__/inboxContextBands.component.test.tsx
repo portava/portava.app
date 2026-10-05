@@ -80,7 +80,7 @@ describe('the band parsers say null for a failed read and a value for an answer'
 describe('the bands, drawn', () => {
   it('all four, in §2.1’s order, above the messages', async () => {
     await render(<InboxContextBands initialData={full()} nowMs={NOW} />);
-    const order = screen.queryAllByTestId(/^telegraph-band-(status|nearby|now|upcoming)$/).map((n: { props: { testID: string } }) => n.props.testID);
+    const order = screen.queryAllByTestId(/^telegraph-band-(status|nearby|now|upcoming)$/).map((n) => String(n.props.testID));
     expect(order).toEqual(['telegraph-band-status', 'telegraph-band-nearby', 'telegraph-band-now', 'telegraph-band-upcoming']);
     expect(screen.getByText('3 people from your circles and trips · 2 free now')).toBeTruthy();
     expect(screen.getByText('Dinner with Marcus · active')).toBeTruthy();
