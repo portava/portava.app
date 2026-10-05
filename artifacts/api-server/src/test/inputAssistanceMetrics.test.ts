@@ -452,33 +452,28 @@ describe("§57 G368 wrong-selection reversal rate — per entity-resolving selec
   });
 });
 
-describe("§57 G370 downstream task completion — successful tasks over reported tasks (opt-in population)", () => {
-  it("is ok:true reports over all reports", () => {
-    const m = computeInputSuccessMetrics([
-      row(0, "downstream_task_completed", { task: "trip_destinations_saved", ok: true }),
-      row(10, "downstream_task_completed", { task: "trip_destinations_saved", ok: true }),
-      row(20, "downstream_task_completed", { task: "trip_created", ok: false }),
-    ]);
+describe("§57 G370 downstream task completion — from the AGGREGATE (3783), opt-in population", () => {
+  const cell = (task: string, ok: boolean, count: number, context = "global_search") => ({ day: "2026-10-05", context, task, ok, count });
+
+  it("is successful tasks over reported tasks, summed over the aggregate's cells", () => {
+    const m = computeInputSuccessMetrics([], { taskOutcomes: [cell("trip_destinations_saved", true, 2), cell("trip_created", false, 1)] });
     assert.equal(m.downstreamTaskCompletionRate.n, 3);
     assert.equal(m.downstreamTaskCompletionRate.value, 2 / 3);
   });
 
-  it("only a literal bool is a report — a row without one counts on neither side", () => {
-    // MUTATION: treat anything not `true` as a failure and n becomes 3, value 1/3.
-    const m = computeInputSuccessMetrics([
-      row(0, "downstream_task_completed", { task: "trip_created", ok: true }),
-      row(10, "downstream_task_completed", { task: "trip_created" }),
-      row(20, "downstream_task_completed", { task: "trip_created", ok: "true" }),
-    ]);
-    assert.equal(m.downstreamTaskCompletionRate.n, 1);
-    assert.equal(m.downstreamTaskCompletionRate.value, 1);
+  it("§44 rows are NOT a source any more — a stray downstream row counts for nothing", () => {
+    // The ingest no longer stores per-event outcome rows (verifier finding 5).
+    // MUTATION: read rows again and this goes to n=1.
+    const m = computeInputSuccessMetrics([row(0, "downstream_task_completed", { task: "trip_created", ok: true })], { taskOutcomes: [] });
+    assert.equal(m.downstreamTaskCompletionRate.n, 0);
+    assert.equal(m.downstreamTaskCompletionRate.value, null);
   });
 
-  it("other events never enter it — an action_completed is not a downstream task", () => {
-    const m = computeInputSuccessMetrics([
-      row(0, "action_completed", { actionType: "add_to_trip", ok: true }),
-      row(10, "downstream_task_completed", { task: "trip_created", ok: false }),
-    ]);
+  it("scoping to a context applies to the cells too", () => {
+    const m = computeInputSuccessMetrics([], {
+      contexts: ["trip_destination"],
+      taskOutcomes: [cell("trip_created", true, 5, "global_search"), cell("trip_destinations_saved", false, 1, "trip_destination")],
+    });
     assert.equal(m.downstreamTaskCompletionRate.n, 1);
     assert.equal(m.downstreamTaskCompletionRate.value, 0);
   });

@@ -79,6 +79,8 @@ function makeFakeClient(state: FakeState, tableErrors: Set<string>, rpcLog: RpcC
     rpc: async (name: string, args: any) => {
       rpcLog.push({ name, args });
       if (tableErrors.has(`rpc:${name}`)) return { data: null, error: { message: "simulated rpc error" } };
+      // 3783: a consented downstream outcome is counted in the aggregate (OD-INPUT-2).
+      if (name === "input_record_task_outcome") return { data: true, error: null };
       return { data: null, error: null };
     },
     from: (table: string) => {
@@ -763,13 +765,21 @@ describe("§44 telemetry ingest — the serve log the client had no destination 
       sessionId: "sess-abc",
       events: emitted.map((name, i) => ({
         name, context: "global_search", fieldId: "global_search", at: NOW_ISH + i,
+        // The real emitter (emitDownstreamTaskCompleted) always sends both; the
+        // aggregate refuses an outcome without a known task and a literal bool.
+        ...(name === "downstream_task_completed" ? { props: { task: "trip_created", ok: true } } : {}),
       })),
     });
     const body = (await r.json()) as any;
     assert.equal(r.status, 200);
     assert.equal(body.rejected, 0, "a standard field must not refuse an arm its own SmartInput emits");
     assert.equal(body.accepted, emitted.length);
-    assert.deepEqual(telemetryRows().map((x) => x.event_name), emitted);
+    // RESTATED 2026-10-05 (verifier finding 5, OD-INPUT-2): the consented
+    // outcome arm is ADMITTED but aggregated at ingest (3783), never stored as a
+    // §44 row — so every OTHER arm is a stored row, and the outcome is one
+    // aggregate increment. Admission (rejected 0, accepted all) is unchanged.
+    assert.deepEqual(telemetryRows().map((x) => x.event_name), emitted.filter((n) => n !== "downstream_task_completed"));
+    assert.equal(rpcLog.filter((c) => c.name === "input_record_task_outcome").length, 1);
   });
 
   // ── The vocabulary gate, tested where the policy gate cannot mask it ────────

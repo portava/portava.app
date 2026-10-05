@@ -52,6 +52,7 @@ import {
   outcomeLearningOffered,
   readOutcomeConsent,
   recordOutcome,
+  recordTaskOutcomeAggregate,
   writeOutcomeConsent,
   type OutcomeConsentState,
 } from '../lib/inputAssistance/outcomeLearning';
@@ -524,6 +525,7 @@ router.post(
     const now = Date.now();
     const rows: TelemetryRow[] = [];
     let rejected = 0;
+    let aggregated = 0;
     for (const raw of events as RawTelemetryEvent[]) {
       if (
         !outcomeAdmitted &&
@@ -541,8 +543,25 @@ router.post(
       // refusal — "declared nothing" is not "declared everything".
       const policy = isKnownContext(ctx) ? resolvePolicy(ctx, fid) : null;
       const outcome = rebuildTelemetryEvent(raw, sessionIdRaw, policy ?? null, POLICY_VERSION, now);
-      if (outcome.ok) rows.push(outcome.row);
-      else rejected += 1;
+      if (!outcome.ok) {
+        rejected += 1;
+        continue;
+      }
+      // OD-INPUT-2 "irreversibly aggregate" (verifier finding 5): a consented
+      // outcome is COUNTED per (day, context, task, ok) — no session, request
+      // or user id travels — and never stored as a per-event row, so nothing
+      // about it outlives the person's withdrawal or the 30-day promise.
+      if (outcome.row.event_name === 'downstream_task_completed') {
+        const agg = await recordTaskOutcomeAggregate(sc, {
+          context: outcome.row.context,
+          task: outcome.row.props.task,
+          ok: outcome.row.props.ok,
+        });
+        if (agg === 'recorded') aggregated += 1;
+        else rejected += 1;
+        continue;
+      }
+      rows.push(outcome.row);
     }
 
     const result = await recordTelemetryEvents(sc, rows, logger);
@@ -575,7 +594,7 @@ router.post(
       return;
     }
 
-    res.status(200).json({ ok: true, accepted: result.recorded, rejected });
+    res.status(200).json({ ok: true, accepted: result.recorded + aggregated, rejected });
   }),
 );
 

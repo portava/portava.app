@@ -83,6 +83,10 @@ function makeFakeClient(state: FakeState) {
         }
         return { data: { active: true, counts: [...by.values()] }, error: null };
       }
+      if (name === "input_record_task_outcome") {
+        if (!flagOn) return { data: false, error: null };
+        return { data: true, error: null };
+      }
       if (name === "input_record_outcome") {
         // Upsert-increment today's bucket, only with the flag on and a valid consent.
         if (!flagOn || !consented(args.p_user_id)) return { data: false, error: null };
@@ -434,15 +438,31 @@ describe("§44 ingest — downstream_task_completed is admitted only for a calle
     assert.deepEqual(names, ["suggestion_selected"]);
   });
 
-  it("with consent and the flag on it lands — and the stored row still carries no account id", async () => {
+  it("with consent and the flag on it is AGGREGATED — counted with no user, session or request id, and never stored as an event row", async () => {
+    // Verifier finding 5: a per-event row is session-linked, kept 90 days and
+    // cannot be deleted on withdrawal. OD-INPUT-2's other fate is "irreversibly
+    // aggregate", so the event is counted at ingest and no row exists.
     setup({ feature_flags: [flag(true)], input_outcome_consent: [consentRow(USER_A)] });
     const r = await call("POST", "/input-assistance/telemetry", telemetryBatch());
     assert.equal(r.status, 200);
-    const stored = state.input_assistance_telemetry_events as any[];
-    const outcome = stored.find((x) => x.event_name === "downstream_task_completed");
-    assert.ok(outcome, "the consented outcome event is stored");
-    assert.deepEqual(outcome.props, { task: "trip_destinations_saved", ok: true });
-    assert.ok(!JSON.stringify(stored).includes(USER_A), "no account id anywhere in the stored rows");
+    const b = (await r.json()) as any;
+    assert.equal(b.accepted, 2, "both events accepted: one stored, one aggregated");
+    const stored = (state.input_assistance_telemetry_events ?? []) as any[];
+    assert.deepEqual(stored.map((x) => x.event_name), ["suggestion_selected"], "no downstream_task_completed row");
+    const aggCalls = state.__rpc!.filter((c) => c.name === "input_record_task_outcome");
+    assert.equal(aggCalls.length, 1);
+    assert.deepEqual(Object.keys(aggCalls[0]!.args).sort(), ["p_context", "p_ok", "p_task"], "the aggregate is told nothing that names a person or a session");
+    assert.deepEqual(aggCalls[0]!.args, { p_context: "city_picker", p_task: "trip_destinations_saved", p_ok: true });
+    assert.ok(!JSON.stringify(state.__rpc).includes("sess-1"), "the session token never reaches the aggregate");
+  });
+
+  it("an outcome event whose task is outside the closed vocabulary is refused, not aggregated", async () => {
+    setup({ feature_flags: [flag(true)], input_outcome_consent: [consentRow(USER_A)] });
+    const batch = telemetryBatch();
+    (batch.events[1] as any).props = { task: "liked_a_post", ok: true };
+    const b = (await (await call("POST", "/input-assistance/telemetry", batch)).json()) as any;
+    assert.equal(b.rejected, 1);
+    assert.equal(state.__rpc!.filter((c) => c.name === "input_record_task_outcome").length, 0);
   });
 
   it("an unreadable consent rejects the outcome event (an unknown consent is not a consent)", async () => {

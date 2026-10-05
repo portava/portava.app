@@ -215,6 +215,27 @@ export async function recordOutcome(
   }
 }
 
+/**
+ * G370's ONLY write (3783): one consented downstream task, counted per (UTC
+ * day, context, task, ok). It takes no user, session or request id, so it
+ * cannot store one. Only the closed task vocabulary and a literal bool count.
+ * The CALLER (the §44 ingest) has already checked this caller's consent; the
+ * database re-checks the flag.
+ */
+export async function recordTaskOutcomeAggregate(
+  db: SupabaseClient,
+  o: { context: string; task: unknown; ok: unknown },
+): Promise<'recorded' | 'refused' | 'failed'> {
+  if (!isOutcomeTask(o.task) || typeof o.ok !== 'boolean') return 'refused';
+  try {
+    const { data, error } = await db.rpc('input_record_task_outcome', { p_context: o.context, p_task: o.task, p_ok: o.ok });
+    if (error) return 'failed';
+    return data === true ? 'recorded' : 'refused';
+  } catch {
+    return 'failed';
+  }
+}
+
 /** `entityType:entityId` — the SAME key personalization.ts uses for selection memory. */
 export function outcomeKey(entityType: string, entityId: string): string {
   return `${entityType}:${entityId}`;

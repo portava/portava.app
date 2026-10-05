@@ -237,9 +237,18 @@ function has(ep: Episode, name: string): boolean {
  * fallback rate over "every field in the product" averages a recipient picker
  * with a trip title, and §57's numbers are only meaningful per surface.
  */
+/** One cell of input_outcome_task_daily (3783): consented outcomes, aggregated at ingest. */
+export interface TaskOutcomeCell {
+  day: string;
+  context: string;
+  task: string;
+  ok: boolean;
+  count: number;
+}
+
 export function computeInputSuccessMetrics(
   rows: readonly MetricRow[],
-  opts: { contexts?: readonly string[] } = {},
+  opts: { contexts?: readonly string[]; taskOutcomes?: readonly TaskOutcomeCell[] } = {},
 ): InputSuccessMetrics {
   const allowed = opts.contexts ? new Set(opts.contexts) : null;
   const scoped = allowed ? rows.filter((r) => allowed.has(r.context)) : rows;
@@ -351,19 +360,21 @@ export function computeInputSuccessMetrics(
   }
 
   // ── G370 downstream task completion ─────────────────────────────────────────
-  // Of the tasks a suggestion-served field reported, how many SUCCEEDED. Only a
-  // literal bool counts either way — the ingest admits nothing else, and a row
-  // without one is not a report of anything. The population is consenting users
-  // (the ingest refuses the event for anyone else), so this is an opt-in rate.
+  // Of the tasks a suggestion-served field reported, how many SUCCEEDED. Read
+  // from the AGGREGATE (3783), not from §44 rows: a consented outcome is counted
+  // per (day, context, task, ok) at ingest and never stored as an event row
+  // (OD-INPUT-2's "irreversibly aggregate"). The population is consenting users
+  // only — an opt-in rate, to be reported as one.
   let tasksReported = 0;
   let tasksSucceeded = 0;
-  for (const r of scoped) {
-    if (r.event_name !== 'downstream_task_completed') continue;
-    if (r.props.ok === true) {
-      tasksReported += 1;
-      tasksSucceeded += 1;
-    } else if (r.props.ok === false) {
-      tasksReported += 1;
+  for (const c of opts.taskOutcomes ?? []) {
+    if (allowed && !allowed.has(c.context)) continue;
+    const n = Number.isFinite(c.count) && c.count > 0 ? Math.floor(c.count) : 0;
+    if (c.ok === true) {
+      tasksReported += n;
+      tasksSucceeded += n;
+    } else if (c.ok === false) {
+      tasksReported += n;
     }
   }
 
