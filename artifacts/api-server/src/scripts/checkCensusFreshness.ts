@@ -2424,6 +2424,15 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/hooks/useGroupChat.ts",
     "artifacts/api-server/src/test/telegraphEditE2eeRefusal.test.ts",
     "artifacts/api-server/src/test/telegraphMessageReportReason.test.ts",
+    // WIDENED 2026-10-05 by lane T2 (census-telegraph §45): the rows §45 moves cite these suites as
+    // their proving tests (T291/T294/T295, T366, T367, T408, T415/T416, T398, T435).
+    "artifacts/api-server/src/test/telegraphProjectionRegistryHonesty.test.ts",
+    "artifacts/api-server/src/test/telegraphConversationMemoryBoundary.test.ts",
+    "artifacts/api-server/src/test/telegraphNearbyNotFromGps.test.ts",
+    "artifacts/api-server/src/test/telegraphScreenshotInformational.test.ts",
+    "artifacts/api-server/src/test/telegraphTransportClasses.test.ts",
+    "artifacts/api-server/src/test/telegraphThreadNotificationPolicy.test.ts",
+    "artifacts/api-server/src/test/telegraphDiagnosticsDurableAudit.test.ts",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as

@@ -22,12 +22,12 @@ Backend paths are relative to `artifacts/api-server/src/` unless prefixed
 | **Denominator (testable requirements) — v1.1** | **451** |
 | — of which shared with v1 | 378 |
 | — of which v1.1-only (§30A Addendum + §31) | 73 |
-| BUILT-AND-CORRECT | **239** — restated 2026-10-03 from the rows by `check:census-integrity` (§41.8); 209 on 2026-09-12 |
-| BUILT-BUT-WRONG | **177** (§41.8; 176 on 2026-09-12) |
-| NOT-BUILT | **33** (§41.8; 51 on 2026-09-12) |
+| BUILT-AND-CORRECT | **255** — restated 2026-10-05 from the rows by lane T2 (§45; 239 at §41.8, 2026-10-03; 209 on 2026-09-12). Other lanes' unmerged sections are not in this count |
+| BUILT-BUT-WRONG | **173** (§45; 177 at §41.8; 176 on 2026-09-12) |
+| NOT-BUILT | **21** (§45; 33 at §41.8; 51 on 2026-09-12) |
 | CANNOT-VERIFY | **2** (§41.8; 3 on 2026-09-12) |
-| **CONSTRUCTED%** = (239+177)/451 | **92.2 %** (85.4 % on 2026-09-12) |
-| **CORRECT%** (raw) = 239/451 | **53.0 %** (46.3 % on 2026-09-12) |
+| **CONSTRUCTED%** = (255+173)/451 | **94.9 %** (92.2 % at §41.8; 85.4 % on 2026-09-12) |
+| **CORRECT%** (raw) = 255/451 | **56.5 %** (53.0 % at §41.8; 46.3 % on 2026-09-12) |
 | **CORRECT% (spec-attributable)** = 0/451 | **0.0 %** (rows citing this spec; the rest are attribution-UNKNOWN — §4) |
 | CANNOT-VERIFY share | 2 / 451 = 0.4 % |
 
@@ -10282,3 +10282,91 @@ calling the guard; the command door dispatching before the guard; a client subty
 allowlist that no client file sends, or sent by a client file and not allowed; the rate gate moved
 ahead of the other four; a throwing tier read treated as "no limit"; a weak door closed without
 the ceiling falling.
+
+## §45 — TELEGRAPH lane T2 (2026-10-05): §24's projections stop being called absent, two legacy cards stop drawing the sender's snapshot, a mute that muted nothing, §30A.12's scale classes, and three guarded absences
+
+Written 2026-10-05 by lane T2 (requirements T262–T451; branch
+`claude/mission-t2-telegraph-advanced-20261005`, cut from `800516a2ff`, merged with
+`origin/main` at `e3daeb739` before final verification). Numbered §45, not §44: lane C and
+lane T1 each wrote a §43 on their own branches and the integration lead is reconciling those;
+§44 is left for that. `head_commit` is NOT re-declared — this section re-measures the rows it
+names and nothing else, and the counted files it changed are named in the census-telegraph
+acknowledgement. **All evidence is CONTROLLED**: in-process route suites over the certification
+harness's PostgREST fake, jest component tests against stubbed network seams, source-level wiring
+assertions and mutations. Two migrations are added (3760, 3761) and applied to NO database; no flag
+was touched and nothing was written to any hosted database. The headline in §1 is not edited here:
+the lead reconciles it across lanes.
+
+### 45.1 Rows that move
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T291 | N | **C** | §24 **PRJ-03 SharedContextProjection** — the registry called it absent after the rail's rows (T13–T21) had moved to C. It is §3.4's projection, built by `buildSharedContextProjection` and served at `artifacts/api-server/src/routes/telegraphSharedContext.ts:155#"/threads/:threadId/shared-context"`; the registry now says so (`artifacts/api-server/src/domain/telegraph/projections/projectionRegistry.ts:91#id: "PRJ-03"`), and a suite probes each projection's route INDEPENDENTLY of the registry, failing when a mounted route sits beside `absent` or a `built` entry beside a missing route (`artifacts/api-server/src/test/telegraphProjectionRegistryHonesty.test.ts:84#a mounted route serving it means`). The `absentProjections` ratchet falls 4 → 0. Mutation: PRJ-06 put back to `absent` → 2 red. |
+| T294 | N | **C** | §24 **PRJ-06 ConversationContentIndex** — the drawer (T66, C) served at `GET /threads/:id/drawer`; the entry said "dead-coded behind a literal false" long after the control was made real (docs/BUILD-BACKLOG.md had recorded it). `artifacts/api-server/src/domain/telegraph/projections/projectionRegistry.ts:143#id: "PRJ-06"`, same suite. |
+| T293 | N | **W** | §24 **PRJ-05 CoordinationProjection** — meeting (rendezvous), attendance and status (user-declared quick states, arrival counts), the session, and safety-relevant state are served per thread (`artifacts/api-server/src/domain/telegraph/projections/projectionRegistry.ts:126#id: "PRJ-05"`). **W, not C:** ETA is only what a member declares; no system-derived ETA exists (T27, T1's range), and §9.1 forbids presenting one as the other. |
+| T292 | N | **W** | §24 **PRJ-04 NearbyAvailableProjection** — built (`artifacts/api-server/src/domain/telegraph/projections/projectionRegistry.ts:110#id: "PRJ-04"`, §30A.2's projection). **Ceiling:** the route answers nobody while `nearby_reachable_enabled` is FALSE, and `safety` is a constant (T382). |
+| T295 | W | **C** | §24's closing rule, **no client recomputation from raw tables** — the last three bypass sites on `app/messages/[id].tsx` (a member count and the "accepted member" gate on `message_thread_members`, `is_e2ee` on `message_threads`) are gone. The gate is the server's `canSendMessage` (`travel-buddy-standalone/app/messages/[id].tsx:1223#const isAcceptedMember = offersPlanControl(conversationProjection);`); the two facts come from `GET /threads/:id/capabilities` (`artifacts/api-server/src/server/telegraph/conversationFacts.ts:44#export async function readConversationFacts(`): an EXACT count, members only, a failed read `null` + `degraded`, never 0 or "not encrypted"; an unknown E2EE state withholds the edit affordance (`travel-buddy-standalone/src/features/telegraph/conversation/conversationProjection.ts:64#export function offersPlanControl(`). Re-derived, not trusted: `artifacts/api-server/src/test/telegraphProjectionRegistryHonesty.test.ts:120#no client file reads a raw messaging table`; `clientBypassSites` 3 → 0; `TELEGRAPH_PROJECTION_BYPASSES` is empty. Mutations: a capped roster page instead of an exact count (red), the count's error branch dropped (red), an unknown E2EE state read as "not encrypted" on the client (red), the roster read put back on the screen (red). |
+| T366 | N `∅` | **C** | §29 **no automatic Memory creation from private conversation history** — guarded, on T19's precedent: closed lists of conversation-history tables, memory-creation tables and RPCs, and the ONE explicit path (`artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:99#export const EXPLICIT_CONVERSATION_MEMORY_PATHS`: §10.2's one-message private draft). The suite judges every top-level unit of the server tree plus one level of same-file and imported calls, and every SQL migration (`artifacts/api-server/src/test/telegraphConversationMemoryBoundary.test.ts:172#no unit outside the closed list`). It is unit-level on purpose: `routes/events.ts` reads `messages` and writes `passport_memories` in two handlers that never meet. Mutation: a `messages` read added to `POST /memories` → red, naming that handler. Static guard: a computed table name or two levels of indirection are not seen. |
+| T367 | N `∅` | **C** | §29 **no Nearby exposure merely because GPS indicates proximity** — Nearby exists (dark) and the prohibition holds in code whatever the flag: a co-located, fully discoverable stranger is never even a candidate (`artifacts/api-server/src/test/telegraphNearbyNotFromGps.test.ts:104#a stranger at the viewer`), and a crewmate at zero distance gets no bucket without presence consent across every consent combination (`artifacts/api-server/src/services/telegraph/reachablePeople.ts:413#input.personPresenceConsent && !nearbySuppressed`). Mutation: the consent term dropped → 2 red. |
+| T408 | N `∅` | **C** | §30A.9 **screenshot detection is informational only** — guarded: the capture-API list and the declared-site list (`artifacts/api-server/src/domain/telegraph/policies/screenshotSignal.ts:59#export const SCREENSHOT_SIGNAL_SITES`, empty — no detection exists) and a guarantee-copy list, enforced over both trees, both manifests and every server string (`artifacts/api-server/src/test/telegraphScreenshotInformational.test.ts:97#no module in either tree uses a capture API`). Mutations: an `addScreenshotListener` call (red); "Screenshots are blocked in this chat" (red). |
+| T393 | N `∅` | **C** | §30A.5 **Seen and Acknowledged are separate** — stale: the ACKNOWLEDGEMENT kind and its projection exist on every deployment (T261 and T392 are C), and the projection has no parameter a read receipt could arrive through (`artifacts/api-server/src/services/telegraph/coordination.ts:504#export function projectAcknowledgements(`, asserted at `artifacts/api-server/src/test/telegraphCoordination.test.ts:812#is STRUCTURALLY unable to derive`). Mutation: a fourth `lastReadAt` parameter → red. |
+| T413 | W | **C** | §30A.10 / §5.3 **legacy cards render the current projection, not the sender's snapshot** — `PostCardMessage` and `DiscoveryCardMessage` now draw one of five modes decided once (`travel-buddy-standalone/src/features/telegraph/sharing/legacyCardView.ts:43#export function legacyCardMode(`): live → the server's projection plus only the sender's caption (`travel-buddy-standalone/src/components/DiscoveryCardMessage.tsx:164#const shownTitle = projection ? projection.title : payload.title;`, `travel-buddy-standalone/src/components/PostCardMessage.tsx:145#const p = live.projection;`); loading → nothing from the source; a possible resolve that FAILED → the reference only (kind, caption, open), as PortavaObjectMessage already did; no thread / no §5 family → the pre-§5 card. The POST projection's byline is the author's CURRENT handle, read at resolve time. Proved in `travel-buddy-standalone/src/features/telegraph/__tests__/legacyCardLive.component.test.tsx:93#live: the server title`. **Supersedes §10's "a card in `unknown` renders exactly as it did before §5"** for a resolve that was attempted: that is when a revoked post would still be drawn in full. Mutation: a live answer drawn as legacy → 6 red. |
+| T448 | W | **C** | §30A.20 **a shared source cannot grant broader access than its authorized projection** — the same change, read from the invariant's side: in every mode but `legacy` the two cards draw nothing the server's projection does not carry (author name, avatar, counts, captured place and blurb are no longer drawn from `messages.body`). |
+| T318 | N | **C** | §26 **RLS-08 authorized user reads current safe share projection → ALLOW** — `vacuous` → `enforced` (`artifacts/api-server/src/domain/telegraph/invariants/rlsAuthorizationMatrix.ts:163#id: "RLS-08"`): the case drives the real `POST /threads/:id/share-projections` — the projection as the source is NOW (a rename between two reads is visible), an unseeable source carries nothing, a non-member is refused before any resolve (`artifacts/api-server/src/test/telegraphRlsAuthorizationMatrix.test.ts:523#RLS-08 — authorized user reads current safe share projection`). §27 F-12 moves to enforced with it. Certification baseline: rlsMatrix 4 → 3, adversarialFixtures 5 → 4. Mutation: the route's membership refusal removed → red. |
+| T415 | N | **C** | §30A.12 **PRIVATE_CONVERSATION / SMALL_GROUP / LARGE_GROUP / BROADCAST** — derived from the context (1:1 kinds are PRIVATE) and the ACTIVE roster (`artifacts/api-server/src/domain/telegraph/policies/transportClass.ts:67#export function transportClassFor(`); BROADCAST is declared and never assigned (`canBroadcast` is false by policy, T204). One strategy table is read by the fan-out path (`artifacts/api-server/src/lib/telegraphEvents.ts:673#const strategy = strategyForAudience`), both receipt routes and the capabilities projection (`conversation.transportClass`). Mutations: the Seen sample dropped (2 red); the small-group bound moved (the pin to `FANOUT_PRESENCE_MAX` goes red). |
+| T416 | W | **C** | §30A.12 **large conversations: no small-group fan-out, presence or per-recipient Seen without bounded strategies** — all three are now bounded by the class, not only the fan-out: presence is shed and messages degrade to a poll signal (unchanged bounds), and per-recipient Seen keeps an exact count with a bounded sample of reader ids on `GET /threads/:id/receipts` (`artifacts/api-server/src/routes/telegraphLifecycle.ts:207#const b = boundSeenReaders`) and counts plus the most recent readers on `GET /threads/:id/read-receipts` (`artifacts/api-server/src/server/telegraph/readReceiptsRoute.ts:133#count_with_sample`), proved at `artifacts/api-server/src/test/telegraphTransportClasses.test.ts:181#GET /receipts in a LARGE_GROUP`. The previous W rested on "never exercised by a real large thread", which is a fact about data, not about the code; the rule binds any conversation that grows past the bound, including a future Event conversation. Mutation: the read-receipts large branch removed → red. |
+| T264 | W | **C** | §20 **Events — share card, attendance, live status, timing changes** — re-graded against what now exists: the share card is a live §5 reference (EVENT shareable); attendance surfaces as the rail's mutual-attendance item (`artifacts/api-server/src/services/telegraph/sharedContext.ts:467#export async function resolveSharedEvents(`, `artifacts/api-server/src/test/telegraphSharedContext.test.ts:510#host Carol is in neither seat`); live status is the rail's HAPPENING NOW / STARTING SOON bands; a moved start is promoted as a change card (`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:66#export function detectCriticalChanges(`, `travel-buddy-standalone/src/features/telegraph/__tests__/railBehavior.component.test.ts:146#detects a moved start time`). |
+| T372 | N | **C** | §30 DoD **the top rail accurately shows authorized mutual Now/Upcoming/Want-to-Do/Past** — the evidence ("No rail") is stale twice over: T13–T21 are C, the route is not flag-gated (`artifacts/api-server/src/routes/telegraphSharedContext.ts:155#"/threads/:threadId/shared-context"`), and the rail is mounted on both conversation surfaces (`travel-buddy-standalone/app/messages/[id].tsx:2058#<SharedContextRail threadId`, `travel-buddy-standalone/src/components/GroupChatScreen.tsx:740#<SharedContextRail threadId`). |
+| T305 | N | **C** | Phase 4 **Shared Context Rail and live source-object cards** — the rail (T372 above) and live cards on all three card surfaces: PortavaObjectMessage (T46) and the two legacy cards (T413 above). |
+| T374 | W | **C** | §30 DoD **plan/invite/vote/meet/coordination use canonical commands** — the two missing halves are C on main: MEET_HERE is a coordination action carried with confirmation (T91; `artifacts/api-server/src/services/telegraph/coordination.ts:600#export const COORDINATION_ACTIONS`) and the coordination session exists (T85). A shared place card now proposes MEET_HERE through the same route rather than any side path (`travel-buddy-standalone/src/features/telegraph/__tests__/legacyCardLive.component.test.tsx:132#MEET_HERE: the card proposes`). |
+| T398 | W | **W** | §30A.6 **ALL / MENTIONS / IMPORTANT / temporary mute / MUTED; safety governed by safety policy** — **a live defect was closed first:** `muted_at` was stored and NEVER consulted when a notification was created, so an @mention in a muted thread notified the member. The dispatch now decides through `artifacts/api-server/src/domain/telegraph/policies/threadNotificationPolicy.ts:102#export function decideThreadNotification(` (`artifacts/api-server/src/routes/messaging.ts:3111#const deliverTo = taggedIds.filter`; `artifacts/api-server/src/test/telegraphThreadNotificationPolicy.test.ts:194#a member who MUTED the thread`), on every deployment; an unreadable member state withholds; SAFETY always delivers. MENTIONS, IMPORTANT and a temporary mute, the policy route and a client sheet are built behind migration 3760 and `telegraph_thread_notification_policy_enabled`. **Ceiling:** 3760 is applied nowhere and the flag is seeded FALSE; the only thread-scoped notification the server emits today is the mention, so ALL vs MENTIONS has nothing else to decide. |
+| T435 | W | **W** | §30A.17 **support tooling audited** — the durable half is built: with migration 3761 and its flag, every served diagnostics read first writes an `admin_access_log` row and is refused if it cannot (`artifacts/api-server/src/routes/telegraphDiagnostics.ts:100#if (await isFlagEnabled(ctx.sc, DIAGNOSTICS_DURABLE_AUDIT_FLAG))`, `artifacts/api-server/src/test/telegraphDiagnosticsDurableAudit.test.ts:74#flag ON and the row cannot be written`). **Ceiling:** 3761 applied nowhere, flag seeded FALSE. |
+| T411 | W | **W** | §30A.10 **action buttons from current capabilities** — the share-card half is done (T413 above: Add to Plan iff the server's ADD_TO_TRIP, Meet here iff MEET_HERE, Save only while the source is live, View only when nothing can be resolved — `travel-buddy-standalone/src/features/telegraph/sharing/legacyCardView.ts:65#export function offeredCardActions(`). **Still W:** the booking milestone card's buttons are markup over a frozen payload (T320, RLS-10, lane B). |
+| T304 | W | **W** | Phase 3 — evidence corrected: the share contract (T41), the drawer (T66) and object-aware search (T272) are C. **Ceiling:** rich media — voice is behind unapplied 2989, GIF has no provider (T405), and upload resume is the media pipeline's (T223). |
+| T307 | W | **W** | Phase 6 — evidence corrected: decisions (T83), coordination sessions (T85) and meeting points (T86) are C and thread-scoped. **Ceiling:** temporary location lacks purpose binding (T214, T1's range). |
+| T265 | W | **W** | §20 Places — four of five now: share, save, add to Trip and **meet here** (the live card proposes MEET_HERE). **Still W:** "current intelligence" — the live projection carries the place's current name, neighbourhood and status, not Discovery's live intelligence. |
+
+### 45.2 What was built that no row move captures
+
+- `domain/telegraph/policies/transportClass.ts`, `threadNotificationPolicy.ts`,
+  `conversationMemoryBoundary.ts`, `screenshotSignal.ts` — each reached from outside the
+  domain package (check:telegraph-package-boundaries passes).
+- `GET/PUT /api/threads/:id/notification-policy` (tail-mounted in `routes/index.ts` so no cited
+  line moved) and the client `ThreadNotificationSheet`, opened by a long-press on the thread
+  screen's mute icon.
+- The shared place card's **Meet here** action.
+- Migrations **3760** and **3761** (lane T2 band 3760–3779), each with postconditions, a
+  rollback file and a `docs/migrations.md` entry. NOT applied anywhere.
+
+### 45.3 Rows examined and NOT moved, with the reason
+
+- **T379 / T380 / T381** (canonical `TelegraphRelationship`): not built this pass. The §13
+  objection still stands — a fifth resolver without retiring the four makes the anti-pattern
+  worse — and two of the four live outside Telegraph (`services/interactionPermissions.ts`,
+  `compass/CompassTools.ts`).
+- **T289** waits on T8 (lane T1 built the inbox bands on its branch) and PRJ-04's flag.
+- **T306 / T420 / T421** wait on T31 / T29 / T32 (lane T1) and the Nearby flag.
+- **T262** (Trip Kernel commands in `server/trips`, lane C), **T266** (Discovery corpus, lane C),
+  **T267** (Compass, lead), **T320** (lane B), **T395 / T397** (notifications), **T399 / T401**
+  (`routes/devices.ts`), **T402 / T426 / T257** (media pipeline): other lanes' files.
+- **T255 / T259**: owner decisions not given (quiet-hours override for P1 coordination;
+  server-side load shedding).
+- Every BLOCKED_ENV row in this range (2810–2813, 2989, 2991, 3000, the 2400 flag, providers)
+  is unchanged.
+- **census line 896's** `[id].tsx:1247-1252` (T295's original evidence) cites a member-count read
+  this branch removed; it is left as written because no line now carries its text.
+
+### 45.4 Net effect of this section, rows only
+
+Sixteen rows move up to C — ten from N (T291, T294, T366, T367, T408, T393, T318, T415, T372,
+T305) and six from W (T295, T413, T448, T416, T264, T374) — and two N rows move to W (T292, T293).
+No row moves down. §1's headline is restated from the rows of THIS tree (C 255 / W 173 / N 21 /
+X 2): `check:census-integrity` refuses a headline that has stopped describing its table. Lane C's
+and lane T1's §43 moves are not in it; the lead restates it again after the merge.
+
+| Bucket | Count, this tree, after §45 |
+| --- | --- |
+| BUILT-AND-CORRECT | **255** |
+| BUILT-BUT-WRONG | **173** |
+| NOT-BUILT | **21** |
+| CANNOT-VERIFY | **2** |
