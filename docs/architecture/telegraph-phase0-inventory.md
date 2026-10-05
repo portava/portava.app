@@ -78,7 +78,7 @@ touch no messaging table.
 
 | route file | route declarations in file | messaging tables touched |
 | --- | --- | --- |
-| `src/routes/airport.ts` | 45 | message_threads |
+| `src/routes/airport.ts` | 47 | message_threads |
 | `src/routes/blocks.ts` | 5 | message_requests |
 | `src/routes/circle.ts` | 24 | message_threads, messages |
 | `src/routes/compass.ts` | 42 | message_thread_members, message_threads |

@@ -246,6 +246,15 @@ describe("the close's outcome carries what the traveller reported", () => {
   });
 });
 
+describe("one gate, spelled three times", () => {
+  it("the checkpoint and outcome writers read exactly 2992's gate, DECISION_PERSISTENCE_FLAG", async () => {
+    const { DECISION_PERSISTENCE_FLAG } = await import("../services/layover/LayoverDecisionStore.js");
+    const { OUTCOME_WRITE_FLAG } = await import("../services/layover/LayoverOutcomeStore.js");
+    assert.equal(CHECKPOINT_WRITE_FLAG, DECISION_PERSISTENCE_FLAG);
+    assert.equal(OUTCOME_WRITE_FLAG, DECISION_PERSISTENCE_FLAG);
+  });
+});
+
 describe("the two pure derivations", () => {
   const cp = (type: string, at: number) => ({ id: `${type}-${at}`, type, observedAt: new Date(at).toISOString(), source: "TRAVELLER", confidence: "MEDIUM" });
   it("presence follows the NEWEST observed report, whatever order rows arrive in", () => {

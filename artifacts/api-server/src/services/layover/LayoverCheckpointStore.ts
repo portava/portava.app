@@ -44,11 +44,15 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
-import { DECISION_PERSISTENCE_FLAG } from "./LayoverDecisionStore.js";
 
 const logger = rootLogger.child({ service: "LayoverCheckpointStore" });
 
-export const CHECKPOINT_WRITE_FLAG = DECISION_PERSISTENCE_FLAG;
+/**
+ * 2992's write gate, spelled as a LITERAL so check:flag-polarity can resolve which flag is read.
+ * It is the same flag as `DECISION_PERSISTENCE_FLAG`; layoverCheckpoints.test.ts asserts the two
+ * cannot drift apart.
+ */
+export const CHECKPOINT_WRITE_FLAG = "layover_decision_persistence_enabled";
 
 /**
  * The two checkpoint types a traveller may report. A subset of 2992's CHECK
@@ -147,7 +151,7 @@ export async function recordTravellerCheckpoint(
     departureTime: string;
   },
 ): Promise<CheckpointWrite> {
-  if (!(await isFlagEnabled(db, CHECKPOINT_WRITE_FLAG))) return { ok: false, reason: "persistence_disabled" };
+  if (!(await isFlagEnabled(db, "layover_decision_persistence_enabled"))) return { ok: false, reason: "persistence_disabled" };
   const dedupKey = `${args.type}:${args.operationId.trim()}`.slice(0, 200);
   const departureMs = Date.parse(args.departureTime);
   const expiresMs = Math.max(
@@ -190,7 +194,7 @@ export async function readTravellerCheckpoints(
   sessionId: string,
   nowMs: number,
 ): Promise<CheckpointRead> {
-  if (!(await isFlagEnabled(db, CHECKPOINT_WRITE_FLAG))) return { ok: false, reason: "persistence_disabled" };
+  if (!(await isFlagEnabled(db, "layover_decision_persistence_enabled"))) return { ok: false, reason: "persistence_disabled" };
   const { data, error } = await db
     .from("layover_checkpoints")
     .select(SELECT)

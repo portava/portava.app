@@ -8629,7 +8629,7 @@ touched, no migration was added or applied, and nothing was written to or read f
    into one private, unpublished Memory carrying city, country and the layover window — never a
    coordinate, place id or operational input (§3 L19).
 4. **The outcome writer** (L32, and L10/L174/L195/L214 through it).
-   `artifacts/api-server/src/services/layover/LayoverOutcomeStore.ts:113#export async function recordLayoverOutcome(`,
+   `artifacts/api-server/src/services/layover/LayoverOutcomeStore.ts:116#export async function recordLayoverOutcome(`,
    called from the close at `artifacts/api-server/src/routes/airport.ts:3851#const outcomeRecord = await recordLayoverOutcome(`,
    writes one `layover_outcomes` row per closed session — BOARDED for "I made my flight", UNKNOWN for
    ending early, every unobserved column NULL and never `false` — behind
@@ -8685,12 +8685,12 @@ mistaken for a regression.
 
 ### 49.6 Added after 49.4: the traveller's own check-ins. NO ROW MOVES
 
-`artifacts/api-server/src/services/layover/LayoverCheckpointStore.ts:140#export async function recordTravellerCheckpoint(`
+`artifacts/api-server/src/services/layover/LayoverCheckpointStore.ts:144#export async function recordTravellerCheckpoint(`
 records "I've left the airport" (`LANDSIDE_EXIT`) and "I'm back at the airport" (`AIRPORT_REENTRY`) as
 TRAVELLER / MEDIUM rows in 2992's `layover_checkpoints`, behind the same gate as the outcome writer, through
 `artifacts/api-server/src/routes/airport.ts:4395#router.post("/airport/sessions/:id/checkpoints"` (registered
 at the tail; nothing cited moved). The outcome row takes `left_airport` and the actual return from them
-(`artifacts/api-server/src/services/layover/LayoverCheckpointStore.ts:126#export function observedReturnFrom(`),
+(`artifacts/api-server/src/services/layover/LayoverCheckpointStore.ts:130#export function observedReturnFrom(`),
 NULL — never false — when nothing was reported or nothing could be read. The client control renders only
 when the overview's `persisted` field says the gate is on
 (`travel-buddy-standalone/src/components/layover/LayoverSafeReturnCard.tsx:263#checkpointCapability(overview) === 'on'`),

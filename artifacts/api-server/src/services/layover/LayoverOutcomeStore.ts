@@ -63,13 +63,16 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
-import { DECISION_PERSISTENCE_FLAG } from "./LayoverDecisionStore.js";
 import { observedReturnFrom, readTravellerCheckpoints } from "./LayoverCheckpointStore.js";
 
 const logger = rootLogger.child({ service: "LayoverOutcomeStore" });
 
 /** 2992's write gate — see the header for why it is shared rather than a new flag. */
-export const OUTCOME_WRITE_FLAG = DECISION_PERSISTENCE_FLAG;
+/**
+ * 2992's write gate, spelled as a LITERAL so check:flag-polarity can resolve which flag is read.
+ * The same flag as `DECISION_PERSISTENCE_FLAG`; layoverCheckpoints.test.ts asserts they cannot drift.
+ */
+export const OUTCOME_WRITE_FLAG = "layover_decision_persistence_enabled";
 
 /** 2992's CHECK vocabulary for `boarding_outcome`, verbatim. */
 export const BOARDING_OUTCOMES = ["BOARDED", "MISSED", "REBOOKED", "CANCELLED", "UNKNOWN"] as const;
@@ -115,7 +118,7 @@ export async function recordLayoverOutcome(
   args: { sessionId: string; outcome: LayoverCloseOutcome; nowMs: number },
 ): Promise<OutcomeWrite> {
   try {
-    if (!(await isFlagEnabled(db, OUTCOME_WRITE_FLAG))) {
+    if (!(await isFlagEnabled(db, "layover_decision_persistence_enabled"))) {
       return { recorded: false, reason: "persistence_disabled" };
     }
     // A failed or disabled checkpoint read is NOT OBSERVED, never "stayed airside".
