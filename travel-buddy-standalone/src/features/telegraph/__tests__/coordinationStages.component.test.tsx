@@ -296,3 +296,20 @@ describe('T108 — Complete: the closeout', () => {
     expect(screen.queryByTestId('telegraph-coordination-panel')).toBeNull();
   });
 });
+
+describe('the conversation screen hands the panel what its controls need', () => {
+  // Source-level, because app/messages/[id].tsx cannot be mounted under jest-expo
+  // (census §41.7). A control the screen does not wire is not drawn, so a lost
+  // prop here would make the recap, location-scope and ride controls silently
+  // vanish rather than fail.
+  const { readFileSync } = require('node:fs');
+  const { join } = require('node:path');
+  const dm: string = readFileSync(join(__dirname, '../../../../app/messages/[id].tsx'), 'utf8');
+  const mount = dm.split('\n').find((l) => l.includes('<CoordinationPanel ')) ?? '';
+
+  it('mounts the panel with the viewer, the recap opener and the location sheet opener', () => {
+    expect(mount).toContain('viewerId={userId');
+    expect(mount).toMatch(/onOpenRecap=\{threadRecap\.available \? \(\) => setShowRecap\(true\) : undefined\}/);
+    expect(mount).toContain("onShareLocation={() => setTypedCompose('LOCATION')}");
+  });
+});
