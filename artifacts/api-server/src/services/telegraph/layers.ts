@@ -202,6 +202,43 @@ export function layerOfMessage(row: LayerInputRow): SemanticLayer {
   return "TALK";
 }
 
+/**
+ * §2.3 NOW is "ACTIVE coordination" — and a partition with no bound in time
+ * would lift every quick state, meeting point, SAFETY and LOCATION message the
+ * thread ever held out of the conversation and into a strip a client draws
+ * above it. A client that drew the partition would then hide last week's
+ * safety message from the stream. So a NOW-class message is in the NOW layer
+ * only while it is CURRENT, and returns to TALK — where it belongs as history —
+ * once it is not:
+ *
+ *   - a scoped LOCATION share (one with an `expiresAt`) is current while it is
+ *     live, i.e. until its expiry (≤ MAX_LOCATION_SHARE_HOURS by construction);
+ *   - every other NOW-class message is current for NOW_LAYER_WINDOW_MINUTES
+ *     after it was sent.
+ *
+ * THE NUMBER IS A PRODUCT CHOICE, set to the most conservative value the spec
+ * text allows: the layer's mistake in either direction only moves a message
+ * between the strip and the stream, but only one direction ever takes a message
+ * OUT of the conversation, so the shorter window is the safer one. An
+ * unparseable send time is treated as old — the stream keeps it.
+ */
+export const NOW_LAYER_WINDOW_MINUTES = 60;
+
+export function nowItemIsCurrent(
+  createdAt: string | null | undefined,
+  envelopeKind: string | null,
+  payload: { expiresAt?: unknown } | null | undefined,
+  nowMs: number,
+): boolean {
+  if (envelopeKind === "LOCATION" && typeof payload?.expiresAt === "string") {
+    const ends = Date.parse(payload.expiresAt);
+    if (Number.isFinite(ends)) return ends > nowMs;
+  }
+  const sent = typeof createdAt === "string" ? Date.parse(createdAt) : NaN;
+  if (!Number.isFinite(sent)) return false;
+  return nowMs - sent <= NOW_LAYER_WINDOW_MINUTES * 60_000;
+}
+
 function ms(v: string | null | undefined): number {
   const t = typeof v === "string" ? Date.parse(v) : NaN;
   return Number.isNaN(t) ? 0 : t;
@@ -291,6 +328,12 @@ export function projectSemanticLayers(input: LayerProjectionInput): SemanticLaye
     const layer = layerOfMessage(p.row);
     const payload: any = p.coordination?.payload ?? p.envelope?.payload ?? null;
     const kind = p.coordination?.kind ?? p.envelope?.kind ?? "TEXT";
+
+    if (layer === "NOW" && !nowItemIsCurrent(p.row.created_at, p.envelope?.kind ?? null, payload, nowMs)) {
+      // Not current any more: history, and history is the conversation.
+      talk.push(p.row.id);
+      continue;
+    }
 
     if (layer === "NOW") {
       now.push({
