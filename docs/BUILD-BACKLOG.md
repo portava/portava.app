@@ -64,6 +64,18 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
   and `PeopleMemoryProjection` are derived per OWNER, so a crew-wide search must
   union one derivative per member and decide what a revoked or departed member's
   derivative means. Product decision; census H113's remaining ceiling.
+
+  CLOSED IN THIS BRANCH — recorded 2026-10-05 at integration, because the change
+  that closed it did not say so here. SHARED_CREW is now reachable from the
+  search surface
+  (`artifacts/api-server/src/services/memory/memorySearchService.ts:138#"SHARED_CREW",`),
+  and the product question this entry held open — what a revoked member's
+  derivative means in a crew-wide union — is answered in code at
+  `artifacts/api-server/src/services/memory/memorySearchService.ts:192#export const CREW_UNION_PARTIAL_POLICY`.
+  The `:110` above is left as written: it named a comment in the tree this entry
+  was filed against, and that comment has since been rewritten. Whether census
+  H113 moves is a grading question for the Highlights & Memories census, not
+  settled by this note.
 - [hm] `artifacts/api-server/src/routes/highlights.ts` — the SQL expiry
   predicate is defence in depth only. Mutation C (replace `NOT_EXPIRED` with a
   predicate that matches everything) SURVIVED all 26 assertions in

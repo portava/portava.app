@@ -3479,7 +3479,7 @@ rules; the fifth is the one that matters — the count of entries that are NOT
 `scripts/TELEGRAPH_CERTIFICATION_BASELINE.json:11` and may only shrink. A
 future change cannot make a red case green by reclassifying it. Wired at
 `scripts/run-all-checks.sh:390` and declared in
-`scripts/guardRegistry.ts:837-850`, with an inspection proof so a pass says how
+`scripts/guardRegistry.ts:900-913`, with an inspection proof so a pass says how
 much it looked at.
 
 **The share-authorization gate.** §26's private-Memory case and §29's Memory
