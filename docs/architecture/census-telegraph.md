@@ -4,7 +4,7 @@
 | --- | --- |
 | **Specs** | `docs/specs/Portava_Telegraph_Design_Architecture_Developer_Spec_v1.txt` (30 sections) and `..._v1_1.txt` (32 headings). The `.docx` originals are authoritative and were extracted and compared; see §2. |
 | **Tree censused** | `claude/portava-continuation-uqta94`, working tree at `ebe72b34`. Sibling agents committed the shared tree during this pass (HEAD is now `feedfb0a`); `git diff ebe72b34..feedfb0a` over every path cited below touches exactly one file — `routes/safeReturn.ts`, +43 lines, an unrelated Passport contact projection appended after `:817` plus two imports — so every verdict holds at HEAD, with that file's post-`:26` citations renumbered. Censused state is **main**: open PRs #460 and #472 are read but never scored into a bucket; see §9. |
-| `head_commit` | `f71cfb85f` — RE-DECLARED 2026-10-04 by **§42**, which is what §41 deferred to the integrator: §41 was written on a lane branch that would be squashed and declining to declare one of its commits was right. `f71cfb85f` is the merge of #586 on `main`, so it is an ancestor of every clone that fetches `main` and carries none of the orphan hazard the paragraphs below record. The 201 counted files that changed since `1fe72289b` are PR #572's own work and twelve other lanes'. **This is a RE-MEASUREMENT of the rows §42 names and NOT of the rest**: §42 re-derived §41's five moves against the code and the committed production capture, corrected the reasons on T69, T74 and T394 without moving any of them, and moved NO verdict. It does **NOT** certify the other 448 rows, and §1's reading rule applies unchanged. The acknowledgement written against `1fe72289b` is RETIRED, not deleted, in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`. The previous declaration read: `1fe72289b` — RE-DECLARED 2026-09-15 at the squash merge of PR #482. The previous value was `80a8d655a`, a commit on the pre-merge branch. **The squash made it an orphan**: it still exists in a clone that fetched the branch, but it is on no line of history leading to `main`, and `check:census-freshness` refuses an orphan because the check would pass locally and fail in a fresh clone. Nothing about this census was re-measured and NO verdict moves — `1fe72289b` is the commit its previous declaration's tree became, so zero counted files have changed since it. The prior declaration and its reasoning follow. — RE-DECLARED 2026-09-14 by §23, replacing `42aeac38`. §23 re-derived T70 (`W → C`) and recorded fourteen membership gates that moved no verdict by §20.6's own rule. Nine counted files changed. It does **NOT** certify the other 229 `C` rows, and §1's reading rule applies unchanged. The previous declaration read: `42aeac38` — DECLARED 2026-09-11. It **starts a clock; it does not certify a past.** Read the next row before quoting it. |
+| `head_commit` | `f71cfb85f` — RE-DECLARED 2026-10-04 by **§43**, which is what §41 deferred to the integrator: §41 was written on a lane branch that would be squashed and declining to declare one of its commits was right. `f71cfb85f` is the merge of #586 on `main`, so it is an ancestor of every clone that fetches `main` and carries none of the orphan hazard the paragraphs below record. The 201 counted files that changed since `1fe72289b` are PR #572's own work and twelve other lanes'. **This is a RE-MEASUREMENT of the rows §43 names and NOT of the rest**: §43 re-derived §41's five moves against the code and the committed production capture, corrected the reasons on T69, T74 and T394 without moving any of them, and moved NO verdict. It does **NOT** certify the other 448 rows, and §1's reading rule applies unchanged. The acknowledgement written against `1fe72289b` is RETIRED, not deleted, in `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`. The previous declaration read: `1fe72289b` — RE-DECLARED 2026-09-15 at the squash merge of PR #482. The previous value was `80a8d655a`, a commit on the pre-merge branch. **The squash made it an orphan**: it still exists in a clone that fetched the branch, but it is on no line of history leading to `main`, and `check:census-freshness` refuses an orphan because the check would pass locally and fail in a fresh clone. Nothing about this census was re-measured and NO verdict moves — `1fe72289b` is the commit its previous declaration's tree became, so zero counted files have changed since it. The prior declaration and its reasoning follow. — RE-DECLARED 2026-09-14 by §23, replacing `42aeac38`. §23 re-derived T70 (`W → C`) and recorded fourteen membership gates that moved no verdict by §20.6's own rule. Nine counted files changed. It does **NOT** certify the other 229 `C` rows, and §1's reading rule applies unchanged. The previous declaration read: `42aeac38` — DECLARED 2026-09-11. It **starts a clock; it does not certify a past.** Read the next row before quoting it. |
 | **What that declaration does and does not say** | `42aeac38` is #476's squash — where this document itself reached `main`. The 451 verdicts were taken at working tree `ebe72b34` (and re-checked at `feedfb0a`), both of which squash-merge orphaned: they resolve in no clone, so **nobody can diff `ebe72b34..42aeac38`, and this declaration does not claim that interval was empty.** What it claims is mechanically checked: `git diff --name-only 42aeac38..HEAD` over the 26 paths in `CENSUS_SCOPE["census-telegraph.md"]` returns **0 files**, and from here any change to one of them ages this census. Before it, `check:census-freshness` reported this document as CANNOT BE CHECKED — the weakest of the three states. FRESH means *no counted file has moved since `42aeac38`*; it does **not** mean the rows were re-read, and none has been. **The scope deliberately excludes `src/scripts/` and `src/test/`**, which supply 40 of this census's 84 resolved citations: those are the guards and suites it used as EVIDENCE, not the surface it measures, and scoping them would age Telegraph on every unrelated lane's guard work until someone switched the check off. Declared by the Trips lane while recounting the sibling census; if the Telegraph lane disagrees, reverting costs only the check. |
 | **Method** | Requirement-level, four buckets, one bucket per requirement. Every BUILT verdict cites a file:line that was opened and read. Matches `census-sensing.md` and `census-wall.md`. |
 | **Database** | Not queried. Storage facts are the ones supplied as ground truth — **independently corroborated in-tree** by `artifacts/api-server/baseline/20260907_production_tables.txt`, committed during this pass, which lists exactly seven Telegraph tables (`message_reports`, `message_requests`, `message_thread_members`, `message_threads`, `message_translations`, `messages`, `thread_reports`) and contains no `unsent` column anywhere. |
@@ -3530,9 +3530,9 @@ there — which is why it has survived. Declared at
 decision rather than an accident.
 
 **3. `POST /threads/:threadId/messages` accepts any `subtype` the client sends.**
-`routes/messaging.ts:2711#const subtype = typeof req.body?.subtype === 'string' ? req.body.subtype : null;` takes it straight from the request body; the only
-vocabulary constraint anywhere on that handler is that `msgType` collapses to
-`system` or `text` (`routes/messaging.ts:2710#const msgType = msgTypeRaw === 'system' ? 'system' : 'text';`). A client can stamp any discriminator it likes onto
+The handler's line `const subtype = typeof req.body?.subtype === 'string' ? req.body.subtype : null;` took it straight from the request body; the only
+vocabulary constraint anywhere on that handler was that `msgType` collapsed to
+`system` or `text` (`const msgType = msgTypeRaw === 'system' ? 'system' : 'text';`). (Both lines were REPLACED by §42, so they are restated here as prose rather than repointed at code that means something else; the tense is changed for the same reason.) A client could stamp any discriminator it liked onto
 a message. It cannot forge the payload's authorization — every card's data comes
 from the same client-authored body — so this is a rendering-shape hole rather
 than an access-control one, but it is exactly the seam §30A.10's capability
@@ -9110,8 +9110,8 @@ from outside, and each was EXECUTED rather than argued about:
 1. **§21 search — a bucket a sender could invent.** `SUBTYPE_BUCKET`
    (`domain/telegraph/contracts/conversationSearch.ts:175#export const SUBTYPE_BUCKET`)
    is keyed by `messages.subtype`, and that column is **client-written**:
-   `routes/messaging.ts:2711#const subtype = typeof req.body?.subtype === 'string' ? req.body.subtype : null;`
-   takes it straight off the request body and inserts it. So any authenticated
+   the text door's `const subtype = typeof req.body?.subtype === 'string' ? req.body.subtype : null;` (REPLACED by §42 and restated as prose; it is no longer true of the text door)
+   took it straight off the request body and inserted it. So any authenticated
    sender could post a message with `subtype: "constructor"`, and
    `classifyMessage` returned the `Object` FUNCTION as its §21 bucket. Two
    things broke at once and both were measured: the hit serialised to `{}`,
@@ -10175,7 +10175,126 @@ restated in place. Counted with `check:census-integrity`, not by arithmetic on �
 the five moves are to W and three of those wait only on migrations reaching production; the one
 move to C (T71) is a client rule with controlled evidence and no production observation.
 
-## §42 — 2026-10-04 (re-census, integration): §41's five moves re-derived, THREE STALE REASONS on `C` and `W` rows corrected, and NO VERDICT MOVES
+## §42 — Every door into `messages` holds the send path's gates (lane ws-telegraph-w1, task TEL-01). NO ROW MOVES
+
+Branch `claude/ws-telegraph-w1-20261004`, cut from `main` at `f71cfb85f`. `head_commit` is NOT
+re-declared: this section re-measures no row. **All evidence is CONTROLLED**, and the larger half of
+it has not been executed by its author — see §42.4. No migration, no flag, nothing written to any
+database.
+
+### 42.1 What was wrong, verified against the tree before each fix
+
+| # | Defect | Where | What it allowed |
+| --- | --- | --- | --- |
+| 1 | The client chose the renderer | `POST /threads/:threadId/messages` stored any `subtype` the request named on a `system` row (§12.2 item 3 recorded it as "a rendering-shape hole") | The thread screen draws a `system` row as platform chrome with no sender attribution: `call_*` as a call line with a call-back button, `rent_buddy_*` as a booking milestone banner, anything else as a centred notice carrying the body. A member could post "Payment released" or a notice in the platform's voice |
+| 2 | The burst limit guarded one door of seven | §22's limiter (T279, C) was called from the text door only | Media, typed kinds, voice, share and coordination were unlimited; a script only had to choose another endpoint |
+| 3 | A command wrote with a membership check and nothing else | `CREATE_COORDINATION_SESSION` on `POST /telegraph/commands` inserts a `messages` row carrying a free-text title and note | A sender the other party had BLOCKED could still write into their 1:1 thread; the `disable_messaging` stop did not stop it; and in an end-to-end encrypted thread the server stored plaintext. Not behind the kernel flag, so live |
+| 4 | The same three gaps on `ADD_REACTION`; `REMOVE_REACTION` ended `void conversationId;` | `server/telegraph/commandRoute.ts` | Dark (2811 is applied nowhere). A blocked sender's reaction; a delete naming a message in a conversation the caller was not authorized for |
+
+### 42.2 What changed
+
+- **One rule for the text door.** `artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:89#export function resolveClientDiscriminator`
+  admits `text` with no subtype, or `system` with one of the five subtypes the app itself authors
+  (`artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:60#export const CLIENT_SYSTEM_SUBTYPES`),
+  and REFUSES everything else with 400 rather than rewriting it. The route takes its discriminator
+  from it (`artifacts/api-server/src/routes/messaging.ts:2709#const discriminator = resolveClientDiscriminator(req.body?.msgType, req.body?.subtype);`).
+- **One allowance for every door.** The shared guard gained a fifth gate, last, so a send refused by
+  the other four never spends it (`artifacts/api-server/src/lib/telegraphThreadWrite.ts:153#const rate = await sendRateRefusal(`);
+  the media door, which carries its own copies of the other gates, calls the same limiter
+  (`artifacts/api-server/src/routes/messaging.ts:3383#if (await refuseSendOverRate(`). Every ordinary
+  door counts against the id the text door already used; a §6.2 SAFETY message is counted in a
+  second bucket at the same tier limit, which is a conservative default and an owner question
+  (§42.5). A 429 carries `Retry-After`.
+- **The command door.** `CREATE_COORDINATION_SESSION` and `ADD_REACTION` pass the shared guard
+  before dispatch (`artifacts/api-server/src/server/telegraph/commandRoute.ts:178#if (GUARDED_WRITE_COMMANDS.has(type)`);
+  a blocked sender is told what a non-member is told. `UNSEND_MESSAGE` and `REMOVE_REACTION` are
+  retractions and are deliberately NOT refused by a block or the stop; `REMOVE_REACTION` is now
+  bound to the conversation the caller was authorized for.
+- **An inventory that can fail.** `MESSAGE_WRITERS` in the policy module declares every non-test
+  file that inserts into `messages`; the suite re-derives the list from the tree in both directions.
+  Four user doors are declared KNOWN WEAK under a ceiling that may only fall — two of them in
+  other lanes' files, left untouched and named in the handoff: `routes/hiddenGems.ts`
+  (membership only; plaintext into an E2EE thread; unchecked insert), `routes/highlights.ts` (the
+  highlight reply writes plaintext into an existing DM that may be E2EE), `lib/threadMessage.ts`
+  and `routes/telegraphChat.ts` (start-poll: no stop, block or rate gate).
+- **The client says so.** A send the server paused no longer reads "Tap to retry" on either chat
+  screen (`travel-buddy-standalone/src/features/telegraph/lifecycle/readState.ts:228#export function failedSendCopy`).
+
+Line-neutral in every cited file: `routes/messaging.ts`, the four guarded routes,
+`commandRoute.ts` up to its last cited line, `sendRateLimit.ts` up to its last cited line, both
+chat screens, both send hooks and the client transport hold what they held at every anchored
+citation. Checked by `check:doc-citations`, which this change otherwise fails in exactly three
+places — the three citations of the two lines item 1 replaced, restated above as prose.
+
+### 42.3 No row moves, and why
+
+- **T279** stays C, and the sentence that graded it was true of one door. It is true of all of them
+  now; the verdict was right for a narrower reason than it read as.
+- **T35 / T429 / T359 / T445** stay where they are. The discriminator is bounded; the PAYLOAD of an
+  allowed card is still an unversioned JSON body the sender wrote. That is the rows' remainder.
+- **T30 / T220 / T368 / T418 / T419** stay W. The per-send block re-check now covers the command
+  door; thirty modules still query `blocks` directly, four doors are still weak, and the Nearby
+  clauses are untouched.
+- **T143 / T163** stay W for their own reason (2811 is applied nowhere, and nothing reads a
+  reaction back).
+
+### 42.4 Tests, and exactly what was and was not run
+
+- `artifacts/api-server/src/test/telegraphMessageDoors.test.ts` — 20 cases, node builtins only.
+  **Run by this lane:** 16 pass / 3 fail on the tree before the routes changed (the three were the
+  command door, the media door's rate gate and the shared guard's rate step), 20/20 after. Twelve
+  mutations, each applied alone and restored by sha256: ten killed on the first run; two survived
+  because an assertion matched a helper's DEFINITION rather than its call, the two cases were
+  rewritten to assert the call site, and all twelve are killed.
+- `travel-buddy-standalone/src/features/telegraph/__tests__/sendFailure.test.ts` — 9 cases.
+  **Run by this lane:** 0/9 against a pristine copy of `main`, 9/9 after; eight mutations, all killed.
+- `artifacts/api-server/src/test/telegraphMessageDoorRoutes.test.ts` — 21 request-level cases
+  over the certification harness. **NOT RUN by this lane:** the authoring environment has no
+  `express`, so CI is this suite's first execution. Each refusing case reads the store back and
+  counts the rows that must not be there, and the header records what each case would have
+  returned at `f71cfb85f`; none of that has been observed.
+- The suites that already drive the four guarded routes and the command door were NOT run either.
+  The one known interaction is the limiter's bucket being process state: a suite that makes more
+  than twenty sends as one user through a guarded door would now meet a 429 on the twenty-first.
+  Counted by reading, `telegraphCoordinationLifecycle` reaches exactly twenty and
+  `verifyFlowVoiceEndToEnd` about seventeen, so five suites now reset the limiter where they
+  install their fake client — the same line, and the same reason, `telegraphAdversarialFixtures`
+  has carried since the limiter was written. That is test isolation, not a weakened assertion: no
+  expectation in any of the five changed. The share and coordination suites make at most six
+  guarded sends as one user and were left alone.
+
+- NOT-GRADED: artifacts/api-server/src/test/telegraphMessageDoors.test.ts — §42's rule-and-inventory suite; controlled evidence, no Telegraph verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/telegraphMessageDoorRoutes.test.ts — §42's request-level suite, first executed by CI; no Telegraph verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/hiddenGems.ts — §42.2 names it as a weak door owned by the Discovery lane; this lane did not change it and no Telegraph verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/lib/threadMessage.ts — §42.2 names it as a weak door owned by the Layover lane; this lane did not change it and no Telegraph verdict rests on it.
+
+### 42.5 Owner questions surfaced, not taken
+
+1. May a SAFETY-kind message ever be paused by the burst limit? Built: its own bucket at the same
+   tier limit. Either other answer is a one-line change in `messageDoorPolicy.ts`.
+2. May a reaction be stored for an end-to-end encrypted thread? Built: refused, as every other
+   server-readable write into such a thread is.
+
+### 42.6 What would turn this red
+
+A new file inserting into `messages` without a declaration; a door declared guarded that stops
+calling the guard; the command door dispatching before the guard; a client subtype added to the
+allowlist that no client file sends, or sent by a client file and not allowed; the rate gate moved
+ahead of the other four; a throwing tier read treated as "no limit"; a weak door closed without
+the ceiling falling.
+
+## §43 — 2026-10-04 (re-census, integration): §41's five moves re-derived, THREE STALE REASONS on `C` and `W` rows corrected, and NO VERDICT MOVES
+
+> **Renumbered at the 2026-10-05 merge of `main` (`800516a2f`) into this section's branch.** It was
+> written as §42 on PR #593's branch. Main's §42 (TEL-01, every door into `messages`) reached `main`
+> first, so this section is §43 and every `§42` inside it, in this census's `head_commit` row and in the
+> retired census-telegraph acknowledgement's `retiredBecause` was renumbered with it; no other word changed.
+> **Order matters for one claim.** This section measured at `f71cfb85f`, which is BEFORE §42's code
+> landed. §43.6's "zero counted files have changed since the new declaration" was true on its branch and
+> is not true after the merge: the counted files §42 changed since `f71cfb85f` are named, with §42's own
+> no-row-moves argument, in the census-telegraph entry of
+> `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json` keyed on `f71cfb85f`. §43 does not
+> re-read §42's rows, and §42 moved none.
 
 **What this section is.** §41 declined to re-declare `head_commit`, correctly, because it was written
 on a lane branch that would be squashed. PR #572 is now merged and this census's declaration is moved
@@ -10190,7 +10309,7 @@ and whether it missed anything.
 scored `C`.** No verdict moves. Nothing is re-read outside #572's subject, and a row this section does
 not name keeps the verdict and the reason it had.
 
-### §42.1 §41's five moves, re-derived against the code and the committed production capture
+### §43.1 §41's five moves, re-derived against the code and the committed production capture
 
 - **T71 `X → C` HOLDS.** §7.2's three prohibitions are each covered by one hook rather than argued
   about: the app must be in the FOREGROUND and the screen FOCUSED, and only a message loaded into that
@@ -10209,7 +10328,7 @@ not name keeps the verdict and the reason it had.
   columns and **neither `delivered_sequence` nor `seen_sequence`**, and **no unsend function at all** in
   its function list. The ceiling these rows name is real and it is checkable offline.
 
-### §42.2 Three reasons corrected, verdict unmoved — and two of them are on rows scored `C`
+### §43.2 Three reasons corrected, verdict unmoved — and two of them are on rows scored `C`
 
 | id | was | now | the correction |
 |---|---|---|---|
@@ -10217,7 +10336,7 @@ not name keeps the verdict and the reason it had.
 | T74 | C | **C** | **A `C` resting on a citation that points at unrelated code — the IN-RANGE-BUT-WRONG class, found in a row nobody would re-check.** The row's evidence is *"unread counts are derived by comparing `created_at > last_read_at` over lines 924-969 of `routes/messaging.ts`"*. At this tree those lines are the **message-request accept handler** — a compare-and-swap on `message_requests.status` and a direct-thread lookup, with no unread arithmetic in them. The claim is still TRUE and is now in two places, both anchored so the next shift is loud: the per-thread derivation at `artifacts/api-server/src/routes/messaging.ts:2186#// Unread count: messages newer than last_read_at not sent by the user.` and the exact count #572 added for threads a bounded page could not answer, `artifacts/api-server/src/services/telegraph/inboxReads.ts:187#export async function countUnreadFromOthers(`. The forbidden shape is still structurally absent, and **the kernel design does not reintroduce it**: 2810 adds `delivered_sequence` and `seen_sequence` as per-member-per-thread COLUMNS, not a row per message per user, so the prohibition survives the migration that has not landed. `C` holds on evidence rather than on a pointer. |
 | T394 | C | **C** | The same citation, the same repair. *"`last_read_at` feeds only unread counts"*, over the same lines 924-969, pointed at the accept handler too. The claim needed re-reading and not just repointing, because #572 gave `last_read_at` a SECOND consumer: the receipts surface behind `artifacts/api-server/src/routes/telegraphLifecycle.ts:132#/threads/:threadId/receipts`, which is what draws "Seen" and "Seen by N". **That is still a passive read receipt being used as a passive read receipt**, which is exactly what the row permits; what it forbids is inferring acceptance, agreement or acknowledgement from it, and every consent-shaped act still has its own explicit object. `C` holds, and the row is now true of two consumers instead of one. |
 
-### §42.3 Rows read and NOT moved
+### §43.3 Rows read and NOT moved
 
 - **T133** (`C`, do not encode delivery or availability solely by colour) is now satisfied
   NON-VACUOUSLY on the surface it is actually about. Its restated evidence is the shared-context rail;
@@ -10226,7 +10345,7 @@ not name keeps the verdict and the reason it had.
   `travel-buddy-standalone/src/features/telegraph/lifecycle/readState.ts:70#export function ownMessageStatus(`,
   and the connection banner renders a sentence. The prohibition held while nothing rendered delivery,
   and it holds now that something does. No move, and a stronger row than it was.
-- **T344** (`C`) does not reopen. §42 checked the one thing that could reopen it — whether #572's
+- **T344** (`C`) does not reopen. §43 checked the one thing that could reopen it — whether #572's
   rewrite of the inbox reads introduced a new plausible-empty — and it is the opposite: a catch-up read
   that fails REFUSES rather than showing a thread empty or read.
 - **T289**, **T428**, **T444**, **T8** stay `W`. The list half of the home projection got more
@@ -10237,7 +10356,7 @@ not name keeps the verdict and the reason it had.
   read.
 - **T326**, **T53** stay `W` as §38 left them; neither is #572's subject.
 
-### §42.4 What this section looked for and did NOT find
+### §43.4 What this section looked for and did NOT find
 
 Stated because a re-census that reports only what it found is not auditable. This section looked
 specifically for a row to move DOWN on this surface and found none. The three candidates and why each
@@ -10247,14 +10366,14 @@ and is not one of §7.2's three prohibitions; **T295** — the ratchet moved in 
 six client bypass sites to three, and the shrink-only baseline came down with it rather than being
 left as slack.
 
-### §42.5 The headline, unchanged
+### §43.5 The headline, unchanged
 
 No verdict moves, so the distribution is §41.8's. Recounted with `check:census-integrity` rather than
 copied: `CENSUS_INTEGRITY_DUMP=ALL` over this file before and after this section yields the same 451
 (id, verdict) pairs — the three restated rows move their LINE only, which is what a reason correction
 should do and the one thing a byte comparison of that dump could not have told you.
 
-| bucket | §41 | **§42** |
+| bucket | §41 | **§43** |
 | --- | ---: | ---: |
 | BUILT-AND-CORRECT | 239 | **239** |
 | BUILT-BUT-WRONG | 177 | **177** |
@@ -10270,7 +10389,7 @@ migrations reaching production. Nothing in the PR could move a `C`, because what
 honesty of state a person reads, and the rows that would reward it are gated on a message kernel that
 is written and not applied.
 
-### §42.6 Freshness, and what this does NOT claim
+### §43.6 Freshness, and what this does NOT claim
 
 `head_commit` is RE-DECLARED at `f71cfb85f`. The census-telegraph acknowledgement written against
 `1fe72289b` is RETIRED, not deleted, in
@@ -10281,7 +10400,7 @@ No code, no flag, no migration, and **no database read or write of any kind** �
 above is quoted from the repository's own committed capture and applied-migration record. This section
 certifies no row it does not name.
 
-### §42.7 What would turn this red
+### §43.7 What would turn this red
 
 - 2325, 2810 and 3000 reaching production: T327, T338, T387 and T69 all have to be re-read the same
   day, and T69's DELIVERED clause becomes decidable rather than in-session.

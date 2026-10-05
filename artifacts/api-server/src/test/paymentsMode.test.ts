@@ -131,5 +131,8 @@ describe("mockIdentityPermitted", () => {
     assert.equal(mockIdentityPermitted({ NODE_ENV: "production" } as any), false);
     assert.equal(mockIdentityPermitted({ NODE_ENV: "development", REPLIT_DEPLOYMENT: "1" } as any), false);
     assert.equal(mockIdentityPermitted({ NODE_TEST_CONTEXT: "child-v8", REPLIT_DEPLOYMENT: "1" } as any), false);
+    // PRESENT counts, even empty: Replit sets "1" or leaves it unset, so an empty value is a blanked marker, not a local run.
+    assert.equal(mockIdentityPermitted({ NODE_ENV: "development", REPLIT_DEPLOYMENT: "" } as any), false);
+    assert.equal(mockIdentityPermitted({ NODE_ENV: "development", REPLIT_DEPLOYMENT: undefined } as any), true);
   });
 });
