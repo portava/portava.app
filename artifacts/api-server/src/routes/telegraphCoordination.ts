@@ -34,6 +34,7 @@ import { logger as rootLogger } from "../lib/logger.js";
 import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js";
 import { emitCoordinationCompleted, publishToThread } from "../lib/telegraphEvents.js";
 import { createCoordinationSession } from "../services/telegraph/coordinationSessions.js";
+import { projectCloseout, projectNextStep, projectSharedRides } from "../services/telegraph/coordinationStages.js";
 import {
   COORDINATION_ACTIONS,
   COORDINATION_KINDS,
@@ -850,8 +851,21 @@ router.get(
       })),
     };
 
+    // §9's per-state cells nothing else produced: Active's NEXT STEP,
+    // Returning's SHARED TRANSPORT and Complete's CLOSEOUT. Pure projections
+    // over the rows already read above — see services/telegraph/coordinationStages.ts.
+    const stages = {
+      nextStep: projectNextStep({ state, plan: view.plan, decisions, commitments, rendezvous: view.rendezvous, nowMs }),
+      sharedRides: projectSharedRides(
+        parsedRows.filter((r) => r.kind === "ACTION_PROPOSAL"),
+        parsedRows.filter((r) => r.kind === "ACTION_RESPONSE"),
+        activeMemberIds,
+      ),
+      closeout: projectCloseout({ state, plan, arrivedCount: view.arrivedCount, nowMs }),
+    };
+
     res.status(200).json({
-      coordination: view,
+      coordination: { ...view, ...stages },
       /**
        * §9.1, stated in the response rather than only in a comment: every
        * entry in `quickStates` is what a person SAID. `state` is DERIVED from

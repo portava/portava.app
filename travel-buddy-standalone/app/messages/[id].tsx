@@ -2091,7 +2091,7 @@ export default function TelegraphThread() {
       {/* Telegraph §2.2's optional coordination panel / §9's coordination
           mode. Renders only while the thread is actually coordinating, or
           while a decision or commitment is unresolved. */}
-      {id ? <CoordinationPanel threadId={id} /> : null}
+      {id ? <CoordinationPanel threadId={id} viewerId={userId ?? null} onOpenRecap={threadRecap.available ? () => setShowRecap(true) : undefined} onShareLocation={() => setTypedCompose('LOCATION')} /> : null}
 
       <FlatList
         windowSize={9}
