@@ -94,7 +94,7 @@ import { getRestrictionState, DegradedPermissionCheckError } from '../services/t
 import { processTagging } from '../services/tagging/TaggingService.js';
 import { enrichSpans } from '../lib/enrichSpans';
 import { circleThreadTitle } from '../lib/displayName'; import { readRecentMessages, readRosterPaged, selectByIdsChunked, asSupabaseResult, asPageResult, sortByActivityDesc, nameVisibilitySetChunked, catchUpInbox, readNewestVisibleMessage, mapLimit, INBOX_CATCHUP_CONCURRENCY } from '../services/telegraph/inboxReads.js'; // past db-max-rows (TELEGRAPH lane 2026-10-03)
-import { NotificationService } from '../services/notifications/NotificationService.js';
+import { NotificationService } from '../services/notifications/NotificationService.js'; import { readThreadNotificationStates, NO_THREAD_CHOICE } from '../services/telegraph/threadNotificationState.js'; import { decideThreadNotification } from '../domain/telegraph/policies/threadNotificationPolicy.js'; // §30A.6, census T398 — on this line so no cited line moves
 import { NotificationRouter } from '../services/notifications/NotificationRouter.js';
 import { readBlockExclusions, isExcluded } from '../lib/exclusionSet.js';
 
@@ -3101,10 +3101,26 @@ router.post('/threads/:threadId/messages', async (req, res) => {
           req.log.warn({ err: taggerProfileErr, messageId: m.id },
             'mention notification: tagger profile unreadable — naming nobody rather than @someone');
         }
+        // §30A.6 (census T398): each tagged MEMBER's thread choice decides the
+        // notification. muted_at used to be stored and never consulted here, so
+        // a muted thread notified exactly like an unmuted one. A failed read of
+        // that choice suppresses (it is not "not muted"); a tagged person with
+        // no active membership has no thread choice to apply.
+        const notifyStates = await readThreadNotificationStates(sc, threadId, taggedIds);
+        const notifyNowMs = Date.now();
+        const deliverTo = taggedIds.filter((taggedId) => {
+          const decision = decideThreadNotification({
+            cause: 'MENTION',
+            state: notifyStates.ok ? (notifyStates.states.get(taggedId) ?? NO_THREAD_CHOICE) : null,
+            nowMs: notifyNowMs,
+          });
+          if (!decision.deliver) req.log.info({ threadId, messageId: m.id, reason: decision.reason }, 'mention notification withheld by the member\'s thread notification policy');
+          return decision.deliver;
+        });
         const notifSvc    = new NotificationService(sc);
         const notifRouter  = new NotificationRouter(sc);
         await Promise.allSettled(
-          taggedIds.map(async (taggedId) => {
+          deliverTo.map(async (taggedId) => {
             const row = await notifSvc.create({
               userId: taggedId,
               eventType: 'pulse.user_tagged',

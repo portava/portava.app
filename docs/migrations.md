@@ -3771,3 +3771,33 @@ the function. `rent_buddy_enabled` is FALSE in production and this file does not
 
 **Rollback:** re-apply `2330`'s definition of the function. There is no dependent object, so the revert
 is one statement and loses nothing.
+
+## 2026-10-05 — `4090_telegraph_thread_notification_policy.sql`, written and NOT applied anywhere (lane T2)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `4090_telegraph_thread_notification_policy.sql` | **not applied** | **not applied** |
+
+**What it is.** Telegraph §30A.6's per-thread notification policy (census-telegraph T398). Two columns on
+`message_thread_members` — `notification_level text NOT NULL DEFAULT 'all'` with a CHECK of
+`all | mentions | important | muted`, and `muted_until timestamptz NULL` (a temporary mute, read rather
+than swept) — and the flag `telegraph_thread_notification_policy_enabled`, seeded **FALSE**. Nothing is
+backfilled; a postcondition refuses a row carrying a level or a temporary mute.
+
+**What works without it.** The live defect T398 found — `muted_at` was stored and never consulted when a
+notification was created, so an @mention in a muted thread notified the member — is fixed in code on every
+deployment: the mention dispatch in `routes/messaging.ts` decides through
+`domain/telegraph/policies/threadNotificationPolicy.ts`, which reads `muted_at` as MUTED. With the flag
+OFF no code names either new column; `PUT /api/threads/:id/notification-policy` stores ALL and MUTED
+through `muted_at` and refuses MENTIONS, IMPORTANT and a temporary mute with `409 feature_disabled`.
+
+**Flag ON (after the apply):** the route reads and writes both columns (keeping `muted_at` equal to
+"MUTED" so the inbox icon agrees), and every thread-scoped notification the dispatch decides honours the
+level. SAFETY is never suppressed by any level.
+
+**Prefix band.** 4090 is in lane T2's band (4090-4119); the 4000-4999 range was opened by lane D's
+`migrationPrefixRules` change, cherry-picked unchanged onto this branch.
+
+**Rollback:** `db/rollback/2026-10-05-4090-telegraph-thread-notification-policy-rollback.sql` drops the
+two columns and the CHECK, deletes the flag row only if it still carries this file's seed description,
+and deletes the ledger row. Turning the flag off is almost always what is wanted instead.

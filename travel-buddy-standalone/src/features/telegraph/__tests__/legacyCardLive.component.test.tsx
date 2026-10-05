@@ -133,7 +133,7 @@ describe('T411 — the action row is the server’s current actions', () => {
     mockedResolve.mockResolvedValue(resolved('HIDDEN_GEM', GEM, {}, ['MEET_HERE']));
     mockedPost.mockResolvedValue({ ok: true, data: { id: 'm1' } } as Awaited<ReturnType<typeof postCoordinationKind>>);
     await render(<DiscoveryCardMessage body={discoveryBody} mine={false} threadId={THREAD} />);
-    fireEvent.press(await screen.findByTestId('discovery-card-meet-here'));
+    await fireEvent.press(await screen.findByTestId('discovery-card-meet-here'));
     expect(mockedPost).toHaveBeenCalledTimes(1);
     const [threadArg, kindArg, payloadArg] = mockedPost.mock.calls[0]!;
     expect(threadArg).toBe(THREAD);

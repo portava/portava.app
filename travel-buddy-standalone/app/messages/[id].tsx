@@ -36,7 +36,7 @@ import { CallHistoryMessage } from '../../src/components/calls/CallHistoryMessag
 import { canShowThreadCallButtons, threadCallContextType } from '../../src/components/calls/callEntryGating';
 import { getBooking } from '../../src/services/rentABuddy';
 import { useThreadMessages, useLanguageSettings, useOutgoingRequestStatus } from '../../src/hooks/useMessaging';
-import { useConversationProjection } from '../../src/features/telegraph/conversation/useConversationProjection.ts'; import { offersPlanControl, treatAsE2eeForEdit, showsE2eeBadge, memberCountOf } from '../../src/features/telegraph/conversation/conversationProjection.ts'; // §24 / census T295: asked of the server, not read from raw tables
+import { useConversationProjection } from '../../src/features/telegraph/conversation/useConversationProjection.ts'; import { ThreadNotificationSheet } from '../../src/features/telegraph/settings/ThreadNotificationSheet.tsx'; import { offersPlanControl, treatAsE2eeForEdit, showsE2eeBadge, memberCountOf } from '../../src/features/telegraph/conversation/conversationProjection.ts'; // §24 / census T295: asked of the server, not read from raw tables
 import { useTrip } from '../../src/hooks/useBackend';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, avatar, icon } from '../../src/theme/tokens';
@@ -1226,7 +1226,7 @@ export default function TelegraphThread() {
   const [blockingUser, setBlockingUser] = useState(false);
   const [showSafetySheet, setShowSafetySheet] = useState(false);
   const [hideAiSuggestions, setHideAiSuggestions] = useState(false);
-  const [threadIsMuted, setThreadIsMuted] = useState(muted === '1'); // the inbox passes the server's mutedAt; it used to start "unmuted" always
+  const [threadIsMuted, setThreadIsMuted] = useState(muted === '1'); const [showNotificationSheet, setShowNotificationSheet] = useState(false); // §30A.6: long-press the mute icon for ALL / MENTIONS / IMPORTANT / temporary mute // the inbox passes the server's mutedAt; it used to start "unmuted" always
   const [showCompassTray, setShowCompassTray] = useState(false);
   const [compassTelegraphEnabled, setCompassTelegraphEnabled] = useState<null | boolean>(null);
   const [dismissedAiMsgIds, setDismissedAiMsgIds] = useState<Set<string>>(new Set());
@@ -1956,6 +1956,8 @@ export default function TelegraphThread() {
               hitSlop={8}
               style={styles.headerIconBtn}
               accessibilityLabel={threadIsMuted ? 'Unmute thread' : 'Mute thread'}
+              accessibilityHint="Long press for notification options"
+              onLongPress={() => setShowNotificationSheet(true)}
               onPress={async () => {
                 const next = !threadIsMuted;
                 const r = await muteThread(id ?? '', next); // the icon shows what the server holds, not what was asked
@@ -2512,6 +2514,7 @@ export default function TelegraphThread() {
         />
       )}
 
+      <ThreadNotificationSheet visible={showNotificationSheet} threadId={id ?? null} onClose={() => setShowNotificationSheet(false)} onChanged={(p) => setThreadIsMuted(p.level === 'MUTED')} />
       {/* Thread safety / overflow controls */}
       <ThreadSafetySheet
         visible={showSafetySheet}
