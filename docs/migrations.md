@@ -3771,3 +3771,24 @@ the function. `rent_buddy_enabled` is FALSE in production and this file does not
 
 **Rollback:** re-apply `2330`'s definition of the function. There is no dependent object, so the revert
 is one statement and loses nothing.
+
+## 2026-10-05 — `3970_trip_private_anchor_shares.sql`, written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3970_trip_private_anchor_shares.sql` | **not applied** | **not applied** |
+
+**What it is.** `public.trip_private_anchor_shares` — one row per grant an anchor's owner made
+(census-trips TR256; the owner's Trips decision of 2026-10-04: *"Private anchors: Owner-only by
+default. The owner can share an individual anchor with selected trip members; trip membership or
+organizer status alone does not grant access."*). Four `ON DELETE CASCADE` foreign keys (the plan
+item, the trip, the owner, the member), RLS on with no policy, every client privilege revoked, and the
+flag `trip_private_anchor_sharing_enabled` seeded FALSE. Postconditions assert all of that.
+
+**Nothing waits on the press.** The access rule is in code and unconditional: the map projection now
+serves a private anchor to its creator only (it served every member's to every member before). With
+3970 absent, the reader treats 42P01 as zero grants — the owner-only default, exactly — and the grant
+route answers 503 rather than pretending to share.
+
+**Rollback:** `db/rollback/2026-10-05-3970-trip-private-anchor-shares-rollback.sql` — refuses while the
+flag is TRUE or any grant row exists, then drops the table, the flag row and the ledger row.
