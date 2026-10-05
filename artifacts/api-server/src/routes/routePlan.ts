@@ -31,6 +31,10 @@ import { deriveIntentMode } from "../compass/CompassIntentModeEngine.js";
 import type { CompassContext } from "../compass/types.js";
 import { makeConfidence } from "../lib/liveIntelligence.js";
 import { resolveLocalHour } from "../lib/localTime.js";
+import { canSeePlanItemLocation, PLAN_ITEM_PRIVACY_COLUMNS } from "../domain/trips/policies/privateAnchorAccess.js";
+import { planItemAccessFor } from "../server/trips/privateAnchorShares.js";
+import { ownerOnlyAccess } from "../domain/trips/policies/privateAnchorAccess.js";
+import { logger } from "../lib/logger.js";
 
 const router = Router();
 const UUID = /^[0-9a-f-]{36}$/i;
@@ -283,7 +287,7 @@ router.post("/route-plans", asyncHandler(async (req, res) => {
     }
   }
 
-  const fullPlan = await fetchFullPlan(client, planId);
+  const fullPlan = await fetchFullPlan(client, planId, user.id);
 
   // census-media §21 — §45 "Media → Route". A route saved from a media item's
   // experience chain (the rail's save_route action sends `originMediaId`) is
@@ -320,7 +324,7 @@ router.get("/route-plans/:id", asyncHandler(async (req, res) => {
   const { id } = req.params;
   if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid plan id"); return; }
 
-  const fullPlan = await fetchFullPlan(client, id);
+  const fullPlan = await fetchFullPlan(client, id, user.id);
   if (!fullPlan) { sendError(res, "not_found", "Route plan not found"); return; }
 
   const plan = fullPlan.plan as any;
@@ -369,7 +373,7 @@ router.get("/route-plans/for-trip/:tripId", asyncHandler(async (req, res) => {
   const chosen = list.find((p) => p.status === "active") ?? list[0] ?? null;
   if (!chosen) { res.json(null); return; }
 
-  const fullPlan = await fetchFullPlan(client, chosen.id);
+  const fullPlan = await fetchFullPlan(client, chosen.id, user.id);
   res.json(fullPlan ?? null);
 }));
 
@@ -814,7 +818,7 @@ router.delete("/route-plans/:id", asyncHandler(async (req, res) => {
 
 // ── Helper: fetch full plan ───────────────────────────────────────────────────
 
-async function fetchFullPlan(client: ReturnType<typeof import("../lib/supabase.js").getServiceClient>, id: string) {
+async function fetchFullPlan(client: ReturnType<typeof import("../lib/supabase.js").getServiceClient>, id: string, viewerId: string) {
   const { data: plan } = await (client as any)
     .from("route_plans")
     .select("*")
@@ -842,14 +846,22 @@ async function fetchFullPlan(client: ReturnType<typeof import("../lib/supabase.j
   let tripAccommodationLocation: { lat: number; lng: number; label?: string } | null = null;
   const tripId = (plan as Record<string, unknown>).trip_id as string | null;
   if (tripId) {
-    const { data: accommodationItem } = await (client as any)
+    // census-trips §81 (TR256): the stay this viewer may see — their own, a
+    // granted one, or one not marked private. Before, the FIRST accommodation
+    // item was served whoever had added it, so a crew member received another
+    // member's private hotel coordinates on every route-plan read. The read's
+    // error is bound: an unreadable plan is no stay shown, not someone's.
+    const { data: stays, error: stayErr } = await (client as any)
       .from("trip_plan_items")
-      .select("title, location_name, lat, lng")
+      .select(`id, title, location_name, lat, lng, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
       .eq("trip_id", tripId)
       .eq("category", "accommodation")
+      .is("removed_at", null)
       .order("day_date", { ascending: true })
-      .limit(1)
-      .maybeSingle();
+      .limit(20);
+    if (stayErr) logger.warn({ err: stayErr.message, tripId }, "route plan: accommodation unreadable — no stay shown");
+    const access = getServiceClient() ? await planItemAccessFor(getServiceClient()!, tripId, viewerId) : ownerOnlyAccess(viewerId, "unread");
+    const accommodationItem = stayErr ? null : ((stays ?? []) as any[]).find((s) => canSeePlanItemLocation(access, s)) ?? null;
 
     if (accommodationItem?.lat != null && accommodationItem?.lng != null) {
       const sl = { lat: accommodationItem.lat, lng: accommodationItem.lng, label: accommodationItem.location_name ?? accommodationItem.title } as Record<string, unknown>;

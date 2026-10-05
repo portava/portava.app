@@ -53,6 +53,8 @@ import {
 } from "../domain/trips/services/TripOfflineBundle.js";
 import { buildTripRouteChainProjection } from "../domain/trips/projections/TripRouteChainProjection.js";
 import { buildTripFreedomProjection } from "../domain/trips/projections/TripFreedomProjection.js";
+import { withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS } from "../domain/trips/policies/privateAnchorAccess.js";
+import { planItemAccessFor } from "../server/trips/privateAnchorShares.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripOffline" });
@@ -80,7 +82,7 @@ router.get("/trips/:tripId/offline-bundle", asyncHandler(async (req, res) => {
   if (version === null) { sendTripRefusal(res, "degraded_unavailable", "TRIP_VERSION_UNREADABLE", "The trip carries no version; a bundle without one cannot be told stale"); return; }
 
   const { data: planRows, error: planErr } = await sc.from("trip_plan_items")
-    .select("id, title, status, day_date, starts_at, ends_at, location_name")
+    .select(`id, title, status, day_date, starts_at, ends_at, location_name, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
     .eq("trip_id", tripId).is("removed_at", null)
     .order("day_date", { ascending: true, nullsFirst: false }).order("starts_at", { ascending: true, nullsFirst: false });
   if (planErr) { log.warn({ err: planErr.message, tripId }, "offline bundle: plan unreadable — refusing"); sendTripRefusal(res, "degraded_unavailable", "TRIP_PROJECTION_UNAVAILABLE", "The plan could not be read; a bundle without it would be a lie about the trip"); return; }
@@ -100,7 +102,8 @@ router.get("/trips/:tripId/offline-bundle", asyncHandler(async (req, res) => {
   } else {
     commitmentsReading = "trip_operational_projections_enabled is off: commitments are not in this bundle";
   }
-  const plans: BundlePlan[] = ((planRows ?? []) as any[]).map((p) => ({ id: String(p.id), title: String(p.title ?? ""), status: String(p.status ?? ""), dayDate: p.day_date ?? null, startsAt: p.starts_at ?? null, endsAt: p.ends_at ?? null, locationName: p.location_name ?? null }));
+  // §81: another member's private place travels in the bundle as a slot.
+  const plans: BundlePlan[] = withholdPrivatePlanItems((planRows ?? []) as any[], await planItemAccessFor(sc, tripId, user.id)).map((p) => ({ id: String(p.id), title: String(p.title ?? ""), status: String(p.status ?? ""), dayDate: p.day_date ?? null, startsAt: p.starts_at ?? null, endsAt: p.ends_at ?? null, locationName: p.location_name ?? null }));
   const reservations = ((resRows ?? []) as any[]).filter((r) => r.status !== "cancelled" && r.status !== "dismissed")
     .map((r) => ({ id: String(r.id), title: String(r.title ?? ""), locationName: r.location_name ?? null, startsAt: r.starts_at ?? null }));
 
@@ -110,19 +113,19 @@ router.get("/trips/:tripId/offline-bundle", asyncHandler(async (req, res) => {
   // TR337, TR341): §62's route chain and the §7.3 windows, both read under the
   // same gate, each as its own §21.2 decision; either failing to read is said,
   // not refused — the plan and the addresses still travel.
-  const routeAndContext = await readRouteAndContextForBundle(sc, tripId, gate.enabled);
+  const routeAndContext = await readRouteAndContextForBundle(sc, tripId, gate.enabled, user.id);
   const bundle = buildOfflineBundle({ tripId, sourceTripVersion: version, commitments, plans, reservations, meetingPoints, ...routeAndContext }, Date.now());
   const signed = signOfflineBundle(bundle, secret);
   res.json({ ...signed, readings: { commitments: commitmentsReading, selectedRoute: bundle.notCarried.selectedRoute, certifiedContext: bundle.contents.certifiedContext.windowsReading, staleness: bundleStaleness(bundle, Date.now(), version).detail } });
 }));
 
-async function readRouteAndContextForBundle(sc: any, tripId: string, gateEnabled: boolean): Promise<Pick<BundleInputs, "selectedRoute" | "routeReading" | "freeWindows" | "windowsDecisionId" | "windowsReading">> {
+async function readRouteAndContextForBundle(sc: any, tripId: string, gateEnabled: boolean, viewerId: string): Promise<Pick<BundleInputs, "selectedRoute" | "routeReading" | "freeWindows" | "windowsDecisionId" | "windowsReading">> {
   if (!gateEnabled) {
     const off = "trip_operational_projections_enabled is off: not read for this bundle";
     return { selectedRoute: null, routeReading: off, freeWindows: null, windowsDecisionId: null, windowsReading: off };
   }
   let selectedRoute: BundleRoute | null = null; let routeReading = "";
-  const chain = await buildTripRouteChainProjection(sc, tripId);
+  const chain = await buildTripRouteChainProjection(sc, tripId, { viewerId });
   if (chain.ok) {
     const p = chain.projection;
     selectedRoute = {

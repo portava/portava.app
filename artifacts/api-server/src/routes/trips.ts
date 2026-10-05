@@ -25,7 +25,7 @@ import {
 } from "../domain/trips/policies/tripPlanPrivacy.js";
 import { isMissingColumnError } from "../lib/capability/schemaCapability.js";
 import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
-import { toCamel, readPlanItemsInOrder } from "./plan.js";
+import { toCamel, readPlanItemsInOrder } from "./plan.js"; import { withholdPrivatePlanItems } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, privateItemEditRefusal, clearAnchorGrantsForItem } from "../server/trips/privateAnchorShares.js";
 import { logTripActivity, findTripActivityByKey } from "../domain/trips/events/tripActivityLog.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
@@ -1751,7 +1751,8 @@ router.get("/trips/:tripId/plan", async (req, res) => {
 
   // Cast to any[] — explicit SELECT string causes Supabase TS to infer GenericStringError
   // for narrowed column sets; the DB-side trim is still in effect at runtime.
-  const rows = (data as any[]) ?? [];
+  // census-trips §81: another member's private place is listed as a slot, not a place.
+  const rows = withholdPrivatePlanItems((data as any[]) ?? [], await planItemAccessFor(getServiceClient() ?? client, tripId, user.id));
 
   // Fetch cancelled meetup IDs for cancelled_source advisory warning
   const meetupSourceIds = rows
@@ -1957,6 +1958,12 @@ router.post("/trips/:tripId/plan/items", async (req, res) => {
   res.status(201).json(toCamel(item));
 });
 
+/** census-trips §81.3: drop every grant on a plan item that stopped being private or was removed. Logged, never fatal: the read-time rule already denies such a grant. */
+async function clearGrantsOnItem(tripId: string, itemId: string, req: any): Promise<void> {
+  const sc = getServiceClient();
+  if (!sc || !(await clearAnchorGrantsForItem(sc, itemId))) req.log?.warn?.({ tripId, itemId }, "private-anchor grants not cleared for this item; the read-time rule still denies them");
+}
+
 // ── PATCH /trips/:tripId/plan/items/:itemId ───────────────────────────────────
 
 router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
@@ -1978,6 +1985,9 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
 
   const auth = await canEditPlanItem(client, tripId, itemId, user.id);
   if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
+  // census-trips §81: another member's private item is theirs to change — the organizer's edit would read it back, or flip it public.
+  const privateRefusal = await privateItemEditRefusal(getServiceClient() ?? client, tripId, itemId, user.id);
+  if (privateRefusal) { sendError(res, privateRefusal.code, privateRefusal.message); return; }
 
   const dbPatch: Record<string, any> = { updated_at: new Date().toISOString() };
   if (patch.title             !== undefined) dbPatch.title               = patch.title;
@@ -2027,6 +2037,7 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
     // §21.1 opportunity_completed_total — a §13 opportunity's plan, done.
     recordOpportunityCompletion(planCommandTypeForPatch(patch), r.result, tripId, r.duplicate);
     setTripVersionHeader(res, r.version);
+    if ((r.result as any)?.location_is_private === false) await clearGrantsOnItem(tripId, itemId, req); // §81.3
     res.json(toCamel(r.result));
     return;
   }
@@ -2089,6 +2100,7 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
     idempotency_key: suppliedKey,
   });
 
+  if ((updated as any)?.location_is_private === false) await clearGrantsOnItem(tripId, itemId, req); // §81.3: an item made public keeps no grants that would revive if it went private again
   res.json(toCamel(updated));
 });
 
@@ -2125,6 +2137,7 @@ router.patch("/trips/:tripId/plan/items/:itemId/remove", async (req, res) => {
     });
     if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
     setTripVersionHeader(res, r.version);
+    await clearGrantsOnItem(tripId, itemId, req); // §81.3
     res.json({ status: "removed", itemId });
     return;
   }
@@ -2138,6 +2151,7 @@ router.patch("/trips/:tripId/plan/items/:itemId/remove", async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "remove plan item"); sendError(res, "db_error", error.message); return; }
 
+  await clearGrantsOnItem(tripId, itemId, req); // §81.3: a removed item takes its grants with it, so nothing revives
   res.json({ status: "removed", itemId });
 });
 
@@ -2174,6 +2188,7 @@ router.delete("/trips/:tripId/plan/items/:itemId", async (req, res) => {
     });
     if (!r.ok) { sendKernelRejection(res, r, req.log); return; }
     setTripVersionHeader(res, r.version);
+    await clearGrantsOnItem(tripId, itemId, req); // §81.3
     res.status(204).send();
     return;
   }
@@ -2186,6 +2201,7 @@ router.delete("/trips/:tripId/plan/items/:itemId", async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "delete plan item"); sendError(res, "db_error", error.message); return; }
 
+  await clearGrantsOnItem(tripId, itemId, req); // §81.3: a removed item takes its grants with it, so nothing revives
   res.status(204).send();
 });
 

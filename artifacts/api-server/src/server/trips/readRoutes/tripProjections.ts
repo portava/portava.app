@@ -87,6 +87,8 @@ import { buildTripTodayProjection } from "../../../domain/trips/projections/Trip
 import { explainTripDecisionFrom, DECISION_RETENTION } from "../../../domain/trips/services/TripDecisionLedger.js";
 import { runTripCloseout } from "../../../domain/trips/services/TripCloseoutService.js";
 import { detectPlanOverlaps } from "../../../domain/trips/invariants/TripFreedomEngine.js";
+import { withholdPrivatePlanItems } from "../../../domain/trips/policies/privateAnchorAccess.js";
+import { planItemAccessFor } from "../privateAnchorShares.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripProjections" });
@@ -172,7 +174,7 @@ router.get("/trips/:tripId/timeline", asyncHandler(async (req, res) => {
     sendTripRefusal(res, "degraded_unavailable", "TRIP_PROJECTION_UNAVAILABLE", "The plan could not be read right now. Please try again shortly.");
     return;
   }
-  const rows = ((data ?? []) as any[]);
+  const rows = withholdPrivatePlanItems((data ?? []) as any[], await planItemAccessFor(sc, tripId, user.id)); // census-trips §81: a slot, not a place
 
   // Cancelled source meetups, exactly as /plan: an unreadable `meetups` read
   // would leave this set empty, which is what "nothing was cancelled" looks
@@ -261,7 +263,7 @@ router.get("/trips/:tripId/route-chain", asyncHandler(async (req, res) => {
   const membership = await requireTripMember(sc, tripId, user.id);
   if (!membership) { sendTripRefusal(res, "not_member", "TRIP_AUTH_NOT_CREW", "You must be an accepted trip member to view the route chain"); return; }
 
-  const built = await buildTripRouteChainProjection(sc, tripId);
+  const built = await buildTripRouteChainProjection(sc, tripId, { viewerId: user.id });
   if (!built.ok) { refuseBuild(res, built); return; }
   res.json(built.projection);
 }));

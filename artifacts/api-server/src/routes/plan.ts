@@ -381,6 +381,8 @@ function toCamel(row: Record<string, any>, opts: { stripCoords?: boolean; warnin
      */
     privacyScope: row.privacy_scope ?? null,
     lockType: row.lock_type ?? "flexible",
+    // census-trips §81: another member's private place, served as a slot (title, place and notes withheld).
+    ...(row.location_withheld === true ? { locationWithheld: true } : {}),
     ...coords,
     warnings: opts.warnings ?? [],
     createdAt: row.created_at,

@@ -186,3 +186,22 @@ export async function clearAnchorGrantsForMember(sc: SupabaseClient, tripId: str
 export async function clearAnchorGrantsForItem(sc: SupabaseClient, planItemId: string): Promise<boolean> {
   return clearWhere(sc, (q) => q.eq("plan_item_id", planItemId));
 }
+
+/**
+ * Editing another member's private item would read it back and could flip it
+ * public, so it is the creator's alone — the trip's organizer included
+ * (OD-TRIP-3: "trip membership or organizer status alone does not grant
+ * access"). Returns the refusal to send, or null to proceed. An unreadable item
+ * refuses (503) rather than letting the edit through blind.
+ */
+export async function privateItemEditRefusal(
+  sc: SupabaseClient, tripId: string, itemId: string, userId: string,
+): Promise<null | { code: "forbidden" | "degraded_unavailable"; message: string }> {
+  const { data, error } = await sc.from("trip_plan_items").select("trip_id, creator_id, location_is_private").eq("id", itemId).maybeSingle();
+  if (error) return { code: "degraded_unavailable", message: "We could not check this plan item right now. Please try again shortly." };
+  const row = data as { trip_id?: string; creator_id?: string | null; location_is_private?: boolean | null } | null;
+  if (!row || row.trip_id !== tripId) return null; // the caller's own not-found handling answers
+  if (row.location_is_private === false) return null;
+  if (row.creator_id === userId) return null;
+  return { code: "forbidden", message: "Only the person who added a private place can change it" };
+}

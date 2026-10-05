@@ -49,6 +49,8 @@ import {
 } from "../services/TripSignals.js";
 import { recordTripDecision, persistTripDecision, TRIP_ENGINE_VERSIONS } from "../services/TripDecisionLedger.js";
 import { estimateTransportReliability, type ReliabilityEstimate } from "../services/tripTransportReliability.js";
+import { withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS } from "../policies/privateAnchorAccess.js";
+import { planItemAccessFor } from "../../../server/trips/privateAnchorShares.js";
 
 const log = logger.child({ mod: "tripPulseProjection" });
 
@@ -163,8 +165,10 @@ export async function buildTripPulseProjection(
   if ("refused" in stagesR) return stagesR.refused;
   const savedR = await read<any>("trip_saved_places", sc.from("trip_saved_places").select("id, place_id, place_name, place_type, lat, lng").eq("trip_id", tripId));
   if ("refused" in savedR) return savedR.refused;
-  const plansR = await read<any>("trip_plan_items", sc.from("trip_plan_items").select("id, title, category, status, starts_at, ends_at, lat, lng, location_name").eq("trip_id", tripId).is("removed_at", null));
+  const plansR = await read<any>("trip_plan_items", sc.from("trip_plan_items").select(`id, title, category, status, starts_at, ends_at, lat, lng, location_name, ${PLAN_ITEM_PRIVACY_COLUMNS}`).eq("trip_id", tripId).is("removed_at", null));
   if ("refused" in plansR) return plansR.refused;
+  // §81: another member's private place is a slot here — no point, so it can never become the location band's centre.
+  plansR.rows = withholdPrivatePlanItems(plansR.rows, await planItemAccessFor(sc, tripId, viewerId));
   const commitmentsR = await read<any>("trip_commitments", sc.from("trip_commitments").select("id, type, starts_at, required_arrival_at, place_id, source_ref").eq("trip_id", tripId));
   if ("refused" in commitmentsR) return commitmentsR.refused;
   const transportR = await read<any>("trip_transport_segments", sc.from("trip_transport_segments").select("id, mode, state, planned_departure_at, reliability").eq("trip_id", tripId));

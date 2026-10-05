@@ -37,6 +37,8 @@ import { withDepartureAssumptions } from "../services/TripDepartureAssumptions.j
 import { estimateTransportReliability } from "../services/tripTransportReliability.js";
 import { recordTripDecision, persistTripDecision, TRIP_ENGINE_VERSIONS } from "../services/TripDecisionLedger.js";
 import type { ArrivalAssumption } from "./TripFreedomProjection.js";
+import { ownerOnlyAccess, withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS } from "../policies/privateAnchorAccess.js";
+import { planItemAccessFor } from "../../../server/trips/privateAnchorShares.js";
 
 const log = logger.child({ mod: "tripRouteChainProjection" });
 const BOUND_PROVIDER = TRIP_TRAVEL_TIME_PROVIDER; // TR128/TR267: Routes API behind a daily quota + hard budget, straight-line fallback (owner decision 2026-10-04)
@@ -50,6 +52,8 @@ export interface RouteChainStop {
   endsAt: string | null;
   dayDate: string | null;
   locationName: string | null;
+  /** §81: another member's private place — a slot with no name, place or point. */
+  locationWithheld?: true;
   point: GeoPoint | null;
 }
 
@@ -108,7 +112,8 @@ const ms = (iso: string | null): number | null => { if (!iso) return null; const
 export async function buildTripRouteChainProjection(
   sc: any,
   tripId: string,
-  opts: { now?: Date } = {},
+  /** The viewer the chain is built FOR (census-trips §81: another member's private place is a slot, not a stop). Absent = nobody's private places. */
+  opts: { now?: Date; viewerId?: string | null } = {},
 ): Promise<RouteChainProjectionResult> {
   const now = opts.now ?? new Date();
   const gate = await tripOperationalProjectionsGate(sc);
@@ -123,10 +128,14 @@ export async function buildTripRouteChainProjection(
 
   const { data: items, error: iErr } = await sc
     .from("trip_plan_items")
-    .select("id, title, category, status, starts_at, ends_at, day_date, lat, lng, location_name")
+    .select(`id, title, category, status, starts_at, ends_at, day_date, lat, lng, location_name, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
     .eq("trip_id", tripId)
     .is("removed_at", null);
   if (iErr) { log.warn({ err: iErr.message, tripId }, "route chain: trip_plan_items unreadable — refusing"); return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: "The plan could not be read" }; }
+  // §81: another member's private place reaches this chain as a slot with no
+  // point, so it is unplaced and no hop is routed to or from it.
+  const access = opts.viewerId ? await planItemAccessFor(sc, tripId, opts.viewerId) : ownerOnlyAccess("");
+  const visibleItems = withholdPrivatePlanItems((items ?? []) as any[], access);
 
   const { data: members, error: mErr } = await sc
     .from("trip_members").select("user_id, status").eq("trip_id", tripId).in("role", ["owner", "co_host", "member", "viewer"]);
@@ -147,12 +156,13 @@ export async function buildTripRouteChainProjection(
   if (segErr) segments = { status: "unread", reason: `trip_transport_segments could not be read (${segErr.message ?? "unknown"}) — 2782 may not be applied here`, count: 0 };
   else { segRows = (segData ?? []) as any[]; segments = { status: "ok", reason: null, count: segRows.length }; }
 
-  const stops: RouteChainStop[] = ((items ?? []) as any[])
+  const stops: RouteChainStop[] = visibleItems
     .filter((p) => p.status !== "cancelled" && p.status !== "removed")
     .map((p) => ({
       planItemId: String(p.id), title: p.title ?? null, category: p.category ?? null, status: p.status ?? null,
       startsAt: p.starts_at ?? null, endsAt: p.ends_at ?? null, dayDate: p.day_date ?? null,
       locationName: p.location_name ?? null, point: point(p.lat, p.lng),
+      ...(p.location_withheld ? { locationWithheld: true as const } : {}),
     }));
   const unplaced: TripRouteChainProjection["unplaced"] = [];
   const placed = stops.filter((s) => {
