@@ -217,6 +217,9 @@ function makeClient(state: State) {
       then(f: any, r: any) { return resolve(false).then(f, r); },
     };
     async function resolve(single: boolean) {
+      if (table === "feature_flags" && (state as any).flagsUnreadable) {
+        return { data: null, error: { message: "feature_flags unavailable", code: "57014" }, count: null };
+      }
       if (pendingInsert) {
         const row = { id: "new-row", created_at: "2026-01-01T00:00:00.000Z", ...pendingInsert };
         const arr: any[] | undefined = (state as any)[table];
@@ -522,6 +525,75 @@ describe("the flag is a schema-presence gate: OFF must be the pre-2338 behaviour
         body: JSON.stringify({ locationPrecision: "street" }),
       });
       assert.equal(res.status, 400);
+    } finally { await app.close(); }
+  });
+});
+
+// ── verifier finding 7: an UNREADABLE precision gate must not publish more ───
+describe("the gate read FAILS: the read clamps, the write refuses — nothing is published at 'exact' by accident", () => {
+  const unreadable = (precision: string | undefined) => {
+    const st = stateWith(precision, true);
+    (st as any).flagsUnreadable = true;
+    return st;
+  };
+
+  it("a non-owner gets NO location when the gate cannot be read; the owner keeps their own", async () => {
+    // Nobody can tell what the owner chose: the gate read failed, so the column
+    // is not selected (this fake returns whole rows, so the row here simply
+    // carries no rung — what an unselected column looks like) and the clamp
+    // reads the missing rung as the coarsest one. isFlagEnabled answered
+    // `false` here and served LAT/LNG.
+    const app = await startApp(unreadable(undefined));
+    try {
+      const viewer = await getMemory(app.baseUrl, "viewer-tok");
+      assert.equal(viewer.status, 200);
+      assert.equal(viewer.body?.memory?.locationLat, null);
+      assert.equal(viewer.body?.memory?.locationLng, null);
+      assert.equal(viewer.body?.memory?.locationCity, null);
+      const owner = await getMemory(app.baseUrl, "owner-tok");
+      assert.equal(owner.body?.memory?.locationLat, LAT, "the owner's own coordinate is never clamped");
+    } finally { await app.close(); }
+  });
+
+  it("a CREATE that carries the owner's rung is refused retryably — never written with the column's DEFAULT standing in", async () => {
+    const state = unreadable(undefined);
+    const app = await startApp(state);
+    try {
+      const res = await fetch(`${app.baseUrl}/api/memories`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", connection: "close", Authorization: "Bearer owner-tok" },
+        body: JSON.stringify({ title: "New", visibility: "public", locationPrecision: "city" }),
+      });
+      assert.equal(res.status, 503);
+      assert.equal(state.inserts.filter((i) => i.table === "memories").length, 0, "no Memory may be written without the rung its owner chose");
+    } finally { await app.close(); }
+  });
+
+  it("a PATCH that carries the owner's rung is refused retryably, and the row is unchanged", async () => {
+    const state = unreadable("exact");
+    const app = await startApp(state);
+    try {
+      const res = await fetch(`${app.baseUrl}/api/memories/${MEM}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", connection: "close", Authorization: "Bearer owner-tok" },
+        body: JSON.stringify({ locationPrecision: "city" }),
+      });
+      assert.equal(res.status, 503);
+      assert.equal(state.memories[0].location_precision, "exact");
+    } finally { await app.close(); }
+  });
+
+  it("a CREATE that names no rung still works with the gate unreadable (nothing the owner chose is lost)", async () => {
+    const state = unreadable(undefined);
+    const app = await startApp(state);
+    try {
+      const res = await fetch(`${app.baseUrl}/api/memories`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", connection: "close", Authorization: "Bearer owner-tok" },
+        body: JSON.stringify({ title: "New", visibility: "public" }),
+      });
+      assert.equal(res.status, 201);
+      assert.equal(state.inserts.find((i) => i.table === "memories")!.payload.location_precision, undefined);
     } finally { await app.close(); }
   });
 });
