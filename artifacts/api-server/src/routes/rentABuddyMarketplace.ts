@@ -77,6 +77,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { createEarningsLedgerEntry } from "../lib/rentBuddyEarningsLedger.js";
+import { collectedInAppUsd, NOTHING_COLLECTED_WARNING } from "../lib/rentBuddyCollectedMoney.js";
 // The ONE reader of rent_buddy_fee_rules. The dashboard used to carry its own
 // `defaultFeePercent = 22`; see lib/rentBuddyFeeSchedule.ts for why a numeric
 // fallback was the defect rather than the safety net (M1 / M10).
@@ -2246,7 +2247,16 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
 
   const totalTips = sum(tips, "amount_usd");
   const completedTotal = sum(completed, "total_usd");
-  const depositCollected = sum(completed, "deposit_usd");
+  // M5 / `09` §1.3.1, the aggregate half. This was `depositCollected = sum(…,
+  // "deposit_usd")`, published as BOTH `depositCollected` and
+  // `inAppAmountCollected` — a buddy's own money screen told them a deposit had
+  // been taken, and for a `full_in_app` booking `deposit_usd` is the whole
+  // total, so it told them the entire booking value had been charged. The
+  // ledger writer was fixed to record 0 and this was not, so the two surfaces
+  // disagreed about the same bookings. The scheduled sum is still computed —
+  // what a booking is worth is not the false claim — but what it is NAMED now
+  // distinguishes "would be charged" from "was charged".
+  const depositScheduled = sum(completed, "deposit_usd");
   const cashBalanceDue = completed
     .filter((b) => b.cash_balance_confirmed_by_buddy !== true)
     .reduce((s, b) => s + Number(b.cash_balance_usd ?? 0), 0);
@@ -2261,7 +2271,12 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
 
   res.json({
     isEstimated: true,
-    warning: "All figures are estimates. Cash balance is tracked but not charged. Payout system not connected.",
+    // The warning used to stop one clause short of the truth: it said the CASH
+    // balance was not charged and that payouts were not connected, and said
+    // nothing about the in-app side — which is how it could sit directly above
+    // a non-zero "Deposit collected".
+    warning: "All figures are estimates. " + NOTHING_COLLECTED_WARNING +
+      " Cash balance is tracked but not charged. Payout system not connected.",
     today: {
       bookingCount: todayBkgs.length,
       bookings: todayBkgs,
@@ -2273,10 +2288,18 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
     completed: {
       count: completed.length,
       totalUsd: completedTotal,
-      depositCollected,
+      // What the bookings say WOULD be charged in app, under a name that does
+      // not assert it happened — the ledger row's `deposit_amount`, aggregated.
+      depositScheduled,
+      // Both of these are the ledger's `in_app_amount_collected`, aggregated:
+      // nothing has been collected, so nothing may be reported as collected.
+      // `depositCollected` is kept in the shape (at 0) rather than removed, for
+      // the same reason the ledger kept its column: the field is the place a
+      // real collection would eventually be reported.
+      depositCollected: collectedInAppUsd(depositScheduled),
       cashBalanceDue,
       cashBalanceConfirmed,
-      inAppAmountCollected: depositCollected,
+      inAppAmountCollected: collectedInAppUsd(depositScheduled),
     },
     tips: { total: totalTips, count: tips.length },
     // The rate and the level it came from, published together so a buddy can
@@ -2411,15 +2434,30 @@ router.get("/rent-a-buddy/admin/marketplace/analytics", async (req, res) => {
   const waitlist = (waitlistRes.data ?? []) as any[];
   const buddies = (buddiesRes.data ?? []) as any[];
 
-  // By city
-  const cityStats: Record<string, { bookings: number; revenue: number; deposit: number; cash: number; inApp: number }> = {};
+  // By city.
+  //
+  // M5 / `09` §1.3.1, the operator-facing half. `inApp` summed
+  // `full_in_app ? total_usd : deposit_usd` — the clearest statement of the
+  // defect anywhere in the tree, since it spells out that a full-in-app
+  // booking's ENTIRE value was being counted as money taken in app. Nothing is
+  // charged, so the collected figure is 0 and the booked figure keeps the
+  // number under `inAppScheduled`. An operator reading a launch decision off
+  // this screen was reading booked volume labelled as collected cash.
+  const cityStats: Record<string, {
+    bookings: number; revenue: number; deposit: number; cash: number;
+    inApp: number; inAppScheduled: number;
+  }> = {};
   for (const b of bookings) {
-    if (!cityStats[b.city]) cityStats[b.city] = { bookings: 0, revenue: 0, deposit: 0, cash: 0, inApp: 0 };
+    if (!cityStats[b.city]) {
+      cityStats[b.city] = { bookings: 0, revenue: 0, deposit: 0, cash: 0, inApp: 0, inAppScheduled: 0 };
+    }
     cityStats[b.city].bookings++;
     cityStats[b.city].revenue += Number(b.total_usd ?? 0);
     cityStats[b.city].deposit += Number(b.deposit_usd ?? 0);
     cityStats[b.city].cash += Number(b.cash_balance_usd ?? 0);
-    cityStats[b.city].inApp += b.payment_mode === "full_in_app" ? Number(b.total_usd ?? 0) : Number(b.deposit_usd ?? 0);
+    cityStats[b.city].inAppScheduled +=
+      b.payment_mode === "full_in_app" ? Number(b.total_usd ?? 0) : Number(b.deposit_usd ?? 0);
+    cityStats[b.city].inApp = collectedInAppUsd(cityStats[b.city].inAppScheduled);
   }
 
   // By category
@@ -2452,6 +2490,11 @@ router.get("/rent-a-buddy/admin/marketplace/analytics", async (req, res) => {
     if (b.available_now) supply[b.city].availableNow++;
   }
 
+  // Summed once: the booked deposit total is reported BOTH as `deposit` and as
+  // the input to the collected answer, and two reduces over the same rows is
+  // how two figures over one set come to disagree.
+  const depositBooked = bookings.reduce((s, b) => s + Number(b.deposit_usd ?? 0), 0);
+
   // Conversion
   const searches = events.filter((e) => e.event_type === "search").length;
   const completedCount = bookings.filter((b) => b.status === "completed").length;
@@ -2471,11 +2514,21 @@ router.get("/rent-a-buddy/admin/marketplace/analytics", async (req, res) => {
       byCity: cityStats,
       byCategory: catStats,
     },
+    // `revenue` here is BOOKED VALUE, never money received, and that is now
+    // said rather than implied. `admin/marketplace.tsx` rendered `deposit`
+    // under the label "Deposit collected", so this block was the fourth surface
+    // claiming a collection; `depositCollected` is published explicitly at 0 so
+    // that a consumer asking the collected question gets the honest answer
+    // instead of reading it off `deposit`.
     revenue: {
       total: bookings.reduce((s, b) => s + Number(b.total_usd ?? 0), 0),
-      deposit: bookings.reduce((s, b) => s + Number(b.deposit_usd ?? 0), 0),
+      deposit: depositBooked,
+      depositCollected: collectedInAppUsd(depositBooked),
       cashBalance: bookings.reduce((s, b) => s + Number(b.cash_balance_usd ?? 0), 0),
     },
+    isEstimated: true,
+    warning: NOTHING_COLLECTED_WARNING +
+      " Every figure here is booked value over the period, not money received.",
     conversion: { searches, completedBookings: completedCount, conversionRate },
     supply,
     waitlistDemand,
