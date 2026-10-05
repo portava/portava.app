@@ -16,6 +16,15 @@
  * renders a revoked notice instead of the snapshot when the source is gone.
  * A card with no threadId, or an unmappable sourceType, behaves exactly as it
  * did before — `unknown` is its own state and is never read as "revoked".
+ *
+ * TELEGRAPH §30A.10 / §30A.20 — LIVE, NOT A SNAPSHOT (census T413 / T448 /
+ * T411). When the resolve answers, the card draws the SERVER's projection —
+ * title, location, image, deep link — and nothing the sender serialised except
+ * their own caption; its actions are the server's current `actions` for this
+ * viewer (Add to Plan ⇐ ADD_TO_TRIP, Meet here ⇐ MEET_HERE). While the answer
+ * is loading it draws nothing from the source, and when a resolve was possible
+ * but failed it draws the reference only. The modes are decided in
+ * `features/telegraph/sharing/legacyCardView.ts`.
  */
 import React, { useState } from 'react';
 import {
@@ -34,6 +43,10 @@ import { TripWishlistPicker, type AddToTripPayload } from './discovery/TripWishl
 import { toggleSave } from '../services/discoveryBookmarks.ts'; import { saveDiscoveryCardViaTelegraph } from '../services/discoveryCardSave.ts';
 import { useShareRevocation, revokedLabel } from '../features/telegraph/sharing/useShareRevocation.ts';
 import { legacySourceTypeToObjectType } from '../features/telegraph/sharing/shareApi.ts';
+import { legacyCardMode, offeredCardActions, objectKindLabel, REFERENCE_COPY } from '../features/telegraph/sharing/legacyCardView.ts';
+import { postCoordinationKind } from '../features/telegraph/coordination/coordinationApi.ts';
+
+type Href = Parameters<typeof router.push>[0];
 
 export interface DiscoveryCardPayload {
   sourceId: string;
@@ -89,6 +102,7 @@ export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = 
     threadId,
     mappedType && payload?.sourceId ? { objectType: mappedType, objectId: payload.sourceId, messageId } : null,
   );
+  const mode = legacyCardMode(revocation, Boolean(threadId && mappedType && payload?.sourceId));
 
   if (revocation.state === 'unavailable') {
     return (
@@ -108,15 +122,126 @@ export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = 
     );
   }
 
+  if (mode === 'loading') {
+    return (
+      <View style={[card.wrap, mine && card.wrapMine]} testID="discovery-card-loading">
+        <Text style={[card.fallback, mine && { color: color.onInk + 'AA' }]}>Loading…</Text>
+      </View>
+    );
+  }
+
+  if (mode === 'reference') {
+    // A resolve was possible and could not answer. Draw the reference only —
+    // the kind, the sender's own caption and a way to open it — never the
+    // snapshot, which is exactly what a revoked place would still look like.
+    return (
+      <View style={[card.wrap, mine && card.wrapMine]} testID="discovery-card-reference">
+        <Text style={[card.brandLabel, mine && { color: color.onInk + 'BB' }]}>
+          {objectKindLabel(mappedType ?? 'PLACE').toUpperCase()}
+        </Text>
+        {payload.caption ? (
+          <Text style={[card.caption, mine && card.captionMine]} numberOfLines={2}>"{payload.caption}"</Text>
+        ) : null}
+        <Text style={[card.fallback, mine && { color: color.onInk + 'AA' }]}>{REFERENCE_COPY}</Text>
+        <Pressable
+          style={[card.actionBtn, mine && card.actionBtnMine]}
+          testID="discovery-card-view"
+          onPress={() => router.push(`/(tabs)/discovery?placeId=${encodeURIComponent(payload.sourceId)}` as Href)}
+        >
+          <ExternalLink size={11} color={mine ? color.onInk : color.signal} />
+          <Text style={[card.actionLabel, mine && card.actionLabelMine]}>View</Text>
+        </Pressable>
+      </View>
+    );
+  }
+
+  // `live`: the server's projection for THIS viewer, now. `legacy`: no resolve
+  // was possible (no thread, or a source type with no §5 family) — the pre-§5
+  // card, offering View only because there is no capability to derive more from.
+  const live = mode === 'live' && revocation.resolved?.available ? revocation.resolved : null;
+  const projection = live ? live.projection : null;
+  const offered = offeredCardActions(mode, live ? live.actions : []);
+  const shownTitle = projection ? projection.title : payload.title;
+  const shownPlace = projection ? projection.subtitle : payload.city;
+  const shownImage = projection ? projection.imageUrl : payload.imageUrl;
+  const shownBlurb = projection ? null : payload.blurb;
+  const shownPrice = projection ? null : payload.priceLevel;
+  const chipLabel = projection ? objectKindLabel(projection.objectType) : payload.category;
   const accentColor = CATEGORY_COLORS[payload.category.toLowerCase()] ?? CATEGORY_COLORS.place;
 
   const addPayload: AddToTripPayload = {
     id:       payload.sourceId,
-    name:     payload.title,
+    name:     shownTitle,
     category: payload.category,
     lat:      null,
     lng:      null,
   };
+
+  const proposeMeetHere = async () => {
+    if (!threadId || !projection) return;
+    const r = await postCoordinationKind(threadId, 'ACTION_PROPOSAL', {
+      action: 'MEET_HERE',
+      title: `Meet at ${projection.title}`.slice(0, 200),
+      objectType: projection.objectType,
+      objectId: projection.objectId,
+    });
+    if (r.ok) Alert.alert('Proposed', `You suggested meeting at ${projection.title}.`);
+    else Alert.alert('Could not propose', 'That suggestion did not reach the conversation. Please try again.');
+  };
+
+  // The three offered actions. Kept at the indentation they had inside the
+  // action row: census-discovery cites lines inside the Add and Save buttons.
+  const addToPlanButton = (
+          <Pressable
+            style={[card.actionBtn, mine && card.actionBtnMine]}
+            testID="discovery-card-add-to-plan"
+            onPress={() => setPickerVisible(true)}
+          >
+            <CalendarPlus size={11} color={mine ? color.onInk : color.signal} />
+            <Text style={[card.actionLabel, mine && card.actionLabelMine]}>Add to Plan</Text>
+          </Pressable>
+  );
+  const meetHereButton = (
+          <Pressable
+            style={[card.actionBtn, mine && card.actionBtnMine]}
+            testID="discovery-card-meet-here"
+            accessibilityRole="button"
+            accessibilityLabel={`Suggest meeting at ${shownTitle}`}
+            onPress={() => { void proposeMeetHere(); }}
+          >
+            <MapPin size={11} color={mine ? color.onInk : color.signal} />
+            <Text style={[card.actionLabel, mine && card.actionLabelMine]}>Meet here</Text>
+          </Pressable>
+  );
+  const saveButton = (
+          <Pressable
+            style={[card.actionBtn, mine && card.actionBtnMine]}
+            testID="discovery-card-save" onPress={async () => {
+              const viaTelegraph = await saveDiscoveryCardViaTelegraph(payload); if (viaTelegraph.kind === 'saved') { Alert.alert('Saved', viaTelegraph.message); return; } if (viaTelegraph.kind !== 'fallback') { Alert.alert('Could not save', viaTelegraph.message); return; }  // census-discovery §95 (A21, §81.4 R1): a Telegraph command first; with the server's telegraph_discovery_actions_enabled off it answers feature_disabled and the real save via discovery bookmarks below runs, unchanged (no fake success alerts)
+              try {
+                const res = await toggleSave({
+                  id: payload.sourceId,
+                  name: shownTitle,
+                  category: payload.category,
+                  type: payload.sourceType ?? null,
+                  address: payload.city ?? null,
+                  savedAt: Date.now(),
+                });
+                Alert.alert(
+                  res.added ? 'Saved' : 'Removed',
+                  res.added
+                    ? `"${shownTitle}" was added to your saved places.`
+                    : `"${shownTitle}" was removed from your saved places.`,
+                );
+              } catch {
+                Alert.alert('Could not save', 'Please try again.');
+              }
+            }}
+          >
+            <Bookmark size={11} color={mine ? color.onInk : color.signal} />
+            <Text style={[card.actionLabel, mine && card.actionLabelMine]}>Save</Text>
+          </Pressable>
+  );
 
   return (
     <>
@@ -129,42 +254,42 @@ export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = 
           <Text style={[card.brandLabel, mine && { color: color.onInk + 'BB' }]}>DISCOVERY</Text>
           <View style={[card.chip, { backgroundColor: accentColor + '22' }]}>
             <Text style={[card.chipText, { color: accentColor }]}>
-              {payload.category}
+              {chipLabel}
             </Text>
           </View>
         </View>
 
         {/* Thumbnail — may be a post-media reference for community photos,
             so it hydrates and shows a visible state when it cannot load. */}
-        {payload.imageUrl ? (
+        {shownImage ? (
           <DisplayMediaImage
-            uri={payload.imageUrl}
+            uri={shownImage}
             width={CARD_MAX_WIDTH}
             height={THUMBNAIL_HEIGHT}
             resizeMode="cover"
             style={card.thumbnail}
-            alt={payload.title}
+            alt={shownTitle}
           />
         ) : null}
 
         {/* Title */}
         <Text style={[card.title, mine && card.titleMine]} numberOfLines={2}>
-          {payload.title}
+          {shownTitle}
         </Text>
 
         {/* Location */}
         <View style={card.locRow}>
           <MapPin size={11} color={mine ? color.onInk + 'AA' : color.mute} />
-          <Text style={[card.loc, mine && card.locMine]} numberOfLines={1}>{payload.city}</Text>
-          {payload.priceLevel ? (
-            <Text style={[card.price, mine && card.priceMine]}> · {payload.priceLevel}</Text>
+          <Text style={[card.loc, mine && card.locMine]} numberOfLines={1}>{shownPlace ?? ''}</Text>
+          {shownPrice ? (
+            <Text style={[card.price, mine && card.priceMine]}> · {shownPrice}</Text>
           ) : null}
         </View>
 
         {/* Blurb */}
-        {payload.blurb ? (
+        {shownBlurb ? (
           <Text style={[card.blurb, mine && card.blurbMine]} numberOfLines={2}>
-            {payload.blurb}
+            {shownBlurb}
           </Text>
         ) : null}
 
@@ -175,55 +300,26 @@ export function DiscoveryCardMessage({ body, mine, threadId = null, messageId = 
           </Text>
         ) : null}
 
-        {/* Action row */}
+        {/* Action row — derived from the server's CURRENT actions for this viewer
+            (legacyCardView.offeredCardActions), never from the frozen payload. */}
         <View style={card.actions}>
           <Pressable
             style={[card.actionBtn, mine && card.actionBtnMine]}
+            testID="discovery-card-view"
             onPress={() => router.push(
-              payload.sourceId
-                ? (`/(tabs)/discovery?placeId=${encodeURIComponent(payload.sourceId)}` as any)
-                : ('/(tabs)/discovery' as any)
+              projection
+                ? (projection.deepLink as Href)
+                : payload.sourceId
+                  ? (`/(tabs)/discovery?placeId=${encodeURIComponent(payload.sourceId)}` as Href)
+                  : ('/(tabs)/discovery' as Href)
             )}
           >
             <ExternalLink size={11} color={mine ? color.onInk : color.signal} />
             <Text style={[card.actionLabel, mine && card.actionLabelMine]}>View</Text>
           </Pressable>
-          <View style={[card.divider, mine && card.dividerMine]} />
-          <Pressable
-            style={[card.actionBtn, mine && card.actionBtnMine]}
-            onPress={() => setPickerVisible(true)}
-          >
-            <CalendarPlus size={11} color={mine ? color.onInk : color.signal} />
-            <Text style={[card.actionLabel, mine && card.actionLabelMine]}>Add to Plan</Text>
-          </Pressable>
-          <View style={[card.divider, mine && card.dividerMine]} />
-          <Pressable
-            style={[card.actionBtn, mine && card.actionBtnMine]}
-            testID="discovery-card-save" onPress={async () => {
-              const viaTelegraph = await saveDiscoveryCardViaTelegraph(payload); if (viaTelegraph.kind === 'saved') { Alert.alert('Saved', viaTelegraph.message); return; } if (viaTelegraph.kind !== 'fallback') { Alert.alert('Could not save', viaTelegraph.message); return; }  // census-discovery §95 (A21, §81.4 R1): a Telegraph command first; with the server's telegraph_discovery_actions_enabled off it answers feature_disabled and the real save via discovery bookmarks below runs, unchanged (no fake success alerts)
-              try {
-                const res = await toggleSave({
-                  id: payload.sourceId,
-                  name: payload.title,
-                  category: payload.category,
-                  type: payload.sourceType ?? null,
-                  address: payload.city ?? null,
-                  savedAt: Date.now(),
-                });
-                Alert.alert(
-                  res.added ? 'Saved' : 'Removed',
-                  res.added
-                    ? `"${payload.title}" was added to your saved places.`
-                    : `"${payload.title}" was removed from your saved places.`,
-                );
-              } catch {
-                Alert.alert('Could not save', 'Please try again.');
-              }
-            }}
-          >
-            <Bookmark size={11} color={mine ? color.onInk : color.signal} />
-            <Text style={[card.actionLabel, mine && card.actionLabelMine]}>Save</Text>
-          </Pressable>
+          {offered.addToTrip ? <><View style={[card.divider, mine && card.dividerMine]} />{addToPlanButton}</> : null}
+          {offered.meetHere ? <><View style={[card.divider, mine && card.dividerMine]} />{meetHereButton}</> : null}
+          {offered.save ? <><View style={[card.divider, mine && card.dividerMine]} />{saveButton}</> : null}
         </View>
       </View>
 

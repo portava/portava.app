@@ -270,13 +270,27 @@ const loadPost: Loader = async (client, id, viewerId) => {
   const mine = r.author_id === viewerId;
   if (!mine && r.visibility !== "public") return { state: UNAVAILABLE("private"), projection: null };
   const body = typeof r.content === "string" ? r.content : "";
+  // The author's CURRENT public handle, read at resolve time — so a legacy post
+  // card can say whose post it is without drawing the sender's snapshot of it
+  // (census T413/T448). A failed or empty read leaves the subtitle null; it
+  // never fails the projection and never substitutes a stored name.
+  let byline: string | null = null;
+  if (typeof r.author_id === "string") {
+    const { data: author, error: authorErr } = await client
+      .from("profiles")
+      .select("handle")
+      .eq("id", r.author_id)
+      .maybeSingle();
+    const handle = !authorErr && author ? (author as Row).handle : null;
+    if (typeof handle === "string" && handle.length > 0) byline = `@${handle}`;
+  }
   return {
     state: AVAILABLE(String(r.status)),
     projection: proj(
       "POST",
       id,
       body.slice(0, 80) || "Post",
-      null,
+      byline,
       Array.isArray(r.media_urls) && r.media_urls.length > 0 ? String(r.media_urls[0]) : null,
       (r.updated_at as string) ?? null,
     ),
