@@ -151,12 +151,14 @@ describe('T411 — the action row is the server’s current actions', () => {
     expect(screen.getByText('"you will love this"')).toBeTruthy();
   });
 
-  it('no thread (nothing to resolve in): the pre-§5 card, with View as its only action', async () => {
+  it('no thread (nothing to resolve in): the pre-§5 card — View, and the server-authorized Save; no Add to Plan', async () => {
     await render(<DiscoveryCardMessage body={discoveryBody} mine={false} />);
     expect(screen.getByText('Snapshot title the sender saw')).toBeTruthy();
     expect(screen.getByTestId('discovery-card-view')).toBeTruthy();
+    // Save's press is authorized by the server's discovery-card command (A21), not by the card.
+    expect(screen.getByTestId('discovery-card-save')).toBeTruthy();
     expect(screen.queryByTestId('discovery-card-add-to-plan')).toBeNull();
-    expect(screen.queryByTestId('discovery-card-save')).toBeNull();
+    expect(screen.queryByTestId('discovery-card-meet-here')).toBeNull();
     expect(mockedResolve).not.toHaveBeenCalled();
   });
 });
@@ -204,7 +206,7 @@ describe('legacyCardView — the five modes, decided once', () => {
   it('only live derives more than View, and only from the actions given', () => {
     expect(offeredCardActions('live', ['ADD_TO_TRIP'])).toEqual({ view: true, addToTrip: true, meetHere: false, save: true });
     expect(offeredCardActions('reference', ['ADD_TO_TRIP', 'MEET_HERE'])).toEqual({ view: true, addToTrip: false, meetHere: false, save: false });
-    expect(offeredCardActions('legacy', ['ADD_TO_TRIP'])).toEqual({ view: true, addToTrip: false, meetHere: false, save: false });
+    expect(offeredCardActions('legacy', ['ADD_TO_TRIP'])).toEqual({ view: true, addToTrip: false, meetHere: false, save: true });
     expect(offeredCardActions('loading')).toEqual({ view: false, addToTrip: false, meetHere: false, save: false });
     expect(offeredCardActions('revoked')).toEqual({ view: false, addToTrip: false, meetHere: false, save: false });
   });

@@ -28,8 +28,8 @@
  *               would otherwise still be shown in full.
  *   legacy    — no resolve is possible (no thread id, or a source type with no
  *               §5 family — `for_you`, `traveler_pick`). The pre-§5 card, with
- *               View as its only action: there is no capability to derive any
- *               other action from.
+ *               View and the server-authorized Save (see offeredCardActions);
+ *               there is no capability to derive any other action from.
  */
 import type { TelegraphAction } from '../sharedContext/types.ts';
 import type { ShareRevocation } from './useShareRevocation.ts';
@@ -72,8 +72,15 @@ export function offeredCardActions(mode: LegacyCardMode, actions: readonly Teleg
         save: true,
       };
     case 'reference':
-    case 'legacy':
       return { ...NONE, view: true };
+    case 'legacy':
+      // Save stays on the pre-§5 card because its press is NOT a client-side
+      // authorization: it goes through the server's discovery-card command,
+      // which proposes the save only when the server's own authorize says yes
+      // (census-discovery §95 / A21, services/discoveryCardSave.ts). Add to Plan
+      // has no such server-side capability step behind it here, so it is not
+      // offered on a card nothing could resolve.
+      return { ...NONE, view: true, save: true };
     default:
       return NONE;
   }

@@ -1221,6 +1221,7 @@ export default function TelegraphThread() {
   // from GET /threads/:id/capabilities (server-built), not from message_thread_members / message_threads.
   const conversationProjection = useConversationProjection(id ?? null);
   const isAcceptedMember = offersPlanControl(conversationProjection);
+  const isE2ee = showsE2eeBadge(conversationProjection); // the lock badge: only an affirmative server answer draws it (still behind E2EE_CLAIM_UI_ENABLED)
   const [isCircleMember, setIsCircleMember] = useState<boolean | null>(null);
   const [plannedByName, setPlannedByName] = useState<string | undefined>(undefined);
   const [blockingUser, setBlockingUser] = useState(false);
@@ -1860,7 +1861,7 @@ export default function TelegraphThread() {
                 through to a safety number the FFI has never produced would
                 invite exactly the trust the previous (theatre) implementation
                 invited. */}
-            {E2EE_CLAIM_UI_ENABLED && showsE2eeBadge(conversationProjection) && (
+            {E2EE_CLAIM_UI_ENABLED && isE2ee && (
               E2EE_VERIFICATION_UI_ENABLED ? (
                 <Pressable
                   hitSlop={8}

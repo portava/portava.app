@@ -96,7 +96,8 @@ describe('the thread screen is wired to the projection and reads no raw messagin
     expect(src).toMatch(/useConversationProjection\(id \?\? null\)/);
     expect(src).toMatch(/const isAcceptedMember = offersPlanControl\(conversationProjection\)/);
     expect(src).toMatch(/const memberCount = memberCountOf\(conversationProjection\)/);
-    expect(src).toMatch(/showsE2eeBadge\(conversationProjection\)/);
+    expect(src).toMatch(/const isE2ee = showsE2eeBadge\(conversationProjection\)/);
+    expect(src).toMatch(/E2EE_CLAIM_UI_ENABLED && isE2ee && \(/);
     expect(src).toMatch(/treatAsE2eeForEdit\(conversationProjection\)/);
   });
 

@@ -3107,7 +3107,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
         // that choice suppresses (it is not "not muted"); a tagged person with
         // no active membership has no thread choice to apply.
         const notifyStates = await readThreadNotificationStates(sc, threadId, taggedIds);
-        const notifyNowMs = Date.now();
+        const notifyNowMs = Date.parse(now); // the send's own clock read (`now`, above) — one clock per handler
         const deliverTo = taggedIds.filter((taggedId) => {
           const decision = decideThreadNotification({
             cause: 'MENTION',
