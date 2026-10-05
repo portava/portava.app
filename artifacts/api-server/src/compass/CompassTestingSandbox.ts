@@ -224,6 +224,8 @@ function buildSyntheticProfile(scenario: TestScenario): CompassProfile {
     trustLevel:            null,
     activeUserScore:       null,
     hasActiveTrip:         false,
+    tripStateUnread:       false, // a sandbox fixture: read nothing, so nothing is unread
+
     hasActiveBooking:      false,
     upcomingTripWithin48h: false,
     hasFutureTripScheduled: false,
