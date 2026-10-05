@@ -83,7 +83,7 @@ function seedBooking(w: World, over: Partial<BookingForPayment> = {}): BookingFo
     bookingId: BOOKING, status: "confirmed", paymentStatus: "not_required",
     travelerId: TRAVELER, buddyProfileId: "bp-1", buddyUserId: BUDDY,
     serviceCountry: "US", serviceMinor: 4000, currency: "USD",
-    startsAt: "2026-08-20T15:00:00.000Z", startBasis: "city_timezone", completedAt: null, disputeWindowExpiresAt: null, isTestBooking: false,
+    startsAt: "2026-08-20T15:00:00.000Z", startBasis: "city_timezone", completedAt: null, disputeWindowExpiresAt: null, isTestBooking: false, paymentMode: "full_in_app",
     ...over,
   };
   w.store.bookings.set(b.bookingId, b);
@@ -704,5 +704,40 @@ describe("Step 5(b): a declined confirmation cancels the intent through the cont
     assert.equal(retry.httpStatus, 503, JSON.stringify(retry.body));
     assert.equal(w.store.payments.size, 1, "no second attempt while the first intent is still open");
     assert.equal([...w.store.payments.values()][0]!.providerCancelOwed, true);
+  });
+});
+
+// ── Found in Step 6 (reconciliation with #603): only a FULL IN-APP booking is charged ──
+// rent_buddy_bookings.payment_mode is 'full_in_app' or 'deposit_plus_cash'
+// (baseline enum). A deposit_plus_cash booking's agreed terms put part (on main:
+// 70 %) or — with #603's deposit switch off — ALL of the price in cash with the
+// buddy (cash_balance_usd). The checkout charged `total_usd` in-app regardless:
+// the traveller would pay in the app AND owe the buddy cash. OD-PAY-3 rules out
+// a deposit in the first release, so the slice takes full in-app payment only
+// and refuses anything else before a provider is asked.
+describe("only a full-in-app booking is charged in the app", () => {
+  it("PM1 a deposit_plus_cash booking: quote and checkout answer 409 payment_not_in_app; nothing is created", async () => {
+    seedBooking(w, { paymentMode: "deposit_plus_cash" });
+    await onboardBuddy(w);
+    const q = await quoteBookingPayment(w.deps, { bookingId: BOOKING, actorUserId: TRAVELER });
+    assert.equal(q.httpStatus, 409, JSON.stringify(q.body));
+    assert.equal(q.body["error"], "payment_not_in_app");
+    const c = await startBookingCheckout(w.deps, { bookingId: BOOKING, actorUserId: TRAVELER });
+    assert.equal(c.httpStatus, 409, JSON.stringify(c.body));
+    assert.equal(c.body["error"], "payment_not_in_app");
+    assert.equal(w.store.payments.size, 0, "no payment row");
+  });
+
+  it("PM2 the production store reads payment_mode off the booking", async () => {
+    const { supabaseBookingPaymentStore } = await import("../services/payments/bookingPayments/supabaseStore.js");
+    const row = {
+      id: "b-1", status: "confirmed", payment_status: "not_required", traveler_id: "t-1", buddy_id: "bp-1",
+      country_code: "US", total_usd: "40.00", booking_date: "2026-08-20", start_time: "15:00:00", city: "Miami",
+      completed_at: null, dispute_window_expires_at: null, is_test_booking: false, payment_mode: "deposit_plus_cash",
+    };
+    const client = { from: (t: string) => { const q: any = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: t === "rent_buddy_bookings" ? row : { user_id: "u-b" }, error: null }) }; return q; } };
+    const r = await supabaseBookingPaymentStore(client).loadBooking("b-1");
+    assert.ok(r.ok && r.value);
+    if (r.ok && r.value) assert.equal(r.value.paymentMode, "deposit_plus_cash");
   });
 });

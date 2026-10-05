@@ -119,7 +119,7 @@ beforeEach(() => {
   store.bookings.set("booking-1", {
     bookingId: "booking-1", status: "confirmed", paymentStatus: "not_required", travelerId: "traveler-1",
     buddyProfileId: "bp-1", buddyUserId: "buddy-user-1", serviceCountry: "US", serviceMinor: 4000, currency: "USD",
-    startsAt: "2026-08-20T01:00:00.000Z", startBasis: "earliest_possible", completedAt: null, disputeWindowExpiresAt: null, isTestBooking: false,
+    startsAt: "2026-08-20T01:00:00.000Z", startBasis: "earliest_possible", completedAt: null, disputeWindowExpiresAt: null, isTestBooking: false, paymentMode: "full_in_app",
   });
   const c = authClient();
   _setTestClient(c as any, true);

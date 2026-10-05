@@ -39,7 +39,7 @@ export const T_PAYOUTS = "rent_buddy_monthly_payouts";
 export const T_EVENTS = "payment_webhook_events";
 
 export const BOOKING_COLUMNS =
-  "id, status, payment_status, traveler_id, buddy_id, country_code, city, total_usd, booking_date, start_time, completed_at, dispute_window_expires_at, is_test_booking";
+  "id, status, payment_status, traveler_id, buddy_id, country_code, city, total_usd, booking_date, start_time, completed_at, dispute_window_expires_at, is_test_booking, payment_mode";
 export const RECIPIENT_COLUMNS =
   "party_id, provider, recipient_ref, country, settlement_currency, onboarding, charges_enabled, payouts_enabled, requirements_due, provider_updated_at";
 export const PAYMENT_COLUMNS =
@@ -326,7 +326,7 @@ export function supabaseBookingPaymentStore(sc: any): BookingPaymentStore {
           })(),
           completedAt: str(b["completed_at"]),
           disputeWindowExpiresAt: str(b["dispute_window_expires_at"]),
-          isTestBooking: b["is_test_booking"] === true,
+          isTestBooking: b["is_test_booking"] === true, paymentMode: str(b["payment_mode"]) ?? "",
         };
         return readOk(booking);
       } catch {

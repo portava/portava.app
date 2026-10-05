@@ -143,7 +143,7 @@ export async function quoteBookingPayment(deps: PaymentSliceDeps, req: QuoteRequ
   if (!deps.paymentsOperational().operational) return UNAVAILABLE();
   const loaded = await loadForTraveller(deps, req.bookingId, req.actorUserId);
   if (isOutcome(loaded)) return loaded;
-  if (!payableNow(loaded.booking)) return refusal(409, "booking_not_payable", "This booking can't be paid for in its current state.");
+  if (!payableNow(loaded.booking)) return refusal(409, "booking_not_payable", "This booking can't be paid for in its current state."); if (loaded.booking.paymentMode !== "full_in_app") return NOT_IN_APP();
   const recipient = await readyRecipient(deps, loaded.booking);
   if (!isRecipient(recipient)) return recipient;
   const q = await buildQuote(deps, loaded.booking, recipient, req.tipMinor ?? 0);
@@ -175,7 +175,7 @@ export async function startBookingCheckout(deps: PaymentSliceDeps, req: StartChe
   if (isOutcome(loaded)) return loaded;
   const { booking, payments } = loaded;
   if (payments.some((p) => PAID_STATES.includes(p.state))) return refusal(409, "already_paid", "This booking has already been paid for.");
-  if (!payableNow(booking)) return refusal(409, "booking_not_payable", "This booking can't be paid for in its current state."); const owed = await settleOwedCancels(deps, payments); if (owed) return owed; // Step 5(b): an earlier declined intent is closed first
+  if (!payableNow(booking)) return refusal(409, "booking_not_payable", "This booking can't be paid for in its current state."); if (booking.paymentMode !== "full_in_app") return NOT_IN_APP(); const owed = await settleOwedCancels(deps, payments); if (owed) return owed; // Step 5(b): an earlier declined intent is closed first
 
   const parties = await deps.bookingParties(booking);
   if (!parties.allowed) return refusal(parties.httpStatus, parties.code, parties.message, { side: parties.side });
@@ -415,4 +415,14 @@ async function settleOwedCancels(deps: PaymentSliceDeps, payments: readonly Book
     if (!w.ok) return READ_FAILED();
   }
   return null;
+}
+
+// ── Only a FULL IN-APP booking is charged in the app (found in Step 6) ───────
+// A `deposit_plus_cash` booking's agreed terms put part of the price — or, with
+// #603's deposit switch off, all of it — in cash with the buddy
+// (cash_balance_usd). Charging its `total_usd` in the app would take the money
+// twice. OD-PAY-3 rules out a deposit in the first release, so nothing but
+// 'full_in_app' is charged; anything else is refused before a provider is asked.
+function NOT_IN_APP(): SliceOutcome {
+  return refusal(409, "payment_not_in_app", "This booking was agreed with part of the price paid directly to your Buddy, so it can't be paid in the app. No charge was made. Please contact support.");
 }

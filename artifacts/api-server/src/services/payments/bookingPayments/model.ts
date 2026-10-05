@@ -67,7 +67,7 @@ export interface BookingForPayment {
   readonly startBasis: "city_timezone" | "earliest_possible" | null;
   readonly completedAt: string | null;
   readonly disputeWindowExpiresAt: string | null;
-  readonly isTestBooking: boolean;
+  readonly isTestBooking: boolean; /** rent_buddy_bookings.payment_mode. Only 'full_in_app' is charged in the app (checkout.ts, foot). */ readonly paymentMode: string;
 }
 
 /**
