@@ -3817,3 +3817,31 @@ The per-call price is deliberately not in the repository: read it off Google's b
 
 **Rollback:** `db/rollback/2026-10-05-3971-trip-routes-api-spend-gate-rollback.sql` — refuses while the
 flag is TRUE; drops the function, the table, the flag row and the ledger row.
+
+## 2026-10-05 — `3972_trip_private_anchor_rls_and_grant_lifecycle.sql`, written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3972_trip_private_anchor_rls_and_grant_lifecycle.sql` | **not applied** | **not applied** |
+
+**What it is.** The client door of census-trips §81. 2337 left `plan_items_select` as *removed_at IS
+NULL AND authz.is_trip_crew(trip_id)*, so any accepted crew member holding a session token could read
+every other member's private plan item — coordinates, place name, title, notes — through PostgREST. The
+policy now also requires the row to be non-private, the viewer's own, or covered by a grant that is still
+true: `authz.private_anchor_granted(item, creator, trip)` (SECURITY DEFINER, `search_path` pinned, reads
+`feature_flags`, `trip_private_anchor_shares`, `trip_members`, `trips` and never `trip_plan_items`, so no
+42P17; the viewer is `auth.uid()` read inside, never a parameter). Two AFTER triggers delete grant rows
+that stopped being true: on `trip_members` delete or a role/status change away from accepted (grants to
+AND by that person on that trip), and on `trip_plan_items` turning non-private or soft-removed (grants on
+that item). Requires 3970.
+
+**Nothing waits on the press.** Every API reader runs as service_role (lib/http.ts `requireUser` hands
+the route the service client) and applies the same rule in code
+(`domain/trips/policies/privateAnchorAccess.ts`, loaded by `server/trips/privateAnchorShares.ts`
+`planItemAccessFor`); the API also clears grants itself on member removal, item removal and an item made
+public. The mobile app reads no `trip_plan_items` row directly. Without 3972 the API's answers are the
+same; the direct PostgREST read stays open.
+
+**Rollback:** `db/rollback/2026-10-05-3972-trip-private-anchor-rls-and-grant-lifecycle-rollback.sql` —
+refuses while sharing is ON; restores 2337's policy verbatim and drops the function and both triggers. It
+says in its header that it reopens the direct read.

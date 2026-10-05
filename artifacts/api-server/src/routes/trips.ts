@@ -25,7 +25,7 @@ import {
 } from "../domain/trips/policies/tripPlanPrivacy.js";
 import { isMissingColumnError } from "../lib/capability/schemaCapability.js";
 import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
-import { toCamel, readPlanItemsInOrder } from "./plan.js"; import { withholdPrivatePlanItems, redactWithheldPlanItem } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, privateItemEditRefusal, clearAnchorGrantsForItem, clearAnchorGrantsForMember } from "../server/trips/privateAnchorShares.js";
+import { toCamel, readPlanItemsInOrder } from "./plan.js"; import { withholdPrivatePlanItems, redactWithheldPlanItem, canSeePlanItemLocation } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, privateItemEditRefusal, clearAnchorGrantsForItem, clearAnchorGrantsForMember } from "../server/trips/privateAnchorShares.js";
 import { logTripActivity, findTripActivityByKey } from "../domain/trips/events/tripActivityLog.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
@@ -1808,9 +1808,9 @@ router.get("/trips/:tripId/plan/map", async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "get trip plan map"); sendError(res, "db_error", error.message); return; }
 
-  // Only items with safe public coordinates
-  const mapItems = (data ?? [])
-    .filter((row) => !row.location_is_private && row.lat != null && row.lng != null)
+  // census-trips §81: the one owner-only rule — public items, the viewer's own private ones, and grants still true
+  const mapAccess = await planItemAccessFor(getServiceClient() ?? client, tripId, user.id); const mapItems = (data ?? [])
+    .filter((row) => canSeePlanItemLocation(mapAccess, row) && row.lat != null && row.lng != null)
     .map((row) => toCamel(row, {}));
 
   res.json({ items: mapItems });

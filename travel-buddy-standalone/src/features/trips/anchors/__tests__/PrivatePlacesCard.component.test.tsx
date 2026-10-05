@@ -9,7 +9,7 @@
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
-import { PrivatePlacesCard } from '../PrivatePlacesCard.tsx';
+import { PrivatePlacesCard, OWN_PLACE_DETAIL } from '../PrivatePlacesCard.tsx';
 
 const layer = (items: unknown[]) => ({ status: 'ok', items });
 const anchor = (id: string, relation: string, label: string | null = null) =>
@@ -72,4 +72,15 @@ it('an unreadable layer or grant list is named, never shown as "nothing shared"'
   await waitFor(() => screen.getByTestId('private-place-h1'));
   await fireEvent.press(screen.getByTestId('private-place-h1'));
   await waitFor(() => screen.getByTestId('anchor-share-unread'));
+});
+
+it('census-trips §81: an own place says what the crew sees — a slot, not the place — and promises no choice the picker has not offered', async () => {
+  // Was "Only you, and anyone you choose, can see this place": the crew sees a
+  // "Private plan" slot at that time, and with sharing off no one can be chosen.
+  await render(<PrivatePlacesCard tripId="t1" currentUserId="me" load={proj(layer([anchor('h1', 'own', 'Hotel')]))} loadMembers={members} />);
+  await waitFor(() => screen.getByTestId('private-places'));
+  expect(screen.getByText(OWN_PLACE_DETAIL)).toBeTruthy();
+  expect(OWN_PLACE_DETAIL).toMatch(/private plan at this time/);
+  expect(screen.queryByText(/anyone you choose/)).toBeNull();
+  expect(screen.getByTestId('private-place-h1').props.accessibilityLabel).not.toMatch(/Only you can see it/);
 });

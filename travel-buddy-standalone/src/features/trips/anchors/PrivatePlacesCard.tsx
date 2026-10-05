@@ -24,6 +24,18 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet, Pressable, Switch } from 'react-native';
 import { Lock, CloudOff } from 'lucide-react-native';
 
+/**
+ * What the crew sees of one of the viewer's private places — and no more than
+ * is true (census-trips §81, verifier finding 2). It used to read "Only you,
+ * and anyone you choose, can see this place": false while sharing is off (no
+ * one CAN be chosen), and false about what the crew does see — the plan keeps
+ * a slot at that time, labelled "Private plan". It is scoped to the surfaces
+ * that apply the owner-only rule on the server (the trip's plan, map and
+ * route); whether a place can be shared, and with whom, is said by the share
+ * picker, which reads the sharing state, not by this line.
+ */
+export const OWN_PLACE_DETAIL = 'On the trip\'s plan, map and route, your crew sees a private plan at this time, not the place.';
+
 import { color, space, radius, type as t, shadow } from '../../../theme/tokens.ts';
 import { writeFailureText, type ApiRead } from '../shared/tripApi.ts';
 import { fetchTripMapProjection, type ProjectionRead } from '../map/tripMapProjection.ts';
@@ -95,13 +107,13 @@ export function PrivatePlacesCard({
             style={s.row}
             onPress={() => setOpen((o) => (o === place.id ? null : place.id))}
             accessibilityRole="button"
-            accessibilityLabel={`${placeLabel(place)}. Only you can see it unless you share it. Choose who can see it.`}
+            accessibilityLabel={`${placeLabel(place)}. ${OWN_PLACE_DETAIL} Opens who can see it.`}
             testID={`private-place-${place.id}`}
           >
             <Lock size={16} color={color.mute} />
             <View style={{ flex: 1 }}>
               <Text style={s.title}>{placeLabel(place)}</Text>
-              <Text style={s.detail}>Only you, and anyone you choose, can see this place.</Text>
+              <Text style={s.detail}>{OWN_PLACE_DETAIL}</Text>
             </View>
             <Text style={s.action}>{open === place.id ? 'Done' : 'Share…'}</Text>
           </Pressable>

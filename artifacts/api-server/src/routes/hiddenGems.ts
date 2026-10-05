@@ -33,7 +33,7 @@ import { Router } from "express";
 import { randomUUID } from "node:crypto"; import { recordGemContributionSignal, recordGemAcceptedSignal, recordGemArrivalIfAttributable } from "../lib/mediaAnalytics.js";
 import { z } from "zod";
 import { requireUser, sendError, canEditPlan } from "../lib/http.js"; import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js";
-import { getServiceClient } from "../lib/supabase.js";
+import { getServiceClient } from "../lib/supabase.js"; import { canSeePlanItemLocation, PLAN_ITEM_PRIVACY_COLUMNS } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor } from "../server/trips/privateAnchorShares.js";
 import {
   tripKernelClient,
   readCommandEnvelope,
@@ -468,12 +468,12 @@ router.get("/hidden-gems", async (req, res) => {
       // recorded in trip_plan_items (source_type="hidden_gem", source_id =
       // gem id), the same table /:id/plan writes to. Resolve the gem ids via
       // that join table first, then fetch the gems themselves.
-      const { data: planItems } = await sc
+      const { data: planItems, error: planItemsErr } = await sc
         .from("trip_plan_items")
-        .select("source_id")
+        .select(`source_id, removed_at, ${PLAN_ITEM_PRIVACY_COLUMNS}`) // census-trips §81: another member's PRIVATE plan item names its place by source_id — the gem IS the location
         .eq("trip_id", callerTripId)
-        .eq("source_type", "hidden_gem");
-      const gemIdsForTrip = [...new Set(((planItems as any[]) ?? []).map((p: any) => p.source_id as string))];
+        .eq("source_type", "hidden_gem"); if (planItemsErr) return sendError(res, "degraded_unavailable", "We could not read this trip's plan right now. Please try again shortly."); const planAccess = await planItemAccessFor(sc, callerTripId, user.id);
+      const gemIdsForTrip = [...new Set(((planItems as any[]) ?? []).filter((p: any) => canSeePlanItemLocation(planAccess, p)).map((p: any) => p.source_id as string))];
       const { data: tripGems } = gemIdsForTrip.length
         ? await sc
             .from("hidden_gems")
