@@ -108,6 +108,9 @@ interface Counters {
   /** §17 CREATE_MEMORY with no originating candidate. */
   explicitMemoriesCreated: number;
   explicitMemoriesWithoutCandidate: number;
+  /** §7 inbox: the OWNER's decision on a stored candidate (episodeCandidates.ts) — not the gate's. */
+  candidatesOwnerConfirmed: number;
+  candidatesOwnerRejected: number;
 }
 
 const zero = (): Counters => ({
@@ -119,6 +122,8 @@ const zero = (): Counters => ({
   participantCorrections: 0,
   explicitMemoriesCreated: 0,
   explicitMemoriesWithoutCandidate: 0,
+  candidatesOwnerConfirmed: 0,
+  candidatesOwnerRejected: 0,
 });
 
 let counters: Counters = zero();
@@ -318,4 +323,17 @@ export function recordProjectionLag(
       ? "metrics: projection_lag — at least one projection did NOT rebuild; this lag is not 'time until the projection was fresh'"
       : "metrics: projection_lag",
   );
+}
+
+/**
+ * §7 candidate inbox — the OWNER confirmed or rejected a stored candidate.
+ * Distinct from `countCandidateEvaluation`, which counts the §6 GATE's verdict:
+ * a candidate the gate admitted is surfaced, and what the owner then does with
+ * it is this count. Both raw counts ride on every sample (`counts`), so a
+ * reader can form the owner-decision rate without this module inventing a
+ * second name for §24's `candidate_confirm_rate`.
+ */
+export function countCandidateDecision(decision: "confirmed" | "rejected"): void {
+  if (decision === "confirmed") counters.candidatesOwnerConfirmed += 1;
+  else counters.candidatesOwnerRejected += 1;
 }
