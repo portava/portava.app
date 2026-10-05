@@ -13,6 +13,7 @@ import { resolveAccountButton, applyReactivateResult } from '../../src/screens/s
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
 import { OutcomeLearningSetting } from '../../src/platform/input-assistance/components/OutcomeLearningSetting';
+import { MemoryContextSetting } from '../../src/platform/input-assistance/components/MemoryContextSetting';
 import { KILL_SWITCH_FLAGS } from '../../src/screens/admin/featureFlags.machine';
 
 export default function Settings() {
@@ -578,6 +579,8 @@ export default function Settings() {
 
           {/* Input Intelligence outcome learning — OD-INPUT-1's separate opt-in (flag off by default). */}
           {(configured && isAuthed && isEnabled('input_outcome_learning_enabled')) && <OutcomeLearningSetting />}
+          {/* Compass memory for suggestions — OD-INPUT-3's separate opt-in, inspect and revoke (flag off by default). */}
+          {(configured && isAuthed && isEnabled('input_memory_context_enabled')) && <MemoryContextSetting />}
 
           {(configured && isAuthed) && (
             <>

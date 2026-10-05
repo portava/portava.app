@@ -56,6 +56,13 @@ import { getServiceClient } from '../supabase';
 import { logger } from '../logger';
 import type { SweepResult } from '../intelRetentionScheduler';
 import { withOutcomes, type SelectionMemory } from './personalization';
+import {
+  hasValidInputConsent,
+  readInputConsent,
+  writeInputConsent,
+  type InputConsentRead,
+  type InputConsentState,
+} from './inputConsent';
 
 /** The feature flag (4120, seeded FALSE). */
 export const INPUT_OUTCOME_FLAG = 'input_outcome_learning_enabled';
@@ -95,22 +102,14 @@ export function isOutcomeTask(v: unknown): v is InputOutcomeTask {
   return typeof v === 'string' && TASKS.has(v);
 }
 
-// ── Consent ───────────────────────────────────────────────────────────────────
+// ── Consent (the shared opt-in shape lives in inputConsent.ts) ────────────────
 
-export interface OutcomeConsentState {
-  enabled: boolean;
-  consentVersion: string | null;
-  consentedAt: string | null;
-  withdrawnAt: string | null;
-}
-
-export type OutcomeConsentRead =
-  | { ok: true; state: OutcomeConsentState | null }
-  | { ok: false };
+export type OutcomeConsentState = InputConsentState;
+export type OutcomeConsentRead = InputConsentRead;
 
 /** Valid = enabled, not withdrawn, and stamped with a version. Fail-closed on anything else. */
 export function hasValidOutcomeConsent(state: OutcomeConsentState | null | undefined): boolean {
-  return !!state && state.enabled === true && !state.withdrawnAt && !!state.consentVersion;
+  return hasValidInputConsent(state);
 }
 
 /** May a grant whose client displayed `seen` be recorded under the current version? */
@@ -120,28 +119,7 @@ export function displayedOutcomeDisclosureMatches(seen: unknown): boolean {
 
 /** The owner's consent row. `{ok:true, state:null}` = never asked (off); `{ok:false}` = unreadable. */
 export async function readOutcomeConsent(db: SupabaseClient, userId: string): Promise<OutcomeConsentRead> {
-  if (!userId) return { ok: false };
-  try {
-    const { data, error } = await db
-      .from('input_outcome_consent')
-      .select('enabled, consent_version, consented_at, withdrawn_at')
-      .eq('user_id', userId)
-      .maybeSingle();
-    if (error) return { ok: false };
-    if (!data) return { ok: true, state: null };
-    const r = data as Record<string, unknown>;
-    return {
-      ok: true,
-      state: {
-        enabled: r.enabled === true,
-        consentVersion: typeof r.consent_version === 'string' ? r.consent_version : null,
-        consentedAt: typeof r.consented_at === 'string' ? r.consented_at : null,
-        withdrawnAt: typeof r.withdrawn_at === 'string' ? r.withdrawn_at : null,
-      },
-    };
-  } catch {
-    return { ok: false };
-  }
+  return readInputConsent(db, 'input_outcome_consent', userId);
 }
 
 export type OutcomeConsentWrite =
@@ -167,24 +145,8 @@ export async function writeOutcomeConsent(
   enabled: boolean,
   now: Date = new Date(),
 ): Promise<OutcomeConsentWrite> {
-  if (!userId) return { ok: false };
-  const at = now.toISOString();
-  try {
-    // A withdrawal keeps the record of WHICH disclosure was once agreed to and
-    // when; it only switches the consent off and stamps the withdrawal.
-    const { error } = enabled
-      ? await db.from('input_outcome_consent').upsert(
-          { user_id: userId, enabled: true, consent_version: INPUT_OUTCOME_DISCLOSURE_VERSION, consented_at: at, withdrawn_at: null, updated_at: at },
-          { onConflict: 'user_id' },
-        )
-      : await db.from('input_outcome_consent').upsert(
-          { user_id: userId, enabled: false, withdrawn_at: at, updated_at: at },
-          { onConflict: 'user_id' },
-        );
-    if (error) return { ok: false };
-  } catch {
-    return { ok: false };
-  }
+  const write = await writeInputConsent(db, 'input_outcome_consent', INPUT_OUTCOME_DISCLOSURE_VERSION, userId, enabled, now);
+  if (!write.ok) return { ok: false };
   let countersErased: boolean | null = null;
   if (!enabled) {
     try {
@@ -196,14 +158,7 @@ export async function writeOutcomeConsent(
       logger.warn({ err }, 'input outcome counters: erase on withdrawal threw; the 30-day sweep remains');
     }
   }
-  const read = await readOutcomeConsent(db, userId);
-  const state: OutcomeConsentState =
-    read.ok && read.state
-      ? read.state
-      : enabled
-        ? { enabled: true, consentVersion: INPUT_OUTCOME_DISCLOSURE_VERSION, consentedAt: at, withdrawnAt: null }
-        : { enabled: false, consentVersion: null, consentedAt: null, withdrawnAt: at };
-  return { ok: true, state, countersErased };
+  return { ok: true, state: write.state, countersErased };
 }
 
 /** Is the opt-in OFFERED at all (the capability flag)? Fail-closed. */

@@ -79,6 +79,7 @@ import {
   type SelectionMemory,
 } from './personalization';
 import { attachOutcomeMemory } from './outcomeLearning';
+import { buildMemoryContextStarters } from './memoryContext';
 import { buildSavedPlaceSuggestions } from './savedEntities';
 import {
   projectSearchResult,
@@ -684,6 +685,16 @@ export async function generateSuggestions(
     policy.allowAI &&
     policy.allowedSuggestionTypes.includes('ai_suggestion')
   ) {
+    // §6 `allowMemoryContext` (census G25) under OD-INPUT-3: the person's own
+    // Compass memory, ONLY behind the field's policy, the flag, and a separate
+    // opt-in — each checked before anything is read (memoryContext.ts). Off by
+    // default; a person who has not opted in gets exactly the curated starters.
+    // Pushed FIRST: the ordering below is stable within a type and confidence,
+    // and the curated set alone fills `maxSuggestions`, so starters appended
+    // after it would be capped out for the very person who asked for them.
+    suggestions.push(
+      ...(await buildMemoryContextStarters(sc, { policy, userId, context, query: q, policyVersion: POLICY_VERSION })),
+    );
     suggestions.push(
       ...buildCompassStarters(context, POLICY_VERSION, q, policy.maxSuggestions, {
         city,

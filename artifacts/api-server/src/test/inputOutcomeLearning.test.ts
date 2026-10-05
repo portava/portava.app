@@ -321,6 +321,13 @@ describe("POST /input-assistance/outcome — only for a user who opted in, only 
     assert.equal(state.__rpc!.length, 0);
   });
 
+  it("is REFUSED for an inconsistent row — enabled but stamped withdrawn (fail closed)", async () => {
+    setup({ feature_flags: [flag(true)], input_outcome_consent: [consentRow(USER_A, { withdrawn_at: "2026-10-02T00:00:00.000Z" })] });
+    const r = await call("POST", "/input-assistance/outcome", OUTCOME);
+    assert.equal(r.status, 403);
+    assert.equal(state.__rpc!.length, 0);
+  });
+
   it("is REFUSED (404) while the flag is off, even for a user who once opted in", async () => {
     setup({ feature_flags: [flag(false)], input_outcome_consent: [consentRow(USER_A)] });
     const r = await call("POST", "/input-assistance/outcome", OUTCOME);

@@ -56,6 +56,14 @@ import {
   type OutcomeConsentState,
 } from '../lib/inputAssistance/outcomeLearning';
 import {
+  INPUT_MEMORY_CONTEXT_DISCLOSURE_VERSION,
+  displayedMemoryDisclosureMatches,
+  inspectMemoryContext,
+  memoryContextOffered,
+  writeMemoryContextConsent,
+} from '../lib/inputAssistance/memoryContext';
+import { hasValidInputConsent, type InputConsentState } from '../lib/inputAssistance/inputConsent';
+import {
   rebuildTelemetryEvent,
   recordTelemetryEvents,
   type RawTelemetryEvent,
@@ -759,6 +767,91 @@ router.post(
       return;
     }
     res.status(200).json({ ok: true, recorded, failed, refused });
+  }),
+);
+
+// ── §6 allowMemoryContext — Compass memory, opt-in, inspect, revoke (OD-INPUT-3) ─
+//
+//   GET /input-assistance/memory-context — is it offered, the caller's own
+//       opt-in, and (ONLY when that opt-in is on) exactly the memory facts the
+//       Compass starters would be built from: the inspect view.
+//   PUT /input-assistance/memory-context-consent — { enabled, disclosureVersion }.
+//       A grant needs the flag and the displayed disclosure version; revoking
+//       (enabled:false) is always accepted and takes effect on the next serve.
+
+function memoryConsentBody(state: InputConsentState | null, available: boolean) {
+  return {
+    available,
+    enabled: hasValidInputConsent(state),
+    consentVersion: state?.consentVersion ?? null,
+    consentedAt: state?.consentedAt ?? null,
+    withdrawnAt: state?.withdrawnAt ?? null,
+    currentDisclosureVersion: INPUT_MEMORY_CONTEXT_DISCLOSURE_VERSION,
+  };
+}
+
+router.get(
+  '/input-assistance/memory-context',
+  asyncHandler(async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const sc = getServiceClient();
+    if (!sc) {
+      sendError(res, 'server_not_configured', 'Service client not ready');
+      return;
+    }
+    const inspection = await inspectMemoryContext(sc, auth.user.id);
+    if (!inspection.ok) {
+      sendError(res, 'degraded_unavailable', 'Your setting could not be read. Please try again.');
+      return;
+    }
+    res.status(200).json({
+      ...memoryConsentBody(inspection.consent, inspection.available),
+      // null = nothing was read (off, or not offered). [] = read, and empty.
+      facts: inspection.facts?.map((f) => ({ city: f.city, country: f.country, occurredAt: f.occurredAt })) ?? null,
+      factsUnavailable: inspection.factsUnavailable !== null,
+    });
+  }),
+);
+
+router.put(
+  '/input-assistance/memory-context-consent',
+  asyncHandler(async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    if (typeof body.enabled !== 'boolean') {
+      sendError(res, 'invalid_payload', 'enabled must be a boolean');
+      return;
+    }
+    const rl = checkRateLimit('input_assist_memory_consent', auth.user.id, 20, 60_000);
+    if (!rl.allowed) {
+      res.setHeader('Retry-After', Math.ceil(rl.retryAfterMs / 1000).toString());
+      sendError(res, 'rate_limited', 'Too many changes. Please wait.');
+      return;
+    }
+    const sc = getServiceClient();
+    if (!sc) {
+      sendError(res, 'server_not_configured', 'Service client not ready');
+      return;
+    }
+    const available = await memoryContextOffered(sc);
+    if (body.enabled) {
+      if (!available) {
+        sendError(res, 'feature_disabled', 'This setting is not available yet.');
+        return;
+      }
+      if (!displayedMemoryDisclosureMatches(body.disclosureVersion)) {
+        sendError(res, 'conflict', 'The explanation you saw is out of date. Please review it again.');
+        return;
+      }
+    }
+    const write = await writeMemoryContextConsent(sc, auth.user.id, body.enabled);
+    if (!write.ok) {
+      sendError(res, 'degraded_unavailable', 'Your setting could not be saved. Please try again.');
+      return;
+    }
+    res.status(200).json(memoryConsentBody(write.state, available));
   }),
 );
 
