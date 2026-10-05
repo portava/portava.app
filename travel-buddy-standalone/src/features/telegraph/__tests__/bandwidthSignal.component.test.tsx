@@ -46,6 +46,7 @@ import {
 import {
   _resetConnectionMonitor,
   currentBandwidth,
+  noteRealtimeStatus,
   noteTelegraphRequest,
 } from '../connection/connectionMonitor.ts';
 import { effectiveDataSaverLevel, useDataSaver } from '../hooks/useDataSaver.ts';
@@ -94,7 +95,8 @@ describe('deriveBandwidthSignal — the rule, pure', () => {
   });
 
   it('only the most recent window counts — a connection that recovered is normal again', () => {
-    const durations = [...Array(LATENCY_WINDOW).fill(SLOW), ...Array(LATENCY_WINDOW).fill(FAST)];
+    // Over all eight the median is SLOW; over the newest five it is FAST.
+    const durations = [...Array(LATENCY_WINDOW).fill(SLOW), ...Array(MIN_SAMPLES).fill(FAST)];
     expect(deriveBandwidthSignal({ connection: 'ONLINE', durationsMs: durations }).signal).toBe('normal');
   });
 
@@ -102,6 +104,8 @@ describe('deriveBandwidthSignal — the rule, pure', () => {
     expect(
       deriveBandwidthSignal({ connection: 'ONLINE', durationsMs: [Number.NaN, -5, Number.POSITIVE_INFINITY, SLOW] }).signal,
     ).toBe('normal');
+    // Counted, the -1 would make three samples with a SLOW median; ignored, two slow answers are too few.
+    expect(deriveBandwidthSignal({ connection: 'ONLINE', durationsMs: [-1, SLOW, SLOW] }).signal).toBe('normal');
   });
 });
 
@@ -111,6 +115,13 @@ describe('the monitor folds what the transport measured', () => {
     expect(currentBandwidth()).toEqual({ signal: 'constrained', cause: 'slow_responses' });
     noteFast(LATENCY_WINDOW);
     expect(currentBandwidth().signal).toBe('normal');
+  });
+
+  it('a live stream that drops and is re-opening is an unreliable connection — no request needed', () => {
+    noteRealtimeStatus('open');
+    expect(currentBandwidth().signal).toBe('normal');
+    noteRealtimeStatus('connecting');
+    expect(currentBandwidth()).toEqual({ signal: 'constrained', cause: 'unreliable_connection' });
   });
 
   it('a run of failed requests is an unreliable connection, whatever latency was seen', () => {
