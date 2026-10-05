@@ -46,6 +46,7 @@ interface FakeState {
   __reads?: string[];
   __fail?: Record<string, boolean>;
   __rpc?: Array<{ name: string; args: any }>;
+  __absent?: Record<string, boolean>;
 }
 
 function makeFakeClient(state: FakeState) {
@@ -106,6 +107,7 @@ function makeFakeClient(state: FakeState) {
       const run = () => {
         if (op === "select") {
           state.__reads!.push(table);
+          if (state.__absent?.[table]) return { data: null, error: { code: "PGRST205", message: `Could not find the table 'public.${table}' in the schema cache` } };
           if (fail(table)) return { data: null, error: { message: "boom" } };
           const out = rowsOf().filter((r) => filters.every((f) => f(r))).slice(0, limitN === Infinity ? undefined : limitN);
           return { data: out, error: null };
@@ -231,6 +233,19 @@ describe("outcome consent — explicit, off by default, server-stamped (OD-INPUT
     assert.equal(b.enabled, false);
     assert.equal(b.currentDisclosureVersion, INPUT_OUTCOME_DISCLOSURE_VERSION);
     assert.equal(b.retentionDays, 30);
+  });
+
+  it("an ABSENT consent table (its migration not applied) is 'never consented' — 200, hidden — not an outage", async () => {
+    // Structural, not a guess: a table that does not exist holds no one's
+    // consent. This is what lets the row render for every signed-in person
+    // (so anyone who opted in can always withdraw) without showing an error
+    // everywhere before 3780 is applied. Every OTHER error stays a 503 (next).
+    setup({ __absent: { input_outcome_consent: true } });
+    const r = await call("GET", "/input-assistance/outcome-consent");
+    assert.equal(r.status, 200);
+    const b = (await r.json()) as any;
+    assert.equal(b.enabled, false);
+    assert.equal(b.available, false);
   });
 
   it("an UNREADABLE consent is a 503, never 'not consented'", async () => {

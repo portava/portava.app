@@ -29,6 +29,18 @@ export interface InputConsentState {
 
 export type InputConsentRead = { ok: true; state: InputConsentState | null } | { ok: false };
 
+/**
+ * PostgREST's "relation does not exist". The ONE error that is not unreadable:
+ * a consent table that does not exist (its migration not yet applied) cannot
+ * hold anyone's consent, so "never consented" is a structural fact there, not a
+ * guess. Every other error stays `{ ok: false }`.
+ */
+function isTableAbsent(err: { code?: string | null; message?: string | null } | null | undefined): boolean {
+  if (!err) return false;
+  const code = String(err.code ?? '');
+  return code === '42P01' || code === 'PGRST205' || /relation .* does not exist/i.test(String(err.message ?? ''));
+}
+
 export function hasValidInputConsent(state: InputConsentState | null | undefined): boolean {
   return !!state && state.enabled === true && !state.withdrawnAt && !!state.consentVersion;
 }
@@ -45,7 +57,7 @@ export async function readInputConsent(
       .select('enabled, consent_version, consented_at, withdrawn_at')
       .eq('user_id', userId)
       .maybeSingle();
-    if (error) return { ok: false };
+    if (error) return isTableAbsent(error) ? { ok: true, state: null } : { ok: false };
     if (!data) return { ok: true, state: null };
     const r = data as Record<string, unknown>;
     return {

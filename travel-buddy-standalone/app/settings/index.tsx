@@ -12,8 +12,7 @@ import { deactivateAccount, requestAccountDeletion, reactivateAccount } from '..
 import { resolveAccountButton, applyReactivateResult } from '../../src/screens/settings/settings.machine';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
-import { OutcomeLearningSetting } from '../../src/platform/input-assistance/components/OutcomeLearningSetting';
-import { MemoryContextSetting } from '../../src/platform/input-assistance/components/MemoryContextSetting';
+import { InputAssistanceSettings } from '../../src/platform/input-assistance/components/InputAssistanceSettings';
 import { KILL_SWITCH_FLAGS } from '../../src/screens/admin/featureFlags.machine';
 
 export default function Settings() {
@@ -577,10 +576,10 @@ export default function Settings() {
             </Pressable>
           ))}
 
-          {/* Input Intelligence outcome learning — OD-INPUT-1's separate opt-in (flag off by default). */}
-          {(configured && isAuthed && isEnabled('input_outcome_learning_enabled')) && <OutcomeLearningSetting />}
-          {/* Compass memory for suggestions — OD-INPUT-3's separate opt-in, inspect and revoke (flag off by default). */}
-          {(configured && isAuthed && isEnabled('input_memory_context_enabled')) && <MemoryContextSetting />}
+          {/* Input Intelligence opt-ins (OD-INPUT-1, OD-INPUT-3): shown to every signed-in person,
+              NOT behind the client's flag map — a person who opted in can always withdraw. Each row
+              asks the server and hides itself when it is neither offered nor on for this person. */}
+          {(configured && isAuthed) && <InputAssistanceSettings />}
 
           {(configured && isAuthed) && (
             <>
