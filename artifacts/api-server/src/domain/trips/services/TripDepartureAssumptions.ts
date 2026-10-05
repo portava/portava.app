@@ -139,7 +139,7 @@ export function withDepartureAssumptions(inner: TravelTimeProvider, timezone: st
     async estimate(q: TravelTimeQuery): Promise<TravelTimeResult> {
       const r = await inner.estimate(q);
       if (!r || r.kind !== "estimate") return r;
-      if (inner.routed) return { ...r, assumption: null, expectedMinutes: r.estimate.minutes };
+      if (inner.routed || r.assumption === null) return { ...r, assumption: null, expectedMinutes: r.estimate.minutes }; // per result: a gated routed provider (TR128) marks its routed answers assumption:null
       const assumption = assumeDeparture(q.departAt, timezone, q.mode);
       return { ...r, assumption, expectedMinutes: Math.max(r.estimate.minutes, Math.ceil(r.estimate.minutes * assumption.factor)) };
     },

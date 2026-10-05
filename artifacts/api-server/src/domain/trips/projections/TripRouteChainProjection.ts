@@ -31,7 +31,7 @@
 import { logger } from "../../../lib/logger.js";
 import { tripOperationalProjectionsGate, refusalForGate } from "../policies/tripOperationalProjections.js";
 import { liveEnvelope, type TripProjectionEnvelope } from "../contracts/TripProjectionEnvelope.js";
-import { straightLineTravelTimeProvider, estimateTravel, type GeoPoint } from "../contracts/TravelTimeProvider.js";
+import { estimateTravel, type GeoPoint } from "../contracts/TravelTimeProvider.js"; import { TRIP_TRAVEL_TIME_PROVIDER } from "../contracts/tripTravelTimeProvider.js";
 import { travelMinutesAt, FEASIBILITY_PERCENTILE, isRoutedSourceClass } from "../../../lib/travelEstimate.js";
 import { withDepartureAssumptions } from "../services/TripDepartureAssumptions.js";
 import { estimateTransportReliability } from "../services/tripTransportReliability.js";
@@ -39,7 +39,7 @@ import { recordTripDecision, persistTripDecision, TRIP_ENGINE_VERSIONS } from ".
 import type { ArrivalAssumption } from "./TripFreedomProjection.js";
 
 const log = logger.child({ mod: "tripRouteChainProjection" });
-const BOUND_PROVIDER = straightLineTravelTimeProvider;
+const BOUND_PROVIDER = TRIP_TRAVEL_TIME_PROVIDER; // TR128/TR267: Routes API behind a daily quota + hard budget, straight-line fallback (owner decision 2026-10-04)
 
 export interface RouteChainStop {
   planItemId: string;

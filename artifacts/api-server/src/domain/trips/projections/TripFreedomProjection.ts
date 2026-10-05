@@ -28,9 +28,9 @@
 import { logger } from "../../../lib/logger.js";
 import { incrementTripMetric } from "../services/tripMetrics.js";
 import { tripOperationalProjectionsGate, refusalForGate } from "../policies/tripOperationalProjections.js";
-import { resolvePlaces, intervalToMinutes, FEASIBILITY_UNVERIFIED_DISCLOSURE } from "../../../routes/tripFeasibility.js";
+import { resolvePlaces, intervalToMinutes, feasibilityDisclosure } from "../../../routes/tripFeasibility.js";
 import { evaluateFeasibility } from "../invariants/TripFeasibilityEngine.js";
-import { straightLineTravelTimeProvider, estimateTravel, type GeoPoint, type TravelAssumption } from "../contracts/TravelTimeProvider.js";
+import { estimateTravel, type GeoPoint, type TravelAssumption } from "../contracts/TravelTimeProvider.js"; import { TRIP_TRAVEL_TIME_PROVIDER } from "../contracts/tripTravelTimeProvider.js";
 import { withDepartureAssumptions } from "../services/TripDepartureAssumptions.js";
 import { liveEnvelope, type TripProjectionEnvelope } from "../contracts/TripProjectionEnvelope.js";
 import { recordTripDecision, persistTripDecision, TRIP_ENGINE_VERSIONS } from "../services/TripDecisionLedger.js";
@@ -42,7 +42,7 @@ import { buildTripRoutineContext, type TripRoutineContext } from "../services/Tr
 
 const log = logger.child({ mod: "tripFreedomProjection" });
 /** The BOUND. The departure-time assumption is layered per trip, below. */
-const BOUND_PROVIDER = straightLineTravelTimeProvider;
+const BOUND_PROVIDER = TRIP_TRAVEL_TIME_PROVIDER; // TR128/TR341/TR412: Routes API behind a daily quota + hard budget, straight-line fallback (owner decision 2026-10-04)
 
 export interface TripFreedomProjection extends TripProjectionEnvelope {
   tripId: string;
@@ -324,7 +324,7 @@ export async function buildTripFreedomProjection(
       unresolvedPlaceIds: places.unresolved,
       participants: [...participants],
       provider: { id: provider.id, routed: provider.routed, assumptionsModel: provider.assumptionsModel },
-      disclosure: FEASIBILITY_UNVERIFIED_DISCLOSURE,
+      disclosure: feasibilityDisclosure(hops),
       reading: FREEDOM_READING,
       arrivalEstimates,
     },

@@ -83,8 +83,8 @@ import {
   checkFeasibility, foldFeasibility,
   type FeasibilityResult,
 } from "../domain/trips/invariants/TripFeasibilityEngine.js";
+import { TRIP_TRAVEL_TIME_PROVIDER } from "../domain/trips/contracts/tripTravelTimeProvider.js"; // TR128: the gated routed provider
 import {
-  straightLineTravelTimeProvider,
   type GeoPoint,
 } from "../domain/trips/contracts/TravelTimeProvider.js";
 import {
@@ -108,7 +108,7 @@ const log = logger.child({ mod: "tripFeasibility" });
  * every consumer already handles the `unknown` result and the UNVERIFIED
  * verdict, so nothing else changes and no branch is added.
  */
-const PROVIDER = straightLineTravelTimeProvider;
+const PROVIDER = TRIP_TRAVEL_TIME_PROVIDER; // TR128/TR412: Routes API behind a daily quota + hard budget, straight-line fallback (owner decision 2026-10-04)
 
 export const FEASIBILITY_UNVERIFIED_DISCLOSURE =
   "Travel times are straight-line lower bounds, not measured routes. A schedule shown as workable may still not be.";
@@ -425,7 +425,7 @@ router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
     provider: { id: PROVIDER.id, routed: PROVIDER.routed },
     // Always present, and always true today. A client that renders a verdict
     // without it is showing a measurement that was never made.
-    disclosure: FEASIBILITY_UNVERIFIED_DISCLOSURE,
+    disclosure: feasibilityDisclosure(hops),
     /**
      * §7.4's transport-mode policy (2793) and the route-availability check
      * made against it, per hop. Both null / UNCHECKABLE while the gate that
@@ -515,3 +515,21 @@ router.put("/trips/:tripId/transport-policy", asyncHandler(async (req, res) => {
 }));
 
 export default router;
+
+/**
+ * The disclosure a feasibility or freedom-window answer carries, from the hops
+ * it was actually computed on (census-trips TR128). Since the Trips seams bind
+ * the gated routed provider, a hop MAY be a routed answer; saying "straight-line
+ * lower bounds" about one would be false, and saying "routed" about a fallback
+ * would be worse. So the sentence is the hops', counted: none routed (every
+ * deployment until the owner configures the Routes API) is the original
+ * disclosure, word for word.
+ */
+export function feasibilityDisclosure(hops: ReadonlyArray<{ routed?: unknown }>): string {
+  const routed = hops.filter((h) => h.routed === true).length;
+  if (routed === 0) return FEASIBILITY_UNVERIFIED_DISCLOSURE;
+  if (routed === hops.length) {
+    return "Travel times are routed estimates for the departure time. A schedule shown as workable can still be disrupted.";
+  }
+  return "Some travel times are routed estimates; the rest are straight-line lower bounds, not measured routes. A schedule shown as workable may still not be.";
+}

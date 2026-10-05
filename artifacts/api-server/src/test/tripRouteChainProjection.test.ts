@@ -73,7 +73,7 @@ describe("the route chain is the trip's plan, in order, with what §14.2 says a 
     assert.ok(h.segment); assert.equal(h.segment!.costMinor, 250); assert.equal(h.segment!.currency, "EUR");
     assert.equal(h.segment!.reliability.basis, "estimated"); assert.ok(h.segment!.reliability.value > 0 && h.segment!.reliability.value <= 1);
     assert.deepEqual(p.segments, { status: "ok", reason: null, count: 1 });
-    assert.equal(p.provider.id, "straight-line"); assert.equal(p.provider.routed, false);
+    assert.equal(p.provider.id, "google-routes-v2-gated"); assert.equal(p.provider.routed, false); // TR267: gated routed provider; unconfigured, the hop is the straight-line bound with its band (asserted above)
     const d = readTripDecision(p.decisionId)!;
     assert.equal(d.type, "route_chain"); assert.equal(d.result.hops, 1); assert.equal(d.result.withSegment, 1);
     assert.match(p.reading, /no stop exists that is not a plan item/);

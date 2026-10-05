@@ -3792,3 +3792,28 @@ route answers 503 rather than pretending to share.
 
 **Rollback:** `db/rollback/2026-10-05-3970-trip-private-anchor-shares-rollback.sql` — refuses while the
 flag is TRUE or any grant row exists, then drops the table, the flag row and the ledger row.
+
+## 2026-10-05 — `3971_trip_routes_api_spend_gate.sql`, written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3971_trip_routes_api_spend_gate.sql` | **not applied** | **not applied** |
+
+**What it is.** The hard half of the owner's Trips decision of 2026-10-04 (*"Routes API: Yes, for a
+bounded rollout … behind a server-side provider interface, set daily quotas and a hard budget, and fall
+back gracefully when the limit is reached"*): `public.routes_api_daily_usage` (one row per UTC day,
+calls and assumed micro-USD, no user data) and `public.routes_api_try_spend(quota, budget_micros,
+cost_micros)`, which takes one call's allowance under the row lock — so every API instance spends one
+shared allowance — and answers `granted | quota_exhausted | budget_exhausted | off`. A refusal writes
+nothing. service_role only; flag `trip_routes_api_enabled` seeded FALSE; postconditions assert the
+grants, the OFF answer for an unconfigured call and the flag.
+
+**Nothing waits on the press.** The Trips seams (feasibility, freedom windows, route chain) now bind
+`TRIP_TRAVEL_TIME_PROVIDER` (`domain/trips/contracts/tripTravelTimeProvider.ts`): Google Routes behind
+this gate, the straight-line bound as the fallback. Without 3971, the flag, the key and all three of
+`ROUTES_API_DAILY_QUOTA` / `ROUTES_API_DAILY_BUDGET_USD` / `ROUTES_API_COST_PER_CALL_USD`, no paid call
+is made and every answer is the straight-line bound it was before, naming why in its source refs.
+The per-call price is deliberately not in the repository: read it off Google's billing page for the SKU.
+
+**Rollback:** `db/rollback/2026-10-05-3971-trip-routes-api-spend-gate-rollback.sql` — refuses while the
+flag is TRUE; drops the function, the table, the flag row and the ledger row.

@@ -1,13 +1,13 @@
 /**
  * Google Routes API v2 adapter for the §7 TravelTimeProvider port.
  *
- * PREPARED, NOT WIRED. Nothing imports this yet, and this file changes no
- * behaviour on any deployment. The four wiring seams stay exactly where they
- * are:
+ * WIRED 2026-10-05 (lane C, owner decision 2026-10-04) — but only THROUGH the
+ * quota + hard-budget gate: tripTravelTimeProvider.ts wraps this adapter in
+ * GatedRoutedTravelTimeProvider.ts. The three Trips seams now read:
  *
- *   routes/tripFeasibility.ts:111                const PROVIDER = straightLineTravelTimeProvider;
- *   domain/trips/projections/TripFreedomProjection.ts:45     const BOUND_PROVIDER = straightLineTravelTimeProvider;  (was :44; corrected 2026-09-27)
- *   domain/trips/projections/TripRouteChainProjection.ts:42  const BOUND_PROVIDER = straightLineTravelTimeProvider;
+ *   routes/tripFeasibility.ts:111                const PROVIDER = TRIP_TRAVEL_TIME_PROVIDER;
+ *   domain/trips/projections/TripFreedomProjection.ts:45     const BOUND_PROVIDER = TRIP_TRAVEL_TIME_PROVIDER;  (unconfigured = straight-line)
+ *   domain/trips/projections/TripRouteChainProjection.ts:42  const BOUND_PROVIDER = TRIP_TRAVEL_TIME_PROVIDER;
  *   services/airport/LayoverTravelTime.ts:83     export const LAYOVER_TRAVEL_TIME_PROVIDER: TravelTimeProvider = corridorTravelTimeProvider(googleRoutesCorridorProvider);  (corrected 2026-09-27: it read `= noRoutedProvider` until 74890f906 on 2026-09-22, which wired the lib/providers corridor adapter, not this file; that adapter refuses unless LAYOVER_ROUTED_CORRIDOR_ENABLED and GOOGLE_MAPS_API_KEY are both set)
  *
  * Each is a module constant rather than an env lookup ON PURPOSE, so that
