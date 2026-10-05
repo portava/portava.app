@@ -77,7 +77,7 @@ import { PlaceInfoSection } from '../../src/components/place/PlaceInfoSection';
 import { getVenueInfoByCoords, clearVenueInfoCache, getCanonicalPlace, type VenueContactInfo } from '../../src/services/places';
 import type { CanonicalPlace } from '../../src/types/canonicalPlace';
 import { canonicalUrl } from '../../src/constants/canonicalUrl';
-import { readFeedSession } from '../../src/lib/feedAttribution.ts';
+import { readFeedSession } from '../../src/lib/feedAttribution.ts'; import { openableTicketLink } from '../../src/lib/ticketLink.ts';
 
 /**
  * Composes the location subtitle line, avoiding a duplicated city when
@@ -1043,7 +1043,10 @@ export default function EventDetailScreen() {
               <Pressable
                 style={styles.ticketBtn}
                 onPress={async () => {
-                  const url = event.priceUrl!;
+                  // REV-020: only an https link is handed to the OS. A stored link with any
+                  // other scheme (javascript:, intent:, http:) is never opened.
+                  const url = openableTicketLink(event.priceUrl);
+                  if (!url) { Alert.alert('Ticket link', 'This ticket link cannot be opened. Ask the host for the link.'); return; }
                   const supported = await Linking.canOpenURL(url).catch(() => false);
                   if (supported) {
                     Linking.openURL(url).catch(() =>

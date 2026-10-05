@@ -27,7 +27,7 @@ import {
   type TelegraphEvent,
 } from '../services/telegraphRealtimeService.ts';
 import { useReconnectCatchUp } from '../features/telegraph/hooks/useReconnectCatchUp.ts';
-import { editErrorCopy } from '../features/telegraph/messageActions/messageActionRules.ts';
+import { editErrorCopy } from '../features/telegraph/messageActions/messageActionRules.ts'; import { sendFailureFrom } from '../features/telegraph/lifecycle/readState.ts';
 
 function makeClientId(): string {
   return `client-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -270,7 +270,7 @@ export function useGroupChat(
     } else {
       setMessages((prev) =>
         prev.map((m) =>
-          m.clientId === clientId ? { ...m, deliveryStatus: 'failed' as const } : m,
+          m.clientId === clientId ? { ...m, deliveryStatus: 'failed' as const, sendFailure: sendFailureFrom(res) } : m,
         ),
       );
     }
@@ -285,7 +285,7 @@ export function useGroupChat(
     if (!failed || !thread) return;
     setMessages((prev) =>
       prev.map((m) =>
-        m.clientId === clientId ? { ...m, deliveryStatus: 'sending' as const } : m,
+        m.clientId === clientId ? { ...m, deliveryStatus: 'sending' as const, sendFailure: null } : m,
       ),
     );
     const res = await sendMessage(thread.id, failed.body ?? '', { clientId });
@@ -297,7 +297,7 @@ export function useGroupChat(
     } else {
       setMessages((prev) =>
         prev.map((m) =>
-          m.clientId === clientId ? { ...m, deliveryStatus: 'failed' as const } : m,
+          m.clientId === clientId ? { ...m, deliveryStatus: 'failed' as const, sendFailure: sendFailureFrom(res) } : m,
         ),
       );
     }
