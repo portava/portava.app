@@ -155,6 +155,12 @@ export const LEDGER_RULE_NAMESPACES = [
   "verdict",
   "percentile",
   "probe",
+  // §4 / §6.1 (LayoverConstraints.ts): the declared baggage mode a record was
+  // computed with, and the constraint closures of its landside gate. Emitted
+  // ONLY when a set was declared or a constraint closed the gate, so a legacy
+  // record's rule list is exactly what it was.
+  "constraints",
+  "gate",
 ] as const;
 
 // ── snapshot identity ────────────────────────────────────────────────────────
@@ -250,6 +256,23 @@ function inputFactsFor(record: LayoverFeasibilityRecord): InputFact[] {
         observedAt: liveConditions.observedAt,
       });
     }
+  }
+
+  // §4 the declared constraint set, walked from the input object like the two
+  // loops above. Present only when the traveller declared one (or the store
+  // could not be read — `constraints.read` says which); a legacy record has no
+  // such member and gains no fact. The traveller SAID these, so they carry the
+  // same source as every other session field.
+  const constraints = record.inputs.constraints;
+  if (constraints) {
+    for (const key of Object.keys(constraints)) {
+      const value = (constraints as unknown as Record<string, unknown>)[key];
+      facts.push({ key: `constraints.${key}`, value: (value ?? null) as InputFact["value"], source: "SESSION", observedAt: null });
+    }
+  }
+  // §6.1's entry policy is the OWNER's setting, not a fact about this traveller.
+  if (record.inputs.policy) {
+    facts.push({ key: "policy.entryForbidsLandside", value: true, source: "POLICY", observedAt: null });
   }
 
   return facts;
@@ -355,6 +378,20 @@ function rulesAppliedFor(record: LayoverFeasibilityRecord): string[] {
   if (probe) {
     rules.push(`probe.${probe.travelTimeSource}`);
     if (record.landside?.requiredMinutesIsLowerBound) rules.push("probe.requiredIsLowerBound");
+  }
+
+  // §4 / §6.1. Conditioned on the record like every rule above: the baggage
+  // rule fires only when a mode was declared, and a `gate.*` rule only for the
+  // three closures the constraint gate ADDS. `insufficient_time`,
+  // `entry_refused` and `traveller_staying_airside` are already said by
+  // `verdict.*`, and repeating them here would add a name to every record that
+  // has one — the duplicate this function's header removed `reason.<CODE>` for.
+  const constraints = record.inputs.constraints;
+  if (constraints) rules.push(`constraints.baggage.${constraints.baggageMode}`);
+  for (const closure of record.landsideGate.closedBy) {
+    if (closure === "baggage_unknown" || closure === "airport_change" || closure === "entry_unconfirmed") {
+      rules.push(`gate.${closure}`);
+    }
   }
 
   return rules;
