@@ -485,7 +485,7 @@ export default function CreateEventScreen() {
       setError('Select a trip to attach this event to');
       return;
     }
-    if (step === 'tickets' && priceType === 'external' && priceUrl && !priceUrl.startsWith('http')) {
+    if (step === 'tickets' && priceType === 'external' && priceUrl.trim() && !/^https:\/\//i.test(priceUrl.trim())) {
       setError('Enter a valid URL starting with https://');
       return;
     }

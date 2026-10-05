@@ -37,7 +37,7 @@
  * (census L50) and this module deliberately leaves it open: it publishes the
  * verdict and the per-candidate rating, and no caller's filtering changed.
  */
-import type { EntryEligibility } from "./layoverEntryGate.js";
+import type { EntryEligibility } from "./layoverEntryGate.js"; import { engineSession, gateLandside, namedConstraintInputs, type ConstraintInput, type LandsideGate, type LandsidePolicyInput, type SessionConstraintContext } from "./LayoverConstraints.js"; // same line: this file's lines are citation-anchored
 import { createHash } from "node:crypto";
 import type { AirportProfile } from "./AirportProfileService.js";
 import type { LayoverSession } from "./LayoverSessionService.js";
@@ -81,7 +81,7 @@ import { statedTravelMin } from "./LayoverPlanFit.js";
  *                 shape's version moved; the arithmetic gained a term, so
  *                 `LAYOVER_ENGINE_VERSION` moved too and for its own reason.
  */
-export const LAYOVER_FEASIBILITY_VERSION = "2026.09.14-1";
+export const LAYOVER_FEASIBILITY_VERSION = "2026.10.04-1"; // 2026.10.04-1: optional `constraints` / `policy` named inputs and `landsideGate` — history entry in LayoverConstraints.ts
 
 // ── §6.2 Estimate representation ─────────────────────────────────────────────
 
@@ -284,7 +284,7 @@ export type FeasibilityAirport = Pick<AirportProfile,
 /** Exactly the session fields the feasibility arithmetic reads. */
 export type FeasibilitySession = Pick<LayoverSession,
   | "id" | "arrivalTime" | "departureTime" | "boardingTime"
-  | "flightType" | "immigrationRequired" | "checkedBags" | "wantsToLeave"
+  | "flightType" | "immigrationRequired" | "checkedBags" | "wantsToLeave" | "constraints"
 >;
 
 /**
@@ -341,7 +341,7 @@ export interface FeasibilityInputs {
    *
    * `null` is UNRESOLVED, never permitted — see `adviseLeaving`.
    */
-  entry: EntryEligibility | null;
+  entry: EntryEligibility | null; /** §4 the declared constraint set and §6.1's entry policy — OPTIONAL and ABSENT unless something was declared / the policy is on, so a legacy computation hashes exactly as before. See LayoverConstraints.ts. */ constraints?: ConstraintInput; policy?: LandsidePolicyInput;
 }
 
 /** Project the domain objects onto the named input set. */
@@ -353,7 +353,7 @@ export function feasibilityInputs(
     landsideProbe?: LandsideProbe | null;
     bufferPercentile?: EstimatePercentile;
     liveConditions?: LiveConditions | null;
-    entry?: EntryEligibility | null;
+    entry?: EntryEligibility | null; /** Overrides `session.constraints` when given; `null` certifies as if nothing were declared. */ constraints?: SessionConstraintContext | null;
   },
 ): FeasibilityInputs {
   const live = opts.liveConditions ?? null;
@@ -410,7 +410,7 @@ export function feasibilityInputs(
               destinationCountry: opts.entry.corridor.destinationCountry,
             },
           }
-      : null,
+      : null, ...namedConstraintInputs(opts.constraints !== undefined ? opts.constraints : session.constraints),
   };
 }
 
@@ -499,7 +499,7 @@ export interface LayoverFeasibilityRecord {
    * deadlines: that is the duplicate-buffer defect `9c26efba` closed, and a
    * second derivation in a handler is exactly how it came back last time.
    */
-  windowOnly: SafetyAssessment;
+  windowOnly: SafetyAssessment; /** §5 `EVALUATING → LANDSIDE_AVAILABLE`, evaluated: entry + critical unknowns + time, and why it is closed when it is. The ONE landside gate; see LayoverConstraints.ts. */ landsideGate: LandsideGate;
 }
 
 /**
@@ -612,7 +612,7 @@ function liveExtraEstimate(live: LiveConditions | null, minutes: number): Estima
  * `inputHash` an identity rather than a decoration.
  */
 export function certifyFeasibility(inputs: FeasibilityInputs): LayoverFeasibilityRecord {
-  const { airport, session, nowMs } = inputs;
+  const { airport, nowMs } = inputs; const session = engineSession(inputs.session, inputs.constraints); // the declared baggage mode replaces the boolean HERE, once, for every term below
 
   const live = inputs.liveConditions;
 
@@ -636,11 +636,11 @@ export function certifyFeasibility(inputs: FeasibilityInputs): LayoverFeasibilit
   // Same deadline object, not a second derivation. See `windowOnly`.
   const windowOnlyByClock = assessWindowOnly(airport, session, envelope, nowMs, deadline);
 
-  const advice = adviseLeaving(airport, session, envelope, {
+  const gated = gateLandside(inputs, envelope, adviseLeaving(airport, session, envelope, {
     travelTimeSource: probe?.travelTimeSource,
     liveConditions: live,
     entry: inputs.entry,
-  });
+  })); const advice = gated.advice; // the gate may only WITHDRAW the clock's verdict — swept in src/test/layoverConstraintGate.test.ts
 
   // ── ONE RESPONSE CANNOT SAY TWO THINGS ──────────────────────────────────
   //
@@ -718,7 +718,7 @@ export function certifyFeasibility(inputs: FeasibilityInputs): LayoverFeasibilit
     computedAt: new Date(nowMs).toISOString(),
     inputs,
     verdict: advice.verdict,
-    confidence: worstConfidence(confidenceOver),
+    confidence: gated.insufficient ? "INSUFFICIENT" : worstConfidence(confidenceOver), // §6.1: a safety-critical unknown forces INSUFFICIENT
     envelope,
     deadline,
     estimates,
@@ -728,7 +728,7 @@ export function certifyFeasibility(inputs: FeasibilityInputs): LayoverFeasibilit
     reasonCodes: advice.reasonCodes,
     disclaimer: advice.disclaimer,
     landside,
-    windowOnly,
+    windowOnly, landsideGate: gated.gate,
   };
 }
 
@@ -752,7 +752,7 @@ export function certifySessionFeasibility(
     bufferPercentile?: EstimatePercentile;
     liveConditions?: LiveConditions | null;
     /** Omitted = unresolved. Resolve it with `resolveLayoverEntry` and pass it. */
-    entry?: EntryEligibility | null;
+    entry?: EntryEligibility | null; /** Overrides `session.constraints`; see `feasibilityInputs`. */ constraints?: SessionConstraintContext | null;
   },
 ): LayoverFeasibilityRecord {
   return certifyFeasibility(feasibilityInputs(airport, session, opts));
