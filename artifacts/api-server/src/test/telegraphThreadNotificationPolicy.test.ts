@@ -56,7 +56,7 @@ const NOW = Date.parse("2026-10-05T12:00:00.000Z");
 /** Everyone reads English: translation is not what this suite is about. */
 const SAME_LANGUAGE: TranslationProvider = {
   async detectLanguage() { return { language: "en", confidence: "high" }; },
-  async translateText(text: string) { return { translatedText: text, provider: "stub" }; },
+  async translateText(text: string) { return { translatedText: text, provider: "stub", providerVersion: "stub-1" }; },
 };
 const st = (o: Partial<ThreadNotificationState> = {}): ThreadNotificationState =>
   ({ level: null, mutedAt: null, mutedUntil: null, ...o });
