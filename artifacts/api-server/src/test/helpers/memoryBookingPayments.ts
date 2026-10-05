@@ -25,6 +25,14 @@ import type {
 } from "../../services/payments/bookingPayments/model.js";
 import type { LedgerPosting, LedgerPostResult, PaymentLedgerPort } from "../../services/payments/bookingPayments/ledgerPostings.js";
 import { canonicalJson } from "../../services/payments/paymentEventFold.js";
+import { createHash } from "node:crypto";
+
+/** A deterministic uuid-shaped payment party id for a profile (requireIdempotencyKey checks the shape). */
+export function partyIdFor(profileId: string): string {
+  const h = createHash("sha256").update(`party:${profileId}`).digest("hex");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
+export const PLATFORM_PARTY_ID = partyIdFor("platform:portava");
 
 type Op = keyof BookingPaymentStore;
 
@@ -36,6 +44,12 @@ export interface MemoryStore extends BookingPaymentStore {
   readonly payouts: Map<string, MonthlyPayoutRecord>;
   readonly events: Map<string, { processed: WebhookEventOutcome | null }>;
   readonly bookingStatusWrites: Array<{ bookingId: string; status: string }>;
+  /** profile id -> payment party id (3821's pseudonym); a removed identity maps to nothing. */
+  readonly parties: Map<string, string>;
+  /** The party a profile has (created as `party:<profile>` by ensureUserParty). */
+  partyOf(profileId: string): string;
+  /** Erasure as 3823 performs it: the party stays, its link to the profile goes. */
+  removeIdentity(profileId: string): void;
   /** The next call of `op` answers a failure (read: ok:false; write: ok:false, conflict:false). */
   failNext(op: Op, times?: number): void;
 }
@@ -48,6 +62,7 @@ export function createMemoryStore(): MemoryStore {
   const payouts = new Map<string, MonthlyPayoutRecord>();
   const events = new Map<string, { processed: WebhookEventOutcome | null }>();
   const bookingStatusWrites: Array<{ bookingId: string; status: string }> = [];
+  const parties = new Map<string, string>();
   const failing = new Map<Op, number>();
   const fails = (op: Op): boolean => {
     const n = failing.get(op) ?? 0;
@@ -61,8 +76,18 @@ export function createMemoryStore(): MemoryStore {
   const clone = <T>(v: T): T => (v === null || v === undefined ? v : JSON.parse(JSON.stringify(v)));
 
   const store: MemoryStore = {
-    bookings, recipients, payments, refunds, payouts, events, bookingStatusWrites,
+    bookings, recipients, payments, refunds, payouts, events, bookingStatusWrites, parties,
     failNext(op, times = 1) { failing.set(op, times); },
+    partyOf: (profileId) => partyIdFor(profileId),
+    removeIdentity(profileId) { parties.delete(profileId); },
+
+    partyForProfile: (profileId) => r("partyForProfile", () => parties.get(profileId) ?? null),
+    profileForParty: (partyId) => r("profileForParty", () => [...parties.entries()].find(([, p]) => p === partyId)?.[0] ?? null),
+    ensureUserParty: (profileId) => r("ensureUserParty", () => {
+      const p = parties.get(profileId) ?? partyIdFor(profileId);
+      parties.set(profileId, p);
+      return p;
+    }),
 
     loadBooking: (id) => r("loadBooking", () => clone(bookings.get(id) ?? null)),
     setBookingPaymentStatus: (id, status) => w("setBookingPaymentStatus", () => {
@@ -73,9 +98,10 @@ export function createMemoryStore(): MemoryStore {
       return ok;
     }),
 
-    getRecipient: (userId) => r("getRecipient", () => clone(recipients.get(userId) ?? null)),
+    ensurePlatformParty: () => r("ensurePlatformParty", () => PLATFORM_PARTY_ID),
+    getRecipient: (partyId) => r("getRecipient", () => clone(recipients.get(partyId) ?? null)),
     findRecipientByRef: (provider, ref) => r("findRecipientByRef", () => clone([...recipients.values()].find((x) => x.provider === provider && x.recipientRef === ref) ?? null)),
-    upsertRecipient: (rec) => w("upsertRecipient", () => { recipients.set(rec.userId, clone(rec)); return ok; }),
+    upsertRecipient: (rec) => w("upsertRecipient", () => { recipients.set(rec.partyId, clone(rec)); return ok; }),
 
     listPaymentsForBooking: (id) => r("listPaymentsForBooking", () => clone([...payments.values()].filter((p) => p.bookingId === id).sort((a, b) => a.attemptNo - b.attemptNo))),
     findPaymentByIntent: (provider, ref) => r("findPaymentByIntent", () => clone([...payments.values()].find((p) => p.provider === provider && p.intentRef === ref) ?? null)),
@@ -90,8 +116,8 @@ export function createMemoryStore(): MemoryStore {
       payments.set(id, { ...p, ...clone(patch) });
       return ok;
     }),
-    listUnpaidSucceededPayments: (userId) => r("listUnpaidSucceededPayments", () =>
-      clone([...payments.values()].filter((p) => p.payoutId === null && (userId === null || p.recipientUserId === userId) && (p.state === "succeeded" || p.state === "partially_refunded" || p.state === "disputed")))),
+    listUnpaidSucceededPayments: (partyId) => r("listUnpaidSucceededPayments", () =>
+      clone([...payments.values()].filter((p) => p.payoutId === null && (partyId === null || p.recipientPartyId === partyId) && (p.state === "succeeded" || p.state === "partially_refunded" || p.state === "disputed")))),
 
     insertRefund: (rec) => w("insertRefund", () => {
       if ([...refunds.values()].some((x) => x.idempotencyKey === rec.idempotencyKey)) return { ok: false, conflict: true, detail: "duplicate idempotency key" };
@@ -142,8 +168,8 @@ export interface MemoryLedger extends PaymentLedgerPort {
   /** How many post() calls replayed an existing key with identical content. */
   readonly replays: () => number;
   setAvailable(available: boolean): void;
-  /** Σ entries per (account, party, currency). */
-  balance(account: string, partyUserId: string | null, currency: string): number;
+  /** Σ entries per (account, party, currency). Processor and platform accounts have party null. */
+  balance(account: string, partyId: string | null, currency: string): number;
 }
 
 export function createMemoryLedger(): MemoryLedger {
@@ -158,7 +184,7 @@ export function createMemoryLedger(): MemoryLedger {
       let n = 0;
       for (const p of postings.values()) {
         if (p.currency !== currency) continue;
-        for (const e of p.entries) if (e.account === account && e.partyUserId === party) n += e.amountMinor;
+        for (const e of p.entries) if (e.account === account && e.partyId === party) n += e.amountMinor;
       }
       return n;
     },

@@ -12,8 +12,10 @@
  * against migration 3931 and the baseline, so a typo here fails a test rather
  * than a production statement.
  */
-import type { PaymentIntentSnapshot, PayoutSnapshot, RefundSnapshot } from "../PaymentProvider.js";
+import type { PaymentIntentSnapshot, PayoutSnapshot, RefundSnapshot, SettlementDetails } from "../PaymentProvider.js";
+import { ensurePaymentAccount } from "../PaymentLedger.js";
 import { majorDecimalToMinor } from "./bookingQuote.js";
+import { serviceStartInstant } from "./serviceStart.js";
 import {
   readFail,
   readOk,
@@ -37,37 +39,87 @@ export const T_PAYOUTS = "rent_buddy_monthly_payouts";
 export const T_EVENTS = "payment_webhook_events";
 
 export const BOOKING_COLUMNS =
-  "id, status, payment_status, traveler_id, buddy_id, country_code, total_usd, booking_date, start_time, completed_at, dispute_window_expires_at, is_test_booking";
+  "id, status, payment_status, traveler_id, buddy_id, country_code, city, total_usd, booking_date, start_time, completed_at, dispute_window_expires_at, is_test_booking";
 export const RECIPIENT_COLUMNS =
-  "user_id, provider, recipient_ref, country, settlement_currency, onboarding, charges_enabled, payouts_enabled, requirements_due, provider_updated_at";
+  "party_id, provider, recipient_ref, country, settlement_currency, onboarding, charges_enabled, payouts_enabled, requirements_due, provider_updated_at";
 export const PAYMENT_COLUMNS =
-  "id, booking_id, attempt_no, provider, idempotency_key, intent_ref, recipient_ref, recipient_user_id, charge_model, state, intent_state, currency, amount_minor, " +
+  "id, booking_id, attempt_no, provider, idempotency_key, intent_ref, recipient_ref, recipient_party_id, charge_model, state, intent_state, currency, amount_minor, " +
   "service_minor, payer_fee_minor, tip_minor, tax_minor, commission_minor, platform_payer_fee_minor, platform_tax_minor, commission_bps, commission_rule_version, " +
   "tax_provider, tax_calculation_refs, buyer_market, seller_market, amount_captured_minor, amount_refunded_minor, platform_fee_collected_minor, " +
-  "platform_fee_refunded_minor, settlement, last_snapshot, failure_reason, payout_id, created_at, updated_at";
+  "platform_fee_refunded_minor, settlement, last_snapshot, failure_reason, provider_cancel_owed, payout_id, created_at, updated_at";
 export const REFUND_COLUMNS =
-  "id, booking_payment_id, provider, idempotency_key, refund_ref, state, reason, amount_minor, currency, refund_platform_fee, requested_by, last_snapshot, created_at";
+  "id, booking_payment_id, provider, idempotency_key, refund_ref, state, reason, amount_minor, currency, refund_platform_fee, requested_by_role, requested_by_party_id, last_snapshot, created_at";
 export const PAYOUT_COLUMNS =
-  "id, recipient_user_id, period, currency, amount_minor, state, idempotency_key, payout_ref, recipient_ref, booking_payment_ids, hold_reason, carry_reason, failure_code, last_snapshot, created_at, updated_at";
+  "id, recipient_party_id, provider, period, currency, amount_minor, state, idempotency_key, payout_ref, recipient_ref, booking_payment_ids, hold_reason, held_by, held_at, released_by, released_at, release_reason, carry_reason, failure_code, last_snapshot, created_at, updated_at";
 
 const num = (v: unknown): number => (typeof v === "number" ? v : typeof v === "string" && /^-?\d+$/.test(v) ? Number(v) : NaN);
 const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
 
-/**
- * booking_date + start_time are a LOCAL date and time with no zone. The
- * earliest UTC instant that local time can be anywhere is 14 hours before it
- * read as UTC (UTC+14). Using that instant means "cancelled before the service
- * begins" is only answered automatically when it is true in every time zone;
- * anything closer goes to support. Null when either part is missing.
- */
+/** The earliest-possible start, kept as a named export for the schema suite; the rule lives in serviceStart.ts. */
 export function earliestStartInstant(bookingDate: unknown, startTime: unknown): string | null {
-  if (typeof bookingDate !== "string" || typeof startTime !== "string") return null;
-  const d = /^(\d{4}-\d{2}-\d{2})$/.exec(bookingDate.slice(0, 10));
-  const t = /^(\d{2}):(\d{2})(?::(\d{2}))?/.exec(startTime);
-  if (!d || !t) return null;
-  const asUtc = Date.parse(`${d[1]}T${t[1]}:${t[2]}:${t[3] ?? "00"}.000Z`);
-  if (!Number.isFinite(asUtc)) return null;
-  return new Date(asUtc - 14 * 3600 * 1000).toISOString();
+  const s = serviceStartInstant(bookingDate, startTime, null);
+  return s ? s.instant : null;
+}
+
+// ── Allow-listed projections of provider objects (OD-PAY-8) ─────────────────
+// What reaches a jsonb column is BUILT here from named fields, never copied: a
+// provider object (or an adapter that passes one through) can carry a name, an
+// email, a phone number, an address or card digits, and a jsonb column would
+// keep them past any erasure. The client secret is never stored either.
+
+const pick = <T extends object>(o: T | null | undefined, keys: readonly (keyof T)[]): Partial<T> | null => {
+  if (!o || typeof o !== "object") return null;
+  const out: Partial<T> = {};
+  for (const k of keys) if (k in o) out[k] = o[k];
+  return out;
+};
+const money = (m: unknown): { amountMinor: unknown; currency: unknown } | null =>
+  m && typeof m === "object" ? { amountMinor: (m as Record<string, unknown>)["amountMinor"], currency: (m as Record<string, unknown>)["currency"] } : null;
+
+export function projectSettlement(s: SettlementDetails | null | undefined): SettlementDetails | null {
+  if (!s || typeof s !== "object") return null;
+  const conv = (c: unknown) =>
+    c && typeof c === "object" ? pick(c as Record<string, unknown>, ["fromCurrency", "toCurrency", "rate", "rateSource", "rateAt"]) : null;
+  return {
+    settled: money(s.settled),
+    conversion: conv(s.conversion),
+    providerFee: s.providerFee ? { amount: money(s.providerFee.amount), paidBy: s.providerFee.paidBy } : null,
+    platformFeeSettled: s.platformFeeSettled ? { settled: money(s.platformFeeSettled.settled), conversion: conv(s.platformFeeSettled.conversion) } : null,
+  } as unknown as SettlementDetails;
+}
+
+export function projectIntentSnapshot(s: PaymentIntentSnapshot | null | undefined): PaymentIntentSnapshot | null {
+  const out = pick(s, [
+    "intentRef", "chargeModel", "recipientRef", "state", "capture", "amountCapturableMinor", "amountCapturedMinor",
+    "amountRefundedMinor", "platformFeeCollectedMinor", "platformFeeRefundedMinor", "livemode", "updatedAt",
+  ]);
+  if (!out || !s) return null;
+  return {
+    ...out,
+    reference: s.reference ? { kind: s.reference.kind, id: s.reference.id } : s.reference,
+    amount: money(s.amount),
+    components: pick(s.components, ["serviceMinor", "payerFeeMinor", "tipMinor", "taxMinor"]),
+    platformFee: pick(s.platformFee, ["commissionMinor", "payerFeeMinor", "taxMinor"]),
+    settlement: projectSettlement(s.settlement),
+    clientSecret: null,
+  } as unknown as PaymentIntentSnapshot;
+}
+
+export function projectRefundSnapshot(s: RefundSnapshot | null | undefined): RefundSnapshot | null {
+  const out = pick(s, ["refundRef", "intentRef", "recipientRef", "state", "platformFeeRefundedMinor", "fullyRefunded", "reason", "livemode", "updatedAt"]);
+  if (!out || !s) return null;
+  return { ...out, amount: money(s.amount) } as unknown as RefundSnapshot;
+}
+
+export function projectPayoutSnapshot(s: PayoutSnapshot | null | undefined): PayoutSnapshot | null {
+  const out = pick(s, ["payoutRef", "kind", "recipientRef", "state", "amountReversedMinor", "failureCode", "expectedArrivalAt", "livemode", "updatedAt"]);
+  if (!out || !s) return null;
+  return {
+    ...out,
+    reference: s.reference ? { kind: s.reference.kind, id: s.reference.id } : null,
+    amount: money(s.amount),
+    settlement: projectSettlement(s.settlement),
+  } as unknown as PayoutSnapshot;
 }
 
 function toPayment(r: Record<string, unknown>): BookingPaymentRecord {
@@ -80,7 +132,7 @@ function toPayment(r: Record<string, unknown>): BookingPaymentRecord {
     idempotencyKey: String(r["idempotency_key"]),
     intentRef: str(r["intent_ref"]),
     recipientRef: String(r["recipient_ref"]),
-    recipientUserId: String(r["recipient_user_id"]),
+    recipientPartyId: String(r["recipient_party_id"]),
     chargeModel: r["charge_model"] as BookingPaymentRecord["chargeModel"],
     state: r["state"] as BookingPaymentRecord["state"],
     intentState: (r["intent_state"] ?? null) as BookingPaymentRecord["intentState"],
@@ -100,6 +152,7 @@ function toPayment(r: Record<string, unknown>): BookingPaymentRecord {
     settlement: (r["settlement"] ?? null) as BookingPaymentRecord["settlement"],
     lastSnapshot: (r["last_snapshot"] ?? null) as PaymentIntentSnapshot | null,
     failureReason: str(r["failure_reason"]),
+    providerCancelOwed: r["provider_cancel_owed"] === true,
     payoutId: str(r["payout_id"]),
     createdAt: String(r["created_at"]),
     updatedAt: String(r["updated_at"]),
@@ -112,7 +165,7 @@ export function paymentRow(p: Partial<BookingPaymentRecord>): Record<string, unk
   const set = (k: string, v: unknown) => { if (v !== undefined) row[k] = v; };
   set("id", p.id); set("booking_id", p.bookingId); set("attempt_no", p.attemptNo); set("provider", p.provider);
   set("idempotency_key", p.idempotencyKey); set("intent_ref", p.intentRef); set("recipient_ref", p.recipientRef);
-  set("recipient_user_id", p.recipientUserId); set("charge_model", p.chargeModel); set("state", p.state); set("intent_state", p.intentState);
+  set("recipient_party_id", p.recipientPartyId); set("charge_model", p.chargeModel); set("state", p.state); set("intent_state", p.intentState);
   if (p.amount) { set("currency", p.amount.currency); set("amount_minor", p.amount.amountMinor); }
   if (p.components) {
     set("service_minor", p.components.serviceMinor); set("payer_fee_minor", p.components.payerFeeMinor);
@@ -126,14 +179,14 @@ export function paymentRow(p: Partial<BookingPaymentRecord>): Record<string, unk
   set("buyer_market", p.buyerMarket); set("seller_market", p.sellerMarket);
   set("amount_captured_minor", p.amountCapturedMinor); set("amount_refunded_minor", p.amountRefundedMinor);
   set("platform_fee_collected_minor", p.platformFeeCollectedMinor); set("platform_fee_refunded_minor", p.platformFeeRefundedMinor);
-  set("settlement", p.settlement); set("last_snapshot", p.lastSnapshot); set("failure_reason", p.failureReason); set("payout_id", p.payoutId);
+  if (p.settlement !== undefined) set("settlement", projectSettlement(p.settlement)); if (p.lastSnapshot !== undefined) set("last_snapshot", projectIntentSnapshot(p.lastSnapshot)); set("failure_reason", p.failureReason); set("provider_cancel_owed", p.providerCancelOwed); set("payout_id", p.payoutId);
   set("created_at", p.createdAt); set("updated_at", p.updatedAt);
   return row;
 }
 
 function toRecipient(r: Record<string, unknown>): RecipientRecord {
   return {
-    userId: String(r["user_id"]),
+    partyId: String(r["party_id"]),
     provider: String(r["provider"]),
     recipientRef: String(r["recipient_ref"]),
     country: String(r["country"]),
@@ -158,7 +211,8 @@ function toRefund(r: Record<string, unknown>): RefundRecord {
     amountMinor: r["amount_minor"] === null || r["amount_minor"] === undefined ? null : num(r["amount_minor"]),
     currency: String(r["currency"]),
     refundPlatformFee: r["refund_platform_fee"] === true,
-    requestedBy: String(r["requested_by"]),
+    requestedByRole: r["requested_by_role"] as RefundRecord["requestedByRole"],
+    requestedByPartyId: str(r["requested_by_party_id"]),
     lastSnapshot: (r["last_snapshot"] ?? null) as RefundSnapshot | null,
     createdAt: String(r["created_at"]),
   };
@@ -169,14 +223,15 @@ export function refundRow(p: Partial<RefundRecord>): Record<string, unknown> {
   const set = (k: string, v: unknown) => { if (v !== undefined) row[k] = v; };
   set("id", p.id); set("booking_payment_id", p.bookingPaymentId); set("provider", p.provider); set("idempotency_key", p.idempotencyKey);
   set("refund_ref", p.refundRef); set("state", p.state); set("reason", p.reason); set("amount_minor", p.amountMinor); set("currency", p.currency);
-  set("refund_platform_fee", p.refundPlatformFee); set("requested_by", p.requestedBy); set("last_snapshot", p.lastSnapshot); set("created_at", p.createdAt);
+  set("refund_platform_fee", p.refundPlatformFee); set("requested_by_role", p.requestedByRole); set("requested_by_party_id", p.requestedByPartyId); if (p.lastSnapshot !== undefined) set("last_snapshot", projectRefundSnapshot(p.lastSnapshot)); set("created_at", p.createdAt);
   return row;
 }
 
 function toPayout(r: Record<string, unknown>): MonthlyPayoutRecord {
   return {
     id: String(r["id"]),
-    recipientUserId: String(r["recipient_user_id"]),
+    recipientPartyId: String(r["recipient_party_id"]),
+    provider: String(r["provider"]),
     period: String(r["period"]),
     currency: String(r["currency"]),
     amountMinor: num(r["amount_minor"]),
@@ -186,6 +241,11 @@ function toPayout(r: Record<string, unknown>): MonthlyPayoutRecord {
     recipientRef: String(r["recipient_ref"]),
     bookingPaymentIds: Array.isArray(r["booking_payment_ids"]) ? (r["booking_payment_ids"] as string[]) : [],
     holdReason: str(r["hold_reason"]),
+    heldBy: str(r["held_by"]),
+    heldAt: str(r["held_at"]),
+    releasedBy: str(r["released_by"]),
+    releasedAt: str(r["released_at"]),
+    releaseReason: str(r["release_reason"]),
     carryReason: str(r["carry_reason"]),
     failureCode: str(r["failure_code"]),
     lastSnapshot: (r["last_snapshot"] ?? null) as PayoutSnapshot | null,
@@ -197,10 +257,10 @@ function toPayout(r: Record<string, unknown>): MonthlyPayoutRecord {
 export function payoutRow(p: Partial<MonthlyPayoutRecord>): Record<string, unknown> {
   const row: Record<string, unknown> = {};
   const set = (k: string, v: unknown) => { if (v !== undefined) row[k] = v; };
-  set("id", p.id); set("recipient_user_id", p.recipientUserId); set("period", p.period); set("currency", p.currency); set("amount_minor", p.amountMinor);
+  set("id", p.id); set("recipient_party_id", p.recipientPartyId); set("provider", p.provider); set("period", p.period); set("currency", p.currency); set("amount_minor", p.amountMinor);
   set("state", p.state); set("idempotency_key", p.idempotencyKey); set("payout_ref", p.payoutRef); set("recipient_ref", p.recipientRef);
   if (p.bookingPaymentIds) set("booking_payment_ids", [...p.bookingPaymentIds]);
-  set("hold_reason", p.holdReason); set("carry_reason", p.carryReason); set("failure_code", p.failureCode); set("last_snapshot", p.lastSnapshot);
+  set("hold_reason", p.holdReason); set("held_by", p.heldBy); set("held_at", p.heldAt); set("released_by", p.releasedBy); set("released_at", p.releasedAt); set("release_reason", p.releaseReason); set("carry_reason", p.carryReason); set("failure_code", p.failureCode); if (p.lastSnapshot !== undefined) set("last_snapshot", projectPayoutSnapshot(p.lastSnapshot));
   set("created_at", p.createdAt); set("updated_at", p.updatedAt);
   return row;
 }
@@ -258,7 +318,12 @@ export function supabaseBookingPaymentStore(sc: any): BookingPaymentStore {
           serviceCountry: typeof b["country_code"] === "string" && /^[A-Z]{2}$/.test(b["country_code"] as string) ? (b["country_code"] as string) : null,
           serviceMinor: majorDecimalToMinor(b["total_usd"]),
           currency: "USD",
-          startsAt: earliestStartInstant(b["booking_date"], b["start_time"]),
+          // In the booking city's zone when it is known; the earliest-possible
+          // instant only when it is not (serviceStart.ts, OD-PAY-5).
+          ...((): { startsAt: string | null; startBasis: BookingForPayment["startBasis"] } => {
+            const st = serviceStartInstant(b["booking_date"], b["start_time"], b["city"]);
+            return { startsAt: st ? st.instant : null, startBasis: st ? st.basis : null };
+          })(),
           completedAt: str(b["completed_at"]),
           disputeWindowExpiresAt: str(b["dispute_window_expires_at"]),
           isTestBooking: b["is_test_booking"] === true,
@@ -271,23 +336,52 @@ export function supabaseBookingPaymentStore(sc: any): BookingPaymentStore {
     setBookingPaymentStatus: (bookingId, status) =>
       touched(sc.from("rent_buddy_bookings").update({ payment_status: status, updated_at: new Date().toISOString() }).eq("id", bookingId).select("id")),
 
-    getRecipient: (userId) => one(sc.from(T_RECIPIENTS).select(RECIPIENT_COLUMNS).eq("user_id", userId).maybeSingle(), toRecipient),
+    partyForProfile: async (profileId) => {
+      const r = await one(sc.from("payment_parties").select("id").eq("profile_id", profileId).maybeSingle(), (x) => String(x["id"]));
+      return r;
+    },
+    profileForParty: async (partyId) => {
+      try {
+        const { data, error } = await sc.from("payment_parties").select("profile_id").eq("id", partyId).maybeSingle();
+        if (error || !data) return readFail("party read failed"); // a party this slice named must exist
+        return readOk(str((data as Record<string, unknown>)["profile_id"]));
+      } catch {
+        return readFail("party read threw");
+      }
+    },
+    ensureUserParty: async (profileId, currency, accountType = "user_payable") => {
+      try {
+        const r = await ensurePaymentAccount(sc, { owner: { kind: "user", profileId }, accountType, currency });
+        return r.ok ? readOk(r.partyId) : readFail(`payment_account_ensure refused: ${r.reason}`);
+      } catch {
+        return readFail("payment_account_ensure threw");
+      }
+    },
+    ensurePlatformParty: async (currency) => {
+      try {
+        const r = await ensurePaymentAccount(sc, { owner: { kind: "platform", label: "portava" }, accountType: "refund_liability", currency });
+        return r.ok ? readOk(r.partyId) : readFail(`payment_account_ensure refused: ${r.reason}`);
+      } catch {
+        return readFail("payment_account_ensure threw");
+      }
+    },
+    getRecipient: (partyId) => one(sc.from(T_RECIPIENTS).select(RECIPIENT_COLUMNS).eq("party_id", partyId).maybeSingle(), toRecipient),
     findRecipientByRef: (provider, ref) => one(sc.from(T_RECIPIENTS).select(RECIPIENT_COLUMNS).eq("provider", provider).eq("recipient_ref", ref).maybeSingle(), toRecipient),
     upsertRecipient: (rec) =>
       touched(sc.from(T_RECIPIENTS).upsert({
-        user_id: rec.userId, provider: rec.provider, recipient_ref: rec.recipientRef, country: rec.country,
+        party_id: rec.partyId, provider: rec.provider, recipient_ref: rec.recipientRef, country: rec.country,
         settlement_currency: rec.settlementCurrency, onboarding: rec.onboarding, charges_enabled: rec.chargesEnabled,
         payouts_enabled: rec.payoutsEnabled, requirements_due: [...rec.requirementsDue], provider_updated_at: rec.providerUpdatedAt,
         updated_at: new Date().toISOString(),
-      }, { onConflict: "user_id" }).select("user_id")),
+      }, { onConflict: "party_id" }).select("party_id")),
 
     listPaymentsForBooking: (bookingId) => many(sc.from(T_PAYMENTS).select(PAYMENT_COLUMNS).eq("booking_id", bookingId).order("attempt_no", { ascending: true }), toPayment),
     findPaymentByIntent: (provider, intentRef) => one(sc.from(T_PAYMENTS).select(PAYMENT_COLUMNS).eq("provider", provider).eq("intent_ref", intentRef).maybeSingle(), toPayment),
     insertPayment: (rec) => touched(sc.from(T_PAYMENTS).insert(paymentRow(rec)).select("id")),
     updatePayment: (id, patch) => touched(sc.from(T_PAYMENTS).update(paymentRow({ ...patch, id: undefined })).eq("id", id).select("id")),
-    listUnpaidSucceededPayments: (userId) => {
+    listUnpaidSucceededPayments: (partyId) => {
       let q = sc.from(T_PAYMENTS).select(PAYMENT_COLUMNS).is("payout_id", null).in("state", ["succeeded", "partially_refunded", "disputed"]);
-      if (userId !== null) q = q.eq("recipient_user_id", userId);
+      if (partyId !== null) q = q.eq("recipient_party_id", partyId);
       return many(q, toPayment);
     },
 

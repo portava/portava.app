@@ -90,7 +90,7 @@ export function netForRecipientMinor(p: BookingPaymentRecord): number {
 }
 
 export interface PlanReportLine {
-  readonly recipientUserId: string;
+  readonly recipientPartyId: string;
   readonly currency: string;
   readonly amountMinor: number;
   readonly result: "planned" | "carried_forward" | "skipped";
@@ -125,18 +125,24 @@ export async function planMonthlyPayouts(deps: PaymentSliceDeps, policy: PayoutP
     if (refunds.value.some((r) => r.state === "requested" || r.state === "pending")) { ineligible.push({ paymentId: p.id, reason: "refund_pending" }); continue; }
     const settled = p.settlement?.settled.currency;
     if (settled && settled !== p.amount.currency) { ineligible.push({ paymentId: p.id, reason: "settled_in_other_currency" }); continue; }
-    const key = `${p.recipientUserId}\u0000${p.recipientRef}\u0000${p.amount.currency}`;
+    const key = `${p.recipientPartyId}\u0000${p.recipientRef}\u0000${p.amount.currency}\u0000${p.provider}`;
     groups.set(key, [...(groups.get(key) ?? []), p]);
   }
 
   const report: PlanReportLine[] = [];
   for (const [key, items] of groups) {
-    const [recipientUserId, recipientRef, currency] = key.split("\u0000") as [string, string, string];
+    const [recipientPartyId, recipientRef, currency, provider] = key.split("\u0000") as [string, string, string, string];
     const amountMinor = items.reduce((n, p) => n + netForRecipientMinor(p), 0);
-    const base = { recipientUserId, currency, amountMinor, paymentCount: items.length };
+    const base = { recipientPartyId, currency, amountMinor, paymentCount: items.length };
 
     // The buddy: verified, and payable by the provider.
-    const verified = await deps.personVerified(recipientUserId);
+    // Verification is a fact about a PERSON: the party leads back to one only
+    // while the identity link exists. After an erasure there is nobody to verify,
+    // so nothing is paid out (the balance stays on the pseudonymous party).
+    const profile = await deps.store.profileForParty(recipientPartyId);
+    if (!profile.ok) { report.push({ ...base, result: "skipped", reason: "verification_unreadable", payoutId: null }); continue; }
+    if (!profile.value) { report.push({ ...base, result: "skipped", reason: "identity_removed", payoutId: null }); continue; }
+    const verified = await deps.personVerified(profile.value);
     if (verified !== "verified") {
       report.push({ ...base, result: "skipped", reason: verified === "unreadable" ? "verification_unreadable" : "recipient_not_verified", payoutId: null });
       continue;
@@ -160,7 +166,8 @@ export async function planMonthlyPayouts(deps: PaymentSliceDeps, policy: PayoutP
     const nowIso = now.toISOString();
     const rec: MonthlyPayoutRecord = {
       id: existing.value?.id ?? deps.newId(),
-      recipientUserId,
+      recipientPartyId,
+      provider,
       period,
       currency,
       amountMinor,
@@ -170,6 +177,11 @@ export async function planMonthlyPayouts(deps: PaymentSliceDeps, policy: PayoutP
       recipientRef,
       bookingPaymentIds: carryReason ? [] : items.map((p) => p.id),
       holdReason: null,
+      heldBy: null,
+      heldAt: null,
+      releasedBy: null,
+      releasedAt: null,
+      releaseReason: null,
       carryReason,
       failureCode: null,
       lastSnapshot: null,
@@ -231,21 +243,34 @@ export async function executePlannedPayouts(deps: PaymentSliceDeps, payoutIds: r
   return outcome(200, { results });
 }
 
-/** Admin HOLD of a planned payout (before it is requested), and RELEASE back to planned. Compare-and-swap. */
+/**
+ * Admin HOLD of a planned payout (before it is requested), and RELEASE back to
+ * planned. Compare-and-swap, and the ACTOR and the REASON are written in the
+ * same single UPDATE as the state change, so a hold that happened always says
+ * who placed it and why — and a refused transition records nothing.
+ * A reason is required both ways (at least 5 characters).
+ */
 export async function holdOrReleasePayout(
   deps: PaymentSliceDeps,
-  input: { payoutId: string; action: "hold" | "release"; reason: string | null },
+  input: { payoutId: string; action: "hold" | "release"; reason: string | null; actorUserId: string },
 ): Promise<SliceOutcome> {
+  if (!input.reason || input.reason.trim().length < 5) {
+    return refusal(400, "invalid_payload", `A ${input.action} needs a reason (at least 5 characters).`);
+  }
+  if (typeof input.actorUserId !== "string" || input.actorUserId.length === 0) return refusal(403, "forbidden", "No acting admin.");
   const r = await deps.store.getPayout(input.payoutId);
   if (!r.ok) return refusal(503, "degraded_unavailable", "The payout could not be read.");
   if (!r.value) return refusal(404, "not_found", "Payout not found.");
   const from: readonly MonthlyPayoutState[] = input.action === "hold" ? ["planned"] : ["held"];
-  if (input.action === "hold" && (!input.reason || input.reason.trim().length < 5)) return refusal(400, "invalid_payload", "A hold needs a reason (at least 5 characters).");
-  const w = await deps.store.transitionPayout(input.payoutId, from, {
-    state: input.action === "hold" ? "held" : "planned",
-    holdReason: input.action === "hold" ? input.reason : null,
-    updatedAt: deps.now().toISOString(),
-  });
+  const now = deps.now().toISOString();
+  const reason = input.reason.trim();
+  const w = await deps.store.transitionPayout(
+    input.payoutId,
+    from,
+    input.action === "hold"
+      ? { state: "held", holdReason: reason, heldBy: input.actorUserId, heldAt: now, updatedAt: now }
+      : { state: "planned", releaseReason: reason, releasedBy: input.actorUserId, releasedAt: now, updatedAt: now },
+  );
   if (!w.ok) {
     return w.conflict
       ? refusal(409, "payout_not_in_state", `Only a ${from[0]} payout can be ${input.action === "hold" ? "held" : "released"}.`, { state: r.value.state })

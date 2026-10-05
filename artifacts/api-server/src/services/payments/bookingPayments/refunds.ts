@@ -99,6 +99,8 @@ export interface RefundRequest {
   readonly actorIsAdmin: boolean;
   readonly trigger: RefundTrigger;
   readonly amountMinor?: number;
+  /** The caller's Idempotency-Key bound to their party and hashed by the route (see checkout.ts ConfirmRequest). */
+  readonly requestKey?: string;
 }
 
 /** Execute a refund (or the cancellation of an uncaptured payment) for a booking. */
@@ -143,10 +145,20 @@ export async function requestBookingRefund(deps: PaymentSliceDeps, req: RefundRe
   if (!decision.ok) return refusal(decision.httpStatus, decision.error, decision.message);
   if (!captured.intentRef) return READ_FAILED;
 
+  // Who asked is recorded by ROLE and, for a traveller or a buddy, by their
+  // payment party — never by profile id (OD-PAY-8). Support is recorded as a role.
+  let requesterParty: string | null = null;
+  if (role !== "admin") {
+    const p = await deps.store.partyForProfile(req.actorUserId);
+    if (!p.ok) return READ_FAILED;
+    requesterParty = p.value;
+  }
   const prior = await deps.store.listRefundsForPayment(captured.id);
   if (!prior.ok) return READ_FAILED;
   // One FULL refund per trigger per payment: a retried request is the same refund, not a second one.
-  const seq = decision.amount === "full" ? "full" : String(prior.value.length + 1);
+  // A partial (support) refund is keyed by the caller's request key when there is
+  // one: a double-submitted decision is ONE refund, two deliberate decisions are two.
+  const seq = decision.amount === "full" ? "full" : req.requestKey ? `req:${req.requestKey}` : String(prior.value.length + 1);
   const idempotencyKey = `rab-refund:${captured.id}:${req.trigger}:${seq}`;
   const existing = prior.value.find((r) => r.idempotencyKey === idempotencyKey);
   const now = deps.now().toISOString();
@@ -161,7 +173,8 @@ export async function requestBookingRefund(deps: PaymentSliceDeps, req: RefundRe
     amountMinor: decision.amount === "full" ? null : decision.amount,
     currency: captured.amount.currency,
     refundPlatformFee: decision.refundPlatformFee,
-    requestedBy: req.actorUserId,
+    requestedByRole: role,
+    requestedByPartyId: role === "admin" ? null : requesterParty,
     lastSnapshot: null,
     createdAt: now,
   };

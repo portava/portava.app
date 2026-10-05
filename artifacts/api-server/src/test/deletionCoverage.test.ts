@@ -91,15 +91,18 @@ describe("deletion coverage — the guard bites", () => {
     //     has no actor column — retained because nothing in it is a person's
     //     row, not because a person's row was ruled kept;
     //   * migration 2920's creator_rule_versions: the creator rule catalogue,
-    //     seeded before any account exists, with no beneficiary and no actor.
+    //     seeded before any account exists, with no beneficiary and no actor;
+    //   * migration 3931's payment_webhook_events (lane B, 2026-10-05): the
+    //     provider webhook dedup log — event id, type, endpoint, timestamps,
+    //     outcome; no party, no profile, no payload, no amount.
     // The ledger tables that cite those rules are NOT here — their fate is the
     // open C-11 decision, asserted separately below. Any further entry must come
     // with the same kind of written reason.
-    assert.equal(RETAINED_WITH_REASON.length, 2,
+    assert.equal(RETAINED_WITH_REASON.length, 3,
       "once retentions are decided, update this expectation deliberately");
     assert.deepEqual(
       RETAINED_WITH_REASON.map((r) => r.table).sort(),
-      ["creator_rule_versions", "intel_state_snapshot_versions"],
+      ["creator_rule_versions", "intel_state_snapshot_versions", "payment_webhook_events"],
     );
     // Asserted for EVERY entry, not just the first: indexing by [0] let a second
     // entry arrive with no reason at all and still pass.
@@ -109,11 +112,12 @@ describe("deletion coverage — the guard bites", () => {
     const byTable = new Map(RETAINED_WITH_REASON.map((r) => [r.table, r.reason]));
     assert.match(byTable.get("intel_state_snapshot_versions")!, /no actor column/);
     assert.match(byTable.get("creator_rule_versions")!, /No beneficiary, no actor and no personal data/);
+    assert.match(byTable.get("payment_webhook_events")!, /No person, no account and no amount/);
   });
 });
 
 describe("an open owner decision is recorded, not resolved (C-11)", () => {
-  it("the four creator / Rent-a-Buddy ledger tables await C-11 and nothing else claims them", () => {
+  it("the four creator / Rent-a-Buddy ledger tables and the four 3931 payment tables await C-11 and nothing else claims them", () => {
     // The point of the bucket: these five tables were in NO bucket at all, and
     // the two buckets that could have held the four ledgers would each have
     // ANSWERED C-11 — ERASED_BY_CASCADE is answer A (3511), RETAINED_WITH_REASON
@@ -125,7 +129,11 @@ describe("an open owner decision is recorded, not resolved (C-11)", () => {
         "creator_attributions",
         "creator_earning_entries",
         "creator_ledger_audit_events",
+        "rent_buddy_booking_payments",
         "rent_buddy_earnings_entries",
+        "rent_buddy_monthly_payouts",
+        "rent_buddy_payment_recipients",
+        "rent_buddy_payment_refunds",
       ],
     );
     const erased = new Set(ERASED_BY_CASCADE);
@@ -137,7 +145,7 @@ describe("an open owner decision is recorded, not resolved (C-11)", () => {
   });
 
   it("every entry names the decision, where it is written, and what holds it open", () => {
-    for (const r of AWAITING_OWNER_DECISION) {
+    for (const r of AWAITING_OWNER_DECISION.filter((x) => CREATOR_LEDGER_TABLES.includes(x.table))) {
       assert.match(r.decision, /C-11/, `${r.decision ? r.table : r.table}: the decision must carry its identifier`);
       assert.match(r.decision, /22\(a\)/, `${r.table}: the decision must say where it is written down`);
       assert.match(r.decision, /3511/, `${r.table}: the decision must name the held answer A`);
@@ -146,6 +154,21 @@ describe("an open owner decision is recorded, not resolved (C-11)", () => {
       // do has recorded nothing: the default IS an answer.
       assert.match(r.heldOpenBy, /3510/, `${r.table}: name the migration that refuses the DELETE meanwhile`);
       assert.match(r.heldOpenBy, /CL451/, `${r.table}: name the SQLSTATE the refusal raises`);
+    }
+    // The 3931 payment tables are held by a different mechanism and the same
+    // question, and the assertions say which — 3510 does not touch them, so an
+    // entry that cited it would be false.
+    const payment = AWAITING_OWNER_DECISION.filter((x) => !CREATOR_LEDGER_TABLES.includes(x.table));
+    assert.equal(payment.length, 4, "every entry is either a creator-ledger table or a 3931 payment table");
+    for (const r of payment) {
+      assert.match(r.decision, /C-11/, `${r.table}: the decision must carry its identifier`);
+      assert.match(r.decision, /22\(a\)/, `${r.table}: the decision must say where it is written down`);
+      assert.match(r.decision, /OD-PAY-8/, `${r.table}: name the owner ruling that decided the fate`);
+      assert.match(r.decision, /payment_retention_settings, seeded undecided/, `${r.table}: say where the open period lives`);
+      assert.match(r.heldOpenBy, /3931/, `${r.table}: name the migration that refuses the DELETE meanwhile`);
+      assert.match(r.heldOpenBy, /NOT DELETE/, `${r.table}: name the refusal (no DELETE grant)`);
+      assert.match(r.heldOpenBy, /does not call removePaymentIdentity/, `${r.table}: say that account deletion does not yet pseudonymise`);
+      assert.doesNotMatch(r.heldOpenBy, /3510|CL451/, `${r.table}: 3510 does not hold this table`);
     }
   });
 
@@ -180,3 +203,6 @@ describe("an open owner decision is recorded, not resolved (C-11)", () => {
       `a stale AWAITING_OWNER_DECISION entry for ${victim} went unreported`);
   });
 });
+
+/** The four tables whose C-11 answers are held at reconciliation-staging/3511 and 3512 and whose DELETE 3510 refuses. */
+const CREATOR_LEDGER_TABLES: readonly string[] = ["rent_buddy_earnings_entries", "creator_attributions", "creator_earning_entries", "creator_ledger_audit_events"];

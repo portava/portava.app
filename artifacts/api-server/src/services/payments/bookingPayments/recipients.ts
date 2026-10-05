@@ -45,14 +45,21 @@ export async function startRecipientOnboarding(deps: PaymentSliceDeps, req: Star
     return refusal(403, "identity_verification_required", "Verify your identity before setting up payouts. Only verified adults can receive payments.");
   }
 
-  const existing = await deps.store.getRecipient(req.userId);
+  // The buddy's payment PARTY (3821) is created here, with their user_payable
+  // account in the settlement currency; from now on they are named by it.
+  const party = await deps.store.ensureUserParty(req.userId, req.settlementCurrency);
+  if (!party.ok) return refusal(503, "degraded_unavailable", "Your payout account could not be set up. Please try again.");
+  const partyId = party.value;
+  const existing = await deps.store.getRecipient(partyId);
   if (!existing.ok) return refusal(503, "degraded_unavailable", "Your payout account could not be read. Please try again.");
 
   let recipientRef = existing.value?.provider === deps.provider.id ? existing.value.recipientRef : null;
   if (!recipientRef) {
     const created = await deps.provider.createRecipient({
-      idempotencyKey: `rab-recipient:${req.userId}:${deps.provider.id}`,
-      profileId: req.userId,
+      // The provider is given the PARTY id as its opaque reference, never the
+      // profile id: an id at the provider outlives an erasure here (OD-PAY-8).
+      idempotencyKey: `rab-recipient:${partyId}:${deps.provider.id}`,
+      profileId: partyId,
       country: req.country,
       entityType: "individual",
       settlementCurrency: req.settlementCurrency,
@@ -68,7 +75,7 @@ export async function startRecipientOnboarding(deps: PaymentSliceDeps, req: Star
     if (created.status === "failed" || created.status === "declined") return refusal(422, "onboarding_refused", "The payment provider could not create your payout account.", { reason: created.reason });
     const snap = created.value;
     const rec: RecipientRecord = {
-      userId: req.userId,
+      partyId,
       provider: deps.provider.id,
       recipientRef: snap.recipientRef,
       country: snap.country,
@@ -96,7 +103,10 @@ export async function startRecipientOnboarding(deps: PaymentSliceDeps, req: Star
 
 /** Ask the provider where the buddy's onboarding stands, and store it. */
 export async function refreshRecipient(deps: PaymentSliceDeps, userId: string): Promise<SliceOutcome> {
-  const existing = await deps.store.getRecipient(userId);
+  const party = await deps.store.partyForProfile(userId);
+  if (!party.ok) return refusal(503, "degraded_unavailable", "Your payout account could not be read.");
+  if (!party.value) return outcome(200, { status: "not_started", chargesEnabled: false, payoutsEnabled: false, requirementsDue: [] });
+  const existing = await deps.store.getRecipient(party.value);
   if (!existing.ok) return refusal(503, "degraded_unavailable", "Your payout account could not be read.");
   if (!existing.value) return outcome(200, { status: "not_started", chargesEnabled: false, payoutsEnabled: false, requirementsDue: [] });
   const v = await deps.provider.validateRecipient(existing.value.recipientRef);

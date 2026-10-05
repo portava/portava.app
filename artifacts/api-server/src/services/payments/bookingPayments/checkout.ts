@@ -93,7 +93,11 @@ const isOutcome = (v: SliceOutcome | Loaded): v is SliceOutcome => "httpStatus" 
 async function readyRecipient(deps: PaymentSliceDeps, booking: BookingForPayment): Promise<SliceOutcome | RecipientRecord> {
   const notReady = refusal(409, "buddy_payments_not_ready", "This Buddy can't receive in-app payments yet, so this booking can't be paid for. No charge was made.");
   if (!booking.buddyUserId) return notReady;
-  const r = await deps.store.getRecipient(booking.buddyUserId);
+  // The buddy is named by their payment PARTY from here on (3821), never by profile.
+  const party = await deps.store.partyForProfile(booking.buddyUserId);
+  if (!party.ok) return READ_FAILED();
+  if (!party.value) return notReady;
+  const r = await deps.store.getRecipient(party.value);
   if (!r.ok) return READ_FAILED();
   if (!r.value || r.value.provider !== deps.provider.id) return notReady;
   const v = await deps.provider.validateRecipient(r.value.recipientRef);
@@ -216,7 +220,7 @@ export async function startBookingCheckout(deps: PaymentSliceDeps, req: StartChe
       idempotencyKey,
       intentRef: null,
       recipientRef: recipient.recipientRef,
-      recipientUserId: recipient.userId,
+      recipientPartyId: recipient.partyId,
       chargeModel: model.chargeModel,
       state: "creating",
       intentState: null,
@@ -236,6 +240,7 @@ export async function startBookingCheckout(deps: PaymentSliceDeps, req: StartChe
       settlement: null,
       lastSnapshot: null,
       failureReason: null,
+      providerCancelOwed: false,
       payoutId: null,
       createdAt: now,
       updatedAt: now,
@@ -322,6 +327,12 @@ export interface ConfirmRequest {
   /** The provider's reference for the payer's payment method (e.g. from the provider's client SDK). */
   readonly paymentMethodRef: string;
   readonly returnUrl: string | null;
+  /**
+   * The caller's Idempotency-Key, already bound to their payment party by
+   * lib/http.ts requireIdempotencyKey and hashed by the route. A retried request
+   * re-sends the same provider key, so a double-submitted confirm is ONE confirm.
+   */
+  readonly requestKey?: string;
 }
 
 /** POST confirm: the payer confirms the open payment with a payment method. */
@@ -335,7 +346,7 @@ export async function confirmBookingPayment(deps: PaymentSliceDeps, req: Confirm
   const open = loaded.payments.find((p) => p.state === "awaiting_payment" && p.intentRef);
   if (!open || !open.intentRef) return refusal(409, "no_open_payment", "There is no payment waiting to be confirmed for this booking.");
   const r = await deps.provider.confirmPaymentIntent({
-    idempotencyKey: `${open.idempotencyKey}:confirm:${req.paymentMethodRef}`,
+    idempotencyKey: `${open.idempotencyKey}:confirm:${req.requestKey ?? req.paymentMethodRef}`,
     intent: intentHandle({ intentRef: open.intentRef, chargeModel: open.chargeModel, recipientRef: open.recipientRef }),
     paymentMethodRef: req.paymentMethodRef,
     returnUrl: req.returnUrl,

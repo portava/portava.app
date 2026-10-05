@@ -63,14 +63,21 @@ export interface BookingForPayment {
   readonly currency: string;
   /** booking_date + start_time as an ISO instant, UTC; null when the start time is unknown. */
   readonly startsAt: string | null;
+  /** How `startsAt` was derived: in the booking city's zone, or the earliest-possible instant (no zone known). */
+  readonly startBasis: "city_timezone" | "earliest_possible" | null;
   readonly completedAt: string | null;
   readonly disputeWindowExpiresAt: string | null;
   readonly isTestBooking: boolean;
 }
 
-/** The buddy's account with the payment provider. Codes only — never a document or a number. */
+/**
+ * The buddy's account with the payment provider. Codes only — never a document
+ * or a number. Keyed by the buddy's PAYMENT PARTY (3821), not their profile:
+ * the party's `profile_id` is the one identity link, and erasure removes it
+ * there (OD-PAY-8) without touching this row.
+ */
 export interface RecipientRecord {
-  readonly userId: string;
+  readonly partyId: string;
   readonly provider: string;
   readonly recipientRef: string;
   readonly country: string;
@@ -127,7 +134,8 @@ export interface BookingPaymentRecord {
   readonly idempotencyKey: string;
   readonly intentRef: string | null;
   readonly recipientRef: string;
-  readonly recipientUserId: string;
+  /** The buddy's payment party (3821). Never a profile id. */
+  readonly recipientPartyId: string;
   readonly chargeModel: ChargeModel;
   readonly state: BookingPaymentState;
   readonly intentState: PaymentIntentState | null;
@@ -150,6 +158,12 @@ export interface BookingPaymentRecord {
   /** The last applied provider snapshot, for stale/duplicate decisions. */
   readonly lastSnapshot: PaymentIntentSnapshot | null;
   readonly failureReason: string | null;
+  /**
+   * The provider still holds an OPEN intent for this ended attempt (a declined
+   * confirmation leaves the intent awaiting another method). Set until a
+   * cancellation through the contract succeeds; retried on the next checkout.
+   */
+  readonly providerCancelOwed: boolean;
   /** Included in a payout (rent_buddy_monthly_payouts.id) once paid out. */
   readonly payoutId: string | null;
   readonly createdAt: string;
@@ -168,7 +182,9 @@ export interface RefundRecord {
   readonly amountMinor: number | null;
   readonly currency: string;
   readonly refundPlatformFee: boolean;
-  readonly requestedBy: string;
+  /** Who asked, by role. The traveller's or buddy's payment party when one of them asked; null for support. */
+  readonly requestedByRole: "traveler" | "buddy" | "admin";
+  readonly requestedByPartyId: string | null;
   readonly lastSnapshot: RefundSnapshot | null;
   readonly createdAt: string;
 }
@@ -187,7 +203,10 @@ export type MonthlyPayoutState =
 
 export interface MonthlyPayoutRecord {
   readonly id: string;
-  readonly recipientUserId: string;
+  /** The buddy's payment party (3821). Never a profile id. */
+  readonly recipientPartyId: string;
+  /** The provider the payout is requested from (the processor_clearing owner in the ledger). */
+  readonly provider: string;
   /** YYYY-MM, the month whose finalised earnings this pays. */
   readonly period: string;
   readonly currency: string;
@@ -198,6 +217,17 @@ export interface MonthlyPayoutRecord {
   readonly recipientRef: string;
   readonly bookingPaymentIds: readonly string[];
   readonly holdReason: string | null;
+  /**
+   * The admin who held / released it, and when: written in the SAME UPDATE as
+   * the state change (one statement, so one transaction). A staff member's
+   * profile id, deliberately: accountability for a money action has to name the
+   * person who took it, and an admin is not a payment party.
+   */
+  readonly heldBy: string | null;
+  readonly heldAt: string | null;
+  readonly releasedBy: string | null;
+  readonly releasedAt: string | null;
+  readonly releaseReason: string | null;
   readonly carryReason: string | null;
   readonly failureCode: string | null;
   readonly lastSnapshot: PayoutSnapshot | null;
@@ -217,7 +247,15 @@ export interface BookingPaymentStore {
   /** The only booking write this slice makes: the `payment_status` projection. */
   setBookingPaymentStatus(bookingId: string, status: "pending" | "captured" | "partial" | "refunded" | "failed"): Promise<Write>;
 
-  getRecipient(userId: string): Promise<Read<RecipientRecord | null>>;
+  /** The payment party of a profile, or null when it has none yet. Never creates one. */
+  partyForProfile(profileId: string): Promise<Read<string | null>>;
+  /** The profile behind a party, or null once the identity was removed (erasure). */
+  profileForParty(partyId: string): Promise<Read<string | null>>;
+  /** The party of a profile, created with its `user_payable` account in `currency` if absent (3821 payment_account_ensure). */
+  ensureUserParty(profileId: string, currency: string, accountType?: "user_payable" | "user_receivable"): Promise<Read<string>>;
+  /** The PLATFORM's party (label `portava`), with its refund-liability account in `currency`: who support acts for. */
+  ensurePlatformParty(currency: string): Promise<Read<string>>;
+  getRecipient(partyId: string): Promise<Read<RecipientRecord | null>>;
   findRecipientByRef(provider: string, recipientRef: string): Promise<Read<RecipientRecord | null>>;
   upsertRecipient(rec: RecipientRecord): Promise<Write>;
 
@@ -227,7 +265,7 @@ export interface BookingPaymentStore {
   insertPayment(rec: BookingPaymentRecord): Promise<Write>;
   updatePayment(id: string, patch: Partial<BookingPaymentRecord>): Promise<Write>;
   /** Payments whose money is on the recipient's provider balance and not yet in a payout. */
-  listUnpaidSucceededPayments(recipientUserId: string | null): Promise<Read<readonly BookingPaymentRecord[]>>;
+  listUnpaidSucceededPayments(recipientPartyId: string | null): Promise<Read<readonly BookingPaymentRecord[]>>;
 
   insertRefund(rec: RefundRecord): Promise<Write>;
   findRefundByRef(provider: string, refundRef: string): Promise<Read<RefundRecord | null>>;

@@ -78,7 +78,7 @@ describe("every column the store names exists", () => {
 
   it("the recipient upsert writes only 3931 columns", () => {
     const cols = columnsOf(migration, T_RECIPIENTS);
-    for (const c of ["user_id", "provider", "recipient_ref", "country", "settlement_currency", "onboarding", "charges_enabled", "payouts_enabled", "requirements_due", "provider_updated_at", "updated_at"]) assert.ok(cols.has(c), c);
+    for (const c of ["party_id", "provider", "recipient_ref", "country", "settlement_currency", "onboarding", "charges_enabled", "payouts_enabled", "requirements_due", "provider_updated_at", "updated_at"]) assert.ok(cols.has(c), c);
   });
 });
 

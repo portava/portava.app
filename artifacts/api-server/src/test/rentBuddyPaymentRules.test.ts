@@ -112,13 +112,13 @@ describe("majorDecimalToMinor: no float touches money", () => {
 });
 
 const payment = (o: Partial<BookingPaymentRecord> = {}): BookingPaymentRecord => ({
-  id: "pay-1", bookingId: "b", attemptNo: 1, provider: "fake", idempotencyKey: "k", intentRef: "pi", recipientRef: "acct", recipientUserId: "buddy",
+  id: "pay-1", bookingId: "b", attemptNo: 1, provider: "fake", idempotencyKey: "k", intentRef: "pi", recipientRef: "acct", recipientPartyId: "party-7a1",
   chargeModel: "direct", state: "succeeded", intentState: "succeeded",
   amount: { amountMinor: 5400, currency: "USD" }, components: { serviceMinor: 4000, payerFeeMinor: 0, tipMinor: 1000, taxMinor: 400 },
   platformFee: { commissionMinor: 400, payerFeeMinor: 0, taxMinor: 400 }, commissionBps: 1000, commissionRuleVersion: "v",
   taxProvider: "fake", taxCalculationRefs: [], buyerMarket: "US", sellerMarket: "US",
   amountCapturedMinor: 0, amountRefundedMinor: 0, platformFeeCollectedMinor: 0, platformFeeRefundedMinor: 0,
-  settlement: null, lastSnapshot: null, failureReason: null, payoutId: null, createdAt: "t", updatedAt: "t", ...o,
+  settlement: null, lastSnapshot: null, failureReason: null, providerCancelOwed: false, payoutId: null, createdAt: "t", updatedAt: "t", ...o,
 });
 const zero = { capturedMinor: 0, refundedMinor: 0, feeCollectedMinor: 0, feeRefundedMinor: 0 };
 
@@ -132,7 +132,7 @@ describe("ledger postings", () => {
     assert.equal(by("user_payable", "principal"), -3600);
     assert.equal(by("platform_revenue", "platform_fee"), -400);
     assert.equal(by("tax_withheld", "tax"), -400);
-    assert.equal(by("processor_clearing", "platform_fee"), 800);
+    assert.equal(by("processor_clearing", "principal"), 5400, "the processor holds the whole charge");
   });
 
   it("the same counters plan the same key and entries (idempotent); a falling counter plans the exact reversal", () => {
@@ -153,10 +153,10 @@ describe("ledger postings", () => {
   });
 
   it("payout paid / returned / chargeback / provider fee all balance, and keys name things, not people", () => {
-    const po = { id: "po-1", recipientUserId: "buddy", currency: "USD", amountMinor: 3600 };
+    const po = { id: "po-1", recipientPartyId: "party-7a1", provider: "fake", payoutRef: "po_000001", currency: "USD", amountMinor: 3600 };
     for (const x of [planPayoutPaidPosting(po, "t"), planPayoutReturnedPosting(po, "t"), planChargebackPosting(payment(), "dp_1", 5400, "t"), planProviderFeePosting(payment(), 0, 160, "t")!]) {
       assert.equal(postingBalance(x), 0, x.key);
-      assert.doesNotMatch(x.key, /buddy/, "no person in a ledger key");
+      assert.doesNotMatch(x.key, /party-7a1/, "no person (nor their party) in a ledger key");
     }
   });
 });

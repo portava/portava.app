@@ -32,7 +32,7 @@ import { processPaymentWebhook } from "../services/payments/bookingPayments/webh
 import { requestBookingRefund } from "../services/payments/bookingPayments/refunds.js";
 import { planMonthlyPayouts, executePlannedPayouts, holdOrReleasePayout } from "../services/payments/bookingPayments/payouts.js";
 import { startRecipientOnboarding } from "../services/payments/bookingPayments/recipients.js";
-import { createMemoryStore, createMemoryLedger, type MemoryStore, type MemoryLedger } from "./helpers/memoryBookingPayments.js";
+import { createMemoryStore, createMemoryLedger, partyIdFor, type MemoryStore, type MemoryLedger } from "./helpers/memoryBookingPayments.js";
 import type { BookingForPayment } from "../services/payments/bookingPayments/model.js";
 
 const LOCAL = { NODE_ENV: "test" } as unknown as NodeJS.ProcessEnv;
@@ -40,6 +40,8 @@ const TRAVELER = "traveler-1";
 const BUDDY = "buddy-user-1";
 const ADMIN = "admin-1";
 const BOOKING = "booking-1";
+/** The buddy's payment party (3821): what the ledger and the payment rows name instead of the profile. */
+const BUDDY_PARTY = partyIdFor(BUDDY);
 
 interface World {
   fake: FakePaymentProvider;
@@ -81,7 +83,7 @@ function seedBooking(w: World, over: Partial<BookingForPayment> = {}): BookingFo
     bookingId: BOOKING, status: "confirmed", paymentStatus: "not_required",
     travelerId: TRAVELER, buddyProfileId: "bp-1", buddyUserId: BUDDY,
     serviceCountry: "US", serviceMinor: 4000, currency: "USD",
-    startsAt: "2026-08-20T15:00:00.000Z", completedAt: null, disputeWindowExpiresAt: null, isTestBooking: false,
+    startsAt: "2026-08-20T15:00:00.000Z", startBasis: "city_timezone", completedAt: null, disputeWindowExpiresAt: null, isTestBooking: false,
     ...over,
   };
   w.store.bookings.set(b.bookingId, b);
@@ -132,7 +134,7 @@ beforeEach(() => { w = world(); });
 describe("buddy onboarding: identity first, then the provider's account", () => {
   it("a verified buddy gets an account and an onboarding link; the signed recipient webhook records it as payable", async () => {
     const ref = await onboardBuddy(w);
-    const rec = w.store.recipients.get(BUDDY);
+    const rec = w.store.recipients.get(BUDDY_PARTY);
     assert.ok(rec);
     assert.equal(rec?.recipientRef, ref);
     assert.equal(rec?.onboarding, "verified");
@@ -197,13 +199,12 @@ describe("checkout -> confirm -> signed webhook -> ledger -> booking state", () 
     assert.equal(p?.commissionRuleVersion, "rab-commission/owner-2026-10-04/v1");
     assert.equal(w.store.bookings.get(BOOKING)?.paymentStatus, "captured");
     // The books: the buddy is owed 3600 on their provider balance; the platform holds its 400 fee and owes 400 tax.
-    assert.equal(w.ledger.balance("user_payable", BUDDY, "USD"), -3600);
-    assert.equal(w.ledger.balance("processor_clearing", BUDDY, "USD"), 3600);
-    assert.equal(w.ledger.balance("processor_clearing", null, "USD"), 800);
+    assert.equal(w.ledger.balance("user_payable", BUDDY_PARTY, "USD"), -3600);
+    assert.equal(w.ledger.balance("processor_clearing", null, "USD"), 4400, "the processor holds the whole charge (3821: only a processor party owns a clearing account)");
     assert.equal(w.ledger.balance("platform_revenue", null, "USD"), -400);
     assert.equal(w.ledger.balance("tax_withheld", null, "USD"), -400);
     // And the provider agrees: the buddy's balance holds exactly what the ledger says they are owed.
-    assert.equal(w.fake.control.balances().recipients[w.store.recipients.get(BUDDY)!.recipientRef]?.["USD"], 3600);
+    assert.equal(w.fake.control.balances().recipients[w.store.recipients.get(BUDDY_PARTY)!.recipientRef]?.["USD"], 3600);
   });
 
   it("confirm alone never marks the booking paid — only the signed webhook does", async () => {
@@ -227,7 +228,7 @@ describe("checkout -> confirm -> signed webhook -> ledger -> booking state", () 
     assert.ok(statuses.every((s) => s === 200), JSON.stringify(statuses));
     const p = [...w.store.payments.values()][0];
     assert.equal(p?.state, "succeeded");
-    assert.equal(w.ledger.balance("user_payable", BUDDY, "USD"), -3600, "exactly one capture booked");
+    assert.equal(w.ledger.balance("user_payable", BUDDY_PARTY, "USD"), -3600, "exactly one capture booked");
     assert.equal(w.store.bookings.get(BOOKING)?.paymentStatus, "captured");
   });
 
@@ -270,7 +271,7 @@ describe("checkout -> confirm -> signed webhook -> ledger -> booking state", () 
     w.ledger.setAvailable(true);
     for (const e of pending) assert.equal((await processPaymentWebhook(w.deps, w.fake.control.webhooks.redeliver(e.providerEventId))).httpStatus, 200);
     assert.equal(w.store.bookings.get(BOOKING)?.paymentStatus, "captured");
-    assert.equal(w.ledger.balance("user_payable", BUDDY, "USD"), -3600);
+    assert.equal(w.ledger.balance("user_payable", BUDDY_PARTY, "USD"), -3600);
   });
 
   it("a STORE failure while booking a webhook answers 503 and the redelivery completes it (no double booking)", async () => {
@@ -292,7 +293,7 @@ describe("checkout -> confirm -> signed webhook -> ledger -> booking state", () 
     assert.equal(again.httpStatus, 200);
     assert.equal(again.body["outcome"], "stale");
     assert.equal(w.store.bookings.get(BOOKING)?.paymentStatus, "captured");
-    assert.equal(w.ledger.balance("user_payable", BUDDY, "USD"), -3600, "the capture is booked once");
+    assert.equal(w.ledger.balance("user_payable", BUDDY_PARTY, "USD"), -3600, "the capture is booked once");
     assert.equal([...w.ledger.postings.values()].filter((p) => p.kind === "capture").length, 1);
   });
 
@@ -306,7 +307,7 @@ describe("checkout -> confirm -> signed webhook -> ledger -> booking state", () 
     await deliverAll(w);
     for (const e of pending) await processPaymentWebhook(w.deps, w.fake.control.webhooks.redeliver(e.providerEventId));
     assert.equal(w.store.bookings.get(BOOKING)?.paymentStatus, "captured");
-    assert.equal(w.ledger.balance("user_payable", BUDDY, "USD"), -3600, "booked once");
+    assert.equal(w.ledger.balance("user_payable", BUDDY_PARTY, "USD"), -3600, "booked once");
     assert.ok(w.ledger.replays() >= 1, "the re-run replayed the posting rather than booking it twice");
   });
 });
@@ -457,7 +458,7 @@ describe("refunds follow the owner's rules; fees come back with them", () => {
     const p = [...w.store.payments.values()][0];
     assert.equal(p?.state, "refunded");
     assert.equal(w.store.bookings.get(BOOKING)?.paymentStatus, "refunded");
-    for (const [acct, party] of [["user_payable", BUDDY], ["processor_clearing", BUDDY], ["processor_clearing", null], ["platform_revenue", null], ["tax_withheld", null]] as const) {
+    for (const [acct, party] of [["user_payable", BUDDY_PARTY], ["processor_clearing", null], ["platform_revenue", null], ["tax_withheld", null]] as const) {
       assert.equal(w.ledger.balance(acct, party, "USD"), 0, `${acct}/${party ?? "platform"} nets to zero`);
     }
     assert.equal([...w.store.refunds.values()][0]?.state, "succeeded");
@@ -497,7 +498,7 @@ describe("refunds follow the owner's rules; fees come back with them", () => {
     assert.equal(p?.state, "partially_refunded");
     assert.equal(p?.amountRefundedMinor, 1100);
     assert.equal(w.store.bookings.get(BOOKING)?.paymentStatus, "partial");
-    assert.equal(w.ledger.balance("processor_clearing", BUDDY, "USD") + w.ledger.balance("processor_clearing", null, "USD"), 4400 - 1100);
+    assert.equal(w.ledger.balance("processor_clearing", null, "USD"), 4400 - 1100);
   });
 
   it("an UNCAPTURED payment is cancelled, not refunded: nothing moved and the traveller is told so", async () => {
@@ -533,7 +534,7 @@ describe("disputes: opened, won, lost (chargeback) — explicit and booked", () 
     w.fake.control.resolveDispute(d.disputeRef, "lost");
     await deliverAll(w);
     assert.equal(w.store.payments.get(p.id)?.state, "reversed");
-    assert.equal(w.ledger.balance("user_payable", BUDDY, "USD"), -3600 + 4400, "the chargeback debits what the buddy was owed");
+    assert.equal(w.ledger.balance("user_payable", BUDDY_PARTY, "USD"), -3600 + 4400, "the chargeback debits what the buddy was owed");
     assert.equal([...w.ledger.postings.values()].filter((x) => x.kind === "chargeback").length, 1);
   });
 
@@ -597,11 +598,11 @@ describe("monthly payouts: finalised, completed, verified; small balances carrie
     await completedAndFinalised();
     const plan = await planMonthlyPayouts(w.deps, { minimumByCurrency: { USD: 1000 } }, "2026-08");
     const payoutId = String(rows(plan.body["report"])[0].payoutId);
-    const held = await holdOrReleasePayout(w.deps, { payoutId, action: "hold", reason: "fraud review" });
+    const held = await holdOrReleasePayout(w.deps, { payoutId, action: "hold", reason: "fraud review", actorUserId: ADMIN });
     assert.equal(held.httpStatus, 200);
     const skipped = await executePlannedPayouts(w.deps, [payoutId]);
     assert.equal(rows(skipped.body["results"])[0].result, "skipped_held");
-    assert.equal((await holdOrReleasePayout(w.deps, { payoutId, action: "release", reason: null })).httpStatus, 200);
+    assert.equal((await holdOrReleasePayout(w.deps, { payoutId, action: "release", reason: "review cleared", actorUserId: ADMIN })).httpStatus, 200);
     const ex = await executePlannedPayouts(w.deps, [payoutId]);
     assert.equal(rows(ex.body["results"])[0].result, "requested");
     const ref = w.store.payouts.get(payoutId)!.payoutRef!;
@@ -611,8 +612,8 @@ describe("monthly payouts: finalised, completed, verified; small balances carrie
       if (w.fake.control.webhooks.pending().length === 0 && w.store.payouts.get(payoutId)!.lastSnapshot?.state === "paid") break;
     }
     assert.equal(w.store.payouts.get(payoutId)?.state, "paid");
-    assert.equal(w.ledger.balance("user_payable", BUDDY, "USD"), 0, "the buddy is owed nothing after the payout");
-    assert.equal(w.ledger.balance("processor_clearing", BUDDY, "USD"), 0);
+    assert.equal(w.ledger.balance("user_payable", BUDDY_PARTY, "USD"), 0, "the buddy is owed nothing after the payout");
+    assert.equal(w.ledger.balance("processor_clearing", null, "USD"), 800, "only the platform's fee and tax remain with the processor");
     assert.equal(w.fake.control.balances().paidOut["USD"], 3600);
   });
 
@@ -625,15 +626,15 @@ describe("monthly payouts: finalised, completed, verified; small balances carrie
     assert.match(String(rows(ex.body["results"])[0].result), /^failed:/);
     assert.equal(w.store.payouts.get(payoutId)?.state, "failed");
     assert.equal([...w.store.payments.values()][0]?.payoutId, null);
-    assert.equal(w.ledger.balance("user_payable", BUDDY, "USD"), -3600, "nothing was booked as paid");
+    assert.equal(w.ledger.balance("user_payable", BUDDY_PARTY, "USD"), -3600, "nothing was booked as paid");
   });
 
   it("a hold needs a reason; only a planned payout can be held", async () => {
     await completedAndFinalised();
     const plan = await planMonthlyPayouts(w.deps, { minimumByCurrency: { USD: 1000 } }, "2026-08");
     const payoutId = String(rows(plan.body["report"])[0].payoutId);
-    assert.equal((await holdOrReleasePayout(w.deps, { payoutId, action: "hold", reason: "" })).httpStatus, 400);
-    assert.equal((await holdOrReleasePayout(w.deps, { payoutId, action: "release", reason: null })).httpStatus, 409);
+    assert.equal((await holdOrReleasePayout(w.deps, { payoutId, action: "hold", reason: "", actorUserId: ADMIN })).httpStatus, 400);
+    assert.equal((await holdOrReleasePayout(w.deps, { payoutId, action: "release", reason: "review cleared", actorUserId: ADMIN })).httpStatus, 409);
   });
 
   it("a month is paid out only after it ends", async () => {

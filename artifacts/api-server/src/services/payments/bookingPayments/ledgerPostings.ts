@@ -33,12 +33,16 @@ import type { BookingPaymentRecord, MonthlyPayoutRecord } from "./model.js";
 
 export type LedgerAccount = "processor_clearing" | "user_payable" | "platform_revenue" | "tax_withheld";
 export type LedgerReason = "principal" | "tip" | "platform_fee" | "processor_fee" | "tax" | "refund" | "chargeback" | "payout" | "payout_return";
-export type LedgerPostingKind = "capture" | "refund" | "chargeback" | "payout" | "payout_return";
+export type LedgerPostingKind = "capture" | "refund" | "fee" | "chargeback" | "payout" | "payout_return";
 
 export interface LedgerEntry {
   readonly account: LedgerAccount;
-  /** The user whose sub-account this is (the buddy), or null for the platform's own accounts. */
-  readonly partyUserId: string | null;
+  /**
+   * For `user_payable`: the buddy's PAYMENT PARTY id (3821's pseudonym — never a
+   * profile id). Null for the processor's clearing account and the platform's
+   * accounts, whose owner the account type decides (3821 pa_account_type_owner_kind).
+   */
+  readonly partyId: string | null;
   /** Signed integer minor units: + debit, − credit. Never 0. */
   readonly amountMinor: number;
   readonly reason: LedgerReason;
@@ -51,6 +55,12 @@ export interface LedgerPosting {
   readonly occurredAt: string;
   /** What the money is about — a payment row or a payout row id. Never a person. */
   readonly subjectId: string;
+  /** The booking the money is for, when there is exactly one (null for a monthly payout). */
+  readonly bookingId: string | null;
+  /** The provider holding the money: owner label of the processor_clearing account. */
+  readonly processor: string;
+  /** The provider's object id (`pi_…`, `po_…`), for disputes and reconciliation. */
+  readonly externalRef: string | null;
   readonly entries: readonly LedgerEntry[];
 }
 
@@ -86,8 +96,8 @@ export function postingBalance(p: Pick<LedgerPosting, "entries">): number {
   return p.entries.reduce((n, e) => n + e.amountMinor, 0);
 }
 
-function entry(account: LedgerAccount, partyUserId: string | null, amountMinor: number, reason: LedgerReason): LedgerEntry | null {
-  return amountMinor === 0 ? null : { account, partyUserId, amountMinor, reason };
+function entry(account: LedgerAccount, partyId: string | null, amountMinor: number, reason: LedgerReason): LedgerEntry | null {
+  return amountMinor === 0 ? null : { account, partyId, amountMinor, reason };
 }
 
 function compact(entries: Array<LedgerEntry | null>): LedgerEntry[] {
@@ -107,20 +117,31 @@ export interface CaptureCounters {
   readonly feeRefundedMinor: number;
 }
 
+type PaymentForPosting = Pick<BookingPaymentRecord, "id" | "bookingId" | "provider" | "intentRef" | "recipientPartyId" | "amount" | "components" | "platformFee">;
+
+const base = (p: Pick<BookingPaymentRecord, "id" | "bookingId" | "provider" | "intentRef" | "amount">, occurredAt: string) => ({
+  currency: p.amount.currency,
+  occurredAt,
+  subjectId: p.id,
+  bookingId: p.bookingId,
+  processor: p.provider,
+  externalRef: p.intentRef,
+});
+
 /**
  * The postings that move a payment's books from `prev` to `next` counters.
  * Up to two: the capture delta and the refund delta. Each may be negative (a
  * reported counter fell) and then plans the exact reversal of that difference.
+ *
+ * The money of a DIRECT charge sits with the PROCESSOR (on the buddy's account
+ * there), so the debit side is the processor's clearing account — 3821 lets
+ * only a `processor` party own one. The credits name who it is for: the buddy's
+ * `user_payable` (principal and tip, kept apart), the platform's revenue (the
+ * commission) and the tax the platform must remit.
  */
-export function planPaymentPostings(
-  payment: Pick<BookingPaymentRecord, "id" | "recipientUserId" | "amount" | "components" | "platformFee">,
-  prev: CaptureCounters,
-  next: CaptureCounters,
-  occurredAt: string,
-): LedgerPosting[] {
+export function planPaymentPostings(payment: PaymentForPosting, prev: CaptureCounters, next: CaptureCounters, occurredAt: string): LedgerPosting[] {
   const out: LedgerPosting[] = [];
-  const party = payment.recipientUserId;
-  const currency = payment.amount.currency;
+  const party = payment.recipientPartyId;
   const total = payment.amount.amountMinor;
   const feeTotal = payment.platformFee.commissionMinor + payment.platformFee.taxMinor;
 
@@ -134,14 +155,9 @@ export function planPaymentPostings(
     out.push({
       key: `rabpay:${payment.id}:captured:${next.capturedMinor}:fee:${next.feeCollectedMinor}`,
       kind: "capture",
-      currency,
-      occurredAt,
-      subjectId: payment.id,
+      ...base(payment, occurredAt),
       entries: compact([
-        // Under a direct charge the provider moves the platform fee to the
-        // PLATFORM's balance at capture, and the rest stays on the buddy's.
-        entry("processor_clearing", party, dCap - dFee, "principal"),
-        entry("processor_clearing", null, dFee, "platform_fee"),
+        entry("processor_clearing", null, dCap, "principal"),
         entry("user_payable", party, -principal, "principal"),
         entry("user_payable", party, -tipShare, "tip"),
         entry("platform_revenue", null, -revenue, "platform_fee"),
@@ -158,12 +174,9 @@ export function planPaymentPostings(
     out.push({
       key: `rabpay:${payment.id}:refunded:${next.refundedMinor}:feeref:${next.feeRefundedMinor}`,
       kind: "refund",
-      currency,
-      occurredAt,
-      subjectId: payment.id,
+      ...base(payment, occurredAt),
       entries: compact([
-        entry("processor_clearing", party, -(dRef - dFeeRef), "refund"),
-        entry("processor_clearing", null, -dFeeRef, "refund"),
+        entry("processor_clearing", null, -dRef, "refund"),
         entry("user_payable", party, dRef - dFeeRef, "refund"),
         entry("platform_revenue", null, revenue, "refund"),
         entry("tax_withheld", null, taxPart, "refund"),
@@ -175,11 +188,13 @@ export function planPaymentPostings(
 
 /**
  * The provider's OWN processing fee, debited from the buddy's balance (direct
- * charges): what is payable to the buddy falls by it. Keyed by the reported
+ * charges): what is payable to the buddy falls by it. Its own `fee`
+ * transaction — 3822 requires a transaction's credits to total its original
+ * amount, so a fee is never a rider on a capture. Keyed by the reported
  * cumulative fee, so a re-report of the same fee replays.
  */
 export function planProviderFeePosting(
-  payment: Pick<BookingPaymentRecord, "id" | "recipientUserId" | "amount">,
+  payment: Pick<BookingPaymentRecord, "id" | "bookingId" | "provider" | "intentRef" | "recipientPartyId" | "amount">,
   prevFeeMinor: number,
   nextFeeMinor: number,
   occurredAt: string,
@@ -188,20 +203,18 @@ export function planProviderFeePosting(
   if (d === 0) return null;
   return {
     key: `rabpay:${payment.id}:providerfee:${nextFeeMinor}`,
-    kind: "capture",
-    currency: payment.amount.currency,
-    occurredAt,
-    subjectId: payment.id,
+    kind: "fee",
+    ...base(payment, occurredAt),
     entries: compact([
-      entry("user_payable", payment.recipientUserId, d, "processor_fee"),
-      entry("processor_clearing", payment.recipientUserId, -d, "processor_fee"),
+      entry("user_payable", payment.recipientPartyId, d, "processor_fee"),
+      entry("processor_clearing", null, -d, "processor_fee"),
     ]),
   };
 }
 
 /** A LOST dispute: the disputed amount leaves the buddy's provider balance by chargeback. */
 export function planChargebackPosting(
-  payment: Pick<BookingPaymentRecord, "id" | "recipientUserId" | "amount">,
+  payment: Pick<BookingPaymentRecord, "id" | "bookingId" | "provider" | "intentRef" | "recipientPartyId" | "amount">,
   disputeRef: string,
   amountMinor: number,
   occurredAt: string,
@@ -209,42 +222,47 @@ export function planChargebackPosting(
   return {
     key: `rabpay:${payment.id}:dispute:${disputeRef}:lost`,
     kind: "chargeback",
-    currency: payment.amount.currency,
-    occurredAt,
-    subjectId: payment.id,
+    ...base(payment, occurredAt),
     entries: compact([
-      entry("user_payable", payment.recipientUserId, amountMinor, "chargeback"),
-      entry("processor_clearing", payment.recipientUserId, -amountMinor, "chargeback"),
+      entry("user_payable", payment.recipientPartyId, amountMinor, "chargeback"),
+      entry("processor_clearing", null, -amountMinor, "chargeback"),
     ]),
   };
 }
 
-/** A payout reached the buddy's bank: what was payable leaves the provider balance. */
-export function planPayoutPaidPosting(payout: Pick<MonthlyPayoutRecord, "id" | "recipientUserId" | "currency" | "amountMinor">, occurredAt: string): LedgerPosting {
+type PayoutForPosting = Pick<MonthlyPayoutRecord, "id" | "recipientPartyId" | "currency" | "amountMinor" | "payoutRef"> & { readonly provider: string };
+
+const payoutBase = (p: PayoutForPosting, occurredAt: string) => ({
+  currency: p.currency,
+  occurredAt,
+  subjectId: p.id,
+  bookingId: null,
+  processor: p.provider,
+  externalRef: p.payoutRef,
+});
+
+/** A payout reached the buddy's bank: what was payable leaves the provider's balance. */
+export function planPayoutPaidPosting(payout: PayoutForPosting, occurredAt: string): LedgerPosting {
   return {
     key: `rabpayout:${payout.id}:paid`,
     kind: "payout",
-    currency: payout.currency,
-    occurredAt,
-    subjectId: payout.id,
+    ...payoutBase(payout, occurredAt),
     entries: compact([
-      entry("user_payable", payout.recipientUserId, payout.amountMinor, "payout"),
-      entry("processor_clearing", payout.recipientUserId, -payout.amountMinor, "payout"),
+      entry("user_payable", payout.recipientPartyId, payout.amountMinor, "payout"),
+      entry("processor_clearing", null, -payout.amountMinor, "payout"),
     ]),
   };
 }
 
 /** A paid payout came back (returned by the bank): the exact reversal. */
-export function planPayoutReturnedPosting(payout: Pick<MonthlyPayoutRecord, "id" | "recipientUserId" | "currency" | "amountMinor">, occurredAt: string): LedgerPosting {
+export function planPayoutReturnedPosting(payout: PayoutForPosting, occurredAt: string): LedgerPosting {
   return {
     key: `rabpayout:${payout.id}:returned`,
     kind: "payout_return",
-    currency: payout.currency,
-    occurredAt,
-    subjectId: payout.id,
+    ...payoutBase(payout, occurredAt),
     entries: compact([
-      entry("processor_clearing", payout.recipientUserId, payout.amountMinor, "payout_return"),
-      entry("user_payable", payout.recipientUserId, -payout.amountMinor, "payout_return"),
+      entry("processor_clearing", null, payout.amountMinor, "payout_return"),
+      entry("user_payable", payout.recipientPartyId, -payout.amountMinor, "payout_return"),
     ]),
   };
 }

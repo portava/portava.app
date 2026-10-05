@@ -21,7 +21,7 @@ import { guardPaymentProvider, type WebhookDelivery } from "../services/payments
 import { enforcePaymentPolicy } from "../services/payments/providerRegistry.js";
 import { createFakeTaxProvider } from "../services/payments/TaxProvider.js";
 import type { PaymentSliceDeps } from "../services/payments/bookingPayments/deps.js";
-import { createMemoryLedger, createMemoryStore, type MemoryLedger, type MemoryStore } from "./helpers/memoryBookingPayments.js";
+import { createMemoryLedger, createMemoryStore, partyIdFor, type MemoryLedger, type MemoryStore } from "./helpers/memoryBookingPayments.js";
 
 const LOCAL = { NODE_ENV: "test" } as unknown as NodeJS.ProcessEnv;
 const TOKENS: Record<string, string> = { "t-traveler": "traveler-1", "t-buddy": "buddy-user-1", "t-admin": "admin-1" };
@@ -55,10 +55,13 @@ function authClient() {
   };
 }
 
-async function call(method: string, path: string, token: string | null, body?: unknown): Promise<{ status: number; body: any }> {
+let keySeq = 0;
+/** Every call carries a fresh Idempotency-Key unless `key` is given (or `null` to send none). */
+async function call(method: string, path: string, token: string | null, body?: unknown, key?: string | null): Promise<{ status: number; body: any }> {
+  const idem = key === null ? {} : { "idempotency-key": key ?? `test-key-${++keySeq}-${Date.now()}` };
   const res = await fetch(`${base}${path}`, {
     method,
-    headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    headers: { "content-type": "application/json", ...idem, ...(token ? { authorization: `Bearer ${token}` } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   return { status: res.status, body: await res.json().catch(() => null) };
@@ -116,7 +119,7 @@ beforeEach(() => {
   store.bookings.set("booking-1", {
     bookingId: "booking-1", status: "confirmed", paymentStatus: "not_required", travelerId: "traveler-1",
     buddyProfileId: "bp-1", buddyUserId: "buddy-user-1", serviceCountry: "US", serviceMinor: 4000, currency: "USD",
-    startsAt: "2026-08-20T01:00:00.000Z", completedAt: null, disputeWindowExpiresAt: null, isTestBooking: false,
+    startsAt: "2026-08-20T01:00:00.000Z", startBasis: "earliest_possible", completedAt: null, disputeWindowExpiresAt: null, isTestBooking: false,
   });
   const c = authClient();
   _setTestClient(c as any, true);
@@ -147,7 +150,7 @@ describe("the slice over HTTP, end to end against the fake provider", () => {
     const statuses = await deliverAllOverHttp();
     assert.ok(statuses.every((s) => s === 200), JSON.stringify(statuses));
     assert.equal(store.bookings.get("booking-1")?.paymentStatus, "captured");
-    assert.equal(ledger.balance("user_payable", "buddy-user-1", "USD"), -3600);
+    assert.equal(ledger.balance("user_payable", partyIdFor("buddy-user-1"), "USD"), -3600);
 
     const rf = await call("POST", "/api/rent-a-buddy/bookings/booking-1/payment/refund", "t-traveler", { trigger: "cancelled_before_service" });
     assert.equal(rf.status, 202, JSON.stringify(rf.body));
@@ -210,10 +213,55 @@ describe("the PRODUCTION binding refuses: no provider is configured and no ledge
     }
   });
 
-  it("the production ledger is LEDGER_NOT_AVAILABLE: a money-booking webhook can never be acknowledged unbooked", async () => {
-    const prod = productionPaymentDeps(authClient());
-    const r = await prod.ledger.post({ key: "k", kind: "capture", currency: "USD", occurredAt: "t", subjectId: "s", entries: [] });
+  it("the production ledger is #598's posting function: where it is not applied it answers ledger_unavailable, so a money-booking webhook is never acknowledged unbooked", async () => {
+    // A database without 3821-3823: PostgREST answers PGRST202 (function not found) to every rpc.
+    const noLedger = { ...authClient(), rpc: async () => ({ data: null, error: { code: "PGRST202", message: "Could not find the function public.payment_account_ensure" } }) };
+    const prod = productionPaymentDeps(noLedger);
+    const r = await prod.ledger.post({
+      key: "rabpay:p-1:captured:4400:fee:800", kind: "capture", currency: "USD", occurredAt: "2026-08-10T12:00:00.000Z",
+      subjectId: "p-1", bookingId: "b-1", processor: "fake", externalRef: "fake_pi_000001",
+      entries: [
+        { account: "processor_clearing", partyId: null, amountMinor: 4400, reason: "principal" },
+        { account: "platform_revenue", partyId: null, amountMinor: -4400, reason: "platform_fee" },
+      ],
+    });
     assert.equal(r.ok, false);
-    if (!r.ok) assert.equal(r.reason, "ledger_unavailable");
+    if (!r.ok) assert.equal(r.reason, "ledger_unavailable", r.detail);
+  });
+});
+
+describe("money routes require an Idempotency-Key bound to the caller's payment party (#598 requireIdempotencyKey)", () => {
+  async function paid(): Promise<void> {
+    const ob = await call("POST", "/api/rent-a-buddy/me/payouts/onboarding", "t-buddy", { country: "US", settlementCurrency: "USD" });
+    fake.control.setRecipientOnboarding(ob.body.recipientRef, "verified");
+    await deliverAllOverHttp();
+    await call("POST", "/api/rent-a-buddy/bookings/booking-1/payment/checkout", "t-traveler", {});
+    await call("POST", "/api/rent-a-buddy/bookings/booking-1/payment/confirm", "t-traveler", { paymentMethodRef: "fake_pm_card" });
+    await deliverAllOverHttp();
+  }
+
+  it("no header -> 400 idempotency_key_required on checkout, confirm and refund; nothing is created", async () => {
+    for (const [path, body] of [
+      ["/api/rent-a-buddy/bookings/booking-1/payment/checkout", {}],
+      ["/api/rent-a-buddy/bookings/booking-1/payment/confirm", { paymentMethodRef: "fake_pm_card" }],
+      ["/api/rent-a-buddy/bookings/booking-1/payment/refund", { trigger: "cancelled_before_service" }],
+    ] as const) {
+      const r = await call("POST", path, "t-traveler", body, null);
+      assert.equal(r.status, 400, `${path}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body.reason, "idempotency_key_required", path);
+    }
+    assert.equal(store.payments.size, 0);
+  });
+
+  it("a support refund double-submitted with the SAME key is ONE refund; a new key is a new decision", async () => {
+    await paid();
+    const a = await call("POST", "/api/rent-a-buddy/bookings/booking-1/payment/refund", "t-admin", { trigger: "support_decision", amountMinor: 500 }, "support-click-1");
+    const b = await call("POST", "/api/rent-a-buddy/bookings/booking-1/payment/refund", "t-admin", { trigger: "support_decision", amountMinor: 500 }, "support-click-1");
+    assert.equal(a.status, 202, JSON.stringify(a.body));
+    assert.equal(b.status, 202, JSON.stringify(b.body));
+    assert.equal(store.refunds.size, 1, "the same key is the same refund");
+    const c = await call("POST", "/api/rent-a-buddy/bookings/booking-1/payment/refund", "t-admin", { trigger: "support_decision", amountMinor: 500 }, "support-click-2");
+    assert.equal(c.status, 202, JSON.stringify(c.body));
+    assert.equal(store.refunds.size, 2);
   });
 });

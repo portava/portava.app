@@ -23,7 +23,8 @@
 import express, { Router, type Request, type Response } from "express";
 import { randomUUID } from "node:crypto";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { requireUser, sendError } from "../lib/http.js";
+import { requireIdempotencyKey, requireUser, sendError } from "../lib/http.js";
+import { createHash } from "node:crypto";
 import { requireAdmin } from "../lib/requireAdmin.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { checkBookingParties } from "../lib/rentBuddyIdentityEligibility.js";
@@ -33,7 +34,7 @@ import { taxProviderOrNone } from "../services/payments/TaxProvider.js";
 import { paymentsReadiness } from "../services/payments/readiness.js";
 import type { WebhookEndpoint } from "../services/payments/PaymentProvider.js";
 import type { PaymentSliceDeps, SliceOutcome } from "../services/payments/bookingPayments/deps.js";
-import { LEDGER_NOT_AVAILABLE } from "../services/payments/bookingPayments/ledgerPostings.js";
+import { paymentLedgerAdapter } from "../services/payments/bookingPayments/ledgerAdapter.js";
 import { supabaseBookingPaymentStore } from "../services/payments/bookingPayments/supabaseStore.js";
 import { confirmBookingPayment, quoteBookingPayment, startBookingCheckout } from "../services/payments/bookingPayments/checkout.js";
 import { REFUND_TRIGGERS, requestBookingRefund, type RefundTrigger } from "../services/payments/bookingPayments/refunds.js";
@@ -48,8 +49,10 @@ export function productionPaymentDeps(sc: any): PaymentSliceDeps {
     provider: getPaymentProvider(),
     tax: taxProviderOrNone(),
     store: supabaseBookingPaymentStore(sc),
-    // PR #598's ledger is not on this tree: every step that must book money refuses (503) until it is bound here.
-    ledger: LEDGER_NOT_AVAILABLE,
+    // PR #598's double-entry ledger (payment_post_transaction, 3822). Unapplied
+    // anywhere today, so it answers ledger_unavailable and every webhook that must
+    // book money is a 503 the provider retries — never money acknowledged unbooked.
+    ledger: paymentLedgerAdapter(sc),
     paymentsOperational: () => {
       const r = paymentsReadiness();
       return { operational: r.operational, reason: r.reason };
@@ -77,6 +80,29 @@ const intOrUndefined = (v: unknown): number | undefined | null => {
 
 const UUIDISH = /^[0-9a-f-]{8,64}$/i;
 
+/**
+ * Money routes take an `Idempotency-Key` header, bound to the CALLER's payment
+ * party (lib/http.ts requireIdempotencyKey, #598): a retried request is the
+ * same request, and two callers who pick the same key never meet. The party is
+ * the traveller's receivable side or the buddy's payable side in the booking's
+ * currency (3821 payment_account_ensure — the pseudonym, never the profile id).
+ * Answers the hashed, scoped key, or null after writing the refusal.
+ */
+async function boundRequestKey(
+  req: Request, res: Response, deps: PaymentSliceDeps, userId: string, bookingId: string, operation: string, actsForPlatform = false,
+): Promise<string | null> {
+  const b = await deps.store.loadBooking(bookingId);
+  if (!b.ok) { sendError(res, "degraded_unavailable", "The booking could not be read."); return null; }
+  if (!b.value) { res.status(404).json({ error: "not_found", message: "Booking not found." }); return null; }
+  const role = b.value.travelerId === userId ? "user_receivable" : "user_payable";
+  // Support is not a payment party; it acts for the PLATFORM, whose party binds its keys.
+  const party = actsForPlatform ? await deps.store.ensurePlatformParty(b.value.currency) : await deps.store.ensureUserParty(userId, b.value.currency, role);
+  if (!party.ok) { sendError(res, "degraded_unavailable", "Your payment account could not be resolved."); return null; }
+  const bound = requireIdempotencyKey(req, res, { operation, actorPartyId: party.value });
+  if (!bound) return null;
+  return createHash("sha256").update(`${bound.scope}|${bound.idempotencyKey}`).digest("hex").slice(0, 40);
+}
+
 /** The router, over injectable dependencies (tests pass an in-memory store and the fake provider). */
 export function createRentABuddyPaymentsRouter(makeDeps: (sc: any) => PaymentSliceDeps = productionPaymentDeps): Router {
   const router = Router();
@@ -103,6 +129,9 @@ export function createRentABuddyPaymentsRouter(makeDeps: (sc: any) => PaymentSli
     const tip = intOrUndefined(req.body?.tipMinor);
     const expected = intOrUndefined(req.body?.expectedTotalMinor);
     if (tip === null || expected === null) return sendError(res, "invalid_payload", "tipMinor and expectedTotalMinor must be non-negative integers of minor units");
+    // Checkout resumes an open attempt rather than creating a second, so the key's
+    // job here is the contract: no money request without one.
+    if ((await boundRequestKey(req, res, ctx.deps, ctx.userId, String(req.params.bookingId), "rab_checkout")) === null) return;
     send(res, await startBookingCheckout(ctx.deps, { bookingId: String(req.params.bookingId), actorUserId: ctx.userId, tipMinor: tip, expectedTotalMinor: expected }));
   }));
 
@@ -112,7 +141,9 @@ export function createRentABuddyPaymentsRouter(makeDeps: (sc: any) => PaymentSli
     const pm = req.body?.paymentMethodRef;
     const returnUrl = typeof req.body?.returnUrl === "string" && req.body.returnUrl.length > 0 ? req.body.returnUrl : null;
     if (typeof pm !== "string" || pm.length === 0 || pm.length > 255) return sendError(res, "invalid_payload", "paymentMethodRef is required");
-    send(res, await confirmBookingPayment(ctx.deps, { bookingId: String(req.params.bookingId), actorUserId: ctx.userId, paymentMethodRef: pm, returnUrl }));
+    const requestKey = await boundRequestKey(req, res, ctx.deps, ctx.userId, String(req.params.bookingId), "rab_confirm");
+    if (requestKey === null) return;
+    send(res, await confirmBookingPayment(ctx.deps, { bookingId: String(req.params.bookingId), actorUserId: ctx.userId, paymentMethodRef: pm, returnUrl, requestKey }));
   }));
 
   router.post("/rent-a-buddy/bookings/:bookingId/payment/refund", asyncHandler(async (req, res) => {
@@ -129,8 +160,12 @@ export function createRentABuddyPaymentsRouter(makeDeps: (sc: any) => PaymentSli
       if (!admin) return;
       actorIsAdmin = true;
     }
+    // A double-submitted refund is ONE refund: the provider key carries the
+    // caller's request key (support's bound to the platform party).
+    const requestKey = await boundRequestKey(req, res, ctx.deps, ctx.userId, String(req.params.bookingId), "rab_refund", actorIsAdmin);
+    if (requestKey === null) return;
     send(res, await requestBookingRefund(ctx.deps, {
-      bookingId: String(req.params.bookingId), actorUserId: ctx.userId, actorIsAdmin, trigger: trigger as RefundTrigger, amountMinor: amount,
+      bookingId: String(req.params.bookingId), actorUserId: ctx.userId, actorIsAdmin, trigger: trigger as RefundTrigger, amountMinor: amount, requestKey,
     }));
   }));
 
@@ -171,7 +206,8 @@ export function createRentABuddyPaymentsRouter(makeDeps: (sc: any) => PaymentSli
       const admin = await requireAdmin(req, res);
       if (!admin) return;
       const reason = typeof req.body?.reason === "string" ? req.body.reason : null;
-      send(res, await holdOrReleasePayout(makeDeps(admin.sc), { payoutId: String(req.params.payoutId), action, reason }));
+      // The acting admin comes from the verified token (requireAdmin), never from the body.
+      send(res, await holdOrReleasePayout(makeDeps(admin.sc), { payoutId: String(req.params.payoutId), action, reason, actorUserId: admin.userId }));
     }));
   }
 

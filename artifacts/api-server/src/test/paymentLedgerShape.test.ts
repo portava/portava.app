@@ -259,7 +259,7 @@ describe("payment ledger shape (09 §3.2, §5.3, §8, §10)", () => {
     assert.match(m3, /'payment_ledger_reads_enabled',\s+false,/);
   });
 
-  it("SH10. PAY-046 stays honest: requireIdempotencyKey is attached to NO route yet, and it cannot hand back a key without its scope", () => {
+  it("SH10. PAY-046 stays honest: requireIdempotencyKey is attached to exactly the routes that require it, and it cannot hand back a key without its scope", () => {
     const routesDir = join(SRC, "routes");
     const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
       e.isDirectory() ? walk(join(dir, e.name)) : /\.ts$/.test(e.name) ? [join(dir, e.name)] : []);
@@ -268,8 +268,11 @@ describe("payment ledger shape (09 §3.2, §5.3, §8, §10)", () => {
     const IMPORTS_HELPER = /import\s[^;]*\b(requireIdempotencyKey|bindIdempotencyKey)\b[^;]*from\s+"[^"]*lib\/(http|idempotencyKey)(\.js)?"/;
     assert.match('import { requireUser, requireIdempotencyKey } from "../lib/http";', IMPORTS_HELPER, "the detector can fire");
     const callers = walk(routesDir).filter((f) => IMPORTS_HELPER.test(tsCode(readFileSync(f, "utf8"))));
-    // When the first money route adopts it, this assertion is the place to say so — and PAY-046 can move.
-    assert.deepEqual(callers, [], "a route now requires the header: update PAY-046's status and this test together");
+    // The first money routes adopted it on 2026-10-05 (lane B): the Rent-a-Buddy
+    // checkout, confirm and refund routes bind the header to the caller's payment
+    // party (support's to the platform party). PAY-046 moves with this line; a new
+    // adopter is added here, by name, in the same change.
+    assert.deepEqual(callers.map((f) => f.slice(routesDir.length + 1)).sort(), ["rentABuddyPayments.ts"], "the routes that require the header changed: update PAY-046's status and this list together");
     const http = tsCode(read("artifacts/api-server/src/lib/http.ts"));
     const fn = http.slice(http.indexOf("export function requireIdempotencyKey("));
     assert.match(fn, /binding: IdempotencyBinding,\s*\): \{ scope: string; idempotencyKey: string \} \| null \{/, "the binding is a required parameter and the result is the pair");

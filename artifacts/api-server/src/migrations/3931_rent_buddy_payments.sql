@@ -36,14 +36,37 @@
 --
 -- ── WHO MAY TOUCH THEM ───────────────────────────────────────────────────────
 -- RLS on, no policy; no client grant. service_role: SELECT, INSERT, UPDATE.
--- No DELETE for anyone: these are financial records. Their fate on account
--- erasure is the creator-ledger retention question C-11 (answer B, pseudonymise,
--- owner-decided; PERIOD not decided; PR #592 on HOLD). Person ids are plain
--- uuids with NO foreign key to profiles, so an erasure neither cascades through
--- them nor is blocked by them; until C-11's period lands, AccountDeletionService
--- must state their fate (lane report: unresolved dependency).
+-- No DELETE for anyone: these are financial records.
+--
+-- ── PEOPLE ARE NAMED BY PAYMENT PARTY, NOT BY PROFILE (OD-PAY-8) ────────────
+-- The owner ruled (2026-10-04, creator-ledger erasure): "Pseudonymize accounting
+-- entries, removing direct identifiers and the identity link when deletion is
+-- requested." The ledger this slice books to (3821) is built that way: a person
+-- is a `payment_parties` row whose `profile_id` (ON DELETE SET NULL) is the ONLY
+-- link to the person, removed by `payment_party_remove_identity`. So every
+-- column here that names the buddy or a requester names their PARTY
+-- (`party_id`, `recipient_party_id`, `requested_by_party_id`, FK to
+-- payment_parties, RESTRICT): erasing a person changes one row in
+-- payment_parties and no row here, and these rows stay linkable to the rest of
+-- that person's books — pseudonymised, not anonymous, which is what retaining
+-- them for tax, accounting and disputes requires. The retention PERIOD is not
+-- decided (C-11; legal confirmation pending, PR #592 on HOLD): nothing here
+-- deletes, early or late.
+--
+-- ONE column names a profile on purpose: `held_by` / `released_by` on
+-- rent_buddy_monthly_payouts — the ADMIN who held or released a payout. An
+-- admin is not a payment party, and accountability for a money action must name
+-- the staff member who took it. It is a staff audit fact, recorded with the
+-- reason in the same UPDATE as the state change.
+--
+-- The jsonb columns (`last_snapshot`, `settlement`) hold an ALLOW-LISTED
+-- projection of the provider's object, built by the API
+-- (services/payments/bookingPayments/supabaseStore.ts project*): never a client
+-- secret, a name, an email, a phone, an address or card digits, whatever the
+-- provider sends.
 --
 -- ── DEPLOY ORDER ─────────────────────────────────────────────────────────────
+-- Requires 3821 (payment_parties; PR #598) — the foreign keys above name it.
 -- Additive. Apply before deploying the API that reads/writes these tables; the
 -- API without them answers 503 on every payment route (fail-closed), because
 -- every read is checked. Nothing here is read by any existing route.
@@ -52,7 +75,7 @@
 
 -- ── rent_buddy_payment_recipients ────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.rent_buddy_payment_recipients (
-  user_id              uuid        PRIMARY KEY,
+  party_id             uuid        PRIMARY KEY REFERENCES public.payment_parties(id) ON DELETE RESTRICT,
   provider             text        NOT NULL CHECK (provider ~ '^[a-z][a-z0-9_]{1,31}$'),
   recipient_ref        text        NOT NULL CHECK (length(recipient_ref) BETWEEN 1 AND 255),
   country              text        NOT NULL CHECK (country ~ '^[A-Z]{2}$'),
@@ -72,7 +95,8 @@ CREATE TABLE IF NOT EXISTS public.rent_buddy_payment_recipients (
 -- ── rent_buddy_monthly_payouts ───────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.rent_buddy_monthly_payouts (
   id                   uuid        PRIMARY KEY,
-  recipient_user_id    uuid        NOT NULL,
+  recipient_party_id   uuid        NOT NULL REFERENCES public.payment_parties(id) ON DELETE RESTRICT,
+  provider             text        NOT NULL CHECK (provider ~ '^[a-z][a-z0-9_]{1,31}$'),
   period               text        NOT NULL CHECK (period ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),
   currency             text        NOT NULL CHECK (currency ~ '^[A-Z]{3}$'),
   amount_minor         bigint      NOT NULL,
@@ -82,6 +106,11 @@ CREATE TABLE IF NOT EXISTS public.rent_buddy_monthly_payouts (
   recipient_ref        text        NOT NULL,
   booking_payment_ids  uuid[]      NOT NULL DEFAULT '{}',
   hold_reason          text        CHECK (hold_reason IS NULL OR length(hold_reason) BETWEEN 5 AND 2000),
+  held_by              uuid,
+  held_at              timestamptz,
+  released_by          uuid,
+  released_at          timestamptz,
+  release_reason       text        CHECK (release_reason IS NULL OR length(release_reason) BETWEEN 5 AND 2000),
   carry_reason         text,
   failure_code         text,
   last_snapshot        jsonb,
@@ -90,7 +119,8 @@ CREATE TABLE IF NOT EXISTS public.rent_buddy_monthly_payouts (
   updated_at           timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT rbmp_key_once UNIQUE (idempotency_key),
   CONSTRAINT rbmp_ref_once UNIQUE (payout_ref),
-  CONSTRAINT rbmp_held_has_reason CHECK (state <> 'held' OR hold_reason IS NOT NULL),
+  CONSTRAINT rbmp_held_has_reason CHECK (state <> 'held' OR (hold_reason IS NOT NULL AND held_by IS NOT NULL AND held_at IS NOT NULL)),
+  CONSTRAINT rbmp_release_is_attributed CHECK ((released_at IS NULL) = (released_by IS NULL) AND (released_at IS NULL) = (release_reason IS NULL)),
   CONSTRAINT rbmp_paid_amount_positive CHECK (state IN ('carried_forward') OR amount_minor > 0)
 );
 
@@ -103,7 +133,7 @@ CREATE TABLE IF NOT EXISTS public.rent_buddy_booking_payments (
   idempotency_key              text        NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 255),
   intent_ref                   text,
   recipient_ref                text        NOT NULL,
-  recipient_user_id            uuid        NOT NULL,
+  recipient_party_id           uuid        NOT NULL REFERENCES public.payment_parties(id) ON DELETE RESTRICT,
   charge_model                 text        NOT NULL CHECK (charge_model IN ('direct', 'destination', 'platform')),
   state                        text        NOT NULL CHECK (state IN ('creating', 'awaiting_payment', 'processing', 'succeeded', 'failed', 'canceled', 'refunded', 'partially_refunded', 'disputed', 'reversed')),
   intent_state                 text        CHECK (intent_state IS NULL OR intent_state IN ('requires_payment_method', 'requires_confirmation', 'requires_action', 'processing', 'requires_capture', 'succeeded', 'canceled')),
@@ -129,6 +159,9 @@ CREATE TABLE IF NOT EXISTS public.rent_buddy_booking_payments (
   settlement                   jsonb,
   last_snapshot                jsonb,
   failure_reason               text,
+  -- a declined confirmation leaves the provider's intent open: TRUE until a
+  -- cancellation through the contract succeeds (retried on the next checkout)
+  provider_cancel_owed         boolean     NOT NULL DEFAULT false,
   payout_id                    uuid        REFERENCES public.rent_buddy_monthly_payouts(id) ON DELETE RESTRICT,
   livemode                     boolean     NOT NULL DEFAULT false CONSTRAINT rbbp_test_mode_only CHECK (livemode = false),
   created_at                   timestamptz NOT NULL DEFAULT now(),
@@ -144,7 +177,7 @@ CREATE TABLE IF NOT EXISTS public.rent_buddy_booking_payments (
   CONSTRAINT rbbp_fee_refunded_bounded CHECK (platform_fee_refunded_minor BETWEEN 0 AND platform_fee_collected_minor)
 );
 CREATE INDEX IF NOT EXISTS rbbp_booking_idx ON public.rent_buddy_booking_payments (booking_id, attempt_no);
-CREATE INDEX IF NOT EXISTS rbbp_unpaid_idx ON public.rent_buddy_booking_payments (recipient_user_id) WHERE payout_id IS NULL;
+CREATE INDEX IF NOT EXISTS rbbp_unpaid_idx ON public.rent_buddy_booking_payments (recipient_party_id) WHERE payout_id IS NULL;
 
 -- ── rent_buddy_payment_refunds ───────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.rent_buddy_payment_refunds (
@@ -159,12 +192,15 @@ CREATE TABLE IF NOT EXISTS public.rent_buddy_payment_refunds (
   currency             text        NOT NULL CHECK (currency ~ '^[A-Z]{3}$'),
   -- REQUIRED, no default: the owner ruled "don't promise that fees … are non-refundable", so each refund states it
   refund_platform_fee  boolean     NOT NULL,
-  requested_by         uuid        NOT NULL,
+  requested_by_role    text        NOT NULL CHECK (requested_by_role IN ('traveler', 'buddy', 'admin')),
+  -- the traveller's or buddy's payment party when they have one; support is recorded as a role only
+  requested_by_party_id uuid       REFERENCES public.payment_parties(id) ON DELETE RESTRICT,
   last_snapshot        jsonb,
   created_at           timestamptz NOT NULL DEFAULT now(),
   updated_at           timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT rbprf_key_once UNIQUE (idempotency_key),
-  CONSTRAINT rbprf_ref_once UNIQUE (provider, refund_ref)
+  CONSTRAINT rbprf_ref_once UNIQUE (provider, refund_ref),
+  CONSTRAINT rbprf_admin_has_no_party CHECK (requested_by_role <> 'admin' OR requested_by_party_id IS NULL)
 );
 CREATE INDEX IF NOT EXISTS rbprf_payment_idx ON public.rent_buddy_payment_refunds (booking_payment_id);
 
@@ -223,4 +259,15 @@ BEGIN
   IF n <> 3 THEN RAISE EXCEPTION '3931: POSTCONDITION FAILED: a livemode = false constraint is missing (found %)', n; END IF;
   SELECT count(*) INTO n FROM pg_constraint WHERE conname IN ('rbbp_components_sum', 'rbbp_commission_from_service_only');
   IF n <> 2 THEN RAISE EXCEPTION '3931: POSTCONDITION FAILED: the amount/commission constraints are missing'; END IF;
+  -- people are named by payment party: every uuid column that names a person
+  -- other than the two admin audit columns references payment_parties
+  SELECT count(*) INTO n FROM information_schema.columns c
+   WHERE c.table_schema = 'public'
+     AND c.table_name IN ('rent_buddy_payment_recipients', 'rent_buddy_monthly_payouts', 'rent_buddy_booking_payments', 'rent_buddy_payment_refunds')
+     AND c.column_name IN ('user_id', 'recipient_user_id', 'requested_by', 'profile_id', 'traveler_id');
+  IF n <> 0 THEN RAISE EXCEPTION '3931: POSTCONDITION FAILED: a payment table names a person by profile id (% column(s))', n; END IF;
+  SELECT count(*) INTO n FROM pg_constraint k
+   WHERE k.contype = 'f' AND k.confrelid = 'public.payment_parties'::regclass
+     AND k.conrelid IN ('public.rent_buddy_payment_recipients'::regclass, 'public.rent_buddy_monthly_payouts'::regclass, 'public.rent_buddy_booking_payments'::regclass, 'public.rent_buddy_payment_refunds'::regclass);
+  IF n <> 4 THEN RAISE EXCEPTION '3931: POSTCONDITION FAILED: expected 4 foreign keys to payment_parties, found %', n; END IF;
 END $$;
