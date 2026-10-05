@@ -53,7 +53,7 @@ import { DiscoveryCardMessage } from '../../src/components/DiscoveryCardMessage'
 import { PostCardMessage } from '../../src/components/PostCardMessage';
 import { ThreadSafetySheet } from '../../src/components/ThreadSafetySheet';
 import { SharedContextRail, shouldCollapseOnScroll } from '../../src/features/telegraph/index.ts';
-import { PortavaObjectMessage } from '../../src/features/telegraph/sharing/PortavaObjectMessage.tsx';
+import { PortavaObjectMessage } from '../../src/features/telegraph/sharing/PortavaObjectMessage.tsx'; import { OriginalAlongside } from '../../src/features/telegraph/translation/OriginalAlongside.tsx';
 import { TypedMessageRenderer, rendersTypedKind } from '../../src/features/telegraph/kinds/TypedMessageRenderer.tsx';
 import { rendersKnownMessageType, safeUnknownBody } from '../../src/features/telegraph/kinds/unsupportedPayload.ts';
 import { parseKindEnvelope as parseTelegraphKindEnvelope } from '../../src/features/telegraph/kinds/kindsApi.ts';
@@ -1025,7 +1025,7 @@ function MessageBubble({
           style={[styles.bubbleText, mine && styles.bubbleTextMine]}
           mentionColor={mine ? 'rgba(255,255,255,0.90)' : undefined}
           hashtagColor={mine ? 'rgba(255,255,255,0.80)' : undefined}
-        />
+        /><OriginalAlongside item={item} view={{ mine, autoTranslate, showingOriginal: showOriginal }} />
 
         {(groupEnd || item.editedAt) ? (
           <Text style={[styles.bubbleTime, mine && styles.bubbleTimeMine]}>

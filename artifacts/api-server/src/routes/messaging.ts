@@ -64,7 +64,7 @@ import { isUuid } from '../lib/followDecisions'; import { REPORT_REASON_CODES, r
 import {
   translateMessageForThread,
   markTranslationsPending,
-  buildDisplayFields,
+  buildDisplayFields, readRecipientTranslations,
   retranslateForUser,
   senderLanguageFrom,
   type TranslationStatusValue,
@@ -2360,11 +2360,11 @@ router.get('/threads/:threadId/messages', async (req, res) => {
 
   let translationMap: Record<string, any> = {};
   if (incomingMsgIds.length > 0) {
-    const { data: tRows, error: tErr } = await sc
-      .from('message_translations')
-      .select('message_id, source_language, target_language, translated_body, status')
-      .in('message_id', incomingMsgIds)
-      .eq('recipient_id', user.id);
+    // §18.2 T242: one reader for both thread routes, carrying `confidence` (2991)
+    // and falling back by name when this database does not have the column yet.
+    const { rows: tRows, error: tErr } = await readRecipientTranslations(
+      sc, incomingMsgIds, user.id,
+    );
 
     if (tErr) {
       /*
@@ -2540,7 +2540,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
             source_language: tRow.source_language,
             target_language: tRow.target_language,
             translated_body: tRow.translated_body,
-            status: tRow.status as TranslationStatusValue,
+            status: tRow.status as TranslationStatusValue, confidence: tRow.confidence ?? null,
           }
         : null,
     );
@@ -2563,7 +2563,7 @@ router.get('/threads/:threadId/messages', async (req, res) => {
       translated: display.translated,
       translationStatus: display.translationStatus,
       translationLabel: display.translationLabel,
-      canShowOriginal: display.canShowOriginal,
+      canShowOriginal: display.canShowOriginal, translationConfidence: display.translationConfidence, showOriginalAlongside: display.showOriginalAlongside, // §18.2 T242
       msgType: (m.msg_type as string) ?? 'text',
       subtype: (m.subtype as string | null) ?? null,
       // Rich-text span metadata (absent for deleted messages)
