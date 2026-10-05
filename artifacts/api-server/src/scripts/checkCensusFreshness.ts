@@ -4621,6 +4621,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/features/passport/__tests__/JourneysScreen.component.test.tsx",
     "travel-buddy-standalone/src/features/passport/__tests__/MyWorldScreen.component.test.tsx",
     "travel-buddy-standalone/src/features/passport/__tests__/TrustDomainsFromServer.component.test.tsx",
+    "travel-buddy-standalone/src/features/passport/__tests__/TrustScreen.confidenceUnmeasured.component.test.tsx",
     "travel-buddy-standalone/src/features/passport/installPassportTelemetry.ts",
     "travel-buddy-standalone/src/features/passport/passportNav.ts",
     "travel-buddy-standalone/src/features/passport/passportQrProjection.ts",

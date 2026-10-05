@@ -2470,3 +2470,100 @@ Unchanged, and recounted rather than carried forward from §25:
 - Migration 2294 applied and `passport_event_share_enabled` flipped: event-Passport sharing stops
   being implementation-complete-and-dark, and §25.5's awaiting clause has to be re-read as a shipped
   surface the same day.
+
+## §27 — 2026-10-05 (lane L): P50 and P154 move to `C` — the "D-WORD band half" they waited on describes code that is no longer there
+
+*Measured on branch `claude/mission-l-lead-residual-20261005` (cut from `13170305f`).
+`head_commit` is NOT re-declared. One test file gains a block (§27.3); no product code
+changes. No flag, migration, deployment or database was touched.*
+
+### 27.1 What the rows were waiting on, and why it no longer exists
+
+§26.1 files P50 as *"recalibrating a confidence band, which **changes the word a person is
+shown**. `D-WORD`"*, and §19's register states the open half as *"whether the confidence band
+may stay travel-derived now that `evidence_weight`/`evidence_count` reach the projection"*.
+P154 is P45/P50 under a phase number.
+
+**The band is not travel-derived on this tree, and has not been since 2026-09-22/23.** It is
+read from the trust engine's own decay-weighted evidence measure and from nothing else:
+`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1349#const confidence = passportTrustConfidence(profileRead.state, evidenceWeight);`,
+derived at `artifacts/api-server/src/services/passport/PassportProjectionService.ts:2497#export function passportTrustConfidence(`,
+which answers `null` — not a band — for an absent, unreadable, pre-2371 or corrupt measurement.
+`stats` and `verified` no longer reach it. The public label is chosen by the MEASURED public
+level, not by the band (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1389#? (verified ? "New Traveler · Verified" : "New Traveler")`).
+So the question "may the band stay travel-derived?" has no subject: nothing derives it from
+travel. What the owner DID decide covers what is left — consolidated-decisions Q3
+(2026-09-22): *"Keep genuinely measured and partial states faithful to their evidence"* — and
+OD-TRUST-7 says stamps (the old formula's main input) are not trust guarantees.
+
+No band WORD was invented or renamed by the change that did this (`High confidence`,
+`Growing confidence`, `Early days`, client-side at
+`travel-buddy-standalone/src/features/passport/useTrustProjection.ts:277#high: {`); what changed
+is which measurement selects one. §26 was written eleven days after that change and still
+filed both rows as owner-gated.
+
+### 27.2 P50 — the row's own sentence, executed
+
+*"An 82 with high evidence is not equivalent to an 82 with little evidence."* The fixture's
+measured profile is an 82 throughout and only `evidence_weight` varies: a complete ramp reads
+`high`, a partial one `medium`, measured-and-empty `low`, and travel volume moves nothing
+(`artifacts/api-server/src/test/passportTrustEvidenceConfidence.test.ts:159#it("TRAVEL VOLUME CANNOT MOVE THE BAND`,
+`artifacts/api-server/src/test/passportTrustEvidenceConfidence.test.ts:169#it("the band moves ONLY with the engine's measure"`).
+`evidenceWeight`, `evidenceCount` and `confidenceBasis` ride beside the band. On the screen,
+`null` survives to the view (`travel-buddy-standalone/src/features/passport/useTrustProjection.ts:413#const confidence: TrustConfidence | null = trust?.confidence ?? null;`)
+and the three real bands render three different words
+(`travel-buddy-standalone/src/features/passport/__tests__/TrustScreen.confidenceUnmeasured.component.test.tsx:78#it('the three REAL bands still render their own words'`).
+
+Executed on this tree: server 20 / 20 (with §27.3), client 5 / 5. Mutations, each seen red and
+restored (`git status` clean):
+
+| mutation | result |
+| --- | --- |
+| server band taken from the `verified` flag instead of the evidence weight | 5 red |
+| server: an absent/unreadable profile answers `"low"` instead of `null` | 3 red |
+| client: `trust?.confidence ?? 'low'` (the pre-fix line) | 4 of 5 red |
+
+### 27.3 P154 — no central number when the engine is dark
+
+The row: *"the projection fabricates its central number when the engine is dark"*. The
+owner-only score now comes from `getDisplayTrustScore`, which returns `null` for an absent,
+unscored or unreadable profile (`artifacts/api-server/src/services/trust/TrustScoreService.ts:768#if (read.state !== "ok") return null;`),
+and a domain with nothing measured reads "Not yet rated"
+(`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1173#if (basis === "substituted") return "Not yet rated";`).
+That had no test on the OWNER's own view — the existing null-score assertion was on the public
+path, where the score is withheld anyway. It has one now:
+`artifacts/api-server/src/test/passportTrustEvidenceConfidence.test.ts:335#it("absent profile: score null, every domain 'Not yet rated', none 'Established'"`,
+with an unreadable-profile case and a measured control (82 shown). Mutations: absent profile
+reads a neutral 50 → 1 red; unreadable reads 50 → 1 red; substituted reads "Established" → 2 red.
+
+### 27.4 What `C` does NOT claim
+
+That the trust engine produces evidence for anyone in production. census-trust grades the
+engine; this census grades what the Passport says about whatever the engine has or has not
+measured, and on that the whole path — projection, wire, client view, screen copy — is now
+honest and pinned. With the engine dark, every user reads "Not yet measured" and no number:
+that is the correct output for the input, not a gap in this surface.
+
+One residual is recorded, not fixed: the band copy for `high` still reads *"Backed by a
+substantial travel and contribution history"*. The band now measures recent trust EVENTS, which
+are largely travel and contribution acts, so the sentence is loose rather than false; rewording
+it is copy, and copy that labels a person is the owner's (D-WORD's spirit), so it is left.
+
+### 27.5 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| P50 | W | **C** | §27.1–§27.2. The band is the trust engine's evidence measure, an 82 with full evidence and an 82 with none read differently end to end, absence is never a band, and the "D-WORD band half" has no subject. Not claimed: production evidence (census-trust). |
+| P154 | W | **C** | §27.3. Phase 4's fabricated central number is gone on the owner's own view and the public view; pinned on the owner view by a new block, three mutations red. It was P45 (C since §16.1) and P50 under a phase number. |
+
+### 27.6 Headline, restated from the rows
+
+**169 requirements · 160 BUILT-AND-CORRECT · 7 BUILT-BUT-WRONG · 1 NOT-BUILT · 1 CANNOT-VERIFY.**
+160 + 7 + 1 + 1 = 169. CONSTRUCTED 98.8 % (167 / 169) · CORRECT 94.7 % (160 / 169).
+
+| Measure | Value |
+| --- | --- |
+| BUILT-AND-CORRECT | 160 |
+| BUILT-BUT-WRONG | 7 |
+| NOT-BUILT | 1 |
+| CANNOT-VERIFY | 1 |
