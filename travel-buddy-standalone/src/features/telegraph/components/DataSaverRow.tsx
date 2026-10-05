@@ -45,6 +45,13 @@ export function DataSaverRow({ state }: DataSaverRowProps) {
           Holds back photos, videos and AI suggestions until you ask for them.
           Messages, status and safety alerts always come through.
         </Text>
+        {ds.automaticCause ? (
+          <Text style={s.hint} testID="data-saver-automatic">
+            {ds.automaticCause === 'slow_responses'
+              ? 'On automatically while your connection is slow.'
+              : 'On automatically while your connection is unreliable.'}
+          </Text>
+        ) : null}
       </View>
       <Switch
         testID="data-saver-switch"

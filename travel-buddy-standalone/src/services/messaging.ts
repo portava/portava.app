@@ -288,10 +288,10 @@ async function apiGet<T>(path: string): Promise<MsgResult<T>> {
   const token = await freshToken();
   if (!token) return { ok: false, data: null, errorKind: 'unauthenticated' };
   try {
-    const res = await fetch(`${apiBase()}${path}`, {
+    const startedAt = Date.now(); const res = await fetch(`${apiBase()}${path}`, { // §17.4: timed for the bandwidth signal
       headers: { Authorization: `Bearer ${token}` },
     });
-    noteTelegraphRequest(res.status >= 500 ? 'server' : 'ok'); if (!res.ok) return mapApiError<T>(res.status, await res.json().catch(() => ({})));
+    noteTelegraphRequest(res.status >= 500 ? 'server' : 'ok', Date.now() - startedAt); if (!res.ok) return mapApiError<T>(res.status, await res.json().catch(() => ({})));
     return { ok: true, data: await res.json() };
   } catch (e) {
     noteTelegraphRequest(isNetworkError(e) ? 'network' : 'server'); if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };

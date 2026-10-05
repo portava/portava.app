@@ -35,6 +35,8 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useBandwidthSignal } from '../connection/connectionMonitor.ts';
+import type { BandwidthCause } from '../connection/bandwidthSignal.ts';
 
 const STORAGE_KEY = 'telegraph:dataSaver:v1';
 
@@ -88,11 +90,28 @@ export function mayLoad(feature: DegradableFeature, level: DataSaverLevel): bool
 }
 
 export interface DataSaverState {
+  /** The person's own setting. */
   level: DataSaverLevel;
-  /** True until the stored preference has been read. Nothing is shed while loading. */
+  /** True until the stored preference has been read. Nothing is shed on the setting's account while loading. */
   loading: boolean;
   setLevel: (next: DataSaverLevel) => Promise<void>;
   mayLoad: (feature: DegradableFeature) => boolean;
+  /**
+   * §17.4 — the level actually applied: the setting, OR 'on' while the
+   * measured connection is constrained. The setting is never rewritten by
+   * this; when the connection recovers, the setting rules again.
+   */
+  effectiveLevel?: DataSaverLevel;
+  /** Why the ladder is shedding without the setting: the measured cause, or null. */
+  automaticCause?: BandwidthCause;
+}
+
+/**
+ * The level the ladder applies: the explicit setting, raised to 'on' while the
+ * MEASURED connection is constrained (T239). Pure.
+ */
+export function effectiveDataSaverLevel(setting: DataSaverLevel, constrained: boolean): DataSaverLevel {
+  return setting === 'on' || constrained ? 'on' : 'off';
 }
 
 export function useDataSaver(): DataSaverState {
@@ -122,12 +141,27 @@ export function useDataSaver(): DataSaverState {
     try { await AsyncStorage.setItem(STORAGE_KEY, next); } catch { /* in-memory only this session */ }
   }, []);
 
+  const bandwidth = useBandwidthSignal();
+  const constrained = bandwidth.signal === 'constrained';
+  const effectiveLevel = effectiveDataSaverLevel(level, constrained);
+
+  // While the stored setting loads, the SETTING sheds nothing (a person who
+  // never asked for data saver must not lose media for a frame on every
+  // mount); a measured constrained connection still does, because it is a
+  // fact about the network and not about the setting.
   const may = useCallback(
-    (feature: DegradableFeature) => (loading ? true : mayLoad(feature, level)),
-    [level, loading],
+    (feature: DegradableFeature) => (loading && !constrained ? true : mayLoad(feature, effectiveLevel)),
+    [effectiveLevel, loading, constrained],
   );
 
-  return { level, loading, setLevel, mayLoad: may };
+  return {
+    level,
+    loading,
+    setLevel,
+    mayLoad: may,
+    effectiveLevel,
+    automaticCause: constrained && level !== 'on' ? bandwidth.cause : null,
+  };
 }
 
 export default useDataSaver;
