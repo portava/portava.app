@@ -1623,7 +1623,7 @@ asset is not a kind.
   `UNSENDABLE_KINDS` (`:146#UNSENDABLE_KINDS`) is every other §6.2 kind with
   the reason it is not here, so a reader can tell "not built" from "built and
   broken". A test asserts every one of §6.2's thirteen is in one list or the
-  other — none is silently missing (`test/telegraphKinds.test.ts:279`).
+  other — none is silently missing (`test/telegraphKinds.test.ts:291`).
 - **§4.3 lands in the LOCATION payload.** `precision` defaults to `area`;
   `exact` is a value the sender must choose. The client sheet opens on
   "Approximate area" and "Exact" is a second tap
@@ -1631,7 +1631,7 @@ asset is not a kind.
   and nothing in that sheet reads the device GPS.
 - **§8.2 lands in the ACTION payload.** `requiresConfirmation` is a
   `z.literal(true)`, so a caller cannot send an already-confirmed action; the
-  forged value is a 400 (`test/telegraphKinds.test.ts:318`).
+  forged value is a 400 (`test/telegraphKinds.test.ts:330`).
 - **§6.4's drawer is a CLASSIFIER over rows the thread already has.**
   `drawerTabFor` (`services/telegraph/messageKinds.ts:316#drawerTabFor`) routes
   each row to one of §6.4's seven tabs
