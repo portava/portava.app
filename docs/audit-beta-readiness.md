@@ -200,7 +200,7 @@ pnpm run typecheck
 | Rent a Buddy — marketplace/search/profile | DONE | Full UI (20+ screens), 100+ API endpoints in `routes/rentABuddy.ts` (6,162 lines), complete DB schema |
 | Rent a Buddy — booking lifecycle (request → accept → start → complete) | DONE | All state transitions implemented with emitBookingMilestone notifications |
 | Rent a Buddy — payment (deposit/full in-app) | **STUB** | Routes exist, DB columns exist, explicit code comment: "payment module not yet implemented" — no payment processor wired |
-| Rent a Buddy — dispute resolution | **STUB** | Explicit comment "payment module not yet implemented" for dispute routes (rentABuddy.ts:2582) |
+| Rent a Buddy — dispute resolution | **STUB** | Explicit comment "payment module not yet implemented" for dispute routes (rentABuddy.ts:2576) |
 | Rent a Buddy — reviews | DONE | `routes/reviews.ts`, RLS, mobile service wired |
 | Rent a Buddy — Telegraph thread auto-creation on booking | DONE | `emitBookingMilestone` + `emitBookingCard` in `rentABuddy.ts` |
 | Rent a Buddy — safety (checkin/feel-unsafe/emergency) | DONE | All safety endpoints implemented and wired to mobile |
@@ -699,7 +699,7 @@ All 8 circle tables were applied via non-canonical migrations 0115–0122. RLS i
 | Gap ID | Feature | Missing Backend Element | Impact | Priority |
 |---|---|---|---|---|
 | BG-01 | Rent a Buddy | Payment processor not wired — `POST /api/rent-a-buddy/bookings/:id/pay-deposit` and `/pay-full` update DB status without charging | Users believe payment succeeded | **CRITICAL / P0** |
-| BG-02 | Rent a Buddy | Dispute resolution routes are stubs (explicit comment at `rentABuddy.ts:2582`) | No dispute resolution available | P1 |
+| BG-02 | Rent a Buddy | Dispute resolution routes are stubs (explicit comment at `rentABuddy.ts:2576`) | No dispute resolution available | P1 |
 | BG-03 | Find Your Circle | Precise GPS coordinates deferred (V2) — `/api/circle/:ctxType/:ctxId/precise-location` returns 403 | GPS-based meetup unavailable | P2 (V2 feature, intentional) |
 | BG-04 | Telegraph | Message search endpoint not implemented — no `GET /api/threads/:id/search` route | Search button shows "coming soon" | P2 |
 | BG-05 | Telegraph | Thread info / shared media endpoint not implemented | Thread info shows "coming soon" | P2 |

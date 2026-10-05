@@ -262,7 +262,7 @@ Conversion means extracting that, not deleting it.
 
 Not an admin guard. It is the feature-access decision function for Rent a Buddy,
 returning `{ allowed, code, message, httpStatus }` and sending no response. It is
-also called from `rentABuddy.ts:1016`, so its contract is cross-file.
+also called from `rentABuddy.ts:1010`, so its contract is cross-file.
 
 Only one fragment is admin logic — the admin-only-mode branch, which reads
 `profiles.role` and accepts `admin` or `owner`. That fragment is expressible as
@@ -426,5 +426,5 @@ decision before any code moves.
   assessment only.
 - **Call-site impact was read, not exercised.** The `admin.role` second gate and
   the cross-file use of `checkRentBuddyAccess` were confirmed by reading
-  `rentABuddyRollout.ts:635` and `rentABuddy.ts:1016`; no test was run against
+  `rentABuddyRollout.ts:635` and `rentABuddy.ts:1010`; no test was run against
   them. Per finding 18, no automated run would have caught it if there were.
