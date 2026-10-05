@@ -59,7 +59,7 @@ import { resolveInteractionPermissions } from '../services/interactionPermission
 import { isKillSwitchEngaged } from '../lib/featureFlags.js';
 import { appStorageUrlInfo } from '../lib/mediaUrl.js';
 import { classifyMemoryMediaUrl } from '../services/memory/memoryMediaOrigin.js';
-import { messagingStopUnknownRefusal, refuseSendOverRate, resolveClientDiscriminator } from '../lib/telegraphThreadWrite.js';
+import { messagingStopUnknownRefusal, refuseSendOverRate, refuseRestrictedSend, resolveClientDiscriminator } from '../lib/telegraphThreadWrite.js';
 import { isUuid } from '../lib/followDecisions'; import { REPORT_REASON_CODES, reportSeverityFor, type ReportReasonCode } from '../lib/reportReasons'; import { refuseEditOnEncryptedThread } from '../services/telegraph/editE2eeGate';
 import {
   translateMessageForThread,
@@ -2796,7 +2796,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
     return;
   }
-  const isE2ee = (threadMeta as any)?.is_e2ee === true;
+  const isE2ee = (threadMeta as any)?.is_e2ee === true; if (await refuseRestrictedSend(req, res, getServiceClient() ?? client, threadId, user.id)) return; // OD-TRUST-5: the restriction gate, the guard's own decision
 
   if (isE2ee) {
     // E2EE thread: ciphertext required, body must be absent.
@@ -3396,7 +3396,7 @@ router.post('/threads/:threadId/media', async (req, res) => {
     return;
   }
 
-  const sc = client; if (await refuseSendOverRate(req, res, getServiceClient() ?? client, user.id, threadId)) return; // §22: the burst limit was on the text door alone
+  const sc = client; if (await refuseRestrictedSend(req, res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseSendOverRate(req, res, getServiceClient() ?? client, user.id, threadId)) return; // §22: the burst limit was on the text door alone
   const now = new Date().toISOString();
 
   const { data: msg, error: msgErr } = await sc
