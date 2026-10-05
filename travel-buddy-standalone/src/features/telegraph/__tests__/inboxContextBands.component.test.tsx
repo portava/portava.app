@@ -136,7 +136,7 @@ describe('the four reads are independent', () => {
         : u.includes('/nearby/reachable')
           ? { enabled: false, people: [] }
           : u.includes('/me/coordination-sessions')
-            ? null
+            ? { sessions: [] } // a well-formed body on a 503: the STATUS must decide, not the shape
             : { meetups: [{ id: 'm1', title: 'Hoi An', startsAt: later(3), status: 'active', chatThreadId: 'th-2' }] };
       const failed = u.includes('/me/coordination-sessions');
       return { ok: !failed, status: failed ? 503 : 200, json: async () => body } as Response;
