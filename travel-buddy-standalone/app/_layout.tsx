@@ -71,6 +71,7 @@ import { installInputTelemetry } from '../src/platform/input-assistance/services
 import { installInputPolicySync } from '../src/platform/input-assistance/services/installInputPolicySync';
 import { installLocalRecents } from '../src/platform/input-assistance/services/installLocalRecents';
 import { installInputTelemetryTransport } from '../src/platform/input-assistance/services/telemetryTransport';
+import { installOutcomeConsentSync } from '../src/platform/input-assistance/services/outcomeLearningTransport';
 import { registerGeographicFields } from '../src/platform/input-assistance/geographic/geoFields';
 import { installSensingCapture } from '../src/services/sensing/installSensingCapture';
 
@@ -214,7 +215,13 @@ function InputTelemetrySetup() {
       createBatcher: () => installInputTelemetryTransport(),
       appState: AppState,
     });
-    return () => handle.dispose();
+    // OD-INPUT-1: bind the outcome-learning consent gate to the session. Closed
+    // until THIS account's opt-in is read; closed again on every account change.
+    const stopOutcomeConsent = installOutcomeConsentSync();
+    return () => {
+      stopOutcomeConsent();
+      handle.dispose();
+    };
   }, []);
   return null;
 }

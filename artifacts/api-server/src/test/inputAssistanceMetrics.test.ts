@@ -348,9 +348,13 @@ describe("§57 — the metrics with no producer are REFUSED, not estimated", () 
     assert.equal(m.wrongSelectionReversalRate.blocked, undefined);
   });
 
-  it("G370 downstream task completion names the screens that must emit it", () => {
+  it("G370 downstream task completion is NOT refused any more — with no task reported it is 0/0, null, and says nothing", () => {
+    // It was refused while `downstream_task_completed` had no caller. It now has
+    // one and a consent gate, so over rows that report no task the honest answer
+    // is an empty denominator, not a blocker and not a zero.
     assert.equal(m.downstreamTaskCompletionRate.value, null);
-    assert.match(m.downstreamTaskCompletionRate.blocked ?? "", /app\/trip\/new\.tsx/);
+    assert.equal(m.downstreamTaskCompletionRate.n, 0);
+    assert.equal(m.downstreamTaskCompletionRate.blocked, undefined);
   });
 
   it("G373 offline completion is NOT refused any more — with no degraded serve it is 0/0, null, and says nothing", () => {
@@ -374,7 +378,6 @@ describe("§57 — the metrics with no producer are REFUSED, not estimated", () 
 
   it("every refusal is a string a reader can act on, not an empty flag", () => {
     for (const metric of [
-      m.downstreamTaskCompletionRate,
       m.privacyIncidents,
     ]) {
       assert.equal(metric.value, null);
@@ -446,6 +449,38 @@ describe("§57 G368 wrong-selection reversal rate — per entity-resolving selec
     assert.equal(m.wrongSelectionReversalRate.value, null);
     assert.equal(m.wrongSelectionReversalRate.n, 0);
     assert.equal(m.wrongSelectionReversalRate.blocked, undefined);
+  });
+});
+
+describe("§57 G370 downstream task completion — successful tasks over reported tasks (opt-in population)", () => {
+  it("is ok:true reports over all reports", () => {
+    const m = computeInputSuccessMetrics([
+      row(0, "downstream_task_completed", { task: "trip_destinations_saved", ok: true }),
+      row(10, "downstream_task_completed", { task: "trip_destinations_saved", ok: true }),
+      row(20, "downstream_task_completed", { task: "trip_created", ok: false }),
+    ]);
+    assert.equal(m.downstreamTaskCompletionRate.n, 3);
+    assert.equal(m.downstreamTaskCompletionRate.value, 2 / 3);
+  });
+
+  it("only a literal bool is a report — a row without one counts on neither side", () => {
+    // MUTATION: treat anything not `true` as a failure and n becomes 3, value 1/3.
+    const m = computeInputSuccessMetrics([
+      row(0, "downstream_task_completed", { task: "trip_created", ok: true }),
+      row(10, "downstream_task_completed", { task: "trip_created" }),
+      row(20, "downstream_task_completed", { task: "trip_created", ok: "true" }),
+    ]);
+    assert.equal(m.downstreamTaskCompletionRate.n, 1);
+    assert.equal(m.downstreamTaskCompletionRate.value, 1);
+  });
+
+  it("other events never enter it — an action_completed is not a downstream task", () => {
+    const m = computeInputSuccessMetrics([
+      row(0, "action_completed", { actionType: "add_to_trip", ok: true }),
+      row(10, "downstream_task_completed", { task: "trip_created", ok: false }),
+    ]);
+    assert.equal(m.downstreamTaskCompletionRate.n, 1);
+    assert.equal(m.downstreamTaskCompletionRate.value, 0);
   });
 });
 

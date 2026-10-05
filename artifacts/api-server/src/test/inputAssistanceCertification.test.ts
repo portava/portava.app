@@ -725,7 +725,22 @@ describe("§44 telemetry ingest — the serve log the client had no destination 
     // Narrowing the list back is a mutation that nothing else here catches:
     // every other assertion in this block is about REFUSAL, so a policy that
     // refuses more passes them all. This is the counterweight.
-    setup({ [TELEMETRY_TABLE]: [] });
+    //
+    // THE CONSENT PRECONDITION IS STATED, NOT ASSUMED (2026-10-05, OD-INPUT-1).
+    // `downstream_task_completed` is now admitted only for a caller who opted in
+    // to outcome learning with the flag on — a second gate, independent of the
+    // policy, proven in its own right (refusal included) by
+    // src/test/inputOutcomeLearning.test.ts. This test is about the POLICY, so
+    // the caller here is one who opted in; without that row the gate would
+    // refuse the outcome arm for a reason that has nothing to do with the list.
+    setup({
+      [TELEMETRY_TABLE]: [],
+      feature_flags: [{ flag: "input_outcome_learning_enabled", enabled: true }],
+      input_outcome_consent: [{
+        user_id: ME, enabled: true, consent_version: "input_outcome_learning_v1",
+        consented_at: "2026-10-01T00:00:00.000Z", withdrawn_at: null,
+      }],
+    });
     const emitted = [
       "input_opened",
       "query_length_changed",
@@ -741,6 +756,8 @@ describe("§44 telemetry ingest — the serve log the client had no destination 
       "disambiguation_selected",
       "action_completed",
       "downstream_task_completed",
+      // G368 — SmartInput emits it on an edit away from an accepted row.
+      "selection_reversed",
     ];
     const r = await telemetry({
       sessionId: "sess-abc",

@@ -40,7 +40,21 @@ import {
   negotiateSuggestionTypes,
   dropUnresolvableActionRows,
 } from '../lib/inputAssistance/compatibility';
-import { recordSelection } from '../lib/inputAssistance/personalization';
+import { recordSelection, policyAdmitsMemory } from '../lib/inputAssistance/personalization';
+import {
+  INPUT_OUTCOME_DISCLOSURE_VERSION,
+  INPUT_OUTCOME_RETENTION_DAYS,
+  MAX_OUTCOME_ENTITIES,
+  displayedOutcomeDisclosureMatches,
+  hasValidOutcomeConsent,
+  isOutcomeTask,
+  outcomeLearningActive,
+  outcomeLearningOffered,
+  readOutcomeConsent,
+  recordOutcome,
+  writeOutcomeConsent,
+  type OutcomeConsentState,
+} from '../lib/inputAssistance/outcomeLearning';
 import {
   rebuildTelemetryEvent,
   recordTelemetryEvents,
@@ -485,10 +499,28 @@ router.post(
       return;
     }
 
+    // OD-INPUT-1: `downstream_task_completed` asserts that a real task really
+    // completed, so it is admitted ONLY for a caller who opted in (and only
+    // while the flag is on). Checked server-side, once per batch, and only when
+    // the batch carries one: the client gate is a courtesy, this is the rule.
+    // A failed check refuses the event — an unknown consent is not a consent.
+    // Every other §44 event is unaffected. Still no account id is stored.
+    const carriesOutcome = (events as unknown[]).some(
+      (e) => !!e && typeof e === 'object' && (e as { name?: unknown }).name === 'downstream_task_completed',
+    );
+    const outcomeAdmitted = carriesOutcome ? await outcomeLearningActive(sc, user.id) : false;
+
     const now = Date.now();
     const rows: TelemetryRow[] = [];
     let rejected = 0;
     for (const raw of events as RawTelemetryEvent[]) {
+      if (
+        !outcomeAdmitted &&
+        raw && typeof raw === 'object' && (raw as { name?: unknown }).name === 'downstream_task_completed'
+      ) {
+        rejected += 1;
+        continue;
+      }
       const ctx = raw && typeof raw === 'object' ? (raw as { context?: unknown }).context : undefined;
       const fid =
         raw && typeof raw === 'object' && typeof (raw as { fieldId?: unknown }).fieldId === 'string'
@@ -537,6 +569,198 @@ router.post(
 );
 
 export default router;
+
+// ── §45 OUTCOME LEARNING — the opt-in and the outcome write (OD-INPUT-1/2) ────
+//
+// Census G320/G370 and the rank term G5/G14/G322/G323 need. Three endpoints:
+//
+//   GET  /input-assistance/outcome-consent  — is it offered (flag), and the
+//        caller's own state. Readable with the flag OFF, so a person who opted
+//        in can always see that and withdraw.
+//   PUT  /input-assistance/outcome-consent  — { enabled, disclosureVersion }.
+//        A GRANT needs the flag on and the disclosure version the client
+//        DISPLAYED to equal the one stamped; a WITHDRAWAL is always accepted and
+//        deletes the caller's counters.
+//   POST /input-assistance/outcome           — a completed downstream task and
+//        the canonical entities it used, credited to the caller's per-field
+//        counters. Refused unless the flag is on AND the caller opted in, and
+//        only for a field whose policy keeps per-user memory of that entity type.
+//
+// The shared §44 stream is gated too (see the telemetry ingest above).
+
+function consentBody(state: OutcomeConsentState | null, available: boolean) {
+  return {
+    available,
+    enabled: hasValidOutcomeConsent(state),
+    consentVersion: state?.consentVersion ?? null,
+    consentedAt: state?.consentedAt ?? null,
+    withdrawnAt: state?.withdrawnAt ?? null,
+    currentDisclosureVersion: INPUT_OUTCOME_DISCLOSURE_VERSION,
+    retentionDays: INPUT_OUTCOME_RETENTION_DAYS,
+  };
+}
+
+router.get(
+  '/input-assistance/outcome-consent',
+  asyncHandler(async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const sc = getServiceClient();
+    if (!sc) {
+      sendError(res, 'server_not_configured', 'Service client not ready');
+      return;
+    }
+    const available = await outcomeLearningOffered(sc);
+    const read = await readOutcomeConsent(sc, auth.user.id);
+    // An unreadable consent is NOT "never consented": rendering it as off would
+    // let the toggle re-stamp a consent the person already gave, or hide one
+    // they need to withdraw.
+    if (!read.ok) {
+      sendError(res, 'degraded_unavailable', 'Your setting could not be read. Please try again.');
+      return;
+    }
+    res.status(200).json(consentBody(read.state, available));
+  }),
+);
+
+router.put(
+  '/input-assistance/outcome-consent',
+  asyncHandler(async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { user } = auth;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    if (typeof body.enabled !== 'boolean') {
+      sendError(res, 'invalid_payload', 'enabled must be a boolean');
+      return;
+    }
+    const rl = checkRateLimit('input_assist_outcome_consent', user.id, 20, 60_000);
+    if (!rl.allowed) {
+      res.setHeader('Retry-After', Math.ceil(rl.retryAfterMs / 1000).toString());
+      sendError(res, 'rate_limited', 'Too many changes. Please wait.');
+      return;
+    }
+    const sc = getServiceClient();
+    if (!sc) {
+      sendError(res, 'server_not_configured', 'Service client not ready');
+      return;
+    }
+    const available = await outcomeLearningOffered(sc);
+    if (body.enabled) {
+      if (!available) {
+        sendError(res, 'feature_disabled', 'This setting is not available yet.');
+        return;
+      }
+      if (!displayedOutcomeDisclosureMatches(body.disclosureVersion)) {
+        sendError(res, 'conflict', 'The explanation you saw is out of date. Please review it again.');
+        return;
+      }
+    }
+    const write = await writeOutcomeConsent(sc, user.id, body.enabled);
+    if (!write.ok) {
+      sendError(res, 'degraded_unavailable', 'Your setting could not be saved. Please try again.');
+      return;
+    }
+    res.status(200).json({ ...consentBody(write.state, available), countersErased: write.countersErased });
+  }),
+);
+
+router.post(
+  '/input-assistance/outcome',
+  asyncHandler(async (req, res) => {
+    const auth = await requireUser(req, res);
+    if (!auth) return;
+    const { user } = auth;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+
+    const context = body.context;
+    if (!isKnownContext(context)) {
+      sendError(res, 'invalid_payload', 'Unknown or missing input context');
+      return;
+    }
+    const fieldId = typeof body.fieldId === 'string' && body.fieldId.length <= 100 ? body.fieldId : undefined;
+    const policy = resolvePolicy(context, fieldId);
+    if (!policy || !policy.allowPersonalization) {
+      sendError(res, 'invalid_payload', 'Outcome learning is not available for this field');
+      return;
+    }
+    if (!isOutcomeTask(body.task)) {
+      sendError(res, 'invalid_payload', 'Unknown task');
+      return;
+    }
+    if (typeof body.ok !== 'boolean') {
+      sendError(res, 'invalid_payload', 'ok must be a boolean');
+      return;
+    }
+    const rawEntities = Array.isArray(body.entities) ? body.entities : [];
+    if (rawEntities.length > MAX_OUTCOME_ENTITIES) {
+      sendError(res, 'invalid_payload', `entities must contain at most ${MAX_OUTCOME_ENTITIES} entries`);
+      return;
+    }
+    const entities: Array<{ entityType: string; entityId: string }> = [];
+    for (const e of rawEntities) {
+      const t = e && typeof e === 'object' ? (e as { entityType?: unknown }).entityType : undefined;
+      const id = e && typeof e === 'object' ? (e as { entityId?: unknown }).entityId : undefined;
+      if (typeof t !== 'string' || typeof id !== 'string' || !id.trim() || id.length > 200) {
+        sendError(res, 'invalid_payload', 'each entity needs an entityType and an entityId');
+        return;
+      }
+      // The same gate selection memory applies: a field that may not remember
+      // this entity type for this user may not count outcomes against it either.
+      if (!policyAdmitsMemory(policy, t)) {
+        sendError(res, 'invalid_payload', 'This field does not keep outcomes for that kind of entity');
+        return;
+      }
+      entities.push({ entityType: t, entityId: id.trim() });
+    }
+
+    const rl = checkRateLimit('input_assist_outcome', user.id, 30, 60_000);
+    if (!rl.allowed) {
+      res.setHeader('Retry-After', Math.ceil(rl.retryAfterMs / 1000).toString());
+      sendError(res, 'rate_limited', 'Too many outcome reports. Please wait.');
+      return;
+    }
+    const sc = getServiceClient();
+    if (!sc) {
+      sendError(res, 'server_not_configured', 'Service client not ready');
+      return;
+    }
+    if (!(await outcomeLearningOffered(sc))) {
+      sendError(res, 'feature_disabled', 'Outcome learning is not available.');
+      return;
+    }
+    const consent = await readOutcomeConsent(sc, user.id);
+    if (!consent.ok) {
+      sendError(res, 'degraded_unavailable', 'Your setting could not be read.');
+      return;
+    }
+    if (!hasValidOutcomeConsent(consent.state)) {
+      sendError(res, 'forbidden', 'Outcome learning is off for this account.');
+      return;
+    }
+    // A task that did not succeed credits nothing: the counters are completions.
+    if (!body.ok || entities.length === 0) {
+      res.status(200).json({ ok: true, recorded: 0, failed: 0, refused: 0 });
+      return;
+    }
+    let recorded = 0;
+    let failed = 0;
+    let refused = 0;
+    for (const e of entities) {
+      const r = await recordOutcome(sc, { userId: user.id, context, entityType: e.entityType, entityId: e.entityId });
+      if (r === 'recorded') recorded += 1;
+      else if (r === 'no_consent') refused += 1;
+      else failed += 1;
+    }
+    // Counts only — which entities a person completed tasks with is not a log fact.
+    logger.info({ context, task: body.task, recorded, failed, refused }, 'input-assistance/outcome');
+    if (recorded === 0 && failed > 0) {
+      res.status(503).json({ ok: false, retryable: true, recorded, failed, refused });
+      return;
+    }
+    res.status(200).json({ ok: true, recorded, failed, refused });
+  }),
+);
 
 // ── POST /api/input-assistance/extract — §24 Paste Intelligence (GII-F08) ────
 //

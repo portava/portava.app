@@ -12,6 +12,7 @@ import { deactivateAccount, requestAccountDeletion, reactivateAccount } from '..
 import { resolveAccountButton, applyReactivateResult } from '../../src/screens/settings/settings.machine';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
+import { OutcomeLearningSetting } from '../../src/platform/input-assistance/components/OutcomeLearningSetting';
 import { KILL_SWITCH_FLAGS } from '../../src/screens/admin/featureFlags.machine';
 
 export default function Settings() {
@@ -574,6 +575,9 @@ export default function Settings() {
               <Text style={styles.item}>{i}</Text>
             </Pressable>
           ))}
+
+          {/* Input Intelligence outcome learning — OD-INPUT-1's separate opt-in (flag off by default). */}
+          {(configured && isAuthed && isEnabled('input_outcome_learning_enabled')) && <OutcomeLearningSetting />}
 
           {(configured && isAuthed) && (
             <>

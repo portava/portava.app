@@ -78,6 +78,7 @@ import {
   emptyMemory,
   type SelectionMemory,
 } from './personalization';
+import { attachOutcomeMemory } from './outcomeLearning';
 import { buildSavedPlaceSuggestions } from './savedEntities';
 import {
   projectSearchResult,
@@ -302,9 +303,16 @@ export async function generateSuggestions(
       : EMPTY_TASK_CONSTRAINT;
 
   const personalizationOn = policy.allowPersonalization === true;
-  const memory: SelectionMemory = personalizationOn
+  const acceptanceMemory: SelectionMemory = personalizationOn
     ? await fetchSelectionMemory(sc, { userId, context, max: 200 }).catch(() => emptyMemory())
     : emptyMemory();
+  // §45 OUTCOME LEARNING (OD-INPUT-1/2). Only for a field that already allows
+  // personalization, and only when the flag is on AND this user opted in. Any
+  // other state — including a failed read — keeps acceptance-only ranking, the
+  // behaviour of a user without the feature (logged, never hidden).
+  const memory: SelectionMemory = personalizationOn
+    ? await attachOutcomeMemory(sc, acceptanceMemory, userId, context)
+    : acceptanceMemory;
   const personalQueryKey = selectionQueryKey(trimmed);
 
   // ── §14 zero-character assistance (geographic pickers) ──────────────────────

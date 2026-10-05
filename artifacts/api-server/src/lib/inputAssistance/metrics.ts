@@ -18,13 +18,14 @@
  * nothing here should be read as claiming otherwise.
  *
  * ══════════════════════════════════════════════════════════════════════════════
- * THREE OF THE NINE ARE REFUSED, NOT ESTIMATED
+ * A METRIC WITH NO PRODUCER IS REFUSED, NOT ESTIMATED (three were; one still is)
  * ══════════════════════════════════════════════════════════════════════════════
  * The temptation in a metrics module is to produce a plausible number for every
  * line of the spec, because a dashboard with a hole in it looks unfinished. That
  * is how a metric that measures nothing ends up being trusted. Three of §57's
- * nine have NO PRODUCER in the taxonomy, and each is returned as an explicit
- * refusal naming what is missing rather than as a rate over an empty numerator:
+ * nine HAD NO PRODUCER in the taxonomy and were returned as explicit refusals
+ * naming what was missing, rather than as a rate over an empty numerator. Two
+ * now have producers; the refusal that remains is the one that must:
  *
  *   - wrong-selection reversal (G368) WAS refused here: no event recorded that
  *     a resolved field was later un-resolved. It is now computed below, over
@@ -32,10 +33,15 @@
  *     `iate_event_name_known` CHECK to admit it). Until 4121 is applied to a
  *     database, an insert carrying that name fails there — the number is
  *     computable from the tree and measurable nowhere yet.
- *   - downstream task completion (G370): `downstream_task_completed` has an
- *     exported emitter and no caller. The screens that complete a task —
- *     app/trip/new.tsx, app/events/create/index.tsx, app/telegraph/new.tsx —
- *     are the only places that can know, and none of them calls it.
+ *   - downstream task completion (G370) WAS refused: `downstream_task_completed`
+ *     had an emitter and no caller. It now has one (the §24 paste-to-Trip
+ *     write) and a consent gate (OD-INPUT-1): the ingest admits the event only
+ *     for a caller who opted in to outcome learning. So it is computed below,
+ *     and its POPULATION IS CONSENTING USERS ONLY — a rate over the people who
+ *     opted in, which is the honest scope of an opt-in measurement and must be
+ *     reported as such, never as "all users". The screens that complete most
+ *     tasks (app/trip/new.tsx, app/events/create, the Telegraph composer) still
+ *     do not call it; they are other lanes' files.
  *   - privacy incident count (G371): this table is deliberately incapable of
  *     recording one. It stores no account id, so "an incident happened to
  *     someone" is not a fact it could hold. That metric is a production
@@ -46,8 +52,9 @@
  * that were served degraded, and a degraded row is kept out of G372's latency
  * — a round trip that never reached the network is not a serve's latency.)
  *
- * A rate of 0/0 reported as 0 would be a lie in all three cases, and a rate over
- * an event that no code emits is the worst kind: it looks green forever.
+ * A rate of 0/0 reported as 0 would be a lie in every case, and a rate over an
+ * event that no code emits is the worst kind: it looks green forever. So an
+ * empty denominator is `value: null, n: 0` — no blocker, and no zero.
  *
  * ══════════════════════════════════════════════════════════════════════════════
  * THE EPISODE — why the three funnel rates share one construction
@@ -111,7 +118,7 @@ export interface InputSuccessMetrics {
   wrongSelectionReversalRate: Metric;
   /** G369 — `disambiguation_selected` rows that resolved to an EXISTING entity. */
   duplicateCreationPrevented: Metric;
-  /** G370 — no producer. */
+  /** G370 — successful downstream tasks over reported downstream tasks (consenting users only). */
   downstreamTaskCompletionRate: Metric;
   /** G371 — not answerable from this table by construction. */
   privacyIncidents: Metric;
@@ -140,10 +147,6 @@ const ENTITY_RESOLVING: ReadonlySet<string> = new Set([
   'disambiguation',
 ]);
 
-const BLOCKED_DOWNSTREAM =
-  'downstream_task_completed has an exported emitter and no caller; only the screens ' +
-  'that complete a task (app/trip/new.tsx, app/events/create/index.tsx, ' +
-  'app/telegraph/new.tsx) can emit it (census G320/G370)';
 const BLOCKED_PRIVACY =
   'this table stores no account id by construction (migration 2950), so it cannot hold ' +
   'the fact that an incident happened to anyone; the answer lives in production ' +
@@ -347,6 +350,23 @@ export function computeInputSuccessMetrics(
     if (ep.events.slice(firstDegraded + 1).some((e) => e.event_name === 'suggestion_selected')) completedDegraded += 1;
   }
 
+  // ── G370 downstream task completion ─────────────────────────────────────────
+  // Of the tasks a suggestion-served field reported, how many SUCCEEDED. Only a
+  // literal bool counts either way — the ingest admits nothing else, and a row
+  // without one is not a report of anything. The population is consenting users
+  // (the ingest refuses the event for anyone else), so this is an opt-in rate.
+  let tasksReported = 0;
+  let tasksSucceeded = 0;
+  for (const r of scoped) {
+    if (r.event_name !== 'downstream_task_completed') continue;
+    if (r.props.ok === true) {
+      tasksReported += 1;
+      tasksSucceeded += 1;
+    } else if (r.props.ok === false) {
+      tasksReported += 1;
+    }
+  }
+
   // ── G372 suggest latency ────────────────────────────────────────────────────
   const serverMs: number[] = [];
   const clientMs: number[] = [];
@@ -368,7 +388,7 @@ export function computeInputSuccessMetrics(
     // A COUNT, not a rate: §57 asks "duplicate creation prevented", and there is
     // no honest denominator (the duplicates the user never saw are unobservable).
     duplicateCreationPrevented: { value: duplicatesPrevented, n: duplicatesPrevented },
-    downstreamTaskCompletionRate: { value: null, n: 0, blocked: BLOCKED_DOWNSTREAM },
+    downstreamTaskCompletionRate: rate(tasksSucceeded, tasksReported),
     privacyIncidents: { value: null, n: 0, blocked: BLOCKED_PRIVACY },
     suggestLatencyServerMs: latency(serverMs),
     suggestLatencyClientMs: latency(clientMs),
