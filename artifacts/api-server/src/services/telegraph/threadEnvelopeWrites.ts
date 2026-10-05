@@ -23,7 +23,8 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { emitLocationStarted, publishToThread } from "../../lib/telegraphEvents.js";
-import { MAX_LOCATION_SHARE_HOURS } from "./messageKinds.js";
+import { MAX_LOCATION_SHARE_HOURS, validateKindMessage } from "./messageKinds.js";
+import { validateCoordinationMessage } from "./coordination.js";
 
 export interface LocationShareWindow {
   expiresAt: string;
@@ -161,4 +162,70 @@ export async function writeThreadEnvelope(
     });
   }
   return { ok: true, row: m };
+}
+
+// ── the §13.1 bus's three envelope commands ─────────────────────────────────
+
+/**
+ * §13.1 commands whose canonical write is an envelope message, and the kind
+ * each one writes. The kind is the SAME one the route door accepts, validated
+ * by the SAME validator — the bus cannot accept a payload the route refuses.
+ */
+export const ENVELOPE_COMMAND_KINDS = {
+  CREATE_DECISION: "DECISION",
+  SET_COORDINATION_STATUS: "COORDINATION",
+  SHARE_LOCATION: "LOCATION",
+} as const;
+export type EnvelopeCommand = keyof typeof ENVELOPE_COMMAND_KINDS;
+
+export function isEnvelopeCommand(type: string): type is EnvelopeCommand {
+  return Object.prototype.hasOwnProperty.call(ENVELOPE_COMMAND_KINDS, type);
+}
+
+export type EnvelopeCommandPlan =
+  | {
+      ok: true;
+      kind: string;
+      envelope: unknown;
+      msgType: string;
+      subtype: string | null;
+      locationShare: LocationShareWindow | null;
+    }
+  | { ok: false; message: string };
+
+/**
+ * Validate one envelope command's params into the row the shared writer will
+ * write, or refuse. Pure: no client, no clock but the one passed in.
+ *
+ * SHARE_LOCATION is §13.1's SHARE, not a pin: params without an `expiresAt`
+ * are refused here, because a LOCATION with no window is somebody sending an
+ * address — it has no lifecycle, nothing ends it, and §13.2's
+ * `location.started` would be meaningless about it. A pin is still sent with
+ * POST /threads/:id/typed-messages.
+ */
+export function planEnvelopeCommand(
+  type: EnvelopeCommand,
+  params: Record<string, unknown>,
+  nowMs: number,
+): EnvelopeCommandPlan {
+  const kind = ENVELOPE_COMMAND_KINDS[type];
+  if (kind === "LOCATION") {
+    const v = validateKindMessage("LOCATION", params);
+    if (!v.ok) return { ok: false, message: v.error };
+    const payload = (v.envelope as { payload?: { expiresAt?: string | null; precision?: string; purpose?: string | null } }).payload;
+    const window = checkLocationShareWindow("LOCATION", payload, nowMs);
+    if (!window.ok) return { ok: false, message: window.message };
+    if (!window.share) {
+      return {
+        ok: false,
+        message:
+          "SHARE_LOCATION needs an expiresAt: a location with no window is a pin, not a share. " +
+          "Send a pin with POST /threads/:threadId/typed-messages.",
+      };
+    }
+    return { ok: true, kind, envelope: v.envelope, msgType: v.msgType, subtype: v.subtype, locationShare: window.share };
+  }
+  const v = validateCoordinationMessage(kind, params);
+  if (!v.ok) return { ok: false, message: v.error };
+  return { ok: true, kind, envelope: v.envelope, msgType: v.msgType, subtype: v.subtype, locationShare: null };
 }

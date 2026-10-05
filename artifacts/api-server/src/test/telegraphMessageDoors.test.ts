@@ -306,7 +306,9 @@ describe("C. every writer into `messages` is declared, and a user door holds its
     const set = src.match(/const GUARDED_WRITE_COMMANDS: ReadonlySet<string> = new Set\(\[([^\]]*)\]\)/);
     assert.ok(set, "GUARDED_WRITE_COMMANDS is not declared as a literal set");
     const guarded = [...set![1]!.matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]).sort();
-    assert.deepEqual(guarded, ["ADD_REACTION", "CREATE_COORDINATION_SESSION"]);
+    assert.deepEqual(guarded, [
+      "ADD_REACTION", "CREATE_COORDINATION_SESSION", "CREATE_DECISION", "SET_COORDINATION_STATUS", "SHARE_LOCATION",
+    ]);
     // And the helper it calls really is the shared guard, not a second copy of it.
     const helper = src.slice(src.indexOf("async function refuseGuardedWrite("));
     assert.match(helper, /const guard = await guardTelegraphThreadWrite\(sc, conversationId, userId\);/);

@@ -94,6 +94,17 @@ export const ISSUABLE_COMMANDS: readonly IssuableCommand[] = [
    * capability nobody can reach.
    */
   "CREATE_COORDINATION_SESSION",
+  /**
+   * census T166 / T169 / T170. Each HAD a legacy writer — the coordination route
+   * (`kind: DECISION`, `kind: COORDINATION`) and the typed-message route (a
+   * LOCATION with an expiry) — and is issuable here only because that writer is
+   * now SHARED (services/telegraph/threadEnvelopeWrites.ts) and this endpoint
+   * runs the same validator and the same shared guard before it. Two doors, one
+   * writer: T168's precedent. None needs unapplied schema, so none is gated.
+   */
+  "CREATE_DECISION",
+  "SET_COORDINATION_STATUS",
+  "SHARE_LOCATION",
 ];
 
 /**
@@ -130,34 +141,26 @@ export const LEGACY_PATH_COMMANDS: Readonly<Record<string, string>> = dispatchTa
   DELETE_MESSAGE: "DELETE /api/messages/:messageId",
   ACCEPT_REQUEST: "POST /api/message-requests/:requestId/accept",
   DECLINE_REQUEST: "POST /api/message-requests/:requestId/decline",
-  // Two doors each, and BOTH are named. §8's general decision shipped on the
-  // coordination route — `kind: DECISION` with four resolution rules, a
-  // deadline and options, answered by `kind: VOTE` — while these entries still
-  // sent every caller to the meetup shape, and `CAST_VOTE` named a TABLE rather
-  // than an endpoint anyone could be sent to. Naming only the general home
-  // would be the same mistake reversed: T83's meetup triple and T167's RSVP are
-  // both C and are still the right door for a meetup.
-  CREATE_DECISION:
-    "POST /api/threads/:threadId/coordination with kind DECISION (general), " +
-    "or POST /api/telegraph-chat/create-meetup or /start-poll (meetup shape)",
+  // Two doors, and BOTH are named. §8's general vote is `kind: VOTE` on the
+  // coordination route; T167's meetup RSVP is still the right door for a
+  // meetup. (CREATE_DECISION used to sit here with the same two doors; it is
+  // now ISSUABLE — the bus writes the general DECISION through the coordination
+  // route's own writer — and the meetup shape keeps its own routes.)
   CAST_VOTE:
     "POST /api/threads/:threadId/coordination with kind VOTE (general), " +
     "or the meetup RSVP surface (meetup_time_votes)",
-  SHARE_LOCATION: "POST /api/me/safe-return/sessions (Safe Return live share)",
+  // SHARE_LOCATION is issuable (the in-thread scoped share, §6.2 LOCATION with an
+  // expiry). Its stop is still Safe Return's; an in-thread share ends at its
+  // expiry (services/telegraph/lifecycleSweep.ts) or when its sender deletes it.
   STOP_LOCATION_SHARE: "POST /api/me/safe-return/sessions/:id/live-share/stop",
   SET_AVAILABILITY: "POST /api/me/availability-windows",
   STOP_AVAILABILITY: "DELETE /api/me/availability-windows/:id",
   BLOCK_USER: "POST /api/users/:userId/block",
   MUTE_THREAD: "POST /api/threads/:threadId/mute",
   REPORT_MESSAGE: "POST /api/messages/:messageId/report",
-  // §9.1's seven quick states ARE this command, on the coordination route.
-  // This entry used to sit in UNIMPLEMENTED_COMMANDS below, saying "the §9.1
-  // vocabulary does not exist" — which stopped being true when §9's
-  // coordination surface landed (COORDINATION_QUICK_STATES, the COORDINATION
-  // message kind, the panel). A refusal that tells a caller a thing does not
-  // exist when it does is worse than no refusal: it sends them away from the
-  // route that would have worked.
-  SET_COORDINATION_STATUS: "POST /api/threads/:threadId/coordination with kind COORDINATION",
+  // SET_COORDINATION_STATUS (§9.1's seven quick states) used to sit here,
+  // naming the coordination route; it is now ISSUABLE through that route's own
+  // writer, for the same reason as CREATE_COORDINATION_SESSION below.
   // CREATE_COORDINATION_SESSION is DELIBERATELY ABSENT from this table, and
   // the absence is a merge decision rather than an oversight. Two lanes fixed
   // the same stale UNIMPLEMENTED_COMMANDS entry at once and disagreed about
@@ -192,7 +195,7 @@ export const LEGACY_PATH_COMMANDS: Readonly<Record<string, string>> = dispatchTa
  * direction because nothing fails when it does; a derivation cannot.
  *
  * TODAY IT IS EMPTY, and that is a measurement: all eighteen §13.1 commands
- * have a home — sixteen in `LEGACY_PATH_COMMANDS`, two in `ISSUABLE_COMMANDS`.
+ * have a home — twelve in `LEGACY_PATH_COMMANDS`, six in `ISSUABLE_COMMANDS`.
  * The 501 branch in `server/telegraph/commandRoute.ts` is therefore currently
  * unreachable, and it is still the RIGHT branch: a nineteenth command added to
  * `TELEGRAPH_COMMANDS` with nowhere to go lands here automatically and gets the
