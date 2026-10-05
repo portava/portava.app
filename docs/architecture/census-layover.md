@@ -8629,7 +8629,7 @@ touched, no migration was added or applied, and nothing was written to or read f
    into one private, unpublished Memory carrying city, country and the layover window — never a
    coordinate, place id or operational input (§3 L19).
 4. **The outcome writer** (L32, and L10/L174/L195/L214 through it).
-   `artifacts/api-server/src/services/layover/LayoverOutcomeStore.ts:106#export async function recordLayoverOutcome(`,
+   `artifacts/api-server/src/services/layover/LayoverOutcomeStore.ts:113#export async function recordLayoverOutcome(`,
    called from the close at `artifacts/api-server/src/routes/airport.ts:3851#const outcomeRecord = await recordLayoverOutcome(`,
    writes one `layover_outcomes` row per closed session — BOARDED for "I made my flight", UNKNOWN for
    ending early, every unobserved column NULL and never `false` — behind
@@ -8682,6 +8682,30 @@ No row moves on a migration being applied, a flag being on or a provider existin
 baseline was re-recorded. **PR #588 bumps the feasibility version**, so that check goes red when #588
 merges until the golden is regenerated with a note — the check doing its job, recorded so it is not
 mistaken for a regression.
+
+### 49.6 Added after 49.4: the traveller's own check-ins. NO ROW MOVES
+
+`artifacts/api-server/src/services/layover/LayoverCheckpointStore.ts:140#export async function recordTravellerCheckpoint(`
+records "I've left the airport" (`LANDSIDE_EXIT`) and "I'm back at the airport" (`AIRPORT_REENTRY`) as
+TRAVELLER / MEDIUM rows in 2992's `layover_checkpoints`, behind the same gate as the outcome writer, through
+`artifacts/api-server/src/routes/airport.ts:4395#router.post("/airport/sessions/:id/checkpoints"` (registered
+at the tail; nothing cited moved). The outcome row takes `left_airport` and the actual return from them
+(`artifacts/api-server/src/services/layover/LayoverCheckpointStore.ts:126#export function observedReturnFrom(`),
+NULL — never false — when nothing was reported or nothing could be read. The client control renders only
+when the overview's `persisted` field says the gate is on
+(`travel-buddy-standalone/src/components/layover/LayoverSafeReturnCard.tsx:263#checkpointCapability(overview) === 'on'`),
+says on screen that a report does not change the return time, and a report provably does not: the suite
+reads the overview before and after one. Tests: `artifacts/api-server/src/test/layoverCheckpoints.test.ts`
+(17 cases; 13/13 mutants killed), seven cases appended to `LayoverSafeReturnCard.component.test.tsx` and
+`layoverCheckpointsRead.component.test.tsx` (8); 10/10 client mutants killed.
+
+- **L30, L173 stay N.** The writer, the route and the control exist; the table exists only in 2992,
+  applied to no database, and the gate is FALSE. By the H24 precedent that is N until it is applied.
+- **L43 stays N.** Its input now exists (an `AIRPORT_REENTRY` report); its side effect — stop landside
+  discovery, refresh gate/security — is not built, and a self-report is deliberately not allowed to gate
+  the recommendations path on its own.
+- **L32's two observed columns** (`left_airport`, `actual_airport_return_at`) now have a source. The row
+  stays N for 49.3's reason.
 
 ## Cited, not graded (check:census-scope-coverage)
 
