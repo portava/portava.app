@@ -518,6 +518,37 @@ describe("refunds follow the owner's rules; fees come back with them", () => {
   });
 });
 
+describe("disputes: opened, won, lost (chargeback) — explicit and booked", () => {
+  it("an open dispute marks the payment disputed and keeps it out of payouts; a LOST dispute is a booked chargeback (reversed)", async () => {
+    await paidBooking(w);
+    const p = [...w.store.payments.values()][0]!;
+    const d = w.fake.control.openDispute(p.intentRef!, "fraudulent");
+    await deliverAll(w);
+    assert.equal(w.store.payments.get(p.id)?.state, "disputed");
+    const b = w.store.bookings.get(BOOKING)!;
+    w.store.bookings.set(BOOKING, { ...b, status: "completed", completedAt: "2026-08-20T18:00:00.000Z", disputeWindowExpiresAt: "2026-08-23T18:00:00.000Z" });
+    w.clock.now = new Date("2026-09-03T00:00:00.000Z");
+    const plan = await planMonthlyPayouts(w.deps, { minimumByCurrency: { USD: 100 } }, "2026-08");
+    assert.equal(rows(plan.body["ineligible"])[0]?.reason, "not_settled", "a disputed payment is not paid out");
+    w.fake.control.resolveDispute(d.disputeRef, "lost");
+    await deliverAll(w);
+    assert.equal(w.store.payments.get(p.id)?.state, "reversed");
+    assert.equal(w.ledger.balance("user_payable", BUDDY, "USD"), -3600 + 4400, "the chargeback debits what the buddy was owed");
+    assert.equal([...w.ledger.postings.values()].filter((x) => x.kind === "chargeback").length, 1);
+  });
+
+  it("a WON dispute returns the payment to succeeded and books nothing", async () => {
+    await paidBooking(w);
+    const p = [...w.store.payments.values()][0]!;
+    const d = w.fake.control.openDispute(p.intentRef!, "fraudulent");
+    await deliverAll(w);
+    w.fake.control.resolveDispute(d.disputeRef, "won");
+    await deliverAll(w);
+    assert.equal(w.store.payments.get(p.id)?.state, "succeeded");
+    assert.equal([...w.ledger.postings.values()].filter((x) => x.kind === "chargeback").length, 0);
+  });
+});
+
 describe("monthly payouts: finalised, completed, verified; small balances carried forward", () => {
   async function completedAndFinalised(): Promise<void> {
     await paidBooking(w);

@@ -562,3 +562,57 @@ A dated header is added to `docs/architecture/09_Payment_Architecture.md`, in th
 corrected censuses use (`census-layover.md`, `census-map.md`, `census-passport.md`,
 `census-sensing.md`). Its body is **not** rewritten: §§1–10 remain as written, and §11's list
 remains readable as the state it described on 2026-09-07.
+
+---
+
+## 7. Addendum, 2026-10-05 (lane B) — the criteria's provenance, and the test-mode slice built against them
+
+*Branch `claude/mission-b-payments-identity-trust-20261005`, from `2e46835263`, merged with `800516a2ff`.
+Nothing applied, deployed or flipped; no database read or written; no real provider called — there are no
+Stripe or Sumsub keys in this lane. Decisions are cited by their ids in `docs/ops/owner-decisions-20261004.md`.*
+
+### 7.1 §4.3 is wrong about where the owner's spec is, and §4.2's "≈146" mostly fails its own test
+
+§4.3 says the manifest's bytes for `07`/`08`/`09` "are not in the repository". They are, at
+`docs/specs/discovery-v1/07_Creator_Economy.md`, `08_Portava_Revenue_Model.md` and
+`09_Payment_Architecture.md` (installed 2026-09-14, `docs/specs/discovery-v1/00-PROVENANCE.md`). Their
+sha256 match `docs/specs/upgrades-v2/SOURCE-MANIFEST.json` exactly (`208c9bac…`, `9b336148…`, `0197464b…`),
+as do the declared source files on the owner's machine. The `docs/architecture/` files of the same names
+do not (`9e4a7fed…`, `b8136a32…`, `d9551fd9…`). The genuine `09` is about two kilobytes: it has no §5.2
+account taxonomy, no invariants I1–I7 and no nine-state §9.1 — those exist only in the derived document.
+So of §4.2's ≈146, the ≈60 counted from the derived `09` and the ≈45 from the derived `07`/`08` are the
+tree grading itself, and are not used. The `PAY-###` ids on #595/#596/#598/#603 come from a
+`tasks/payments.json` that is in no commit; their provenance cannot be checked, and they are
+cross-referenced only. The criteria built against are the owner's answers (OD-PAY-1 … OD-PAY-11,
+OD-INPUT-4, OD-TRUST-2/3/5, OD-TRIP-1) and the hash-verified `docs/specs/discovery-v1/0{7,8,9}`.
+
+### 7.2 What now exists (all of it behind `PAYMENT_PROVIDER`, default `none`)
+
+| decision | built | where |
+|---|---|---|
+| OD-PAY-1/2 provider interface, buddy is the seller | direct charge on the buddy's account, commission as a separate platform fee; a market without direct charges is **refused**, never silently made a destination charge | `artifacts/api-server/src/services/payments/bookingPayments/checkout.ts:189#const model = selectChargeModel(deps.provider.capabilities(), market, "refuse");` |
+| OD-PAY-3 10 % on the pre-tax price, shown first, none on tips, no deposit | 1000 bps, versioned, by product and market (no market rule decided, none configured); the quote shows the commission as taken FROM the price | `artifacts/api-server/src/services/payments/bookingPayments/commissionPolicy.ts:54#bps: 1000,`, `artifacts/api-server/src/services/payments/bookingPayments/bookingQuote.ts:110#const commission = commissionMinor(input.serviceMinor, rule.bps);` |
+| OD-PAY-4 monthly, finalised, completed, verified; carry forward | plan / hold / release / execute; finalised = dispute window closed; a currency with **no configured minimum pays nothing** (the owner named no number) | `artifacts/api-server/src/services/payments/bookingPayments/payouts.ts:159#const carryReason = minimum === undefined` |
+| OD-PAY-5 refunds | the owner's table; fees returned in proportion; an uncaptured payment is cancelled, not refunded | `artifacts/api-server/src/services/payments/bookingPayments/refunds.ts:66#case "cancelled_before_service": {` |
+| OD-PAY-6 original currency and conversion | stored as charged and as the provider reports settlement; **local-currency pricing is NOT built** — prices are stored only as `total_usd` | `artifacts/api-server/src/migrations/3931_rent_buddy_payments.sql:111#amount_minor                 bigint      NOT NULL CHECK (amount_minor > 0),` |
+| OD-PAY-7 tax configured per market before checkout | checkout refuses where the registered tax provider has not configured the market | `artifacts/api-server/src/services/payments/bookingPayments/bookingQuote.ts:100#return r.reason === "tax_not_configured"` |
+| OD-PAY-11 test mode until readiness | `livemode` CHECK false on every provider-mirroring table; readiness gate; live events refused | `artifacts/api-server/src/migrations/3931_rent_buddy_payments.sql:133#CONSTRAINT rbbp_test_mode_only CHECK (livemode = false)` |
+| `09` §2/§6/§10 ledger first, reversals, signed webhooks | money is posted to the ledger BEFORE state changes; the event is marked processed LAST | `artifacts/api-server/src/services/payments/bookingPayments/webhookProcessor.ts:142#const failure = await postAll(deps, [...planPaymentPostings(` |
+
+**The production ledger binding is `LEDGER_NOT_AVAILABLE`**
+(`artifacts/api-server/src/routes/rentABuddyPayments.ts:52#ledger: LEDGER_NOT_AVAILABLE,`): the only
+ledger that can record settled money is PR #598's. Until it is merged and applied, every webhook that must
+book money answers 503 and the provider retries, so this tree never acknowledges unbooked money. Every
+end-to-end proof is therefore against the deterministic fake provider with an in-memory store and ledger
+(`artifacts/api-server/src/test/rentBuddyPaymentSlice.test.ts:1#/**`, 42 cases;
+`artifacts/api-server/src/test/rentBuddyPaymentRoutes.test.ts:1#/**`, the real routers and the raw-body
+webhook over HTTP).
+
+### 7.3 Statements above that this addendum corrects
+
+- §1.4 and `09`'s lines that say booking creation is open "unless `rent_buddy_allow_bookings_without_kyc`
+  is explicitly on": that override is **retired** (OD-PAY-10, no tester bypass) and no longer read
+  (`artifacts/api-server/src/lib/rentBuddyKycGate.ts:69#void KYC_OVERRIDE_FLAG;`).
+- §2 D8 "No unverified bookings is BUILT": it was a deployment-level gate only. Both people are now
+  checked on every creation path, and a sandbox-key verification does not count
+  (`artifacts/api-server/src/services/identityVerification/currentVerification.ts:154#if (mode === "test")`).

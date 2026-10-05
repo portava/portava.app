@@ -719,7 +719,7 @@ not exist anywhere in this repository.
 | TV-1a | `POST /api/verification/session` — auth required; creates the provider session for the caller; upserts the row in `created` status; returns `redirectUrl` | **W** | Four criteria, three pass. Auth required ✓ `routes/verification.ts:193-196#router.post("/verification/session", asyncHandler(async (req, res) => {` (`requireUser` first). Creates the caller's session ✓ `routes/verification.ts:238-243#session = await provider.createSession({` (`userId: user.id`). Returns `redirectUrl` ✓ `routes/verification.ts:303-307#res.status(201).json({`, and the 23505 branch returns the existing active session rather than a raw DB error `routes/verification.ts:265-286#if ((insertError as any).code === "23505") {`. **Status ✗:** the insert writes `status: "pending"` (`routes/verification.ts:257#status:`), not `created`. Both are legal values of the live CHECK and no consumer behaves differently (`travel-buddy-standalone/app/profile/verification.tsx:44#const POLL_INTERVAL_MS = 4_000;` treats `created`/`pending`/`processing` alike), so the effect is nil — but the stated criterion is `created` and it is not met, and a parent row cannot be `C` on three of four. |
 | TV-1b | `POST /api/verification/webhook` — raw-body route; passes to `provider.handleWebhook`; on a normalized result, updates the row | **C** | Raw body ✓ — mounted in `app.ts:129#app.post("/api/verification/webhook", verificationWebhookRawParser, verificationWebhookHan` with `express.raw` BEFORE the global JSON parser (`routes/verification.ts:314#export const webhookRawParser = express.raw({ type: () => true, limit: "512kb" });`), and deliberately not re-registered on the router (`routes/verification.ts:396-398#// NOTE: /verification/webhook is mounted in app.ts BEFORE the global JSON parser`). Passes the headers and raw body to the adapter ✓ `routes/verification.ts:363-366#result = await provider.handleWebhook({`. Updates the row on a normalized result ✓ `persistResult:128-132`, with the lookup-by-session error bound and rethrown at `routes/verification.ts:105#eventType: "identity_verified",` so an unreadable table cannot masquerade as an unknown session. Irrelevant events are acknowledged, not persisted ✓ `routes/verification.ts:376-379#if (!result) {`. |
 | TV-1c | …and, when `verified`, sets `profiles.verification_level` via `toVerificationLevel()` and `verified_at` *(SPLIT out of V-1's webhook bullet: separately testable, separately load-bearing, and separately broken)* | **W** | The code is right and **the database rejects it.** Measured read-only on production 2026-09-13: `profiles_verification_level_check` is `CHECK ((verification_level = ANY (ARRAY['none','basic_verified','trusted_traveler','host_verified','buddy_verified'])))`. `toVerificationLevel` returns `'id_verified'` or `'id_selfie_verified'` (`services/identityVerification/types.ts:105-109#export function toVerificationLevel(`), and `applyVerifiedProfile` writes exactly that (`routes/verification.ts:68-75#const { error } = await client`). Every successful verification is a 23514. The handler binds the error and throws, `webhookHandler` returns 5xx so the provider retries — **and the retry writes the same rejected value**. No user can reach a non-`none` level, which is the column `lib/travelerVerification.ts:85-88#(typeof row["verification_level"] === "string" && row["verification_level"] !== "none")` reads as the ID signal and `routes/rentABuddyRollout.ts` gates bookings on. Open as audit **H5** since 2026-08-30 (`docs/handoff/2026-08-30-session-handoff.md:117#**H5 — verification vocabulary mismatch.**`, proved on CI there), invisible to every existing test because they all use an injected fake with no schema knowledge (`test/verification.test.ts:280#it("returns verificationLevel from profiles when set to id_verified", async () => {` asserts `id_verified` round-trips through a double that would accept any string). **Staged this pass, not applied:** `migrations/2870_profiles_verification_level_identity_vocabulary.sql` widens the CHECK additively, with `db/rollback/2026-09-13-2870-profiles-verification-level-identity-vocabulary-rollback.sql` that REFUSES to run while any identity level exists. Stays `W` because the migration is applied to no database — grading it `C` on a staged file would be the "merged is not deployed" error this census made its name on. |
-| TV-1d | `GET /api/verification/status` — the caller's current verification row (poll fallback) | **C** | `routes/verification.ts:401-452#router.get("/verification/status", asyncHandler(async (req, res) => {`. Both reads bind `error`: the row read refuses at `routes/verification.ts:418-420#if (rowErr) {`, and the profile read refuses at `routes/verification.ts:441-443#if (profileErr) {` rather than letting `?? "none"` convert an unreadable `profiles` into "you are not verified" — a false statement the caller cannot act on, in a signal that gates bookings. Pinned by `test/verificationStatusUnreadableProfile.test.ts`. |
+| TV-1d | `GET /api/verification/status` — the caller's current verification row (poll fallback) | **C** | `routes/verification.ts:401-470#router.get("/verification/status", asyncHandler(async (req, res) => {`. Both reads bind `error`: the row read refuses at `routes/verification.ts:418-420#if (rowErr) {`, and the profile read refuses at `routes/verification.ts:441-443#if (profileErr) {` rather than letting `?? "none"` convert an unreadable `profiles` into "you are not verified" — a false statement the caller cannot act on, in a signal that gates bookings. Pinned by `test/verificationStatusUnreadableProfile.test.ts`. |
 | TV-1e | Rate limits: max 3 session creations per user per 24 h | **C** | `routes/verification.ts:32-33#const VERIFICATION_SESSION_LIMIT = 3;` (`VERIFICATION_SESSION_LIMIT = 3`, 24 h window), enforced first in the handler at `routes/verification.ts:199-205#const rl = checkRateLimit("verification_session", user.id, VERIFICATION_SESSION_LIMIT, VER` with a `Retry-After` header and an explicit retry timestamp. Covered by `test/verification.test.ts`. |
 | TV-1f | Trust Score hook: on transition to `verified`, emit the existing trust event the platform uses | **C** | **Built correct this pass.** The event is the declared one (`services/trust/TrustEventService.ts:815#IDENTITY_VERIFIED:        { category: "respect_safety" as TrustCategory,  delta: 10, sever`, `IDENTITY_VERIFIED` → respect_safety +10) and is emitted at `routes/verification.ts:103-109#await recordTrustEvent(client, {`. It was emitted **without a `sourceId`**, and `TrustEventService.isDuplicate:242` opens `if (!sourceId) return "new"` — so the emitter had no idempotency key and every call was a first call. Provider webhooks are at-least-once by construction and this handler returns 5xx on a persist failure *on purpose* so they retry, so the one path built to be re-entered was the one path with no key: each redelivery charged another +10 until the daily cap absorbed it. V-1 defines the hook per TRANSITION, not per delivery. Now keyed on the provider session id with `sourceType` carried alongside (the dedup read filters on both). RED 1 pass/2 fail → GREEN 3/3 (`test/verificationTrustIdempotency.test.ts`); reverting the two added lines returns it to 1/2. Whether +10 is the right magnitude is scoring policy and is already parked at §5 item 5 — this row does not claim it. |
 | TV-1g | Tests: mock-provider end-to-end, forced failures map to correct reasons, rate limit | **C** | `test/verification.test.ts` (create → webhook approve → profile level set; the four forced-failure hints; the rate limit), `test/verificationWritesIssued.test.ts` (writes are ISSUED, not merely constructed), `test/verificationStatusUnreadableProfile.test.ts`. 48/48 at this commit before this pass; 59/59 after, with the three files added. **Caveat recorded, because it is the reason TV-1c survived a year of green suites: every one of these runs against an injected fake client with no schema knowledge, so none of them can see a CHECK constraint.** `test/verificationLevelVocabulary.test.ts` is the answer to that class and is new this pass. |
@@ -3644,3 +3644,85 @@ Unchanged, and recounted rather than carried forward from §31:
   deciding clause falls and the row is a `W` candidate without any owner decision at all.
 - 2870 applied: TV-1c is decidable, and §31 names the DB assertion that will fail there first.
 
+
+## §33 (lane B, payments / identity / Trust) — 2026-10-05 · The booking paths now enforce Trust restrictions and identity on BOTH people; six owner decisions land on Trust rows. **ONE ROW MOVES: TRV2-08, N → W.**
+
+Lane B, branch `claude/mission-b-payments-identity-trust-20261005`, cut from `main` at `2e46835263` and
+merged with `main` at `800516a2ff`. `head_commit` is **not** re-declared: this section records one build and
+grades one row; it does not re-measure 108 requirements. Evidence is node:test suites over fakes that
+answer a failed read `{ data: null, error }` as supabase-js does. **No database was read or written**,
+production included; no flag was touched; migrations 3930 and 3931 are written and applied nowhere. The
+owner's 2026-10-04 answers are cited by their ids in `docs/ops/owner-decisions-20261004.md`.
+
+### 33.1 What was built
+
+1. **Two-sided booking eligibility on all five creation paths** (OD-PAY-10, OD-INPUT-4, OD-TRUST-5).
+   `artifacts/api-server/src/lib/rentBuddyIdentityEligibility.ts:151#if (!travelerRestrictions.canJoinPrivatePlans) {`
+   refuses a traveller under a `private_plan_access` restriction, telling them where to see it and
+   appeal; `artifacts/api-server/src/lib/rentBuddyIdentityEligibility.ts:163#if (buddy.state !== "verified" || !buddy.adult || !buddyRestrictions.canHost) return BUDDY_UNAVAILABLE;`
+   makes a buddy under a `hosting` restriction (or unverified, or not a verified adult) unbookable, with
+   one opaque answer so the traveller learns nothing about why. An unreadable restriction state
+   (`fail_closed`) is a 503 "try again", never a restriction message
+   (`artifacts/api-server/src/lib/rentBuddyIdentityEligibility.ts:128#if (travelerRestrictions.degradedReason === "fail_closed"`).
+   It is called from the shared gate stack
+   (`artifacts/api-server/src/routes/rentABuddy.ts:1813#if (!await refuseKnownMinorTraveler(serviceClient, res, userId)) return false; if (!await requireVerifiedBookingParties`)
+   and from the spec request path
+   (`artifacts/api-server/src/routes/rentABuddySpec.ts:508#} if (!await requireVerifiedBookingParties(serviceClient, res, { travelerId: auth.user.id, buddyUserId })) return;`).
+   **Which restriction type covers booking is this lane's reading** of OD-TRUST-5's "limit each
+   restriction to the actions … needed" (a booked meetup is hosted by the buddy and is a private plan
+   for the traveller); it is recorded as a reading, not as an owner ruling.
+2. **The defined current verification** (OD-TRUST-3, OD-PAY-10's "real identity verification … no
+   sandbox verification key"):
+   `artifacts/api-server/src/services/identityVerification/currentVerification.ts:154#if (mode === "test") return { state: "not_verified", reason: "sandbox_verification" };`
+   — a sandbox-key approval never counts; the mode is recorded per attempt by migration 3930. The
+   verification status route now returns it as the badge state with its criteria and a
+   not-an-endorsement statement (`artifacts/api-server/src/routes/verification.ts:461#badge: {`).
+   The retired KYC override flag is no longer read
+   (`artifacts/api-server/src/lib/rentBuddyKycGate.ts:69#void KYC_OVERRIDE_FLAG;`).
+3. **Appeal restoration** (OD-TRIP-1): the ruling is encoded as the approved roles and source
+   (`artifacts/api-server/src/services/appeals/adminRestoreParticipant.ts:109#export const APPROVED_RESTORATION_ROLES`)
+   and a pure plan (`artifacts/api-server/src/services/appeals/adminRestoreParticipant.ts:166#export function planAppealRestoration`);
+   the write still refuses on the missing Trip Kernel command
+   (`artifacts/api-server/src/services/appeals/adminRestoreParticipant.ts:326#"ADMIN_RESTORE_COMMAND_ABSENT",`),
+   and the queue no longer says it is blocked on a decision
+   (`artifacts/api-server/src/services/appeals/resolveAppeal.ts:146#blockedOn: null`).
+
+Proof: `artifacts/api-server/src/test/rentABuddyGateConsolidation.test.ts:687#a buddy under a Trust 'hosting' restriction cannot be booked`
+(four paths), `artifacts/api-server/src/test/rentABuddyGateConsolidation.test.ts:667#an UNVERIFIED traveller is refused`,
+`artifacts/api-server/src/test/rentBuddyIdentityEligibility.test.ts:59#traveller under a private_plan_access restriction`,
+`artifacts/api-server/src/test/currentIdentityVerification.test.ts:1#/**`,
+`artifacts/api-server/src/test/appealRestorationPlan.test.ts:1#/**`. Mutations, each RED then restored:
+removing the shared-stack call (12 red), removing the spec-path call (2 red), counting a sandbox
+approval (2 red), treating an unknown age as adult (1 red), honouring the override again (2 red),
+approving `owner` or a policy-default source (4 red each), restoring full membership on an ended trip
+(1 red).
+
+### 33.2 Rows
+
+| id | was | now | the evidence |
+|---|---|---|---|
+| TRV2-08 | N | **W** | The **booking** leg is built: a restricted traveller cannot book and a restricted buddy cannot be booked, on all five creation paths (33.1 item 1, proven in `rentABuddyGateConsolidation.test.ts` and `rentBuddyIdentityEligibility.test.ts`). The owner answered D-RESTRICTION-REACH (OD-TRUST-5: "Enforce restrictions on the server across all relevant APIs and surfaces"), so the row no longer waits on a decision. It is **W, not C**, because the Compass and Discovery consuming actions still hold no `getRestrictionState` caller — those files are the lead's (Compass) and lane C's (Discovery). Turns C when both refuse a restricted user, with tests. Turns back to N if the booking call is removed. |
+| TV-0e | N | **N** | D-BADGE is answered (OD-TRUST-3: "for a defined, current verification state only. Make criteria visible; don't sell the badge or present it as an endorsement"). The SERVER half now exists (33.1 item 2). The row's criterion is the client `VerifiedBadge` component, which still does not exist, and every badge is correctly absent until 2870 is applied (TV-1c). Blocker: the client lane, then OD-TRUST-1's apply. |
+| TV-2c | N | **N** | Same decision, same server half. Rendering inside `UserIdentityLink` on the six surfaces is in files other lanes own; and TV-1c. |
+| TV-4b | W | **W** | D-SUSPENSION-UX is answered (OD-TRUST-4: show what is restricted, why, for how long, and how to appeal; restore access promptly on a successful appeal) and OD-TRUST-5 adds "preserve access to appeals and permitted data exports". What remains is the blanket 403 in `lib/http.ts` — outside lane B, and rewritten by open PR #580 — which must return the restriction explanation and let the appeal routes through for a suspended account. No decision is owed any more; the auth path and the client are. |
+| TV-1c | W | **W** | D-2870-APPLY is answered (OD-TRUST-1: "Yes, after migration-state and recovery checks"). Still applied nowhere, so still W, now BLOCKED_ENV. Consequence, stated because 33.1 item 2 makes it load-bearing: the booking gate now requires an identity `verification_level`, which 2870 is what makes writable, so until it is applied **no one can book** — fail-closed, by design. |
+| TV-6a | N | **N** | D-PROVIDER is answered: Sumsub, behind the interface, with per-country checks (OD-TRUST-2, OD-PAY-10). The adapter is owner-HELD PR #612. Still owed by the owner: the Sumsub account, keys, the webhook secret and per-launch-market coverage confirmation. A sandbox key may certify the adapter but its approvals do not count for bookings (33.1 item 2). |
+| TRV2-10 | CV | **CV** | D-REVERSAL is **partly** answered: an upheld appeal restores what that decision removed (OD-TRIP-1, encoded in 33.1 item 3). Still undecided: whether an admin REVOCATION reverses the `identity_verified` award, and how long derived Trust evidence survives a subject's erasure (the Map/Sensing 12-month audit rule is scoped to that section and is not read across here). Correctness of the row is still not determinable. |
+
+### 33.3 Headline, restated from the rows
+
+| BUILT-AND-CORRECT | **89** |
+|---|---|
+| BUILT-BUT-WRONG | **13** |
+| NOT-BUILT | **4** |
+| CANNOT-VERIFY | **2** |
+
+89 + 13 + 4 + 2 = 108. CONSTRUCTED 94.4 % (102 / 108) · CORRECT 82.4 % (89 / 108). This supersedes the
+§31 table (restated unchanged by §32.7) and nothing else; the denominator is unchanged at 108.
+
+### 33.4 What would turn this red
+
+- `requireVerifiedBookingParties` removed from either call site: TRV2-08 returns to N.
+- A Compass or Discovery action refusing a restricted user, with a test: TRV2-08 is a C candidate.
+- `provider_mode` defaulted, backfilled or written as `live` for an attempt made with a test key: every
+  sandbox approval becomes a booking-grade identity, which is the bypass OD-PAY-10 forbids.
