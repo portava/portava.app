@@ -52,3 +52,11 @@ it('409 is conflict', async () => {
   respond(409, { error: 'conflict', message: 'This suggestion has already been decided.' });
   expect((await confirmMemoryCandidate('ep-1', null) as { kind?: string }).kind).toBe('conflict');
 });
+
+it('every Keep of one candidate carries the SAME key — a second tap or a retry is the same command', async () => {
+  respond(200, { ok: true, memoryId: 'mem-1', state: 'confirmed' });
+  await confirmMemoryCandidate('ep-7', null);
+  await confirmMemoryCandidate('ep-7', null);
+  const keys = calls.map((c) => (c.init!.headers as Record<string, string>)['Idempotency-Key']);
+  expect(keys).toEqual(['memory-candidate:ep-7', 'memory-candidate:ep-7']);
+});

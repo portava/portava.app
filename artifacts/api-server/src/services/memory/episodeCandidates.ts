@@ -134,10 +134,36 @@ interface MediaRow {
   captured_at: string | null;
   source_type: string | null;
   moderation_status: string | null;
+  processing_status: string | null;
+  deleted_at: string | null;
   provenance: Record<string, unknown> | null;
 }
 
-const MEDIA_COLUMNS = "id, owner_user_id, media_type, mime_type, public_url, captured_at, source_type, moderation_status, provenance";
+const MEDIA_COLUMNS = "id, owner_user_id, media_type, mime_type, public_url, captured_at, source_type, moderation_status, processing_status, deleted_at, provenance";
+
+/**
+ * Moderation states a capture may be in to stand as evidence, be previewed, or
+ * be attached. An ALLOW-list: a state this code has not heard of is not
+ * admitted. The legacy spellings (pending/approved) and their §36 meanings
+ * (processing/active) are both here; flagged, limited, rejected, removed and
+ * owner_deleted are not.
+ */
+export const ADMISSIBLE_CAPTURE_MODERATION: ReadonlySet<string> = new Set(["approved", "active", "pending", "processing"]);
+
+/**
+ * ONE rule for every read of the owner's media in this module — detection,
+ * the inbox preview and the photos a Keep attaches. A capture the owner
+ * deleted after detection (deleted_at set, processing_status 'removed',
+ * moderation 'owner_deleted') or one a moderator flagged later is not
+ * evidence, not a preview and not attached: the decision is re-made at every
+ * read, never inherited from the detection that first saw the file.
+ */
+export function isAdmissibleCapture(m: Pick<MediaRow, "processing_status" | "deleted_at" | "moderation_status" | "source_type">): boolean {
+  return m.processing_status === "ready"
+    && m.deleted_at == null
+    && ADMISSIBLE_CAPTURE_MODERATION.has(String(m.moderation_status ?? ""))
+    && (m.source_type ?? "user") === "user";
+}
 
 /** What a capture says about how it was made, if anything. Never "camera" unless the file says so. */
 function captureProvenanceOf(p: Record<string, unknown> | null): string {
@@ -263,10 +289,9 @@ export async function detectTripCandidates(
     .order("captured_at", { ascending: true })
     .limit(MAX_CAPTURES);
   if (mediaErr) return { ok: false, reason: "unavailable", detail: `media_assets: ${mediaErr.message}` };
-  const media = ((mediaData as MediaRow[] | null) ?? [])
-    // A moderator's verdict outranks a memory; a non-user source is not the owner's capture.
-    .filter((m) => m.moderation_status !== "flagged" && m.moderation_status !== "rejected")
-    .filter((m) => (m.source_type ?? "user") === "user");
+  // A moderator's verdict outranks a memory; a non-user source is not the
+  // owner's capture; a deleted file is gone. See isAdmissibleCapture.
+  const media = ((mediaData as MediaRow[] | null) ?? []).filter(isAdmissibleCapture);
   // The window query reads CAPTURE time, so a file with none never reaches it.
   // Say how many there were (uploaded inside the trip, no capture time) rather
   // than letting them vanish: "we could not date 4 photos" is information.
@@ -454,9 +479,10 @@ export interface CandidateView {
   detectionReason: string;
   detectorVersion: number;
   captureCount: number;
-  /** Up to four capture URLs to show, owner's own. */
+  /** Up to four capture URLs to show, owner's own, still admissible now. */
   previewUrls: string[];
-  state: "candidate";
+  /** `interrupted`: the owner pressed Keep and it did not finish — Keep again completes it. */
+  state: "candidate" | "interrupted";
 }
 
 export type ListOutcome =
@@ -467,35 +493,41 @@ export async function listCandidates(sc: SupabaseClient, ownerId: string): Promi
   const store = await candidateStoreState(sc);
   if (store.state !== "ready") return { ok: false, reason: store.state, detail: store.detail };
 
+  // `confirmed` is read too: a Keep that claimed its episode and was cut off
+  // before its Memory was linked must stay in front of the owner, or the retry
+  // that finishes it would be unreachable. Those are the ones with no link.
   const { data, error } = await sc
     .from(EPISODES_TABLE)
     .select(EPISODE_SELECT)
     .eq("user_id", ownerId)
-    .eq("state", "candidate")
+    .in("state", ["candidate", "confirmed"])
     .order("started_at", { ascending: false })
-    .limit(MAX_CANDIDATES_LISTED);
+    .limit(MAX_CANDIDATES_LISTED * 4);
   if (error) return { ok: false, reason: "unavailable", detail: `${EPISODES_TABLE}: ${error.message}` };
-  const episodes = ((data as unknown[] | null) ?? []).map(parseEpisodeRow).filter((e): e is MemoryEpisode => e !== null);
-  if (episodes.length === 0) return { ok: true, candidates: [] };
+  const read = ((data as unknown[] | null) ?? []).map(parseEpisodeRow).filter((e): e is MemoryEpisode => e !== null);
+  if (read.length === 0) return { ok: true, candidates: [] };
 
   const { data: ev, error: evErr } = await sc
     .from(EVIDENCE_TABLE)
     .select("episode_id, source_table, source_id")
     .eq("user_id", ownerId)
-    .in("episode_id", episodes.map((e) => e.id));
+    .in("episode_id", read.map((e) => e.id));
   if (evErr) return { ok: false, reason: "unavailable", detail: `${EVIDENCE_TABLE}: ${evErr.message}` };
   const evRows = ((ev as Array<{ episode_id: string; source_table: string; source_id: string }> | null) ?? []);
+  const linked = new Set(evRows.filter((r) => r.source_table === "memories").map((r) => r.episode_id));
+  const episodes = read.filter((e) => e.state === "candidate" || !linked.has(e.id)).slice(0, MAX_CANDIDATES_LISTED);
+  if (episodes.length === 0) return { ok: true, candidates: [] };
   const mediaIds = [...new Set(evRows.filter((r) => r.source_table === "media_assets").map((r) => r.source_id))];
 
   const urlById = new Map<string, string>();
   if (mediaIds.length > 0) {
     const { data: media, error: mediaErr } = await sc
       .from("media_assets")
-      .select("id, owner_user_id, public_url")
+      .select("id, owner_user_id, public_url, processing_status, deleted_at, moderation_status, source_type")
       .eq("owner_user_id", ownerId)
       .in("id", mediaIds);
     if (mediaErr) return { ok: false, reason: "unavailable", detail: `media_assets: ${mediaErr.message}` };
-    for (const m of ((media as Array<{ id: string; public_url: string | null }> | null) ?? [])) if (m.public_url) urlById.set(m.id, m.public_url);
+    for (const m of ((media as Array<MediaRow> | null) ?? [])) if (m.public_url && isAdmissibleCapture(m)) urlById.set(m.id, m.public_url);
   }
 
   return {
@@ -512,7 +544,9 @@ export async function listCandidates(sc: SupabaseClient, ownerId: string): Promi
         detectorVersion: e.detection.version,
         captureCount: mine.length,
         previewUrls: mine.map((r) => urlById.get(r.source_id)).filter((u): u is string => Boolean(u)).slice(0, 4),
-        state: "candidate" as const,
+        // A claimed-but-unlinked Keep: the owner already chose to keep it, and
+        // Keep again finishes the same Memory (it cannot make a second one).
+        state: e.state === "confirmed" ? ("interrupted" as const) : ("candidate" as const),
       };
     }),
   };
@@ -556,39 +590,74 @@ export async function rejectCandidate(sc: SupabaseClient, input: { ownerId: stri
   const loaded = await loadOwnEpisode(sc, input.ownerId, input.episodeId);
   if (!loaded.ok) return { ok: false, reason: loaded.reason, detail: loaded.detail };
   if (loaded.episode.state === "rejected") return { ok: true, episodeId: input.episodeId, state: "rejected", replayed: true };
-  // A confirm that created its Memory and then failed before moving the episode
-  // leaves a `candidate` WITH a Memory. Rejecting that would leave a Memory —
-  // and so a possible Highlight — behind a rejected candidate (§30 H238). The
-  // owner kept it; the retry of the confirm finishes it, and deleting the
-  // Memory is the way to undo it.
+  // ONLY A CANDIDATE MAY BE REJECTED HERE. The lifecycle machine admits
+  // confirmed → rejected, but in this inbox `confirmed` means the owner pressed
+  // Keep: confirmCandidate claims the episode BEFORE its Memory exists, so a
+  // `confirmed` episode is one whose Memory exists or is being made. Rejecting
+  // it would leave that Memory — and any Highlight made from it — behind a
+  // rejected candidate (H238). Deleting the Memory is how a kept one is undone.
+  if (loaded.episode.state !== "candidate") {
+    return { ok: false, reason: "not_a_candidate", detail: `a ${loaded.episode.state} suggestion cannot be dismissed — it was kept` };
+  }
   const link = await linkedMemoryId(sc, input.ownerId, input.episodeId);
   if (!link.ok) return { ok: false, reason: "unavailable", detail: link.detail };
   if (link.memoryId) return { ok: false, reason: "not_a_candidate", detail: "this suggestion was already kept as a Memory" };
-  const decision = decideTransition(loaded.episode.state, "rejected");
-  if (!decision.ok) return { ok: false, reason: "not_a_candidate", detail: decision.detail };
   const { data, error } = await sc
     .from(EPISODES_TABLE)
     .update({ state: "rejected", state_changed_at: input.now.toISOString() })
     .eq("id", input.episodeId)
     .eq("user_id", input.ownerId)
-    .eq("state", loaded.episode.state)
+    .eq("state", "candidate")
     .select("id");
   if (error) return { ok: false, reason: "write_failed", detail: `${EPISODES_TABLE} update: ${error.message}` };
-  if (!Array.isArray(data) || data.length !== 1) return { ok: false, reason: "not_a_candidate", detail: "the candidate changed state while it was being rejected" };
+  // A Keep that claimed the episode between the read above and this write wins:
+  // the conditional update changes nothing, and the dismissal is refused.
+  if (!Array.isArray(data) || data.length !== 1) return { ok: false, reason: "not_a_candidate", detail: "the suggestion was kept while it was being dismissed" };
   countCandidateDecision("rejected");
   return { ok: true, episodeId: input.episodeId, state: "rejected", replayed: false };
 }
 
 /**
+ * A uuid derived from a name — the same name, the same id, on every call.
+ * The Memory a candidate becomes, and each photo attached to it, are keyed this
+ * way so a second INSERT of the same thing is impossible (primary key), not
+ * merely unlikely: two taps, two devices, a retry after a lost response, a
+ * retry after a failed link write — all reach one row.
+ */
+export function derivedUuid(namespace: string, name: string): string {
+  const h = createHash("sha256").update(`${namespace}\u0000${name}`).digest();
+  h[6] = (h[6]! & 0x0f) | 0x50;
+  h[8] = (h[8]! & 0x3f) | 0x80;
+  const x = h.subarray(0, 16).toString("hex");
+  return `${x.slice(0, 8)}-${x.slice(8, 12)}-${x.slice(12, 16)}-${x.slice(16, 20)}-${x.slice(20, 32)}`;
+}
+export const candidateMemoryId = (episodeId: string) => derivedUuid("portava:memory-candidate:memory", episodeId);
+export const candidateItemId = (memoryId: string, assetId: string) => derivedUuid("portava:memory-candidate:item", `${memoryId}:${assetId}`);
+/** The §19 key the Memory create carries: one per candidate, whatever key the client sent. */
+export const candidateCreateKey = (episodeId: string) => `memory-candidate:${episodeId}`;
+
+/**
  * §27 MemoryDomainService.confirm — the owner keeps a candidate.
  *
- * ORDER IS THE RETRY STORY. (1) a Memory already linked to this episode is
- * reused, so a retry after any later failure creates no second Memory; (2) the
- * Memory is created through the §17 boundary; (3) the link is written as
- * EXPLICIT evidence before anything else, so step (1) can find it; (4) the
- * captures are attached through ADD_MEDIA, skipping any already attached;
- * (5) the episode moves candidate → confirmed, conditionally, with §8's score
- * and the `user_affirmed` basis the 2320 CHECK requires.
+ * ONLY ONE CALLER CAN WIN, AND NOTHING IT LEAVES BEHIND IS A SECOND MEMORY.
+ *
+ *   (1) CLAIM. A conditional `candidate → confirmed` update (with §8's score
+ *       and the `user_affirmed` basis the 2320 CHECK requires) that must change
+ *       exactly one row. A reject racing it can no longer win; a reject that
+ *       already won makes this claim change nothing and the answer is 409 —
+ *       before any Memory exists. A second confirm finds `confirmed` and goes
+ *       on to (2) as a completion, not as a competitor.
+ *   (2) MEMORY. Created through the §17 boundary with an id DERIVED from the
+ *       episode (and the §19 key derived the same way), so every completer —
+ *       concurrent, retried, or after a crash — reaches the same row: with the
+ *       kernel off a duplicate INSERT is a primary-key refusal answered by
+ *       reading that row; with it on the receipt answers the original result.
+ *   (3) LINK, as explicit evidence — idempotent on its own key.
+ *   (4) PHOTOS, each with a derived id, admissible captures only.
+ *
+ * A failure after (1) leaves `confirmed` without a link; the inbox keeps
+ * showing it as interrupted and Keep again completes it. A rejected candidate
+ * never has a Memory, because (2) never runs for one.
  */
 export async function confirmCandidate(
   sc: SupabaseClient,
@@ -598,38 +667,61 @@ export async function confirmCandidate(
   if (store.state !== "ready") return { ok: false, reason: store.state, detail: store.detail };
   const loaded = await loadOwnEpisode(sc, input.ownerId, input.episodeId);
   if (!loaded.ok) return { ok: false, reason: loaded.reason, detail: loaded.detail };
-  const ep = loaded.episode;
-  if (ep.state !== "candidate" && ep.state !== "confirmed") {
-    return { ok: false, reason: "not_a_candidate", detail: `a ${ep.state} episode cannot be confirmed` };
+  let ep = loaded.episode;
+  const title = input.title && input.title.trim() ? input.title.trim().slice(0, 200) : null;
+
+  // (1)
+  let claimedHere = false;
+  if (ep.state === "candidate") {
+    const significance = scoreSignificance({ later_user_promotion: true, user_caption: Boolean(title) });
+    const decision = decideTransition("candidate", "confirmed", { significance: significance.score, significanceBasis: "user_affirmed" });
+    if (!decision.ok) return { ok: false, reason: "not_a_candidate", detail: decision.detail };
+    const { data, error } = await sc
+      .from(EPISODES_TABLE)
+      .update({
+        state: "confirmed",
+        state_changed_at: input.now.toISOString(),
+        significance: significance.score,
+        significance_basis: "user_affirmed",
+        summary: title ?? ep.summary,
+      })
+      .eq("id", ep.id)
+      .eq("user_id", input.ownerId)
+      .eq("state", "candidate")
+      .select("id");
+    if (error) return { ok: false, reason: "write_failed", detail: `${EPISODES_TABLE} claim: ${error.message}` };
+    if (Array.isArray(data) && data.length === 1) {
+      claimedHere = true;
+      countCandidateDecision("confirmed");
+    } else {
+      const again = await loadOwnEpisode(sc, input.ownerId, input.episodeId);
+      if (!again.ok) return { ok: false, reason: again.reason, detail: again.detail };
+      ep = again.episode;
+    }
+  }
+  if (ep.state !== "confirmed" && !claimedHere) {
+    return { ok: false, reason: "not_a_candidate", detail: `a ${ep.state} episode cannot be kept` };
   }
 
   const { data: evData, error: evErr } = await sc
     .from(EVIDENCE_TABLE)
-    .select("source_table, source_id, observed_at")
+    .select("source_table, source_id")
     .eq("user_id", input.ownerId)
     .eq("episode_id", ep.id);
   if (evErr) return { ok: false, reason: "unavailable", detail: `${EVIDENCE_TABLE}: ${evErr.message}` };
-  const captureIds = ((evData as Array<{ source_table: string; source_id: string }> | null) ?? [])
-    .filter((r) => r.source_table === "media_assets").map((r) => r.source_id);
-
-  const significance = scoreSignificance({ later_user_promotion: true, user_caption: Boolean(input.title && input.title.trim()) });
-  const scored = { significance: significance.score, significanceBasis: "user_affirmed" };
-  if (ep.state === "candidate") {
-    const decision = decideTransition("candidate", "confirmed", scored);
-    if (!decision.ok) return { ok: false, reason: "not_a_candidate", detail: decision.detail };
-  }
-
-  // (1)
-  const link = await linkedMemoryId(sc, input.ownerId, ep.id);
-  if (!link.ok) return { ok: false, reason: "unavailable", detail: link.detail };
-  let memoryId = link.memoryId;
-  const replayed = memoryId !== null;
+  const evRows = ((evData as Array<{ source_table: string; source_id: string }> | null) ?? []);
+  const captureIds = evRows.filter((r) => r.source_table === "media_assets").map((r) => r.source_id);
+  const existingLink = evRows.find((r) => r.source_table === "memories")?.source_id ?? null;
+  const replayed = !claimedHere;
 
   // (2)
+  let memoryId = existingLink;
   if (!memoryId) {
+    const derivedId = candidateMemoryId(ep.id);
     const write = {
+      id: derivedId,
       owner_id: input.ownerId,
-      title: input.title && input.title.trim() ? input.title.trim().slice(0, 200) : null,
+      title: title ?? ep.summary,
       caption: null,
       visibility: "only_me",
       state: "published",
@@ -643,14 +735,20 @@ export async function confirmCandidate(
       commandType: "CREATE_MEMORY",
       memoryId: null,
       actorUserId: input.ownerId,
-      idempotencyKey: input.idempotencyKey,
+      idempotencyKey: candidateCreateKey(ep.id),
       fromCandidate: true,
       payload: { to_state: lifecycleStateOf("published"), visibility: "only_me", write, select: "id" },
       fromKernelResult: (r: any) => ({ id: String(r?.memory_id ?? r?.id ?? "") }),
       legacy: async () => {
         const { data, error } = await sc.from("memories").insert(write).select("id").single();
-        if (error) return { ok: false, http: { code: "db_error", message: error.message } };
-        return { ok: true, body: { id: String((data as { id: string }).id) } };
+        if (!error) return { ok: true, body: { id: String((data as { id: string }).id) } };
+        if (String((error as { code?: string }).code ?? "") !== "23505") return { ok: false, http: { code: "db_error", message: error.message } };
+        // The derived id is taken: this candidate's Memory already exists.
+        const { data: had, error: hadErr } = await sc.from("memories").select("id, owner_id").eq("id", derivedId).maybeSingle();
+        if (hadErr || !had || (had as { owner_id: string }).owner_id !== input.ownerId) {
+          return { ok: false, http: { code: "db_error", message: "the candidate's Memory id is taken and could not be confirmed as this owner's" } };
+        }
+        return { ok: true, body: { id: derivedId } };
       },
     });
     if (!created.ok) {
@@ -658,54 +756,59 @@ export async function confirmCandidate(
       return { ok: false, reason: "kernel_refused", detail: String(detail) };
     }
     memoryId = created.body.id;
-  }
 
-  // (3)
-  const { error: linkErr } = await sc
-    .from(EVIDENCE_TABLE)
-    .upsert({
-      episode_id: ep.id,
-      user_id: input.ownerId,
-      truth_level: "asserted",
-      source_class: "explicit",
-      source_table: "memories",
-      source_id: memoryId,
-      source_ref: { confirmed_by: "owner", significance_policy: SIGNIFICANCE_POLICY_VERSION },
-      observed_at: input.now.toISOString(),
-      weight: 1,
-    }, { onConflict: "episode_id,source_table,source_id,truth_level", ignoreDuplicates: true });
-  if (linkErr) return { ok: false, reason: "write_failed", detail: `${EVIDENCE_TABLE} link: ${linkErr.message}` };
+    // (3)
+    const { error: linkErr } = await sc
+      .from(EVIDENCE_TABLE)
+      .upsert({
+        episode_id: ep.id,
+        user_id: input.ownerId,
+        truth_level: "asserted",
+        source_class: "explicit",
+        source_table: "memories",
+        source_id: memoryId,
+        source_ref: { confirmed_by: "owner", significance_policy: SIGNIFICANCE_POLICY_VERSION },
+        observed_at: input.now.toISOString(),
+        weight: 1,
+      }, { onConflict: "episode_id,source_table,source_id,truth_level", ignoreDuplicates: true });
+    if (linkErr) return { ok: false, reason: "write_failed", detail: `${EVIDENCE_TABLE} link: ${linkErr.message}` };
+  }
 
   // (4)
   let attached = 0;
   if (captureIds.length > 0) {
     const [mediaRead, itemsRead] = await Promise.all([
-      sc.from("media_assets").select("id, owner_user_id, mime_type, public_url, captured_at").eq("owner_user_id", input.ownerId).in("id", captureIds),
-      sc.from("memory_items").select("media_url").eq("memory_id", memoryId),
+      sc.from("media_assets").select(MEDIA_COLUMNS).eq("owner_user_id", input.ownerId).in("id", captureIds),
+      sc.from("memory_items").select("id, media_url").eq("memory_id", memoryId),
     ]);
     if (mediaRead.error) return { ok: false, reason: "unavailable", detail: `media_assets: ${mediaRead.error.message}` };
     if (itemsRead.error) return { ok: false, reason: "unavailable", detail: `memory_items: ${itemsRead.error.message}` };
-    const have = new Set(((itemsRead.data as Array<{ media_url: string }> | null) ?? []).map((i) => i.media_url));
-    const media = ((mediaRead.data as Array<{ id: string; mime_type: string | null; public_url: string | null; captured_at: string | null }> | null) ?? [])
-      .filter((m) => m.public_url)
+    const items = ((itemsRead.data as Array<{ id: string; media_url: string }> | null) ?? []);
+    const haveIds = new Set(items.map((i) => i.id));
+    const haveUrls = new Set(items.map((i) => i.media_url));
+    const media = ((mediaRead.data as MediaRow[] | null) ?? [])
+      .filter((m) => m.public_url && isAdmissibleCapture(m))
       .sort((a, b) => String(a.captured_at ?? "").localeCompare(String(b.captured_at ?? "")) || a.id.localeCompare(b.id));
-    let position = have.size;
+    let position = items.length;
     for (const m of media) {
       const url = m.public_url!;
-      if (have.has(url)) continue;
+      const itemId = candidateItemId(memoryId!, m.id);
+      if (haveIds.has(itemId) || haveUrls.has(url)) continue;
       if (classifyMemoryMediaUrl(url, input.ownerId).verdict === "foreign_storage") continue;
-      const item = { memory_id: memoryId, media_url: url, media_type: m.mime_type ?? "image/jpeg", caption: null, position };
+      const item = { id: itemId, memory_id: memoryId, media_url: url, media_type: m.mime_type ?? "image/jpeg", caption: null, position };
       const added = await dispatchMemoryCommand<{ id: string }>({
         sc,
         commandType: "ADD_MEDIA",
         memoryId,
         actorUserId: input.ownerId,
-        idempotencyKey: `${input.idempotencyKey}:media:${m.id}`.slice(0, 200),
+        idempotencyKey: `memory-candidate-item:${itemId}`,
         payload: { media_type: item.media_type, position, write: item },
         legacy: async () => {
           const { data, error } = await sc.from("memory_items").insert(item).select("id").single();
-          if (error) return { ok: false, http: { code: "db_error", message: error.message } };
-          return { ok: true, body: { id: String((data as { id: string }).id) } };
+          if (!error) return { ok: true, body: { id: String((data as { id: string }).id) } };
+          // A concurrent completer attached this exact photo already.
+          if (String((error as { code?: string }).code ?? "") === "23505") return { ok: true, body: { id: itemId } };
+          return { ok: false, http: { code: "db_error", message: error.message } };
         },
       });
       if (!added.ok) {
@@ -715,29 +818,6 @@ export async function confirmCandidate(
       attached += 1;
       position += 1;
     }
-  }
-
-  // (5)
-  if (ep.state === "candidate") {
-    const { data, error } = await sc
-      .from(EPISODES_TABLE)
-      .update({
-        state: "confirmed",
-        state_changed_at: input.now.toISOString(),
-        significance: significance.score,
-        significance_basis: "user_affirmed",
-        summary: input.title && input.title.trim() ? input.title.trim().slice(0, 200) : ep.summary,
-      })
-      .eq("id", ep.id)
-      .eq("user_id", input.ownerId)
-      .eq("state", "candidate")
-      .select("id");
-    if (error) return { ok: false, reason: "write_failed", detail: `${EPISODES_TABLE} update: ${error.message}` };
-    if (!Array.isArray(data) || data.length !== 1) {
-      log.warn({ episodeId: ep.id }, "episode candidates: candidate changed state during confirm — the Memory stands, the retry finds it");
-      return { ok: false, reason: "not_a_candidate", detail: "the candidate changed state while it was being confirmed" };
-    }
-    countCandidateDecision("confirmed");
   }
 
   return { ok: true, episodeId: ep.id, state: "confirmed", memoryId: memoryId!, mediaAttached: attached, replayed };

@@ -131,3 +131,27 @@ it('trips that could not be loaded are said, not shown as "no trips"', async () 
   expect(await screen.findByTestId('candidates-trips-error')).toBeTruthy();
   expect(screen.queryByTestId('candidates-no-trips')).toBeNull();
 });
+
+it('two taps on Keep in the same frame send ONE confirm (a ref lock, not a state closure)', async () => {
+  mockList.mockResolvedValueOnce({ ok: true, candidates: [C1] });
+  let resolve: (v: unknown) => void = () => {};
+  mockConfirm.mockImplementationOnce(() => new Promise((r) => { resolve = r; }));
+  await render(<CandidateInbox />);
+  await screen.findByTestId('candidate-keep-ep-1');
+  await act(async () => {
+    fireEvent.press(screen.getByTestId('candidate-keep-ep-1'));
+    fireEvent.press(screen.getByTestId('candidate-keep-ep-1'));
+  });
+  expect(mockConfirm).toHaveBeenCalledTimes(1);
+  await act(async () => { resolve({ ok: true, memoryId: 'mem-1' }); });
+  expect(mockPush).toHaveBeenCalledWith('/memory/mem-1');
+});
+
+it('an interrupted Keep is shown as such, and Keep finishes it', async () => {
+  mockList.mockResolvedValueOnce({ ok: true, candidates: [{ ...C1, state: 'interrupted' }] });
+  mockConfirm.mockResolvedValueOnce({ ok: true, memoryId: 'mem-2' });
+  await render(<CandidateInbox />);
+  expect(await screen.findByTestId('candidate-interrupted-ep-1')).toBeTruthy();
+  await press('candidate-keep-ep-1');
+  expect(mockPush).toHaveBeenCalledWith('/memory/mem-2');
+});

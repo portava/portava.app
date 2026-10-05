@@ -12,7 +12,6 @@
  * said with Try again. A failed read is never "no suggestions".
  */
 import { freshToken } from '../../../services/apiToken.ts';
-import { newMemoryOperationId } from '../../../services/memories.ts';
 
 function apiBase(): string {
   return process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
@@ -26,6 +25,8 @@ export interface MemoryCandidate {
   country: string | null;
   captureCount: number;
   previewUrls: string[];
+  /** `interrupted`: kept, but the save did not finish — Keep completes it. */
+  state?: 'candidate' | 'interrupted';
 }
 
 export interface DetectReport {
@@ -75,10 +76,20 @@ export function detectMemoryCandidates(tripId: string) {
   return send('POST', '/api/me/memory-candidates/detect', (b) => (b.report && typeof b.report === 'object' ? { report: b.report as DetectReport } : null), { body: { tripId } });
 }
 
+/** The stable §19 key for keeping one candidate. */
+export function candidateOperationId(candidateId: string): string {
+  return `memory-candidate:${candidateId}`;
+}
+
 export function confirmMemoryCandidate(id: string, title: string | null, operationId?: string) {
   return send('POST', `/api/me/memory-candidates/${encodeURIComponent(id)}/confirm`,
     (b) => (typeof b.memoryId === 'string' ? { memoryId: b.memoryId } : null),
-    { body: title ? { title } : {}, headers: { 'Idempotency-Key': operationId || newMemoryOperationId('candidate') } });
+    // ONE key per candidate, not per tap: a second tap, a retry after a lost
+    // response and a second device all carry the same key, so the server's
+    // §19 receipt (kernel on) and its derived Memory id (kernel off) see one
+    // command. The server keys the Memory on the candidate anyway; this makes
+    // the client say the same thing.
+    { body: title ? { title } : {}, headers: { 'Idempotency-Key': operationId || candidateOperationId(id) } });
 }
 
 export function rejectMemoryCandidate(id: string) {

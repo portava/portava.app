@@ -38,13 +38,14 @@ const OTHER_TRIP = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const NODATE_TRIP = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
 
 const m = (n: number) => `30000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+const m_ = m;
 const url = (n: number) => `https://cdn.example.test/u/${OWNER}/p${n}.jpg`;
 
 function media(n: number, captured: string | null, over: Record<string, unknown> = {}) {
   return {
     id: m(n), owner_user_id: OWNER, media_type: "image", mime_type: "image/jpeg", public_url: url(n),
     captured_at: captured, source_type: "user", moderation_status: "approved", processing_status: "ready",
-    provenance: null, created_at: "2026-03-02T22:00:00.000Z", ...over,
+    deleted_at: null, provenance: null, created_at: "2026-03-02T22:00:00.000Z", ...over,
   };
 }
 
@@ -70,6 +71,7 @@ function seed(): Record<string, any[]> {
       media(10, "2026-04-20T10:00:00.000Z"),                                  // outside the trip
       media(11, "2026-03-02T19:50:00.000Z", { processing_status: "failed" }), // never became a file
       media(13, "2026-03-02T19:15:00.000Z", { source_type: "generated" }),    // not the owner's capture
+      media(14, "2026-03-02T19:05:00.000Z", { processing_status: "removed", moderation_status: "owner_deleted", deleted_at: "2026-03-02T23:00:00.000Z" }), // deleted before detection
     ],
     memories: [{ id: "90000000-0000-4000-8000-000000000001", owner_id: OWNER, state: "published" }],
     memory_items: [{ id: "91000000-0000-4000-8000-000000000001", memory_id: "90000000-0000-4000-8000-000000000001", media_url: url(9), media_type: "image/jpeg", position: 0 }],
@@ -81,7 +83,7 @@ function seed(): Record<string, any[]> {
 let gen = 0;
 const newId = () => `e${String(++gen).padStart(7, "0")}-0000-4000-8000-000000000000`;
 
-interface FakeOpts { absent?: Set<string>; failReads?: Set<string>; failWrites?: Set<string> }
+interface FakeOpts { absent?: Set<string>; failReads?: Set<string>; failWrites?: Set<string>; beforeUpdate?: (table: string, store: Record<string, any[]>) => void }
 
 function makeClient(store: Record<string, any[]>, opts: FakeOpts) {
   function chain(table: string) {
@@ -111,6 +113,11 @@ function makeClient(store: Record<string, any[]>, opts: FakeOpts) {
     };
     const err = (message: string, code?: string) => ({ data: null, error: { message, code } });
     async function run(): Promise<any> {
+      // A real round trip yields the event loop. Without this every handler ran
+      // to completion before a concurrent request's handler started, and a race
+      // could never be observed — PROBE 1 and PROBE 3 passed against the code
+      // that had the race.
+      await new Promise((r) => setTimeout(r, 1));
       if (opts.absent?.has(table)) return err(`relation "public.${table}" does not exist`, "42P01");
       if (mode === "select" && opts.failReads?.has(table)) return err(`${table} unavailable`, "57014");
       if (mode !== "select" && opts.failWrites?.has(`${table}:${mode}`)) return err(`${table} ${mode} failed`, "57014");
@@ -138,6 +145,10 @@ function makeClient(store: Record<string, any[]>, opts: FakeOpts) {
             }
             Object.assign(r, { id: newId(), recorded_at: "2026-10-05T00:00:00.000Z" });
           } else {
+            // A primary key: an explicit id already present is refused, as the database would.
+            if (r.id != null && all.some((x) => x.id === r.id)) {
+              return err(`duplicate key value violates unique constraint "${table}_pkey"`, "23505");
+            }
             r.id = r.id ?? newId();
           }
           all.push(r);
@@ -146,6 +157,7 @@ function makeClient(store: Record<string, any[]>, opts: FakeOpts) {
         if (!wantRows) return { data: null, error: null };
         return { data: single ? written[0] ?? null : written, error: null };
       }
+      if (mode === "update" && opts.beforeUpdate) opts.beforeUpdate(table, store);
       let matched = all.filter((r) => filters.every((f) => f(r)));
       if (mode === "update") {
         for (const r of matched) {
@@ -378,25 +390,115 @@ describe("confirm and reject — the owner's decision", () => {
     assert.equal(app.store.memory_items.filter((i) => i.memory_id === first.body.memoryId).length, 3);
   });
 
-  it("a confirm that fails AFTER creating its Memory is finished by the retry — still one Memory — and cannot be rejected in between (H238)", async () => {
+  it("PROBE 1 — two Keeps at once make ONE Memory, three photos and one link, and both callers are told so", async () => {
+    const { a, epA } = await seeded(); app = a;
+    const [r1, r2] = await Promise.all([
+      call(app, "POST", `/api/me/memory-candidates/${epA.id}/confirm`, OWNER, {}, { "Idempotency-Key": "tap-1" }),
+      call(app, "POST", `/api/me/memory-candidates/${epA.id}/confirm`, OWNER, {}, { "Idempotency-Key": "tap-2" }),
+    ]);
+    assert.deepEqual([r1.status, r2.status], [200, 200], JSON.stringify([r1.body, r2.body]));
+    assert.equal(r1.body.memoryId, r2.body.memoryId);
+    const mine = app.store.memories.filter((x) => x.owner_id === OWNER && x.id !== "90000000-0000-4000-8000-000000000001");
+    assert.equal(mine.length, 1, "one Memory, not one per tap");
+    assert.equal(app.store.memory_items.filter((i) => i.memory_id === r1.body.memoryId).length, 3, "three photos, not six");
+    assert.equal(app.store.memory_evidence.filter((v) => v.episode_id === epA.id && v.source_table === "memories").length, 1, "one link");
+  });
+
+  it("PROBE 2 — a link write that fails after the Memory exists is finished by the retry with the same key: still ONE Memory", async () => {
+    app = await start({ failWrites: new Set(["memory_evidence:upsert"]) });
+    // Detection itself writes evidence through upsert, so seed it on a healthy client first.
+    const healthy = makeClient(app.store, {});
+    _setTestClient(healthy as any, true);
+    await detect(app);
+    const epA = app.store.memory_episodes.find((e) => e.started_at === "2026-03-02T19:00:00.000Z");
+    _setTestClient(makeClient(app.store, { failWrites: new Set(["memory_evidence:upsert"]) }) as any, true);
+    const failed = await call(app, "POST", `/api/me/memory-candidates/${epA.id}/confirm`, OWNER, {}, { "Idempotency-Key": "k-1" });
+    assert.equal(failed.status, 503);
+    assert.equal(app.store.memory_episodes.find((e) => e.id === epA.id).state, "confirmed", "the claim held");
+    assert.equal(app.store.memories.filter((x) => x.owner_id === OWNER).length, 2, "the seeded Memory plus the one this Keep made");
+    // The interrupted Keep is still in front of the owner.
+    _setTestClient(healthy as any, true);
+    const list = await call(app, "GET", "/api/me/memory-candidates", OWNER);
+    assert.equal(list.body.candidates.find((c: any) => c.id === epA.id)?.state, "interrupted");
+    const retry = await call(app, "POST", `/api/me/memory-candidates/${epA.id}/confirm`, OWNER, {}, { "Idempotency-Key": "k-1" });
+    assert.equal(retry.status, 200, JSON.stringify(retry.body));
+    assert.equal(app.store.memories.filter((x) => x.owner_id === OWNER).length, 2, "the retry made no second Memory");
+    assert.equal(app.store.memory_evidence.filter((v) => v.episode_id === epA.id && v.source_table === "memories").length, 1);
+    assert.equal(app.store.memory_items.filter((i) => i.memory_id === retry.body.memoryId).length, 3);
+    const after = await call(app, "GET", "/api/me/memory-candidates", OWNER);
+    assert.ok(!after.body.candidates.some((c: any) => c.id === epA.id), "a finished Keep leaves the inbox");
+  });
+
+  it("PROBE 3 — Keep and Dismiss at once never leave a rejected candidate with a Memory (H238)", async () => {
+    for (const order of ["confirm-first", "reject-first"] as const) {
+      const { a, epA } = await seeded(); app = a;
+      const keep = () => call(app!, "POST", `/api/me/memory-candidates/${epA.id}/confirm`, OWNER, {});
+      const dismiss = () => call(app!, "POST", `/api/me/memory-candidates/${epA.id}/reject`, OWNER);
+      const [k, d] = order === "confirm-first"
+        ? await Promise.all([keep(), dismiss()])
+        : await Promise.all([dismiss(), keep()]).then(([dd, kk]) => [kk, dd]);
+      const state = app.store.memory_episodes.find((e) => e.id === epA.id).state;
+      const made = app.store.memories.filter((m) => m.owner_id === OWNER && m.id !== "90000000-0000-4000-8000-000000000001").length;
+      assert.ok((state === "confirmed" && made === 1) || (state === "rejected" && made === 0),
+        `${order}: state ${state} with ${made} Memory — ${JSON.stringify([k.status, d.status])}`);
+      // Exactly one decision wins, and each caller is told the truth about it.
+      assert.ok((k.status === 200) !== (d.status === 200), `${order}: keep ${k.status}, dismiss ${d.status} — exactly one may succeed`);
+      assert.equal(state, k.status === 200 ? "confirmed" : "rejected");
+      await app.close(); app = null;
+    }
+  });
+
+  it("a Dismiss that commits between Keep's read and Keep's claim wins: the claim changes nothing and no Memory is made (H238)", async () => {
+    let raced = false;
+    app = await start({
+      beforeUpdate: (table, st) => {
+        if (table !== "memory_episodes" || raced) return;
+        raced = true;
+        // The concurrent Dismiss commits first.
+        const ep = st.memory_episodes.find((e) => e.started_at === "2026-03-02T19:00:00.000Z");
+        if (ep) ep.state = "rejected";
+      },
+    });
+    await detect(app);
+    const epA = app.store.memory_episodes.find((e) => e.started_at === "2026-03-02T19:00:00.000Z");
+    const r = await call(app, "POST", `/api/me/memory-candidates/${epA.id}/confirm`, OWNER, {});
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(app.store.memory_episodes.find((e) => e.id === epA.id).state, "rejected");
+    assert.equal(app.store.memories.filter((x) => x.owner_id === OWNER).length, 1, "only the seeded Memory");
+  });
+
+  it("a Keep whose claim cannot be written makes no Memory at all", async () => {
     app = await start({ failWrites: new Set(["memory_episodes:update"]) });
     await detect(app);
     const epA = app.store.memory_episodes.find((e) => e.started_at === "2026-03-02T19:00:00.000Z");
-    const failed = await call(app, "POST", `/api/me/memory-candidates/${epA.id}/confirm`, OWNER, {});
-    assert.equal(failed.status, 503);
+    const r = await call(app, "POST", `/api/me/memory-candidates/${epA.id}/confirm`, OWNER, {});
+    assert.equal(r.status, 503);
+    assert.equal(app.store.memories.filter((x) => x.owner_id === OWNER).length, 1, "only the seeded Memory");
     assert.equal(app.store.memory_episodes.find((e) => e.id === epA.id).state, "candidate");
-    const memId = app.store.memory_evidence.find((v) => v.episode_id === epA.id && v.source_table === "memories")?.source_id;
-    assert.ok(memId, "the Memory and its link exist");
-    const reject = await call(app, "POST", `/api/me/memory-candidates/${epA.id}/reject`, OWNER);
-    assert.equal(reject.status, 409, "a kept candidate cannot be rejected — its Memory would outlive the rejection");
-    // Same store, healed database.
-    const healed = makeClient(app.store, {});
-    _setTestClient(healed as any, true);
-    const retry = await call(app, "POST", `/api/me/memory-candidates/${epA.id}/confirm`, OWNER, {});
-    assert.equal(retry.status, 200, JSON.stringify(retry.body));
-    assert.equal(retry.body.memoryId, memId);
-    assert.equal(app.store.memories.filter((x) => x.owner_id === OWNER).length, 2);
+  });
+
+  it("a kept (claimed) suggestion cannot be dismissed — its Memory would outlive the rejection (H238)", async () => {
+    const { a, epA } = await seeded(); app = a;
+    epA.state = "confirmed"; epA.significance = 0.5; epA.significance_basis = "user_affirmed";
+    const r = await call(app, "POST", `/api/me/memory-candidates/${epA.id}/reject`, OWNER);
+    assert.equal(r.status, 409);
     assert.equal(app.store.memory_episodes.find((e) => e.id === epA.id).state, "confirmed");
+  });
+
+  it("deleted and late-flagged photos are neither previewed nor attached", async () => {
+    app = await start({ mutate: (st) => { st.media_assets.push(media(15, "2026-03-02T19:45:00.000Z")); } });
+    await detect(app);
+    const epA = app.store.memory_episodes.find((e) => e.started_at === "2026-03-02T19:00:00.000Z");
+    // After detection: the owner deletes one capture, a moderator flags another,
+    // and a third has its deletion recorded while processing still reads 'ready'.
+    Object.assign(app.store.media_assets.find((m) => m.id === m_(1)), { processing_status: "removed", moderation_status: "owner_deleted", deleted_at: "2026-10-05T00:00:00.000Z" });
+    Object.assign(app.store.media_assets.find((m) => m.id === m_(2)), { moderation_status: "flagged" });
+    Object.assign(app.store.media_assets.find((m) => m.id === m_(15)), { deleted_at: "2026-10-05T00:00:00.000Z" });
+    const list = await call(app, "GET", "/api/me/memory-candidates", OWNER);
+    assert.deepEqual(list.body.candidates.find((c: any) => c.id === epA.id).previewUrls, [url(3)]);
+    const kept = await call(app, "POST", `/api/me/memory-candidates/${epA.id}/confirm`, OWNER, {});
+    assert.equal(kept.status, 200);
+    assert.deepEqual(app.store.memory_items.filter((i) => i.memory_id === kept.body.memoryId).map((i) => i.media_url), [url(3)]);
   });
 
   it("reject moves candidate → rejected and creates nothing a Highlight could be made from (H238)", async () => {

@@ -13,7 +13,7 @@
  * nothing is shown: there is nothing to offer, which is not a failure. A read
  * that FAILED → "Could not check" with Try again — never "no suggestions".
  */
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, ActivityIndicator, Alert, StyleSheet } from 'react-native';
 import { router } from 'expo-router';
 import { Sparkles } from 'lucide-react-native';
@@ -44,6 +44,9 @@ export function CandidateInbox() {
   const [busy, setBusy] = useState<string | null>(null);
   const [trips, setTrips] = useState<Trips>({ s: 'closed' });
   const [found, setFound] = useState<string | null>(null);
+  // A REF, not state: two taps in one frame both see `busy === null` in a
+  // state closure, and both would send. The ref is set synchronously.
+  const inFlight = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     setState({ s: 'loading' });
@@ -66,8 +69,11 @@ export function CandidateInbox() {
   }, []);
 
   const detect = useCallback(async (tripId: string) => {
+    if (inFlight.current) return;
+    inFlight.current = `detect:${tripId}`;
     setBusy(`detect:${tripId}`);
     const r = await detectMemoryCandidates(tripId);
+    inFlight.current = null;
     setBusy(null);
     if (!r.ok) { Alert.alert('Could not look through that trip', r.message); return; }
     setTrips({ s: 'closed' });
@@ -78,16 +84,22 @@ export function CandidateInbox() {
   }, [load]);
 
   const keep = useCallback(async (c: MemoryCandidate) => {
+    if (inFlight.current) return;
+    inFlight.current = c.id;
     setBusy(c.id);
     const r = await confirmMemoryCandidate(c.id, null);
+    inFlight.current = null;
     setBusy(null);
     if (!r.ok) { Alert.alert('Could not keep this', r.message); return; }
     router.push(`/memory/${r.memoryId}` as never);
   }, []);
 
   const dismiss = useCallback(async (c: MemoryCandidate) => {
+    if (inFlight.current) return;
+    inFlight.current = c.id;
     setBusy(c.id);
     const r = await rejectMemoryCandidate(c.id);
+    inFlight.current = null;
     setBusy(null);
     if (!r.ok) { Alert.alert('Could not dismiss this', r.message); return; }
     setState((prev) => (prev.s === 'ok' ? { s: 'ok', candidates: prev.candidates.filter((x) => x.id !== c.id) } : prev));
@@ -116,6 +128,7 @@ export function CandidateInbox() {
       {state.candidates.map((c) => (
         <View key={c.id} style={s.card} testID={`candidate-${c.id}`}>
           <Text style={s.body}>{range(c)}</Text>
+          {c.state === 'interrupted' ? <Text style={s.note} testID={`candidate-interrupted-${c.id}`}>You kept this and it did not finish saving. Keep finishes it.</Text> : null}
           <Text style={s.note}>{[c.city, c.country].filter(Boolean).join(', ') || 'Place not known'} · {c.captureCount} photo{c.captureCount === 1 ? '' : 's'}</Text>
           {c.previewUrls.length > 0 ? (
             <View style={s.previews}>
