@@ -38,6 +38,10 @@
  *      commission included, at the rate the booking was ledgered at
  *   U  unledgered is counted by ENTRIES; an unfulfilled booking cannot be revived
  *   K  the creation key is unique per traveller
+ *   N  main's 3530 (#610, "nothing collected") and 3824 together: applied in
+ *      order, all four of #610's surfaces report 0 collected over real rows,
+ *      the scheduled amount and the net survive 3824's no-deposit bookings, and
+ *      3530 applied AFTER 3824 is shown to bring a negative net back
  *
  * THE PURE MODEL IS THE SPECIFICATION. `lib/creatorLedgerEntries.ts`
  * (`buildBookingEntries`, `buildReversal`) used to be the writer's arithmetic
@@ -59,6 +63,7 @@ import {
 } from "./localDb.js";
 import { buildBookingEntries, buildReversal, type LedgerEntry } from "../../lib/creatorLedgerEntries.js";
 import { RENT_BUDDY_FEE_RULE_VERSION, toEarningsEntryRow } from "../../lib/creatorLedgerRows.js";
+import { collectedInAppUsd, scheduledInAppUsd, withNothingCollected } from "../../lib/rentBuddyCollectedMoney.js";
 import {
   LEDGER_REVERSED_NOTE_PREFIX,
   LEDGER_UNAVAILABLE,
@@ -75,6 +80,8 @@ const REPO = new URL("../../../../../", import.meta.url);
 const sqlFile = (rel: string) => readFileSync(new URL(rel, REPO), "utf8");
 const FORWARD = "artifacts/api-server/src/migrations/3824_rent_buddy_ledger_posting.sql";
 const ROLLBACK = "db/rollback/2026-10-04-3824-rent-buddy-ledger-posting-rollback.sql";
+/** main's #610: the aggregate that reports nothing as collected. Sorts BEFORE 3824. */
+const M3530 = "artifacts/api-server/src/migrations/3530_rb_earnings_summary_nothing_collected.sql";
 
 /** The rule generation 3824 stamps. v1 is the retired JavaScript writer's. */
 const RULE_V2 = "rent-buddy-fee-schedule/v2";
@@ -378,6 +385,14 @@ describe("migration 3824 — the Rent-a-Buddy ledger posting door, executed", { 
       scalar(`SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='rent_buddy_global_controls' AND column_name='deposits_enabled'`),
     ].map(Number);
 
+    /** rb_buddy_earnings_summary as installed: [its search_path setting, whether it reads the payment mode (3824) or deposit_usd alone (3530)]. */
+    const summaryFn = () => [
+      (scalar(`SELECT array_to_string(proconfig, '|') FROM pg_proc WHERE oid = 'public.rb_buddy_earnings_summary(uuid, numeric)'::regprocedure`) ?? "").replace(/[\s"]+/g, ""),
+      scalar(`SELECT (pg_get_functiondef('public.rb_buddy_earnings_summary(uuid, numeric)'::regprocedure) ~ 'payment_mode')::text`),
+    ];
+    const BY_MODE = ["search_path=public,pg_temp", "true"];
+    const AS_3530 = ["search_path=public", "false"];
+
     before(() => {
       const main = new URL(LOCAL_DB_URL).pathname.slice(1);
       useDatabase(urlFor("postgres"));
@@ -396,6 +411,7 @@ describe("migration 3824 — the Rent-a-Buddy ledger posting door, executed", { 
       assert.equal(scalar(`SELECT count(*) FROM pg_trigger WHERE tgrelid = 'public.rent_buddy_bookings'::regclass AND tgname = 'rbb_reverse_ledger_on_unfulfilled'`), "1");
       assert.equal(scalar(`SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='rent_buddy_launch_controls' AND column_name='platform_fee_percent'`), "1");
       assert.match(scalar(`SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'rbee_entry_reason_check'`)!, /settlement/);
+      assert.deepEqual(summaryFn(), BY_MODE, "after the chain (… 3530 … 3824) the breakdown aggregate must be 3824's: the in-app share by payment mode, pg_temp last");
     });
 
     test("M2. re-applying is a no-op that still passes its own postconditions", () => {
@@ -403,6 +419,7 @@ describe("migration 3824 — the Rent-a-Buddy ledger posting door, executed", { 
       assert.equal(again.ok, true, again.stderr);
       assert.equal(fnCount(), 10);
       assert.deepEqual(round2(), [1, 1, 1, 1]);
+      assert.deepEqual(summaryFn(), BY_MODE);
     });
 
     test("M2b. re-applying does NOT turn an operator's deposit switch back off", () => {
@@ -420,6 +437,7 @@ describe("migration 3824 — the Rent-a-Buddy ledger posting door, executed", { 
       assert.match(back.stderr, /ROLLBACK REFUSED \(3824\).*rent_buddy_global_controls\.deposits_enabled is ON/);
       assert.equal(fnCount(), 10, "a refused rollback must change nothing");
       assert.deepEqual(round2(), [1, 1, 1, 1]);
+      assert.deepEqual(summaryFn(), BY_MODE, "a refused rollback must not have put 3530's body back either");
       exec(SWITCH_OFF);
     });
 
@@ -428,6 +446,17 @@ describe("migration 3824 — the Rent-a-Buddy ledger posting door, executed", { 
       assert.equal(back.ok, true, back.stderr);
       assert.equal(fnCount(), 0);
       assert.deepEqual(round2(), [0, 0, 0, 0], "the rollback left a round-2 object behind");
+      // The breakdown aggregate is NOT dropped (2330 created it, 3530 owns it):
+      // it goes back to 3530's body — still reporting nothing as collected.
+      assert.deepEqual(summaryFn(), AS_3530, "the rollback must restore 3530's definition of rb_buddy_earnings_summary");
+      const empty = JSON.parse(scalar(`SELECT public.rb_buddy_earnings_summary('00000000-0000-0000-0000-000000000000'::uuid, 0.15)::text`)!);
+      assert.deepEqual([Number(empty.totalInAppUsd), "totalInAppScheduledUsd" in empty], [0, true], "after the rollback the aggregate must still be #610's, not 2330's");
+      assert.deepEqual(
+        rows<{ svc: boolean; anon: boolean; authed: boolean; pub: boolean }>(
+          `SELECT has_function_privilege('service_role', p.oid, 'EXECUTE') AS svc, has_function_privilege('anon', p.oid, 'EXECUTE') AS anon,
+                  has_function_privilege('authenticated', p.oid, 'EXECUTE') AS authed, has_function_privilege('public', p.oid, 'EXECUTE') AS pub
+             FROM pg_proc p WHERE p.oid = 'public.rb_buddy_earnings_summary(uuid, numeric)'::regprocedure`)[0],
+        { svc: true, anon: false, authed: false, pub: false }, "the rollback changed who may run the aggregate");
       assert.equal(scalar(`SELECT count(*) FROM pg_trigger WHERE tgrelid = 'public.rent_buddy_bookings'::regclass AND tgname = 'rbb_reverse_ledger_on_unfulfilled'`), "0");
       assert.equal(scalar(`SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='rent_buddy_launch_controls' AND column_name='platform_fee_percent'`), "0");
       assert.doesNotMatch(scalar(`SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'rbee_entry_reason_check'`)!, /settlement/);
@@ -440,6 +469,30 @@ describe("migration 3824 — the Rent-a-Buddy ledger posting door, executed", { 
       assert.equal(forward.ok, true, forward.stderr);
       assert.equal(fnCount(), 10);
       assert.deepEqual(round2(), [1, 1, 1, 1]);
+      assert.deepEqual(summaryFn(), BY_MODE);
+    });
+
+    test("M8. 3824 never rewrites the comment on rent_buddy_bookings — 3820 keeps its rollback record there", () => {
+      // 3820_rent_buddy_bookings_write_boundary.sql (main, #596) records what it
+      // revoked in the TABLE comment, and its rollback reads it back. 3824 adds a
+      // column, an index and two triggers to that table; it must comment on the
+      // COLUMN only. Apply, rollback and re-apply all leave the table comment as
+      // they found it.
+      const comment = () => scalar(`SELECT md5(COALESCE(obj_description('public.rent_buddy_bookings'::regclass), '<none>'))`);
+      const had3820 = scalar(`SELECT (COALESCE(obj_description('public.rent_buddy_bookings'::regclass), '') ~ '3820')::text`);
+      const before = comment();
+      assert.equal(applyOnClone(FORWARD).ok, true);
+      assert.equal(comment(), before, "re-applying 3824 changed the table comment");
+      assert.equal(applyOnClone(ROLLBACK).ok, true);
+      assert.equal(comment(), before, "rolling 3824 back changed the table comment");
+      assert.equal(applyOnClone(FORWARD).ok, true);
+      assert.equal(comment(), before, "re-applying 3824 after its rollback changed the table comment");
+      // Said rather than assumed: on a harness whose chain includes 3820 the
+      // record is really there (CI's does; the assertion is skipped only where
+      // 3820 was not applied, and says so).
+      if (had3820 !== "true") console.warn("M8: this database's rent_buddy_bookings comment carries no 3820 record (3820 not applied here); the unchanged-comment assertions still ran.");
+      assert.doesNotMatch(sqlFile(FORWARD), /COMMENT ON TABLE public\.rent_buddy_bookings\b/, "3824 comments on the bookings TABLE");
+      assert.doesNotMatch(sqlFile(ROLLBACK), /COMMENT ON TABLE public\.rent_buddy_bookings\b/, "3824's rollback comments on the bookings TABLE");
     });
 
     test("M5. the rollback REFUSES, changing nothing, while a commission override exists", () => {
@@ -464,6 +517,205 @@ describe("migration 3824 — the Rent-a-Buddy ledger posting door, executed", { 
       assert.match(back.stderr, /ROLLBACK REFUSED \(3824\).*settlement/);
       assert.equal(fnCount(), 10, "a refused rollback must change nothing");
       assert.match(scalar(`SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'rbee_entry_reason_check'`)!, /settlement/);
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // N — main's 3530 (#610) and 3824, together, on the clone
+  // ═══════════════════════════════════════════════════════════════════════════
+  //
+  // #610's guarantee: no aggregate reports money as collected while the ledger
+  // says 0 — on four surfaces. 3824's: the summary is the fold of the entries,
+  // unledgered completed bookings are counted, and no deposit is stored.
+  //
+  // The two meet in the DATA. 3530 reads the "scheduled" amount from
+  // `deposit_usd` and builds the net on it; 3824 stores `deposit_usd = 0`. So
+  // the bookings here are of BOTH kinds — the shape #610's own fixtures have
+  // (deposit = the in-app share) and the shape 3824 creates (deposit = 0) — and
+  // every figure is asserted over the mix.
+  //
+  //   old   full_in_app        500   deposit 500   cash   0
+  //   old   full_in_app        400   deposit 400   cash   0
+  //   old   deposit_plus_cash  500   deposit 150   cash 350
+  //   new   full_in_app        600   deposit   0   cash   0     ← terms from rb_quote_booking
+  //   new   deposit_plus_cash  200   deposit   0   cash 200     ← terms from rb_quote_booking
+  //                           ────           ────        ────
+  //   gross                   2200   stored  1050   cash 550    in-app share 500+400+150+600+0 = 1650
+  //   commission 25 % (this buddy's schedule row) = 550;  net = 1650 + 550 − 550 = 1650 = gross − commission
+  describe("N — 3530 (#610: nothing collected) then 3824: both guarantees hold over the same rows", () => {
+    const FEE = 0.25;
+    let buddy: { user: string; profile: string };
+    let newFull = "";
+    const ids: string[] = [];
+    const summary = (profile = buddy.profile) =>
+      JSON.parse(asService(`SELECT public.rb_buddy_earnings_summary(${q(profile)}, ${FEE})::text;`).join("\n"));
+    const num = (o: any, keys: string[]) => keys.map((k) => Number(o[k]));
+    const insertBooking = (o: { total: number; mode: string; deposit: number; cash: number }) => {
+      const id = scalar(
+        `INSERT INTO public.rent_buddy_bookings
+           (buddy_id, traveler_id, booking_date, duration_h, city, category, status, payment_mode, total_usd, deposit_usd, cash_balance_usd, country_code)
+         VALUES (${q(buddy.profile)}, ${q(w.traveller)}, current_date, 2, 'Payd City', 'city', 'requested', ${q(o.mode)}, ${o.total}, ${o.deposit}, ${o.cash}, ${q(MARKET)})
+         RETURNING id`,
+      )!;
+      ids.push(id);
+      return id;
+    };
+    /** A booking with the terms 3824 itself decides (rb_quote_booking), as every creation path now stores them. */
+    const insertQuoted = (total: number, mode: string) => {
+      const quoted = quote(buddy.profile, { price: total, qty: 1, mode });
+      assert.deepEqual([quoted.ok, quoted.deposit_enabled, quoted.deposit_usd], [true, false, 0], `the quote for a ${mode} booking must carry no deposit`);
+      return insertBooking({ total, mode, deposit: quoted.deposit_usd, cash: quoted.cash_balance_usd });
+    };
+    const applyHere = (rel: string) => { const r = psql(sqlFile(rel)); return { ok: r.status === 0, stderr: r.stderr }; };
+    const installedByMode = () => scalar(`SELECT (pg_get_functiondef('public.rb_buddy_earnings_summary(uuid, numeric)'::regprocedure) ~ 'payment_mode')::text`);
+
+    before(() => {
+      useDatabase(urlFor(CLONE));
+      // The order the chain applies them in, done here explicitly: 3530, then 3824.
+      const a = applyHere(M3530);
+      assert.equal(a.ok, true, a.stderr);
+      assert.equal(installedByMode(), "false", "3530 must install ITS body (deposit_usd) — otherwise this group is not exercising the order it names");
+      const b = applyHere(FORWARD);
+      assert.equal(b.ok, true, b.stderr);
+      assert.equal(installedByMode(), "true");
+
+      buddy = seedBuddy("payd_n610", LEVEL_25);
+      insertBooking({ total: 500, mode: "full_in_app", deposit: 500, cash: 0 });
+      insertBooking({ total: 400, mode: "full_in_app", deposit: 400, cash: 0 });
+      insertBooking({ total: 500, mode: "deposit_plus_cash", deposit: 150, cash: 350 });
+      newFull = insertQuoted(600, "full_in_app");
+      insertQuoted(200, "deposit_plus_cash");
+      for (const id of ids) {
+        assert.equal(post(id, "booking_created").ok, true, id);   // the WRITER, for every booking
+        setStatus(id, "completed");
+      }
+    });
+    after(() => {
+      // The clone is dropped by the outer `after`; only the connection is reset.
+      useDatabase(null);
+    });
+
+    test("N1. what 3824 stores for a booking made while no deposit is taken: deposit 0 in both modes", () => {
+      const stored = rows<{ payment_mode: string; total: number; deposit: number; cash: number }>(
+        `SELECT payment_mode::text AS payment_mode, total_usd::float8 AS total, deposit_usd::float8 AS deposit, cash_balance_usd::float8 AS cash
+           FROM public.rent_buddy_bookings WHERE buddy_id = ${q(buddy.profile)} ORDER BY total_usd, payment_mode`);
+      assert.deepEqual(stored, [
+        { payment_mode: "deposit_plus_cash", total: 200, deposit: 0, cash: 200 },
+        { payment_mode: "full_in_app", total: 400, deposit: 400, cash: 0 },
+        { payment_mode: "deposit_plus_cash", total: 500, deposit: 150, cash: 350 },
+        { payment_mode: "full_in_app", total: 500, deposit: 500, cash: 0 },
+        { payment_mode: "full_in_app", total: 600, deposit: 0, cash: 0 },
+      ]);
+    });
+
+    test("N2. #610 S3 — rb_buddy_earnings_summary: 0 collected, in total and in every month; the scheduled amount and the net are whole", () => {
+      const s = summary();
+      // (1) the claim is absent
+      assert.equal(Number(s.totalInAppUsd), 0);
+      assert.ok(s.monthlyBreakdown.length >= 1);
+      for (const m of s.monthlyBreakdown) assert.equal(Number(m.inApp), 0, `month ${m.month} reports money in app`);
+      // (2) the rows were read: the scheduled amount is the in-app share of all five
+      assert.deepEqual(num(s, ["totalInAppScheduledUsd", "totalCashConfirmedUsd", "totalPlatformFeesUsd", "totalDisputedUsd"]), [1650, 550, 550, 0]);
+      assert.equal(s.monthlyBreakdown.reduce((n: number, m: any) => n + Number(m.bookingCount), 0), 5);
+      assert.equal(s.monthlyBreakdown.reduce((n: number, m: any) => n + Number(m.inAppScheduled), 0), 1650);
+      // (3) the net is what the buddy is owed: gross − commission, and not negative
+      assert.equal(Number(s.totalNetUsd), 1650);
+      assert.equal(s.monthlyBreakdown.reduce((n: number, m: any) => n + Number(m.totalUsd), 0), 1650, "the months must add up to the net");
+    });
+
+    test("N3. #610 S2 — the route's re-statement leaves 3824's answer alone, and the JavaScript definition of the in-app share agrees with the SQL one row for row", () => {
+      const s = summary();
+      const restated = withNothingCollected(s);
+      assert.deepEqual(num(restated, ["totalInAppUsd", "totalInAppScheduledUsd", "totalNetUsd"]), [0, 1650, 1650]);
+      assert.deepEqual(restated.monthlyBreakdown.map((m: any) => [Number(m.inApp), Number(m.inAppScheduled)]),
+        s.monthlyBreakdown.map((m: any) => [0, Number(m.inAppScheduled)]));
+
+      // The pagination path folds rows with lib/rentBuddyCollectedMoney.ts
+      // #scheduledInAppUsd. Over the rows as PostgREST would hand them over:
+      const bookingRows = rows<any>(
+        `SELECT id, total_usd::float8 AS total_usd, deposit_usd::float8 AS deposit_usd, cash_balance_usd::float8 AS cash_balance_usd, payment_mode::text AS payment_mode, status::text AS status
+           FROM public.rent_buddy_bookings WHERE buddy_id = ${q(buddy.profile)} AND status::text IN ('completed', 'disputed')`);
+      assert.equal(bookingRows.length, 5);
+      const jsScheduled = bookingRows.reduce((n, r) => n + scheduledInAppUsd(r), 0);
+      const jsCash = bookingRows.reduce((n, r) => n + Number(r.cash_balance_usd), 0);
+      const jsFees = bookingRows.reduce((n, r) => n + Math.round(Number(r.total_usd) * FEE * 100) / 100, 0);
+      assert.deepEqual([jsScheduled, jsCash, jsFees, jsScheduled + jsCash - jsFees],
+        num(s, ["totalInAppScheduledUsd", "totalCashConfirmedUsd", "totalPlatformFeesUsd", "totalNetUsd"]),
+        "the two paths of the breakdown would answer differently");
+      assert.equal(collectedInAppUsd(jsScheduled), Number(s.totalInAppUsd));
+    });
+
+    test("N4. #610 S1 — the buddy's own summary: the fold reports 0 collected, the stored deposits by their honest name, and it agrees with the rows the WRITER wrote", async () => {
+      const totals = await readBuddyLedgerTotals(rpcClient(), buddy.user);
+      assert.equal(totals.status, "ok", JSON.stringify(totals));
+      if (totals.status !== "ok") return;
+      const t = totals.totals;
+      // (1) nothing collected — the fold's reading and the module's are the same number
+      assert.equal(t.inAppAmountCollectedUsd, 0);
+      assert.equal(collectedInAppUsd(t.depositScheduledUsd), t.inAppAmountCollectedUsd);
+      // (2) the rows were read
+      assert.deepEqual([t.completedCount, t.unledgeredCompletedCount, t.completedTotalUsd, t.depositScheduledUsd], [5, 0, 2200, 1050]);
+      // (3) the estimate is the fold of the entries: 25 % of each booking, rounded once each
+      assert.deepEqual([t.ledgeredGrossUsd, t.estimatedPlatformFeeUsd, t.estimatedBuddyEarningsUsd], [2200, 550, 1650]);
+      assert.deepEqual([t.cashBalanceDueUsd, t.isEstimated], [550, true]);
+
+      // The cross-surface invariant #610 is about, on real rows: what the
+      // ledger writer recorded for the same five bookings.
+      const written = rows<{ collected: number; scheduled: number; n: number }>(
+        `SELECT COALESCE(SUM(in_app_amount_collected), 0)::float8 AS collected, COALESCE(SUM(deposit_amount), 0)::float8 AS scheduled, count(*)::int AS n
+           FROM public.rent_buddy_earnings_ledger WHERE booking_id IN (${ids.map(q).join(",")})`)[0]!;
+      assert.deepEqual(written, { collected: 0, scheduled: 1050, n: 5 });
+      assert.equal(t.inAppAmountCollectedUsd, written.collected, "the dashboard and the ledger disagree about the same bookings");
+      assert.equal(t.depositScheduledUsd, written.scheduled);
+      for (const id of ids) assertSummaryIsFold(id, `N4 ${id}`);
+    });
+
+    test("N5. #610 S4 — the operator figure over the same rows: booked value 1650 in app, 0 collected", () => {
+      // The route (GET /admin/marketplace/analytics) is driven over the wire by
+      // rentBuddyCollectedMoney.test.ts S4; what it computes per row is this
+      // function, and these are the rows.
+      const bookingRows = rows<any>(
+        `SELECT total_usd::float8 AS total_usd, deposit_usd::float8 AS deposit_usd, payment_mode::text AS payment_mode
+           FROM public.rent_buddy_bookings WHERE buddy_id = ${q(buddy.profile)}`);
+      const inAppScheduled = bookingRows.reduce((n, r) => n + scheduledInAppUsd(r), 0);
+      const depositBooked = bookingRows.reduce((n, r) => n + Number(r.deposit_usd), 0);
+      assert.deepEqual([inAppScheduled, collectedInAppUsd(inAppScheduled), depositBooked, collectedInAppUsd(depositBooked)], [1650, 0, 1050, 0]);
+    });
+
+    test("N6. a disputed booking still counts as disputed and adds nothing to the scheduled amount or the net (3530's rule, kept)", () => {
+      const solo = seedBuddy("payd_n610_d", LEVEL_25);
+      exec(
+        `INSERT INTO public.rent_buddy_bookings (buddy_id, traveler_id, booking_date, duration_h, city, category, status, payment_mode, total_usd, deposit_usd, cash_balance_usd, country_code)
+         VALUES (${q(solo.profile)}, ${q(w.traveller)}, current_date, 2, 'Payd City', 'city', 'disputed', 'full_in_app', 300, 0, 0, ${q(MARKET)}),
+                (${q(solo.profile)}, ${q(w.traveller)}, current_date, 2, 'Payd City', 'city', 'completed', 'full_in_app', 100, 0, 0, ${q(MARKET)});`);
+      const s = summary(solo.profile);
+      assert.deepEqual(num(s, ["totalInAppUsd", "totalInAppScheduledUsd", "totalDisputedUsd", "totalPlatformFeesUsd", "totalNetUsd"]), [0, 100, 300, 25, 75]);
+    });
+
+    test("N7. ORDER MATTERS: 3530 applied AFTER 3824 brings the negative net back for a no-deposit full_in_app booking — and re-applying 3824 repairs it", () => {
+      // The reason 3824 re-states the function instead of leaving 3530's alone,
+      // shown rather than argued. One buddy, one booking: full_in_app, 600,
+      // stored by 3824 with no deposit.
+      const solo = seedBuddy("payd_n610_o", LEVEL_25);
+      exec(
+        `INSERT INTO public.rent_buddy_bookings (buddy_id, traveler_id, booking_date, duration_h, city, category, status, payment_mode, total_usd, deposit_usd, cash_balance_usd, country_code)
+         SELECT ${q(solo.profile)}, traveler_id, booking_date, duration_h, city, category, 'completed', payment_mode, total_usd, deposit_usd, cash_balance_usd, country_code
+           FROM public.rent_buddy_bookings WHERE id = ${q(newFull)};`);
+      assert.deepEqual(num(summary(solo.profile), ["totalInAppUsd", "totalInAppScheduledUsd", "totalNetUsd"]), [0, 600, 450]);
+
+      const late = applyHere(M3530);
+      assert.equal(late.ok, true, late.stderr);
+      assert.equal(installedByMode(), "false");
+      const under3530 = summary(solo.profile);
+      // #610's guarantee holds under its own body…
+      assert.equal(Number(under3530.totalInAppUsd), 0);
+      // …and the buddy is told they OWE Portava the commission.
+      assert.deepEqual(num(under3530, ["totalInAppScheduledUsd", "totalNetUsd"]), [0, -150]);
+
+      const repaired = applyHere(FORWARD);
+      assert.equal(repaired.ok, true, repaired.stderr);
+      assert.equal(installedByMode(), "true");
+      assert.deepEqual(num(summary(solo.profile), ["totalInAppUsd", "totalInAppScheduledUsd", "totalNetUsd"]), [0, 600, 450]);
     });
   });
 
@@ -542,6 +794,36 @@ describe("migration 3824 — the Rent-a-Buddy ledger posting door, executed", { 
       const posted = JSON.parse(out[2]!);
       assert.deepEqual([posted.ok, posted.fee_percent], [true, 25], "a temporary table changed the rate a booking was ledgered at");
       assert.equal(summaryOf(bk)!.platform_fee_amount, 20);
+    });
+
+    test("G5. rb_buddy_earnings_summary as 3824 re-states it: definer, service_role only, pinned to public with pg_temp LAST, and a temporary rent_buddy_bookings changes nothing", () => {
+      const fn = "public.rb_buddy_earnings_summary(uuid, numeric)";
+      const r = rows<{ secdef: boolean; cfg: string; svc: boolean; anon: boolean; authed: boolean; pub: boolean }>(
+        `SELECT p.prosecdef AS secdef, array_to_string(p.proconfig, '|') AS cfg,
+                has_function_privilege('service_role', p.oid, 'EXECUTE') AS svc, has_function_privilege('anon', p.oid, 'EXECUTE') AS anon,
+                has_function_privilege('authenticated', p.oid, 'EXECUTE') AS authed, has_function_privilege('public', p.oid, 'EXECUTE') AS pub
+           FROM pg_proc p WHERE p.oid = ${q(fn)}::regprocedure`,
+      )[0]!;
+      // 3530 pinned `public` alone, which leaves pg_temp searched FIRST for
+      // relations. 3824 keeps 3530's pin and spells pg_temp out last: the same
+      // effective order as the ten functions in G3 (pg_catalog is implicit).
+      assert.deepEqual({ ...r, cfg: r.cfg.replace(/[\s"]+/g, "") },
+        { secdef: true, cfg: "search_path=public,pg_temp", svc: true, anon: false, authed: false, pub: false });
+
+      const solo = seedBuddy("payd_g5", "new");
+      const bk = seedBooking({ buddyProfile: solo.profile, total: 120, status: "completed", cash: 0 });
+      assert.ok(bk);
+      const honest = asService(`SELECT public.rb_buddy_earnings_summary(${q(solo.profile)}, 0.25)::text;`).join("\n");
+      const out = asService(
+        `CREATE TEMP TABLE rent_buddy_bookings (id uuid DEFAULT gen_random_uuid(), buddy_id uuid, status text, payment_mode text, total_usd numeric, deposit_usd numeric, cash_balance_usd numeric, completed_at timestamptz, booking_date date);\n` +
+        `INSERT INTO rent_buddy_bookings (buddy_id, status, payment_mode, total_usd, deposit_usd, cash_balance_usd, booking_date) VALUES (${q(solo.profile)}, 'completed', 'full_in_app', 99999, 99999, 0, current_date);\n` +
+        // The shadow is real: an unqualified name in THIS session resolves to the temp table.
+        `SELECT (SELECT max(total_usd) FROM rent_buddy_bookings WHERE buddy_id = ${q(solo.profile)})::text;\n` +
+        `SELECT public.rb_buddy_earnings_summary(${q(solo.profile)}, 0.25)::text;`,
+      );
+      assert.equal(out[0], "99999", "the temp table does not shadow the real one in this session — the test proves nothing");
+      assert.equal(out[1], honest, "a temporary rent_buddy_bookings changed the earnings breakdown");
+      assert.deepEqual([Number(JSON.parse(honest).totalInAppScheduledUsd), Number(JSON.parse(honest).totalNetUsd)], [120, 90]);
     });
 
     test("G2. a signed-in client cannot call the posting function, and nothing is written", () => {
@@ -1200,6 +1482,7 @@ describe("migration 3824 — the Rent-a-Buddy ledger posting door, executed", { 
         completedCount: 3,
         unledgeredCompletedCount: 1,
         completedTotalUsd: 1149.5,
+        depositScheduledUsd: 1114.15,          // 100 + 15.15 + 999: the stored deposit_usd of ALL three, a term and never a collection
         ledgeredGrossUsd: 150.5,
         estimatedPlatformFeeUsd: 15.05,        // 10.00 + 5.05, each rounded once per booking
         estimatedBuddyEarningsUsd: 135.45,     // gross − commission; tips are reported apart

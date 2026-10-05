@@ -39,7 +39,7 @@
 --                                     entries are reversed in the SAME
 --                                     transaction that moves its status
 --   rb_booking_refuse_uncancel        trigger: an unfulfilled booking is terminal
---   rb_buddy_ledger_totals            the earnings summary, folded in SQL
+--   rb_buddy_ledger_totals            the earnings summary, folded in SQL (section 8 also re-states 3530's rb_buddy_earnings_summary on the payment mode)
 --   rb_admin_payout_transition        payout hold/release + its audit row
 --   rent_buddy_bookings.creation_key  one booking per (traveller, creation key)
 --   rent_buddy_global_controls.deposits_enabled   the ONE deposit switch, FALSE
@@ -1326,7 +1326,7 @@ CREATE OR REPLACE FUNCTION public.rb_buddy_ledger_totals(p_buddy_user_id uuid)
   SET search_path TO pg_catalog, public, pg_temp
   AS $$
   WITH done AS (
-    SELECT b.id, b.total_usd, b.cash_balance_usd, b.cash_balance_confirmed_by_buddy
+    SELECT b.id, b.total_usd, b.deposit_usd, b.cash_balance_usd, b.cash_balance_confirmed_by_buddy
       FROM public.rent_buddy_bookings b
       JOIN public.rent_buddy_profiles bp ON bp.id = b.buddy_id
      WHERE bp.user_id = p_buddy_user_id
@@ -1359,7 +1359,7 @@ CREATE OR REPLACE FUNCTION public.rb_buddy_ledger_totals(p_buddy_user_id uuid)
   SELECT jsonb_build_object(
     'completedCount',            (SELECT COUNT(*) FROM done),
     'unledgeredCompletedCount',  u.unledgered,
-    'completedTotalUsd',         (SELECT COALESCE(SUM(total_usd), 0) FROM done),
+    'completedTotalUsd',         (SELECT COALESCE(SUM(total_usd), 0) FROM done), 'depositScheduledUsd', (SELECT COALESCE(SUM(deposit_usd), 0) FROM done),
     'ledgeredGrossUsd',          round(f.gross_minor / 100.0, 2),
     'estimatedPlatformFeeUsd',   round(f.fee_minor / 100.0, 2),
     'estimatedBuddyEarningsUsd', round((f.net_minor - f.tip_minor) / 100.0, 2),
@@ -1467,6 +1467,133 @@ BEGIN
 END;
 $_$;
 
+-- ── 8. rb_buddy_earnings_summary — 3530's body, on the payment MODE ────────
+--
+-- 3530_rb_earnings_summary_nothing_collected.sql (main, #610) replaced 2330's
+-- body so that this aggregate reports NOTHING as collected: `totalInAppUsd` and
+-- every month's `inApp` are a literal 0, the former deposit sum is published as
+-- `totalInAppScheduledUsd` / `inAppScheduled`, and `totalNetUsd` keeps deriving
+-- from the SCHEDULED amount — because deriving it from the collected zero
+-- "would report a NEGATIVE balance for every full_in_app booking" (3530's own
+-- words).
+--
+-- THIS FILE CHANGES WHAT 3530 READS. 3530 takes the scheduled amount from
+-- `deposit_usd`, which until now WAS the in-app share: the whole price for
+-- `full_in_app`, the deposit for `deposit_plus_cash`. Under the owner's ruling
+-- of 2026-10-04 (no deposit in the first release) rb_booking_payment_terms,
+-- above, stores `deposit_usd = 0` for every new booking. For `full_in_app`
+-- that also leaves `cash_balance_usd = 0`, so 3530's body would compute
+--     totalNetUsd = 0 + 0 - fees
+-- for a buddy whose bookings are paid entirely in app: the negative balance
+-- 3530 was written to prevent, reached by a different road. 3530 sorts before
+-- this file and is not edited (an applied migration is a frozen artifact, and
+-- it is correct for every booking that exists when it is applied), so the
+-- repair belongs here, in the file that changes the data.
+--
+-- WHAT IS DIFFERENT FROM 3530 — one expression, one qualification, one path:
+--   * `in_app_scheduled` is the whole price for `full_in_app` and the stored
+--     deposit otherwise. For every booking written before this file the value
+--     is the SAME as 3530's (a full_in_app booking stored its whole price as
+--     its deposit); it differs only for bookings created after it. This is the
+--     expression routes/rentABuddyMarketplace.ts already used for the operator
+--     screen, and lib/rentBuddyCollectedMoney.ts#scheduledInAppUsd now owns it
+--     for the JavaScript fold, so both paths of the breakdown answer alike.
+--   * the table is schema-qualified;
+--   * search_path is `'public', pg_temp` — 3530's pin with pg_temp spelled out
+--     LAST. With `public` alone pg_temp is searched first for relations and
+--     types; spelled last it cannot shadow anything. (pg_catalog is searched
+--     first when it is not listed, so the effective order is the one every
+--     other function in this file names.)
+-- EVERYTHING ELSE IS 3530's, key for key: the two literal zeros, the scheduled
+-- names, the net, the disputed rule, the month key, the sort order, the fee
+-- parameter (a FRACTION supplied by the caller — this aggregate is the
+-- breakdown estimate, not the ledger; rb_buddy_ledger_totals is the fold).
+--
+-- ORDER. Apply 3530 BEFORE this file (it sorts first). If 3530 were applied
+-- after it, 3530's body would replace this one and the negative net would be
+-- back for new full_in_app bookings; re-applying this file repairs it. If 3530
+-- was never applied, CREATE OR REPLACE creates the function here.
+CREATE OR REPLACE FUNCTION public.rb_buddy_earnings_summary(
+  p_buddy_id         uuid,
+  p_platform_fee_pct numeric
+)
+  RETURNS jsonb
+  LANGUAGE sql
+  STABLE
+  SECURITY DEFINER
+  SET search_path TO 'public', pg_temp
+  AS $$
+  WITH src AS (
+    SELECT
+      COALESCE(
+        to_char(b.completed_at AT TIME ZONE 'UTC', 'YYYY-MM'),
+        to_char(b.booking_date, 'YYYY-MM'),
+        ''
+      )                                                                     AS month,
+      b.status::text                                                        AS status,
+      COALESCE(b.total_usd, 0)::numeric                                     AS gross,
+      -- The in-app share, by payment mode. 3530 read `deposit_usd` alone.
+      CASE WHEN b.payment_mode::text = 'full_in_app'
+           THEN COALESCE(b.total_usd, 0)::numeric
+           ELSE COALESCE(b.deposit_usd, 0)::numeric
+      END                                                                   AS in_app_scheduled,
+      COALESCE(b.cash_balance_usd, 0)::numeric                              AS cash,
+      ROUND(COALESCE(b.total_usd, 0)::numeric * COALESCE(p_platform_fee_pct, 0), 2) AS fee
+    FROM public.rent_buddy_bookings b
+    WHERE b.buddy_id = p_buddy_id
+      AND b.status::text IN ('completed', 'disputed')
+  ),
+  monthly AS (
+    SELECT
+      s.month                                                                    AS month,
+      COUNT(*)::int                                                              AS booking_count,
+      SUM(CASE WHEN s.status = 'disputed' THEN 0 ELSE s.gross - s.fee END)       AS total_usd,
+      SUM(CASE WHEN s.status = 'disputed' THEN 0 ELSE s.in_app_scheduled END)    AS in_app_scheduled,
+      SUM(CASE WHEN s.status = 'disputed' THEN 0 ELSE s.cash END)                AS cash,
+      SUM(CASE WHEN s.status = 'disputed' THEN 0 ELSE s.fee END)                 AS fees
+    FROM src s
+    GROUP BY s.month
+  ),
+  totals AS (
+    SELECT
+      COALESCE(SUM(CASE WHEN s.status = 'disputed' THEN 0 ELSE s.in_app_scheduled END), 0) AS total_in_app_scheduled,
+      COALESCE(SUM(CASE WHEN s.status = 'disputed' THEN 0 ELSE s.cash   END), 0) AS total_cash,
+      COALESCE(SUM(CASE WHEN s.status = 'disputed' THEN 0 ELSE s.fee    END), 0) AS total_fees,
+      COALESCE(SUM(CASE WHEN s.status = 'disputed' THEN s.gross ELSE 0  END), 0) AS total_disputed
+    FROM src s
+  )
+  SELECT jsonb_build_object(
+    -- Collected in app. Nothing is (3530). A literal 0, not an expression.
+    'totalInAppUsd',           0::numeric,
+    'totalInAppScheduledUsd',  t.total_in_app_scheduled,
+    'totalCashConfirmedUsd',   t.total_cash,
+    'totalPlatformFeesUsd',    t.total_fees,
+    'totalDisputedUsd',        t.total_disputed,
+    'totalPendingUsd',         0,
+    -- Unchanged: the estimate of what the buddy is OWED.
+    'totalNetUsd',             t.total_in_app_scheduled + t.total_cash - t.total_fees,
+    'yearlyNetUsd',            COALESCE((
+                                 SELECT SUM(m.total_usd) FROM monthly m
+                                  WHERE m.month LIKE to_char(now() AT TIME ZONE 'UTC', 'YYYY') || '%'
+                               ), 0),
+    'monthlyBreakdown',        COALESCE((
+                                 SELECT jsonb_agg(
+                                          jsonb_build_object(
+                                            'month',          m.month,
+                                            'totalUsd',       m.total_usd,
+                                            'bookingCount',   m.booking_count,
+                                            'inApp',          0::numeric,
+                                            'inAppScheduled', m.in_app_scheduled,
+                                            'cash',           m.cash,
+                                            'fees',           m.fees
+                                          ) ORDER BY m.month DESC
+                                        )
+                                 FROM monthly m
+                               ), '[]'::jsonb)
+  )
+  FROM totals t;
+$$;
+
 -- ── Grants: SECURITY DEFINER, service_role only ─────────────────────────────
 -- A newly created function is EXECUTE-to-PUBLIC by default, so the revoke/grant
 -- pair is unconditional (2330's shape).
@@ -1529,6 +1656,13 @@ REVOKE ALL ON FUNCTION public.rb_admin_payout_transition(uuid, text, uuid, text)
 REVOKE ALL ON FUNCTION public.rb_admin_payout_transition(uuid, text, uuid, text) FROM service_role;
 GRANT EXECUTE ON FUNCTION public.rb_admin_payout_transition(uuid, text, uuid, text) TO service_role;
 
+-- 2330's and 3530's pair, repeated: this file may be the one that creates it.
+REVOKE ALL ON FUNCTION public.rb_buddy_earnings_summary(uuid, numeric) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.rb_buddy_earnings_summary(uuid, numeric) FROM anon;
+REVOKE ALL ON FUNCTION public.rb_buddy_earnings_summary(uuid, numeric) FROM authenticated;
+REVOKE ALL ON FUNCTION public.rb_buddy_earnings_summary(uuid, numeric) FROM service_role;
+GRANT EXECUTE ON FUNCTION public.rb_buddy_earnings_summary(uuid, numeric) TO service_role;
+
 COMMENT ON FUNCTION public.rb_resolve_platform_fee_percent(text, text, text, text) IS
   'The Rent-a-Buddy platform commission as a whole percentage of the pre-tax service price, resolved from configuration: a rent_buddy_launch_controls.platform_fee_percent override for the market/product (most specific first), else rent_buddy_fee_rules for the buddy level, else the owner default of 10 (ruling 2026-10-04). Refuses (22023) a schedule row outside 0..100.';
 COMMENT ON FUNCTION public.rb_post_booking_ledger(uuid, text, text, jsonb) IS
@@ -1546,9 +1680,12 @@ COMMENT ON FUNCTION public.rb_booking_refuse_uncancel() IS
 COMMENT ON FUNCTION public.rb_booking_ledger_on_unfulfilled() IS
   'Trigger function for rbb_reverse_ledger_on_unfulfilled: reverses a booking''s earning entries in the transaction that moves it to cancelled / cancelled_by_* / declined / expired. Raises, aborting the status change, if the reversal is refused.';
 COMMENT ON FUNCTION public.rb_buddy_ledger_totals(uuid) IS
-  'A buddy''s earnings summary over their completed bookings, folded from rent_buddy_earnings_entries in SQL and returned as one jsonb row. Completed bookings with a price and no ENTRIES are counted in unledgeredCompletedCount and contribute no money. inAppAmountCollectedUsd is the fold of settlement entries.';
+  'A buddy''s earnings summary over their completed bookings, folded from rent_buddy_earnings_entries in SQL and returned as one jsonb row. Completed bookings with a price and no ENTRIES are counted in unledgeredCompletedCount and contribute no money. inAppAmountCollectedUsd is the fold of settlement entries; depositScheduledUsd is the sum of the stored deposit_usd, a term of the bookings and never a collection.';
 COMMENT ON FUNCTION public.rb_admin_payout_transition(uuid, text, uuid, text) IS
   'PAY-075. Applies an admin payout hold or release under the row lock AND writes its rent_buddy_admin_actions row in the same transaction; a failing audit insert leaves the status unchanged. Hold from pending only; release from on_hold only. Requires an admin profile and a reason. Moves no money and creates no payout.';
+
+COMMENT ON FUNCTION public.rb_buddy_earnings_summary(uuid, numeric) IS
+  'M7 + M5. DB-side earnings breakdown for one buddy as a single jsonb row, so no PostgREST row cap can truncate the sum. Reports totalInAppUsd = 0 and monthlyBreakdown[].inApp = 0 because nothing is ever collected in app (3530). totalInAppScheduledUsd / inAppScheduled are the in-app SHARE of the bookings by payment mode: the whole price for full_in_app, the stored deposit otherwise — deposit_usd alone is 0 on a booking made while no deposit is taken (3824), and a net built on it would be negative. totalNetUsd = scheduled + cash - fees, unchanged. Supersedes 3530''s body; see 3824_rent_buddy_ledger_posting.sql section 8.';
 
 -- ── Postconditions ──────────────────────────────────────────────────────────
 DO $post$
@@ -1727,12 +1864,95 @@ BEGIN
 END
 $post$;
 
+-- ── Postconditions for rb_buddy_earnings_summary (section 8) ────────────────
+-- 3530's own postconditions, re-asserted against THIS file's body — a later
+-- replacement is exactly how a collected claim would come back — plus the one
+-- property this file adds.
+DO $post_summary$
+DECLARE
+  oid_ oid;
+  body text;
+BEGIN
+  SELECT p.oid INTO oid_
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+   WHERE n.nspname = 'public' AND p.proname = 'rb_buddy_earnings_summary'
+     AND pg_get_function_identity_arguments(p.oid) = 'p_buddy_id uuid, p_platform_fee_pct numeric';
+  IF oid_ IS NULL THEN
+    RAISE EXCEPTION '3824: POSTCONDITION FAILED: public.rb_buddy_earnings_summary(p_buddy_id uuid, p_platform_fee_pct numeric) does not exist';
+  END IF;
+  IF NOT (SELECT p.prosecdef FROM pg_proc p WHERE p.oid = oid_) THEN
+    RAISE EXCEPTION '3824: POSTCONDITION FAILED: rb_buddy_earnings_summary is not SECURITY DEFINER';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc p
+     WHERE p.oid = oid_ AND p.proconfig IS NOT NULL
+       AND EXISTS (SELECT 1 FROM unnest(p.proconfig) cfg
+                    WHERE replace(replace(cfg, ' ', ''), '"', '') = 'search_path=public,pg_temp')) THEN
+    RAISE EXCEPTION '3824: POSTCONDITION FAILED: rb_buddy_earnings_summary does not pin search_path to public with pg_temp last';
+  END IF;
+  IF has_function_privilege('public', oid_, 'EXECUTE') THEN
+    RAISE EXCEPTION '3824: POSTCONDITION FAILED: PUBLIC can execute rb_buddy_earnings_summary';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') AND has_function_privilege('anon', oid_, 'EXECUTE') THEN
+    RAISE EXCEPTION '3824: POSTCONDITION FAILED: anon can execute rb_buddy_earnings_summary';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') AND has_function_privilege('authenticated', oid_, 'EXECUTE') THEN
+    RAISE EXCEPTION '3824: POSTCONDITION FAILED: authenticated can execute rb_buddy_earnings_summary';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') AND NOT has_function_privilege('service_role', oid_, 'EXECUTE') THEN
+    RAISE EXCEPTION '3824: POSTCONDITION FAILED: service_role cannot execute rb_buddy_earnings_summary — the breakdown route would fall back to paging';
+  END IF;
+
+  body := pg_get_functiondef(oid_);
+  -- 3530's three, word for word in what they test.
+  IF body !~ 'totalInAppScheduledUsd' THEN
+    RAISE EXCEPTION '3824: POSTCONDITION FAILED: the installed body has no totalInAppScheduledUsd';
+  END IF;
+  IF body !~ '''totalInAppUsd''[[:space:]]*,[[:space:]]*0::numeric' THEN
+    RAISE EXCEPTION '3824: POSTCONDITION FAILED: totalInAppUsd is not built from a literal 0 in the installed body';
+  END IF;
+  IF body ~ '''totalInAppUsd''[[:space:]]*,[[:space:]]*t\.total_in_app[[:space:]]*,' THEN
+    RAISE EXCEPTION '3824: POSTCONDITION FAILED: the installed body builds totalInAppUsd from the deposit sum';
+  END IF;
+  IF body !~ '''inApp''[[:space:]]*,[[:space:]]*0::numeric' THEN
+    RAISE EXCEPTION '3824: POSTCONDITION FAILED: a month''s inApp is not a literal 0 in the installed body';
+  END IF;
+  -- This file's: the in-app share is read from the payment mode, from a
+  -- schema-qualified table.
+  IF body !~ 'payment_mode::text[[:space:]]*=[[:space:]]*''full_in_app''' THEN
+    RAISE EXCEPTION '3824: POSTCONDITION FAILED: rb_buddy_earnings_summary does not read the in-app share from the payment mode — a full_in_app booking with no deposit would report a negative net';
+  END IF;
+  IF body !~ 'FROM public\.rent_buddy_bookings' THEN
+    RAISE EXCEPTION '3824: POSTCONDITION FAILED: rb_buddy_earnings_summary does not schema-qualify rent_buddy_bookings';
+  END IF;
+END
+$post_summary$;
+
+-- Behavioural, as 3530's probe is: the shape an empty aggregate answers with.
+DO $probe_summary$
+DECLARE
+  result jsonb;
+BEGIN
+  SELECT public.rb_buddy_earnings_summary('00000000-0000-0000-0000-000000000000'::uuid, 0.15) INTO result;
+  IF result IS NULL THEN
+    RAISE EXCEPTION '3824: POSTCONDITION FAILED: rb_buddy_earnings_summary returned NULL for a buddy with no bookings';
+  END IF;
+  IF (result ->> 'totalInAppUsd')::numeric <> 0 THEN
+    RAISE EXCEPTION '3824: POSTCONDITION FAILED: totalInAppUsd is % and not 0', result ->> 'totalInAppUsd';
+  END IF;
+  IF NOT (result ? 'totalInAppScheduledUsd') OR NOT (result ? 'totalNetUsd') OR NOT (result ? 'monthlyBreakdown') THEN
+    RAISE EXCEPTION '3824: POSTCONDITION FAILED: rb_buddy_earnings_summary is missing a key the breakdown route reads (%)', result;
+  END IF;
+END
+$probe_summary$;
+
 COMMIT;
 
 -- ── ROLLBACK ────────────────────────────────────────────────────────────────
 -- db/rollback/2026-10-04-3824-rent-buddy-ledger-posting-rollback.sql. It drops
 -- the two triggers, the functions, the override column, the creation-key column
--- and the deposit switch, and restores 2901's entry_reason CHECK — which it
+-- and the deposit switch, puts 3530's body of rb_buddy_earnings_summary back,
+-- and restores 2901's entry_reason CHECK — which it
 -- REFUSES to do while a settlement entry or a non-NULL override exists or the
 -- deposit switch is ON, because each would be destroyed or orphaned.
 -- No entry or summary row written through this door is touched: they are

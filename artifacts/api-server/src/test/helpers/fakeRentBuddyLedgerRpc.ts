@@ -478,6 +478,7 @@ function ledgerTotals(db: FakeLedgerDb, args: any): any {
     completedCount: done.length,
     unledgeredCompletedCount: unledgered,
     completedTotalUsd: done.reduce((n, b) => n + toMinor(b.total_usd), 0) / 100,
+    depositScheduledUsd: done.reduce((n, b) => n + toMinor(b.deposit_usd ?? 0), 0) / 100,
     ledgeredGrossUsd: usd(gross),
     estimatedPlatformFeeUsd: usd(fee),
     estimatedBuddyEarningsUsd: usd(net - tip),
