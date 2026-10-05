@@ -29,7 +29,13 @@ jest.mock('../../../../services/apiToken.ts', () => ({ freshToken: async () => '
 type Script = { text?: string; confidence?: number; error?: string };
 let script: Script = {};
 
+// OD-INPUT-5 (2026-10-05): this layer uses a browser recognizer ONLY when the
+// engine can recognise on the device (the spec's `available({processLocally})`
+// and `processLocally`). The stand-in models such an engine; an engine without
+// those controls is refused, which speechRecognizer.test.ts proves.
 class FakeRecognition {
+  static available = async (_o: { processLocally?: boolean }) => 'available';
+  processLocally = false;
   lang = '';
   interimResults = false;
   continuous = true;

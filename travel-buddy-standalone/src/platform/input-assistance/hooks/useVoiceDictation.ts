@@ -93,6 +93,8 @@ export function useVoiceDictation({ fieldId, context, onTranscript, language, re
       setState({ phase: 'heard', text: outcome.request.text });
     } else if (outcome.state === 'refused') {
       setState({ phase: 'refused', message: REFUSAL_COPY[outcome.reason] });
+    } else if (outcome.reason === 'on_device_unavailable') {
+      setState({ phase: 'unavailable', message: outcome.error ?? 'Voice input needs on-device speech recognition here.' });
     } else if (outcome.reason === 'no_provider') {
       setState({ phase: 'unavailable', message: outcome.error ?? 'Voice input isn’t available on this build.' });
     } else if (outcome.reason === 'capture_failed') {

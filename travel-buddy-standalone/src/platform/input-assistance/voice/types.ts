@@ -71,7 +71,11 @@ export type VoiceUnavailableReason =
   | 'no_provider'
   | 'permission_denied'
   | 'capture_failed'
-  | 'provider_error';
+  | 'provider_error'
+  // OD-INPUT-5: the platform cannot recognise speech ON THE DEVICE here, and
+  // sending audio to an online service needs a separate consent this build
+  // does not ask for — so nothing is sent and nothing is recorded.
+  | 'on_device_unavailable';
 
 /**
  * Why a transcript was REFUSED rather than passed to the shared engine.
