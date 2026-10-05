@@ -540,6 +540,23 @@ export function reachableTelemetry(
 }
 
 /**
+ * What the VIEWER is told about the people who were not shown: one
+ * undifferentiated count, never the reasons.
+ *
+ * Per-reason counts are a disclosure in a small crew — with two candidates,
+ * `{ no_presence_consent: 1 }` says that one named person turned location
+ * sharing off, and a `protected_zone` reason would say a named person is at a
+ * clinic or a shelter. The reasons stay in `reachableTelemetry`, which only the
+ * server log sees (verifier F1, 2026-10-05; the single count is the lead's
+ * reading and is listed for the owner to confirm).
+ */
+export function viewerFacingNotShown(t: ReachableTelemetry): number {
+  let n = 0;
+  for (const v of Object.values(t.refusals)) n += v;
+  return n;
+}
+
+/**
  * §4.4's second clause, restated where a reader of this module will see it: a
  * viewer in invisible mode still gets their own map. Referenced by the route so
  * the private-map path cannot be "tidied away" as unused.

@@ -59,6 +59,7 @@ import { classifyAgainstProtected, type ProtectedZone } from "../../lib/protecte
 import { loadActiveProtectedZones } from "../../lib/protectedZoneStore.js";
 import {
   resolveInvisibleMode,
+  suppressesSurface,
   type InvisibleModeState,
 } from "../../lib/invisibleMode.js";
 import {
@@ -569,7 +570,15 @@ export async function loadReachablePeople(
       blocked: blockedSet.has(personId) || verdict.reason === "blocked",
       blockStateKnown: verdict.reason !== "unavailable",
       personInvisible,
-      personInProtectedZone: positionInProtectedZone(st?.lat, st?.lng, zones),
+      // §4.3's zones are asked ONLY about a position that would otherwise be
+      // published — consented, fresh and not suppressed by invisible mode. A
+      // person who withheld their position is never tested against a zone:
+      // the answer would be a fact about where they are that they did not share
+      // (verifier F1, 2026-10-05).
+      personInProtectedZone:
+        personPoint !== null &&
+        !suppressesSurface(personInvisible, "nearby") &&
+        positionInProtectedZone(st?.lat, st?.lng, zones),
       viewerInvisible,
       personPresenceConsent: presenceConsent,
       availabilityPublished: availability.published,

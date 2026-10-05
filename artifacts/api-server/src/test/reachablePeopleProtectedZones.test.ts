@@ -11,8 +11,11 @@
  * What each case pins, and the state it reads back (the projection the route
  * would serialise, not a return code):
  *   - a person inside a zone is never given a bucket, whatever they consented to;
- *   - with nothing else to say they are refused BY NAME (`protected_zone`), so the
- *     response's counts explain the short list;
+ *   - with nothing else to say they are not shown, and the reason (`protected_zone`)
+ *     lives ONLY in server-side telemetry — the viewer is never told it (see
+ *     reachablePeopleZoneNoLeak.test.ts, which pins the wire: verifier F1);
+ *   - a zone is asked only about a position that would otherwise be published:
+ *     a person who withheld consent, or whose position is stale, is never tested;
  *   - with availability published they are still shown — availability is not a
  *     position — but their proximity is `unknown`;
  *   - a COARSEN-class zone (medical facility) withholds too: the bucket is
@@ -140,7 +143,7 @@ describe("CONTROL: with no zone covering anyone, a consented crewmate is buckete
 });
 
 describe("a person inside a zone is never given a bucket", () => {
-  it("inside a private-residence zone with nothing else published: refused BY NAME, nothing serialised", async () => {
+  it("inside a private-residence zone with nothing else published: not shown; the reason is SERVER-side telemetry only", async () => {
     const result = await load({ rows: world({ available: false, zones: [zoneRow()] }) });
     assert.equal(result.ok, true);
     if (!result.ok) return;
@@ -168,6 +171,29 @@ describe("a person inside a zone is never given a bucket", () => {
     if (!result.ok) return;
     assert.equal(result.people.length, 0);
     assert.equal(result.telemetry.refusals["protected_zone"], 1);
+  });
+
+  it("THE F1 FIX: a person who withheld location consent is never asked about a zone", async () => {
+    const rows = world({ available: false, zones: [zoneRow()] });
+    rows.user_privacy_settings = [{ user_id: CREWMATE, allow_location_sharing: false }];
+    const result = await load({ rows });
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    assert.equal(result.telemetry.refusals["protected_zone"], undefined, "zone membership computed for a non-consenting person");
+    assert.equal(result.telemetry.refusals["no_presence_consent"], 1);
+  });
+
+  it("THE F1 FIX: a stale position is never asked about a zone", async () => {
+    const rows = world({ available: false, zones: [zoneRow()] });
+    rows.user_location_state = [
+      { user_id: VIEWER, ...VIEWER_AT, last_known_at: FRESH },
+      { user_id: CREWMATE, ...CREWMATE_AT, last_known_at: new Date(NOW - 10 * 86_400_000).toISOString() },
+    ];
+    const withZone = await load({ rows });
+    const without = await load({ rows: { ...rows, protected_zones: [] } });
+    assert.equal(withZone.ok && without.ok, true);
+    if (!withZone.ok || !without.ok) return;
+    assert.deepEqual(withZone.telemetry.refusals, without.telemetry.refusals);
   });
 
   it("a zone whose geometry cannot be parsed withholds rather than being skipped", async () => {
