@@ -47,6 +47,7 @@ import {
 } from "../../airport/LayoverFeasibility.js";
 import type { LiveConditions } from "../../airport/LayoverSafetyEngine.js";
 import type { EntryEligibility } from "../../airport/layoverEntryGate.js";
+import type { SessionConstraintContext } from "../../airport/LayoverConstraints.js";
 import { decisionRecordFor, type DecisionRecord } from "../../airport/layoverLedger.js";
 
 /** 2026-10-01T02:00:00Z — 10:00 in Taipei, nowhere near a local midnight. */
@@ -98,6 +99,8 @@ export interface LayoverScenario {
   entry: EntryEligibility | null;
   liveConditions?: LiveConditions | null;
   landsideProbe?: LandsideProbe | null;
+  /** §4 / §6.1 (PR #588): the declared constraint set and the entry policy. Absent = legacy (nothing declared, policy off). */
+  constraints?: SessionConstraintContext | null;
 }
 
 function session(arriveMin: number, departMin: number, over: Partial<FeasibilitySession> = {}): Omit<FeasibilitySession, "id"> {
@@ -109,6 +112,15 @@ function session(arriveMin: number, departMin: number, over: Partial<Feasibility
 }
 
 const NOW = CORPUS_EPOCH_MS + 20 * MIN;
+
+/** A DECLARED §4 constraint set, version 1, with the owner's entry policy OFF unless stated. */
+function declared(over: { baggageMode: "CHECKED_THROUGH" | "COLLECT_RECHECK" | "CARRY_ON_ONLY" | "UNKNOWN"; recheckRequired?: boolean | null; airportChangeRequired?: boolean | null }, entryForbidsLandside = false): SessionConstraintContext {
+  return {
+    read: "declared",
+    set: { version: 1, baggageMode: over.baggageMode, recheckRequired: over.recheckRequired ?? null, airportChangeRequired: over.airportChangeRequired ?? null, declaredAt: at(0) },
+    entryForbidsLandside,
+  };
+}
 
 export const LAYOVER_SCENARIOS: readonly LayoverScenario[] = [
   { id: "s01-2h-domestic", source: "§21.1 2h domestic → airport-only (census L219)",
@@ -166,6 +178,25 @@ export const LAYOVER_SCENARIOS: readonly LayoverScenario[] = [
   // 20 minutes is already spent and no change to it can move a decision.
   { id: "s24-3h-domestic-at-touchdown", source: "exit delay charged in full — domestic, clock at arrival",
     airport: GENERIC_TPE, session: session(0, 180, { flightType: "domestic", immigrationRequired: false }), nowMs: CORPUS_EPOCH_MS, entry: PERMITTED },
+  // ── §4 / §6.1 rows that became representable with PR #588 (LAY-01) ──
+  { id: "s25-unknown-baggage", source: "§21.1 Unknown baggage → fail closed if critical (Appendix B.2: 4h45m, baggage mode UNKNOWN)",
+    airport: GENERIC_TPE, session: session(0, 285), nowMs: NOW, entry: PERMITTED,
+    constraints: declared({ baggageMode: "UNKNOWN" }) },
+  { id: "s26-checked-through", source: "Appendix B.2 step 5 — the same session once the bag is confirmed CHECKED_THROUGH",
+    airport: GENERIC_TPE, session: session(0, 285), nowMs: NOW, entry: PERMITTED,
+    constraints: declared({ baggageMode: "CHECKED_THROUGH" }) },
+  { id: "s27-airport-change", source: "§21.1 Airport change → exploration subordinate to transfer (census L224)",
+    airport: GENERIC_TPE, session: session(0, 360), nowMs: NOW, entry: PERMITTED,
+    constraints: declared({ baggageMode: "CARRY_ON_ONLY", airportChangeRequired: true }) },
+  { id: "s28-self-transfer-recheck-declared", source: "§21.1 5h self-transfer → recheck friction included, DECLARED (census L222)",
+    airport: GENERIC_TPE, session: session(0, 300, { checkedBags: true }), nowMs: NOW, entry: PERMITTED,
+    constraints: declared({ baggageMode: "COLLECT_RECHECK", recheckRequired: true }) },
+  { id: "s29-entry-unresolved-policy-on", source: "§21.1 Unknown entry permission → no landside recommendation, with the owner's entry policy ON (census L230)",
+    airport: GENERIC_TPE, session: session(0, 360), nowMs: NOW, entry: UNRESOLVED,
+    constraints: { read: "undeclared", set: null, entryForbidsLandside: true } },
+  { id: "s30-constraints-unreadable", source: "an unreadable constraint store charges the bag as UNKNOWN, never 'no bags' (census L35)",
+    airport: GENERIC_TPE, session: session(0, 360), nowMs: NOW, entry: PERMITTED,
+    constraints: { read: "unreadable", set: null, entryForbidsLandside: false } },
   { id: "s22-hnd-6h", source: "Appendix B.1 — normal 6-hour international layover at HND",
     airport: GENERIC_HND, session: session(0, 360), nowMs: NOW, entry: { ...PERMITTED, corridor: { passportCountry: "US", destinationCountry: "JP" } } },
 ];
@@ -175,8 +206,6 @@ export const LAYOVER_SCENARIOS: readonly LayoverScenario[] = [
  * coverage is a stated fact rather than an inference from what is missing.
  */
 export const UNREPRESENTED_SCENARIOS: readonly { row: string; why: string }[] = [
-  { row: "Airport change", why: "airport_change_required has no input on this tree (census L224; PR #588 adds it)" },
-  { row: "Unknown baggage", why: "checked_bags is a boolean, so UNKNOWN is unrepresentable (census L35/L229; PR #588 adds BaggageMode)" },
   { row: "Flight cancellation", why: "the disruption chain is LayoverSafeReturnService's, not the feasibility record's (census L148)" },
   { row: "Crew mixed departures", why: "the crew solver is LayoverCrewService's, not the feasibility record's (census L133/L232)" },
   { row: "Offline after leaving", why: "a client cache, not an engine decision (census L233)" },
@@ -190,6 +219,7 @@ export function decideScenario(s: LayoverScenario): DecisionRecord {
     entry: s.entry,
     liveConditions: s.liveConditions ?? null,
     landsideProbe: s.landsideProbe ?? null,
+    ...(s.constraints !== undefined ? { constraints: s.constraints } : {}),
   }));
   return decisionRecordFor(sessionId, record);
 }

@@ -67,11 +67,13 @@ describe("the corpus", () => {
   it("covers every §21.1 row the engine can represent and NAMES the rest", () => {
     const sources = LAYOVER_SCENARIOS.map((s) => s.source).join("\n");
     const represented = ["2h domestic", "4h international", "6h visa-free", "self-transfer", "overnight",
-      "arrival delay", "departure delay", "security spike", "traffic spike", "unknown entry permission"];
+      "arrival delay", "departure delay", "security spike", "traffic spike", "unknown entry permission",
+      // representable since PR #588 (LAY-01) added the declared constraint set
+      "airport change", "unknown baggage"];
     for (const row of represented) assert.match(sources, new RegExp(row, "i"), `§21.1 row "${row}" has no scenario`);
     const named = UNREPRESENTED_SCENARIOS.map((u) => u.row);
-    assert.deepEqual(named.sort(), ["Airport change", "Crew mixed departures", "Flight cancellation", "Offline after leaving", "Unknown baggage"]);
-    // 10 represented + 5 named = §21.1's 15 rows; nothing silently dropped.
+    assert.deepEqual(named.sort(), ["Crew mixed departures", "Flight cancellation", "Offline after leaving"]);
+    // 12 represented + 3 named = §21.1's 15 rows; nothing silently dropped.
     assert.equal(represented.length + named.length, 15);
   });
 });
@@ -101,6 +103,24 @@ describe("the corpus pairs hold §21.1's stated invariants", () => {
       ["s06-6h-visa-free", "s17-return-soon", "s23-return-now", "s18-past-hard-return"].map((id) => decide(id).result.returnState),
       ["NORMAL", "RETURN_SOON", "RETURN_NOW", "CONNECTION_AT_RISK"],
     );
+  });
+  it("unknown baggage closes landside; the same session with the bag confirmed through is evaluated (Appendix B.2)", () => {
+    const unknown = decide("s25-unknown-baggage");
+    const through = decide("s26-checked-through");
+    assert.ok(unknown.rulesApplied.includes("gate.baggage_unknown"), JSON.stringify(unknown.rulesApplied));
+    assert.ok(unknown.reasonCodes.includes("BAGGAGE_STATUS_CRITICAL_UNKNOWN"));
+    assert.equal(unknown.result.verdict, "no");
+    assert.ok(!through.rulesApplied.some((r) => r.startsWith("gate.")));
+    assert.notEqual(through.result.verdict, "no");
+  });
+  it("an airport change and an unresolved entry under the owner's policy each close landside", () => {
+    assert.ok(decide("s27-airport-change").rulesApplied.includes("gate.airport_change"));
+    assert.equal(decide("s27-airport-change").result.verdict, "no");
+    assert.ok(decide("s29-entry-unresolved-policy-on").rulesApplied.includes("gate.entry_unconfirmed"));
+    assert.equal(decide("s29-entry-unresolved-policy-on").result.verdict, "no");
+  });
+  it("an unreadable constraint store charges the bag — never 'no bags'", () => {
+    assert.ok(decide("s30-constraints-unreadable").result.totalBufferMin > base.totalBufferMin);
   });
   it("the curated airport model and the generic one answer the same session differently (census L220)", () => {
     assert.notEqual(decide("s04-5h-international-generic").result.verdict, decide("s05-5h-international-curated").result.verdict);
