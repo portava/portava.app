@@ -217,6 +217,7 @@ export const REFUSAL_REASONS = [
   "no_presence_consent",
   "no_availability_consent",
   "stale",
+  "protected_zone",
 ] as const;
 export type RefusalReason = (typeof REFUSAL_REASONS)[number];
 
@@ -350,6 +351,15 @@ export interface ReachablePersonInputs {
    */
   readonly blockStateKnown: boolean;
   readonly personInvisible: InvisibleModeState;
+  /**
+   * §4.3 "Privacy zones can suppress discovery around home, lodging or
+   * user-defined sensitive places" — true when the person's RAW position falls
+   * inside a §24 protected zone. Decided by the query layer, which is the only
+   * layer that ever holds the raw position; this module receives the verdict and
+   * never the coordinate. True withholds the person's position from every
+   * bucket, whatever their consent says.
+   */
+  readonly personInProtectedZone: boolean;
   readonly viewerInvisible: InvisibleModeState;
   /** Affirmative presence consent: the person's effective discovery visibility. */
   readonly personPresenceConsent: boolean;
@@ -410,7 +420,9 @@ export function projectReachablePerson(input: ReachablePersonInputs): Projection
   // reciprocity §4.2 asks for, expressed as arithmetic rather than a rule.
   const viewerPoint = suppressesSurface(input.viewerInvisible, "nearby") ? null : input.viewerPoint;
   const personPoint =
-    input.personPresenceConsent && !nearbySuppressed ? input.personPoint : null;
+    input.personPresenceConsent && !nearbySuppressed && !input.personInProtectedZone
+      ? input.personPoint
+      : null;
   const bucket = proximityBucketBetween(viewerPoint, personPoint);
   const proximityPublished = bucket !== "unknown";
 
@@ -419,6 +431,7 @@ export function projectReachablePerson(input: ReachablePersonInputs): Projection
   // presence surface for no stated reason.
   if (!availabilityPublished && !proximityPublished) {
     if (nearbySuppressed || availabilitySuppressed) return { ok: false, refusal: "invisible" };
+    if (input.personInProtectedZone) return { ok: false, refusal: "protected_zone" };
     return {
       ok: false,
       refusal: input.personPresenceConsent ? "no_availability_consent" : "no_presence_consent",
