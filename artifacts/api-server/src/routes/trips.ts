@@ -25,7 +25,7 @@ import {
 } from "../domain/trips/policies/tripPlanPrivacy.js";
 import { isMissingColumnError } from "../lib/capability/schemaCapability.js";
 import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
-import { toCamel, readPlanItemsInOrder } from "./plan.js"; import { withholdPrivatePlanItems, redactWithheldPlanItem } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, privateItemEditRefusal, clearAnchorGrantsForItem } from "../server/trips/privateAnchorShares.js";
+import { toCamel, readPlanItemsInOrder } from "./plan.js"; import { withholdPrivatePlanItems, redactWithheldPlanItem } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, privateItemEditRefusal, clearAnchorGrantsForItem, clearAnchorGrantsForMember } from "../server/trips/privateAnchorShares.js";
 import { logTripActivity, findTripActivityByKey } from "../domain/trips/events/tripActivityLog.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
@@ -2384,6 +2384,7 @@ router.delete("/trips/:tripId/members/:userId", async (req, res) => {
   const { revokeAccessForMember } = await import("../domain/trips/services/TripCrewLiveShareService.js");
   revokeAccessForMember(client, tripId, userId).catch((e: unknown) => req.log?.error({ err: e }, "revokeAccessForMember failed"));
 
+  { const scClear = getServiceClient(); if (!scClear || !(await clearAnchorGrantsForMember(scClear, tripId, userId))) req.log?.warn?.({ tripId, userId }, "private-anchor grants not cleared for a removed member; the read-time rule still denies them"); } // census-trips §81.3
   res.status(200).json({ status: "removed", tripId, userId });
 });
 

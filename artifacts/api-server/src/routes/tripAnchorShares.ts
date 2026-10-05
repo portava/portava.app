@@ -125,8 +125,29 @@ router.post("/trips/:tripId/anchors/:itemId/shares", asyncHandler(async (req, re
   await answerGrantees(res, g.sc, g.itemId, 201);
 }));
 
+/**
+ * The revoke gate (census-trips §81.3): the caller created the item, and the
+ * item belongs to this trip. NOTHING ELSE can refuse a retraction — not the
+ * item having been made public or removed, not the caller having left the trip,
+ * not the sharing flag. Wave 1 used the grant gate here, so a grant on an item
+ * made public, removed, or owned by someone who had left could not be taken back.
+ */
+async function revokeGate(req: Request, res: Response): Promise<{ sc: Sc; userId: string; tripId: string; itemId: string } | null> {
+  const auth = await requireUser(req, res);
+  if (!auth) return null;
+  const { tripId, itemId } = req.params as { tripId: string; itemId: string };
+  if (!UUID_RE.test(tripId) || !UUID_RE.test(itemId)) { sendError(res, "invalid_payload", "Invalid id"); return null; }
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return null; }
+  const anchor = await readAnchor(sc, itemId);
+  if (!anchor.ok) { sendError(res, "degraded_unavailable", UNREADABLE); return null; }
+  if (!anchor.item || anchor.item.trip_id !== tripId) { sendError(res, "not_found", "That place is not on this trip"); return null; }
+  if (anchor.item.creator_id !== auth.user.id) { sendError(res, "forbidden", "Only the person who added a private place can stop sharing it"); return null; }
+  return { sc, userId: auth.user.id, tripId, itemId };
+}
+
 router.delete("/trips/:tripId/anchors/:itemId/shares/:memberId", asyncHandler(async (req, res) => {
-  const g = await ownerGate(req, res);
+  const g = await revokeGate(req, res);
   if (!g) return;
   const memberId = String(req.params.memberId ?? "");
   if (!UUID_RE.test(memberId)) { sendError(res, "invalid_payload", "Invalid member id"); return; }
