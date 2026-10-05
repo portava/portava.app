@@ -1,4 +1,4 @@
--- Rollback for artifacts/api-server/src/migrations/4091_telegraph_diagnostics_durable_audit.sql
+-- Rollback for artifacts/api-server/src/migrations/3761_telegraph_diagnostics_durable_audit.sql
 --
 -- WHAT THIS DESTROYS: the durable audit rows of Telegraph diagnostics reads, if
 -- any were written — a re-added five-value CHECK would refuse them, so they are
@@ -29,7 +29,7 @@ DELETE FROM public.feature_flags
 DO $$
 BEGIN
   IF to_regclass('public.schema_migration_ledger') IS NOT NULL THEN
-    DELETE FROM public.schema_migration_ledger WHERE filename = '4091_telegraph_diagnostics_durable_audit.sql';
+    DELETE FROM public.schema_migration_ledger WHERE filename = '3761_telegraph_diagnostics_durable_audit.sql';
   END IF;
 END $$;
 

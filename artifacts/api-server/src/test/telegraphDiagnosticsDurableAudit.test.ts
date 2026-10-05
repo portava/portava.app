@@ -3,7 +3,7 @@
  *
  * The ceiling the census recorded: the audit of GET /api/telegraph/diagnostics
  * was a structured log line, because admin_access_log's record_type CHECK had no
- * value for it. Migration 4091 adds 'telegraph_diagnostics' behind
+ * value for it. Migration 3761 adds 'telegraph_diagnostics' behind
  * telegraph_diagnostics_durable_audit_enabled (seeded FALSE). This suite drives
  * the real route through the real requireAdmin:
  *
@@ -13,7 +13,7 @@
  *   - flag ON and the row cannot be written: the read is REFUSED (503), the
  *     payload never leaves the server;
  *   - flag OFF (the seed): served with the log line only, no row, exactly as
- *     before 4091 — a database without the value is never asked to store it;
+ *     before 3761 — a database without the value is never asked to store it;
  *   - the purpose gate still runs first: no purpose, no row and no read.
  *
  * SHOWN RED (T2 lane report): the insert's error branch dropped turns the
@@ -80,7 +80,7 @@ describe("§30A.17 — the durable audit of the support tooling (T435)", () => {
     assert.equal("slos" in body, false, "diagnostics leaked past a failed audit");
   });
 
-  it("flag OFF (the seed): served with the log line only — no row is asked of a database without 4091", async () => {
+  it("flag OFF (the seed): served with the log line only — no row is asked of a database without 3761", async () => {
     const c = use(seed(false));
     const r = await read(PURPOSE);
     assert.equal(r.status, 200);

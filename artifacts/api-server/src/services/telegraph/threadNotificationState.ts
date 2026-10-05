@@ -4,7 +4,7 @@
  * this module only establishes the facts, and never presents a failed read as one.
  *
  * ── THE COLUMNS ARE NEVER NAMED WITHOUT THE FLAG ────────────────────────────
- * `notification_level` and `muted_until` exist only where migration 4090 is
+ * `notification_level` and `muted_until` exist only where migration 3760 is
  * applied. PostgREST answers an unknown column with 42703 and fails the WHOLE
  * statement, so with telegraph_thread_notification_policy_enabled OFF (the seed)
  * every select and update here names `muted_at` only — which every database has

@@ -2,7 +2,7 @@
  * Telegraph §30A.6 — the per-thread notification choice.
  *
  * Offers ONLY what the server says this deployment can store: on a database
- * without migration 4090 that is All and Muted; with it and its flag on, also
+ * without migration 3760 that is All and Muted; with it and its flag on, also
  * Mentions only, Important only and a temporary mute. Every state is honest:
  *   - loading: a spinner, no choices;
  *   - a failed read: the reason and Try again, and NO choices — offering

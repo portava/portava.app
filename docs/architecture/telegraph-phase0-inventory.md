@@ -73,7 +73,7 @@ touch no messaging table.
 - `src/migrations/2989_messages_audio_media_type.sql`
 - `src/migrations/2991_message_translations_confidence.sql`
 - `src/migrations/3000_telegraph_unsend_authoritative.sql`
-- `src/migrations/4090_telegraph_thread_notification_policy.sql`
+- `src/migrations/3760_telegraph_thread_notification_policy.sql`
 
 ### 3. Server routes that read or write a messaging table
 

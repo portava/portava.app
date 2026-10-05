@@ -1,4 +1,4 @@
--- Rollback for artifacts/api-server/src/migrations/4090_telegraph_thread_notification_policy.sql
+-- Rollback for artifacts/api-server/src/migrations/3760_telegraph_thread_notification_policy.sql
 -- Telegraph §30A.6 — per-thread notification levels and temporary mute.
 --
 -- ══════════════════════════════════════════════════════════════════════════════
@@ -40,7 +40,7 @@ DELETE FROM public.feature_flags
 DO $$
 BEGIN
   IF to_regclass('public.schema_migration_ledger') IS NOT NULL THEN
-    DELETE FROM public.schema_migration_ledger WHERE filename = '4090_telegraph_thread_notification_policy.sql';
+    DELETE FROM public.schema_migration_ledger WHERE filename = '3760_telegraph_thread_notification_policy.sql';
   END IF;
 END $$;
 
@@ -52,7 +52,7 @@ BEGIN
      WHERE table_schema='public' AND table_name='message_thread_members'
        AND column_name IN ('notification_level','muted_until')
   ) THEN
-    RAISE EXCEPTION 'ROLLBACK POSTCONDITION FAILED: a 4090 column is still present on message_thread_members.';
+    RAISE EXCEPTION 'ROLLBACK POSTCONDITION FAILED: a 3760 column is still present on message_thread_members.';
   END IF;
 END $$;
 

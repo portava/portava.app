@@ -11,7 +11,7 @@
  *      muted the thread (muted_at — every database has it, no flag) is no longer
  *      sent an @mention notification; the unmuted control still is; and an
  *      unreadable member state withholds rather than delivers.
- *   3. With migration 4090's columns and the flag ON: MENTIONS and IMPORTANT
+ *   3. With migration 3760's columns and the flag ON: MENTIONS and IMPORTANT
  *      deliver a mention; a temporary mute in force withholds it.
  *   4. The real GET/PUT /threads/:id/notification-policy: flag OFF stores
  *      MUTED/ALL through muted_at and REFUSES MENTIONS / IMPORTANT / a temporary
@@ -211,7 +211,7 @@ describe("§30A.6 on the live mention path (no migration, no flag)", () => {
   });
 });
 
-describe("§30A.6 with migration 4090's columns and the flag ON", () => {
+describe("§30A.6 with migration 3760's columns and the flag ON", () => {
   const ON = [{ flag: THREAD_NOTIFICATION_POLICY_FLAG, enabled: true }];
   for (const level of ["mentions", "important"]) {
     it(`level ${level.toUpperCase()} still delivers a mention`, async () => {
@@ -245,7 +245,7 @@ describe("GET/PUT /threads/:id/notification-policy", () => {
     const bobRow = (c._store.message_thread_members as Array<Record<string, unknown>>).find((r) => r.user_id === BOB)!;
     assert.ok(typeof bobRow.muted_at === "string", "muted_at was written");
     assert.ok(!("notification_level" in bobRow) || bobRow.notification_level === undefined,
-      "with the flag off the 4090 column is never named");
+      "with the flag off the 3760 column is never named");
     const all = await putReq(BOB, { level: "ALL" });
     assert.equal(all.body.level, "ALL");
     assert.equal(bobRow.muted_at, null);

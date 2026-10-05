@@ -43,12 +43,12 @@
  * than the clause asks for. Both halves of that are recorded here rather than
  * one.
  *
- * MOVED 2026-10-05 (lane T2, census T435): migration 4091 adds
+ * MOVED 2026-10-05 (lane T2, census T435): migration 3761 adds
  * 'telegraph_diagnostics' to that CHECK, behind
  * telegraph_diagnostics_durable_audit_enabled (seeded FALSE). With it on, the
  * audit is a durable admin_access_log row written BEFORE anything is served,
  * and a row that cannot be written refuses the read. With it off — and on every
- * database that does not have 4091 — the log line above is still the audit.
+ * database that does not have 3761 — the log line above is still the audit.
  */
 
 import { Router, type IRouter } from "express";
@@ -65,7 +65,7 @@ import { BOOT_HRTIME } from "../lib/bootTime.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 
 /**
- * census T435 — the durable half of gate 3, behind migration 4091. ON: the read
+ * census T435 — the durable half of gate 3, behind migration 3761. ON: the read
  * is served only after its admin_access_log row is written; a row that cannot
  * be written refuses the read. OFF (the seed): the log line below, as before.
  */
@@ -93,7 +93,7 @@ router.get("/telegraph/diagnostics", asyncHandler(async (req, res) => {
     return;
   }
 
-  // census T435: with 4091 applied and its flag on, the audit is a DURABLE row,
+  // census T435: with 3761 applied and its flag on, the audit is a DURABLE row,
   // written before anything is served. An unaudited read of the support
   // tooling is what §30A.17 rules out, so a row that cannot be written refuses
   // the read rather than serving it with only a log line.

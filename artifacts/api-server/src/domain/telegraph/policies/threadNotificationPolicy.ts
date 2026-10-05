@@ -72,7 +72,7 @@ export function isThreadNotificationLevel(v: unknown): v is ThreadNotificationLe
   return typeof v === "string" && (THREAD_NOTIFICATION_LEVELS as readonly string[]).includes(v);
 }
 
-/** The stored literal (lower case, migration 4090's CHECK) ↔ the spec's name. */
+/** The stored literal (lower case, migration 3760's CHECK) ↔ the spec's name. */
 export function levelFromColumn(v: unknown): ThreadNotificationLevel | null {
   if (typeof v !== "string") return null;
   const up = v.toUpperCase();

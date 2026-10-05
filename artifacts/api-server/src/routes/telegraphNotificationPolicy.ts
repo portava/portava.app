@@ -4,7 +4,7 @@
  *   GET /api/threads/:threadId/notification-policy
  *       The caller's level, any temporary mute in force, and which choices this
  *       deployment can store (MENTIONS / IMPORTANT / temporary mute need
- *       migration 4090 and telegraph_thread_notification_policy_enabled).
+ *       migration 3760 and telegraph_thread_notification_policy_enabled).
  *   PUT /api/threads/:threadId/notification-policy   { level, muteForMinutes? }
  *       Set it. The answer is READ BACK from the database.
  *

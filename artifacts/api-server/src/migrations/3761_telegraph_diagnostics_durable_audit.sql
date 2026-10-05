@@ -1,6 +1,6 @@
--- 4091_telegraph_diagnostics_durable_audit.sql
+-- 3761_telegraph_diagnostics_durable_audit.sql
 -- Telegraph §30A.17 — the internal support tooling's audit becomes a DURABLE row.
--- POST-CUTOVER CANONICAL FORWARD MIGRATION. Lane T2 band 4090-4119.
+-- POST-CUTOVER CANONICAL FORWARD MIGRATION. Lane T2 band 3760-3779.
 --
 -- Spec §30A.17, verbatim:
 --   "Internal support tooling should expose delivery and projection diagnostics,
@@ -32,7 +32,7 @@
 -- No table, no column, no grant. The row carries no private content: record_id
 -- is the literal 'snapshot', reason is the admin's stated purpose.
 --
--- ROLLBACK: db/rollback/2026-10-05-4091-telegraph-diagnostics-durable-audit-rollback.sql
+-- ROLLBACK: db/rollback/2026-10-05-3761-telegraph-diagnostics-durable-audit-rollback.sql
 
 BEGIN;
 

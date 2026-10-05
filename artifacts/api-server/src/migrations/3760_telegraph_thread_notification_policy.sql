@@ -1,8 +1,8 @@
--- 4090_telegraph_thread_notification_policy.sql
+-- 3760_telegraph_thread_notification_policy.sql
 -- Telegraph §30A.6 — per-thread notification policy: ALL / MENTIONS / IMPORTANT /
 -- temporary mute / MUTED, with safety-critical delivery governed by the safety
 -- policy rather than by ordinary mute.
--- POST-CUTOVER CANONICAL FORWARD MIGRATION. Lane T2 band 4090-4119.
+-- POST-CUTOVER CANONICAL FORWARD MIGRATION. Lane T2 band 3760-3779.
 --
 -- Spec §30A.6, verbatim:
 --   "Thread notification policy may support ALL, MENTIONS, IMPORTANT, temporary
@@ -47,7 +47,7 @@
 -- No table is created, no row is written, no grant changes. Columns on an
 -- existing table inherit its RLS and grants unchanged.
 --
--- ROLLBACK: db/rollback/2026-10-05-4090-telegraph-thread-notification-policy-rollback.sql
+-- ROLLBACK: db/rollback/2026-10-05-3760-telegraph-thread-notification-policy-rollback.sql
 
 BEGIN;
 
