@@ -145,7 +145,7 @@ below, reviewed as such, one at a time.
 | `src/services/appeals/resolveAppeal.ts` | executeTripCommand | `UPDATE_TRIP` |
 | `src/services/hiddenGems/HiddenGemService.ts` | executeTripCommand | `ADD_PLAN` |
 
-### Direct write paths around the kernel — 81
+### Direct write paths around the kernel — 82
 
 | file | table | verb |
 | --- | --- | --- |
@@ -226,6 +226,7 @@ below, reviewed as such, one at a time.
 | `src/routes/trips.ts` | `trip_members` | delete |
 | `src/routes/trips.ts` | `trip_plan_items` | insert |
 | `src/routes/trips.ts` | `trip_plan_items` | update |
+| `src/server/trips/privateAnchorShares.ts` | `trip_private_anchor_shares` | delete |
 | `src/server/trips/projectionWorkers/tripReminderScheduler.ts` | `trips` | update |
 | `src/services/appeals/resolveAppeal.ts` | `trip_members` | update |
 | `src/services/appeals/resolveAppeal.ts` | `trips` | update |

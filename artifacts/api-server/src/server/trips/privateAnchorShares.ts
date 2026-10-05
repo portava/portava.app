@@ -188,20 +188,33 @@ export async function clearAnchorGrantsForItem(sc: SupabaseClient, planItemId: s
 }
 
 /**
- * Editing another member's private item would read it back and could flip it
- * public, so it is the creator's alone — the trip's organizer included
- * (OD-TRIP-3: "trip membership or organizer status alone does not grant
- * access"). Returns the refusal to send, or null to proceed. An unreadable item
- * refuses (503) rather than letting the edit through blind.
+ * Fields that locate, name or un-privatise a plan item. On another member's
+ * private item, only its creator may change them: the organizer's edit would
+ * read the place back, or flip it public (OD-TRIP-3: "trip membership or
+ * organizer status alone does not grant access"). The rest — status, time,
+ * order — stays editable by whoever the trip's plan rules allow, and the answer
+ * they receive is the withheld slot.
+ */
+export const PRIVATE_ITEM_CREATOR_ONLY_FIELDS: ReadonlySet<string> = new Set([
+  "location_is_private", "lat", "lng", "location_name", "title", "notes", "description", "place_id", "source_id",
+]);
+
+/**
+ * Returns the refusal to send, or null to proceed (with `withheld` telling the
+ * caller to redact its answer). An unreadable item refuses (503) rather than
+ * letting the edit through blind.
  */
 export async function privateItemEditRefusal(
-  sc: SupabaseClient, tripId: string, itemId: string, userId: string,
-): Promise<null | { code: "forbidden" | "degraded_unavailable"; message: string }> {
+  sc: SupabaseClient, tripId: string, itemId: string, userId: string, patchKeys: readonly string[],
+): Promise<{ refusal: null | { code: "forbidden" | "degraded_unavailable"; message: string }; withheld: boolean }> {
   const { data, error } = await sc.from("trip_plan_items").select("trip_id, creator_id, location_is_private").eq("id", itemId).maybeSingle();
-  if (error) return { code: "degraded_unavailable", message: "We could not check this plan item right now. Please try again shortly." };
+  if (error) return { refusal: { code: "degraded_unavailable", message: "We could not check this plan item right now. Please try again shortly." }, withheld: true };
   const row = data as { trip_id?: string; creator_id?: string | null; location_is_private?: boolean | null } | null;
-  if (!row || row.trip_id !== tripId) return null; // the caller's own not-found handling answers
-  if (row.location_is_private === false) return null;
-  if (row.creator_id === userId) return null;
-  return { code: "forbidden", message: "Only the person who added a private place can change it" };
+  if (!row || row.trip_id !== tripId) return { refusal: null, withheld: false }; // the caller's own not-found handling answers
+  if (row.location_is_private === false || row.creator_id === userId) return { refusal: null, withheld: false };
+  const touched = patchKeys.filter((k) => PRIVATE_ITEM_CREATOR_ONLY_FIELDS.has(k));
+  if (touched.length > 0) {
+    return { refusal: { code: "forbidden", message: `Only the person who added a private place can change its ${touched.join(", ")}` }, withheld: true };
+  }
+  return { refusal: null, withheld: true };
 }

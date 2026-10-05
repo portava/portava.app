@@ -25,7 +25,7 @@ import {
 } from "../domain/trips/policies/tripPlanPrivacy.js";
 import { isMissingColumnError } from "../lib/capability/schemaCapability.js";
 import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
-import { toCamel, readPlanItemsInOrder } from "./plan.js"; import { withholdPrivatePlanItems } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, privateItemEditRefusal, clearAnchorGrantsForItem } from "../server/trips/privateAnchorShares.js";
+import { toCamel, readPlanItemsInOrder } from "./plan.js"; import { withholdPrivatePlanItems, redactWithheldPlanItem } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, privateItemEditRefusal, clearAnchorGrantsForItem } from "../server/trips/privateAnchorShares.js";
 import { logTripActivity, findTripActivityByKey } from "../domain/trips/events/tripActivityLog.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
@@ -1985,10 +1985,6 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
 
   const auth = await canEditPlanItem(client, tripId, itemId, user.id);
   if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
-  // census-trips §81: another member's private item is theirs to change — the organizer's edit would read it back, or flip it public.
-  const privateRefusal = await privateItemEditRefusal(getServiceClient() ?? client, tripId, itemId, user.id);
-  if (privateRefusal) { sendError(res, privateRefusal.code, privateRefusal.message); return; }
-
   const dbPatch: Record<string, any> = { updated_at: new Date().toISOString() };
   if (patch.title             !== undefined) dbPatch.title               = patch.title;
   if (patch.category          !== undefined) dbPatch.category            = patch.category;
@@ -2016,6 +2012,12 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
     dbPatch.visibility    = visibilityForPrivacyScope(patch.privacyScope);
   }
 
+  // census-trips §81: on another member's private item, the fields that locate or name it are its creator's alone,
+  // and whatever this caller may change, the answer they get back is the withheld slot.
+  const privateEdit = await privateItemEditRefusal(getServiceClient() ?? client, tripId, itemId, user.id, Object.keys(dbPatch));
+  if (privateEdit.refusal) { sendError(res, privateEdit.refusal.code, privateEdit.refusal.message); return; }
+  const answer = (row: any) => toCamel(privateEdit.withheld ? redactWithheldPlanItem(row) : row);
+
   // Trip Kernel path (§3.3: a status change is a command, not a column write).
   // The command type is derived from the patch; the kernel refuses a transition
   // out of `done` / `cancelled` and writes state + event atomically.
@@ -2038,7 +2040,7 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
     recordOpportunityCompletion(planCommandTypeForPatch(patch), r.result, tripId, r.duplicate);
     setTripVersionHeader(res, r.version);
     if ((r.result as any)?.location_is_private === false) await clearGrantsOnItem(tripId, itemId, req); // §81.3
-    res.json(toCamel(r.result));
+    res.json(answer(r.result));
     return;
   }
 
@@ -2066,7 +2068,7 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
     if (seen && (seen.metadata as any)?.item_id === itemId) {
       const { data: current, error: curErr } = await client.from("trip_plan_items").select("*").eq("id", itemId).maybeSingle();
       if (curErr) { sendError(res, "db_error", curErr.message); return; }
-      if (current) { res.json(toCamel(current)); return; }
+      if (current) { res.json(answer(current)); return; }
     }
   }
 
@@ -2101,7 +2103,7 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
   });
 
   if ((updated as any)?.location_is_private === false) await clearGrantsOnItem(tripId, itemId, req); // §81.3: an item made public keeps no grants that would revive if it went private again
-  res.json(toCamel(updated));
+  res.json(answer(updated));
 });
 
 // ── PATCH /trips/:tripId/plan/items/:itemId/remove — soft-delete ──────────────

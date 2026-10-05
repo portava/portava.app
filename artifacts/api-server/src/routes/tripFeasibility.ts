@@ -99,6 +99,8 @@ import { tripOperationalProjectionsGate, describeOperationalGate, refusalForGate
 import { canEditTrip } from "../domain/trips/policies/tripPolicy.js";
 import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
 import { z } from "zod";
+import { withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS, ownerOnlyAccess } from "../domain/trips/policies/privateAnchorAccess.js";
+import { planItemAccessFor } from "../server/trips/privateAnchorShares.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripFeasibility" });
@@ -351,7 +353,7 @@ router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
   // apart, and §7.4 is not exempt.
   const { data: planData, error: planErr } = await sc
     .from("trip_plan_items")
-    .select("id, stage_id, starts_at, day_date, location_name, place_id, lat, lng")
+    .select(`id, stage_id, starts_at, day_date, location_name, place_id, lat, lng, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
     .eq("trip_id", tripId)
     .is("removed_at", null);
   if (planErr) {
@@ -385,7 +387,8 @@ router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
     return;
   }
 
-  const planRows: PlanForConsistency[] = ((planData ?? []) as any[]).map((p) => ({
+  // census-trips §81: another member's private place has no place or point here, so no distance to it is reported.
+  const planRows: PlanForConsistency[] = withholdPrivatePlanItems((planData ?? []) as any[], await planItemAccessFor(sc, tripId, user.id)).map((p) => ({
     id: p.id,
     stageId: p.stage_id ?? null,
     startsAt: p.starts_at ?? null,

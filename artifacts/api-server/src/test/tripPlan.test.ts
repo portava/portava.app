@@ -302,7 +302,7 @@ function stateWithItem(creatorId: string): State {
     source_type: "manual", source_id: null,
     day_date: null, starts_at: null, ends_at: null,
     location_name: null, notes: null,
-    sort_order: 0, visibility: "members", removed_at: null,
+    sort_order: 0, visibility: "members", removed_at: null, location_is_private: false,
     created_at: "2026-06-01T00:00:00Z", updated_at: "2026-06-01T00:00:00Z",
   });
   return s;
@@ -393,7 +393,7 @@ describe("PATCH /api/trips/:tripId/plan/items/:itemId — edit", () => {
       title: "Bob item", category: "activity", status: "tentative",
       source_type: "manual", source_id: null, day_date: null,
       starts_at: null, ends_at: null, location_name: null, notes: null,
-      sort_order: 0, visibility: "members", removed_at: null,
+      sort_order: 0, visibility: "members", removed_at: null, location_is_private: false,
       created_at: "2026-06-01T00:00:00Z", updated_at: "2026-06-01T00:00:00Z",
     });
     const { port, close } = await startServer(s);
@@ -431,7 +431,7 @@ describe("PATCH /remove — soft-delete", () => {
       title: "Meetup item", category: "meeting_point", status: "tentative",
       source_type: "meetup", source_id: MEETUP_ID, day_date: null,
       starts_at: null, ends_at: null, location_name: null, notes: null,
-      sort_order: 0, visibility: "members", removed_at: null,
+      sort_order: 0, visibility: "members", removed_at: null, location_is_private: false,
       created_at: "2026-06-01T00:00:00Z", updated_at: "2026-06-01T00:00:00Z",
     });
     const { port, close } = await startServer(s);
@@ -493,7 +493,7 @@ describe("GET /plan — GPS privacy", () => {
       source_type: "place", source_id: PLACE_ID,
       day_date: null, starts_at: null, ends_at: null,
       location_name: "Banilad, Cebu", notes: null,
-      sort_order: 0, visibility: "members", removed_at: null,
+      sort_order: 0, visibility: "members", removed_at: null, location_is_private: false,
       created_at: "2026-06-01T00:00:00Z", updated_at: "2026-06-01T00:00:00Z",
       // These should NOT appear in the response
       approximate_lat: 10.32,
@@ -769,7 +769,7 @@ describe("DELETE /api/trips/:tripId/plan/items/:itemId — permissions", () => {
       title: "Bob item", category: "activity", status: "tentative",
       source_type: "manual", source_id: null, day_date: null,
       starts_at: null, ends_at: null, location_name: null, notes: null,
-      sort_order: 0, visibility: "members", removed_at: null,
+      sort_order: 0, visibility: "members", removed_at: null, location_is_private: false,
       created_at: "2026-06-01T00:00:00Z", updated_at: "2026-06-01T00:00:00Z",
     });
     const { port, close } = await startServer(s);
@@ -807,7 +807,7 @@ describe("PATCH /remove — additional permission scenarios", () => {
       title: "Bob item", category: "activity", status: "tentative",
       source_type: "manual", source_id: null, day_date: null,
       starts_at: null, ends_at: null, location_name: null, notes: null,
-      sort_order: 0, visibility: "members", removed_at: null,
+      sort_order: 0, visibility: "members", removed_at: null, location_is_private: false,
       created_at: "2026-06-01T00:00:00Z", updated_at: "2026-06-01T00:00:00Z",
     });
     const { port, close } = await startServer(s);
@@ -860,7 +860,7 @@ describe("Invited member blocked from plan mutations", () => {
       title: "Existing item", category: "activity", status: "tentative",
       source_type: "manual", source_id: null, day_date: null,
       starts_at: null, ends_at: null, location_name: null, notes: null,
-      sort_order: 0, visibility: "members", removed_at: null,
+      sort_order: 0, visibility: "members", removed_at: null, location_is_private: false,
       created_at: "2026-06-01T00:00:00Z", updated_at: "2026-06-01T00:00:00Z",
     });
     return s;
@@ -926,7 +926,7 @@ describe("the plan-item PATCH's flag-off twin is held to §3.3: refused arrows, 
       title: "Museum", category: "activity", status,
       source_type: "manual", source_id: null, day_date: "2026-07-10",
       starts_at: null, ends_at: null, location_name: null, notes: null,
-      sort_order: 0, visibility: "members", removed_at: null,
+      sort_order: 0, visibility: "members", removed_at: null, location_is_private: false,
       created_at: "2026-06-01T00:00:00Z", updated_at: "2026-06-01T00:00:00Z",
     });
     return s;

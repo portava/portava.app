@@ -26,6 +26,8 @@ import {
   type ComputedArea,
   type AreaPreferences,
 } from "../lib/neighborhoodMatch.js";
+import { canSeePlanItemLocation, PLAN_ITEM_PRIVACY_COLUMNS } from "../domain/trips/policies/privateAnchorAccess.js";
+import { planItemAccessFor } from "../server/trips/privateAnchorShares.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f-]{36}$/i;
@@ -350,11 +352,14 @@ router.post("/trips/:tripId/location-check", asyncHandler(async (req, res) => {
   try {
     const { data: planItems, error: planErr } = await sc
       .from("trip_plan_items")
-      .select("lat, lng, removed_at")
+      .select(`id, lat, lng, removed_at, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
       .eq("trip_id", tripId);
     if (!planErr) {
+      // census-trips §81: another member's private place is not part of this viewer's centre of gravity.
+      const access = await planItemAccessFor(sc, tripId, user.id);
       for (const it of (planItems as any[]) ?? []) {
         if (it.removed_at != null) continue;
+        if (!canSeePlanItemLocation(access, it)) continue;
         if (Number.isFinite(it.lat) && Number.isFinite(it.lng)) {
           points.push({ lat: it.lat, lng: it.lng });
         }

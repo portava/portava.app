@@ -68,6 +68,8 @@ import type { RoutineSummary } from "../invariants/TripRecurrence.js";
 import type { PhaseDecision } from "../services/TripOperationalPhase.js";
 import type { HealthReason, TripHealthLevel } from "../services/TripHealth.js";
 import { recordTripDecision, persistTripDecision, TRIP_ENGINE_VERSIONS } from "../services/TripDecisionLedger.js";
+import { withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS } from "../policies/privateAnchorAccess.js";
+import { planItemAccessFor } from "../../../server/trips/privateAnchorShares.js";
 
 const log = logger.child({ mod: "tripTodayProjection" });
 
@@ -297,14 +299,15 @@ export async function buildTripTodayProjection(
 
   const { data: items, error: iErr } = await sc
     .from("trip_plan_items")
-    .select("id, title, category, status, starts_at, ends_at, day_date, location_name")
+    .select(`id, title, category, status, starts_at, ends_at, day_date, location_name, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
     .eq("trip_id", tripId)
     .is("removed_at", null);
   if (iErr) {
     log.warn({ err: iErr.message, tripId }, "today: trip_plan_items unreadable — refusing");
     return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: "The plan could not be read" };
   }
-  const active = ((items ?? []) as any[]).find((p) => p.id === health.phase.evidence.activePlanId) ?? null;
+  const visibleItems = withholdPrivatePlanItems((items ?? []) as any[], await planItemAccessFor(sc, tripId, viewerId)); // census-trips §81: a slot, not a place
+  const active = visibleItems.find((p) => p.id === health.phase.evidence.activePlanId) ?? null;
   const currentPlan: TodayCurrentPlan | null = active ? {
     id: String(active.id), title: active.title ?? null, category: active.category ?? null, status: active.status ?? null,
     startsAt: active.starts_at ?? null, endsAt: active.ends_at ?? null, locationName: active.location_name ?? null,
@@ -406,7 +409,7 @@ export async function buildTripTodayProjection(
   // widest honest answer — and says so in `unreadSources`, rather than
   // refusing a whole day's projection over an optional refinement or silently
   // reporting that no one is going.
-  const planIds = ((items ?? []) as any[]).map((p) => String(p.id));
+  const planIds = visibleItems.map((p) => String(p.id));
   const attendanceByPlan = new Map<string, string[]>();
   let attendanceUnread = false;
   if (planIds.length > 0) {
@@ -443,7 +446,7 @@ export async function buildTripTodayProjection(
         participantIds: acceptedCrewIds,
       };
     }),
-    plans: ((items ?? []) as any[]).map((p) => {
+    plans: visibleItems.map((p) => {
       const attending = attendanceByPlan.get(String(p.id)) ?? null;
       return {
         id: String(p.id), title: p.title ?? null, startsAt: p.starts_at ?? null, endsAt: p.ends_at ?? null,

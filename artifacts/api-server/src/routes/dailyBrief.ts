@@ -43,6 +43,9 @@ import { defaultExplicit, defaultInferred } from "../lib/preferenceLearning.js";
 import { getWeatherContext, type WeatherContext, type DailyWeather } from "../lib/weatherCache.js";
 import { getLocalContext, type LocalContext } from "../lib/localContext.js";
 import { getEventsNearDestination, type EventsContext } from "../lib/eventsCache.js";
+import { withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS, ownerOnlyAccess, canSeePlanItemLocation } from "../domain/trips/policies/privateAnchorAccess.js";
+import { planItemAccessFor } from "../server/trips/privateAnchorShares.js";
+import { getServiceClient } from "../lib/supabase.js";
 
 const router = Router();
 
@@ -607,11 +610,12 @@ function formatGapDayLabel(dateStr: string): string {
 
 /* ── Plan + meetup fetch ─────────────────────────────────────────────────── */
 
-export async function fetchBriefData(client: any, tripId: string) {
+/** `viewerId`: the person the brief is FOR (census-trips §81). Absent = nobody's private places. */
+export async function fetchBriefData(client: any, tripId: string, viewerId?: string | null) {
   const [planResult, meetupsResult] = await Promise.all([
     client
       .from("trip_plan_items")
-      .select("id,title,starts_at,ends_at,category,status,location_name,day_date")
+      .select(`id,title,starts_at,ends_at,category,status,location_name,day_date,${PLAN_ITEM_PRIVACY_COLUMNS.replace(/ /g, "")}`)
       .eq("trip_id", tripId)
       .is("removed_at", null),
     client
@@ -640,7 +644,7 @@ export async function fetchBriefData(client: any, tripId: string) {
   }
 
   return {
-    planItems: planResult.data ?? [],
+    planItems: withholdPrivatePlanItems(planResult.data ?? [], viewerId && getServiceClient() ? await planItemAccessFor(getServiceClient()!, tripId, viewerId) : ownerOnlyAccess(viewerId ?? "")), // census-trips §81
     meetups: meetups.map((m: any) => ({ ...m, attendee_count: countByMeetup.get(m.id) ?? 0 })),
   };
 }
@@ -733,7 +737,7 @@ async function buildBriefContext(
 
   const now = new Date();
   const [{ planItems, meetups }, preferenceProfile, upcomingMeetups24h, weatherContext, localContext, eventsContext] = await Promise.all([
-    fetchBriefData(client, activeTripId),
+    fetchBriefData(client, activeTripId, userId),
     getPreferenceProfile(client, userId),
     fetchUpcomingMeetups24h(client, userId, activeTripId, now),
     destination ? getWeatherContext(destination, date, capForecastEnd(date, activeTrip.endDate, 7)) : Promise.resolve(null),

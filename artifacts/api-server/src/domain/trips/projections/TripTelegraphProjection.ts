@@ -38,6 +38,8 @@ import { logger } from "../../../lib/logger.js";
 import { liveEnvelope, type TripProjectionEnvelope } from "../contracts/TripProjectionEnvelope.js";
 import { ok, unread, type Layer } from "./TripMapProjection.js";
 import { readTripAttention } from "../policies/TripAttentionFilter.js";
+import { withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS, ownerOnlyAccess, canSeePlanItemLocation } from "../policies/privateAnchorAccess.js";
+import { planItemAccessFor } from "../../../server/trips/privateAnchorShares.js";
 
 const log = logger.child({ mod: "tripTelegraphProjection" });
 
@@ -155,7 +157,7 @@ export async function buildTripTelegraphProjection(
 
   const { data: items, error: iErr } = await sc
     .from("trip_plan_items")
-    .select("id, title, category, status, starts_at, ends_at, location_name")
+    .select(`id, title, category, status, starts_at, ends_at, location_name, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
     .eq("trip_id", tripId)
     .is("removed_at", null);
   let currentPlan: TelegraphPlanItem | null = null;
@@ -164,7 +166,7 @@ export async function buildTripTelegraphProjection(
     log.warn({ err: iErr.message, tripId }, "telegraph context: plan unreadable — refusing");
     return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: "The plan could not be read" };
   }
-  const plan = ((items ?? []) as any[])
+  const plan = withholdPrivatePlanItems((items ?? []) as any[], await planItemAccessFor(sc, tripId, viewerId)) // census-trips §81
     .filter((p) => p.status !== "cancelled" && p.status !== "removed")
     .map((p): TelegraphPlanItem => ({
       id: String(p.id), title: p.title ?? null, category: p.category ?? null, status: p.status ?? null,

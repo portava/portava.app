@@ -37,7 +37,7 @@ const TRIP_ID   = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const NOW = new Date("2026-09-13T09:00:00.000Z");
 const A = "cccccccc-cccc-cccc-cccc-ccccccccccc1"; const B = "cccccccc-cccc-cccc-cccc-ccccccccccc2";
 const C = "cccccccc-cccc-cccc-cccc-ccccccccccc3"; const D = "cccccccc-cccc-cccc-cccc-ccccccccccc4";
-const item = (id: string, o: Record<string, any>) => ({ id, trip_id: TRIP_ID, title: id, category: "activity", status: "planned", starts_at: null, ends_at: null, day_date: "2026-09-13", lat: null, lng: null, location_name: null, removed_at: null, ...o });
+const item = (id: string, o: Record<string, any>) => ({ id, trip_id: TRIP_ID, title: id, category: "activity", status: "planned", starts_at: null, ends_at: null, day_date: "2026-09-13", lat: null, lng: null, location_name: null, removed_at: null, location_is_private: false, ...o });
 
 function tables(opts: { gate?: boolean; segment?: boolean } = {}) {
   const t = base();

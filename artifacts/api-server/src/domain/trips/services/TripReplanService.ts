@@ -15,6 +15,8 @@ import { looksWeatherSensitive } from "./TripSignals.js";
 import { findMeetingPoint, type MeetingPointResult, type MeetingCandidate } from "./TripMeetingPoint.js";
 import { getCrewMap, CrewMapUnavailableError } from "./TripCrewLocationService.js";
 import { isFlagEnabled } from "../../../lib/featureFlags.js";
+import { withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS, ownerOnlyAccess } from "../policies/privateAnchorAccess.js";
+import { planItemAccessFor } from "../../../server/trips/privateAnchorShares.js";
 
 export type ReplanResult =
   | { ok: true; day: string; diff: ReplanDiff; sourceTripVersion: number | null; unread: string[] }
@@ -23,7 +25,7 @@ export type ReplanResult =
 export async function computeReplan(sc: any, tripId: string, userId: string, opts: { day?: string | null; constraints?: ReplanConstraints; now?: Date } = {}): Promise<ReplanResult> {
   const now = opts.now ?? new Date();
   const day = opts.day && /^\d{4}-\d{2}-\d{2}$/.test(opts.day) ? opts.day : now.toISOString().slice(0, 10);
-  const loaded = await loadImpactState(sc, tripId, { now });
+  const loaded = await loadImpactState(sc, tripId, { now, viewerId: userId });
   if (!loaded.ok) return { ok: false, reason: loaded.reason, message: loaded.message };
   const freedom = await buildTripFreedomProjection(sc, tripId, { now });
   if (!freedom.ok) return { ok: false, reason: freedom.reason, message: freedom.message };
@@ -53,7 +55,7 @@ export type MeetingPointComputation =
 
 export async function computeMeetingPoint(sc: any, tripId: string, userId: string, opts: { participantIds?: string[]; planId?: string | null; candidateIds?: string[]; now?: Date } = {}): Promise<MeetingPointComputation> {
   const now = opts.now ?? new Date();
-  const loaded = await loadImpactState(sc, tripId, { now });
+  const loaded = await loadImpactState(sc, tripId, { now, viewerId: userId });
   if (!loaded.ok) return { ok: false, reason: loaded.reason, message: loaded.message };
   // §14.3's party, in the order of how much the caller actually knows
   // (census-trips TR150):
@@ -103,7 +105,9 @@ export async function computeMeetingPoint(sc: any, tripId: string, userId: strin
   const unread = [...loaded.unread];
   const { data: savedRows, error: savedErr } = await sc.from("trip_saved_places").select("id, place_name, place_type, lat, lng").eq("trip_id", tripId);
   if (savedErr) unread.push("trip_saved_places");
-  const { data: planRows, error: planErr } = await sc.from("trip_plan_items").select("id, title, category, lat, lng, location_is_private").eq("trip_id", tripId).is("removed_at", null);
+  const { data: rawPlanRows, error: planErr } = await sc.from("trip_plan_items").select(`id, title, category, lat, lng, ${PLAN_ITEM_PRIVACY_COLUMNS}`).eq("trip_id", tripId).is("removed_at", null);
+  // census-trips §81: another member's private place is no candidate, and is never named in the result.
+  const planRows = planErr ? null : withholdPrivatePlanItems((rawPlanRows ?? []) as any[], await planItemAccessFor(sc, tripId, userId));
   if (planErr) unread.push("trip_plan_items");
   const candidates: MeetingCandidate[] = [
     ...((savedRows ?? []) as any[]).filter((s) => typeof s.lat === "number" && typeof s.lng === "number").map((s) => ({ id: `saved:${s.id}`, name: String(s.place_name ?? ""), point: { lat: s.lat, lng: s.lng }, placeType: s.place_type ?? null })),

@@ -45,7 +45,8 @@ export interface LegacyPlanItemRow {
 
 export async function planItemRowsFromProjection(
   sc: any,
-  q: { pattern: string; offset: number; limit: number },
+  // census-trips §81: `viewerId` lets the searcher match their OWN private items; absent, none matches.
+  q: { pattern: string; offset: number; limit: number; viewerId?: string | null },
 ): Promise<{ data: LegacyPlanItemRow[] | null; error: { message: string } | null }> {
   const r = await searchTripPlanItemProjections(sc, q);
   if (!r.ok) return { data: null, error: { message: `${r.reason}: ${r.detail}` } };

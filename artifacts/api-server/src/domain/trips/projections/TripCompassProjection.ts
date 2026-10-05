@@ -35,6 +35,8 @@ import { logger } from "../../../lib/logger.js";
 import { todayInTimezone } from "../invariants/tripStatus.js";
 import { liveEnvelope, type TripProjectionEnvelope } from "../contracts/TripProjectionEnvelope.js";
 import { ok, unread, type Layer } from "./TripMapProjection.js";
+import { withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS, ownerOnlyAccess, canSeePlanItemLocation } from "../policies/privateAnchorAccess.js";
+import { planItemAccessFor } from "../../../server/trips/privateAnchorShares.js";
 
 const log = logger.child({ mod: "tripCompassProjection" });
 
@@ -142,7 +144,8 @@ const TRIP_COLUMNS = "id, title, destination_city, destination_country, start_da
 export async function buildTripCompassProjection(
   sc: any,
   tripId: string,
-  opts: { maxItems?: number; now?: Date; focusDate?: string } = {},
+  /** census-trips §81: the viewer the context is FOR. Absent = nobody's private places (the safe default for a caller that does not say). */
+  opts: { maxItems?: number; now?: Date; focusDate?: string; viewerId?: string | null } = {},
 ): Promise<CompassProjectionResult> {
   const cap = opts.maxItems ?? COMPASS_PLAN_ITEM_CAP;
 
@@ -181,7 +184,7 @@ export async function buildTripCompassProjection(
   // the scan is bounded either way and the window is three comparisons.
   const { data: items, error: itemsErr } = await sc
     .from("trip_plan_items")
-    .select("id, title, category, day_date, status")
+    .select(`id, title, category, day_date, status, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
     .eq("trip_id", tripId)
     .is("removed_at", null)
     .order("day_date", { ascending: true, nullsFirst: false })
@@ -193,7 +196,7 @@ export async function buildTripCompassProjection(
     log.warn({ err: itemsErr.message, tripId }, "compass projection: plan items unread");
     planItems = unread("trip_plan_items could not be read");
   } else {
-    const scanned = ((items ?? []) as any[]);
+    const scanned = withholdPrivatePlanItems((items ?? []) as any[], opts.viewerId ? await planItemAccessFor(sc, tripId, opts.viewerId) : ownerOnlyAccess("")); // census-trips §81
     planWindow.scanTruncated = scanned.length > PLAN_SCAN_CAP;
     // Undated items are ALWAYS admitted: the old ordering sorted them last,
     // which made them the first thing the cap cut, and a date window that

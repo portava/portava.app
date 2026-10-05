@@ -493,7 +493,7 @@ router.post("/trips/:tripId/proposals/preview", asyncHandler(async (req, res) =>
   const ctx = await memberContext(req, res); if (!ctx) return;
   const change = parseChange(req.body);
   if (typeof change === "string") { sendError(res, "invalid_payload", change); return; }
-  const loaded = await loadImpactState(ctx.sc, ctx.tripId);
+  const loaded = await loadImpactState(ctx.sc, ctx.tripId, { viewerId: ctx.userId });
   if (!loaded.ok) { refuseBuild(res, loaded as any); return; }
   const preview = previewImpact({ ...change, proposedBy: ctx.userId }, loaded.state, Date.now());
   res.json({ tripId: ctx.tripId, sourceTripVersion: loaded.sourceTripVersion, unread: loaded.unread, preview });
@@ -504,7 +504,7 @@ router.post("/trips/:tripId/simulate", asyncHandler(async (req, res) => {
   const ctx = await memberContext(req, res); if (!ctx) return;
   const change = parseChange(req.body);
   if (typeof change === "string") { sendError(res, "invalid_payload", change); return; }
-  const loaded = await loadImpactState(ctx.sc, ctx.tripId);
+  const loaded = await loadImpactState(ctx.sc, ctx.tripId, { viewerId: ctx.userId });
   if (!loaded.ok) { refuseBuild(res, loaded as any); return; }
   const freedom = await buildTripFreedomProjection(ctx.sc, ctx.tripId);
   if (!freedom.ok) { refuseBuild(res, freedom as any); return; }
@@ -599,7 +599,7 @@ router.post("/trips/:tripId/rescue", asyncHandler(async (req, res) => {
   const problem = typeof body.problem === "string" ? body.problem : "";
   if (!(RESCUE_PROBLEMS as readonly string[]).includes(problem)) { sendError(res, "invalid_payload", `problem must be one of ${RESCUE_PROBLEMS.join(", ")}`); return; }
   const now = new Date();
-  const loaded = await loadImpactState(ctx.sc, ctx.tripId, { now });
+  const loaded = await loadImpactState(ctx.sc, ctx.tripId, { now, viewerId: ctx.userId });
   if (!loaded.ok) { refuseBuild(res, loaded as any); return; }
   const st = loaded.state;
   const next = st.commitments.map((c) => ({ c, at: Date.parse(c.requiredArrivalAt ?? c.startsAt ?? "") })).filter((x) => Number.isFinite(x.at) && x.at > now.getTime()).sort((a, b) => a.at - b.at)[0] ?? null;
@@ -805,7 +805,7 @@ router.get("/trips/:tripId/context", asyncHandler(async (req, res) => {
   const membership = await requireTripMember(sc, tripId, user.id);
   if (!membership) { sendTripRefusal(res, "not_member", "TRIP_AUTH_NOT_CREW", "You must be an accepted trip member to view the trip context"); return; }
 
-  const built = await buildTripCompassProjection(sc, tripId);
+  const built = await buildTripCompassProjection(sc, tripId, { viewerId: user.id });
   if (!built.ok) {
     if (built.reason === "TRIP_NOT_FOUND") { sendError(res, "not_found", built.message); return; }
     sendTripRefusal(res, "degraded_unavailable", "TRIP_PROJECTION_UNAVAILABLE", built.message);

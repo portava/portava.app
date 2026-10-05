@@ -140,10 +140,10 @@ function planWorld(flag: boolean): Rows {
   return {
     feature_flags: flag ? [{ flag: DISCOVERY_TRIP_VIEWER_PROJECTIONS_FLAG, enabled: true }] : [],
     trip_plan_items: [
-      { id: "p1", title: "Harbour cruise", trip_id: "t-1", creator_id: OTHER, created_at: "2026-09-01T00:00:00.000Z", removed_at: null, notes: "secret", cost: 90 },
-      { id: "p2", title: "Harbour walk", trip_id: "t-1", creator_id: OTHER, created_at: "2026-09-02T00:00:00.000Z", removed_at: null },
-      { id: "p3", title: "Harbour dinner (removed)", trip_id: "t-1", creator_id: OTHER, created_at: "2026-09-03T00:00:00.000Z", removed_at: "2026-09-04T00:00:00.000Z" },
-      { id: "p4", title: "Harbour private", trip_id: "t-2", creator_id: OTHER, created_at: "2026-09-05T00:00:00.000Z", removed_at: null },
+      { id: "p1", title: "Harbour cruise", trip_id: "t-1", creator_id: OTHER, location_is_private: false, created_at: "2026-09-01T00:00:00.000Z", removed_at: null, notes: "secret", cost: 90 },
+      { id: "p2", title: "Harbour walk", trip_id: "t-1", creator_id: OTHER, location_is_private: false, created_at: "2026-09-02T00:00:00.000Z", removed_at: null },
+      { id: "p3", title: "Harbour dinner (removed)", trip_id: "t-1", creator_id: OTHER, location_is_private: false, created_at: "2026-09-03T00:00:00.000Z", removed_at: "2026-09-04T00:00:00.000Z" },
+      { id: "p4", title: "Harbour private", trip_id: "t-2", creator_id: OTHER, location_is_private: false, created_at: "2026-09-05T00:00:00.000Z", removed_at: null },
     ],
     trips: [
       trip("t-1", OTHER, "planning", "2026-10-01", "Sydney"),

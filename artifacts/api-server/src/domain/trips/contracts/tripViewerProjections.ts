@@ -73,6 +73,8 @@ export interface TripPlanItemSearchQuery {
   pattern: string;
   offset: number;
   limit: number;
+  /** census-trips §81: the searcher. Another member's private item never matches on its (withheld) title; absent = no private item matches. */
+  viewerId?: string | null;
 }
 
 /**
@@ -84,13 +86,15 @@ export async function searchTripPlanItemProjections(sc: any, q: TripPlanItemSear
   try {
     const { data, error } = await sc
       .from("trip_plan_items")
-      .select("id, title, trip_id, creator_id, created_at")
+      .select("id, title, trip_id, creator_id, created_at, location_is_private")
       .ilike("title", q.pattern)
       .is("removed_at", null)
       .order("created_at", { ascending: false })
       .range(q.offset, q.offset + q.limit - 1);
     if (error) return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", detail: String(error.message ?? error) };
-    const rows: any[] = Array.isArray(data) ? data : [];
+    // census-trips §81: a private item's title is its owner's — it is not searchable by anyone else (grants
+    // give sight on the trip's own surfaces, not a search index).
+    const rows: any[] = (Array.isArray(data) ? data : []).filter((r: any) => r.location_is_private === false || (typeof q.viewerId === "string" && r.creator_id === q.viewerId));
     return {
       ok: true, generatedAt, freshness: "live",
       items: rows.map((r): TripPlanItemProjection => ({

@@ -266,6 +266,8 @@ export function buildTripPassportProjection(inputs: PostTripInputs): TripPasspor
 
 import { tripOperationalProjectionsGate } from "../policies/tripOperationalProjections.js";
 import { logger } from "../../../lib/logger.js";
+import { withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS, ownerOnlyAccess, canSeePlanItemLocation } from "../policies/privateAnchorAccess.js";
+import { planItemAccessFor } from "../../../server/trips/privateAnchorShares.js";
 
 const log = logger.child({ mod: "tripPostTrip" });
 
@@ -287,7 +289,7 @@ export async function readPostTripInputs(sc: any, tripId: string, viewerId: stri
   if (!trip) return { ok: false, reason: "TRIP_NOT_FOUND", message: "Trip not found" };
 
   const { data: items, error: iErr } = await sc.from("trip_plan_items")
-    .select("id, title, category, status, day_date, starts_at, ends_at, location_name, source_type, source_id")
+    .select(`id, title, category, status, day_date, starts_at, ends_at, location_name, source_type, source_id, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
     .eq("trip_id", tripId).is("removed_at", null);
   if (iErr) return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: "The trip's plans could not be read" };
 
@@ -361,7 +363,8 @@ export async function readPostTripInputs(sc: any, tripId: string, viewerId: stri
     inputs: {
       trip: { id: String((trip as any).id), title: (trip as any).title ?? null, status: (trip as any).status ?? null, destinationCity: (trip as any).destination_city ?? null, destinationCountry: (trip as any).destination_country ?? null, startDate: (trip as any).start_date ?? null, endDate: (trip as any).end_date ?? null },
       viewerId,
-      planItems: ((items ?? []) as any[]).map((p) => ({ id: String(p.id), title: p.title ?? null, category: p.category ?? null, status: p.status ?? null, dayDate: p.day_date ?? null, startsAt: p.starts_at ?? null, endsAt: p.ends_at ?? null, locationName: p.location_name ?? null, sourceType: p.source_type ?? null, sourceId: p.source_id ?? null })),
+      planItems: withholdPrivatePlanItems((items ?? []) as any[], await planItemAccessFor(sc, tripId, viewerId)).map((p) => // census-trips §81
+ ({ id: String(p.id), title: p.title ?? null, category: p.category ?? null, status: p.status ?? null, dayDate: p.day_date ?? null, startsAt: p.starts_at ?? null, endsAt: p.ends_at ?? null, locationName: p.location_name ?? null, sourceType: p.source_type ?? null, sourceId: p.source_id ?? null })),
       outcomes, checkpoints,
       crew: ((members ?? []) as any[]).map((m) => ({ userId: String(m.user_id), role: m.role ?? null })),
       memories, stamps, unread, now,

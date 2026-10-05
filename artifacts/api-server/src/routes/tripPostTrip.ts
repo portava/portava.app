@@ -29,6 +29,8 @@ import { executeTripCommand, isTripKernelEnabled, TRIP_KERNEL_FLAG } from "../do
 import { liveEnvelope, readTripVersion } from "../domain/trips/contracts/TripProjectionEnvelope.js";
 import { buildTripMemoryProjection, buildTripPassportProjection, readPostTripInputs } from "../domain/trips/projections/TripPostTripProjections.js";
 import { reconciliationQuestions } from "../domain/trips/services/TripCloseout.js";
+import { withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS, ownerOnlyAccess, canSeePlanItemLocation } from "../domain/trips/policies/privateAnchorAccess.js";
+import { planItemAccessFor } from "../server/trips/privateAnchorShares.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripPostTrip" });
@@ -84,14 +86,15 @@ router.post("/trips/:tripId/closeout/answers", asyncHandler(async (req, res) => 
     return;
   }
   const { data: plan, error: pErr } = await ctx.sc.from("trip_plan_items")
-    .select("id, title, location_name, day_date, starts_at, ends_at, status")
+    .select(`id, title, location_name, day_date, starts_at, ends_at, status, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
     .eq("id", parsed.data.planId).eq("trip_id", ctx.tripId).is("removed_at", null).maybeSingle();
   if (pErr) { sendTripRefusal(res, "degraded_unavailable", "TRIP_PROJECTION_UNAVAILABLE", "The plan could not be read"); return; }
   if (!plan) { sendError(res, "not_found", "Plan not found on this trip"); return; }
+  const shown = withholdPrivatePlanItems([plan as any], await planItemAccessFor(ctx.sc, ctx.tripId, ctx.userId))[0]!; // census-trips §81
   // The question in the spec's own words, when the plan is one the closeout
   // would ask about; an answer for a plan already certain is a correction and
   // carries no question.
-  const question = reconciliationQuestions({ today: "9999-12-31", planItems: [{ id: String(plan.id), title: plan.title ?? null, status: plan.status ?? null, dayDate: plan.day_date ?? null, locationName: plan.location_name ?? null }] })[0]?.question ?? null;
+  const question = reconciliationQuestions({ today: "9999-12-31", planItems: [{ id: String(plan.id), title: shown.title ?? null, status: shown.status ?? null, dayDate: shown.day_date ?? null, locationName: shown.location_name ?? null }] })[0]?.question ?? null;
   const occurredAt = plan.ends_at ?? plan.starts_at ?? (plan.day_date ? `${plan.day_date}T23:59:59.000Z` : new Date().toISOString());
   const result = await executeTripCommand(ctx.sc, {
     commandId: randomUUID(), tripId: ctx.tripId, actorUserId: ctx.userId, actorRole: "user",

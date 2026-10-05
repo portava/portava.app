@@ -36,7 +36,7 @@ function withStages(tables: Record<string, Row[]>): Record<string, Row[]> {
 const snapshot = (claimType: string, value: any, o: Row = {}): Row => ({
   subject_id: VENUE_ID, zone_id: "", claim_type: claimType, value, confidence: 0.8, observed_at: T("11:50"), expires_at: T("13:00"), conflict_state: null, source_count: 2, ...o,
 });
-const walk = (o: Row = {}): Row => ({ id: "walk", trip_id: TRIP_ID, title: "Walking tour of Montmartre", category: "activity", status: "planned", starts_at: T("15:00"), ends_at: T("17:00"), lat: null, lng: null, location_name: null, removed_at: null, ...o });
+const walk = (o: Row = {}): Row => ({ id: "walk", trip_id: TRIP_ID, title: "Walking tour of Montmartre", category: "activity", status: "planned", starts_at: T("15:00"), ends_at: T("17:00"), lat: null, lng: null, location_name: null, removed_at: null, location_is_private: false, ...o });
 const forecast = (o: Row = {}): Row => ({ destination: "Paris", date_key: "2026-09-13:2026-09-15", fetched_at: T("11:00"), forecasts_json: [{ date: "2026-09-13", precipMm: 9, weatherCode: 63, summary: "Rain" }, { date: "2026-09-14", precipMm: 0, weatherCode: 1, summary: "Clear" }], ...o });
 
 let server: Server; let port: number;
