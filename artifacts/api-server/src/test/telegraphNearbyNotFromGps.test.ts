@@ -57,7 +57,7 @@ const ALLOW_ANYONE: MessagePermissionVerdict = {
   },
 };
 
-function world(): Record<string, Record<string, any>[]> {
+function world(): Record<string, Record<string, unknown>[]> {
   const sameSpot = { lat: 41.15, lng: -8.61, last_known_at: FRESH };
   return {
     feature_flags: [],

@@ -36,6 +36,7 @@ import { CallHistoryMessage } from '../../src/components/calls/CallHistoryMessag
 import { canShowThreadCallButtons, threadCallContextType } from '../../src/components/calls/callEntryGating';
 import { getBooking } from '../../src/services/rentABuddy';
 import { useThreadMessages, useLanguageSettings, useOutgoingRequestStatus } from '../../src/hooks/useMessaging';
+import { useConversationProjection } from '../../src/features/telegraph/conversation/useConversationProjection.ts'; import { offersPlanControl, treatAsE2eeForEdit, showsE2eeBadge, memberCountOf } from '../../src/features/telegraph/conversation/conversationProjection.ts'; // §24 / census T295: asked of the server, not read from raw tables
 import { useTrip } from '../../src/hooks/useBackend';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, avatar, icon } from '../../src/theme/tokens';
@@ -1216,15 +1217,16 @@ export default function TelegraphThread() {
   const [addToPlanSuggestion, setAddToPlanSuggestion] = useState<TelegraphSuggestion | null>(null);
   const [meetupSheetCtx, setMeetupSheetCtx] = useState<MeetupSheetCtx | null>(null);
   const isDirect = threadType === 'direct' || threadType === 'rent_buddy_booking';
-  const [isAcceptedMember, setIsAcceptedMember] = useState(isDirect);
+  // §24 / census T295: the plan control, the E2EE badge/edit affordance and the member count come
+  // from GET /threads/:id/capabilities (server-built), not from message_thread_members / message_threads.
+  const conversationProjection = useConversationProjection(id ?? null);
+  const isAcceptedMember = offersPlanControl(conversationProjection);
   const [isCircleMember, setIsCircleMember] = useState<boolean | null>(null);
   const [plannedByName, setPlannedByName] = useState<string | undefined>(undefined);
   const [blockingUser, setBlockingUser] = useState(false);
   const [showSafetySheet, setShowSafetySheet] = useState(false);
   const [hideAiSuggestions, setHideAiSuggestions] = useState(false);
   const [threadIsMuted, setThreadIsMuted] = useState(muted === '1'); // the inbox passes the server's mutedAt; it used to start "unmuted" always
-  // E-2: whether the thread uses end-to-end encryption
-  const [isE2ee, setIsE2ee] = useState(false);
   const [showCompassTray, setShowCompassTray] = useState(false);
   const [compassTelegraphEnabled, setCompassTelegraphEnabled] = useState<null | boolean>(null);
   const [dismissedAiMsgIds, setDismissedAiMsgIds] = useState<Set<string>>(new Set());
@@ -1244,8 +1246,8 @@ export default function TelegraphThread() {
   const [dmProfile, setDmProfile] = useState<{ name: string | null; avatarUrl: string | null; handle: string | null; city: string | null } | null>(null);
   // DM receipts come from useThreadReadState (server receipts, re-read when a read lands); this
   // used to hold the other party's last_read_at, read once when the thread opened and never again.
-  // Member count for trip/circle threads
-  const [memberCount, setMemberCount] = useState<number | null>(null);
+  // Member count for trip/circle threads — measured by the server, or null (never a guess).
+  const memberCount = memberCountOf(conversationProjection);
   const listRef = useRef<FlatList>(null);
   const shouldAnimateMessage = useMessageEntranceGate();
   const mediaPicker = useMessageMediaPicker();
@@ -1409,47 +1411,12 @@ export default function TelegraphThread() {
   );
 
 
-  // Fetch member count for trip / circle threads
-  useEffect(() => {
-    if (isDirect || !id) return;
-    supabase
-      .from('message_thread_members')
-      .select('*', { count: 'exact', head: true })
-      .eq('thread_id', id)
-      .is('left_at', null)
-      .then(({ count }) => { if (count !== null) setMemberCount(count); });
-  }, [id, threadType]);
-
-  // Permission gate: accepted thread members only (DMs always pass; trip/circle
-  // check message_thread_members — only accepted members are in the thread).
-  useEffect(() => {
-    if (isDirect) { setIsAcceptedMember(true); return; }
-    if (!id || !userId) return;
-    supabase.from('message_thread_members')
-      .select('user_id')
-      .eq('thread_id', id)
-      .eq('user_id', userId)
-      .is('left_at', null)
-      .maybeSingle()
-      .then(({ data }) => setIsAcceptedMember(Boolean(data)));
-  }, [id, threadType, userId]);
 
   // Seen is no longer stamped here on mount. A mount is not a read: the first page may not
   // have rendered, the app may be in the background, and nothing newer was ever marked after
   // it. useThreadReadState (above) marks the newest RENDERED message while the screen is
   // focused and the app is in the foreground, and again whenever a newer one appears.
   // (TELEGRAPH lane, 2026-10-03.)
-
-  // E-2: fetch is_e2ee flag once per thread open.
-  useEffect(() => {
-    if (!id) return;
-    supabase
-      .from('message_threads')
-      .select('is_e2ee')
-      .eq('id', id)
-      .maybeSingle()
-      .then(({ data }) => { if ((data as any)?.is_e2ee) setIsE2ee(true); });
-  }, [id]);
 
   // Merge: per-thread override takes precedence over global langSettings
   const autoTranslate = threadAutoTranslate ?? langSettings?.auto_translate_messages ?? true;
@@ -1893,7 +1860,7 @@ export default function TelegraphThread() {
                 through to a safety number the FFI has never produced would
                 invite exactly the trust the previous (theatre) implementation
                 invited. */}
-            {E2EE_CLAIM_UI_ENABLED && isE2ee && (
+            {E2EE_CLAIM_UI_ENABLED && showsE2eeBadge(conversationProjection) && (
               E2EE_VERIFICATION_UI_ENABLED ? (
                 <Pressable
                   hitSlop={8}
@@ -2599,7 +2566,7 @@ export default function TelegraphThread() {
             else Alert.alert('Error', r.message ?? 'Could not save message.');
           });
         }}
-        onUnsent={() => { void reload(); }} onEdit={(m) => setEditingMsg(m)} onHistory={(m) => setHistoryMsg(m)} canEdit={canEditMessage(actionMsg, actionMsgMine, isE2ee)} blockLabel={isDirect && otherUserId ? 'Block this person' : undefined} onBlockSender={isDirect && otherUserId ? () => { void (async () => { setBlockingUser(true); const blocked = await blockUser(otherUserId); setBlockingUser(false); if (blocked.ok) router.replace('/messages'); else Alert.alert('Could not block', blockFailedCopy(blocked.error)); })(); } : undefined}
+        onUnsent={() => { void reload(); }} onEdit={(m) => setEditingMsg(m)} onHistory={(m) => setHistoryMsg(m)} canEdit={canEditMessage(actionMsg, actionMsgMine, treatAsE2eeForEdit(conversationProjection))} blockLabel={isDirect && otherUserId ? 'Block this person' : undefined} onBlockSender={isDirect && otherUserId ? () => { void (async () => { setBlockingUser(true); const blocked = await blockUser(otherUserId); setBlockingUser(false); if (blocked.ok) router.replace('/messages'); else Alert.alert('Could not block', blockFailedCopy(blocked.error)); })(); } : undefined}
         receipt={actionMsgReceipt}
       />
 

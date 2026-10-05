@@ -107,8 +107,6 @@ Enforced shrink-only by `check:telegraph-slos`; declared in
 
 | client file | table |
 | --- | --- |
-| `travel-buddy-standalone/app/messages/[id].tsx` | message_thread_members |
-| `travel-buddy-standalone/app/messages/[id].tsx` | message_threads |
 
 ### 5. Realtime subscriptions
 
