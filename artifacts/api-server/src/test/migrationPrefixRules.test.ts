@@ -48,7 +48,7 @@ describe("validatePrefixBand — reserved buffer 2096-2099", () => {
   });
 });
 
-describe("validatePrefixBand — new-format ranges 2100-2999 and 3000-3999", () => {
+describe("validatePrefixBand — new-format ranges 2100-2999, 3000-3999 and 4000-4999", () => {
   it("accepts prefixes across the valid range", () => {
     for (const n of [2100, 2150, 2500, 2999]) {
       assert.equal(validatePrefixBand(`${n}_ok.sql`), null, `${n} should be valid`);
@@ -76,10 +76,21 @@ describe("validatePrefixBand — new-format ranges 2100-2999 and 3000-3999", () 
       "this is why a dated prefix is not the escape hatch for a dependent migration");
   });
 
-  it("rejects a 4-digit prefix at or above 4000, which is not allocated", () => {
-    const v = validatePrefixBand("4000_too_far.sql");
+  it("accepts 4000-4999, opened 2026-10-05 because 3xxx was partitioned into parallel lanes' bands", () => {
+    // This assertion used to say the opposite, on purpose, and it moved for the
+    // reason migrationPrefixRules.ts records: every remaining 3xxx number was
+    // inside another lane's band. The invariant is unchanged — a 4xxx prefix
+    // still cannot be mistaken for a date and still sorts after every 3xxx one.
+    for (const n of [4000, 4121, 4999]) {
+      assert.equal(validatePrefixBand(`${n}_ok.sql`), null, `${n} should now be valid`);
+    }
+    assert.ok("4000_x.sql" > "3999_x.sql", "a 4xxx prefix must sort after every 3xxx one");
+  });
+
+  it("rejects a 4-digit prefix at or above 5000, which is not allocated", () => {
+    const v = validatePrefixBand("5000_too_far.sql");
     assert.ok(v);
-    assert.match(v!.reason, /3000-3999/);
+    assert.match(v!.reason, /4000-4999/);
     assert.match(v!.reason, /not allocated yet/);
   });
 
@@ -121,12 +132,13 @@ describe("validateAllPrefixBands", () => {
       "2097_sneaks_into_the_buffer.sql",
       "2100_valid_new_format.sql",
       "3000_valid_new_format.sql",
-      "4000_out_of_range.sql",
+      "4000_valid_new_format.sql",
+      "5000_out_of_range.sql",
     ];
     const violations = validateAllPrefixBands(files);
     assert.deepEqual(
       violations.map((v) => v.file).sort(),
-      ["2097_sneaks_into_the_buffer.sql", "4000_out_of_range.sql"].sort(),
+      ["2097_sneaks_into_the_buffer.sql", "5000_out_of_range.sql"].sort(),
     );
   });
 

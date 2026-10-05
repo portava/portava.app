@@ -46,16 +46,25 @@
  *
  * What is NOT permitted is a second digit of 0 in the 2000s: 2000-2095 would be
  * genuinely ambiguous, and that is what the reserved buffer and the `2[1-9]`
- * arm keep out. 4000 and above are left unallocated deliberately; when 3999 is
+ * arm keep out. 4000 and above were left unallocated deliberately; when 3999 is
  * reached, whoever needs 4000 should extend this the same way and write down
  * why, rather than reaching for a date.
+ *
+ * 4000-4999 OPENED 2026-10-05. 3xxx is not exhausted on main, but it is fully
+ * PARTITIONED: the mission's integration lead handed 3900-3999 to three parallel
+ * lanes and the next four lanes their bands in 4030-4149 (A2 4030-4059, T1
+ * 4060-4089, T2 4090-4119, D 4120-4149), so a new number below 4000 would land
+ * in another lane's band. 4xxx keeps every invariant above for the same reason
+ * 3xxx did: no YYYYMMDD in this millennium begins with "4", it sorts strictly
+ * after every 3xxx prefix, and it still reads as post-cutover (>= "2100").
+ * 5000 and above stay unallocated.
  */
 
 export const RESERVED_BUFFER_MIN = 2096;
 export const RESERVED_BUFFER_MAX = 2099;
 
-/** New canonical 4-digit numeric prefixes must match this: 2100-2999 or 3000-3999. */
-export const NEW_NUMERIC_PREFIX_RE = /^(?:2[1-9]\d{2}|3\d{3})_/;
+/** New canonical 4-digit numeric prefixes must match this: 2100-2999, 3000-3999 or 4000-4999. */
+export const NEW_NUMERIC_PREFIX_RE = /^(?:2[1-9]\d{2}|3\d{3}|4\d{3})_/;
 
 export interface PrefixBandViolation {
   file: string;
@@ -95,8 +104,8 @@ export function validatePrefixBand(filename: string): PrefixBandViolation | null
     return {
       file: filename,
       reason:
-        `prefix ${digits} is >= 2100 but outside the allocated ranges 2100-2999 and ` +
-        "3000-3999 (must match /^(?:2[1-9]\\d{2}|3\\d{3})_/). 4000 and above are not " +
+        `prefix ${digits} is >= 2100 but outside the allocated ranges 2100-2999, ` +
+        "3000-3999 and 4000-4999 (must match /^(?:2[1-9]\\d{2}|3\\d{3}|4\\d{3})_/). 5000 and above are not " +
         "allocated yet — extend NEW_NUMERIC_PREFIX_RE and say why, rather than " +
         "reaching for a dated prefix, which sorts BELOW every 2xxx file",
     };
