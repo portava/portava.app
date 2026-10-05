@@ -45,23 +45,36 @@ function session(over: Record<string, unknown> = {}): Record<string, unknown> {
   };
 }
 
+const CREW = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+
 function tables(sessions: Record<string, unknown>[]): Record<string, any[]> {
   return {
     layover_sessions: sessions,
+    trips: [{
+      id: TRIP, owner_id: OWNER, title: "Japan 2026", destination_city: "Tokyo",
+      destination_country: "JP", start_date: "2026-09-28", end_date: "2026-10-04", status: "completed",
+    }],
+    trip_members: [
+      { trip_id: TRIP, user_id: OWNER, role: "owner", status: "accepted" },
+      { trip_id: TRIP, user_id: CREW, role: "member", status: "accepted" },
+    ],
     memories: [], memory_tags: [], memory_items: [], memory_likes: [], memory_saves: [],
     profiles: [
       { id: OWNER, account_status: "active", name: "Owner", handle: "owner", avatar_url: null, expo_push_token: null },
       { id: STRANGER, account_status: "active", name: "Stranger", handle: "stranger", avatar_url: null, expo_push_token: null },
+      { id: CREW, account_status: "active", name: "Crew", handle: "crew", avatar_url: null, expo_push_token: null },
     ],
     blocks: [], user_follows: [], circle_memberships: [],
     feature_flags: [], notifications: [], hidden_gems: [],
   };
 }
 
+let insertSeq = 0;
 function makeClient(store: Record<string, any[]>, failReads: Set<string>) {
   function chain(table: string) {
     const filters: Array<(r: any) => boolean> = [];
     let single = false, head = false, isWrite = false, selectedAfterWrite = false;
+    let orderBy: { col: string; asc: boolean } | null = null; let limitN: number | null = null;
     let mode: "insert" | "update" | "delete" | null = null;
     let payload: any = null;
     const obj: any = {
@@ -77,7 +90,10 @@ function makeClient(store: Record<string, any[]>, failReads: Set<string>) {
       gt(c: string, v: any) { filters.push((r) => r[c] > v); return obj; },
       lt(c: string, v: any) { filters.push((r) => r[c] < v); return obj; },
       not() { return obj; }, ilike() { return obj; }, or() { return obj; }, filter() { return obj; },
-      order() { return obj; }, limit() { return obj; }, range() { return obj; },
+      // ORDER and LIMIT are modelled here (the harness this was copied from ignores both), because the
+      // trip-Memory readers pick "the NEWEST live row" and a fake that returns the first match cannot show
+      // a newer layover Memory displacing an older trip Memory.
+      order(c: string, o?: any) { orderBy = { col: c, asc: o?.ascending !== false }; return obj; }, limit(n: number) { limitN = n; return obj; }, range() { return obj; },
       maybeSingle() { single = true; return resolve(); },
       single() { single = true; return resolve(); },
       then(f: any, r: any) { return resolve().then(f, r); },
@@ -91,11 +107,13 @@ function makeClient(store: Record<string, any[]>, failReads: Set<string>) {
       const all = (store[table] ??= []);
       if (mode === "insert") {
         const rows = (Array.isArray(payload) ? payload : [payload])
-          .map((r: any) => ({ ...r, id: r.id ?? `new-${all.length}-${table}`, created_at: "2026-02-01T00:00:00.000Z" }));
+          .map((r: any) => ({ ...r, id: r.id ?? `new-${all.length}-${table}`, created_at: r.created_at ?? new Date(Date.UTC(2026, 1, 1) + (++insertSeq) * 1000).toISOString() }));
         for (const r of rows) all.push(r);
         return { data: single ? rows[0] : rows, error: null, count: rows.length };
       }
       let matched = all.filter((r) => filters.every((f) => f(r)));
+      if (orderBy) { const { col, asc } = orderBy; matched = [...matched].sort((a, b) => (a[col] < b[col] ? -1 : a[col] > b[col] ? 1 : 0) * (asc ? 1 : -1)); }
+      if (limitN !== null) matched = matched.slice(0, limitN);
       if (mode === "delete") {
         const gone = new Set(matched);
         store[table] = all.filter((r) => !gone.has(r));
@@ -173,7 +191,7 @@ let app: App | null = null;
 afterEach(async () => { if (app) { await app.close(); app = null; } });
 
 describe("a completed layover becomes ONE private Memory with no coordinate", () => {
-  it("writes the Memory the traveller asked for — city, country, window, trip — private and unpublished", async () => {
+  it("writes the Memory the traveller asked for — city, country, window — private and unpublished", async () => {
     app = await startApp();
     const r = await post(app, SESSION, OWNER);
     assert.equal(r.status, 201, JSON.stringify(r.body));
@@ -187,7 +205,7 @@ describe("a completed layover becomes ONE private Memory with no coordinate", ()
     assert.equal(m.location_city, "Taipei");
     assert.equal(m.location_country, "Taiwan");
     assert.equal(m.canonical_location_id, CITY_ID);
-    assert.equal(m.trip_id, TRIP);
+    // NO trip_id, although this layover belongs to TRIP: see "Lead review item 1" below.
     assert.equal(m.starts_at, ARRIVAL);
     assert.equal(m.ends_at, DEPARTURE);
   });
@@ -300,5 +318,84 @@ describe("§28.11 — an unreadable table is a refusal, never an absence and nev
     assert.equal(r.status, 503, JSON.stringify(r.body));
     assert.equal(r.body?.error, "degraded_unavailable");
     assert.equal(app.store.memories.length, 0, "a Memory was written although the duplicate check could not run");
+  });
+});
+
+// ── Lead review item 1: a layover Memory must never become the TRIP's Memory ──
+//
+// `memories` has no kind/source column, and the trip-Memory readers in
+// routes/memories.ts treat "the newest live row with this trip_id and this
+// owner" as THE trip Memory: `answerExistingTripMemory` (behind
+// POST /trips/:tripId/memory) and GET /trips/:tripId/memory. A layover Memory
+// carrying its session's trip_id therefore (a) made the real trip Memory
+// impossible to create, and (b) displaced it — the owner was answered with the
+// "Layover in …" draft, and a crew member with "No memory for this trip".
+
+async function call(app: App, method: string, path: string, actor: string, key?: string) {
+  const res = await fetch(`${app.baseUrl}${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${actor}`, "Content-Type": "application/json", connection: "close", ...(key ? { "Idempotency-Key": key } : {}) },
+    body: method === "POST" ? "{}" : undefined,
+  });
+  const text = await res.text();
+  let body: any = null;
+  try { body = text ? JSON.parse(text) : null; } catch { body = text; }
+  return { status: res.status, body };
+}
+
+describe("Lead review item 1 — a layover that belongs to a trip does not occupy the trip's Memory", () => {
+  it("(a) keeping the layover first, the trip Memory can still be CREATED (201, existing:false)", async () => {
+    app = await startApp();
+    const kept = await post(app, SESSION, OWNER);
+    assert.equal(kept.status, 201, JSON.stringify(kept.body));
+    const trip = await call(app, "POST", `/api/trips/${TRIP}/memory`, OWNER, "trip-memory-key");
+    assert.equal(trip.status, 201, `the trip Memory was answered by the layover Memory: ${JSON.stringify(trip.body)}`);
+    assert.notEqual(trip.body?.existing, true);
+    assert.equal(trip.body?.memory?.title, "Japan 2026");
+    assert.equal(app.store.memories.filter((m) => m.state !== "deleted").length, 2);
+  });
+
+  it("(b) a layover kept AFTER the trip Memory never displaces it — owner and crew both get the trip Memory", async () => {
+    app = await startApp();
+    app.store.memories.push({
+      id: "trip-memory-1", owner_id: OWNER, title: "Japan 2026", caption: null, visibility: "trip_crew",
+      allowed_user_ids: [], hidden_user_ids: [], trip_id: TRIP, event_id: null, place_id: null,
+      location_city: null, location_country: null, location_lat: null, location_lng: null, canonical_location_id: null,
+      starts_at: "2026-09-28T00:00:00.000Z", ends_at: "2026-10-04T00:00:00.000Z", state: "published",
+      created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z",
+    });
+    const kept = await post(app, SESSION, OWNER);
+    assert.equal(kept.status, 201, JSON.stringify(kept.body));
+
+    const asOwner = await call(app, "GET", `/api/trips/${TRIP}/memory`, OWNER);
+    assert.equal(asOwner.status, 200, JSON.stringify(asOwner.body));
+    assert.equal(asOwner.body?.memory?.id, "trip-memory-1", `the owner was answered with ${JSON.stringify(asOwner.body?.memory?.title)}`);
+
+    const asCrew = await call(app, "GET", `/api/trips/${TRIP}/memory`, CREW);
+    assert.equal(asCrew.status, 200, `a crew member lost the trip Memory: ${JSON.stringify(asCrew.body)}`);
+    assert.equal(asCrew.body?.memory?.id, "trip-memory-1");
+  });
+
+  it("an UNRELATED Memory with the same two instants is not answered as this layover's Memory", async () => {
+    app = await startApp();
+    app.store.memories.push({
+      id: "manual-1", owner_id: OWNER, title: "Night market", caption: null, visibility: "only_me",
+      allowed_user_ids: [], hidden_user_ids: [], trip_id: null, event_id: null, place_id: null,
+      location_city: "Taipei", location_country: "Taiwan", location_lat: null, location_lng: null, canonical_location_id: null,
+      starts_at: ARRIVAL, ends_at: DEPARTURE, state: "draft",
+      created_at: "2026-01-01T00:00:00.000Z", updated_at: "2026-01-01T00:00:00.000Z",
+    });
+    const r = await post(app, SESSION, OWNER);
+    assert.equal(r.status, 201, `another Memory was answered as the layover's: ${JSON.stringify(r.body)}`);
+    assert.equal(r.body?.existing, false);
+    assert.equal(r.body?.memory?.title, "Layover in Taipei");
+    assert.equal(app.store.memories.length, 2);
+  });
+
+  it("the layover Memory itself carries no trip_id", async () => {
+    app = await startApp();
+    assert.equal((await post(app, SESSION, OWNER)).status, 201);
+    const m = app.store.memories[0];
+    assert.ok(!("trip_id" in m) || m.trip_id == null, `trip_id leaked onto the layover Memory: ${m.trip_id}`);
   });
 });

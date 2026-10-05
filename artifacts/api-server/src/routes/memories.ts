@@ -3543,6 +3543,13 @@ router.post("/memories/from-layover/:sessionId", async (req, res) => {
     .eq("owner_id", user.id)
     .eq("starts_at", row.starts_at)
     .eq("ends_at", row.ends_at)
+    // The TITLE too: owner + the two instants alone could answer an unrelated
+    // Memory that happens to share them (a manual one, or a trip Memory whose
+    // dates fall on the same midnights) as "this layover's Memory". The builder
+    // derives the title deterministically from the session, so a retry still
+    // matches; only a rename between a lost response and its retry does not,
+    // and that costs a second private draft, never a wrong answer.
+    .eq("title", row.title as string)
     .neq("state", "deleted")
     .order("created_at", { ascending: false })
     .limit(1);

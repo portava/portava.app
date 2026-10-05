@@ -13,8 +13,20 @@
  *
  *   - the CITY and COUNTRY of the airport, and its canonical city id — the
  *     same granularity the elected Passport stamp already carries;
- *   - the layover's own window as `starts_at` / `ends_at`;
- *   - the trip it belonged to, when it belonged to one.
+ *   - the layover's own window as `starts_at` / `ends_at`.
+ *
+ *   It NEVER carries `trip_id`, even when the layover belongs to a trip.
+ *   `memories` has no kind/source column, and three readers in
+ *   routes/memories.ts treat "the newest live row with this trip_id and this
+ *   owner" as THE trip Memory: `answerExistingTripMemory` (behind
+ *   `POST /trips/:tripId/memory`, "one live trip Memory per trip"),
+ *   `GET /trips/:tripId/memory`, and the trip recap read. A layover Memory with
+ *   the trip's id made the real trip Memory impossible to create, and displaced
+ *   an existing one — the owner was answered with "Layover in <city>" and a crew
+ *   member with "No memory for this trip" (found in lead review, 2026-10-05;
+ *   memoryFromLayover.test.ts "Lead review item 1"). Linking a layover Memory to
+ *   its trip needs a column that says which kind of Memory a row is, which is a
+ *   migration and lane A2's surface, not this route's.
  *
  *   It never carries a coordinate (`location_lat` / `location_lng` are not
  *   written at all, so the column default applies), a `place_id`, a terminal,
@@ -34,13 +46,12 @@
 
 /** The columns the route reads. `airport_profiles(...)` is the FK embed; lat/lng are NOT selected. */
 export const LAYOVER_MEMORY_SESSION_SELECT =
-  "id, user_id, status, trip_id, canonical_city_id, arrival_time, departure_time, manual_city, manual_country, manual_airport_name, manual_iata, airport_profiles(city, country, name, iata_code)";
+  "id, user_id, status, canonical_city_id, arrival_time, departure_time, manual_city, manual_country, manual_airport_name, manual_iata, airport_profiles(city, country, name, iata_code)";
 
 export interface LayoverSessionForMemory {
   id: string;
   user_id: string;
   status: string;
-  trip_id: string | null;
   canonical_city_id: string | null;
   arrival_time: string;
   departure_time: string;
@@ -97,7 +108,7 @@ export function layoverMemoryTitle(session: LayoverSessionForMemory): string {
 
 /**
  * The `memories` insert row. Every key is listed so a reader can see what is
- * NOT here: no `location_lat`, no `location_lng`, no `place_id`.
+ * NOT here: no `location_lat`, no `location_lng`, no `place_id`, no `trip_id`.
  */
 export function layoverMemoryRow(session: LayoverSessionForMemory, ownerId: string): Record<string, unknown> {
   const { city, country } = layoverMemoryPlace(session);
@@ -108,7 +119,6 @@ export function layoverMemoryRow(session: LayoverSessionForMemory, ownerId: stri
     visibility: "only_me",
     allowed_user_ids: [],
     hidden_user_ids: [],
-    trip_id: session.trip_id ?? null,
     canonical_location_id: session.canonical_city_id ?? null,
     location_city: city,
     location_country: country,
@@ -118,5 +128,9 @@ export function layoverMemoryRow(session: LayoverSessionForMemory, ownerId: stri
   };
 }
 
-/** Keys the row must never carry — asserted by the suite, and by the route before it writes. */
-export const LAYOVER_MEMORY_FORBIDDEN_KEYS = ["location_lat", "location_lng", "place_id"] as const;
+/**
+ * Keys the row must never carry — asserted by the suite, and by the route before
+ * it writes. The first three are §3 L19 (no operational location); `trip_id` is
+ * the one-trip-Memory invariant described in the header.
+ */
+export const LAYOVER_MEMORY_FORBIDDEN_KEYS = ["location_lat", "location_lng", "place_id", "trip_id"] as const;
