@@ -152,6 +152,17 @@ describe('a failed read draws nothing and hides nothing', () => {
     expect((onIds.mock.calls.at(-1)![0] as Set<string>).size).toBe(0);
   });
 
+  it('a REFRESH that fails drops the stale partition — the stream gets everything back', async () => {
+    mockedFetch.mockResolvedValueOnce({ ok: true, data: layers() });
+    const onIds = jest.fn();
+    const { rerender } = await render(<SemanticLayersStrip threadId="t1" viewerId={ME} messages={messages} refreshKey="m1" onLayeredIdsChange={onIds} />);
+    expect(await screen.findByTestId('telegraph-semantic-layers')).toBeTruthy();
+    mockedFetch.mockResolvedValueOnce({ ok: false, error: '503' });
+    await rerender(<SemanticLayersStrip threadId="t1" viewerId={ME} messages={messages} refreshKey="m2" onLayeredIdsChange={onIds} />);
+    await waitFor(() => expect(screen.queryByTestId('telegraph-semantic-layers')).toBeNull());
+    expect((onIds.mock.calls.at(-1)![0] as Set<string>).size).toBe(0);
+  });
+
   it('layeredStreamIds: null layers hide nothing; unloaded ids hide nothing', () => {
     expect(layeredStreamIds(null, new Set(['a'])).size).toBe(0);
     expect([...layeredStreamIds(layers(), new Set(['safety-1']))]).toEqual(['safety-1']);
