@@ -732,9 +732,9 @@ describe("S3 — rb_buddy_earnings_summary's installed body claims no collection
     const rollback = readFileSync(
       resolve(MIGRATIONS_DIR, "../../../../db/rollback/2026-10-04-3824-rent-buddy-ledger-posting-rollback.sql"), "utf8");
     const def = /CREATE OR REPLACE FUNCTION public\.rb_buddy_earnings_summary\([\s\S]*?\n\$\$;\n/;
-    const in3530 = def.exec(m3530)?.[0];
-    const inRollback = def.exec(rollback)?.[0];
-    assert.ok(in3530 && inRollback, "the function must be defined in 3530 and restored by 3824's rollback");
+    const in3530: string = def.exec(m3530)?.[0] ?? "";
+    const inRollback: string = def.exec(rollback)?.[0] ?? "";
+    assert.ok(in3530 !== "" && inRollback !== "", "the function must be defined in 3530 and restored by 3824's rollback");
 
     assertSql(in3530, "3530", /COALESCE\(b\.deposit_usd, 0\)::numeric\s+AS in_app_scheduled/,
       "3530 reads deposit_usd, as merged; the mode-based reading belongs to 3824");

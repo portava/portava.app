@@ -480,17 +480,17 @@ describe("migration 3824 — the Rent-a-Buddy ledger posting door, executed", { 
       // they found it.
       const comment = () => scalar(`SELECT md5(COALESCE(obj_description('public.rent_buddy_bookings'::regclass), '<none>'))`);
       const had3820 = scalar(`SELECT (COALESCE(obj_description('public.rent_buddy_bookings'::regclass), '') ~ '3820')::text`);
-      const before = comment();
+      // The record is really there: 3820 sorts before 3824, so the chain that
+      // built this database applied it. Without this, "unchanged" could be an
+      // unchanged absence.
+      assert.equal(had3820, "true", "the rent_buddy_bookings table comment carries no 3820 record — 3820 was not applied to this database, so this test proves nothing");
+      const commentAtStart = comment();
       assert.equal(applyOnClone(FORWARD).ok, true);
-      assert.equal(comment(), before, "re-applying 3824 changed the table comment");
+      assert.equal(comment(), commentAtStart, "re-applying 3824 changed the table comment");
       assert.equal(applyOnClone(ROLLBACK).ok, true);
-      assert.equal(comment(), before, "rolling 3824 back changed the table comment");
+      assert.equal(comment(), commentAtStart, "rolling 3824 back changed the table comment");
       assert.equal(applyOnClone(FORWARD).ok, true);
-      assert.equal(comment(), before, "re-applying 3824 after its rollback changed the table comment");
-      // Said rather than assumed: on a harness whose chain includes 3820 the
-      // record is really there (CI's does; the assertion is skipped only where
-      // 3820 was not applied, and says so).
-      if (had3820 !== "true") console.warn("M8: this database's rent_buddy_bookings comment carries no 3820 record (3820 not applied here); the unchanged-comment assertions still ran.");
+      assert.equal(comment(), commentAtStart, "re-applying 3824 after its rollback changed the table comment");
       assert.doesNotMatch(sqlFile(FORWARD), /COMMENT ON TABLE public\.rent_buddy_bookings\b/, "3824 comments on the bookings TABLE");
       assert.doesNotMatch(sqlFile(ROLLBACK), /COMMENT ON TABLE public\.rent_buddy_bookings\b/, "3824's rollback comments on the bookings TABLE");
     });
