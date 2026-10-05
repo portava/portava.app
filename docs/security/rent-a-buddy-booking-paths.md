@@ -41,16 +41,16 @@ creation paths; before this change two were gated."*
 
 | # | route | file:line (handler / insert) | initial `status` |
 |---|---|---|---|
-| 1 | `POST /rent-a-buddy/bookings` — canonical checkout, the one the shipped app's "Book This Package" and hourly-booking flows both use | `rentABuddy.ts:999` / insert `:1310` | `"requested"` |
-| 2 | `POST /rent-a-buddy/packages/:packageId/book` (`bookPackage`) | `rentABuddyMarketplace.ts:1291` / insert `:1373` | `"pending"` |
-| 3 | `POST /rent-a-buddy/offers/:offerId/accept` | `rentABuddyMarketplace.ts:1023` / insert `:1082` | `"pending"` |
-| 4 | `POST /rent-a-buddy/bookings/:bookingId/rebook` | `rentABuddy.ts:6230` / insert `:6306` | `"pending"` |
+| 1 | `POST /rent-a-buddy/bookings` — canonical checkout, the one the shipped app's "Book This Package" and hourly-booking flows both use | `rentABuddy.ts:1005` / insert `:1316` | `"requested"` |
+| 2 | `POST /rent-a-buddy/packages/:packageId/book` (`bookPackage`) | `rentABuddyMarketplace.ts:1292` / insert `:1374` | `"pending"` |
+| 3 | `POST /rent-a-buddy/offers/:offerId/accept` | `rentABuddyMarketplace.ts:1024` / insert `:1083` | `"pending"` |
+| 4 | `POST /rent-a-buddy/bookings/:bookingId/rebook` | `rentABuddy.ts:6236` / insert `:6312` | `"pending"` |
 | 5 | `POST /rent-a-buddy/buddies/:buddyId/request` | `rentABuddySpec.ts:408` / insert `:526` | `"pending"` |
 
 Path 1 is the only one whose initial `status` is `"requested"` rather than
 `"pending"` — flagged in §4, not resolved here.
 
-### 1.1 Canonical checkout — `rentABuddy.ts:999-1353`
+### 1.1 Canonical checkout — `rentABuddy.ts:1005-1359`
 
 **Real client flow, precisely** (correcting an initial assumption before
 this investigation started): `buddy/[id].tsx:120,408` — "Book This Package"
@@ -108,7 +108,7 @@ notes, payment_mode, total_usd, deposit_usd, cash_balance_usd,
 is_test_booking, expires_at, status: "requested", safety_status: "normal",
 route_plan: [], updated_at`.
 
-### 1.2 `bookPackage` — `rentABuddyMarketplace.ts:1291-1405`
+### 1.2 `bookPackage` — `rentABuddyMarketplace.ts:1292-1406`
 
 **Gate stack:** `requireBookingKyc` (:1303) → kill switches (:1304-1307) →
 package lookup + `admin_review_status === "approved"` (:1309-1318) →
@@ -151,7 +151,7 @@ total_usd, deposit_usd, cash_balance_usd, pricing_type: "package",
 deposit_rule_applied, deposit_percent, deposit_reason, is_group_booking,
 expires_at, status: "pending"`.
 
-### 1.3 Offer-accept — `rentABuddyMarketplace.ts:1023-1131`
+### 1.3 Offer-accept — `rentABuddyMarketplace.ts:1024-1132`
 
 **Gate stack:** `requireBookingKyc` (:1037) → kill switches (:1038-1041) →
 offer lookup + `status === "pending"` + ownership check (:1044-1053) →
@@ -166,7 +166,7 @@ o.cash_balance_usd`. No `calculateDeposit` involvement.
 
 **Upstream of that:** the offer itself is created at
 `POST /rent-a-buddy/requests/:requestId/offers`
-(`rentABuddyMarketplace.ts:913-972`, insert `:947-965`), where a **buddy**
+(`rentABuddyMarketplace.ts:914-973`, insert `:948-966`), where a **buddy**
 supplies `proposedPriceUsd, depositAmountUsd, cashBalanceDue, paymentMode`
 directly — only `proposedPriceUsd` is required to be truthy (`:941`);
 nothing else is validated (no check that `deposit + cash == total`, no
@@ -175,7 +175,7 @@ typed there, unchecked.
 
 Also calls `createEarningsLedgerEntry` (`:1127`, see §2).
 
-### 1.4 Rebook — `rentABuddy.ts:6230-6345`
+### 1.4 Rebook — `rentABuddy.ts:6236-6351`
 
 **Gate stack:** `requireRentBuddyEnabled` (:6234) → `requireBookingKyc`
 (:6240) — this file's own comment (`:6236-6239`) explains why: *"Rebook
@@ -242,10 +242,10 @@ deposit_usd: 0, status: "pending", created_at, updated_at`.
 deposit/payment_mode calculation — it is a separate, downstream concern:
 
 - Admin-only writes: `PATCH /rent-a-buddy/admin/fee-rules`
-  (`rentABuddyMarketplace.ts:2250-2269`), keyed by `buddy_level` →
+  (`rentABuddyMarketplace.ts:2260-2284`), keyed by `buddy_level` →
   `platform_fee_percent, traveler_service_fee_usd, traveler_service_fee_pct`.
 - Only consumer: `createEarningsLedgerEntry()`
-  (`rentABuddyMarketplace.ts:1939-1980`), called **after** a booking already
+  (`rentABuddyMarketplace.ts:1940-1981`), called **after** a booking already
   exists — from `bookPackage` (`:1401`) and offer-accept (`:1127`) only.
   **Not called from the canonical checkout route, rebook, or the
   spec-request route at all.** It reads the buddy's fee rule to compute
@@ -277,7 +277,7 @@ about them even though they aren't strictly pricing.)*
 - **The platform "enabled" flag doesn't cover 3 of 5 paths.**
   `rentABuddy.ts:4` documents: *"All non-admin routes are gated by
   `requireRentBuddyEnabled`."* Verified: called by every handler in
-  `rentABuddy.ts` (checkout `:1006`, rebook `:6234`) — but **never called
+  `rentABuddy.ts` (checkout `:1012`, rebook `:6240`) — but **never called
   anywhere in `rentABuddyMarketplace.ts` or `rentABuddySpec.ts`**.
   `bookPackage`, offer-accept, and spec-request rely only on the two
   kill-switch flags instead.
@@ -311,8 +311,8 @@ extraction but not folded into it.
 - `:223` — `gc.force_public_meetup` — same scoping.
 
 `bookPackage` passes `action: "package-book"`
-(`rentABuddyMarketplace.ts:1336`) and offer-accept passes `action:
-"offer-accept"` (`rentABuddyMarketplace.ts:1060`) — **neither matches
+(`rentABuddyMarketplace.ts:1337`) and offer-accept passes `action:
+"offer-accept"` (`rentABuddyMarketplace.ts:1061`) — **neither matches
 `"book"`, so neither is stopped by any of these three admin controls.** An
 admin who pauses all bookings platform-wide does not actually stop package
 bookings or offer-accepts from completing, and an admin who forces
@@ -324,7 +324,7 @@ exempt.
 
 ### Follow-up 2 — validation asymmetry: bookPackage/offer-accept skip checks canonical checkout enforces
 
-Canonical checkout (`rentABuddy.ts:999-1353`, full gate stack in §1.1)
+Canonical checkout (`rentABuddy.ts:1005-1359`, full gate stack in §1.1)
 enforces, and `bookPackage`/offer-accept (§1.2, §1.3) do not:
 - Self-booking block (buddy cannot book themselves).
 - Mutual block-table check (blocker/blocked in either direction).
