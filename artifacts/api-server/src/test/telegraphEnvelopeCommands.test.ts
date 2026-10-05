@@ -200,8 +200,10 @@ describe("the bus holds the route doors' gates", () => {
     const c = use(store());
     const past = await post(`/telegraph/commands`, A, { type: "SHARE_LOCATION", conversationId: GROUP, params: { ...share(), expiresAt: new Date(Date.now() - 60_000).toISOString() } });
     assert.equal(past.status, 400);
+    assert.match(String(past.body.message), /already past/, "refused for the wrong reason");
     const far = await post(`/telegraph/commands`, A, { type: "SHARE_LOCATION", conversationId: GROUP, params: { ...share(), expiresAt: new Date(Date.now() + 400 * 3_600_000).toISOString() } });
     assert.equal(far.status, 400);
+    assert.match(String(far.body.message), /at most \d+ hours/, "refused for the wrong reason");
     assert.equal(messagesIn(c, GROUP).length, 0);
   });
 });
