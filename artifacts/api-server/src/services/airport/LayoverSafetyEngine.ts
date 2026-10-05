@@ -96,10 +96,10 @@ export const LAYOVER_ENGINE_VERSION = "2026.09.22-1";
  *   SOURCE_CONFLICT      "  (§10.1 contradiction, never silently merged)
  *   FLIGHT_MOVED_EARLIER          LayoverEventReplanner, on a cutoff that moved
  *   FLIGHT_DELAY_CREATED_OPPORTUNITY  "  , on a delay that widened the window
- * Declared, never emitted anywhere (no input exists in any shape):
- * BAGGAGE_STATUS_CRITICAL_UNKNOWN (checked_bags is a boolean, unknown is
- * unrepresentable), RETURN_ROUTE_UNRELIABLE, AIRPORT_CHANGE_REQUIRED,
- * SELF_TRANSFER_FRICTION, RECOMMENDATION_EXPIRED.
+ * Emitted by the constraint gate (LayoverConstraints.ts), from a DECLARED set:
+ * BAGGAGE_STATUS_CRITICAL_UNKNOWN, AIRPORT_CHANGE_REQUIRED, SELF_TRANSFER_FRICTION.
+ * RETURN_ROUTE_UNRELIABLE is emitted by `returnRiskAdjustedAdvice` below.
+ * Declared, never emitted anywhere (no input exists): RECOMMENDATION_EXPIRED.
  */
 export const LAYOVER_REASON_CODES = [
   "ENTRY_NOT_CONFIRMED",
