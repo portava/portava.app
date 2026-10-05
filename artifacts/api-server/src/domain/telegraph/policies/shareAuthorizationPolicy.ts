@@ -549,23 +549,25 @@ export const TELEGRAPH_DYNAMIC_SHARE_PRODUCERS: readonly DynamicShareProducer[] 
   },
   {
     file: "artifacts/api-server/src/routes/messaging.ts",
-    expression: "subtype: req.body?.subtype (any string the client sends)",
+    expression: "msg_type: msgType | subtype (both from resolveClientDiscriminator, a closed list)",
     family: "OPERATIONAL",
     sourceDomain: null,
-    produces: [],
+    produces: ["discovery_card", "post_card", "compass_card", "meetup", "e2ee_welcome"],
     writesMessages: true,
     note:
-      "UNBOUNDED, AND THIS IS THE FINDING. POST /threads/:threadId/messages takes " +
-      "`subtype` straight from the request body with no vocabulary check — the only " +
-      "constraint applied is that msgType collapses to 'system' or 'text'. So a " +
-      "client can stamp any subtype it likes onto a message, including one a " +
-      "renderer will dispatch on. It cannot forge the PAYLOAD authorization (the " +
-      "body is whatever the sender wrote, and every card's data comes from that " +
-      "same body), so this is a rendering-shape hole rather than an access-control " +
-      "one — but it is exactly the seam a capability registry is supposed to close, " +
-      "and it is why `produces` is empty here rather than enumerated. Recorded " +
-      "against census T35/T41/T429: there is no versioned structured-message schema " +
-      "and no validation of the discriminator that selects a renderer.",
+      "BOUNDED 2026-10-04. This entry used to read \"UNBOUNDED, AND THIS IS THE FINDING\": POST " +
+      "/threads/:threadId/messages took `subtype` straight from the request body, so a client could " +
+      "stamp any subtype onto a `system` row, including one a renderer dispatches on. It called that a " +
+      "rendering-shape hole. It was worse than its name: the thread screen draws a `system` row as " +
+      "platform chrome with no sender attribution — `call_*` as a call line with a call-back button, " +
+      "`rent_buddy_*` as a booking milestone banner, anything unrecognised as a centred notice — so a " +
+      "member could post in the platform's voice. The discriminator now comes from " +
+      "resolveClientDiscriminator (domain/telegraph/policies/messageDoorPolicy.ts): `text` with no " +
+      "subtype, or `system` with one of the five subtypes the app itself authors, listed in `produces`. " +
+      "test/telegraphMessageDoors.test.ts holds that list equal to what the client tree sends, in both " +
+      "directions. WHAT IS STILL OPEN, and it is census T35/T429's remainder: the three card subtypes " +
+      "carry an unversioned JSON body the sender wrote, so the PAYLOAD of an allowed card is still a " +
+      "sender's snapshot. That closes when those cards move to POST /threads/:id/share.",
   },
   {
     file: "artifacts/api-server/src/routes/circle.ts",

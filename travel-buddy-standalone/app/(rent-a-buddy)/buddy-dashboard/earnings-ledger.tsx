@@ -77,10 +77,16 @@ function SummaryCard({ summary }: { summary: EarningsSummary }) {
         </View>
       </View>
       <View style={sum.row}>
+        {/*
+          Was a "deposit collected" cell over the API's deprecated alias — a claim
+          that the money had been taken, on the one screen where a buddy decides
+          whether they have been paid. Nothing is charged (the API reports 0 under
+          both names), so the cell shows what WAS collected, from the current field. No
+          deposit is taken in this release, so no deposit term is shown here.
+        */}
         <View style={sum.col}>
           <Text style={sum.colLbl}>Collected in app</Text>
-          <Text style={sum.colVal} testID="earnings-collected-in-app">{usd(summary.completed.inAppAmountCollected)}</Text>
-          <Text style={sum.colNote}>In-app payment is not live and no deposit is taken.</Text>
+          <Text style={sum.colVal} testID="earnings-collected-in-app">{usd(summary.completed.inAppAmountCollected)}</Text><Text style={sum.colNote}>In-app payment is not live and no deposit is taken.</Text>
         </View>
         <View style={sum.col}>
           <Text style={sum.colLbl}>Cash balance due</Text>
@@ -139,6 +145,8 @@ function LedgerRow({ entry }: { entry: LedgerEntry }) {
           </Text>
         )}
         {entry.tipUsd > 0 ? <Text style={row.detail}>Tip: +{usd(entry.tipUsd)} (no commission)</Text> : null}
+        {/* `depositAmount` (the ledger row's `deposit_amount`: scheduled, never taken) is not shown: no deposit
+            is taken in this release. The collected figure is `inAppAmountCollected`, below, which is 0. */}
         {!reversed && entry.cashBalanceDue > 0 ? (
           <Text style={row.detail}>Cash balance due {usd(entry.cashBalanceDue)}</Text>
         ) : null}

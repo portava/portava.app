@@ -77,13 +77,14 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { logger } from "../lib/logger.js";
 import { beginIdempotentCreation, sendBookingLedgerRefusal, settleBookingLedger } from "../lib/rentBuddyEarningsLedger.js";
+import { collectedInAppUsd, NOTHING_COLLECTED_WARNING, scheduledInAppUsd } from "../lib/rentBuddyCollectedMoney.js";
 // The commission is no longer resolved or applied in this file: the earnings
 // summary reads it, and every money total, from SQL (migration 3824) through
 // lib/rentBuddyLedgerPosting.ts. The dashboard once carried its own
 // `defaultFeePercent = 22` and then a JavaScript fold over
 // lib/rentBuddyFeeSchedule.ts; both are gone from here (M1 / M10, PAY-055).
-// (This import block is the length it was: docs cite this file by line, so
-// edits here keep every line below where it stood.)
+// (This import block is the length main's is: docs cite this file by line, so
+// edits here keep every line below where it stands on main.)
 import { LEDGER_REVERSED_NOTE_PREFIX, RESERVED_TIP_EVENT_KEY, depositColumns, isPositiveMoneyAmount, postBookingAddons, quoteBooking, quotePricedBooking, readBuddyLedgerTotals, sendBookingQuoteFailure, sendLedgerRefusal, sendMoneyRpcFailure, type AddonsPostResult, type MoneyRpcFailure } from "../lib/rentBuddyLedgerPosting.js";
 import { isNonNumericCoord } from "../lib/coords.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
@@ -292,9 +293,6 @@ function toBuddyScoringData(row: any, trustScore: number): BuddyScoringData {
     city: row.city,
     categories: row.categories ?? [],
     languages: row.languages ?? [],
-    hourlyRateUsd: row.hourly_rate_usd ? Number(row.hourly_rate_usd) : null,
-    halfDayRateUsd: row.half_day_rate_usd ? Number(row.half_day_rate_usd) : null,
-    fullDayRateUsd: row.full_day_rate_usd ? Number(row.full_day_rate_usd) : null,
     vibeTagsList: row.vibe_tags ?? [],
     energyType: row.energy_type ?? null,
     buddyLevel: row.buddy_level ?? 'new',
@@ -391,8 +389,10 @@ router.post("/rent-a-buddy/match", async (req, res) => {
     vibe: prefOverride?.vibe ?? (storedPrefs as any)?.vibe,
     energy: prefOverride?.energy ?? (storedPrefs as any)?.energy,
     language: prefOverride?.language ?? (storedPrefs as any)?.language,
-    budgetMinUsd: prefOverride?.budgetMinUsd ?? (storedPrefs as any)?.budget_min_usd,
-    budgetMaxUsd: prefOverride?.budgetMaxUsd ?? (storedPrefs as any)?.budget_max_usd,
+    // budgetMinUsd / budgetMaxUsd deliberately NOT passed: the owner ruled on
+    // 2026-10-04 that a buddy's list price must not influence the compatibility
+    // score or the default order. The traveller's stated budget is still stored
+    // and still theirs to filter or sort by on a separate surface.
     bookingLength: prefOverride?.bookingLength ?? (storedPrefs as any)?.booking_length,
     safetyPrefs: prefOverride?.safetyPrefs ?? (storedPrefs as any)?.safety_prefs ?? {},
     groupSize: prefOverride?.groupSize ?? (storedPrefs as any)?.group_size ?? 1,
@@ -2250,8 +2250,28 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
   // rather than re-listed so the two cannot drift apart again.
   const cancelled = bookings.filter((b) => CANCELLED_BOOKING_STATUSES.has(b.status));
 
+  // ── ONE ANSWER TO "COLLECTED", SHARED WITH #610 (M5 / `09` §1.3.1) ─────────
+  // The fold above supplies every total, and no money column is added up here.
+  // `depositScheduled` is #610's field, summed by the same SQL function over the
+  // same completed bookings: the stored `deposit_usd`, which is 0 for a booking
+  // made while no deposit is taken (owner ruling 2026-10-04). The COLLECTED
+  // figure comes from #610's module, lib/rentBuddyCollectedMoney.ts, and nowhere
+  // else. The fold has its own reading of it (the sum of settlement entries),
+  // also 0 because no route can post a settlement; a disagreement between the
+  // two is logged loudly rather than published as a second definition.
+  const depositScheduled = totals.depositScheduledUsd;
+  const collectedInApp = collectedInAppUsd(depositScheduled);
+  if (totals.inAppAmountCollectedUsd !== collectedInApp) {
+    logger.error(
+      { userId: auth.user.id, buddyProfileId: buddyProfile.id, ledgerSettledUsd: totals.inAppAmountCollectedUsd, published: collectedInApp },
+      "earnings summary: the ledger holds settlement entries that lib/rentBuddyCollectedMoney.ts does not read yet",
+    );
+  }
+
   res.json({
     isEstimated: totals.isEstimated,
+    // #610's sentence ("No payment has been collected …") inside the warning
+    // this route already carried; null only once a settlement clears the flag.
     warning: totals.isEstimated ? EARNINGS_NOT_COLLECTED_WARNING : null,
     today: {
       bookingCount: todayBkgs.length,
@@ -2266,15 +2286,17 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
       totalUsd: totals.completedTotalUsd,
       // Completed bookings that have no ledger entries: counted, not priced.
       unledgeredCount: totals.unledgeredCompletedCount,
+      // The deposit the bookings NAME, under a name that does not assert it
+      // was taken (#610) — the ledger row's `deposit_amount`, aggregated.
+      depositScheduled,
       cashBalanceDue: totals.cashBalanceDueUsd,
       cashBalanceConfirmed: totals.cashBalanceConfirmedUsd,
-      // The fold of settlement entries. 0: nothing is collected in-app, and no
-      // deposit is taken in this release (owner ruling 2026-10-04).
-      inAppAmountCollected: totals.inAppAmountCollectedUsd,
-      // DEPRECATED alias, kept so an app build that still reads it gets a
-      // number. It is the SAME figure — what was collected — and no longer the
-      // sum of `deposit_usd`, which was money nobody had paid.
-      depositCollected: totals.inAppAmountCollectedUsd,
+      // Collected in app: lib/rentBuddyCollectedMoney.ts's answer, which is 0.
+      // `depositCollected` is kept in the shape (at 0) rather than removed, for
+      // the same reason the ledger kept its column: the field is the place a
+      // real collection would eventually be reported.
+      inAppAmountCollected: collectedInApp,
+      depositCollected: collectedInApp,
     },
     tips: { total: totals.tipsTotalUsd, count: totals.tipCount },
     // The rate that applies to this buddy's next booking and where it came
@@ -2412,15 +2434,30 @@ router.get("/rent-a-buddy/admin/marketplace/analytics", async (req, res) => {
   const waitlist = (waitlistRes.data ?? []) as any[];
   const buddies = (buddiesRes.data ?? []) as any[];
 
-  // By city
-  const cityStats: Record<string, { bookings: number; revenue: number; deposit: number; cash: number; inApp: number }> = {};
+  // By city.
+  //
+  // M5 / `09` §1.3.1, the operator-facing half. `inApp` summed
+  // `full_in_app ? total_usd : deposit_usd` — the clearest statement of the
+  // defect anywhere in the tree, since it spells out that a full-in-app
+  // booking's ENTIRE value was being counted as money taken in app. Nothing is
+  // charged, so the collected figure is 0 and the booked figure keeps the
+  // number under `inAppScheduled`. An operator reading a launch decision off
+  // this screen was reading booked volume labelled as collected cash.
+  const cityStats: Record<string, {
+    bookings: number; revenue: number; deposit: number; cash: number;
+    inApp: number; inAppScheduled: number;
+  }> = {};
   for (const b of bookings) {
-    if (!cityStats[b.city]) cityStats[b.city] = { bookings: 0, revenue: 0, deposit: 0, cash: 0, inApp: 0 };
+    if (!cityStats[b.city]) {
+      cityStats[b.city] = { bookings: 0, revenue: 0, deposit: 0, cash: 0, inApp: 0, inAppScheduled: 0 };
+    }
     cityStats[b.city].bookings++;
     cityStats[b.city].revenue += Number(b.total_usd ?? 0);
     cityStats[b.city].deposit += Number(b.deposit_usd ?? 0);
     cityStats[b.city].cash += Number(b.cash_balance_usd ?? 0);
-    cityStats[b.city].inApp += b.payment_mode === "full_in_app" ? Number(b.total_usd ?? 0) : Number(b.deposit_usd ?? 0);
+    // ONE definition of the in-app share, shared with the earnings fold (lib/rentBuddyCollectedMoney.ts#scheduledInAppUsd).
+    cityStats[b.city].inAppScheduled += scheduledInAppUsd(b);
+    cityStats[b.city].inApp = collectedInAppUsd(cityStats[b.city].inAppScheduled);
   }
 
   // By category
@@ -2453,6 +2490,11 @@ router.get("/rent-a-buddy/admin/marketplace/analytics", async (req, res) => {
     if (b.available_now) supply[b.city].availableNow++;
   }
 
+  // Summed once: the booked deposit total is reported BOTH as `deposit` and as
+  // the input to the collected answer, and two reduces over the same rows is
+  // how two figures over one set come to disagree.
+  const depositBooked = bookings.reduce((s, b) => s + Number(b.deposit_usd ?? 0), 0);
+
   // Conversion
   const searches = events.filter((e) => e.event_type === "search").length;
   const completedCount = bookings.filter((b) => b.status === "completed").length;
@@ -2472,11 +2514,21 @@ router.get("/rent-a-buddy/admin/marketplace/analytics", async (req, res) => {
       byCity: cityStats,
       byCategory: catStats,
     },
+    // `revenue` here is BOOKED VALUE, never money received, and that is now
+    // said rather than implied. `admin/marketplace.tsx` rendered `deposit`
+    // under the label "Deposit collected", so this block was the fourth surface
+    // claiming a collection; `depositCollected` is published explicitly at 0 so
+    // that a consumer asking the collected question gets the honest answer
+    // instead of reading it off `deposit`.
     revenue: {
       total: bookings.reduce((s, b) => s + Number(b.total_usd ?? 0), 0),
-      deposit: bookings.reduce((s, b) => s + Number(b.deposit_usd ?? 0), 0),
+      deposit: depositBooked,
+      depositCollected: collectedInAppUsd(depositBooked),
       cashBalance: bookings.reduce((s, b) => s + Number(b.cash_balance_usd ?? 0), 0),
     },
+    isEstimated: true,
+    warning: NOTHING_COLLECTED_WARNING +
+      " Every figure here is booked value over the period, not money received.",
     conversion: { searches, completedBookings: completedCount, conversionRate },
     supply,
     waitlistDemand,
@@ -2785,8 +2837,8 @@ router.post("/rent-a-buddy/admin/restrictions/city-category", async (req, res) =
  * The warning the earnings summary carries while any figure is an estimate.
  * Exported so the test asserts the copy the buddy actually reads.
  */
-export const EARNINGS_NOT_COLLECTED_WARNING =
-  "All figures are estimates. Nothing has been collected through the app: in-app payment is not live, no deposit is taken, and payouts are not connected. Cash balances are tracked, not charged.";
+export const EARNINGS_NOT_COLLECTED_WARNING = // #610's sentence about the CHARGE, between the two clauses this warning always had
+  "All figures are estimates. " + NOTHING_COLLECTED_WARNING + " No deposit is taken. Cash balance is tracked but not charged. Payout system not connected.";
 
 /** An event key rb_post_booking_ledger accepts (3824): 1-120 of [A-Za-z0-9_.:-]. */
 const TIP_KEY_RE = /^[A-Za-z0-9_.:-]{1,120}$/;

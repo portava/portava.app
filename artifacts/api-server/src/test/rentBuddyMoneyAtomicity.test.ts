@@ -535,7 +535,11 @@ describe("M7 — earnings aggregation is exhaustive", () => {
     const fetched = await fetchAllBuddyEarningsRows(makeCappedBookingsClient(rows, 1000), BUDDY_PROF);
     const summary = foldEarningsRows(fetched!, 0.15, new Date("2026-06-01T00:00:00Z"));
 
-    assert.equal(summary.totalInAppUsd, 1201 * 30);
+    // M5: the deposit sum is now `totalInAppScheduledUsd`; `totalInAppUsd`
+    // means COLLECTED and is 0. The net is unchanged — it was always derived
+    // from the scheduled amount, and still is.
+    assert.equal(summary.totalInAppScheduledUsd, 1201 * 30);
+    assert.equal(summary.totalInAppUsd, 0, "nothing is collected in app; there is no payment path");
     assert.equal(summary.totalCashConfirmedUsd, 1201 * 70);
     assert.equal(round2(summary.totalPlatformFeesUsd), round2(1201 * 15));
     assert.equal(round2(summary.totalNetUsd), round2(1201 * 30 + 1201 * 70 - 1201 * 15));
@@ -549,8 +553,15 @@ describe("M7 — earnings aggregation is exhaustive", () => {
     const truncated = foldEarningsRows(capped.data, 0.15, new Date("2026-06-01T00:00:00Z"));
 
     assert.equal(capped.data.length, 1000, "PostgREST returns a short array and no error");
-    assert.ok(truncated.totalInAppUsd < 1201 * 30,
+    // READS THE SCHEDULED FIELD DELIBERATELY. This control used to assert on
+    // `totalInAppUsd`, which M5 pinned to 0 — and `0 < 36030` is true for every
+    // input, so the control would have gone silently vacuous and stopped
+    // distinguishing the truncating shape from the exhaustive one. The
+    // scheduled sum is the field that still varies with the row count.
+    assert.equal(truncated.totalInAppUsd, 0, "the collected figure is 0 either way — it cannot witness truncation");
+    assert.ok(truncated.totalInAppScheduledUsd < 1201 * 30,
       "the pre-fix shape under-reports the buddy's earnings — silently, which is the defect");
+    assert.equal(truncated.totalInAppScheduledUsd, 1000 * 30, "exactly one page of deposits");
   });
 
   it("returns null (never a confident zero) when the read fails", async () => {
@@ -571,7 +582,8 @@ describe("M7 — earnings aggregation is exhaustive", () => {
       { id: "c", total_usd: 100, deposit_usd: 100, cash_balance_usd: 0,  status: "completed", completed_at: null, booking_date: "2026-02-01" },
     ], 0.15, new Date("2026-06-01T00:00:00Z"));
 
-    assert.equal(summary.totalInAppUsd, 130);            // 30 + 100; the disputed 60 is excluded
+    assert.equal(summary.totalInAppScheduledUsd, 130);   // 30 + 100; the disputed 60 is excluded
+    assert.equal(summary.totalInAppUsd, 0);              // M5: scheduled is not collected
     assert.equal(summary.totalCashConfirmedUsd, 70);
     assert.equal(summary.totalPlatformFeesUsd, 30);      // 15 + 15; the disputed booking's fee is excluded
     assert.equal(summary.totalDisputedUsd, 200);

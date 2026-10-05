@@ -41,16 +41,16 @@ creation paths; before this change two were gated."*
 
 | # | route | file:line (handler / insert) | initial `status` |
 |---|---|---|---|
-| 1 | `POST /rent-a-buddy/bookings` — canonical checkout, the one the shipped app's "Book This Package" and hourly-booking flows both use | `rentABuddy.ts:999` / insert `:1310` | `"requested"` |
+| 1 | `POST /rent-a-buddy/bookings` — canonical checkout, the one the shipped app's "Book This Package" and hourly-booking flows both use | `rentABuddy.ts:1005` / insert `:1316` | `"requested"` |
 | 2 | `POST /rent-a-buddy/packages/:packageId/book` (`bookPackage`) | `rentABuddyMarketplace.ts:1292` / insert `:1374` | `"pending"` |
 | 3 | `POST /rent-a-buddy/offers/:offerId/accept` | `rentABuddyMarketplace.ts:1024` / insert `:1083` | `"pending"` |
-| 4 | `POST /rent-a-buddy/bookings/:bookingId/rebook` | `rentABuddy.ts:6230` / insert `:6306` | `"pending"` |
+| 4 | `POST /rent-a-buddy/bookings/:bookingId/rebook` | `rentABuddy.ts:6236` / insert `:6312` | `"pending"` |
 | 5 | `POST /rent-a-buddy/buddies/:buddyId/request` | `rentABuddySpec.ts:408` / insert `:526` | `"pending"` |
 
 Path 1 is the only one whose initial `status` is `"requested"` rather than
 `"pending"` — flagged in §4, not resolved here.
 
-### 1.1 Canonical checkout — `rentABuddy.ts:999-1353`
+### 1.1 Canonical checkout — `rentABuddy.ts:1005-1359`
 
 **Real client flow, precisely** (correcting an initial assumption before
 this investigation started): `buddy/[id].tsx:120,408` — "Book This Package"
@@ -160,7 +160,7 @@ offer lookup + `status === "pending"` + ownership check (:1044-1053) →
 **No `requireRentBuddyEnabled` call.**
 
 **Pricing computed:** none — **copies straight from the offer row**
-(`:1097-1100`): `payment_mode: o.payment_mode, total_usd:
+(`:1096-1099`): `payment_mode: o.payment_mode, total_usd:
 o.proposed_price_usd, deposit_usd: o.deposit_amount_usd, cash_balance_usd:
 o.cash_balance_usd`. No `calculateDeposit` involvement.
 
@@ -168,14 +168,14 @@ o.cash_balance_usd`. No `calculateDeposit` involvement.
 `POST /rent-a-buddy/requests/:requestId/offers`
 (`rentABuddyMarketplace.ts:914-973`, insert `:948-966`), where a **buddy**
 supplies `proposedPriceUsd, depositAmountUsd, cashBalanceDue, paymentMode`
-directly — only `proposedPriceUsd` is required to be truthy (`:942`);
+directly — only `proposedPriceUsd` is required to be truthy (`:941`);
 nothing else is validated (no check that `deposit + cash == total`, no
 `calculateDeposit` involvement at all). Path 1.3 inherits whatever the buddy
 typed there, unchecked.
 
-Also calls `createEarningsLedgerEntry` (`:1128`, see §2).
+Also calls `createEarningsLedgerEntry` (`:1127`, see §2).
 
-### 1.4 Rebook — `rentABuddy.ts:6230-6345`
+### 1.4 Rebook — `rentABuddy.ts:6236-6351`
 
 **Gate stack:** `requireRentBuddyEnabled` (:6234) → `requireBookingKyc`
 (:6240) — this file's own comment (`:6236-6239`) explains why: *"Rebook
@@ -242,17 +242,17 @@ deposit_usd: 0, status: "pending", created_at, updated_at`.
 deposit/payment_mode calculation — it is a separate, downstream concern:
 
 - Admin-only writes: `PATCH /rent-a-buddy/admin/fee-rules`
-  (`rentABuddyMarketplace.ts:2251-2270`), keyed by `buddy_level` →
+  (`rentABuddyMarketplace.ts:2260-2284`), keyed by `buddy_level` →
   `platform_fee_percent, traveler_service_fee_usd, traveler_service_fee_pct`.
 - Only consumer: `createEarningsLedgerEntry()`
   (`rentABuddyMarketplace.ts:1940-1981`), called **after** a booking already
-  exists — from `bookPackage` (`:1402`) and offer-accept (`:1128`) only.
+  exists — from `bookPackage` (`:1401`) and offer-accept (`:1127`) only.
   **Not called from the canonical checkout route, rebook, or the
   spec-request route at all.** It reads the buddy's fee rule to compute
   `platform_fee_amount`/`buddy_net_estimated_amount` for
   `rent_buddy_earnings_ledger` — the buddy's *payout* math, downstream of
   and separate from the traveler's *charge*.
-- Admin analytics also reads it wholesale (`:1998`) for reporting only.
+- Admin analytics also reads it wholesale (`:1997`) for reporting only.
 
 No existing table-driven candidate exists for the deposit-percentage logic
 itself — `calculateDeposit()` (§1.2) is entirely in-code constants.
@@ -277,7 +277,7 @@ about them even though they aren't strictly pricing.)*
 - **The platform "enabled" flag doesn't cover 3 of 5 paths.**
   `rentABuddy.ts:4` documents: *"All non-admin routes are gated by
   `requireRentBuddyEnabled`."* Verified: called by every handler in
-  `rentABuddy.ts` (checkout `:1006`, rebook `:6234`) — but **never called
+  `rentABuddy.ts` (checkout `:1012`, rebook `:6240`) — but **never called
   anywhere in `rentABuddyMarketplace.ts` or `rentABuddySpec.ts`**.
   `bookPackage`, offer-accept, and spec-request rely only on the two
   kill-switch flags instead.
@@ -324,7 +324,7 @@ exempt.
 
 ### Follow-up 2 — validation asymmetry: bookPackage/offer-accept skip checks canonical checkout enforces
 
-Canonical checkout (`rentABuddy.ts:999-1353`, full gate stack in §1.1)
+Canonical checkout (`rentABuddy.ts:1005-1359`, full gate stack in §1.1)
 enforces, and `bookPackage`/offer-accept (§1.2, §1.3) do not:
 - Self-booking block (buddy cannot book themselves).
 - Mutual block-table check (blocker/blocked in either direction).

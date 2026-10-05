@@ -337,6 +337,8 @@ export interface BuddyLedgerTotals {
   /** Completed bookings with no ledger row: counted, and priced by nothing. */
   unledgeredCompletedCount: number;
   completedTotalUsd: number;
+  /** The deposit the completed bookings NAME (sum of their stored `deposit_usd`); never a collection (#610). */
+  depositScheduledUsd: number;
   ledgeredGrossUsd: number;
   estimatedPlatformFeeUsd: number;
   estimatedBuddyEarningsUsd: number;
@@ -369,6 +371,7 @@ export async function readBuddyLedgerTotals(client: any, buddyUserId: string): P
       completedCount: asNumber(raw.completedCount),
       unledgeredCompletedCount: asNumber(raw.unledgeredCompletedCount),
       completedTotalUsd: asNumber(raw.completedTotalUsd),
+      depositScheduledUsd: asNumber(raw.depositScheduledUsd),
       ledgeredGrossUsd: asNumber(raw.ledgeredGrossUsd),
       estimatedPlatformFeeUsd: asNumber(raw.estimatedPlatformFeeUsd),
       estimatedBuddyEarningsUsd: asNumber(raw.estimatedBuddyEarningsUsd),

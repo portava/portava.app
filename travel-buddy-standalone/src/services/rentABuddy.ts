@@ -910,7 +910,16 @@ export interface EarningsSummary {
   today: { bookingCount: number; bookings: BuddyBooking[] };
   upcoming: { bookingCount: number; bookings: BuddyBooking[] };
   completed: {
-    count: number; totalUsd: number; /** @deprecated the same figure as inAppAmountCollected: what was COLLECTED (0 today), never the booking's deposit term. */ depositCollected: number;
+    count: number; totalUsd: number;
+    /** The deposit the completed bookings name (their stored `deposit_usd`). 0 for bookings made while no deposit is taken. Not shown on a screen. */
+    depositScheduled: number;
+    /**
+     * Collected in app. Always 0 — `pay-deposit` / `pay-full` are 503s, so no
+     * charge ever executes, and `rent_buddy_earnings_ledger` records 0 for the
+     * same bookings. These two fields used to carry the deposit SUM, which told
+     * a buddy a full_in_app booking's entire value had been taken.
+     */
+    depositCollected: number;
     cashBalanceDue: number; cashBalanceConfirmed: number; inAppAmountCollected: number; /** Completed bookings with no ledger entries: counted, not priced. */ unledgeredCount?: number;
   };
   tips: { total: number; count: number }; /** The commission on this buddy's NEXT booking and where it is configured. */ platformFeePercent?: number; platformFeeSource?: CommissionSource; tipCommissionPercent?: number;
@@ -1362,23 +1371,31 @@ export async function getPostingDefaults(): Promise<ApiResult<PostingDefaults>> 
 // ── Earnings enhanced summary ─────────────────────────────────────────────────
 
 export interface EarningsBreakdownSummary {
+  /** Collected in app. Always 0; see EarningsSummary.completed above. */
   totalInAppUsd: number;
+  /** What the bookings say WOULD be charged in app — the former totalInAppUsd. */
+  totalInAppScheduledUsd: number;
   totalCashConfirmedUsd: number;
   totalPlatformFeesUsd: number;
   totalDisputedUsd: number;
   totalPendingUsd: number;
+  /** Estimate of what the buddy is OWED. Unchanged by the collected zero. */
   totalNetUsd: number;
   yearlyNetUsd: number;
   monthlyBreakdown: Array<{
     month: string;
     totalUsd: number;
     bookingCount: number;
+    /** Collected in app that month. Always 0. */
     inApp: number;
+    inAppScheduled: number;
     cash: number;
     fees: number;
   }>;
   taxNote: string;
   platformFeePct: number;
+  isEstimated: boolean;
+  warning: string;
 }
 
 export async function getEarningsBreakdownSummary(): Promise<ApiResult<EarningsBreakdownSummary>> {

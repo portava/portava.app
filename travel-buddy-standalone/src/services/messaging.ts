@@ -189,7 +189,7 @@ export interface Message {
   /** Client-generated id for optimistic-send correlation (set locally; echoed by the server). */
   clientId?: string | null;
   /** Local delivery state for optimistic UI. Absent for messages loaded from the server. */
-  deliveryStatus?: 'sending' | 'sent' | 'failed';
+  deliveryStatus?: 'sending' | 'sent' | 'failed'; /** Why the server refused it, when it said (set with `failed`). */ sendFailure?: import('../features/telegraph/lifecycle/readState.ts').SendFailure | null;
   /** Saved @mention annotations — whitelist for RichText rendering. */
   tags?: Array<{ type: 'user'; id: string; matchToken: string; startChar: number; endChar: number; isBlocked?: boolean; isDeleted?: boolean }>;
   /** Saved #hashtag annotations — whitelist for RichText rendering. */
@@ -241,7 +241,7 @@ export type MsgErrorKind =
   | 'invalid_payload'
   | 'db_error'
   | 'network_unreachable'
-  | 'config_error';
+  | 'config_error' | 'rate_limited';
 
 import {
   buildOutgoingPayload,
@@ -250,13 +250,13 @@ import {
   joinFromWelcomeIfNeeded,
   E2EE_WELCOME_SUBTYPE,
 } from '../lib/e2ee/threadCrypto.ts';
-import { realCryptoPort } from '../lib/e2ee/realPort.ts';
+import { realCryptoPort } from '../lib/e2ee/realPort.ts'; import { parseRetryAfterSeconds } from '../features/telegraph/lifecycle/readState.ts';
 
 export interface MsgResult<T> {
   ok: boolean;
   data: T | null;
   errorKind?: MsgErrorKind;
-  message?: string;
+  message?: string; /** Seconds the server asked the client to wait (HTTP 429 `Retry-After`); null when it gave none. */ retryAfterSeconds?: number | null;
 }
 
 function apiBase(): string {
@@ -267,14 +267,14 @@ async function freshToken(): Promise<string | null> {
   return freshApiToken();
 }
 
-function mapApiError<T>(status: number, body: any): MsgResult<T> {
+function mapApiError<T>(status: number, body: any, retryAfter?: string | null): MsgResult<T> {
   const code = (body?.error as MsgErrorKind) ?? 'db_error';
-  const known: MsgErrorKind[] = ['unauthenticated', 'forbidden', 'not_found', 'invalid_payload', 'db_error'];
+  const known: MsgErrorKind[] = ['unauthenticated', 'forbidden', 'not_found', 'invalid_payload', 'db_error', 'rate_limited'];
   return {
     ok: false,
     data: null,
     errorKind: known.includes(code) ? code : 'db_error',
-    message: body?.message ?? `API ${status}`,
+    message: body?.message ?? `API ${status}`, ...(code === 'rate_limited' ? { retryAfterSeconds: parseRetryAfterSeconds(retryAfter) } : {}),
   };
 }
 
@@ -309,7 +309,7 @@ async function apiPost<T>(path: string, body?: unknown): Promise<MsgResult<T>> {
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
-    noteTelegraphRequest(res.status >= 500 ? 'server' : 'ok'); if (!res.ok) return mapApiError<T>(res.status, await res.json().catch(() => ({})));
+    noteTelegraphRequest(res.status >= 500 ? 'server' : 'ok'); if (!res.ok) return mapApiError<T>(res.status, await res.json().catch(() => ({})), res.headers?.get?.('Retry-After') ?? null);
     return { ok: true, data: await res.json() };
   } catch (e) {
     noteTelegraphRequest(isNetworkError(e) ? 'network' : 'server'); if (isNetworkError(e)) return { ok: false, data: null, errorKind: 'network_unreachable' };
