@@ -2207,7 +2207,7 @@ router.get("/highlights/archived", async (req, res) => {
     return;
   }
 
-  res.status(200).json({ highlights: (rows ?? []).map((h: any) => ({ ...h, ...describeLifetimeFields(h, archivedProjection.classProjected) })) });
+  res.status(200).json({ highlights: pinnedFirst((rows ?? []) as any[]).map((h: any) => ({ ...h, ...describeLifetimeFields(h, archivedProjection.classProjected) })) }); // pinned first (§12, census H100), archived_at order kept within each partition
 });
 
 /* ============================================================================
@@ -2890,7 +2890,7 @@ router.get("/highlights/following-feed", async (req, res) => {
       handle: g.profile.handle,
       name: g.profile.name,
       avatarUrl: g.profile.avatarUrl,
-      highlights: g.highlights,
+      highlights: pinnedFirst(g.highlights), // §12 "pinned/manual order always outranks automatic ordering", within each person's group; nextCursor was derived above from the unreordered page, so the cursor cannot skip rows (census H100)
     }));
 
   // nextCursor is present only while the cap is engaged; unbounded responses
