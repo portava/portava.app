@@ -4316,3 +4316,86 @@ superseded figure in this file.
 - A `getRestrictionState` or `resolveInteractionPermissions` call appearing under the Compass tree:
   this census would acquire a verdict that rests on `census-trust.md`'s subject, and §32.2's third
   entrance would become a Compass finding as well as a Trust one.
+
+## §37 — 2026-10-05 (lane L): CT-09's code half was already closed and is now pinned; Trust restrictions reach four Compass write paths; CPH-08's three failing sources named by file. NO VERDICT MOVES
+
+*Measured on branch `claude/mission-l-lead-residual-20261005` (cut from `13170305f`). `head_commit`
+is NOT re-declared; `CENSUS_STALENESS_ACKNOWLEDGED.json` names the two new counted files with the
+argument below. No flag, migration, deployment or database was touched.*
+
+### 37.1 CT-09 — the "no affectedObjects" half has been false since 2026-09-17
+
+§36.4 says CT-09 "needs a code change AND a flag", the code half being that the proposal
+`create_proposal` creates "still carries none" of `affectedObjects`. **That has not been true since
+`8c8f8974f` (2026-09-17)**, which routed the tool's three §9.3 contract fields through the Trips
+contract writer: `artifacts/api-server/src/compass/CompassTools.ts:1491#affectedObjects: Array.isArray(args.affectedObjects)`.
+§36 was written seventeen days later and repeated the old sentence. The decision rule and the expiry
+were already carried, and the proposal is a kernel `trip_proposals` row other members read.
+
+What was genuinely missing was a TEST: no suite asserted that the Compass tool path carries the
+three fields, so the closure could have regressed silently. It is pinned now, reading the recorded
+kernel command back through the contract's own reader rather than checking keys this test chose:
+`artifacts/api-server/src/test/compassRestrictionGate.test.ts:242#it("CT-09: a proposal that IS made carries affectedObjects`.
+Mutation: `affectedObjects: []` in the tool → that case red; restored byte-identical (`cmp`).
+
+**CT-09 stays `W` on ONE reason, not two:** `create_proposal` refuses while `trip_kernel_enabled` is
+false (`artifacts/api-server/src/compass/CompassTools.ts:1470#if (!(await isKernelFlagEnabled(sc, "trip_kernel_enabled"))) return { proposal: null`).
+§36.3/§36.4's "code-actionable" count is therefore **one** row (CT-02), not two — and CT-02's work is
+in the files PR #613 edits, which on its own branch still leaves the same twelve modules with raw
+`.from("trip…` reads (re-measured: twelve, not the eleven §36.4 states — the twelfth is
+`CompassCurrentTrip.ts`).
+
+### 37.2 Trust restrictions reach Compass (census-trust TRV2-08 — graded THERE)
+
+§36.6 named this case: *"A `getRestrictionState` … call appearing under the Compass tree: this census
+would acquire a verdict that rests on `census-trust.md`'s subject."* It has appeared, and it is
+recorded here so that reading is not missed. OD-TRUST-5 requires restrictions to be enforced on the
+server across all relevant surfaces. `artifacts/api-server/src/compass/CompassRestrictionGate.ts:78#export const COMPASS_ACTION_RESTRICTIONS`
+maps four Compass actions to restriction types (lane L's reading, listed for owner confirmation, not
+an owner ruling): `create_proposal` ← hosting + messaging; the plan-proposal confirm and the Autopilot
+confirm ← hosting; turning the visibility boost ON ← messaging. An unreadable restriction state refuses
+in both degraded shapes (`artifacts/api-server/src/compass/CompassRestrictionGate.ts:119#if (state.degraded) {`)
+and is worded as "could not verify", never as "restricted"
+(`artifacts/api-server/src/test/compassRestrictionGate.test.ts:233#an UNREADABLE trust_restrictions proposes nothing`).
+
+**No Compass verdict moves on it.** Each gate sits after the existing membership and permission checks
+and before any write, so every path a row in this census grades behaves identically for an
+unrestricted user with a readable state; the pre-existing suites (compass-tools 28, compass-autopilot
+15, tripReplanRoutes 25, compassTripTools 44, compassAutopilotKernelPath 13) pass unchanged. Six
+mutations, each seen red and restored byte-identical, are in the commit message of `c1d4f95bd`.
+
+### 37.3 CPH-08 — the three failing sources, by file, and where each fix lives
+
+Re-read on this tree; the row's verdict and its two passing criteria hold. The three sources that are
+not fetched at tool time each have a client in this repository that nothing on the Compass path calls:
+
+| source | what the tool reads today | the live client that exists | why this lane did not wire it |
+| --- | --- | --- | --- |
+| live places | `discovery_places` (`artifacts/api-server/src/compass/CompassTools.ts:996#name:  wrapUgc(String(p.name ?? "")),`) | `artifacts/api-server/src/lib/foursquarePlaces.ts:36#export async function searchFoursquare` | the call site is in `CompassTools.ts`, which open PR #613 rewrites |
+| live events | the `events` table (`artifacts/api-server/src/compass/CompassTools.ts:1079#title:       wrapUgc(String(e.title ?? "")),`) | `artifacts/api-server/src/lib/eventsCache.ts:79#export async function getEventsNearDestination(` (Ticketmaster) | same file, same PR |
+| route time | a straight-line bound (`artifacts/api-server/src/domain/trips/projections/TripRouteChainProjection.ts:42#const BOUND_PROVIDER = straightLineTravelTimeProvider;`) | `artifacts/api-server/src/domain/trips/contracts/GoogleRoutesTravelTimeProvider.ts:4#PREPARED, NOT WIRED` | a Trips file (lane C); spend is decided (OD-TRIP-2 / OD-TRUST-6: quotas and a hard budget) but no spend ceiling exists in the tree |
+
+So CPH-08 is no longer a pure PROVIDER row (§36.3): the places and events halves are code in a file
+held by an open PR, plus a key in the environment; the route half is another lane's code plus a budget
+mechanism. **Stays `W`.**
+
+### 37.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| CT-09 | W | **W** | §37.1. The code half is closed (since `8c8f8974f`) and now pinned; the row is held by `trip_kernel_enabled` alone. |
+| CPH-08 | W | **W** | §37.3. Verdict unchanged; the three failing sources are named by file with their fix owners. |
+
+### 37.5 Checks
+
+`check:census-integrity`, `check:census-freshness`, `check:census-scope-coverage`,
+`check:doc-citations`, `check:citation-targets`, `check:citation-symbols` and
+`check:census-policy-citations` were run after this section was written and committed.
+
+### 37.6 Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: artifacts/api-server/src/test/compassRestrictionGate.test.ts — §37.1/§37.2's controlled evidence: it pins CT-09's already-closed contract half and the census-trust TRV2-08 gate. CT-09 stays W on trip_kernel_enabled, which this file does not touch, and TRV2-08 is graded in census-trust.
+- NOT-GRADED: artifacts/api-server/src/lib/foursquarePlaces.ts — §37.3 names it only as the live places client CPH-08's tool does not call; no Compass verdict rests on the client itself.
+- NOT-GRADED: artifacts/api-server/src/lib/eventsCache.ts — §37.3 names it only as the live events client CPH-08's tool does not call; it is the daily brief's dependency, not a Compass row's subject.
+- NOT-GRADED: artifacts/api-server/src/domain/trips/projections/TripRouteChainProjection.ts — §37.3 cites only its straight-line provider binding, which is a Trips file graded in census-trips; CPH-08 records it as the route half's fix site.
+- NOT-GRADED: artifacts/api-server/src/domain/trips/contracts/GoogleRoutesTravelTimeProvider.ts — §37.3 cites only its "prepared, not wired" header; the adapter is Trips' (census-trips) and no Compass verdict rests on it.
