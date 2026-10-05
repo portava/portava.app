@@ -835,7 +835,7 @@ function setupState(extra: Partial<FakeState> = {}) {
     ...restExtra,
   };
 
-  const client = makeClient(USER_ID);
+  const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
   _setTestClient(client as any, true);
   _setTestServiceClient(client as any);
 }
@@ -1617,7 +1617,7 @@ describe("Rent a Buddy — compliance: eligibility & launch controls", () => {
       },
       ...overrides,
     } as any;
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, true);
     _setTestServiceClient(client as any);
   }
@@ -1691,7 +1691,7 @@ describe("Rent a Buddy — compliance: tag consent", () => {
         [BUDDY_PROF]: { id: BUDDY_PROF, user_id: BUDDY_USER },
       },
     };
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, true);
     _setTestServiceClient(client as any);
   }
@@ -1754,7 +1754,7 @@ describe("Rent a Buddy — compliance: support reports", () => {
         { id: "tpl-2", category: "harassment",              title: "Harassment report received", body: "We are reviewing your report.", is_active: true },
       ],
     } as any;
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, true);
     _setTestServiceClient(client as any);
   }
@@ -1838,7 +1838,7 @@ describe("Rent a Buddy — compliance: training checklist", () => {
       },
       applications: { [USER_ID]: { id: APP_ID, user_id: USER_ID, status: "pending" } },
     };
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, true);
     _setTestServiceClient(client as any);
   }
@@ -1895,7 +1895,7 @@ describe("Rent a Buddy — compliance: risk review", () => {
         },
       },
     };
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, true);
     _setTestServiceClient(client as any);
   }
@@ -1970,7 +1970,7 @@ describe("Rent a Buddy — compliance: posting defaults & earnings summary", () 
           }
         : {},
     };
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, true);
     _setTestServiceClient(client as any);
   }
@@ -2066,7 +2066,7 @@ describe("Rent a Buddy — booking: launch control and age enforcement", () => {
       },
       launchControls: [launchControl],
     };
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, true);
     _setTestServiceClient(client as any);
   }
@@ -2228,7 +2228,7 @@ describe("Rent a Buddy — booking: category risk levels", () => {
       // checkRentBuddyAccess fail-closes on unknown status; seed city as public_mvp
       cityRollouts: [{ id: `cr-${city.toLowerCase()}`, city, country_code: "PH", status: "public_mvp", enabled: true }],
     };
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, true);
     _setTestServiceClient(client as any);
   }
@@ -2303,7 +2303,7 @@ describe("Rent a Buddy — reviews: moderation and duplicate guard", () => {
       },
       reviews: extraReviews,
     };
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, true);
     _setTestServiceClient(client as any);
   }
@@ -2383,7 +2383,7 @@ describe("Rent a Buddy — reviews: moderation and duplicate guard", () => {
         [BUDDY_PROF]: { id: BUDDY_PROF, user_id: BUDDY_USER },
       },
     };
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, true);
     _setTestServiceClient(client as any);
     const r = await req("POST", "/api/rent-a-buddy/bookings/pending-bk/review", { rating: 5 });
@@ -2418,7 +2418,7 @@ describe("Rent a Buddy — admin: review approve and reject", () => {
       }],
       adminActions: [],
     };
-    const client = makeClient(ADMIN_USER);
+    const client = withVerifiedBookingParties(makeClient(ADMIN_USER), "everyone");
     _setTestClient(client as any, true);
     _setTestServiceClient(client as any);
   }
@@ -2490,7 +2490,7 @@ describe("Rent a Buddy — rebook", () => {
         },
       },
     };
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, true);
     _setTestServiceClient(client as any);
   }
@@ -2759,7 +2759,7 @@ describe("Rent a Buddy — rebook", () => {
         },
       },
     };
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, true);
     _setTestServiceClient(client as any);
     const r = await req("POST", `/api/buddy-bookings/${ORIG_BOOKING_ID}/rebook`, {
@@ -2798,7 +2798,7 @@ describe("Rent a Buddy — dashboard availability settings & blocked dates", () 
       },
       ...extra,
     };
-    const client = makeClient(BUDDY_USER);
+    const client = withVerifiedBookingParties(makeClient(BUDDY_USER), "everyone");
     _setTestClient(client as any, true);
     _setTestServiceClient(client as any);
   }
@@ -2868,7 +2868,7 @@ describe("Rent a Buddy — dashboard availability settings & blocked dates", () 
       exception_date: IN_5, end_date: IN_10,
     }];
     // traveler books inside the blocked range
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, true);
     _setTestServiceClient(client as any);
     const r = await req("POST", "/api/rent-a-buddy/bookings", {
@@ -2885,7 +2885,7 @@ describe("Rent a Buddy — dashboard availability settings & blocked dates", () 
       id: "ex-1", buddy_id: BUDDY_PROF, exception_type: "vacation",
       exception_date: IN_5, end_date: IN_7,
     }];
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, true);
     _setTestServiceClient(client as any);
     const r = await req("POST", "/api/rent-a-buddy/bookings", {
@@ -3015,7 +3015,7 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
   it("escalates a no_show_pending booking past its grace expiry to disputed", async () => {
     // Grace window expired 3 hours ago — sweep must promote to disputed.
     const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, false);
     _setTestServiceClient(client as any);
 
@@ -3068,7 +3068,7 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     // The sweeper must still promote the booking to disputed and set raised_by = traveler_id.
     const PAST = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
     const TRAVELER = "traveler-fallback-uid";
-    const client = makeClient(TRAVELER);
+    const client = withVerifiedBookingParties(makeClient(TRAVELER), "everyone");
     _setTestClient(client as any, false);
     _setTestServiceClient(client as any);
 
@@ -3117,7 +3117,7 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
   it("leaves a no_show_pending booking whose grace window has not yet expired untouched", async () => {
     // Grace window expires 1 hour from now — sweep must not touch this booking.
     const FUTURE = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, false);
     _setTestServiceClient(client as any);
 
@@ -3176,7 +3176,7 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     try {
       // --- Case A: expiry === FIXED_NOW → must NOT be escalated ---
       {
-        const client = makeClient(USER_ID);
+        const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
         _setTestClient(client as any, false);
         _setTestServiceClient(client as any);
 
@@ -3209,7 +3209,7 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
 
       // --- Case B: expiry === FIXED_NOW - 1 ms → must be escalated ---
       {
-        const client = makeClient(USER_ID);
+        const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
         _setTestClient(client as any, false);
         _setTestServiceClient(client as any);
 
@@ -3250,7 +3250,7 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     // Put a past-expired timestamp on several non-no_show_pending bookings;
     // the sweep must leave all of them unchanged.
     const PAST = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, false);
     _setTestServiceClient(client as any);
 
@@ -3275,7 +3275,7 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     // Simulate a concurrent sweep run that already created the dispute row.
     // The sweep must reuse it (exactly one dispute row) and still promote the booking.
     const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, false);
     _setTestServiceClient(client as any);
 
@@ -3326,7 +3326,7 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     // abandon this booking: noShowEscalated stays 0, booking stays no_show_pending,
     // and no buddy_booking_events row is written.
     const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, false);
     _setTestServiceClient(client as any);
 
@@ -3383,7 +3383,7 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     // .update({ status: 'disputed' }) DB call succeeds.  If the call errors
     // the booking is left in no_show_pending and the count must stay at 0.
     const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, false);
     _setTestServiceClient(client as any);
 
@@ -3459,7 +3459,7 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     // throw or un-do the already-committed status update.  noShowEscalated must
     // still be 1 and the booking must reach 'disputed'.
     const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, false);
     _setTestServiceClient(client as any);
 
@@ -3505,7 +3505,7 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     // console.error with the affected booking ID so operators can identify which
     // bookings lost their audit trail.
     const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, false);
     _setTestServiceClient(client as any);
 
@@ -3557,7 +3557,7 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     // A stale requested booking whose .update({ status: 'expired' }) errors must
     // leave expired = 0 and the booking in its original status.
     const PAST = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, false);
     _setTestServiceClient(client as any);
 
@@ -3622,7 +3622,7 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     // expired: 0 without touching any booking, distinguishing a fetch-error
     // from an update-error (already covered by the sibling test above).
     const PAST = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, false);
     _setTestServiceClient(client as any);
 
@@ -3685,7 +3685,7 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     // expired count must be 0.  This confirms the implementation uses a single
     // batch update (not a per-booking loop that could partially succeed).
     const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, false);
     _setTestServiceClient(client as any);
 
@@ -3743,7 +3743,7 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     // the bookings are left in completed_pending_traveler_confirmation and the
     // count must stay at 0.
     const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, false);
     _setTestServiceClient(client as any);
 
@@ -3788,7 +3788,7 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     // this test will catch it by asserting that neither side-effect fires when
     // the status update DB call errors.
     const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, false);
     _setTestServiceClient(client as any);
 
@@ -3837,7 +3837,7 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     // dispute windows have both expired.  The .in("id", ids2) batch update
     // must advance every one of them to completed in a single sweep run.
     const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, false);
     _setTestServiceClient(client as any);
 
@@ -3908,7 +3908,7 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     // ABSENCE of the row, so it passed just as happily when the write was never
     // issued for any booking at all.
     const PAST = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, false);
     _setTestServiceClient(client as any);
 
@@ -3940,7 +3940,7 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     // return a DB error.  The code destructures only { data: staleNoShows } so
     // data will be null; the guard `if (staleNoShows && staleNoShows.length > 0)`
     // must skip the loop and the sweep must still return 200 with noShowEscalated: 0.
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, false);
     _setTestServiceClient(client as any);
 
@@ -4004,7 +4004,7 @@ describe("Rent a Buddy — grace-period sweep: no_show_pending → disputed", ()
     // lookup itself returns a DB error, the traveler's own notification must
     // still fire — a buddy-ID resolution failure must never silence the
     // traveler side.
-    const client = makeClient(USER_ID);
+    const client = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
     _setTestClient(client as any, false);
     _setTestServiceClient(client as any);
     const PAST = new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString();
@@ -5186,3 +5186,8 @@ describe("safety checkin — known types only, and a refused insert is not ok:tr
     assert.equal((state.safetyEvents ?? []).length, 0);
   });
 });
+
+// Every booking party reads as a verified adult (owner 2026-10-04: no unverified
+// bookings — lib/rentBuddyIdentityEligibility.ts, proven in its own suite).
+// Appended at the foot so every cited line keeps its number.
+import { withVerifiedBookingParties } from "./helpers/verifiedBookingParties.js";

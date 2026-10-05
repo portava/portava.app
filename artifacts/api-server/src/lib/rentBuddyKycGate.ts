@@ -22,21 +22,21 @@
  * This gate is tied directly to whether verification actually works, so it
  * cannot be defeated by config drift, and it is applied to BOTH insert paths.
  *
- * ── Failure semantics: closed ───────────────────────────────────────────────
- * The override flag is read with isFlagEnabled(), which returns false on any
- * DB error. "No override" means "stay blocked", so a database problem cannot
- * open bookings.
+ * ── Failure semantics: closed, and no override ──────────────────────────────
+ * No escape hatch (owner, 2026-10-04: "No tester bypass or sandbox verification
+ * key"): the retired override flag is not read, and a sandbox (test) identity
+ * key keeps bookings closed too (verificationIsBookingGrade, at the foot).
  */
-import { isFlagEnabled } from "./featureFlags.js";
+import { configuredIdentityProvider, identityKeyDecision, mockIdentityPermitted } from "./paymentsMode.js";
 import { identityProviderStatus } from "../services/identityVerification/readiness.js";
 import { logger as rootLogger } from "./logger.js";
 
 const logger = rootLogger.child({ gate: "RentBuddyKycGate" });
 
 /**
- * Escape hatch for running a marketplace pilot without KYC. Deliberately
- * verbose: enabling it is an explicit statement that you accept unverified
- * strangers meeting in person.
+ * RETIRED 2026-10-05. Was an escape hatch for a pilot without KYC; the owner
+ * ruled out any tester bypass, and the gate no longer reads it. Kept exported
+ * so a stale row or a test that seeds it is visibly inert, not an error.
  */
 export const KYC_OVERRIDE_FLAG = "rent_buddy_allow_bookings_without_kyc";
 
@@ -49,24 +49,24 @@ export interface KycGateResult {
 }
 
 /**
- * Decide whether a booking may be created right now.
- *
- * Returns `{ allowed: true }` when identity verification is operational, or
- * when the override flag is explicitly on.
+ * Decide whether a booking may be created right now: `{ allowed: true }` only
+ * when identity verification is operational AND booking-grade (a live key, or
+ * the mock in a local run). There is no override (owner, 2026-10-04: no tester
+ * bypass).
  */
-export async function checkBookingKycGate(sc: any): Promise<KycGateResult> {
+export async function checkBookingKycGate(_sc: any): Promise<KycGateResult> {
   const status = identityProviderStatus();
-  if (status.operational) return { allowed: true };
+  if (status.operational && verificationIsBookingGrade()) return { allowed: true };
 
-  // Not operational — only an explicit override may let this through.
-  const overridden = await isFlagEnabled(sc, KYC_OVERRIDE_FLAG);
-  if (overridden) {
-    logger.warn(
-      { provider: status.provider, reason: status.reason, flag: KYC_OVERRIDE_FLAG },
-      "Booking allowed WITHOUT working identity verification — override flag is on",
-    );
-    return { allowed: true };
-  }
+  // Not operational, or operational only on a SANDBOX key. Nothing lets this
+  // through: the owner ruled (2026-10-04) that first-release bookings require
+  // REAL identity verification — "No tester bypass or sandbox verification
+  // key." KYC_OVERRIDE_FLAG used to be read here as an escape hatch for a
+  // pilot without KYC; it is no longer read by anything, so turning the row on
+  // changes nothing. A sandbox key verifies nobody for real, so a deployment
+  // whose identity key is a test key stays closed exactly like one with no
+  // provider at all (verificationIsBookingGrade, at the foot).
+  void KYC_OVERRIDE_FLAG;
 
   logger.error(
     { provider: status.provider, reason: status.reason },
@@ -93,4 +93,22 @@ export async function requireBookingKyc(sc: any, res: any): Promise<boolean> {
   if (gate.allowed) return true;
   res.status(gate.httpStatus).json({ error: gate.code, message: gate.message });
   return false;
+}
+
+// ── Booking-grade verification (appended at the foot so every cited line keeps its number) ──
+//
+// `identityProviderStatus().operational` answers "can a verification be
+// completed?". A SANDBOX key can complete one — the vendors' sandboxes approve
+// test documents on demand — and that is not a real verification. So for
+// BOOKINGS the gate additionally requires the configured provider's key to be a
+// LIVE key that this process is allowed to use (lib/paymentsMode.ts:
+// PAYMENTS_ALLOW_LIVE exactly "true"), or the unsigned mock in a positively
+// evidenced local run (tests, `pnpm dev`) — never on a hosted deployment. Every
+// per-person check (services/identityVerification/currentVerification.ts) also
+// refuses a sandbox-mode verification row; this is the deployment-level half.
+export function verificationIsBookingGrade(env: NodeJS.ProcessEnv = process.env): boolean {
+  const provider = configuredIdentityProvider(env);
+  if (provider === "mock") return mockIdentityPermitted(env);
+  const decision = identityKeyDecision(env);
+  return decision !== null && decision.allowed && decision.mode === "live";
 }

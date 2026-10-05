@@ -10,7 +10,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { identityProviderStatus } from "../services/identityVerification/readiness.js";
-import { checkBookingKycGate, KYC_OVERRIDE_FLAG } from "../lib/rentBuddyKycGate.js";
+import { checkBookingKycGate, KYC_OVERRIDE_FLAG, verificationIsBookingGrade } from "../lib/rentBuddyKycGate.js";
 
 // ── Fake client returning a flag row ─────────────────────────────────────────
 
@@ -127,7 +127,9 @@ describe("checkBookingKycGate", () => {
       assert.equal(gate.allowed, false);
       assert.equal(gate.httpStatus, 503);
       assert.equal(gate.code, "verification_unavailable");
-      assert.ok(c._seen.includes(KYC_OVERRIDE_FLAG), "must consult the override flag");
+      // The override is RETIRED (owner 2026-10-04: no tester bypass). The gate
+      // must not even read it — a read is the first step of honouring it.
+      assert.ok(!c._seen.includes(KYC_OVERRIDE_FLAG), "the retired override flag must not be consulted");
     });
   });
 
@@ -152,10 +154,14 @@ describe("checkBookingKycGate", () => {
     });
   });
 
-  it("allows bookings only when the override flag is explicitly true", async () => {
+  it("the retired override flag set TRUE no longer opens bookings (owner 2026-10-04: no tester bypass)", async () => {
     await withProdEnv(async () => {
-      const gate = await checkBookingKycGate(flagClient({ enabled: true }));
-      assert.equal(gate.allowed, true);
+      const c = flagClient({ enabled: true });
+      const gate = await checkBookingKycGate(c);
+      assert.equal(gate.allowed, false, "a TRUE override row must not let an unverified booking through");
+      assert.equal(gate.httpStatus, 503);
+      assert.equal(gate.code, "verification_unavailable");
+      assert.deepEqual(c._seen, [], "the gate reads no flag at all");
     });
   });
 
@@ -167,5 +173,36 @@ describe("checkBookingKycGate", () => {
         assert.ok(!msg.includes(leak), `message leaked "${leak}": ${msg}`);
       }
     });
+  });
+});
+
+// ── Booking-grade verification: no sandbox verification key ─────────────────
+//
+// Owner, 2026-10-04: "No tester bypass or sandbox verification key." A sandbox
+// key can COMPLETE a verification (the vendor approves test documents on
+// demand); it cannot make one real. So a deployment whose identity key is a test
+// key is not booking-grade, whatever the readiness probe says.
+
+describe("verificationIsBookingGrade", () => {
+  it("a TEST identity key is never booking-grade", () => {
+    assert.equal(verificationIsBookingGrade({ IDENTITY_PROVIDER: "stripe", STRIPE_IDENTITY_SECRET_KEY: "sk_test_x", NODE_ENV: "production" } as any), false);
+    assert.equal(verificationIsBookingGrade({ IDENTITY_PROVIDER: "persona", PERSONA_API_KEY: "persona_sandbox_x", NODE_ENV: "production" } as any), false);
+  });
+
+  it("a LIVE key is booking-grade only when live is allowed (PAYMENTS_ALLOW_LIVE exactly \"true\")", () => {
+    assert.equal(verificationIsBookingGrade({ IDENTITY_PROVIDER: "stripe", STRIPE_IDENTITY_SECRET_KEY: "sk_live_x", NODE_ENV: "production" } as any), false);
+    assert.equal(verificationIsBookingGrade({ IDENTITY_PROVIDER: "stripe", STRIPE_IDENTITY_SECRET_KEY: "sk_live_x", PAYMENTS_ALLOW_LIVE: "true", NODE_ENV: "production" } as any), true);
+  });
+
+  it("the mock is booking-grade in a local run only, never on a hosted deployment", () => {
+    assert.equal(verificationIsBookingGrade({ IDENTITY_PROVIDER: "mock", NODE_ENV: "test" } as any), true);
+    assert.equal(verificationIsBookingGrade({ IDENTITY_PROVIDER: "mock", NODE_ENV: "test", REPLIT_DEPLOYMENT: "1" } as any), false);
+    assert.equal(verificationIsBookingGrade({ IDENTITY_PROVIDER: "mock", NODE_ENV: "production" } as any), false);
+  });
+
+  it("no key, an unknown key and an unknown provider are not booking-grade", () => {
+    assert.equal(verificationIsBookingGrade({ IDENTITY_PROVIDER: "stripe", NODE_ENV: "production" } as any), false);
+    assert.equal(verificationIsBookingGrade({ IDENTITY_PROVIDER: "stripe", STRIPE_IDENTITY_SECRET_KEY: "xx_weird", NODE_ENV: "production" } as any), false);
+    assert.equal(verificationIsBookingGrade({ IDENTITY_PROVIDER: "acme", NODE_ENV: "production" } as any), false);
   });
 });

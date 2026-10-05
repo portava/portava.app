@@ -135,7 +135,7 @@ after(async () => {
 afterEach(() => { _clearTestClient(); _setTestServiceClient(null); });
 
 async function requestBooking(spec: FakeClientSpec, body: Record<string, unknown> = {}) {
-  const c = withIlike(makeFailClosedClient(spec));
+  const c = withVerifiedBookingParties(withIlike(makeFailClosedClient(spec)), [TRAVELER, BUDDY_USER]);
   _setTestClient(c, true);
   _setTestServiceClient(c);
   const res = await fetch(`${base}/rent-a-buddy/buddies/${BUDDY_PROF}/request`, {
@@ -241,7 +241,7 @@ describe("GET /rent-a-buddy/me/eligibility — the reason it reports during an o
   });
 
   async function eligibility(spec: FakeClientSpec) {
-    const c = withIlike(makeFailClosedClient(spec));
+    const c = withVerifiedBookingParties(withIlike(makeFailClosedClient(spec)), [TRAVELER, BUDDY_USER]);
     _setTestClient(c, true);
     _setTestServiceClient(c);
     const res = await fetch(`${elBase}/rent-a-buddy/me/eligibility?city=Seoul&category=city`, {
@@ -282,3 +282,8 @@ describe("GET /rent-a-buddy/me/eligibility — the reason it reports during an o
     assert.ok(body.reasons.includes("age_unverified"), "the true verdict survives the fix to the false one");
   });
 });
+
+// Both booking parties read as verified adults (owner 2026-10-04: no unverified
+// bookings — lib/rentBuddyIdentityEligibility.ts). Appended at the foot so every
+// cited line keeps its number; the subject of this suite is a different gate.
+import { withVerifiedBookingParties } from "./helpers/verifiedBookingParties.js";

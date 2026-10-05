@@ -426,7 +426,7 @@ after(() => {
 
 beforeEach(() => {
   state = freshState();
-  const client = makeClient();
+  const client = withVerifiedBookingParties(makeClient(), [TRAVELER_ID, BUDDY_USER]);
   _setTestClient(client as any, true);
   _setTestServiceClient(client as any);
 });
@@ -648,3 +648,54 @@ describe("every creation path is gated by rent_buddy_city_restrictions (fail-clo
     });
   }
 });
+
+// ── Gate 0: both people hold a current REAL identity verification ──────────────
+// Owner 2026-10-04: "No unverified bookings. Require identity … before someone
+// can offer or book the service" — no tester bypass, no sandbox key. Every
+// creation path (rebook, package-book, offer-accept and the canonical POST) must
+// refuse when EITHER person is not verified, and seat nothing.
+
+describe("two-sided identity eligibility on every creation path (lib/rentBuddyIdentityEligibility.ts)", () => {
+  const all = [...paths, { name: "direct", run: () => directBooking() }];
+  const reinstall = (verified: string[], restrictions?: Record<string, string[]>) => {
+    const c = withVerifiedBookingParties(makeClient(), verified, { restrictions });
+    _setTestClient(c as any, true);
+    _setTestServiceClient(c as any);
+  };
+
+  for (const p of all) {
+    it(`${p.name}: an UNVERIFIED traveller is refused (403 identity_verification_required), no row seated`, async () => {
+      currentCategory = "city";
+      reinstall([BUDDY_USER]);
+      const r = await p.run();
+      assert.equal(r.status, 403, JSON.stringify(r.body));
+      assert.equal(r.body.error, "identity_verification_required");
+      assert.equal(r.body.side, "traveler");
+      assert.equal(state.insertedBookings.length, 0);
+    });
+
+    it(`${p.name}: an UNVERIFIED buddy cannot be booked (403 buddy_unavailable, nothing about why), no row seated`, async () => {
+      currentCategory = "city";
+      reinstall([TRAVELER_ID]);
+      const r = await p.run();
+      assert.equal(r.status, 403, JSON.stringify(r.body));
+      assert.equal(r.body.error, "buddy_unavailable");
+      assert.doesNotMatch(String(r.body.message), /verif|minor|restrict/i, "the traveller learns nothing about the buddy's status");
+      assert.equal(state.insertedBookings.length, 0);
+    });
+
+    it(`${p.name}: a buddy under a Trust 'hosting' restriction cannot be booked, no row seated`, async () => {
+      currentCategory = "city";
+      reinstall([TRAVELER_ID, BUDDY_USER], { [BUDDY_USER]: ["hosting"] });
+      const r = await p.run();
+      assert.equal(r.status, 403, JSON.stringify(r.body));
+      assert.equal(r.body.error, "buddy_unavailable");
+      assert.equal(state.insertedBookings.length, 0);
+    });
+  }
+});
+
+// Both booking parties read as verified adults (owner 2026-10-04: no unverified
+// bookings — lib/rentBuddyIdentityEligibility.ts). Appended at the foot so every
+// cited line keeps its number; the subject of this suite is a different gate.
+import { withVerifiedBookingParties } from "./helpers/verifiedBookingParties.js";

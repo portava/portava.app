@@ -505,7 +505,7 @@ router.post("/rent-a-buddy/buddies/:buddyId/request", asyncHandler(async (req, r
   const buddyUserId: string | null = (bp as any).user_id ?? null;
   if (buddyUserId && buddyUserId === auth.user.id) {
     return res.status(409).json({ error: "self_booking_not_allowed", message: "You cannot book yourself as a Buddy." });
-  }
+  } if (!await requireVerifiedBookingParties(serviceClient, res, { travelerId: auth.user.id, buddyUserId })) return; // both people: current REAL identity, adult, not restricted (foot of file)
 
   // Block-table enforcement — traveler must not be blocked by, or have blocked, the buddy's user.
   //
@@ -2538,3 +2538,10 @@ router.post("/rent-a-buddy/admin/payouts/:payoutId/release", asyncHandler(async 
 }));
 
 export default router;
+
+// ── Two-sided identity eligibility (appended at the foot so every cited line keeps its number) ──
+// The fifth booking-creation path calls the SAME helper the shared gate stack
+// (rentABuddy.ts enforceBookingCreationGates) calls, on the line after the
+// self-booking guard, so this alias cannot seat a booking the canonical route
+// refuses (owner 2026-10-04: no unverified bookings, no tester bypass).
+import { requireVerifiedBookingParties } from "../lib/rentBuddyIdentityEligibility.js";

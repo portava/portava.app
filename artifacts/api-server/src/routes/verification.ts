@@ -255,7 +255,7 @@ router.post("/verification/session", asyncHandler(async (req, res) => {
       provider:            session.provider,
       provider_session_id: session.providerSessionId,
       status:              "created",   // V-1 + 0161 default + first lifecycle state — see test/verificationSessionCreatedStatus.test.ts
-      expires_at:          session.expiresAt,
+      expires_at:          session.expiresAt, provider_mode: sessionProviderMode(session.provider), // 3930 — see the foot of this file
     })
     .select("id, provider_session_id, expires_at")
     .single();
@@ -557,3 +557,15 @@ async function refreshPendingFromProvider(
     return row;
   }
 }
+
+// ── provider_mode (migration 3930), appended at the foot so every cited line keeps its number ──
+//
+// The session INSERT above records the mode of the key that created the
+// session — `test` (sandbox key), `live`, or `local_mock` (the unsigned mock in
+// a local run) — because the provider's events for that session belong to the
+// same key. The owner ruled out "a sandbox verification key" for bookings
+// (2026-10-04), and only this column lets a reader tell a sandbox approval from
+// a real one: `services/identityVerification/currentVerification.ts` counts
+// `live` (and `local_mock` only in a local run), and nothing else. Null — a
+// provider or key this process cannot classify — never counts.
+import { sessionProviderMode } from "../services/identityVerification/currentVerification.js";

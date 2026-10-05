@@ -1810,7 +1810,7 @@ export async function enforceBookingCreationGates(opts: {
   // flag is the only other identity condition in the block. A government
   // document stating the traveller is a minor is not a location policy, and
   // this is the booking path that pairs strangers in person.
-  if (!await refuseKnownMinorTraveler(serviceClient, res, userId)) return false;
+  if (!await refuseKnownMinorTraveler(serviceClient, res, userId)) return false; if (!await requireVerifiedBookingParties(serviceClient, res, { travelerId: userId, buddyUserId: (buddyProfile as any)?.user_id })) return false; // both people: current REAL identity, adult, not restricted — see the foot of this file
 
   // ── Launch control gating (age / DOB / ID / phone) ──────────────────────────
   // countryCode must be provided whenever launch controls are configured —
@@ -8247,3 +8247,17 @@ const RENT_BUDDY_CHECKIN_TYPES: readonly string[] = [
   "arrival", "comfort_30min", "check_ok", "uncomfortable", "end_early", "contact_support", "start_safe_return", "emergency_phrase",
   "arrived", "started", "could_not_find", "no_show", "unsafe", "missed",
 ];
+
+// ── Two-sided identity eligibility (appended at the foot so every cited line keeps its number) ──
+//
+// `enforceBookingCreationGates` now refuses unless BOTH people hold a current
+// REAL identity verification, are verified adults, and carry no Trust
+// restriction covering the action (lib/rentBuddyIdentityEligibility.ts). The
+// owner ruled on 2026-10-04: "No unverified bookings. Require identity … before
+// someone can offer or book the service", with no tester bypass and no sandbox
+// verification key. Before this, the traveller's ID was required only where an
+// admin-editable launch control said so and the buddy's only for two high-risk
+// categories. The call sits on the verified-minor line, before launch controls,
+// for the same reason that refusal does: a location policy must not be able to
+// waive it. rentABuddySpec.ts (the fifth creation path) calls the same helper.
+import { requireVerifiedBookingParties } from "../lib/rentBuddyIdentityEligibility.js";

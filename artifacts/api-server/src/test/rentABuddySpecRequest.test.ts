@@ -259,7 +259,7 @@ beforeEach(() => {
     cityRollouts: [{ city: "Seoul", status: "public_mvp", is_active: true }],
     userLimits: [],
   };
-  const client = makeClient();
+  const client = withVerifiedBookingParties(makeClient(), [USER_ID, BUDDY_USER]);
   _setTestClient(client as any, true);
   _setTestServiceClient(client as any);
 });
@@ -313,3 +313,32 @@ describe("Spec router booking request — blocked-date enforcement", () => {
     assert.equal(state.insertedBookings.length, 1);
   });
 });
+
+// The fifth creation path (/buddies/:buddyId/request) calls the same two-sided
+// identity helper as the shared gate stack (owner 2026-10-04: no unverified bookings).
+describe("Spec router booking request — two-sided identity eligibility", () => {
+  const reinstall = (verified: string[]) => {
+    const c = withVerifiedBookingParties(makeClient(), verified);
+    _setTestClient(c as any, true);
+    _setTestServiceClient(c as any);
+  };
+  it("an unverified traveller is refused 403 identity_verification_required and nothing is seated", async () => {
+    reinstall([BUDDY_USER]);
+    const r = await req("POST", `/api/rent-a-buddy/buddies/${BUDDY_PROF}/request`, requestBody());
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(r.body.error, "identity_verification_required");
+    assert.equal(state.insertedBookings.length, 0);
+  });
+  it("an unverified buddy cannot be requested: 403 buddy_unavailable and nothing is seated", async () => {
+    reinstall([USER_ID]);
+    const r = await req("POST", `/api/rent-a-buddy/buddies/${BUDDY_PROF}/request`, requestBody());
+    assert.equal(r.status, 403, JSON.stringify(r.body));
+    assert.equal(r.body.error, "buddy_unavailable");
+    assert.equal(state.insertedBookings.length, 0);
+  });
+});
+
+// Both booking parties read as verified adults (owner 2026-10-04: no unverified
+// bookings — lib/rentBuddyIdentityEligibility.ts). Appended at the foot so every
+// cited line keeps its number; the subject of this suite is a different gate.
+import { withVerifiedBookingParties } from "./helpers/verifiedBookingParties.js";
