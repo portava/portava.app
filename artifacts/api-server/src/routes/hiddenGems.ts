@@ -32,7 +32,7 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto"; import { recordGemContributionSignal, recordGemAcceptedSignal, recordGemArrivalIfAttributable } from "../lib/mediaAnalytics.js";
 import { z } from "zod";
-import { requireUser, sendError, canEditPlan } from "../lib/http.js";
+import { requireUser, sendError, canEditPlan } from "../lib/http.js"; import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js";
 import { getServiceClient } from "../lib/supabase.js";
 import {
   tripKernelClient,
@@ -1173,25 +1173,25 @@ router.post("/hidden-gems/:id/share-telegraph", async (req, res) => {
   }
 
   const threadId = req.body?.threadId;
-  if (!threadId) { sendError(res, "invalid_payload", "threadId is required"); return; }
+  if (!threadId || typeof threadId !== "string") { sendError(res, "invalid_payload", "threadId is required"); return; }
 
-  // Thread access is gated ONLY by message_thread_members — the same check the
-  // canonical send path makes before its insert (routes/messaging.ts, and
-  // verifyThreadMember in routes/telegraphChat.ts). Without it, threadId came
-  // straight from the body and any authenticated user could post a message into
-  // ANY thread id they could guess. The insert below runs on the service-role
-  // client, so RLS is not a backstop, and messages_thread_id_fkey only proves
-  // the thread exists — not that the sender belongs to it.
-  const { data: threadMember } = await sc
-    .from("message_thread_members")
-    .select("user_id, left_at")
-    .eq("thread_id", threadId)
-    .eq("user_id", user.id)
-    .maybeSingle();
-  if (!threadMember || (threadMember as any).left_at !== null) {
-    sendError(res, "forbidden", "Not a member of this thread");
+  // The shared Telegraph send guard — the five gates every other door into
+  // `messages` holds (census-telegraph §42): the messaging stop, membership (with
+  // its read error BOUND, so an outage is 503 and not "not a member"), the 1:1
+  // block, the end-to-end-encryption refusal (this card is plaintext JSON and
+  // must not be written into an E2EE thread), and the burst limit. This door
+  // used to check membership only, with the read's error dropped. Before even
+  // that, threadId came straight from the body and any authenticated user could
+  // post into ANY thread id they could guess.
+  const guard = await guardTelegraphThreadWrite(client, threadId, user.id);
+  if (!guard.ok) {
+    sendThreadWriteRefusal(res, guard);
     return;
   }
+  // `messages_thread_id_fkey` only proves the thread exists; the guard above is
+  // what proves the sender belongs to it and may write there now. The insert
+  // below checks its own result: a refused write is not a share.
+  // (census-telegraph §42.2 named this door KNOWN WEAK.)
 
   try {
     const gem = await getGem(sc, req.params.id);
@@ -1224,7 +1224,7 @@ router.post("/hidden-gems/:id/share-telegraph", async (req, res) => {
 
     // Insert Telegraph message with the gem card embedded as JSON in body
     // (messages has body — not content — and no metadata column).
-    await client
+    const { error: insertErr } = await client
       .from("messages")
       .insert({
         thread_id: threadId,
@@ -1237,7 +1237,7 @@ router.post("/hidden-gems/:id/share-telegraph", async (req, res) => {
         subtype: "hidden_gem",
       });
 
-    res.json({ ok: true, card });
+    if (insertErr) { req.log?.warn?.({ err: insertErr, threadId }, "hidden gem share: message insert refused"); sendError(res, "db_error", "The gem could not be shared. Please try again."); return; } res.json({ ok: true, card });
   } catch (err: any) {
     sendError(res, "db_error", err.message);
   }
