@@ -53,7 +53,7 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, request as httpRequest } from "node:http";
 import express from "express";
-import { _setTestClient } from "../lib/http.js"; import { _resetRateLimit } from "../lib/rateLimit.js";
+import { _setTestClient } from "../lib/http.js";
 import telegraphVoiceRouter from "../routes/telegraphVoice.js";
 import {
   AUDIO_MIGRATION_PENDING_MESSAGE,
