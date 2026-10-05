@@ -2001,6 +2001,29 @@ export function layoverMemoryIdempotencyKey(sessionId: string): string {
   return `CREATE_MEMORY_FROM_LAYOVER:${sessionId}`;
 }
 
+/**
+ * A response body as a plain record, or `null` when it is not one (no body, not
+ * JSON, an array, a primitive). The three lane-A calls below read their bodies
+ * through this and narrow each field by its runtime type, so nothing the server
+ * sends is trusted to have the shape the client hopes for.
+ */
+async function readJsonRecord(res: Response): Promise<Record<string, unknown> | null> {
+  let parsed: unknown;
+  try { parsed = await res.json(); } catch { return null; }
+  return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : null;
+}
+
+function stringField(r: Record<string, unknown> | null, key: string): string | null {
+  const v = r?.[key];
+  return typeof v === 'string' ? v : null;
+}
+
+function presenceOf(v: unknown): AirportPresence | null {
+  return typeof v === 'string' && (CHECKPOINT_PRESENCES as readonly string[]).includes(v) ? (v as AirportPresence) : null;
+}
+
 export async function createMemoryFromLayover(sessionId: string): Promise<LayoverMemoryResult> {
   let res: Response;
   try {
@@ -2012,11 +2035,13 @@ export async function createMemoryFromLayover(sessionId: string): Promise<Layove
   } catch {
     return { ok: false, reason: 'unreachable', message: 'Could not reach Portava to save the Memory.' };
   }
-  let json: any = null;
-  try { json = await res.json(); } catch { json = null; }
-  const serverMessage = typeof json?.message === 'string' ? json.message : null;
+  const json = await readJsonRecord(res);
+  const serverMessage = stringField(json, 'message');
   if (res.ok) {
-    const memoryId = typeof json?.memory?.id === 'string' ? json.memory.id : null;
+    const memory = json?.memory;
+    const memoryId = memory !== null && typeof memory === 'object' && !Array.isArray(memory)
+      ? stringField(memory as Record<string, unknown>, 'id')
+      : null;
     // A 2xx without the Memory it promises is a contract mismatch, not a saved Memory.
     if (!memoryId) return { ok: false, reason: 'refused', message: 'The Memory could not be confirmed.' };
     return { ok: true, memoryId, existing: json?.existing === true };
@@ -2060,24 +2085,26 @@ export async function getLayoverCheckpoints(sessionId: string): Promise<LayoverC
   } catch {
     return { ok: false, reason: 'unreachable', message: CHECKPOINTS_UNREACHABLE };
   }
-  let json: any = null;
-  try { json = await res.json(); } catch { json = null; }
-  const message = typeof json?.message === 'string' ? json.message : 'Your check-ins could not be loaded.';
+  const json = await readJsonRecord(res);
+  const message = stringField(json, 'message') ?? 'Your check-ins could not be loaded.';
   if (!res.ok) return { ok: false, reason: res.status === 503 ? 'unavailable' : 'refused', message };
   if (json?.available === false) return { ok: true, available: false };
   // A 200 that claims the store is on must carry the list and a presence it
   // recognises; anything else is a contract mismatch, not "nothing reported".
-  if (json?.available !== true || !Array.isArray(json.checkpoints) || !CHECKPOINT_PRESENCES.includes(json.airportPresence)) {
+  const rawList = json?.checkpoints;
+  const airportPresence = presenceOf(json?.airportPresence);
+  if (json?.available !== true || !Array.isArray(rawList) || airportPresence === null) {
     return { ok: false, reason: 'refused', message: 'Your check-ins could not be read.' };
   }
   const checkpoints: LayoverCheckpointView[] = [];
-  for (const c of json.checkpoints as unknown[]) {
-    const o = c as Record<string, unknown> | null;
-    if (o && typeof o.id === 'string' && typeof o.type === 'string' && typeof o.observedAt === 'string') {
-      checkpoints.push({ id: o.id, type: o.type, observedAt: o.observedAt });
-    }
+  for (const c of rawList as unknown[]) {
+    const o = c !== null && typeof c === 'object' && !Array.isArray(c) ? (c as Record<string, unknown>) : null;
+    const id = stringField(o, 'id');
+    const type = stringField(o, 'type');
+    const observedAt = stringField(o, 'observedAt');
+    if (id && type && observedAt) checkpoints.push({ id, type, observedAt });
   }
-  return { ok: true, available: true, checkpoints, airportPresence: json.airportPresence as AirportPresence };
+  return { ok: true, available: true, checkpoints, airportPresence };
 }
 
 export type LayoverCheckpointReport =
@@ -2102,14 +2129,12 @@ export async function reportLayoverCheckpoint(
   } catch {
     return { ok: false, reason: 'unreachable', message: 'Could not reach Portava. Your check-in was not saved — try again.' };
   }
-  let json: any = null;
-  try { json = await res.json(); } catch { json = null; }
-  const message = typeof json?.message === 'string' ? json.message : 'Your check-in was not saved.';
+  const json = await readJsonRecord(res);
+  const message = stringField(json, 'message') ?? 'Your check-in was not saved.';
   if (res.ok && json?.ok === true) {
-    const presence = CHECKPOINT_PRESENCES.includes(json.airportPresence) ? (json.airportPresence as AirportPresence) : null;
-    return { ok: true, duplicate: json.duplicate === true, airportPresence: presence };
+    return { ok: true, duplicate: json.duplicate === true, airportPresence: presenceOf(json.airportPresence) };
   }
-  if (json?.error === 'feature_disabled') return { ok: false, reason: 'off', message };
+  if (stringField(json, 'error') === 'feature_disabled') return { ok: false, reason: 'off', message };
   if (res.status === 409) return { ok: false, reason: 'ended', message };
   if (res.status === 503) return { ok: false, reason: 'unavailable', message };
   return { ok: false, reason: 'refused', message };
