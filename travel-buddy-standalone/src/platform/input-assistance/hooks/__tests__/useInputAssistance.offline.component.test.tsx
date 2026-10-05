@@ -32,6 +32,14 @@ import { render, screen, waitFor } from '@testing-library/react-native';
 jest.mock('../../services/inputAssistance.ts', () => ({
   requestSuggestions: jest.fn(),
 }));
+// A PASS-THROUGH spy on the degraded arm, so a test can ask WHICH arm produced
+// what is on screen (2026-10-05, OD-INPUT-7: the dictionary is now also shown
+// immediately while a request is in flight, so "is a shipped row on screen" no
+// longer tells the two arms apart — "was the offline arm called" does).
+jest.mock('../../services/localDictionary.ts', () => {
+  const actual = jest.requireActual('../../services/localDictionary.ts');
+  return { ...actual, offlineLocalRows: jest.fn(actual.offlineLocalRows) };
+});
 
 import { requestSuggestions } from '../../services/inputAssistance.ts';
 import { useInputAssistance } from '../useInputAssistance.ts';
@@ -40,6 +48,7 @@ import { sharedSuggestionCache } from '../../services/suggestionCache.ts';
 import { clearLocalZeroState, recordLocalSelection } from '../../services/localZeroState.ts';
 import { clearRecentSelections } from '../../services/suggestionHistory.ts';
 import { resolveFieldPolicy } from '../../contexts/fieldRegistry.ts';
+import { offlineLocalRows } from '../../services/localDictionary.ts';
 import type { InputSuggestion } from '../../types/inputSuggestion.ts';
 
 // ── SEEDED (G340) ───────────────────────────────────────────────────────────
@@ -312,11 +321,20 @@ test('§34: the shipped dictionary does NOT pre-empt the request — the server 
   expect(mockRequest).toHaveBeenCalledTimes(1);
 });
 
-test('§33: a TRANSIENT error is not offline — nothing shipped is shown for it', async () => {
-  // The `unavailable` arm is the only one that may serve a shipped row. A
-  // transient failure keeps whatever is on screen (nothing, here) and does NOT
-  // fall back to the dictionary, because the field is not degraded — one
-  // request failed.
+test('§33: a TRANSIENT error is not offline — the degraded arm is never taken for it', async () => {
+  // The `unavailable` arm is the only one that may serve the OFFLINE surface. A
+  // transient failure keeps whatever is on screen and does NOT fall back to the
+  // degraded arm, because the field is not degraded — one request failed.
+  //
+  // RESTATED 2026-10-05 (OD-INPUT-7, census G212). What is on screen before the
+  // failure is no longer nothing: the shipped dictionary row is now shown
+  // IMMEDIATELY while the request is in flight (immediateDictionaryRows), so the
+  // old `labels === ''` could no longer tell the arms apart. The property is
+  // asserted directly instead: the offline arm (`offlineLocalRows`) is not
+  // called, the field is not marked unavailable, and what stays on screen is
+  // exactly the immediate local row — nothing was added because of the error.
+  const offlineArm = offlineLocalRows as jest.MockedFunction<typeof offlineLocalRows>;
+  offlineArm.mockClear();
   mockRequest.mockResolvedValueOnce({
     ok: false,
     aborted: false,
@@ -326,8 +344,10 @@ test('§33: a TRANSIENT error is not offline — nothing shipped is shown for it
   render(<Probe fieldId={COUNTRY_FIELD} text="thai" />);
 
   await waitFor(() => expect(mockRequest).toHaveBeenCalledTimes(1));
-  expect(screen.getByTestId('labels').props.children).toBe('');
+  expect(offlineArm).not.toHaveBeenCalled();
   expect(screen.getByTestId('unavailable').props.children).toBe('false');
+  expect(screen.getByTestId('labels').props.children).toBe('Thailand');
+  expect(screen.getByTestId('sources').props.children).toBe('local');
 });
 
 /*

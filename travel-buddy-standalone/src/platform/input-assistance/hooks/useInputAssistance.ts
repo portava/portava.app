@@ -37,7 +37,7 @@ import { sharedSuggestionCache, SuggestionCache, isCacheablePrivacyClass } from 
 import { createSequenceGuard } from '../services/raceGuard.ts';
 import { finalizeSuggestions, narrowToQuery } from '../services/suggestionRanking.ts';
 import { localZeroState } from '../services/localZeroState.ts';
-import { offlineLocalRows } from '../services/localDictionary.ts';
+import { offlineLocalRows, immediateDictionaryRows } from '../services/localDictionary.ts';
 import { emitInputEvent } from '../services/inputTelemetry.ts';
 
 export interface UseInputAssistanceOptions {
@@ -264,10 +264,23 @@ export function useInputAssistance(
     // cross-device recents) and it is the authority on eligibility — so the
     // local list is what the field shows WHILE that answer is fetched, and what
     // it keeps if the answer never arrives.
+    // ── OD-INPUT-7 / §34 "prefer local: STATIC DICTIONARIES" (census G212) ──
+    // With no cached prefix to narrow and no zero-state to replay, a typed query
+    // used to show nothing until the round trip landed — the shipped dictionary
+    // was consulted only AFTER the network had failed. The owner's latency rule
+    // is the opposite: local suggestions immediately, slower results replacing
+    // them. `immediateDictionaryRows` applies the offline arm's two gates and
+    // adds no raw-query row; the request below still goes out, unchanged.
     const local = localTier
       ?? (zeroStateTier || (trimmed.length === 0 && policy.minChars === 0)
         ? (() => {
             const rows = finalizeSuggestions(localZeroState(policy), policy.maxSuggestions);
+            return rows.length > 0 ? rows : null;
+          })()
+        : null)
+      ?? (trimmed.length > 0
+        ? (() => {
+            const rows = finalizeSuggestions(immediateDictionaryRows(policy, trimmed), policy.maxSuggestions);
             return rows.length > 0 ? rows : null;
           })()
         : null);
