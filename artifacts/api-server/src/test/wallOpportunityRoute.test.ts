@@ -59,7 +59,7 @@ const BUDDIES = [
     meetup_base_lat: 16.05, meetup_base_lng: 108.2 },
 ];
 
-function fakeClient(flags: Record<string, boolean>) {
+function fakeClient(flags: Record<string, boolean>) { return withVerifiedBookingParties(fakeClientRaw(flags), "everyone"); } function fakeClientRaw(flags: Record<string, boolean>) {
   function builder(table: string) {
     const eqs: Record<string, any> = {};
     const ins: Record<string, any[]> = {};
@@ -210,3 +210,10 @@ describe("Wall route — RAB opportunity producer wiring", () => {
     assert.equal(opportunities(res.json).length, 0);
   });
 });
+
+// Every booking party reads as a verified adult: since 2026-10-05 the shared
+// booking gate this producer runs also requires both people to hold a current
+// REAL identity verification (lib/rentBuddyIdentityEligibility.ts, owner
+// 2026-10-04). Wrapped on the definition line, import at the foot, so no cited
+// line moves; the subject of this suite is the Wall producer.
+import { withVerifiedBookingParties } from "./helpers/verifiedBookingParties.js";

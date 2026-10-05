@@ -77,7 +77,7 @@ import tagsRouter from "./tags";
 import hashtagsRouter from "./hashtags";
 import circleAgeSettingsRouter from "./circleAgeSettings";
 import rentABuddyRouter from "./rentABuddy";
-import rentABuddyMarketplaceRouter from "./rentABuddyMarketplace"; import creatorEconomyRouter from "./creatorEconomy"; import adminCreatorLedgerRouter from "./adminCreatorLedger"; import adminTrailsRouter from "./adminTrails"; // census-discovery §52 (DC-23, DV-59/DV-74): appended to this line so every line-number citation below stays true | census-discovery §86 (DV-74)
+import rentABuddyMarketplaceRouter from "./rentABuddyMarketplace"; import creatorEconomyRouter from "./creatorEconomy"; import adminCreatorLedgerRouter from "./adminCreatorLedger"; import adminTrailsRouter from "./adminTrails"; import rentABuddyPaymentsRouter from "./rentABuddyPayments.js"; // census-discovery §52 (DC-23, DV-59/DV-74): appended to this line so every line-number citation below stays true | census-discovery §86 (DV-74) | lane B 2026-10-05: the Rent-a-Buddy payment slice (rentABuddyPaymentsRouter), test mode only
 import rentABuddyRolloutRouter from "./rentABuddyRollout";
 import rentABuddySpecRouter from "./rentABuddySpec";
 import compassRouter from "./compass";
@@ -244,7 +244,7 @@ router.use(hashtagsRouter);
 router.use(circleAgeSettingsRouter);
 router.use(rentABuddyRouter);
 router.use(rentABuddySpecRouter);
-router.use(rentABuddyMarketplaceRouter); router.use(creatorEconomyRouter); router.use(adminCreatorLedgerRouter); router.use(adminTrailsRouter); // census-discovery §52; §86 (adminTrailsRouter)
+router.use(rentABuddyMarketplaceRouter); router.use(creatorEconomyRouter); router.use(adminCreatorLedgerRouter); router.use(adminTrailsRouter); router.use(rentABuddyPaymentsRouter); // census-discovery §52; §86 (adminTrailsRouter); lane B 2026-10-05 (rentABuddyPaymentsRouter: quote/checkout/confirm/refund/onboarding/payouts)
 router.use(rentABuddyRolloutRouter);
 router.use(compassRouter);
 router.use(compassHomeRouter);
@@ -435,5 +435,4 @@ router.use(postcardMediaTransportRouter);
 import mediaVideoPosterRouter from "./mediaVideoPoster.js";
 router.use(mediaVideoPosterRouter);
 import discoveryOutputKindsRouter from "./discoveryOutputKinds.js"; router.use(discoveryOutputKindsRouter); /* census-discovery §91 (DC-01): the three §85 output kinds, behind discovery_output_kinds_enabled; on this line so no cited line moves */ import discoveryTrendingRouter from "./discoveryTrending.js"; router.use(discoveryTrendingRouter); // census-discovery §58 (DC-21): `11` §4 trend explanation, read-only, behind discovery_trending_api_enabled. Written over the blank line that stood here, so the file keeps its 439 lines and no cited line moves.
-import rentABuddyPaymentsRouter from "./rentABuddyPayments.js"; router.use(rentABuddyPaymentsRouter); // lane B 2026-10-05: Rent-a-Buddy payment slice (quote/checkout/confirm/refund/onboarding/payouts), test mode only; tail-registered so no cited line moves
 export default router;
