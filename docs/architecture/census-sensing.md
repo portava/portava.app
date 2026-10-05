@@ -5045,12 +5045,12 @@ pass verified it, in the order the RED WHEN demands — claims into the context
 FIRST, checker over that context SECOND, *"because a checker over an empty
 context is vacuous"*:
 
-* The context half. `` `artifacts/api-server/src/routes/compass.ts:1788#liveClaimEvidence = live.evidence;` ``
+* The context half. `` `artifacts/api-server/src/routes/compass.ts:1797#liveClaimEvidence = live.evidence;` ``
   — `buildLiveClaimContext` pushes its lines onto the prompt and keeps the
   per-subject band it derived, on the request path, before any answer exists.
 * The checker half, on BOTH branches so streamed and non-streamed answers
-  cannot drift: `` `artifacts/api-server/src/routes/compass.ts:1955#const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);` ``
-  and `` `artifacts/api-server/src/routes/compass.ts:1955#const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);` ``.
+  cannot drift: `` `artifacts/api-server/src/routes/compass.ts:1964#const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);` ``
+  and `` `artifacts/api-server/src/routes/compass.ts:1964#const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);` ``.
   `groundCompassAnswer` merges the tool-log evidence with the context band
   and hands the union to `enforceCompassGroundingEnvelope`.
 * The proof is a REGISTERED suite, not a reading: `` `artifacts/api-server/src/test/compassGroundingLiveClaims.test.ts:99#describe("S79 part 1` ``
@@ -5087,7 +5087,7 @@ no world state, no opportunities, no disruptions, no sessions"*. Re-derived:
   `ExperienceSession` and the crew on the trip itself.
 * It is on the request path, handed the same kernel and the same admitted
   opportunities the prompt gets, so the trip world cannot show a different
-  world from the ranker: `` `artifacts/api-server/src/routes/compass.ts:1870#const tripWorld = await buildTripWorldContext(sc, user.id, {` ``.
+  world from the ranker: `` `artifacts/api-server/src/routes/compass.ts:1879#const tripWorld = await buildTripWorldContext(sc, user.id, {` ``.
 * The suite: `` `artifacts/api-server/src/test/sensingConsumersTripWorld.test.ts:88#describe("S83 — the projection carries all five named parts"` ``
   — builds all five from a stub client that FILTERS per table, asserts a
   closed session is not an open one, that the disruption claim types are the
@@ -5729,7 +5729,7 @@ owner's and is not.
 | # | §21.4 blocker | Now |
 |---|---|---|
 | 2 | *"Nothing publishes. `publishThroughDifferencingGate` has no caller outside tests."* | `lib/sensingPublicationScheduler` is that caller: on its own clock, per live cohort of the current and previous privacy bucket, `readSensingCohort` → `aggregateSensingCohort` → `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:225#    const decision = await publishThroughDifferencingGate(` ``. A cohort the k-gate withholds never reaches the gate or the store (`` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:219#    if (aggregate.publishable !== true) {` ``). Started at boot: `` `artifacts/api-server/src/index.ts:162#  startSensingPublicationScheduler();` ``. |
-| 3 | *"A Compass turn carries a city, not a sensing `zone_id`."* | The turn now carries the device's OWN coarse zone — the spatial bucket its capture stamps on its contributions, present only while capture runs (`` `travel-buddy-standalone/src/services/sensing/sensingCapture.ts:103#  currentZone(): string | null;` ``, registered by `` `travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:145#    registerSensingZoneSource(() => running.currentZone());` ``, sent on both ask paths per `` `travel-buddy-standalone/src/services/__tests__/compass.sensingZone.test.ts:68#describe('the wiring, by source: both ask paths apply the rule to the body they send', () => {` ``). The route accepts it (`` `artifacts/api-server/src/routes/compass.ts:1128#  sensingZoneIds:      z.array(z.string().min(1).max(64)).max(5).optional(),` ``), turns it into the cohort refs of the current and previous bucket (`` `artifacts/api-server/src/compass/CompassSensingPresenceProducer.ts:254#export function sensingCohortRefsForZones(` ``, pure, bounded by the zone cap on the READS) and hands them to the producer (`` `artifacts/api-server/src/routes/compass.ts:1810#        sensingCohortRefsForZones(sensingZoneIds, turnNowMs),` ``). |
+| 3 | *"A Compass turn carries a city, not a sensing `zone_id`."* | The turn now carries the device's OWN coarse zone — the spatial bucket its capture stamps on its contributions, present only while capture runs (`` `travel-buddy-standalone/src/services/sensing/sensingCapture.ts:103#  currentZone(): string | null;` ``, registered by `` `travel-buddy-standalone/src/services/sensing/installSensingCapture.ts:145#    registerSensingZoneSource(() => running.currentZone());` ``, sent on both ask paths per `` `travel-buddy-standalone/src/services/__tests__/compass.sensingZone.test.ts:68#describe('the wiring, by source: both ask paths apply the rule to the body they send', () => {` ``). The route accepts it (`` `artifacts/api-server/src/routes/compass.ts:1137#  sensingZoneIds:      z.array(z.string().min(1).max(64)).max(5).optional(),` ``), turns it into the cohort refs of the current and previous bucket (`` `artifacts/api-server/src/compass/CompassSensingPresenceProducer.ts:254#export function sensingCohortRefsForZones(` ``, pure, bounded by the zone cap on the READS) and hands them to the producer (`` `artifacts/api-server/src/routes/compass.ts:1819#        sensingCohortRefsForZones(sensingZoneIds, turnNowMs),` ``). |
 | 1 | *"`surface` is not in `SENSING_ANON_GRANTED_SCOPES`"* | **Unchanged, deliberately.** Both the publisher and the producer test the scope BEFORE reading their flag and before any read: `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:153#  if (!sensingPublicationScopeGranted(opts.policy ?? SENSING_ANON_POLICY_V1)) {` `` precedes `` `artifacts/api-server/src/lib/sensingPublicationScheduler.ts:161#  if (!(await isFlagEnabled(db, SENSING_PUBLICATION_FLAG))) return SKIPPED("capability_off");` ``. The frozen constant was not edited. |
 
 **Proven with the scope INJECTED through the seam, never granted.**
