@@ -54,6 +54,12 @@ import {
   resolveFeeSchedule,
 } from "../lib/rentBuddyFeeSchedule.js";
 import {
+  collectedInAppUsd,
+  NOTHING_COLLECTED_WARNING,
+  withNothingCollected,
+  type EarningsMonthAgg,
+} from "../lib/rentBuddyCollectedMoney.js";
+import {
   findLaunchControlRow,
   normalizeLaunchControlKey,
   upsertLaunchControlRow,
@@ -7339,7 +7345,7 @@ const EARNINGS_PAGE_SIZE = 500;
 /** Bookings that count toward earnings. */
 const EARNINGS_STATUSES = ["completed", "disputed"] as const;
 
-interface EarningsMonth { month: string; totalUsd: number; bookingCount: number; inApp: number; cash: number; fees: number }
+type EarningsMonth = EarningsMonthAgg;
 
 /**
  * Fold booking rows into the summary, with byte-identical arithmetic to the
@@ -7347,13 +7353,27 @@ interface EarningsMonth { month: string; totalUsd: number; bookingCount: number;
  *   - month key   = first 7 chars of completed_at, else booking_date, else ""
  *   - fee         = round(total_usd * pct, 2)
  *   - disputed    → gross to totalDisputed, month's bookingCount +1, nothing else
- *   - otherwise   → deposit to inApp, cash_balance to cash, fee to fees,
- *                   (gross - fee) to the month's totalUsd
+ *   - otherwise   → deposit to inAppScheduled, cash_balance to cash, fee to
+ *                   fees, (gross - fee) to the month's totalUsd
  *   - yearlyNet   = sum of the current year's monthly totalUsd
  * Exported so the concurrency/exactness tests can drive it directly.
+ *
+ * ── THE ONE DEPARTURE FROM "BYTE-IDENTICAL" (M5 / `09` §1.3.1) ──────────────
+ * `deposit_usd` used to accumulate into `totalInAppUsd` and
+ * `monthlyBreakdown[].inApp` — fields whose names assert the money reached
+ * Portava. It never did: `pay-deposit` / `pay-full` are 503s. The deposit sum
+ * now accumulates into `totalInAppScheduledUsd` / `inAppScheduled`, and the two
+ * COLLECTED fields are 0, matching what `lib/rentBuddyEarningsLedger.ts` writes
+ * for the same bookings. `lib/rentBuddyCollectedMoney.ts` owns that answer and
+ * argues it in full.
+ *
+ * Everything else is untouched, INCLUDING every total: `totalNetUsd` still
+ * derives from the scheduled amount, so the net a buddy is shown is the same
+ * number as before. Deriving it from the zero would make a `full_in_app`
+ * booking report a negative balance.
  */
 export function foldEarningsRows(rows: any[], platformFeePct: number, now: Date = new Date()) {
-  let totalInApp = 0;
+  let totalInAppScheduled = 0;
   let totalCashConfirmed = 0;
   let totalFees = 0;
   let totalDisputed = 0;
@@ -7363,7 +7383,9 @@ export function foldEarningsRows(rows: any[], platformFeePct: number, now: Date 
 
   for (const b of rows) {
     const month = (b.completed_at ?? b.booking_date ?? "").slice(0, 7);
-    if (!monthlyMap[month]) monthlyMap[month] = { totalUsd: 0, bookingCount: 0, inApp: 0, cash: 0, fees: 0 };
+    if (!monthlyMap[month]) {
+      monthlyMap[month] = { totalUsd: 0, bookingCount: 0, inApp: 0, inAppScheduled: 0, cash: 0, fees: 0 };
+    }
 
     const gross = Number(b.total_usd ?? 0);
     const fee = Math.round(gross * platformFeePct * 100) / 100;
@@ -7373,13 +7395,14 @@ export function foldEarningsRows(rows: any[], platformFeePct: number, now: Date 
       totalDisputed += gross;
       monthlyMap[month].totalUsd += 0;
     } else {
-      const inApp = Number(b.deposit_usd ?? 0);
+      const inAppScheduled = Number(b.deposit_usd ?? 0);
       const cash = Number(b.cash_balance_usd ?? 0);
-      totalInApp += inApp;
+      totalInAppScheduled += inAppScheduled;
       totalCashConfirmed += cash;
       totalFees += fee;
       monthlyMap[month].totalUsd += net;
-      monthlyMap[month].inApp += inApp;
+      monthlyMap[month].inAppScheduled += inAppScheduled;
+      monthlyMap[month].inApp = collectedInAppUsd(monthlyMap[month].inAppScheduled);
       monthlyMap[month].cash += cash;
       monthlyMap[month].fees += fee;
     }
@@ -7396,12 +7419,17 @@ export function foldEarningsRows(rows: any[], platformFeePct: number, now: Date 
     .reduce((sum, m) => sum + m.totalUsd, 0);
 
   return {
-    totalInAppUsd: totalInApp,
+    /** Collected in app. 0, and the ledger row for the same booking says 0. */
+    totalInAppUsd: collectedInAppUsd(totalInAppScheduled),
+    /** What those bookings say WOULD be charged in app. */
+    totalInAppScheduledUsd: totalInAppScheduled,
     totalCashConfirmedUsd: totalCashConfirmed,
     totalPlatformFeesUsd: totalFees,
     totalDisputedUsd: totalDisputed,
     totalPendingUsd: totalPending,
-    totalNetUsd: totalInApp + totalCashConfirmed - totalFees,
+    // Unchanged arithmetic, now reading the renamed accumulator: the estimate
+    // of what the buddy is OWED, which is not a claim that it has been paid.
+    totalNetUsd: totalInAppScheduled + totalCashConfirmed - totalFees,
     yearlyNetUsd,
     monthlyBreakdown,
   };
@@ -7555,7 +7583,19 @@ router.get("/rent-a-buddy/dashboard/earnings/summary", async (req, res) => {
   });
   const agg = rpc.ok ? (Array.isArray(rpc.data) ? rpc.data[0] : rpc.data) : null;
   if (agg && typeof agg === "object" && agg.totalNetUsd !== undefined) {
-    return res.json({ ...agg, taxNote, buddyLevel: feeSchedule.buddyLevel, platformFeePct: rule.platformFeePercent });
+    // M5. The aggregate is re-stated rather than forwarded: migration 3530
+    // replaces the function body, and until it is applied every database still
+    // holds 2330's, which returns the deposit sum as `totalInAppUsd`. The
+    // honest zero must not wait on a migration press. See
+    // lib/rentBuddyCollectedMoney.ts:withNothingCollected.
+    return res.json({
+      ...withNothingCollected(agg),
+      taxNote,
+      buddyLevel: feeSchedule.buddyLevel,
+      platformFeePct: rule.platformFeePercent,
+      isEstimated: true,
+      warning: NOTHING_COLLECTED_WARNING,
+    });
   }
 
   // Fallback: exhaustive pagination, same arithmetic. Not truncating either.
@@ -7571,6 +7611,10 @@ router.get("/rent-a-buddy/dashboard/earnings/summary", async (req, res) => {
     taxNote,
     buddyLevel: feeSchedule.buddyLevel,
     platformFeePct: rule.platformFeePercent,
+    // Both paths carry the same marker, so a reader cannot tell the honest
+    // total apart by which one answered — and neither path can omit it.
+    isEstimated: true,
+    warning: NOTHING_COLLECTED_WARNING,
   });
 });
 

@@ -2254,7 +2254,7 @@ is how a hold outlives its own scope.
    versioned, append-only, non-cash earnings ledger, with `ledger_version` NOT
    NULL at `:41`, and its flag TRUE in production. What is absent is a
    *Discovery-surface* creator→value link, which is a different sentence. The
-   disposition is `docs/architecture/09_Payment_Architecture.md:575#Payments are not a discovery workstream` —
+   disposition is `docs/architecture/09_Payment_Architecture.md:602#Payments are not a discovery workstream` —
    *"Payments are not a discovery workstream."*
 2. **A21** — *"no registration mechanism exists to register into."* **False.**
    `artifacts/api-server/src/services/telegraph/actionRegistry.ts:55` declares
@@ -6046,9 +6046,9 @@ about what it owed and it paid it.
 
 `B05`'s cell at §91 carries two BARE inherited pointers whose anchors contain a
 double quote. **`check:doc-citations` cannot see either of them.** `ANCHOR` at
-`artifacts/api-server/scripts/check-doc-citations.mjs:405#const ANCHOR` stops at
+`artifacts/api-server/scripts/check-doc-citations.mjs:413#const ANCHOR` stops at
 the first `"`, and `INHERITED_RE` at
-`artifacts/api-server/scripts/check-doc-citations.mjs:413#export const INHERITED_RE`
+`artifacts/api-server/scripts/check-doc-citations.mjs:421#export const INHERITED_RE`
 then demands a closing backtick that is not there, so the citation matches
 nothing: not counted, not checked, not reported. The sibling hazard with a SPACE
 in the anchor IS refused, by `UNBINDABLE_INHERITED_RE`; the quote form falls
@@ -9087,7 +9087,7 @@ Retries return the same served set.
 | Discovery — `GET /discovery` (four serve paths), `/discovery/feed`, `/discovery/community` | yes, through `discoveryLayoverGate` (`routes/discovery.ts`'s `layoverGatedPlaces` and the community call) | none |
 | Discovery — `GET /hidden-gems/layover-safe`, `GET /hidden-gems?layoverSafe=1` | **yes, since §56.2** | none |
 | Discovery — `portavaRank.availabilityFitScore` | no | a DORMANT duplicate: *"Layover/limited-window mode: must start within the window"*, `lib/portavaRank.ts` line 289 (`minutesUntil <= ctx.availableMinutes ? 1 : -0.5`, as it stood at `3cc027a06`; deleted in §93). No caller sets `ViewerContext.availableMinutes`, so it never runs; `lib/portavaRank.ts` is not this lane's file and the ranker hold stands, so it is named, not removed |
-| Compass — tools and `routes/compass.ts` | yes: `artifacts/api-server/src/compass/CompassTools.ts:1804#const r = await certifiedLayoverSnapshot(sc as any, userId);`, `artifacts/api-server/src/routes/compass.ts:1728#const snap = await certifiedLayoverSnapshot(sc, user.id);` | none |
+| Compass — tools and `routes/compass.ts` | yes: `artifacts/api-server/src/compass/CompassTools.ts:1826#const r = await certifiedLayoverSnapshot(sc as any, userId);`, `artifacts/api-server/src/routes/compass.ts:1728#const snap = await certifiedLayoverSnapshot(sc, user.id);` | none |
 | Compass — the in-layover question (`POST` via `routes/airport.ts` → `answerLayoverQuestion`) | no | a DUPLICATE budget: it re-derives usable minutes as cutoff − now − buffer (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:144#Math.round((cutoffMs - now.getTime()) / 60000)`, `artifacts/api-server/src/services/airport/LayoverCompassService.ts:146#Math.max(0, availMin - bufferMin);`) instead of reading `record.envelope.usableMinutes` |
 | Trips card / Map envelope / dashboard (`routes/airport.ts`) | no | certifies inline, WITH the entry input: `artifacts/api-server/src/routes/airport.ts:1375#certifySessionFeasibility(airport, session, { nowMs, entry: await sessionEntry(sc, airport, session) })` |
 | Safe Return | no | the canonical derivation, called directly (as found at §56's tree; §65 gave it the route's entry fact, so the line now reads `artifacts/api-server/src/services/airport/LayoverSafeReturnService.ts:510#certifySessionFeasibility(airport, session, { nowMs: input.nowMs, entry: input.entry });`); the reminder instant is arithmetic on the certified deadline (`artifacts/api-server/src/services/airport/LayoverReturnEscalation.ts:306#const correctMs = deadlineMs - RETURN_SOON_LEAD_MIN * 60_000;`) |

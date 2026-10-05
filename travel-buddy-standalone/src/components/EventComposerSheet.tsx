@@ -29,7 +29,7 @@ import { color, space, radius, type as t, dot } from '../theme/tokens.ts';
 import { formatEventLocation } from '../lib/location/formatEventLocation.ts';
 import { resolvePickedPlace } from '../lib/location/applyPickedPlace.ts';
 import { KeyboardSafeScrollView } from './ui/KeyboardSafeView.tsx';
-
+import { isTicketLinkRefusal, ticketLinkForSave } from '../lib/ticketLink.ts';
 interface Props {
   onDismiss: () => void;
   onCreated: (ev: EventSummary) => void;
@@ -340,7 +340,7 @@ export function EventComposerSheet({ onDismiss, onCreated, initialEvent, onUpdat
       chatEnabled,
       waitlistEnabled,
       priceType,
-      priceUrl:     priceType === 'external' && priceUrl.trim() ? priceUrl.trim() : undefined,
+      priceUrl:     ticketLinkForSave(priceType, priceUrl), // null, never undefined: Free or an emptied field REMOVES the stored link (REV-020)
     };
 
     // ── Edit mode ───────────────────────────────────────────────────────────
@@ -352,7 +352,7 @@ export function EventComposerSheet({ onDismiss, onCreated, initialEvent, onUpdat
       const res = await updateEvent(initialEvent.id, updateInput);
       setSaving(false);
       if (!res.ok || !res.data) {
-        setError(res.message ?? 'Failed to save event');
+        setError(res.message ?? 'Failed to save event'); if (isTicketLinkRefusal(res.message)) setStep('settings'); // shown at the link field
         return;
       }
       onUpdated?.(res.data);
@@ -368,7 +368,7 @@ export function EventComposerSheet({ onDismiss, onCreated, initialEvent, onUpdat
       const res = await updateEvent(draftEventId, updateInput);
       setSaving(false);
       if (!res.ok || !res.data) {
-        setError(res.message ?? 'Failed to create event');
+        setError(res.message ?? 'Failed to create event'); if (isTicketLinkRefusal(res.message)) setStep('settings');
         return;
       }
       onCreated(res.data);
@@ -380,7 +380,7 @@ export function EventComposerSheet({ onDismiss, onCreated, initialEvent, onUpdat
     const res = await createEvent(createInput);
     setSaving(false);
     if (!res.ok || !res.data) {
-      setError(res.message ?? 'Failed to create event');
+      setError(res.message ?? 'Failed to create event'); if (isTicketLinkRefusal(res.message)) setStep('settings');
       return;
     }
     onCreated(res.data);
@@ -752,7 +752,7 @@ export function EventComposerSheet({ onDismiss, onCreated, initialEvent, onUpdat
                     <Pressable
                       key={p}
                       style={[s.priceBtn, priceType === p && s.priceBtnActive]}
-                      onPress={() => setPriceType(p)}
+                      onPress={() => { setPriceType(p); if (isTicketLinkRefusal(error)) setError(null); }}
                     >
                       <Text style={[s.priceBtnText, priceType === p && s.priceBtnTextActive]}>
                         {p === 'free' ? 'Free' : 'External link'}
@@ -766,10 +766,26 @@ export function EventComposerSheet({ onDismiss, onCreated, initialEvent, onUpdat
                     placeholder="https://tickets.example.com/…"
                     placeholderTextColor={color.faint}
                     value={priceUrl}
-                    onChangeText={setPriceUrl}
+                    onChangeText={(v) => { setPriceUrl(v); if (isTicketLinkRefusal(error)) setError(null); }}
                     keyboardType="url"
                     autoCapitalize="none"
                   />
+                )}
+                {/* REV-020: the server's refusal of the ticket link, at the field it is about,
+                    with the two ways out: type another link above, or take the link off. */}
+                {isTicketLinkRefusal(error) && (
+                  <View style={s.linkRefusal} testID="event-ticket-link-refusal">
+                    <Text style={s.linkRefusalText}>{error}</Text>
+                    <Pressable
+                      style={s.linkRemoveBtn}
+                      accessibilityRole="button"
+                      accessibilityLabel="Remove the ticket link"
+                      testID="event-ticket-link-remove"
+                      onPress={() => { setPriceUrl(''); setPriceType('free'); setError(null); }}
+                    >
+                      <Text style={s.linkRemoveBtnText}>Remove link</Text>
+                    </Pressable>
+                  </View>
                 )}
               </>
             )}
@@ -849,7 +865,7 @@ export function EventComposerSheet({ onDismiss, onCreated, initialEvent, onUpdat
               </>
             )}
 
-            {error ? <Text style={s.errorText}>{error}</Text> : null}
+            {error && !isTicketLinkRefusal(error) ? <Text style={s.errorText}>{error}</Text> : null}
           </ScrollView>
 
           {/* Navigation */}
@@ -976,6 +992,10 @@ const s = StyleSheet.create({
   draftBtn:   { backgroundColor: color.paper, borderRadius: radius.pill, paddingVertical: space.md, alignItems: 'center', borderWidth: 1, borderColor: color.haze },
   draftBtnText:{ ...t.body, color: color.mute, fontWeight: '600' },
   errorText:  { ...t.small, color: '#DC2626', textAlign: 'center', marginTop: space.sm },
+  linkRefusal:{ marginTop: space.sm, gap: space.sm },
+  linkRefusalText:{ ...t.small, color: '#DC2626' },
+  linkRemoveBtn:{ alignSelf: 'flex-start', paddingVertical: 8, paddingHorizontal: space.md, borderRadius: radius.pill, borderWidth: 1, borderColor: color.haze, backgroundColor: color.paper },
+  linkRemoveBtnText:{ ...t.small, color: color.ink, fontWeight: '600' },
   nav:        { flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.lg, paddingVertical: space.md, borderTopWidth: 1, borderTopColor: color.haze, gap: space.md },
   navBack:    { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: space.sm },
   navBackText:{ ...t.body, color: color.mute, fontWeight: '600' },
