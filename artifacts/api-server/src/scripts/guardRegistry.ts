@@ -1028,4 +1028,18 @@ export const GUARDS: readonly GuardEntry[] = [
       "No money identifier (price, fee, earnings, payout, commission, tip, revenue, sponsored placement, paid plan) is read by a ranker (Discovery, the Wall, media, the Compass pipeline, the buddy match scorer), a ranking feature vector, a graph builder or a feed payload, except an allowlisted identifier that enforces a non-goal or is not money where it stands. A real money input is neither excused nor removed by the check: it is a recorded open owner question, reported with a warning on every run and not failed, covering only the identifiers it names; the set of such questions is pinned in the check's test (`08` §6, `09` §10; PAY-019, PAY-074).",
     reach: { kind: "check-all", script: "check:no-money-in-ranking" },
   },
+  // Appended at the END of the array so no cited line above moves.
+  {
+    checker: "src/scripts/checkLayoverDecisionDiff.ts",
+    inspects: {
+      countPattern: "layover decision diff: (\\d+) scenario\\(s\\) compared",
+      unit: "synthetic Layover scenarios diffed against layoverDecisionGolden.json",
+    },
+    responsibility:
+      "A feasibility-engine change that decides a corpus scenario differently from layoverDecisionGolden.json — a verdict, a deadline, a rule — is red until the golden is regenerated with a note (Layover spec §21.2; census-layover L241).",
+    // The corpus is src/services/layover/replay/layoverScenarioCorpus.ts; the
+    // diff is layoverReplay.decisionDiffCorpus; deadlines that moved LATER are
+    // printed first because that is the direction that strands a traveller.
+    reach: { kind: "check-all", script: "check:layover-decision-diff" },
+  },
 ];
