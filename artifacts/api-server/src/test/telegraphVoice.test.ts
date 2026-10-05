@@ -53,7 +53,7 @@ import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createServer, request as httpRequest } from "node:http";
 import express from "express";
-import { _setTestClient } from "../lib/http.js";
+import { _setTestClient } from "../lib/http.js"; import { _resetRateLimit } from "../lib/rateLimit.js";
 import telegraphVoiceRouter from "../routes/telegraphVoice.js";
 import {
   AUDIO_MIGRATION_PENDING_MESSAGE,
@@ -361,7 +361,7 @@ let base = "";
 
 function useState(state: State) {
   const c = makeClient(state);
-  _setTestClient(c, true);
+  _setTestClient(c, true); _resetRateLimit(); // the §22 send limiter is PROCESS state and now guards this door too: without this the 21st send in the FILE is a 429 that measures an earlier case
   return c;
 }
 

@@ -40,9 +40,16 @@ function SummaryCard({ summary }: { summary: EarningsSummary }) {
         </View>
       </View>
       <View style={sum.row}>
+        {/*
+          Was "Deposit collected" over `depositCollected` — a claim that the
+          money had been taken, on the one screen where a buddy decides whether
+          they have been paid. Nothing is charged (the API now reports
+          `depositCollected: 0`), so the label says what the figure is: the
+          deposit the booking schedules.
+        */}
         <View style={sum.col}>
-          <Text style={sum.colLbl}>Deposit collected</Text>
-          <Text style={sum.colVal}>${summary.completed.depositCollected.toFixed(2)}</Text>
+          <Text style={sum.colLbl}>Deposit scheduled</Text>
+          <Text style={sum.colVal}>${summary.completed.depositScheduled.toFixed(2)}</Text>
         </View>
         <View style={sum.col}>
           <Text style={sum.colLbl}>Cash balance due</Text>
@@ -79,8 +86,14 @@ function LedgerRow({ entry }: { entry: LedgerEntry }) {
           Gross ${entry.totalBookingUsd.toFixed(2)} · Fee {entry.platformFeePercent ?? 22}% = ${entry.platformFeeAmount.toFixed(2)}
         </Text>
         {entry.tipUsd > 0 ? <Text style={row.detail}>Tip: +${entry.tipUsd.toFixed(2)}</Text> : null}
+        {/*
+          `depositAmount` is the ledger row's `deposit_amount` — scheduled, not
+          taken. "In-app $X" read as money received; "In-app due" does not.
+          The collected figure on the same row is `inAppAmountCollected`, which
+          the writer records as 0.
+        */}
         {entry.depositAmount > 0 ? (
-          <Text style={row.detail}>In-app ${entry.depositAmount.toFixed(2)} · Cash ${entry.cashBalanceDue.toFixed(2)}</Text>
+          <Text style={row.detail}>In-app due ${entry.depositAmount.toFixed(2)} · Cash ${entry.cashBalanceDue.toFixed(2)}</Text>
         ) : null}
         {entry.isEstimated ? <Text style={row.estimated}>Estimated — not yet paid</Text> : null}
       </View>
