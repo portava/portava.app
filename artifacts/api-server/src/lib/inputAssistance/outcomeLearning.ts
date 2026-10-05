@@ -36,7 +36,7 @@
  *    read here failing, the gateway ranks EXACTLY as it did before this module
  *    existed (acceptance-only). Suggestions never depend on the opt-in.
  *  - 30 DAYS THEN DELETE: counters are UTC-day buckets; `runInputOutcomeRetentionSweep`
- *    deletes a bucket whole once it is 30 days old, and `fetchOutcomeCounts`
+ *    deletes a bucket whole once it is 30 days old, and `input_outcome_memory`
  *    applies the same window so a late sweep cannot make an expired completion
  *    count. Withdrawing the consent deletes the user's counters at once.
  *
@@ -70,7 +70,7 @@ export const INPUT_OUTCOME_FLAG = 'input_outcome_learning_enabled';
 /**
  * The disclosure a grant is recorded under. The client shows exactly these
  * words (travel-buddy-standalone/src/platform/input-assistance/services/
- * outcomeConsent.ts mirrors them) and sends this version with the grant; a
+ * outcomeLearning.ts mirrors them) and sends this version with the grant; a
  * mismatch is refused. Bump BOTH when the words change materially.
  *
  * THE TEXT IS THE ENGINEERING DRAFT OF OD-INPUT-1's PROPERTIES and is the one
@@ -168,8 +168,9 @@ export async function outcomeLearningOffered(db: SupabaseClient): Promise<boolea
 
 /**
  * Is outcome learning ACTIVE for this user right now: flag on AND a valid
- * consent. Any failure answers false — the acceptance-only behaviour, which is
- * exactly what a user without the feature gets.
+ * consent. Any failure answers false. Two reads; used only by the §44 ingest,
+ * and only for a batch that carries an outcome event — the ranking path uses
+ * the one-round-trip `readOutcomeMemory` instead.
  */
 export async function outcomeLearningActive(db: SupabaseClient, userId: string): Promise<boolean> {
   if (!userId) return false;
@@ -219,46 +220,51 @@ export function outcomeKey(entityType: string, entityId: string): string {
   return `${entityType}:${entityId}`;
 }
 
-export type OutcomeCountsRead = { ok: true; counts: Map<string, number> } | { ok: false };
+export type OutcomeMemoryRead =
+  | { ok: true; active: false }
+  | { ok: true; active: true; counts: Map<string, number> }
+  | { ok: false };
 
 /**
- * The owner's completions per entity in ONE context, inside the window. Owner
- * scope is mandatory and comes from the session. Bounded.
+ * ONE round trip (OD-INPUT-7): `input_outcome_memory` (3780) answers whether
+ * outcome learning is active for this user — flag on AND a valid consent,
+ * both checked in the database — and, only if so, their windowed completion
+ * counts for one context. Owner scope comes from the session. A failed call,
+ * or an answer that is not exactly that shape, is `{ ok: false }`.
  */
-export async function fetchOutcomeCounts(
+export async function readOutcomeMemory(
   db: SupabaseClient,
-  o: { userId: string; context: string; now?: Date; max?: number },
-): Promise<OutcomeCountsRead> {
+  o: { userId: string; context: string; now?: Date },
+): Promise<OutcomeMemoryRead> {
   if (!o.userId) return { ok: false };
   try {
-    const { data, error } = await db
-      .from('input_outcome_counters')
-      .select('entity_type, entity_id, completed_count, bucket_day')
-      .eq('user_id', o.userId) // OWNER SCOPE — do not remove.
-      .eq('context', o.context)
-      .gte('bucket_day', outcomeWindowStartDay(o.now))
-      .limit(o.max ?? 500);
-    if (error || !Array.isArray(data)) return { ok: false };
+    const { data, error } = await db.rpc('input_outcome_memory', {
+      p_user_id: o.userId, // OWNER SCOPE — from the session, never the request.
+      p_context: o.context,
+      p_since: outcomeWindowStartDay(o.now),
+    });
+    if (error || !data || typeof data !== 'object') return { ok: false };
+    const d = data as { active?: unknown; counts?: unknown };
+    if (d.active === false) return { ok: true, active: false };
+    if (d.active !== true || !Array.isArray(d.counts)) return { ok: false };
     const counts = new Map<string, number>();
-    for (const r of data as Array<Record<string, unknown>>) {
-      if (typeof r.entity_type !== 'string' || typeof r.entity_id !== 'string') continue;
-      const n = typeof r.completed_count === 'number' && r.completed_count > 0 ? r.completed_count : 0;
-      if (n === 0) continue;
-      const k = outcomeKey(r.entity_type, r.entity_id);
-      counts.set(k, (counts.get(k) ?? 0) + n);
+    for (const r of d.counts as Array<Record<string, unknown>>) {
+      if (!r || typeof r.entity_type !== 'string' || typeof r.entity_id !== 'string') continue;
+      const n = typeof r.completed === 'number' && r.completed > 0 ? r.completed : 0;
+      if (n > 0) counts.set(outcomeKey(r.entity_type, r.entity_id), n);
     }
-    return { ok: true, counts };
+    return { ok: true, active: true, counts };
   } catch {
     return { ok: false };
   }
 }
 
 /**
- * The gateway's single entry point. Returns `memory` UNCHANGED (acceptance-only
- * ranking) unless outcome learning is active for this user, in which case the
- * user's windowed counts for this context are attached. A failed counter read
- * after an active check is logged and also returns `memory` unchanged: the user
- * gets the ranking a user without the feature gets, never a fabricated one.
+ * The gateway's single entry point — ONE round trip. Returns `memory` UNCHANGED
+ * (acceptance-only ranking) unless outcome learning is active for this user, in
+ * which case the user's windowed counts for this context are attached. A failed
+ * read is logged and also returns `memory` unchanged: the user gets the ranking
+ * a user without the feature gets, never a fabricated one.
  */
 export async function attachOutcomeMemory(
   db: SupabaseClient,
@@ -267,18 +273,14 @@ export async function attachOutcomeMemory(
   context: string,
   now: Date = new Date(),
 ): Promise<SelectionMemory> {
-  try {
-    if (!(await outcomeLearningActive(db, userId))) return memory;
-    const read = await fetchOutcomeCounts(db, { userId, context, now });
-    if (!read.ok) {
-      logger.warn({ context }, 'input outcome counts unreadable; ranking falls back to acceptance-only');
-      return memory;
-    }
-    return withOutcomes(memory, read.counts);
-  } catch (err) {
-    logger.warn({ err, context }, 'input outcome learning threw; ranking falls back to acceptance-only');
+  const read = await readOutcomeMemory(db, { userId, context, now });
+  if (!read.ok) {
+    // Acceptance-only — the SAME memory object, not the outcome formula with
+    // empty counts (that would halve every acceptance for a read that failed).
+    logger.warn({ context }, 'input outcome memory unreadable; ranking falls back to acceptance-only');
     return memory;
   }
+  return read.active ? withOutcomes(memory, read.counts) : memory;
 }
 
 /**

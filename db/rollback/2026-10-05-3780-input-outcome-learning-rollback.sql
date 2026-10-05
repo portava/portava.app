@@ -3,7 +3,8 @@
 -- NOT applied to travel-buddy (ajrurzioarfkagpuxfnb).
 --
 -- WHAT 3780 DID: created input_outcome_consent, input_outcome_counters and
--- input_record_outcome(uuid, text, text, text), and seeded
+-- input_record_outcome(uuid, text, text, text), input_outcome_memory(uuid,
+-- text, date), and seeded
 -- input_outcome_learning_enabled FALSE.
 -- WHAT THIS ROLLBACK DOES: removes all four — ONLY while the flag is FALSE and
 -- no one has opted in. A TRUE flag means the owner turned the capability on;
@@ -26,6 +27,7 @@ BEGIN
 END $$;
 
 DROP FUNCTION IF EXISTS public.input_record_outcome(uuid, text, text, text);
+DROP FUNCTION IF EXISTS public.input_outcome_memory(uuid, text, date);
 DROP TABLE IF EXISTS public.input_outcome_counters;
 DROP TABLE IF EXISTS public.input_outcome_consent;
 DELETE FROM public.feature_flags WHERE flag = 'input_outcome_learning_enabled' AND enabled = FALSE;
@@ -38,8 +40,9 @@ BEGIN
   IF to_regclass('public.input_outcome_consent') IS NOT NULL OR to_regclass('public.input_outcome_counters') IS NOT NULL THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3780 rollback): an outcome table is still present.';
   END IF;
-  IF to_regprocedure('public.input_record_outcome(uuid, text, text, text)') IS NOT NULL THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3780 rollback): input_record_outcome is still present.';
+  IF to_regprocedure('public.input_record_outcome(uuid, text, text, text)') IS NOT NULL
+     OR to_regprocedure('public.input_outcome_memory(uuid, text, date)') IS NOT NULL THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3780 rollback): an outcome function is still present.';
   END IF;
   IF EXISTS (SELECT 1 FROM public.feature_flags WHERE flag = 'input_outcome_learning_enabled') THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3780 rollback): the flag is still present.';

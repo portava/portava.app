@@ -25,7 +25,7 @@ import {
   INPUT_OUTCOME_DISCLOSURE_VERSION,
   INPUT_OUTCOME_FLAG,
   INPUT_OUTCOME_RETENTION_DAYS,
-  fetchOutcomeCounts,
+  readOutcomeMemory,
   outcomeWindowStartDay,
   runInputOutcomeRetentionSweep,
 } from "../lib/inputAssistance/outcomeLearning.js";
@@ -64,11 +64,27 @@ function makeFakeClient(state: FakeState) {
     rpc: async (name: string, args: any) => {
       state.__rpc!.push({ name, args });
       if (fail(`rpc:${name}`)) return { data: null, error: { message: "boom" } };
+      // Models 3780: both functions re-check the FLAG and the CONSENT in the database.
+      const flagOn = !!(state.feature_flags ?? []).find((f: any) => f.flag === INPUT_OUTCOME_FLAG && f.enabled === true);
+      const consented = (uid: string) => {
+        const c = (state.input_outcome_consent ?? []).find((r: any) => r.user_id === uid);
+        return !!c && c.enabled === true && !c.withdrawn_at && !!c.consent_version;
+      };
+      if (name === "input_outcome_memory") {
+        if (!flagOn || !consented(args.p_user_id)) return { data: { active: false }, error: null };
+        const by = new Map<string, any>();
+        for (const r of state.input_outcome_counters ?? []) {
+          if (r.user_id !== args.p_user_id || r.context !== args.p_context || r.bucket_day < args.p_since) continue;
+          const k = `${r.entity_type}\u0000${r.entity_id}`;
+          const e = by.get(k) ?? { entity_type: r.entity_type, entity_id: r.entity_id, completed: 0 };
+          e.completed += r.completed_count;
+          by.set(k, e);
+        }
+        return { data: { active: true, counts: [...by.values()] }, error: null };
+      }
       if (name === "input_record_outcome") {
-        // Models 3780: re-check consent in the database, then upsert-increment
-        // today's bucket.
-        const c = (state.input_outcome_consent ?? []).find((r: any) => r.user_id === args.p_user_id);
-        if (!c || !c.enabled || c.withdrawn_at) return { data: false, error: null };
+        // Upsert-increment today's bucket, only with the flag on and a valid consent.
+        if (!flagOn || !consented(args.p_user_id)) return { data: false, error: null };
         const rows = (state.input_outcome_counters ??= []);
         const day = new Date().toISOString().slice(0, 10);
         const hit = rows.find((r: any) =>
@@ -484,19 +500,44 @@ describe("POST /suggest — outcome learning reaches the rank only for a consent
     assert.ok(conf(body, SANTA_ROSA.id) > conf(body, SANTA_ANA.id), JSON.stringify(body.suggestions.map((s: any) => [s.label, s.confidence])));
   });
 
-  it("no consent: acceptance-only, exactly as before — and the counters are NEVER READ", async () => {
+  /** The acceptance-only confidences for the same fixture: a serve with no hint. */
+  async function plainConfs(): Promise<[number, number]> {
+    setup({ ...base(), feature_flags: [flag(false)] });
+    _resetRateLimit();
+    const b = (await (await suggest(A_TOK, false)).json()) as any;
+    return [conf(b, SANTA_ANA.id), conf(b, SANTA_ROSA.id)];
+  }
+
+  it("no consent: acceptance-only, value for value", async () => {
     setup({ ...base(), feature_flags: [flag(true)] });
     const body = (await (await suggest()).json()) as any;
-    assert.ok(conf(body, SANTA_ANA.id) > conf(body, SANTA_ROSA.id));
-    assert.ok(!state.__reads!.includes("input_outcome_counters"), "no opt-in, no read");
+    assert.deepEqual([conf(body, SANTA_ANA.id), conf(body, SANTA_ROSA.id)], await plainConfs());
   });
 
-  it("flag off: acceptance-only, and neither consent nor counters are read", async () => {
+  it("flag off: acceptance-only even for a user who opted in, value for value", async () => {
     setup({ ...base(), feature_flags: [flag(false)], input_outcome_consent: [consentRow(USER_A)] });
     const body = (await (await suggest()).json()) as any;
-    assert.ok(conf(body, SANTA_ANA.id) > conf(body, SANTA_ROSA.id));
-    assert.ok(!state.__reads!.includes("input_outcome_counters"));
-    assert.ok(!state.__reads!.includes("input_outcome_consent"));
+    assert.deepEqual([conf(body, SANTA_ANA.id), conf(body, SANTA_ROSA.id)], await plainConfs());
+  });
+
+  it("MEASURED COST (OD-INPUT-7): a hinted serve makes exactly ONE outcome round trip in every state; no hint makes none", async () => {
+    // Round trips to the outcome store per personalised serve: the RPC calls
+    // plus any direct reads of the three tables it covers.
+    const outcomeTrips = () =>
+      state.__rpc!.filter((c) => c.name === "input_outcome_memory").length +
+      state.__reads!.filter((t) => ["feature_flags", "input_outcome_consent", "input_outcome_counters"].includes(t)).length;
+    const states: Array<[string, FakeState, boolean, number]> = [
+      ["no hint, opted in, flag on", { ...base(), feature_flags: [flag(true)], input_outcome_consent: [consentRow(USER_A)] }, false, 0],
+      ["hint, flag off", { ...base(), feature_flags: [flag(false)], input_outcome_consent: [consentRow(USER_A)] }, true, 1],
+      ["hint, flag on, no consent", { ...base(), feature_flags: [flag(true)] }, true, 1],
+      ["hint, flag on, consent (active)", { ...base(), feature_flags: [flag(true)], input_outcome_consent: [consentRow(USER_A)] }, true, 1],
+    ];
+    for (const [label, st, hint, expected] of states) {
+      setup(st);
+      _resetRateLimit();
+      assert.equal((await suggest(A_TOK, hint)).status, 200);
+      assert.equal(outcomeTrips(), expected, `${label}: ${outcomeTrips()} outcome round trips`);
+    }
   });
 
   it("NO HINT (every device that never opted in): no flag, consent or counter read at all — even for an opted-in user", async () => {
@@ -509,13 +550,13 @@ describe("POST /suggest — outcome learning reaches the rank only for a consent
     for (const t of ["feature_flags", "input_outcome_consent", "input_outcome_counters"]) {
       assert.ok(!state.__reads!.includes(t), `${t} was read without the hint`);
     }
+    assert.equal(state.__rpc!.filter((c) => c.name === "input_outcome_memory").length, 0);
   });
 
   it("the HINT grants nothing: hinted, flag on, but no consent row → acceptance-only", async () => {
     setup({ ...base(), feature_flags: [flag(true)] });
     const body = (await (await suggest(A_TOK, true)).json()) as any;
     assert.ok(conf(body, SANTA_ANA.id) > conf(body, SANTA_ROSA.id));
-    assert.ok(!state.__reads!.includes("input_outcome_counters"));
   });
 
   it("another user's outcomes never move this user's rank", async () => {
@@ -526,12 +567,29 @@ describe("POST /suggest — outcome learning reaches the rank only for a consent
     assert.ok(conf(body, SANTA_ANA.id) > conf(body, SANTA_ROSA.id));
   });
 
-  it("an unreadable counter table degrades to acceptance-only and the serve still succeeds", async () => {
-    setup({ ...base(), feature_flags: [flag(true)], input_outcome_consent: [consentRow(USER_A)], __fail: { input_outcome_counters: true } });
+  it("a FAILED outcome read ranks EXACTLY as acceptance-only — not the outcome formula with empty counts", async () => {
+    // The two differ: the outcome formula halves every bare acceptance. So the
+    // failed serve's confidences must equal a no-hint serve's, value for value.
+    setup({ ...base(), feature_flags: [flag(true)], input_outcome_consent: [consentRow(USER_A)], __fail: { "rpc:input_outcome_memory": true } });
     const r = await suggest();
     assert.equal(r.status, 200);
-    const body = (await r.json()) as any;
-    assert.ok(conf(body, SANTA_ANA.id) > conf(body, SANTA_ROSA.id));
+    const failed = (await r.json()) as any;
+    setup({ ...base(), feature_flags: [flag(true)], input_outcome_consent: [consentRow(USER_A)] });
+    _resetRateLimit();
+    const plain = (await (await suggest(A_TOK, false)).json()) as any;
+    assert.equal(conf(failed, SANTA_ANA.id), conf(plain, SANTA_ANA.id));
+    assert.equal(conf(failed, SANTA_ROSA.id), conf(plain, SANTA_ROSA.id));
+  });
+
+  it("an active answer with no counts DOES use the outcome formula (the failure case above is not the same thing)", async () => {
+    const st = { ...base(), feature_flags: [flag(true)], input_outcome_consent: [consentRow(USER_A)] };
+    st.input_outcome_counters = [];
+    setup(st);
+    const active = (await (await suggest()).json()) as any;
+    setup({ ...base(), feature_flags: [flag(true)] });
+    _resetRateLimit();
+    const plain = (await (await suggest(A_TOK, false)).json()) as any;
+    assert.ok(conf(active, SANTA_ANA.id) < conf(plain, SANTA_ANA.id), "a consenting user's bare acceptances are halved");
   });
 });
 
@@ -554,9 +612,12 @@ describe("OD-INPUT-2 — a completion counts for 30 UTC days, then it is deleted
         { user_id: USER_A, context: "city_picker", entity_type: "city", entity_id: "out", bucket_day: dayAgo(30), completed_count: 9 },
       ],
     };
-    const read = await fetchOutcomeCounts(makeFakeClient(s) as any, { userId: USER_A, context: "city_picker", now: NOW });
-    assert.ok(read.ok);
-    assert.deepEqual([...read.counts.entries()], [["city:in", 1]]);
+    s.feature_flags = [flag(true)];
+    s.input_outcome_consent = [consentRow(USER_A)];
+    const read = await readOutcomeMemory(makeFakeClient(s) as any, { userId: USER_A, context: "city_picker", now: NOW });
+    assert.ok(read.ok && read.active);
+    assert.deepEqual([...(read as any).counts.entries()], [["city:in", 1]]);
+    assert.equal(s.__rpc![0]!.args.p_since, dayAgo(29), "the window travels to the database");
   });
 
   it("the sweep deletes every bucket outside the window, for every user, and keeps the rest", async () => {
@@ -578,10 +639,11 @@ describe("OD-INPUT-2 — a completion counts for 30 UTC days, then it is deleted
     assert.deepEqual(r, { purged: 0, skipped: true, reason: "error" });
   });
 
-  it("an unreadable counter table is a failed read, not an empty one", async () => {
-    const s: FakeState = { __fail: { input_outcome_counters: true } };
-    const read = await fetchOutcomeCounts(makeFakeClient(s) as any, { userId: USER_A, context: "c", now: NOW });
-    assert.equal(read.ok, false);
+  it("a failed read is a failed read, not an empty one; a malformed answer is also a failure", async () => {
+    const s: FakeState = { __fail: { "rpc:input_outcome_memory": true } };
+    assert.equal((await readOutcomeMemory(makeFakeClient(s) as any, { userId: USER_A, context: "c", now: NOW })).ok, false);
+    const odd = { rpc: async () => ({ data: { active: true }, error: null }) };
+    assert.equal((await readOutcomeMemory(odd as any, { userId: USER_A, context: "c", now: NOW })).ok, false, "active without counts is not an answer");
   });
 });
 

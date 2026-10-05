@@ -30,10 +30,16 @@
 --
 -- ── input_record_outcome ───────────────────────────────────────────────────────
 -- Upsert-with-increment, keyed by a caller-supplied user id, so service_role
--- only (2258's lesson). It RE-CHECKS CONSENT ITSELF and records nothing for a
--- user whose consent is absent, disabled or withdrawn: the application checks
--- first, and the database refuses anyway, so a future caller that forgets the
--- check still cannot write an outcome for someone who did not opt in.
+-- only (2258's lesson). It RE-CHECKS THE FLAG AND THE CONSENT ITSELF and records
+-- nothing while input_outcome_learning_enabled is off or for a user whose
+-- consent is absent, disabled or withdrawn: the application checks first, and
+-- the database refuses anyway, so a future caller that forgets either check
+-- still cannot write an outcome.
+--
+-- ── input_outcome_memory ───────────────────────────────────────────────────────
+-- The READ, in ONE round trip (OD-INPUT-7's latency rule): is outcome learning
+-- active for this user (flag on AND a valid consent), and if so their windowed
+-- completion counts for one input context. The ranking path calls only this.
 --
 -- ── input_outcome_learning_enabled ─────────────────────────────────────────────
 -- Seeded FALSE. While it is off the consent cannot be granted, no outcome is
@@ -123,7 +129,11 @@ BEGIN
   IF p_user_id IS NULL OR p_context IS NULL OR p_entity_type IS NULL OR p_entity_id IS NULL THEN
     RAISE EXCEPTION 'input_record_outcome: user, context, entity_type and entity_id are all required';
   END IF;
-  -- OD-INPUT-1, enforced where the write happens: no valid opt-in, no row.
+  -- OD-INPUT-1, enforced where the write happens: no flag, no row.
+  IF NOT COALESCE((SELECT f.enabled FROM public.feature_flags f WHERE f.flag = 'input_outcome_learning_enabled'), false) THEN
+    RETURN false;
+  END IF;
+  -- And no valid opt-in, no row.
   IF NOT EXISTS (
     SELECT 1 FROM public.input_outcome_consent c
      WHERE c.user_id = p_user_id
@@ -144,7 +154,57 @@ REVOKE ALL ON FUNCTION public.input_record_outcome(uuid, text, text, text) FROM 
 GRANT EXECUTE ON FUNCTION public.input_record_outcome(uuid, text, text, text) TO service_role;
 
 COMMENT ON FUNCTION public.input_record_outcome(uuid, text, text, text) IS
-  'OD-INPUT-1/2 write path: increments today''s outcome bucket for one (user, context, entity). Returns false and writes nothing unless the user holds an enabled, unwithdrawn input_outcome_consent. Service_role only.';
+  'OD-INPUT-1/2 write path: increments today''s outcome bucket for one (user, context, entity). Returns false and writes nothing unless input_outcome_learning_enabled is on and the user holds an enabled, unwithdrawn input_outcome_consent. Service_role only.';
+
+CREATE OR REPLACE FUNCTION public.input_outcome_memory(
+  p_user_id uuid,
+  p_context text,
+  p_since   date
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+STABLE
+SECURITY DEFINER
+SET search_path TO 'public', 'pg_catalog'
+AS $fn$
+BEGIN
+  IF p_user_id IS NULL OR p_context IS NULL OR p_since IS NULL THEN
+    RAISE EXCEPTION 'input_outcome_memory: user, context and since are all required';
+  END IF;
+  IF NOT COALESCE((SELECT f.enabled FROM public.feature_flags f WHERE f.flag = 'input_outcome_learning_enabled'), false)
+     OR NOT EXISTS (
+       SELECT 1 FROM public.input_outcome_consent c
+        WHERE c.user_id = p_user_id
+          AND c.enabled
+          AND c.withdrawn_at IS NULL
+          AND c.consent_version IS NOT NULL
+     ) THEN
+    RETURN jsonb_build_object('active', false);
+  END IF;
+  RETURN jsonb_build_object(
+    'active', true,
+    'counts', COALESCE((
+      SELECT jsonb_agg(jsonb_build_object('entity_type', t.entity_type, 'entity_id', t.entity_id, 'completed', t.total))
+        FROM (
+          SELECT k.entity_type, k.entity_id, sum(k.completed_count)::int AS total
+            FROM public.input_outcome_counters k
+           WHERE k.user_id = p_user_id
+             AND k.context = p_context
+             AND k.bucket_day >= p_since
+           GROUP BY k.entity_type, k.entity_id
+           ORDER BY total DESC
+           LIMIT 500
+        ) t
+    ), '[]'::jsonb)
+  );
+END
+$fn$;
+
+REVOKE ALL ON FUNCTION public.input_outcome_memory(uuid, text, date) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.input_outcome_memory(uuid, text, date) TO service_role;
+
+COMMENT ON FUNCTION public.input_outcome_memory(uuid, text, date) IS
+  'OD-INPUT-1/2 read path, one round trip: {active:false} unless input_outcome_learning_enabled is on and the user holds a valid input_outcome_consent; otherwise {active:true, counts:[...]} over buckets on or after p_since. Service_role only.';
 
 INSERT INTO public.feature_flags (flag, enabled, description) VALUES
   (
@@ -161,8 +221,13 @@ BEGIN
   IF to_regclass('public.input_outcome_consent') IS NULL OR to_regclass('public.input_outcome_counters') IS NULL THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3780): a table was not created.';
   END IF;
-  IF to_regprocedure('public.input_record_outcome(uuid, text, text, text)') IS NULL THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3780): input_record_outcome was not created.';
+  IF to_regprocedure('public.input_record_outcome(uuid, text, text, text)') IS NULL
+     OR to_regprocedure('public.input_outcome_memory(uuid, text, date)') IS NULL THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3780): a function was not created.';
+  END IF;
+  IF has_function_privilege('anon', 'public.input_outcome_memory(uuid, text, date)', 'EXECUTE')
+     OR has_function_privilege('authenticated', 'public.input_outcome_memory(uuid, text, date)', 'EXECUTE') THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3780): input_outcome_memory is executable by anon/authenticated.';
   END IF;
   -- Keyed by a caller-supplied user id: an anon/authenticated grant would let
   -- any caller write another user's outcomes (the 2190/2214 lesson).

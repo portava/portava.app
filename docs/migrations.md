@@ -3809,5 +3809,5 @@ the disclosure text (`lib/inputAssistance/outcomeLearning.ts`, `lib/inputAssista
 discarding a decision: 3780/3782 while their flag is TRUE or any consent row exists, 3781 while any
 `selection_reversed` row exists.
 
-**Numbering:** first written as 4120–4122; renumbered into lane D's corrected band 3780–3799 before
+**Numbering:** first written with prefixes above 4000, which `check:migration-prefixes` rejects; renumbered into lane D's corrected band 3780–3799 before
 anything was applied anywhere (lead correction, 2026-10-05).
