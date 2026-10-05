@@ -6400,3 +6400,43 @@ column, recorded in this document with a date.
 - NOT-GRADED: artifacts/api-server/src/lib/keysetRead.ts — the shared whole-read helper #582 added for the intel paths. Machinery; no S verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/src/services/intelConsent.ts — §31.1 item 4's client consent read. The server-side consent scope is what S25 and S31 grade; no S row grades a screen's consent copy.
 - NOT-GRADED: artifacts/api-server/src/migrations/3003_intel_identity_bridges.sql — §31.4 names it beside 3002 as the pair that carries the rotating-token shape S118 needs. S118's `BW` rests on the `actor_id` reference that 2130 installs, not on either of these files; neither is applied so far as the repository records, and 3002 is already watched here.
+
+## §32 — 2026-10-05 (lane L): S26's "identified-retention ruling" was given (OD-MAP-7); the prepared consent v2 BUNDLES what OD-MAP-6 says to separate. MOVES NOTHING
+
+*Read on branch `claude/mission-l-lead-residual-20261005` (cut from `13170305f`). Documentation
+only; `head_commit` is not re-declared.*
+
+### 32.1 S26 is no longer owner-gated
+
+§30 files S26 under *"owner-gated … the identified-retention ruling"*. The owner gave it on
+2026-10-04 (OD-MAP-7, `docs/ops/owner-decisions-20261004.md`): *"180 days maximum for pseudonymous
+contributions … delete or aggregate afterward. Delete raw source material sooner."* The identified
+raw store is tokenised under 3002 (pseudonymous) and its retention is the 180 days 2173 implements;
+the anonymous raw store is structurally capped at 72 hours
+(`artifacts/api-server/src/migrations/2315_sensing_anon_contributions.sql:172#CHECK (expires_at > created_at AND expires_at <= created_at + interval '72 hours'),`).
+So S26 joins §30's first class — implementation complete, awaiting real contributions on a database
+with `intel_contribution_retention_enabled` on. **Stays `W`**, for that reason only.
+
+### 32.2 Consent v2, as drafted, cannot be the consent OD-MAP-6 asks for
+
+S39, S24, S18 and S32 wait on *"consent v2 approval"*. OD-MAP-6 (same register): *"Separate consent
+for on-device capture, contribution upload, and each secondary use. Make it revocable; don't bundle it
+with general app consent."* The prepared disclosure grants all of them in ONE recorded version:
+the server maps `sensing_contributions_v2` to `collect, retain, aggregate, surface` together
+(`artifacts/api-server/src/lib/sensingConsentScopes.ts:60#[SENSING_CONSENT_V2]: Object.freeze(["collect", "retain", "aggregate", "surface"])`),
+and the client text covers passive capture and surfacing in a single grant
+(`travel-buddy-standalone/src/lib/sensing/consentDisclosure.ts:80#coversSurface: true,`).
+
+So approving v2 as written would contradict a decision the owner has already taken. What these four
+rows need is (a) engineering: a consent record that carries capture, upload and `surface` as
+separately granted and separately revocable scopes (the session issuer already intersects scopes, so
+this is a change to what one grant may cover, plus very likely a migration), and then (b) the owner's
+approval of the split wording — the same kind of approval Discovery's Q15 waits on. Nothing here
+grants a scope or changes a constant. Lane L lists the question as Q-L20.
+
+### 32.3 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| S26 | W | **W** | §32.1. The ruling it waited on is OD-MAP-7; it now waits only on real contributions with the retention flag on. |
+| S39 | W | **W** | §32.2. Waits on a split, separately revocable consent (OD-MAP-6) and the owner's approval of its words, not on approving v2 as drafted. |

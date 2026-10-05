@@ -16284,3 +16284,29 @@ still open and still the owner's. It is named here so that this section's "0 up,
   be re-read as a shipped surface the same day.
 - A gate list read in one request again: MD62 and MD273 go back to being `C` over an incomplete gate.
 
+
+## 49. Lane L, 2026-10-05: the two rows §48 left "needing a look", and which media questions the owner's 46 answers settle. No row moves
+
+*Read on branch `claude/mission-l-lead-residual-20261005` (cut from `13170305f`). Documentation
+only; `head_commit` is not re-declared.*
+
+### 49.1 MD2 and MD403
+
+- **MD2** ("World-first, not creator-first"). §41.4 read production on 2026-09-27: the ranker and all
+  five legacy creator boosts are off, so no shipped ordering carries a creator-identity boost. What
+  remains is what the tab OPENS on, which is owner decision F1, built as a flag seeded off (§34).
+  So MD2 is not a ranker-lane code row any more; it is an F1 row like MD1. **Stays `W`.**
+- **MD403** (dark, high-contrast foundation with clear state labels). Implementation is complete and
+  measured (§33.13); the blocker the row states is VERIFICATION — the owner's visual review and an
+  on-device accessibility pass (dynamic type, screen reader, touch targets). That is an external
+  measurement, not an owner DECISION. **Stays `W`.**
+
+### 49.2 The media owner questions, checked against the 2026-10-04 register
+
+None of the 46 answers in `docs/ops/owner-decisions-20261004.md` is a Media product decision, so F1/F2
+(§34), the MD65 safety question (§35.4), MD37, MD71, MD162, MD197 and the six §36.4 definitions all
+remain open. Two answers do constrain MD65's options and are applied rather than ignored: OD-MAP-6
+(a separate, revocable consent for each secondary use — so photo-as-evidence needs its own grant,
+not the Quick Signals one) and OD-MAP-7 (180 days maximum for pseudonymous contributions). Lane L's
+owner-decision list groups the 31 media rows into nine questions (Q-L8 to Q-L16) with a
+recommendation for each.
