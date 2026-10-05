@@ -685,7 +685,7 @@ export interface CreateSessionPayload {
   boardingLocal?: string | null;
   flightType?: FlightType;
   immigrationRequired?: boolean;
-  checkedBags?: boolean;
+  checkedBags?: boolean; /** §4 the declared set (census L35). A server that has it lets `baggageMode` win over `checkedBags`; an older one reads only the boolean, so the sheet sends both. */ baggageMode?: BaggageMode; recheckRequired?: boolean | null; airportChangeRequired?: boolean | null;
   loungeAccess?: boolean;
   wantsToLeave?: boolean;
   comfortLevel?: ComfortLevel;
@@ -2113,4 +2113,210 @@ export async function reportLayoverCheckpoint(
   if (res.status === 409) return { ok: false, reason: 'ended', message };
   if (res.status === 503) return { ok: false, reason: 'unavailable', message };
   return { ok: false, reason: 'refused', message };
+}
+
+// ── §4 / §6.1 the declared constraint set and the landside gate (census L22, L35, L172) ──
+
+/** Spec §4.1 `BaggageMode`. UNKNOWN is a real answer and is never read as "no bags". */
+export type BaggageMode = 'CHECKED_THROUGH' | 'COLLECT_RECHECK' | 'CARRY_ON_ONLY' | 'UNKNOWN';
+
+export type DeclarableConstraintField = 'baggageMode' | 'recheckRequired' | 'airportChangeRequired';
+
+/** One immutable version of what the traveller declared. */
+export interface LayoverConstraintSet {
+  version: number;
+  baggageMode: BaggageMode;
+  /** Separate tickets — the traveller checks in again. `null` = not stated. */
+  recheckRequired: boolean | null;
+  /** The next flight leaves from a different airport. `null` = not stated. */
+  airportChangeRequired: boolean | null;
+  declaredAt?: string | null;
+}
+
+export type LandsideClosure =
+  | 'traveller_staying_airside'
+  | 'insufficient_time'
+  | 'entry_refused'
+  | 'entry_unconfirmed'
+  | 'baggage_unknown'
+  | 'airport_change';
+
+/** Spec §5's guard, evaluated server-side. The client renders it; it never re-derives it. */
+export interface LandsideGate {
+  open: boolean;
+  /** A bare string on the wire: a closure this build has not been taught must survive as itself. */
+  closedBy: Array<LandsideClosure | string>;
+  needsInfo: 'baggageMode' | null;
+  criticalUnknowns: string[];
+  entryPermissionState: 'CONFIRMED_ALLOWED' | 'CONFIRMED_NOT_ALLOWED' | 'UNKNOWN';
+  constraintsRead: 'declared' | 'unreadable' | 'legacy';
+  constraintsVersion: number | null;
+  entryForbidsLandside: boolean;
+}
+
+/** Spec §4.1 `LayoverState`. Typed as a string because the server may name one this build predates. */
+export type LayoverLifecycleState = string;
+
+export interface ConstraintQuestion {
+  field: 'baggageMode';
+  prompt: string;
+  options: Array<{ value: BaggageMode; label: string }>;
+}
+
+/** The body of GET and PUT `/airport/sessions/:id/constraints`. */
+export interface LayoverConstraintsAnswer {
+  /**
+   * `versioned` — the four-way answer is kept, with its history.
+   * `session_booleans_only` — the server can keep the baggage answer only as
+   * "bags to collect" / "no bags to collect"; `declarable` then names the one
+   * field worth offering.
+   */
+  storage: 'versioned' | 'session_booleans_only';
+  declarable: DeclarableConstraintField[];
+  constraints: LayoverConstraintSet | null;
+  /** What the arithmetic is charging right now. */
+  baggageCharged: boolean;
+  landsideGate: LandsideGate;
+  layoverState: LayoverLifecycleState | null;
+  layoverStateUnavailableReason: string | null;
+  question: ConstraintQuestion | null;
+  verdict: LeaveAdvice['verdict'];
+  confidence: EstimateConfidence;
+  reasonCodes: string[];
+  snapshotId: string;
+}
+
+/**
+ * `gone`        404 with the server's `not_found` — not this traveller's layover.
+ * `unavailable` 503 — the session, the airport or the declared set could not be
+ *               READ. NOT "nothing declared": the server refuses rather than
+ *               serving an unread store as an empty one, and so must the card.
+ * `unreachable` no server answered.
+ * `unsupported` the route does not exist on this server (an older deployment),
+ *               or Layover is switched off. The card renders nothing: it has no
+ *               claim to make.
+ * `refused`     anything else the server said no to, with its sentence.
+ */
+export type LayoverConstraintsFailure = 'gone' | 'unavailable' | 'unreachable' | 'unsupported' | 'refused';
+
+export type LayoverConstraintsRead =
+  | { ok: true; answer: LayoverConstraintsAnswer }
+  | { ok: false; reason: LayoverConstraintsFailure; message: string; retryable: boolean };
+
+export type LayoverConstraintsWrite =
+  | {
+      ok: true;
+      answer: LayoverConstraintsAnswer;
+      stored: 'versioned' | 'session_booleans_only';
+      /** Fields that were sent and could NOT be kept. Must be said, not swallowed. */
+      unsaved: DeclarableConstraintField[];
+    }
+  | { ok: false; reason: LayoverConstraintsFailure; message: string; retryable: boolean };
+
+export interface LayoverConstraintPatch {
+  baggageMode?: BaggageMode;
+  recheckRequired?: boolean | null;
+  airportChangeRequired?: boolean | null;
+}
+
+const CONSTRAINTS_UNREACHABLE = "We couldn't reach Portava. Check your connection and try again.";
+const CONSTRAINTS_UNREADABLE = 'Your bag and connection details could not be loaded. Please try again.';
+const CONSTRAINTS_UNSAVED = 'Your bag and connection details could not be saved. Please try again.';
+
+/** A 200 body that is actually the contract, or null. A partial body is not rendered as a full one. */
+function toConstraintsAnswer(json: Record<string, any>): LayoverConstraintsAnswer | null {
+  const gate = json.landsideGate;
+  if (!gate || typeof gate !== 'object' || typeof gate.open !== 'boolean' || !Array.isArray(gate.closedBy)) return null;
+  if (json.storage !== 'versioned' && json.storage !== 'session_booleans_only') return null;
+  if (!Array.isArray(json.declarable)) return null;
+  return {
+    storage: json.storage,
+    declarable: json.declarable as DeclarableConstraintField[],
+    constraints: (json.constraints ?? null) as LayoverConstraintSet | null,
+    baggageCharged: json.baggageCharged === true,
+    landsideGate: gate as LandsideGate,
+    layoverState: typeof json.layoverState === 'string' ? json.layoverState : null,
+    layoverStateUnavailableReason:
+      typeof json.layoverStateUnavailableReason === 'string' ? json.layoverStateUnavailableReason : null,
+    question: (json.question ?? null) as ConstraintQuestion | null,
+    verdict: json.verdict as LeaveAdvice['verdict'],
+    confidence: json.confidence as EstimateConfidence,
+    reasonCodes: Array.isArray(json.reasonCodes) ? (json.reasonCodes as string[]) : [],
+    snapshotId: typeof json.snapshotId === 'string' ? json.snapshotId : '',
+  };
+}
+
+function constraintsFailure(
+  res: Response,
+  json: Record<string, any>,
+  fallback: string,
+): { ok: false; reason: LayoverConstraintsFailure; message: string; retryable: boolean } {
+  // The server's sentence when it wrote one; never one made up here to stand in for it.
+  const message = typeof json.message === 'string' ? json.message : fallback;
+  const retryable = json.retryable === true;
+  if (json.error === 'feature_disabled') return { ok: false, reason: 'unsupported', message, retryable: false };
+  if (json.error === 'not_found') return { ok: false, reason: 'gone', message, retryable };
+  // A 404 with no server code is a route this deployment does not have.
+  if (res.status === 404) return { ok: false, reason: 'unsupported', message, retryable: false };
+  if (json.error === 'degraded_unavailable') return { ok: false, reason: 'unavailable', message, retryable };
+  return { ok: false, reason: 'refused', message, retryable };
+}
+
+/**
+ * What the traveller has declared about their bags and their connection, and
+ * what the certified gate makes of it. Resolves in every case; never throws.
+ */
+export async function getLayoverConstraints(sessionId: string): Promise<LayoverConstraintsRead> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'constraints'));
+  } catch {
+    return { ok: false, reason: 'unreachable', message: CONSTRAINTS_UNREACHABLE, retryable: true };
+  }
+  let json: Record<string, any> = {};
+  try { json = await res.json(); } catch { /* falls through to the status check */ }
+  if (!res.ok) return constraintsFailure(res, json, CONSTRAINTS_UNREADABLE);
+  const answer = toConstraintsAnswer(json);
+  // A 200 that is not the contract is NOT "nothing declared".
+  if (!answer) return { ok: false, reason: 'refused', message: CONSTRAINTS_UNREADABLE, retryable: true };
+  return { ok: true, answer };
+}
+
+/**
+ * Declare or re-declare. The server appends a version (or, where it cannot yet,
+ * keeps the cautious boolean and names what it could not keep) and answers with
+ * the freshly certified gate. Resolves in every case; never throws.
+ */
+export async function updateLayoverConstraints(
+  sessionId: string,
+  patch: LayoverConstraintPatch,
+): Promise<LayoverConstraintsWrite> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'constraints'), {
+      method: 'PUT',
+      body: JSON.stringify(patch),
+    });
+  } catch {
+    return { ok: false, reason: 'unreachable', message: CONSTRAINTS_UNREACHABLE, retryable: true };
+  }
+  let json: Record<string, any> = {};
+  try { json = await res.json(); } catch { /* falls through to the status check */ }
+  if (!res.ok) return constraintsFailure(res, json, CONSTRAINTS_UNSAVED);
+  const answer = toConstraintsAnswer(json);
+  if (!answer) {
+    // The write may have landed; what cannot be claimed is what it produced.
+    return {
+      ok: false,
+      reason: 'refused',
+      message: 'Your details may have been saved, but the answer could not be read. Pull to refresh.',
+      retryable: true,
+    };
+  }
+  return {
+    ok: true,
+    answer,
+    stored: json.stored === 'versioned' ? 'versioned' : 'session_booleans_only',
+    unsaved: Array.isArray(json.unsaved) ? (json.unsaved as DeclarableConstraintField[]) : [],
+  };
 }
