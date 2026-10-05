@@ -21,17 +21,17 @@ Backend paths are relative to `artifacts/api-server/src/`, client paths to
 | Measure | Value |
 | --- | --- |
 | **Denominator — testable requirements** | **373** |
-| BUILT-AND-CORRECT | **298** |
+| BUILT-AND-CORRECT | **299** |
 | BUILT-BUT-WRONG | **50** |
-| NOT-BUILT | **21** |
+| NOT-BUILT | **20** |
 | CANNOT-VERIFY | **4** |
-| **CONSTRUCTED%** = (C+W)/373 | **348 / 373 = 93.3 %** |
-| **CORRECT%** (raw) = C/373 | **298 / 373 = 79.9 %** |
+| **CONSTRUCTED%** = (C+W)/373 | **349 / 373 = 93.6 %** |
+| **CORRECT%** (raw) = C/373 | **299 / 373 = 80.2 %** |
 | **THE GAP** = W/373 | **50 / 373 = 13.4 %** |
 | CANNOT-VERIFY share | **4 / 373 = 1.1 %** |
 
-> **RESTATED 2026-10-05 BY §37** from §36.5's `294 / 48 / 27 / 4` plus §37's eight moves
-> (G326, G337, G212, G359 to `C`; G25, G320, G370, G368 `N → W`). The previous restatement follows.
+> **RESTATED 2026-10-05 BY §37** from §36.5's `294 / 48 / 27 / 4` plus §37's nine moves
+> (G326, G30, G337, G212, G359 to `C`; G25, G320, G370, G368 `N → W`). The previous restatement follows.
 
 > **RESTATED 2026-10-03 BY §35**, from the last stated headline (§34.3's
 > `294 / 47 / 28 / 4`, which this block had not been brought up to) plus §35's
@@ -5673,6 +5673,7 @@ Two further builds rest on no decision and close rows on their own terms: the §
 | G337 | N | **C** | Controlled. The premise "no paste path exists" stopped being true at §34. Pasted text was already made safe to render; what was missing was the URL: an item's `raw` echoed credentials and tracking tokens, and a URL inside a text line rode into the rendered QUERY. Now every `raw` is display-safe (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:120#export function displaySafeUrl`) and a URL is removed from a text query (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:371#const query = timed.replace`), while parsing still reads the full URL. Proven through the route (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:271#through the route: the response a review screen renders carries no credential or token`). Mutations: raw unredacted, query kept, URL left in the query, `href` returned — each red. |
 | G212 | W | **C** | Controlled. This row's unmet condition was "consulted by the hook BEFORE the network". It now is: the shipped dictionary is the last fallback of the hook's immediate tier, shown while the request is in flight, and the server's answer replaces it (`travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts:395#export function immediateDictionaryRows`; `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.immediateLocal.component.test.tsx:92#the server answer REPLACES the local rows when it lands`). The §4 cell also named G224's sufficiency tier as the condition; that is G224's own requirement (37.3) and OD-INPUT-7 asks for show-while-loading, not for suppressing the request. One pinned test was RESTATED, not weakened: the transient-error case now asserts the degraded arm is never taken (`travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.offline.component.test.tsx:324#a TRANSIENT error is not offline — the degraded arm is never taken for it`), and the mutation that makes the transient branch call it is red. |
 | G359 | W | **C** | The row named its own blocker: "a prohibition with no detector is a convention." The detector now exists, in the shape it asked for, with the four pre-existing engines as named, closed, shrink-only exemptions and every other match classified with a reason (`travel-buddy-standalone/src/platform/input-assistance/services/__tests__/noIndependentEngines.test.ts:66#const CENSUS_NAMED_ENGINES`). It runs in the mobile node suite, so CI enforces it. The second clause of the old cell — a client-side duplicate of the Compass starter set — is no longer true: the module is a thin adapter over the served rows (`travel-buddy-standalone/src/platform/input-assistance/compass/compassPrompt.ts:33#export function startersFromSuggestions`). Mutations: a planted fifth engine, a fifth name exempted, an entry dropped, an entry pointed at a missing file — each red. What it cannot catch is stated in its header. The four engines themselves are G6/G16, which stay `W`. |
+| G30 | N | **C** | A stale row, found by reading the code rather than the cell. The cell's own condition was "§32's substrate — a local dictionary or cached entity index that a field falls back to — plus a reader that picks the fallback by this member". Both now exist and neither section that built them restated this row: on an unreachable server the hook keeps or drops retained rows by the member (`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:409#const mayRetain = offlineSurfaceAllowed(policy.offlinePolicy);`, §30.4), and the shipped dictionaries are chosen by it (`travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts:193#const classes = SURFACE_ENTITY_CLASSES[policy.offlinePolicy as string];`, §32). Proven at both ends: `travel-buddy-standalone/src/platform/input-assistance/services/__tests__/localDictionary.test.ts:182#§32: a field the authority marks server_required gets NO local dictionary` and `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.offline.component.test.tsx:267#§32: a SERVER_REQUIRED field renders nothing offline`, both passing this pass; the two vocabularies were aligned and the parity moved from reported to asserted at §29.3. |
 | G25 | N | **W** | IMPLEMENTATION-COMPLETE; awaits 3782 applied, the owner's approval of the disclosure text, and `input_memory_context_enabled`. `allowMemoryContext` is no longer read by nothing: it is the FIRST of the three OD-INPUT-3 gates (`artifacts/api-server/src/lib/inputAssistance/memoryContext.ts:99#if (!policy || policy.allowMemoryContext !== true) return 'policy';`), and a false policy reads nothing at all, not even the flag (`artifacts/api-server/src/test/inputMemoryContext.test.ts:212#a field whose policy does not allow memory context reads NOTHING`). Behind it, the person's own CompassMemoryProjection is read through the memory layer's retrieval service and becomes at most two starters, pushed before the curated set (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:696#...(await buildMemoryContextStarters(sc`). Mutations on each gate, the ordering, the inspect read and the withdrawn-row predicate — each red (the last survived once; the case that kills it was added). |
 | G320 | N | **W** | IMPLEMENTATION-COMPLETE for this lane; awaits 3780 applied, the disclosure approved, `input_outcome_learning_enabled`, and the task screens owned by other lanes. The emitter now has a caller — the paste-to-Trip write, in edit mode only (`travel-buddy-standalone/src/platform/input-assistance/paste/persistPastedDestinations.ts:71#report(PASTE_TRIP_FIELD, 'trip_destinations_saved'`) — and BOTH halves this row named: the consent gate on the device and at the ingest (37.1). The reporter is a no-op without consent. `app/trip/new.tsx`, `app/events/create` and the Telegraph composer still do not call it (37.3). |
 | G370 | N | **W** | Computed; awaits a number. Successful downstream tasks over reported ones (`artifacts/api-server/src/lib/inputAssistance/metrics.ts:391#downstreamTaskCompletionRate: rate(tasksSucceeded, tasksReported)`), only a literal bool counting either way (`artifacts/api-server/src/test/inputAssistanceMetrics.test.ts:466#only a literal bool is a report`). Its population is consenting users only, and the module says so; reporting it as an all-users rate would be wrong. |
@@ -5722,17 +5723,17 @@ Two further builds rest on no decision and close rows on their own terms: the §
 
 ### 37.4 Headline, restated from the rows
 
-Four up to `C` (G326, G337, G212, G359), four `N → W` (G25, G320, G370, G368), none down.
+Five up to `C` (G326, G30, G337, G212, G359), four `N → W` (G25, G320, G370, G368), none down.
 
 | Measure | §36 | **§37** |
 | --- | ---: | ---: |
 | Denominator | 373 | **373** |
-| BUILT-AND-CORRECT | 294 | **298** |
+| BUILT-AND-CORRECT | 294 | **299** |
 | BUILT-BUT-WRONG | 48 | **50** |
-| NOT-BUILT | 27 | **21** |
+| NOT-BUILT | 27 | **20** |
 | CANNOT-VERIFY | 4 | **4** |
-| CONSTRUCTED% | 91.7 % | **93.3 %** (348 / 373) |
-| CORRECT% raw | 78.8 % | **79.9 %** (298 / 373) |
+| CONSTRUCTED% | 91.7 % | **93.6 %** (349 / 373) |
+| CORRECT% raw | 78.8 % | **80.2 %** (299 / 373) |
 
 ### 37.5 What would turn this red
 
