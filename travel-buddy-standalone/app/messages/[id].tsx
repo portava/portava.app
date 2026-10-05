@@ -58,7 +58,7 @@ import { TypedMessageRenderer, rendersTypedKind } from '../../src/features/teleg
 import { rendersKnownMessageType, safeUnknownBody } from '../../src/features/telegraph/kinds/unsupportedPayload.ts';
 import { parseKindEnvelope as parseTelegraphKindEnvelope } from '../../src/features/telegraph/kinds/kindsApi.ts';
 import { useAnnouncementAcknowledgement } from '../../src/features/telegraph/kinds/useAnnouncementAcknowledgement.ts';
-import { CoordinationPanel } from '../../src/features/telegraph/coordination/CoordinationPanel.tsx';
+import { CoordinationPanel } from '../../src/features/telegraph/coordination/CoordinationPanel.tsx'; import { SafetyModeBar } from '../../src/features/telegraph/safety/SafetyModeBar.tsx'; // §15.2 — shares a line: nothing below this import moves
 import { ContentDrawerSheet } from '../../src/features/telegraph/drawer/ContentDrawerSheet.tsx';
 import { RecapSheet } from '../../src/features/telegraph/memory/RecapSheet.tsx';
 import { useThreadRecap } from '../../src/features/telegraph/memory/useThreadRecap.ts';
@@ -2086,7 +2086,7 @@ export default function TelegraphThread() {
       {/* Telegraph §2.2 / §3: the Shared Context Rail sits between the header
           and the message stream. It renders nothing when there is no mutual
           canonical state, and nothing when the read failed. */}
-      {id ? <SharedContextRail threadId={id} scrolled={railCollapsed} /> : null}<TelegraphConnectionBanner />{/* §30A.15: says when messages cannot arrive; nothing while fine */}
+      {id ? <SafetyModeBar threadId={id} refreshKey={messages[messages.length - 1]?.id ?? null} onCall={canShowCallButtons ? () => { void startThreadCall('voice'); } : undefined} onBlockOrReport={() => setShowSafetySheet(true)} onLocationScope={() => setTypedCompose('LOCATION')} onModeChange={(s) => { if (s.deprioritizeEntertainment) setRailCollapsed(true); }} /> : null}{id ? <SharedContextRail threadId={id} scrolled={railCollapsed} /> : null}<TelegraphConnectionBanner />{/* §30A.15: says when messages cannot arrive; nothing while fine */}
 
       {/* Telegraph §2.2's optional coordination panel / §9's coordination
           mode. Renders only while the thread is actually coordinating, or
