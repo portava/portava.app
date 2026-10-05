@@ -139,7 +139,7 @@ const styles = StyleSheet.create({
   tempRow: { flexDirection: 'row', flexWrap: 'wrap', gap: space.xs, marginTop: space.xs },
   chip: { paddingHorizontal: space.sm, paddingVertical: space.xs, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, minHeight: 44, justifyContent: 'center' },
   chipLabel: { ...t.small, color: color.ink },
-  error: { ...t.small, color: color.signalStrong },
+  error: { ...t.small, color: color.ink, fontWeight: '600' },
   retry: { paddingVertical: space.xs, minHeight: 44, justifyContent: 'center' },
   retryLabel: { ...t.small, color: color.signal, fontWeight: '700' },
   safety: { ...t.small, color: color.mute, marginTop: space.sm },
