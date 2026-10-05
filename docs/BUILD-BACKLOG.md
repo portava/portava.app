@@ -99,9 +99,13 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
   `isoTrackHandlers` (same file, added for voice) returns every track's handler
   type, so `sniffMedia`'s MP4 branch can answer `image`/`video`/neither from the
   tracks instead of from the `ftyp` brand.
-- [telegraph] `artifacts/api-server/src/domain/telegraph/projections/projectionRegistry.ts:119`
-  — PRJ-06's note says the content drawer is "dead-coded behind a literal
-  false". It is NOT, at HEAD: `travel-buddy-standalone/app/messages/[id].tsx:1964`
+- [telegraph] RESOLVED 2026-10-05 by lane T2 (census-telegraph T291-T294): PRJ-06 is now
+  `status: "built"` with its route named
+  (`artifacts/api-server/src/domain/telegraph/projections/projectionRegistry.ts:143#id: "PRJ-06",`),
+  the absent-projection ratchet is 0, and a suite probes each projection's route
+  independently of the registry. The original note follows.
+  — PRJ-06's note said the content drawer is "dead-coded behind a literal
+  false". It is NOT, at HEAD: `travel-buddy-standalone/app/messages/[id].tsx:1931`
   mounts an unconditional `onPress={() => setShowContentDrawer(true)}` on the
   header, and `GET /threads/:id/drawer` serves it. The registry's `status:
   "absent"` and census-telegraph T294's evidence are both stale on that clause.

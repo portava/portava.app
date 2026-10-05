@@ -386,7 +386,7 @@ Eighteen of those paths ALSO push the bound into the query as
 `.gte("created_at", <bound>)` before the predicate ever runs —
 `services/telegraphSearch.ts:177`, `services/telegraph/coordinationSessions.ts:115`,
 `compass/TelegraphConversationTools.ts:215` and `:396`,
-`routes/telegraphLifecycle.ts:531`, `routes/telegraphMemory.ts:266`,
+`routes/telegraphLifecycle.ts:541`, `routes/telegraphMemory.ts:266`,
 `routes/telegraphKinds.ts:152`, and six in `routes/telegraphCoordination.ts`
 (`:205`, `:257`, `:670`, `:884`, `:993`, `:1092`, `:1497` — seven). **A carve-out
 written only in `withinWindow` would be silently defeated at every one of them**:
