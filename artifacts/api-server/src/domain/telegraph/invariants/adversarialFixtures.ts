@@ -233,20 +233,22 @@ export const TELEGRAPH_ADVERSARIAL_FIXTURES: readonly AdversarialFixture[] = [
     scenario:
       "The source object behind a rendered share card is revoked while the " +
       "conversation is open",
-    status: "divergent",
+    status: "enforced",
     enforcedBy: [
       "travel-buddy-standalone/src/components/DiscoveryCardMessage.tsx",
       "travel-buddy-standalone/src/components/PostCardMessage.tsx",
-      "src/domain/telegraph/policies/shareAuthorizationPolicy.ts",
+      "travel-buddy-standalone/src/features/telegraph/sharing/legacyCardView.ts",
+      "src/services/telegraph/shareables.ts",
     ],
     note:
-      "The card cannot notice. The fixture reads both card components and asserts " +
-      "each contains no fetch, no effect and no capability read — they render " +
-      "frozen JSON from messages.body forever. This is §29's revocation-bypass " +
-      "invariant failing at the card, and it is structural rather than timing " +
-      "dependent, which is why the fixture is a static assertion over the real " +
-      "components rather than a race. It goes red the moment a card learns to " +
-      "re-resolve, which is the change that fixes it.",
+      "ENFORCED since 2026-10-05 (lane T2, census T413/T448). Both legacy cards " +
+      "re-resolve their source for the viewer on every mount (useShareRevocation → " +
+      "POST /threads/:id/share-projections), draw the REVOKED notice when the server " +
+      "says the source is gone, draw nothing from the source while loading, draw the " +
+      "server's projection — never the frozen body — when it is live, and draw only " +
+      "the reference when a possible resolve fails. The fixture asserts that wiring " +
+      "over the real components; the behaviour is driven end to end in the client " +
+      "suites shareRevocation.component.test.tsx and legacyCardLive.component.test.tsx.",
   },
 ];
 
