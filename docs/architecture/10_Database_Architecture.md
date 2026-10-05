@@ -556,7 +556,7 @@ SELECT on every object in the post-media bucket, was dropped by
   tests read (`src/test/generated/liveColumns.json`) is refreshed only by an explicit
   `refresh:live-columns` run against a live database (`scripts/src/refresh-live-columns.ts:1-17`).
 - **The baseline has not been recaptured since 2026-08-19.** Everything the post-cutover band has
-  built since is invisible to it, which is why `deletionDispositions.ts:33-42` cannot yet list
+  built since is invisible to it, which is why `deletionDispositions.ts:33-46` cannot yet list
   `phone_verification_challenges` even though the service already deletes it. A recapture is a
   prerequisite for several open items, not a chore.
 - **Event Truth** — the append-only decision store that would make a ranked page reconstructable
