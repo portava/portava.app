@@ -177,7 +177,7 @@ const s = StyleSheet.create({
   headRow: { flexDirection: 'row', alignItems: 'center', gap: space.xs },
   heading: { ...(t.bodyStrong as object), color: color.ink },
   note: { ...(t.small as object), color: color.mute },
-  link: { ...(t.small as object), color: color.signalStrong, fontWeight: '600', marginTop: space.xs },
+  link: { ...(t.small as object), color: color.deep, fontWeight: '600', textDecorationLine: 'underline', marginTop: space.xs },
   body: { ...(t.body as object), color: color.ink },
   card: { backgroundColor: color.paperRaised, borderRadius: radius.md, borderWidth: 1, borderColor: color.haze, padding: space.md, gap: space.xs, marginTop: space.sm },
   previews: { flexDirection: 'row', gap: space.xs },

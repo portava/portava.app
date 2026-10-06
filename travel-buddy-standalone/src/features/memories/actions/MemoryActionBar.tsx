@@ -324,7 +324,7 @@ const s = StyleSheet.create({
   chipBusy: { opacity: 0.6 },
   chipText: { ...(t.small as object), color: color.deep, fontWeight: '600' },
   note: { ...(t.small as object), color: color.mute },
-  link: { ...(t.small as object), color: color.signalStrong, fontWeight: '600', marginTop: space.xs },
+  link: { ...(t.small as object), color: color.deep, fontWeight: '600', textDecorationLine: 'underline', marginTop: space.xs },
   backdrop: { flex: 1, backgroundColor: 'rgba(17,17,15,0.35)' },
   sheet: {
     backgroundColor: color.paper, padding: space.lg, gap: space.sm,
