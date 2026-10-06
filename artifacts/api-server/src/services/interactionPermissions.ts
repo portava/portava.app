@@ -26,7 +26,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getRestrictionState, DegradedPermissionCheckError } from "./trust/TrustRestrictionService.js";
-import { logger as rootLogger } from "../lib/logger.js"; import { isAbsentTableError } from "../lib/absentTableError.js"; // one line: this file is cited by line
+import { logger as rootLogger } from "../lib/logger.js"; import { isRestrictionRowInForce } from "../lib/accountStateGate.js"; import { isAbsentTableError } from "../lib/absentTableError.js"; // one line: this file is cited by line
 
 const log = rootLogger.child({ service: "interactionPermissions" });
 
@@ -304,27 +304,27 @@ export async function resolveInteractionPermissions(
   }
 
   // ── PRIORITY 1: Target account state ──────────────────────────────────────
-  // Phase 2 table — silences table-missing errors; throws on real DB errors.
-  const targetState = await optQuery<{ state: string }>(
+  // critList, not optList: user_account_states is THE moderation state (owner decision 2026-10-03), no longer a "Phase 2 table that may not be migrated yet" — a MISSING table means every ban is unread, so it throws like any other failed read instead of reading as "not banned".
+  const targetState = (await critList<{ state: string; expires_at?: string | null }>(
     sc.from("user_account_states")
-      .select("state")
+      .select("state, expires_at")
       .eq("user_id", targetUserId)
-      .in("state", ["deleted", "deactivated", "banned"])
-      .maybeSingle() as unknown as Promise<{ data: { state: string } | null; error: any }>,
-  );
+      .in("state", ["deleted", "deactivated", "banned"]) as unknown as Promise<{ data: Array<{ state: string; expires_at?: string | null }> | null; error: any }>,
+  // A LIST, and a ban only while IN FORCE: an unban revokes the row (expires_at := now) and keeps it as history (lib/accountStateGate.ts).
+  )).find((r) => r.state !== "banned" || isRestrictionRowInForce(r.expires_at, Date.now())) ?? null;
   if (targetState?.state) {
     reasonCodes.push(`target_${targetState.state}`);
     return { ...ALL_FALSE, targetUserId, viewerId, relationshipLabel: "unavailable", profileVisibility: "unavailable", canBlock: false, canReport: true, safetyWarnings, reasonCodes, context: ctx };
   }
 
   // ── PRIORITY 1b: Viewer account state ────────────────────────────────────
-  const viewerState = await optQuery<{ state: string }>(
+  const viewerState = (await critList<{ state: string; expires_at?: string | null }>(
     sc.from("user_account_states")
-      .select("state")
+      .select("state, expires_at")
       .eq("user_id", viewerId)
-      .in("state", ["suspended", "limited"])
-      .maybeSingle() as unknown as Promise<{ data: { state: string } | null; error: any }>,
-  );
+      .in("state", ["suspended", "limited"]) as unknown as Promise<{ data: Array<{ state: string; expires_at?: string | null }> | null; error: any }>,
+  // Only an IN-FORCE suspension counts (expires_at NULL or future; an unban sets it to now) — and it wins over `limited`.
+  )).find((r) => r.state === "suspended" && isRestrictionRowInForce(r.expires_at, Date.now())) ?? null;
   const viewerSuspended = viewerState?.state === "suspended";
 
   // ── PRIORITY 2: Block check (FAIL-CLOSED) ─────────────────────────────────

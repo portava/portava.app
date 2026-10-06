@@ -71,7 +71,7 @@ import phoneVerificationRouter from "./phoneVerification";
 import passportStampsRouter from "./passportStamps";
 import hiddenGemsRouter from "./hiddenGems";
 import notificationsRouter from "./notifications";
-import airportRouter from "./airport";import layoverEventsRouter from "./layoverEvents"; // eslint-disable-line -- same-line to keep this file line-count-stable; 27 doc citations anchor on line numbers here
+import airportRouter from "./airport";import layoverEventsRouter from "./layoverEvents";import layoverConstraintsRouter from "./layoverConstraints"; // eslint-disable-line -- same-line to keep this file line-count-stable; 27 doc citations anchor on line numbers here
 import featureFlagsRouter from "./featureFlags";
 import tagsRouter from "./tags";
 import hashtagsRouter from "./hashtags";
@@ -237,7 +237,7 @@ router.use(trustAdminRouter);
 router.use(phoneVerificationRouter);
 router.use(hiddenGemsRouter);
 router.use(notificationsRouter);
-router.use(airportRouter); router.use(layoverEventsRouter); // §11 producer ingest, separate router — see routes/layoverEvents.ts
+router.use(airportRouter); router.use(layoverEventsRouter); router.use(layoverConstraintsRouter); // §11 producer ingest, separate router — see routes/layoverEvents.ts
 router.use(featureFlagsRouter);
 router.use(tagsRouter);
 router.use(hashtagsRouter);
@@ -434,5 +434,5 @@ router.use(postcardMediaTransportRouter);
 // ── Media §37: the poster for a video uploaded through POST /media/upload ─────
 import mediaVideoPosterRouter from "./mediaVideoPoster.js";
 router.use(mediaVideoPosterRouter);
-import discoveryOutputKindsRouter from "./discoveryOutputKinds.js"; router.use(discoveryOutputKindsRouter); /* census-discovery §91 (DC-01): the three §85 output kinds, behind discovery_output_kinds_enabled; on this line so no cited line moves */ import discoveryTrendingRouter from "./discoveryTrending.js"; router.use(discoveryTrendingRouter); // census-discovery §58 (DC-21): `11` §4 trend explanation, read-only, behind discovery_trending_api_enabled. Written over the blank line that stood here, so the file keeps its 439 lines and no cited line moves.
-export default router;
+import discoveryOutputKindsRouter from "./discoveryOutputKinds.js"; router.use(discoveryOutputKindsRouter); /* census-discovery §91 (DC-01): the three §85 output kinds, behind discovery_output_kinds_enabled; on this line so no cited line moves */ import discoveryTrendingRouter from "./discoveryTrending.js"; router.use(discoveryTrendingRouter); import memoryActionsRouter from "./memoryActions.js"; router.use(memoryActionsRouter); import memoryCandidatesRouter from "./memoryCandidates.js"; router.use(memoryCandidatesRouter); /* census-highlights-memories §AC: §14 executable Memories and the §7 candidate inbox, before this line's comment so neither is swallowed */ // census-discovery §58 (DC-21): `11` §4 trend explanation, read-only, behind discovery_trending_api_enabled. Written over the blank line that stood here, so the file keeps its 439 lines and no cited line moves.
+import telegraphNotificationPolicyRouter from "./telegraphNotificationPolicy.js"; router.use(telegraphNotificationPolicyRouter); /* census-telegraph §45 (T398): §30A.6's per-thread notification policy, registered on the file's last line so routes/index.ts keeps its 439 lines and no cited line moves */ export default router;

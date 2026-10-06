@@ -179,13 +179,13 @@ router.get("/me/safe-return/suggest/:planItemId", async (req, res) => {
 
   // Fetch plan item via user-scoped client (RLS filters non-member rows).
   // Belt-and-suspenders: we also explicitly verify trip membership below.
-  const { data: item } = await client
+  const { data: readItem } = await client
     .from("trip_plan_items")
-    .select("id, category, starts_at, day_date, location_name, lat, lng, trip_id")
+    .select("id, category, starts_at, day_date, location_name, lat, lng, trip_id, creator_id, location_is_private")
     .eq("id", planItemId)
     .maybeSingle();
 
-  if (!item) {
+  const item = readItem ? withholdPrivatePlanItems([readItem as Record<string, unknown>], await planItemAccessFor(db, String((readItem as { trip_id?: unknown }).trip_id ?? ""), user.id))[0] ?? null : null; if (!item) { // OD-TRIP-3: a crewmate's private place is the slot, not the place — no name, no coordinates, no caution lookup off them
     sendError(res, "not_found", "Plan item not found");
     return;
   }
@@ -1242,3 +1242,5 @@ async function noticeLiveShareRecipient(
     return { notified: false, reason: "notice_failed" };
   }
 }
+
+import { planItemAccessFor, withholdPrivatePlanItems } from "../services/safeReturn/safeReturnPlanItemAccess.js";

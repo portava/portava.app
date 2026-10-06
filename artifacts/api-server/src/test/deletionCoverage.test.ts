@@ -13,12 +13,16 @@ import { BASELINE_PATH } from "../scripts/parseBaselineSchema.js";
 import {
   userKeyedTablesFromBaseline,
   computeProblems,
+  openDecisionProblems,
 } from "../scripts/checkDeletionCoverage.js";
 import {
   ERASED_BY_CASCADE,
+  ANONYMISED_FK_NULLED,
   DELETION_FLOW_TABLES,
   RETAINED_WITH_REASON,
+  AWAITING_OWNER_DECISION,
   UNCLASSIFIED_BACKLOG,
+  DENOMINATOR_CORRECTION_BACKLOG,
   POST_BASELINE_TABLES,
 } from "../lib/deletionDispositions.js";
 
@@ -42,9 +46,12 @@ describe("deletion coverage — the manifest matches the baseline", () => {
       seen.set(name, bucket);
     };
     for (const t of ERASED_BY_CASCADE) add(t, "ERASED_BY_CASCADE");
+    for (const t of ANONYMISED_FK_NULLED) add(t, "ANONYMISED_FK_NULLED");
     for (const t of DELETION_FLOW_TABLES) add(t, "DELETION_FLOW_TABLES");
     for (const r of RETAINED_WITH_REASON) add(r.table, "RETAINED_WITH_REASON");
+    for (const r of AWAITING_OWNER_DECISION) add(r.table, "AWAITING_OWNER_DECISION");
     for (const t of UNCLASSIFIED_BACKLOG) add(t, "UNCLASSIFIED_BACKLOG");
+    for (const t of DENOMINATOR_CORRECTION_BACKLOG) add(t, "DENOMINATOR_CORRECTION_BACKLOG");
   });
 });
 
@@ -78,15 +85,98 @@ describe("deletion coverage — the guard bites", () => {
     // If this ever reaches zero the program is done with D6; until then the
     // number is the honest measure of how much survives account deletion.
     assert.ok(UNCLASSIFIED_BACKLOG.length > 0);
-    // Updated deliberately (IG unit I1, migration 2273): the ONE decided
-    // retention is the append-only projection history, which carries no actor
-    // column at all — it is retained because nothing in it is a person's row,
-    // not because a person's row was ruled kept. Any further entry here must
-    // come with the same kind of written reason.
-    assert.equal(RETAINED_WITH_REASON.length, 1,
+    // Updated deliberately, TWICE now, and the pattern is the same both times:
+    // a decided retention here is a table that carries no person at all.
+    //   * IG unit I1, migration 2273: the append-only projection history, which
+    //     has no actor column — retained because nothing in it is a person's
+    //     row, not because a person's row was ruled kept;
+    //   * migration 2920's creator_rule_versions: the creator rule catalogue,
+    //     seeded before any account exists, with no beneficiary and no actor.
+    // The ledger tables that cite those rules are NOT here — their fate is the
+    // open C-11 decision, asserted separately below. Any further entry must come
+    // with the same kind of written reason.
+    assert.equal(RETAINED_WITH_REASON.length, 2,
       "once retentions are decided, update this expectation deliberately");
-    assert.equal(RETAINED_WITH_REASON[0].table, "intel_state_snapshot_versions");
-    assert.ok(RETAINED_WITH_REASON[0].reason.length > 40, "a retention needs a reason a user could be shown");
-    assert.match(RETAINED_WITH_REASON[0].reason, /no actor column/);
+    assert.deepEqual(
+      RETAINED_WITH_REASON.map((r) => r.table).sort(),
+      ["creator_rule_versions", "intel_state_snapshot_versions"],
+    );
+    // Asserted for EVERY entry, not just the first: indexing by [0] let a second
+    // entry arrive with no reason at all and still pass.
+    for (const r of RETAINED_WITH_REASON) {
+      assert.ok(r.reason.length > 40, `${r.table}: a retention needs a reason a user could be shown`);
+    }
+    const byTable = new Map(RETAINED_WITH_REASON.map((r) => [r.table, r.reason]));
+    assert.match(byTable.get("intel_state_snapshot_versions")!, /no actor column/);
+    assert.match(byTable.get("creator_rule_versions")!, /No beneficiary, no actor and no personal data/);
+  });
+});
+
+describe("an open owner decision is recorded, not resolved (C-11)", () => {
+  it("the four creator / Rent-a-Buddy ledger tables await C-11 and nothing else claims them", () => {
+    // The point of the bucket: these five tables were in NO bucket at all, and
+    // the two buckets that could have held the four ledgers would each have
+    // ANSWERED C-11 — ERASED_BY_CASCADE is answer A (3511), RETAINED_WITH_REASON
+    // is answer B (3512). If a later change moves one of them, it has to come
+    // here and say which answer the owner gave.
+    assert.deepEqual(
+      AWAITING_OWNER_DECISION.map((r) => r.table).sort(),
+      [
+        "creator_attributions",
+        "creator_earning_entries",
+        "creator_ledger_audit_events",
+        "rent_buddy_earnings_entries",
+      ],
+    );
+    const erased = new Set(ERASED_BY_CASCADE);
+    const retained = new Set(RETAINED_WITH_REASON.map((r) => r.table));
+    for (const r of AWAITING_OWNER_DECISION) {
+      assert.ok(!erased.has(r.table), `${r.table} is in ERASED_BY_CASCADE, which answers C-11 with "delete"`);
+      assert.ok(!retained.has(r.table), `${r.table} is in RETAINED_WITH_REASON, which answers C-11 with "retain"`);
+    }
+  });
+
+  it("every entry names the decision, where it is written, and what holds it open", () => {
+    for (const r of AWAITING_OWNER_DECISION) {
+      assert.match(r.decision, /C-11/, `${r.decision ? r.table : r.table}: the decision must carry its identifier`);
+      assert.match(r.decision, /22\(a\)/, `${r.table}: the decision must say where it is written down`);
+      assert.match(r.decision, /3511/, `${r.table}: the decision must name the held answer A`);
+      assert.match(r.decision, /3512/, `${r.table}: the decision must name the held answer B`);
+      // A bucket whose rows are governed only by whatever the cascades already
+      // do has recorded nothing: the default IS an answer.
+      assert.match(r.heldOpenBy, /3510/, `${r.table}: name the migration that refuses the DELETE meanwhile`);
+      assert.match(r.heldOpenBy, /CL451/, `${r.table}: name the SQLSTATE the refusal raises`);
+    }
+  });
+
+  it("REJECTS an entry that names no decision, and one that nothing holds open", () => {
+    const vague = openDecisionProblems([
+      { table: "fx_ledger", decision: "someone should decide", heldOpenBy: "migration 9999 refuses every DELETE with SQLSTATE XX999, by every path" },
+    ]);
+    assert.deepEqual(vague.map((p) => p.kind), ["UNNAMED DECISION"]);
+
+    const unheld = openDecisionProblems([
+      { table: "fx_ledger", decision: "C-11 / W10D-B0 (question 22(a); census §107): delete the earning records on erasure, or retain them pseudonymised?", heldOpenBy: "" },
+    ]);
+    assert.deepEqual(unheld.map((p) => p.kind), ["NOTHING HOLDS IT OPEN"]);
+
+    // And the well-formed live manifest produces neither.
+    assert.deepEqual(openDecisionProblems(AWAITING_OWNER_DECISION), []);
+  });
+
+  it("FLAGS a stale entry in the new bucket as it does in every other", () => {
+    // AWAITING_OWNER_DECISION must not be the one bucket the staleness check
+    // skips — that is how an entry outlives the table it describes.
+    const tables = new Map(userKeyedTablesFromBaseline(BASELINE));
+    const victim = AWAITING_OWNER_DECISION[0].table;
+    assert.ok(POST_BASELINE_TABLES.includes(victim),
+      `${victim} is post-baseline, so the stale check only reaches it through POST_BASELINE_TABLES`);
+    // Drop it from BOTH the denominator and the post-baseline exemption, which is
+    // the state a deleted table would really leave behind — it is in the
+    // denominator ONLY because POST_BASELINE_TABLES carries it there.
+    tables.delete(victim);
+    const problems = computeProblems(tables, POST_BASELINE_TABLES.filter((t) => t !== victim));
+    assert.ok(problems.some((p) => p.table === victim && p.kind === "STALE ENTRY"),
+      `a stale AWAITING_OWNER_DECISION entry for ${victim} went unreported`);
   });
 });

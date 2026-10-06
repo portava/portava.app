@@ -67,7 +67,7 @@ import {
   type FeasibilitySession,
   type LayoverFeasibilityRecord,
 } from "./LayoverFeasibility.js";
-import { planFitTotals, planFitVerdict, type PlanFitStop } from "./LayoverPlanFit.js";
+import { type PlanFitStop } from "./LayoverPlanFit.js"; import { certifiedPlanFit } from "./LayoverConstraints.js";
 import { formatLocalTime } from "./AirportTime.js";
 import { sanitizeCompassAnswer } from "./LayoverPrivacyGuard.js";
 
@@ -424,14 +424,14 @@ function deterministicAnswer(input: {
 
 /**
  * The whole violation vocabulary, declared once so a new check cannot invent a
- * spelling and so a test can count them. Two were built by §18; the two below
- * them are census L101's remaining nouns.
+ * spelling and so a test can count them. Two were built by §18, two by §19.5;
+ * the fifth, `operational_state_asserted`, is L101's last noun (end of file).
  */
 export const COMPASS_BOUNDARY_KINDS = [
   "return_deadline_widened",
   "usable_time_widened",
   "entry_status_asserted",
-  "risk_band_widened",
+  "risk_band_widened", "operational_state_asserted",
 ] as const;
 
 export type CompassBoundaryViolationKind = (typeof COMPASS_BOUNDARY_KINDS)[number];
@@ -598,7 +598,7 @@ export function enforceCompassEnvelope(
     }
   }
 
-  return { ok: violations.length === 0, text: answer, violations };
+  violations.push(...operationalStateViolations(answer)); return { ok: violations.length === 0, text: answer, violations }; // L101/L3 fifth noun, defined at the end of this file
 }
 
 /**
@@ -934,21 +934,21 @@ export function runLayoverTool(
       const candidate: PlanFitStop[] = modelSuppliedSet
         ? (args.candidateSet as PlanFitStop[])
         : (ctx.stops ?? []);
-      // The same arithmetic and the same refusal as `computePlanFit` — through
-      // the same module, so this tool cannot answer a question about a plan
-      // differently from the screen the traveller is looking at (census L47).
-      // A leg nobody stated is not a zero-minute leg, so `neededMin` is a lower
-      // bound and `fitsWindow` is false unless every leg is stated.
-      const totals = planFitTotals(candidate);
-      const fit = planFitVerdict(totals, r.envelope.usableMinutes);
+      // The same arithmetic, the same refusal AND THE SAME GATE as the plan
+      // routes — `certifiedPlanFit`, the one function all three plan surfaces
+      // call (census L47; the gate half is LAY-FIX). The clock half used to be
+      // the whole answer, so a plan through the city "fit" under a refused
+      // border. A stop with no `insideAirport: true` is a landside stop: a
+      // model-supplied candidate that omits the field is not read as airside.
+      const f = certifiedPlanFit(r, candidate);
       return ok({
-        neededMin: totals.neededMin,
-        usableMinutes: r.envelope.usableMinutes,
-        fitsWindow: fit === "fits",
-        fit,
-        unstatedTravelStops: totals.unstatedTravelStops,
-        neededMinIsLowerBound: totals.neededMinIsLowerBound,
-        overflowMin: Math.max(0, totals.neededMin - r.envelope.usableMinutes),
+        neededMin: f.neededMin, usableMinutes: f.usableMinutes,
+        fitsWindow: f.fitsWindow,
+        fit: f.fit, clockFit: f.clockFit,
+        landsideStatus: f.landside.status, landsideClosedBy: f.landside.closedBy, landsideCautions: f.landside.cautions,
+        unstatedTravelStops: f.unstatedTravelStops,
+        neededMinIsLowerBound: f.neededMinIsLowerBound,
+        overflowMin: f.overflowMin,
         backByTime: r.deadline.hardReturnTime.toISOString(),
       });
     }
@@ -1069,3 +1069,107 @@ export const LAYOVER_TOOL_SCHEMAS = LAYOVER_TOOL_NAMES.map((name) => ({
     },
   },
 }));
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §12 — census L101 / L3: OPERATIONAL STATE, the fifth noun
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Appended here rather than written inline in `enforceCompassEnvelope` so that
+// no line above moves: census-compass and census-layover cite this file by line
+// number (`:812`, `:848`, `:986`, `:1053`), and a guard that shifted them would
+// have made four correct citations false to add one check.
+
+/**
+ * §19.5 left exactly one of L101's five nouns open: *"a model that asserts the
+ * security queue is short, or that a terminal transfer is running, is still
+ * unconstrained, and there is no certified operational state to compare it
+ * against."*
+ *
+ * There is NO certified operational state on this tree: `getAirportState`
+ * publishes `liveOperationalState: null` with `liveUnavailableReason:
+ * "no_airport_intelligence_feed"`, there is no flight-status feed
+ * (`flightStatus: unavailable("no_flight_feed")`), and `terminal_info` is null on
+ * every production airport. So a sentence stating the CURRENT state of a queue,
+ * a flight, a gate or a transfer train is invented by construction.
+ *
+ * It is also the most dangerous kind of invention this surface can make: "your
+ * flight is delayed an hour" or "security is quick right now" tells the
+ * traveller they have MORE time than the certified window, in words the
+ * deadline check cannot see because no clock time is named.
+ *
+ * NARROW, like the other four checks: the trigger is a present-state predicate
+ * on a dynamic subject ("the queue is short", "the train is running", "your
+ * gate is B12"), not a mention of security or a train. "Be back at security by
+ * 18:00", "there is a transit hotel in Terminal 2" and "allow time for the
+ * queue" all pass. A hedged or general sentence ("security can be slow at peak
+ * times", "we have no live queue data", "check the departures board") is advice
+ * rather than a claim of state, and passes.
+ *
+ * When a certified live feed exists one day, a sentence restating it will be
+ * refused until this check is taught to compare against it. That is the
+ * direction a refusal must fail: the deterministic answer is published
+ * instead, never an uncertified claim.
+ */
+export function operationalStateViolations(answer: string): CompassBoundaryViolation[] {
+  const out: CompassBoundaryViolation[] = [];
+  for (const m of answer.matchAll(OPERATIONAL_STATE_ASSERTION)) {
+    const sentence = m[0];
+    if (OPERATIONAL_HEDGE.test(sentence)) continue;
+    out.push({
+      kind: "operational_state_asserted",
+      stated: sentence.trim().slice(0, 140),
+      certified: "no certified operational state — liveOperationalState is null (no_airport_intelligence_feed, no_flight_feed)",
+    });
+  }
+  return out;
+}
+
+/**
+ * Up to forty characters of the same sentence between a subject and its verb —
+ * "the SkyTrain between terminals is running", "the queue at Terminal 1 is
+ * short" — never crossing a sentence end, so a subject in one sentence cannot
+ * pair with a predicate in the next.
+ */
+const SUBJECT_GAP = String.raw`[^.!?]{0,40}?\s`;
+
+/** Present-state claims about something dynamic at an airport. */
+const OPERATIONAL_STATE_CLAIMS: readonly string[] = [
+  // queue / wait state
+  String.raw`\b(?:no|short|small|quick|fast|light|minimal|zero)\s+(?:queues?|lines?|waits?|wait\s+times?)\b`,
+  String.raw`\b(?:queues?|lines?|waits?|wait\s+times?)\b${SUBJECT_GAP}(?:is|are|looks?|seems?|(?:'|’)s)\s+(?:currently\s+|now\s+|pretty\s+|really\s+|very\s+)?(?:short|quick|fast|light|minimal|empty|moving\s+(?:quickly|fast)|not\s+(?:bad|long|busy))\b`,
+  // a checkpoint's present state or duration
+  String.raw`\b(?:security|immigration|passport\s+control|customs|check-?in)\b${SUBJECT_GAP}(?:is|are|looks?|seems?|(?:'|’)s)\s+(?:currently\s+|now\s+|pretty\s+|really\s+|very\s+)?(?:quick|fast|empty|quiet|clear|not\s+busy|moving\s+(?:quickly|fast)|a\s+breeze)\b`,
+  String.raw`\b(?:security|immigration|passport\s+control|customs)\s+(?:only|just)\s+takes?\b`,
+  String.raw`\b(?:security|immigration|passport\s+control|customs)\s+takes?\s+(?:only|just)\b`,
+  // flight status — "delayed" WIDENS the window, the most dangerous claim here
+  String.raw`\b(?:flight|connection|departure)\b${SUBJECT_GAP}(?:is|has\s+been|was|(?:'|’)s|isn(?:'|’)t|is\s+not|hasn(?:'|’)t\s+been)\s+(?:currently\s+|now\s+)?(?:on\s+time|delayed|cancell?ed|on\s+schedule|running\s+late|boarding)\b`,
+  String.raw`\bgate\s+(?:is|has\s+(?:changed|moved)\s+to|will\s+be|(?:'|’)s)\s+(?:now\s+)?[a-z]?\d{1,3}[a-z]?\b`,
+  String.raw`\bboarding\s+(?:has\s+(?:started|begun)|is\s+(?:open|underway)|(?:starts|begins)\s+(?:late|later))\b`,
+  // transport running status
+  String.raw`\b(?:trains?|shuttles?|sky\s*train|people\s+mover|monorail|airport\s+express|express\s+train|metro|mrt|subway|tram|bus(?:es)?)\b${SUBJECT_GAP}(?:is|are|(?:'|’)s)\s+(?:currently\s+|still\s+|now\s+)?(?:running|operating|on\s+(?:time|schedule)|in\s+service)\b`,
+  // crowding
+  String.raw`\b(?:airport|terminal|security|immigration)\b${SUBJECT_GAP}(?:is|(?:'|’)s)\s+(?:currently\s+|pretty\s+|really\s+|very\s+)?(?:quiet|empty|dead|not\s+(?:busy|crowded))\b`,
+  String.raw`\b(?:airport|terminal|security|immigration)\b${SUBJECT_GAP}(?:isn(?:'|’)t|is\s+not)\s+(?:currently\s+|very\s+)?(?:busy|crowded|packed)\b`,
+];
+
+/**
+ * The SENTENCE carrying a claim. Sentence-scoped for the same reason as
+ * `ENTRY_ASSERTION`: the hedge test reads the same sentence, so an answer that
+ * hedges once and asserts twice still trips.
+ */
+const OPERATIONAL_STATE_ASSERTION = new RegExp(
+  String.raw`[^.!?]*(?:` + OPERATIONAL_STATE_CLAIMS.join("|") + String.raw`)[^.!?]*[.!?]?`,
+  "gi",
+);
+
+/**
+ * What makes an operational sentence advice rather than a claim: not knowing,
+ * an instruction to check, a modal, a generality, or a condition. `may`,
+ * `might` and `could` are hedges HERE (contrast `ENTRY_HEDGE`, where "you may
+ * enter" is the permission being caught). `normally` is deliberately NOT one:
+ * "the SkyTrain is operating normally" is a status claim. Bare `don't`/`can't`
+ * are not either — "security is quick, so don't rush" is a claim with a
+ * negation in it — only the not-knowing forms are.
+ */
+const OPERATIONAL_HEDGE =
+  /\b(?:can(?:'|’)?t\s+(?:see|confirm|know|tell|check|verify|guarantee)|cannot\s+(?:see|confirm|know|tell|check|verify|guarantee)|don(?:'|’)?t\s+(?:know|have|see)|do\s+not\s+(?:know|have|see)|unable\s+to|not\s+able\s+to|unknown|unsure|uncertain|no\s+live|not\s+live|check|verify|confirm|ask|may|might|could|usually|typically|generally|often|sometimes|tends?\s+to|varies|vary|depends?|information|data|feed|reports?|if)\b/i;

@@ -115,12 +115,15 @@ function world(): Partial<KitState> {
       trip_plan_items: [
         ...NAMES.map((n) => ({
           id: owned("plan", n), title: `zork plan ${n}`, trip_id: owned("trip", n), creator_id: CAST[n]!.id,
-          created_at: "2026-01-01T00:00:00Z", removed_at: null,
+          // NOT NULL (default TRUE) on the real table; FALSE models a place shared
+          // with the crew, so these cases test the OWNER gates and trip admission.
+          // OD-TRIP-3's per-item rule is pinned in inputPlanItemPrivacy.test.ts.
+          created_at: "2026-01-01T00:00:00Z", removed_at: null, location_is_private: false,
         })),
         { id: "plan-alice-private", title: "zork plan alice private", trip_id: "trip-alice-private", creator_id: ALICE,
-          created_at: "2026-01-01T00:00:00Z", removed_at: null },
+          created_at: "2026-01-01T00:00:00Z", removed_at: null, location_is_private: false },
         { id: "plan-viewer-own", title: "zork plan viewer own", trip_id: "trip-viewer-private", creator_id: VIEWER,
-          created_at: "2026-01-01T00:00:00Z", removed_at: null },
+          created_at: "2026-01-01T00:00:00Z", removed_at: null, location_is_private: false },
       ],
       hidden_gems: [
         ...NAMES.map((n) => ({
@@ -366,7 +369,9 @@ describe("revocation between two requests reaches the second one", () => {
   it("the VIEWER suspended between two requests is refused on the second (the ban gate is read per request)", async () => {
     const { state } = fresh();
     assert.equal((await searchIds("events")).status, 200);
-    state.rows.profiles!.find((p) => p.id === VIEWER)!.account_status = "suspended";
+    // A suspension is a user_account_states row (embedded on the gate's profiles read) — the one
+    // moderation state; profiles.account_status cannot hold 'suspended' (its CHECK).
+    (state.rows.user_account_states ??= []).push({ user_id: VIEWER, state: "suspended", expires_at: null });
     const second = await kitGet(base, "/discovery/search?q=zork&type=events");
     assert.equal(second.status, 403);
     assert.equal(second.body?.results, undefined, "a suspended viewer is served no rows");

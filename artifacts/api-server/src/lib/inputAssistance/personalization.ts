@@ -60,6 +60,18 @@ const QUERY_WEIGHT = 0.06;
 /** Hard cap on the confidence added by personalization. */
 const MAX_BOOST = 0.25;
 /**
+ * OUTCOME CALIBRATION (§45, census G5/G14/G322/G323; OD-INPUT-1/2). Applies
+ * ONLY when the memory carries `outcomes` — i.e. the flag is on and THIS user
+ * opted in (outcomeLearning.ts). Then a bare acceptance is worth half what it
+ * was, and a completed downstream task is worth twice a selection: an entity
+ * the user keeps picking and never completes anything with no longer outranks
+ * one they picked less often and actually used. Without `outcomes` the formula
+ * is the original, byte for byte — separated from core assistance.
+ */
+const ACCEPTANCE_SHARE = 0.5;
+/** Per-completion weight of "a task this user completed used this entity here". */
+const OUTCOME_WEIGHT = 0.06;
+/**
  * Ceiling on a boosted row's confidence. Kept strictly below the exact-match
  * band (tierConfidence(3) = 0.99) so a personalized WEAKER match can never be
  * lifted past a genuine strong canonical match — augment, never override (§9).
@@ -135,6 +147,18 @@ export interface SelectionMemory {
   recentEntities: EntityAggregate[];
   /** True when the user has no selection history for this context. */
   isEmpty: boolean;
+  /**
+   * Completed downstream tasks per entity in this context, inside the 30-day
+   * window — PRESENT ONLY when outcome learning is active for this user (flag on
+   * + valid consent). Absent means acceptance-only ranking, exactly as before.
+   * Same key as `byEntity`.
+   */
+  outcomes?: ReadonlyMap<string, number>;
+}
+
+/** Attach a consenting user's outcome counts (outcomeLearning.fetchOutcomeCounts). */
+export function withOutcomes(memory: SelectionMemory, outcomes: ReadonlyMap<string, number>): SelectionMemory {
+  return { ...memory, outcomes };
 }
 
 const EMPTY_MEMORY: SelectionMemory = {
@@ -220,11 +244,21 @@ export async function fetchSelectionMemory(
 // ── The PriorSelection boost (§15) ────────────────────────────────────────────
 
 /** Bounded confidence boost for one entity given the current query key. */
-function boostFor(memory: SelectionMemory, entityType: string, entityId: string, queryKey: string): number {
-  const agg = memory.byEntity.get(entityMemoryKey(entityType, entityId));
-  if (!agg) return 0;
-  const sameQuery = queryKey ? agg.byQuery.get(queryKey) ?? 0 : 0;
-  const boost = ENTITY_WEIGHT * agg.total + QUERY_WEIGHT * sameQuery;
+export function boostFor(memory: SelectionMemory, entityType: string, entityId: string, queryKey: string): number {
+  const key = entityMemoryKey(entityType, entityId);
+  const agg = memory.byEntity.get(key);
+  const completed = memory.outcomes ? memory.outcomes.get(key) ?? 0 : null;
+  if (!agg && !completed) return 0;
+  const total = agg?.total ?? 0;
+  const sameQuery = agg && queryKey ? agg.byQuery.get(queryKey) ?? 0 : 0;
+  if (completed === null) {
+    // Acceptance-only: outcome learning is not active for this user.
+    return Math.min(MAX_BOOST, ENTITY_WEIGHT * total + QUERY_WEIGHT * sameQuery);
+  }
+  // Outcome-calibrated. The same-query term is unchanged: it is RESOLUTION
+  // learning (this user's own abbreviation → the canonical entity), which §45
+  // counts as success rather than as engagement.
+  const boost = ENTITY_WEIGHT * ACCEPTANCE_SHARE * total + OUTCOME_WEIGHT * completed + QUERY_WEIGHT * sameQuery;
   return Math.min(MAX_BOOST, boost);
 }
 
@@ -245,7 +279,7 @@ export function applyPriorSelectionBoost(
   memory: SelectionMemory,
   queryKey: string,
 ): InputSuggestion[] {
-  if (memory.isEmpty) return suggestions;
+  if (memory.isEmpty && !memory.outcomes?.size) return suggestions;
   return suggestions.map((s) => {
     if (!BOOSTABLE_TYPES.has(s.type) || !s.entityType || !s.entityId) return s;
     const boost = boostFor(memory, s.entityType, s.entityId, queryKey);
@@ -531,3 +565,15 @@ export async function recordSelection(
  */
 const MEMORABLE_PRIVACY_CLASSES: ReadonlySet<InputFieldPolicy['privacyClass']> =
   new Set<InputFieldPolicy['privacyClass']>(['public', 'viewer_scoped']);
+
+/**
+ * May this field keep per-user memory of `entityType` at all? The SAME three
+ * gates `recordSelection` applies (personalization allowed, entity type
+ * declared, privacy class memorable), exported so the §45 outcome counters
+ * (outcomeLearning.ts) cannot admit what selection memory refuses.
+ */
+export function policyAdmitsMemory(policy: InputFieldPolicy, entityType: string): boolean {
+  if (!policy.allowPersonalization) return false;
+  if (!(policy.entityTypes ?? []).includes(entityType as EntityType)) return false;
+  return MEMORABLE_PRIVACY_CLASSES.has(policy.privacyClass);
+}

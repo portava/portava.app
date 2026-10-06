@@ -1059,19 +1059,36 @@ describe("background correction sweep", () => {
     //     null, so the sweep sees zero tombstoned keys and issues no hard-delete.
     // If delete() were somehow called it would affect 0 rows; we track any call
     // so the assertion below can confirm it was skipped entirely.
-    let deleteCalled = false;
+    //
+    // The two deletes the sweep can issue are told apart by their predicate,
+    // because only one of them is this test's subject: Pass 2 deletes the
+    // specific keys it just evicted (`.in`), while Pass 3 reclaims aged
+    // tombstones by age alone (`.lt("deleted_at", …)`). Pass 3 runs on every
+    // sweep by design — it is a set-based statement that matches nothing here —
+    // so counting it as a Pass 2 delete would make this test fail for the wrong
+    // reason.
+    let pass2DeleteCalled = false;
+    let reclaimDeleteCalled = false;
     const revivedDb = {
       from(table: string) {
         assert.equal(table, "city_country_geocode_cache");
         let gteColumn = "";
+        let ltColumn = "";
+        let isDelete = false;
+        let inCalled = false;
         const chain: any = {
           select()            { return chain; },
           gte(col: string)    { gteColumn = col; return chain; },
+          lt(col: string)     { ltColumn = col; return chain; },
           not()               { return chain; },
-          in()                { return chain; },
-          delete()            { deleteCalled = true; return chain; },
+          in()                { inCalled = true; return chain; },
+          delete()            { isDelete = true; return chain; },
           then(resolve: (v: any) => void) {
-            if (gteColumn === "deleted_at") {
+            if (isDelete) {
+              if (inCalled) pass2DeleteCalled = true;
+              else if (ltColumn === "deleted_at") reclaimDeleteCalled = true;
+              resolve({ data: [], error: null });
+            } else if (gteColumn === "deleted_at") {
               // Pass 2: concurrent PUT already cleared deleted_at — no tombstones.
               resolve({ data: [], error: null });
             } else {
@@ -1102,7 +1119,9 @@ describe("background correction sweep", () => {
     assert.ok(r !== null, "revived city result must not be null");
     assert.equal(r!.countryCode, "NO", "revived city must return the original country code");
     assert.equal(r!.country, "Norway", "revived city must return the original country name");
-    assert.equal(deleteCalled, false, "hard-delete must not be called when no tombstoned keys are found");
+    assert.equal(pass2DeleteCalled, false, "hard-delete must not be called when no tombstoned keys are found");
+    assert.equal(reclaimDeleteCalled, true,
+      "Pass 3 still reclaims aged tombstones by age — it does not depend on Pass 2 finding keys");
   });
 
   it("tombstone-sweep eviction: writes the fresh Nominatim result back to the DB", async () => {

@@ -119,10 +119,10 @@ function entryFailures(world: World): Record<string, { message: string }> {
 }
 
 /** What the certified snapshot says for this traveller in this world. */
-async function snapshotVerdict(db: SupabaseClient, nowMs = Date.now()): Promise<{ verdict: string; landsideOpen: boolean }> {
+async function snapshotVerdict(db: SupabaseClient, nowMs = Date.now()): Promise<{ verdict: string; landsideNotForbidden: boolean; landsideOpen: boolean }> {
   const r = await certifiedLayoverSnapshot(db, USER, { nowMs });
   assert.ok(r.ok, `fixture: a certified snapshot must exist (${JSON.stringify(r)})`);
-  return { verdict: r.snapshot.verdict, landsideOpen: r.snapshot.landsideOpen };
+  return { verdict: r.snapshot.verdict, landsideNotForbidden: landsideNotForbidden(r.snapshot), landsideOpen: r.snapshot.landsideOpen };
 }
 
 const REFUSED: EntryEligibility = {
@@ -299,12 +299,12 @@ describe("generateRecommendations — landside cards follow the entry-bearing ve
     assert.ok((await landsideCards("permitted")).length > 0, "a permitted border must not close landside");
   });
 
-  it("PARITY with the snapshot's `landsideOpen` in every world (a data gap closes neither)", async () => {
+  it("PARITY with the snapshot's 'not forbidden' reading (`landsideStatus` open or caution) in every world (a data gap closes neither)", async () => {
     for (const world of WORLDS) {
       stage(world);
       const snap = await snapshotVerdict(db);
       const open = (await landsideCards(world)).length > 0;
-      assert.equal(open, snap.landsideOpen, `${world}: recommendations open=${open}, snapshot landsideOpen=${snap.landsideOpen}`);
+      assert.equal(open, snap.landsideNotForbidden, `${world}: recommendations open=${open}, snapshot not-forbidden=${snap.landsideNotForbidden}`); if (snap.verdict !== "yes") assert.equal(snap.landsideOpen, false, `${world}: the strict boolean is true only for a verdict of yes`);
     }
   });
 });
@@ -595,3 +595,6 @@ function envelope(
   if (!r.ok) assert.fail(`envelope did not normalise: ${r.reason} ${r.detail}`);
   return r.event;
 }
+
+// At the foot: lines above are cited by line (an ESM import is hoisted wherever it is written).
+import { landsideNotForbidden } from "../services/airport/LayoverSnapshot.js";

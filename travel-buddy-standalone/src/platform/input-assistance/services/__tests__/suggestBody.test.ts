@@ -84,3 +84,15 @@ test('§48: an EMPTY declaration is not sent — it would read as "I render noth
     false,
   );
 });
+
+// §45 / OD-INPUT-1 — the outcome-learning hint rides the body ONLY as a literal
+// true, and only when the caller set it (the hook sets it while this account's
+// opt-in gate is open). The server re-checks consent, so the hint grants nothing;
+// leaving it off keeps every non-consenting serve free of outcome reads.
+test('outcomeLearning is sent only as a literal true, and omitted otherwise', () => {
+  const base = { context: 'city_picker' as const, fieldId: 'geo.city', text: 'sant', limit: 8 };
+  assert.equal(buildSuggestBody({ ...base, outcomeLearning: true }).outcomeLearning, true);
+  for (const v of [false, undefined, 'true' as unknown as boolean, 1 as unknown as boolean]) {
+    assert.ok(!('outcomeLearning' in buildSuggestBody({ ...base, outcomeLearning: v })), `sent for ${String(v)}`);
+  }
+});

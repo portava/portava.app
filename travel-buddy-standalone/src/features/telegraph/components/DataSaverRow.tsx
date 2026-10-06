@@ -45,6 +45,13 @@ export function DataSaverRow({ state }: DataSaverRowProps) {
           Holds back photos, videos and AI suggestions until you ask for them.
           Messages, status and safety alerts always come through.
         </Text>
+        {ds.automaticCause ? (
+          <Text style={s.hint} testID="data-saver-automatic">
+            {ds.automaticCause === 'slow_responses'
+              ? 'On automatically: Portava has been slow to respond.'
+              : 'On automatically: Portava has not been answering reliably.'}
+          </Text>
+        ) : null}
       </View>
       <Switch
         testID="data-saver-switch"

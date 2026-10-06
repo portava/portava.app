@@ -744,6 +744,69 @@ export const GUARDS: readonly GuardEntry[] = [
     reach: { kind: "check-all", script: "check:census-integrity" },
   },
   {
+    checker: "src/scripts/checkSchedulerCoverage.ts",
+    inspects: {
+      countPattern: "(\\d+) schedulers started",
+      unit: "background schedulers index.ts starts at boot",
+    },
+    responsibility:
+      "The registry in lib/schedulerCoverage.ts is EXACTLY the set of schedulers index.ts starts, and " +
+      "each row's claim about how that scheduler's health can be known is true of the tree: every job " +
+      "name it says /healthz/schedulers reports is a real literal in routes/health.ts and every such " +
+      "literal is claimed once, and every job_health key it says is written really is written by the " +
+      "owning file while every non-test writer of job_health is claimed.",
+    // It is a DENOMINATOR guard, not a liveness one. It cannot tell whether any
+    // scheduler is actually running — nothing in-process can, which is the
+    // defect that made it necessary — so a pass means only that the published
+    // count of unobservable jobs has not quietly drifted. The number it
+    // protects is the one /healthz/schedulers discloses next to its verdict, so
+    // a scheduler added without a row would otherwise silently enlarge the
+    // invisible set while the endpoint kept reporting the old figure.
+    reach: { kind: "check-all", script: "check:scheduler-coverage" },
+  },
+  {
+    checker: "src/scripts/checkSchedulerRelativeWindows.ts",
+    inspects: {
+      countPattern: "(\\d+) lower bound\\(s\\) judged",
+      unit: "lower-bound time windows reached from a scheduled job",
+    },
+    responsibility:
+      "Every lower-bound time window a scheduled background job reaches is one of: absolute (a " +
+      "predicate on the row's own deadline, which the next pass still sees), derived from a durable " +
+      "watermark, scoped to an entity rather than to a span of wall-clock time, wider than the " +
+      "plausible gap between passes, or named in ALLOWLIST with the mechanism that covers it. A bare " +
+      "window relative to now, with no watermark, FAILS.",
+    // WHY THIS EXISTS. The hosting is Replit autoscale, which suspends a
+    // container after fifteen idle minutes, so a gap between two passes of any
+    // scheduled job is ordinary rather than exceptional. A job selecting work
+    // by `created_at > now - N` and keeping no record of where the last pass
+    // got to cannot see anything that fell inside a gap longer than N: those
+    // rows are older than the next pass's `since` and are examined by NO later
+    // pass, ever. Eight jobs had that shape and four of them lost data on any
+    // quiet night, because their window was shorter than the idle interval.
+    // Nothing reported the loss, which is the point — the fix is a query shape,
+    // so the shape is what has to be guarded.
+    //
+    // IT REFUSES RATHER THAN GUESSES. A lower bound it cannot resolve is
+    // counted and fails the check; it is not waved through. Sites it allows are
+    // named one at a time with the mechanism that makes them safe (a cache
+    // eviction signal rather than a work queue, a horizon rather than a
+    // selection predicate, a request-time freshness read, a span the caller
+    // chooses, evidence that is regenerated rather than consumed, or a
+    // watermark reached by a route the static trace cannot follow). Sites that
+    // cannot be defended are LEDGERED as known defects rather than allowed, so
+    // the remaining losses stay counted instead of disappearing into a pass.
+    //
+    // WHAT A PASS DOES NOT MEAN, since this is a static reader: it says nothing
+    // about whether any job RUNS, it cannot see a window inside a SQL function
+    // reached through .rpc(), it cannot follow a window assembled in one file
+    // and filtered on in another, it does not verify that a
+    // "wider-than-the-gap" window really is wide enough, and it does not ask
+    // whether an entity-scoped read's entity list was itself chosen by a
+    // relative window.
+    reach: { kind: "check-all", script: "check:scheduler-relative-windows" },
+  },
+  {
     checker: "src/scripts/checkMemoryCertification.ts",
     inspects: {
       countPattern: "fixtures (\\d+) certified",
@@ -1017,5 +1080,29 @@ export const GUARDS: readonly GuardEntry[] = [
     responsibility:
       "Every table or index a migration creates on a Discovery table carries expected cardinality, index rationale and EXPLAIN evidence in docs/discovery/query-paths.md (`10` §4; census-discovery DC-15).",
     reach: { kind: "check-all", script: "check:discovery-query-paths" },
+  },
+  {
+    checker: "src/scripts/checkNoMoneyInRanking.ts",
+    inspects: {
+      countPattern: "(\\d+) ranking, feature-vector, graph and feed-payload files scanned",
+      unit: "ranker, feature-vector, graph-builder and feed-payload files scanned for money identifiers",
+    },
+    responsibility:
+      "No money identifier (price, fee, earnings, payout, commission, tip, revenue, sponsored placement, paid plan) is read by a ranker (Discovery, the Wall, media, the Compass pipeline, the buddy match scorer), a ranking feature vector, a graph builder or a feed payload, except an allowlisted identifier that enforces a non-goal or is not money where it stands. A real money input is neither excused nor removed by the check: it is a recorded open owner question, reported with a warning on every run and not failed, covering only the identifiers it names; the set of such questions is pinned in the check's test (`08` §6, `09` §10; PAY-019, PAY-074).",
+    reach: { kind: "check-all", script: "check:no-money-in-ranking" },
+  },
+  // Appended at the END of the array so no cited line above moves.
+  {
+    checker: "src/scripts/checkLayoverDecisionDiff.ts",
+    inspects: {
+      countPattern: "layover decision diff: (\\d+) scenario\\(s\\) compared",
+      unit: "synthetic Layover scenarios diffed against layoverDecisionGolden.json",
+    },
+    responsibility:
+      "A feasibility-engine change that decides a corpus scenario differently from layoverDecisionGolden.json — a verdict, a deadline, a rule — is red until the golden is regenerated with a note (Layover spec §21.2; census-layover L241).",
+    // The corpus is src/services/layover/replay/layoverScenarioCorpus.ts; the
+    // diff is layoverReplay.decisionDiffCorpus; deadlines that moved LATER are
+    // printed first because that is the direction that strands a traveller.
+    reach: { kind: "check-all", script: "check:layover-decision-diff" },
   },
 ];

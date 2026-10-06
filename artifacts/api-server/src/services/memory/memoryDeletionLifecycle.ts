@@ -53,7 +53,7 @@
  * stays W on that half, and this file is the reason it is only that half.
  */
 
-import { revokeDerivativesForMemory } from "../memoryProjections/derivativeRegistry.js";
+import { revokeDerivativesForMemory } from "../memoryProjections/derivativeRegistry.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; // one line: cited by line
 import {
   revokeMemoryAudienceCaches,
   type MemoryAudienceState,
@@ -111,12 +111,12 @@ export interface DeletionReport {
 
 interface MinimalError { code?: unknown; message?: unknown }
 
-/** A relation or column that is not there. A retry will not conjure it. */
+/** The TABLE is not there (lib/tableAbsence) — the one case where "nothing to purge" is TRUE. */
 export function isStoreAbsent(err: MinimalError | null | undefined): boolean {
-  if (!err) return false;
-  const code = String((err as any).code ?? "");
-  if (code === "42P01" || code === "42703" || code === "PGRST205" || code === "PGRST204") return true;
-  return /does not exist|could not find the table|schema cache/i.test(String((err as any).message ?? ""));
+  // NOT a missing column (42703 / PGRST204), function or operator (42883 "does
+  // not exist"): those are a store that EXISTS and a purge that FAILED, and they
+  // used to be reported `not_applicable` in an erasure report. A code decides.
+  return isTableAbsentError(err);
 }
 
 /** What one step attempt may answer. */

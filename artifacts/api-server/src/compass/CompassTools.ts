@@ -599,7 +599,7 @@ export const COMPASS_TOOL_DEFINITIONS = [
     function: {
       name: "get_layover_snapshot",
       description:
-        "Layover §25 / census CL-03: the ONE certified LayoverSnapshot for the user's live layover session — verdict, return state, tier, usable minutes, the hard return-by deadline and the minutes to it, whether landside is open and why not, reason codes and unknowns. Call it before advising anyone in a layover; never compute a time budget yourself. Answers `noLayover` when the user has no live session, and `unavailable` when the session store could not be read (do not treat that as 'no layover').",
+        "Layover §25 / census CL-03: the ONE certified LayoverSnapshot for the user's live layover session — verdict, return state, tier, usable minutes, the hard return-by deadline and the minutes to it, the three-valued landside status (`open`; `caution` = not forbidden and NOT confirmed, so never tell the traveller they can leave; `closed`, and why), reason codes and unknowns. Call it before advising anyone in a layover; never compute a time budget yourself. Answers `noLayover` when the user has no live session, and `unavailable` when the session store could not be read (do not treat that as 'no layover').",
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
   },
@@ -1739,7 +1739,19 @@ async function toolWhosAround(
   profile: CompassProfile | null,
   userId: string,
 ): Promise<unknown> {
-  const { people, contextsChecked } = await getWhosAround(sc, userId, hiddenUserIds(profile));
+  const { people, contextsChecked, unreadSources } = await getWhosAround(sc, userId, hiddenUserIds(profile));
+  // census-compass CT-02. `contextsChecked === 0` used to be answered with
+  // "the user has no active trips or upcoming events" whether the contexts
+  // were ABSENT or merely UNREADABLE — and an unreadable `trip_members` is
+  // exactly how a traveller on a trip got that sentence. The assistant repeats
+  // it as fact, so the two cases are now distinct sentences and the unread one
+  // tells the model not to assert either way.
+  if (unreadSources.length > 0) {
+    return {
+      people: [],
+      info: `The user's trip and event contexts could not be read (${unreadSources.join(", ")}) — this is temporary. Do NOT say whether they are on a trip, and do not say nobody is around.`,
+    };
+  }
   if (contextsChecked === 0) {
     return { people: [], info: "The user has no active trips or upcoming events with a circle to check." };
   }
@@ -1765,8 +1777,18 @@ async function toolMeetupOpportunities(
   profile: CompassProfile | null,
   userId: string,
 ): Promise<unknown> {
-  const { opportunities, contextsChecked, withheldForPrivacy } =
+  const { opportunities, contextsChecked, withheldForPrivacy, unreadSources } =
     await getMeetupOpportunities(sc, userId, hiddenUserIds(profile));
+  // Same CT-02 distinction as toolWhosAround: an unreadable context is not an
+  // absent one, and "no meetups" over an unread roster is a wrong answer
+  // rather than a degraded one.
+  if (unreadSources.length > 0) {
+    return {
+      opportunities: [],
+      withheldForPrivacy: 0,
+      info: `The user's trip and event contexts could not be read (${unreadSources.join(", ")}) — this is temporary. Do NOT say whether they are on a trip, and do not say there is nobody to meet.`,
+    };
+  }
   if (contextsChecked === 0) {
     return { opportunities: [], withheldForPrivacy: 0, info: "The user has no active trips or upcoming events with a circle to check." };
   }
@@ -2009,14 +2031,29 @@ async function resolveGroupMemberIds(
   }
 
   // Default: current/upcoming trip members.
-  const current: any = await toolGetCurrentTrip(sc, userId);
-  const trip = current?.trip;
-  if (!trip) return { error: "No circle name given and the user has no active or upcoming trip group." };
-  const { data: members } = await sc
+  //
+  // census-compass CT-02. This took `toolGetCurrentTrip(...)?.trip` and
+  // treated a null trip as "the user has no active or upcoming trip group" —
+  // discarding the `info` that tool had just gone to the trouble of writing to
+  // distinguish `unread` from `none`. It now takes the three-valued seam
+  // directly, which is also one fewer projection built for a trip id.
+  const resolved = await resolveCurrentTrip(sc, userId, TOOL_TRIP_STATUSES);
+  if (resolved.status === "unread") {
+    return { error: `The user's trips could not be read (${resolved.reason}) — this is temporary. Do not say they have no trip group.` };
+  }
+  if (resolved.status === "none") return { error: "No circle name given and the user has no active or upcoming trip group." };
+  const trip = resolved.trip;
+  const { data: members, error: membersErr } = await sc
     .from("trip_members")
     .select("user_id, role, status")
     .eq("trip_id", trip.id)
     .in("role", ["owner", "co_host", "member", "viewer"]);
+  // An unreadable roster is NOT a roster of one. The group recommendation
+  // would otherwise be computed for the caller alone and presented as the
+  // group's — a narrower answer wearing the group's name.
+  if (membersErr) {
+    return { error: "The trip's member list could not be read — this is temporary. Nothing was recommended for the group." };
+  }
   const ids = new Set<string>([userId]);
   for (const m of (members ?? []) as any[]) {
     if (m.status == null || m.status === "accepted") ids.add(String(m.user_id));
@@ -2295,7 +2332,7 @@ export async function toolGetLayoverSnapshot(sc: SupabaseClient, userId: string)
     return { noLayover: true, reason: r.reason, info: r.message };
   }
   const { certifiedRecord: _record, ...snapshot } = r.snapshot;
-  return { snapshot: sanitizeToolResult(snapshot) };
+  return { snapshot: sanitizeToolResult(snapshot.landsideStatus === "closed" ? { ...snapshot, envelope: null, envelopeUnavailableReason: "landside_closed" } : snapshot) }; // a closed gate hands the model no reach to describe
 }
 
 async function toolGetDecision(sc: SupabaseClient, args: Record<string, unknown>): Promise<unknown> {

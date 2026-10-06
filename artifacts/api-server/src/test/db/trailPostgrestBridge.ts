@@ -15,7 +15,12 @@
  * `lib/blocks.ts` and `lib/discoveryLocalMomentum.ts` issue, nothing more):
  *   GET     select=<plain columns>, filters eq/neq/gt/gte/lt/lte/is/in/like/ilike
  *           (and `not.` of each), `or=(...)` with `and(...)` groups, order,
- *           limit, offset.
+ *           limit, offset. One level of FK-hinted embedding,
+ *           `relation!constraint(cols)`, resolved against the REAL foreign key
+ *           (./postgrestEmbed.ts) — the form the account-state gate's read of
+ *           `profiles` uses on every authenticated request. An embed whose
+ *           constraint does not link the two tables answers PGRST200 / 400, as
+ *           PostgREST does.
  *   POST    object or array body → INSERT … RETURNING, with the `columns`
  *           parameter postgrest-js sends for arrays.
  *   PATCH   UPDATE … FROM json_populate_record … WHERE <filters>.
@@ -53,6 +58,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { spawn, spawnSync } from "node:child_process";
 import { LOCAL_DB_URL } from "./localDb.js";
+import { PostgrestEmbedError, selectListWithEmbeds } from "./postgrestEmbed.js";
 
 type Row = Record<string, unknown>;
 
@@ -196,12 +202,27 @@ function whereClause(params: URLSearchParams, alias: string): string {
   return conds.length === 0 ? "" : ` WHERE ${conds.join(" AND ")}`;
 }
 
-function selectList(select: string | null, alias = ""): string {
+/**
+ * `table` is passed by the GET path only (an unaliased FROM): that is where an
+ * FK-hinted embed is translated. RETURNING lists (aliased) still refuse one.
+ */
+function selectList(select: string | null, alias = "", table: string | null = null): string {
   if (!select || select.trim() === "" || select.trim() === "*") return `${alias}*`;
-  return select.split(",").map((c) => c.trim()).filter(Boolean).map((c) => {
+  const plain = (c: string): string => {
     if (c.includes("(") || c.includes(":")) throw new Error(`trailPostgrestBridge: embedded/aliased select ${c}`);
     return `${alias}${ident(c)}`;
-  }).join(", ");
+  };
+  if (table !== null && alias === "") {
+    const withEmbeds = selectListWithEmbeds(table, select, plain, catalogue);
+    if (withEmbeds !== null) return withEmbeds;
+  }
+  return select.split(",").map((c) => c.trim()).filter(Boolean).map(plain).join(", ");
+}
+
+/** One catalogue query for ./postgrestEmbed.ts: stdout lines, or null when it failed. */
+function catalogue(sql: string): string[] | null {
+  const e = run(sql);
+  return e.ok ? e.stdout.split("\n").filter((l) => l.length > 0) : null;
 }
 
 function orderClause(order: string | null): string {
@@ -336,7 +357,16 @@ export function makeTrailBridge(opts: BridgeOptions = {}): BridgeHandle {
     if (method === "GET" || method === "HEAD") {
       const limit = params.get("limit");
       const offset = params.get("offset");
-      sql = `SELECT COALESCE(json_agg(_q), '[]'::json)::text FROM (SELECT ${selectList(select)} FROM ${t}`
+      let columns: string;
+      try {
+        columns = selectList(select, "", table);
+      } catch (err) {
+        // An embed PostgREST would refuse (no such relationship): its answer, 400 + PGRST200.
+        if (!(err instanceof PostgrestEmbedError)) throw err;
+        log.push({ method, path: `${url.pathname}${url.search}`, sql: `(${err.body.code})` });
+        return json(err.body, 400);
+      }
+      sql = `SELECT COALESCE(json_agg(_q), '[]'::json)::text FROM (SELECT ${columns} FROM ${t}`
         + `${whereClause(params, "")}${orderClause(params.get("order"))}`
         + `${limit !== null ? ` LIMIT ${Number(limit)}` : ""}${offset !== null ? ` OFFSET ${Number(offset)}` : ""}) _q;`;
       log.push({ method, path: `${url.pathname}${url.search}`, sql });

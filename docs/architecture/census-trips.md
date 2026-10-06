@@ -749,7 +749,7 @@ because there is no stage.*
 | TR93 | §5.2 Never encode foreign IDs into generic text fields | **W** | Violated by the same two lines: `source_id text NULL` at `0010:16` is a foreign identifier in a generic text field, which is the shape the rule names. It is at least *labelled* by `source_type`, which is why this is W and not N. |
 | TR94 | §5.2 Traveler-visible place identity resolves through the canonical place bridge where available | **C** | `lib/placeIdBridge.ts` is the single sanctioned crossing and `src/scripts/checkPlaceIdBridge.ts#SANCTIONED` is the ratchet that keeps it single. **Corrected 2026-09-11 (§38):** this row named `checkSchemaReferences.ts` as the ratchet and that was wrong — it checks select-list columns against the schema, not id spaces, and no guard mentioned the bridge at all. The crossing was single by convention; it is now single by enforcement. |
 | TR95 | §5.2 Unresolved external/manual places remain typed as unresolved, not falsely canonical | **C** | `0010_trip_plan.sql:14-15` — `source_type` defaults to `'manual'` and admits `'place'`/`'meetup'`; a manual entry is typed as manual and never acquires a canonical id by default. `:22-23` additionally forbids coordinates on the label: *"public-safe label only — no GPS coordinates stored."* |
-| TR96 | §5.3 Canonical durable class (trip, stages, confirmed plans, membership) retained until deletion/retention policy | **C** | `trips`, `trip_members`, `trip_plan_items` are durable with cascade deletes (`0001_spine.sql:74,101-102`; `0010:7`) and are covered by the account-deletion disposition table (`lib/deletionDispositions.ts:443`). |
+| TR96 | §5.3 Canonical durable class (trip, stages, confirmed plans, membership) retained until deletion/retention policy | **C** | `trips`, `trip_members`, `trip_plan_items` are durable with cascade deletes (`0001_spine.sql:74,101-102`; `0010:7`) and are covered by the account-deletion disposition table (`lib/deletionDispositions.ts:567`). |
 | TR97 | §5.3 Operational class (decision tasks, risks, transient execution state) expires/archives after usefulness | **W** | The only operational artifact is readiness, and it does have a staleness rule — `domain/trips/services/tripReadiness.ts:24-25` `READINESS_STALE_MS = 10 * 60 * 1000` with a stale-row sweep on recompute (`:5-7`). Decision tasks and risks do not exist, so two-thirds of the class has no policy because it has no rows. |
 | TR98 | §5.3 Ephemeral sensitive class (precise presence, safety/location) has short TTL and strict access | **C** | `0167_safety_ddl_reconcile.sql:126-137` — `safe_return_live_shares` is `active \| stopped \| expired` with an `expires_at` index; `trip_crew_location_sessions` carries an expiry consumed at `domain/trips/services/tripCrewLocation.ts:142`; `server/trips/projectionWorkers/tripCrewLiveShareScheduler.ts` sweeps. Strict access is `domain/trips/services/tripCrewLocation.ts:1-16`'s privacy contract. |
 | TR99 | §5.3 Derived class (Today/Map/Compass projections) is rebuildable with TTL/freshness metadata | **W** | Only one derived artifact exists (`trip_readiness_snapshots`, `0175`) and it *is* rebuildable with a staleness bound. The Today/Map/Compass projections it names do not exist (§11.1, §14.1, §19.1), so the class is one-eighth populated. |
@@ -6545,7 +6545,7 @@ code changes in this section.
   (`travel-buddy-standalone/src/features/map/cache/mapCache.ts:507#rehydrate(`).
   The points of an event's map are cached; the map is not. W.
 - **TR133 holds W, at two of four.** Compass's `get_freedom_windows`
-  (`compass/CompassTools.ts:2357#case "get_freedom_windows":`) consumes the
+  (`compass/CompassTools.ts:2394#case "get_freedom_windows":`) consumes the
   engine, and so do Saved Ideas: the opportunity projection compiles the
   crew's saved places against each window rather than computing free time
   of its own (`domain/trips/projections/TripOpportunityProjection.ts:292#from("trip_saved_places")`).
@@ -6651,17 +6651,17 @@ rows stay W with the reason narrowed to the gate alone.
   turns a booking's date and start time into an instant in the trip's own
   zone (UTC, and said so, when the trip declares none). The Buddy booking
   route consults it when a `tripId` rides on the request
-  (`routes/rentABuddy.ts:2194#tripFit = await readSlotFit(serviceClient, {`) and
+  (`routes/rentABuddy.ts:2186#tripFit = await readSlotFit(serviceClient, {`) and
   refuses a CONFLICT with `409 trip_time_conflict`, reason
   `TRIP_TEMPORAL_CONFLICT`, the commitments named
-  (`routes/rentABuddy.ts:2201#error: "trip_time_conflict"`); every other verdict
+  (`routes/rentABuddy.ts:2193#error: "trip_time_conflict"`); every other verdict
   rides on the 201. Discovery search takes `tripId`
   (`routes/discoverySearch.ts:192#tripId: ctxTripId,`), reads the windows once
-  (`lib/inputAssistance/searchCandidates.ts:792#const read = await readTripWindows(sc, ctx.tripId, userId);`),
+  (`lib/inputAssistance/searchCandidates.ts:799#const read = await readTripWindows(sc, ctx.tripId, userId);`),
   places each event's start against them as `metadata.tripFit`
   (`domain/trips/services/TripFreedomConsumers.ts:153#export function fitInstantToWindows(`)
   and leads with the ones that fit, stably, AFTER the match-tier ranking
-  (`lib/inputAssistance/searchCandidates.ts:814#function leadWithTripFit(`). Tests: the
+  (`lib/inputAssistance/searchCandidates.ts:821#function leadWithTripFit(`). Tests: the
   verdicts against the real freedom projection on the health fixture's Paris
   trip — 13:00 local FITS, 11:30 crosses A, 17:30 runs into B's reserved
   travel, a later date OUTSIDE_TRIP, no start time UNPLACED, gate closed or
@@ -6670,7 +6670,7 @@ rows stay W with the reason narrowed to the gate alone.
   the Discovery route with a trip whose windows are readable — the clashing
   event comes first on the search's own order and second with the trip in
   context, every row NOT_CONSULTED with the gate closed, a malformed
-  `tripId` ignored (`test/discoverySearch.test.ts:1688#events carry tripFit when a trip is in context`);
+  `tripId` ignored (`test/discoverySearch.test.ts:1691#events carry tripFit when a trip is in context`);
   the booking route's wiring on its own harness, where the trip tables are
   not modelled and the response says NOT_CONSULTED rather than guessing
   (`test/rentABuddy.test.ts:5108#a booking on a trip consults the freedom windows`).
@@ -8143,7 +8143,7 @@ the work.
 | TR160 | `tripCrewLocation.ts` line 142 is `liveShareExpiresAt` | the accuracy-banding comment again | `artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts:225#expires_at` |
 | TR170 | `tripCrewLocation.ts` lines 155-156 is `checkInStatus` | the `exactCoords` doc comment | `artifacts/api-server/src/domain/trips/services/tripCrewLocation.ts:286#shareSafeReturnStatus` is the nearest real code; the check-in fields are at lines 59-60, which the row also cites and which IS right |
 | TR214 | `CompassTools.ts` lines 245-249 "is exactly this instruction set" | JSON-schema boilerplate (`parameters: { type: "object" …`) | `artifacts/api-server/src/compass/CompassTools.ts:635#explain` |
-| TR215 | `CompassTools.ts` lines 734-738 runs the gates, line 821 is the relationship gate | a comment about trip selection; a `discovery_places` query | `artifacts/api-server/src/compass/CompassTools.ts:1654#canEditPlan` and `artifacts/api-server/src/compass/CompassTools.ts:1875#Relationship gate` |
+| TR215 | `CompassTools.ts` lines 734-738 runs the gates, line 821 is the relationship gate | a comment about trip selection; a `discovery_places` query | `artifacts/api-server/src/compass/CompassTools.ts:1654#canEditPlan` and `artifacts/api-server/src/compass/CompassTools.ts:1897#Relationship gate` |
 | TR216 | `CompassTools.ts` lines 261-269 strips coordinate-shaped keys | JSON-schema boilerplate | `artifacts/api-server/src/compass/CompassTools.ts:655#sanitizeToolResult` |
 | TR289 | `tripReservations.ts` line 118 paste-import, line 189 manual create | neither is a route | `artifacts/api-server/src/routes/tripReservations.ts:357#router.post` (and line 145) |
 | TR296 | `tripReservations.ts` line 309, line 390, line 416 are confirm / dismiss / delete | line 309 is a **blank line**; none of the three is a route | `artifacts/api-server/src/routes/tripReservations.ts:506#confirm` (dismiss line 500, delete line 526) |

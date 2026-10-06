@@ -21,7 +21,7 @@ import {
   LIVE_REFERENCE_MSG_TYPE,
   liveReferenceBody,
   type LiveReference,
-} from "./liveReference.js";
+} from "./liveReference.js"; import { isTableAbsentError } from "./tableAbsence.js"; // one line: census-sensing cites this file by line
 
 export const MESSAGES_TABLE = "messages";
 export const THREAD_MEMBERS_TABLE = "message_thread_members";
@@ -50,12 +50,12 @@ export async function isActiveThreadMember(sc: any, threadId: string, userId: st
 }
 
 function isMissingRelation(err: unknown): boolean {
-  if (!err || typeof err !== "object") return false;
-  const e = err as { code?: unknown; message?: unknown };
-  const code = typeof e.code === "string" ? e.code : "";
-  if (code === "42P01" || code === "PGRST205") return true;
-  const msg = typeof e.message === "string" ? e.message.toLowerCase() : "";
-  return msg.includes("does not exist") || msg.includes("could not find the table");
+  // lib/tableAbsence: the TABLE is absent, nothing wider. "does not exist" also
+  // matched 42703 (column) and 42883 (operator/function), labelling a drift or
+  // an outage `versions_unavailable` ("apply 2273") instead of `error`.
+  // A code, when present, decides; see that module for the rule.
+  // Same line count as before: census-sensing cites this file by line.
+  return isTableAbsentError(err);
 }
 
 export type LatestVersionsResult =

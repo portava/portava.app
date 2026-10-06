@@ -270,14 +270,17 @@ describe("Telegraph §13.1 — the command vocabulary", () => {
     }
   });
 
-  it("SET_COORDINATION_STATUS names the route that exists, not a nonexistent vocabulary", () => {
+  it("SET_COORDINATION_STATUS is issued HERE — neither unimplemented nor sent away", () => {
     // §9.1's seven quick states shipped with the coordination surface. This
-    // command sat in UNIMPLEMENTED_COMMANDS afterwards, so the endpoint told
-    // callers "nothing in this repository implements it" while
-    // POST /threads/:id/coordination was implementing it. A refusal that is
-    // wrong in that direction sends a caller away from the working route.
+    // command once sat in UNIMPLEMENTED_COMMANDS (telling callers nothing
+    // implemented it), then in LEGACY_PATH_COMMANDS (sending them to the
+    // coordination route). It is now issued by this endpoint through that
+    // route's own writer (services/telegraph/threadEnvelopeWrites.ts), so the
+    // only correct answer is "issuable" — and it must not ALSO be a legacy path,
+    // or the endpoint would refuse a command it performs.
     assert.equal(UNIMPLEMENTED_COMMANDS.includes("SET_COORDINATION_STATUS"), false);
-    assert.match(String(LEGACY_PATH_COMMANDS.SET_COORDINATION_STATUS), /coordination/);
+    assert.equal(LEGACY_PATH_COMMANDS.SET_COORDINATION_STATUS, undefined);
+    assert.ok((ISSUABLE_COMMANDS as readonly string[]).includes("SET_COORDINATION_STATUS"));
   });
 
   it("every §13.1 command is accounted for: issuable, legacy, or unimplemented", () => {

@@ -56,6 +56,7 @@ import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { logger as rootLogger } from "../lib/logger.js";
 import { publishToThread } from "../lib/telegraphEvents.js";
+import { boundSeenReaders, strategyForAudience } from "../domain/telegraph/policies/transportClass.js";
 import {
   receiptFor,
   unsendBeforeSeen,
@@ -184,6 +185,8 @@ router.get(
     }
 
     const messages = ((rows as any[]) ?? []) as LifecycleMessage[];
+    const activeMembers = membersRead.members.filter((mm) => mm.left_at == null).length;
+    const seenStrategy = strategyForAudience(activeMembers);
     const receipts = messages
       // Q6 is a NO-OP on this surface and is passed anyway so the predicate is
       // called the same way everywhere: the very next filter keeps only
@@ -196,7 +199,14 @@ router.get(
       // asking who else has read a message they did not send is a different
       // question with a different policy, and this route does not answer it.
       .filter((m) => m.sender_id === user.id)
-      .map((m) => receiptFor(m, membersRead.members));
+      .map((m) => {
+        // §30A.12 (census T415/T416): in a LARGE_GROUP the count stays exact and
+        // the reader ids are a bounded sample, so one receipt cannot name a
+        // whole event's audience under every message.
+        const r = receiptFor(m, membersRead.members);
+        const b = boundSeenReaders(r.seenByUserIds, seenStrategy);
+        return { ...r, seenByUserIds: b.seenByUserIds, seenByUserIdsSampled: b.seenByUserIdsSampled };
+      });
 
     res.status(200).json({
       threadId,

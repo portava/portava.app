@@ -52,6 +52,21 @@
  * All three are fixed through `killSwitchStateUnknown` in lib/featureFlags.ts,
  * which is where the next person writing a kill switch will meet it.
  *
+ * ── A SECOND SHAPE OF THE SAME CLASS (2026-10-06, PR #588's verification) ────
+ * The pattern above matches a kill switch skipped because the client is absent.
+ * It does NOT match a restriction read through the false-on-error reader:
+ *
+ *     isFlagEnabled(db, "layover_entry_forbid_landside_enabled")
+ *
+ * There is no `&&`, no `isKillSwitchEngaged` and no `disable_` in that line, so
+ * it sailed past this file — and past `check:flag-polarity`, which classifies
+ * `*_enabled` as a CAPABILITY by convention and is satisfied by `isFlagEnabled`.
+ * But for that flag ON is the RESTRICTIVE state, so "false on error" is "the
+ * restriction is off": a failed read left the landside gate open. The second
+ * describe below is the ratchet for that shape, keyed on the registry in
+ * lib/featureFlags.ts (`RESTRICTIVE_WHEN_ON_FLAGS`), with the two lines that
+ * escaped transcribed as its fixture.
+ *
  * Run: node --import tsx/esm --test src/test/verifyFailOpenStopReads.test.ts
  */
 import { describe, it } from "node:test";
@@ -118,3 +133,140 @@ describe("a kill switch is never skipped because the service client is absent", 
     );
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// A restriction named like a capability, read through a false-on-error reader
+// ═════════════════════════════════════════════════════════════════════════════
+
+const SRC = path.resolve(import.meta.dirname, "..");
+
+/** Every production source under src/: no tests, no fixtures. */
+function productionSources(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) return e.name === "test" || e.name === "__tests__" || e.name === "node_modules" ? [] : productionSources(full);
+    return e.name.endsWith(".ts") && !e.name.endsWith(".test.ts") && !e.name.endsWith(".d.ts") ? [full] : [];
+  });
+}
+
+/**
+ * The readers that answer FALSE (or null) when `feature_flags` cannot be read.
+ * `readFlagState` is deliberately absent: it is the one that says `unreadable`.
+ */
+const FALSE_ON_ERROR_READERS = ["isFlagEnabled", "isEnabled", "isLivePlacesCapabilityEnabled", "getFlagRow"];
+
+/**
+ * A false-on-error reader called with `flag` — as a literal, or through a
+ * member of a constants object (`isFlagEnabled(db, FLAGS.storage)`), which is
+ * the spelling a refactor of the literal form would most naturally take.
+ */
+function failOpenRestrictionRead(flag: string, constantMembers: string[] = []): RegExp {
+  const quoted = `["'\`]${flag}["'\`]`;
+  const viaConstant = constantMembers.map((m) => m.replace(/[.$]/g, "\\$&"));
+  const arg = [quoted, ...viaConstant].join("|");
+  return new RegExp(`\\b(?:${FALSE_ON_ERROR_READERS.join("|")})\\s*\\(\\s*[^,()]+,\\s*(?:${arg})\\s*[,)]`);
+}
+
+/** How the store's constants object spells each registered flag. */
+const CONSTANT_SPELLINGS: Record<string, string[]> = {
+  layover_constraints_enabled: ["LAYOVER_CONSTRAINT_FLAGS.storage"],
+  layover_entry_forbid_landside_enabled: ["LAYOVER_CONSTRAINT_FLAGS.entryForbidsLandside"],
+};
+
+describe("a flag whose ON is the restrictive state is never read through a false-on-error reader", () => {
+  /**
+   * THE LINES THAT ESCAPED, transcribed from
+   * services/layover/LayoverConstraintStore.ts:66-69 at origin/main 5f7cf6b58
+   * (PR #588). Not paraphrased: a ratchet proven against a tidier version of the
+   * defect than the one that shipped proves nothing about the one that shipped.
+   */
+  const ESCAPED = [
+    "  const [storage, entryForbidsLandside] = await Promise.all([",
+    "    isFlagEnabled(db, \"layover_constraints_enabled\"),",
+    "    isFlagEnabled(db, \"layover_entry_forbid_landside_enabled\"),",
+    "  ]);",
+  ].join("\n");
+
+  it("the registry names the two flags, and each is one a person is refused something by", async () => {
+    const { RESTRICTIVE_WHEN_ON_FLAGS } = await import("../lib/featureFlags.js");
+    assert.deepEqual([...RESTRICTIVE_WHEN_ON_FLAGS].sort(), ["layover_constraints_enabled", "layover_entry_forbid_landside_enabled"]);
+    for (const flag of RESTRICTIVE_WHEN_ON_FLAGS) {
+      assert.ok(CONSTANT_SPELLINGS[flag], `${flag} is registered and this ratchet does not know how a constants object spells it`);
+    }
+  });
+
+  it("FIXTURE: the pattern matches the lines that shipped — and the older ratchet does not, which is how they escaped", async () => {
+    const { RESTRICTIVE_WHEN_ON_FLAGS } = await import("../lib/featureFlags.js");
+    for (const flag of RESTRICTIVE_WHEN_ON_FLAGS) {
+      assert.match(ESCAPED, failOpenRestrictionRead(flag, CONSTANT_SPELLINGS[flag]), `${flag}: the ratchet cannot see the read that escaped`);
+    }
+    assert.equal(FAIL_OPEN.test(ESCAPED), false, "the kill-switch ratchet DOES match these lines, so this second one is redundant — delete it rather than keep two");
+    // The same defect spelled through the constants object, and with spacing.
+    assert.match("await isFlagEnabled(db, LAYOVER_CONSTRAINT_FLAGS.storage)", failOpenRestrictionRead("layover_constraints_enabled", CONSTANT_SPELLINGS.layover_constraints_enabled));
+    assert.match("isFlagEnabled( sc ,'layover_entry_forbid_landside_enabled' )", failOpenRestrictionRead("layover_entry_forbid_landside_enabled"));
+    assert.match("const row = await getFlagRow(sc, `layover_constraints_enabled`);", failOpenRestrictionRead("layover_constraints_enabled"));
+  });
+
+  it("NEGATIVE CONTROL: the three-valued read, a comment and a DIFFERENT flag are not matched", () => {
+    const fixed = [
+      "    readFlagState(db, \"layover_constraints_enabled\"),",
+      "    readFlagState(db, \"layover_entry_forbid_landside_enabled\"),",
+      "  storage: \"layover_constraints_enabled\",",
+      "  if (!(await isFlagEnabled(sc, \"airport_mode_enabled\"))) { sendError(res, \"feature_disabled\"); return null; }",
+      "  isFlagEnabled(db, \"layover_constraints_enabled_v2\")",
+    ].join("\n");
+    for (const flag of ["layover_constraints_enabled", "layover_entry_forbid_landside_enabled"]) {
+      assert.equal(failOpenRestrictionRead(flag, CONSTANT_SPELLINGS[flag]).test(fixed), false, flag);
+    }
+  });
+
+  it("no production source reads a restrictive-when-ON flag through a false-on-error reader", async () => {
+    const { RESTRICTIVE_WHEN_ON_FLAGS } = await import("../lib/featureFlags.js");
+    const sources = await readProductionSources();
+    assert.ok(sources.length > 500, `VACUOUS: only ${sources.length} production sources were scanned`);
+    const offenders: string[] = [];
+    for (const { file, text } of sources) {
+      for (const flag of RESTRICTIVE_WHEN_ON_FLAGS) {
+        if (failOpenRestrictionRead(flag, CONSTANT_SPELLINGS[flag]).test(text)) offenders.push(`${path.relative(SRC, file)} reads ${flag}`);
+      }
+    }
+    assert.deepEqual(
+      offenders,
+      [],
+      "For each of these flags ON is the restrictive state, so a reader that answers `false` on a database " +
+        "error turns the restriction OFF exactly when it could not be read. Read it through readFlagState " +
+        "(lib/capability/schemaCapability.ts) and close on `unreadable`.",
+    );
+  });
+
+  it("NON-VACUITY: each registered flag IS read somewhere, three-valued — a flag nobody reads cannot fail open or closed", async () => {
+    const { RESTRICTIVE_WHEN_ON_FLAGS } = await import("../lib/featureFlags.js");
+    const files = (await readProductionSources()).map((s) => s.text);
+    for (const flag of RESTRICTIVE_WHEN_ON_FLAGS) {
+      const threeValued = new RegExp(`\\breadFlagState\\s*\\(\\s*[^,()]+,\\s*["'\`]${flag}["'\`]`);
+      assert.ok(files.some((text) => threeValued.test(text)), `${flag} is registered as restrictive and no production source reads it through readFlagState`);
+    }
+  });
+});
+
+/**
+ * List AND read every production source under the tree lock.
+ *
+ * `guardCoverageReachability.test.ts` writes a probe into src/lib/ and deletes
+ * it again, and node:test runs files concurrently: a scan that lists the tree,
+ * then reads it, can list the probe and find it gone (ENOENT — a red that is
+ * about another suite's timing, not about a flag). The two full-tree
+ * flag-polarity scans take this lock for the same reason (#623).
+ */
+async function readProductionSources(): Promise<Array<{ file: string; text: string }>> {
+  const release = await acquireTreeLock("verifyFailOpenStopReads restrictive-flag scan");
+  try {
+    return productionSources(SRC).map((file) => ({ file, text: readFileSync(file, "utf8") }));
+  } finally {
+    release();
+  }
+}
+
+// At the tail, where flagPolaritySeedScan.test.ts and flagPhantomReads.test.ts
+// import it too (an ESM import is hoisted wherever it is written).
+import { acquireTreeLock } from "./helpers/treeMutationLock.js";

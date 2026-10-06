@@ -81,6 +81,38 @@ function throttled(): Promise<void> {
 
 const CORRECTION_SWEEP_WINDOW_MS = 60 * 60 * 1_000; // look back 1 hour
 
+// How long a tombstone row is kept before it is reclaimed.
+//
+// WHY THIS IS NOT THE SWEEP WINDOW
+// ================================
+// The two passes below ask "what changed in the last hour", which is the right
+// question for an EVICTION SIGNAL: a correction only has to reach each
+// instance's in-memory cache once. It is the wrong question for RECLAIMING
+// STORAGE, and the difference is what made the rows accumulate.
+//
+// `gte("deleted_at", since)` can only ever see tombstones newer than the
+// window. If no sweep runs while a tombstone is inside its hour — the host is
+// Replit autoscale, which suspends after fifteen idle minutes, so an hour
+// without a tick is an ordinary quiet night rather than an incident — the row
+// ages out of the window and NOTHING deletes it afterwards. The only other
+// writers of this table are `writeDbCache`, whose upsert clears `deleted_at`
+// rather than removing the row, and the admin routes. So the pass's own stated
+// goal, "hard-deletes the tombstone rows so they don't accumulate
+// indefinitely", was defeated by any gap longer than its look-back.
+//
+// The reclaim below therefore uses an ABSOLUTE predicate — every tombstone
+// older than this bound, however long it has been there — so a missed sweep
+// delays reclamation instead of forfeiting it.
+//
+// The bound is an age FLOOR, well past CORRECTION_SWEEP_WINDOW_MS, so reclaim
+// can never race the eviction signal: by the time a row qualifies, every
+// instance has had twenty-four hours of sweeps in which to see it, and any
+// instance that still missed it is covered by `evictIfDbCorrected` on the read
+// path. Reclaiming is safe for correctness in any case — `readDbCache` and
+// `evictIfDbCorrected` both treat a tombstoned row and an absent row
+// identically — so the floor protects propagation, not correctness.
+const TOMBSTONE_RECLAIM_AFTER_MS = 24 * 60 * 60 * 1_000;
+
 async function runCorrectionSweep(): Promise<void> {
   const sc = dbClient();
   if (!sc) return;
@@ -135,6 +167,34 @@ async function runCorrectionSweep(): Promise<void> {
     // Best-effort — transient DB errors never abort the sweep, but they must
     // be visible to operators.
     logEvent("stamp.country_geocode.sweep_pass2_error", { error: e?.message ?? String(e) });
+  }
+
+  // Pass 3 — reclaim aged tombstones.
+  //
+  // Pass 2 deletes the tombstones it evicted, which covers the rows it could
+  // see. This pass covers the rows it could NOT see: anything whose deleted_at
+  // fell outside the look-back because no sweep ran while it was inside.
+  // Absolute predicate, so a gap of any length only postpones the reclaim.
+  // No in-memory eviction here — a tombstone this old has either already been
+  // evicted by pass 2, or its city has not been geocoded for a day and holds no
+  // warm entry to evict.
+  try {
+    const reclaimBefore = new Date(Date.now() - TOMBSTONE_RECLAIM_AFTER_MS).toISOString();
+    const { data: reclaimed, error: reclaimErr } = await sc
+      .from(DB_CACHE_TABLE)
+      .delete()
+      .lt("deleted_at", reclaimBefore)
+      .not("deleted_at", "is", null)
+      .select("city_key");
+    if (reclaimErr) {
+      logEvent("stamp.country_geocode.sweep_reclaim_error", { error: reclaimErr.message });
+    } else if (reclaimed && (reclaimed as any[]).length > 0) {
+      logEvent("stamp.country_geocode.sweep_tombstones_reclaimed", {
+        count: (reclaimed as any[]).length,
+      });
+    }
+  } catch (e: any) {
+    logEvent("stamp.country_geocode.sweep_reclaim_error", { error: e?.message ?? String(e) });
   }
 }
 

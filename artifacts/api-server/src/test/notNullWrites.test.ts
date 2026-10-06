@@ -447,6 +447,56 @@ describe("evaluate() — the guard honours migrations, not just the baseline", (
 // COPIES the real script files and lets their own `import.meta.url` resolve
 // into the fixture, so what runs is the shipped entry point, byte for byte,
 // read fresh from disk on every run.
+//
+// ── THESE SIX ASSERTED NOTHING UNTIL 2026-10-04, AND WHY IT WAS INVISIBLE ───
+// Two separate causes had to be removed before any of them measured the guard,
+// and PR #601 removed both — the `package.json` in `fixture()` below, and
+// `realpathSync` on BOTH sides of the entry-point comparison in
+// `src/scripts/checkNotNullWrites.ts`. Fixing it in the guard rather than here
+// is the right place: `resolve(process.argv[1])` against a symlink-resolved
+// `import.meta.url` was fragile for ANY caller invoking the guard through a
+// symlinked path, not only for this fixture.
+//
+// THE SHAPE IS WORTH REMEMBERING. Neither cause made these cases fail
+// honestly. The module-format one crashed the subprocess; the symlink one made
+// it exit 0 having printed nothing — and exit 0 is what three of the six cases
+// assert. A case checking only the exit code would have passed against a guard
+// that never executed a line. That is what `runGuard`'s canary below now
+// refuses, and it is deliberately NOT a second realpath here: if the guard's
+// own realpath is ever reverted, these six must go RED rather than be rescued
+// by the fixture.
+//
+// ── AND THE SIX ARE FALSIFIABLE, MEASURED RATHER THAN ASSUMED ───────────────
+// .agents/memory/prove-the-test-fails-before-trusting-it.md. Repairing a
+// fixture does not establish that what it now runs is checked, so each
+// mutation below was applied to `src/scripts/checkNotNullWrites.ts` alone, this
+// block re-run, and the guard restored:
+//
+//   M1a  delete the refusal (`if (files.length < 100)` → `if (false)`)
+//          → kills "REFUSES, exit 1, …"
+//   M1b  loosen the boundary (`< 100` → `<= 100`)
+//          → kills "does NOT refuse at exactly 100 …"
+//   M2   main() ignores the overrides it computed
+//        (`evaluate(writes, baselineSql, overrides)` → empty override maps)
+//          → kills BOTH "exits 0 … a MIGRATION dropped NOT NULL from" and
+//            "exits 1 … a migration SET NOT NULL". This is hole 2, and it is
+//            the mutation the whole block exists for.
+//   M3   drop the unverifiable count from the stdout summary
+//          → kills "PRINTS the unverifiable count …"
+//   M4   report every nulled column (`w.nulled.filter(c => nn.has(c))`
+//        → `w.nulled`)
+//          → kills "the same write passes when NO migration tightens the
+//            column", plus three others
+//   M5   revert #601's entry-point repair (drop `realpathSync` from BOTH sides
+//        of the comparison at the foot of checkNotNullWrites.ts)
+//          → takes ALL SIX red, and `runGuard`'s canary names the cause in the
+//            first assertion rather than leaving six assorted failures to be
+//            decoded. This is what makes that repair falsifiable from here.
+//
+// M1a-M4 are each killed by at least one case and no single mutation kills all
+// six, so none of them is merely asserting that the guard runs. M5 is the
+// exception and deliberately so: it removes the guard's ability to run at all,
+// which is precisely the condition the canary exists to report.
 describe("the guard SCRIPT — main() honours migrations, and refuses when it cannot read them", () => {
   const REAL_SCRIPTS = resolve(__dir, "../scripts");
 
@@ -475,6 +525,15 @@ describe("the guard SCRIPT — main() honours migrations, and refuses when it ca
     for (const f of ["checkNotNullWrites.ts", "parseBaselineSchema.ts"]) {
       copyFileSync(join(REAL_SCRIPTS, f), join(root, "src/scripts", f));
     }
+    // The copied guard imports "./parseBaselineSchema.js", which only resolves to
+    // the .ts beside it when node treats the tree as ESM. Node decides that by
+    // walking UP for a package.json, and this tree is under $TMPDIR — so what it
+    // finds depends on where $TMPDIR happens to be. On CI that resolves; on macOS
+    // ($TMPDIR = /var/folders/...) nothing above it declares a type, node falls
+    // back to CJS, and the require fails with MODULE_NOT_FOUND — six cases red for
+    // a reason that has nothing to do with the guard. Declare it here so the tree
+    // carries its own answer and the test means the same thing everywhere.
+    writeFileSync(join(root, "package.json"), JSON.stringify({ type: "module" }));
     writeFileSync(join(root, "baseline/20260819_baseline_structure.sql"), FIXTURE_BASELINE);
     writeFileSync(join(root, "src/routes/w.ts"), opts.source);
     for (const m of opts.migrations) {
@@ -491,13 +550,42 @@ describe("the guard SCRIPT — main() honours migrations, and refuses when it ca
     }));
   }
 
+  /**
+   * Spawn the copied guard — and REFUSE to return a result that cannot be an
+   * answer from it.
+   *
+   * This is the generalisation of the two defects PR #601 fixed, and it is here
+   * because of HOW they hid rather than what they were. A broken fixture does
+   * not make these cases fail honestly: it produces `status: 0, stdout: ""`,
+   * and three of the six cases below assert `status === 0`. Both causes were
+   * environment-dependent, so the same silence can arrive from an environment
+   * nobody has run this in yet — a different `$TMPDIR`, a loader change, a
+   * future entry-point check. This turns it into a named failure instead of six
+   * quiet passes.
+   *
+   * The guard prints its summary line on every path it can reach — the refusal
+   * and the no-writes case both print before exiting — so "no output at all" is
+   * never a legitimate result, whatever the exit code.
+   */
   function runGuard(root: string) {
     const r = spawnSync(
       process.execPath,
       ["--import", "tsx/esm", join(root, "src/scripts/checkNotNullWrites.ts")],
       { encoding: "utf8", cwd: resolve(__dir, "../..") },
     );
-    return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+    const out = { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+
+    assert.ok(
+      out.stdout.trim() !== "" || out.stderr.trim() !== "",
+      "FIXTURE IS BROKEN, or the guard no longer recognises itself as the entry " +
+      `point: the spawned guard produced no output on either stream (exit ${out.status}). ` +
+      "It never reached main(), so every assertion below would be vacuous. Check " +
+      "that checkNotNullWrites.ts still compares REAL paths in its entry-point " +
+      "test, and that this fixture still writes a package.json declaring " +
+      `"type": "module". Root: ${root}`,
+    );
+
+    return out;
   }
 
   function withFixture(opts: Parameters<typeof fixture>[0], fn: (r: ReturnType<typeof runGuard>) => void) {

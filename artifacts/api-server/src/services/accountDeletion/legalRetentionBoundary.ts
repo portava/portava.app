@@ -16,6 +16,7 @@
  * it is doing so and who authorised it.
  */
 import type { DeletionGraphNode } from "../../lib/deletion/types.js";
+import { AWAITING_OWNER_DECISION } from "../../lib/deletionDispositions.js";
 import type { PolicyFate, PolicyEntry } from "./policy.js";
 
 export interface BoundaryViolation {
@@ -37,6 +38,7 @@ export interface BoundaryViolation {
 export const BOUNDARY_RULES = {
   DELETION_RECEIPT: "a deletion's own receipt cannot be erased by that deletion",
   DECIDED_RETENTION: "a table already RETAINED_WITH_REASON cannot be erased without withdrawing the written reason",
+  OPEN_OWNER_DECISION: "a table whose fate is an open owner decision cannot be given one by a deletion plan",
   RETENTION_SIGNAL: "erasing financial / safety / legal-evidence rows requires an explicit overridesRetentionSignal acknowledgement",
   GUARDED_APPEND_ONLY: "an append-only table cannot be deleted outside a declared erasure",
 } as const;
@@ -64,6 +66,20 @@ export function checkBoundary(
     out.push({
       table: node.table, fate, source, rule: BOUNDARY_RULES.DECIDED_RETENTION,
       detail: "the manifest carries a written retention reason for this table; changing its fate means withdrawing that reason in the same change",
+    });
+  }
+
+  // EVERY fate is a violation here, including RETAIN. The point of the bucket is
+  // that the choice is the owner's: a plan that retains these rows has answered
+  // C-11 with "retain" just as surely as one that deletes them, and without the
+  // retention period and pseudonymisation that answer actually carries.
+  if (node.statedFate === "AWAITING_OWNER_DECISION") {
+    const d = AWAITING_OWNER_DECISION.find((x) => x.table === node.table);
+    out.push({
+      table: node.table, fate, source, rule: BOUNDARY_RULES.OPEN_OWNER_DECISION,
+      detail:
+        `a deletion plan cannot assign ${fate} here: the fate is a named open owner decision, and the schema refuses the DELETE until it is answered. ` +
+        `${d?.decision ?? ""} Answer the decision and move the table to the bucket the answer implies, in the change that implements it.`,
     });
   }
 

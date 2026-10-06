@@ -88,12 +88,12 @@
 | Measure | Value |
 | --- | --- |
 | **Denominator (testable requirements)** | **293** |
-| BUILT-AND-CORRECT | 235 | 237 | **238** |
-| BUILT-BUT-WRONG | 48 | 46 | **45** |
+| BUILT-AND-CORRECT | 235 | 237 | 238 | **239** |
+| BUILT-BUT-WRONG | 48 | 46 | 45 | **44** |
 | NOT-BUILT | **5** |
 | CANNOT-VERIFY | **5** |
-| **CONSTRUCTED%** = (238+45)/293 | **283 / 293 = 96.6 %** |
-| **CORRECT%** (raw) = 238/293 | **81.2 %** |
+| **CONSTRUCTED%** = (239+44)/293 | **283 / 293 = 96.6 %** |
+| **CORRECT%** (raw) = 239/293 | **81.6 %** |
 | **CORRECT% (spec-attributable)** = 226/293 | **77.1 %** |
 | CANNOT-VERIFY share | **5 / 293 = 1.7 %** |
 
@@ -101,6 +101,11 @@
 being built and executed. CONSTRUCTED% does not move, and that is the point —
 these were BUILT-BUT-WRONG rows, so closing them is a pure CORRECT% gain. §40
 records the moves, the mutations, and what was left alone.*
+
+*The last column is the 2026-10-05 pass: M43 moved W→C (§47). It was built on
+2026-09-20 and deliberately not regraded then; §47 is the grading pass that was
+owed. CONSTRUCTED% does not move. The spec-attributable figure on the line below
+is NOT recomputed by §47 and still reads as it did before this pass.*
 
 ### The attribution finding, stated first because it is the one that differs
 
@@ -700,7 +705,7 @@ The persistent rail is M17. The seven long-press actions:
 | M198 | Hidden Gems | C | `mapSearchModel.ts:47`; `searchAdapter.ts:73`. |
 | M199 | Areas | C | `mapSearchModel.ts:48`; `searchAdapter.ts:79-80` (`cities`, `countries`). |
 | M200 | Hashtags | C | `mapSearchModel.ts:49`; `searchAdapter.ts:74`. |
-| M201 | Saved items | C | **Moved W→C 2026-09-13.** The row's finding was right: the client carried the whole branch (`mapSearchModel.ts:50`, `:144-148`, `:64`) and the server had no type that could reach it. It has one now — `` `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:101#saved` `` is wire vocabulary, produced by `` `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:1290#async function searchSaved(` `` over the two tables saves actually land in (`wishlist_places` + `discovery_place_saves`, as `savedPlaceProducer` reads them after #446), dispatched at `` `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:2352#case "saved":` ``. The adapter's `saved` key moved out of the tolerated-alias block into the wire table (`` `travel-buddy-standalone/src/features/map/search/searchAdapter.ts:84#saved:` ``) and `savedKind` is now read from the wire rather than hard-coded (`` `travel-buddy-standalone/src/features/map/search/searchAdapter.ts:261#export function savedKindFromMetadata` ``). The map asks for it: `` `travel-buddy-standalone/src/components/map/MapSearchSheet.tsx:187#requestMapSearchPage(q,` (repointed by census-discovery §80.8: the sheet's two `searchUnified` calls became one gateway request) ``. Executed: `` `artifacts/api-server/src/test/mapSearchSavedItems.test.ts:168#it("dispatchSearch has a` `` (15 cases; deleting the dispatch case reddens 9, dropping either save table reddens 6). **Not in the `all` fan-out** — see the owner decision in §40. |
+| M201 | Saved items | C | **Moved W→C 2026-09-13.** The row's finding was right: the client carried the whole branch (`mapSearchModel.ts:50`, `:144-148`, `:64`) and the server had no type that could reach it. It has one now — `` `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:108#saved` `` is wire vocabulary, produced by `` `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:1315#async function searchSaved(` `` over the two tables saves actually land in (`wishlist_places` + `discovery_place_saves`, as `savedPlaceProducer` reads them after #446), dispatched at `` `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:2377#case "saved":` ``. The adapter's `saved` key moved out of the tolerated-alias block into the wire table (`` `travel-buddy-standalone/src/features/map/search/searchAdapter.ts:84#saved:` ``) and `savedKind` is now read from the wire rather than hard-coded (`` `travel-buddy-standalone/src/features/map/search/searchAdapter.ts:261#export function savedKindFromMetadata` ``). The map asks for it: `` `travel-buddy-standalone/src/components/map/MapSearchSheet.tsx:187#requestMapSearchPage(q,` (repointed by census-discovery §80.8: the sheet's two `searchUnified` calls became one gateway request) ``. Executed: `` `artifacts/api-server/src/test/mapSearchSavedItems.test.ts:168#it("dispatchSearch has a` `` (15 cases; deleting the dispatch case reddens 9, dropping either save table reddens 6). **Not in the `all` fan-out** — see the owner decision in §40. |
 | M202 | Geographic results centre or frame the relevant map object | C | `mapSearchModel.ts:218` — bounds used where known; `:265-267` a saved area frames as `FOCUS_AREA`, a saved trip as `FOCUS_TRIP`; `:307-309` a saved item inherits the geography of what it saved. `searchAdapter.ts:19` refuses to fall back to the user's position because that "pretends the result is where they are". |
 
 ### §28 Offline and Degraded Mode (8)
@@ -1159,7 +1164,7 @@ both are work to commission.
 ### An owner decision this pass surfaced and did NOT take
 
 `saved` is deliberately **absent from the server's `type=all` fan-out**
-(`` `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:2383#// 17 of the 18 non-"all" types run in parallel at FAN_LIMIT items each.` ``).
+(`` `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:2408#// 17 of the 18 non-"all" types run in parallel at FAN_LIMIT items each.` ``).
 It is the only viewer-scoped search type — a person's own saves, not a public
 corpus — and that fan-out feeds the app's ONE global search as well as the
 map's. Folding a private, always-matching bucket into "All" would change what
@@ -2421,7 +2426,7 @@ every `src/test/db` suite).
 
 - **It applies each migration the way the runner does.** It uses the runner's
   own classifier and its own statement,
-  `` `scripts/src/apply-migrations.ts:984#export function buildApplyStatement(args: {` ``,
+  `` `scripts/src/apply-migrations.ts:1253#export function buildApplyStatement(args: {` ``,
   so the body and its ledger row are one transaction:
   `` `artifacts/api-server/src/test/db/intelEvidenceSealedReference.db.test.ts:92#function runnerApply(filename: string, sql: string)` ``.
 - **The CHECK** refuses a new plaintext photo or video reference. It admits a
@@ -2880,3 +2885,110 @@ touched.
 - NOT-GRADED: travel-buddy-standalone/src/services/__tests__/mapCompassCommands.component.test.ts — §46.2's suite for the handler; no verdict rests on it
 - NOT-GRADED: travel-buddy-standalone/src/components/circle/__tests__/CheckInActions.needHelp.component.test.tsx — §46.3's suite for the button; no verdict rests on it
 - NOT-GRADED: artifacts/api-server/src/test/circleNeedHelpAlertSilence.test.ts — named in §46.5 only because it quotes the route's untrue success message; no Map verdict rests on it
+
+---
+
+## §47 — 2026-10-05: three rows this census called code, re-read against `main` (integration lead)
+
+*Measured at `origin/main` = `2e4683526`. One test file is added by this pass
+and nothing else in the tree changes. `head_commit` is not re-declared.*
+
+§41.4 and §42.3 left three rows described as open defects in code: M43, M263 and
+M123. All three descriptions are now out of date, in three different ways. One
+row moves. Two do not, and the reason each stays W is corrected.
+
+### 47.1 M43 — the viewer's own position is drawn, and the grading pass that was owed is this one
+
+The build landed on 2026-09-20. `CENSUS_STALENESS_ACKNOWLEDGED.json` records it
+and says in terms that it *"deliberately does not take that move"*, because
+*"regrading M43 needs its full acceptance criteria read against a real user
+flow, which is a measuring act and belongs in a grading pass"*. No pass took it,
+so for fifteen days this census has said "nothing renders the user's own
+position on the canvas" about a canvas that does.
+
+The row's criterion is its own **Turns red when**: *a component test mounts the
+real map canvas with a viewer position and finds a user-position node in the
+tree*, with the stated trap being a marker that only mounts when other objects
+do. Read against the whole path, three links:
+
+1. **The screen gives the canvas the live fix.** The position is the device's
+   location, null without one (`travel-buddy-standalone/app/map/index.tsx:857#const userLat = locationState.coords?.lat ?? null;`),
+   the canvas the screen mounts is the one under test
+   (`travel-buddy-standalone/app/map/index.tsx:2556#const MapComponent = DiscoveryMapView!;`), and both
+   coordinates are passed to that element (`travel-buddy-standalone/app/map/index.tsx:2570#userLat={userLat}`).
+   **This link had no test.** It has one now:
+   `travel-buddy-standalone/src/components/map/__tests__/userPositionWiring.test.ts:88#test('both coordinates are passed to the canvas element itself'`.
+2. **The canvas mounts the marker unconditionally**
+   (`travel-buddy-standalone/src/components/discovery/DiscoveryMapView.tsx:678#<UserPositionMarker lat={userLat} lng={userLng} />`),
+   outside every entity and place branch.
+3. **The marker draws, and fails closed** on a missing or degenerate position
+   (`travel-buddy-standalone/src/components/map/UserPositionMarker.tsx:138#export function UserPositionMarker`).
+
+**Executed on this tree, not quoted from the build.** The canvas suite and the
+marker suite: 2 suites, 17 tests, all passing — including the row's own case,
+`travel-buddy-standalone/src/components/map/__tests__/DiscoveryMapView.userPosition.component.test.tsx:120#it('draws the viewer with no entities and no places on the map at all'`.
+The new wiring suite: 4 of 4.
+
+**Mutations, each seen red, every file restored byte-identical:**
+
+| mutation | result |
+| --- | --- |
+| the canvas no longer mounts the marker | canvas suite: 2 failed, 1 passed |
+| the screen stops passing the latitude to the canvas | wiring suite: 1 failed |
+| the position is taken from the fallback city, not the live fix | wiring suite: 1 failed |
+| the canvas is handed the camera centre as the viewer | wiring suite: 2 failed |
+
+**What C does NOT claim here.** No frame was captured on a device: that the dot
+is the right size, colour and z-order on a handset is M254–M258's kind of
+question and stays with them. And the dot is only drawn for a viewer who has
+granted location; a viewer who has not is shown no dot, which is the fail-closed
+half of the same component.
+
+### 47.2 M263 — the payload defect is closed and pinned; the row stays W for its siblings' reason
+
+The row still says *"the emitter exists and its payload is wrong"* and that
+wiring the fix is *"a cross-lane change"*. It was wired on 2026-09-20: the
+emitter hands the panel-derived payload straight through
+(`travel-buddy-standalone/app/map/index.tsx:2876#emitMapEvent('why_shown_opened', whyShownOpenedPayload(obj));`),
+and a test fails if the call site ever restates the rule instead
+(`travel-buddy-standalone/src/features/map/telemetry/__tests__/whyShownOpenedWiring.test.ts:65#test('the emit calls whyShownOpenedPayload'`;
+8 of 8 across the two suites on this tree).
+
+So §42.3's heading — *"the one defect in this census that no deployment fixes"*
+— no longer describes anything. M263 is now exactly what M259–M274 are: a
+correct emitter whose event cannot land, because `map_telemetry_events` does not
+exist in production and `map_telemetry_enabled` is seeded OFF. It stays W for
+that reason and no other.
+
+### 47.3 M123 — its named blocker cleared; what holds it is a flag, not code
+
+§41.6 says M123's blocker *"is M42's writerless-`saved_places` projection, which
+is code"*. M42 has since moved to C: the projector's PLACE lane was repointed at
+the canonical save tables by migrations 2963 and 2965, and M42's row records the
+live proof. PR #451, which this census named as the fix, was closed unmerged;
+2963 is what landed.
+
+M42's row also says what it does not claim, and that sentence is M123's
+blocker now: no memory pin is drawn for a real user in production, because
+`memory_projection` is off there and two functions it needs are absent. That is
+a deployment and a flag. **M123 stays W, and moves from this census's "logic
+wrong in code" group to its "built, gated" group.** §41.3's count of three rows
+with logic wrong in code is therefore **zero** after this section: M42 moved to
+C earlier, M43 moves here, and M123 was never code.
+
+### 47.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| M43 | W | **C** | §47.1. Built 2026-09-20 and not regraded then. The row's own criterion — the real canvas, a viewer position, a user-position node, on an empty map — is executed on this tree and mutation-proven, and the one untested link (the screen handing the live fix to the canvas) is now pinned by `travel-buddy-standalone/src/components/map/__tests__/userPositionWiring.test.ts:75#test('the position is the device live fix, not the camera or a fallback'`. Not claimed: any on-device rendering property. |
+| M263 | W | **W** | §47.2. Verdict unchanged, reason corrected: the payload defect is closed and pinned. It stays W because its event cannot land — the same production table and flag that hold M259–M274. |
+| M123 | W | **W** | §47.3. Verdict unchanged, reason corrected: its named code blocker (M42) is cleared. It stays W on `memory_projection` being off in production. |
+
+### 47.5 Checks
+
+`check:census-integrity`, `check:census-freshness`, `check:census-scope-coverage`,
+`check:doc-citations`, `check:citation-targets`, `check:citation-symbols` and
+`check:census-policy-citations` were run on this tree after this section was
+written. The new test file is inside this census's watched paths, so
+`CENSUS_STALENESS_ACKNOWLEDGED.json` names it, with the argument that it is
+evidence for the regrade this section takes.

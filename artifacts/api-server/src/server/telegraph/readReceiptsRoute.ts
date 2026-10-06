@@ -43,6 +43,11 @@ import { asyncHandler } from "../../lib/asyncHandler.js";
 import { historyBoundEnabled, membershipSelect, visibleFromOf } from "../../services/groupChatHistoryBound.js";
 import { resolveConversationCapabilities } from "../../domain/telegraph/policies/conversationCapabilityPolicy.js";
 import { redactForWire } from "../../domain/telegraph/contracts/telegraphReasonCodes.js";
+import {
+  LARGE_GROUP_SEEN_SAMPLE,
+  strategyFor,
+  transportClassFor,
+} from "../../domain/telegraph/policies/transportClass.js";
 
 const router = Router();
 
@@ -121,7 +126,26 @@ router.get(
       return { userId: String(r.user_id), lastReadAt, clamped: lastReadAt !== raw };
     });
 
-    res.status(200).json({ conversationId: threadId, receipts });
+    // §30A.12 (census T415/T416): per-recipient Seen is a SMALL-group strategy.
+    // A LARGE_GROUP gets exact counts and a bounded sample of the most recent
+    // readers, never the whole roster's read positions.
+    const transportClass = transportClassFor({ threadType: caps.conversationType, activeMembers: receipts.length });
+    if (strategyFor(transportClass, receipts.length).seen === "count_with_sample") {
+      const readers = receipts
+        .filter((r) => r.lastReadAt !== null)
+        .sort((a, b) => Date.parse(b.lastReadAt as string) - Date.parse(a.lastReadAt as string));
+      res.status(200).json({
+        conversationId: threadId,
+        transportClass,
+        receipts: readers.slice(0, LARGE_GROUP_SEEN_SAMPLE),
+        sampled: true,
+        memberCount: receipts.length,
+        readerCount: readers.length,
+      });
+      return;
+    }
+
+    res.status(200).json({ conversationId: threadId, transportClass, receipts });
   }),
 );
 
