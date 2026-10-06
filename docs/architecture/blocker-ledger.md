@@ -191,7 +191,7 @@ was **left exactly as it is**.
 
 Note the contrast that makes this a real choice rather than an oversight: the
 meeting-point producer *does* drop cancelled items
-(`meetingPointProducer.ts:153`, `:287`, `:331`). So the codebase already
+(`meetingPointProducer.ts:153`, `:289`, `:333`). So the codebase already
 contains both answers, applied to different surfaces. Which one a **trip** should
 follow is a product judgement:
 
