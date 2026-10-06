@@ -58,6 +58,13 @@ export interface TripPlanItemProjection {
   title: string | null;
   creatorId: string | null;
   createdAt: string | null;
+  /**
+   * census-trips §81 / lead ruling D-65: whether the item is a private (owner-only)
+   * place, as stored; null when the row did not say, which every consumer must
+   * read as private. Carried so a consumer that searches without naming its
+   * viewer can apply the owner-only rule itself (lib/inputAssistance/searchCandidates.ts).
+   */
+  locationIsPrivate: boolean | null;
 }
 
 export type TripPlanItemProjectionResult =
@@ -73,7 +80,11 @@ export interface TripPlanItemSearchQuery {
   pattern: string;
   offset: number;
   limit: number;
-  /** census-trips §81: the searcher. Another member's private item never matches on its (withheld) title; absent = no private item matches. */
+  /**
+   * census-trips §81: the searcher. Named, another member's private item never
+   * matches on its (withheld) title. Absent, every match is returned WITH
+   * `locationIsPrivate`, and the consumer applies the owner-only rule.
+   */
   viewerId?: string | null;
 }
 
@@ -94,7 +105,8 @@ export async function searchTripPlanItemProjections(sc: any, q: TripPlanItemSear
     if (error) return { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", detail: String(error.message ?? error) };
     // census-trips §81: a private item's title is its owner's — it is not searchable by anyone else (grants
     // give sight on the trip's own surfaces, not a search index).
-    const rows: any[] = (Array.isArray(data) ? data : []).filter((r: any) => r.location_is_private === false || (typeof q.viewerId === "string" && r.creator_id === q.viewerId));
+    const all: any[] = Array.isArray(data) ? data : [];
+    const rows: any[] = typeof q.viewerId === "string" ? all.filter((r: any) => r.location_is_private === false || r.creator_id === q.viewerId) : all;
     return {
       ok: true, generatedAt, freshness: "live",
       items: rows.map((r): TripPlanItemProjection => ({
@@ -104,6 +116,7 @@ export async function searchTripPlanItemProjections(sc: any, q: TripPlanItemSear
         title: typeof r.title === "string" ? r.title : null,
         creatorId: typeof r.creator_id === "string" ? r.creator_id : null,
         createdAt: typeof r.created_at === "string" ? r.created_at : null,
+        locationIsPrivate: typeof r.location_is_private === "boolean" ? r.location_is_private : null,
       })),
     };
   } catch (e) {

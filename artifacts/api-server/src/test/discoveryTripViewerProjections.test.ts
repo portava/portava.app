@@ -193,12 +193,12 @@ describe("V4 — plan-item search: ON equals OFF, and a refusal is the same name
 });
 
 describe("V5 — the plan-item projection carries its fields and nothing else", () => {
-  it("six keys; no notes, cost or any other column", async () => {
+  it("seven keys; no notes, cost or any other column (locationIsPrivate is the one the owner-only rule needs)", async () => {
     const r = await searchTripPlanItemProjections(tracked(planWorld(true)).db, { pattern: "%harbour%", offset: 0, limit: 20 });
     assert.ok(r.ok);
     if (!r.ok) return;
     for (const p of r.items) {
-      assert.deepEqual(Object.keys(p).sort(), ["createdAt", "creatorId", "planItemId", "projectionSchemaVersion", "title", "tripId"]);
+      assert.deepEqual(Object.keys(p).sort(), ["createdAt", "creatorId", "locationIsPrivate", "planItemId", "projectionSchemaVersion", "title", "tripId"]);
     }
     assert.deepEqual(r.items.map((p) => p.planItemId), ["p4", "p2", "p1"], "removed items out, newest first");
   });
