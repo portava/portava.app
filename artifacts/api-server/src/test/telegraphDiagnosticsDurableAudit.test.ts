@@ -15,6 +15,9 @@
  *   - flag OFF (the seed): served with the log line only, no row, exactly as
  *     before 3761 — a database without the value is never asked to store it;
  *   - the purpose gate still runs first: no purpose, no row and no read.
+ *   - (verifier finding 2, 2026-10-05) the FLAG cannot be read: refused (503)
+ *     whatever the audit table would have done — an unreadable stricter-path
+ *     flag used to read as OFF and serve with no durable row.
  *
  * SHOWN RED (T2 lane report): the insert's error branch dropped turns the
  * refusal case red; the insert removed turns the row case red.
@@ -91,6 +94,32 @@ describe("§30A.17 — the durable audit of the support tooling (T435)", () => {
     const c = use(seed(true));
     const r = await read(null);
     assert.equal(r.status, 400);
+    assert.equal(auditRows(c).length, 0);
+  });
+});
+
+describe("verifier finding 2 — the durable-audit flag itself cannot be read", () => {
+  const flagsDown = { message: "flags unreadable", code: "57014", ops: ["select" as const] };
+
+  it("flag row ON, the flag read fails, the audit insert would fail too: REFUSED, nothing served, no row attempted", async () => {
+    // The verifier's reproduction: before the fix this answered 200 with the
+    // SLOs and made 0 audit inserts.
+    const c = use(seed(true), { errors: {
+      feature_flags: flagsDown,
+      admin_access_log: { message: "audit table down", code: "57014", ops: ["insert"] },
+    } });
+    const r = await read(PURPOSE);
+    assert.equal(r.status, 503);
+    const body = (await r.json()) as Record<string, unknown>;
+    assert.equal(body.error, "degraded_unavailable");
+    assert.equal("slos" in body, false, "diagnostics served on an unreadable audit flag");
+    assert.equal(auditRows(c).length, 0);
+  });
+
+  it("the flag read fails even where the row COULD be written: still refused — 'unknown' is not 'on' either", async () => {
+    const c = use(seed(true), { errors: { feature_flags: flagsDown } });
+    const r = await read(PURPOSE);
+    assert.equal(r.status, 503);
     assert.equal(auditRows(c).length, 0);
   });
 });
