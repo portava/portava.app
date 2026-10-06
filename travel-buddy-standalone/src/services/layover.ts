@@ -2566,6 +2566,8 @@ export function setPresenceIntents(
 
 export function clearPresenceIntents(sessionId: string): Promise<PresenceIntentsWrite> {
   return writeIntents(sessionId, { method: 'DELETE' });
+}
+
 // ── PR #624 follow-ups — appended: lines above are cited by line ─────────────
 
 /** `GET /overview`'s `safeEnvelopeGate`. */
