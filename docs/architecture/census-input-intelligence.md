@@ -6174,6 +6174,8 @@ entity row that could be tapped before it was bound. It is ledgered as code.
   `2258_input_selection_history` is in `production-applied-migrations.json`. G85's cell already says so. G75 stays
   `W` for the reason its own ledger entry gives: no recorded selection has been read back on a running deployment.
 
+- NOT-GRADED: artifacts/api-server/src/lib/capability/snapshots/20260922-production-schema.json — §40.2b cites the production capture only to correct G75's stale evidence; the capture is the capability record's artifact, and G75's verdict rests on its own ledger entry, not on this file.
+
 ### 40.3 Headline
 
 No row moves. The headline is §38.4's, unchanged: of 373 rows, 297 BUILT-AND-CORRECT, 52 BUILT-BUT-WRONG,
