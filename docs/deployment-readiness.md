@@ -158,7 +158,7 @@ does any workflow. `docs/migrations.md:137#Nothing` states it outright:
 "Nothing in the merge path applies migrations". So a deploy of this HEAD ships
 code whose migrations may not be on the production database, and the repo's own
 answer to that is `pnpm run check:migration-ledger`
-(`artifacts/api-server/package.json:225#check:migration-ledger`), which needs
+(`artifacts/api-server/package.json:229#check:migration-ledger`), which needs
 database credentials this environment does not have.
 
 ### 1.5 Deployment readiness checklist
