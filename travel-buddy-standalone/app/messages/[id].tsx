@@ -2260,7 +2260,7 @@ export default function TelegraphThread() {
       )}
 
       {/* Typing indicator */}
-      {typingUserIds.length > 0 && (
+      {typingUserIds.length > 0 && dataSaver.mayLoad('typing') && (
         <View style={styles.typingRow}>
           <Text style={styles.typingText}>
             {typingUserIds.length === 1 && dmProfile?.name
@@ -2484,7 +2484,7 @@ export default function TelegraphThread() {
           placeholder={isWaitingForReply ? 'Waiting for reply…' : 'Write a Telegraph…'}
           placeholderTextColor={color.faint}
           value={input}
-          onChangeText={(text) => { setInput(text); notifyTyping(text.trim().length > 0); }}
+          onChangeText={(text) => { setInput(text); notifyTyping(text.trim().length > 0 && dataSaver.mayLoad('typing')); }}
           onBlur={() => notifyTyping(false)}
           onSubmitEditing={handleSend}
           returnKeyType="send"

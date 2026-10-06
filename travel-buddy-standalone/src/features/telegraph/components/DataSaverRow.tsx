@@ -48,8 +48,8 @@ export function DataSaverRow({ state }: DataSaverRowProps) {
         {ds.automaticCause ? (
           <Text style={s.hint} testID="data-saver-automatic">
             {ds.automaticCause === 'slow_responses'
-              ? 'On automatically while your connection is slow.'
-              : 'On automatically while your connection is unreliable.'}
+              ? 'On automatically: Portava has been slow to respond.'
+              : 'On automatically: Portava has not been answering reliably.'}
           </Text>
         ) : null}
       </View>

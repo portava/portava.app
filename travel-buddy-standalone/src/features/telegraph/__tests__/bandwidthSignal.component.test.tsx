@@ -183,6 +183,17 @@ describe('the ladder sheds on the MEASURED signal without touching the setting',
     noteSlow(MIN_SAMPLES);
     await render(<DataSaverRow />);
     expect(await screen.findByTestId('data-saver-automatic')).toBeTruthy();
-    expect(screen.getByText('On automatically while your connection is slow.')).toBeTruthy();
+    // Verifier F4: what the app OBSERVED (its own API answering slowly) — not a
+    // claim about the person's connection, which the signal cannot see.
+    expect(screen.getByText('On automatically: Portava has been slow to respond.')).toBeTruthy();
+    expect(screen.queryByText(/your connection/i)).toBeNull();
+  });
+
+  it('VERIFIER F4: typing indicators and typing notifications follow the ladder on the conversation screen', () => {
+    const { readFileSync } = require('node:fs');
+    const { join } = require('node:path');
+    const dm: string = readFileSync(join(__dirname, '../../../../app/messages/[id].tsx'), 'utf8');
+    expect(dm).toContain("{typingUserIds.length > 0 && dataSaver.mayLoad('typing') && (");
+    expect(dm).toContain("notifyTyping(text.trim().length > 0 && dataSaver.mayLoad('typing'));");
   });
 });
