@@ -30,18 +30,31 @@ jest.mock('../../../../platform/input-assistance/components/SmartInput.tsx', () 
   };
 });
 
+// NOTE: intentionally exhaustive — the provider fetches GET /api/feature-flags;
+// the microphone reads only `isEnabled('wall_enabled')`, and the stand-in
+// answers from the set below so each test chooses the Wall flag.
+const mockFlags = { on: new Set<string>(['wall_enabled']) };
+jest.mock('../../../../context/FeatureFlagsContext', () => ({
+  useFeatureFlags: () => ({ isEnabled: (k: string) => mockFlags.on.has(k), isLivePlacesEnabled: () => false, loading: false }),
+}));
+
 import { WallHeader } from '../WallHeader.tsx';
+import { WALL_PTT_UNAVAILABLE } from '../WallPushToTalk.tsx';
 import type { SpeechRecognizerPort } from '../../../../platform/input-assistance/voice/speechRecognizer.ts';
 
 interface FakeRecognizer extends SpeechRecognizerPort {
   sessions: Array<{ aborted: boolean }>;
+  readonly onDeviceOnly?: true;
 }
 
 /** Listens until aborted (a hold), then answers `heard` as the final transcript. */
-function holdingRecognizer(heard: string, opts: { available?: boolean; fail?: boolean } = {}): FakeRecognizer {
+function holdingRecognizer(heard: string, opts: { available?: boolean; fail?: boolean; onDevice?: boolean } = {}): FakeRecognizer {
   const sessions: Array<{ aborted: boolean }> = [];
   return {
     providerId: 'native-speech',
+    // Declares the guarantee the Wall requires; `onDevice: false` models a
+    // recognizer that may send audio to a server.
+    ...(opts.onDevice === false ? {} : { onDeviceOnly: true as const }),
     sessions,
     async isAvailable() { return opts.available !== false; },
     recognizeOnce({ signal } = {}) {
@@ -67,6 +80,8 @@ const ptt = () => screen.getByTestId('wall-ptt');
 async function settle() {
   await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 }
+
+beforeEach(() => { mockFlags.on = new Set(['wall_enabled']); });
 
 describe('W71 — the Wall microphone is push-to-talk, on the shared engine', () => {
   it('holding listens; releasing stops it, and the words land in the steer field as if typed — NOT submitted', async () => {
@@ -118,8 +133,9 @@ describe('W71 — the Wall microphone is push-to-talk, on the shared engine', ()
     let releaseAvailability!: () => void;
     const gate = new Promise<void>((r) => { releaseAvailability = r; });
     const started: string[] = [];
-    const rec: SpeechRecognizerPort = {
+    const rec: SpeechRecognizerPort & { onDeviceOnly: true } = {
       providerId: 'native-speech',
+      onDeviceOnly: true,
       async isAvailable() { await gate; return true; },
       recognizeOnce({ signal } = {}) {
         started.push('start');
@@ -152,7 +168,7 @@ describe('W71 — the Wall microphone is push-to-talk, on the shared engine', ()
     await act(async () => { await fireEvent(ptt(), 'pressIn'); });
     await settle();
     expect(rec.sessions).toHaveLength(0);
-    expect(screen.getByTestId('wall-ptt-status').props.children).toMatch(/isn’t available/);
+    expect(screen.getByTestId('wall-ptt-status').props.children).toBe(WALL_PTT_UNAVAILABLE);
     expect(field().props.value).toBe('');
   });
 
@@ -182,6 +198,71 @@ describe('W71 — the Wall microphone is push-to-talk, on the shared engine', ()
     await settle();
     expect(ptt().props.accessibilityLabel).toBe('Hold to talk');
     expect(ptt().props.accessibilityHint).toMatch(/hold to speak, release to stop/i);
+    expect(ptt().props.accessibilityHint).toMatch(/on this device/);
+  });
+});
+
+// ── Verifier finding 1 (2026-10-06): on-device or not at all, and behind the Wall flag ──
+describe('W71 — the Wall never sends a voice off the device, and is dark when the Wall is', () => {
+  afterEach(() => { delete (globalThis as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition; });
+
+  it('on a WEB build with the browser recognizer present, nothing is started and it says why', async () => {
+    // What the shared resolver falls back to on react-native-web: the Web
+    // Speech API, which may process audio on the browser vendor's servers.
+    const constructed: string[] = [];
+    class FakeWebSpeech {
+      lang = ''; interimResults = false; continuous = false; maxAlternatives = 1;
+      onresult = null; onerror = null; onend = null;
+      constructor() { constructed.push('new'); }
+      start() { constructed.push('start'); }
+      stop() { constructed.push('stop'); }
+      abort() { constructed.push('abort'); }
+    }
+    (globalThis as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition = FakeWebSpeech;
+
+    await render(<WallHeader />);
+    await settle();
+    expect(ptt().props.accessibilityLabel).toBe('Voice input unavailable');
+    expect(ptt().props.accessibilityHint).toBeUndefined();
+
+    await act(async () => { await fireEvent(ptt(), 'pressIn'); });
+    await act(async () => { await fireEvent(ptt(), 'pressOut'); });
+    await settle();
+    expect(constructed).toEqual([]);
+    expect(screen.getByTestId('wall-ptt-status').props.children).toBe(WALL_PTT_UNAVAILABLE);
+    expect(field().props.value).toBe('');
+  });
+
+  it('a recognizer that does not declare on-device processing is never started, even if it says it is available', async () => {
+    const rec = holdingRecognizer('sent to a server', { onDevice: false });
+    await render(<WallHeader voiceRecognizer={rec} />);
+    await settle();
+    await act(async () => { await fireEvent(ptt(), 'pressIn'); });
+    await act(async () => { await fireEvent(ptt(), 'pressOut'); });
+    await settle();
+    expect(rec.sessions).toHaveLength(0);
+    expect(field().props.value).toBe('');
+  });
+
+  it('with wall_enabled off (or not yet loaded) there is no microphone at all', async () => {
+    mockFlags.on = new Set();
+    const rec = holdingRecognizer('x');
+    await render(<WallHeader voiceRecognizer={rec} />);
+    await settle();
+    expect(screen.queryByTestId('wall-ptt')).toBeNull();
+    // The steer bar itself is unchanged.
+    expect(field()).toBeTruthy();
+  });
+
+  it('the on-device hint is not shown while availability is still being checked', async () => {
+    let release!: () => void;
+    const pending = new Promise<void>((r) => { release = r; });
+    const rec = holdingRecognizer('x');
+    rec.isAvailable = async () => { await pending; return true; };
+    await render(<WallHeader voiceRecognizer={rec} />);
+    expect(ptt().props.accessibilityHint).toBeUndefined();
+    await act(async () => { release(); });
+    await settle();
     expect(ptt().props.accessibilityHint).toMatch(/on this device/);
   });
 });
