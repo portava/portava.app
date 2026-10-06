@@ -1143,7 +1143,7 @@ part is genuinely new; the existing row is re-graded and a row is added for the 
 | `CPV2-05` Home uses a server-built current-context projection | **DUPLICATE** | `CX-06` | **`CX-06` RE-GRADED `C` → `W`** (§13.4). Deliberately mapped onto `CX-06` and not `CPH-10`: the clause's object is the projection, which is `CX-06`'s. |
 | `CPV2-06` Sense routes changes through attention policy and user-controlled presence | **DUPLICATE** | `CPH-11` (+ `CX-08`) | `CPH-11` is graded `W` by this exact bar (§13.3); `CX-08` unchanged at `N`. |
 | `CPV2-07` Live start/stop/revocation control ongoing context and queued attention | **DUPLICATE** | `CPH-12` | `CPH-12`'s *"ends cleanly"* is the same obligation and is graded `W` by this bar (§13.3). |
-| `CPV2-08` propose Trip changes through the canonical Trip command path | **DUPLICATE** | `CT-01` (+ `CC-18`) | Both clauses the row did not already carry are met: execution-time re-check is `CC-18`; duplicate-execution idempotency is keyed at `artifacts/api-server/src/compass/CompassAutopilotEngine.ts:973#autopilot:${proposal.id}:${c.itemId}` and persisted at `artifacts/api-server/src/domain/trips/commands/tripKernel.ts:757#cmd.idempotencyKey`. `CT-01` stays `W` on its existing residual. |
+| `CPV2-08` propose Trip changes through the canonical Trip command path | **DUPLICATE** | `CT-01` (+ `CC-18`) | Both clauses the row did not already carry are met: execution-time re-check is `CC-18`; duplicate-execution idempotency is keyed at `artifacts/api-server/src/compass/CompassAutopilotEngine.ts:973#autopilot:${proposal.id}:${c.itemId}` and persisted at `artifacts/api-server/src/domain/trips/commands/tripKernel.ts:759#cmd.idempotencyKey`. `CT-01` stays `W` on its existing residual. |
 | `CPV2-09` preserve confirmation for money, bookings, messages, location sharing | **DUPLICATE** | `CR-03` | Word-for-word the same four classes. |
 | `CPV2-10` keep private/group context and anonymous intelligence separate | **DUPLICATE** | `CR-04`, `CR-05`, `CTG-02`, `CPH-06`, `CX-13` | Every clause has a carrier, **including the one with no obvious home** — contributor identifiers. Compass reads live intelligence through exactly one seam whose type header states it carries *"NO contributor ids, coordinates, raw GPS evidence, visibility, or k-anonymity"* (`artifacts/api-server/src/lib/liveClaimRead.ts:110#contributor`), imported by two modules and no others, which is `CX-13`'s obligation exactly. |
 | `CPV2-11` learn from permitted actual outcomes · idempotent · revocation follows lineage | **SPLIT** → `CPV2-11` | `CPH-14`, `CTR-03`, `CH-01` | Idempotency is schema-enforced (`artifacts/api-server/src/migrations/20260729_compass_outcome_learning.sql:27#recommendation_id`); "a recommendation alone creates no visit/Memory/Trust event" is `CTR-03` + `CH-01`. New ground: **revocation by lineage**, which no row states. |
@@ -1234,7 +1234,7 @@ much to the next reader as a move.
 | CX-09 (Sensing `:19` existing Compass paths keep functioning while new projections are partial or gated) | C | **C** | Re-executed against CPV2-01's bar — *"existing multi-turn, reference resolution, streaming and action journeys still pass after integration"* — and each of the four has a registered test opened at this commit: multi-turn `artifacts/api-server/src/test/compass-ask.test.ts:282#assistant`, reference resolution `artifacts/api-server/src/test/compass-ask.test.ts:264#conversationId:`, streaming `artifacts/api-server/src/test/compass-ask.test.ts:609#assistant` and `artifacts/api-server/src/test/compass-ask.test.ts:647#assistant`, action `artifacts/api-server/src/test/compass-ask.test.ts:381#unauthorized`. Verdict unchanged, evidence strengthened. |
 | CT-06 (Trips `:283` Trips remain operational without Compass) | C | **C** | Re-executed as CR-01's first criterion rather than re-read: `artifacts/api-server/src/test/tripsHostingDegraded.test.ts` runs green at `b7f137a4d` inside the 163-test measurement recorded on `CR-01`. |
 | CX-08 (Sensing `:176` Attention Engine mandatory before NOTIFY/WALL/SILENT/IGNORE) | N | **N** | Re-executed against CPV2-06 and Phase 11, both of which map partly onto it. Unchanged: `artifacts/api-server/src/compass/CompassNotificationEngine.ts:100-112#NotificationOutcome` still has no `wall` outcome, and `artifacts/api-server/src/compass/CompassSenseEngine.ts:81#export const AWARE_DAILY_CAP = 3;` is a fixed daily cap, not an attention budget with relevance, novelty, half-life or interruption cost. The presence/permission/dedupe machinery that **does** exist is `CPH-11`'s, not this row's, and is not credited here. |
-| CT-01 (Trips `:12` consequential changes through the Trip Kernel) | W | **W** | Re-executed against CPV2-08. Both clauses the row did not carry are met — execution-time re-check (`CC-18`) and duplicate-execution idempotency, keyed at `artifacts/api-server/src/compass/CompassAutopilotEngine.ts:973#autopilot:${proposal.id}:${c.itemId}` and persisted at `artifacts/api-server/src/domain/trips/commands/tripKernel.ts:757#cmd.idempotencyKey`. Verdict unchanged on the residual §11.3 already named: two direct write sites and a flag. |
+| CT-01 (Trips `:12` consequential changes through the Trip Kernel) | W | **W** | Re-executed against CPV2-08. Both clauses the row did not carry are met — execution-time re-check (`CC-18`) and duplicate-execution idempotency, keyed at `artifacts/api-server/src/compass/CompassAutopilotEngine.ts:973#autopilot:${proposal.id}:${c.itemId}` and persisted at `artifacts/api-server/src/domain/trips/commands/tripKernel.ts:759#cmd.idempotencyKey`. Verdict unchanged on the residual §11.3 already named: two direct write sites and a flag. |
 
 **And one citation that has rotted, recorded so the next reader does not trust it.** `CC-04`'s
 evidence cites lines 238-250 of `CompassTools` for `PRIVATE_KEY_RE` + `stripCoordinateFields` and line 1185
@@ -1907,7 +1907,7 @@ The row's original evidence — *"`TripCompassProjection`: zero occurrences … 
 to publish; not closable from Compass"* — is **false at this tree in its first
 half and its last**, and §12.2's re-execution updated the count of raw readers
 without revisiting either claim. The projection exists
-(`artifacts/api-server/src/domain/trips/projections/TripCompassProjection.ts:142#export async function buildTripCompassProjection`)
+(`artifacts/api-server/src/domain/trips/projections/TripCompassProjection.ts:144#export async function buildTripCompassProjection`)
 and `get_current_trip` has consumed it through the §19.1 rule since before this
 pass. Recorded as a stale reason, not as a verdict move: the row is `W` for
 reasons that remain true.
@@ -1969,7 +1969,7 @@ selecting trip columns at all: (1) a `TripCompassProjection` that carries
 `timezone` — `CompassTripContext` needs it for the local-day arithmetic and it is
 the only column keeping that module on a raw read; (2) a day-scoped plan window.
 Today's cap is the first ten items ordered by `day_date` from the trip's start
-(`artifacts/api-server/src/domain/trips/projections/TripCompassProjection.ts:187#.order("day_date", { ascending: true, nullsFirst: false })`),
+(`artifacts/api-server/src/domain/trips/projections/TripCompassProjection.ts:190#.order("day_date", { ascending: true, nullsFirst: false })`),
 so on day seven of a trip **today's plan is past the cap** — which is why this
 pass did NOT route the always-on context block's plan reads through it. Doing so
 would have looked like consuming the projection and would have silently emptied
@@ -3718,10 +3718,10 @@ suggestion's `…` menu → **Dismiss**; tap a quick action (**View plan**, **As
   (`travel-buddy-standalone/src/components/DailyBriefCard.tsx:688#async function dismissSuggestion(`); it used to be removed
   optimistically even when the write failed.
 - **Server defect fixed.** The dismiss route answered `{ ok: true }` when its write failed ("best-effort");
-  it now answers 503 (`artifacts/api-server/src/routes/dailyBrief.ts:1010#if (evtError) { briefLogger.warn(`).
+  it now answers 503 (`artifacts/api-server/src/routes/dailyBrief.ts:1038#if (evtError) { briefLogger.warn(`).
   And a recorded dismissal came back on the next GET, because the brief is cached per user per day and
   nothing read the dismissals: every served brief now passes through
-  `artifacts/api-server/src/routes/dailyBrief.ts:1034#async function applyDismissals(`.
+  `artifacts/api-server/src/routes/dailyBrief.ts:1062#async function applyDismissals(`.
 - A brief whose dismissals could not be read says so (`dismissalsApplied: false` → "something you
   dismissed may show again"); a failed refresh says so; and a GET whose membership read failed
   (`denialReason: db_error`) is an error with Retry, no longer "only available to accepted trip members".
