@@ -2487,7 +2487,7 @@ P154 is P45/P50 under a phase number.
 **The band is not travel-derived on this tree, and has not been since 2026-09-22/23.** It is
 read from the trust engine's own decay-weighted evidence measure and from nothing else:
 `artifacts/api-server/src/services/passport/PassportProjectionService.ts:1349#const confidence = passportTrustConfidence(profileRead.state, evidenceWeight);`,
-derived at `artifacts/api-server/src/services/passport/PassportProjectionService.ts:2497#export function passportTrustConfidence(`,
+derived at `artifacts/api-server/src/services/passport/PassportProjectionService.ts:2504#export function passportTrustConfidence(`,
 which answers `null` — not a band — for an absent, unreadable, pre-2371 or corrupt measurement.
 `stats` and `verified` no longer reach it. The public label is chosen by the MEASURED public
 level, not by the band (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1389#? (verified ? "New Traveler · Verified" : "New Traveler")`).
@@ -2567,3 +2567,41 @@ it is copy, and copy that labels a person is the owner's (D-WORD's spirit), so i
 | BUILT-BUT-WRONG | 7 |
 | NOT-BUILT | 1 |
 | CANNOT-VERIFY | 1 |
+
+## §28 — 2026-10-06 (lane L): independent verification of §27 — the band was right and its wire was not; both now pinned. P50 and P154 stay `C`
+
+*Measured on branch `claude/mission-l-lead-residual-20261005` after merging `origin/main`
+(`824633ce45`). `head_commit` is not re-declared.*
+
+### 28.1 What the verifier found
+
+1. **The raw evidence numbers went to every viewer.** §27 graded the band; the same response carried
+   `evidenceWeight` and `evidenceCount` on the public path and to every relationship viewer, and an
+   anonymous response is cacheable publicly. The count includes negative events, so a stranger watching
+   it move learns when one landed, and weight against count reveals recency — which census-trust
+   A1/A3/C20 forbid. Pre-existing, but §27 moved two rows to `C` on top of it, so it is this census's to
+   close.
+2. **§27's tests could not tell weight from count.** Every fixture set count = ceil(weight), so the
+   mutant "band from the count" passed 28 / 28.
+
+### 28.2 What changed, and the proof
+
+- The two numbers ride only on the owner's own view, like `score`
+  (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1443#...(context === "self" ? { evidenceWeight, evidenceCount } : {}),`);
+  every other viewer gets the band and its basis. Pinned by a matrix over all nine viewer contexts,
+  asserting the keys are absent and that the serialized projection carries no raw evidence number for
+  any non-owner (`artifacts/api-server/src/test/passportTrustEvidenceConfidence.test.ts:368#describe("P50 §7 — the raw evidence numbers never reach a non-owner, on any viewer path"`).
+  The older public-path case asserted the keys were present as `null`; it now asserts they are absent.
+- Two fixtures where weight and count disagree
+  (`artifacts/api-server/src/test/passportTrustEvidenceConfidence.test.ts:396#it("many old, decayed events (count 40, weight below full credit) read 'medium', not 'high'"`).
+
+Mutations, each red then restored byte-identical: numbers back on the relationship views → 7 red; back
+on the public view → 2 red; band computed from the count → 2 red. Every api-server test that imports
+the projection: 29 files, 504 / 504.
+
+### 28.3 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| P50 | C | **C** | §28. Re-verified: the band is the engine's evidence weight (not the count), and no non-owner receives the raw numbers. |
+| P154 | C | **C** | §28. Phase 4's trust section carries no internal number to a non-owner on any viewer path. |
