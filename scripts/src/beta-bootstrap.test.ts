@@ -481,7 +481,9 @@ describe("the reference snapshot plan (fixture)", () => {
     ]);
     assert.match(sql, /INSERT INTO public\."feature_flags" \("flag", "enabled", "metadata", "tags", "note", "owner_id"\)/);
     assert.match(sql, /ON CONFLICT \("flag"\) DO NOTHING RETURNING 1/);
-    assert.match(sql, /jsonb_build_object\('metadata', \(src\.r ->> 'metadata'\)::jsonb\)/);
+    assert.match(sql, /jsonb_build_object\('metadata', \(e\.r ->> 'metadata'\)::jsonb\)/);
+    assert.match(sql, /jsonb_populate_record\(NULL::public\."feature_flags", e\.r \|\| /);
+    assert.match(sql, /SELECT "flag", "enabled", "metadata", "tags", "note", "owner_id" FROM src ON CONFLICT/);
     assert.match(sql, /12345678901234567890/, "big numbers inside jsonb travel as text, untouched");
     const tricky = buildReferenceImportSql(rb, [{ id: "1", status_changed_by: null, city: "$ref$" }]);
     assert.match(tricky, /\$ref1\$\[/, "a payload containing $ref$ gets another tag");

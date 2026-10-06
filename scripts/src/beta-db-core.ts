@@ -1489,18 +1489,17 @@ export function buildReferenceImportSql(plan: ReferenceTablePlan, rows: readonly
   const tag = chooseDollarTag([payload], "ref");
   const d = `$${tag}$`;
   const overrides = plan.jsonColumns
-    .map((c) => `${quoteLiteral(c)}, (src.r ->> ${quoteLiteral(c)})::jsonb`)
+    .map((c) => `${quoteLiteral(c)}, (e.r ->> ${quoteLiteral(c)})::jsonb`)
     .join(", ");
-  const record = overrides
-    ? `src.r || pg_catalog.jsonb_build_object(${overrides})`
-    : "src.r";
+  const record = overrides ? `e.r || pg_catalog.jsonb_build_object(${overrides})` : "e.r";
   const cols = plan.columns.map(quoteIdent).join(", ");
-  const pcols = plan.columns.map((c) => `p.${quoteIdent(c)}`).join(", ");
   const conflict = plan.primaryKey.map(quoteIdent).join(", ");
+  // The rows are typed in the CTE, so the INSERT is the plain
+  // `INSERT … SELECT … FROM src ON CONFLICT …` shape.
   return (
-    `WITH src AS (SELECT e.r FROM pg_catalog.jsonb_array_elements(${d}${payload}${d}::jsonb) AS e(r)), ` +
-    `ins AS (INSERT INTO ${target} (${cols}) ` +
-    `SELECT ${pcols} FROM src, LATERAL pg_catalog.jsonb_populate_record(NULL::${target}, ${record}) AS p ` +
+    `WITH src AS (SELECT p.* FROM pg_catalog.jsonb_array_elements(${d}${payload}${d}::jsonb) AS e(r), ` +
+    `LATERAL pg_catalog.jsonb_populate_record(NULL::${target}, ${record}) AS p), ` +
+    `ins AS (INSERT INTO ${target} (${cols}) SELECT ${cols} FROM src ` +
     `ON CONFLICT (${conflict}) DO NOTHING RETURNING 1) ` +
     "SELECT count(*)::text AS inserted FROM ins"
   );
