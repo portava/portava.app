@@ -79,7 +79,7 @@ import type {
   PlanStop,
   PublicAirport,
 } from '../../services/layover.ts';
-import { fmtClock, fmtDur } from './layoverFormat.ts';
+import { fmtClock, fmtDur } from './layoverFormat.ts'; import { STOP_NOT_ON_OFFER, describeEnvelope, type EnvelopeGate } from './layoverEnvelopeFacts.ts';
 // §16 — the ONE staleness rule on this client, mirroring the server's own
 // (`LayoverDegradedService.bundleFreshness`) including the `>=` boundary and
 // the fail-closed `known: false`. A second rule here (`Date.parse(staleAfter)
@@ -117,7 +117,7 @@ interface Props {
    * `null`/absent for an airport with no usable coordinate, which is rendered
    * as an explicit "no envelope" state and never as an unbounded one.
    */
-  envelope?: LayoverSafeEnvelope | null;
+  envelope?: LayoverSafeEnvelope | null; /** The landside gate the envelope was published under (`overview.safeEnvelopeGate`). Closed = nothing is drawn; anything but `open` = drawn WITHOUT the word "safe". Absent (an older server) is treated as not-open. */ envelopeGate?: EnvelopeGate | null;
   /**
    * §13 L122 — the feasibility state per RECOMMENDATION id, from the
    * recommendation contract. A stop is joined to it by `recommendationId`;
@@ -198,7 +198,7 @@ function toPlace(partial: Partial<DiscoveryPlace> & { id: string; name: string; 
 }
 
 export function LayoverMapCard({
-  airport, stops, airportReturn, envelope, candidateFeasibility, offline, nowMs,
+  airport, stops, airportReturn, envelope, envelopeGate, candidateFeasibility, offline, nowMs,
 }: Props) {
   const hasAirportCoords =
     airport.lat != null && airport.lng != null && !(airport.lat === 0 && airport.lng === 0);
@@ -264,7 +264,7 @@ export function LayoverMapCard({
 
   // The scale THIS render draws at. Derived from the proved edge so both rings
   // share one scale and their ratio is the certified one.
-  const envelopeScale = envelope ? envelopeMetresPerPx(envelope.radiusMetres) : ENVELOPE_METRES_PER_PX;
+  const envelopeScale = envelope ? envelopeMetresPerPx(envelope.radiusMetres) : ENVELOPE_METRES_PER_PX; const env = describeEnvelope(!!envelope, envelopeGate); // what the envelope may be CALLED, and whether it may be drawn — decided in layoverEnvelopeFacts.ts, not here
   // §16 L126 — asked, never derived here. `known: false` (an instant that does
   // not parse) comes back STALE, which is the fail-closed answer.
   const freshness = offline ? bundleFreshness(offline, nowMs ?? Date.now()) : null;
@@ -332,9 +332,9 @@ export function LayoverMapCard({
       {/* ── §13 SAFE ENVELOPE (L121, L116) ───────────────────────────────
           Two edges, drawn to a printed scale. The server certified both; this
           card only sizes them. */}
-      {envelope ? (
+      {envelope && env.draw ? (
         <View style={styles.envelope} testID="layover-map-safe-envelope">
-          <Text style={styles.sheetLabel}>SAFE ENVELOPE</Text>
+          <Text style={styles.sheetLabel} testID={`layover-map-envelope-label-${env.tone}`}>{env.label}</Text>{env.note ? <Text style={styles.envelopeCaveat} testID="layover-map-envelope-not-a-clearance">{env.note}{env.reasons.map((r) => ` ${r.sentence.charAt(0).toUpperCase()}${r.sentence.slice(1)}.`).join('')}</Text> : null}
           <View style={styles.envelopeRow}>
             <View style={styles.envelopePlot}>
               <View
@@ -407,10 +407,10 @@ export function LayoverMapCard({
           ) : null}
         </View>
       ) : (
-        <View style={styles.envelope} testID="layover-map-envelope-unavailable">
+        <View style={styles.envelope} testID={env.tone === 'withheld' ? 'layover-map-envelope-withheld' : 'layover-map-envelope-unavailable'}>
           <Text style={styles.envelopeSub}>
-            No safe envelope has been certified for this layover, so nothing on this map is
-            marked reachable or blocked.
+            {/* Two different absences: the gate is closed, or there is no coordinate to cut one from. */}
+            {env.withheldText ?? 'No safe envelope has been certified for this layover, so nothing on this map is marked reachable or blocked.'}
           </Text>
         </View>
       )}
@@ -428,7 +428,7 @@ export function LayoverMapCard({
               >
                 <Text style={styles.bandTitle} numberOfLines={1}>{st.title}</Text>
                 <Text style={styles.bandBody}>
-                  {isBlocked
+                  {env.tone === 'withheld' && !isBlocked && !st.insideAirport ? STOP_NOT_ON_OFFER : isBlocked
                     ? (feasibility?.reason
                         ?? 'This is outside your certified safe envelope, so it is not on the map.')
                     : feasibility?.withinPlannedEdge === false

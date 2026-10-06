@@ -269,13 +269,16 @@ describe("privacy fail-closed", () => {
         "a deactivated/banned/deleted account must not stay visible because the state read failed");
     });
 
-    it("a genuinely ABSENT user_account_states table is still skipped (42P01)", async () => {
+    // Was: "a genuinely ABSENT user_account_states table is still skipped (42P01)" → "full". The table has
+    // been THE moderation state since the owner's decision of 2026-10-03 (lib/accountStateGate.ts): a missing
+    // one means every ban and suspension is unread, so it now hides the profile like any other failed read.
+    it("a genuinely ABSENT user_account_states table hides the profile too (42P01): missing is not 'not banned'", async () => {
       const sc = makeClient({
         db: baseDb,
         errors: { user_account_states: { code: "42P01", message: 'relation "user_account_states" does not exist' } },
       }) as any;
       const r = await resolveProfileVisibility(sc, VIEWER, OWNER, TARGET_PROFILE);
-      assert.equal(r.visibility, "full", "a table that does not exist carries no restriction to read");
+      assert.equal(r.visibility, "unavailable", "a moderation table that cannot be seen carries every restriction, unread");
     });
 
     it("PGRST204 (missing COLUMN) on user_account_states is NOT a missing table → hidden", async () => {

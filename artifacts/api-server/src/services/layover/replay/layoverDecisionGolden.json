@@ -1,0 +1,5117 @@
+{
+  "decisions": [
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s01-2h-domestic"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T04:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "domestic"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        }
+      ],
+      "inputHash": "sha256:2174d943103278f18dbdee7c097ce7fdd7002fc506d2d8bba0e6d79743c4f976",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED",
+        "INSUFFICIENT_USABLE_TIME"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T02:38:00.000Z",
+        "returnState": "RETURN_SOON",
+        "shortfallMinutes": null,
+        "tier": "too_short",
+        "totalBufferMin": 82,
+        "usableMinutes": 18,
+        "verdict": "no",
+        "windowRating": "not_recommended"
+      },
+      "rulesApplied": [
+        "buffer.base.domestic",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.too_short",
+        "returnState.RETURN_SOON",
+        "verdict.no",
+        "percentile.p90"
+      ],
+      "sessionId": "corpus:s01-2h-domestic",
+      "snapshotId": "snap:edd5d0aa52e0eefd692faae6a6b8663e",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s01-2h-domestic",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s02-4h-international-permitted-generic"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T06:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        }
+      ],
+      "inputHash": "sha256:5d4d2ff977543ec820d09e6ad87b2502c57e388b5def6f81d5d24acf5f4fa720",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED",
+        "INSUFFICIENT_USABLE_TIME"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T03:08:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "too_short",
+        "totalBufferMin": 172,
+        "usableMinutes": 23,
+        "verdict": "no",
+        "windowRating": "not_recommended"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.too_short",
+        "returnState.NORMAL",
+        "verdict.no",
+        "percentile.p90"
+      ],
+      "sessionId": "corpus:s02-4h-international-permitted-generic",
+      "snapshotId": "snap:d0d33e795773b133fd946663b116091a",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s02-4h-international-permitted-generic",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "AIRPORT_PROFILE",
+          "value": "corpus-airport-tpe"
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "AIRPORT_PROFILE",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "AIRPORT_PROFILE",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "AIRPORT_PROFILE",
+          "value": true
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "AIRPORT_PROFILE",
+          "value": 45
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "AIRPORT_PROFILE",
+          "value": 90
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "AIRPORT_PROFILE",
+          "value": 20
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "AIRPORT_PROFILE",
+          "value": 10
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "AIRPORT_PROFILE",
+          "value": 15
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s03-4h-international-permitted-curated"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T06:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        }
+      ],
+      "inputHash": "sha256:5604835709ce76a0b0c2381043c0d9b40e024cd2ee02184b38d21e2a6b37362a",
+      "reasonCodes": [],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T03:53:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "airport_only",
+        "totalBufferMin": 127,
+        "usableMinutes": 68,
+        "verdict": "tight",
+        "windowRating": "possible_but_risky"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.airport_only",
+        "returnState.NORMAL",
+        "verdict.tight",
+        "percentile.p90"
+      ],
+      "sessionId": "corpus:s03-4h-international-permitted-curated",
+      "snapshotId": "snap:6ef76ad38e2f6109c8a11242c9c4458f",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "airport_profiles.checked_bags_extra_min",
+        "airport_profiles.immigration_extra_min",
+        "airport_profiles.international_buffer_min",
+        "airport_profiles.traffic_extra_min",
+        "airport_profiles:corpus-airport-tpe",
+        "layover_sessions:corpus:s03-4h-international-permitted-curated",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s04-5h-international-generic"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T07:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        }
+      ],
+      "inputHash": "sha256:4620f697ee151d691332ddb8e8a92db8e01d94132edb9cef99e958185e1ff7c6",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T04:04:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "airport_only",
+        "totalBufferMin": 176,
+        "usableMinutes": 79,
+        "verdict": "tight",
+        "windowRating": "possible_but_risky"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.airport_only",
+        "returnState.NORMAL",
+        "verdict.tight",
+        "percentile.p90"
+      ],
+      "sessionId": "corpus:s04-5h-international-generic",
+      "snapshotId": "snap:ca8a0d54a9a6aaef0e2483fd1fb9d1ec",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s04-5h-international-generic",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "AIRPORT_PROFILE",
+          "value": "corpus-airport-tpe"
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "AIRPORT_PROFILE",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "AIRPORT_PROFILE",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "AIRPORT_PROFILE",
+          "value": true
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "AIRPORT_PROFILE",
+          "value": 45
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "AIRPORT_PROFILE",
+          "value": 90
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "AIRPORT_PROFILE",
+          "value": 20
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "AIRPORT_PROFILE",
+          "value": 10
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "AIRPORT_PROFILE",
+          "value": 15
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s05-5h-international-curated"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T07:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        }
+      ],
+      "inputHash": "sha256:efa7a4d7a5d1921bb93a1880396865b75968aaea5baa0c00f0f406ab28c03e91",
+      "reasonCodes": [],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T04:50:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "quick_city",
+        "totalBufferMin": 130,
+        "usableMinutes": 125,
+        "verdict": "yes",
+        "windowRating": "safe"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.quick_city",
+        "returnState.NORMAL",
+        "verdict.yes",
+        "percentile.p90"
+      ],
+      "sessionId": "corpus:s05-5h-international-curated",
+      "snapshotId": "snap:afe8344e15091cd9d6e1d357b0c2157a",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "airport_profiles.checked_bags_extra_min",
+        "airport_profiles.immigration_extra_min",
+        "airport_profiles.international_buffer_min",
+        "airport_profiles.traffic_extra_min",
+        "airport_profiles:corpus-airport-tpe",
+        "layover_sessions:corpus:s05-5h-international-curated",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s06-6h-visa-free"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T08:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        }
+      ],
+      "inputHash": "sha256:0e18304de952c3c87eab01df1d140c8eb131886e70d24c26b2722d1120569dfb",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T04:58:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "quick_city",
+        "totalBufferMin": 182,
+        "usableMinutes": 133,
+        "verdict": "yes",
+        "windowRating": "safe"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.quick_city",
+        "returnState.NORMAL",
+        "verdict.yes",
+        "percentile.p90"
+      ],
+      "sessionId": "corpus:s06-6h-visa-free",
+      "snapshotId": "snap:ad61c6b9290ee2b921cfee15b1bd5bfd",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s06-6h-visa-free",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s07-5h-checked-bags-recheck"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T07:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        }
+      ],
+      "inputHash": "sha256:8508529a621f81a52d72fbec35b14bf69eef1bea82474aa0a0ebcecfbb32a51c",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED",
+        "INSUFFICIENT_USABLE_TIME"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T03:49:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "too_short",
+        "totalBufferMin": 191,
+        "usableMinutes": 44,
+        "verdict": "no",
+        "windowRating": "not_recommended"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.bags",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.too_short",
+        "returnState.NORMAL",
+        "verdict.no",
+        "percentile.p90"
+      ],
+      "sessionId": "corpus:s07-5h-checked-bags-recheck",
+      "snapshotId": "snap:9c88ede6abf24df68768e43273f94225",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s07-5h-checked-bags-recheck",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T15:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s08-overnight"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T15:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-02T01:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T15:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790868000000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        }
+      ],
+      "inputHash": "sha256:791601505ff0ab9cf2e87c6b4202450fb834fce434af2c6d41e65fdd8fa58111",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T22:04:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "overnight",
+        "totalBufferMin": 176,
+        "usableMinutes": 379,
+        "verdict": "yes",
+        "windowRating": "safe"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.overnight",
+        "window.overnight",
+        "returnState.NORMAL",
+        "verdict.yes",
+        "percentile.p90"
+      ],
+      "sessionId": "corpus:s08-overnight",
+      "snapshotId": "snap:05c6300c08f5e46e0b66abc290ad4f59",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s08-overnight",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T03:50:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s09-arrival-delay"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T03:30:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T08:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T03:50:00.000Z",
+          "source": "POLICY",
+          "value": 1790826600000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        }
+      ],
+      "inputHash": "sha256:e42df70446c45debaf6d38eef92b130acf854d373074af205cd879b5928a1f3f",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED",
+        "INSUFFICIENT_USABLE_TIME"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T04:58:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "too_short",
+        "totalBufferMin": 182,
+        "usableMinutes": 43,
+        "verdict": "no",
+        "windowRating": "not_recommended"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.too_short",
+        "returnState.NORMAL",
+        "verdict.no",
+        "percentile.p90"
+      ],
+      "sessionId": "corpus:s09-arrival-delay",
+      "snapshotId": "snap:aa7404a63fae55fd80be4b474457a526",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s09-arrival-delay",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s10-departure-delay"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T09:30:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        }
+      ],
+      "inputHash": "sha256:ea1d613a53166af19c2b7e43c91c4a65d714c620fc0ecde2c293506cb4ad4d6e",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T06:28:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "quick_city",
+        "totalBufferMin": 182,
+        "usableMinutes": 223,
+        "verdict": "yes",
+        "windowRating": "safe"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.quick_city",
+        "returnState.NORMAL",
+        "verdict.yes",
+        "percentile.p90"
+      ],
+      "sessionId": "corpus:s10-departure-delay",
+      "snapshotId": "snap:0412140fbb3a6dd0a937b81fb07dcf16",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s10-departure-delay",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s11-security-spike"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T08:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        },
+        {
+          "key": "live.securityWaitExtraMin",
+          "observedAt": "2026-10-01T02:00:00.000Z",
+          "source": "LIVE",
+          "value": 40
+        },
+        {
+          "key": "live.immigrationWaitExtraMin",
+          "observedAt": "2026-10-01T02:00:00.000Z",
+          "source": "LIVE",
+          "value": 0
+        },
+        {
+          "key": "live.groundTransportExtraMin",
+          "observedAt": "2026-10-01T02:00:00.000Z",
+          "source": "LIVE",
+          "value": 0
+        }
+      ],
+      "inputHash": "sha256:8e05899fd002c698428751b474bb2d7ddc6dd1025bdecb0aef3eb7f14fc8a3c1",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T04:18:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "quick_city",
+        "totalBufferMin": 222,
+        "usableMinutes": 93,
+        "verdict": "yes",
+        "windowRating": "safe"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.traffic",
+        "buffer.live",
+        "deadline.anchor.departure",
+        "window.tier.quick_city",
+        "returnState.NORMAL",
+        "verdict.yes",
+        "percentile.p90"
+      ],
+      "sessionId": "corpus:s11-security-spike",
+      "snapshotId": "snap:4814582f08ec9c2ee993f5674e5ca2f1",
+      "sourceRefs": [
+        "LayoverAirportTruth.liveConditionsFrom(no codes)",
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_airport_observations:observedAt=2026-10-01T02:00:00.000Z",
+        "layover_sessions:corpus:s11-security-spike"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s12-traffic-spike"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T08:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        },
+        {
+          "key": "live.securityWaitExtraMin",
+          "observedAt": "2026-10-01T02:00:00.000Z",
+          "source": "LIVE",
+          "value": 0
+        },
+        {
+          "key": "live.immigrationWaitExtraMin",
+          "observedAt": "2026-10-01T02:00:00.000Z",
+          "source": "LIVE",
+          "value": 0
+        },
+        {
+          "key": "live.groundTransportExtraMin",
+          "observedAt": "2026-10-01T02:00:00.000Z",
+          "source": "LIVE",
+          "value": 30
+        }
+      ],
+      "inputHash": "sha256:a07acc52f1d3d46940f448cf7cd269e83aa4874e39c9beb5e2bd86f716c23dc1",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T04:28:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "quick_city",
+        "totalBufferMin": 212,
+        "usableMinutes": 103,
+        "verdict": "yes",
+        "windowRating": "safe"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.traffic",
+        "buffer.live",
+        "deadline.anchor.departure",
+        "window.tier.quick_city",
+        "returnState.NORMAL",
+        "verdict.yes",
+        "percentile.p90"
+      ],
+      "sessionId": "corpus:s12-traffic-spike",
+      "snapshotId": "snap:3f5ecf4d1196ee6d8de52fdd70ef8628",
+      "sourceRefs": [
+        "LayoverAirportTruth.liveConditionsFrom(no codes)",
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_airport_observations:observedAt=2026-10-01T02:00:00.000Z",
+        "layover_sessions:corpus:s12-traffic-spike"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s13-entry-unresolved"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T08:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        }
+      ],
+      "inputHash": "sha256:259dcbe88d1907a9ac39d08ae012d4dcccf1fcbb06b27f644df27ba995981ed5",
+      "reasonCodes": [
+        "ENTRY_NOT_CONFIRMED",
+        "AIRPORT_MATURITY_LIMITED"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T04:58:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "quick_city",
+        "totalBufferMin": 182,
+        "usableMinutes": 133,
+        "verdict": "entry_unverified",
+        "windowRating": "possible_but_risky"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.quick_city",
+        "returnState.NORMAL",
+        "verdict.entry_unverified",
+        "percentile.p90"
+      ],
+      "sessionId": "corpus:s13-entry-unresolved",
+      "snapshotId": "snap:f348505aca4677f1483fb4d1fa6d13ac",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s13-entry-unresolved",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s14-entry-refused"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T08:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        }
+      ],
+      "inputHash": "sha256:be7cce8bfc5786fd5380412feb58e2967f50815afaae145c1194821e65c6fda6",
+      "reasonCodes": [
+        "ENTRY_NOT_CONFIRMED",
+        "AIRPORT_MATURITY_LIMITED"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T04:58:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "quick_city",
+        "totalBufferMin": 182,
+        "usableMinutes": 133,
+        "verdict": "no",
+        "windowRating": "not_recommended"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.quick_city",
+        "returnState.NORMAL",
+        "verdict.no",
+        "percentile.p90"
+      ],
+      "sessionId": "corpus:s14-entry-refused",
+      "snapshotId": "snap:782f93ace34e4a60abf12edb9e0bb69c",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s14-entry-refused",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s15-entry-not-resolved-by-caller"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T08:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        }
+      ],
+      "inputHash": "sha256:ac9ec98e38e3bd9b74362e5751f002bc12abbd79b3bcc6d3730200574c523353",
+      "reasonCodes": [
+        "ENTRY_NOT_CONFIRMED",
+        "AIRPORT_MATURITY_LIMITED"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T04:58:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "quick_city",
+        "totalBufferMin": 182,
+        "usableMinutes": 133,
+        "verdict": "entry_unverified",
+        "windowRating": "possible_but_risky"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.quick_city",
+        "returnState.NORMAL",
+        "verdict.entry_unverified",
+        "percentile.p90"
+      ],
+      "sessionId": "corpus:s15-entry-not-resolved-by-caller",
+      "snapshotId": "snap:dddeff71a45b0ecad0048b5a6563f538",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s15-entry-not-resolved-by-caller",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s16-stay-airside"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T08:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        }
+      ],
+      "inputHash": "sha256:024405d4c974be521d6a0b42ccdf7216fea77f38686aa0464b8b0460cf1faf53",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T04:58:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "airport_only",
+        "totalBufferMin": 182,
+        "usableMinutes": 133,
+        "verdict": "stay_airside",
+        "windowRating": "airport_only"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.airport_only",
+        "returnState.NORMAL",
+        "verdict.stay_airside",
+        "percentile.p90"
+      ],
+      "sessionId": "corpus:s16-stay-airside",
+      "snapshotId": "snap:a63dfa5b265e70b34dd2d09055c3aca0",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s16-stay-airside",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T04:33:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s17-return-soon"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T08:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T04:33:00.000Z",
+          "source": "POLICY",
+          "value": 1790829180000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        }
+      ],
+      "inputHash": "sha256:ecd0bac2824118684ab43102542980eeeabadb6f299d0d5e23e95421ebf589f7",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED",
+        "INSUFFICIENT_USABLE_TIME"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T04:58:00.000Z",
+        "returnState": "RETURN_SOON",
+        "shortfallMinutes": null,
+        "tier": "too_short",
+        "totalBufferMin": 182,
+        "usableMinutes": 25,
+        "verdict": "no",
+        "windowRating": "not_recommended"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.too_short",
+        "returnState.RETURN_SOON",
+        "verdict.no",
+        "percentile.p90"
+      ],
+      "sessionId": "corpus:s17-return-soon",
+      "snapshotId": "snap:1895e48382148a59949a7997456e9be3",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s17-return-soon",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T05:02:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s23-return-now"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T08:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T05:02:00.000Z",
+          "source": "POLICY",
+          "value": 1790830920000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        }
+      ],
+      "inputHash": "sha256:34000baa6f7d300f98ca51efa084f1f3940be023b1c0bb7a44dd028384c2cbe6",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED",
+        "RETURN_THRESHOLD_REACHED",
+        "INSUFFICIENT_USABLE_TIME"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T04:58:00.000Z",
+        "returnState": "RETURN_NOW",
+        "shortfallMinutes": null,
+        "tier": "too_short",
+        "totalBufferMin": 182,
+        "usableMinutes": 0,
+        "verdict": "no",
+        "windowRating": "not_recommended"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.too_short",
+        "returnState.RETURN_NOW",
+        "verdict.no",
+        "percentile.p90"
+      ],
+      "sessionId": "corpus:s23-return-now",
+      "snapshotId": "snap:9bd9e8677960bdb8fc496889a74e3674",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s23-return-now",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T06:10:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s18-past-hard-return"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T08:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T06:10:00.000Z",
+          "source": "POLICY",
+          "value": 1790835000000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        }
+      ],
+      "inputHash": "sha256:a0bca5445917c216d0f3005500d95e3cded8685615884f7ef6cc5249f4bd12bb",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED",
+        "RETURN_THRESHOLD_REACHED",
+        "INSUFFICIENT_USABLE_TIME"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T04:58:00.000Z",
+        "returnState": "CONNECTION_AT_RISK",
+        "shortfallMinutes": null,
+        "tier": "too_short",
+        "totalBufferMin": 182,
+        "usableMinutes": 0,
+        "verdict": "no",
+        "windowRating": "not_recommended"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.too_short",
+        "returnState.CONNECTION_AT_RISK",
+        "verdict.no",
+        "percentile.p90"
+      ],
+      "sessionId": "corpus:s18-past-hard-return",
+      "snapshotId": "snap:51d99bf2a7b8851c0f16dfd55e057fe9",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s18-past-hard-return",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s19-boarding-time-wins"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T08:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T07:20:00.000Z"
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        }
+      ],
+      "inputHash": "sha256:65e78ed7848e2fe16579ade0523ba216350a5a950290cb6c72dce1f047fa8f17",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T04:24:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "quick_city",
+        "totalBufferMin": 176,
+        "usableMinutes": 99,
+        "verdict": "yes",
+        "windowRating": "safe"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.traffic",
+        "deadline.anchor.boarding",
+        "window.tier.quick_city",
+        "returnState.NORMAL",
+        "verdict.yes",
+        "percentile.p90"
+      ],
+      "sessionId": "corpus:s19-boarding-time-wins",
+      "snapshotId": "snap:e69b4731c87894cc812916f4666afa8a",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s19-boarding-time-wins",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s20-landside-probe-unmeasured-leg"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T08:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        },
+        {
+          "key": "probe.travelTimeMin",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": null
+        },
+        {
+          "key": "probe.activityTimeMin",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": 60
+        },
+        {
+          "key": "probe.travelTimeSource",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "unmeasured"
+        }
+      ],
+      "inputHash": "sha256:a6bd9fddcd212304030e05222941a708079834cbcb6e56904ce57c624bd9e4cc",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T04:58:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "quick_city",
+        "totalBufferMin": 182,
+        "usableMinutes": 133,
+        "verdict": "yes",
+        "windowRating": "safe"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.quick_city",
+        "returnState.NORMAL",
+        "verdict.yes",
+        "percentile.p90",
+        "probe.unmeasured",
+        "probe.requiredIsLowerBound"
+      ],
+      "sessionId": "corpus:s20-landside-probe-unmeasured-leg",
+      "snapshotId": "snap:1a414eee1f45d621647cc69a3a054df1",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s20-landside-probe-unmeasured-leg",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s21-landside-probe-stated-leg"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T08:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        },
+        {
+          "key": "probe.travelTimeMin",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": 30
+        },
+        {
+          "key": "probe.activityTimeMin",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": 60
+        },
+        {
+          "key": "probe.travelTimeSource",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "traveller_stated"
+        }
+      ],
+      "inputHash": "sha256:9604777b3bccaa886604ab6fad4c21304a1319c164732d9945154dc8bdb3013e",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T04:58:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "quick_city",
+        "totalBufferMin": 182,
+        "usableMinutes": 133,
+        "verdict": "yes",
+        "windowRating": "safe"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.quick_city",
+        "returnState.NORMAL",
+        "verdict.yes",
+        "percentile.p90",
+        "probe.traveller_stated"
+      ],
+      "sessionId": "corpus:s21-landside-probe-stated-leg",
+      "snapshotId": "snap:6246108c2b02f6ec7192b00226124501",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s21-landside-probe-stated-leg",
+        "no live conditions supplied",
+        "travelTimeSource:traveller_stated"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:00:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s24-3h-domestic-at-touchdown"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T05:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "domestic"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:00:00.000Z",
+          "source": "POLICY",
+          "value": 1790820000000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        }
+      ],
+      "inputHash": "sha256:1c2e4220fdb5b2636af920a439073144ea9aacb40ced2823c957dea3ac58fd5f",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T03:38:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "airport_only",
+        "totalBufferMin": 82,
+        "usableMinutes": 83,
+        "verdict": "tight",
+        "windowRating": "possible_but_risky"
+      },
+      "rulesApplied": [
+        "buffer.base.domestic",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.airport_only",
+        "returnState.NORMAL",
+        "verdict.tight",
+        "percentile.p90"
+      ],
+      "sessionId": "corpus:s24-3h-domestic-at-touchdown",
+      "snapshotId": "snap:123b62c58f3d176ddc18c873f537bc79",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s24-3h-domestic-at-touchdown",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s25-unknown-baggage"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T06:45:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        },
+        {
+          "key": "constraints.read",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "declared"
+        },
+        {
+          "key": "constraints.version",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": 1
+        },
+        {
+          "key": "constraints.baggageMode",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "UNKNOWN"
+        },
+        {
+          "key": "constraints.recheckRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "constraints.airportChangeRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        }
+      ],
+      "inputHash": "sha256:e3eda351c04a27f63c9c6d894b0713e639d8eb52d2650bff34bc4d3cb6ffd520",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED",
+        "INSUFFICIENT_USABLE_TIME",
+        "BAGGAGE_STATUS_CRITICAL_UNKNOWN"
+      ],
+      "result": {
+        "confidence": "INSUFFICIENT",
+        "hardReturnTime": "2026-10-01T03:38:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "too_short",
+        "totalBufferMin": 187,
+        "usableMinutes": 33,
+        "verdict": "no",
+        "windowRating": "not_recommended"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.bags",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.too_short",
+        "returnState.NORMAL",
+        "verdict.no",
+        "percentile.p90",
+        "constraints.baggage.UNKNOWN",
+        "gate.baggage_unknown"
+      ],
+      "sessionId": "corpus:s25-unknown-baggage",
+      "snapshotId": "snap:2e9451b0ab5d79494b3fb146ebaba1e7",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s25-unknown-baggage",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s26-checked-through"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T06:45:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        },
+        {
+          "key": "constraints.read",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "declared"
+        },
+        {
+          "key": "constraints.version",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": 1
+        },
+        {
+          "key": "constraints.baggageMode",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "CHECKED_THROUGH"
+        },
+        {
+          "key": "constraints.recheckRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "constraints.airportChangeRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        }
+      ],
+      "inputHash": "sha256:dfe0aa1f5c30a99672b5f4354da8a98c2be513381203855b2d4e7969bae9fcd1",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T03:53:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "airport_only",
+        "totalBufferMin": 172,
+        "usableMinutes": 68,
+        "verdict": "tight",
+        "windowRating": "possible_but_risky"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.airport_only",
+        "returnState.NORMAL",
+        "verdict.tight",
+        "percentile.p90",
+        "constraints.baggage.CHECKED_THROUGH"
+      ],
+      "sessionId": "corpus:s26-checked-through",
+      "snapshotId": "snap:51d62597a796b2ca969c8b35c4082beb",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s26-checked-through",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s27-airport-change"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T08:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        },
+        {
+          "key": "constraints.read",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "declared"
+        },
+        {
+          "key": "constraints.version",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": 1
+        },
+        {
+          "key": "constraints.baggageMode",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "CARRY_ON_ONLY"
+        },
+        {
+          "key": "constraints.recheckRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "constraints.airportChangeRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        }
+      ],
+      "inputHash": "sha256:4614a43de32fd1dbb58898bddd2bf8f822ad62dd2da59ae2e98838fdaca267b5",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED",
+        "AIRPORT_CHANGE_REQUIRED"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T04:43:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "quick_city",
+        "totalBufferMin": 197,
+        "usableMinutes": 98,
+        "verdict": "no",
+        "windowRating": "not_recommended"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.bags",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.quick_city",
+        "returnState.NORMAL",
+        "verdict.no",
+        "percentile.p90",
+        "constraints.baggage.CARRY_ON_ONLY",
+        "gate.airport_change"
+      ],
+      "sessionId": "corpus:s27-airport-change",
+      "snapshotId": "snap:ac5e6ac06416a8d39a37175cfda2202b",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s27-airport-change",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s28-self-transfer-recheck-declared"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T07:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        },
+        {
+          "key": "constraints.read",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "declared"
+        },
+        {
+          "key": "constraints.version",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": 1
+        },
+        {
+          "key": "constraints.baggageMode",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "COLLECT_RECHECK"
+        },
+        {
+          "key": "constraints.recheckRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "constraints.airportChangeRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        }
+      ],
+      "inputHash": "sha256:a3c13cb50b4a469fe3285502635bdf6fe548f463af5c402555e1f43b4013d1de",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED",
+        "INSUFFICIENT_USABLE_TIME",
+        "SELF_TRANSFER_FRICTION"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T03:49:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "too_short",
+        "totalBufferMin": 191,
+        "usableMinutes": 44,
+        "verdict": "no",
+        "windowRating": "not_recommended"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.bags",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.too_short",
+        "returnState.NORMAL",
+        "verdict.no",
+        "percentile.p90",
+        "constraints.baggage.COLLECT_RECHECK"
+      ],
+      "sessionId": "corpus:s28-self-transfer-recheck-declared",
+      "snapshotId": "snap:232207d3fb97cfad248f30a516f22e7a",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s28-self-transfer-recheck-declared",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s29-entry-unresolved-policy-on"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T08:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        },
+        {
+          "key": "constraints.read",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "undeclared"
+        },
+        {
+          "key": "constraints.version",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "constraints.baggageMode",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "constraints.recheckRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "constraints.airportChangeRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "policy.entryForbidsLandside",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": true
+        }
+      ],
+      "inputHash": "sha256:d7ff951a292ce75c070ed17cbabe4696b284db4e890fb27db39741fb8e603f77",
+      "reasonCodes": [
+        "ENTRY_NOT_CONFIRMED",
+        "AIRPORT_MATURITY_LIMITED"
+      ],
+      "result": {
+        "confidence": "INSUFFICIENT",
+        "hardReturnTime": "2026-10-01T04:43:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "quick_city",
+        "totalBufferMin": 197,
+        "usableMinutes": 98,
+        "verdict": "no",
+        "windowRating": "not_recommended"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.bags",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.quick_city",
+        "returnState.NORMAL",
+        "verdict.no",
+        "percentile.p90",
+        "gate.airport_change_unknown",
+        "gate.entry_unconfirmed"
+      ],
+      "sessionId": "corpus:s29-entry-unresolved-policy-on",
+      "snapshotId": "snap:9ca0eb527c2cde38fb7dccbf6d7cb95b",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s29-entry-unresolved-policy-on",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s30-constraints-unreadable"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T08:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        },
+        {
+          "key": "constraints.read",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "unreadable"
+        },
+        {
+          "key": "constraints.version",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "constraints.baggageMode",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "UNKNOWN"
+        },
+        {
+          "key": "constraints.recheckRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "constraints.airportChangeRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        }
+      ],
+      "inputHash": "sha256:39019f655ed63952bda50a33f5bf068185fdaf5d28753f818a2a07a6018ddeff",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED"
+      ],
+      "result": {
+        "confidence": "INSUFFICIENT",
+        "hardReturnTime": "2026-10-01T04:43:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "quick_city",
+        "totalBufferMin": 197,
+        "usableMinutes": 98,
+        "verdict": "no",
+        "windowRating": "not_recommended"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.bags",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.quick_city",
+        "returnState.NORMAL",
+        "verdict.no",
+        "percentile.p90",
+        "constraints.baggage.UNKNOWN",
+        "gate.constraints_unreadable"
+      ],
+      "sessionId": "corpus:s30-constraints-unreadable",
+      "snapshotId": "snap:1bfaf6e0ea9f7f136d0b845ec40c5d91",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s30-constraints-unreadable",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "TPE"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Taipei"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s31-checked-through-tickets-unstated"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T06:45:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        },
+        {
+          "key": "constraints.read",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "declared"
+        },
+        {
+          "key": "constraints.version",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": 1
+        },
+        {
+          "key": "constraints.baggageMode",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "CHECKED_THROUGH"
+        },
+        {
+          "key": "constraints.recheckRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "constraints.airportChangeRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        }
+      ],
+      "inputHash": "sha256:6dfc43629d4c37527135f301e8a0d24dc5f0195f5da9b4637195aafaf480d33c",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED",
+        "INSUFFICIENT_USABLE_TIME"
+      ],
+      "result": {
+        "confidence": "INSUFFICIENT",
+        "hardReturnTime": "2026-10-01T03:38:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "too_short",
+        "totalBufferMin": 187,
+        "usableMinutes": 33,
+        "verdict": "no",
+        "windowRating": "not_recommended"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.bags",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.too_short",
+        "returnState.NORMAL",
+        "verdict.no",
+        "percentile.p90",
+        "constraints.baggage.CHECKED_THROUGH",
+        "gate.recheck_unknown"
+      ],
+      "sessionId": "corpus:s31-checked-through-tickets-unstated",
+      "snapshotId": "snap:edde50ee3814d234733914d19148f306",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:TPE",
+        "layover_sessions:corpus:s31-checked-through-tickets-unstated",
+        "no live conditions supplied"
+      ]
+    },
+    {
+      "computedAt": "2026-10-01T02:20:00.000Z",
+      "engineVersion": "2026.09.22-1",
+      "inputFacts": [
+        {
+          "key": "airport.id",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": null
+        },
+        {
+          "key": "airport.iataCode",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "HND"
+        },
+        {
+          "key": "airport.timezone",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": "Asia/Tokyo"
+        },
+        {
+          "key": "airport.verified",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": false
+        },
+        {
+          "key": "airport.domesticBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 60
+        },
+        {
+          "key": "airport.internationalBufferMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 120
+        },
+        {
+          "key": "airport.immigrationExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 30
+        },
+        {
+          "key": "airport.checkedBagsExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 15
+        },
+        {
+          "key": "airport.trafficExtraMin",
+          "observedAt": null,
+          "source": "GENERIC",
+          "value": 20
+        },
+        {
+          "key": "session.id",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "corpus:s22-hnd-6h"
+        },
+        {
+          "key": "session.arrivalTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T02:00:00.000Z"
+        },
+        {
+          "key": "session.departureTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "2026-10-01T08:00:00.000Z"
+        },
+        {
+          "key": "session.boardingTime",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": null
+        },
+        {
+          "key": "session.flightType",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": "international"
+        },
+        {
+          "key": "session.immigrationRequired",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "session.checkedBags",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": false
+        },
+        {
+          "key": "session.wantsToLeave",
+          "observedAt": null,
+          "source": "SESSION",
+          "value": true
+        },
+        {
+          "key": "nowMs",
+          "observedAt": "2026-10-01T02:20:00.000Z",
+          "source": "POLICY",
+          "value": 1790821200000
+        },
+        {
+          "key": "bufferPercentile",
+          "observedAt": null,
+          "source": "POLICY",
+          "value": "p90"
+        }
+      ],
+      "inputHash": "sha256:4abad65cabb8debd36a339ff7bf4aa15c12c88e90931cd22f0bad91e1493779a",
+      "reasonCodes": [
+        "AIRPORT_MATURITY_LIMITED"
+      ],
+      "result": {
+        "confidence": "LOW",
+        "hardReturnTime": "2026-10-01T04:58:00.000Z",
+        "returnState": "NORMAL",
+        "shortfallMinutes": null,
+        "tier": "quick_city",
+        "totalBufferMin": 182,
+        "usableMinutes": 133,
+        "verdict": "yes",
+        "windowRating": "safe"
+      },
+      "rulesApplied": [
+        "buffer.base.international",
+        "buffer.immigration",
+        "buffer.traffic",
+        "deadline.anchor.departure",
+        "window.tier.quick_city",
+        "returnState.NORMAL",
+        "verdict.yes",
+        "percentile.p90"
+      ],
+      "sessionId": "corpus:s22-hnd-6h",
+      "snapshotId": "snap:94e8dffa0ea7811737ba49699bc7729f",
+      "sourceRefs": [
+        "LayoverSafetyEngine.estimateExitDelay",
+        "LayoverSafetyEngine.timeOfDayBand",
+        "StaticAirportData:HND",
+        "layover_sessions:corpus:s22-hnd-6h",
+        "no live conditions supplied"
+      ]
+    }
+  ],
+  "head": "f9c4ea144",
+  "note": "REGENERATED 2026-10-06 after merging origin/main 02acdb0f0 (carrying #624, \"the landside gate fails closed\"), by mission lane A. The engine is main's; the golden and the corpus were the branch's. Previous note, first line: \"REGENERATED 2026-10-05 after merging origin/main e3daeb739 (PR #588, LAY-01), by mission lane A. Previous note: \\\"initial record: 24 synthetic scenarios ... at engine 2026.09.22-1, census-layover L241\\\".\"\n\nWHAT CHANGED, measured by this check: on the merged tree before this change, 30 of 30 scenarios changed. After it: 30 compared (25 changed in identity only, s27/s29/s30 in substance, s25/s26 in identity with corrected inputs) and ONE ADDED (s31).\n\n1. IDENTITY ONLY — 25 scenarios (s01-s24, s28): ONLY inputHash and snapshotId. CAUSE: #624 bumped LAYOVER_FEASIBILITY_VERSION \"2026.10.04-1\" -> \"2026.10.06-1\" (artifacts/api-server/src/services/airport/LayoverFeasibility.ts:84); that string is a hashed named input (LayoverFeasibility.ts:362, feasibilityInputHash at :423) and snapshotId derives from inputHash. PROVEN, not inferred: with the string set back to \"2026.10.04-1\" on a scratch run (reverted), those 25 match the old golden byte-for-byte. CORRECT: same decisions, new identity for a new rules version is what L5 (versioned, replayable) asks for.\n\n2. THE INPUTS #624 NOW TREATS AS UNKNOWN. #624 (LayoverConstraints.ts header, 2026.10.06-1): \"unknown, unreadable and undeclared inputs are closures\", and separate tickets \"true or not stated\" are charged the collect-and-re-check bag terms (recheckChargesBags, LayoverConstraints.ts:305: null -> charged). The charge is the engine's two existing bag terms, +15 return buffer and +20 claim minutes, so a charged deadline is 15 min earlier and usable time 35 min shorter.\n| case | before -> now | input #624 treats as unknown | rule | spec clause | correct |\n| s27-airport-change (6h, CARRY_ON_ONLY, airport change YES, tickets not stated) | no stays no; deadline 15 min EARLIER, usable 133 -> 98, buffer.bags | recheckRequired = null | tickets not stated -> charged; the verdict is already no by gate.airport_change, so nothing is asked | 21.1 \"airport change -> exploration subordinate to transfer\" (verdict); 2.1 + App C1 \"unknown is preferable to fabricated certainty\", never read in the traveller's favour (the earlier deadline) | yes |\n| s29-entry-unresolved-policy-on (6h, entry unresolved, owner policy ON, nothing declared) | no stays no; deadline 15 min EARLIER, usable 133 -> 98, LOW -> INSUFFICIENT, gate.airport_change_unknown beside gate.entry_unconfirmed | read = \"undeclared\": the store was read and holds nothing, so tickets AND airport change are unknown (namedConstraintInputs now emits it, LayoverConstraints.ts:254) | tickets -> charged; airport change not stated -> airport_change_unknown (LayoverConstraints.ts:568) | 21.1 \"unknown entry permission -> no landside recommendation\" (verdict, unchanged); 6.1 critical unknown -> INSUFFICIENT; 2.1 + App C1 (deadline) | yes |\n| s30-constraints-unreadable (6h, store unreadable, policy OFF) | YES -> NO; usable 98 unchanged (the bag was already charged as UNKNOWN); INSUFFICIENT; gate.constraints_unreadable | the whole declared set: an unread store may hold \"yes, a different airport\" | constraints_unreadable closes every verdict not already a refusal (LayoverConstraints.ts:538, withdrawal at :648) | App C2 \"never turn a data error into plausible state\"; 21.1 \"airport change -> exploration subordinate to transfer\" (the answer we cannot see could be that); 6.1 fail closed on a critical unknown | yes |\n| s31-checked-through-tickets-unstated (ADDED: 4h45m, CHECKED_THROUGH, tickets and airport change NOT stated — s26's inputs until this change) | no, usable 33, deadline 03:38 (15 min EARLIER than s26's 03:53), INSUFFICIENT, too_short, gate.recheck_unknown | recheckRequired = null | tickets not stated -> charged; the clock then refuses; the probe without the charge answers tight, so recheck_unknown is named and asked (LayoverConstraints.ts:617) | 21.1 \"5h self-transfer -> recheck friction included\"; 2.1 + App C1; 6.1 critical unknown -> INSUFFICIENT, forbid landside; 12.1 the one decisive question | yes |\nThis is the s26 deadline move (-15 min) and the s26 flip (tight -> no) that the merged tree first reported: they are kept, under the id that now says what the inputs are.\n\n3. s25 / s26 — INPUTS CORRECTED, DECISIONS UNCHANGED. Both now declare recheckRequired:false and airportChangeRequired:false (one ticket, same airport). WHY: their source is Appendix B.2, whose session has ONE unknown, the bag (\"Compass asks exactly one question\"; step 5 \"if confirmed CHECKED_THROUGH ... landside feasibility is evaluated\"). Before #624 an unstated ticket and airport answer read as \"no\"; after it they are decisive unknowns of their own, so the fixtures stopped representing B.2 and layoverDecisionDiffCheck.test.ts's B.2 case (the same session with the bag confirmed through is evaluated) went red. With both stated, s25 is no / usable 33 / BAGGAGE_STATUS_CRITICAL_UNKNOWN / gate.baggage_unknown and s26 is tight / usable 68 / no gate rule — byte-identical to the previous golden's results; only inputHash and snapshotId moved. Probe on a scratch copy (reverted): stating ONLY recheckRequired:false restores s26's deadline but leaves it NO via gate.airport_change_unknown, so both facts are needed.\n\nWHAT THE PREVIOUS NOTE SAID THAT IS NO LONGER TRUE: s30's \"6.1 fails closed only when the unknown could change the verdict, and at 6h it cannot\" considered only the bag. The unread set also holds the airport-change answer, which can change any verdict that is not already a refusal.\nNO CHANGE IS UNEXPLAINED BY #624; no scenario was held back as a defect.\nOPEN (not this lane's): whether a CHECKED_THROUGH declaration should imply one ticket is #624's own owner question (constraintsChargeBags comment)."
+}

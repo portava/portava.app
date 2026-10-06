@@ -37,7 +37,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator, TextInput } from 'react-native';
 import { Users, UserPlus, LogOut, AlertTriangle, RefreshCw } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { CREW_EACH_CHECKS_OWN, MEETING_POINT_PLACE_NEEDED, MEETING_POINT_PLACE_OPTIONS, crewOwnGateNote } from './layoverEnvelopeFacts.ts'; import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { fmtClock } from './layoverFormat.ts';
 import {
   createLayoverCrew,
@@ -66,7 +66,7 @@ const REASON_TEXT: Record<CrewInfeasibilityReason, string> = {
   unknown_member_in_branch: 'The plan names someone who is not in the crew.',
   empty_branch: 'Part of the plan has nobody doing it.',
   plan_exceeds_usable_minutes: 'The plan needs more time than the tightest crewmate has.',
-  plan_ends_after_shared_return: 'The plan would finish after the crew has to be back.',
+  plan_ends_after_shared_return: 'The plan would finish after the crew has to be back.', landside_closed_for_member: 'The plan leaves the airport, and a crewmate may not — their layover does not allow it.',
 };
 
 interface Props {
@@ -87,7 +87,7 @@ export function LayoverCrewSection({ sessionId, timezone, refreshKey = 0 }: Prop
   const [notice, setNotice] = useState<string | null>(null);
   const [composing, setComposing] = useState(false);
   const [title, setTitle] = useState('');
-  const [meetingPoint, setMeetingPoint] = useState('');
+  const [meetingPoint, setMeetingPoint] = useState(''); /** Where the typed meeting point is. NULL until the traveller says — never defaulted. */ const [meetingPointInside, setMeetingPointInside] = useState<boolean | null>(null);
 
   // Every read takes a ticket and only the newest may land. The section reads
   // on mount, on every dashboard refresh and after its own actions, so two
@@ -113,6 +113,7 @@ export function LayoverCrewSection({ sessionId, timezone, refreshKey = 0 }: Prop
     setComposing(false);
     setTitle('');
     setMeetingPoint('');
+    setMeetingPointInside(null);
     // Re-read rather than trusting the action's own body, so what the section
     // shows is what a fresh load would show. That is what makes the flow
     // survive a reload rather than only look as if it had.
@@ -166,7 +167,7 @@ export function LayoverCrewSection({ sessionId, timezone, refreshKey = 0 }: Prop
               <Text style={styles.deadlineLabel}>Everyone must be back by</Text>
               <Text style={styles.deadline}>{fmtClock(solution.sharedReturnBy, timezone)}</Text>
               <Text style={styles.deadlineNote}>
-                The earliest deadline in the crew, so it is everyone&rsquo;s.
+                The earliest deadline in the crew, so it is everyone&rsquo;s.{' '}<Text testID="layover-crew-not-a-clearance">{CREW_EACH_CHECKS_OWN}</Text>{crewOwnGateNote(state.yourLandside) ? <Text testID={`layover-crew-own-gate-${state.yourLandside}`}>{' '}{crewOwnGateNote(state.yourLandside)}</Text> : null}
               </Text>
             </>
           ) : (
@@ -241,11 +242,17 @@ export function LayoverCrewSection({ sessionId, timezone, refreshKey = 0 }: Prop
   }
 
   // Not in a crew: the openings here, and the way to make one.
+  // §14.1 / L138: `safety_gate_not_passed` is the server's own refusal reason,
+  // read rather than re-derived — this section decides nothing about time.
+  const gateClosed = state.reason === 'safety_gate_not_passed';
   return (
     <View style={styles.card}>
       <Header />
       {state.city ? (
-        <Text style={styles.subhead}>Meet other travellers on a layover in {state.city}.</Text>
+        <Text style={styles.subhead}>
+          Meet other travellers on a layover in {state.city}.{' '}
+          <Text testID="layover-crew-roster-not-a-clearance">{CREW_EACH_CHECKS_OWN}</Text>
+        </Text>
       ) : (
         <Text style={styles.subhead}>
           We do not know which city this layover is in yet, so there is no crew to join.
@@ -277,6 +284,20 @@ export function LayoverCrewSection({ sessionId, timezone, refreshKey = 0 }: Prop
             </View>
           ))}
         </View>
+      ) : gateClosed ? (
+        /**
+         * §14.1 / census-layover L138 — a REFUSAL, not an empty city.
+         *
+         * `crews: []` with `reason: 'safety_gate_not_passed'` means the server's
+         * certified record says this traveller must not be offered a landside
+         * meeting. "No crews here yet. Start one." would be the fabricated zero
+         * this lane keeps catching, and it would invite exactly the thing the
+         * gate just refused.
+         */
+        <Text style={styles.body}>
+          Your layover does not leave room to go and meet a crew in the city right now, so
+          none is being offered. This changes with your return deadline.
+        </Text>
       ) : state.city ? (
         <Text style={styles.body}>No crews here yet. Start one.</Text>
       ) : null}
@@ -302,6 +323,27 @@ export function LayoverCrewSection({ sessionId, timezone, refreshKey = 0 }: Prop
               accessibilityLabel="Meeting point"
               style={styles.input}
             />
+            {/* A typed meeting point is free text the server cannot classify, so
+                the creator says where it is. Asked only once something is typed,
+                with NOTHING pre-selected: "in the city" is the one answer the
+                server checks against this traveller's own landside gate. */}
+            {meetingPoint.trim() ? (
+              <View style={styles.composerActions} accessibilityRole="radiogroup" accessibilityLabel="Where is the meeting point?">
+                {MEETING_POINT_PLACE_OPTIONS.map((opt) => (
+                  <Pressable
+                    key={String(opt.insideAirport)}
+                    onPress={() => { setMeetingPointInside(opt.insideAirport); setNotice(null); }}
+                    accessibilityRole="radio"
+                    accessibilityLabel={opt.label}
+                    accessibilityState={{ checked: meetingPointInside === opt.insideAirport, selected: meetingPointInside === opt.insideAirport }}
+                    style={[styles.secondaryBtn, meetingPointInside === opt.insideAirport ? styles.placeOn : null]}
+                    testID={`layover-crew-meeting-place-${opt.insideAirport ? 'inside' : 'outside'}`}
+                  >
+                    <Text style={styles.secondaryBtnText}>{opt.label}</Text>
+                  </Pressable>
+                ))}
+              </View>
+            ) : null}
             {/* A LABEL, never a position. §14's crew-member map element is gated
                 on an explicit temporary location permission whose grant store
                 does not exist, so nothing here collects a coordinate. */}
@@ -317,9 +359,13 @@ export function LayoverCrewSection({ sessionId, timezone, refreshKey = 0 }: Prop
               <Pressable
                 onPress={() => {
                   if (!title.trim()) { setNotice('Give your crew a name first.'); return; }
+                  const point = meetingPoint.trim() || null;
+                  if (point && meetingPointInside === null) { setNotice(MEETING_POINT_PLACE_NEEDED); return; }
                   void apply('create', () => createLayoverCrew(sessionId, {
                     title: title.trim(),
-                    meetingPointLabel: meetingPoint.trim() || null,
+                    meetingPointLabel: point,
+                    // Sent only with a meeting point; with none there is nothing to place.
+                    ...(point ? { meetingPointInsideAirport: meetingPointInside } : {}),
                   }));
                 }}
                 disabled={busy !== null}
@@ -463,6 +509,7 @@ const styles = StyleSheet.create({
   },
   secondaryBtnText: { ...t.small, color: color.deep, fontWeight: '600' },
   notice: { ...t.small, color: color.warn, marginTop: space.xs },
+  placeOn: { borderColor: color.deep, borderWidth: 1.5 },
   footnote: { ...t.small, color: color.faint, fontSize: 11 },
   retry: {
     flexDirection: 'row',

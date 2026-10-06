@@ -120,7 +120,7 @@ Each step says what to run, what a PASS looks like, and what a FAIL means.
 ### 3.2 Policy handshake (G340's whole point)
 
 `GET /input-assistance/policies`, authenticated. **VERIFIED from the route
-source** (`routes/inputAssistance.ts:133`): auth required, rate limit 30 per
+source** (`routes/inputAssistance.ts:156`): auth required, rate limit 30 per
 60 s per user, handler touches no database, `telemetryPolicy` deliberately not
 served.
 
@@ -221,7 +221,7 @@ Trust lane depends on.
 
 1. **Consent.** Enabling assistance must not enable personalization for anyone
    who has not granted it. `allowPersonalization` is served per context and the
-   server-side gate at `lib/inputAssistance/personalization.ts:473` fail-closes
+   server-side gate at `lib/inputAssistance/personalization.ts:507` fail-closes
    on `privacyClass`. Verify a user without consent gets no memory-derived
    suggestions.
 2. **Location privacy.** `privacyClass` gates whether a field's suggestions may

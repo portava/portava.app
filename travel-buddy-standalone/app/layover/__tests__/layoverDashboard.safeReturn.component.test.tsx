@@ -33,7 +33,7 @@ import LayoverDashboardScreen from '../[id].tsx';
 jest.mock('expo-router', () => ({
   ...jest.requireActual('expo-router'),
   Stack: { Screen: () => null },
-  useLocalSearchParams: () => ({ id: 'sess-1' }),
+  useLocalSearchParams: () => ({ id: 'sess-1', ...((global as any).__routeParams ?? {}) }),
   useRouter: () => ({ push: jest.fn(), back: jest.fn(), replace: jest.fn() }),
 }));
 
@@ -589,4 +589,71 @@ test('the dashboard mounts the constraints card for this session, directly under
   const before = layoverService.getLayoverOverview.mock.calls.length;
   await act(async () => { props.onChanged(); });
   await waitFor(() => expect(layoverService.getLayoverOverview.mock.calls.length).toBeGreaterThan(before));
+  // Opened the ordinary way, the start sheet reported nothing to pass on.
+  expect(props.creationNotice).toBeNull();
+});
+
+test('what the start sheet could not store reaches the constraints card — it is not dropped at the route', async () => {
+  // `LayoverModeSheet` opens `/layover/<id>?constraints=not_stored` when the
+  // create answered that the bag answer was not kept. The screen owes the card
+  // that one fact; before LAY-FIX the create's answer was discarded outright.
+  (global as any).__routeParams = { constraints: 'not_stored' };
+  (global as any).__constraintsCardProps = null;
+  (global as any).__overview = overview(false);
+  try {
+    await render(<LayoverDashboardScreen />);
+    await waitFor(() => expect(screen.getByTestId('layover-constraints-card-stub')).toBeTruthy());
+    expect((global as any).__constraintsCardProps.creationNotice).toBe('not_stored');
+  } finally {
+    (global as any).__routeParams = undefined;
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// §15 L42 — the SAME-TICK double tap. At the foot of the file, away from the
+// other L42 cases, because line 546 above is cited by census-layover and an
+// insertion before it would move the citation.
+// ══════════════════════════════════════════════════════════════════════════
+
+test('L42 — SAME TICK: the footer and the card pressed in one frame are still one POST', async () => {
+  // THE CASE "L42 — the card and the footer share one controller" STOPPED
+  // EXERCISING. It used to fire both presses without awaiting either; commit
+  // 27b85202 awaited them (correctly — two sibling un-awaited RNTL v14 presses
+  // leave two act() scopes open and kill every later render in this file). But
+  // an awaited first press lets React COMMIT `busy` before the second press is
+  // dispatched, so that case now proves only what a state-only guard would
+  // also pass: "a second press after the first has rendered is ignored".
+  //
+  // The claim the shared controller exists for is the other one: two presses
+  // that land BEFORE any commit. Both go inside ONE outer act() — the pattern
+  // `LayoverSafeReturnCard.component.test.tsx` ("a double tap fires exactly one
+  // request") established as valid under RNTL v14 and React 19: the outer
+  // scope restores actScopeDepth when it closes, so the two inner scopes the
+  // presses open cannot leak into the next test. Nothing is awaited between
+  // the two dispatches, so the second handler runs against the state the first
+  // one saw — and only a guard written SYNCHRONOUSLY (the ref in
+  // `useSafeReturnAbort`) stops it.
+  layoverService.returnToAirportNow.mockClear();
+  let release: (v: unknown) => void = () => {};
+  layoverService.returnToAirportNow.mockImplementation(
+    () => new Promise((resolve) => { release = resolve; }),
+  );
+  (global as any).__overview = overview(true);
+  await render(<LayoverDashboardScreen />);
+
+  await waitFor(() => expect(screen.getByTestId('layover-footer-return-now')).toBeTruthy());
+  const footer = screen.getByTestId('layover-footer-return-now');
+  const card = screen.getByTestId('return-to-airport-btn');
+  await act(async () => {
+    fireEvent.press(footer);
+    fireEvent.press(card);
+  });
+
+  await waitFor(() => expect(layoverService.returnToAirportNow).toHaveBeenCalledTimes(1));
+  expect(layoverService.returnToAirportNow).toHaveBeenCalledWith('sess-1');
+  // Still exactly one once the abort settles: the second press was not queued
+  // behind the first, it was refused.
+  await act(async () => { release({ kind: 'offline' }); });
+  expect(layoverService.returnToAirportNow).toHaveBeenCalledTimes(1);
+  layoverService.returnToAirportNow.mockImplementation(async () => ({ kind: 'offline' }));
 });

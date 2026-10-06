@@ -45,6 +45,7 @@ import { _setTestClient } from "../../../lib/http.js";
 import airportRouter from "../../../routes/airport.js";
 import { makeLayoverDb, airportRow, sessionRow } from "../../../test/helpers/fakeLayoverDb.js";
 import {
+  LAYOVER_CROWD_REPORTS_FLAG,
   TRAVELLER_SUBMITTABLE_FACT_TYPES,
   travellerObserverHandle,
 } from "../LayoverObservationService.js";
@@ -101,7 +102,20 @@ function stage(
   } = {},
 ) {
   const tables: Record<string, any[]> = {
-    feature_flags: [{ flag: "airport_mode_enabled", enabled: true }],
+    // Both flags the observation handlers read, each at the state a real
+    // database holds: 0127 seeds airport_mode_enabled TRUE and 3513 seeds
+    // layover_crowd_reports_enabled TRUE. The crowd-report flag is the
+    // dedicated kill switch for this channel; omitting its row here would
+    // make every case in this file refuse with degraded_unavailable, which
+    // is what it did before this line existed. The off/absent/unreadable
+    // cases for that flag are covered in
+    // test/verifyFlowLayoverObservationsCrew.test.ts (FLOW 4c), not here —
+    // this file's subject is the surface's own behaviour with the channel
+    // open.
+    feature_flags: [
+      { flag: "airport_mode_enabled", enabled: true },
+      { flag: LAYOVER_CROWD_REPORTS_FLAG, enabled: true },
+    ],
     airport_profiles: [airportRow()],
     layover_sessions: [sessionRow({ user_id: USER_ID })],
     airport_fact_observations: opts.observations ?? [],

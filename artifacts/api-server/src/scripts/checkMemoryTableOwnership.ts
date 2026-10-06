@@ -114,6 +114,22 @@ const LEGACY_SIDE = new Set([
   // rows so the account-deletion case starts from a known state.
   // PROJECTION-side; names memory_domain_events nowhere.
   "test/db/sessionMemoryLineage.db.test.ts",
+  // ADDED 2026-10-03 by the 2490/3503 client-privilege lane, for 3504.
+  // 3504 revokes the anon/authenticated table grants on 53 service-role-only
+  // tables and names public.memory_events in exactly one place: the header
+  // section listing the ten tables it deliberately does NOT touch. The four
+  // memory_* tables are held out because lane 2333 already revokes the client
+  // roles there AND narrows service_role on purpose with exact-match
+  // postconditions, so re-deriving it in 3504 would make whichever migration
+  // ran last the winner. The reference is therefore a statement that 3504
+  // leaves the projection family's log alone, and its database test asserts
+  // exactly that: CT9 compares the ACL of each excluded table before and after
+  // the body and requires byte equality. PROJECTION-side; neither file names
+  // memory_domain_events, and neither reads, writes or alters either table.
+  "migrations/3504_client_table_privilege_boundary.sql",
+  // 3504's behavioural proof. It names public.memory_events only in the
+  // EXCLUDED array it feeds to CT9, for the reason above.
+  "test/db/clientTablePrivileges.db.test.ts",
   "lib/deletionDispositions.ts",
   "lib/memoryProjectionScheduler.ts",
   "services/accountDeletion/AccountDeletionService.ts",
@@ -206,6 +222,25 @@ const BOTH_ALLOWED = new Set([
   // ratchet stating a rename with the reason for it removed, which is the one
   // sentence a future reader most needs. Same judgement as 2710's header.
   "scripts/checkProductionDrift.ts",
+  // ADDED 2026-10-06 by lane T2 (census-telegraph §45f; live-DB tier on #628).
+  // Telegraph's §29 tripwire, "no automatic Memory creation from private
+  // conversation history". It reads and writes NEITHER log: it is a closed
+  // vocabulary, MEMORY_CREATION_TABLES, of every table a conversation must not
+  // create rows in, and both logs are on it for different, real reasons, each
+  // used by its SQL detector (sqlCrossesBoundary):
+  //   - the projection family's log is appended to by trigger functions
+  //     (2184, 2186, 2193, 2963), so a trigger on `messages` doing the same is
+  //     the automatic conversation→Memory path §29 forbids;
+  //   - the kernel's log is appended to by memory_kernel_execute (2711), so a
+  //     migration reading `messages` and appending there is the same violation
+  //     through the §17 kernel.
+  // Naming only one would leave the other door unwatched, so this is the
+  // guardRegistry.ts case — two logs named as data, kept distinct, touched by
+  // nobody — not a file that confuses them. Pinned by
+  // test/telegraphConversationMemoryBoundary.test.ts ("every memory event log a
+  // migration appends to is on the closed list"), which goes red if either is
+  // dropped.
+  "domain/telegraph/policies/conversationMemoryBoundary.ts",
 ]);
 
 /** The migrations that belong to the kernel; no object in them may say memory_events_*. */

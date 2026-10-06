@@ -99,6 +99,11 @@ function world(): Partial<KitState> {
       trip_plan_items: CAST.map((c) => ({
         id: own("plan", c.key), title: `zork plan ${c.key}`, trip_id: own("trip", c.key), creator_id: c.id,
         created_at: "2026-01-01T00:00:00Z", removed_at: null,
+        // The column is NOT NULL (default TRUE) on the real table. FALSE models a
+        // place its creator shared with the crew, which OD-TRIP-3 lets anyone who
+        // may see the trip be offered — so every case here serves what it served
+        // before the rule. The rule itself is pinned in inputPlanItemPrivacy.test.ts.
+        location_is_private: false,
       })),
       hidden_gems: CAST.map((c) => ({
         id: own("gem", c.key), name: `zork gem ${c.key}`, city: "Lisbon", country: "PT", submitted_by: c.id,

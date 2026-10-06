@@ -335,9 +335,11 @@ describe("executeAdminRestoreParticipant refuses, and writes nothing", () => {
 // ── The refusal states a fact about the system, not a preference ─────────────
 
 describe("the kernel really has no ADMIN_RESTORE_PARTICIPANT", () => {
-  it("no migration implements it — which is why execution cannot dispatch", () => {
-    // When this assertion starts failing, the command exists and this whole
-    // contract must be revisited: that is the intended alarm.
+  it("exactly one migration implements it (3974, lane C) — any other is the alarm", () => {
+    // The alarm fired once, as designed: 3974 implements the command in the Trip
+    // Kernel (domain/trips/commands/adminRestoreTripParticipant.ts is its one
+    // caller). This module still refuses until lane B dispatches to it. Any OTHER
+    // migration naming the command means the contract must be revisited again.
     const dir = new URL("../migrations/", import.meta.url).pathname;
     const hits: string[] = [];
     for (const f of readdirSync(dir)) {
@@ -346,8 +348,8 @@ describe("the kernel really has no ADMIN_RESTORE_PARTICIPANT", () => {
     }
     assert.deepEqual(
       hits,
-      [],
-      `${ADMIN_RESTORE_PARTICIPANT} appears in ${hits.join(", ")} — the kernel may now implement it`,
+      ["3974_trip_kernel_admin_restore_participant.sql"],
+      `${ADMIN_RESTORE_PARTICIPANT} appears in ${hits.join(", ")} — the kernel implementation has moved or multiplied`,
     );
   });
 

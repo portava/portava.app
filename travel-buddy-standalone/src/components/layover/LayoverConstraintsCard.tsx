@@ -14,6 +14,14 @@
  * client-side rule here about minutes or verdicts — `LayoverReturnPanel.tsx` was
  * deleted at `a718beb5` for carrying its own.
  *
+ * ── THE BADGE CANNOT CONTRADICT THE VERDICT CARD ABOVE IT ────────────────────
+ * `CanILeaveCard` is mounted directly over this card and both now word the
+ * verdict from ONE table (`layoverVerdictFacts.ts`). The badge is green on
+ * exactly one path — the verdict is `yes`, the gate is open, and the server
+ * named an affirmative state. It used to be green whenever `layoverState` was
+ * LANDSIDE_AVAILABLE, which the server sent for an unconfirmed border and for a
+ * tight window: "You can go out" under "Time is fine — entry unconfirmed".
+ *
  * ── THE STATES THAT ARE NOT THE SAME STATE ───────────────────────────────────
  *   loading      we have not asked yet.
  *   failed       we asked and the read FAILED — including the server's own 503
@@ -47,13 +55,16 @@ import {
   BAGGAGE_MODE_ORDER,
   CONNECTION_FIELD_COPY,
   TRI_STATE_OPTIONS,
+  creationNoteForParam,
   describeClosures,
-  describeLayoverState,
   legacyBaggageLine,
+  questionPatch,
+  questionWhy,
   selectedBaggageMode,
   storageNote,
   unsavedNote,
 } from './layoverConstraintFacts.ts';
+import { describeCautions, describeLandsideBadge } from './layoverVerdictFacts.ts';
 
 interface Props {
   sessionId: string;
@@ -67,6 +78,13 @@ interface Props {
    * than keep rendering the answer the declaration just replaced.
    */
   onChanged?: () => void;
+  /**
+   * What the start sheet learned from `POST /airport/sessions` about the
+   * answers it sent: `not_stored` or `unsaved`, or absent when all was kept.
+   * Shown until the traveller declares here — a "not sure" that failed to
+   * store must not look stored.
+   */
+  creationNotice?: string | null;
 }
 
 type LoadState =
@@ -80,18 +98,23 @@ const READ_FAILED = 'Your bag and connection details could not be loaded.';
 const STATE_TONE_FG: Record<string, string> = {
   ask: color.warn,
   closed: color.signalDim,
+  // The ONE green. `describeLandsideBadge` returns it only for the verdict `yes`.
   open: color.success,
+  // The same amber `CanILeaveCard` draws a cautionary verdict in.
+  caution: color.warn,
   return: color.signalDim,
   done: color.mute,
   unknown: color.mute,
 };
 
-export function LayoverConstraintsCard({ sessionId, canEdit, refreshKey = 0, onChanged }: Props) {
+export function LayoverConstraintsCard({ sessionId, canEdit, refreshKey = 0, onChanged, creationNotice = null }: Props) {
   const [state, setState] = useState<LoadState>({ kind: 'loading' });
   /** The control that is saving, e.g. `baggageMode:UNKNOWN`. One save at a time. */
   const [saving, setSaving] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  /** Cleared by the first declaration the server accepts here. */
+  const [declaredHere, setDeclaredHere] = useState(false);
   /** Only the newest read may land: a slow answer must not replace a newer one. */
   const readTicket = useRef(0);
 
@@ -138,6 +161,7 @@ export function LayoverConstraintsCard({ sessionId, canEdit, refreshKey = 0, onC
     }
     setState({ kind: 'ready', answer: outcome.answer });
     setNotice(unsavedNote(outcome.unsaved));
+    setDeclaredHere(true);
     onChanged?.();
   }, [sessionId, saving, canEdit, onChanged]);
 
@@ -175,14 +199,25 @@ export function LayoverConstraintsCard({ sessionId, canEdit, refreshKey = 0, onC
   }
 
   const { answer } = state;
-  const lifecycle = describeLayoverState(answer.layoverState);
+  // The verdict decides the badge; the state only names WHICH affirmative or
+  // journey state it is. See `layoverVerdictFacts.ts`.
+  const lifecycle = describeLandsideBadge({
+    layoverState: answer.layoverState,
+    verdict: answer.verdict,
+    gate: answer.landsideGate,
+  });
   const closures = describeClosures(answer.landsideGate.closedBy);
+  const cautions = describeCautions(answer.landsideGate.cautions);
+  const startNote = declaredHere ? null : creationNoteForParam(creationNotice);
   const selectedMode = selectedBaggageMode(answer);
   const declarable = (f: DeclarableConstraintField) => answer.declarable.includes(f);
   const note = storageNote(answer);
   const busy = saving !== null;
   // A closed layover is not asked anything: it is told why, by the closures.
   const question = canEdit ? answer.question : null;
+  // One element type for the three questions' options: the bag question's are
+  // modes, the two connection questions' are booleans.
+  const questionOptions: Array<{ value: string | boolean; label: string }> = question ? question.options : [];
 
   return (
     <View style={styles.card} testID="layover-constraints-card">
@@ -191,12 +226,22 @@ export function LayoverConstraintsCard({ sessionId, canEdit, refreshKey = 0, onC
         {lifecycle ? (
           <Text
             style={[styles.stateBadge, { color: STATE_TONE_FG[lifecycle.tone] ?? color.mute }]}
-            testID={`layover-state-${answer.layoverState}`}
+            // Named for the TONE, not the server's state token: a stale
+            // LANDSIDE_AVAILABLE that this build declines to draw green must
+            // not be findable as if it had been.
+            testID={`layover-badge-${lifecycle.tone}`}
+            accessibilityLabel={`Status: ${lifecycle.label}`}
           >
             {lifecycle.label}
           </Text>
         ) : null}
       </View>
+
+      {/* What the START sheet could not keep. Until the traveller declares
+          here, an answer that was not stored must not look stored. */}
+      {startNote ? (
+        <Text style={styles.notice} testID="layover-constraints-not-stored">{startNote}</Text>
+      ) : null}
 
       {/* §12.1 / App B.2 — the ONE question, and only when the server says the
           answer could change the verdict. */}
@@ -206,23 +251,26 @@ export function LayoverConstraintsCard({ sessionId, canEdit, refreshKey = 0, onC
             <HelpCircle size={15} color={color.warn} />
             <Text style={styles.questionTitle}>{question.prompt}</Text>
           </View>
-          <Text style={styles.questionBody}>
-            Your answer decides whether you have time to leave the airport, so we are holding back
-            anything outside it until you tell us.
+          <Text style={styles.questionBody} testID="layover-constraints-question-why">
+            {questionWhy(question.field)}
           </Text>
           <View style={styles.chips}>
-            {question.options.map((opt) => {
-              const key = `question:${opt.value}`;
+            {questionOptions.map((opt) => {
+              const key = `question:${String(opt.value)}`;
+              // The QUESTION's field, not always the bag mode. A value this
+              // build cannot express is not offered rather than sent wrong.
+              const patch = questionPatch(question, opt.value);
+              if (!patch) return null;
               return (
                 <Pressable
-                  key={opt.value}
-                  onPress={() => { void declare(key, { baggageMode: opt.value }); }}
+                  key={String(opt.value)}
+                  onPress={() => { void declare(key, patch); }}
                   disabled={busy}
                   accessibilityRole="button"
                   accessibilityLabel={opt.label}
                   accessibilityState={{ disabled: busy, busy: saving === key }}
                   style={[styles.chip, styles.chipStrong, busy && saving !== key ? styles.chipDim : null]}
-                  testID={`layover-constraints-answer-${opt.value}`}
+                  testID={`layover-constraints-answer-${String(opt.value)}`}
                 >
                   {saving === key
                     ? <ActivityIndicator size="small" color={color.deep} />
@@ -240,6 +288,17 @@ export function LayoverConstraintsCard({ sessionId, canEdit, refreshKey = 0, onC
           <Text style={styles.closedTitle}>Why we are not suggesting anything outside the airport</Text>
           {closures.map((c) => (
             <Text key={c.code} style={styles.closedLine} testID={`layover-landside-closed-${c.code}`}>·  {c.sentence}</Text>
+          ))}
+        </View>
+      ) : null}
+
+      {/* Nothing forbids landside, and nothing confirms it: said in the same
+          amber as the verdict above, never left to read as a yes. */}
+      {cautions.length > 0 && closures.length === 0 && !question ? (
+        <View style={styles.closedBox} testID="layover-landside-caution">
+          <Text style={[styles.closedTitle, { color: color.warn }]}>Why this is not a clear yes</Text>
+          {cautions.map((c) => (
+            <Text key={c.code} style={styles.closedLine} testID={`layover-landside-caution-${c.code}`}>·  {c.sentence}</Text>
           ))}
         </View>
       ) : null}

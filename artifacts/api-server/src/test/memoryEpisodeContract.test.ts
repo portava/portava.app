@@ -25,7 +25,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  DETECTION_REASONS,
+  DETECTION_REASONS, EPISODES_TABLE, EVIDENCE_TABLE,
   EPISODE_KINDS,
   EPISODE_STATES,
   EPISODE_TRANSITIONS,
@@ -608,7 +608,7 @@ describe("the spine is inert by construction", () => {
     assert.match(sql, /PRECONDITION FAILED: public\.erase_memory_for_user\(uuid\) missing/);
   });
 
-  it("no TS module outside the contract and this test imports the spine", async () => {
+  it("no TS module outside the contract, this test and the one sanctioned consumer imports the spine — and that consumer checks the store first", async () => {
     // The proof that it is wired into nothing: the only importers are each other.
     const { execFileSync } = await import("node:child_process");
     const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -631,6 +631,39 @@ describe("the spine is inert by construction", () => {
       .filter(Boolean)
       .map((p) => p.replace(`${root}/`, ""))
       .filter((p) => !p.startsWith("memory/") && p !== "test/memoryEpisodeContract.test.ts");
-    assert.deepEqual(importers, [], `the spine must be wired into nothing, found: ${importers.join(", ")}`);
+    // UPDATED 2026-10-05 (mission lane A2, census-highlights-memories §AC.1 item 4
+    // and §AD): the spine has ONE production consumer now, the §7 candidate inbox,
+    // which is the first writer of memory_episodes / memory_evidence. 2320 is
+    // unapplied on production, so the claim this case pins is no longer "wired
+    // into nothing" but "wired into exactly that, and that asks whether the store
+    // exists before it reads or writes anything" — both halves asserted.
+    const SANCTIONED = ["services/memory/episodeCandidates.ts"];
+    assert.deepEqual([...importers].sort(), SANCTIONED, `the spine may be wired only into the candidate inbox, found: ${importers.join(", ")}`);
+    const consumer = readFileSync(resolve(root, SANCTIONED[0]!), "utf8");
+    for (const fn of ["detectTripCandidates", "listCandidates", "rejectCandidate", "confirmCandidate"]) {
+      const at = consumer.indexOf(`export async function ${fn}(`);
+      assert.ok(at >= 0, `${fn} must exist`);
+      const body = consumer.slice(at);
+      const firstAwait = body.indexOf("await ");
+      assert.ok(body.slice(firstAwait).startsWith("await candidateStoreState(sc)"),
+        `${fn} must ask whether 2320's store exists before anything else (its first await is: ${body.slice(firstAwait, firstAwait + 60)})`);
+    }
+  });
+
+  it("the sanctioned consumer names the spine's tables as literals that equal the contract's constants", () => {
+    // check:write-path-columns resolves `.from("literal")` only — `.from(EPISODES_TABLE)`
+    // is "dynamic table name" to it, and every column it would have checked at that
+    // site goes unchecked (PR #625's live-DB red, 2026-10-06). So the consumer writes
+    // the literal at each call site, and THIS pins the literal to the constant: a
+    // rename of the spine's table fails here instead of drifting silently.
+    const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+    const consumer = readFileSync(resolve(root, "services/memory/episodeCandidates.ts"), "utf8");
+    const dynamicFrom = consumer.match(/\.from\((?:EPISODES_TABLE|EVIDENCE_TABLE)\)/g) ?? [];
+    assert.deepEqual(dynamicFrom, [], `the write-path guard cannot resolve ${dynamicFrom.join(", ")}; write the literal`);
+    const literalFroms = [...consumer.matchAll(/\.from\("(memory_episodes|memory_evidence)"\)/g)].map((m) => m[1]);
+    assert.ok(literalFroms.includes(EPISODES_TABLE) && literalFroms.includes(EVIDENCE_TABLE),
+      `the consumer must read and write both spine tables by their literal names (saw: ${[...new Set(literalFroms)].join(", ")})`);
+    assert.equal(EPISODES_TABLE, "memory_episodes");
+    assert.equal(EVIDENCE_TABLE, "memory_evidence");
   });
 });

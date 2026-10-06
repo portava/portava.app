@@ -8,6 +8,7 @@
 import React, { useCallback } from 'react';
 import { MemoryRowsScreen, formatMemoryDate, placeLine, type MemoryRowsLoad } from '../../src/features/memories/social/MemoryRowsScreen.tsx';
 import { getMemoryTimeline } from '../../src/services/memorySocial.ts';
+import { CandidateInbox } from '../../src/features/memories/candidates/CandidateInbox.tsx';
 
 export default function MemoryTimelineRoute() {
   const load = useCallback<MemoryRowsLoad>(async () => {
@@ -29,6 +30,7 @@ export default function MemoryTimelineRoute() {
       testID="memory-timeline-screen"
       title="Your timeline"
       intro="Only you can see this."
+      header={<CandidateInbox />}
       load={load}
       emptyTitle="No memories yet"
       emptyBody="Memories you make from your trips and places will line up here."

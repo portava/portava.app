@@ -509,3 +509,120 @@ test('a partial abort carries no crew answer, so the card makes no crew claim', 
 
   expect(screen.queryByTestId('abort-crew-notice')).toBeNull();
 });
+
+// ── census L30 / L173 — the traveller's "left / back" check-ins ───────────────
+//
+// The control is rendered ONLY when the overview says 2992's store is on
+// (`persisted` not `persistence_disabled`), so every case above — whose fixture
+// carries no `persisted` — renders exactly what it did before. The cases below
+// route `fetch` by URL: `/checkpoints` is the control's, `/return-now` the card's.
+
+function checkpointCalls(method?: string) {
+  return fetchSpy.mock.calls.filter(([url, init]) =>
+    String(url).includes('/checkpoints') && (method ? (init?.method ?? 'GET') === method : true));
+}
+
+const GATE_ON = { state: 'stored', unwritten: [] as string[] };
+const GATE_OFF = { state: 'not_stored', reason: 'persistence_disabled' };
+
+test('L30 — with 2992\'s gate OFF the card offers no check-in and asks the server nothing', async () => {
+  await render(<CardUnderTest overview={{ ...overviewFixture(), persisted: GATE_OFF }} nowMs={CERTIFIED_MS} canAbort />);
+  expect(screen.queryByTestId('layover-checkpoints')).toBeNull();
+  expect(screen.queryByTestId('layover-checkpoints-loading')).toBeNull();
+  expect(checkpointCalls()).toHaveLength(0);
+});
+
+test('L30 — an overview without `persisted` (an older server) is treated as unknown: hidden', async () => {
+  await render(<CardUnderTest overview={overviewFixture()} nowMs={CERTIFIED_MS} canAbort />);
+  expect(screen.queryByTestId('layover-checkpoints')).toBeNull();
+  expect(checkpointCalls()).toHaveLength(0);
+});
+
+test('L173 — gate ON: read, report "I\'ve left the airport", re-read, and offer "I\'m back"', async () => {
+  const left = { id: 'cp-1', type: 'LANDSIDE_EXIT', observedAt: '2026-09-08T11:05:00.000Z' };
+  let reported = false;
+  fetchSpy.mockImplementation(async (url: string, init?: any) => {
+    if (String(url).includes('/checkpoints') && init?.method === 'POST') {
+      reported = true;
+      return jsonResponse(201, { ok: true, checkpoint: left, duplicate: false, airportPresence: 'landside' });
+    }
+    if (String(url).includes('/checkpoints')) {
+      return jsonResponse(200, reported
+        ? { ok: true, available: true, checkpoints: [left], airportPresence: 'landside' }
+        : { ok: true, available: true, checkpoints: [], airportPresence: 'unreported' });
+    }
+    return jsonResponse(404, {});
+  });
+  await render(<CardUnderTest overview={{ ...overviewFixture(), persisted: GATE_ON }} nowMs={CERTIFIED_MS} canAbort />);
+  await waitFor(() => expect(screen.getByTestId('layover-checkpoint-left')).toBeTruthy());
+  expect(screen.getByText('This does not change your return time.')).toBeTruthy();
+
+  await act(async () => { fireEvent.press(screen.getByTestId('layover-checkpoint-left')); });
+  await waitFor(() => expect(screen.getByTestId('layover-checkpoint-back')).toBeTruthy());
+  const post = checkpointCalls('POST');
+  expect(post).toHaveLength(1);
+  const body = JSON.parse(post[0][1].body);
+  expect(body.type).toBe('LANDSIDE_EXIT');
+  expect(typeof body.operationId).toBe('string');
+  expect(String(screen.getByTestId('layover-checkpoints-status').props.children)).toMatch(/You told us you left the airport at/);
+});
+
+test('L173 — a failed report says so, and the retry carries the SAME operation id', async () => {
+  let posts = 0;
+  fetchSpy.mockImplementation(async (url: string, init?: any) => {
+    if (String(url).includes('/checkpoints') && init?.method === 'POST') {
+      posts += 1;
+      return posts === 1
+        ? jsonResponse(503, { error: 'degraded_unavailable', message: 'Your checkpoint was not saved. Please try again.' })
+        : jsonResponse(201, { ok: true, checkpoint: { id: 'cp-1', type: 'LANDSIDE_EXIT', observedAt: '2026-09-08T11:05:00.000Z' }, duplicate: false, airportPresence: 'landside' });
+    }
+    if (String(url).includes('/checkpoints')) return jsonResponse(200, { ok: true, available: true, checkpoints: [], airportPresence: 'unreported' });
+    return jsonResponse(404, {});
+  });
+  await render(<CardUnderTest overview={{ ...overviewFixture(), persisted: GATE_ON }} nowMs={CERTIFIED_MS} canAbort />);
+  await waitFor(() => expect(screen.getByTestId('layover-checkpoint-left')).toBeTruthy());
+  await act(async () => { fireEvent.press(screen.getByTestId('layover-checkpoint-left')); });
+  await waitFor(() => expect(screen.getByTestId('layover-checkpoint-notice')).toBeTruthy());
+  expect(String(screen.getByTestId('layover-checkpoint-notice').props.children)).toMatch(/not saved/);
+  await act(async () => { fireEvent.press(screen.getByTestId('layover-checkpoint-left')); });
+  await waitFor(() => expect(checkpointCalls('POST')).toHaveLength(2));
+  const [a, b] = checkpointCalls('POST').map(([, init]) => JSON.parse(init.body).operationId);
+  expect(b).toBe(a);
+});
+
+test('L30 — a failed read is a failure with a retry, never "you have reported nothing"', async () => {
+  fetchSpy.mockImplementation(async (url: string) =>
+    String(url).includes('/checkpoints')
+      ? jsonResponse(503, { error: 'degraded_unavailable', message: 'Your checkpoints could not be loaded. Please try again.' })
+      : jsonResponse(404, {}));
+  await render(<CardUnderTest overview={{ ...overviewFixture(), persisted: GATE_ON }} nowMs={CERTIFIED_MS} canAbort />);
+  await waitFor(() => expect(screen.getByTestId('layover-checkpoints-unavailable')).toBeTruthy());
+  expect(screen.queryByTestId('layover-checkpoints-status')).toBeNull();
+  expect(screen.getByText('Your checkpoints could not be loaded. Please try again.')).toBeTruthy();
+  await act(async () => { fireEvent.press(screen.getByTestId('layover-checkpoints-retry')); });
+  await waitFor(() => expect(checkpointCalls('GET').length).toBeGreaterThanOrEqual(2));
+});
+
+test('L30 — the server\'s own "store off" renders nothing, even with the overview saying on', async () => {
+  fetchSpy.mockImplementation(async (url: string) =>
+    String(url).includes('/checkpoints')
+      ? jsonResponse(200, { ok: true, available: false, reason: 'persistence_disabled', checkpoints: null, airportPresence: null })
+      : jsonResponse(404, {}));
+  await render(<CardUnderTest overview={{ ...overviewFixture(), persisted: GATE_ON }} nowMs={CERTIFIED_MS} canAbort />);
+  await waitFor(() => expect(checkpointCalls()).toHaveLength(1));
+  await waitFor(() => expect(screen.queryByTestId('layover-checkpoints-loading')).toBeNull());
+  expect(screen.queryByTestId('layover-checkpoints')).toBeNull();
+  expect(screen.queryByTestId('layover-checkpoints-unavailable')).toBeNull();
+});
+
+test('L173 — an ended layover shows its check-ins but offers no report', async () => {
+  fetchSpy.mockImplementation(async (url: string) =>
+    String(url).includes('/checkpoints')
+      ? jsonResponse(200, { ok: true, available: true, checkpoints: [], airportPresence: 'unreported' })
+      : jsonResponse(404, {}));
+  const ov = overviewFixture();
+  await render(<CardUnderTest overview={{ ...ov, session: { ...ov.session, status: 'completed' }, persisted: GATE_ON }} nowMs={CERTIFIED_MS} canAbort={false} />);
+  await waitFor(() => expect(screen.getByTestId('layover-checkpoints')).toBeTruthy());
+  expect(screen.queryByTestId('layover-checkpoint-left')).toBeNull();
+  expect(screen.queryByTestId('layover-checkpoint-back')).toBeNull();
+});

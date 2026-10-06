@@ -81,6 +81,46 @@ export interface ThreadCoordinationView {
   decisions: ConversationDecisionView[];
   commitments: ConversationCommitmentView[];
   rendezvous: Array<{ messageId: string; setBy: string; at: string; payload: any }>;
+  /**
+   * §9's per-state cells (server `services/telegraph/coordinationStages.ts`).
+   * Optional because an older server does not send them; absent is drawn as
+   * nothing, never as "there is no next step".
+   */
+  nextStep?: NextStepView | null;
+  sharedRides?: SharedRideView[];
+  closeout?: CloseoutView | null;
+}
+
+/** §9 Active — the one next step, DERIVED from the thread (never a declaration). */
+export interface NextStepView {
+  kind: string;
+  label: string;
+  at: string | null;
+  sourceMessageId: string | null;
+  provenance: 'DERIVED_FROM_THREAD';
+}
+
+/** §9 Returning — a shared ride: a SPLIT_RIDE proposal and who answered it. */
+export interface SharedRideView {
+  proposalId: string;
+  proposedBy: string;
+  proposedAt: string;
+  title: string;
+  detail: string | null;
+  riders: string[];
+  declined: string[];
+  /** False when the server could not re-check the riders against the roster. */
+  rosterChecked: boolean;
+}
+
+/** §9 Complete — the closeout offered for a short window after a plan completes. */
+export interface CloseoutView {
+  planObjectId: string;
+  title: string;
+  endedAt: string;
+  offeredUntil: string;
+  arrivedCount: number;
+  options: Array<'CREATE_RECAP' | 'SAVE_TO_MEMORY' | 'DONE'>;
 }
 
 export interface CoordinationResponse {
@@ -257,4 +297,30 @@ export function coordinationStateLabel(state: CoordinationState | null): string 
     default:
       return '';
   }
+}
+
+// ── §9 Returning — shared transport ──────────────────────────────────────────
+
+/**
+ * Propose a shared ride back: a §8.1 `SPLIT_RIDE` action proposal. It is a
+ * PROPOSAL (§8.2) — it books nothing and charges nothing; people answer it.
+ */
+export async function proposeSharedRide(
+  threadId: string,
+  title: string,
+): Promise<CoordinationResult<{ id: string }>> {
+  return postCoordinationKind(threadId, 'ACTION_PROPOSAL', {
+    action: 'SPLIT_RIDE',
+    title,
+    requiresConfirmation: true,
+  });
+}
+
+/** Answer an action proposal (a shared ride included): CONFIRMED joins, DECLINED drops out. */
+export async function respondToAction(
+  threadId: string,
+  actionMessageId: string,
+  response: 'CONFIRMED' | 'DECLINED',
+): Promise<CoordinationResult<{ id: string }>> {
+  return postCoordinationKind(threadId, 'ACTION_RESPONSE', { actionMessageId, response });
 }

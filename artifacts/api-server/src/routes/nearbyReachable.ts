@@ -69,7 +69,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { checkRateLimit } from "../lib/rateLimit.js";
 import { invisibleModeTelemetry } from "../lib/invisibleMode.js";
-import { viewerMayUsePrivateMap } from "../services/telegraph/reachablePeople.js";
+import { viewerFacingNotShown, viewerMayUsePrivateMap } from "../services/telegraph/reachablePeople.js";
 import { loadReachablePeople, MAX_CANDIDATES } from "../services/telegraph/reachablePeopleQuery.js";
 
 const router = Router();
@@ -144,7 +144,10 @@ router.get(
         privateMapAvailable: viewerMayUsePrivateMap(result.viewerInvisible),
       },
       degraded: result.degraded,
-      refusals: result.telemetry.refusals,
+      // ONE undifferentiated count. The reasons are server-side telemetry only
+      // (logged above): per-reason counts told a viewer, in a small crew, that
+      // a named person had sharing off — or was inside a protected zone.
+      notShown: viewerFacingNotShown(result.telemetry),
     });
   }),
 );

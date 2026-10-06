@@ -359,10 +359,15 @@ describe("census-trust §31: column drift on a DENY table is an unread state, ne
     assert.equal(p.canFollow, false);
   });
 
-  it("PAIR — user_account_states genuinely ABSENT (42P01) → Phase-2 'no state', the pair is interactable", async () => {
-    const p = ran(await resolve(baseRows(), { user_account_states: TABLE_MISSING }));
-    assert.equal(p.canMessage, true);
-    assert.notEqual(p.degraded, true);
+  // Was: "genuinely ABSENT (42P01) → Phase-2 'no state', the pair is interactable". user_account_states has
+  // been THE moderation state since the owner's decision of 2026-10-03 (lib/accountStateGate.ts), not a
+  // Phase-2 table that may not exist yet: a missing one means every ban is unread, so the resolution refuses.
+  it("PAIR — user_account_states genuinely ABSENT (42P01) → the resolution REFUSES too: missing is unread, not 'not banned'", async () => {
+    scenarios++;
+    await assert.rejects(
+      resolve(baseRows(), { user_account_states: TABLE_MISSING }),
+      "a moderation table that cannot be seen must not resolve to an interactable target",
+    );
   });
 
   it("user_privacy_settings COLUMN drift → REFUSES; an age restriction that could not be read is not 'unrestricted'", async () => {

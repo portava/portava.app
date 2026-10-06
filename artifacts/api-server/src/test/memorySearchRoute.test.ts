@@ -38,6 +38,8 @@ import http from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import memoriesRouter from "../routes/memories.js";
+import { scopeKeyOf } from "../services/memoryProjections/projectionRegistry.js";
+import { CREW_UNION_MEMBER_LIMIT } from "../services/memory/memorySearchService.js";
 
 const OWNER = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const VIEWER = "cccccccc-cccc-cccc-cccc-cccccccccccc";
@@ -45,6 +47,14 @@ const STRANGER = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 const M_PUB = "dddddddd-dddd-dddd-dddd-dddddddddddd";
 const M_PRIV = "dddddddd-dddd-dddd-dddd-dddddddddd02";
 const M_MINE = "dddddddd-dddd-dddd-dddd-dddddddddd03";
+/** SHARED_CREW fixture. OWNER owns the trip; VIEWER and DEPARTING are crew. */
+const TRIP = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee1";
+const DEPARTING = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbb02";
+const NONMEMBER = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbb03";
+const M_CREW_OWNER = "dddddddd-dddd-dddd-dddd-dddddddddd10";
+const M_CREW_VIEWER = "dddddddd-dddd-dddd-dddd-dddddddddd11";
+const M_CREW_ONLY_ME = "dddddddd-dddd-dddd-dddd-dddddddddd12";
+const M_CREW_DEPARTING = "dddddddd-dddd-dddd-dddd-dddddddddd13";
 
 function memory(id: string, owner: string, over: Record<string, unknown> = {}) {
   return {
@@ -77,12 +87,54 @@ function tables(): Record<string, any[]> {
     ],
     blocks: [],
     feature_flags: [],
+    trips: [],
+    trip_members: [],
   };
 }
 
-function makeClient(store: Record<string, any[]>, failReads: Set<string>) {
+/**
+ * The SHARED_CREW fixture, as a separate builder so the existing single-target
+ * cases keep the store they were written against.
+ *
+ * Note what is deliberately in it: one `only_me` Memory of the trip owner's
+ * (`M_CREW_ONLY_ME`). `TripMemoryProjection.build` filters to the scope owner's
+ * UNDELETED Memories on the trip and runs no audience ladder at all — it does not
+ * look at `visibility`, and `TRIP_FIELDS` does not even carry the column — so
+ * that row IS in the registered derivative the union reads. If the §23 ladder is
+ * not run over the union, the crew gets handed it.
+ */
+function crewTables(): Record<string, any[]> {
+  const t = tables();
+  t.memories.push(
+    memory(M_CREW_OWNER, OWNER, { id: M_CREW_OWNER, trip_id: TRIP, visibility: "trip_crew", title: "Porto crew dinner" }),
+    memory(M_CREW_VIEWER, VIEWER, { id: M_CREW_VIEWER, trip_id: TRIP, visibility: "trip_crew", title: "Porto morning run" }),
+    memory(M_CREW_ONLY_ME, OWNER, { id: M_CREW_ONLY_ME, trip_id: TRIP, visibility: "only_me", title: "the argument on the bridge" }),
+    memory(M_CREW_DEPARTING, DEPARTING, { id: M_CREW_DEPARTING, trip_id: TRIP, visibility: "trip_crew", title: "Porto last night" }),
+  );
+  t.trips = [{ id: TRIP, owner_id: OWNER }];
+  t.trip_members = [
+    { trip_id: TRIP, user_id: OWNER, role: "owner", status: "accepted" },
+    { trip_id: TRIP, user_id: VIEWER, role: "member", status: "accepted" },
+    { trip_id: TRIP, user_id: DEPARTING, role: "member", status: "accepted" },
+  ];
+  t.profiles.push(
+    { id: DEPARTING, account_status: "active", name: "D", handle: "d", avatar_url: null },
+    { id: NONMEMBER, account_status: "active", name: "N", handle: "n", avatar_url: null },
+  );
+  return t;
+}
+
+/**
+ * `failScopeKeys` makes ONE member's derivative read fail while the rest of the
+ * crew's succeed, which `failReads` (whole-table) cannot express. It is the only
+ * way to exercise the case the honesty requirement is about: a union in which one
+ * member's derivative could not be read must name that member as withheld, not
+ * drop them and not report them as having no memories.
+ */
+function makeClient(store: Record<string, any[]>, failReads: Set<string>, failScopeKeys: Set<string> = new Set()) {
   function chain(table: string) {
     const filters: Array<(r: any) => boolean> = [];
+    const eqValues: any[] = [];
     let single = false, head = false, isWrite = false, selectedAfterWrite = false;
     let mode: "insert" | "upsert" | "update" | "delete" | null = null;
     let payload: any = null;
@@ -97,7 +149,7 @@ function makeClient(store: Record<string, any[]>, failReads: Set<string>) {
         return obj;
       },
       delete() { isWrite = true; mode = "delete"; return obj; },
-      eq(c: string, v: any) { filters.push((r) => r[c] === v); return obj; },
+      eq(c: string, v: any) { eqValues.push(v); filters.push((r) => r[c] === v); return obj; },
       neq(c: string, v: any) { filters.push((r) => r[c] !== v); return obj; },
       in(c: string, vs: any[]) { const s = new Set(vs); filters.push((r) => s.has(r[c])); return obj; },
       is(c: string, v: any) { filters.push((r) => (v === null ? r[c] == null : r[c] === v)); return obj; },
@@ -114,6 +166,9 @@ function makeClient(store: Record<string, any[]>, failReads: Set<string>) {
       // supabase-js RESOLVES on a database error; it does not throw. A fake
       // that threw would exercise a `catch` the production path does not have.
       if (failReads.has(table)) return { data: null, error: { message: `${table} unavailable` }, count: null };
+      if (!isWrite && eqValues.some((v) => typeof v === "string" && failScopeKeys.has(v))) {
+        return { data: null, error: { message: `${table} unavailable for ${eqValues.join("|")}` }, count: null };
+      }
       const all = (store[table] ??= []);
       if (mode === "insert" || mode === "upsert") {
         const rows = (Array.isArray(payload) ? payload : [payload]).map((r: any) => ({ ...r }));
@@ -151,9 +206,9 @@ function makeClient(store: Record<string, any[]>, failReads: Set<string>) {
 
 interface App { baseUrl: string; store: Record<string, any[]>; logged: any[]; close: () => Promise<void> }
 
-async function startApp(opts: { failReads?: Set<string>; store?: Record<string, any[]> } = {}): Promise<App> {
+async function startApp(opts: { failReads?: Set<string>; store?: Record<string, any[]>; failScopeKeys?: Set<string> } = {}): Promise<App> {
   const store = opts.store ?? tables();
-  _setTestClient(makeClient(store, opts.failReads ?? new Set()) as any, true);
+  _setTestClient(makeClient(store, opts.failReads ?? new Set(), opts.failScopeKeys ?? new Set()) as any, true);
   const logged: any[] = [];
   const app = express();
   app.use(express.json());
@@ -382,14 +437,24 @@ describe("§15 namespace isolation: the request never gets to be a cross-namespa
     } finally { await app.close(); }
   });
 
-  it("says plainly which namespace this surface cannot reach, and why", async () => {
-    // Census H113's ceiling, on the wire rather than only in a comment: a
-    // crew-wide derivative is a product decision, not a wiring gap.
+  it("reports all three namespaces reachable and NO unreachable ones", async () => {
+    // This assertion used to be the opposite — `namespaces` was
+    // ["PRIVATE_PERSONAL", "PUBLIC"] and SHARED_CREW was listed with a reason in
+    // `unreachableNamespaces`. It is inverted rather than deleted because
+    // `searchCapabilities()` puts both fields ON THE WIRE: a surface that kept
+    // advertising a reason SHARED_CREW cannot be reached would be telling clients
+    // they cannot do something they now can, which is a worse lie than the
+    // original gap.
     const app = await startApp();
     try {
       const r = await search(app, VIEWER, { intent: { kind: "mine" } });
-      assert.deepEqual(r.body.capabilities.namespaces, ["PRIVATE_PERSONAL", "PUBLIC"]);
-      assert.ok("SHARED_CREW" in r.body.capabilities.unreachableNamespaces);
+      assert.deepEqual(r.body.capabilities.namespaces, ["PRIVATE_PERSONAL", "SHARED_CREW", "PUBLIC"]);
+      assert.deepEqual(r.body.capabilities.unreachableNamespaces, {});
+      assert.ok(r.body.capabilities.intents.includes("crew_trip"));
+      // The union's own ceilings travel beside `semanticIndex`, for the same
+      // reason: a client must be able to render what this answer does not cover.
+      assert.equal(r.body.capabilities.crewUnion.partialPolicy, "serve_readable_and_name_withheld");
+      assert.equal(typeof r.body.capabilities.crewUnion.memberBound, "number");
     } finally { await app.close(); }
   });
 });
@@ -485,6 +550,279 @@ describe("§28.11 an unreadable source or registry refuses rather than answering
       const r = await search(app, VIEWER, { intent: { kind: "public", ownerId: OWNER }, trip: "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee" });
       assert.equal(r.status, 400);
       assert.match(String(r.body.message), /cannot answer/i);
+    } finally { await app.close(); }
+  });
+});
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * SHARED_CREW — the crew's memory of one trip, and the honesty of a UNION
+ *
+ * The namespace existed in the engine (`NAMESPACE_PROJECTIONS.SHARED_CREW`) and
+ * was reachable only by calling `searchMemories` directly; the service listed it
+ * in `UNREACHABLE_NAMESPACES` with a reason. The reason's two factual halves were
+ * already settled in the schema — a departed member is simply not crew, because
+ * REMOVE_PARTICIPANT and DECLINE_INVITE DELETE the `trip_members` row — and the
+ * third half, what to do when one member's derivative is revoked, is the decision
+ * these cases pin down.
+ *
+ * WHAT MAKES THESE CASES WORTH WRITING. A union is the one shape where "it
+ * worked" and "it worked for four of the six people on this trip" are the same
+ * 200. Every case below is about the difference.
+ * ════════════════════════════════════════════════════════════════════════*/
+
+const memberLine = (b: any, id: string) => ((b?.members ?? []) as any[]).find((m) => m.memberId === id);
+
+describe("§15 SHARED_CREW: a crew search unions the crew's per-owner derivatives", () => {
+  it("serves every accepted member's Memories of the trip, and REGISTERS one derivative per member", async () => {
+    const app = await startApp({ store: crewTables() });
+    try {
+      const r = await search(app, VIEWER, { intent: { kind: "crew_trip", tripId: TRIP } });
+      assert.equal(r.status, 200);
+      assert.equal(r.body.namespace, "SHARED_CREW");
+      assert.equal(r.body.projectionId, "TripMemoryProjection");
+      // The union: the viewer's own Memory AND two other members'.
+      assert.ok(ids(r.body).has(M_CREW_VIEWER), "the viewer's own trip Memory");
+      assert.ok(ids(r.body).has(M_CREW_OWNER), "another member's trip Memory — this is the union");
+      assert.ok(ids(r.body).has(M_CREW_DEPARTING));
+      // STATE, not the return value: §18's cleanup graph must have one row per
+      // member's derivative to walk, or a member's privacy decision has nothing
+      // to revoke.
+      const crewRegs = app.store[REG].filter((g: any) => g.projection_id === "TripMemoryProjection");
+      assert.equal(crewRegs.length, 3, "one registration per crew member, not one for the union");
+      assert.deepEqual(crewRegs.map((g: any) => g.owner_id).sort(), [OWNER, VIEWER, DEPARTING].sort());
+      for (const g of crewRegs) assert.equal(g.revocation_state, "ACTIVE");
+      // NO member was withheld — and the union still does not claim to be
+      // complete, because the §23 ladder withheld the trip owner's only_me row
+      // (the case below). Both facts are reported, separately, because they are
+      // different failures: a member we could not read, and a row this reader may
+      // not have.
+      assert.deepEqual(r.body.withheldMembers, []);
+      assert.equal(r.body.audienceWithheldCount, 1);
+      assert.equal(r.body.unionComplete, false);
+      assert.equal(r.body.crewSize, 3);
+      for (const id of [OWNER, VIEWER, DEPARTING]) {
+        assert.equal(memberLine(r.body, id).state, "served", `${id} must be named as served`);
+      }
+    } finally { await app.close(); }
+  });
+
+  it("does NOT serve another member's only_me Memory — the projection is not the permission", async () => {
+    // `TripMemoryProjection.build` puts every undeleted Memory of the scope owner
+    // on the trip into the payload, with no audience ladder and no `visibility`
+    // field in TRIP_FIELDS to filter on afterwards. GET
+    // /trips/:tripId/memories/recap handles that by running canReadMemory BEFORE
+    // the builder; the search path reads a REGISTERED derivative that is keyed by
+    // audience rather than by reader, so it cannot. The ladder therefore runs as
+    // an intersection over the union, and this is the case that proves it does.
+    const app = await startApp({ store: crewTables() });
+    try {
+      const r = await search(app, VIEWER, { intent: { kind: "crew_trip", tripId: TRIP } });
+      assert.equal(r.status, 200);
+      assert.ok(!ids(r.body).has(M_CREW_ONLY_ME), "a crew member's only_me Memory must not reach the crew");
+      // STATE: the row IS in the registered derivative. The ladder is the only
+      // thing keeping it out of the answer, so if that is ever removed this
+      // assertion is what fails rather than nothing.
+      const ownerReg = app.store[REG].find((g: any) => g.projection_id === "TripMemoryProjection" && g.owner_id === OWNER);
+      assert.ok(
+        (ownerReg.payload_json as any[]).some((row) => row.memory_id === M_CREW_ONLY_ME),
+        "positive control: the derivative itself does contain it",
+      );
+      // A narrowed union is not a complete one, and it says so.
+      assert.ok(r.body.audienceWithheldCount >= 1);
+      assert.equal(r.body.unionComplete, false);
+    } finally { await app.close(); }
+  });
+
+  it("the owner still sees their OWN only_me Memory of the trip", async () => {
+    // The ladder's first line: the owner always reads their own row. Without this
+    // the case above would also pass if the union simply dropped only_me rows for
+    // everyone, which is a different (and wrong) rule.
+    const app = await startApp({ store: crewTables() });
+    try {
+      const r = await search(app, OWNER, { intent: { kind: "crew_trip", tripId: TRIP } });
+      assert.equal(r.status, 200);
+      assert.ok(ids(r.body).has(M_CREW_ONLY_ME));
+      // And for THIS reader nothing was withheld at all, so the union reports
+      // itself complete. This is the positive control for `unionComplete`: the
+      // field has to be capable of being true, or it is decoration.
+      assert.equal(r.body.audienceWithheldCount, 0);
+      assert.equal(r.body.unionComplete, true);
+    } finally { await app.close(); }
+  });
+
+  it("refuses a viewer who is not accepted crew, with the answer that does not confirm the trip", async () => {
+    const app = await startApp({ store: crewTables() });
+    try {
+      const r = await search(app, NONMEMBER, { intent: { kind: "crew_trip", tripId: TRIP } });
+      assert.equal(r.status, 404);
+      // STATE: a refused search must not have built anything. A derivative
+      // registered on a stranger's request is a derivative their request caused
+      // the system to compute over other people's Memories.
+      assert.equal(app.store[REG].filter((g: any) => g.projection_id === "TripMemoryProjection").length, 0);
+    } finally { await app.close(); }
+  });
+
+  it("refuses a member whose row says status != accepted", async () => {
+    // `acceptedCrewOfTrip` is the single rule, and this is the half of it the
+    // older, looser copies of the trip_crew predicate got wrong: role='invited'
+    // and status='removed' both used to be admitted.
+    const store = crewTables();
+    store.trip_members.push({ trip_id: TRIP, user_id: NONMEMBER, role: "member", status: "invited" });
+    const app = await startApp({ store });
+    try {
+      const r = await search(app, NONMEMBER, { intent: { kind: "crew_trip", tripId: TRIP } });
+      assert.equal(r.status, 404);
+    } finally { await app.close(); }
+  });
+
+  it("a DEPARTED member's Memories leave the union, through the real read path", async () => {
+    // Membership is a HARD delete: REMOVE_PARTICIPANT and DECLINE_INVITE both
+    // `DELETE FROM public.trip_members`, and nothing in the repository ever
+    // writes status='removed' or 'left'. So there is no "formerly crew" state to
+    // handle — the union is over `acceptedCrewOfTrip` and inherits the answer.
+    const store = crewTables();
+    const app = await startApp({ store });
+    try {
+      const before = await search(app, VIEWER, { intent: { kind: "crew_trip", tripId: TRIP } });
+      assert.ok(ids(before.body).has(M_CREW_DEPARTING), "positive control: they were crew a moment ago");
+
+      // The departure, as the route performs it.
+      store.trip_members = store.trip_members.filter((m: any) => m.user_id !== DEPARTING);
+
+      const after = await search(app, VIEWER, { intent: { kind: "crew_trip", tripId: TRIP } });
+      assert.equal(after.status, 200);
+      assert.ok(!ids(after.body).has(M_CREW_DEPARTING), "a departed member's Memories must not be in the crew's union");
+      assert.equal(after.body.crewSize, 2);
+      // And they are NOT reported as withheld either: they are not crew, which is
+      // a different fact from "crew, and we could not serve them".
+      assert.equal(memberLine(after.body, DEPARTING), undefined);
+      assert.equal(after.body.withheldMembers.length, 0);
+      // The Memory itself is untouched — a departure is not a deletion.
+      assert.ok(store.memories.some((m: any) => m.id === M_CREW_DEPARTING && m.state === "published"));
+    } finally { await app.close(); }
+  });
+});
+
+describe("§18 / §15 SHARED_CREW partial unions are SERVED and NAMED, never refused whole", () => {
+  it("one member's REVOKED derivative withholds that member and serves the rest", async () => {
+    const app = await startApp({ store: crewTables() });
+    try {
+      await search(app, VIEWER, { intent: { kind: "crew_trip", tripId: TRIP } });
+      const ownerReg = app.store[REG].find((g: any) => g.projection_id === "TripMemoryProjection" && g.owner_id === OWNER);
+      ownerReg.revocation_state = "REVOKED";
+      ownerReg.revoked_at = "2026-03-01T00:00:00.000Z";
+      const payloadBefore = JSON.stringify(ownerReg.payload_json);
+
+      const r = await search(app, VIEWER, { intent: { kind: "crew_trip", tripId: TRIP } });
+      // NOT a 410. One member's privacy decision must not blank the crew's
+      // shared memory for the other two (a denial-of-service shape), and the
+      // refusal itself would announce that somebody revoked something (a privacy
+      // leak by inference).
+      assert.equal(r.status, 200);
+      assert.ok(ids(r.body).has(M_CREW_VIEWER), "the other members are still served");
+      assert.ok(ids(r.body).has(M_CREW_DEPARTING));
+      assert.ok(!ids(r.body).has(M_CREW_OWNER), "the revoked member contributes nothing");
+      // NAMED. This is the requirement: a partial union must never present as
+      // complete, and the withheld member must be identifiable.
+      const line = memberLine(r.body, OWNER);
+      assert.equal(line.state, "withheld");
+      assert.equal(line.reason, "derivative_revoked");
+      // Never 0 — "we did not look" is not "this member has no memories".
+      assert.equal(line.matchCount, null);
+      assert.deepEqual(r.body.withheldMembers.map((m: any) => m.memberId), [OWNER]);
+      assert.equal(r.body.unionComplete, false);
+      // STATE: and it was NOT resurrected on the way past.
+      assert.equal(ownerReg.revocation_state, "REVOKED");
+      assert.equal(JSON.stringify(ownerReg.payload_json), payloadBefore);
+    } finally { await app.close(); }
+  });
+
+  it("one member's UNREADABLE derivative is named as withheld, not dropped and not reported as empty", async () => {
+    // §28.11, which is the whole reason this field exists: a failed read served
+    // as an empty one is the defect this repository keeps finding. The member is
+    // still in `members`, still has a reason, and still has `matchCount: null`.
+    const store = crewTables();
+    const failing = scopeKeyOf("TripMemoryProjection", {
+      owner_id: DEPARTING, viewer_id: null, trip_id: TRIP, place_id: null, person_id: null,
+    });
+    const app = await startApp({ store, failScopeKeys: new Set([failing]) });
+    try {
+      const r = await search(app, VIEWER, { intent: { kind: "crew_trip", tripId: TRIP } });
+      assert.equal(r.status, 200);
+      const line = memberLine(r.body, DEPARTING);
+      assert.ok(line, "an unreadable member must still appear in `members` — dropping them is the silent omission");
+      assert.equal(line.state, "withheld");
+      assert.equal(line.reason, "derivative_unavailable");
+      assert.equal(line.matchCount, null, "0 would claim this member has no memories of the trip");
+      assert.ok(typeof line.detail === "string" && line.detail.length > 0);
+      assert.ok(!ids(r.body).has(M_CREW_DEPARTING));
+      assert.equal(r.body.unionComplete, false);
+      // The readable members are still served — the failure is contained.
+      assert.ok(ids(r.body).has(M_CREW_VIEWER));
+      assert.equal(memberLine(r.body, VIEWER).state, "served");
+    } finally { await app.close(); }
+  });
+
+  it("an unreadable trip_members REFUSES rather than searching an empty crew", async () => {
+    // An empty crew would be served as "nobody on this trip has any memories",
+    // which is a claim about the world made out of a failed read.
+    const app = await startApp({ store: crewTables(), failReads: new Set(["trip_members"]) });
+    try {
+      const r = await search(app, VIEWER, { intent: { kind: "crew_trip", tripId: TRIP } });
+      assert.equal(r.status, 503);
+      assert.ok(app.logged.length > 0, "the refusal must be logged, not only returned");
+    } finally { await app.close(); }
+  });
+
+  it("a `trip` filter that contradicts the crew scope is refused rather than reconciled", async () => {
+    const app = await startApp({ store: crewTables() });
+    try {
+      const r = await search(app, VIEWER, {
+        intent: { kind: "crew_trip", tripId: TRIP },
+        trip: "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeee9",
+      });
+      assert.equal(r.status, 400);
+    } finally { await app.close(); }
+  });
+});
+
+describe("§15 SHARED_CREW bounds its fan-out and says what the bound is", () => {
+  it("unions at most CREW_UNION_MEMBER_LIMIT members and NAMES the rest as withheld", async () => {
+    // N members is N derivative reads. The bound is the smallest safe one rather
+    // than a capacity decision anybody has made, and it is on the wire so a crew
+    // of 27 is never handed 25 members' memories as though that were all of them.
+    const store = crewTables();
+    const extra: string[] = [];
+    for (let i = 0; i < 30; i += 1) {
+      const id = `f0000000-0000-0000-0000-0000000000${String(i).padStart(2, "0")}`;
+      extra.push(id);
+      store.trip_members.push({ trip_id: TRIP, user_id: id, role: "member", status: "accepted" });
+    }
+    const app = await startApp({ store });
+    try {
+      const r = await search(app, VIEWER, { intent: { kind: "crew_trip", tripId: TRIP } });
+      assert.equal(r.status, 200);
+      const bound = r.body.memberBound;
+      assert.equal(bound, CREW_UNION_MEMBER_LIMIT);
+      assert.equal(r.body.crewSize, 33, "the crew is reported in full, however many are served");
+      const served = (r.body.members as any[]).filter((m) => m.state === "served");
+      const over = (r.body.members as any[]).filter((m) => m.reason === "over_member_bound");
+      assert.ok(served.length <= bound, `served ${served.length} must not exceed the bound ${bound}`);
+      assert.equal(served.length + (r.body.members as any[]).filter((m) => m.state === "withheld").length, 33);
+      assert.equal(over.length, 33 - bound);
+      assert.equal(r.body.unionComplete, false);
+      // STATE, and this is the assertion the bound exists for: exactly `bound`
+      // derivatives were read and registered, not one per crew member.
+      assert.equal(
+        app.store[REG].filter((g: any) => g.projection_id === "TripMemoryProjection").length,
+        bound,
+        "the fan-out itself must be bounded, not just the reported member list",
+      );
+      // The cut is deterministic, so a member is never served to one reader and
+      // withheld from another.
+      const sorted = [...served.map((m) => m.memberId)].sort();
+      assert.deepEqual(served.map((m) => m.memberId), sorted);
+      assert.ok(extra.length === 30);
     } finally { await app.close(); }
   });
 });
