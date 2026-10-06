@@ -3268,7 +3268,7 @@ the document's `head_commit`, because it re-reads fifty-odd rows, not 450.
   `/media-contribute`) are reachable by deep link exactly as `/media-world`
   already is; nothing outside the dark shell links to them. Registered at the
   END of the route array so no cited line moved:
-  `travel-buddy-standalone/src/navigation/portavaRoutes.ts:2080#key: 'media-map',`.
+  `travel-buddy-standalone/src/navigation/portavaRoutes.ts:2089#key: 'media-map',`.
 - **Every proof is a fixture or a stand-in.** The client suites stub `fetch` or
   the service module; the server suites use the in-memory Supabase double. A
   mutation turning a suite red proves the test can fail. It proves nothing about
@@ -13260,7 +13260,7 @@ was not fixed here.
    - The item's `placeId` is the post's canonical place
      (`artifacts/api-server/src/compass/CompassItemHydrator.ts:134#placeId:         (post.canonical_place_id as string | null) ?? null,`).
    - The feed serves the whole item: `FeedItem` spreads the pipeline result
-     (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:791#...r,`), and
+     (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:836#...r,`), and
      CompassPrivacyGuard does not strip `placeId`.
    - **Why not fixed:** the same id is the live-constraint subject
      (`artifacts/api-server/src/compass/CompassLiveConstraints.ts:639#if (item.type === "post" && pid) { out.set(item.id, pid); continue; }`).
@@ -15093,16 +15093,16 @@ kept everywhere, as mapPublicPost keeps them.
 **1. The Compass feed (§42.6, item 1).**
 - Served: each post item's canonical place as `placeId`
   (`artifacts/api-server/src/compass/CompassItemHydrator.ts:134#placeId:         (post.canonical_place_id as string | null) ?? null,`),
-  spread whole into the page (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:791#...r,`).
+  spread whole into the page (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:836#...r,`).
 - The hydrator SELECTs the mode
   (`artifacts/api-server/src/compass/CompassItemHydrator.ts:65#canonical_place_id, post_status, location_privacy_mode";`)
   and marks a withheld post
   (`artifacts/api-server/src/compass/CompassItemHydrator.ts:135#data:            { title }, ...postPlaceMark(post),`).
   `placeId` itself is left in place.
 - **Stripped at the page**: buildFeed and buildSection null `placeId` for a
-  non-owner (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:717#pageItems.map((r0) => compassPostPlaceForViewer(r0, profile.userId))`,
-  `artifacts/api-server/src/compass/CompassFeedBuilder.ts:790#pageItems.map((r0) => compassPostPlaceForViewer(r0, profile.userId))`,
-  `artifacts/api-server/src/compass/CompassFeedBuilder.ts:829#export function compassPostPlaceForViewer<`).
+  non-owner (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:762#pageItems.map((r0) => compassPostPlaceForViewer(r0, profile.userId))`,
+  `artifacts/api-server/src/compass/CompassFeedBuilder.ts:835#pageItems.map((r0) => compassPostPlaceForViewer(r0, profile.userId))`,
+  `artifacts/api-server/src/compass/CompassFeedBuilder.ts:874#export function compassPostPlaceForViewer<`).
 - Why there and not at the source, as §42.6 (1) asked: the same id is the
   live-constraint subject
   (`artifacts/api-server/src/compass/CompassLiveConstraints.ts:639#if (item.type === "post" && pid) { out.set(item.id, pid); continue; }`)

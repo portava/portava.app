@@ -3003,7 +3003,7 @@ carries §47). No code changes in this section; `head_commit` is not re-declared
 M256's cell says its server half is *"a missing harness nobody has written"* and that this lane
 *"can see no such harness anywhere under `artifacts/api-server/src/test/`"*. It was written on
 2026-09-20/21 (`c36aac77d`, `62bee1776`) and is in the api-server `test` script:
-`artifacts/api-server/src/test/mapProjectionPerf.test.ts:271#describe("M256(a) — GET /api/map/projection, 50 warm-cache requests"`,
+`artifacts/api-server/src/test/mapProjectionPerf.test.ts:283#describe("M256(a) — GET /api/map/projection, 50 warm-cache requests"`,
 gating p95 at the top of the band (`artifacts/api-server/src/test/mapProjectionPerf.test.ts:136#const P95_BUDGET_MS = 800;`)
 with four anti-vacuity guards that make a route which stops reading fail rather than get faster.
 Re-run on this tree: 9 / 9, in-process arm **p50 4.2 ms / p95 54.7 ms** over 50 warm requests.
