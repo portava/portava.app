@@ -58,7 +58,17 @@ export function summariseNearby(raw: unknown): InboxBandsData['nearby'] {
   };
 }
 
-export function openSessions(raw: unknown): InboxBandsData['now'] {
+/**
+ * §2.1 NOW is active coordination. The same bound the server puts on §2.3's NOW
+ * layer (services/telegraph/layers.ts NOW_LAYER_WINDOW_MINUTES) applies here: a
+ * session nobody ended is NOW only while something happened in it within the
+ * window — its opening or its latest transition. The sessions route answers up
+ * to fourteen days back, and "Dinner · active" from last week is not now
+ * (verifier F5).
+ */
+export const NOW_WINDOW_MINUTES = 60;
+
+export function openSessions(raw: unknown, nowMs: number = Date.now()): InboxBandsData['now'] {
   const body = rec(raw);
   if (!body || !Array.isArray(body.sessions)) return null;
   const out: NonNullable<InboxBandsData['now']> = [];
@@ -67,6 +77,12 @@ export function openSessions(raw: unknown): InboxBandsData['now'] {
     const sessionId = str(s?.sessionId);
     const threadId = str(s?.threadId);
     if (!s || !sessionId || !threadId || s.endedAt != null) continue;
+    let last = Date.parse(str(s.startedAt) ?? '');
+    for (const t of Array.isArray(s.transitions) ? s.transitions : []) {
+      const at = Date.parse(str(rec(t)?.at) ?? '');
+      if (Number.isFinite(at) && (!Number.isFinite(last) || at > last)) last = at;
+    }
+    if (!Number.isFinite(last) || nowMs - last > NOW_WINDOW_MINUTES * 60_000) continue;
     out.push({ sessionId, threadId, title: str(s.title) ?? 'Coordination', state: str(s.state) });
   }
   return out;
@@ -80,7 +96,9 @@ export function upcomingPlans(raw: unknown, nowMs: number): InboxBandsData['upco
     const m = rec(item);
     const id = str(m?.id);
     const startsAt = str(m?.startsAt);
-    if (!m || !id || !startsAt || m.status === 'cancelled' || !(Date.parse(startsAt) > nowMs)) continue;
+    // A plan the viewer DECLINED (or cancelled) is not their upcoming plan: /me/meetups
+    // returns every invitation with `myRsvp` (verifier F5).
+    if (!m || !id || !startsAt || m.status === 'cancelled' || m.myRsvp === 'declined' || m.myRsvp === 'cancelled' || !(Date.parse(startsAt) > nowMs)) continue;
     out.push({ id, title: str(m.title) ?? 'Plan', startsAt, chatThreadId: str(m.chatThreadId) });
   }
   return out.sort((a, b) => Date.parse(a.startsAt!) - Date.parse(b.startsAt!));
@@ -97,7 +115,7 @@ export async function fetchInboxBands(nowMs: number = Date.now()): Promise<Inbox
   return {
     status: st && 'status' in st ? { status: str(st.status), expiresAt: str(st.expiresAt) } : null,
     nearby: summariseNearby(nearby),
-    now: openSessions(sessions),
+    now: openSessions(sessions, nowMs),
     upcoming: upcomingPlans(meetups, nowMs),
   };
 }

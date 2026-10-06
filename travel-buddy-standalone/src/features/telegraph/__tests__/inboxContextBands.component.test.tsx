@@ -50,9 +50,9 @@ describe('the band parsers say null for a failed read and a value for an answer'
   it('now: only OPEN sessions, and a malformed body is a failed read', () => {
     expect(
       openSessions({ sessions: [
-        { sessionId: 'a', threadId: 't', title: 'Open', state: 'ACTIVE', endedAt: null },
-        { sessionId: 'b', threadId: 't', title: 'Ended', state: 'COMPLETE', endedAt: later(-1) },
-      ] }),
+        { sessionId: 'a', threadId: 't', title: 'Open', state: 'ACTIVE', endedAt: null, startedAt: later(-0.2) },
+        { sessionId: 'b', threadId: 't', title: 'Ended', state: 'COMPLETE', endedAt: later(-1), startedAt: later(-0.5) },
+      ] }, NOW),
     ).toEqual([{ sessionId: 'a', threadId: 't', title: 'Open', state: 'ACTIVE' }]);
     expect(openSessions({ nope: true })).toBeNull();
   });
@@ -68,12 +68,41 @@ describe('the band parsers say null for a failed read and a value for an answer'
     expect(upcomingPlans('garbage', NOW)).toBeNull();
   });
 
+  it('VERIFIER F5: a session opened 13 days ago that nobody ended is not NOW; a recent transition keeps one that is', () => {
+    expect(openSessions({ sessions: [{ sessionId: 's', threadId: 't', title: 'Dinner', state: 'ACTIVE', endedAt: null, startedAt: later(-13 * 24) }] }, NOW)).toEqual([]);
+    expect(openSessions({ sessions: [{ sessionId: 's', threadId: 't', title: 'Dinner', state: 'ACTIVE', endedAt: null, startedAt: later(-3), transitions: [{ at: later(-0.25) }] }] }, NOW)?.length).toBe(1);
+    expect(openSessions({ sessions: [{ sessionId: 's', threadId: 't', title: 'Dinner', state: 'ACTIVE', endedAt: null }] }, NOW)).toEqual([]);
+  });
+
+  it('VERIFIER F5: UPCOMING excludes a plan the viewer DECLINED', () => {
+    expect(upcomingPlans({ meetups: [{ id: 'm1', title: 'Beach', startsAt: later(5), status: 'active', chatThreadId: 't', myRsvp: 'declined' }] }, NOW)).toEqual([]);
+    expect(upcomingPlans({ meetups: [{ id: 'm2', title: 'Beach', startsAt: later(5), status: 'active', chatThreadId: 't', myRsvp: 'going' }] }, NOW)?.length).toBe(1);
+  });
+
   it('a status line is said only for a live status', () => {
     expect(statusLine({ status: 'free_tonight', expiresAt: later(6) }, NOW)).toMatch(/^Free tonight · until \d{1,2}:\d{2}$/);
     expect(statusLine({ status: 'free_tonight', expiresAt: later(-1) }, NOW)).toBeNull();
     expect(statusLine({ status: 'invented', expiresAt: later(1) }, NOW)).toBeNull();
     expect(statusLine({ status: null, expiresAt: null }, NOW)).toBeNull();
     expect(statusLine(null, NOW)).toBeNull();
+  });
+});
+
+describe('VERIFIER F5: the inbox stays mounted, so its clock must not freeze', () => {
+  it('YOUR STATUS is gone after it expires, on the next render', async () => {
+    const realNow = Date.now;
+    let clock = NOW;
+    Date.now = () => clock;
+    try {
+      const data = { status: { status: 'free_now', expiresAt: later(0.5) }, nearby: null, now: null, upcoming: null };
+      const { rerender } = await render(<InboxContextBands initialData={data} />);
+      expect(screen.queryByTestId('telegraph-band-status')).toBeTruthy();
+      clock = NOW + 2 * 3_600_000;
+      await rerender(<InboxContextBands initialData={data} />);
+      expect(screen.queryByTestId('telegraph-band-status')).toBeNull();
+    } finally {
+      Date.now = realNow;
+    }
   });
 });
 

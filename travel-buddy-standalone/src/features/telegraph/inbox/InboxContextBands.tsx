@@ -88,8 +88,15 @@ export function InboxContextBands({ onOpenThread, initialData = null, nowMs }: I
   const palette = useTelegraphPalette();
   const styles = useMemo(() => makeStyles(palette), [palette]);
   const [data, setData] = useState<InboxBandsData | null>(initialData);
-  // The instant the time words are measured from: read once, not on every render.
-  const [mountedAt] = useState(() => Date.now());
+  // The inbox is a tab and stays mounted: re-read the clock on every render and
+  // tick once a minute, so an expired "Free now · until …" does not stay on
+  // screen (verifier F5). The data refresh is the screen's; the clock is ours.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (nowMs !== undefined) return;
+    const h = setInterval(() => setTick((n) => n + 1), 60_000);
+    return () => clearInterval(h);
+  }, [nowMs]);
 
   useEffect(() => {
     if (initialData !== null) return;
@@ -102,7 +109,7 @@ export function InboxContextBands({ onOpenThread, initialData = null, nowMs }: I
   }, [initialData]);
 
   if (!data) return null;
-  const now = nowMs ?? mountedAt;
+  const now = nowMs ?? Date.now();
   const status = statusLine(data.status, now);
   const nearby = data.nearby && data.nearby.enabled && data.nearby.count > 0 ? data.nearby : null;
   const sessions = data.now ?? [];
