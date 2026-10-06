@@ -85,6 +85,7 @@ DECLARE
   before_len int;
   branches_before int;
   admin_before int;
+  family_before int;
 BEGIN
   SELECT pg_get_functiondef(p.oid) INTO d
     FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
@@ -92,6 +93,10 @@ BEGIN
   before_len := length(d);
   branches_before := (length(d) - length(replace(d, E'\n      WHEN ''', ''))) / length(E'\n      WHEN ''');
   admin_before := (length(d) - length(replace(d, $a$THEN 'admin'$a$, ''))) / length($a$THEN 'admin'$a$);
+  -- family assignments, counted FROM THE KERNEL IN FRONT OF US (2798's reason)
+  family_before := (length(d) - length(replace(d, E'v_family     := ''participant'';', ''))) / length(E'v_family     := ''participant'';');
+  CREATE TEMP TABLE _k3974_before (what text PRIMARY KEY, n int) ON COMMIT DROP;
+  INSERT INTO _k3974_before VALUES ('participant_family', family_before), ('branches', branches_before);
 
   -- 1. declarations, after 2798's last
   n := (length(d) - length(replace(d, '  v_rec_day    date;', ''))) / length('  v_rec_day    date;');
@@ -111,7 +116,7 @@ BEGIN
   -- 3. the branch, inserted before ADMIN_HIDE_TRIP's
   n := (length(d) - length(replace(d, E'      WHEN ''ADMIN_HIDE_TRIP'' THEN\n', ''))) / length(E'      WHEN ''ADMIN_HIDE_TRIP'' THEN\n');
   IF n <> 1 THEN RAISE EXCEPTION '3974: anchor ADMIN_HIDE_TRIP branch occurs % times, expected 1', n; END IF;
-  d := replace(d, E'      WHEN ''ADMIN_HIDE_TRIP'' THEN\n', $branch$      WHEN 'ADMIN_RESTORE_PARTICIPANT' THEN
+  d := replace(d, E'      WHEN ''ADMIN_HIDE_TRIP'' THEN\n', $branches$      WHEN 'ADMIN_RESTORE_PARTICIPANT' THEN
         -- 3974 (census-trips §83): an upheld appeal restores what the removal took.
         v_family := 'participant';
         BEGIN
@@ -193,6 +198,7 @@ BEGIN
         UPDATE public.trip_crew_location_sessions SET status = 'stopped', stopped_at = now()
          WHERE trip_id = v_trip_id AND user_id = v_subject AND status = 'active';
         GET DIAGNOSTICS v_n = ROW_COUNT;
+        v_family     := 'participant';
         v_event_type := 'trip.participant_added';
         v_result := jsonb_build_object('trip_id', v_trip_id, 'user_id', v_subject, 'role', v_member.role::text,
                                        'status', v_member.status, 'access', v_rst_access,
@@ -200,7 +206,7 @@ BEGIN
         v_payload := v_payload || jsonb_build_object('via', 'admin_restore', 'removal_sequence', v_rst_seq);
 
       WHEN 'ADMIN_HIDE_TRIP' THEN
-$branch$);
+$branches$);
 
   IF length(d) <= before_len THEN RAISE EXCEPTION '3974: the transform did not grow the definition'; END IF;
   n := (length(d) - length(replace(d, E'\n      WHEN ''', ''))) / length(E'\n      WHEN ''');
@@ -213,6 +219,14 @@ $branch$);
   END IF;
 
   EXECUTE d;
+  -- family assignments must grow by exactly two (entry + before the event); checked again after COMMIT
+  n := (length(d) - length(replace(d, E'v_family     := ''participant'';', ''))) / length(E'v_family     := ''participant'';');
+  IF n <> family_before + 2 THEN
+    RAISE EXCEPTION '3974: participant family assignments went from % to %, expected +2', family_before, n;
+  END IF;
+  CREATE TEMP TABLE IF NOT EXISTS _k3974_after (what text PRIMARY KEY, n int);
+  DELETE FROM _k3974_after;
+  INSERT INTO _k3974_after VALUES ('participant_family', n);
 END
 $mig$;
 
@@ -220,7 +234,7 @@ COMMIT;
 
 -- ── Postconditions (separate transaction: they assert what persisted) ───────
 DO $post$
-DECLARE d text; t text;
+DECLARE d text; t text; n int;
 BEGIN
   SELECT pg_get_functiondef(p.oid) INTO d
     FROM pg_proc p JOIN pg_namespace ns ON ns.oid = p.pronamespace
@@ -231,8 +245,16 @@ BEGIN
     'TRIP_RESTORE_REMOVAL_NOT_RECORDED', 'TRIP_RESTORE_NOT_LATEST_REMOVAL', 'TRIP_RESTORE_ACCESS_MISMATCH',
     'TRIP_RESTORE_TRIP_STATUS_UNKNOWN', $a$'via', 'admin_restore'$a$, $a$'live_sharing_restored', false$a$,
     -- what this transform did not name must still be there
-    $a$WHEN 'ADMIN_HIDE_TRIP' THEN 'admin'$a$, 'trip.hidden_by_admin', 'ADD_RECURRING_COMMITMENT', 'REMOVE_PARTICIPANT', 'JOIN_VIA_LINK'] LOOP
+    $a$WHEN 'ADMIN_HIDE_TRIP' THEN 'admin'$a$, 'trip.hidden_by_admin', 'ADD_RECURRING_COMMITMENT', 'REMOVE_PARTICIPANT', 'JOIN_VIA_LINK',
+    'TRIP_VERSION_CONFLICT', 'authz.is_accepted_trip_member', 'trip_command_receipts', 'trip_outbox'] LOOP
     IF position(t in d) = 0 THEN RAISE EXCEPTION 'POSTCONDITION FAILED (3974): % missing after apply', t; END IF;
   END LOOP;
+  -- Ledger attribution: the branch sets v_family twice (at entry, and again
+  -- immediately before its event), so the participant family assignments in the
+  -- installed definition must have grown by exactly two.
+  n := (length(d) - length(replace(d, E'v_family     := ''participant'';', ''))) / length(E'v_family     := ''participant'';');
+  IF n <> (SELECT b.n FROM pg_temp._k3974_after b WHERE b.what = 'participant_family') THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3974): participant family assignments are %, expected % — a dropped one would file events under the wrong family', n, (SELECT b.n FROM pg_temp._k3974_after b WHERE b.what = 'participant_family');
+  END IF;
 END
 $post$;

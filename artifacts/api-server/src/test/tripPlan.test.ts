@@ -113,6 +113,10 @@ function makeFakeClient(state: State) {
       delete() { _op = "delete"; return b; },
       eq(col: string, val: any) { filters.push((r: any) => r[col] === val); return b; },
       in(col: string, vals: any[]) { filters.push((r: any) => vals.includes(r[col])); return b; },
+      // lib/tripTrustGate.ts (census-trips §84) reads trust_restrictions with an or() on expires_at.
+      // This fixture holds no restriction rows, so the filter is moot there — and or() on any OTHER
+      // table is not modelled and says so, rather than silently matching everything.
+      or() { if (table !== "trust_restrictions") throw new Error(`or() is not modelled for ${table}`); return b; },
       is(col: string, val: any) {
         filters.push((r: any) => val === null ? r[col] == null : r[col] === val);
         return b;

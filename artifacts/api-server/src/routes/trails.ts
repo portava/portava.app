@@ -35,7 +35,7 @@ import { z } from "zod";
 import { createHash } from "node:crypto";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { getServiceClient } from "../lib/supabase.js";
+import { getServiceClient } from "../lib/supabase.js"; import { refuseIfTrustRestricted } from "../lib/discoveryTrustGate.js";
 import { readTrailLiveIntel } from "../lib/trailLiveIntel.js";
 import {
   windowSpanMs, type DerivedStoreProvenance,
@@ -135,6 +135,8 @@ function sendTrailRefusal(res: Response, refusal: Exclude<TrailRefusal, null>): 
       // 503, not 500: nothing failed. The Trail object is not deployed here.
       return sendError(res, "degraded_unavailable", "trails are not available in this deployment");
     case "source_unreadable": return sendError(res, "degraded_unavailable", "the content could not be verified; nothing was attached"); // §61, retryable
+    case "rate_limited": res.setHeader("Retry-After", "3600"); return sendError(res, "rate_limited", `You can start up to ${TRAIL_PROPOSALS_PER_DAY} Trails a day. Try again later.`); // census-discovery §84
+    case "allowance_unreadable": return sendError(res, "degraded_unavailable", "We could not check how many Trails you have started today. Please try again shortly."); // §84, retryable
     default:
       return sendError(res, "db_error", "trail read failed");
   }
@@ -171,7 +173,7 @@ router.get("/v1/discovery/trails", asyncHandler(async (req: Request, res: Respon
 
 router.post("/v1/discovery/trails", asyncHandler(async (req: Request, res: Response) => {
   const auth = await requireUser(req, res);
-  if (!auth) return;
+  if (!auth) return; if (await refuseIfTrustRestricted(res, getServiceClient(), auth.user.id, "hosting")) return; // census-discovery §84 / TRV2-08: hosting (lane C reading)
   const body = z.object({
     title: z.string().min(2).max(120),
     destination: z.string().max(120).nullish(),
@@ -413,7 +415,7 @@ function sendAttachResult(
 
 router.post("/v1/discovery/trails/:id/content", asyncHandler(async (req: Request, res: Response) => {
   const auth = await requireUser(req, res);
-  if (!auth) return;
+  if (!auth) return; if (await refuseIfTrustRestricted(res, getServiceClient(), auth.user.id, "messaging")) return; // census-discovery §84 / TRV2-08: messaging (lane C reading)
   const id = uuid.safeParse(req.params.id);
   if (!id.success) return sendError(res, "invalid_payload", "trail id must be a uuid");
   const body = attachmentBody.safeParse(req.body);
@@ -428,7 +430,7 @@ router.post("/v1/discovery/trails/:id/content", asyncHandler(async (req: Request
 
 router.post("/v1/discovery/trails/:id/suggestions", asyncHandler(async (req: Request, res: Response) => {
   const auth = await requireUser(req, res);
-  if (!auth) return;
+  if (!auth) return; if (await refuseIfTrustRestricted(res, getServiceClient(), auth.user.id, "messaging")) return; // census-discovery §84 / TRV2-08: messaging (lane C reading)
   const id = uuid.safeParse(req.params.id);
   if (!id.success) return sendError(res, "invalid_payload", "trail id must be a uuid");
   const body = attachmentBody.safeParse(req.body);
@@ -528,7 +530,7 @@ router.get("/v1/discovery/trails/:id/more", asyncHandler(async (req: Request, re
  */
 router.post("/v1/discovery/trails/:id/relations", asyncHandler(async (req: Request, res: Response) => {
   const auth = await requireUser(req, res);
-  if (!auth) return;
+  if (!auth) return; if (await refuseIfTrustRestricted(res, getServiceClient(), auth.user.id, "hosting")) return; // census-discovery §84 / TRV2-08: hosting (lane C reading)
   const id = uuid.safeParse(req.params.id);
   if (!id.success) return sendError(res, "invalid_payload", "trail id must be a uuid");
   const body = z.object({
@@ -580,7 +582,7 @@ import {
 // Follow control opens on the viewer's real state. Lane C, appended below every
 // cited line. A failed read answers through the shared refusal map (503),
 // never `following: false`.
-import { readTrailFollow } from "../services/trails/TrailService.js";
+import { readTrailFollow, TRAIL_PROPOSALS_PER_DAY } from "../services/trails/TrailService.js";
 router.get("/v1/discovery/trails/:id/follow", asyncHandler(async (req: Request, res: Response) => {
   const auth = await requireUser(req, res);
   if (!auth) return;

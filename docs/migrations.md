@@ -3900,3 +3900,22 @@ answers `TRIP_COMMAND_UNKNOWN_TYPE`. Not executed anywhere (no Postgres on the a
 
 **Rollback:** `db/rollback/2026-10-05-3974-trip-kernel-admin-restore-participant-rollback.sql` — the inverse
 transform; restored memberships stay.
+
+## 2026-10-05 — `3975_trail_proposal_daily_allowance.sql`, written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3975_trail_proposal_daily_allowance.sql` | **not applied** | **not applied** |
+
+**What it is.** census-discovery §84: `public.trail_propose` (3415) replaced by the same function plus one
+step 0 — a proposer may start three Trails per rolling 24 hours (lane C's number, for the owner to confirm;
+`TrailService.TRAIL_PROPOSALS_PER_DAY`, pinned equal by test), decided under a per-proposer advisory lock
+taken before 3415's per-token locks (so the lock order cannot cycle). Over the allowance it answers
+`rate_limited` and writes nothing. Everything else is 3415's body byte for byte (asserted by test).
+
+**Nothing waits on the press.** The API counts the same allowance before it calls the function (an
+unreadable count is a 503) and answers 429 with `Retry-After`; without 3975 two proposals racing on
+different instances can overshoot by the number of instances.
+
+**Rollback:** `db/rollback/2026-10-05-3975-trail-proposal-daily-allowance-rollback.sql` — restores 3415's
+function verbatim.

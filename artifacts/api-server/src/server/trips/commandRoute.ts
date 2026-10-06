@@ -51,7 +51,7 @@ import { requireUser, requireTripMember, sendError } from "../../lib/http.js";
 import { getServiceClient } from "../../lib/supabase.js";
 import { logger } from "../../lib/logger.js";
 import { asyncHandler } from "../../lib/asyncHandler.js";
-import { executeTripCommand, type TripCommandType } from "../../domain/trips/commands/tripKernel.js";
+import { executeTripCommand, type TripCommandType } from "../../domain/trips/commands/tripKernel.js"; import { refuseTripActionIfRestricted } from "../../lib/tripTrustGate.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripCommands" });
@@ -205,7 +205,7 @@ router.post("/trips/:tripId/commands", asyncHandler(async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   const membership = await requireTripMember(sc, tripId, user.id);
-  if (!membership) { sendError(res, "forbidden", "Not a trip member"); return; }
+  if (!membership) { sendError(res, "forbidden", "Not a trip member"); return; } if (type === "CREATE_PROPOSAL" && await refuseTripActionIfRestricted(res, sc, tripId, user.id, "create_proposal")) return; // census-trips §84 / TRV2-08 (lane C reading)
 
   const result = await executeTripCommand(sc, {
     commandId: randomUUID(),

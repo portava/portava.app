@@ -36,6 +36,8 @@ export type TrailProposalCommit =
   | { kind: "refused"; refusals: TrailCreationRefusal[]; suggestedParentTrailId: string | null }
   /** The declared parent was archived or removed between the pre-check and the decision. */
   | { kind: "invalid_parent" }
+  /** 3975 (census-discovery §84): the proposer has started TRAIL_PROPOSALS_PER_DAY Trails in the last 24 hours, counted under a per-proposer lock. */
+  | { kind: "rate_limited" }
   /** 3415 is not applied here. Creation is refused, never done unserialised. */
   | { kind: "unavailable" }
   | { kind: "error"; error: { code?: unknown; message?: unknown } };
@@ -112,6 +114,8 @@ export async function commitTrailProposal(sc: any, input: TrailProposalInput): P
     }
     case "invalid_parent":
       return { kind: "invalid_parent" };
+    case "rate_limited":
+      return { kind: "rate_limited" };
     default:
       break;
   }

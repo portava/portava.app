@@ -7,7 +7,7 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
-import { requireUser, isAcceptedTripMember, canEditPlan, sendError } from "../lib/http.js";
+import { requireUser, isAcceptedTripMember, canEditPlan, sendError } from "../lib/http.js"; import { refuseTripActionIfRestricted } from "../lib/tripTrustGate.js"; import { getServiceClient as tripGateClient } from "../lib/supabase.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { isMissingColumnError } from "../lib/capability/schemaCapability.js";
 import {
@@ -46,7 +46,7 @@ router.post("/meetups/:meetupId/add-to-trip-plan", asyncHandler(async (req, res)
   if (!member) { sendError(res, "not_member", "You must be an accepted trip member to add items"); return; }
   const permitted = await canEditPlan(client, tripId, user.id);
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
-  if (!permitted) { sendError(res, "forbidden", "You don't have permission to add items to this plan"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You don't have permission to add items to this plan"); return; } if (await refuseTripActionIfRestricted(res, tripGateClient() ?? client, tripId, user.id, "change_shared_plan")) return; // census-trips §84 / TRV2-08 (lane C reading)
 
   // Fetch meetup row — we use a meetups table stub (title, starts_at, location_name)
   const { data: meetup } = await client
@@ -168,7 +168,7 @@ router.post("/places/:placeId/add-to-trip-plan", asyncHandler(async (req, res) =
   if (!member) { sendError(res, "not_member", "You must be an accepted trip member to add items"); return; }
   const permitted = await canEditPlan(client, tripId, user.id);
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
-  if (!permitted) { sendError(res, "forbidden", "You don't have permission to add items to this plan"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You don't have permission to add items to this plan"); return; } if (await refuseTripActionIfRestricted(res, tripGateClient() ?? client, tripId, user.id, "change_shared_plan")) return; // census-trips §84 / TRV2-08 (lane C reading)
 
   // Fetch place row — public-safe columns only (name, category, city)
   // NOTE: exact coordinates are intentionally NOT fetched.

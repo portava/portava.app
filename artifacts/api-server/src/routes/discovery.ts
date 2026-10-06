@@ -21,7 +21,7 @@ import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { provenanceStamp } from "../lib/placeProvenance.js";
 import { z } from "zod";
-import { getServiceClient } from "../lib/supabase";
+import { getServiceClient } from "../lib/supabase"; import { refuseIfTrustRestricted } from "../lib/discoveryTrustGate.js";
 import { osmNeighborhood } from "../lib/osmPlaceShape";
 import { sendError, requireUser } from "../lib/http";
 import { nameVisibilitySet } from "../lib/publicIdentity";
@@ -3200,7 +3200,7 @@ router.get("/discovery/community", async (req, res) => {
  */
 router.post("/discovery/community", async (req, res) => {
   const auth = await requireUser(req, res);
-  if (!auth) return;
+  if (!auth) return; if (await refuseIfTrustRestricted(res, getServiceClient(), auth.user.id, "messaging")) return; // census-discovery §84 / TRV2-08: messaging (lane C reading)
 
   const sc = getServiceClient();
   if (!sc) {

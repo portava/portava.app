@@ -65,7 +65,7 @@ import { trailAffinityMap, trailMomentumFromRankEvents, type TrailMembershipRow 
 import { commitTrailProposal } from "./trailProposal.js"; // census-discovery §61: DC-03's serialised creation decision
 import { verifyAttachSources, type AttachSourceRefusal } from "./trailAttachIntegrity.js"; // §61: DC-20's check that attached content exists
 import { requireTripMember, TripAccessUnavailableError } from "../../lib/http.js"; // §64: a trip route's crew, as 2334's RLS and GET /route-plans/:id decide it
-import { logger as rootLogger } from "../../lib/logger.js";
+import { logger as rootLogger } from "../../lib/logger.js"; import { isAbsentTableError } from "../../lib/absentTableError.js";
 import { fetchBlockedSet, submitterIsVisible } from "../../lib/blocks.js";
 import { decidePostReadable, isPostPublished } from "../../lib/postVisibility.js";
 import { NON_ACTIVE_ACCOUNT_STATUSES } from "../../lib/mediaEligibility.js";
@@ -78,7 +78,20 @@ export type TrailRefusal =
   | "unknown_trail"
   | "invalid_request"
   | "db_error"
-  | "source_unreadable"; // attach (§61): a content source could not be read, so nothing was admitted
+  | "source_unreadable" // attach (§61): a content source could not be read, so nothing was admitted
+  | "rate_limited" // census-discovery §84: the proposer's daily Trail allowance is spent
+  | "allowance_unreadable"; // §84: the allowance count could not be read — retryable, never "none started"
+
+/**
+ * census-discovery §84 (verifier: starting a Trail published a `proposed` Trail
+ * to every user at once, with no rate limit). Trails a person may START per
+ * rolling 24 hours. LANE C'S NUMBER, for the owner to confirm: 02_Trails.md
+ * names no figure; a Trail is a permanent themed space (§1), and three a day is
+ * far above any curator's pace and far below a flood. Mirrored in SQL by
+ * trail_propose (3975), where the decision is taken under a per-proposer lock;
+ * the count here is the fast pre-check, as §61's canonicalisation is.
+ */
+export const TRAIL_PROPOSALS_PER_DAY = 3;
 
 /** Columns read from `trails`. Kept as one constant so no read drifts from another. */
 const TRAIL_COLUMNS =
@@ -1219,6 +1232,13 @@ export async function proposeTrail(
 ): Promise<ProposeTrailResult> {
   const none: ProposeTrailResult = { refusal: null, trail: null, canonicalisation: [], suggestedParentTrailId: null };
   if (!sc) return { ...none, refusal: "no_service_client" };
+  // §84: the daily allowance, BEFORE anything else is read. An unreadable count is not "none started".
+  if (proposerId) {
+    const recent = await sc.from("trails").select("id").eq("created_by", proposerId)
+      .gt("created_at", new Date(Date.now() - 86_400_000).toISOString()).limit(TRAIL_PROPOSALS_PER_DAY); // the rolling 24 h, exclusive: a Trail started exactly a day ago no longer counts
+    if (recent.error) return { ...none, refusal: isAbsentTableError(recent.error) ? "trails_unavailable" : "allowance_unreadable" };
+    if (((recent.data ?? []) as unknown[]).length >= TRAIL_PROPOSALS_PER_DAY) return { ...none, refusal: "rate_limited" };
+  }
 
   const destination = typeof input?.destination === "string" ? input.destination.trim().toLowerCase() : null;
   // THE COMPARISON SET, and why it is wider than the destination (§51).
@@ -1303,6 +1323,7 @@ export async function proposeTrail(
   });
   if (committed.kind === "unavailable") return { ...none, refusal: "trails_unavailable" };
   if (committed.kind === "invalid_parent") return { ...none, refusal: "invalid_request" };
+  if (committed.kind === "rate_limited") return { ...none, refusal: "rate_limited" };
   if (committed.kind === "refused") {
     return { refusal: null, trail: null, canonicalisation: committed.refusals, suggestedParentTrailId: committed.suggestedParentTrailId };
   }

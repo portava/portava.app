@@ -50,7 +50,7 @@
 import { Router } from "express";
 
 import { requireUser, requireTripMember, sendError, canEditPlan } from "../../../lib/http.js";
-import { getServiceClient } from "../../../lib/supabase.js";
+import { getServiceClient } from "../../../lib/supabase.js"; import { refuseTripActionIfRestricted } from "../../../lib/tripTrustGate.js";
 import { isFlagEnabled } from "../../../lib/featureFlags.js";
 import { logger } from "../../../lib/logger.js";
 import { asyncHandler } from "../../../lib/asyncHandler.js";
@@ -517,7 +517,7 @@ router.post("/trips/:tripId/simulate", asyncHandler(async (req, res) => {
 // kernel flag. Nothing else is written.
 router.post("/trips/:tripId/replan", asyncHandler(async (req, res) => {
   const ctx = await memberContext(req, res); if (!ctx) return;
-  const body = (req.body ?? {}) as any;
+  const body = (req.body ?? {}) as any; if (body.createProposals === true && await refuseTripActionIfRestricted(res, ctx.sc, ctx.tripId, ctx.userId, "create_proposal")) return; // census-trips §84 / TRV2-08 (lane C reading): refused before anything is computed or recorded
   const now = new Date();
   const constraints: ReplanConstraints = {
     lockedPlanIds: Array.isArray(body.lockedPlanIds) ? body.lockedPlanIds.filter((x: unknown) => typeof x === "string") : [],

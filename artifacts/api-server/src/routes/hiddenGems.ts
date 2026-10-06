@@ -33,7 +33,7 @@ import { Router } from "express";
 import { randomUUID } from "node:crypto"; import { recordGemContributionSignal, recordGemAcceptedSignal, recordGemArrivalIfAttributable } from "../lib/mediaAnalytics.js";
 import { z } from "zod";
 import { requireUser, sendError, canEditPlan } from "../lib/http.js"; import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js";
-import { getServiceClient } from "../lib/supabase.js"; import { canSeePlanItemLocation, PLAN_ITEM_PRIVACY_COLUMNS } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor } from "../server/trips/privateAnchorShares.js";
+import { getServiceClient } from "../lib/supabase.js"; import { canSeePlanItemLocation, PLAN_ITEM_PRIVACY_COLUMNS } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor } from "../server/trips/privateAnchorShares.js"; import { refuseIfTrustRestricted } from "../lib/discoveryTrustGate.js"; import { refuseTripActionIfRestricted } from "../lib/tripTrustGate.js";
 import {
   tripKernelClient,
   readCommandEnvelope,
@@ -266,7 +266,7 @@ async function resolveCallerId(req: any, sc: any): Promise<string | null> {
 
 router.post("/hidden-gems", async (req, res) => {
   const auth = await requireUser(req, res);
-  if (!auth) return;
+  if (!auth) return; if (await refuseIfTrustRestricted(res, getServiceClient(), auth.user.id, "messaging")) return; // census-discovery §84 / TRV2-08: messaging (lane C reading)
   const { user } = auth;
 
   const sc = getServiceClient();
@@ -1118,7 +1118,7 @@ router.post("/hidden-gems/:id/report", async (req, res) => {
 
 router.post("/hidden-gems/:id/contribute", async (req, res) => {
   const auth = await requireUser(req, res);
-  if (!auth) return;
+  if (!auth) return; if (await refuseIfTrustRestricted(res, getServiceClient(), auth.user.id, "messaging")) return; // census-discovery §84 / TRV2-08: messaging (lane C reading)
   const { user } = auth;
 
   const sc = getServiceClient();
@@ -1266,7 +1266,7 @@ router.post("/hidden-gems/:id/plan", async (req, res) => {
   // it does but this user may not edit its plan.
   const permitted = await canEditPlan(sc, tripId, user.id);
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
-  if (!permitted) { sendError(res, "forbidden", "You don't have permission to edit this trip's plan"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You don't have permission to edit this trip's plan"); return; } if (await refuseTripActionIfRestricted(res, sc, tripId, user.id, "change_shared_plan")) return; // census-trips §84 / TRV2-08 (lane C reading)
 
   try {
     const gem = await getGem(sc, req.params.id);

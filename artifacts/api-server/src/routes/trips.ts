@@ -25,7 +25,7 @@ import {
 } from "../domain/trips/policies/tripPlanPrivacy.js";
 import { isMissingColumnError } from "../lib/capability/schemaCapability.js";
 import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
-import { toCamel, readPlanItemsInOrder } from "./plan.js"; import { withholdPrivatePlanItems, redactWithheldPlanItem, canSeePlanItemLocation } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, privateItemEditRefusal, clearAnchorGrantsForItem, clearAnchorGrantsForMember } from "../server/trips/privateAnchorShares.js";
+import { toCamel, readPlanItemsInOrder } from "./plan.js"; import { withholdPrivatePlanItems, redactWithheldPlanItem } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, privateItemEditRefusal, clearAnchorGrantsForItem, clearAnchorGrantsForMember } from "../server/trips/privateAnchorShares.js"; import { refuseTripActionIfRestricted } from "../lib/tripTrustGate.js";
 import { logTripActivity, findTripActivityByKey } from "../domain/trips/events/tripActivityLog.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
@@ -1808,9 +1808,9 @@ router.get("/trips/:tripId/plan/map", async (req, res) => {
 
   if (error) { req.log.error({ err: error }, "get trip plan map"); sendError(res, "db_error", error.message); return; }
 
-  // census-trips §81: the one owner-only rule — public items, the viewer's own private ones, and grants still true
-  const mapAccess = await planItemAccessFor(getServiceClient() ?? client, tripId, user.id); const mapItems = (data ?? [])
-    .filter((row) => canSeePlanItemLocation(mapAccess, row) && row.lat != null && row.lng != null)
+  // Only items with safe PUBLIC coordinates: this shared map shows no private place to anyone, its creator included (that is the map projection's privateAnchors layer, which applies grants).
+  const mapItems = (data ?? []) // census-trips §81: `=== false`, so an UNSET privacy (null) is private here, not public
+    .filter((row) => row.location_is_private === false && row.lat != null && row.lng != null)
     .map((row) => toCamel(row, {}));
 
   res.json({ items: mapItems });
@@ -1828,7 +1828,7 @@ router.post("/trips/:tripId/plan/items", async (req, res) => {
 
   const permitted = await canEditPlan(client, tripId, user.id);
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
-  if (!permitted) { sendError(res, "forbidden", "You do not have permission to add plan items on this trip"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You do not have permission to add plan items on this trip"); return; } if (await refuseTripActionIfRestricted(res, getServiceClient() ?? client, tripId, user.id, "change_shared_plan")) return; // census-trips §84 / TRV2-08 (lane C reading)
 
   const parsed = CreatePlanItemSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
@@ -1981,7 +1981,7 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
   // Check trip-level plan edit permission first
   const permitted = await canEditPlan(client, tripId, user.id);
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
-  if (!permitted) { sendError(res, "forbidden", "You do not have permission to edit plan items on this trip"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You do not have permission to edit plan items on this trip"); return; } if (await refuseTripActionIfRestricted(res, getServiceClient() ?? client, tripId, user.id, "change_shared_plan")) return; // census-trips §84 / TRV2-08 (lane C reading)
 
   const auth = await canEditPlanItem(client, tripId, itemId, user.id);
   if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
@@ -2116,7 +2116,7 @@ router.patch("/trips/:tripId/plan/items/:itemId/remove", async (req, res) => {
 
   const permitted = await canEditPlan(client, tripId, user.id);
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
-  if (!permitted) { sendError(res, "forbidden", "You do not have permission to edit plan items on this trip"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You do not have permission to edit plan items on this trip"); return; } if (await refuseTripActionIfRestricted(res, getServiceClient() ?? client, tripId, user.id, "change_shared_plan")) return; // census-trips §84 / TRV2-08 (lane C reading)
 
   const auth = await canEditPlanItem(client, tripId, itemId, user.id);
   if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
@@ -2167,7 +2167,7 @@ router.delete("/trips/:tripId/plan/items/:itemId", async (req, res) => {
 
   const permitted = await canEditPlan(client, tripId, user.id);
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
-  if (!permitted) { sendError(res, "forbidden", "You do not have permission to edit plan items on this trip"); return; }
+  if (!permitted) { sendError(res, "forbidden", "You do not have permission to edit plan items on this trip"); return; } if (await refuseTripActionIfRestricted(res, getServiceClient() ?? client, tripId, user.id, "change_shared_plan")) return; // census-trips §84 / TRV2-08 (lane C reading)
 
   const auth = await canEditPlanItem(client, tripId, itemId, user.id);
   if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
@@ -2400,7 +2400,7 @@ router.post("/trips/:tripId/plan/items/:itemId/reorder", async (req, res) => {
   // Reorder is owner-only: any accepted member can view/add/edit, but only
   // the trip owner may change the global sort order.
   const auth = await canEditPlanItem(client, tripId, itemId, user.id, true);
-  if (!auth.permitted) { sendError(res, auth.code, auth.message); return; }
+  if (!auth.permitted) { sendError(res, auth.code, auth.message); return; } if (await refuseTripActionIfRestricted(res, getServiceClient() ?? client, tripId, user.id, "change_shared_plan")) return; // census-trips §84 / TRV2-08 (lane C reading)
 
   // Trip Kernel path (REORDER_PLAN, one item).
   const kernel = await tripKernel();

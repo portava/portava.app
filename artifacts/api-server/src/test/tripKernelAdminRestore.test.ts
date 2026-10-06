@@ -38,7 +38,7 @@ const m3974 = read("3974_trip_kernel_admin_restore_participant.sql");
 const k2590 = read("2590_trip_kernel_add_plan_attachment_columns.sql");
 const kbody = k2590.slice(k2590.indexOf("CREATE OR REPLACE FUNCTION public.trip_kernel_execute"), k2590.indexOf("$fn$;", k2590.indexOf("CREATE OR REPLACE FUNCTION public.trip_kernel_execute")));
 const count = (hay: string, needle: string) => hay.split(needle).length - 1;
-const branch = m3974.slice(m3974.indexOf("$branch$      WHEN 'ADMIN_RESTORE_PARTICIPANT' THEN"), m3974.lastIndexOf("$branch$"));
+const branch = m3974.slice(m3974.indexOf("$branches$      WHEN 'ADMIN_RESTORE_PARTICIPANT' THEN"), m3974.lastIndexOf("$branches$"));
 
 describe("A. 3974 transforms the kernel it says it transforms", () => {
   it("A1. its two dispatch anchors occur exactly once in 2590's definition, the last full CREATE of trip_kernel_execute", () => {

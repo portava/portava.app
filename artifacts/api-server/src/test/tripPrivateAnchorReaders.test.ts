@@ -31,9 +31,11 @@
  *
  * SHOWN RED at `85bb3c5339` (this file run against that tree): 76 of 122 fail.
  * Cases 1, 2, 4 and 5 fail on every path except `map-projection` (wave 1's
- * fix) and `plan-map` — which served NO private item to anyone, its creator
- * included, so there it is cases 0 and 3 that fail: the one rule lets the
- * creator and a grantee see it. daily-brief 6 and 7 fail too. Each path's mutation — that path's own call to the
+ * fix). daily-brief 6 and 7 fail too. `plan-map` (GET /trips/:id/plan/map) is
+ * asserted separately below: it is a public-coordinates-only surface by design
+ * and shows no private place to anyone, its creator included; what was wrong
+ * there was narrower — it read `!location_is_private`, so a row with privacy
+ * UNSET (null) was drawn as public. Each path's mutation — that path's own call to the
  * rule replaced by the raw rows — is applied alone and turns that path's cases
  * 1, 2, 4 and 5 red (census-trips §81 lists each mutation and its result).
  *
@@ -137,7 +139,6 @@ const PATHS: ReaderPath[] = [
   { name: "offline-bundle", method: "GET", path: `/trips/${TRIP}/offline-bundle` },
   { name: "route-plan-stay", method: "GET", path: `/route-plans/for-trip/${TRIP}` },
   { name: "plan-list", method: "GET", path: `/trips/${TRIP}/plan` },
-  { name: "plan-map", method: "GET", path: `/trips/${TRIP}/plan/map` },
   { name: "map-projection", method: "GET", path: `/trips/${TRIP}/map` },
   { name: "feasibility", method: "GET", path: `/trips/${TRIP}/feasibility`,
     // Derived: the stay's distance from its stage anchor. Without the stay's point the check is UNCHECKABLE for it.
@@ -226,4 +227,24 @@ describe("§81 path gem-coords (a gem linked by a private plan item unlocks noth
   it("gem-coords 3. a granted member, sharing on, does", async () => { assert.equal(await precise(BEN, "on"), true); });
   it("gem-coords 4. sharing off: does not", async () => { assert.equal(await precise(BEN, "off"), false); });
   it("gem-coords 5. grant list unreadable: does not", async () => { assert.equal(await precise(BEN, "unread"), false); });
+});
+
+describe("§81 path plan-map (public coordinates only — no private place, for anyone)", () => {
+  const map = async (viewer: string, hotelOver: Record<string, unknown> = {}) => {
+    const c = makeFakeClient(seed(viewer, "on", hotelOver));
+    _setTestClient(c as never, true);
+    _setTestServiceClient(c as never);
+    const r = await call(harness.base, "GET", `/trips/${TRIP}/plan/map`, viewer);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    return (r.body.items as Array<{ id: string }>).map((i) => i.id);
+  };
+  it("plan-map 0. CONTROL: the public dinner is on the map — the surface works", async () => {
+    assert.ok((await map(CLEO)).includes(DINNER));
+  });
+  it("plan-map 1. the private stay is on nobody's map: not the creator's, not a grantee's, not the organizer's, not a member's", async () => {
+    for (const v of [ANA, BEN, ORGANIZER, CLEO]) assert.ok(!(await map(v)).includes(HOTEL), v);
+  });
+  it("plan-map 2. THE POINT: a row whose privacy is UNSET (null) is private here, not public", async () => {
+    for (const v of [ANA, CLEO]) assert.ok(!(await map(v, { location_is_private: null })).includes(HOTEL), v);
+  });
 });

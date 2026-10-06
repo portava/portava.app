@@ -25,7 +25,7 @@ BEGIN
 
   d := regexp_replace(d, $a$      WHEN 'ADMIN_RESTORE_PARTICIPANT' THEN.*?      WHEN 'ADMIN_HIDE_TRIP' THEN$a$, $a$      WHEN 'ADMIN_HIDE_TRIP' THEN$a$, '');
   n := (length(d) - length(replace(d, E'\n      WHEN ''', ''))) / length(E'\n      WHEN ''');
-  IF n <> branches_before - 1 THEN RAISE EXCEPTION 'rollback 3974: the excision removed % branches, expected exactly 1', branches_before - n; END IF;
+  IF n <> branches_before - 1 THEN RAISE EXCEPTION 'rollback 3974: the excision overran — it removed % command branches, expected exactly 1', branches_before - n; END IF;
 
   d := replace(d, $a$ WHEN 'ADMIN_RESTORE_PARTICIPANT' THEN 'admin'$a$, '');
   d := replace(d, '  v_rec_day    date;' || E'\n' || '  v_rst_event  uuid;' || E'\n' || '  v_rst_seq    bigint;' || E'\n' || '  v_rst_access text;', '  v_rec_day    date;');
