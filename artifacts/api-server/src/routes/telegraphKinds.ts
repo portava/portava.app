@@ -36,8 +36,8 @@ import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { logger as rootLogger } from "../lib/logger.js";
-import { guardTelegraphThreadWrite } from "../lib/telegraphThreadWrite.js";
-import { emitLocationStarted, publishToThread } from "../lib/telegraphEvents.js";
+import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js"; import { sendBucketForKind } from "../domain/telegraph/policies/messageDoorPolicy.js";
+import { checkLocationShareWindow, writeThreadEnvelope } from "../services/telegraph/threadEnvelopeWrites.js";
 import {
   DRAWER_TABS,
   drawerTabFor,
@@ -48,7 +48,6 @@ import {
   SENDABLE_ENVELOPE_KINDS,
   UNSENDABLE_KINDS,
   validateKindMessage,
-  MAX_LOCATION_SHARE_HOURS,
   type DrawerTab,
 } from "../services/telegraph/messageKinds.js";
 import {
@@ -71,7 +70,6 @@ export const DRAWER_SCAN_LIMIT = 500;
 const TypedMessageSchema = z.object({
   kind: z.string().min(1).max(40),
   payload: z.unknown(),
-  replyToId: z.string().max(64).nullish(),
   clientId: z.string().max(64).nullish(),
 });
 
@@ -180,6 +178,42 @@ router.post(
       sendError(res, "invalid_payload", "Invalid threadId");
       return;
     }
+    /**
+     * `replyToId` is REFUSED BY NAME, not dropped. Until this check existed the
+     * field sat in the schema above, parsed cleanly, and was then written
+     * nowhere: the insert (`writeThreadEnvelope`) carries no `reply_to_id` and the 201 echoes
+     * none. That is precisely the failure the thread read's T344 note
+     * (`routes/messaging.ts:2443-2453`) exists to prevent — "a reply whose
+     * quote vanished and a message that was never a reply look identical on the
+     * wire" — except here the write side manufactured it, and told the sender
+     * 201 while doing so.
+     *
+     * Refusing rather than persisting is deliberate. A typed message's `body`
+     * is `JSON.stringify(input.envelope)` in `writeThreadEnvelope`, and the thread read's
+     * quote builder copies a replied-to body VERBATIM
+     * (`routes/messaging.ts:2504`, `body: qr.body ?? ''`). So persisting
+     * `reply_to_id` here with no other change would make a reply TO a typed
+     * message quote a raw JSON envelope string in the thread. Carrying replies
+     * on typed kinds therefore also obliges an envelope-aware quote renderer,
+     * which is a larger piece of work and a separate decision. Until that
+     * exists the honest answer is a refusal the caller can act on.
+     *
+     * An explicit `null` is the absence of a reply, not a request for one, so
+     * it is not a mistake and is not refused.
+     */
+    const replyToIdGiven = (req.body as { replyToId?: unknown } | null | undefined)?.replyToId;
+    if (replyToIdGiven !== undefined && replyToIdGiven !== null) {
+      sendError(
+        res,
+        "invalid_payload",
+        "replyToId is not supported on typed messages. A typed message's body is a JSON " +
+          "envelope and the thread read quotes a replied-to body verbatim, so a reply to one " +
+          "would render as raw JSON. Send the reply as an ordinary message, or post this kind " +
+          "without replyToId.",
+      );
+      return;
+    }
+
     const parsed = TypedMessageSchema.safeParse(req.body);
     if (!parsed.success) {
       sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");
@@ -192,94 +226,48 @@ router.post(
       return;
     }
 
-    /**
-     * §12 `location_shares` — an EXPIRY that is a real bound, checked here
-     * because a schema can say "a string" and not "in the future, and not next
-     * year".
-     *
-     * Two refusals and they are different mistakes. An expiry already in the
-     * past is a share that was never live: the sweep's window would never
-     * contain it, so `location.started` would be emitted for a capability that
-     * ends before anybody sees it and `location.expired` would never follow —
-     * a live chip nothing ever takes down. An expiry beyond the ceiling is an
-     * unbounded share wearing a timestamp, which is the thing §15.1 exists to
-     * refuse.
-     */
-    // ONE clock read for this request, derived from below. `splitClockGuard`
-    // refuses a handler that calls both `Date.now()` and a no-arg `new Date()`:
-    // two independent reads mean the expiry this route VALIDATED and the
-    // `created_at` it STORED can straddle a tick, and the share would be
-    // accepted against one instant and recorded against another.
+    // §12 `location_shares` — the expiry is a real bound (in the past, or past
+    // §15.1's ceiling, is refused). The rule lives with the ONE writer both this
+    // route and POST /telegraph/commands SHARE_LOCATION use, and runs BEFORE the
+    // guard so an impossible expiry does not spend the sender's burst allowance.
+    //
+    // ONE clock read for this request. `splitClockGuard` refuses a handler that
+    // calls both `Date.now()` and a no-arg `new Date()`: the expiry this route
+    // VALIDATED and the `created_at` it STORED must be the same instant.
     const nowMs = Date.now();
-
-    let locationShare: { expiresAt: string; precision: string; purpose: string | null } | null = null;
-    if (validated.envelope.kind === "LOCATION") {
-      const lp = (validated.envelope as any).payload as {
-        expiresAt?: string | null;
-        precision?: string;
-        purpose?: string | null;
-      };
-      if (typeof lp.expiresAt === "string" && lp.expiresAt.length > 0) {
-        const endsMs = Date.parse(lp.expiresAt);
-        if (!Number.isFinite(endsMs)) {
-          sendError(res, "invalid_payload", "expiresAt must be an ISO timestamp");
-          return;
-        }
-        if (endsMs <= nowMs) {
-          sendError(res, "invalid_payload",
-            "expiresAt is already past. A share that has expired before it is posted is never live, " +
-            "so nothing would ever take it down.");
-          return;
-        }
-        if (endsMs > nowMs + MAX_LOCATION_SHARE_HOURS * 3600_000) {
-          sendError(res, "invalid_payload",
-            `A scoped location share may run for at most ${MAX_LOCATION_SHARE_HOURS} hours (§15.1). ` +
-            "A longer one is an unbounded capability with a timestamp on it.");
-          return;
-        }
-        locationShare = {
-          expiresAt: lp.expiresAt,
-          precision: String(lp.precision ?? "area"),
-          purpose: lp.purpose ?? null,
-        };
-      }
+    const window = checkLocationShareWindow(
+      validated.envelope.kind,
+      (validated.envelope as { payload?: { expiresAt?: string | null; precision?: string; purpose?: string | null } }).payload,
+      nowMs,
+    );
+    if (!window.ok) {
+      sendError(res, "invalid_payload", window.message);
+      return;
     }
 
-    const guard = await guardTelegraphThreadWrite(client, threadId, user.id);
+    const guard = await guardTelegraphThreadWrite(client, threadId, user.id, { sendBucket: sendBucketForKind(validated.envelope.kind) });
     if (!guard.ok) {
-      sendError(res, guard.code, guard.message);
+      sendThreadWriteRefusal(res, guard);
       return;
     }
 
-    const now = new Date(nowMs).toISOString();
-    const { data: msg, error: msgErr } = await client
-      .from("messages")
-      .insert({
-        thread_id: threadId,
-        sender_id: user.id,
-        body: JSON.stringify(validated.envelope),
-        created_at: now,
-        msg_type: validated.msgType,
-        subtype: validated.subtype,
-      })
-      .select("id, thread_id, sender_id, body, created_at, msg_type, subtype")
-      .single();
-
-    if (msgErr || !msg) {
-      log.error({ err: msgErr, threadId, kind: parsed.data.kind }, "typed message insert failed");
-      sendError(res, "db_error", msgErr?.message ?? "Failed to send");
+    // §13.1 — the ONE writer this route and the command bus share.
+    const written = await writeThreadEnvelope(client, {
+      threadId,
+      senderId: user.id,
+      envelope: validated.envelope,
+      msgType: validated.msgType,
+      subtype: validated.subtype,
+      nowMs,
+      locationShare: window.share,
+    }, log);
+    if (!written.ok) {
+      log.error({ threadId, kind: parsed.data.kind, message: written.message }, "typed message insert failed");
+      sendError(res, "db_error", written.message);
       return;
     }
 
-    const { error: bumpErr } = await client
-      .from("message_threads")
-      .update({ last_message_at: now, updated_at: now })
-      .eq("id", threadId);
-    if (bumpErr) {
-      log.warn({ err: bumpErr, threadId }, "thread bump after typed send failed (message was written)");
-    }
-
-    const m = msg as any;
+    const m = written.row;
     res.status(201).json({
       id: m.id,
       threadId: m.thread_id,
@@ -291,33 +279,6 @@ router.post(
       payload: (validated.envelope as any).payload,
       clientId: parsed.data.clientId ?? null,
     });
-
-    void publishToThread(client, threadId, {
-      type: "message.created",
-      payload: {
-        messageId: m.id,
-        senderId: m.sender_id,
-        msgType: m.msg_type,
-        subtype: m.subtype,
-        createdAt: m.created_at,
-      },
-    });
-
-    // §13.2 `location.started`. Only for a share with an expiry: a LOCATION
-    // message with none is a pin — somebody sending an address — and it has no
-    // lifecycle for this event to be about. The payload carries the precision
-    // and the window and NEVER a coordinate; a member entitled to those already
-    // has them in the message, behind that message's own read gate.
-    if (locationShare) {
-      void emitLocationStarted(client, threadId, {
-        shareId: String(m.id),
-        ownerUserId: String(m.sender_id),
-        precision: locationShare.precision,
-        purpose: locationShare.purpose,
-        startedAt: String(m.created_at),
-        expiresAt: locationShare.expiresAt,
-      });
-    }
   }),
 );
 

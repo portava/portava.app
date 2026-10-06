@@ -42,6 +42,13 @@
  * what happened is better than a row that says something untrue, and it is less
  * than the clause asks for. Both halves of that are recorded here rather than
  * one.
+ *
+ * MOVED 2026-10-05 (lane T2, census T435): migration 3761 adds
+ * 'telegraph_diagnostics' to that CHECK, behind
+ * telegraph_diagnostics_durable_audit_enabled (seeded FALSE). With it on, the
+ * audit is a durable admin_access_log row written BEFORE anything is served,
+ * and a row that cannot be written refuses the read. With it off — and on every
+ * database that does not have 3761 — the log line above is still the audit.
  */
 
 import { Router, type IRouter } from "express";
@@ -55,6 +62,14 @@ import { telegraphEmitterStats } from "../lib/telegraphEvents.js";
 import { telegraphSloSnapshot } from "../domain/telegraph/services/telegraphObservability.js";
 import { TELEGRAPH_PROJECTIONS } from "../domain/telegraph/projections/projectionRegistry.js";
 import { BOOT_HRTIME } from "../lib/bootTime.js";
+import { readFlagState } from "../lib/featureFlags.js";
+
+/**
+ * census T435 — the durable half of gate 3, behind migration 3761. ON: the read
+ * is served only after its admin_access_log row is written; a row that cannot
+ * be written refuses the read. OFF (the seed): the log line below, as before.
+ */
+export const DIAGNOSTICS_DURABLE_AUDIT_FLAG = "telegraph_diagnostics_durable_audit_enabled";
 
 const log = rootLogger.child({ route: "telegraphDiagnostics" });
 
@@ -76,6 +91,40 @@ router.get("/telegraph/diagnostics", asyncHandler(async (req, res) => {
         `${MIN_PURPOSE_LENGTH} characters stating why these diagnostics are being read.`,
     });
     return;
+  }
+
+  // census T435: with 3761 applied and its flag on, the audit is a DURABLE row,
+  // written before anything is served. An unaudited read of the support
+  // tooling is what §30A.17 rules out, so a row that cannot be written refuses
+  // the read rather than serving it with only a log line. The flag is read in
+  // THREE states (§45c, verifier finding 2): its ON is the stricter path, so an
+  // unreadable flag must not read as OFF and serve with no durable row.
+  const auditFlag = await readFlagState(ctx.sc, DIAGNOSTICS_DURABLE_AUDIT_FLAG);
+  if (auditFlag === "unknown") {
+    log.error({ adminId: ctx.userId }, "telegraph diagnostics: durable-audit flag unreadable — read refused");
+    res.status(503).json({
+      error: "degraded_unavailable",
+      message: "We could not establish whether this access must be recorded in the audit trail, so the diagnostics were not served. Please try again.",
+    });
+    return;
+  }
+  if (auditFlag === "on") {
+    const { error: auditErr } = await ctx.sc.from("admin_access_log").insert({
+      admin_id: ctx.userId,
+      record_type: "telegraph_diagnostics",
+      record_id: "snapshot",
+      reason: purpose,
+      action_taken: "view",
+      timestamp: new Date().toISOString(),
+    });
+    if (auditErr) {
+      log.error({ err: auditErr, adminId: ctx.userId }, "telegraph diagnostics: durable audit row NOT written — read refused");
+      res.status(503).json({
+        error: "degraded_unavailable",
+        message: "This access could not be recorded in the audit trail, so the diagnostics were not served. Please try again.",
+      });
+      return;
+    }
   }
 
   const emitter = telegraphEmitterStats();

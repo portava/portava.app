@@ -18,14 +18,14 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlobalTimePicker } from '../selectors/GlobalTimePicker.tsx';
 import { GlobalCalendarPicker } from '../selectors/GlobalCalendarPicker.tsx';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx';
+import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx'; import { BAGGAGE_MODE_COPY, BAGGAGE_MODE_ORDER, conservativeCheckedBags, creationNoteParam } from './layoverConstraintFacts.ts';
 import {
   createLayoverSession,
   searchAirports,
   type AirportProfile,
   type CreateSessionPayload,
   type FlightType,
-  type ComfortLevel,
+  type ComfortLevel, type BaggageMode,
 } from '../../services/layover.ts';
 
 interface Props {
@@ -116,7 +116,7 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
   // Prefs
   const [flightType, setFlightType]                   = useState<FlightType>('international');
   const [immigrationRequired, setImmigrationRequired] = useState(false);
-  const [checkedBags, setCheckedBags]                 = useState(false);
+  const [baggageMode, setBaggageMode]                 = useState<BaggageMode>('UNKNOWN'); // §4 / census L35: unanswered is UNKNOWN, never "no bags"
   const [loungeAccess, setLoungeAccess]               = useState(false);
   const [wantsToLeave, setWantsToLeave]               = useState(true);
   const [comfortLevel, setComfortLevel]               = useState<ComfortLevel>('moderate');
@@ -214,7 +214,11 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
         departureLocal: `${depDate}T${depTime}`,
         flightType,
         immigrationRequired,
-        checkedBags,
+        // §4 / census L35 — the four-way answer, and beside it the boolean a
+        // server that predates `baggageMode` reads. That boolean is the
+        // CAUTIOUS one: "not sure" is sent as "bags to collect", never as none.
+        baggageMode,
+        checkedBags: conservativeCheckedBags(baggageMode),
         loungeAccess,
         wantsToLeave,
         comfortLevel,
@@ -236,7 +240,7 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
       }
       onClose();
       onSessionCreated?.(result.session.id, result.safeReturnSuggested);
-      router.push(`/layover/${result.session.id}` as any);
+      const kept = creationNoteParam(result.constraints); router.push(`/layover/${result.session.id}${kept ? `?constraints=${kept}` : ''}` as any); // the server SAID what it did with the bag answer; a "not sure" it could not store is handed to the dashboard, which shows it as not stored
     } catch (err: unknown) {
       // `createLayoverSession` resolves in every case; this is the belt to that
       // braces, so a future throw cannot leave the button spinning.
@@ -376,7 +380,6 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
           <View style={styles.toggleCard}>
             {[
               { label: 'I go through immigration', value: immigrationRequired, set: setImmigrationRequired },
-              { label: 'I have checked bags',       value: checkedBags,         set: setCheckedBags },
               { label: 'I have lounge access',      value: loungeAccess,        set: setLoungeAccess },
               { label: 'I want to leave the airport', value: wantsToLeave,      set: setWantsToLeave },
             ].map(({ label, value, set }, i, arr) => (
@@ -389,6 +392,28 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
                   thumbColor={Platform.OS === 'android' ? color.paperRaised : undefined}
                 />
               </View>
+            ))}
+          </View>
+
+          {/* Bags — §4 `baggage_mode`. This was a yes/no switch that started at
+              "no", so a traveller who did not know was recorded as having no
+              bags (census L35). It is a four-way choice that starts at "Not
+              sure", and "Not sure" is charged the collect-and-re-check time. */}
+          <Text style={styles.sectionLabel}>Your bags</Text>
+          <View style={styles.comfortRow} accessibilityRole="radiogroup" accessibilityLabel="Your bags">
+            {BAGGAGE_MODE_ORDER.map((mode) => (
+              <Pressable
+                key={mode}
+                style={[styles.comfortCard, baggageMode === mode && styles.comfortCardActive]}
+                onPress={() => setBaggageMode(mode)}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: baggageMode === mode, selected: baggageMode === mode }} // `checked` is the state a radio HAS; `selected` alone is not announced as the chosen radio by a screen reader
+                accessibilityLabel={`Bags: ${BAGGAGE_MODE_COPY[mode].label}`}
+                testID={`layover-start-baggage-${mode}`}
+              >
+                <Text style={[styles.comfortLabel, baggageMode === mode && styles.comfortLabelActive]}>{BAGGAGE_MODE_COPY[mode].label}</Text>
+                <Text style={styles.comfortDesc}>{BAGGAGE_MODE_COPY[mode].blurb}</Text>
+              </Pressable>
             ))}
           </View>
 

@@ -59,7 +59,7 @@ import { resolveInteractionPermissions } from '../services/interactionPermission
 import { isKillSwitchEngaged } from '../lib/featureFlags.js';
 import { appStorageUrlInfo } from '../lib/mediaUrl.js';
 import { classifyMemoryMediaUrl } from '../services/memory/memoryMediaOrigin.js';
-import { messagingStopUnknownRefusal } from '../lib/telegraphThreadWrite.js';
+import { messagingStopUnknownRefusal, refuseSendOverRate, refuseRestrictedSend, resolveClientDiscriminator } from '../lib/telegraphThreadWrite.js';
 import { isUuid } from '../lib/followDecisions'; import { REPORT_REASON_CODES, reportSeverityFor, type ReportReasonCode } from '../lib/reportReasons'; import { refuseEditOnEncryptedThread } from '../services/telegraph/editE2eeGate';
 import {
   translateMessageForThread,
@@ -94,7 +94,7 @@ import { getRestrictionState, DegradedPermissionCheckError } from '../services/t
 import { processTagging } from '../services/tagging/TaggingService.js';
 import { enrichSpans } from '../lib/enrichSpans';
 import { circleThreadTitle } from '../lib/displayName'; import { readRecentMessages, readRosterPaged, selectByIdsChunked, asSupabaseResult, asPageResult, sortByActivityDesc, nameVisibilitySetChunked, catchUpInbox, readNewestVisibleMessage, mapLimit, INBOX_CATCHUP_CONCURRENCY } from '../services/telegraph/inboxReads.js'; // past db-max-rows (TELEGRAPH lane 2026-10-03)
-import { NotificationService } from '../services/notifications/NotificationService.js';
+import { NotificationService } from '../services/notifications/NotificationService.js'; import { readThreadNotificationStates, NO_THREAD_CHOICE, writeThreadNotificationChoice } from '../services/telegraph/threadNotificationState.js'; import { decideThreadNotification } from '../domain/telegraph/policies/threadNotificationPolicy.js'; // §30A.6, census T398 — on this line so no cited line moves
 import { NotificationRouter } from '../services/notifications/NotificationRouter.js';
 import { readBlockExclusions, isExcluded } from '../lib/exclusionSet.js';
 
@@ -2083,7 +2083,7 @@ router.get('/me/threads', async (req, res) => {
   if (lastMsgIds.length > 0) {
     const { data: tRows, error: tErr } = await sc
       .from('message_translations')
-      .select('message_id, translated_body, status, source_language')
+      .select('message_id, translated_body, status, source_language, target_language') // §18.2 T242: the full row buildDisplayFields reads; never `confidence` (2991 is applied nowhere)
       .in('message_id', lastMsgIds)
       .eq('recipient_id', user.id);
 
@@ -2197,20 +2197,20 @@ router.get('/me/threads', async (req, res) => {
 
     let lastMessagePreview: any = null;
     if (lm) {
-      let displayBody = lm.body?.slice(0, 80) ?? '';
-      if (lm.sender_id !== user.id) {
-        const tRow = translationsByMsgId[lm.id];
-        if (tRow?.status === 'translated' && tRow.translated_body) {
-          displayBody = tRow.translated_body.slice(0, 80);
-        }
-      }
+      const tRow = lm.sender_id !== user.id ? translationsByMsgId[lm.id] : undefined; // §18.2 T242 — the preview
+      const display = buildDisplayFields( // decides exactly as the thread reader does, from the same row and the same helper
+        { body: lm.body ?? null, deleted: false, senderId: lm.sender_id },
+        user.id,
+        tRow ? { source_language: tRow.source_language, target_language: tRow.target_language, translated_body: tRow.translated_body, status: tRow.status } : null,
+      ); // no `confidence` is read or passed: the helper treats "no reading" as not-high, so a translated preview shows its original
+      const displayBody = (display.displayBody ?? lm.body ?? '').slice(0, 80);
       lastMessagePreview = {
         body: lm.body?.slice(0, 80) ?? '',
         displayBody,
         senderId: lm.sender_id,
         createdAt: lm.created_at,
         msgType: lm.msg_type ?? 'text',
-        subtype: lm.subtype ?? null,
+        subtype: lm.subtype ?? null, translated: display.translated, showOriginalAlongside: display.showOriginalAlongside, // §18.2 T242
         // T344: present ONLY when the translations table could not be read, so
         // an untranslated preview is a stated failure rather than a silent one.
         // Omitted in the normal case — a field that is always there says
@@ -2706,9 +2706,9 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     return;
   }
 
-  const msgTypeRaw = typeof req.body?.msgType === 'string' ? req.body.msgType : 'text';
-  const msgType = msgTypeRaw === 'system' ? 'system' : 'text';
-  const subtype = typeof req.body?.subtype === 'string' ? req.body.subtype : null;
+  const discriminator = resolveClientDiscriminator(req.body?.msgType, req.body?.subtype); // a `system` row renders as platform chrome: only the subtypes the app itself authors
+  if (!discriminator.ok) { req.log.warn({ userId: user.id, threadId, reason: discriminator.reason }, 'message refused: client-supplied msg_type / subtype'); sendError(res, 'invalid_payload', discriminator.message); return; }
+  const { msgType, subtype } = discriminator;
   // Optional client-generated id used to correlate optimistic sends with the
   // server message (echoed in the response and in the realtime event).
   const clientId = typeof req.body?.clientId === 'string' ? req.body.clientId.slice(0, 64) : null;
@@ -2796,7 +2796,7 @@ router.post('/threads/:threadId/messages', async (req, res) => {
     sendError(res, 'degraded_unavailable', 'We could not verify this conversation right now. Please try again shortly.');
     return;
   }
-  const isE2ee = (threadMeta as any)?.is_e2ee === true;
+  const isE2ee = (threadMeta as any)?.is_e2ee === true; if (await refuseRestrictedSend(req, res, getServiceClient() ?? client, threadId, user.id)) return; // OD-TRUST-5: the restriction gate, the guard's own decision
 
   if (isE2ee) {
     // E2EE thread: ciphertext required, body must be absent.
@@ -3101,10 +3101,26 @@ router.post('/threads/:threadId/messages', async (req, res) => {
           req.log.warn({ err: taggerProfileErr, messageId: m.id },
             'mention notification: tagger profile unreadable — naming nobody rather than @someone');
         }
+        // §30A.6 (census T398): each tagged MEMBER's thread choice decides the
+        // notification. muted_at used to be stored and never consulted here, so
+        // a muted thread notified exactly like an unmuted one. A failed read of
+        // that choice suppresses (it is not "not muted"); a tagged person with
+        // no active membership has no thread choice to apply.
+        const notifyStates = await readThreadNotificationStates(sc, threadId, taggedIds);
+        const notifyNowMs = Date.parse(now); // the send's own clock read (`now`, above) — one clock per handler
+        const deliverTo = taggedIds.filter((taggedId) => {
+          const decision = decideThreadNotification({
+            cause: 'MENTION',
+            state: notifyStates.ok ? (notifyStates.states.get(taggedId) ?? NO_THREAD_CHOICE) : null,
+            nowMs: notifyNowMs,
+          });
+          if (!decision.deliver) req.log.info({ threadId, messageId: m.id, reason: decision.reason }, 'mention notification withheld by the member\'s thread notification policy');
+          return decision.deliver;
+        });
         const notifSvc    = new NotificationService(sc);
         const notifRouter  = new NotificationRouter(sc);
         await Promise.allSettled(
-          taggedIds.map(async (taggedId) => {
+          deliverTo.map(async (taggedId) => {
             const row = await notifSvc.create({
               userId: taggedId,
               eventType: 'pulse.user_tagged',
@@ -3380,7 +3396,7 @@ router.post('/threads/:threadId/media', async (req, res) => {
     return;
   }
 
-  const sc = client;
+  const sc = client; if (await refuseRestrictedSend(req, res, getServiceClient() ?? client, threadId, user.id)) return; if (await refuseSendOverRate(req, res, getServiceClient() ?? client, user.id, threadId)) return; // §22: the burst limit was on the text door alone
   const now = new Date().toISOString();
 
   const { data: msg, error: msgErr } = await sc
@@ -4054,7 +4070,7 @@ router.patch('/threads/:threadId/mute', async (req, res) => {
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
   const { threadId } = req.params;
   const muted = req.body?.muted === true;
-  const now = new Date().toISOString();
+  const nowMs = Date.now(); // §45c verifier finding 3: the toggle writes through the ONE notification-choice writer below
 
   const { data: member, error: memberErr } = await sc
     .from('message_thread_members')
@@ -4067,15 +4083,15 @@ router.patch('/threads/:threadId/mute', async (req, res) => {
   if (memberErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: memberErr, threadId, userId: user.id }); return; }
   if (!member) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
 
-  const { error } = await sc
-    .from('message_thread_members')
-    .update({ muted_at: muted ? now : null })
-    .eq('thread_id', threadId)
-    .eq('user_id', user.id);
+  // MUTED / ALL through writeThreadNotificationChoice, exactly as PUT /notification-policy writes
+  // them: with 3760's flag ON that also sets notification_level and clears a temporary mute, so
+  // the header icon and the level cannot disagree; with it OFF it is muted_at alone, as before.
+  const written = await writeThreadNotificationChoice(sc, threadId, user.id, { level: muted ? 'MUTED' : 'ALL', muteForMinutes: null }, nowMs);
 
-  if (error) { req.log.error({ err: error }, 'mute thread failed'); sendError(res, 'db_error', error.message); return; }
-
-  res.status(200).json({ ok: true, muted });
+  if (!written.ok) { req.log.error({ threadId, code: written.code }, 'mute thread failed'); sendError(res, 'db_error', 'Your notification setting was not saved. Please try again.'); return; }
+  // The answer is the READ-BACK — muted whenever muted_at is set, the policy route's own rule.
+  // A toggle that answered what was ASKED is how the icon said "unmuted" over a muted level.
+  res.status(200).json({ ok: true, muted: written.state.mutedAt !== null });
 });
 
 // ── Leave thread ──────────────────────────────────────────────────────────────

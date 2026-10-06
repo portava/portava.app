@@ -50,7 +50,7 @@ import {
   projectEarningsEntryRow,
   projectRewardLedgerRow,
   reconcile,
-} from "../../lib/creatorShareCanonical.js";
+} from "../../lib/creatorShareCanonical.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; // one line: cited by line
 
 const REWARD_LEDGER = "intel_reward_ledger";
 const EARNINGS_ENTRIES = "rent_buddy_earnings_entries";
@@ -59,12 +59,12 @@ const CREATOR_EARNING_ENTRIES = "creator_earning_entries";
 /** PostgREST's own ceiling is 1000; this stays under it and is overridable. */
 export const DEFAULT_PAGE_SIZE = 500;
 
-export type ReadFailure = { ok: false; reason: "db_error"; detail: string };
+export type ReadFailure = { ok: false; reason: "db_error"; detail: string; /** lib/tableAbsence said the TABLE is absent. */ tableAbsent?: true };
 
 export type ReadResult<T> = { ok: true; value: T } | ReadFailure;
 
 const fail = (detail: unknown): ReadFailure => ({
-  ok: false, reason: "db_error", detail: String((detail as any)?.message ?? detail),
+  ok: false, reason: "db_error", detail: String((detail as any)?.message ?? detail), ...(isTableAbsentError(detail) ? { tableAbsent: true as const } : {}),
 });
 
 /**
@@ -176,7 +176,7 @@ export async function readPerLedgerShareRows(
     "cash_settled_minor,rule_version,beneficiary_user_id,reverses_entry_id,occurred_at",
     "id", page,
   );
-  if (!creatorEntries.ok && !/42P01|does not exist|could not find the table/i.test(creatorEntries.detail)) {
+  if (!creatorEntries.ok && !creatorEntries.tableAbsent) { // the ERROR decides (42P01/PGRST205), not a /does not exist/ test on its text, which also passed a 42703/42883 — an unreadable ledger dropped from a money reconciliation
     return creatorEntries;
   }
 

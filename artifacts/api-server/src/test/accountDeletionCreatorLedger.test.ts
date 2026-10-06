@@ -1,7 +1,7 @@
 /**
  * Account deletion — the creator / Rent-a-Buddy ledgers are PSEUDONYMISED, not
  * deleted and not left naming the person (owner decision C-11 / W10D-B0,
- * migration 3513, census-discovery §107).
+ * migration 3600, census-discovery §107).
  *
  * Under test: services/accountDeletion/AccountDeletionService.ts, step
  * `pseudonymise_creator_ledger`.
@@ -42,7 +42,7 @@
  *   P7  absence that IS an answer: a database without the ledger tables (42P01 /
  *       PGRST205) deletes cleanly
  *   P8  no per-person row count is recorded on the step or persisted on the
- *       request receipt (3513: a count per person is a fingerprint)
+ *       request receipt (3600: a count per person is a fingerprint)
  *   P9  the manifest says all four are a decided retention, with a reason
  *
  * In every refusing case the test also asserts the deletion stopped BEFORE the
@@ -67,7 +67,7 @@ const ADMIN_ID = "33333333-3333-3333-3333-333333333333";
 
 const LEDGERS = ["rent_buddy_earnings_entries", "creator_attributions", "creator_earning_entries", "creator_ledger_audit_events"] as const;
 
-/** The pseudonym column each ledger carries, as 3513 adds them. */
+/** The pseudonym column each ledger carries, as 3600 adds them. */
 const PSEUDONYM_COLUMN: Record<string, string> = {
   rent_buddy_earnings_entries: "beneficiary_pseudonym",
   creator_attributions: "beneficiary_pseudonym",
@@ -123,7 +123,7 @@ interface ClientOptions {
 
 /**
  * A fake supabase client that APPLIES what it is told, so the properties proven
- * are about rows and columns rather than about calls. `rpc` runs 3513's
+ * are about rows and columns rather than about calls. `rpc` runs 3600's
  * substitution: every occurrence of the user's id in every column becomes ONE
  * fresh pseudonym, and the identity columns move to the pseudonym column.
  */
@@ -187,7 +187,7 @@ function makeClient(opts: ClientOptions = {}) {
     return q;
   }
 
-  /** 3513's substitution, as the database performs it, applied to the store. */
+  /** 3600's substitution, as the database performs it, applied to the store. */
   function removeIdentity(user: string): Record<string, number> {
     pseudonym = pseudonym ?? "99999999-9999-9999-9999-999999999999";
     const counts: Record<string, number> = {};
@@ -245,7 +245,7 @@ const ledgerOps = (c: any, op: string) => c._ops.filter((o: Op) => (LEDGERS as r
 /** Every column of every ledger row, as one string — so "nowhere" can be asserted. */
 const ledgerText = (c: any) => JSON.stringify(LEDGERS.map((t) => c._store[t] ?? []));
 
-describe("executeAccountDeletion — creator-ledger pseudonymisation (C-11 answer B, migration 3513)", () => {
+describe("executeAccountDeletion — creator-ledger pseudonymisation (C-11 answer B, migration 3600)", () => {
   it("P1/P2/P3. pseudonymises rather than deletes: the accounting rows survive, the identity link is severed, one pseudonym per person, another account untouched", async () => {
     const c = makeClient({ seed: seedLedger() });
     const before = Object.fromEntries(LEDGERS.map((t) => [t, (c._store[t] ?? []).length]));
@@ -320,7 +320,7 @@ describe("executeAccountDeletion — creator-ledger pseudonymisation (C-11 answe
       "the reason lands on a receipt that may not name the subject");
 
     // The scheduler and worker pass actorId: null — that is 'system', not a
-    // missing admin, and 3513 refuses an actor who is the subject, so a caller
+    // missing admin, and 3600 refuses an actor who is the subject, so a caller
     // that passed the subject must also arrive as 'system'.
     for (const actorId of [null, USER_ID]) {
       const s = makeClient({ seed: seedLedger() });
@@ -334,7 +334,7 @@ describe("executeAccountDeletion — creator-ledger pseudonymisation (C-11 answe
     // 3510's header explains why this case has its own test: a statement-level
     // append-only trigger once refused the erasure of users who had no rows at
     // all, making them undeletable. The step must be a no-op for them, and must
-    // not depend on 3513 being applied to be one.
+    // not depend on 3600 being applied to be one.
     const c = makeClient({ seed: { rent_buddy_earnings_entries: [], creator_attributions: [], creator_earning_entries: [], creator_ledger_audit_events: [] } });
     const out = await executeAccountDeletion(c, USER_ID, { actorId: null });
     assert.equal(out.ok, true, JSON.stringify(out.steps.filter((s: any) => !s.ok)));
@@ -394,7 +394,7 @@ describe("executeAccountDeletion — creator-ledger pseudonymisation (C-11 answe
     assert.match(stepOf(outA, "pseudonymise_creator_ledger")!.error!, /creator_ledger_remove_identity failed/);
     assert.deepEqual(a._authDeleted, []);
 
-    // (b) 3513 is not applied here AND the ledger names this person. There is no
+    // (b) 3600 is not applied here AND the ledger names this person. There is no
     // other way to sever the link — the tables are append-only, service_role has
     // no UPDATE, and 3510's guard refuses every DELETE — so it must say which
     // tables and refuse.
@@ -403,7 +403,7 @@ describe("executeAccountDeletion — creator-ledger pseudonymisation (C-11 answe
     assert.equal(outB.ok, false);
     const errB = stepOf(outB, "pseudonymise_creator_ledger")!.error!;
     assert.match(errB, /is absent on this database/);
-    assert.match(errB, /migration 3513 must be applied/);
+    assert.match(errB, /migration 3600 must be applied/);
     assert.match(errB, /rent_buddy_earnings_entries\.beneficiary_user_id/);
     assert.match(errB, /creator_ledger_audit_events\.actor_user_id/);
     assert.deepEqual(b._authDeleted, []);
@@ -437,7 +437,7 @@ describe("executeAccountDeletion — creator-ledger pseudonymisation (C-11 answe
   });
 
   it("P8. no per-person ledger row count is recorded on the step or persisted on the request receipt", async () => {
-    // 3513's door returns counts and its comment forbids logging them beside the
+    // 3600's door returns counts and its comment forbids logging them beside the
     // user id: how many ledger rows a person had is a fingerprint that could be
     // matched to a pseudonym's rows later. `deleted_counts` IS persisted on
     // user_deletion_requests, so the ledger must contribute to neither.
@@ -478,7 +478,7 @@ describe("executeAccountDeletion — creator-ledger pseudonymisation (C-11 answe
     for (const { table, column } of CREATOR_LEDGER_IDENTITY_COLUMNS) {
       assert.ok(byTable.has(table), `${table} must be classified RETAINED_WITH_REASON (C-11)`);
       assert.match(byTable.get(table)!, /GDPR Art\. 17\(3\)\(b\)\/\(e\)/, `${table}: the lawful basis must be named`);
-      assert.match(byTable.get(table)!, /3513/, `${table}: the reason must name the migration that implements it`);
+      assert.match(byTable.get(table)!, /3600/, `${table}: the reason must name the migration that implements it`);
       assert.ok(POST_BASELINE_TABLES.includes(table), `${table} is post-baseline and must be hand-registered`);
       assert.ok(column === "beneficiary_user_id" || column === "actor_user_id", `${table}: unexpected identity column ${column}`);
     }

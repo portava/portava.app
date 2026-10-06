@@ -68,7 +68,7 @@ jest.mock('../../../src/components/layover/LayoverHero', () => {
   return { LayoverHero: () => <View testID="layover-hero-stub" /> };
 });
 // NOTE: intentional stub — see above.
-jest.mock('../../../src/components/layover/CanILeaveCard', () => ({ CanILeaveCard: () => null }));
+jest.mock('../../../src/components/layover/CanILeaveCard', () => ({ CanILeaveCard: () => null })); jest.mock('../../../src/components/layover/LayoverConstraintsCard', () => ({ LayoverConstraintsCard: () => null })); // NOTE: intentional stub — the card has its own suite (LayoverConstraintsCard.component.test.tsx)
 // NOTE: intentional stub — see above.
 jest.mock('../../../src/components/layover/AirportEssentialsCard', () => ({ AirportEssentialsCard: () => null }));
 // NOTE: intentional stub — see above.

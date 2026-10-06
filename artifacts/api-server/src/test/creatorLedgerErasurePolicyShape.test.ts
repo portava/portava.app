@@ -2,7 +2,7 @@
  * census-discovery §107 — the C-11 erasure design, pinned on the files, with no
  * database (the database behaviour is creatorLedgerErasurePolicy.db.test.ts).
  *
- *   E1  C-11 IS ANSWERED: answer B is in the canonical chain as 3513, after
+ *   E1  C-11 IS ANSWERED: answer B is in the canonical chain as 3600, after
  *       everything it depends on and after the 3510 guard it replaces; answer A
  *       is NOT, and the two held numbers 3511 / 3512 are not chain files
  *   E2  3510 decides nothing: ROW-level BEFORE DELETE guards on exactly the four
@@ -10,7 +10,7 @@
  *       written outside its always-rolled-back probe
  *   E3  the answers are mutually exclusive, each requires 3510, and each
  *       rollback re-installs 3510's guard with 3510's function body verbatim
- *   E4  3513 never stores or returns the id -> pseudonym mapping, and says
+ *   E4  3600 never stores or returns the id -> pseudonym mapping, and says
  *       "pseudonymised, not anonymous" where a reader will see it
  *   E5  the chosen answer carries the owner's decision verbatim, says it is not
  *       yet applied to a hosted database, and does not invent the retention
@@ -25,12 +25,12 @@ import { readFileSync, readdirSync } from "node:fs";
 const REPO = new URL("../../../../", import.meta.url);
 const read = (rel: string) => readFileSync(new URL(rel, REPO), "utf8");
 const CHAIN = "artifacts/api-server/src/migrations/";
-const CHOSEN = "3513_creator_ledger_erasure_retain_pseudonymised.sql";
+const CHOSEN = "3600_creator_ledger_erasure_retain_pseudonymised.sql";
 const G = read(`${CHAIN}3510_creator_ledger_erasure_policy_undecided.sql`);
 const A = read("reconciliation-staging/3511_creator_ledger_erasure_delete_on_erasure.sql");
 const B = read(`${CHAIN}${CHOSEN}`);
 const A_RB = read("reconciliation-staging/2026-09-30-3511-creator-ledger-erasure-delete-on-erasure-rollback.sql");
-const B_RB = read("db/rollback/2026-10-04-3513-creator-ledger-erasure-retain-pseudonymised-rollback.sql");
+const B_RB = read("db/rollback/2026-10-04-3600-creator-ledger-erasure-retain-pseudonymised-rollback.sql");
 const G_RB = read("db/rollback/2026-09-30-3510-creator-ledger-erasure-policy-undecided-rollback.sql");
 
 /** SQL with `--` comments removed, so a sentence in a header cannot satisfy or trip a check. */
@@ -43,7 +43,7 @@ const guardBody = (sql: string) => {
 const LEDGERS = ["rent_buddy_earnings_entries", "creator_attributions", "creator_earning_entries", "creator_ledger_audit_events"];
 
 describe("C-11 erasure design, on the files (census-discovery §107)", () => {
-  it("E1. C-11 is answered: answer B is in the chain as 3513, after its dependencies and after 3510; answer A is not, and the held numbers are not chain files", () => {
+  it("E1. C-11 is answered: answer B is in the chain as 3600, after its dependencies and after 3510; answer A is not, and the held numbers are not chain files", () => {
     const chain = readdirSync(new URL(CHAIN, REPO)).filter((f) => f.endsWith(".sql")).sort();
     const undecided = chain.indexOf("3510_creator_ledger_erasure_policy_undecided.sql");
     for (const dep of ["2901_", "2920_", "2921_", "3387_"]) {
@@ -87,8 +87,10 @@ describe("C-11 erasure design, on the files (census-discovery §107)", () => {
   it("E3. the answers exclude each other, each needs 3510, and each rollback restores 3510's guard verbatim", () => {
     assert.match(code(A), /creator_ledger_remove_identity[\s\S]*?mutually exclusive/);
     assert.match(code(B), /creator_ledger_erase_beneficiary[\s\S]*?mutually exclusive/);
-    for (const [name, sql] of [["3511", A], ["3512", B]] as const) {
-      assert.match(code(sql), /creator_ledger_erasure_policy_undecided\(\)'\) IS NULL THEN\s+RAISE EXCEPTION '35\d\d: PRECONDITION FAILED: 3510/, name);
+    // Each refusal names its OWN file: answer A is still 3511, answer B was
+    // promoted as 3513 and renumbered 3600 (main took 3513 for layover).
+    for (const [name, sql] of [["3511", A], ["3600", B]] as const) {
+      assert.match(code(sql), new RegExp(`creator_ledger_erasure_policy_undecided\\(\\)'\\) IS NULL THEN\\s+RAISE EXCEPTION '${name}: PRECONDITION FAILED: 3510`), name);
     }
     const body = guardBody(G);
     assert.equal(guardBody(A_RB), body, "3511's rollback re-installs 3510's function exactly");
@@ -97,7 +99,7 @@ describe("C-11 erasure design, on the files (census-discovery §107)", () => {
     assert.match(code(G_RB), /ROLLBACK REFUSED \(3510\)/);
   });
 
-  it("E4. 3513 stores and returns no id -> pseudonym mapping, and calls the result pseudonymised, not anonymous", () => {
+  it("E4. 3600 stores and returns no id -> pseudonym mapping, and calls the result pseudonymised, not anonymous", () => {
     const c = code(B);
     const receipt = /CREATE TABLE IF NOT EXISTS public\.creator_ledger_identity_removals \(([\s\S]*?)\n\);/.exec(c)![1]!;
     assert.deepEqual(

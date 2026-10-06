@@ -30,11 +30,15 @@
  * available per table from the user-link graph.
  *
  * THE BUCKETS ARE NOT EQUIVALENT:
- *   ERASED_BY_CASCADE     — the service actually deletes these today.
- *   RETAINED_WITH_REASON  — a DECIDED retention, with the reason written down.
- *   UNCLASSIFIED_BACKLOG  — NOT a decision. Pre-existing tables nobody has
- *                           triaged. Being on this list means the data survives
- *                           deletion and no one has said whether it should.
+ *   ERASED_BY_CASCADE       — the service actually deletes these today.
+ *   RETAINED_WITH_REASON    — a DECIDED retention, with the reason written down.
+ *   AWAITING_OWNER_DECISION — the fate is a NAMED open owner decision whose two
+ *                             answers are already written, and the schema
+ *                             refuses the DELETE meanwhile so neither answer is
+ *                             taken by default. Triaged, not decided.
+ *   UNCLASSIFIED_BACKLOG    — NOT a decision. Pre-existing tables nobody has
+ *                             triaged. Being on this list means the data survives
+ *                             deletion and no one has said whether it should.
  *
  * Emptying UNCLASSIFIED_BACKLOG is owner decision D6 in the A0 packet. Entries
  * move to ERASED_BY_CASCADE (with matching code in AccountDeletionService) or to
@@ -214,6 +218,16 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   // even if the episode delete were to fail.
   "memory_episodes",
   "memory_evidence",
+  // Input-assistance opt-ins and outcome counters (migrations 3780 / 3782).
+  // Each is keyed by user_id REFERENCES auth.users(id) ON DELETE CASCADE — the
+  // wall_telemetry_events mechanism, not a profiles-keyed one — so the rows go
+  // when AccountDeletionService's final step calls auth.admin.deleteUser, even
+  // though the profiles row is kept as a tombstone. No service step names them.
+  // (input_outcome_task_daily, migration 3783, carries no user column at all:
+  // it is a day/context/task aggregate, so it is not user-keyed and not listed.)
+  "input_outcome_consent",
+  "input_outcome_counters",
+  "input_memory_context_consent",
 ];
 
 /**
@@ -267,17 +281,42 @@ export const RETAINED_WITH_REASON: ReadonlyArray<{ table: string; reason: string
       "Append-only projection history with no actor column and no personal data (place key, counts, model inputs). " +
       "The per-person contributions behind it are erased by erase_intel_for_actor; the aggregate record is kept, as intel_claims/intel_state_snapshots are.",
   },
+  // The creator ledger's RULE CATALOGUE (migration 2920), registered in the same
+  // change that classified the four ledger tables it prices. It is in this
+  // bucket, and NOT in AWAITING_OWNER_DECISION below, because C-11 is a question
+  // about EARNING RECORDS and this table holds none: its seven columns are
+  // creator_type, rule_version, params, effective_from, note, created_at and id
+  // — no beneficiary, no actor, no person-shaped uuid of any kind, and six
+  // seeded rows written by the migration itself before any account exists.
+  // Neither held answer mentions it (3511 and 3512 both name exactly the four
+  // ledger tables), so retaining it resolves nothing the owner has to decide.
+  //
+  // It is also the one table here that no erasure path could reach even if it
+  // tried: 2920 grants service_role INSERT and SELECT only and asserts in its
+  // own postconditions that service_role has neither UPDATE nor DELETE
+  // ("a rule version can be deleted; history would be unreconstructable"), so
+  // the retention is a property of the grants, not a promise in a comment.
+  {
+    table: "creator_rule_versions",
+    reason:
+      "The versioned rule set that prices creator value (07 §8/§10) — creator_type, rule_version, params, effective_from, note. " +
+      "No beneficiary, no actor and no personal data: the rows are seeded by migration 2920 before any account exists, and service_role holds INSERT/SELECT only (no DELETE), so a rule lineage cannot be deleted at all. " +
+      "Retained so that an earning record naming a rule_version stays reconstructable; the earning records themselves are retained under C-11 answer B (below), not by this entry.",
+  },
   // ── The four creator / Rent-a-Buddy ledgers (2901, 2920, 2921, 3387) ──────
-  // OWNER DECISION C-11 / W10D-B0, answered 2026-10-04, verbatim: "Pseudonymize
-  // accounting entries, removing direct identifiers and the identity link when
-  // deletion is requested. Keep only the records needed for tax, accounting,
-  // disputes, or legal claims, with a defined retention period and access
-  // controls. GDPR, for example, permits exceptions to erasure where processing
-  // is needed to meet a legal obligation or establish or defend legal claims.
-  // [GDPR Article 17]" Implemented by migration 3513 (which replaces 3510's
+  // OWNER DECISION OD-PAY-8 (C-11 / W10D-B0, question 22(a)), 2026-10-04,
+  // verbatim: "Pseudonymize accounting entries, removing direct identifiers and
+  // the identity link when deletion is requested. Keep only the records needed
+  // for tax, accounting, disputes, or legal claims, with a defined retention
+  // period and access controls. GDPR, for example, permits exceptions to
+  // erasure where processing is needed to meet a legal obligation or establish
+  // or defend legal claims. [GDPR Article 17]" Recorded as answer B on
+  // 2026-10-04 15:52 UTC. Implemented by migration 3600 (which replaces 3510's
   // CL451 "undecided" guard with a decided CL452 retention guard plus the
   // SECURITY DEFINER door) and wired into the deletion path by
-  // AccountDeletionService's `pseudonymise_creator_ledger` step.
+  // AccountDeletionService's `pseudonymise_creator_ledger` step. They were in
+  // AWAITING_OWNER_DECISION until that answer; its header says an answered
+  // entry moves here.
   //
   // WHY HERE AND NOT IN ANONYMISED_FK_NULLED, which is the same SHAPE (the row
   // is kept, the identifier goes): that bucket records the mechanical repair of
@@ -288,36 +327,97 @@ export const RETAINED_WITH_REASON: ReadonlyArray<{ table: string; reason: string
   // a later policy erasing them without withdrawing that reason in the same
   // change. A written reason is the whole point of the entry.
   //
-  // WHAT IS STILL OPEN, and is NOT this manifest's to invent: the "defined
-  // retention period". 3513 builds no purge and names no period, because the
-  // period has no value yet (owner question Q11(a), pending legal review), so
-  // these rows are retained INDEFINITELY today — longer than the decision
-  // authorises once a period exists. Nothing in the repo expresses that period
-  // for these tables.
+  // THE PERIOD, STATED AND NOT INVENTED. The owner's default (2026-10-04 15:52
+  // UTC) is "seven years after fiscal year-end", overridden by any
+  // jurisdiction-specific legal period, and "legal confirmation is still
+  // required"; on 2026-10-05: "do not invent legal approval or erase records
+  // early". Whose fiscal year and which jurisdiction's period applies are not
+  // confirmed, so 3600 builds no purge: the rows are retained INDEFINITELY
+  // today, which can never erase one early. Each reason below says so.
   {
     table: "rent_buddy_earnings_entries",
     reason:
       "Rent-a-Buddy accounting entries (double-entry earnings legs and their reversals) are retained for tax, accounting, dispute and legal-claim purposes — GDPR Art. 17(3)(b)/(e). " +
-      "On deletion the person is removed from them rather than the rows: beneficiary_user_id is severed and every occurrence of their id becomes one random pseudonym (migration 3513). Retained rows are frozen and no client role can read them. The retention period itself is pending legal review (Q11(a)).",
+      "On deletion the person is removed from them rather than the rows: beneficiary_user_id is severed and every occurrence of their id becomes one random pseudonym (migration 3600). Retained rows are frozen and no client role can read them. " +
+      "Retention period: the owner's default is seven years after fiscal year-end, overridden by any jurisdiction-specific legal period, pending legal confirmation; no purge enforces it yet, so nothing is erased early.",
   },
   {
     table: "creator_attributions",
     reason:
-      "Creator attribution records — which value event earned a share, under which published rule version — are retained as the basis of the accounting entries above, for tax, accounting, dispute and legal-claim purposes (GDPR Art. 17(3)(b)/(e)). " +
-      "On deletion beneficiary_user_id is severed and replaced by one random pseudonym (migration 3513); the record is then frozen (no supersession, hold, release or recompute). The retention period is pending legal review (Q11(a)).",
+      "Creator attribution records — which value event earned a share, under which published rule version — are retained as the basis of the accounting entries, for tax, accounting, dispute and legal-claim purposes (GDPR Art. 17(3)(b)/(e)). " +
+      "On deletion beneficiary_user_id is severed and replaced by one random pseudonym (migration 3600); the record is then frozen (no supersession, hold, release or recompute). " +
+      "Retention period: the owner's default is seven years after fiscal year-end, overridden by any jurisdiction-specific legal period, pending legal confirmation; no purge enforces it yet, so nothing is erased early.",
   },
   {
     table: "creator_earning_entries",
     reason:
       "Creator earning entries are the money itself: balanced double-entry legs, their reversals and refunds, retained for tax, accounting, dispute and legal-claim purposes (GDPR Art. 17(3)(b)/(e)). " +
-      "On deletion beneficiary_user_id is severed and replaced by one random pseudonym (migration 3513), and the transaction still balances. The retention period is pending legal review (Q11(a)).",
+      "On deletion beneficiary_user_id is severed and replaced by one random pseudonym (migration 3600), and the transaction still balances. " +
+      "Retention period: the owner's default is seven years after fiscal year-end, overridden by any jurisdiction-specific legal period, pending legal confirmation; no purge enforces it yet, so nothing is erased early.",
   },
   {
     table: "creator_ledger_audit_events",
     reason:
       "The ledger's own audit trail — who held, released or recomputed an attribution, and why — retained with the entries it explains, for dispute and legal-claim purposes (GDPR Art. 17(3)(b)/(e)); an accounting record whose corrections cannot be accounted for is not one. " +
-      "Where an erased person was the ADMIN who acted, actor_user_id is severed and replaced by their pseudonym (migration 3513). The retention period is pending legal review (Q11(a)).",
+      "Where an erased person was the ADMIN who acted, actor_user_id is severed and replaced by their pseudonym (migration 3600). " +
+      "Retention period: the owner's default is seven years after fiscal year-end, overridden by any jurisdiction-specific legal period, pending legal confirmation; no purge enforces it yet, so nothing is erased early.",
   },
+];
+
+/**
+ * ── A FATE THAT IS AN OPEN OWNER DECISION, NAMED AND HELD ───────────────────
+ *
+ * NOT A DECISION, AND NOT UNTRIAGED EITHER. This bucket exists because the four
+ * buckets above could not describe the creator ledger without answering a
+ * question that is the owner's to answer:
+ *
+ *   * ERASED_BY_CASCADE would assert the rows are deleted on erasure. That is
+ *     C-11 answer A (reconciliation-staging/3511), and it is also false today:
+ *     3510 refuses every DELETE of these rows with SQLSTATE CL451.
+ *   * RETAINED_WITH_REASON would assert a DECIDED retention. That is C-11
+ *     answer B (reconciliation-staging/3512), which additionally pseudonymises
+ *     the identity — a retention this manifest cannot promise, because no code
+ *     performs it and no retention period exists (question 22(a): "for the
+ *     period your legal advice sets").
+ *   * UNCLASSIFIED_BACKLOG and DENOMINATOR_CORRECTION_BACKLOG both mean
+ *     "nobody has looked". Somebody has: both answers are written, rehearsed in
+ *     a throwaway database by src/test/db/creatorLedgerErasurePolicy.db.test.ts,
+ *     and held out of the chain. Filing these tables as untriaged debt would
+ *     lose that, and the dated backlogs are records of what was found in
+ *     2026-08-22 / 2026-09-08, not places to put a 2026-10 table.
+ *
+ * So the fate recorded here is the true one: the DELETE is REFUSED while a named
+ * owner decision is open, and the refusal is in the schema rather than in this
+ * comment. Each entry states the decision and the mechanism holding it open, and
+ * check:deletion-coverage rejects an entry missing either.
+ *
+ * THIS IS NOT A THIRD HIDING PLACE, and the difference is mechanical: an entry
+ * here must name a decision whose two answers are already written. A table whose
+ * fate merely has not been thought about does not qualify — it has to be decided
+ * on the day it is created, which is what the gate exists for.
+ *
+ * Entries leave this list when the owner answers: the chosen migration is
+ * promoted out of reconciliation-staging/, the service is wired to it, and the
+ * table moves to ERASED_BY_CASCADE (answer A) or to RETAINED_WITH_REASON with
+ * the period the answer sets (answer B).
+ */
+export const AWAITING_OWNER_DECISION: ReadonlyArray<{
+  table: string;
+  /** The owner question, by its identifier, and where it is written down. */
+  decision: string;
+  /** What stops either answer being taken by default in the meantime. */
+  heldOpenBy: string;
+}> = [
+  // EMPTY SINCE 2026-10-06 (PR #592, lane P). Its first four entries were the
+  // creator / Rent-a-Buddy ledgers awaiting C-11. The owner answered: OD-PAY-8
+  // (docs/ops/owner-decisions-20261004.md), recorded as answer B on 2026-10-04
+  // 15:52 UTC. Answer B is promoted into the chain as migration 3600 (was
+  // reconciliation-staging/3512), which replaces 3510's CL451 refusal with the
+  // decided CL452 retention guard, and AccountDeletionService's
+  // `pseudonymise_creator_ledger` step is wired to it, so all four moved to
+  // RETAINED_WITH_REASON above, exactly as this bucket's header says an answered
+  // entry does. The bucket and its checks stay for the next decision of the
+  // same kind.
 ];
 
 /**
@@ -697,13 +797,56 @@ export const DENOMINATOR_CORRECTION_BACKLOG: readonly string[] = [
 /**
  * Tables created by canonical migrations AFTER the 2026-08-19 baseline. They are
  * classified above but cannot be found in the baseline yet, so the coverage check
- * must not report them as stale. They leave this list when the baseline is
- * recaptured — which is part of the apply sequence, not an afterthought.
+ * must not report them as stale.
  *
  * The journey_* family belongs here too: those tables are LIVE ON PRODUCTION
  * (verified 2026-08-22) while their migrations are still unpushed to git. They
  * are listed as backlog rather than erased because their deletion fate is the
  * Journey workstream's call, not this one's.
+ *
+ * ── THIS LIST IS THE BLIND SPOT, NOT THE FIX FOR IT (measured 2026-10-04) ────
+ * An earlier revision of this comment said entries "leave this list when the
+ * baseline is recaptured — which is part of the apply sequence". That is true of
+ * an APPLIED migration and false of every other kind, and the difference is the
+ * whole hole:
+ *
+ *   * the denominator has exactly two sources — baseline/20260819_baseline_
+ *     structure.sql, and this hand-written list passed to classifyUserLinks as
+ *     `extraTables`. Nothing reads src/migrations/.
+ *   * so a migration that CREATEs a user-keyed table puts it in the universe
+ *     only when a person remembers to type its name here. Forgetting is not an
+ *     error the gate can report: the table is absent from the baseline, so it is
+ *     absent from the denominator, so check:deletion-coverage passes.
+ *   * a baseline recapture cannot close this. Recapture snapshots PRODUCTION, and
+ *     a committed-but-unapplied migration's tables are not on production. The
+ *     creator-ledger tables (2901 / 2920 / 2921 / 3387) are exactly that case:
+ *     absent from the 2026-08-19 dump, absent from
+ *     baseline/20260922_production_tables.txt, and absent from
+ *     lib/capability/production-applied-migrations.json, whose newest applied
+ *     version is 20260922155706.
+ *
+ * MEASURED, so the size of the hole is a number rather than a worry — and
+ * measured with a model this repository ALREADY HAS. scripts/lib/
+ * canonicalSchema.ts replays every file in migrations/ and src/migrations/ over
+ * the same baseline (754 files on 2026-10-04) and is already the source of truth
+ * for check:schema-references. Asked what tables it knows, it answers 529, of
+ * which 142 are post-baseline, of which 114 — including all five added here —
+ * were named in no bucket of this file.
+ *
+ * SO THE FIX IS SMALLER THAN IT LOOKS, and it is still not this change:
+ *   * the PRESENCE half needs no new parser. "Every table the canonical chain
+ *     creates must be named in this manifest" is answerable today from
+ *     canonicalSchema.columns, and it is the half that would have caught these
+ *     five. It cannot be switched on here because it reports 114 tables at once,
+ *     and the gate's own failure text forbids parking a new table in either
+ *     dated backlog — correctly. It needs a change that triages them.
+ *   * the CLASSIFICATION half does need new work: canonicalSchema deliberately
+ *     models columns and not constraints, and lib/deletion/userLink.ts decides
+ *     HOW a table is user-linked from the FOREIGN KEY graph, which is parsed out
+ *     of the dump's format (lib/deletion/schemaFacts.ts) and not out of
+ *     migration DDL. Until that exists, a post-baseline table registered here
+ *     is DERIVED_USER_LINKED by hand registration — in scope, with no schema
+ *     evidence either way, which is what these five now are.
  */
 export const POST_BASELINE_TABLES: readonly string[] = [
   // Derived memory, added by migrations 2183-2191 (post-baseline).
@@ -748,6 +891,11 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   // Wall §32 telemetry sink, added by migration 2308 (post-baseline).
   // Classified in ERASED_BY_CASCADE above.
   "wall_telemetry_events",
+  // Input-assistance opt-ins and outcome counters, added by migrations 3780 /
+  // 3782 (post-baseline). Classified in ERASED_BY_CASCADE above.
+  "input_outcome_consent",
+  "input_outcome_counters",
+  "input_memory_context_consent",
   "journey_observations",
   "journey_revocation_jobs",
   "journey_segment_revisions",
@@ -755,17 +903,14 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "journey_shadow_ground_truth",
   "journey_shadow_qa_reports",
   "journey_shadow_session_issuances",
-  // The four creator / Rent-a-Buddy ledgers, added by migrations 2901, 2920,
-  // 2921 and 3387 (all post-baseline). Classified in RETAINED_WITH_REASON above
-  // under owner decision C-11: the accounting rows are kept and the person is
-  // removed from them by migration 3513's door, called from
-  // AccountDeletionService's `pseudonymise_creator_ledger` step.
-  //
-  // Listed here because the baseline predates all four tables, so the measured
-  // user-link graph cannot see them: without a hand registration the four
-  // tables that hold a departed person's money would be the one part of the
-  // deletion surface the coverage gate has nothing to say about.
+  // The creator / Rent-a-Buddy ledger (migrations 2901, 2920, 2921, 3387).
+  // Post-baseline AND unapplied to production, so neither the 2026-08-19 dump
+  // nor a recapture of it can ever see these five: they are in the denominator
+  // only because they are named here. All five are in RETAINED_WITH_REASON:
+  // creator_rule_versions since #609, the four ledgers since C-11 was answered
+  // (OD-PAY-8, answer B, migration 3600).
   "rent_buddy_earnings_entries",
+  "creator_rule_versions",
   "creator_attributions",
   "creator_earning_entries",
   "creator_ledger_audit_events",

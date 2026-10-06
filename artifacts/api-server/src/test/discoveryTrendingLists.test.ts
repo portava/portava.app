@@ -25,7 +25,7 @@ import express from "express";
 import { _setTestClient, _clearTestClient } from "../lib/http.js";
 import trendingRouter from "../routes/discoveryTrending.js";
 import {
-  explainExposures, eligibleListPlaces, mayNameNeighbourhood, parseDestination, TREND_DISCLOSURE_MIN_TRAVELERS, TREND_LIST_STATES,
+  explainExposures, eligibleListPlaces, mayNameNeighbourhood, parseDestination, zoneAllowsPosition, TREND_DISCLOSURE_MIN_TRAVELERS, TREND_LIST_STATES,
   type TrendAreaRow, type TrendSnapshotRow,
 } from "../lib/discoveryTrendExplanation.js";
 import { TREND_STATE_MODEL_VERSION_V2, TREND_FEATURE_VERSION_V2, TREND_PRIOR_MS, explainTrendReading } from "../lib/discoveryTrendState.js";
@@ -296,6 +296,11 @@ describe("L-H — emerging places and Trails", () => {
   const T1 = "44444444-4444-4444-8444-444444444441", T2 = "44444444-4444-4444-8444-444444444442";
   function trailSeed(travellers: number): Record<string, Row[]> {
     const s = SEED();
+    // A `content_trails` place member IS a discovery_places row: 3476's
+    // discovery_trend_place_context joins content_trails.source_id against
+    // lower(discovery_places.id). The fixture said otherwise, which made the
+    // fold's member-eligibility rule unobservable here.
+    s["discovery_places"] = [...s["discovery_places"]!, dp(20)];
     s["trails"] = [{ id: T1, destination: "lisbon", lifecycle_status: "active" }, { id: T2, destination: "lisbon", lifecycle_status: "archived" }];
     s["content_trails"] = [
       { trail_id: T1, source_type: "place", source_id: pid(20) }, { trail_id: T1, source_type: "post", source_id: pid(21) },
@@ -323,6 +328,164 @@ describe("L-H — emerging places and Trails", () => {
     const r = await get("emerging", "lisbon");
     assert.equal(r.status, 200);
     assert.equal(r.body.trailsUnavailable, "trails_unavailable");
+  });
+});
+
+// ── L-Z — Q12 (owner, 2026-10-04): protected-zone suppression on the two legs
+//          that published without asking the policy ──────────────────────────
+//
+// "Close Q12 with the threshold of at least 15 travellers and suppress
+//  contributions inside protected zones."
+//
+// The k ≥ 15 half already held on every published leg (L-D, L-G, L-H, L-I).
+// This block is the OTHER half, on the two legs that read no zone at all:
+// Local Pulse (DV-29) and the emerging-Trails fold. Each gap gets the same
+// four questions: inside a zone is withheld · a FAILED policy read withholds
+// (and does not quietly answer "nothing") · outside every zone still
+// publishes · and the place legs do not change.
+describe("L-Z — protected zones, Local Pulse (gap 1)", () => {
+  /** A suppress-action zone over exactly dp(13)'s position; dp(13) feeds n:lisbon:alfama. */
+  const OVER_13 = { id: "z13", category: "shelter", action: "suppress", shape: "circle", center_lat: 38.80, center_lng: -9.20, radius_meters: 200, active: true };
+  /** Same shape, 150 km away: a policy that exists and bears on nothing here. */
+  const FAR = { id: "zfar", category: "shelter", action: "suppress", shape: "circle", center_lat: 40.20, center_lng: -8.40, radius_meters: 200, active: true };
+
+  it("L-Z1. a neighbourhood a protected zone fed is NOT published by /trending/areas", async () => {
+    const s = SEED();
+    s["protected_zones"] = [OVER_13];
+    withDb(s);
+    const r = await get("areas", "lisbon");
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.areas, [], "Alfama was fed by dp(13), which stands inside a suppress zone");
+    assert.ok(!r.text.includes("Alfama"), "the neighbourhood's name does not reach the client either");
+  });
+
+  it("L-Z2. an UNREADABLE zone policy is a stated 503, never a 200 with an empty pulse", async () => {
+    withDb(SEED(), { erroring: ["protected_zones"] });
+    const r = await get("areas", "lisbon");
+    assert.equal(r.status, 503, r.text);
+    assert.equal(r.body.reason, "eligibility_read_failed");
+    assert.equal(r.body.error, "degraded_unavailable");
+    // The same for the read that attributes a cell to its places: an
+    // unanswerable question is not an answer of "no zones".
+    clearProtectedZoneCache();   // a second phase in one test must re-ask the policy, not reuse the 30s cache
+    withDb(SEED(), { erroring: ["discovery_places"] });
+    const d = await get("areas", "lisbon");
+    assert.equal(d.status, 503, d.text);
+    assert.equal(d.body.reason, "eligibility_read_failed");
+  });
+
+  it("L-Z3. a neighbourhood outside every zone still publishes — with a policy loaded, and with none", async () => {
+    const far = SEED(); far["protected_zones"] = [FAR];
+    withDb(far);
+    const r = await get("areas", "lisbon");
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.areas.map((a: any) => a.area), ["Alfama"], "a distant zone must not blank the feature");
+    assert.equal(r.body.areas[0].reason.text, "Saved more than usual in Alfama in the last couple of days.");
+    clearProtectedZoneCache();   // without this the next phase re-reads FAR from the cache and asserts nothing new
+    withDb(SEED());
+    assert.deepEqual((await get("areas", "lisbon")).body.areas.map((a: any) => a.area), ["Alfama"], "no zones at all: unchanged");
+  });
+
+  it("L-Z4. a cell no place of this run accounts for is withheld, not waved through", async () => {
+    const s = SEED();
+    s["area_momentum"] = [...s["area_momentum"]!, {
+      cell_key: "n:lisbon:chiado", cell_label: "Chiado", city: "lisbon", computed_at: RUN, trend_state: "trending",
+      driver: "saves", recent_unique_travelers: K + 5, window_unique_travelers: K + 5, velocity: 9, source_surface: "discovery",
+    }];
+    withDb(s);
+    const r = await get("areas", "lisbon");
+    assert.deepEqual(r.body.areas.map((a: any) => a.area), ["Alfama"], "Chiado has a reading but no place behind it: unclearable");
+    assert.ok(!r.text.includes("Chiado"));
+    // And when NO candidate cell has a place behind it, the pulse is empty
+    // rather than wholly waved through — the branch the case above skips,
+    // because Alfama still supplies places there.
+    clearProtectedZoneCache();
+    // Built from `s`, NOT from a fresh SEED(): SEED() re-stamps RUN, and area
+    // rows carrying the old instant would simply fall outside the new run —
+    // an empty pulse that proves nothing.
+    const alone = { ...s, area_momentum: s["area_momentum"]!.filter((a) => a["cell_key"] !== "n:lisbon:alfama") };
+    withDb(alone);
+    const only = await get("areas", "lisbon");
+    assert.equal(only.status, 200);
+    assert.deepEqual(only.body.areas, [], "not one cell could be cleared");
+    assert.ok(!only.text.includes("Chiado"));
+  });
+
+  it("L-Z5. the place legs are unchanged by the refactor: one decision, same answers", async () => {
+    // The zone decision moved into zoneAllowsPosition; these are the four
+    // answers eligibleListPlaces relied on, asserted on the shared function.
+    const zones = [{ id: "z", category: "shelter", action: "suppress" as const, shape: "circle" as const, center: { lat: 38.80, lng: -9.20 }, radiusMeters: 200 }];
+    assert.equal(zoneAllowsPosition("p", "P", 38.80, -9.20, zones), false, "inside: withheld");
+    assert.equal(zoneAllowsPosition("p", "P", 38.71, -9.13, zones), true, "outside: published");
+    assert.equal(zoneAllowsPosition("p", "P", 38.71, -9.13, null), false, "unreadable policy: withheld");
+    assert.equal(zoneAllowsPosition("p", "P", 38.71, -9.13, []), true, "asked, no zones: published");
+    assert.equal(zoneAllowsPosition("p", "P", null, null, null), true, "no position: no zone can decide it");
+    // A COARSEN zone also withholds here: these wires have no coarse rung.
+    const med = [{ id: "m", category: "medical_facility" as const, shape: "circle" as const, center: { lat: 38.71, lng: -9.13 }, radiusMeters: 300 }];
+    assert.equal(zoneAllowsPosition("p", "P", 38.71, -9.13, med), false, "coarsened is not published at full precision");
+  });
+});
+
+describe("L-Z — protected zones, the emerging-Trails fold (gap 2)", () => {
+  const T1 = "44444444-4444-4444-8444-444444444441";
+  /** The L-H fixture, whose Trail T1 has one PLACE member, dp(20), at 38.71/-9.13. */
+  function seed(travellers: number): Record<string, Row[]> {
+    const s = SEED();
+    s["discovery_places"] = [...s["discovery_places"]!, dp(20)];
+    s["trails"] = [{ id: T1, destination: "lisbon", lifecycle_status: "active" }];
+    s["content_trails"] = [{ trail_id: T1, source_type: "place", source_id: pid(20) }];
+    const ev: Row[] = [];
+    for (let i = 0; i < 40; i++) ev.push({ id: `e${i}`, user_id: `v${i % travellers}`, item_id: `db/${pid(20)}`, surface: "discovery", outcome: "impression", served_at: iso(3_600_000 + i * 60_000), outcome_at: null });
+    for (let i = 0; i < 4; i++) ev.push({ id: `s${i}`, user_id: `v${i}`, item_id: pid(20), surface: "discovery", outcome: "save", served_at: iso(7_300_000 + i * 900_000), outcome_at: iso(7_200_000 + i * 900_000) });
+    s["rank_events"] = ev;
+    return s;
+  }
+  /** A suppress zone over dp(20)'s own position. */
+  const OVER_20 = { id: "z20", category: "private_residence", action: "suppress", shape: "circle", center_lat: 38.71, center_lng: -9.13, radius_meters: 150, active: true };
+
+  it("L-Z6. a Trail whose place member stands inside a protected zone is NOT listed", async () => {
+    const s = seed(K + 2); s["protected_zones"] = [OVER_20];
+    withDb(s);
+    const r = await get("emerging", "lisbon");
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.trails, [], "the fold must not count a member it withholds");
+    assert.ok(!r.text.includes(T1), "the Trail id does not reach the client either");
+  });
+
+  it("L-Z7. a FAILED zone read withholds the Trail rather than listing it", async () => {
+    withDb(seed(K + 2), { erroring: ["protected_zones"] });
+    const r = await get("emerging", "lisbon");
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.trails, [], "an unreadable policy over a positioned member: withheld");
+    // And a rule that could not be applied at all is STATED on this leg.
+    clearProtectedZoneCache();
+    const stale = seed(K + 2);
+    stale["place_momentum"] = stale["place_momentum"]!.map((x) => ({ ...x, computed_at: iso(3_600_000) }));
+    withDb(stale, { erroring: ["blocks"] });
+    const f = await get("emerging", "lisbon");
+    assert.equal(f.status, 200, f.text);
+    assert.equal(f.body.unavailable, "stale_snapshot");
+    assert.equal(f.body.trailsUnavailable, "trail_read_failed");
+    assert.deepEqual(f.body.trails, []);
+  });
+
+  it("L-Z8. a Trail whose members are outside every zone is still listed", async () => {
+    const far = seed(K + 2);
+    far["protected_zones"] = [{ id: "zfar", category: "shelter", action: "suppress", shape: "circle", center_lat: 40.20, center_lng: -8.40, radius_meters: 200, active: true }];
+    withDb(far);
+    const r = await get("emerging", "lisbon");
+    assert.deepEqual(r.body.trails.map((t: any) => t.trailId), [T1], "a distant zone must not blank the Trails half");
+    assert.equal(r.body.trailsUnavailable, null);
+    clearProtectedZoneCache();
+    withDb(seed(K + 2));
+    assert.deepEqual((await get("emerging", "lisbon")).body.trails.map((t: any) => t.trailId), [T1], "no zones at all: unchanged");
+  });
+
+  it("L-Z9. an inactive place member is not folded either (the same gate, not a second one)", async () => {
+    const s = seed(K + 2);
+    s["discovery_places"] = s["discovery_places"]!.map((p) => (p["id"] === pid(20) ? { ...p, status: "pending" } : p));
+    withDb(s);
+    assert.deepEqual((await get("emerging", "lisbon")).body.trails, []);
   });
 });
 

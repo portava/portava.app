@@ -353,15 +353,15 @@ export const TELEGRAPH_DYNAMIC_SHARE_PRODUCERS: readonly DynamicShareProducer[] 
   {
     file: "artifacts/api-server/src/routes/telegraphKinds.ts",
     expression:
-      "subtype: (row.subtype as string) ?? null | msg_type: validated.msgType | " +
+      "subtype: (row.subtype as string) ?? null | " +
       "subtype: validated.subtype | subtype: m.subtype",
     family: "AUDIENCE_SCOPED",
     sourceDomain: null,
     produces: [
       "media_album", "gif", "location", "action", "announcement", "safety", "memory_note",
     ],
-    writesMessages: true,
-    note:
+    writesMessages: false,
+    note: "THE ROUTE NO LONGER INSERTS: since §13.1 SHARE_LOCATION it hands the validated msgType/subtype to services/telegraph/threadEnvelopeWrites.ts (declared at the end of this list), the one writer both doors share, so writesMessages is false here and true there; the rest of this note still describes the values. " +
       "DECLARED BY THE INTEGRATOR. The §6.2 typed-kind route. msg_type is " +
       "msgTypeOf(kind), the lowercase of one of the seven SENDABLE_ENVELOPE_KINDS, " +
       "so the set is bounded by that constant and listed above. The subtype is " +
@@ -391,7 +391,7 @@ export const TELEGRAPH_DYNAMIC_SHARE_PRODUCERS: readonly DynamicShareProducer[] 
   },
   {
     file: "artifacts/api-server/src/routes/telegraphCoordination.ts",
-    expression: "msg_type: validated.msgType | subtype: validated.subtype | subtype: m.subtype",
+    expression: "subtype: validated.subtype | subtype: m.subtype",
     family: "OPERATIONAL",
     sourceDomain: null,
     produces: [
@@ -399,8 +399,8 @@ export const TELEGRAPH_DYNAMIC_SHARE_PRODUCERS: readonly DynamicShareProducer[] 
       "commitment_response", "action_proposal", "action_response",
       "acknowledgement", "coordination_session", "coordination_transition",
     ],
-    writesMessages: true,
-    note:
+    writesMessages: false,
+    note: "THE ROUTE NO LONGER INSERTS: since §13.1 CREATE_DECISION / SET_COORDINATION_STATUS its generic tail hands the validated msgType/subtype to services/telegraph/threadEnvelopeWrites.ts (declared at the end of this list), the one writer the route and the command bus share; the rest of this note still describes the values. " +
       "DECLARED BY THE INTEGRATOR. The §9 coordination route. msg_type is the " +
       "lowercase of one of the COORDINATION_KINDS, listed above. §21.9 recorded " +
       "that this list had gone three values short when ACTION_RESPONSE, " +
@@ -549,23 +549,25 @@ export const TELEGRAPH_DYNAMIC_SHARE_PRODUCERS: readonly DynamicShareProducer[] 
   },
   {
     file: "artifacts/api-server/src/routes/messaging.ts",
-    expression: "subtype: req.body?.subtype (any string the client sends)",
+    expression: "msg_type: msgType | subtype (both from resolveClientDiscriminator, a closed list)",
     family: "OPERATIONAL",
     sourceDomain: null,
-    produces: [],
+    produces: ["discovery_card", "post_card", "compass_card", "meetup", "e2ee_welcome"],
     writesMessages: true,
     note:
-      "UNBOUNDED, AND THIS IS THE FINDING. POST /threads/:threadId/messages takes " +
-      "`subtype` straight from the request body with no vocabulary check — the only " +
-      "constraint applied is that msgType collapses to 'system' or 'text'. So a " +
-      "client can stamp any subtype it likes onto a message, including one a " +
-      "renderer will dispatch on. It cannot forge the PAYLOAD authorization (the " +
-      "body is whatever the sender wrote, and every card's data comes from that " +
-      "same body), so this is a rendering-shape hole rather than an access-control " +
-      "one — but it is exactly the seam a capability registry is supposed to close, " +
-      "and it is why `produces` is empty here rather than enumerated. Recorded " +
-      "against census T35/T41/T429: there is no versioned structured-message schema " +
-      "and no validation of the discriminator that selects a renderer.",
+      "BOUNDED 2026-10-04. This entry used to read \"UNBOUNDED, AND THIS IS THE FINDING\": POST " +
+      "/threads/:threadId/messages took `subtype` straight from the request body, so a client could " +
+      "stamp any subtype onto a `system` row, including one a renderer dispatches on. It called that a " +
+      "rendering-shape hole. It was worse than its name: the thread screen draws a `system` row as " +
+      "platform chrome with no sender attribution — `call_*` as a call line with a call-back button, " +
+      "`rent_buddy_*` as a booking milestone banner, anything unrecognised as a centred notice — so a " +
+      "member could post in the platform's voice. The discriminator now comes from " +
+      "resolveClientDiscriminator (domain/telegraph/policies/messageDoorPolicy.ts): `text` with no " +
+      "subtype, or `system` with one of the five subtypes the app itself authors, listed in `produces`. " +
+      "test/telegraphMessageDoors.test.ts holds that list equal to what the client tree sends, in both " +
+      "directions. WHAT IS STILL OPEN, and it is census T35/T429's remainder: the three card subtypes " +
+      "carry an unversioned JSON body the sender wrote, so the PAYLOAD of an allowed card is still a " +
+      "sender's snapshot. That closes when those cards move to POST /threads/:id/share.",
   },
   {
     file: "artifacts/api-server/src/routes/circle.ts",
@@ -670,6 +672,31 @@ export const TELEGRAPH_DYNAMIC_SHARE_PRODUCERS: readonly DynamicShareProducer[] 
     note:
       "The E2EE thread bootstrap, sending the Welcome through the same API. The " +
       "server cannot read its body, which is the point of the thread.",
+  },
+  {
+    file: "artifacts/api-server/src/services/telegraph/threadEnvelopeWrites.ts",
+    expression:
+      "msg_type: input.msgType | subtype: input.subtype | subtype: m.subtype | subtype: v.subtype",
+    family: "AUDIENCE_SCOPED",
+    sourceDomain: null,
+    produces: [
+      "media_album", "gif", "location", "action", "announcement", "safety", "memory_note",
+      "coordination", "decision", "vote", "rendezvous", "commitment",
+      "commitment_response", "action_proposal", "action_response",
+      "acknowledgement", "coordination_session", "coordination_transition",
+    ],
+    writesMessages: true,
+    note:
+      "DECLARED WHEN THE GUARD CAUGHT IT. §13.1 — the ONE envelope writer behind " +
+      "the typed-kind route, the coordination route's generic tail and the command " +
+      "bus's CREATE_DECISION / SET_COORDINATION_STATUS / SHARE_LOCATION. It " +
+      "computes nothing: msg_type and subtype arrive as parameters already produced " +
+      "by validateKindMessage or validateCoordinationMessage (planEnvelopeCommand, " +
+      "the `v.subtype` site, calls the same two), so `produces` is the union of the " +
+      "two route entries and no wider. AUDIENCE_SCOPED, the stricter of the two " +
+      "families those entries declare, because the union includes the typed kinds; " +
+      "each value's own classification is the route entry that bounds it. Placed " +
+      "last so no line another document cites moves.",
   },
 ];
 

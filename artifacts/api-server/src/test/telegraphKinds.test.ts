@@ -38,13 +38,25 @@
  *   • `drawerTabFor` returning "MEDIA" for everything → pass 32 / fail 4.
  *   All four restored: 36/36.
  *
+ * SHOWN RED 2026-10-03 for the two `replyToId` tests (B12), each restored:
+ *   • the refusal's condition forced never-true (silent accept, as before) →
+ *     pass 38 / fail 1. The without-the-field test STAYED GREEN, which is the
+ *     point of having it: the rejection is not swallowing the normal path.
+ *   • the refusal message replaced by a generic "Invalid body." → pass 38 /
+ *     fail 1. Note a WEAKER mutation that stayed green: blanking only the
+ *     first of the four concatenated fragments, because a later fragment still
+ *     said "replyToId". The assertion is "the message names the field", not
+ *     "the message opens with it".
+ *   • the refusal forced always-true → pass 35 / fail 4 (the two new 201 posts
+ *     plus the two existing ones).
+ *
  * Run: node --import tsx/esm --test src/test/telegraphKinds.test.ts
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import express from "express";
-import { _setTestClient } from "../lib/http.js";
+import { _setTestClient } from "../lib/http.js"; import { _resetRateLimit } from "../lib/rateLimit.js";
 import telegraphKindsRouter from "../routes/telegraphKinds.js";
 import {
   DRAWER_TABS,
@@ -197,6 +209,10 @@ function makeClient(state: State) {
           const col = clause.slice(0, a), op = clause.slice(a + 1, b), val = clause.slice(b + 1);
           if (op === "gte") return (r: any) => Date.parse(r[col]) >= Date.parse(val);
           if (op === "eq") return (r: any) => String(r[col]) === val;
+          // Trust's restriction read (`expires_at.is.null,expires_at.gt.<now>`), which the
+          // shared send guard now makes on a 1:1 send (OD-TRUST-5).
+          if (op === "is" && val === "null") return (r: any) => r[col] == null;
+          if (op === "gt") return (r: any) => Date.parse(r[col]) > Date.parse(val);
           throw new Error(`fake client: unmodelled or() operator "${op}"`);
         });
         filters.push((r: any) => ms.some((m) => m(r)));
@@ -252,7 +268,7 @@ let base = "";
 
 function useState(state: State) {
   const c = makeClient(state);
-  _setTestClient(c, true);
+  _setTestClient(c, true); _resetRateLimit(); // the §22 send limiter is PROCESS state and now guards this door too: without this the 21st send in the FILE is a 429 that measures an earlier case
   return c;
 }
 
@@ -485,6 +501,46 @@ describe("POST /threads/:id/typed-messages", () => {
 
     useState({});
     assert.equal((await post(`/threads/${THREAD_E2EE}/typed-messages`, ALICE, { kind: "ANNOUNCEMENT", payload: { title: "x" } })).status, 422);
+  });
+
+  it("refuses replyToId BY NAME and writes nothing — silent acceptance was the failure mode", async () => {
+    const c = useState({});
+    const r = await post(`/threads/${THREAD}/typed-messages`, ALICE, {
+      kind: "ANNOUNCEMENT",
+      payload: { title: "x" },
+      replyToId: "eeeeeeee-0000-4000-8000-00000000000a",
+    });
+    assert.equal(r.status, 400);
+    // The field must be NAMED. A generic "invalid body" leaves the caller
+    // guessing which key the server disliked, and the old behaviour — parse it
+    // and drop it — produced a 201 for a message that was not a reply.
+    assert.ok(String(r.body.message).includes("replyToId"), r.body.message);
+    // The STATE: nothing was written at all, so there is no row whose
+    // reply-ness differs from what the caller asked for.
+    assert.equal((c as any)._inserted.length, 0);
+  });
+
+  it("the same payload WITHOUT replyToId still writes — the refusal cannot swallow the normal path", async () => {
+    const c = useState({});
+    const r = await post(`/threads/${THREAD}/typed-messages`, ALICE, {
+      kind: "ANNOUNCEMENT",
+      payload: { title: "x" },
+    });
+    assert.equal(r.status, 201);
+    const rows = (c as any)._inserted.filter((i: any) => i.table === "messages");
+    assert.equal(rows.length, 1);
+    assert.equal(JSON.parse(rows[0].row.body).kind, "ANNOUNCEMENT");
+    assert.equal(rows[0].row.reply_to_id, undefined);
+
+    // An explicit null is the ABSENCE of a reply, not a request for one.
+    const c2 = useState({});
+    const r2 = await post(`/threads/${THREAD}/typed-messages`, ALICE, {
+      kind: "ANNOUNCEMENT",
+      payload: { title: "x" },
+      replyToId: null,
+    });
+    assert.equal(r2.status, 201);
+    assert.equal((c2 as any)._inserted.filter((i: any) => i.table === "messages").length, 1);
   });
 
   it("an invalid payload is refused before any gate runs a write", async () => {

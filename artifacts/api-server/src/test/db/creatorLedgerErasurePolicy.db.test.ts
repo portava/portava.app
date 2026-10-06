@@ -7,7 +7,7 @@
  * removing direct identifiers and the identity link when deletion is requested.
  * Keep only the records needed for tax, accounting, disputes, or legal claims,
  * with a defined retention period and access controls." That is answer B, and it
- * is now the canonical chain's: 3513_creator_ledger_erasure_retain_pseudonymised
+ * is now the canonical chain's: 3600_creator_ledger_erasure_retain_pseudonymised
  * (promoted from reconciliation-staging/3512), which replaces 3510's CL451
  * "undecided" guard with a decided CL452 retention guard.
  *
@@ -15,11 +15,11 @@
  * runs in its own throwaway clone of the harness database (CREATE DATABASE …
  * TEMPLATE), never beside another and never against portava-ci or travel-buddy:
  *
- *   MAIN  the harness itself: the chain, 3513 included — RETAIN, PSEUDONYMISED
- *   U     a clone with 3513 ROLLED BACK — the 3510 "undecided" state the chain
+ *   MAIN  the harness itself: the chain, 3600 included — RETAIN, PSEUDONYMISED
+ *   U     a clone with 3600 ROLLED BACK — the 3510 "undecided" state the chain
  *         left behind. Its refusals are unchanged from when they were MAIN's, so
  *         they now certify that the rollback restores the previous behaviour
- *         exactly, which is what makes 3513 reversible before any erasure uses it
+ *         exactly, which is what makes 3600 reversible before any erasure uses it
  *   A     a clone, rolled back to 3510 and then + reconciliation-staging/3511 —
  *         DELETE ON ERASURE, the answer that was NOT chosen, still held and still
  *         rehearsed so the choice stays reversible
@@ -93,8 +93,8 @@ const A_FORWARD = "reconciliation-staging/3511_creator_ledger_erasure_delete_on_
 const A_ROLLBACK = "reconciliation-staging/2026-09-30-3511-creator-ledger-erasure-delete-on-erasure-rollback.sql";
 // Answer B is the chain's now, so these two are canonical paths — the file the
 // harness has ALREADY applied, and its rollback.
-const B_FORWARD = "artifacts/api-server/src/migrations/3513_creator_ledger_erasure_retain_pseudonymised.sql";
-const B_ROLLBACK = "db/rollback/2026-10-04-3513-creator-ledger-erasure-retain-pseudonymised-rollback.sql";
+const B_FORWARD = "artifacts/api-server/src/migrations/3600_creator_ledger_erasure_retain_pseudonymised.sql";
+const B_ROLLBACK = "db/rollback/2026-10-04-3600-creator-ledger-erasure-retain-pseudonymised-rollback.sql";
 const G_FORWARD = "artifacts/api-server/src/migrations/3510_creator_ledger_erasure_policy_undecided.sql";
 const G_ROLLBACK = "db/rollback/2026-09-30-3510-creator-ledger-erasure-policy-undecided-rollback.sql";
 
@@ -319,14 +319,14 @@ describe("the creator ledger on synthetic accounts, and C-11 in its three states
   });
 
   // ── MAIN: the flows, under the answer the chain now carries ───────────────
-  describe("MAIN — the harness chain, 3513 applied: C-11 answered (retain, pseudonymised)", () => {
+  describe("MAIN — the harness chain, 3600 applied: C-11 answered (retain, pseudonymised)", () => {
     let w: World;
     before(async () => { useDatabase(null); w = await runSyntheticLedger(); });
     // By the synthetic PREFIX, not by `w`: a flow that fails half-way must not
     // leave its rows behind for the next suite (or the next fixture clone).
-    // Under 3513 a ledger row cannot be DELETEd by any role, so the purge runs
+    // Under 3600 a ledger row cannot be DELETEd by any role, so the purge runs
     // in `session_replication_role = replica` — the same bypass it already
-    // needed for 3510's CL451 guard, now needed for 3513's CL452 one. That is
+    // needed for 3510's CL451 guard, now needed for 3600's CL452 one. That is
     // also why the ERASURE tests run in a clone and not here: a retained row is
     // retained, and this database is shared with eighteen other suites.
     after(() => exec(purgeSyntheticSql()));
@@ -415,21 +415,21 @@ describe("the creator ledger on synthetic accounts, and C-11 in its three states
     });
   });
 
-  // ── U: the state 3513's rollback restores ─────────────────────────────────
+  // ── U: the state 3600's rollback restores ─────────────────────────────────
   // These six tests were MAIN's while C-11 was open, and their assertions are
   // unchanged. What they certify has changed: the chain now answers C-11, so the
-  // "undecided" refusal only exists where 3513 has been rolled back. Reaching it
+  // "undecided" refusal only exists where 3600 has been rolled back. Reaching it
   // through the rollback — and finding the SAME refusals, byte for byte, down to
-  // the SQLSTATE and the function name — is what makes 3513 reversible while no
+  // the SQLSTATE and the function name — is what makes 3600 reversible while no
   // erasure has used it yet, which is the state the owner's ruling holds it in
   // until legal review confirms Q11(a).
-  describe("FIXTURE U — a clone with 3513 rolled back: the 3510 undecided state", () => {
+  describe("FIXTURE U — a clone with 3600 rolled back: the 3510 undecided state", () => {
     let w: World;
     before(async () => {
       useDatabase(fixtures.U);
       applyFile(B_ROLLBACK);
       assert.equal(scalar(`SELECT count(*) FROM pg_trigger WHERE tgfoid = 'public.creator_ledger_erasure_policy_undecided()'::regprocedure`), "4",
-        "3513's rollback re-installs 3510's guard on all four ledgers");
+        "3600's rollback re-installs 3510's guard on all four ledgers");
       assert.equal(scalar(`SELECT count(*) FROM pg_proc WHERE proname = 'creator_ledger_remove_identity'`), "0",
         "and takes the identity-removal door away with it");
       assert.equal(scalar(`SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' AND column_name IN ('beneficiary_pseudonym', 'actor_pseudonym')`), "0",
@@ -498,13 +498,13 @@ describe("the creator ledger on synthetic accounts, and C-11 in its three states
     let w: World;
     before(async () => {
       useDatabase(fixtures.A);
-      // The clone arrives with the CHAIN's answer (3513) applied, and the two
+      // The clone arrives with the CHAIN's answer (3600) applied, and the two
       // answers refuse to coexist — by precondition, in both directions. So
       // answer A can only be rehearsed after answer B is rolled back, which is
       // also the only order an operator could ever change their mind in.
       applyFile(B_ROLLBACK);
       assert.equal(scalar(`SELECT count(*) FROM pg_proc WHERE proname = 'creator_ledger_remove_identity'`), "0",
-        "3513's rollback removes answer B's door before answer A is applied");
+        "3600's rollback removes answer B's door before answer A is applied");
       // Rehearse 3510 and 3511 in this database while the ledgers are empty:
       // 3510 rollback -> re-apply; 3511 apply -> re-apply -> rollback -> re-apply.
       applyFile(G_ROLLBACK);
@@ -599,13 +599,13 @@ describe("the creator ledger on synthetic accounts, and C-11 in its three states
   });
 
   // ── B: retain, pseudonymised ───────────────────────────────────────────────
-  describe("FIXTURE B — its own database, the CHOSEN answer 3513: retain, identity removed", () => {
+  describe("FIXTURE B — its own database, the CHOSEN answer 3600: retain, identity removed", () => {
     let w: World;
     let cFoldsBefore: Record<string, string>;
     let cRowsBefore = 0;
     before(async () => {
       useDatabase(fixtures.B);
-      // The clone already carries 3513 from the chain. Re-apply it (3513 is
+      // The clone already carries 3600 from the chain. Re-apply it (3600 is
       // idempotent and says so: "RECONCILE: already applied"), roll it back,
       // and apply it again — so the file is rehearsed in all three directions
       // before a single erasure runs against it.
@@ -710,9 +710,9 @@ describe("the creator ledger on synthetic accounts, and C-11 in its three states
       assert.equal(Number(scalar(`SELECT count(DISTINCT beneficiary_pseudonym) FROM public.creator_attributions WHERE beneficiary_pseudonym IS NOT NULL`)), 2);
     });
 
-    test("B7. 3513's rollback REFUSES while any row is pseudonymised", () => {
+    test("B7. 3600's rollback REFUSES while any row is pseudonymised", () => {
       const r = psql(sqlFile(B_ROLLBACK));
-      assert.match(r.stderr, /ROLLBACK REFUSED \(3513\)/);
+      assert.match(r.stderr, /ROLLBACK REFUSED \(3600\)/);
     });
 
     test("B8. the door refuses an actor who is the subject, and a missing reason", () => {

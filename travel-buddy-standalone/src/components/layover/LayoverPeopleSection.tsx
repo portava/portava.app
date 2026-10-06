@@ -7,7 +7,7 @@ import { View, Text, StyleSheet, Pressable, Switch, ScrollView } from 'react-nat
 import { Avatar } from '../ui/Avatar.tsx';
 import { CachedImage } from '../CachedImage.tsx';
 import { Users, Star, BadgeCheck } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { color, space, radius, type as t } from '../../theme/tokens.ts'; import { LayoverPresenceIntents } from './LayoverPresenceIntents.tsx';
 import type { LayoverBuddiesAnswer, LayoverBuddy, LayoverBuddySafetyGate, LayoverPresenceAnswer } from '../../services/layover.ts';
 import { primaryIdentityText } from '../../lib/displayIdentity.ts';
 
@@ -41,7 +41,7 @@ interface Props {
   buddies: LayoverBuddiesAnswer | null; // the WHOLE /buddies answer, null before the first read (census §48)
   canEdit: boolean;
   onToggleShare: (enabled: boolean) => void;
-  onOpenBuddy: (buddy: LayoverBuddy) => void;
+  onOpenBuddy: (buddy: LayoverBuddy) => void; /** census L129 — the server's `share.intentsEnabled`; absent = the surface does not exist here. */ intentsEnabled?: boolean; sessionId?: string | null;
 }
 
 function initials(name: string | null, handle: string | null): string {
@@ -52,7 +52,7 @@ function initials(name: string | null, handle: string | null): string {
 
 export function LayoverPeopleSection({
   city, shareEnabled, shareBusy, presence, buddies,
-  canEdit, onToggleShare, onOpenBuddy,
+  canEdit, onToggleShare, onOpenBuddy, intentsEnabled = false, sessionId = null,
 }: Props) {
   const { count: presenceCount, travelers } = presence;
   // ORDER MATTERS AND IS THE SERVER'S. `preferences_unreadable` and
@@ -142,7 +142,7 @@ export function LayoverPeopleSection({
         </View>
       )}
 
-      {/* Rent-a-Buddy: the list, or the server's reason there is none (§48). */}<BuddiesNotice answer={buddies} />
+      {intentsEnabled && shareEnabled && sessionId ? <LayoverPresenceIntents sessionId={sessionId} canEdit={canEdit} /> : null}{/* census L129 — §14 L1, counts only */}{/* Rent-a-Buddy: the list, or the server's reason there is none (§48). */}<BuddiesNotice answer={buddies} />
       {buddies?.ok && buddies.buddies.length > 0 && (
         <>
           <Text style={styles.buddyHead}>Local buddies for a few hours</Text>

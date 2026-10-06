@@ -34,6 +34,20 @@
  *     and every tick forever re-announces the share on the boundary.
  *   - The watermark advanced after a FAILED tick: the recovery test fails, and
  *     every share that expired inside the broken window is lost silently.
+ *   - The location watermark kept in process memory only: the restart test
+ *     fails. `.replit` suspends this container after fifteen idle minutes, so a
+ *     watermark that re-seeds to `now - 5min` on boot does not emit late — it
+ *     never emits at all for the gap, and records nothing about having skipped
+ *     it. That is the fifty-four hour outage in `lib/schedulerCoverage.ts`.
+ *   - `readWatermark`'s `ok: false` read as "no watermark stored": the refusal
+ *     tests fail. One transient read error would then widen the window to a
+ *     guess, commit that guess, and erase every expiry before it — while
+ *     reporting a clean tick.
+ *   - The catch-up cap raised past what the candidate read can serve: the
+ *     consistency test fails. `created_at >= now - 8h` with shares up to 4h
+ *     long means only the last 4h of a gap is reachable; a wider window emits
+ *     for the short shares still in the horizon and silently drops the long
+ *     ones, which reads as coverage and is not.
  *
  * Run: node --import tsx/esm --test src/test/telegraphLifecycleEvents.test.ts
  */
@@ -53,10 +67,14 @@ import {
   sweepExpiredLocationShares,
 } from "../services/telegraph/lifecycleSweep.js";
 import {
+  LOCATION_WATERMARK_JOB,
+  MAX_LOCATION_CATCHUP_MS,
   SWEEP_INTERVAL_MS,
   _resetLifecycleSweepStatus,
+  _setWatermarkStoreForTests,
   getLifecycleSweepStatus,
   tickOnce,
+  type WatermarkStore,
 } from "../server/telegraph/lifecycleScheduler.js";
 import {
   LOCATION_PRECISIONS,
@@ -72,7 +90,17 @@ const CAROL = "cccccccc-0000-4000-8000-000000000003";
 const THREAD = "dddddddd-0000-4000-8000-00000000000d";
 
 const NOW = Date.now();
+import { COMMIT_LAG_MS } from "../lib/schedulerWatermark.js";
+
 const min = (n: number) => new Date(NOW + n * 60_000).toISOString();
+
+/**
+ * What a pass at `at` actually commits: COMMIT_LAG_MS behind its own clock, so
+ * a row written during the pass — or inside any clock skew between this
+ * container and the database — is re-read next pass instead of skipped. The
+ * next pass's `since` is therefore this, not the previous pass's `now`.
+ */
+const committedAt = (at: number) => new Date(at - COMMIT_LAG_MS).toISOString();
 
 function env(kind: string, payload: unknown) {
   return JSON.stringify({ kind, envelopeVersion: "1", payload });
@@ -230,6 +258,54 @@ function makeClient(state: State = {}) {
   } as any;
 }
 
+/**
+ * The durable watermark, modelled where the scheduler reads it.
+ *
+ * `lib/schedulerWatermark.ts` owns the row; what this file has to pin is what
+ * the SCHEDULER does with the three answers that row can give — a stored
+ * instant, no row yet, and A READ THAT FAILED — plus a commit that does not
+ * land. The last two cannot be produced by injecting a PostgREST error on a
+ * table name, because then the test asserts another module's query shape rather
+ * than this module's decision, and it goes green the moment that shape changes.
+ * So the store is injected, and it counts its calls: "did not commit" is an
+ * assertion about zero writes, not about a flag.
+ */
+interface FakeWatermarkStore extends WatermarkStore {
+  at: Date | null;
+  readOk: boolean;
+  commitOk: boolean;
+  reads: string[];
+  commits: Array<{ job: string; through: string }>;
+}
+
+function makeWatermarkStore(
+  init: { at?: Date | null; readOk?: boolean; commitOk?: boolean } = {},
+): FakeWatermarkStore {
+  const store: FakeWatermarkStore = {
+    at: init.at ?? null,
+    readOk: init.readOk ?? true,
+    commitOk: init.commitOk ?? true,
+    reads: [],
+    commits: [],
+    async read(_sc: any, job: string) {
+      store.reads.push(job);
+      // `ok: false` is a REFUSAL and carries no instant. A fake that returned
+      // `{at: store.at, ok: false}` would let a caller that ignores `ok` pass.
+      if (!store.readOk) return { at: null, ok: false };
+      return { at: store.at, ok: true };
+    },
+    async commit(_sc: any, job: string, through: Date) {
+      store.commits.push({ job, through: through.toISOString() });
+      if (!store.commitOk) return false;
+      store.at = through;
+      return true;
+    },
+  };
+  return store;
+}
+
+let wm: FakeWatermarkStore;
+
 let server: any;
 let base = "";
 let deliveries: Array<{ userId: string; event: TelegraphEvent }> = [];
@@ -288,6 +364,7 @@ before(async () => {
 
 after(async () => {
   for (const u of unsubs) u();
+  _setWatermarkStoreForTests(null);
   _setTestClient(null, false);
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
@@ -297,6 +374,12 @@ beforeEach(() => {
   deliveries = [];
   unsubs = [ALICE, BOB, CAROL].map((u) => subscribe(u, (e) => { deliveries.push({ userId: u, event: e }); }));
   _resetLifecycleSweepStatus();
+  // Every tick in this file runs against a modelled watermark row, including
+  // the ticks written before the row existed: with `at: null` the store answers
+  // exactly what a first run gets, so those tests still assert first-run
+  // behaviour and now also assert that it is unchanged by the durable read.
+  wm = makeWatermarkStore();
+  _setWatermarkStoreForTests(wm);
 });
 
 function locationMsg(id: string, sender: string, createdAt: string, payload: Record<string, unknown>) {
@@ -633,7 +716,7 @@ describe("the sweep runs, and a broken run does not look like an idle one", () =
     const r2 = await tickOnce({ client: c, now: new Date(NOW + 60_000) });
     await settle();
     assert.equal(r2.locationExpired, 0);
-    assert.equal(r2.window!.since, new Date(NOW).toISOString());
+    assert.equal(r2.window!.since, committedAt(NOW), "it resumes from the committed mark, which trails NOW by the commit lag");
   });
 
   it("a FAILED tick moves lastRunAt but NOT lastSuccessAt, and counts", async () => {
@@ -690,5 +773,232 @@ describe("the sweep runs, and a broken run does not look like an idle one", () =
     assert.equal(r.skipped, true);
     assert.deepEqual(r.failures, ["no_service_client"]);
     assert.equal(getLifecycleSweepStatus().consecutiveFailures, 1);
+  });
+});
+
+/* ──────────────── the watermark SURVIVES the restart, or does not ─────────── */
+
+/**
+ * `.replit` sets `deploymentTarget = "autoscale"`: the container is suspended
+ * after fifteen idle minutes and its event loop stops. Before the durable
+ * watermark, the location half's `since` was a module-level `let`, so every
+ * boot re-seeded it to `now - SWEEP_INTERVAL_MS` and every `location.expired`
+ * for a share that expired during the gap was dropped — not emitted late,
+ * dropped, with nothing recording that a window had been skipped.
+ *
+ * These tests are about the three answers the stored row can give and the one
+ * answer it cannot be allowed to give: a read error that passes for an absence.
+ */
+describe("§13.2 location.expired — the watermark is DURABLE across a restart", () => {
+  const hoursAgo = (n: number) => new Date(NOW - n * 3600_000);
+
+  it("after a 54-hour gap, a share that expired during the gap IS emitted", async () => {
+    // The gap in `lib/schedulerCoverage.ts`, to the hour: the row says the last
+    // covered instant was 54h ago, and this is the first tick since.
+    wm = makeWatermarkStore({ at: hoursAgo(54) });
+    _setWatermarkStoreForTests(wm);
+    const c = makeClient({
+      messages: [locationMsg("during-the-gap", ALICE, min(-130), { expiresAt: min(-120) })],
+    });
+
+    const r = await tickOnce({ client: c, now: new Date(NOW) });
+    await settle();
+
+    assert.equal(r.watermark.source, "stored", "the window must come from the row, not from this process");
+    assert.equal(
+      r.locationExpired,
+      1,
+      "a share that expired two hours into the gap was never emitted — this is the whole defect",
+    );
+    assert.equal(firstPayload("location.expired").shareId, "during-the-gap");
+    assert.deepEqual(recipientsOf("location.expired"), [ALICE, BOB].sort());
+    // In-memory, `since` would have been NOW-5min and this share NOW-2h.
+    assert.ok(
+      Date.parse(r.window!.since) < Date.parse(min(-120)),
+      "the window did not actually reach the share; it was emitted for some other reason",
+    );
+    assert.equal(r.watermark.committed, true);
+    assert.equal(wm.at!.toISOString(), committedAt(NOW), "the stored mark trails the pass clock by the commit lag");
+  });
+
+  it("the NEXT boot resumes from the committed row and re-emits nothing", async () => {
+    wm = makeWatermarkStore({ at: hoursAgo(54) });
+    _setWatermarkStoreForTests(wm);
+    const c = makeClient({
+      messages: [locationMsg("during-the-gap", ALICE, min(-130), { expiresAt: min(-120) })],
+    });
+    await tickOnce({ client: c, now: new Date(NOW) });
+    await settle();
+    deliveries = [];
+
+    // A RESTART: every in-memory counter and the cached watermark are gone, and
+    // only the row is left. This is the state the old code could not survive.
+    _resetLifecycleSweepStatus();
+    const r = await tickOnce({ client: c, now: new Date(NOW + 60_000) });
+    await settle();
+
+    assert.equal(r.watermark.source, "stored");
+    assert.equal(r.window!.since, committedAt(NOW), "the second boot must start where the first ended");
+    assert.equal(r.window!.capped, false, "a one-minute gap is not a capped catch-up");
+    assert.equal(countDistinct("location.expired"), 0, "the already-emitted share came back");
+  });
+
+  it("a REFUSED read does NOT widen the window and does NOT commit", async () => {
+    // The row holds a position 54h back and the read cannot reach it. Treating
+    // that as "nothing stored" would take the 4h catch-up on a guess and then
+    // STORE the guess, erasing the 50h before it. CONTRIBUTING.md:33-66.
+    wm = makeWatermarkStore({ at: hoursAgo(54), readOk: false });
+    _setWatermarkStoreForTests(wm);
+    const c = makeClient({
+      messages: [locationMsg("during-the-gap", ALICE, min(-130), { expiresAt: min(-120) })],
+    });
+
+    const r = await tickOnce({ client: c, now: new Date(NOW) });
+    await settle();
+
+    assert.equal(r.watermark.source, "unreadable", "a failed read is not an absent watermark");
+    assert.equal(
+      Date.parse(r.window!.now) - Date.parse(r.window!.since),
+      SWEEP_INTERVAL_MS,
+      "a read it could not perform must not buy a wider window",
+    );
+    assert.equal(r.window!.capped, false);
+    assert.equal(r.locationExpired, 0);
+    // Zero WRITES, not a flag that says zero writes.
+    assert.deepEqual(wm.commits, [], "a tick that could not read the watermark must not move it");
+    assert.equal(wm.at!.toISOString(), hoursAgo(54).toISOString(), "the stored position was overwritten");
+    assert.equal(r.watermark.committed, false);
+    assert.equal(getLifecycleSweepStatus().lastWatermarkDurable, false);
+  });
+
+  it("a refused read is RETRIED, so the stored position is recovered rather than lost", async () => {
+    wm = makeWatermarkStore({ at: hoursAgo(54), readOk: false });
+    _setWatermarkStoreForTests(wm);
+    const c = makeClient({
+      messages: [locationMsg("during-the-gap", ALICE, min(-130), { expiresAt: min(-120) })],
+    });
+    await tickOnce({ client: c, now: new Date(NOW) });
+    await settle();
+    deliveries = [];
+
+    // Adopting the guessed window into process memory would have made the loss
+    // permanent for the life of the process AND stopped it ever reading the row
+    // again. The cached watermark is therefore left null on a refusal.
+    wm.readOk = true;
+    const r = await tickOnce({ client: c, now: new Date(NOW + 60_000) });
+    await settle();
+
+    assert.equal(wm.reads.length, 2, "the second tick did not re-read the row");
+    assert.equal(r.watermark.source, "stored");
+    assert.equal(r.locationExpired, 1, "the share lost during the unreadable tick was never recovered");
+  });
+
+  it("the catch-up is CAPPED, and the cap is what the candidate read can serve", async () => {
+    wm = makeWatermarkStore({ at: hoursAgo(54) });
+    _setWatermarkStoreForTests(wm);
+    const c = makeClient({
+      messages: [
+        // Inside the horizon (`created_at >= now - 8h`) but outside the cap, so
+        // the filter cannot be what excludes it — the window has to.
+        locationMsg("before-the-cap", ALICE, min(-310), { expiresAt: min(-300) }),
+        locationMsg("inside-the-cap", ALICE, min(-130), { expiresAt: min(-120) }),
+      ],
+    });
+
+    const r = await tickOnce({ client: c, now: new Date(NOW) });
+    await settle();
+
+    assert.equal(
+      Date.parse(r.window!.now) - Date.parse(r.window!.since),
+      MAX_LOCATION_CATCHUP_MS,
+      "the first scan after a 54h gap must be bounded, not 54h wide",
+    );
+    assert.equal(r.window!.capped, true, "a trimmed window that does not say so is a silent gap");
+    assert.equal(getLifecycleSweepStatus().lastWindowCapped, true);
+    assert.equal(r.locationExpired, 1);
+    assert.equal(firstPayload("location.expired").shareId, "inside-the-cap");
+  });
+
+  it("the cap and the candidate read's horizon are CONSISTENT, by construction", () => {
+    // A share expiring at `T` has `created_at` in `[T - MAX_LOCATION_SHARE_HOURS, T)`
+    // and the read keeps `created_at >= now - LOCATION_SWEEP_HORIZON_HOURS`, so
+    // the deepest window in which EVERY expiry is still reachable is the
+    // difference. A cap past it would emit for the short-lived shares that
+    // happen to remain in the horizon and drop the long-lived ones — coverage
+    // that is not coverage. Widening the horizon instead does not fix it on its
+    // own: `LOCATION_SWEEP_SCAN_LIMIT` takes 500 rows `created_at DESC`, oldest
+    // dropped first, which is precisely the catch-up rows.
+    assert.equal(
+      MAX_LOCATION_CATCHUP_MS,
+      (LOCATION_SWEEP_HORIZON_HOURS - MAX_LOCATION_SHARE_HOURS) * 3600_000,
+    );
+    assert.ok(
+      MAX_LOCATION_CATCHUP_MS + MAX_LOCATION_SHARE_HOURS * 3600_000
+        <= LOCATION_SWEEP_HORIZON_HOURS * 3600_000,
+      "the catch-up reaches back further than the candidate read can see",
+    );
+    assert.ok(MAX_LOCATION_CATCHUP_MS > SWEEP_INTERVAL_MS, "a cap at one interval is the defect, restated");
+  });
+
+  it("a FAILED pass does not advance the stored watermark — proved across a restart", async () => {
+    wm = makeWatermarkStore({ at: hoursAgo(54) });
+    _setWatermarkStoreForTests(wm);
+    const broken = makeClient({ errorTable: "messages" });
+
+    const bad = await tickOnce({ client: broken, now: new Date(NOW) });
+    await settle();
+    assert.equal(bad.ok, false);
+    assert.deepEqual(wm.commits, [], "a pass that could not read `messages` must not claim its window");
+    assert.equal(wm.at!.toISOString(), hoursAgo(54).toISOString());
+
+    // The old test proves this for the in-memory watermark; the loss that
+    // mattered was the one that outlived the process, so prove it there too.
+    _resetLifecycleSweepStatus();
+    const good = makeClient({
+      messages: [locationMsg("during-the-gap", ALICE, min(-130), { expiresAt: min(-120) })],
+    });
+    const r = await tickOnce({ client: good, now: new Date(NOW + 60_000) });
+    await settle();
+    assert.equal(r.locationExpired, 1, "the window the broken pass dropped was never retried");
+  });
+
+  it("a commit that does NOT land is reported, not folded into failures", async () => {
+    wm = makeWatermarkStore({ commitOk: false });
+    _setWatermarkStoreForTests(wm);
+    const c = makeClient({
+      messages: [locationMsg("share-1", ALICE, min(-70), { expiresAt: min(-2) })],
+    });
+
+    const r = await tickOnce({ client: c, now: new Date(NOW) });
+    await settle();
+
+    // The emits HAPPENED, so the window's work succeeded; what is at risk is a
+    // restart re-covering it, which `eventKey` makes idempotent (§13.3).
+    // Calling the tick failed would hold the watermark back and re-emit this
+    // window every five minutes for as long as the write stayed broken.
+    assert.equal(r.ok, true);
+    assert.equal(r.locationExpired, 1);
+    assert.deepEqual(r.failures, []);
+    // But it must not be invisible either.
+    assert.equal(r.watermark.committed, false);
+    assert.equal(getLifecycleSweepStatus().lastWatermarkDurable, false);
+    assert.equal(wm.commits.length, 1, "the commit was not even attempted");
+
+    // The cached watermark still advances: within this process the window IS
+    // covered, and re-emitting it every tick would be a second defect.
+    deliveries = [];
+    const r2 = await tickOnce({ client: c, now: new Date(NOW + 60_000) });
+    await settle();
+    assert.equal(r2.window!.since, committedAt(NOW));
+    assert.equal(countDistinct("location.expired"), 0);
+  });
+
+  it("reads and writes the one job key, so two lanes cannot share a watermark", async () => {
+    assert.equal(LOCATION_WATERMARK_JOB, "telegraph_location_expiry");
+    const c = makeClient({});
+    await tickOnce({ client: c, now: new Date(NOW) });
+    await settle();
+    assert.deepEqual(wm.reads, [LOCATION_WATERMARK_JOB]);
+    assert.deepEqual(wm.commits.map((x) => x.job), [LOCATION_WATERMARK_JOB]);
   });
 });

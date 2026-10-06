@@ -1,4 +1,4 @@
--- Rollback for 3513_creator_ledger_erasure_retain_pseudonymised.sql (C-11 answer B, chosen).
+-- Rollback for 3600_creator_ledger_erasure_retain_pseudonymised.sql (C-11 answer B, chosen).
 -- Written 2026-09-30 by the creator-ledger lane (census-discovery §107); promoted
 -- with its migration on 2026-10-04 when the owner answered C-11.
 -- Rehearsed only in the throwaway local-db harness and its clones
@@ -29,7 +29,7 @@ BEGIN
        + (SELECT count(*) FROM public.creator_ledger_identity_removals)
     INTO n;
   IF n > 0 THEN
-    RAISE EXCEPTION 'ROLLBACK REFUSED (3513): % pseudonymised row(s) or identity-removal receipt(s) exist. Nothing has been changed.', n;
+    RAISE EXCEPTION 'ROLLBACK REFUSED (3600): % pseudonymised row(s) or identity-removal receipt(s) exist. Nothing has been changed.', n;
   END IF;
 END
 $pre$;
@@ -104,7 +104,7 @@ CREATE TRIGGER clae_erasure_policy_undecided BEFORE DELETE ON public.creator_led
 DO $$
 BEGIN
   IF to_regclass('public.schema_migration_ledger') IS NOT NULL THEN
-    DELETE FROM public.schema_migration_ledger WHERE filename = '3513_creator_ledger_erasure_retain_pseudonymised.sql';
+    DELETE FROM public.schema_migration_ledger WHERE filename = '3600_creator_ledger_erasure_retain_pseudonymised.sql';
   END IF;
 END $$;
 
@@ -114,13 +114,13 @@ DO $post$
 DECLARE n int;
 BEGIN
   IF to_regprocedure('public.creator_ledger_remove_identity(uuid,text,uuid,text)') IS NOT NULL THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3513 rollback): the identity-removal door still exists.';
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3600 rollback): the identity-removal door still exists.';
   END IF;
   SELECT count(*) INTO n FROM pg_trigger
    WHERE NOT tgisinternal AND tgfoid = 'public.creator_ledger_erasure_policy_undecided()'::regprocedure;
-  IF n <> 4 THEN RAISE EXCEPTION 'POSTCONDITION FAILED (3513 rollback): 3510''s guard is on % of 4 tables.', n; END IF;
+  IF n <> 4 THEN RAISE EXCEPTION 'POSTCONDITION FAILED (3600 rollback): 3510''s guard is on % of 4 tables.', n; END IF;
   SELECT count(*) INTO n FROM pg_trigger
    WHERE NOT tgisinternal AND tgfoid = 'public.intel_append_only()'::regprocedure
      AND tgname IN ('rbee_no_update', 'ca_no_update', 'cee_no_update', 'clae_no_update');
-  IF n <> 4 THEN RAISE EXCEPTION 'POSTCONDITION FAILED (3513 rollback): % of 4 append-only triggers restored.', n; END IF;
+  IF n <> 4 THEN RAISE EXCEPTION 'POSTCONDITION FAILED (3600 rollback): % of 4 append-only triggers restored.', n; END IF;
 END $post$;

@@ -58,7 +58,7 @@ interface FakeState {
   trip_members?: any[];
   trips?: any[];
   trip_join_requests?: any[];
-  buddy_bookings?: any[];
+  rent_buddy_bookings?: any[];
   rent_buddy_profiles?: any[];
   hidden_gems?: any[];
   blocks?: any[];
@@ -77,7 +77,7 @@ function makeClient(state: FakeState = {}, callerUserId = ALICE_ID) {
     trip_members:         state.trip_members         ?? [],
     trips:                state.trips                ?? [],
     trip_join_requests:   state.trip_join_requests   ?? [],
-    buddy_bookings:       state.buddy_bookings       ?? [],
+    rent_buddy_bookings:       state.rent_buddy_bookings       ?? [],
     rent_buddy_profiles:  state.rent_buddy_profiles  ?? [],
     hidden_gems:          state.hidden_gems          ?? [],
     blocks:               state.blocks               ?? [],
@@ -273,13 +273,13 @@ describe("GET /api/pulse/live", () => {
 
   it("A — returns pending buddy booking as item_type=buddy_request", async () => {
     _setTestClient(makeClient({
-      buddy_bookings: [{
+      rent_buddy_bookings: [{
         id: "bk-0001-0000-0000-000000000001",
         buddy_id: BOB_ID,
         traveler_id: ALICE_ID,
         booking_date: in2h,
         city: "Manila",
-        status: "requested",
+        status: "pending",
       }],
     }), true);
 
@@ -431,13 +431,13 @@ describe("GET /api/pulse/live", () => {
         going_count: 5,
         max_attendees: null,
       }],
-      buddy_bookings: [{
+      rent_buddy_bookings: [{
         id: "bk-0002-0000-0000-000000000001",
         buddy_id: BOB_ID,
         traveler_id: ALICE_ID,
         booking_date: in3days,
         city: "Manila",
-        status: "requested",
+        status: "pending",
       }],
     }), true);
 
@@ -707,13 +707,13 @@ describe("GET /api/pulse/live", () => {
         user_id: ALICE_ID,
         admin_status: "active",
       }],
-      buddy_bookings: [{
+      rent_buddy_bookings: [{
         id: bookingId,
         buddy_id: buddyProfileId,
         traveler_id: BOB_ID,
         booking_date: in2h,
         city: "Manila",
-        status: "requested",
+        status: "pending",
       }],
     }), true);
 
@@ -726,13 +726,13 @@ describe("GET /api/pulse/live", () => {
     const bookingId = "bk-0004-0000-0000-000000000001";
     _setTestClient(makeClient({
       rent_buddy_profiles: [], // no approved profile
-      buddy_bookings: [{
+      rent_buddy_bookings: [{
         id: bookingId,
         buddy_id: "bp-xxxx-0000-0000-000000000001",
         traveler_id: BOB_ID,
         booking_date: in2h,
         city: "Manila",
-        status: "requested",
+        status: "pending",
       }],
     }), true);
 

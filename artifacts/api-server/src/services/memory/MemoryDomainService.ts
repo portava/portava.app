@@ -115,7 +115,7 @@ export interface CommandAudit {
   reason?: string;
   eventId?: string | null;
   /** false when only the operational log holds this row (kernel flag off). */
-  durable: boolean;
+  durable: boolean; /** A CREATE_MEMORY that confirmed a §7 candidate (services/memory/episodeCandidates.ts) — H218's numerator. */ fromCandidate?: boolean;
   /**
    * §18/§24 "source version": the version of the Memory this command ACTED ON,
    * as the row read it. `memories` has no `current_version` column (that is
@@ -232,15 +232,15 @@ export function auditCommand(a: CommandAudit): void {
   // `rejected` command never happened, and is already counted by reason at
   // lib/memoryCommandBus.ts#readMemoryCommandRejectedTotal.
   if (a.outcome === "accepted") {
-    // `hadCandidate` is FALSE for every CREATE_MEMORY in this tree, and that is
-    // a measurement rather than a default: §6's candidate pipeline has no
-    // production caller at all (services/memoryProjections/evidence.ts is
-    // reachable from no route, and its storage — memory_evidence /
-    // memory_episodes, migration 2320 — is written and unapplied). So
-    // `explicit_memory_without_candidate_rate` reads 1.0 today, which is the
-    // true figure: every Memory in this system is explicit. When a candidate
-    // pipeline lands, this argument is where it reports itself.
-    countAcceptedCommand(a.commandType, false);
+    // `hadCandidate` is TRUE only for the CREATE_MEMORY that confirms a §7
+    // candidate — services/memory/episodeCandidates.ts confirmCandidate passes
+    // `fromCandidate` through dispatchMemoryCommand. Every other create is
+    // explicit. The candidate pipeline's storage (memory_evidence /
+    // memory_episodes, migration 2320) is written and unapplied on production,
+    // so until it is applied `explicit_memory_without_candidate_rate` still
+    // reads 1.0 there, which is the true figure. This argument is where the
+    // pipeline reports itself, and it now does.
+    countAcceptedCommand(a.commandType, a.fromCandidate === true);
   }
 }
 
@@ -445,7 +445,7 @@ export interface DispatchInput<T> {
    */
   highlightId?: string | null;
   actorUserId: string;
-  idempotencyKey: string;
+  idempotencyKey: string; /** CREATE_MEMORY confirming a §7 candidate; reported to §24's H218 count. */ fromCandidate?: boolean;
   payload: Record<string, unknown>;
   /**
    * The pre-kernel direct write, run ONLY when `memory_kernel_enabled` is off.
@@ -498,7 +498,7 @@ export async function dispatchMemoryCommand<T>(input: DispatchInput<T>): Promise
     auditCommand({
       commandId, commandType: input.commandType, memoryId: input.memoryId,
       highlightId: input.highlightId ?? null,
-      actorUserId: input.actorUserId, idempotencyKey: input.idempotencyKey,
+      actorUserId: input.actorUserId, idempotencyKey: input.idempotencyKey, fromCandidate: input.fromCandidate,
       outcome: "accepted", eventId: null, durable: false,
       sourceVersion: input.sourceVersion ?? null,
     });
@@ -533,7 +533,7 @@ export async function dispatchMemoryCommand<T>(input: DispatchInput<T>): Promise
   auditCommand({
     commandId, commandType: input.commandType, memoryId: result.memoryId,
     highlightId: result.highlightId,
-    actorUserId: input.actorUserId, idempotencyKey: input.idempotencyKey,
+    actorUserId: input.actorUserId, idempotencyKey: input.idempotencyKey, fromCandidate: input.fromCandidate,
     outcome: result.duplicate ? "duplicate" : "accepted", eventId: result.eventId, durable: true,
     sourceVersion: input.sourceVersion ?? null,
   });

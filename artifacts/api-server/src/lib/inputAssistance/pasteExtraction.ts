@@ -99,6 +99,80 @@ export function sanitizePastedText(raw: unknown): string {
     .slice(0, PASTE_MAX_CHARS);
 }
 
+/**
+ * §47 "Sanitize pasted URLs … before rendering" (census G337) — the URL half.
+ *
+ * `sanitizePastedText` above makes a line safe to render as TEXT. A pasted URL
+ * needs one more step before it is echoed back as an item's `raw`, which the
+ * review screen shows whenever no place could be read from it (a shortened
+ * link, an unknown host): the URL a person copies from a browser or a booking
+ * e-mail routinely carries things that must not be repeated onto a screen —
+ * credentials in the userinfo (`https://user:secret@…`), session and tracking
+ * tokens in the query (`?token=…&utm_source=…`), state in the fragment.
+ *
+ * The DISPLAY form keeps what lets the person recognise the link — scheme,
+ * host, port and path — and replaces any query or fragment with a single "…".
+ * It is applied only to what is RENDERED (`raw`): parsing (`parseMapLink`) still
+ * reads the full URL, so a Google Maps `?q=` or Apple `ll=` still resolves.
+ * A string that is not an http(s) URL is returned unchanged (a `geo:` URI holds
+ * only coordinates and a label, both already sanitized as text).
+ */
+export function displaySafeUrl(text: string): string {
+  const s = (text ?? '').trim();
+  const scheme = (s.match(/^https?:\/\//i) ?? [''])[0];
+  const host = urlHost(s);
+  if (!host) return scheme ? `${scheme}…` : '…';
+  const at = s.toLowerCase().lastIndexOf(host.toLowerCase());
+  // An internationalised host comes back from the parser in punycode and is not
+  // found verbatim: show it, and assume something followed it.
+  if (at < 0) return `${scheme}${host}…`;
+  const rest = s.slice(at + host.length);
+  return `${scheme}${host}${rest.length > 0 ? '…' : ''}`;
+}
+
+/**
+ * The host of a URL-like token, or null. The URL parser is trusted when it
+ * parses (userinfo is then never part of `hostname`); when it does not — a
+ * password containing "/", a bad percent-escape — everything up to the LAST
+ * "@" is treated as userinfo and dropped, and only a plain host is accepted.
+ * Scheme-less tokens (`www.…`, `booking.com/…`) are read as https.
+ */
+function urlHost(token: string): string | null {
+  const withScheme = /^https?:\/\//i.test(token) ? token : `https://${token}`;
+  try {
+    const u = new URL(withScheme);
+    if (u.hostname && /^[\p{L}\p{N}.-]+$/u.test(u.hostname)) return u.hostname;
+  } catch {
+    // fall through to the defensive read below
+  }
+  let rest = withScheme.replace(/^https?:\/\//i, '');
+  const at = rest.lastIndexOf('@');
+  if (at >= 0) rest = rest.slice(at + 1);
+  const host = rest.split(/[\/?#;:\\]/)[0] ?? '';
+  return /^[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+$/u.test(host) ? host : null;
+}
+
+/** Scheme-less (G337): optional userinfo (a `mailto:`/`data:`/`javascript:` address is text), a domain or IPv4 host, optional port, then a path, query, fragment or parameter. */
+const SCHEMELESS_URL = String.raw`(?!(?:mailto|data|javascript):)(?:\w[^\s@:\/]*(?::(?!\/\/)[^\s@]*)?@)?(?:(?:[a-z0-9-]+\.)+[a-z]{2,}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))(?::\d{1,5})?[\/?#;]\S*`;
+/** A URL-like token: with a scheme, starting `www.`, or scheme-less (`booking.com/r?sid=…`, `user:pw@host.com/…`, `host.com:8443/…`, `192.168.1.1/…`). */
+const URL_TOKEN = new RegExp(String.raw`(?:\bhttps?:\/\/|\bwww\.)\S+|\b` + SCHEMELESS_URL, 'gi');
+const URL_LINE = new RegExp(String.raw`^(?:(?:https?:\/\/|geo:|www\.)\S+|` + SCHEMELESS_URL + ')$', 'i');
+
+/** Every URL-like token inside a rendered line, in its display-safe form. */
+export function redactUrlsForDisplay(line: string): string {
+  return (line ?? '').replace(URL_TOKEN, (m) => displaySafeUrl(m));
+}
+
+/** A text line with every URL-like token removed — what may become a place query. */
+export function stripUrls(line: string): string {
+  return (line ?? '').replace(URL_TOKEN, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/** What an item's `raw` may hold: sanitized text with every URL display-safe, bounded. */
+function displayRaw(line: string): string {
+  return redactUrlsForDisplay(line).slice(0, 200);
+}
+
 // ── Coordinates (G157) ─────────────────────────────────────────────────────────
 
 function inRange(lat: number, lng: number): boolean {
@@ -307,7 +381,14 @@ function stripTime(text: string): { query: string; timeHint: string | null } {
 }
 
 function isUrlLine(line: string): boolean {
-  return /^(?:https?:\/\/|geo:)\S+$/i.test(line.trim());
+  // The SAME scheme-less shape URL_TOKEN redacts, anchored — userinfo, port and IPv4 included.
+  return URL_LINE.test(line.trim());
+}
+
+/** A URL-only line in the form parseMapLink reads (scheme-less → https). */
+function asParseableUrl(line: string): string {
+  const t = line.trim();
+  return /^(?:https?:\/\/|geo:)/i.test(t) ? t : `https://${t}`;
 }
 
 function textItems(line: string, dayLabel: string | null): Array<Omit<PasteItem, 'index'>> {
@@ -318,10 +399,16 @@ function textItems(line: string, dayLabel: string | null): Array<Omit<PasteItem,
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
   for (const part of parts.length > 0 ? parts : [line]) {
-    const { query, timeHint } = stripTime(part);
+    // A URL inside a text line is never part of a place name, and every part
+    // of it after the host is what G337 forbids repeating — the query is
+    // rendered (as the item's label and in "No place matched “…”") and is sent
+    // to search. So every URL-like token — scheme-less ones included — leaves
+    // the QUERY before anything else reads the line (a port or a path digit
+    // must not become a "time"); `raw` keeps its display-safe form.
+    const { query, timeHint } = stripTime(stripUrls(part));
     if (!query) continue;
     out.push({
-      raw: part.slice(0, 200),
+      raw: displayRaw(part),
       source: 'text',
       provider: null,
       query: query.slice(0, MAX_QUERY_CHARS),
@@ -338,16 +425,23 @@ function textItems(line: string, dayLabel: string | null): Array<Omit<PasteItem,
 function lineItems(line: string, dayLabel: string | null): Array<Omit<PasteItem, 'index'>> {
   const coords = parseCoordinates(line);
   if (coords) {
-    return [{ raw: line.slice(0, 200), source: 'coordinates', provider: null, query: null, ...coords, timeHint: null, dayLabel, unsupported: null }];
+    return [{ raw: displayRaw(line), source: 'coordinates', provider: null, query: null, ...coords, timeHint: null, dayLabel, unsupported: null }];
   }
   if (isUrlLine(line)) {
-    const link = parseMapLink(line);
-    if (!link) return [];
+    const link = parseMapLink(asParseableUrl(line));
+    // A line that LOOKS like a link but cannot be parsed is reported as a link
+    // this endpoint cannot read — never dropped, which would answer "nothing was
+    // pasted" for a paste that plainly had something in it. (isUrlLine admits
+    // only http(s), geo:, www. and scheme-less host shapes, so a `javascript:`
+    // or `mailto:` string never reaches here.)
+    if (!link) {
+      return [{ raw: displayRaw(line), source: 'map_link', provider: null, query: null, lat: null, lng: null, timeHint: null, dayLabel, unsupported: 'unsupported_link' }];
+    }
     if (link.unsupported || link.stops.length === 0) {
-      return [{ raw: line.slice(0, 200), source: 'map_link', provider: link.provider, query: null, lat: null, lng: null, timeHint: null, dayLabel, unsupported: link.unsupported ?? 'unsupported_link' }];
+      return [{ raw: displayRaw(line), source: 'map_link', provider: link.provider, query: null, lat: null, lng: null, timeHint: null, dayLabel, unsupported: link.unsupported ?? 'unsupported_link' }];
     }
     return link.stops.map((stop) => ({
-      raw: line.slice(0, 200),
+      raw: displayRaw(line),
       source: 'map_link' as const,
       provider: link.provider,
       query: stop.query,

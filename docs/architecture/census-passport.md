@@ -115,7 +115,7 @@ than 98%. Three of them matter more than the rest:
    `buildConsumerProjection` has **three call sites** (Trips, Buddy, Event).
    Discovery, Compass, Telegraph and Safety still build their own identity
    payloads from `profiles` (`routes/discovery.ts:1504,2523`;
-   `lib/inputAssistance/searchCandidates.ts:403,445,1536`), which is the precise duplication the
+   `lib/inputAssistance/searchCandidates.ts:410,452,1561`), which is the precise duplication the
    module's own header says it exists to end, and **Map has no variant at all**.
    Four of §21's seven consumers, plus §35's closing rule, are
    built-but-unadopted.
@@ -250,7 +250,7 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 | P39 | Availability ("can I") distinct from Open to Plans ("do I want invitations") | C | The window carries `startAt`/`endAt` (capability) and `openToPlans` + `socialAvailability` (willingness) as independent fields (`:54-72`). |
 | P40 | Temporary intent carries a TTL or an explicit clear | C | `expiresAt` on the window, `effectiveExpiry:130` / `isExpired:140` re-evaluated on every read; `clearWindow:404`. |
 | P41 | Current intent examples: Food, Drinks, Nightlife, Explore, Events, Meet Travelers | C | `:33` `INTENT_TYPES` is exactly that list. |
-| P42 | Compass and Discovery weight explicit current intent above generic interests | **W** | The projection exposes the distinction (`PassportConsumerProjections.readVisibleExplicitIntent:445`, and the module header documents a bounded `genericInterestWeight` for Compass), **and the "nothing consumes it" finding this row was scored on is FALSE — corrected 2026-09-14 (§14.2/§14.3)**. Both Compass people-ranking surfaces consume it: `artifacts/api-server/src/compass/CompassTools.ts:1938#readVisibleExplicitIntent(sc, targetId` and `artifacts/api-server/src/routes/compass.ts:4057#const viewerIntentRead = await readVisibleExplicitIntent`, both applying the shared bounded weight at `artifacts/api-server/src/routes/compass.ts:4550#export function applyExplicitIntentWeighting`. The function itself is at `artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:519#readVisibleExplicitIntent`, not `:445`. **What remains is Discovery alone**, whose content ranker carries no intent term and is on an explicit owner hold (`docs/discovery/ROADMAP.md:222#RANKER WORK GOES ON EXPLICIT HOLD`; `census-discovery.md` A18). Two of two in Compass, zero of one in Discovery. |
+| P42 | Compass and Discovery weight explicit current intent above generic interests | **W** | The projection exposes the distinction (`PassportConsumerProjections.readVisibleExplicitIntent:445`, and the module header documents a bounded `genericInterestWeight` for Compass), **and the "nothing consumes it" finding this row was scored on is FALSE — corrected 2026-09-14 (§14.2/§14.3)**. Both Compass people-ranking surfaces consume it: `artifacts/api-server/src/compass/CompassTools.ts:1960#readVisibleExplicitIntent(sc, targetId` and `artifacts/api-server/src/routes/compass.ts:4057#const viewerIntentRead = await readVisibleExplicitIntent`, both applying the shared bounded weight at `artifacts/api-server/src/routes/compass.ts:4550#export function applyExplicitIntentWeighting`. The function itself is at `artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:519#readVisibleExplicitIntent`, not `:445`. **What remains is Discovery alone**, whose content ranker carries no intent term and is on an explicit owner hold (`docs/discovery/ROADMAP.md:222#RANKER WORK GOES ON EXPLICIT HOLD`; `census-discovery.md` A18). Two of two in Compass, zero of one in Discovery. |
 
 ### §9 Trust Architecture
 
@@ -368,9 +368,9 @@ NOT-BUILT · **?** = CANNOT-VERIFY. Backend paths are relative to
 
 | id | Consumer | V | Evidence |
 | --- | --- | --- | --- |
-| P95 | **Discovery** | C | **Moved W→C 2026-09-08 from the call site.** The W said "nothing calls it" and named the three `buildConsumerProjection` sites that existed then. Discovery's person card now consumes the variant: `routes/discoverySearch.ts:600#buildConsumerProjection`. The inline identity that remains is in the SEARCH LIST (`lib/inputAssistance/searchCandidates.ts:649#subtitle`), a different endpoint and a different problem — a bulk list cannot pay the ~34-reads-per-target per-user path. That remainder is carried by **P169**, not double-counted here. |
+| P95 | **Discovery** | C | **Moved W→C 2026-09-08 from the call site.** The W said "nothing calls it" and named the three `buildConsumerProjection` sites that existed then. Discovery's person card now consumes the variant: `routes/discoverySearch.ts:600#buildConsumerProjection`. The inline identity that remains is in the SEARCH LIST (`lib/inputAssistance/searchCandidates.ts:656#subtitle`), a different endpoint and a different problem — a bulk list cannot pay the ~34-reads-per-target per-user path. That remainder is carried by **P169**, not double-counted here. |
 | P96 | Trips | C | `PassportConsumerProjections.ts:230-241` `TripsProjection` (identity + `TripsTrustEligibility` + host/guest context, deliberately no stamps/memories/plans), consumed at `routes/trips.ts:467`. |
-| P97 | Buddy | C | `:178-200` `BuddyProjection` (identity, verification, services, availability, reputation), consumed at `routes/rentABuddy.ts:1368#BuddyProjection`. *(Cited `:1241` until 2026-09-22; that line is a scoring-pool comment and was one at `origin/main` too — a pre-existing wrong pointer, not drift. `BuddyProjection` occurs exactly twice in that file: the import at `:27` and this declaration, whose value comes from `routes/rentABuddy.ts:1386#buildConsumerProjection`. Both lines are byte-identical to `origin/main`.)* |
+| P97 | Buddy | C | `:178-200` `BuddyProjection` (identity, verification, services, availability, reputation), consumed at `routes/rentABuddy.ts:1374#BuddyProjection`. *(Cited `:1247` until 2026-09-22; that line is a scoring-pool comment and was one at `origin/main` too — a pre-existing wrong pointer, not drift. `BuddyProjection` occurs exactly twice in that file: the import at `:27` and this declaration, whose value comes from `routes/rentABuddy.ts:1392#buildConsumerProjection`. Both lines are byte-identical to `origin/main`.)* |
 | P98 | **Map** — aggregate or permission-appropriate presence only | C | **Moved N→C 2026-09-08.** The map now REQUESTS the Passport's map-presence projection instead of rebuilding identity: `services/passport/PassportConsumerProjections.ts:990#buildMapPresenceProjections`, consumed at `lib/mapTravelers.ts:358#buildMapPresenceProjections`. It carries identity ONLY — handle, displayName, avatarUrl, verified — and applies the two rules that govern them (the universal display-name gate and the `show_profile_picture_publicly` opt-out). **It is deliberately NOT a seventh `PassportConsumerVariant`** (`PassportConsumerProjections.ts:150#PassportConsumerVariant`): every variant is reached through `buildConsumerProjection`, which narrows a full per-user assembly (~21 reads plus ~13 for the permissions engine, per target), and the live map returns up to 100 travelers polled every 45 s — the per-user path is ~3,400 reads per poll per viewer. A `"map"` member would advertise that path to the next person wiring a map feature, so `passportMapPresence.test.ts` asserts the union does not gain one and pins the projection at exactly ONE table read for 50 owners. **This was an AUTHORITY defect, not a leak** — `mapTravelers` already applied both rules correctly; they simply lived in a consumer, so a change to the universal display-name rule had two places to land. Output is unchanged and `mapTravelers.test.ts` (14 tests) is green unmodified; the adoption costs no read, because the projection took over the `nameVisibilitySet` call that file already made. `openToMeet` stays behind deliberately: it is a map-ELIGIBILITY signal, not identity. |
 | P99 | **Telegraph** | C | **Moved W→C 2026-09-08 from the call site.** The W said a grep for the variant outside its defining module returned nothing. The conversation header now consumes it: `routes/telegraph.ts:386#buildConsumerProjection`. |
 | P100 | Compass | C | **Moved W→C 2026-09-08 from the call site.** The W said "no Compass route calls `buildConsumerProjection`". One does: `routes/compass.ts:4899#buildConsumerProjection`, taking the `discovery_card` variant for person cards exactly as the module's header intended. Compass's traveler SUGGESTION LIST (`routes/compass.ts:4156#title: projectedName`) still builds identity inline for the bulk-surface reason above; carried by **P169**. |
@@ -514,7 +514,7 @@ All eighteen named events exist, allow-listed on both sides (`routes/passport.ts
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
 | P168 | The complete loop: Passport → Availability → Trust → Shared Context → Compass → Map → Plan → Telegraph → real-world experience → Memory → Stamp → Passport | C | Every hop exists and is wired: availability (`OpenToPlansService`), trust (`buildTrust`), shared context (`SharedContextService`), Compass (`SharedContextScreen.tsx:217` → ai.tsx line 104 when written, now `travel-buddy-standalone/app/(tabs)/ai.tsx:118#send(prefillMessage,` after e0d858f28 moved it 14 lines down; corrected 2026-09-27, verdict unmoved), plan (`TripInvitePickerSheet`), Telegraph (messaging routes), memory (`PassportMemoryService`), stamp (`StampAwardEngine`, whose `safe_return`/`check_in` sources are literally experience-derived). Unlike the Wall's §41, the Passport loop's return leg **does** close: a real-world experience becomes a stamp through a deployed table (`user_stamps`, `stamp_award_events`). |
-| P169 | Other surfaces request the appropriate Passport projection instead of rebuilding identity, availability, trust and social context independently | **W** | **This row was badly stale and its replacement note (written earlier the same day) was wrong too; both are corrected here from the call sites.** It read "adoption is three of seven consumers — Trips, Buddy and Event". Every one of the seven now calls `buildConsumerProjection`: `routes/trips.ts:596#buildConsumerProjection`, `routes/rentABuddy.ts:1386#buildConsumerProjection`, `services/passport/EventPassportService.ts:436#buildConsumerProjection`, `routes/telegraph.ts:386#buildConsumerProjection`, `routes/safeReturn.ts:1215#buildConsumerProjection`, `routes/discoverySearch.ts:600#buildConsumerProjection` and `routes/compass.ts:4899#buildConsumerProjection`. **What actually remains is not four unadopted consumers — it is two BULK LIST endpoints**, which are different routes from the profile-card ones above and were being counted as the same thing: the discovery search list (`lib/inputAssistance/searchCandidates.ts:649#subtitle`) and the Compass traveler suggestions (`routes/compass.ts:4156#title: projectedName`). Both still build identity inline, and both do so for exactly the reason the map did — the per-user projection is ~34 reads per target and a list cannot pay it. **The batch path they need now exists** (P98's `buildMapPresenceProjections`), but it is not a drop-in for either: the map's projection is viewer-INDEPENDENT (a pin carries no follow/friend context), while both of these gate on the viewer relationship — Discovery suppresses the avatar unless `isFollowing || isFriend || show_profile_picture_publicly`, and Compass suppresses the title entirely for a private non-followed profile. Extending the batch projection with a viewer-relationship input is the remaining work, and it is one job, not two. **The row stays W**, but it is a much smaller and much better-specified W than "the single largest structural gap in Passport". |
+| P169 | Other surfaces request the appropriate Passport projection instead of rebuilding identity, availability, trust and social context independently | **W** | **This row was badly stale and its replacement note (written earlier the same day) was wrong too; both are corrected here from the call sites.** It read "adoption is three of seven consumers — Trips, Buddy and Event". Every one of the seven now calls `buildConsumerProjection`: `routes/trips.ts:596#buildConsumerProjection`, `routes/rentABuddy.ts:1392#buildConsumerProjection`, `services/passport/EventPassportService.ts:436#buildConsumerProjection`, `routes/telegraph.ts:386#buildConsumerProjection`, `routes/safeReturn.ts:1215#buildConsumerProjection`, `routes/discoverySearch.ts:600#buildConsumerProjection` and `routes/compass.ts:4899#buildConsumerProjection`. **What actually remains is not four unadopted consumers — it is two BULK LIST endpoints**, which are different routes from the profile-card ones above and were being counted as the same thing: the discovery search list (`lib/inputAssistance/searchCandidates.ts:656#subtitle`) and the Compass traveler suggestions (`routes/compass.ts:4156#title: projectedName`). Both still build identity inline, and both do so for exactly the reason the map did — the per-user projection is ~34 reads per target and a list cannot pay it. **The batch path they need now exists** (P98's `buildMapPresenceProjections`), but it is not a drop-in for either: the map's projection is viewer-INDEPENDENT (a pin carries no follow/friend context), while both of these gate on the viewer relationship — Discovery suppresses the avatar unless `isFollowing || isFriend || show_profile_picture_publicly`, and Compass suppresses the title entirely for a private non-followed profile. Extending the batch projection with a viewer-relationship input is the remaining work, and it is one job, not two. **The row stays W**, but it is a much smaller and much better-specified W than "the single largest structural gap in Passport". |
 
 ---
 
@@ -770,7 +770,7 @@ decisions and no engineering at all.**
 
 | id | was | now | why |
 |---|---|---|---|
-| P169 | W | **C** | **Built, and the row specified it.** P169's own text: *"What actually remains is not four unadopted consumers — it is two BULK LIST endpoints … Extending the batch projection with a viewer-relationship input is the remaining work, and it is one job, not two."* That job is `artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:1153#export async function buildListIdentityProjections`, whose viewer input is `artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:1109#export interface ListViewerRelationships`. Both lists adopted it: the Discovery search list at `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:626#const identity = await buildListIdentityProjections(sc, nameSafe as any[], {` and the Compass traveler suggestions at `artifacts/api-server/src/routes/compass.ts:4113#buildConsumerProjection(sc, "discovery_card"`. Pinned by `artifacts/api-server/src/test/passportListIdentityProjection.test.ts:1#/**` — 14 cases in three blocks, the third of which asserts that NEITHER route still resolves a display name or applies the picture opt-out itself. Also closes census-discovery A15 and the server half of census-compass CP-02. |
+| P169 | W | **C** | **Built, and the row specified it.** P169's own text: *"What actually remains is not four unadopted consumers — it is two BULK LIST endpoints … Extending the batch projection with a viewer-relationship input is the remaining work, and it is one job, not two."* That job is `artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:1153#export async function buildListIdentityProjections`, whose viewer input is `artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:1109#export interface ListViewerRelationships`. Both lists adopted it: the Discovery search list at `artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:633#const identity = await buildListIdentityProjections(sc, nameSafe as any[], {` and the Compass traveler suggestions at `artifacts/api-server/src/routes/compass.ts:4113#buildConsumerProjection(sc, "discovery_card"`. Pinned by `artifacts/api-server/src/test/passportListIdentityProjection.test.ts:1#/**` — 14 cases in three blocks, the third of which asserts that NEITHER route still resolves a display name or applies the picture opt-out itself. Also closes census-discovery A15 and the server half of census-compass CP-02. |
 
 ### 12.3 The divergence P169 closed was not cosmetic
 
@@ -1073,7 +1073,7 @@ what it cites.
 
 | row | the sentence that is false | what was measured, 2026-09-14 |
 |---|---|---|
-| **P42** | *"Neither Compass nor Discovery reads the discovery-card variant"*, and §12.6's *"Compass's traveler recommendation list does not"* consume explicit intent. | **Both Compass people-ranking surfaces now consume it.** The compatibility tool at `artifacts/api-server/src/compass/CompassTools.ts:1938#readVisibleExplicitIntent(sc, targetId` (already known), AND the traveler suggestion list at `artifacts/api-server/src/routes/compass.ts:4057#const viewerIntentRead = await readVisibleExplicitIntent`, which reads each candidate at the visibility the viewer is entitled to and applies the shared bounded weight through `artifacts/api-server/src/routes/compass.ts:4550#export function applyExplicitIntentWeighting`. The demand side is **two of two in Compass**, not one of four. The row's own citation is also stale twice over: the function is at `artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:519#readVisibleExplicitIntent`, not `:445` (`:445` is now `explicitIntentBoost`), and `buildConsumerProjection`'s three named call sites became seven in §12. |
+| **P42** | *"Neither Compass nor Discovery reads the discovery-card variant"*, and §12.6's *"Compass's traveler recommendation list does not"* consume explicit intent. | **Both Compass people-ranking surfaces now consume it.** The compatibility tool at `artifacts/api-server/src/compass/CompassTools.ts:1960#readVisibleExplicitIntent(sc, targetId` (already known), AND the traveler suggestion list at `artifacts/api-server/src/routes/compass.ts:4057#const viewerIntentRead = await readVisibleExplicitIntent`, which reads each candidate at the visibility the viewer is entitled to and applies the shared bounded weight through `artifacts/api-server/src/routes/compass.ts:4550#export function applyExplicitIntentWeighting`. The demand side is **two of two in Compass**, not one of four. The row's own citation is also stale twice over: the function is at `artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:519#readVisibleExplicitIntent`, not `:445` (`:445` is now `explicitIntentBoost`), and `buildConsumerProjection`'s three named call sites became seven in §12. |
 | **P59** | *"the tree's only current posture on visas is the OPPOSITE one — the three places the word appears are Layover disclaimers (LayoverSafetyEngine.ts, then-lines 585, 619 and 628)"*. | **Wrong on the count, the lines and the posture — and the truth makes the N stronger.** *(Those three numbers are QUOTED, not cited: they are the wrong lines this correction is about, and they are written in prose so no checker reads a corrected error as a live pointer. One of them was mechanically repointed to 586 on 2026-09-22 and restored the same day — a verbatim quote must not be repointed.)* Two of those three Layover lines are now `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1211#Verify visa rules` and `artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1298#Visa or transit-permit requirements`; **the third no longer exists** — census-layover §27 deleted the "Entry is never confirmed on this tree" comment when it built the entry gate, and the emission it sat above is now conditional (`artifacts/api-server/src/services/airport/LayoverSafetyEngine.ts:1326#entryConfirmed`). More to the point the word appears in two systems the row did not see. (1) A whole curated entry-intelligence subsystem: `artifacts/api-server/src/lib/entryRequirements.ts:4#HONESTY CONTRACT` — admin-curated corridor rows only, every row carrying an `official_source_url`, unknown corridors explicit, and `artifacts/api-server/src/lib/entryRequirements.ts:20#export const DISCLAIMER` shipped with every assessment. (2) A live abuse policy that classifies the *peer-to-peer* version of this capability as fraud: `artifacts/api-server/src/domain/telegraph/policies/travelScamSignals.ts:111#family: "VISA_HELP"`, whose patterns include the embassy-insider and fast-track-your-visa offers. So the tree does not merely lack a Visa Buddy; **it ships a policy that reads one as a scam signal and an architecture that answers visa questions from official sources with a disclaimer.** |
 | **P61** | *"there is **no Contributor stamp type at all** (contributions surface as a credential via `PassportReputationService`, never as a stamp)"*. Hence *"nine of eleven"*. | **There is one, it is seeded, and it has a live producer.** `artifacts/api-server/src/migrations/0198_place_contributor_stamps.sql:9#INSERT INTO stamp_definitions` seeds three definitions carrying `stamp_type = 'place_contributor'`, awarded at 10 / 50 / 100 posts by `artifacts/api-server/src/lib/places/placeCollectionsWorker.ts:172#definitionSlug: "place_contributor"`, and the label reaches the Passport's own collection verbatim through `artifacts/api-server/src/services/passport/UnifiedStampService.ts:219#stampType: r.stamp_definitions?.stamp_type ?? null`, with TABLE 16 provenance `contribution_earned` (`artifacts/api-server/src/services/passport/UnifiedStampService.ts:102#case "posts"`). **Ten of eleven, not nine.** |
 | **P77** | *"two of five"* Memories views. | **One of five.** §15 names Trips, Places, People, Timeline and Map. `travel-buddy-standalone/src/components/MemoriesTab.tsx:769#const MEMORY_VIEW_TABS` (**superseded 2026-09-14 — see §17.6; the two-tab catalogue this cited is gone, the verdict is not**) offers exactly two tabs, and only **Timeline** is one of the five — "All" is the ungrouped grid, which is the surface the five views are views *of*, not a sixth view. The row is one worse than it says. |
@@ -1086,7 +1086,7 @@ are not.
 | id | re-executed finding | verdict |
 |---|---|---|
 | P13 | Confirmed unmoved, with two citations repaired. The composition is still a cream document card with a vertical spine (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:357#<View style={s.spine}>`) and a LEFT-COLUMN avatar (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:671#leftCol:`), not a portrait overlapping a hero. The avatar is circular and gold-ringed — but **not at the `:653` this row cites**, which is a 34 px absolute-positioned overlay chip; the real evidence is `travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:679#goldRing:` and `:685#avatarPressable` (`borderRadius: AVATAR_SIZE / 2`). D-DESIGN. **Still unmoved 2026-09-14, and now for a stated reason rather than a pending decision: the palette ruling does not reach a composition (§15.2).** | W |
-| P42 | **Evidence false — see §14.2.** Compass is two of two; Discovery is zero of one and is the whole of what remains. Discovery's people path is not a ranker at all (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:546#.order("name", { ascending: true })` — an alphabetical name-match search that weights no interest term either way), so the clause binds on Discovery's CONTENT ranker, and that ranker is on an explicit owner hold: `docs/discovery/ROADMAP.md:222#RANKER WORK GOES ON EXPLICIT HOLD`, which `census-discovery.md` A18 grades `N — owner hold`. The blocker is an owner ruling, not a contended file. | W |
+| P42 | **Evidence false — see §14.2.** Compass is two of two; Discovery is zero of one and is the whole of what remains. Discovery's people path is not a ranker at all (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:553#.order("name", { ascending: true })` — an alphabetical name-match search that weights no interest term either way), so the clause binds on Discovery's CONTENT ranker, and that ranker is on an explicit owner hold: `docs/discovery/ROADMAP.md:222#RANKER WORK GOES ON EXPLICIT HOLD`, which `census-discovery.md` A18 grades `N — owner hold`. The blocker is an owner ruling, not a contended file. | W |
 | P45 | Confirmed unchanged at `artifacts/api-server/src/services/passport/PassportProjectionService.ts:1232#measuredValue(k)` and `artifacts/api-server/src/services/passport/PassportProjectionService.ts:1132#if (score >= 50) return "Established";`. §13.2's `basis` is live and reaches the trips variant (`artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:789#basis: d.basis`). Re-measured: **`trust.domains` still has no client consumer at all** — a repo-wide grep over `travel-buddy-standalone/src` for `trustDomains` and `domains[` returns **0**, and `useTrustProjection.ts` still builds its own six rows from capability flags. D-WORD, plus a client surface. | W |
 | P50 | Confirmed unchanged and deliberately so: `artifacts/api-server/src/services/passport/PassportProjectionService.ts:2497#export function passportTrustConfidence`. `evidenceWeight` / `evidenceCount` / `confidenceBasis` reach the projection beside it and make the two 82s distinguishable; the BAND is still travel-derived, and because `confidence === "low"` is what selects the non-stigmatizing "New Traveler" copy (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1389#"New Traveler · Verified"`), recalibrating the band changes the word a person is shown. D-WORD. | W |
 | P59 | **Evidence false — see §14.2, and the correction strengthens the N.** Re-confirmed absent: `canProvideVisaBuddyService`, `VisaBuddy` and `visa_buddy` return **0** across the server and client trees, and `artifacts/api-server/src/services/passport/PassportProjectionService.ts:759#export function buildOwnerCapabilities` returns exactly six keys. Now pinned by `artifacts/api-server/src/test/passportProjection.test.ts:587#§11 capabilities — six built` so a seventh cannot arrive by accident. | N |
@@ -2356,3 +2356,117 @@ defects that path actually hits.
 - NOT-GRADED: travel-buddy-standalone/src/components/passport/__tests__/PassportStatsRow.readFailed.component.test.tsx — §25.4's suite; no verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/src/features/passport/__tests__/eventPassport.client.component.test.ts — §25.4's suite; no verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/src/features/passport/__tests__/EventPassport.component.test.tsx — §25.4 cites its two new outage blocks; no verdict rests on them.
+
+## §26 — 2026-10-04 (re-census, integration): no row moves, and §25.1's own classification counts four `C` rows as non-C
+
+**What this section is.** The re-census pass of the 3–4 October merged surfaces, opened on a corpus
+measurement rather than a suspicion: `check:census-integrity` returns the same `C` at `f71cfb85f` as
+it did at `626b46b7e`, 108 commits and seventeen pull requests earlier. PR #581 is this census's.
+Scope: the rows whose SUBJECT #581 touched, plus all eleven non-C rows, each re-read against its own
+settlement condition. Nothing else is re-read, and a row this section does not name keeps the verdict
+and the reason it had.
+
+**`head_commit` is NOT re-declared**, for §25's reason and §26.4's: this section grades no row.
+Documentation only — no code, no migration, no flag, no schema change, and **nothing was read from or
+written to any database**, hosted or otherwise. Where a hosted fact appears it is quoted from §25,
+which took it, or from the repository's own committed capture.
+
+### 26.1 Row moves: none, in either direction
+
+**0 up, 0 down**, and here is the work rather than the assertion. Each of the eleven non-C rows was
+re-read against the settlement condition its own cell states:
+
+| id | V | what settles it | class |
+|---|---|---|---|
+| P13 | W | a ruling in `brand-palette-decision.md` that already names this row and says *"stays W"* | owner, already ruled |
+| P128 | W | the same artifact, line 129; on the blocker ledger as `PASSPORT_DARK_MODE_FIRST` | owner, already ruled |
+| P133 | W | two of four clauses ruled out by the same artifact; whether restrained glass survives the paper metaphor is *"genuinely UNDECIDED"* | owner |
+| P42 | W | lifting the Discovery ranker hold. Nothing in this census's paths is involved | owner (another programme's hold) |
+| P50 | W | recalibrating a confidence band, which **changes the word a person is shown**. `D-WORD` | owner / product |
+| P154 | W | P50 moving. §16 confirmed P154 is P45 and P50 under a phase number, and P45 already moved | follows P50 |
+| P59 | N | a product decision that a seventh capability should exist. Re-executed greps return **0** for `canProvideVisaBuddyService`, `VisaBuddy` and `visa_buddy` outside the guard test | owner / product |
+| P61 | W | a migration adding the `place` CHECK label, plus a product rule for what earns one. Ten of eleven labels present | owner, then a migration lane |
+| P159 | W | one paragraph from the owner defining the surface; everything after that sentence is small and inside this census's paths | owner / product |
+| P77 | W | a participant field `PassportMemory` does not have. Four of §15's five views exist, and *"four of five does not close a row that names five"* | cross-lane (memory services) |
+| P66 | X | a designer's dated sign-off against a rendered screen. 26.3 | owner / design |
+
+**§25.1's classification therefore HOLDS in substance**: *"No row on the tester's path was
+code-actionable, so the pass worked the defects that path actually hits."* Re-reading each row
+independently reaches the same place. **Not one of the eleven can be moved by code in this
+repository**, and that is a fact about where this surface's work stopped, not about #581.
+
+### 26.2 §25.1's arithmetic disagrees with the check it quotes in the same sentence
+
+§25.1 opens: *"Fifteen rows are not C (`check:census-integrity`: 158 C · 9 W · 1 N · 1 X …"*.
+
+**9 + 1 + 1 = 11, not 15**, and the two numbers are five words apart. The list that follows then names
+fifteen rows, and four of them are `C` at this tree — each moved by an earlier section of this
+document, with evidence, and none of those moves was withdrawn:
+
+| id | §25.1 filed it as | actual verdict at `f71cfb85f` | where it moved |
+|---|---|---|---|
+| P45 | owner-gated | **C** | §16.1's `W → C`: the three clauses are domain-specific, confidence-aware and explainable, and the third was closed when `trust.domains` acquired a client consumer instead of being overridden by a flattering constant |
+| P75 | product-surface build, deferred | **C** | §13.1, *"Built and closed"* |
+| P126 | product-surface build, deferred | **C** | §13.1, *"Built and closed"* |
+| P169 | blocked cross-lane | **C** | §18's `W → C`: the row's own text specified *"two BULK LIST endpoints … one job, not two"*, and both lists adopted the extended batch projection |
+
+**No verdict moves on this.** The eleven are the eleven, and this document's own parser has said so
+since §15.1. What the correction buys is that a reader of §25.1 — the newest section before this one,
+and therefore the one a reader reaches first — is no longer told that four closed rows are open.
+**This is the sharper half of the finding**: an overcount of non-C rows reads as conservatism, so it
+is the direction nobody audits.
+
+### 26.3 P66 stays `X`, and what would settle it is now narrower and harder
+
+P66 is *"Premium collectible appearance with perforated / passport-stamp edges."* §16's note sharpened
+the question to *"is this premium ENOUGH"* rather than *"is there any premium treatment"*, on the
+ground that the tree ships rarity affordances — a rarity badge, sawtooth and wave frames, a legendary
+glow ring.
+
+**That ground survives #581, and it survives for a reason worth writing down, because #581's first
+finding looks at first as though it destroys it.** §25.2 records that *"Every premium stamp was
+framed 'common'"*: `rarityForCatalog` filtered `stamp_definitions.catalog_id`, a column that table has
+never had, PostgREST answered 42703, and the catch answered `"common"` — so on the hosted database
+twelve composed artwork versions belonging to rare (6) and uncommon (6) definitions are **all composed
+common**. If P66's affordances came from that composition, the renders a designer would be shown would
+carry no rarity differentiation at all and §16's note would be false.
+
+They do not. The affordances are rendered client-side from the item's own rarity field, not from the
+server-composed artwork, which is why the composition defect and the rendering affordances are
+independent and why §16's note holds unaltered. **`X` stands.**
+
+What this section adds to the row's settlement condition, because a sign-off taken today would be
+taken against the wrong artwork: §25.5 records that *"The 12 common-framed artwork versions need
+recomposing after deploy; that is a hosted write."* **A designer shown a premium stamp whose artwork
+came from the hosted store before that recompose is being shown a common frame.** So the condition is
+now: recompose first, then sign off. Nothing about this is an engineering verdict, which is why the
+letter does not change.
+
+### 26.4 What #581 did to rows it does not grade, stated so the next reader is not surprised
+
+§25.6 says *"No P row moves. None grades stamp rarity, a stat's failure state, or an outage's
+wording."* Re-read and confirmed row by row: P69 (*"Metallic accents and subtle depth may distinguish
+premium/earned states"*) and P130 (*"Gold for premium/earned travel identity and collectible
+stamps"*) both rest on the theme tokens and the client card, neither of which the generation worker
+touches; and no P row rests on `measureStampsEarned`, `buildStats` or the event-Passport status
+vocabulary. **So the four defects #581 fixed were each real, each user-visible, and each invisible to
+this census's 169 requirements.** That is a statement about the census's coverage, not about the lane,
+and it is the one thing on this surface a future denominator revision should look at first.
+
+### 26.5 Headline, restated from the rows
+
+Unchanged, and recounted rather than carried forward from §25:
+**169 requirements · 158 BUILT-AND-CORRECT · 9 BUILT-BUT-WRONG · 1 NOT-BUILT · 1 CANNOT-VERIFY.**
+158 + 9 + 1 + 1 = 169. CONSTRUCTED 98.8 % (167 / 169) · CORRECT 93.5 % (158 / 169).
+
+### 26.6 What would turn this red
+
+- A later section quoting §25.1's "fifteen": the overcount is corrected here, and repeating it puts
+  four closed rows back in the open column.
+- A designer's P66 sign-off dated before the twelve artwork versions are recomposed: the sign-off is
+  about artwork the deploy will replace, and the row has to be re-opened rather than closed.
+- Any P row newly rested on a composed artwork's rarity, on `stampsEarned`, or on an event-Passport
+  status word, without §26.4 being read first: #581's fixes are what make such a row gradeable at all.
+- Migration 2294 applied and `passport_event_share_enabled` flipped: event-Passport sharing stops
+  being implementation-complete-and-dark, and §25.5's awaiting clause has to be re-read as a shipped
+  surface the same day.

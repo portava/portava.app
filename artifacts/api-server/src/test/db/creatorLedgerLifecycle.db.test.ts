@@ -576,7 +576,7 @@ describe("the creator ledger, end to end (census-discovery §52)", { skip: !HAVE
   // profile CASCADES the creator's whole ledger away — i.e. it pinned "delete on
   // erasure", an answer nobody had given. 3510 then refused instead (CL451,
   // "undecided"). The owner has now ANSWERED C-11: accounting entries are
-  // retained with the identity removed, and 3513 carries that in the chain, so
+  // retained with the identity removed, and 3600 carries that in the chain, so
   // the refusal is the DECIDED one (CL452) and it names the door that makes the
   // erasure possible. The claim this test makes is unchanged and stronger: a
   // creator with a ledger cannot be erased by deleting their profile row, and

@@ -36,9 +36,40 @@
  *     manifest against the schema, not against the service's behaviour.
  *   * post-baseline tables. The baseline is the 2026-08-19 snapshot; tables
  *     created after cutover (the journey_* family is live on production and
- *     absent here) are invisible to this check until the baseline is recaptured.
- *     That is the same blind spot rlsDispositions has, and it is why recapture
- *     is part of the apply sequence rather than an afterthought.
+ *     absent here) are invisible to this check until someone types their names
+ *     into deletionDispositions.POST_BASELINE_TABLES by hand.
+ *
+ *     ── MEASURED 2026-10-04, because "recapture will fix it" was wrong ───────
+ *     This gate reads TWO things and neither is the migration chain: the
+ *     2026-08-19 dump, and that hand-written list (passed as `extraTables`).
+ *     Nothing reads src/migrations/. So a migration that CREATEs a user-keyed
+ *     table enters the denominator only if a person remembers to register it,
+ *     and FORGETTING IS NOT A FAILURE THIS GATE CAN REPORT — the table is not in
+ *     the baseline, so it is not in the denominator, so this script exits 0 while
+ *     the table has no stated deletion fate at all.
+ *
+ *     Recapture does not close that. Recapture snapshots PRODUCTION, so it can
+ *     only ever see APPLIED migrations; a committed-but-unapplied migration's
+ *     tables are invisible to the dump, to a recapture of it, and to
+ *     baseline/*_production_tables.txt alike. The creator-ledger tables
+ *     (2901 / 2920 / 2921 / 3387) were exactly that: absent from all three, and
+ *     carrying money owed to a named person plus the admin who held it.
+ *
+ *     The size of the gap is a number, not a worry, and the thing that measures
+ *     it already ships: scripts/lib/canonicalSchema.ts replays every file in
+ *     migrations/ and src/migrations/ over this same baseline (754 files) and
+ *     backs check:schema-references. It knows 529 tables; 142 are post-baseline;
+ *     114 of those, the five creator-ledger tables included, were named in no
+ *     bucket of the manifest on 2026-10-04.
+ *
+ *     READING THE CHAIN IS THE FIX, and the cheap half of it needs no new
+ *     parser: "every table the canonical chain creates is named in the manifest"
+ *     is a presence check over canonicalSchema.columns, and it is the half that
+ *     would have caught these five. It is not this change, because it reports
+ *     114 tables at once and the failure text below forbids parking a new table
+ *     in either dated backlog — correctly. Classifying them needs more: that
+ *     wants the FK graph, which userLink.ts gets from the dump's format via
+ *     lib/deletion/schemaFacts.ts, not from migration DDL.
  *   * a user's uuid in a `text` column or inside jsonb. The foreign-key graph
  *     cannot see it and neither can the name rules. AMBIGUOUS is where the
  *     schema's inability to tell is made visible instead of assumed away.
@@ -57,6 +88,7 @@ import {
   ANONYMISED_FK_NULLED,
   DELETION_FLOW_TABLES,
   RETAINED_WITH_REASON,
+  AWAITING_OWNER_DECISION,
   UNCLASSIFIED_BACKLOG,
   DENOMINATOR_CORRECTION_BACKLOG,
   POST_BASELINE_TABLES,
@@ -97,12 +129,30 @@ export function userKeyedTablesFromBaseline(sql: string): Map<string, string[]> 
 
 export interface CoverageProblem { kind: string; table: string; detail: string }
 
-export function computeProblems(tables: Map<string, string[]>): CoverageProblem[] {
+/**
+ * @param postBaselineExempt tables the baseline predates, which are therefore
+ *   exempt from the STALE ENTRY check. Defaults to the manifest's own list;
+ *   passed explicitly by the tests, because a post-baseline entry's staleness is
+ *   otherwise unreachable — the same exemption that makes the entry legal makes
+ *   the check that would catch it unobservable.
+ */
+export function computeProblems(
+  tables: Map<string, string[]>,
+  postBaselineExempt: readonly string[] = POST_BASELINE_TABLES,
+  /**
+   * The open-decision bucket. Defaults to the manifest's own; passed by the
+   * tests since the live bucket is EMPTY (2026-10-06: its four entries left when
+   * C-11 was answered), so its staleness and well-formedness checks stay
+   * observable on a synthetic entry rather than going vacuous.
+   */
+  awaitingOwnerDecision: typeof AWAITING_OWNER_DECISION = AWAITING_OWNER_DECISION,
+): CoverageProblem[] {
   const problems: CoverageProblem[] = [];
   const erased = new Set(ERASED_BY_CASCADE);
   const nulled = new Set(ANONYMISED_FK_NULLED);
   const flow = new Set(DELETION_FLOW_TABLES);
   const retained = new Set(RETAINED_WITH_REASON.map((r) => r.table));
+  const awaiting = new Set(awaitingOwnerDecision.map((r) => r.table));
   const backlog = new Set(UNCLASSIFIED_BACKLOG);
   const correction = new Set(DENOMINATOR_CORRECTION_BACKLOG);
 
@@ -112,6 +162,7 @@ export function computeProblems(tables: Map<string, string[]>): CoverageProblem[
       nulled.has(t) && "ANONYMISED_FK_NULLED",
       flow.has(t) && "DELETION_FLOW_TABLES",
       retained.has(t) && "RETAINED_WITH_REASON",
+      awaiting.has(t) && "AWAITING_OWNER_DECISION",
       backlog.has(t) && "UNCLASSIFIED_BACKLOG",
       correction.has(t) && "DENOMINATOR_CORRECTION_BACKLOG",
     ].filter(Boolean) as string[];
@@ -124,6 +175,9 @@ export function computeProblems(tables: Map<string, string[]>): CoverageProblem[
           `is linked to a user account but appears in no bucket of deletionDispositions.ts. ` +
           `Decide what happens to it on account deletion: add it to ERASED_BY_CASCADE (and clear it in ` +
           `AccountDeletionService), or to RETAINED_WITH_REASON with a reason a user could be shown. ` +
+          `If the fate is genuinely an OWNER's to decide, AWAITING_OWNER_DECISION is the honest bucket — but only ` +
+          `when the decision has an identifier, somewhere it is written down, and a mechanism that refuses the DELETE ` +
+          `meanwhile; "nobody has thought about it yet" is not an open decision and does not qualify. ` +
           `Do NOT add it to UNCLASSIFIED_BACKLOG — that list is a dated record of pre-existing debt, not a place to put new tables. ` +
           `Do NOT add it to DENOMINATOR_CORRECTION_BACKLOG either — that list is closed: it is the dated record of the 91 tables ` +
           `the old column-name denominator could not see, not a second hiding place.`,
@@ -138,10 +192,11 @@ export function computeProblems(tables: Map<string, string[]>): CoverageProblem[
     { name: "ERASED_BY_CASCADE", items: ERASED_BY_CASCADE },
     { name: "ANONYMISED_FK_NULLED", items: ANONYMISED_FK_NULLED },
     { name: "DELETION_FLOW_TABLES", items: DELETION_FLOW_TABLES },
+    { name: "AWAITING_OWNER_DECISION", items: awaitingOwnerDecision.map((r) => r.table) },
     { name: "UNCLASSIFIED_BACKLOG", items: UNCLASSIFIED_BACKLOG },
     { name: "DENOMINATOR_CORRECTION_BACKLOG", items: DENOMINATOR_CORRECTION_BACKLOG },
   ]) {
-    const postBaseline = new Set(POST_BASELINE_TABLES);
+    const postBaseline = new Set(postBaselineExempt);
     for (const t of list.items) {
       // Post-baseline tables are classified but not yet in the snapshot; they
       // stop being exempt once the baseline is recaptured.
@@ -157,6 +212,42 @@ export function computeProblems(tables: Map<string, string[]>): CoverageProblem[
   for (const r of RETAINED_WITH_REASON) {
     if (!r.reason || r.reason.trim() === "") {
       problems.push({ kind: "EMPTY REASON", table: r.table, detail: "RETAINED_WITH_REASON needs a written reason." });
+    }
+  }
+  problems.push(...openDecisionProblems(awaitingOwnerDecision));
+  return problems;
+}
+
+/**
+ * An open decision that names neither the question nor what holds it open is a
+ * shrug in a bucket, and would make AWAITING_OWNER_DECISION the third hiding
+ * place its own documentation forbids. Takes its entries as an argument so a
+ * test can prove the rejection on a bad entry rather than on the live manifest,
+ * which is (and should stay) well-formed.
+ */
+export function openDecisionProblems(
+  entries: ReadonlyArray<{ table: string; decision: string; heldOpenBy: string }>,
+): CoverageProblem[] {
+  const problems: CoverageProblem[] = [];
+  for (const r of entries) {
+    if (!r.decision || r.decision.trim().length < 40) {
+      problems.push({
+        kind: "UNNAMED DECISION",
+        table: r.table,
+        detail:
+          "AWAITING_OWNER_DECISION must name the owner decision (its identifier and where it is written down) — " +
+          "otherwise this bucket means no more than UNCLASSIFIED_BACKLOG while sounding like it does.",
+      });
+    }
+    if (!r.heldOpenBy || r.heldOpenBy.trim().length < 40) {
+      problems.push({
+        kind: "NOTHING HOLDS IT OPEN",
+        table: r.table,
+        detail:
+          "AWAITING_OWNER_DECISION must state what stops either answer being taken by default (the migration and the " +
+          "refusal it installs). Without that the rows are simply governed by whatever the cascades already do, which " +
+          "is a decision made by omission.",
+      });
     }
   }
   return problems;
@@ -234,6 +325,8 @@ function main(): void {
       `   ${ANONYMISED_FK_NULLED.length} anonymised in place (FK identifier NULLed, row kept)\n` +
       `   ${DELETION_FLOW_TABLES.length} deletion-flow tables (not user content)\n` +
       `   ${RETAINED_WITH_REASON.length} retained with a written reason\n` +
+      `   ${AWAITING_OWNER_DECISION.length} awaiting a NAMED owner decision, DELETE refused meanwhile ` +
+      `(${[...new Set(AWAITING_OWNER_DECISION.map((r) => r.decision.split(" ")[0]))].sort().join(", ")})\n` +
       `   ${UNCLASSIFIED_BACKLOG.length} UNCLASSIFIED — survive deletion, undecided (owner decision D6)\n` +
       `   ${DENOMINATOR_CORRECTION_BACKLOG.length} UNCLASSIFIED and never triaged — the tables the old denominator could not see\n` +
       `   = ${UNCLASSIFIED_BACKLOG.length + DENOMINATOR_CORRECTION_BACKLOG.length} tables whose rows survive account deletion with nobody having ruled on them\n` +

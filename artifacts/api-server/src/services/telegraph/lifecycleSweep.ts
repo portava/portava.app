@@ -48,10 +48,14 @@
  * lane owns and no index on an envelope field, so there is nothing to flip. The
  * sweep therefore emits for shares whose `expiresAt` falls in the half-open
  * window `(since, now]`, where `since` is the previous tick. Two instances
- * sweeping the same tick emit twice; a restart replays at most the last
- * interval, never the whole history, because a cold start sets `since` to
- * `now - interval` rather than to the epoch. Every payload carries a stable
- * `eventKey`, which is what §13.3's "idempotently" needs a consumer to have.
+ * sweeping the same tick emit twice; a restart resumes from a DURABLE watermark
+ * (`lib/schedulerWatermark.ts`, job `telegraph_location_expiry`) rather than
+ * from the epoch or from `now`, so it replays at most the window it had already
+ * covered and loses nothing that expired while it was down — bounded by
+ * `MAX_LOCATION_CATCHUP_MS`, which the scheduler derives from the horizon below
+ * because a window this read cannot serve is not coverage. Every payload
+ * carries a stable `eventKey`, which is what §13.3's "idempotently" needs a
+ * consumer to have.
  * Claiming exactly-once over a bus whose own header says publish failures are
  * "logged and swallowed" would be a claim about a transport that cannot make
  * it.
@@ -72,7 +76,17 @@ import {
 } from "../../lib/telegraphEvents.js";
 import { LOCATION_PRECISIONS, parseKindEnvelope } from "./messageKinds.js";
 
-/** How far back the location sweep will look for shares at all. */
+/**
+ * How far back the location sweep will look for shares at all.
+ *
+ * This bounds `created_at`, which is when a share STARTED. It is therefore also
+ * the ceiling on catch-up after an outage: an expiry at `T` is only reachable
+ * here while `T - MAX_LOCATION_SHARE_HOURS >= now - this`, so the scheduler's
+ * `MAX_LOCATION_CATCHUP_MS` is computed from this constant minus that one
+ * rather than chosen. Raising this to buy a deeper catch-up is not enough on its
+ * own — `LOCATION_SWEEP_SCAN_LIMIT` takes 500 rows `created_at DESC`, so the
+ * oldest, which is to say the catch-up rows, are the first it drops.
+ */
 export const LOCATION_SWEEP_HORIZON_HOURS = 8;
 /** How many `messages` rows one location sweep reads. */
 export const LOCATION_SWEEP_SCAN_LIMIT = 500;

@@ -107,7 +107,7 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 
-import { _setTestClient } from "../lib/http.js";
+import { _setTestClient } from "../lib/http.js"; import { _resetRateLimit } from "../lib/rateLimit.js";
 import telegraphVoiceRouter from "../routes/telegraphVoice.js";
 import { loadDismissedPlaceIds, DISMISSED_MAX_IDS } from "../lib/discoveryDismissed.js";
 import { isKillSwitchEngaged, isFlagEnabled } from "../lib/featureFlags.js";
@@ -251,7 +251,7 @@ let base = "";
 
 function useState(state: FakeState) {
   const c = makeClient(state);
-  _setTestClient(c as any, true);
+  _setTestClient(c as any, true); _resetRateLimit(); // the §22 send limiter is PROCESS state and now guards this door too: without this the 21st send in the FILE is a 429 that measures an earlier case
   return c;
 }
 

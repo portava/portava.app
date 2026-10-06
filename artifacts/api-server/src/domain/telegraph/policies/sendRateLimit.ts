@@ -45,7 +45,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { checkRateLimit, type RateLimitResult } from "../../../lib/rateLimit.js";
+import { checkRateLimit, type RateLimitResult } from "../../../lib/rateLimit.js"; import { sendLimiterId, type SendBucket } from "./messageDoorPolicy.js";
 import { logger as rootLogger } from "../../../lib/logger.js";
 
 const log = rootLogger.child({ mod: "telegraphSendRateLimit" });
@@ -241,10 +241,16 @@ export async function checkSendRateLimit(
   sc: SupabaseClient,
   userId: string,
   nowMs: number = Date.now(),
+  /**
+   * Which allowance this send is counted in. `ordinary` is the id this function
+   * has always used, so every door that joins the text door shares its bucket;
+   * see `messageDoorPolicy.ts` for why SAFETY alone has a second one.
+   */
+  bucket: SendBucket = "ordinary",
 ): Promise<SendLimitDecision> {
   const resolved = await resolveSendTier(sc, userId, nowMs);
   const verdict: RateLimitResult = checkRateLimit(
-    `telegraph_send:${resolved.tier}`,
+    sendLimiterId(bucket, resolved.tier),
     userId,
     resolved.limit,
     SEND_WINDOW_MS,

@@ -37,6 +37,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { TELEMETRY_TABLE } from "../lib/inputAssistance/telemetry.js";
 import {
   computeInputSuccessMetrics,
+  type TaskOutcomeCell,
   type MetricRow,
   type Metric,
   type LatencyMetric,
@@ -104,7 +105,32 @@ async function main(): Promise<void> {
     if (data.length < PAGE) break;
   }
 
-  const m = computeInputSuccessMetrics(rows, context ? { contexts: [context] } : {});
+  // G370 reads the AGGREGATE (3783), never §44 rows: consented outcomes are
+  // counted at ingest and no per-event row exists. A failed read is SAID — the
+  // metric is reported unreadable, not 0/0.
+  let taskOutcomes: TaskOutcomeCell[] | null = null;
+  {
+    const { data, error } = await db
+      .from("input_outcome_task_daily")
+      .select("day,context,task,ok,completed_count")
+      .gte("day", since.slice(0, 10))
+      .limit(10_000);
+    if (error) {
+      console.error(`reportInputMetrics: G370 unreadable — input_outcome_task_daily: ${error.message} (is migration 3783 applied here?)`);
+    } else {
+      taskOutcomes = ((data ?? []) as Array<Record<string, unknown>>).map((r) => ({
+        day: String(r.day), context: String(r.context), task: String(r.task), ok: r.ok === true, count: Number(r.completed_count) || 0,
+      }));
+    }
+  }
+
+  const m = computeInputSuccessMetrics(rows, {
+    ...(context ? { contexts: [context] } : {}),
+    taskOutcomes: taskOutcomes ?? [],
+  });
+  if (taskOutcomes === null) {
+    m.downstreamTaskCompletionRate = { value: null, n: 0, blocked: "input_outcome_task_daily could not be read (migration 3783)" };
+  }
 
   if (json) {
     console.log(JSON.stringify({ since, days, context: context ?? null, metrics: m }, null, 2));

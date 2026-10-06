@@ -38,7 +38,7 @@ import {
   type TelegraphEvent,
 } from '../services/telegraphRealtimeService.ts';
 import { useSession } from '../context/SessionContext.tsx';
-import { useSnapshotCache } from './useSnapshotCache.ts';
+import { useSnapshotCache } from './useSnapshotCache.ts'; import { sendFailureFrom } from '../features/telegraph/lifecycle/readState.ts';
 
 // When realtime is connected we lean on pushed events and poll only as a slow
 // safety net. When realtime is unavailable the service reports 'polling' and
@@ -274,6 +274,9 @@ export function useThreadMessages(threadId: string | null) {
   const sendingRef = useRef(false);
   const typingTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const lastTypingSentRef = useRef(0);
+  // What this device last TOLD the thread: a "stopped" is only worth a request
+  // when "typing" was said (re-verification R3).
+  const typingToldRef = useRef(false);
   // True once the first network response has been applied for the current thread;
   // prevents the snapshot from overwriting fresher network data if AsyncStorage is slow.
   const networkFetchedRef = useRef(false);
@@ -476,7 +479,7 @@ export function useThreadMessages(threadId: string | null) {
       } else {
         setMessages((prev) =>
           prev.map((m) =>
-            m.clientId === clientId ? { ...m, deliveryStatus: 'failed' as const } : m,
+            m.clientId === clientId ? { ...m, deliveryStatus: 'failed' as const, sendFailure: sendFailureFrom(res) } : m,
           ),
         );
       }
@@ -497,7 +500,7 @@ export function useThreadMessages(threadId: string | null) {
       if (!failed || !failed.body) return;
       setMessages((prev) =>
         prev.map((m) =>
-          m.clientId === clientId ? { ...m, deliveryStatus: 'sending' as const } : m,
+          m.clientId === clientId ? { ...m, deliveryStatus: 'sending' as const, sendFailure: null } : m,
         ),
       );
       const res = await sendMessage(threadId, failed.body, {
@@ -515,7 +518,7 @@ export function useThreadMessages(threadId: string | null) {
       } else {
         setMessages((prev) =>
           prev.map((m) =>
-            m.clientId === clientId ? { ...m, deliveryStatus: 'failed' as const } : m,
+            m.clientId === clientId ? { ...m, deliveryStatus: 'failed' as const, sendFailure: sendFailureFrom(res) } : m,
           ),
         );
       }
@@ -524,18 +527,28 @@ export function useThreadMessages(threadId: string | null) {
     [threadId, messages],
   );
 
-  /** Relay a typing indicator, throttled so we send at most one ping / 2 s. */
+  /**
+   * Relay a typing indicator: "typing" at most once per 2 s, "stopped" only as
+   * a TRANSITION — when "typing" was the last thing said. A constrained
+   * connection makes the screen call this with `false` on every keystroke
+   * (typing notifications follow the data-saver ladder), and each of those used
+   * to be a POST saying what the last one said. Since a "stopped" can only
+   * follow a sent "typing", and "typing" is throttled — the throttle is NOT
+   * reset by a stop — neither edge exceeds one request per 2 s window.
+   */
   const notifyTyping = useCallback(
     (isTyping: boolean) => {
       if (!threadId) return;
       if (!isTyping) {
-        lastTypingSentRef.current = 0;
+        if (!typingToldRef.current) return;
+        typingToldRef.current = false;
         void sendTyping(threadId, false);
         return;
       }
       const now = Date.now();
       if (now - lastTypingSentRef.current < 2_000) return;
       lastTypingSentRef.current = now;
+      typingToldRef.current = true;
       void sendTyping(threadId, true);
     },
     [threadId],

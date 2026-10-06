@@ -318,13 +318,26 @@ describe("Telegraph §14.1 — capabilities are derived server-side", () => {
     assert.equal(live.reasons.canShareExactLocation, "TELEGRAPH_LOCATION_PRECISION_CEILING");
   });
 
-  it("a trust restriction on the viewer denies send, plan and location, not membership", async () => {
+  // CHANGED 2026-10-05 (lane T2, OD-TRUST-5): this case asserted that a messaging
+  // restriction denies canSendMessage in a TRIP thread — a refusal no send door
+  // performed, and broader than what the person is told the restriction means
+  // ("You cannot initiate new conversations"). The projection now reads the send
+  // guard's own decision (restrictionSendPolicy.ts): a trip thread's roster is the
+  // source domain's, so writing there is continuing, not initiating. The refusal
+  // the restriction DOES carry — opening contact in a DM — is asserted beside it,
+  // and the whole agreement is driven in telegraphRestrictionSendGate.test.ts.
+  it("a messaging restriction refuses calls and group seen state everywhere, and sends only where they would initiate contact", async () => {
     const sc = makeClient({ restrictions: ["messaging"] });
     const r = await resolveConversationCapabilities(sc, { viewerId: ALICE, conversationId: TRIP_THREAD });
-    assert.equal(r.capabilities.canSendMessage, false);
-    assert.equal(r.reasons.canSendMessage, "TELEGRAPH_SAFETY_TRUST_RESTRICTED");
+    assert.equal(r.capabilities.canSendMessage, true, "a trip thread is not a new conversation");
+    assert.equal(r.capabilities.canCall, false, "the call gateway's rule: a messaging restriction is a calling restriction");
+    assert.equal(r.reasons.canCall, "TELEGRAPH_SAFETY_TRUST_RESTRICTED");
     assert.equal(r.capabilities.canSeeGroupReadReceipts, false,
       "a restricted viewer does not receive group seen state either");
+    // DM, and Bob has never written in it: sending would initiate contact.
+    const dm = await resolveConversationCapabilities(sc, { viewerId: ALICE, conversationId: DM });
+    assert.equal(dm.capabilities.canSendMessage, false);
+    assert.equal(dm.reasons.canSendMessage, "TELEGRAPH_SAFETY_TRUST_RESTRICTED");
   });
 
   it("a thread that already owns a booking refuses a second booking from inside itself", async () => {

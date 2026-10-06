@@ -30,7 +30,7 @@ import { color, space, radius, type as t, avatar } from '../../src/theme/tokens'
 import { ConfirmSheet } from '../../src/components/ui/ConfirmSheet';
 import {
   addStopFromRecommendation,
-  endLayoverSession,
+  endLayoverSession, createMemoryFromLayover, type LayoverLandsideSuppression,
   getLayoverBuddies,
   getLayoverOverview,
   getLayoverPresence,
@@ -53,7 +53,7 @@ import {
 import { AirportEssentialsCard } from '../../src/components/layover/AirportEssentialsCard';
 import { AirportConditionsCard } from '../../src/components/layover/AirportConditionsCard';
 import { LayoverHero } from '../../src/components/layover/LayoverHero';
-import { CanILeaveCard } from '../../src/components/layover/CanILeaveCard';
+import { CanILeaveCard } from '../../src/components/layover/CanILeaveCard'; import { LayoverConstraintsCard } from '../../src/components/layover/LayoverConstraintsCard';
 import { LayoverPlanSection } from '../../src/components/layover/LayoverPlanSection';
 import { LayoverRecsSection } from '../../src/components/layover/LayoverRecsSection';
 import { LayoverMapCard } from '../../src/components/layover/LayoverMapCard';
@@ -61,7 +61,7 @@ import { LayoverPeopleSection } from '../../src/components/layover/LayoverPeople
 import { LayoverCrewSection } from '../../src/components/layover/LayoverCrewSection';
 import { LayoverDiscoveryCard } from '../../src/components/layover/LayoverDiscoveryCard';
 import { LayoverSafeReturnCard } from '../../src/components/layover/LayoverSafeReturnCard';
-import { LayoverEndSheet } from '../../src/components/layover/LayoverEndSheet';
+import { LayoverEndSheet } from '../../src/components/layover/LayoverEndSheet'; import { endLayoverToast } from '../../src/components/layover/layoverEndToast';
 import { useSafeReturnAbort } from '../../src/components/layover/useSafeReturnAbort';
 import { LayoverCompassCard } from '../../src/components/layover/LayoverCompassCard';
 import { LayoverFlightChangeCard } from '../../src/components/layover/LayoverFlightChangeCard';
@@ -93,7 +93,7 @@ import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView
 const UNREACHABLE_COPY = "We couldn't reach Portava. Check your connection and try again.";
 
 export default function LayoverDashboardScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, constraints: constraintsAtStart } = useLocalSearchParams<{ id: string; constraints?: string }>(); // `constraints`: what the start sheet learned about the answers it sent (`not_stored` | `unsaved`) — see LayoverModeSheet
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
@@ -103,7 +103,7 @@ export default function LayoverDashboardScreen() {
   const [recsLoading, setRecsLoading] = useState(true);
   // census L294 (C2) — the SERVER's refusal sentence, or null when it served a
   // list. Never an empty list standing in for a failure.
-  const [recsError, setRecsError] = useState<string | null>(null);
+  const [recsError, setRecsError] = useState<string | null>(null); const [recsLandside, setRecsLandside] = useState<LayoverLandsideSuppression | null>(null); // census L43
   const [refreshing, setRefreshing] = useState(false);
   /**
    * census L156 — WHICH failure, not just THAT one happened.
@@ -338,7 +338,7 @@ export default function LayoverDashboardScreen() {
       // `recs` with `recsError` null is a measured "nothing fits"; a non-null
       // `recsError` is the server's refusal and carries its sentence.
       setRecs(recRes.ok ? recRes.recommendations : []);
-      setRecsError(recRes.ok ? null : recRes.message);
+      setRecsError(recRes.ok ? null : recRes.message); setRecsLandside(recRes.ok ? recRes.landsideSuppression : null);
     } catch {
       setRecsLoading(false);
       setRecs([]);
@@ -534,17 +534,17 @@ export default function LayoverDashboardScreen() {
    * `passportStamp.reason` is what the toast says — this screen does not
    * re-derive whether a stamp was written.
    */
-  const doEndLayover = useCallback(async (choice: { outcome: 'completed' | 'cancelled'; passportStamp: boolean }) => {
+  const doEndLayover = useCallback(async (choice: { outcome: 'completed' | 'cancelled'; passportStamp: boolean; keepMemory?: boolean }) => {
     if (!id) return;
     setEndConfirmOpen(false);
     setEndBusy(true);
     try {
-      const result = await endLayoverSession(id, choice);
+      const result = await endLayoverSession(id, { outcome: choice.outcome, passportStamp: choice.passportStamp });
       if (result.ok) {
-        await cancelScheduledNotification(notifIdRef.current);
-        if (choice.passportStamp && result.passportStamp && !result.passportStamp.written) {
-          showToast('Layover ended — the Passport stamp could not be saved');
-        }
+        await cancelScheduledNotification(notifIdRef.current); const memory = choice.keepMemory === true && result.outcome === 'completed' ? await createMemoryFromLayover(id) : null; // census L275 — only a layover the SERVER recorded as completed
+        const endToast = endLayoverToast(Boolean(choice.passportStamp && result.passportStamp && !result.passportStamp.written), memory);
+        if (endToast) showToast(endToast);
+        // ↑ census L19/L162 (the stamp) and L275 (the Memory): ONE sentence from both of the server's answers.
         router.back();
       } else {
         showToast('Could not end the layover');
@@ -794,7 +794,7 @@ export default function LayoverDashboardScreen() {
           window={win}
           airport={airport}
           airportIntelligence={overview.airportIntelligence ?? null}
-        />
+        /><LayoverConstraintsCard sessionId={session.id} canEdit={!!canEdit} refreshKey={dataEpoch} onChanged={() => load(true)} creationNotice={typeof constraintsAtStart === 'string' ? constraintsAtStart : null} />{/* §4/§5/§12.1 (census L22, L35, L49): the declared bags and connection, and the one question when the answer could change the verdict. */}
         {/* The one §11 event producer this tree has: the traveller. A flight
             time the gate agent just announced is a fact no feed here carries,
             and the server runs the whole §11.1 pipeline over it. */}
@@ -861,7 +861,7 @@ export default function LayoverDashboardScreen() {
               canPlan={!!canEdit}
               addedRecIds={addedRecIds}
               addingRecId={addingRecId}
-              onAddToPlan={handleAddRec}
+              onAddToPlan={handleAddRec} landsideSuppression={recsLandside}
             />
             {/* §13 L116/L117/L119/L121/L122/L125/L126 — the map's three server
                 inputs, all of which the server was ALREADY publishing and this
@@ -881,7 +881,7 @@ export default function LayoverDashboardScreen() {
               airport={airport}
               stops={stops}
               airportReturn={airportReturn}
-              envelope={overview.safeEnvelope ?? null}
+              envelope={overview.safeEnvelope ?? null} envelopeGate={overview.safeEnvelopeGate ?? null}
               candidateFeasibility={candidateFeasibility}
               offline={overview.offlineBundle ?? null}
               nowMs={nowMs}
@@ -903,7 +903,7 @@ export default function LayoverDashboardScreen() {
               buddies={buddies}
               canEdit={!!canEdit}
               onToggleShare={handleToggleShare}
-              onOpenBuddy={(b) => router.push(`/(rent-a-buddy)/buddy/${b.id}` as any)}
+              onOpenBuddy={(b) => router.push(`/(rent-a-buddy)/buddy/${b.id}` as any)} intentsEnabled={overview.share.intentsEnabled === true} sessionId={id ?? null}
             />
 
             {/* §25.2 L269 — Layover Discovery. `getLayoverGems` and
