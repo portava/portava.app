@@ -223,7 +223,7 @@ export function ActiveSafeReturnCard({ session, onSessionEnded, onSessionUpdated
             onMessageCircle={handleMessageCircle}
           />
         )}
-        <EmergencyHelpSheet visible={showEmergency} onClose={() => setShowEmergency(false)} />
+        <EmergencyHelpSheet visible={showEmergency} onClose={() => setShowEmergency(false)} tripId={session.tripId} onShareLocation={handleShareLocation} onMessageTrustedCircle={handleMessageCircle} />
       </>
     );
   }
@@ -256,7 +256,7 @@ export function ActiveSafeReturnCard({ session, onSessionEnded, onSessionUpdated
           <Pressable style={styles.secondaryBtn} onPress={handleExtend} disabled={loading}>
             <Text style={styles.secondaryBtnText}>+15 min</Text>
           </Pressable>
-          <Pressable style={styles.emergencyBtn} onPress={() => setShowEmergency(true)}>
+          <Pressable style={styles.emergencyBtn} onPress={() => setShowEmergency(true)} accessibilityRole="button" accessibilityLabel="Emergency help" testID="safe-return-emergency">
             <PhoneCall size={14} color={color.signal} />
           </Pressable>
         </View>
@@ -283,7 +283,7 @@ export function ActiveSafeReturnCard({ session, onSessionEnded, onSessionUpdated
           <Text style={styles.cancelLinkText}>Cancel Safe Return</Text>
         </Pressable>
       </View>
-      <EmergencyHelpSheet visible={showEmergency} onClose={() => setShowEmergency(false)} />
+      <EmergencyHelpSheet visible={showEmergency} onClose={() => setShowEmergency(false)} tripId={session.tripId} onShareLocation={handleShareLocation} onMessageTrustedCircle={handleMessageCircle} />
     </>
   );
 }
