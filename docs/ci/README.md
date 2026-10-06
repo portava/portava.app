@@ -917,6 +917,15 @@ Three things about it differ from `live-db.yml` and are deliberate:
   records); they carry the unconditional allowlist step, and every entry point
   they run imports the guard first.
 
+Two more facts about its apply step. The applier refuses two chain files by
+shape (2182 and 2190), which portava-ci never classifies because 2254's
+backfill rows cover them; the step is a bounded loop in which
+`db:beta-bootstrap --apply-refused` applies each one verbatim where the
+applier stops and records it `applied_by='manual'` — the applier's own
+documented remedy, not atomic with its ledger row, and explained in the
+runbook. And the chain apply needs PR #632 (declared apply-order overrides)
+merged first.
+
 ### Concurrency: the shared database is a queue, not a race
 
 `live-db.yml`'s jobs share one non-production Supabase project, so only one run

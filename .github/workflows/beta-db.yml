@@ -21,10 +21,19 @@
 #                             of the 280 files the baseline already covers;
 #        db:apply-migrations:dry-run, db:apply-migrations
 #                           — the UNCHANGED applier, which now sees every file
-#                             at or after 2093_ as pending;
+#                             at or after 2093_ as pending. It refuses two files
+#                             by shape (2182, 2190: transaction control it cannot
+#                             wrap with a ledger row). The apply step is a
+#                             bounded loop: where the applier stops on one, the
+#                             bootstrap applies it verbatim and records it
+#                             applied_by='manual' (db:beta-bootstrap
+#                             --apply-refused), and the applier resumes;
 #        certify:migrations, audit:schema
 #                           — the same proofs live-db.yml runs on portava-ci.
 #   3. verdict             .github/scripts/live-db-verdict.sh, as everywhere.
+#
+# The chain apply also needs PR #632 (declared apply-order overrides) merged
+# first; see the runbook.
 #
 # Runbook: docs/supabase-beta-runbook.md. Dispatch:
 #   gh workflow run beta-db.yml -f confirm=BOOTSTRAP-BETA
@@ -344,16 +353,76 @@ jobs:
             bash .github/scripts/pnpm-run.sh scripts @workspace/scripts db:beta-bootstrap --snapshot "$SNAPSHOT"
           fi
 
-      # The unchanged applier. With the ledger pre-created, every canonical file
-      # at or after 2093_ has no row and is pending; the dry run classifies all
-      # of them and writes nothing.
-      - name: 'migrations — dry run (ordered plan, writes nothing)'
+      # THE UNCHANGED APPLIER'S DRY RUN. With the ledger pre-created every
+      # canonical file at or after 2093_ is pending, so it classifies all of
+      # them. It exits 1 when a pending file is refused by SHAPE (transaction
+      # control it cannot wrap with its ledger row: 2182 and 2190 today). That
+      # exit is accepted ONLY when every refused file it names is in the
+      # bootstrap's own computed refused set (--check-refused, offline); the
+      # list is kept for the apply loop below. Any other failure is red.
+      - name: 'migrations — dry run (refusals must be exactly the files the bootstrap hand-applies)'
         shell: bash
-        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts db:apply-migrations:dry-run
+        run: |
+          set -uo pipefail
+          LOG="$RUNNER_TEMP/apply-dry-run.log"
+          REFUSED_LIST="$RUNNER_TEMP/refused-by-shape.txt"
+          bash .github/scripts/pnpm-run.sh scripts @workspace/scripts db:apply-migrations:dry-run 2>&1 | tee "$LOG"
+          RC=${PIPESTATUS[0]}
+          sed -nE 's/^ +[0-9]+\. ([A-Za-z0-9_.-]+\.sql) +\[REFUSED .*/\1/p' "$LOG" > "$REFUSED_LIST"
+          if [ "$RC" -eq 0 ]; then
+            echo "dry run: no pending file is refused by shape."
+            exit 0
+          fi
+          if [ "$RC" -ne 1 ] || [ ! -s "$REFUSED_LIST" ]; then
+            echo "::error::the dry run failed (exit $RC) for a reason other than files refused by shape — see above."
+            exit 1
+          fi
+          echo "dry run: refused by shape, to be applied verbatim by the bootstrap: $(paste -sd, "$REFUSED_LIST")"
+          bash .github/scripts/pnpm-run.sh scripts @workspace/scripts db:beta-bootstrap --check-refused "$(paste -sd, "$REFUSED_LIST")"
 
-      - name: 'migrations — apply the chain to portava-beta'
+      # THE APPLY, AS A BOUNDED LOOP. The applier stops at the first refused
+      # file, having applied everything before it; the bootstrap then applies
+      # that file VERBATIM and records it applied_by='manual' (the applier's own
+      # documented remedy — see scripts/src/beta-bootstrap.ts), and the applier
+      # runs again from there. Today: applier (stops at 2182) -> hand-apply 2182
+      # -> applier (stops at 2190) -> hand-apply 2190 -> applier (to the end).
+      # The loop continues ONLY on a stop the applier reports as `refused`, for
+      # a file the dry run listed; any other failure ends it red. At most
+      # (number of refused files + 1) applier runs.
+      - name: 'migrations — apply the chain, hand-applying each refused-by-shape file where the applier stops'
         shell: bash
-        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts db:apply-migrations
+        run: |
+          set -uo pipefail
+          LOG="$RUNNER_TEMP/apply.log"
+          REFUSED_LIST="$RUNNER_TEMP/refused-by-shape.txt"
+          CAP=$(( $(grep -c . "$REFUSED_LIST") + 1 ))
+          RUN=0
+          while [ "$RUN" -lt "$CAP" ]; do
+            RUN=$((RUN + 1))
+            echo "── applier run $RUN of at most $CAP"
+            bash .github/scripts/pnpm-run.sh scripts @workspace/scripts db:apply-migrations 2>&1 | tee "$LOG"
+            RC=${PIPESTATUS[0]}
+            if [ "$RC" -eq 0 ]; then
+              echo "applier: the chain is complete after $RUN run(s)."
+              exit 0
+            fi
+            STOPPED="$(sed -nE 's/.*apply-migrations STOPPED at ([A-Za-z0-9_.-]+\.sql) \(refused\).*/\1/p' "$LOG" | head -n 1)"
+            if [ "$RC" -ne 1 ] || [ -z "$STOPPED" ]; then
+              echo "::error::the applier failed (exit $RC) for a reason other than a file refused by shape. Only refused files are hand-applied; this is a real failure — see above."
+              exit 1
+            fi
+            if ! grep -qxF "$STOPPED" "$REFUSED_LIST"; then
+              echo "::error::the applier refused $STOPPED, which this run's dry run did not list. Not hand-applying a file nobody saw refused."
+              exit 1
+            fi
+            echo "── hand-applying $STOPPED verbatim (the applier refuses its shape)"
+            if ! bash .github/scripts/pnpm-run.sh scripts @workspace/scripts db:beta-bootstrap --apply-refused "$STOPPED"; then
+              echo "::error::the bootstrap could not hand-apply $STOPPED — see above."
+              exit 1
+            fi
+          done
+          echo "::error::the applier had not finished after $CAP run(s) — more stops than refused files. Stopping."
+          exit 1
 
       - name: 'migrations — certify the apply landed'
         shell: bash

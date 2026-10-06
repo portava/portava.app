@@ -41,7 +41,7 @@ The workflow has four jobs:
 | --- | --- | --- |
 | `preflight` | nothing | `assert-ci-scripts.mjs`; the `confirm`/`reset` inputs must be exact. |
 | `reference-snapshot` | portava-ci, **read-only** | `db:beta-reference-snapshot` → `beta-reference-snapshot.json`, uploaded as an artifact. |
-| `beta-bootstrap` | portava-beta | `db:beta-bootstrap`, then `db:apply-migrations:dry-run`, `db:apply-migrations`, `certify:migrations`, `audit:schema`. |
+| `beta-bootstrap` | portava-beta | `db:beta-bootstrap`, then `db:apply-migrations:dry-run`, the apply loop (`db:apply-migrations`, with `db:beta-bootstrap --apply-refused` where it stops on a refused-by-shape file), `certify:migrations`, `audit:schema`. |
 | `verdict` | nothing | `live-db-verdict.sh`: anything skipped or cancelled is not a pass. |
 
 ### `db:beta-bootstrap` step by step (`scripts/src/beta-bootstrap.ts`)
@@ -99,6 +99,65 @@ The workflow has four jobs:
   one transaction. Every chain file has no row, so the **unchanged** applier
   treats all of them as pending, and 2254 later runs as an ordinary pending
   migration.
+- **i. Refused-by-shape preview.** The chain files the applier will refuse are
+  computed against the ledger just written and printed (2182 and 2190 today);
+  they are applied later, where the applier stops on each — see below.
+
+### The two files the applier refuses by shape — applied by the bootstrap
+
+The unchanged applier wraps every migration in ONE transaction together with
+its ledger row, so it refuses a file whose own transaction control it cannot
+wrap, and its header names the remedy: *apply it by hand, verify it, then
+INSERT its ledger row with `applied_by='manual'`*. On portava-ci such files
+sit under 2254's backfill rows and are never classified. On beta every chain
+file is pending, so the applier meets them. Measured by running
+`classifyMigration` over every chain file at or after `2093_` with no ledger
+row, the set is exactly:
+
+| File | Why the applier refuses it |
+| --- | --- |
+| `2182_close_authz_rpc_oracle.sql` | a `BEGIN … COMMIT` body followed by a top-level `BEGIN … ROLLBACK` verification probe (line 167) |
+| `2190_memory_lifecycle_fixes.sql` | two `BEGIN … COMMIT` blocks (lines 61–362 and 376–407) |
+
+`scripts/src/beta-bootstrap.test.ts` pins that set, so a newly refused file
+turns the test red instead of being absorbed.
+
+The bootstrap is the hand: `db:beta-bootstrap --apply-refused <file>`. It
+refuses unless the file is in the computed set, has no ledger row, and every
+chain file sorting before it already has one — i.e. the applier stopped
+exactly there. It then sends the file's bytes **verbatim** as one Management
+API call (not through `beta_bootstrap.run()`: PL/pgSQL cannot execute
+`BEGIN`/`COMMIT`/`ROLLBACK`; verbatim is what the SQL editor does — the file's
+own `BEGIN … COMMIT` commits its body and its `BEGIN … ROLLBACK` probe rolls
+itself back), and in a **second** call inserts the ledger row:
+`applied_by='manual'`, `checksum` = the applier's `checksumOf(bytes)`, `notes`
+= `beta-bootstrap 2026-10-06: applied verbatim by the bootstrap because the
+applier refuses its shape (<first sentence of the refusal>)`,
+`ON CONFLICT (filename) DO NOTHING`.
+
+**This is not atomic.** The apply and the row are two calls, so a failure
+between them leaves the file applied and unrecorded; the script says so and
+names the row to insert by hand before the applier runs again. If the
+verbatim call itself fails, no row is written and the file's own
+preconditions and transaction blocks decide what persisted. The mode is
+idempotent: a file that already has a ledger row is skipped.
+
+Because 2182 and 2190 depend on the files before them, and the files after
+them depend on them, the hand apply can only happen where the applier stops.
+The workflow's apply step is therefore a bounded loop:
+
+1. `db:apply-migrations` — applies everything before 2182, stops at 2182 (`refused`).
+2. `db:beta-bootstrap --apply-refused 2182_close_authz_rpc_oracle.sql`
+3. `db:apply-migrations` — continues, stops at 2190 (`refused`).
+4. `db:beta-bootstrap --apply-refused 2190_memory_lifecycle_fixes.sql`
+5. `db:apply-migrations` — to the end.
+
+The loop continues only when the applier exits 1 reporting a `refused` stop
+for a file the same run's dry run listed (and the bootstrap re-checks the
+set); any other applier failure ends it red. It runs the applier at most
+(refused files + 1) times. The dry run before it exits 1 whenever a pending
+file is refused; that is accepted only when `db:beta-bootstrap --check-refused`
+confirms every file it named is in the refused set.
 
 ### The reference snapshot (`scripts/src/beta-reference-snapshot.ts`)
 
@@ -161,7 +220,9 @@ partway leaves tables behind and the next plain run is refused as not empty.
 | `public` not empty, no reset | 2 | the baseline is restored over whatever is there |
 | baseline shape changed | 2 | the skip rules must be re-read against a new dump |
 | snapshot missing, from another baseline, carrying an unlisted table, a non-NULL user-id column, or an enabled flag | 2 | the import accepts only what the plan allows |
-| a statement, the census, an import or the ledger check failed | 1 | the log names the statement and the error |
+| `--apply-refused` for a file the applier does not refuse by shape, or before every earlier chain file is recorded | 2 | only the applier's refused files are hand-applied, and only where it stopped |
+| `--apply-refused` for a file that already has a ledger row | 0 (skips) | idempotent |
+| a statement, the census, an import, the ledger check, a verbatim apply or its ledger row failed | 1 | the log names the statement and the error |
 
 ## What it does NOT configure
 
@@ -193,23 +254,16 @@ In the order the workflow would meet them:
   average); each call has a 10-minute client timeout. A request that does not
   complete leaves its batch's outcome unknown — re-dispatch with the reset
   rather than retrying over it.
-- **Files the applier refuses.** `2182_close_authz_rpc_oracle.sql` (a top-level
-  `ROLLBACK` probe) and `2190_memory_lifecycle_fixes.sql` (two `BEGIN … COMMIT`
-  blocks) are classified `refuse` by the unchanged applier. On portava-ci they
-  sit under 2254's backfill rows and are never classified; on beta they are
-  pending, so `db:apply-migrations:dry-run` exits 1 naming them and the apply
-  does not start. Measured by running `classifyMigration` over all 413 pending
-  files: these two are the only refusals. They need a decision (the applier's
-  documented remedy is a hand apply recorded with `applied_by='manual'`, at the
-  right point in the order) before the chain can complete.
-- **Chain order.** Two chain-order defects (2138 must precede 2136; 2137 must
-  follow 2279) need the declared apply-order overrides from the sibling change
-  `claude/migration-order-overrides-20261006`. Without it the apply stops at
-  2136's precondition.
+- **Chain order — merge #632 first.** The beta apply needs the declared
+  apply-order overrides added to the applier by PR #632 (its entries are
+  documented there). Without it, the chain apply stops at the first
+  chain-order defect.
+- **The refused-by-shape files.** Handled by the loop above. A verbatim apply
+  that fails stops the loop with the file's own error.
 - **Other replay gaps.** `artifacts/api-server/scripts/local-db/KNOWN_UNREPLAYABLE.json`
   records the files that fail when the chain is replayed onto this baseline on
   plain PostgreSQL. `2490` (the `MAINTAIN` privilege) is PostgreSQL-16-only and
   does not apply to beta's 17; `2970` needs the stamp slugs the reference
   snapshot now supplies; the intel files (`2276`–`2292`, `3002`, `3003`,
-  `3310`) and `2140` are the most likely next stops if the overrides above do
-  not cover them.
+  `3310`) and `2140` are the most likely next stops if #632's overrides do not
+  cover them.

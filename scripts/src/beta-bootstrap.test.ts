@@ -42,7 +42,12 @@ import {
   assertAllowlisted,
   assertReadOnlySelect,
   boolField,
+  buildManualLedgerRowSql,
+  firstSentence,
   jsonField,
+  manualApplyNotes,
+  refusedChainFiles,
+  unrecordedPredecessors,
   backfillFilenames,
   baselineShapeProblems,
   buildBaselineModel,
@@ -74,8 +79,8 @@ import {
   type ReferenceSnapshot,
   type ReferenceTablePlan,
 } from "./beta-db-core.js";
-import { MIGRATIONS_DIR, listMigrationFiles, maskNonCode } from "./apply-migrations.js";
-import { bootstrapTargetRefusal, parseBootstrapArgs } from "./beta-bootstrap.js";
+import { MIGRATIONS_DIR, checksumOf, listMigrationFiles, maskNonCode } from "./apply-migrations.js";
+import { bootstrapTargetRefusal, checkRefusedProblems, parseBootstrapArgs } from "./beta-bootstrap.js";
 import { missingSourceColumns } from "./beta-reference-snapshot.js";
 
 const BASELINE_SQL = readFileSync(BASELINE_PATH, "utf8");
@@ -699,14 +704,96 @@ describe("emptiness, reset, census and arguments", () => {
   });
 
   it("parses the bootstrap's flags fail-closed", () => {
-    assert.deepEqual(parseBootstrapArgs(["--snapshot", "/tmp/s.json"]), { snapshot: "/tmp/s.json", reset: false });
+    assert.deepEqual(parseBootstrapArgs(["--snapshot", "/tmp/s.json"]), { mode: "bootstrap", snapshot: "/tmp/s.json", reset: false });
     assert.deepEqual(parseBootstrapArgs(["--snapshot=/tmp/s.json", "--reset", "--confirm-reset=RESET-BETA"]), {
+      mode: "bootstrap",
       snapshot: "/tmp/s.json",
       reset: true,
     });
+    assert.deepEqual(parseBootstrapArgs(["--apply-refused", "2182_close_authz_rpc_oracle.sql"]), {
+      mode: "apply-refused",
+      file: "2182_close_authz_rpc_oracle.sql",
+    });
+    assert.deepEqual(parseBootstrapArgs(["--check-refused", "a.sql,b.sql"]), { mode: "check-refused", files: ["a.sql", "b.sql"] });
+    assert.equal(typeof parseBootstrapArgs(["--apply-refused", "x.sql", "--snapshot", "s"]), "string", "modes are exclusive");
+    assert.equal(typeof parseBootstrapArgs(["--apply-refused", "x.sql", "--reset", "--confirm-reset=RESET-BETA"]), "string");
+    assert.equal(typeof parseBootstrapArgs(["--apply-refused"]), "string");
+    assert.equal(typeof parseBootstrapArgs(["--apply-refused", "x'; DROP TABLE y; --"]), "string");
+    assert.equal(typeof parseBootstrapArgs(["--check-refused", ""]), "string");
     assert.equal(typeof parseBootstrapArgs([]), "string");
     assert.equal(typeof parseBootstrapArgs(["--snapshot", "s", "--reset"]), "string");
     assert.equal(typeof parseBootstrapArgs(["--snapshot", "s", "--reset", "--confirm-reset=yes"]), "string");
     assert.equal(typeof parseBootstrapArgs(["--snapshot", "s", "--confirm-reset=RESET-BETA"]), "string");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe("the files the applier refuses by shape (applied verbatim by the bootstrap)", () => {
+  const files = listMigrationFiles();
+  const read = (f: string) => readFileSync(join(MIGRATIONS_DIR, f), "utf8");
+
+  it("is exactly 2182 and 2190 today — a newly refused file must turn this red", () => {
+    const refused = refusedChainFiles(files, read);
+    assert.deepEqual(refused.map((r) => r.filename), [
+      "2182_close_authz_rpc_oracle.sql",
+      "2190_memory_lifecycle_fixes.sql",
+    ]);
+    assert.equal(
+      firstSentence(refused[0].reason),
+      "2182_close_authz_rpc_oracle.sql contains a top-level ROLLBACK at line 167.",
+    );
+    assert.equal(
+      firstSentence(refused[1].reason),
+      "2190_memory_lifecycle_fixes.sql has transaction-control statements this script will not interpret: BEGIN@61, COMMIT@362, BEGIN@376, COMMIT@407.",
+    );
+  });
+
+  it("never includes a file before 2093_ or one that already has a ledger row", () => {
+    // Fixture: every file has a shape the applier refuses (an interior ROLLBACK).
+    const refusedShape = () => "BEGIN;\nCREATE TABLE public.t (x int);\nCOMMIT;\nBEGIN;\nSELECT 1;\nROLLBACK;\n";
+    assert.deepEqual(
+      refusedChainFiles(["0186_geo_indexes.sql", "2092_x.sql", "2093_a.sql", "2200_b.sql"], refusedShape, new Set(["2200_b.sql"]))
+        .map((r) => r.filename),
+      ["2093_a.sql"],
+    );
+    const backfilled = new Set(backfillFilenames(files));
+    assert.ok(refusedChainFiles(files, read).every((r) => !backfilled.has(r.filename)));
+    assert.deepEqual(
+      refusedChainFiles(files, read, new Set(["2182_close_authz_rpc_oracle.sql"])).map((r) => r.filename),
+      ["2190_memory_lifecycle_fixes.sql"],
+    );
+  });
+
+  it("applies only where the applier stopped: every earlier chain file must be recorded", () => {
+    const chain = files.filter((f) => f >= CHAIN_START_PREFIX);
+    const before2182 = chain.filter((f) => f < "2182_");
+    assert.deepEqual(unrecordedPredecessors(files, "2182_close_authz_rpc_oracle.sql", new Set(before2182)), []);
+    const gap = new Set(before2182.filter((f) => !f.startsWith("2181_")));
+    assert.deepEqual(
+      unrecordedPredecessors(files, "2182_close_authz_rpc_oracle.sql", gap),
+      before2182.filter((f) => f.startsWith("2181_")),
+    );
+    assert.deepEqual(unrecordedPredecessors(files, chain[0], new Set()), [], "nothing before the chain start counts");
+  });
+
+  it("records the hand apply as 'manual' with the applier's checksum and a reason, never overwriting", () => {
+    const f = "2182_close_authz_rpc_oracle.sql";
+    const sum = checksumOf(read(f));
+    const notes = manualApplyNotes(refusedChainFiles(files, read)[0].reason);
+    assert.equal(
+      notes,
+      "beta-bootstrap 2026-10-06: applied verbatim by the bootstrap because the applier refuses its shape " +
+        "(2182_close_authz_rpc_oracle.sql contains a top-level ROLLBACK at line 167.)",
+    );
+    const sql = buildManualLedgerRowSql(f, sum, notes);
+    assert.match(sql, new RegExp(`VALUES \\('${f}', '${sum}', 'manual', '`));
+    assert.match(sql, /ON CONFLICT \(filename\) DO NOTHING RETURNING 1\)/);
+    assert.throws(() => buildManualLedgerRowSql(f, "backfill", notes), /sha256/);
+  });
+
+  it("--check-refused accepts exactly the refused set and nothing else", () => {
+    assert.deepEqual(checkRefusedProblems(["2182_close_authz_rpc_oracle.sql", "2190_memory_lifecycle_fixes.sql"], files), []);
+    assert.equal(checkRefusedProblems(["2093_discovery_shadow_serves_grants.sql"], files).length, 1);
+    assert.match(checkRefusedProblems(["9999_nope.sql"], files)[0], /not a canonical migration file/);
   });
 });

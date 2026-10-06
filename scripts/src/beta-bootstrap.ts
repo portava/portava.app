@@ -35,19 +35,52 @@
  *      NO row, so the unchanged applier sees all of them as pending; 2254 then
  *      runs later as an ordinary pending migration (its INSERT is ON CONFLICT
  *      DO NOTHING).
+ *   i. REFUSED-BY-SHAPE PREVIEW. The chain files the applier will refuse
+ *      (refusedChainFiles(), against the ledger just written) are printed;
+ *      they are applied later, by --apply-refused, where the applier stops.
  *   Then the scratch schema is dropped and the script exits 0. The chain is
  *   applied by the UNCHANGED applier in a later workflow step.
+ *
+ * TWO MORE MODES, FOR THE FILES THE APPLIER REFUSES BY SHAPE
+ * ==========================================================
+ * The applier refuses a file whose transaction control it cannot wrap in one
+ * transaction with its ledger row, and its header names the remedy: "apply it
+ * by hand, verify it, then INSERT its ledger row with applied_by='manual'".
+ * On beta that is 2182_close_authz_rpc_oracle.sql and
+ * 2190_memory_lifecycle_fixes.sql (refusedChainFiles() in beta-db-core.ts;
+ * the unit test pins the set). This script is that hand:
+ *
+ *   --apply-refused <file>  Only when <file> is in the computed refused set,
+ *       has no ledger row, and every chain file sorting before it HAS one (so
+ *       the applier stopped exactly there). Sends the file's bytes VERBATIM
+ *       as one Management API call — not through beta_bootstrap.run(),
+ *       because PL/pgSQL cannot execute BEGIN/COMMIT/ROLLBACK; verbatim is
+ *       what the SQL editor does: the file's own BEGIN … COMMIT commits its
+ *       body and its BEGIN … ROLLBACK probe rolls itself back. Then, in a
+ *       SECOND call, inserts the ledger row (applied_by='manual',
+ *       checksum = the applier's checksumOf(bytes), ON CONFLICT DO NOTHING).
+ *       NOT ATOMIC WITH THE APPLY: if the second call fails, the file is
+ *       applied and unrecorded, and the next applier run would offer it again
+ *       — the error says so. Idempotent: a file that already has a ledger row
+ *       is skipped. If the verbatim call fails, nothing is recorded and the
+ *       file's own preconditions and transaction blocks decide what persisted.
+ *   --check-refused <a.sql,b.sql>  Offline (no token, no request): exit 0 only
+ *       if every named file is in the refused set computed from disk — the
+ *       workflow's check that a dry run's refusals are exactly these.
  *
  * USAGE
  *   pnpm --dir scripts run db:beta-bootstrap --snapshot <path>
  *   pnpm --dir scripts run db:beta-bootstrap --snapshot <path> --reset --confirm-reset=RESET-BETA
+ *   pnpm --dir scripts run db:beta-bootstrap --apply-refused 2182_close_authz_rpc_oracle.sql
+ *   pnpm --dir scripts run db:beta-bootstrap --check-refused 2182_close_authz_rpc_oracle.sql,2190_memory_lifecycle_fixes.sql
  *   (In CI, only through .github/workflows/beta-db.yml and .github/scripts/pnpm-run.sh.)
  *
  * EXIT CODES
- *   0  bootstrapped; the chain is ready for the applier
- *   1  a statement, a census or an import failed — the output names it
- *   2  refused: wrong target, missing token or snapshot, not empty, bad flags,
- *      or a baseline whose measured shape no longer matches BASELINE_SHAPE
+ *   0  bootstrapped / applied and recorded / already recorded / all named files refused-by-shape
+ *   1  a statement, a census, an import, a verbatim apply or its ledger row failed — the output names it
+ *   2  refused: wrong target, missing token or snapshot, not empty, bad flags, a file
+ *      that is not in the refused set or is out of order, or a baseline whose
+ *      measured shape no longer matches BASELINE_SHAPE
  *
  * TARGET GUARD — the same arrangement as apply-migrations.ts: the guard is a
  * dynamic import under RUN_DIRECTLY, awaited before main(); nothing at module
@@ -56,7 +89,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -77,6 +110,8 @@ import {
   argValue,
   backfillFilenames,
   boolField,
+  buildManualLedgerRowSql,
+  firstSentence,
   baselineShapeProblems,
   buildBatchQuery,
   buildCreateExtensionsSql,
@@ -91,10 +126,13 @@ import {
   loadBaselineModel,
   loadLedgerDdl,
   managementApi,
+  manualApplyNotes,
   parseRunFailureOrdinal,
   planBatches,
   planReferenceTables,
+  refusedChainFiles,
   resolveProjectRef,
+  unrecordedPredecessors,
   jsonField,
   stringArrayField,
   textField,
@@ -105,30 +143,70 @@ import {
   type ReferenceSnapshot,
   type SkipRule,
 } from "./beta-db-core.js";
-import { compareMigrationFilenames } from "./apply-migrations.js";
+import {
+  MIGRATIONS_DIR,
+  checksumOf,
+  compareMigrationFilenames,
+  listMigrationFiles,
+} from "./apply-migrations.js";
 
 export const RESET_CONFIRMATION = "RESET-BETA";
 
-export interface BootstrapArgs {
-  snapshot: string;
-  reset: boolean;
-}
+export type BootstrapArgs =
+  | { mode: "bootstrap"; snapshot: string; reset: boolean }
+  | { mode: "apply-refused"; file: string }
+  | { mode: "check-refused"; files: string[] };
 
-/** Parse argv; returns a reason string on refusal. */
+const FILE_ARG_RE = /^[A-Za-z0-9_.-]+\.sql$/;
+
+/** Parse argv; returns a reason string on refusal. The three modes are exclusive. */
 export function parseBootstrapArgs(argv: readonly string[]): BootstrapArgs | string {
+  const applyRefused = argValue(argv, "--apply-refused");
+  const checkRefused = argValue(argv, "--check-refused");
   const snapshot = argValue(argv, "--snapshot");
+  const reset = argv.includes("--reset");
+  const confirm = argValue(argv, "--confirm-reset");
+  const modes = [applyRefused !== null, checkRefused !== null, snapshot !== null].filter(Boolean).length;
+  if (modes > 1) return "--snapshot, --apply-refused and --check-refused are separate modes; give exactly one.";
+  if (applyRefused !== null || checkRefused !== null) {
+    if (reset || confirm !== null) return "--reset belongs to the bootstrap mode (--snapshot), not to this one.";
+    if (applyRefused !== null) {
+      if (!FILE_ARG_RE.test(applyRefused)) return "--apply-refused needs one migration filename (e.g. 2182_close_authz_rpc_oracle.sql).";
+      return { mode: "apply-refused", file: applyRefused };
+    }
+    const files = (checkRefused ?? "").split(",").map((f) => f.trim()).filter(Boolean);
+    if (files.length === 0 || !files.every((f) => FILE_ARG_RE.test(f))) {
+      return "--check-refused needs a comma-separated list of migration filenames.";
+    }
+    return { mode: "check-refused", files };
+  }
   if (!snapshot) {
     return "--snapshot <path> is required: the reference rows the structure-only baseline lacks come from it.";
   }
-  const reset = argv.includes("--reset");
-  const confirm = argValue(argv, "--confirm-reset");
   if (reset && confirm !== RESET_CONFIRMATION) {
     return `--reset drops the public schema and needs --confirm-reset=${RESET_CONFIRMATION} beside it.`;
   }
   if (!reset && confirm !== null) {
     return "--confirm-reset was given without --reset. Refusing a confirmation that confirms nothing.";
   }
-  return { snapshot, reset };
+  return { mode: "bootstrap", snapshot, reset };
+}
+
+const readMigration = (f: string) => readFileSync(join(MIGRATIONS_DIR, f), "utf8");
+
+/**
+ * --check-refused: every named file must be one the applier refuses by shape.
+ * Pure over the files on disk; returns the problems (empty = accepted).
+ */
+export function checkRefusedProblems(named: readonly string[], files: readonly string[] = listMigrationFiles()): string[] {
+  const refused = new Set(refusedChainFiles(files, readMigration).map((r) => r.filename));
+  return named
+    .filter((f) => !refused.has(f))
+    .map((f) =>
+      files.includes(f)
+        ? `${f} is not a file the applier refuses by shape at or after ${CHAIN_START_PREFIX}; the bootstrap will not hand-apply it.`
+        : `${f} is not a canonical migration file.`,
+    );
 }
 
 /**
@@ -192,6 +270,71 @@ function printEmptiness(s: EmptinessState): void {
   console.log(`  ${LEDGER_TABLE.padEnd(29)}: ${s.ledgerFiles === null ? "absent" : `${s.ledgerFiles.length} row(s)`}`);
 }
 
+/**
+ * --apply-refused <file>: the hand the applier's header asks for. See the
+ * header of this file for the contract; every refusal happens before the
+ * verbatim call, and the verbatim call and the ledger row are two calls.
+ */
+async function applyRefused(api: ManagementApi, file: string): Promise<never> {
+  step(`apply-refused · ${file}`);
+  const files = listMigrationFiles();
+  if (!files.includes(file)) refuse(`${file} is not a canonical migration file.`);
+  const state = await readEmptiness(api);
+  if (state.ledgerFiles === null) refuse(`${LEDGER_TABLE} does not exist on beta; run the bootstrap (--snapshot) first.`);
+  const recorded = new Set(state.ledgerFiles);
+  if (recorded.has(file)) {
+    console.log(`  ${file} already has a ledger row — nothing to do (this mode is idempotent).`);
+    process.exit(0);
+  }
+  const entry = refusedChainFiles(files, readMigration, recorded).find((r) => r.filename === file);
+  if (!entry) {
+    refuse(`${file} is not in the set the applier refuses by shape (chain files at or after ${CHAIN_START_PREFIX} with no ledger row). Only those are applied by hand.`);
+  }
+  const missing = unrecordedPredecessors(files, file, recorded);
+  if (missing.length > 0) {
+    refuse(
+      `out of order: ${missing.length} chain file(s) sorting before ${file} have no ledger row ` +
+        `(${missing.slice(0, 8).join(", ")}${missing.length > 8 ? ", …" : ""}). The applier must apply them first; ` +
+        "this mode runs exactly where the applier stopped.",
+    );
+  }
+  const sql = readMigration(file);
+  const checksum = checksumOf(sql);
+  console.log(`  ${file}: ${Buffer.byteLength(sql, "utf8")} bytes, sha256 ${checksum}`);
+  console.log(`  the applier refuses it: ${firstSentence(entry.reason)}`);
+  console.log("  applying VERBATIM — one Management API call; the file's own BEGIN/COMMIT/ROLLBACK govern it.");
+  try {
+    await api.query(sql);
+  } catch (err) {
+    fail(
+      `the verbatim apply of ${file} failed, and NO ledger row was written. The file's own transaction ` +
+        "blocks decide what persisted (a block that COMMITted before the error is in the database). " +
+        `Read the error, inspect, and re-run this mode only when the file can be applied again.\n  ${(err as Error).message}`,
+    );
+  }
+  const notes = manualApplyNotes(entry.reason);
+  let inserted: string;
+  try {
+    const [r] = await api.query(buildManualLedgerRowSql(file, checksum, notes));
+    inserted = textField(r, "inserted");
+  } catch (err) {
+    fail(
+      `${file} WAS APPLIED but its ledger row was NOT written (${(err as Error).message}). It is applied and ` +
+        "unrecorded — the state the ledger exists to prevent, possible here because the verbatim apply and the " +
+        `row are two calls. Insert the row by hand (applied_by='manual', checksum ${checksum}) before the applier ` +
+        "runs again, or it will offer the file again.",
+    );
+  }
+  const row = (await api.query(LEDGER_FILENAMES_SQL)).find((r) => textField(r, "filename") === file);
+  if (!row || textField(row, "applied_by") !== "manual" || textField(row, "checksum") !== checksum) {
+    fail(`${file}: the ledger does not show the manual row just written (inserted=${inserted}).`);
+  }
+  console.log(`  recorded: applied_by='manual', checksum ${checksum}`);
+  console.log(`  notes: ${notes}`);
+  console.log(`\nbeta-bootstrap --apply-refused PASSED — ${file} applied verbatim and recorded. Re-run the applier.`);
+  process.exit(0);
+}
+
 async function main(): Promise<never> {
   // ── a. guards ─────────────────────────────────────────────────────────────
   step("a · guards");
@@ -202,11 +345,27 @@ async function main(): Promise<never> {
   const targetRefusal = bootstrapTargetRefusal(process.env.SUPABASE_URL);
   if (targetRefusal !== null) refuse(targetRefusal);
   const ref = BETA_PROJECT_REF;
+
+  if (args.mode === "check-refused") {
+    const problems = checkRefusedProblems(args.files);
+    if (problems.length > 0) refuse(problems.join("\n  "));
+    console.log(`  check-refused: ${args.files.join(", ")} — each is refused by the applier's shape rules; the bootstrap applies them verbatim.`);
+    process.exit(0);
+  }
+
   const token = process.env.SUPABASE_PROJECT_TOKEN || process.env.SUPABASE_ACCESS_TOKEN;
   if (!token) {
     refuse("no Management API token (SUPABASE_PROJECT_TOKEN or SUPABASE_ACCESS_TOKEN). A bootstrap that did not run is not a skip.");
   }
   console.log(`  target ${ref} (portava-beta) — allowlist guard passed, hard-coded beta ref matched.`);
+
+  if (args.mode === "apply-refused") {
+    try {
+      return await applyRefused(managementApi(ref, token), args.file);
+    } catch (err) {
+      fail((err as Error).message);
+    }
+  }
 
   // Everything that can be decided offline is decided before the first request.
   const model = loadBaselineModel();
@@ -412,9 +571,21 @@ async function main(): Promise<never> {
       fail(`the ledger already has rows for chain files (${chainRows.slice(0, 6).map((r) => r.filename).join(", ")}); the applier would not apply them.`);
     }
 
+    // ── i. the files the applier will refuse by shape ───────────────────────
+    // Computed against beta's ledger as it now stands, exactly as the applier
+    // will meet them. Nothing is applied here: each depends on the files
+    // before it, so it can only be applied where the applier stops on it —
+    // the workflow's apply loop runs `--apply-refused <file>` at that point.
+    step("i · files the applier refuses by shape");
+    const refusedNow = refusedChainFiles(listMigrationFiles(), readMigration, new Set(byName.keys()));
+    for (const r of refusedNow) console.log(`  ${r.filename}: ${firstSentence(r.reason)}`);
+    console.log(
+      `  ${refusedNow.length} file(s); the apply loop hand-applies each verbatim (--apply-refused) where the applier stops on it.`,
+    );
+
     await api.query(DROP_SCRATCH_SQL);
     console.log("\nbeta-bootstrap PASSED — baseline restored, reference rows imported, ledger pre-created.");
-    console.log("Next: db:apply-migrations:dry-run, then db:apply-migrations (every file at or after 2093_ is pending).");
+    console.log("Next: db:apply-migrations:dry-run, then the apply loop (every file at or after 2093_ is pending).");
     process.exit(0);
   } catch (err) {
     fail((err as Error).message);

@@ -1574,6 +1574,88 @@ export function buildLedgerPrecreationSql(ddl: string, files: readonly string[])
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// FILES THE APPLIER REFUSES BY SHAPE — applied verbatim by the bootstrap
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * apply-migrations.ts refuses a file whose transaction control it cannot wrap
+ * in one transaction with its ledger row, and its header names the remedy:
+ * "apply it by hand, verify it, then INSERT its ledger row with
+ * applied_by='manual'". On portava-ci such files sit under 2254's backfill rows
+ * and are never classified; on beta every chain file is pending, so they are
+ * met. The bootstrap is that hand (`--apply-refused <file>`).
+ *
+ * The set is computed exactly as the applier would meet it: canonical files
+ * sorting at or after CHAIN_START_PREFIX, with no ledger row, that
+ * classifyMigration() refuses. Measured 2026-10-06: exactly
+ * 2182_close_authz_rpc_oracle.sql (a BEGIN … ROLLBACK verification probe after
+ * its BEGIN … COMMIT body) and 2190_memory_lifecycle_fixes.sql (two
+ * BEGIN … COMMIT blocks). The unit test pins that set, so a newly refused file
+ * is noticed rather than absorbed.
+ */
+export interface RefusedChainFile {
+  filename: string;
+  /** classifyMigration()'s full reason. */
+  reason: string;
+}
+
+export function refusedChainFiles(
+  files: readonly string[],
+  read: (filename: string) => string,
+  recorded: ReadonlySet<string> = new Set(),
+): RefusedChainFile[] {
+  const out: RefusedChainFile[] = [];
+  for (const f of files) {
+    if (compareMigrationFilenames(f, CHAIN_START_PREFIX) < 0 || recorded.has(f)) continue;
+    const cls = classifyMigration(read(f), f);
+    if (cls.kind === "refuse") out.push({ filename: f, reason: cls.reason });
+  }
+  return out;
+}
+
+/** The first sentence of a classifyMigration() reason — the part that names the shape. */
+export function firstSentence(reason: string): string {
+  const m = /^[\s\S]*?\.(?=\s|$)/.exec(reason);
+  return (m ? m[0] : reason).trim();
+}
+
+export function manualApplyNotes(reason: string): string {
+  return (
+    "beta-bootstrap 2026-10-06: applied verbatim by the bootstrap because the applier refuses its " +
+    `shape (${firstSentence(reason)})`
+  );
+}
+
+/**
+ * Chain files sorting BEFORE `filename` that have no ledger row. A verbatim
+ * apply is only in order when this is empty — i.e. the applier has already
+ * recorded everything before the file it stopped at.
+ */
+export function unrecordedPredecessors(
+  files: readonly string[],
+  filename: string,
+  recorded: ReadonlySet<string>,
+): string[] {
+  return files.filter(
+    (f) =>
+      compareMigrationFilenames(f, CHAIN_START_PREFIX) >= 0 &&
+      compareMigrationFilenames(f, filename) < 0 &&
+      !recorded.has(f),
+  );
+}
+
+/** The ledger row for a verbatim apply: 'manual', a real sha256, never overwriting. */
+export function buildManualLedgerRowSql(filename: string, checksum: string, notes: string): string {
+  if (!FILENAME_RE.test(filename)) throw new Error(`refusing to splice filename '${filename}' into SQL`);
+  if (!/^[0-9a-f]{64}$/.test(checksum)) throw new Error("a manual ledger row needs a real sha256");
+  return (
+    `WITH ins AS (INSERT INTO ${LEDGER_TABLE} (filename, checksum, applied_by, notes) ` +
+    `VALUES (${quoteLiteral(filename)}, ${quoteLiteral(checksum)}, 'manual', ${quoteLiteral(notes)}) ` +
+    "ON CONFLICT (filename) DO NOTHING RETURNING 1) SELECT count(*)::text AS inserted FROM ins"
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // THE MANAGEMENT API — the only I/O in this module; everything is a parameter
 // ─────────────────────────────────────────────────────────────────────────────
 
