@@ -10358,3 +10358,36 @@ One row changed bucket: T242 `W → C`. Counted with `check:census-integrity`, n
 
 451 rows. CONSTRUCTED (C + W) is 416 of 451 = 92.2 %; CORRECT is 240 of 451 = 53.2 %. The one move
 (T242) needs no migration and no flag; its evidence is controlled, not production.
+
+## §44 — Lane C (2026-10-05, wave 2): corrections to §43 — the burst limit at the two doors proven by behaviour, and T242 back to W. ONE ROW MOVES (T242 C → W)
+
+*Written 2026-10-05 by lane C, for rows lane C built before Telegraph moved to lanes T1/T2. Controlled
+evidence only; nothing written to any database. Append-only: §43's sentences are corrected here.*
+
+### 44.1 The burst limit at the gem-share and poll doors
+
+§43.3 said the two doors "now hold … the burst limit". At `85bb3c5339` that was asserted only by the
+guard's call text: the mutation `if (!guard.ok && guard.code !== "rate_limited")` — every gate but the
+burst limit — survived both door suites. It is now asserted by behaviour: the sender shares until refused,
+the refusal is a 429 with `Retry-After` and writes nothing, and a burst spent at the gem door refuses the
+poll door too (one bucket per sender, not per door). The mutation now dies at each door —
+`artifacts/api-server/src/routes/hiddenGems.ts:1186#const guard = await guardTelegraphThreadWrite(client, threadId, user.id);`
+and `artifacts/api-server/src/routes/telegraphChat.ts:602#const guard = await guardTelegraphThreadWrite(client, threadId, user.id); if (!guard.ok)`.
+T418 and T419 keep their verdicts; §43.3's sentence about them is now true.
+
+### 44.2 T242 — every place a translated message is shown
+
+The row: *"Low-confidence operational translation shows original plus translation instead of pretending
+certainty."* §43.3 moved it to C on the two thread readers. Two things make that false: the **inbox
+preview** still shows a translation alone, with no decision forwarded
+(`artifacts/api-server/src/routes/messaging.ts:2204#displayBody = tRow.translated_body.slice(0, 80);`); and the
+"confidence" the decision reads is the provider's language-DETECTION confidence, not a measure of the
+translation's quality (`artifacts/api-server/src/services/messageTranslation.ts:452#detectionConfidence = detected.confidence;`).
+`routes/messaging.ts` is lane T1's file and is not edited here. The change T1 must make, and the open
+question, are in lane C's report.
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T242 | C | **W** | **Corrected (§44.2).** The two thread readers forward the show-both decision and the app draws it (§43), but the inbox preview shows a translation alone, and the confidence behind the decision is detection confidence, not translation certainty. |
+| T418 | W | W | §43.3's burst-limit sentence is now proven by behaviour at both doors (§44.1). |
+| T419 | W | W | As T418. |

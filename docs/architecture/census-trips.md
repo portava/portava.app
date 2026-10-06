@@ -9914,3 +9914,198 @@ were not executed: there is no Postgres on this machine, so CI is their first ex
 | CANNOT-VERIFY | **0** |
 | **CONSTRUCTED%** = (C+W)/451 | **448 / 451 = 99.3 %** |
 | **CORRECT%** = C/451 | **320 / 451 = 70.9 %** |
+
+## §81 Lane C wave 2 (2026-10-05): ONE owner-only rule on every reader of a plan item's location, the client door closed, and grants that stop when they stop being true — corrections to §80, NO ROW MOVES BUCKET
+
+*Written 2026-10-05 by lane C after an independent verifier found `85bb3c5339` not acceptable. Append-only:
+§80's sentences are corrected here, not edited there. Every piece of evidence is **controlled** (node and
+jest suites over the certification harness and fakes; no database was touched). Migration 3972 was
+WRITTEN and applied nowhere; no flag was touched.*
+
+### §81.1 Corrections to statements already made
+
+- **Commit `84da036a5`** says the share router is registered on routes/index.ts's long line. **It was not**:
+  the `import …; router.use(tripAnchorSharesRouter);` was appended AFTER an existing `//` comment on that
+  line, so it was part of the comment and every share route answered Express's HTML 404 through the real
+  app. Registered for real in `b5a8520c9` (`artifacts/api-server/src/routes/index.ts:437#import tripAnchorSharesRouter from "./tripAnchorShares.js"; router.use(tripAnchorSharesRouter);`),
+  and guarded for every router the file imports by `artifacts/api-server/src/test/routesIndexMounting.test.ts`
+  (red at `85bb3c533` on the three routes and on line 437; no other offender among 167 router imports).
+- **§80.3 TR256** — *"Owner-only is now enforced on the wire for every viewer, and per-anchor grants exist
+  end to end"* — **false on both halves at `85bb3c5339`.** Only the map projection's `privateAnchors` layer
+  applied the rule; 19 sibling readers served another member's private place (coordinates, place name,
+  title, notes, or a value derived from them) to every accepted member, the organizer included, and the
+  grant routes were not mounted. Restated in §81.6 after the fix.
+- **§80.1** — *"a revoke is honoured with the flag off"* — **true of the flag and false in three other
+  cases** at `85bb3c5339`: the revoke went through the grant gate, so a grant on an item made public, an
+  item removed, or an item whose creator had left the trip could not be taken back (403/400) while it
+  stayed in the table. Now the revoke needs only "you created it, and it is on this trip"
+  (`artifacts/api-server/src/routes/tripAnchorShares.ts:137#async function revokeGate(`).
+
+### §81.2 The rule, and the one loader every reader calls
+
+The rule is pure: `artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:157#export function canSeePlanItemLocation(` —
+a non-private item is everyone's; the creator sees their own; anyone else only through a grant whose owner
+is the item's creator, never on a removed item. A withheld item is served as its time window under the
+label "Private plan", with every locating field nulled
+(`artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:167#export function redactWithheldPlanItem<`).
+**LEAD'S READING, for the owner to confirm:** OD-TRIP-3 says "access", not which fields; the withheld set
+is coordinates, address, place id, location name, title, notes and description.
+
+The grants a viewer holds are read by ONE loader,
+`artifacts/api-server/src/server/trips/privateAnchorShares.ts:77#export async function planItemAccessFor(`:
+the sharing flag read three-valued (an unreadable flag is `unread`, never a silent "off"), the grant rows,
+and membership — a grant counts only while its owner AND its grantee are accepted members. An unreadable
+flag, grant list or membership withholds every other member's private item and says `unread`.
+
+### §81.3 Every reader of a plan item's location, and its disposition
+
+Enumerated by grep over `src/` for `trip_plan_items` (non-test): 63 files. Disposition of each that reads
+a locating or naming field:
+
+| reader | disposition |
+| --- | --- |
+| route chain, Pulse, Today, timeline, Telegraph trip context, Compass trip context (`GET /trips/:id/context`), closeout, impact preview (simulate / rescue / meeting point), offline bundle, route-plan stay, plan list, feasibility, memory candidates, daily brief, Neighbourhoods location check, the trip's Hidden Gems, gem exact-coordinates reveal, map projection | **the rule applied** (this lane's files) |
+| plan map (`GET /trips/:id/plan/map`) | public coordinates only, for everyone, by design; it read `!location_is_private`, so an UNSET privacy was drawn as public — now `=== false` |
+| plan item PATCH | an organizer may change a private item's time and status but not its place, name or privacy (creator-only fields); the answer is the slot |
+| `routes/tripStructure.ts`, `TripHealthProjection`, `tripReadiness`, `TripOperationalPhase`, `tripDecisions`, `trips-expansion`, `PresenceVerifier`, `CompassSenseEngine`, `lib/http.ts` | read no locating or naming field — nothing to withhold |
+| writers (`compass.ts`, `events.ts`, `airport.ts`, `hiddenGems.ts`, `telegraphChat.ts`, `tripReservations.ts`, `plan.ts`) | dedupe reads of `id`/`source_id` only |
+| **other lanes** — `routes/telegraphSharedContext.ts` (T1/T2), `compass/CompassTools.ts`, `CompassAutopilotEngine`, `CompassTripContext`, `CompassLiveEngine`, `lib/mapProducers/meetingPointProducer.ts`, `services/wall/LiveForYouService.ts` (lead), `routes/safeReturn.ts`, `services/safeReturn/SafeReturnNotificationService.ts` (A), `lib/inputAssistance/searchCandidates.ts` legacy path (D) | **not changed here**; each must call `planItemAccessFor` and `withholdPrivatePlanItems` (or select `location_is_private, creator_id` and filter) — the exact change per file is in lane C's report |
+
+Two defects found on the way and fixed: a **cached daily brief** (both caches are keyed per user per day)
+was served after the grant that built it was revoked, sharing turned off, or the grant list became
+unreadable — the brief now carries a digest of the viewer's private-place access and is rebuilt when it
+differs (`artifacts/api-server/src/routes/dailyBrief.ts:61#async function privatePlanAccessKey(`); and the
+trip's **Hidden Gems** list and a gem's **exact-coordinates reveal** treated a gem linked by another
+member's private plan item as linked for everyone — the gem is the place.
+
+### §81.4 The client door: migration 3972
+
+`plan_items_select` (2337) let any accepted crew member read every other member's private row through
+PostgREST. `artifacts/api-server/src/migrations/3972_trip_private_anchor_rls_and_grant_lifecycle.sql:101#CREATE POLICY "plan_items_select" ON public.trip_plan_items`
+adds the owner-only clause through a SECURITY DEFINER helper that reads no `trip_plan_items` row (no 42P17)
+and takes the viewer from `auth.uid()` (no oracle); every column is qualified (no `x.c = x.c`). Measured
+first: the mobile app reads no `trip_plan_items` row directly and every API route reads as service_role,
+so no answer changes — the direct door is what closes. Rollback reopens it and says so.
+
+### §81.5 Grant lifecycle
+
+Cleared where the truth ends, in the API — member removal (legacy and kernel)
+(`artifacts/api-server/src/routes/trips.ts:2385#private-anchor grants not cleared for a removed member`), an item
+made public (cleared BEFORE the write; a failed clearing refuses the change), an item removed by `/remove`
+or `DELETE` (legacy and kernel) — and in the database by 3972's triggers on `trip_members` (insert, delete,
+a move into or out of accepted) and on `trip_plan_items` (made non-private, soft-removed). The owner's
+share list answers `sharing: on | off | unread`, and the app says an unreadable setting is unreadable
+(`travel-buddy-standalone/src/features/trips/anchors/PrivatePlacesCard.tsx`).
+
+`PrivatePlacesCard`'s sentence *"Only you, and anyone you choose, can see this place"* was false — the
+crew sees a slot at that time, and with sharing off nobody can be chosen. It now reads
+`travel-buddy-standalone/src/features/trips/anchors/PrivatePlacesCard.tsx:37#export const OWN_PLACE_DETAIL =`.
+
+**Owner question, raised not decided:** `location_is_private` DEFAULTS TO TRUE in the database, and the
+Compass, Hidden Gems, Telegraph-suggestion and `plan.ts` writers rely on the default — so under this rule
+their items are owner-only for the crew (titles withheld) and an organizer cannot change their place.
+Either confirm, or narrow what an anchor is (a lodging category, an explicit toggle) or change those
+writers' default.
+
+### §81.6 Row statement
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| TR256 | W | W | **Restated (§81.1).** Owner-only is now one rule applied by every reader of a plan item's location in this lane's files — 20 paths, each tested for five viewers (a member with no grant, the organizer, a granted member with sharing on and off, an unreadable grant list) plus the creator as control, each mutation-proven — and closed at the PostgREST door by 3972. Still W: eleven readers in other lanes' files do not apply it yet (§81.3), 3970 and 3972 are applied nowhere, and §31.3.1's condition (an anchor writers cannot fail to set) stands. |
+
+### §81.7 Tests and mutations
+
+`artifacts/api-server/src/test/tripPrivateAnchorReaders.test.ts` (119 cases; 76 of 122 red when run against
+`85bb3c5339`'s tree; 21 per-path mutants each killed), `artifacts/api-server/src/test/tripPrivateAnchorLifecycle.test.ts`
+(35 cases; 14 mutants killed: revoke gate, owner and grantee acceptance, grant owner = creator, unread flag,
+three-valued answer, each clearing site, the organizer's field refusal and redaction),
+`artifacts/api-server/src/test/routesIndexMounting.test.ts` (7; red at `85bb3c533`), the PrivatePlacesCard
+component suite (6). Fixture-only changes elsewhere: `location_is_private: false` on public fixture items.
+
+- NOT-GRADED: artifacts/api-server/src/test/tripPrivateAnchorReaders.test.ts — §81's per-path suite; TR256 rests on the policy, loader and reader files cited.
+- NOT-GRADED: artifacts/api-server/src/test/tripPrivateAnchorLifecycle.test.ts — §81.5's lifecycle suite and 3972's text; TR256 rests on the files cited.
+- NOT-GRADED: artifacts/api-server/src/test/routesIndexMounting.test.ts — §81.1's mounting guard over routes/index.ts.
+
+## §82 Lane C wave 2 (2026-10-05): what the Routes API can and cannot certify, a walk that keeps its band, disclosures said from the hops, and a share per member and per trip — corrections to §80.2, NO ROW MOVES BUCKET
+
+*Written 2026-10-05 by lane C. Controlled evidence only. Migration 3973 was WRITTEN and applied nowhere.*
+
+### §82.1 Corrections
+
+- **§80.3 TR341 / TR412 "As TR128"** — **false.** TR128's FEASIBLE is reachable from a routed answer; a
+  CERTIFIED window is not: certification needs HIGH-confidence travel
+  (`artifacts/api-server/src/domain/trips/invariants/TripFreedomEngine.ts:230#certified: w.confidence === "HIGH" && !unknownTerm,`),
+  and the Google adapter stamps every routed answer MEDIUM — one number, no spread
+  (`artifacts/api-server/src/domain/trips/contracts/GoogleRoutesTravelTimeProvider.ts:286#sourceClass === "STATIC_DEFAULT" ? "LOW" : "MEDIUM",`).
+  The Trips spec names no mapping from a single routed figure to HIGH, so none was invented and the
+  adapter was not raised: **no window is certified on this tree, routed or not.** Wave 1's suite stamped
+  its fake HIGH, which the adapter never does; the fake is now what the adapter returns.
+- **§80.2** — *"never stripped from a fallback"* — **false for the adapter's walk substitution**: it
+  stamped `assumption: null` on a straight-line walk, the gated provider passed it through, and the
+  departure wrapper then skipped the band (1 min with no band at peak, against 2 from the plain bound).
+  Now all three layers refuse it: the adapter does not claim it, the gated provider removes the key from any
+  answer that is not routed, and the wrapper skips the band only for a ROUTED source class
+  (`artifacts/api-server/src/domain/trips/services/TripDepartureAssumptions.ts:145#&& isRoutedSourceClass(r.estimate.sourceClass)) return`).
+- **Fixed-text disclosures** — the route chain's *"no routed provider exists on this tree"*, the freedom
+  reading and the offline bundle's static `routed` flag would all have been false the moment routing was
+  on. Each is now said from the hops returned
+  (`artifacts/api-server/src/domain/trips/projections/TripRouteChainProjection.ts:110#export function routeChainDisclosure(`,
+  `artifacts/api-server/src/domain/trips/projections/TripFreedomProjection.ts:118#export function freedomReadingFor(`).
+
+### §82.2 One member cannot drain the day
+
+Each Trips read now runs inside a routing budget
+(`artifacts/api-server/src/domain/trips/contracts/RoutesRequestBudget.ts:64#export function withRoutesRequestBudget<`):
+at most 12 asks of the spend gate per read (counted before the first await, so a Promise.all cannot
+overshoot), no routed call after 8 s of the read, and nothing spent without a user and a trip. The gate
+charges a per-user and a per-trip daily share, both required configuration
+(`ROUTES_API_USER_DAILY_SHARE`, `ROUTES_API_TRIP_DAILY_SHARE`), taken with the day's unit by
+`artifacts/api-server/src/migrations/3973_trip_routes_api_user_trip_shares.sql:80#CREATE OR REPLACE FUNCTION public.routes_api_try_spend_scoped(`
+under row locks in one order (day, trip, user) — the same argument as 3971's, extended to three rows. Over
+any bound the answer is the labelled straight-line estimate.
+
+### §82.3 Row statements
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| TR128 | W | W | Holds as §80.3 states it: FEASIBLE is reachable from a routed answer once the owner configures the gate (now also the two shares, and 3973). |
+| TR267 | W | W | As §80.3, with the walk substitution corrected (§82.1): a static answer always carries its band. |
+| TR341 | W | W | **Restated.** The bundle carries the last certified context, and says how many windows are certified and what its travel terms were. No window is certified on this tree even with routing on (§82.1) — that cap, not the provider's absence, is now the reason. |
+| TR412 | W | W | **Restated.** The property holds on every window the engine emits and is vacuous on certified ones, which cannot exist here while routed answers are MEDIUM (§82.1). |
+
+- NOT-GRADED: artifacts/api-server/src/test/tripRoutedTravelTime.test.ts — §80.2/§82's suite (36 cases; 15 mutants killed); the rows rest on the provider, engine and seam files cited.
+
+## §83 Lane C wave 2 (2026-10-05): the Trip Kernel can restore an appealed removal — ADMIN_RESTORE_PARTICIPANT written (3974), NO ROW MOVES BUCKET
+
+Lane B's appeal executor refused, naming this command. `artifacts/api-server/src/migrations/3974_trip_kernel_admin_restore_participant.sql:119#      WHEN 'ADMIN_RESTORE_PARTICIPANT' THEN`
+adds it by transform (2764/2798's method): the admin family; the removal event re-read from the kernel's
+own ledger (this trip, this person, this role, the latest removal); `access` re-decided from the trip as it
+is (retained record only for an ended trip, the membership for a live one); the row inserted in the role at
+removal with live sharing off (no session created, any active one stopped, and 3972's trigger clears every
+grant on a membership that begins); `trip.participant_added` with `via: 'admin_restore'`. The crew cap
+still applies — lane B's plan reads the ruling as not subject to it; that reading needs the owner. The one
+call lane B makes is `artifacts/api-server/src/domain/trips/commands/adminRestoreTripParticipant.ts:44#export async function adminRestoreTripParticipant(`.
+Not executed (no Postgres here); proven against the corpus it transforms by
+`artifacts/api-server/src/test/tripKernelAdminRestore.test.ts`.
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| TR1 | W | W | The command the row waited on now exists (3974, applied nowhere). Still W until lane B's executor calls it and 3974 is applied; lane B's tripwire test "no migration implements it" now fires, as it was written to. |
+| TR435 | W | W | As TR1: the one ungated write's kernel command is written; the write is not yet routed through it. |
+
+- NOT-GRADED: artifacts/api-server/src/test/tripKernelAdminRestore.test.ts — §83's static and call suite; TR1/TR435 rest on the migration and caller cited.
+
+## §84 Lane C wave 2 (2026-10-05): trust restrictions at the Trips doors that do what Compass refuses (census-trust TRV2-08, OD-TRUST-5) — NO ROW MOVES BUCKET
+
+None of these read `getRestrictionState`. Gated by `artifacts/api-server/src/lib/tripTrustGate.ts:60#export async function refuseTripActionIfRestricted(`:
+adding, editing, removing or reordering a GROUP trip's plan items (`routes/trips.ts`, `routes/plan.ts`'s
+two add-to-trip-plan doors, `POST /hidden-gems/:id/plan`) is **hosting**; a proposal through `/commands`
+`CREATE_PROPOSAL` or `/replan` with `createProposals` is **hosting or messaging** (lane L's Compass reading,
+so the two doors agree). **LANE C'S READING, for the owner to confirm**, by the restrictions' own words —
+the refusal says the restriction's sentence and nothing more. A solo trip is not gated ("cannot host group
+trips"); lane L's Compass gate does not make that distinction and the lead should pick one. Voting,
+accepting, attendance, presence and every safety path stay ungated. Any unreadable restriction state is a
+retryable 503 that never says "restricted". Ten doors, each mutation-proven by
+`artifacts/api-server/src/test/trustRestrictionDoors.test.ts`.
+
+- NOT-GRADED: artifacts/api-server/src/test/trustRestrictionDoors.test.ts — §84's door suite (Trips and Discovery); the gates rest on the two lib files cited.

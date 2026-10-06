@@ -16910,3 +16910,44 @@ client suites are `travel-buddy-standalone/src/features/discovery/trails/__tests
 - NOT-GRADED: travel-buddy-standalone/src/features/discovery/trending/__tests__/trendingApi.test.ts — §108's client service suite; no verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/src/features/discovery/trails/__tests__/TrailsScreens.component.test.tsx — §108's screen suite; no verdict rests on it.
 - NOT-GRADED: travel-buddy-standalone/src/features/discovery/trending/__tests__/TrendingView.component.test.tsx — §108's screen suite; no verdict rests on it.
+
+## §109 — Lane C wave 2 (2026-10-05): trust restrictions at Discovery's publishing doors, a daily bound on starting a Trail, and two Hidden Gems reads that leaked a private plan's place; no row changes bucket
+
+*Written 2026-10-05 by lane C. Controlled evidence only (the route suites' fakes and the certification
+harness). Migration 3975 was WRITTEN and applied nowhere; nothing was written to any database.*
+
+### 109.1 Trust restrictions (census-trust TRV2-08; OD-TRUST-5)
+
+Discovery read no restriction state, so an account restricted from hosting or messaging could still start
+a Trail — which publishes a `proposed` Trail to every user at once — link Trails, push content into a
+Trail or a curator's queue, submit a hidden gem, add to one, or submit a community place. Seven doors now
+call `getRestrictionState` through `artifacts/api-server/src/lib/discoveryTrustGate.ts:85#export async function refuseIfTrustRestricted(`.
+
+**The mapping is LANE C'S READING, for the owner to confirm.** No restriction type is named for
+publishing; by purpose, **hosting** ("cannot host group trips": convening a shared space others join) covers
+starting a Trail and linking Trails, and **messaging** ("cannot initiate new conversations": reaching
+people who did not ask) covers attaching to a Trail, suggesting to one, submitting or adding to a gem, and
+submitting a community place. The refusal says the restriction's own sentence
+(`artifacts/api-server/src/lib/discoveryTrustGate.ts:63#export const RESTRICTION_SENTENCES`), so nobody is
+told more than their restriction says; a dedicated publishing restriction would fit better and is the
+owner's to add. Saves, follows, collections and reports are not gated. An unreadable state — a read error,
+an absent table, a throw — is a retryable 503 that never says "restricted" (lane L's Compass rule, so the
+surfaces agree).
+
+### 109.2 A daily bound on starting a Trail
+
+Three Trails per person per rolling 24 hours (lane C's number; `02_Trails.md` names none):
+`artifacts/api-server/src/services/trails/TrailService.ts:94#export const TRAIL_PROPOSALS_PER_DAY = 3;`. The
+API counts before it proposes (an unreadable count is a 503, never "none started"; over the allowance a 429
+with `Retry-After`), and `artifacts/api-server/src/migrations/3975_trail_proposal_daily_allowance.sql:63#PERFORM pg_advisory_xact_lock(hashtextextended('trail_propose:proposer:'`
+decides it where the insert is, under a per-proposer lock taken before 3415's token locks; otherwise 3415's
+function byte for byte. Moderation of a proposed Trail is unchanged and still absent (`02` §15).
+
+### 109.3 Two Hidden Gems reads that carried another member's private place (census-trips §81)
+
+The trip's gems list (`GET /hidden-gems?tripId=`) and a gem's exact-coordinates reveal
+(`reveal_after_acceptance`) both treated a gem linked by ANOTHER member's private plan item as linked for
+the whole trip — and the gem is the place. Both now apply census-trips §81's rule
+(`artifacts/api-server/src/services/hiddenGems/HiddenGemPrivacyGuard.ts:157#const planRow = linkAccess ? links.find((r) => canSeePlanItemLocation(linkAccess, r)) : undefined;`).
+
+- NOT-GRADED: artifacts/api-server/src/test/trustRestrictionDoors.test.ts — §109's door and allowance suite (shared with census-trips §84); no Discovery row's verdict rests on it.
