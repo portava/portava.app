@@ -138,6 +138,10 @@ describe("T367 — publication: zero distance publishes nothing without affirmat
       personInvisible: visible,
       viewerInvisible: visible,
       personPresenceConsent: presence,
+      // Not in a §24 protected zone: the input every production caller supplies
+      // since lane T1's T31 work (reachablePeopleQuery.ts) — this case is about
+      // consent, so a zone must not be what withholds the point.
+      personInProtectedZone: false,
       availabilityPublished: availability,
       availabilityState: availability ? "available_now" : "unknown",
       availabilityIntents: [],
