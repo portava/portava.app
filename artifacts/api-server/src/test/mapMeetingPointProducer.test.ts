@@ -213,6 +213,11 @@ describe("projectMeetingPoint — what never renders", () => {
     assert.equal(skipReason({ location_is_private: true }), "private_location");
   });
 
+  it("an item that does not say it is public (privacy null or absent) is dropped too — D-65: only items KNOWN public (verifier L2)", () => {
+    assert.equal(skipReason({ location_is_private: null }), "private_location");
+    assert.equal(skipReason({ location_is_private: undefined }), "private_location");
+  });
+
   it("removed, cancelled, uncoordinated and non-meeting items", () => {
     assert.equal(skipReason({ removed_at: iso(-1) }), "removed");
     assert.equal(skipReason({ status: "cancelled" }), "cancelled");

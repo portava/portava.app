@@ -46,12 +46,14 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import express from "express";
+import { readFileSync } from "node:fs";
 
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import tripProjectionsRouter from "../server/trips/readRoutes/tripProjections.js";
 import tripOfflineRouter from "../routes/tripOffline.js";
 import routePlanRouter from "../routes/routePlan.js";
+import tripCommandRouter from "../server/trips/commandRoute.js";
 import telegraphSharedContextRouter from "../routes/telegraphSharedContext.js";
 import tripsRouter from "../routes/trips.js";
 import tripFeasibilityRouter from "../routes/tripFeasibility.js";
@@ -110,6 +112,10 @@ function seed(viewer: string, scenario: Scenario, hotelOver: Record<string, unkn
     trip_stages: [{ id: STAGE, trip_id: TRIP, starts_at: iso(-30), ends_at: iso(70), timezone: "Europe/Lisbon", place_id: PORTO, title: "Porto" }],
     places: [{ id: PORTO, name: "Porto", latitude: 41.15, longitude: -8.61, lat: 41.15, lng: -8.61 }],
     hidden_gems: [{ id: GEM, status: "active", title: "Segreta Gem", created_at: "2026-10-01T00:00:00Z" }],
+    // verifier L4: a stored snapshot (2773's fold names each plan by its title).
+    trip_snapshots: [{ id: "5c000000-0000-4000-8000-0000000000c1", trip_id: TRIP, aggregate_version: 3, created_at: "2026-10-02T00:00:00Z",
+      engine_versions_json: { snapshot_fold: 1 },
+      snapshot_json: { aggregate_version: 3, plans: { [HOTEL]: { title: "Casa Segreta", status: "in_progress" }, [DINNER]: { title: "Dinner", status: "planned" } } } }],
     // census-trips §85 (verifier R1): the trip's Telegraph thread.
     message_threads: [{ id: TRIP_THREAD, thread_type: "trip", trip_id: TRIP, status: "active", circle_owner_id: null, is_e2ee: false }],
     message_thread_members: [ORGANIZER, ANA, BEN, CLEO].map((u) => ({ thread_id: TRIP_THREAD, user_id: u, role: "member", left_at: null, last_read_at: null })),
@@ -136,6 +142,8 @@ const PATHS: ReaderPath[] = [
   { name: "today", method: "GET", path: `/trips/${TRIP}/today` },
   { name: "timeline", method: "GET", path: `/trips/${TRIP}/timeline` },
   { name: "telegraph-context", method: "GET", path: `/trips/${TRIP}/telegraph-context` },
+  // verifier L4 (1867c97df): GET /trips/:id/snapshots/:version, redacted at the API.
+  { name: "trip-snapshot", method: "GET", path: `/trips/${TRIP}/snapshots/latest` },
   // verifier R1 (1867c97df): the OTHER Telegraph trip-context door, read from inside the trip's thread.
   { name: "telegraph-thread-trip-context", method: "GET", path: `/threads/${TRIP_THREAD}/trip-context` },
   { name: "compass-context", method: "GET", path: `/trips/${TRIP}/context` },
@@ -163,7 +171,7 @@ before(async () => {
   process.env.TRIP_OFFLINE_BUNDLE_SECRET ??= "lane-c-test-offline-bundle-secret-0123456789";
   const all = express.Router();
   for (const r of [tripProjectionsRouter, tripOfflineRouter, routePlanRouter, tripsRouter, tripFeasibilityRouter,
-    tripPostTripRouter, dailyBriefRouter, neighborhoodsRouter, hiddenGemsRouter, telegraphSharedContextRouter]) all.use(r);
+    tripPostTripRouter, dailyBriefRouter, neighborhoodsRouter, hiddenGemsRouter, telegraphSharedContextRouter, tripCommandRouter]) all.use(r);
   harness = await startRouter(all);
 });
 after(async () => {
@@ -204,6 +212,16 @@ for (const p of PATHS) {
     });
   });
 }
+
+describe("verifier L1 (1867c97df): GET /hidden-gems?tripId reads the link rows WITH their id", () => {
+  it("the grant is keyed by the plan item's id, so the select must carry it (the harness returns whole rows, so this is read from the source)", () => {
+    const src = readFileSync(new URL("../routes/hiddenGems.ts", import.meta.url), "utf8");
+    const i = src.indexOf('.eq("source_type", "hidden_gem"); if (planItemsErr)');
+    assert.ok(i > 0, "the trip-gems link read moved; re-point this test");
+    const select = src.slice(src.lastIndexOf(".select(", i), i);
+    assert.match(select, /\.select\(`id, source_id, removed_at, \$\{PLAN_ITEM_PRIVACY_COLUMNS\}`\)/);
+  });
+});
 
 describe("§81 daily-brief cache: a brief built while a grant held is not served after it stopped holding", () => {
   // Both brief caches are keyed per user per day. Measured: with no access
