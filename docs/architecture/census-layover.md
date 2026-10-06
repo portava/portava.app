@@ -8939,7 +8939,7 @@ clause and #624's rule in the golden's own note
 `LAYOVER_FEASIBILITY_VERSION` bump, proven by reverting it on a scratch run. **L241 stays W** (§49.2's grounds,
 unchanged); no row moves.
 
-## §53 — 2026-10-06 (mission lane R): the open Layover rows re-triaged from `main` after lane A closed; ONE ROW MOVES (L220 `W → C`)
+## §53 — 2026-10-06 (mission lane R): the open Layover rows re-triaged from `main` after lane A closed; NO ROW MOVES
 
 Lane R took over this surface after #629 merged. It re-read every non-`C` row at `ca49bbd286` against the
 code on `main` (ledger in the mission scratchpad, `lane-r/triage.psv`, not in this repository). Of this census's
@@ -8954,7 +8954,7 @@ flipped no flag.
 | another owner's surface (PR #569 crew planning and location grants, still OPEN; Trips' temporal-freedom engine; Compass's tool flag; Rent-a-Buddy categories; the money-in-ranking guard script) | 29 |
 | an owner decision (including L219's tier calibration: §21.1 expects airport-only where the engine's 2h domestic answer is the stricter `too_short`) | 13 |
 | a new migration (the spec's vocabulary columns and state machine) | 11 |
-| code this lane can build — L220 (built here, §53.5), L3 and L101 (waiting on §53.3's ruling), L155, L205, L236, L294, L295 | 8 |
+| code this lane can build — L220 (its test built here, §53.5; held `W` on curated airport data), L3 and L101 (waiting on §53.3's ruling), L155, L205, L236, L294, L295 | 8 |
 
 ### 53.2 Three statuses this document carries that are no longer true
 
@@ -8996,7 +8996,7 @@ flipped no flag.
 
 Neither moves a row: L27, L129 and L187 stay where §51.1 put them.
 
-### 53.5 L220 moves `W → C`: the 4h pair is pinned against §21.1's sentence
+### 53.5 L220 stays `W`: the 4h pair is pinned against §21.1's sentence, and no production session can reach it
 
 §51.3 corrected L220's stated reason and held the row at `W` "until a test pins the 4h pair against §21.1's sentence".
 `artifacts/api-server/src/test/layoverScenarioL220.test.ts:50#§21.1 L220 — 4h international, visa allowed → potential landside depending on airport model`
@@ -9012,33 +9012,32 @@ clause:
 Three engine mutants are killed: the airport's international buffer replaced by the generic constant, a refused
 corridor no longer overriding the clock, and an unresolved corridor treated as confirmed.
 
+**Why it is still `W`.** This census held L143 at `W` on exactly this production fact: 0 of 3,206 production airports
+are curated (header note 2), so the curated branch, which is the half of L220 that says "depending on airport model",
+is reached by no production session. §41 states the rule: a capability no production session can reach stays `W`.
+An earlier draft of this section moved L220 `W → C` on the engine's behaviour and attributed the production gap to
+L243. The independent verifier rejected that (lane R wave-1 finding F2), and it is withdrawn here before it reached
+`main`. The "visa allowed" half IS reachable in production (`passport_entry_intelligence_enabled` is true and the
+corridor tables are present), so the one thing between this row and `C` is curated airport data.
+
 | id | was | now | why |
 | --- | --- | --- | --- |
-| L220 | W | C | §21.1's scenario holds clause by clause on the engine's own entry point, pinned by `layoverScenarioL220.test.ts` with three engine mutants killed. Its old `W` reasons were both corrected in §51.3: entry permission is representable, and at 4h the airport model decides. Production carries no curated airport (header note 2), so every production 4h international layover takes the generic branch. That is L243's owner decision about buffers, not this row. |
+| L220 | W | W | The §21.1 scenario holds clause by clause on the engine's own entry point (`layoverScenarioL220.test.ts`, three engine mutants killed). L143's precedent and §41's rule keep it `W`: no production airport is curated, so no production session can take the curated branch. It moves when one is. |
 
-`artifacts/api-server/src/test/layoverScenarioMatrix.test.ts` still asserts that both of ITS airport models refuse at
-4h. That is not a contradiction. Its fixture has the traveller at the gate at the instant of arrival, with no corridor
-supplied, and its generic model is a slower one (150-minute international buffer). The corpus scenarios are 20 minutes
-after arrival with the corridor permitted. That file's sentence "cannot be parameterised on entry permission" is stale
-in the same way §51.3 found L220's reason stale: entry reaches the engine as `EntryEligibility`, not as a session field.
+`artifacts/api-server/src/test/layoverScenarioMatrix.test.ts` asserts that both of ITS airport models refuse at 4h. Its
+fixture has the traveller at the gate at the instant of arrival, with no corridor supplied, and its generic model is a
+slower one (a 150-minute international buffer). The corpus scenarios are 20 minutes after arrival with the corridor
+permitted. That file's two case titles and comments said the 4h verdict "does not yet vary" and that the scenario
+"cannot be parameterised on entry permission". Both are restated (F2); no assertion changed.
 
 **One observation for L48, not a move.** An `unresolved` corridor costs a session the clock's `yes`, which becomes
-`entry_unverified`. At the risky band, it does not change `tight`; it only adds `ENTRY_NOT_CONFIRMED`. Both answers are
+`entry_unverified`. At the risky band it does not change `tight`; it only adds `ENTRY_NOT_CONFIRMED`. Both answers are
 `possible_but_risky`, so no band widens. Whether `tight` with an unconfirmed border should read as `entry_unverified`
 is L48's question.
 
 ### 53.6 Headline
 
-One row moves, `W → C`. `check:census-integrity` reads **C=85 W=144 N=67 X=0** over 296 (§50.4: 84/145/67/0).
-
-| Measure | §50 | **§53** |
-| --- | ---: | ---: |
-| BUILT-AND-CORRECT | 84 | **85** |
-| BUILT-BUT-WRONG | 145 | **144** |
-| NOT-BUILT | 67 | **67** |
-| CANNOT-VERIFY | 0 | **0** |
-| CONSTRUCTED% | 77.4 % | **77.4 %** |
-| CORRECT% raw | 28.4 % | **28.7 %** |
+No row moves. `check:census-integrity` reads **C=84 W=145 N=67 X=0** over 296, unchanged since §50.4.
 
 ## Cited, not graded (check:census-scope-coverage)
 

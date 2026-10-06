@@ -6148,18 +6148,31 @@ file of this census, ran nothing against any database, and read or flipped no fl
 
 | need | rows |
 | --- | --- |
-| an observation on a running deployment, a device or handset run, an on-device recognizer, or the production apply of 3780–3783 with its flags and disclosure approval | 27 |
+| an observation on a running deployment, a device or handset run, an on-device recognizer, or the production apply of 3780–3783 with its flags and disclosure approval | 26 |
 | another owner's surface (Discovery hours, verification and the search endpoint's missing relationship filter for G98/G116: lane C; Rent-a-Buddy eligibility: lane B; Telegraph composer: lane C) | 14 |
 | an owner decision (G141: does `caption` cover postcards and Memories) | 1 |
 | intended by OD-INPUT-6 (no paid typeahead provider in the initial release) | 4 |
 | a new migration (G229's query-completion storage) | 1 |
-| code this lane can build | 29 |
+| code this lane can build (G306's live-DB suite included, §40.2b) | 30 |
 
 ### 40.2 One class corrected
 
 G212 was ledgered as an open owner decision. OD-INPUT-7 already decides it: local results show at once while
 slower ones load. What reverted the earlier build was engineering — impressions counted twice, and a local
 entity row that could be tapped before it was bound. It is ledgered as code.
+
+### 40.2b Two more corrections (lane R wave-1 verification, F8)
+
+- **G306 is code, not environment.** Its own red-criterion asks for a live-DB suite that emits a §44 event through the
+  installed sink and reads the row back, plus the table existing in production. The second clause is met. The first
+  is a CI live-DB-tier test, the same kind of need ledgered as code for census-layover L236/L295, so G306 is
+  ledgered as code (CI tier), not as an environment blocker.
+- **G75's evidence is stale.** It reads that `input_selection_history` and the `input_record_selection` RPC were ABSENT
+  from production on 2026-09-21. The 2026-09-22 capture holds both
+  (`artifacts/api-server/src/lib/capability/snapshots/20260922-production-schema.json:6295#input_selection_history`,
+  `artifacts/api-server/src/lib/capability/snapshots/20260922-production-schema.json:6395#input_record_selection`), and
+  `2258_input_selection_history` is in `production-applied-migrations.json`. G85's cell already says so. G75 stays
+  `W` for the reason its own ledger entry gives: no recorded selection has been read back on a running deployment.
 
 ### 40.3 Headline
 
