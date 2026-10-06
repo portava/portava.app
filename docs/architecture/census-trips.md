@@ -10158,3 +10158,14 @@ an OFF flag. The lead re-verifies before any row moves.
   `lib/providers/googleRoutesCorridorProvider.ts` calls the same API behind its own env flag with no spend ceiling
   (the lead's file; recorded, not edited).
 - NOT-GRADED: artifacts/api-server/src/lib/providers/googleRoutesCorridorProvider.ts — Layover's corridor adapter (the lead's); cited in §85 only to record that the Trips spend gate does not bound it.
+
+### §85.1 Lane C wave 4, relayed from lane B (2026-10-06): trip creation under a hosting restriction — NO ROW MOVES
+
+`POST /trips` refused every creation under a hosting restriction. D-24a: a solo trip is not stopped, and a trip being
+created is its creator's alone, so creation reads no restriction state
+(`artifacts/api-server/src/routes/trips.ts:287#// Lead ruling D-24a (2026-10-06): a hosting restriction does NOT stop a solo`).
+Inviting someone is what makes a trip a group trip, so the invite door carries the hosting gate
+(`artifacts/api-server/src/routes/trips.ts:1198#if (!invite.allowed)`), as does `POST /trips/:tripId/invite-link`.
+census-trust's TRV2-08 evidence still lists `routes/trips.ts:288` as a restriction consumer; that line is now this
+explanation (lane B's census; recorded, not edited). The refusal copy becomes lane B's `restrictionSentence("hosting")`
+once lane B lands.
