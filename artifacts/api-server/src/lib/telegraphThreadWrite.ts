@@ -29,7 +29,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"; import { sendLimite
 import { getServiceClient } from "./supabase.js"; import { checkSendRateLimit, SEND_LIMITS, SEND_WINDOW_MS } from "../domain/telegraph/policies/sendRateLimit.js";
 import { isKillSwitchEngaged } from "./featureFlags.js"; import { checkRateLimit } from "./rateLimit.js";
 import { isBlockedBetween } from "./blockGuard.js"; import { sendError } from "./http.js";
-import { decideRestrictedSend, readRestrictionSendFacts, RESTRICTION_SEND_SCOPE, RESTRICTION_UNKNOWN_MESSAGE } from "../domain/telegraph/policies/restrictionSendPolicy.js"; import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
+import { decideRestrictedSend, readRestrictionSendFacts, RESTRICTION_SEND_SCOPE, RESTRICTION_UNKNOWN_MESSAGE } from "../domain/telegraph/policies/restrictionSendPolicy.js"; import { getRestrictionState } from "../services/trust/TrustRestrictionService.js"; import type { TelegraphReason } from "../domain/telegraph/contracts/telegraphReasonCodes.js";
 
 export type ThreadWriteRefusal =
   | "feature_disabled"
@@ -39,7 +39,7 @@ export type ThreadWriteRefusal =
 
 export type ThreadWriteGuard =
   | { ok: true; otherMemberIds: string[] }
-  | { ok: false; code: ThreadWriteRefusal; message: string; retryAfterMs?: number };
+  | { ok: false; code: ThreadWriteRefusal; message: string; retryAfterMs?: number; /** Set by the restriction gate only, so a door can tell "restricted" from "not a member". */ reason?: TelegraphReason };
 
 /**
  * The refusal for a flag client we do not have.
@@ -177,6 +177,7 @@ export async function guardTelegraphThreadWrite(
       ok: false,
       code: restrictionVerdict.refusal === "unknown" ? "degraded_unavailable" : "forbidden",
       message: restrictionVerdict.message,
+      reason: restrictionVerdict.reason,
     };
   }
 
