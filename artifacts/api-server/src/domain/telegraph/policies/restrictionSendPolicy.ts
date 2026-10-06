@@ -143,6 +143,49 @@ export function decideRestrictedSend(facts: RestrictionSendFacts, opts: { safety
   return { allowed: true, reason: null };
 }
 
+/**
+ * The OTHER Telegraph capabilities a restriction reaches, in the same place as
+ * the send scope so the whole OD-TRUST-5 reading is one table (census-telegraph
+ * §45d, re-verification 5). Read by the capabilities projection only.
+ *
+ *   canCall                messaging — the call gateway's own rule ("messaging
+ *                          restriction implies calling restriction",
+ *                          lib/calls/callGatewayAdapter.ts), in ANY thread.
+ *   canCreatePlan          none. `hosting` is "cannot host group trips" and is
+ *                          enforced where trips are created (routes/trips.ts);
+ *                          neither Telegraph plan door (the command door's
+ *                          meetup draft, Compass's plan draft) is hosting a group
+ *                          trip, and the projection used to refuse it under
+ *                          `hosting` while the command door did not.
+ *   canShareExactLocation  location_plan_join — the rule lane B applied to the
+ *                          crew live-location share (routes/tripCrewLocation.ts),
+ *                          the one door that shares a live position.
+ *
+ * Same fail direction as a send: an unreadable state refuses a capability some
+ * restriction could reach, retryably; a capability no restriction reaches is
+ * decided without it.
+ */
+export const RESTRICTION_CAPABILITY_SCOPE: Readonly<Record<"canCall" | "canCreatePlan" | "canShareExactLocation", readonly RestrictionType[]>> = {
+  canCall: ["messaging"],
+  canCreatePlan: [],
+  canShareExactLocation: ["location_plan_join"],
+};
+
+export function decideRestrictedCapability(
+  capability: keyof typeof RESTRICTION_CAPABILITY_SCOPE,
+  restriction: Pick<RestrictionState, "activeRestrictions" | "degraded" | "degradedReason">,
+): { readonly allowed: true } | { readonly allowed: false; readonly reason: TelegraphReason } {
+  const scope = RESTRICTION_CAPABILITY_SCOPE[capability];
+  if (scope.length === 0) return { allowed: true };
+  if (restriction.degraded && restriction.degradedReason === "fail_closed") {
+    return { allowed: false, reason: "TELEGRAPH_DEGRADED_TRUST_UNREADABLE" };
+  }
+  if (restriction.activeRestrictions.some((t) => scope.includes(t))) {
+    return { allowed: false, reason: "TELEGRAPH_SAFETY_TRUST_RESTRICTED" };
+  }
+  return { allowed: true };
+}
+
 /** A participant id that is safe to place inside a PostgREST `or()` filter. */
 const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
