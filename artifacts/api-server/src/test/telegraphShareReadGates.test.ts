@@ -168,6 +168,7 @@ describe("Telegraph share card — a Memory takes canReadMemory and a two-way bl
     const db = tables();
     db.blocks = [{ blocker_id: BOB, blocked_id: ALICE }];
     const r = await card("MEMORY", M_PUBLIC, db);
+    assert.equal(r.available, false);
     assert.equal(r.reason, "unauthorized");
     assert.equal(r.projection, null);
   });
