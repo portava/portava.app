@@ -60,6 +60,9 @@ import highlightsRouter from "../routes/highlights.js";
 import blocksRouter from "../routes/blocks.js";
 import moderationRouter from "../routes/moderation.js";
 import appealsRouter from "../routes/appeals.js";
+import reportsRouter from "../routes/reports.js";
+import mutesRouter from "../routes/mutes.js";
+import restrictRouter from "../routes/restrict.js";
 import {
   makeFakeClient,
   startRouter,
@@ -196,6 +199,9 @@ before(async () => {
   all.use(blocksRouter);
   all.use(moderationRouter);
   all.use(appealsRouter);
+  all.use(reportsRouter);
+  all.use(mutesRouter);
+  all.use(restrictRouter);
   harness = await startRouter(all);
 });
 after(async () => {
@@ -601,14 +607,19 @@ describe("4. safety sends and safety actions are never refused by a restriction"
   // here under every restriction TYPE and an unreadable state, so a future
   // change that routes one of them through it goes red.
   //
-  // ONE MEASURED EXCEPTION, NOT ASSERTED AS CORRECT: POST /users/:id/block
-  // answers 500 "Permission check failed" when the restriction state cannot be
-  // read, because resolveInteractionPermissions (services/interactionPermissions.ts)
-  // throws DegradedPermissionCheckError on fail_closed and routes/blocks.ts maps
-  // every throw to db_error. Pre-existing, outside this gate, reported for the
-  // owner rather than chosen here (lane T2 report, 2026-10-05).
+  // FOUR MEASURED EXCEPTIONS, NOT ASSERTED AS CORRECT (re-verification 1,
+  // 2026-10-06): POST /users/:id/block, POST /users/:id/mute,
+  // POST /users/:id/restrict and POST /reports with target_type "user" answer
+  // 500 "Permission check failed" when the restriction state cannot be read,
+  // because resolveInteractionPermissions (services/interactionPermissions.ts)
+  // throws DegradedPermissionCheckError on fail_closed and each route maps every
+  // throw to db_error. Pre-existing, outside this gate; routed to the Trust lane
+  // (lane B) — the permission engine and those four routes.
   const ACTIONS: Array<{ name: string; table: string; go: () => Promise<Outcome>; failClosedKnownRefused?: true }> = [
     { name: "block   POST /users/:id/block", table: "blocks", go: () => http(`/users/${B}/block`, {}), failClosedKnownRefused: true },
+    { name: "mute    POST /users/:id/mute", table: "user_mutes", go: () => http(`/users/${B}/mute`, {}), failClosedKnownRefused: true },
+    { name: "restrict POST /users/:id/restrict", table: "user_restrictions", go: () => http(`/users/${B}/restrict`, {}), failClosedKnownRefused: true },
+    { name: "report  POST /reports (a user)", table: "reports", go: () => http(`/reports`, { target_type: "user", target_id: B, reason_code: "harassment" }), failClosedKnownRefused: true },
     { name: "report  POST /threads/:id/report", table: "reports", go: () => http(`/threads/${DM_REPLY}/report`, { reason: "harassment" }) },
     { name: "report  POST /messages/:id/report", table: "reports", go: () => http(`/messages/${M_REPLY}/report`, { reason: "spam" }) },
     { name: "report  POST /moderation/report", table: "moderation_reports", go: () => http(`/moderation/report`, { subjectType: "message", subjectId: M_REPLY, category: "harassment" }) },
