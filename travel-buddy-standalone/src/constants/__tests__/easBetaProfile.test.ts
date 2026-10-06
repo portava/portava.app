@@ -7,9 +7,12 @@
  * to portava-beta. eas.json's build-profile `env` outranks EAS environment
  * variables of the same name — documented for EAS Workflows build jobs
  * (https://docs.expo.dev/eas/workflows/environment/, read 2026-10-06); the
- * runbook has the owner confirm it in the first beta build's log. The
- * anon/publishable key is deliberately NOT in the file: it
- * comes from the EAS environment the profile names (docs/eas-runbook.md
+ * runbook has the owner confirm it in the first beta build's log. Because that
+ * precedence is not documented for a plain `eas build`, the profile also
+ * carries the beta project's PUBLISHABLE key (public by design, as .replit
+ * commits production's) and EXPO_PUBLIC_DEPLOYMENT_ENV=beta, so the build needs
+ * nothing from an EAS environment, and the app refuses to start on a
+ * half-overridden build (src/lib/deploymentConsistency.ts; docs/eas-runbook.md
  * § "Private beta build").
  *
  * Run: node --import tsx/esm --test src/constants/__tests__/easBetaProfile.test.ts
@@ -50,9 +53,19 @@ describe('eas.json beta profile', () => {
     assert.ok(!text.includes(PRODUCTION_ORIGIN), 'the beta profile names portava.replit.app');
   });
 
-  it('carries no key in the file — the publishable key comes from the named EAS environment', () => {
-    assert.equal(beta.env?.EXPO_PUBLIC_SUPABASE_ANON_KEY, undefined);
-    assert.ok(!/sb_publishable_|eyJ[A-Za-z0-9_-]{10,}/.test(JSON.stringify(beta)), 'a key literal is in eas.json');
-    assert.equal(typeof beta.environment, 'string', 'the EAS environment must be named explicitly, not inferred');
+  it('carries every inlined value itself — URLs, the deployment marker and beta\'s PUBLISHABLE key — so no EAS environment has to', () => {
+    // The `preview` EAS environment is shared with the production-targeting `preview` profile, and Expo does not
+    // document which side wins for a plain `eas build`. So the profile names every EXPO_PUBLIC_* the app needs
+    // itself, and the app refuses to start if the database and API disagree (src/lib/deploymentConsistency.ts).
+    assert.equal(beta.env?.EXPO_PUBLIC_DEPLOYMENT_ENV, 'beta');
+    const key = beta.env?.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
+    assert.match(key, /^sb_publishable_[A-Za-z0-9_-]+$/, 'only a PUBLISHABLE key may be in the file');
+    assert.ok(!/eyJ[A-Za-z0-9_-]{10,}|sb_secret_|service_role/.test(JSON.stringify(beta)), 'no JWT anon key, secret key or service-role key');
+    // Not production's publishable key (.replit [userenv.shared] commits production's).
+    const replit = readFileSync(pathResolve(__dir, '../../../../.replit'), 'utf8');
+    const prodKey = /EXPO_PUBLIC_SUPABASE_ANON_KEY\s*=\s*"([^"]+)"/.exec(replit)?.[1];
+    assert.ok(prodKey && prodKey.startsWith('sb_publishable_'), 'could not read production\'s publishable key from .replit');
+    assert.notEqual(key, prodKey, 'the beta profile carries PRODUCTION\'s publishable key');
   });
+
 });
