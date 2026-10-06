@@ -8950,11 +8950,11 @@ flipped no flag.
 
 | need | rows |
 | --- | --- |
-| a production apply or flag (2700, 2992, 2740, 2860, 2977, 3640, 3900, 2981/3513; `layover_constraints_enabled`, `layover_stable_recommendation_ids_enabled`, `layover_safe_return_status_enabled`), a routing or flight-status provider and its secret, airport data curation, or a lodging/help data source (L145, L223) | 151 |
+| a production apply or flag (2700, 2992, 2740, 2860, 2977, 3640, 3900, 2981/3513; `layover_constraints_enabled`, `layover_stable_recommendation_ids_enabled`, `layover_safe_return_status_enabled`), a routing or flight-status provider and its secret, airport data curation (L220 among them, §53.5), or a lodging/help data source (L145, L223) | 152 |
 | another owner's surface (PR #569 crew planning and location grants, still OPEN; Trips' temporal-freedom engine; Compass's tool flag; Rent-a-Buddy categories; the money-in-ranking guard script) | 29 |
 | an owner decision (including L219's tier calibration: §21.1 expects airport-only where the engine's 2h domestic answer is the stricter `too_short`) | 13 |
 | a new migration (the spec's vocabulary columns and state machine) | 11 |
-| code this lane can build — L220 (its test built here, §53.5; held `W` on curated airport data), L3 and L101 (waiting on §53.3's ruling), L155, L205, L236, L294, L295 | 8 |
+| code this lane can build — L3 and L101 (waiting on §53.3's ruling), L155, L205, L236, L294, L295 | 7 |
 
 ### 53.2 Three statuses this document carries that are no longer true
 
