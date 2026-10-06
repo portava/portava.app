@@ -212,7 +212,12 @@ describe('the conversation screen mounts the bar above the rail and wires it', (
     expect(line).toContain("onCall={canShowCallButtons ? () => { void startThreadCall('voice'); } : undefined}");
     expect(line).toContain('onBlockOrReport={() => setShowSafetySheet(true)}');
     expect(line).toContain("onLocationScope={() => setTypedCompose('LOCATION')}");
-    expect(line).toContain('if (s.deprioritizeEntertainment) setRailCollapsed(true);');
+    // Verifier F3: the rail is coordination context, not entertainment — it is never
+    // collapsed for safety. What is held away, for the whole of the raised mode, is
+    // the unsolicited AI suggestion tray.
+    expect(line).toContain('onModeChange={(s) => setSafetyQuiet(s.deprioritizeEntertainment)}');
+    expect(line).not.toContain('setRailCollapsed');
+    expect(dm).toContain("{id && !hideAiSuggestions && !safetyQuiet && dataSaver.mayLoad('ai') && (");
     expect(line.indexOf('<SafetyModeBar ')).toBeLessThan(line.indexOf('<SharedContextRail '));
   });
 });

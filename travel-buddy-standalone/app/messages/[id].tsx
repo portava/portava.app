@@ -1221,7 +1221,7 @@ export default function TelegraphThread() {
   const [plannedByName, setPlannedByName] = useState<string | undefined>(undefined);
   const [blockingUser, setBlockingUser] = useState(false);
   const [showSafetySheet, setShowSafetySheet] = useState(false); const [layeredIds, setLayeredIds] = useState<ReadonlySet<string>>(() => new Set()); // §2.3: ids drawn in the PLAN/NOW strip leave the stream
-  const [hideAiSuggestions, setHideAiSuggestions] = useState(false);
+  const [hideAiSuggestions, setHideAiSuggestions] = useState(false); const [safetyQuiet, setSafetyQuiet] = useState(false); // §15.2: held for the whole of a raised safety mode
   const [threadIsMuted, setThreadIsMuted] = useState(muted === '1'); // the inbox passes the server's mutedAt; it used to start "unmuted" always
   // E-2: whether the thread uses end-to-end encryption
   const [isE2ee, setIsE2ee] = useState(false);
@@ -2086,7 +2086,7 @@ export default function TelegraphThread() {
       {/* Telegraph §2.2 / §3: the Shared Context Rail sits between the header
           and the message stream. It renders nothing when there is no mutual
           canonical state, and nothing when the read failed. */}
-      {id ? <SafetyModeBar threadId={id} refreshKey={messages[messages.length - 1]?.id ?? null} onCall={canShowCallButtons ? () => { void startThreadCall('voice'); } : undefined} onBlockOrReport={() => setShowSafetySheet(true)} onLocationScope={() => setTypedCompose('LOCATION')} onModeChange={(s) => { if (s.deprioritizeEntertainment) setRailCollapsed(true); }} /> : null}{id ? <SharedContextRail threadId={id} scrolled={railCollapsed} /> : null}<TelegraphConnectionBanner />{/* §30A.15: says when messages cannot arrive; nothing while fine */}
+      {id ? <SafetyModeBar threadId={id} refreshKey={messages[messages.length - 1]?.id ?? null} onCall={canShowCallButtons ? () => { void startThreadCall('voice'); } : undefined} onBlockOrReport={() => setShowSafetySheet(true)} onLocationScope={() => setTypedCompose('LOCATION')} onModeChange={(s) => setSafetyQuiet(s.deprioritizeEntertainment)} /> : null}{id ? <SharedContextRail threadId={id} scrolled={railCollapsed} /> : null}<TelegraphConnectionBanner />{/* §30A.15: says when messages cannot arrive; nothing while fine */}
 
       {/* Telegraph §2.2's optional coordination panel / §9's coordination
           mode. Renders only while the thread is actually coordinating, or
@@ -2309,7 +2309,7 @@ export default function TelegraphThread() {
         the person's own hide-AI preference is still the other condition — it is
         simply not fetched, which is where the bytes are.
       */}
-      {id && !hideAiSuggestions && dataSaver.mayLoad('ai') && (
+      {id && !hideAiSuggestions && !safetyQuiet && dataSaver.mayLoad('ai') && (
         <TelegraphSuggestionTray
           threadId={id}
           lastSentMessage={lastSentMessage}
