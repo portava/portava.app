@@ -17,6 +17,7 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
+import { ACCOUNT_STATE_GATE_SELECT } from "../lib/accountStateGate.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import profileRouter from "../routes/profile.js";
 
@@ -1131,7 +1132,7 @@ function makeGetFallbackErrorClient() {
       update(patch: any) { void patch; return builder; },
       insert() { return builder; },
       maybeSingle() {
-        if (table === "profiles" && lastSelect.trim() === "account_status") {
+        if (table === "profiles" && lastSelect === ACCOUNT_STATE_GATE_SELECT) { // the auth gate's read (lib/accountStateGate.ts)
           return Promise.resolve({ data: { account_status: "active" }, error: null });
         }
         if (table === "profiles") {
@@ -1213,7 +1214,7 @@ function makeGetFallbackSuccessClient() {
       update(patch: any) { void patch; return builder; },
       insert() { return builder; },
       maybeSingle() {
-        if (table === "profiles" && lastSelect.trim() === "account_status") {
+        if (table === "profiles" && lastSelect === ACCOUNT_STATE_GATE_SELECT) { // the auth gate's read (lib/accountStateGate.ts)
           return Promise.resolve({ data: { account_status: "active" }, error: null });
         }
         if (table === "profiles") {

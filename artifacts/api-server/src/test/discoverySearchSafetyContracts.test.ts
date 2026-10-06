@@ -366,7 +366,9 @@ describe("revocation between two requests reaches the second one", () => {
   it("the VIEWER suspended between two requests is refused on the second (the ban gate is read per request)", async () => {
     const { state } = fresh();
     assert.equal((await searchIds("events")).status, 200);
-    state.rows.profiles!.find((p) => p.id === VIEWER)!.account_status = "suspended";
+    // A suspension is a user_account_states row (embedded on the gate's profiles read) — the one
+    // moderation state; profiles.account_status cannot hold 'suspended' (its CHECK).
+    (state.rows.user_account_states ??= []).push({ user_id: VIEWER, state: "suspended", expires_at: null });
     const second = await kitGet(base, "/discovery/search?q=zork&type=events");
     assert.equal(second.status, 403);
     assert.equal(second.body?.results, undefined, "a suspended viewer is served no rows");

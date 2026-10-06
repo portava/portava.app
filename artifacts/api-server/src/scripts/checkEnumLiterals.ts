@@ -168,25 +168,17 @@ export const KNOWN_DEAD_LITERALS: Record<string, { count: number; note: string }
  * Ranked by consequence, worst first. These are FIXES, not exemptions.
  */
 export const KNOWN_DEAD_WRITE_LITERALS: Record<string, { count: number; note: string }> = {
-  "src/routes/admin.ts:profiles.account_status:suspended": {
-    count: 2,
-    note:
-      "THE ADMIN SUSPEND ROUTE CANNOT SUCCEED. profiles_account_status_check " +
-      "permits active | deactivated | pending_deletion | deleted and no migration " +
-      "widens it. POST /admin/users/:userId/suspend surfaces the error, so the " +
-      "route always fails; the moderation path at :1134 folds it into " +
-      "sideEffects.accountState = 'error' and records the suspension only in " +
-      "user_account_states, while the access gates read profiles.account_status. " +
-      "Needs a decision: widen the CHECK, or point the gates at user_account_states.",
-  },
-  "src/routes/admin.ts:profiles.account_status:banned": {
-    count: 2,
-    note:
-      "THE ADMIN BAN ROUTE CANNOT SUCCEED — same column, same cause as 'suspended' " +
-      "above. POST /admin/users/:userId/ban returns db_error every time. Ban and " +
-      "suspend are the two strongest moderation actions and neither has ever " +
-      "written the field the access gates consult.",
-  },
+  // TWO ENTRIES STRUCK OFF (2026-10-03, moderation lane), both for one decision.
+  // `admin.ts:profiles.account_status:suspended` (count 2) and `…:banned`
+  // (count 2) recorded that POST /admin/users/:id/suspend and /ban, and the
+  // PATCH moderation-action path, wrote values profiles_account_status_check
+  // cannot hold, so every ban and suspension failed 23514 — "needs a decision:
+  // widen the CHECK, or point the gates at user_account_states". The owner
+  // decided: user_account_states is the ONE authoritative moderation state. The
+  // writers now go through lib/accountModeration.ts (row upsert; unban revokes
+  // with expires_at := now) and no longer write account_status at all; every
+  // auth gate reads the row through lib/accountStateGate.ts. The CHECK is NOT
+  // widened — a second, duplicate ban state is exactly what was decided against.
   "src/routes/rentABuddy.ts:message_threads.thread_type:rent_buddy_booking": {
     count: 2,
     note:
