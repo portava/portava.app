@@ -15500,7 +15500,7 @@ Each is the same class of disclosure, recorded with the reason.
    - They carry sample media ids, in the living payload
      (`artifacts/api-server/src/routes/placeLiving.ts:438#dedupGroups:  dedupGroupsOut,`)
      and at GET /places/:id/dedup-groups
-     (`artifacts/api-server/src/routes/places.ts:1593#.from("media_dedup_groups")`).
+     (`artifacts/api-server/src/routes/places.ts:1609#.from("media_dedup_groups")`).
    - A withheld post's media can be in a group.
    - Why not fixed: the groups are written by Media's dedup worker keyed on
      media, not posts. The fix belongs in that writer.

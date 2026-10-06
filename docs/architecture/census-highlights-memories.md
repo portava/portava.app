@@ -1658,14 +1658,14 @@ section B records — re-declare at the squash when this lands — is unchanged 
 | Two write-shaped tools that write nothing | `artifacts/api-server/src/compass/MemoryCompassTools.ts:658#toolMemoryCreateDraft` and `:728#toolMemorySuggestCorrection` | Both return a proposal with `requires_confirmation` and a `confirm_via` naming the existing authenticated route, which re-authorizes. Field allow-lists at `:637#DRAFTABLE_FIELDS` and `:641#CORRECTABLE_FIELDS`, both deliberately SHORTER than `patchMemorySchema`: audience lists, visibility and lifecycle state cannot be proposed by prose. |
 | The wiring | `artifacts/api-server/src/compass/CompassTools.ts:626#MEMORY_COMPASS_TOOL_DEFINITIONS` (spread) and `artifacts/api-server/src/compass/CompassTools.ts:2427#MEMORY_COMPASS_TOOL_NAMES.has` (dispatch) | One import, one spread, one branch, one prompt block — the shape Telegraph's §18.3 block already established in this file. |
 | The §16 boundary as prompt text | `artifacts/api-server/src/compass/MemoryCompassTools.ts:940#MEMORY_COMPASS_PROMPT_RULES` | Listed LAST on purpose. It is the weakest of the three layers, and it exists only for §16's "may" clauses, which cannot be expressed as a refusal. |
-| The suites | `artifacts/api-server/src/test/memoryCompassTools.test.ts:300#bypass` (35 tests) and `artifacts/api-server/src/test/memoryPublishPolicy.test.ts:195#refuses` (18 tests) | Both registered in `package.json`'s `test` script. |
+| The suites | `artifacts/api-server/src/test/memoryCompassTools.test.ts:307#bypass` (35 tests) and `artifacts/api-server/src/test/memoryPublishPolicy.test.ts:195#refuses` (18 tests) | Both registered in `package.json`'s `test` script. |
 
 **The two greps section B.7 wrote are the ones that decide §16, so here they are re-run rather
 than described.** B.7 recorded `grep -cE 'name: "[a-z_]*(memor|highlight|storie)'` over the tool
 files returning **0** and **0**, and a grep for a tool implementation reading a Memory table
 returning nothing. On this commit the first returns **8** and the second returns the eight
 accessors. A test asserts the first mechanically, in the definition list rather than by shelling
-out: `artifacts/api-server/src/test/memoryCompassTools.test.ts:247#offered`.
+out: `artifacts/api-server/src/test/memoryCompassTools.test.ts:254#offered`.
 
 ### C.2 Reachability, stated as a chain with its weak links named
 
@@ -3025,8 +3025,8 @@ the other two suites already ran.
 | turning up inside the meetup radius DOES earn the stamp | `artifacts/api-server/src/test/memoryPlannedNotExperienced.test.ts:492#CONTROL — turning up inside the radius` |
 | checking in before the window opens earns nothing | `artifacts/api-server/src/test/memoryPlannedNotExperienced.test.ts:517#checking in before the window opens` |
 | an invited-but-not-accepted member earns nothing | `artifacts/api-server/src/test/memoryPlannedNotExperienced.test.ts:532#an invited-but-not-accepted member earns nothing` |
-| an unreadable participant read is not "nobody was there" | `artifacts/api-server/src/test/memoryCompassTools.test.ts:584#an unreadable memory_tags read is not reported` |
-| an unreadable attachment read is not "nothing is attached" | `artifacts/api-server/src/test/memoryCompassTools.test.ts:596#an unreadable memory_items read is not reported` |
+| an unreadable participant read is not "nobody was there" | `artifacts/api-server/src/test/memoryCompassTools.test.ts:591#an unreadable memory_tags read is not reported` |
+| an unreadable attachment read is not "nothing is attached" | `artifacts/api-server/src/test/memoryCompassTools.test.ts:603#an unreadable memory_items read is not reported` |
 | a blocked viewer is refused the owner's public Memory card | `artifacts/api-server/src/test/telegraphShare.test.ts:396#a Memory whose owner has blocked the viewer degrades` |
 | an unreadable `blocks` withholds rather than shares | `artifacts/api-server/src/test/telegraphShare.test.ts:411#an unreadable blocks table withholds` |
 
@@ -6604,15 +6604,15 @@ Any of the following makes the suites above go red:
 ### §AC.1 What was built
 
 1. **Executable Memories (§14, §27 `MemoryActionService`).**
-   - The service: `artifacts/api-server/src/services/memory/memoryActionService.ts:752#export async function compileDoAgain`, with `artifacts/api-server/src/services/memory/memoryActionService.ts:834#export function compileAddToTrip` and `artifacts/api-server/src/services/memory/memoryActionService.ts:853#export function compileTakeMeBack` — §27's three methods — and `artifacts/api-server/src/services/memory/memoryActionService.ts:897#export async function compileBringForward`.
+   - The service: `artifacts/api-server/src/services/memory/memoryActionService.ts:758#export async function compileDoAgain`, with `artifacts/api-server/src/services/memory/memoryActionService.ts:840#export function compileAddToTrip` and `artifacts/api-server/src/services/memory/memoryActionService.ts:859#export function compileTakeMeBack` — §27's three methods — and `artifacts/api-server/src/services/memory/memoryActionService.ts:903#export async function compileBringForward`.
    - Every operational fact is read when the action is compiled, from the system that owns it. The catalog row is read now: a merge is followed to its successor (`artifacts/api-server/src/services/memory/memoryActionService.ts:336#while (row.merged_into_place_id`) and a closed place is refused (`artifacts/api-server/src/services/memory/memoryActionService.ts:382#if (place.status === "closed") return`).
-   - A live source answers, or the plan says nobody can tell whether the place is open. §14's fusion stays a juxtaposition (`artifacts/api-server/src/services/memory/memoryActionService.ts:771#fuseHistoricalWithCurrent(historicalOf`).
+   - A live source answers, or the plan says nobody can tell whether the place is open. §14's fusion stays a juxtaposition (`artifacts/api-server/src/services/memory/memoryActionService.ts:777#fuseHistoricalWithCurrent(historicalOf`).
    - Free time comes from the Trips Temporal Freedom Engine and is never computed here (`artifacts/api-server/src/services/memory/memoryActionService.ts:304#readTripWindows(sc, tripId, viewerId, { now })`).
    - A non-owner is never handed a venue that the owner's §10 rung or a protected Hidden Gem withholds (`artifacts/api-server/src/services/memory/memoryActionService.ts:411#export async function mayDiscloseVenue`). A non-owner is never handed the Memory's raw coordinate either.
    - Three of §14's eight are declared and refused by name (`artifacts/api-server/src/services/memory/memoryActionService.ts:154#export const DECLARED_UNBUILT`).
    - The routes: `artifacts/api-server/src/routes/memoryActions.ts:94#router.get("/memories/:id/actions"` and `artifacts/api-server/src/routes/memoryActions.ts:127#router.get("/memories/:id/actions/:action"`. They are read-only. Add to Trip compiles the current place for the trip's own write path (`POST /trips/:tripId/saved-places`) and writes no trip table.
    - The client is `MemoryActionBar` on the Memory screen.
-   - Evidence: `artifacts/api-server/src/test/memoryActions.test.ts:429#compiles a plan on the trip going THERE`, `artifacts/api-server/src/test/memoryActions.test.ts:278#refuses every venue action on a place the catalog says has CLOSED`, `artifacts/api-server/src/test/memoryActions.test.ts:341#withholds a protected Hidden Gem` and `artifacts/api-server/src/test/memoryActions.test.ts:598#BOOK_AGAIN, NEW_TRIP_WITH_CREW and USE_AS_INSPIRATION`. That is 31 cases, and 28 of 28 mutants were killed.
+   - Evidence: `artifacts/api-server/src/test/memoryActions.test.ts:429#compiles a plan on the trip going THERE`, `artifacts/api-server/src/test/memoryActions.test.ts:278#refuses every venue action on a place the catalog says has CLOSED`, `artifacts/api-server/src/test/memoryActions.test.ts:341#withholds a protected Hidden Gem` and `artifacts/api-server/src/test/memoryActions.test.ts:610#BOOK_AGAIN, NEW_TRIP_WITH_CREW and USE_AS_INSPIRATION`. That is 31 cases, and 28 of 28 mutants were killed.
 2. **§12's Highlight verbs.**
    - The route: `artifacts/api-server/src/routes/highlights.ts:2910#router.get("/highlights/:id/actions"`. It sits behind the same `resolveViewAccess` gate as every engagement route.
    - The venue verbs run on the Memory the Highlight projects, under the MEMORY's read gate for this viewer (`artifacts/api-server/src/services/highlights/highlightActions.ts:171#const loaded = await loadMemoryForViewer`).
@@ -6755,22 +6755,22 @@ The suites in §AC.1 assert each of these.
 6. **The place bridge.**
    - The defect: the action service had its own id crossing. It guessed between two catalog rows, applied `.limit(5)` before sorting, and the sibling route treated `canonical_location_id` as a place id.
    - The fix: the crossing now goes through `artifacts/api-server/src/lib/placeIdBridge.ts:397#export async function resolveMemoryPlaceRef`. The Memory's own `place_id` row wins. When several rows share its canonical location, the answer is PLACE_AMBIGUOUS (`artifacts/api-server/src/lib/placeIdBridge.ts:417#if (rows.length > 1) return { state: "ambiguous"`). `discovery_places` is never read. Its `canonical_location_id` is a `places.id`, the trap that `memories.canonical_location_id` (a `canonical_locations.id`) does not share.
-   - The tests: `artifacts/api-server/src/test/memoryActions.test.ts:664#BRIDGE: two catalog rows sharing the Memory's canonical location` and `artifacts/api-server/src/test/memoryActions.test.ts:673#BRIDGE: the Memory's OWN catalog row wins`.
+   - The tests: `artifacts/api-server/src/test/memoryActions.test.ts:676#BRIDGE: two catalog rows sharing the Memory's canonical location` and `artifacts/api-server/src/test/memoryActions.test.ts:685#BRIDGE: the Memory's OWN catalog row wins`.
 7. **The precision gate failed open.**
    - The defect: an unreadable `memory_location_precision_enabled` read as "off", which publishes at `exact`.
    - The fix: one helper now reads the gate in three states (`artifacts/api-server/src/lib/memoryPrecisionGate.ts:33#export async function readMemoryPrecisionGate`). Every site uses it, including the eight in `artifacts/api-server/src/routes/memories.ts:474#const precisionGate = await readMemoryPrecisionGate(sc)`. An unreadable gate clamps non-owner reads. A write that carries a rung is refused as retryable (`artifacts/api-server/src/routes/memories.ts:493#if (precisionGate === "unreadable" && d.locationPrecision !== undefined)`).
    - The tests: `artifacts/api-server/src/test/memoryLocationPrecision.test.ts:540#a non-owner gets NO location when the gate cannot be read`, the CREATE and PATCH refusals after it, and one case for each of the five list and projection sites (`artifacts/api-server/src/test/memoryLocationPrecision.test.ts:605#an UNREADABLE gate clamps every non-owner read site`). Each site case first serves the place with the gate off, so that its absence under an unreadable gate is shown to be the clamp. Mutants: 11 of 11 killed, covering the three-state read, the clamp, the column, both write refusals and all six clamp sites.
 8. **Bring Forward, the 21st trip, and the MOVED copy.**
-   - Bring Forward now follows merges through the same `followMergeChain` that Do Again uses (`artifacts/api-server/src/services/memory/memoryActionService.ts:948#const chain = await followMergeChain(sc, saved)`).
-   - Every current trip is kept for deciding. Only the list a person picks from is capped (`artifacts/api-server/src/services/memory/memoryActionService.ts:547#return { state: "ok", trips };`).
+   - Bring Forward now follows merges through the same `followMergeChain` that Do Again uses (`artifacts/api-server/src/services/memory/memoryActionService.ts:954#const chain = await followMergeChain(sc, saved)`).
+   - Every current trip is kept for deciding. Only the list a person picks from is capped (`artifacts/api-server/src/services/memory/memoryActionService.ts:553#return { state: "ok", trips };`).
    - The MOVED caution no longer claims a new address, which nothing records.
-   - The tests: `artifacts/api-server/src/test/memoryActions.test.ts:684#the 21st current trip is still the viewer's own` and `artifacts/api-server/src/test/memoryActions.test.ts:701#Bring Forward follows a merge to the successor`.
+   - The tests: `artifacts/api-server/src/test/memoryActions.test.ts:696#the 21st current trip is still the viewer's own` and `artifacts/api-server/src/test/memoryActions.test.ts:713#Bring Forward follows a merge to the successor`.
 9. **Five boundary mutants now die.** Each has its own test:
-   - the rung admits `neighborhood` (`artifacts/api-server/src/test/memoryActions.test.ts:610#BOUNDARY: a 'neighborhood' rung withholds the venue`);
-   - the gem ceiling admits `neighborhood` (`artifacts/api-server/src/test/memoryActions.test.ts:621#BOUNDARY: an APPROXIMATE gem`);
-   - the deleted filter is dropped (`artifacts/api-server/src/test/memoryActions.test.ts:632#BOUNDARY: a deleted Memory has no actions`);
-   - closed is checked before withheld (`artifacts/api-server/src/test/memoryActions.test.ts:639#BOUNDARY: a closed place a non-owner may not be TOLD about`);
-   - the past `end_date` filter is dropped (`artifacts/api-server/src/test/memoryActions.test.ts:651#BOUNDARY: a trip whose end date has passed`).
+   - the rung admits `neighborhood` (`artifacts/api-server/src/test/memoryActions.test.ts:622#BOUNDARY: a 'neighborhood' rung withholds the venue`);
+   - the gem ceiling admits `neighborhood` (`artifacts/api-server/src/test/memoryActions.test.ts:633#BOUNDARY: an APPROXIMATE gem`);
+   - the deleted filter is dropped (`artifacts/api-server/src/test/memoryActions.test.ts:644#BOUNDARY: a deleted Memory has no actions`);
+   - closed is checked before withheld (`artifacts/api-server/src/test/memoryActions.test.ts:651#BOUNDARY: a closed place a non-owner may not be TOLD about`);
+   - the past `end_date` filter is dropped (`artifacts/api-server/src/test/memoryActions.test.ts:663#BOUNDARY: a trip whose end date has passed`).
 
 Mutation results for this wave: 18 of 18 server mutants killed (findings 3, 5, 6, 8 and 9) and 10 of 10 client mutants killed (finding 4). Findings 1, 2 and 7 were each committed with their own mutants.
 
@@ -6867,3 +6867,72 @@ Across pages of the bounded feed, the tests prove the opposite (H100 above).
 - NOT-GRADED: artifacts/api-server/src/test/passportMemorySelfVerification.test.ts — §AB.4 names it as the controlled half of the H204 move it RECOMMENDS and does not make; no verdict in this census rests on it today
 - NOT-GRADED: artifacts/api-server/src/routes/index.ts — §AC.6 names the one tail line that registers the two new routers; the route registry is shared wiring, and the routes themselves are graded through `routes/memoryActions.ts` and `routes/memoryCandidates.ts`
 - NOT-GRADED: artifacts/api-server/src/lib/liveIntelligence.ts — §AD.6 records its unchecked top-1 name match as an open question for its owner (Discovery / Live Places); no row in this census grades the live source, and the Do Again plan's present-tense claim is cited as only as good as that match
+
+## §AE — 2026-10-06 (mission lane N7): §AD.6's open question is answered — a live reading is about THIS place or it is absent (lead ruling D-67), and NO VERDICT MOVES
+
+Branch `claude/live-identity-d67-20261006`, cut from `main` at `ca49bbd28`. `head_commit` is **NOT**
+re-declared. Controlled evidence only: node:test suites over the files' own fakes and a stubbed
+`fetch`. No flag, no migration, no database read.
+
+### §AE.1 What §AD.6 recorded, and what closes it
+
+§AD.6's first item said the live source looked a venue up by name with a top-1 search and checked
+nothing, so the Do Again plan could say "open right now", marked `verified_live`, about a different
+venue with the same name. Its bare `liveIntelligence.ts:146-151` describes the file at `ca49bbd28`;
+the lines it named no longer exist in that form and it is left as the measurement it was, not
+repointed onto code that says the opposite.
+
+The lead ruled on 2026-10-06 (D-67): only a place whose identity is confirmed may be labelled verified
+live — a stored provider id, or names equal after normalisation AND the provider's coordinates within
+150 m of the place's. The lookup now takes the place's coordinates as a required anchor, refuses to ask
+without one (`artifacts/api-server/src/lib/liveIntelligence.ts:240#if (!at) return null;`) and uses only
+a record that passes (`artifacts/api-server/src/lib/liveIntelligence.ts:285#const r = results.find((x) => x?.fsq_place_id && isSameVenue(name, at, x));`).
+census-compass §37.2 states the rule and the lookup's own tests; this section grades the two Memory
+callers.
+
+### §AE.2 The Memory callers
+
+- **Do Again's current half.** `readCurrentWorld` anchors on the catalog row's own
+  `places.latitude`/`longitude`, and a row without them gets an honest unknown without the live source
+  being asked (`artifacts/api-server/src/services/memory/memoryActionService.ts:451#const anchor = liveVenueAnchorOf(place.lat, place.lng);`,
+  `artifacts/api-server/src/services/memory/memoryActionService.ts:456#live = await deps.liveStatus(place.name, anchor);`).
+  The seam's type now requires the anchor (`artifacts/api-server/src/services/memory/memoryActionService.ts:297#liveStatus(name: string, anchor: LiveVenueAnchor)`).
+- **`memory_get_place_history`.** It reads the catalog place's `lat, lng` and passes them
+  (`artifacts/api-server/src/compass/MemoryCompassTools.ts:476#liveVenueAnchorOf((place as any).lat, (place as any).lng)`).
+  **A defect fixed in passing:** that read never bound its `error`, so an unreadable
+  `discovery_places` was answered with "No catalog place was resolved from this Memory's place id" — a
+  failed read reported as an absence. It is now reported as unreadable
+  (`artifacts/api-server/src/compass/MemoryCompassTools.ts:473#if (placeError) current = currentWorldUnknown(`).
+  The edit is line-neutral from `:469` down, so H109's `fuseHistoricalWithCurrent` caller keeps its line.
+
+### §AE.3 The tests, each mutation-proved (revert → red → restore, tree clean after)
+
+- `artifacts/api-server/src/test/memoryActions.test.ts:451#lead ruling D-67: anchored on the catalog place's own coordinates`
+  — red when the action passes any other point.
+- `artifacts/api-server/src/test/memoryActions.test.ts:456#lead ruling D-67: a catalog place with no coordinates is never looked up live`
+  — red when the no-coordinate short-circuit is removed.
+- `artifacts/api-server/src/test/memoryCompassTools.test.ts:704#passes the place's own coordinates, and a record there is a verified-live reading`
+  — red when the tool passes no anchor, or when the lookup's request is not centred on it.
+- `artifacts/api-server/src/test/memoryCompassTools.test.ts:715#a namesake 2 km away says nothing about now`
+  — red when the distance test is removed.
+- `artifacts/api-server/src/test/memoryCompassTools.test.ts:724#a place with no coordinates asks no provider`
+  — red when the lookup's anchor guard is replaced by a name-only search.
+- `artifacts/api-server/src/test/memoryCompassTools.test.ts:732#a failed place read is reported as unreadable, never as 'no catalog place'`
+  — red when the `placeError` line is removed.
+
+### §AE.4 Rows
+
+**0 up, 0 down.** H107 stays `W` for the reason §AD.1 gives (the free-time leg is behind
+`trip_operational_projections_enabled`, FALSE); its live leg is now about the right venue, which
+removes a defect §AD.6 recorded beside the verdict rather than inside it. H109, H70 and H5 grade the
+fusion boundary, which is unchanged: a wrong-venue reading was always kept apart from history; it is
+now also not produced. H16 stays `W` on §AD.1's two remaining reasons. The headline is §AD.4's.
+
+### §AE.5 What would turn this red
+
+- A Memory caller that passes the trip's or the city's coordinates instead of the place row's: the
+  150 m rule would confirm against the wrong point. Both callers read the place row today.
+- `places` gaining a Foursquare reference this lookup is handed (`external_place_references` holds
+  `provider = 'fsq'` rows from the OS Places backfill, and nothing passes them here): D-67's stored-id
+  branch would then have a carrier, and building it is the next step, not a reason to relax the
+  coordinate branch.
