@@ -6885,8 +6885,8 @@ repointed onto code that says the opposite.
 The lead ruled on 2026-10-06 (D-67): only a place whose identity is confirmed may be labelled verified
 live — a stored provider id, or names equal after normalisation AND the provider's coordinates within
 150 m of the place's. The lookup now takes the place's coordinates as a required anchor, refuses to ask
-without one (`artifacts/api-server/src/lib/liveIntelligence.ts:240#if (!at) return null;`) and uses only
-a record that passes (`artifacts/api-server/src/lib/liveIntelligence.ts:285#const r = results.find((x) => x?.fsq_place_id && isSameVenue(name, at, x));`).
+without one (`artifacts/api-server/src/lib/liveIntelligence.ts:265#if (!at) return null;`) and uses only
+a record that passes (`artifacts/api-server/src/lib/liveIntelligence.ts:311#const r = results.find((x) => x?.fsq_place_id && isSameVenue(name, at, x));`).
 census-compass §37.2 states the rule and the lookup's own tests; this section grades the two Memory
 callers.
 

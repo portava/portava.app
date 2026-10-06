@@ -4339,14 +4339,14 @@ this one: a wrong answer is not a degraded one.
 A provider record is this place only when the names are equal after NFKD, diacritic stripping, a
 full case fold, punctuation removal and whitespace collapsing, AND the record's own coordinates lie
 within `artifacts/api-server/src/lib/liveIntelligence.ts:125#export const LIVE_IDENTITY_MAX_DISTANCE_M = 150;`
-of the place's (`artifacts/api-server/src/lib/liveIntelligence.ts:208#!== want) return false;`,
-`artifacts/api-server/src/lib/liveIntelligence.ts:211#return metresBetween(anchor, at) <= LIVE_IDENTITY_MAX_DISTANCE_M;`).
+of the place's (`artifacts/api-server/src/lib/liveIntelligence.ts:231#!== want) return false;`,
+`artifacts/api-server/src/lib/liveIntelligence.ts:236#<= LIVE_IDENTITY_MAX_DISTANCE_M;`).
 The lookup takes the place's coordinates as a required anchor; with none it asks no provider and
-returns null (`artifacts/api-server/src/lib/liveIntelligence.ts:240#if (!at) return null;`). It
+returns null (`artifacts/api-server/src/lib/liveIntelligence.ts:265#if (!at) return null;`). It
 searches around the anchor for five candidates with their coordinates
-(`artifacts/api-server/src/lib/liveIntelligence.ts:256#ll:`) and uses the FIRST that passes
-(`artifacts/api-server/src/lib/liveIntelligence.ts:285#const r = results.find((x) => x?.fsq_place_id && isSameVenue(name, at, x));`).
-The cache key carries the anchor (`artifacts/api-server/src/lib/liveIntelligence.ts:216#|${anchor.lat},${anchor.lng}`),
+(`artifacts/api-server/src/lib/liveIntelligence.ts:282#ll:`) and uses the FIRST that passes
+(`artifacts/api-server/src/lib/liveIntelligence.ts:311#const r = results.find((x) => x?.fsq_place_id && isSameVenue(name, at, x));`).
+The cache key carries the anchor (`artifacts/api-server/src/lib/liveIntelligence.ts:241#|${anchor.lat},${anchor.lng}`),
 so two same-named places never share an entry. No catalog table stores a Foursquare id this lookup
 is handed (`discovery_places` has `lat`/`lng` and no provider-id column), so the ruling's
 stored-id branch has no carrier today and is not built.
@@ -4364,15 +4364,15 @@ census-highlights-memories §AE grades that half.
 
 `artifacts/api-server/src/test/compass-live-intel.test.ts` gains two suites:
 
-- the identity rule — `artifacts/api-server/src/test/compass-live-intel.test.ts:344#same name within 150 m → verified live`,
-  `artifacts/api-server/src/test/compass-live-intel.test.ts:352#same name just past 150 m → not verified`,
-  `artifacts/api-server/src/test/compass-live-intel.test.ts:358#same name 2 km away → not verified`,
-  `artifacts/api-server/src/test/compass-live-intel.test.ts:363#different name at the same coordinates → not verified`,
-  `artifacts/api-server/src/test/compass-live-intel.test.ts:373#the second result is used when the first is a namesake elsewhere`,
-  `artifacts/api-server/src/test/compass-live-intel.test.ts:401#null anchor → the provider is not asked and the answer is null`,
-  and the cache crossing anchors in both orders (`artifacts/api-server/src/test/compass-live-intel.test.ts:420#the cache does not cross anchors`);
-- the tool — `artifacts/api-server/src/test/compass-live-intel.test.ts:439#passes the row's own coordinates and never returns them on the place`
-  and `artifacts/api-server/src/test/compass-live-intel.test.ts:451#a namesake 2 km away gives no verified-live label`.
+- the identity rule — `artifacts/api-server/src/test/compass-live-intel.test.ts:346#same name within 150 m → verified live`,
+  `artifacts/api-server/src/test/compass-live-intel.test.ts:354#same name just past 150 m → not verified`,
+  `artifacts/api-server/src/test/compass-live-intel.test.ts:360#same name 2 km away → not verified`,
+  `artifacts/api-server/src/test/compass-live-intel.test.ts:365#different name at the same coordinates → not verified`,
+  `artifacts/api-server/src/test/compass-live-intel.test.ts:399#the second result is used when the first is a namesake elsewhere`,
+  `artifacts/api-server/src/test/compass-live-intel.test.ts:427#null anchor → the provider is not asked and the answer is null`,
+  and the cache crossing anchors in both orders (`artifacts/api-server/src/test/compass-live-intel.test.ts:447#the cache does not cross anchors`);
+- the tool — `artifacts/api-server/src/test/compass-live-intel.test.ts:466#passes the row's own coordinates and never returns them on the place`
+  and `artifacts/api-server/src/test/compass-live-intel.test.ts:478#a namesake 2 km away gives no verified-live label`.
 
 Mutation-proved one at a time (revert → red → restore, tree clean after each): removing the distance
 test, the name test, the anchor guard, the anchor from the cache key or the `ll` centre; going back to
@@ -4429,9 +4429,9 @@ live source.
 
 ### 38.3 Tests and mutation proofs
 
-- `artifacts/api-server/src/test/compass-live-intel.test.ts:473#a failed discovery_places read says unreadable and asks no live source`
+- `artifacts/api-server/src/test/compass-live-intel.test.ts:500#a failed discovery_places read says unreadable and asks no live source`
   — red when the tool answers a failed read as "Place not found." again.
-- `artifacts/api-server/src/test/compass-live-intel.test.ts:484#a real miss (no error, no row) is still 'Place not found.'`
+- `artifacts/api-server/src/test/compass-live-intel.test.ts:511#a real miss (no error, no row) is still 'Place not found.'`
   — red when the tool answers every null as unreadable.
 
 Each was mutation-proven (revert → red → restore, tree clean after).
