@@ -176,14 +176,13 @@ function makeClient(state: State) {
   };
 }
 
-type LoggedRequest = express.Request & { log?: { error: () => void; info: () => void; warn: () => void } };
-
 async function startApp(state: State) {
   _setTestClient(makeClient(state), true);
   const app = express();
   app.use(express.json());
-  app.use((req: LoggedRequest, _res: express.Response, next: express.NextFunction) => {
-    req.log = { error: () => {}, info: () => {}, warn: () => {} };
+  app.use((req: express.Request, _res: express.Response, next: express.NextFunction) => {
+    // A silent stand-in for pino's per-request logger; the routes only call these three.
+    Object.assign(req, { log: { error: () => {}, info: () => {}, warn: () => {} } });
     next();
   });
   app.use("/api", memoriesRouter);
