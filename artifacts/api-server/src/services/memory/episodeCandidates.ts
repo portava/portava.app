@@ -86,7 +86,7 @@ export const CANDIDATE_DETECTION_REASON = "media_cluster" as const;
 /** 2320's kind vocabulary has no "photos" kind; a cluster of captures is an activity until the owner says more. */
 export const CANDIDATE_EPISODE_KIND = "activity" as const;
 
-const EPISODE_COLUMNS = [
+export const EPISODE_COLUMNS = [
   "id", "user_id", "episode_kind", "summary", "started_at", "ended_at", "place_id", "city", "country",
   "detection_reason", "detector_version", "detection_digest", "significance", "significance_basis",
   "state", "state_changed_at", "merged_into_id", "sensitivity", "visibility", "retention_class",
@@ -96,7 +96,10 @@ const EVIDENCE_COLUMNS = [
   "id", "episode_id", "user_id", "truth_level", "source_class", "source_table", "source_id",
   "source_ref", "observed_at", "recorded_at", "weight",
 ] as const;
-const EPISODE_SELECT = EPISODE_COLUMNS.join(", ");
+// A string literal, not EPISODE_COLUMNS.join(", "): check:write-path-columns resolves a
+// select list only when it is a literal or a same-file string const, and a .join is a
+// blind spot to it. memoryEpisodeContract.test pins the two to the same column set.
+export const EPISODE_SELECT = "id, user_id, episode_kind, summary, started_at, ended_at, place_id, city, country, detection_reason, detector_version, detection_digest, significance, significance_basis, state, state_changed_at, merged_into_id, sensitivity, visibility, retention_class, created_at, updated_at";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** A trip's dates are calendar days in its own zone; ±14 h covers every zone on Earth. */

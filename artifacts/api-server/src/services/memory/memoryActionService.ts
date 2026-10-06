@@ -164,7 +164,10 @@ export const DECLARED_UNBUILT: Readonly<Partial<Record<MemoryAction, ActionUnava
 /** The Memory columns an action reads. `location_precision` only when the gate is on. */
 export const MEMORY_ACTION_COLUMNS =
   "id, owner_id, title, visibility, allowed_user_ids, hidden_user_ids, trip_id, place_id, canonical_location_id, location_city, location_country, location_lat, location_lng, starts_at, ends_at, state, created_at";
-export const MEMORY_ACTION_COLUMNS_WITH_PRECISION = `${MEMORY_ACTION_COLUMNS}, location_precision`;
+// A plain string literal (not a template over MEMORY_ACTION_COLUMNS): check:write-path-columns
+// resolves only literals and same-file string consts. memorySelectListsLiteral.test pins the two.
+export const MEMORY_ACTION_COLUMNS_WITH_PRECISION =
+  "id, owner_id, title, visibility, allowed_user_ids, hidden_user_ids, trip_id, place_id, canonical_location_id, location_city, location_country, location_lat, location_lng, starts_at, ends_at, state, created_at, location_precision";
 
 export interface MemoryForAction {
   id: string;
@@ -201,11 +204,11 @@ export async function loadMemoryForViewer(sc: SupabaseClient, memoryId: string, 
   // §10 gate, three states: an unreadable gate selects no rung and CLAMPS
   // (lib/memoryPrecisionGate.ts) — it never reads as "off" (verifier finding 7).
   const precisionGate = await readMemoryPrecisionGate(sc);
-  const { data, error } = await sc
-    .from("memories")
-    .select(precisionColumnSelectable(precisionGate) ? MEMORY_ACTION_COLUMNS_WITH_PRECISION : MEMORY_ACTION_COLUMNS)
-    .eq("id", memoryId)
-    .maybeSingle();
+  // Two sites, one per gate state, each with a same-file constant: check:write-path-columns
+  // cannot read a select list chosen by a ternary, and both lists must stay checkable.
+  const { data, error } = precisionColumnSelectable(precisionGate)
+    ? await sc.from("memories").select(MEMORY_ACTION_COLUMNS_WITH_PRECISION).eq("id", memoryId).maybeSingle()
+    : await sc.from("memories").select(MEMORY_ACTION_COLUMNS).eq("id", memoryId).maybeSingle();
   if (error) {
     log.error({ err: error, memoryId }, "memory actions: memory read failed — unreadable, not absent");
     return { state: "unreadable" };
