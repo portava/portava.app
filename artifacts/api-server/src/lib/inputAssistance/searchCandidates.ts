@@ -976,7 +976,7 @@ async function searchPlans(
     const pat = sqlPattern(q); // census-discovery §81 (A10): the plan items come from Trips' projection when its flag is on
     const { data, error } = (await discoveryTripViewerProjectionsOn(sc)) ? await planItemRowsFromProjection(sc, { pattern: pat, offset, limit: fetchLimit }) : await sc
       .from("trip_plan_items")
-      .select(`id, title, trip_id, created_at, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
+      .select("id, title, trip_id, created_at, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`) // a literal, so check:write-path-columns can resolve it (it follows no import); the satisfies fails typecheck if the privacy columns change
       .ilike("title", pat)
       .is("removed_at", null)
       .order("created_at", { ascending: false })
