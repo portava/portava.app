@@ -157,6 +157,6 @@ const s = StyleSheet.create({
   },
   btnOn: { backgroundColor: color.ink },
   btnOff: { opacity: 0.6 },
-  msg: { ...t.small, color: color.muteStrong, textAlign: 'right' },
+  msg: { ...t.small, color: color.deep, textAlign: 'right' },
   msgBad: { color: color.ink },
 });

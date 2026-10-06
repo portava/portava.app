@@ -902,7 +902,7 @@ describe("H2. Trust restrictions reach the confirm and the visibility boost (TRV
     const pid = "82345678-1234-1234-1234-123456789abc";
     const db = seededDb(pid, [{ ...HOSTING }]);
     const client = makeClient(db);
-    _setTestClient(client, "test-token");
+    _setTestClient(client, true);
 
     const refused = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
     assert.equal(refused.status, 403);
@@ -919,7 +919,7 @@ describe("H2. Trust restrictions reach the confirm and the visibility boost (TRV
   it("confirm under a MESSAGING-only restriction still confirms — the restriction is limited to what it is for", async () => {
     const pid = "92345678-1234-1234-1234-123456789abc";
     const client = makeClient(seededDb(pid, [{ ...MESSAGING }]));
-    _setTestClient(client, "test-token");
+    _setTestClient(client, true);
     const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
     assert.equal(r.status, 201);
   });
@@ -927,7 +927,7 @@ describe("H2. Trust restrictions reach the confirm and the visibility boost (TRV
   it("confirm with an UNREADABLE trust_restrictions → 503, retryable, not worded as a restriction, no write", async () => {
     const pid = "a2345678-1234-1234-1234-123456789abc";
     const client = unreadableRestrictions(makeClient(seededDb(pid)));
-    _setTestClient(client, "test-token");
+    _setTestClient(client, true);
     const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
     assert.equal(r.status, 503);
     assert.equal(r.body.error, "degraded_unavailable");
@@ -938,7 +938,7 @@ describe("H2. Trust restrictions reach the confirm and the visibility boost (TRV
   it("boost ON under a MESSAGING restriction → 403 and nothing saved; boost OFF under the same restriction is saved", async () => {
     const client = makeClient(makeDb({ trust_restrictions: [{ ...MESSAGING }] }));
     const writes = recordBoost(client);
-    _setTestClient(client, "test-token");
+    _setTestClient(client, true);
 
     const on = await put("/api/compass/me/boost-visibility", { enabled: true });
     assert.equal(on.status, 403);
@@ -953,7 +953,7 @@ describe("H2. Trust restrictions reach the confirm and the visibility boost (TRV
   it("boost ON with an UNREADABLE trust_restrictions → 503 and nothing saved; a clean record saves it", async () => {
     const unreadable = unreadableRestrictions(makeClient(makeDb({})));
     const lost = recordBoost(unreadable);
-    _setTestClient(unreadable, "test-token");
+    _setTestClient(unreadable, true);
     const r = await put("/api/compass/me/boost-visibility", { enabled: true });
     assert.equal(r.status, 503);
     assert.doesNotMatch(String(r.body.message), /restrict/i);
@@ -961,7 +961,7 @@ describe("H2. Trust restrictions reach the confirm and the visibility boost (TRV
 
     const fine = makeClient(makeDb({}));
     const saved = recordBoost(fine);
-    _setTestClient(fine, "test-token");
+    _setTestClient(fine, true);
     const ok = await put("/api/compass/me/boost-visibility", { enabled: true });
     assert.equal(ok.status, 200);
     assert.deepEqual(saved, [{ user_id: ALICE_ID, boost_visibility_enabled: true }]);
