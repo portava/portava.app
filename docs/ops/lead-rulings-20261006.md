@@ -22,6 +22,12 @@ must not be refused.
   - hosting: "You cannot host group trips or start or link public Trails."
   - messaging: "You cannot start new conversations, submit public content (Trail suggestions, gems, community
     places), or have your posts boosted."
+  - **Amendment (2026-10-06, lane L verifier):** the confirmed mapping also stops a hosting-restricted person
+    changing a *group* trip's shared plan (adding, editing, removing or reordering items, proposals, confirming
+    Compass plan or Autopilot changes), so the hosting sentence names it too: "You cannot host group trips,
+    change a group trip's shared plan, or start or link public Trails. You also cannot be booked as a Buddy."
+    Solo trips stay unaffected (D-24a). Every surface that refuses under a restriction shows the sentence from
+    `restrictionSentence()`; no surface keeps its own copy.
   - private-plan access: unchanged, plus "You also cannot book a Buddy."; location plan: unchanged.
   - **Amendment (2026-10-06, lane B):** the hosting sentence also ends "You also cannot be booked as a
     Buddy." The mapping this ruling confirms already stops both bookings (decision note §D-24 table, lane B
