@@ -54,15 +54,55 @@ const DECISION_LABEL: Record<ModerationReviewDecision, string> = {
 
 const PAGE = 30;
 
-/** What the moderator is shown about the reported thing. A failed read is never "deleted". */
-export function snapshotLine(s: ModerationSubjectSnapshot | undefined): string {
+/** A string field of an `ok` snapshot, or null. */
+function str(s: Record<string, unknown>, k: string): string | null {
+  const v = s[k];
+  return typeof v === 'string' && v.trim().length > 0 ? v.trim() : null;
+}
+
+/**
+ * What the moderator is shown about the reported thing, read from the keys the
+ * SERVER emits for each subject type (artifacts/api-server/src/lib/
+ * moderationReportSnapshots.ts READERS): `excerpt` for a post, comment, message
+ * or review; `displayName`/`tagline` for a buddy listing; `title` for an event;
+ * `caption` for media; `name`/`address` for a place; `name`/`handle` for a
+ * person. The test renders every entry of a fixture GENERATED from those
+ * readers (fixtures/moderationSubjectSnapshots.json), so this cannot drift from
+ * the server again without a test going red. A failed read is never "deleted".
+ */
+export function snapshotLine(subjectType: string, s: ModerationSubjectSnapshot | undefined): string {
   if (!s || s.state === 'unsupported') return 'No preview for this kind of report.';
   if (s.state === 'unavailable') return 'The reported content could not be read right now — it may still exist. Reload to try again.';
   if (s.state === 'not_found') return 'The reported content no longer exists.';
-  const text = ['text', 'content', 'body', 'title', 'name', 'caption', 'display_name', 'handle']
-    .map((k) => s[k])
-    .find((v) => typeof v === 'string' && v.trim().length > 0) as string | undefined;
-  return text ? text.slice(0, 280) : 'Reported content is present (no text to preview).';
+  const o = s as Record<string, unknown>;
+  switch (subjectType) {
+    case 'post':
+    case 'comment':
+    case 'message': {
+      if (o.deleted === true) return 'Its author deleted it before review, so its text is no longer available here.';
+      return str(o, 'excerpt') ?? 'Reported content is present (no text to preview).';
+    }
+    case 'review': {
+      const text = str(o, 'excerpt');
+      const rating = typeof o.rating === 'number' ? `${o.rating}★` : null;
+      return [rating, text].filter(Boolean).join(' · ') || 'Reported review is present (no text to preview).';
+    }
+    case 'buddy_listing':
+      return [str(o, 'displayName'), str(o, 'tagline')].filter(Boolean).join(' — ') || 'Reported listing is present (no name to preview).';
+    case 'event':
+      return [str(o, 'title'), str(o, 'city')].filter(Boolean).join(' · ') || 'Reported event is present (no title to preview).';
+    case 'media':
+      return str(o, 'caption') ?? (str(o, 'mediaType') ? `A ${str(o, 'mediaType')} with no caption.` : 'Reported media is present (no caption).');
+    case 'place':
+      return [str(o, 'name'), str(o, 'address')].filter(Boolean).join(' — ') || 'Reported place is present (no name).';
+    case 'user': {
+      const name = str(o, 'name');
+      const handle = str(o, 'handle');
+      return [name, handle ? `@${handle}` : null].filter(Boolean).join(' ') || 'Reported person (no name to show).';
+    }
+    default:
+      return 'Reported content is present (no preview for this kind).';
+  }
 }
 
 export default function ModerationReportsScreen() {
@@ -210,7 +250,7 @@ export default function ModerationReportsScreen() {
                 style={[s.snapshot, r.subject_snapshot?.state === 'unavailable' && s.snapshotBad]}
                 testID={`modq-snapshot-${r.id}`}
               >
-                {snapshotLine(r.subject_snapshot)}
+                {snapshotLine(r.subject_type, r.subject_snapshot)}
               </Text>
               <Text style={s.meta}>{new Date(r.created_at).toLocaleString()}</Text>
               {NEXT[r.status]?.length ? (

@@ -38,14 +38,21 @@ jest.mock('../../../src/services/apiToken', () => ({
 }));
 
 import ModerationReportsScreen, { snapshotLine } from '../moderation-reports';
+// GENERATED from the server's snapshot readers and pinned on the server side by
+// adminModerationReportReview.test.ts ("the committed fixture IS what
+// loadModerationSubjectSnapshots emits"). Never hand-edit it.
+import SERVER_SNAPSHOTS from './fixtures/moderationSubjectSnapshots.json';
 
 const R1 = '11111111-1111-4111-8111-111111111111';
 const R2 = '22222222-2222-4222-8222-222222222222';
+type Contract = Record<string, { subject_type: string; subject_snapshot: any }>;
+const CONTRACT = SERVER_SNAPSHOTS as unknown as Contract;
 const row = (id: string, over: Record<string, unknown> = {}) => ({
-  id, reporter_id: 'rep-1', subject_type: 'post', subject_id: 'p1', subject_user_id: 'author-1',
+  id, reporter_id: 'rep-1', subject_type: CONTRACT.post.subject_type, subject_id: 'p1', subject_user_id: 'author-1',
   category: 'harassment', details: 'they keep posting this', status: 'open',
   created_at: '2026-10-05T10:00:00.000Z', resolved_at: null,
-  subject_snapshot: { state: 'ok', text: 'the reported post text' },
+  // The server's own shape for a post — `excerpt`, not a key this test invented.
+  subject_snapshot: CONTRACT.post.subject_snapshot,
   ...over,
 });
 
@@ -99,7 +106,7 @@ describe('User reports — the moderation_reports queue reaches a client', () =>
   it('a snapshot that could not be read says so (never "deleted"), and the page says it is incomplete', async () => {
     responder = () => ({
       status: 200,
-      body: { reports: [row(R1, { subject_snapshot: { state: 'unavailable' } }), row(R2, { subject_snapshot: { state: 'not_found' } })], total: 2, page: 1, snapshotsUnavailableFor: ['post'] },
+      body: { reports: [row(R1, { subject_snapshot: CONTRACT.unavailable.subject_snapshot }), row(R2, { subject_snapshot: CONTRACT.not_found.subject_snapshot })], total: 2, page: 1, snapshotsUnavailableFor: ['post'] },
     });
     await render(<ModerationReportsScreen />);
     await screen.findByTestId(`modq-row-${R1}`);
@@ -157,9 +164,38 @@ describe('User reports — the moderation_reports queue reaches a client', () =>
     expect(screen.queryByTestId(`modq-dismissed-${R1}`)).toBeNull();
   });
 
-  it('snapshotLine: ok without text, unsupported and absent each have their own words', () => {
-    expect(snapshotLine({ state: 'ok' })).toMatch(/present/);
-    expect(snapshotLine({ state: 'unsupported' })).toMatch(/No preview/);
-    expect(snapshotLine(undefined)).toMatch(/No preview/);
+  it('every subject type the SERVER reads shows its own text — from the generated contract, not an invented shape', () => {
+    const expected: Record<string, RegExp> = {
+      user: /Nadia Rahman @nadia/,
+      post: /the reported post text/,
+      post_deleted: /deleted it before review/,
+      comment: /the reported comment text/,
+      message: /the reported message text/,
+      event: /Night market crawl · Da Nang/,
+      review: /1★ · the reported review text/,
+      buddy_listing: /Nadia — Local food guide/,
+      media: /the reported caption/,
+      place: /Han Market — 119 Tran Phu, Da Nang/,
+      not_found: /no longer exists/,
+      unsupported: /No preview/,
+      unavailable: /could not be read right now/,
+    };
+    // Every contract entry is covered, so a new server reader cannot slip past this list.
+    expect(Object.keys(CONTRACT).sort()).toEqual(Object.keys(expected).sort());
+    for (const [key, entry] of Object.entries(CONTRACT)) {
+      expect(snapshotLine(entry.subject_type, entry.subject_snapshot)).toMatch(expected[key]);
+    }
+  });
+
+  it('a row renders the server-shaped excerpt on screen', async () => {
+    responder = () => ({ status: 200, body: { reports: [row(R1, { subject_type: 'buddy_listing', subject_snapshot: CONTRACT.buddy_listing.subject_snapshot })], total: 1, page: 1 } });
+    await render(<ModerationReportsScreen />);
+    await screen.findByTestId(`modq-row-${R1}`);
+    expect(screen.getByTestId(`modq-snapshot-${R1}`).props.children).toBe('Nadia — Local food guide');
+  });
+
+  it('absent snapshot and an unknown subject type each have their own words', () => {
+    expect(snapshotLine('post', undefined)).toMatch(/No preview/);
+    expect(snapshotLine('trip', { state: 'ok' })).toMatch(/present/);
   });
 });

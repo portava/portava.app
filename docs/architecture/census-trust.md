@@ -3913,7 +3913,14 @@ moderator id/note on the report row; unowned subject closed unattributed.
   linked from Content Reports) lists the queue with each subject snapshot and acts through the review
   route: a refusal changes nothing and says why
   (`travel-buddy-standalone/app/admin/__tests__/ModerationReports.component.test.tsx:140#it('a refusal (409, closed by someone else first) leaves the row unchanged and says why'`),
-  8 / 8, four mutations red. So §35.2's item 2 is closed on this branch.
+  8 / 8, four mutations red. *(Corrected the same day after independent verification: as first
+  written the screen read preview keys the server never sends — `text`/`body` instead of the
+  server's `excerpt` (post, comment, message, review) and `displayName` (buddy listing) — and its
+  fixture was invented to match, so a moderator saw "no text to preview" on exactly the reports
+  that carry text. The preview now reads each subject type's server keys, and its fixture is
+  GENERATED from `loadModerationSubjectSnapshots` and pinned on the server side by
+  `adminModerationReportReview.test.ts`, so the two cannot drift silently again. With that fix §35.2's
+  item 2 — a client that reads the queue and acts on it — is met on this branch; before it, it was not.)*
 - **The reporter's read of `resolver_id` / `resolver_note`, closed at the database** (verifier finding
   6). Migration 3700 replaces the client roles' table-level SELECT with SELECT on the twelve other
   columns (`artifacts/api-server/src/migrations/3700_moderation_reports_resolver_columns_withheld.sql:116#REVOKE SELECT ON TABLE public.moderation_reports FROM anon, authenticated;`);
