@@ -256,7 +256,7 @@ const ALL_FALSE: Omit<
 
 export interface ResolveOptions {
   sourceType?: string | null;
-  sourceId?: string | null; /** census-discovery §81 (DV-76, §63.7 Q5 — APPROVAL REQUIRED): "consent_copy" reads `interacted` and `friends_only` as the settings copy words them, on the arms this engine observes; absent = the engine's own reading. Only POST /api/tags passes it, and only behind `tag_permission_consent_copy_enabled`. */ tagDefinitions?: "engine" | "consent_copy";
+  sourceId?: string | null; /** census-discovery §81 (DV-76, §63.7 Q5 — APPROVAL REQUIRED): "consent_copy" reads `interacted` and `friends_only` as the settings copy words them, on the arms this engine observes; absent = the engine's own reading. Only POST /api/tags passes it, and only behind `tag_permission_consent_copy_enabled`. */ tagDefinitions?: "engine" | "consent_copy"; /** A SAFETY action (block, mute, restrict, report) is being resolved: an unreadable viewer restriction state does not refuse it; every reach-granting capability is then false (foot of file). */ protective?: boolean;
 }
 
 export async function resolveInteractionPermissions(
@@ -363,7 +363,7 @@ export async function resolveInteractionPermissions(
   // restriction was enforced here forever. getRestrictionState excludes
   // expired restrictions, matching every other consumer.
   const restrictionState = await getRestrictionState(sc, viewerId);
-  if (restrictionState.degradedReason === "fail_closed") {
+  const restrictionUnreadable = restrictionState.degradedReason === "fail_closed" && opts.protective === true; if (restrictionState.degradedReason === "fail_closed" && !restrictionUnreadable) {
     // Fail-OPEN is handled by getRestrictionState itself (canMessage stays
     // true, logged there at WARN) and needs no special case here — it falls
     // through to the normal computation below like a clean, unrestricted read.
@@ -713,7 +713,7 @@ export async function resolveInteractionPermissions(
    * be degraded by them.
    */
   const mark = (v: InteractionPermissions): InteractionPermissions =>
-    degradedReads.length > 0 ? { ...v, degraded: true, degradedReads: [...degradedReads] } : v;
+    restrictionUnreadable ? protectiveOnly(v, degradedReads) : degradedReads.length > 0 ? { ...v, degraded: true, degradedReads: [...degradedReads] } : v;
 
   // ── PRIORITY 5: Target profile must exist ────────────────────────────────
   if (!targetProfile) {
@@ -899,4 +899,24 @@ export async function resolveInteractionPermissions(
     reasonCodes,
     context: ctx,
   });
+}
+
+// ── A safety action under an unreadable restriction state (lane B, 2026-10-06) ──
+// Appended at the foot so every cited line above keeps its number. The viewer's
+// Trust restriction limits what they may REACH; it says nothing about whether
+// they may protect themselves. So when that state cannot be read and the caller
+// is resolving a block, mute, restrict or report (`protective: true`), those
+// stay as the rest of the engine decided them and EVERY other capability —
+// everything that grants reach — is false, the verdict marked degraded.
+const PROTECTIVE_CAPABILITIES: readonly string[] = ["canBlock", "canUnblock", "canMute", "canRestrict", "canReport", "canUnsaveProfile"];
+
+function protectiveOnly(v: InteractionPermissions, degradedReads: readonly string[]): InteractionPermissions {
+  const out: Record<string, unknown> = { ...v };
+  for (const [k, val] of Object.entries(v)) {
+    if (k.startsWith("can") && typeof val === "boolean" && !PROTECTIVE_CAPABILITIES.includes(k)) out[k] = false;
+  }
+  out["degraded"] = true;
+  out["degradedReads"] = [...degradedReads, "trust_restrictions"];
+  out["reasonCodes"] = [...v.reasonCodes, "restriction_state_unreadable"];
+  return out as unknown as InteractionPermissions;
 }
