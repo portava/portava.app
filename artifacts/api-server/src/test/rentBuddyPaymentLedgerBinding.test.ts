@@ -188,3 +188,39 @@ describe("PR — provider objects are stored as an allow-listed projection", () 
     assert.doesNotMatch(JSON.stringify(writes[0]), forbidden, JSON.stringify(writes[0]));
   });
 });
+
+// ── Verifier F1 (2026-10-06): the production store's compare-and-set ──
+describe("F1 supabaseBookingPaymentStore.updatePaymentIfUnchanged is a compare-and-set", () => {
+  function casClient(rows: unknown[]) {
+    const filters: Array<[string, string, unknown]> = [];
+    const sc = {
+      from() {
+        const q: any = {
+          update: () => q,
+          eq: (c: string, v: unknown) => { filters.push(["eq", c, v]); return q; },
+          is: (c: string, v: unknown) => { filters.push(["is", c, v]); return q; },
+          select: async () => ({ data: rows, error: null }),
+        };
+        return q;
+      },
+    };
+    return { sc, filters };
+  }
+  const held = { updatedAt: "2026-08-10T12:00:00.000Z", state: "processing" as const, intentState: null, amountCapturedMinor: 0, amountRefundedMinor: 0 };
+
+  it("the UPDATE is filtered on everything it read: updated_at, state, intent state and both money counters", async () => {
+    const { sc, filters } = casClient([{ id: "x" }]);
+    const w = await supabaseBookingPaymentStore(sc).updatePaymentIfUnchanged("x", held, { state: "succeeded" });
+    assert.equal(w.ok, true);
+    assert.deepEqual(filters, [
+      ["eq", "id", "x"], ["eq", "updated_at", held.updatedAt], ["eq", "state", "processing"],
+      ["eq", "amount_captured_minor", 0], ["eq", "amount_refunded_minor", 0], ["is", "intent_state", null],
+    ]);
+  });
+
+  it("zero rows matched is a CONFLICT (another write landed first), not a plain failure", async () => {
+    const { sc } = casClient([]);
+    const w = await supabaseBookingPaymentStore(sc).updatePaymentIfUnchanged("x", held, { state: "succeeded" });
+    assert.deepEqual([w.ok, !w.ok && w.conflict], [false, true]);
+  });
+});

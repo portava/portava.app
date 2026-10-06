@@ -4,8 +4,9 @@
  * refund, the recipient or the payout, then on the booking.
  *
  * `09` §7 / §10 (hash-verified spec): signed webhook verification, idempotency
- * keys. The provider delivers at least once, late and out of order; this is
- * written so that ANY order and ANY number of deliveries end in the same books.
+ * keys. The provider delivers at least once, late, out of order and concurrently;
+ * ANY order and number of deliveries end in the same books, and (step 5 is a
+ * compare-and-set, verifier F1) in the same payment row and booking projection.
  *
  * ── THE ORDER OF OPERATIONS, AND WHY ────────────────────────────────────────
  *   1. verify the signature over the RAW body, parse, refuse live mode
@@ -104,7 +105,38 @@ function bookingStatusFor(state: string): "pending" | "captured" | "partial" | "
   }
 }
 
+/**
+ * Two deliveries for ONE intent can be processed at the same time (verifier F1).
+ * Each read-decide-write below is a compare-and-set on what it read; a delivery
+ * whose write finds the row changed re-reads and decides again (a stale one then
+ * takes the `stale` path, which re-asserts the booking from the CURRENT row). A
+ * booking projection written from a row that has since changed is re-asserted.
+ * Bounded; past the bound the provider retries (503).
+ */
+const CAS_MISS = Symbol("cas_miss");
+const CAS_ATTEMPTS = 4;
+
 async function applyIntent(deps: PaymentSliceDeps, snap: PaymentIntentSnapshot, occurredAt: string): Promise<WebhookEventOutcome | string> {
+  for (let attempt = 0; attempt < CAS_ATTEMPTS; attempt++) {
+    const r = await applyIntentOnce(deps, snap, occurredAt);
+    if (r !== CAS_MISS) return r;
+  }
+  return "payment changed concurrently on every attempt";
+}
+
+/** The booking's payment_status from the payment row as it stands; CAS_MISS when the row moved underneath. */
+async function projectBooking(deps: PaymentSliceDeps, payment: BookingPaymentRecord): Promise<string | null | typeof CAS_MISS> {
+  const bs = bookingStatusFor(payment.state);
+  if (!bs) return null;
+  const b = await deps.store.setBookingPaymentStatus(payment.bookingId, bs);
+  if (!b.ok) return "booking payment_status write failed";
+  const again = await deps.store.findPaymentByIntent(deps.provider.id, payment.intentRef ?? "");
+  if (!again.ok) return "store unreadable";
+  if (again.value && again.value.updatedAt !== payment.updatedAt) return CAS_MISS; // another delivery wrote the row after we read it: project again from the newer row
+  return null;
+}
+
+async function applyIntentOnce(deps: PaymentSliceDeps, snap: PaymentIntentSnapshot, occurredAt: string): Promise<WebhookEventOutcome | string | typeof CAS_MISS> {
   const found = await deps.store.findPaymentByIntent(deps.provider.id, snap.intentRef);
   if (!found.ok) return "store unreadable";
   const payment = found.value;
@@ -116,11 +148,8 @@ async function applyIntent(deps: PaymentSliceDeps, snap: PaymentIntentSnapshot, 
     // Stale or a re-delivery of what is already applied. Re-assert the booking's
     // projection from the CURRENT payment state: if an earlier delivery wrote the
     // payment and then failed on the booking, this is what completes it.
-    const bs = bookingStatusFor(payment.state);
-    if (bs) {
-      const b = await deps.store.setBookingPaymentStatus(payment.bookingId, bs);
-      if (!b.ok) return "booking payment_status write failed";
-    }
+    const projected = await projectBooking(deps, payment);
+    if (projected !== null) return projected;
     return "stale";
   }
 
@@ -152,7 +181,9 @@ async function applyIntent(deps: PaymentSliceDeps, snap: PaymentIntentSnapshot, 
   else if (snap.state === "requires_payment_method" && (payment.state === "processing" || payment.intentState === "requires_action")) state = "failed";
   // A `requires_confirmation` snapshot predates any confirmation: it never moves a submitted payment backwards.
   else if (snap.state === "requires_confirmation" && payment.state === "processing") state = "processing";
-  const w = await deps.store.updatePayment(payment.id, {
+  const nowIso = deps.now().toISOString();
+  const updatedAt = nowIso > payment.updatedAt ? nowIso : new Date(Date.parse(payment.updatedAt) + 1).toISOString(); // strictly after what was read, so the next compare-and-set sees this write
+  const w = await deps.store.updatePaymentIfUnchanged(payment.id, payment, {
     intentState: snap.state,
     state,
     amountCapturedMinor: next.capturedMinor,
@@ -162,14 +193,12 @@ async function applyIntent(deps: PaymentSliceDeps, snap: PaymentIntentSnapshot, 
     settlement: snap.settlement ?? payment.settlement,
     lastSnapshot: snap,
     failureReason: state === "failed" ? "payment_failed_after_confirmation" : payment.failureReason,
-    updatedAt: deps.now().toISOString(),
+    updatedAt,
   });
-  if (!w.ok) return "payment write failed";
-  const bs = bookingStatusFor(state);
-  if (bs) {
-    const b = await deps.store.setBookingPaymentStatus(payment.bookingId, bs);
-    if (!b.ok) return "booking payment_status write failed";
-  }
+  if (!w.ok) return w.conflict ? CAS_MISS : "payment write failed";
+  const projected = await projectBooking(deps, { ...payment, state, updatedAt });
+  if (projected === CAS_MISS) return CAS_MISS; // the stale-path re-run re-projects from the newer row; this delivery's money is already booked and idempotent
+  if (projected !== null) return projected;
   return "applied";
 }
 

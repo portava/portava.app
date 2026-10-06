@@ -116,6 +116,16 @@ export function createMemoryStore(): MemoryStore {
       payments.set(id, { ...p, ...clone(patch) });
       return ok;
     }),
+    updatePaymentIfUnchanged: (id, held, patch) => w("updatePaymentIfUnchanged", () => {
+      const p = payments.get(id);
+      if (!p) return { ok: false, conflict: false, detail: "no payment" };
+      if (p.updatedAt !== held.updatedAt || p.state !== held.state || p.intentState !== held.intentState
+        || p.amountCapturedMinor !== held.amountCapturedMinor || p.amountRefundedMinor !== held.amountRefundedMinor) {
+        return { ok: false, conflict: true, detail: "payment changed since it was read" };
+      }
+      payments.set(id, { ...p, ...clone(patch) });
+      return ok;
+    }),
     listUnpaidSucceededPayments: (partyId) => r("listUnpaidSucceededPayments", () =>
       clone([...payments.values()].filter((p) => p.payoutId === null && (partyId === null || p.recipientPartyId === partyId) && (p.state === "succeeded" || p.state === "partially_refunded" || p.state === "disputed")))),
 

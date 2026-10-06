@@ -303,7 +303,7 @@ describe("checkout -> confirm -> signed webhook -> ledger -> booking state", () 
     await startBookingCheckout(w.deps, { bookingId: BOOKING, actorUserId: TRAVELER });
     await confirmBookingPayment(w.deps, { bookingId: BOOKING, actorUserId: TRAVELER, paymentMethodRef: "fake_pm", returnUrl: null });
     const pending = w.fake.control.webhooks.pending();
-    w.store.failNext("updatePayment", 3);
+    w.store.failNext("updatePaymentIfUnchanged", 3); // the webhook's payment write is the compare-and-set one (F1)
     await deliverAll(w);
     for (const e of pending) await processPaymentWebhook(w.deps, w.fake.control.webhooks.redeliver(e.providerEventId));
     assert.equal(w.store.bookings.get(BOOKING)?.paymentStatus, "captured");
@@ -739,5 +739,76 @@ describe("only a full-in-app booking is charged in the app", () => {
     const r = await supabaseBookingPaymentStore(client).loadBooking("b-1");
     assert.ok(r.ok && r.value);
     if (r.ok && r.value) assert.equal(r.value.paymentMode, "deposit_plus_cash");
+  });
+});
+
+// ── Verifier F1 (2026-10-06): two deliveries for ONE intent processed CONCURRENTLY ──
+// The provider delivers at least once, late, out of order AND concurrently. The
+// older snapshot's write must never land over the newer one, and the booking's
+// payment_status must end on the newest row, whichever write lands last.
+describe("F1: concurrent deliveries for the same intent end in the newest state", () => {
+  async function confirmedWithEvents(): Promise<{ paymentId: string; older: ReturnType<FakePaymentProvider["control"]["webhooks"]["deliver"]>[number]; newest: ReturnType<FakePaymentProvider["control"]["webhooks"]["deliver"]>[number] }> {
+    seedBooking(w);
+    await onboardBuddy(w);
+    const c = await startBookingCheckout(w.deps, { bookingId: BOOKING, actorUserId: TRAVELER });
+    assert.equal(c.httpStatus, 201, JSON.stringify(c.body));
+    const f = await confirmBookingPayment(w.deps, { bookingId: BOOKING, actorUserId: TRAVELER, paymentMethodRef: "fake_pm_card", returnUrl: null });
+    assert.equal(f.httpStatus, 200, JSON.stringify(f.body));
+    const intents = w.fake.control.webhooks.deliver().filter((d) => /payment_intent/.test(d.rawBody));
+    const newest = intents.filter((d) => /"state":"succeeded"/.test(d.rawBody)).pop()!;
+    const older = intents[0]!;
+    assert.ok(newest && older && newest !== older, "premise: an older intent event and the succeeded one");
+    return { paymentId: String(c.body["paymentId"]), older, newest };
+  }
+
+  it("F1a the OLDER payment write lands last: it is refused by the compare-and-set, re-decided as stale, and the row stays succeeded", async () => {
+    const { paymentId, older, newest } = await confirmedWithEvents();
+    let newerWritten: () => void = () => {};
+    const newerDone = new Promise<void>((res) => { newerWritten = res; });
+    // Both payment writers are wrapped, so the interleaving is forced whichever one the processor uses.
+    const realCas = w.store.updatePaymentIfUnchanged;
+    const realPlain = w.store.updatePayment;
+    const gate = async <T>(patch: { lastSnapshot?: { state?: string } | null }, write: () => Promise<T>): Promise<T> => {
+      const isNewer = patch.lastSnapshot?.state === "succeeded";
+      if (!isNewer && patch.lastSnapshot) await newerDone; // the stale write waits until the newer one has landed
+      const r = await write();
+      if (isNewer) newerWritten();
+      return r;
+    };
+    w.store.updatePaymentIfUnchanged = (id, held, patch) => gate(patch, () => realCas(id, held, patch));
+    w.store.updatePayment = (id, patch) => gate(patch, () => realPlain(id, patch));
+    const [rOld, rNew] = await Promise.all([processPaymentWebhook(w.deps, older), processPaymentWebhook(w.deps, newest)]);
+    w.store.updatePaymentIfUnchanged = realCas;
+    w.store.updatePayment = realPlain;
+    assert.equal(rOld.httpStatus, 200, JSON.stringify(rOld.body));
+    assert.equal(rNew.httpStatus, 200, JSON.stringify(rNew.body));
+    const p = w.store.payments.get(paymentId)!;
+    assert.equal(p.state, "succeeded", "the newer state survives");
+    assert.equal(p.amountCapturedMinor, 4400);
+    assert.equal(w.store.bookings.get(BOOKING)?.paymentStatus, "captured", "the booking reads as paid");
+    assert.equal([...w.ledger.postings.values()].filter((x) => x.kind === "capture").length, 1, "the capture is booked once");
+  });
+
+  it("F1b the older delivery wins the row but its BOOKING write lands last: the booking is re-projected from the newest row", async () => {
+    const { paymentId, older, newest } = await confirmedWithEvents();
+    let newerFinished: () => void = () => {};
+    const newerDone = new Promise<void>((res) => { newerFinished = res; });
+    const realSet = w.store.setBookingPaymentStatus;
+    let held = true;
+    w.store.setBookingPaymentStatus = async (id, status) => {
+      if (status === "pending" && held) { held = false; await newerDone; } // the older delivery's projection waits until the newer delivery is done
+      return realSet(id, status);
+    };
+    const oldRun = processPaymentWebhook(w.deps, older);
+    await new Promise((r) => setImmediate(r));
+    const rNew = await processPaymentWebhook(w.deps, newest);
+    newerFinished();
+    const rOld = await oldRun;
+    w.store.setBookingPaymentStatus = realSet;
+    assert.equal(rNew.httpStatus, 200, JSON.stringify(rNew.body));
+    assert.equal(rOld.httpStatus, 200, JSON.stringify(rOld.body));
+    assert.equal(w.store.payments.get(paymentId)!.state, "succeeded");
+    assert.equal(held, false, "premise: the older delivery's `pending` projection was the write that was delayed");
+    assert.equal(w.store.bookings.get(BOOKING)?.paymentStatus, "captured", "the late `pending` projection was re-asserted from the newest row");
   });
 });

@@ -170,6 +170,9 @@ export interface BookingPaymentRecord {
   readonly updatedAt: string;
 }
 
+/** What a payment compare-and-set compares (F1). */
+export type PaymentCasKey = Pick<BookingPaymentRecord, "updatedAt" | "state" | "intentState" | "amountCapturedMinor" | "amountRefundedMinor">;
+
 export interface RefundRecord {
   readonly id: string;
   readonly bookingPaymentId: string;
@@ -264,6 +267,12 @@ export interface BookingPaymentStore {
   /** Insert; `conflict: true` when the idempotency key already exists. */
   insertPayment(rec: BookingPaymentRecord): Promise<Write>;
   updatePayment(id: string, patch: Partial<BookingPaymentRecord>): Promise<Write>;
+  /**
+   * Compare-and-set (verifier F1): updates only while the row still holds `held`'s
+   * updated_at, state, intent state and money counters. `conflict: true` when another
+   * write landed first, so a stale delivery can never overwrite a newer one.
+   */
+  updatePaymentIfUnchanged(id: string, held: PaymentCasKey, patch: Partial<BookingPaymentRecord>): Promise<Write>;
   /** Payments whose money is on the recipient's provider balance and not yet in a payout. */
   listUnpaidSucceededPayments(recipientPartyId: string | null): Promise<Read<readonly BookingPaymentRecord[]>>;
 

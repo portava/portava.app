@@ -379,6 +379,13 @@ export function supabaseBookingPaymentStore(sc: any): BookingPaymentStore {
     findPaymentByIntent: (provider, intentRef) => one(sc.from(T_PAYMENTS).select(PAYMENT_COLUMNS).eq("provider", provider).eq("intent_ref", intentRef).maybeSingle(), toPayment),
     insertPayment: (rec) => touched(sc.from(T_PAYMENTS).insert(paymentRow(rec)).select("id")),
     updatePayment: (id, patch) => touched(sc.from(T_PAYMENTS).update(paymentRow({ ...patch, id: undefined })).eq("id", id).select("id")),
+    updatePaymentIfUnchanged: (id, held, patch) => {
+      let q = sc.from(T_PAYMENTS).update(paymentRow({ ...patch, id: undefined })).eq("id", id)
+        .eq("updated_at", held.updatedAt).eq("state", held.state)
+        .eq("amount_captured_minor", held.amountCapturedMinor).eq("amount_refunded_minor", held.amountRefundedMinor);
+      q = held.intentState === null ? q.is("intent_state", null) : q.eq("intent_state", held.intentState);
+      return touched(q.select("id"), true); // zero rows = another write landed first (F1)
+    },
     listUnpaidSucceededPayments: (partyId) => {
       let q = sc.from(T_PAYMENTS).select(PAYMENT_COLUMNS).is("payout_id", null).in("state", ["succeeded", "partially_refunded", "disputed"]);
       if (partyId !== null) q = q.eq("recipient_party_id", partyId);
