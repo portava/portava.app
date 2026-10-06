@@ -113,6 +113,7 @@ function profile(over: Partial<CompassProfile> = {}): CompassProfile {
     trustLevel: "trusted_traveler",
     activeUserScore: null,
     hasActiveTrip: false,
+    tripStateUnread: false,
     hasActiveBooking: false,
     upcomingTripWithin48h: false,
     hasFutureTripScheduled: false,
