@@ -3644,8 +3644,209 @@ Unchanged, and recounted rather than carried forward from §31:
   deciding clause falls and the row is a `W` candidate without any owner decision at all.
 - 2870 applied: TV-1c is decidable, and §31 names the DB assertion that will fail there first.
 
+## §33 (moderation lane) — 2026-10-03 · Bans and suspensions are one state, `user_account_states`, and every gate reads it. **NO ROW MOVES.**
 
-## §33 (lane B, payments / identity / Trust) — 2026-10-05 · The booking paths now enforce Trust restrictions and identity on BOTH people; six owner decisions land on Trust rows. **ONE ROW MOVES: TRV2-08, N → W.**
+> **Renumbered at the 2026-10-05 merge of `main` (`e3daeb739`) into PR #580's branch (lane F).** This section and the
+> next were written as §32 and §33 on that branch. Main's §32 (the 2026-10-04 integration re-census of PR #584) reached
+> `main` first, so they are §33 and §34, and every `§32` / `§33` inside them — and the one in this census's
+> acknowledgement entry — was renumbered with them; no other word changed. Both sections and main's §32 move no row.
+
+**The owner's decision (2026-10-03).** `user_account_states` is the canonical source for moderation
+bans and suspensions. `profiles.account_status` cannot hold either value: `profiles_account_status_check`
+admits `active | deactivated | pending_deletion | deleted`, verified read-only on the testing database and
+on portava-ci. So `POST /admin/users/:id/ban` and `/suspend` failed 23514 on every call before their
+`user_account_states` upsert ran, the PATCH moderation-action path folded the same failure into a 200,
+and every auth gate compared `account_status` with values no row can carry. A ban could not be applied,
+and if one had been, no gate would have read it. The CHECK is **not** widened, because a second ban state
+is exactly what the decision rules out.
+
+### §33.1 The contract (confirmed against the schema, not assumed)
+
+The table comes from `0063_interaction_foundation.sql` (:155) plus `0130` (`updated_at`). The fields:
+
+- **Key.** One row per `(user_id, state)`, so writers upsert on that key.
+- **`user_id`.** A foreign key to `profiles`, `ON DELETE CASCADE`, named `user_account_states_user_id_fkey`
+  on the baseline, the testing database and portava-ci.
+- **`state`.** Text, with no CHECK.
+- **In force.** A `banned` or `suspended` row is in force while `expires_at` is NULL or in the future.
+- **Revocation.** An unban sets `expires_at` to the revocation instant and keeps the row, including
+  `reason`, `set_by` and `created_at`. `moderation_actions` records who lifted it and why. This needs no
+  new column, and the expiry-aware readers (`circleAccessGuard`, `CompassNotificationEngine`) honour an
+  unban unchanged.
+- **RLS.** A signed-in user may SELECT their own rows and has no write policy, so a banned user cannot
+  lift their own ban through PostgREST. `service_role` writes.
+
+No migration was needed. The testing database holds 0 rows.
+
+### §33.2 One read path, every gate
+
+`resolveAccountRestriction` (`lib/accountStateGate.ts`) makes one `profiles` read with
+`user_account_states` embedded through that foreign key. It returns `ok` (the account status plus a
+restriction of `none`, `banned` or `suspended` with its end) or `unavailable`.
+
+The same answers apply on every path: `requireUser`, `optionalUser`, `requireUserFromToken` (Telegraph
+SSE) and the six files of hand-rolled optional-auth sites PR #580 routed.
+
+| Account state | Answer |
+|---|---|
+| In-force ban | 403 `forbidden`, `reason: account_banned` |
+| In-force suspension | 403 `forbidden`, `reason: account_suspended`; the message names the end |
+| GoTrue banned refusal | 403 `forbidden`, `reason: account_restricted`, never 401 |
+| Unreadable state | 503 `degraded_unavailable`, retryable |
+
+On an optional-auth route a restricted caller is now **refused, not served as anonymous**. This reverses
+PR #580's mapping, by the owner's ruling. The deleted, deactivated and pending_deletion behaviour is
+unchanged.
+
+TV-4b's cited `requireUser` lines in `lib/http.ts` still hold the statements they quote,
+now driven by the user_account_states read. The anchors in that row are therefore still true. What
+changed is what feeds them.
+
+### §33.3 Writers
+
+`artifacts/api-server/src/lib/accountModeration.ts` is the only writer, used by `/ban`, `/suspend`, `/restore` and PATCH
+moderation-action.
+
+- **Ban.** Upserts the row with no end.
+- **Suspend.** Upserts the row with an `expires_at`, which must be in the future. Otherwise the route
+  answers 400 before any audit row is written.
+- **Restore.** Revokes the in-force rows. It no longer DELETEs them, and no longer writes `account_status`,
+  which used to reactivate a deactivated account.
+
+The audit row comes first, as before. Every write's error is checked: a failed restriction write is 500
+with "nothing is in force", and a failed unlock is 502. The trust charge now runs only after the restriction
+lands.
+
+Each restriction also does two more things:
+
+- **Session lock.** It sets the GoTrue session lock (`ban_duration`), so refresh and sign-in stop and the
+  direct PostgREST, Realtime and Storage paths close within one access-token lifetime. The testing database
+  has 227 tables with a client write policy. The gate never reads this lock, and a lift clears it.
+- **Telegraph streams.** It closes the user's open Telegraph streams.
+
+### §33.4 Surfaces beyond the HTTP gates
+
+| Surface | How it is enforced |
+|---|---|
+| `GET /telegraph/stream` | Gated at connect. The writer terminates open streams, and the 30-minute max age forces re-auth. |
+| `GET /me/notifications/stream` | Re-reads the state every 60 s (`watchAccountRestriction`) and ends with `access.revoked`. |
+| Compass ask SSE | Per request, gated by `requireUser`. |
+| Websocket upgrades | None exist. |
+| `delayedPostPublisher` (publishes on the author's behalf) | Holds a restricted or unreadable author's post until the restriction ends. |
+| `profileVisibility` and `interactionPermissions` | Now honour `expires_at` and revocation. Both had ignored them, and `maybeSingle` turned a revoked ban beside a deactivated row into an error. |
+
+### §33.5 Tests and mutations
+
+- **`artifacts/api-server/src/test/moderationAccountState.test.ts`** (61 tests, registered) covers:
+  - permanent ban, suspension, expiry and revocation;
+  - a token issued before the ban;
+  - the GoTrue refusal and unreadable state;
+  - deleted, pending_deletion and deactivated controls;
+  - the admin writers with an audit row and with write errors;
+  - the notification stream, the publisher, profile visibility and interaction permissions.
+- **Red before.** Each fixed file, reverted alone to its pre-change source, turns its tests red.
+- **`artifacts/api-server/src/test/db/userAccountStatesContract.db.test.ts`** pins the real table's CHECK refusal, key, foreign
+  key name, revocation SQL and RLS.
+- **Mutations.** 58 mutants, each applied alone and restored byte-identically: 57 killed, 1 equivalent (profileVisibility's non-array guard, whose `.some` on null throws into the catch that already answers `unavailable`).
+
+### §33.6 Rows
+
+- **TV-4a stays W.** Its act criterion concerns `moderation_reports`, untouched here. The user-level
+  suspend and ban actions now land.
+- **TV-4b stays W.** Middleware on auth is now real rather than nominal. Banned users are locked out of
+  refresh by the session lock but are not shown a signed-out state. Suspended users get no read-only state
+  and no appeal contact. Owner decision **D-SUSPENSION-UX** stands.
+
+Cited in this section, graded by no row of this census:
+
+- NOT-GRADED: artifacts/api-server/src/lib/accountStateGate.ts — §33.2's single read path and refusals; the gate TV-4b grades is requireUser, whose cited lines stay where they were.
+- NOT-GRADED: artifacts/api-server/src/lib/accountModeration.ts — §33.3's writer for the admin routes TV-4a names; no verdict moves on it.
+- NOT-GRADED: artifacts/api-server/src/test/moderationAccountState.test.ts — §33.5's controlled evidence; no Trust verdict moves on it.
+- NOT-GRADED: artifacts/api-server/src/test/db/userAccountStatesContract.db.test.ts — §33.5's database evidence for the table contract; no Trust verdict moves on it.
+
+## §34 (trust lane, PR #580 taken over) — 2026-10-04 · The independent verifier's findings on §33, fixed test-first; the red database job; a missing moderation table is unread. **NO ROW MOVES.**
+
+§33 was verified independently at `9dd3aafc2` and **failed**. Its scenario checks passed; nine things it found did
+not. This section records what each was, what closes it, and what a reader of §33 must now read differently.
+Nothing here re-grades a row: the lead re-grades after another independent verification.
+
+### §34.1 Fail-open — four findings
+
+- **Four hand-rolled bearer sites still served a banned token.** `routes/discovery.ts` (GET /discovery,
+  /discovery/feed, /discovery/community) and `routes/hiddenGems.ts` (`resolveCallerId`) called
+  `sc.auth.getUser` themselves; §33.2's "six files of hand-rolled optional-auth sites" did not include them,
+  and `handRolledAuthAccountState.test.ts` pinned them as "known open". They now go through `getGatedUser` /
+  `optionalUserFromToken`, their catches hand the gate's refusal to `rethrowAccountGateRefusal`, and
+  /discovery/community resolves a presented token before it serves (the lookup was lazy, so a banned caller
+  whose request never needed a viewer id was served). The pin has **no exemption** any more.
+- **A catch that swallowed the refusal.** The same search found `routes/og.ts`'s image route answering a
+  banned viewer with the generic card. A source scan now fails on any call that can throw the gate's refusal
+  inside a `try` whose `catch` does not rethrow it. (`uncheckedSupabaseReads.test.ts` asserted that
+  `routes/discovery.ts` calls `auth.getUser` itself and asked to be revisited if that stopped being true; it
+  now asserts the opposite, and points its non-coverage note at the gate.)
+- **Suspending an already-banned user shortened the session lock.** `applyAccountRestriction` set GoTrue's
+  `ban_duration` from the row it had just written. The lock is now computed from every in-force row of that
+  user (`lockForRowsInForce`): permanent if any has no end, otherwise the latest end. If those rows cannot be
+  read back the lock is left alone and reported `failed`.
+- **`routes/follows.ts` served a banned user's passport.** GET /users/:userId and /users/by-handle/:handle
+  guarded on `profiles.account_status`, which cannot hold `banned` or `suspended`. Both now read the target
+  through `resolveAccountRestriction`: in force → the unavailable sentinel those routes already send;
+  unreadable → 503.
+- **A profile row with no restriction embed read as "no ban".** For every client `getServiceClient` builds
+  (`lib/supabase.ts` records them) a row without the `user_account_states` key is now `unavailable`: PostgREST
+  always returns the key of an embed a select names. Only an injected test double that models the status
+  column alone still reads as no rows, and a source scan pins that no other file builds a client.
+
+### §34.2 Wrong answer, integrity and test gaps
+
+- **`routes/passport.ts` answered a confirmed ban, and an unreadable state, as 500 `db_error`** on four
+  routes whose catch-all caught the gate's refusal. They now answer the gate's 403 / 503.
+- **`/suspend` accepted `"2099"`** (a date to `Date.parse`, not a timestamp to PostgreSQL) and failed after
+  the audit row. `parseRestrictionEnd` now requires a full ISO-8601 instant with an offset, in the future,
+  and stores it normalised; the writer applies the same rule to every caller.
+- **A failed restriction write left an audit row that looked landed.** The routes audit first, so the row
+  stays; a second row, `<action>_not_applied`, now names it and carries the write's error. If even that cannot
+  be written, the refusal says so.
+- **Test gaps closed:** a suspended author in the post publisher (held; published once the suspension is
+  lifted) and the GoTrue `user_banned` code check (the code alone decides; other codes at HTTP 403 are 401).
+
+### §34.3 What §33 said that is no longer the whole truth
+
+- **§33.2's table** gains one field: every 403 for a restricted account also carries
+  `restriction: { kind, until }` (absent for the auth service's own refusal, which names neither). That is the
+  server contract TV-4b's client would need to tell a restricted account from a connection fault; it decides
+  nothing about D-SUSPENSION-UX.
+- **§33.4's last row.** `profileVisibility` and `interactionPermissions` no longer exempt a **missing**
+  `user_account_states`: both now treat it as unread (profile withheld; the resolution refuses). §31's
+  absent-table rule was written for Phase-2 tables that may not exist yet. This table stopped being one when it
+  became the one moderation state, so "missing" means every ban is unread, not that nobody is banned. Three
+  tests that pinned the old answer were changed to pin the stricter one, and say so in place.
+- **§33.5's count.** `moderationAccountState.test.ts` is 87 tests and `handRolledAuthAccountState.test.ts` 136, the
+  second now driving every optional-viewer route over HTTP rather than two representatives.
+
+### §34.4 The red database job
+
+`api-server · kernel SQL executed on a throwaway database` failed on `9dd3aafc2` because the three database
+doubles (`trailPostgrestBridge`, `discoveryVerifyBridge`, `creatorLedgerPsqlClient`) threw on any embedded
+select, so the gate's read of `profiles` failed and the gate answered 503. They now translate one level of
+FK-hinted embedding against the real foreign key, and answer PGRST200 when the hinted constraint does not link
+the two tables. A new database suite pins the gate's read through all three. No assertion in any suite changed.
+
+### §34.5 Rows
+
+- **TV-4a stays W.** No route acts on a `moderation_reports` row; that criterion is untouched.
+- **TV-4b stays W.** The middleware is stricter and its refusal is machine-readable. A suspended user still
+  gets no read-only state and no appeal contact, and the client still has no branch for either state:
+  D-SUSPENSION-UX stands. One fact for that decision: while the session lock is in place the auth service
+  refuses the restricted user's token, so the API cannot identify them and no authenticated appeal route can
+  be reached by the people it exists for.
+
+Cited in this section, graded by no row of this census:
+
+- NOT-GRADED: artifacts/api-server/src/routes/og.ts — §34.1's one further site where a catch swallowed the gate's refusal; no Trust row grades the share-image route.
+- NOT-GRADED: artifacts/api-server/src/test/handRolledAuthAccountState.test.ts — §34.1 and §34.2's controlled evidence for the route-level refusals and the three source scans; no Trust verdict moves on it.
+
+## §35 (lane B, payments / identity / Trust) — 2026-10-05 · The booking paths now enforce Trust restrictions and identity on BOTH people; six owner decisions land on Trust rows. **ONE ROW MOVES: TRV2-08, N → W.**
 
 Lane B, branch `claude/mission-b-payments-identity-trust-20261005`, cut from `main` at `2e46835263` and
 merged with `main` at `800516a2ff`. `head_commit` is **not** re-declared: this section records one build and
@@ -3654,7 +3855,7 @@ answer a failed read `{ data: null, error }` as supabase-js does. **No database 
 production included; no flag was touched; migrations 3930 and 3931 are written and applied nowhere. The
 owner's 2026-10-04 answers are cited by their ids in `docs/ops/owner-decisions-20261004.md`.
 
-### 33.1 What was built
+### 35.1 What was built
 
 1. **Two-sided booking eligibility on all five creation paths** (OD-PAY-10, OD-INPUT-4, OD-TRUST-5).
    `artifacts/api-server/src/lib/rentBuddyIdentityEligibility.ts:151#if (!travelerRestrictions.canJoinPrivatePlans) {`
@@ -3697,7 +3898,7 @@ approval (2 red), treating an unknown age as adult (1 red), honouring the overri
 approving `owner` or a policy-default source (4 red each), restoring full membership on an ended trip
 (1 red).
 
-### 33.2 Rows
+### 35.2 Rows
 
 | id | was | now | the evidence |
 |---|---|---|---|
@@ -3709,7 +3910,7 @@ approving `owner` or a policy-default source (4 red each), restoring full member
 | TV-6a | N | **N** | D-PROVIDER is answered: Sumsub, behind the interface, with per-country checks (OD-TRUST-2, OD-PAY-10). The adapter is owner-HELD PR #612. Still owed by the owner: the Sumsub account, keys, the webhook secret and per-launch-market coverage confirmation. A sandbox key may certify the adapter but its approvals do not count for bookings (33.1 item 2). |
 | TRV2-10 | CV | **CV** | D-REVERSAL is **partly** answered: an upheld appeal restores what that decision removed (OD-TRIP-1, encoded in 33.1 item 3). Still undecided: whether an admin REVOCATION reverses the `identity_verified` award, and how long derived Trust evidence survives a subject's erasure (the Map/Sensing 12-month audit rule is scoped to that section and is not read across here). Correctness of the row is still not determinable. |
 
-### 33.3 Headline, restated from the rows
+### 35.3 Headline, restated from the rows
 
 | BUILT-AND-CORRECT | **89** |
 |---|---|
@@ -3720,7 +3921,7 @@ approving `owner` or a policy-default source (4 red each), restoring full member
 89 + 13 + 4 + 2 = 108. CONSTRUCTED 94.4 % (102 / 108) · CORRECT 82.4 % (89 / 108). This supersedes the
 §31 table (restated unchanged by §32.7) and nothing else; the denominator is unchanged at 108.
 
-### 33.4 What would turn this red
+### 35.4 What would turn this red
 
 - `requireVerifiedBookingParties` removed from either call site: TRV2-08 returns to N.
 - A Compass or Discovery action refusing a restricted user, with a test: TRV2-08 is a C candidate.

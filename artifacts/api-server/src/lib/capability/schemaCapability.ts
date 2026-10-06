@@ -50,6 +50,7 @@
  * cannot answer an empty 200 for a feature its operator believes is on.
  */
 import { logger } from "../logger.js";
+import { isTableAbsentError } from "../tableAbsence.js";
 import type { ApiErrorCode } from "../http.js";
 import {
   SCHEMA_PROBE_SENTINEL_ID,
@@ -89,17 +90,14 @@ export function isMissingColumnError(error: unknown): boolean {
  * True when the error means "this database does not have that table".
  *   • PostgREST — PGRST205, `Could not find the table 'public.x' in the schema cache`
  *   • PostgreSQL — 42P01, `relation "x" does not exist`
- * PURE.
+ * Delegates to lib/tableAbsence.ts: a code, when present, decides. The old
+ * substring test ("relation" + "does not exist") read a 42703 worded
+ * `column "c" of relation "t" does not exist` as a missing TABLE, which sent
+ * discoverySearchCanonical's column-drift case to its "table absent → [] as
+ * stored" branch — a failure served as an empty, complete answer. PURE.
  */
 export function isMissingTableError(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  const code = String((error as any).code ?? "");
-  if (code === "PGRST205" || code === "42P01") return true;
-  const msg = String((error as any).message ?? "").toLowerCase();
-  return (
-    (msg.includes("in the schema cache") && msg.includes("table")) ||
-    (msg.includes("relation") && msg.includes("does not exist"))
-  );
+  return isTableAbsentError(error);
 }
 
 /** Either of the above: the database lacks a required object. PURE. */

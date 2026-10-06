@@ -26,29 +26,34 @@ import { requireUser, sendError } from "../lib/http";
 import { isUuid } from "../lib/followDecisions";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
 import { getServiceClient } from "../lib/supabase";
+import { isTableAbsentError } from "../lib/tableAbsence";
 
 const router = Router();
 
 /**
- * Silences "table does not exist" (42P01 / PGRST204); re-throws other errors.
- * Used so Phase 2 tables (user_mutes, user_restrictions) degrade gracefully
- * when migration 0063 hasn't been applied yet.
+ * Silences an ABSENT TABLE only (lib/tableAbsence: 42P01 / PGRST205); re-throws
+ * every other error. Used so Phase 2 tables (user_mutes, user_restrictions)
+ * degrade gracefully when migration 0063 hasn't been applied yet — an absent
+ * table holds no mute, so `false` is then true.
+ *
+ * It used to silence PGRST204 (a missing COLUMN) and any message containing
+ * "does not exist" (42703 column, 42883 operator/function), so a table that
+ * EXISTS and could not be read answered iMuted / iRestricted `false` — an
+ * unread mute reported as "not muted". And it did NOT recognise PGRST205, the
+ * code PostgREST actually sends for an absent table once its schema cache is
+ * loaded, so the genuinely-absent case it was written for 500'd instead.
+ * Census-trust §31 measured this file with the two #574 fixed; it is their
+ * sibling.
  */
 async function safeQuerySingle<T>(
   result: Promise<{ data: T | null; error: any }>,
 ): Promise<T | null> {
   const { data, error } = await result;
   if (error) {
-    const code = error.code ?? "";
-    const msg  = String(error.message ?? "").toLowerCase();
-    if (
-      code === "42P01" ||
-      code === "PGRST204" ||
-      msg.includes("does not exist")
-    ) {
-      return null; // table not migrated yet — fail-open
+    if (isTableAbsentError(error)) {
+      return null; // table not migrated yet — no row can exist
     }
-    throw new Error(`DB query failed: ${error.message ?? code}`);
+    throw new Error(`DB query failed: ${error.message ?? error.code ?? ""}`);
   }
   return data ?? null;
 }

@@ -35,6 +35,7 @@
  * same flag would be a second thing to get out of step.
  */
 import { logger } from "../../../lib/logger.js";
+import { isTableAbsentError } from "../../../lib/tableAbsence.js";
 import { noSource, ok as okLayer, unread, type Layer } from "../projections/TripMapProjection.js";
 import {
   expandRecurrences, nextOccurrenceAfter, summariseRoutine, RecurrenceHorizonError,
@@ -54,11 +55,15 @@ const SELECT_COLUMNS =
   "duration, arrival_lead, lateness_tolerance, prep_duration, place_id, flexibility, confidence, " +
   "effective_from, effective_until, skip_dates";
 
-/** PostgREST and PostgreSQL both have a way of saying "no such table"; this is both of them. */
+/**
+ * PostgREST and PostgreSQL both have a way of saying "no such table"; this is
+ * both of them, and nothing wider (lib/tableAbsence). PGRST200 is a missing
+ * RELATIONSHIP and `relation .* does not exist` also matched a 42703 worded
+ * `column "c" of relation "t" does not exist`: both are a table that exists
+ * and could not be read, which is `unread`, never "no recurrence source".
+ */
 function looksLikeMissingTable(err: { code?: string | null; message?: string | null } | null): boolean {
-  const code = String(err?.code ?? "");
-  if (code === "42P01" || code === "PGRST205" || code === "PGRST200") return true;
-  return /relation .* does not exist|could not find the table/i.test(String(err?.message ?? ""));
+  return isTableAbsentError(err);
 }
 
 /**
