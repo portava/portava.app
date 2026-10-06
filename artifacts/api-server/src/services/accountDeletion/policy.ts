@@ -23,7 +23,7 @@
  * observation about the evidence; nothing in this file reads it.
  */
 import type { DeletionGraphNode } from "../../lib/deletion/types.js";
-import { RETAINED_WITH_REASON } from "../../lib/deletionDispositions.js";
+import { RETAINED_WITH_REASON, AWAITING_OWNER_DECISION } from "../../lib/deletionDispositions.js";
 
 export type PolicyFate = "DELETE" | "ANONYMIZE" | "RETAIN";
 
@@ -87,6 +87,18 @@ export function resolveFate(node: DeletionGraphNode, policy: DeletionPolicy): Re
       const f = FLOW_TABLE_FATES[node.table];
       if (f) return { resolved: true, fate: f.fate, source: "manifest", authority: f.authority };
       return { resolved: false, reason: "DELETION_FLOW table with no cited handling in AccountDeletionService" };
+    }
+    case "AWAITING_OWNER_DECISION": {
+      // UNRESOLVED on purpose, and for a different reason than the backlog: the
+      // question is named and both answers are written, so resolving it here
+      // would be this file choosing one.
+      const d = AWAITING_OWNER_DECISION.find((x) => x.table === node.table);
+      return {
+        resolved: false,
+        reason:
+          `AWAITING_OWNER_DECISION — the fate is an open owner decision, and the schema refuses the DELETE until it is answered. ` +
+          `${d?.decision ?? ""} Held open by: ${d?.heldOpenBy ?? ""}`,
+      };
     }
     case "UNCLASSIFIED_BACKLOG":
       return { resolved: false, reason: "UNCLASSIFIED_BACKLOG — survives deletion today and nobody has decided whether it should (owner decision D6)" };
