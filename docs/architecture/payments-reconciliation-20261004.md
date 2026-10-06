@@ -354,13 +354,20 @@ of it.
   inconsistently — 2901 via `SET NULL` (which the append-only trigger refuses, failing with the
   wrong cause) and 2920/3387 via `CASCADE` (which silently deleted the whole creator ledger).
 - **Retention period: ABSENT.** No statutory period is stated anywhere for these tables.
-- **A blind spot this pass found.** None of the five new ledger/attribution/audit tables appears in
-  `lib/deletionDispositions.ts` at all — not in `RETAINED_WITH_REASON`, not even in
-  `UNCLASSIFIED_BACKLOG`, which that file is explicit is *"NOT a decision"*. The three legacy money
-  tables *are* in that backlog (`artifacts/api-server/src/lib/deletionDispositions.ts:430#rent_buddy_earnings_ledger`,
-  `:437#rent_buddy_payouts`, `:445#rent_buddy_tips`). Because the new tables are absent from the
-  production baseline the coverage guard reads, they are unclassified **and** green — the
-  deletion-coverage blind spot, recurring on the money tables.
+- **A blind spot this pass found — since CLOSED, and the hole behind it measured.** As graded here,
+  none of the five new ledger/attribution/audit tables appeared in `lib/deletionDispositions.ts` at
+  all — not in `RETAINED_WITH_REASON`, not even in `UNCLASSIFIED_BACKLOG`, which that file is
+  explicit is *"NOT a decision"* — while the three legacy money tables *are* in that backlog
+  (`artifacts/api-server/src/lib/deletionDispositions.ts:544#rent_buddy_earnings_ledger`,
+  `:551#rent_buddy_payouts`, `:559#rent_buddy_tips`). All five are now classified: the four ledgers
+  in a new `AWAITING_OWNER_DECISION` bucket that records C-11 without answering it, and
+  `creator_rule_versions` in `RETAINED_WITH_REASON` (it carries no beneficiary and no actor, so it
+  is not a C-11 subject). The CAUSE is not fixed and is bigger than these five: the coverage guard
+  reads the 2026-08-19 baseline plus a hand-typed `POST_BASELINE_TABLES` list and never reads
+  `src/migrations/`, so registration is a thing a person must remember and forgetting cannot be
+  reported. A baseline **recapture cannot close it either**, because recapture snapshots PRODUCTION
+  and these migrations are not applied. Measured against `scripts/lib/canonicalSchema.ts`, which
+  already replays the whole chain: 529 tables, 142 post-baseline, **114 of them named in no bucket**.
 
 ### D10 Launch flags — "keep payments in test mode until payment, identity and tax readiness are established" → **PARTIAL**
 
