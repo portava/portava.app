@@ -109,6 +109,12 @@ export interface ConversationHeaderParticipant {
     checkedIn: boolean;
     stale: boolean;
   } | null;
+  /**
+   * Who this is, as the SERVER presents them to the viewer (census-telegraph T295
+   * §45c): the name only when they chose to show it. Null when it could not be
+   * read; absent from an older server.
+   */
+  identity?: { handle: string | null; name: string | null; avatarUrl: string | null } | null;
 }
 
 export interface ConversationHeaderResponse {

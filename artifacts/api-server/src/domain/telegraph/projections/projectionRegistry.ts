@@ -5,6 +5,11 @@
  * projections instead of independently joining raw tables and reimplementing
  * authorization/business logic." The census found two of the six built, four
  * absent, and the rule broken in exactly two places on the conversation screen.
+ * RE-MEASURED 2026-10-05 (lane T2): all six are served — two built, four
+ * partial with the gap stated — and the client bypass list is empty.
+ * `src/test/telegraphProjectionRegistryHonesty.test.ts` probes the tree for each
+ * projection's route independently of this file, so `absent` beside a mounted
+ * route, or `built` beside a missing one, is a failing test.
  *
  * WHY THIS REGISTRY EXISTS RATHER THAN A COMMENT
  * ----------------------------------------------
@@ -37,6 +42,11 @@ export interface TelegraphProjection {
   readonly status: ProjectionStatus;
   /** Repo-relative module that builds it, or null when nothing does. */
   readonly builtBy: string | null;
+  /**
+   * The route a client reads it through, as "<route module> <METHOD> <path>",
+   * or null when nothing serves it. A projection nobody can read is not built.
+   */
+  readonly servedAt: string | null;
   readonly note: string;
 }
 
@@ -47,6 +57,7 @@ export const TELEGRAPH_PROJECTIONS: readonly TelegraphProjection[] = [
     censusRow: "T289",
     status: "partial",
     builtBy: "src/routes/messaging.ts",
+    servedAt: "src/routes/messaging.ts GET /me/threads",
     note:
       "GET /me/threads is a real server-built projection: it resolves the other " +
       "participant's display identity under the name-visibility rule, folds in " +
@@ -60,6 +71,7 @@ export const TELEGRAPH_PROJECTIONS: readonly TelegraphProjection[] = [
     censusRow: "T290",
     status: "partial",
     builtBy: "src/routes/messaging.ts",
+    servedAt: "src/routes/messaging.ts GET /threads/:threadId/messages",
     note:
       "GET /threads/:id/messages sanitizes sender identities per viewer, joins " +
       "per-recipient translations, resolves reply context and enriches mention " +
@@ -79,35 +91,53 @@ export const TELEGRAPH_PROJECTIONS: readonly TelegraphProjection[] = [
     id: "PRJ-03",
     name: "SharedContextProjection",
     censusRow: "T291",
-    status: "absent",
-    builtBy: null,
+    status: "built",
+    builtBy: "src/services/telegraph/sharedContext.ts",
+    servedAt: "src/routes/telegraphSharedContext.ts GET /threads/:threadId/shared-context",
     note:
-      "Does not exist. The nearest artifact belongs to a different programme: " +
-      "Passport's SharedContextService builds explainable facts for a PROFILE " +
-      "PAIR under its own spec's §17/§18, is consumed only by the passport route, " +
-      "and has no conversation id, no now/upcoming/unresolved/past arrays and no " +
-      "available actions.",
+      "§3.4's TelegraphSharedContextProjection — conversationId, generatedAt and the " +
+      "now / upcoming / unresolved / past arrays — built by buildSharedContextProjection " +
+      "from canonical mutuality sources only (trip_members, meetup_invites, " +
+      "event_attendees, rent_buddy_bookings, collection_items; never the message " +
+      "table, §3.2), ordered by §3.3, Want-to-Do in `unresolved`, each item carrying " +
+      "its available actions. A rail built on a failed read says `incomplete` rather " +
+      "than rendering empty. The client renders it (SharedContextRail) and computes " +
+      "none of it. RE-GRADED 2026-10-05 (lane T2): this entry said `absent` after " +
+      "census T13-T21 had moved to C; the Passport SharedContextService it used to " +
+      "point at is a different programme's profile-pair projection.",
   },
   {
     id: "PRJ-04",
     name: "NearbyAvailableProjection",
     censusRow: "T292",
-    status: "absent",
-    builtBy: null,
+    status: "partial",
+    builtBy: "src/services/telegraph/reachablePeople.ts",
+    servedAt: "src/routes/nearbyReachable.ts GET /nearby/reachable",
     note:
-      "Does not exist, and neither does its input: Telegraph never reads " +
-      "availability at all, and there is no proximity surface to rank over.",
+      "§30A.2's ReachablePersonProjection: relationship (projected from canMessage's " +
+      "context), availability (audience policy + quick status), proximity as a bucket " +
+      "only, shared context, privacy and safety, ranked without disclosing distance; " +
+      "candidates are the social graph, never a viewport. `partial`, not `built`, for " +
+      "two stated reasons: the route answers nobody while nearby_reachable_enabled is " +
+      "FALSE (seeded FALSE by 2990), and `safety` is a constant rather than a read " +
+      "(census T382). 'Open opportunities' have no source on this surface.",
   },
   {
     id: "PRJ-05",
     name: "CoordinationProjection",
     censusRow: "T293",
-    status: "absent",
-    builtBy: null,
+    status: "partial",
+    builtBy: "src/services/telegraph/coordination.ts",
+    servedAt: "src/routes/telegraphCoordination.ts GET /threads/:threadId/coordination",
     note:
-      "Does not exist. Coordination sessions do not exist (T85); meetups, " +
-      "meeting points and temporary location each exist separately and none is " +
-      "conversation-scoped.",
+      "§24's 'meeting, attendance, ETA/status and safety-relevant operational state': " +
+      "the coordination session (projectCoordinationSession, census T85), §9's derived " +
+      "state for the plan being coordinated, the latest USER-DECLARED quick state per " +
+      "member with arrival counts, the rendezvous, decisions and commitments — served " +
+      "per thread — and the safety-relevant state from GET /threads/:threadId/safety-mode " +
+      "in the same route module. `partial` and not `built` for one stated reason: ETA is only what a " +
+      "member declares (ON_MY_WAY / RUNNING_LATE); there is no system-derived ETA " +
+      "(census T27, T1's range), and §9.1 forbids presenting the one as the other.",
   },
   {
     id: "PRJ-06",
@@ -115,21 +145,24 @@ export const TELEGRAPH_PROJECTIONS: readonly TelegraphProjection[] = [
     censusRow: "T294",
     status: "partial",
     builtBy: "src/routes/telegraphKinds.ts",
+    servedAt: "src/routes/telegraphKinds.ts GET /threads/:threadId/drawer",
     note:
       "The content drawer. CORRECTED 2026-10-03: the earlier note said \"dead-coded " +
       "behind a literal false (T66)\" and that is no longer true. `GET /threads/:threadId/" +
       "drawer` serves it (`routes/telegraphKinds.ts:376`), membership-gated before any read " +
       "(`:393`), and the client mounts the entry point in the thread header " +
-      "(`travel-buddy-standalone/app/messages/[id].tsx:1958`, testID " +
-      "`telegraph-open-content-drawer`) with the sheet rendered at `:2414`. NOT " +
+      "(`travel-buddy-standalone/app/messages/[id].tsx:1918`, testID " +
+      "`telegraph-open-content-drawer`) with the sheet rendered at `:2376`. NOT " +
       "unconditional, and not a flag either: the mount sits inside the `{!compact && …}` " +
-      "header-actions block (`[id].tsx:1932`), a layout variant, so the compact header " +
+      "header-actions block (`[id].tsx:1892`), a layout variant, so the compact header " +
       "offers no way in. THE GAP THAT KEEPS THIS `partial` RATHER THAN `built`: §24 asks " +
       "for a server-BUILT projection, and this is an on-demand route that classifies the " +
       "thread's rows per request and stores nothing — there is no materialised " +
       "ConversationContentIndex, so nothing can be read without re-deriving it, and nothing " +
       "outside a live request can consume it. The census verdict row (T294) still carries " +
-      "the old wording; re-grading it is the lead's call, not this registry's.",
+      "the old wording; re-grading it is the lead's call, not this registry's. " +
+      "RE-GRADED 2026-10-06 on the lead's ruling: T294 is W (census-telegraph §45e). " +
+      "Lane T2 had moved this entry to `built` on 2026-10-05; main's `partial` stands.",
   },
 ];
 
@@ -155,30 +188,11 @@ export interface ProjectionBypass {
 }
 
 export const TELEGRAPH_PROJECTION_BYPASSES: readonly ProjectionBypass[] = [
-  {
-    file: "travel-buddy-standalone/app/messages/[id].tsx",
-    table: "message_thread_members",
-    censusRow: "T295",
-    note:
-      "TWO reads remain of the four this entry used to list: (2) a member count, " +
-      "and (3) the 'permission gate: accepted thread members only', whose result " +
-      "decides what the screen offers — the one that recomputes an authorization " +
-      "decision. Both belong behind the ConversationProjection's missing " +
-      "permissions block (PRJ-02). The receipt reads, (1) the other party's " +
-      "last_read_at and (4) the group roster's, were removed by the TELEGRAPH lane " +
-      "on 2026-10-03: receipts now come from GET /threads/:id/receipts through " +
-      "useThreadReadState, which the server windows and scopes to the caller's own " +
-      "messages, and which a read that FAILED cannot turn into a silent \"Sent\".",
-  },
-  {
-    file: "travel-buddy-standalone/app/messages/[id].tsx",
-    table: "message_threads",
-    censusRow: "T295",
-    note:
-      "Reads is_e2ee directly off the thread row to decide whether the composer " +
-      "encrypts. The SERVER makes the same decision independently on every send " +
-      "and refuses a plaintext body in an E2EE thread, so the client read is an " +
-      "affordance and not the gate — but it is a second copy of a decision the " +
-      "projection should carry.",
-  },
+  // EMPTY since 2026-10-05 (lane T2, census T295). The last three — a member
+  // count and the "accepted member" gate on message_thread_members, and is_e2ee
+  // on message_threads, all on app/messages/[id].tsx — were replaced by
+  // GET /threads/:id/capabilities: the gate is the server's canSendMessage and
+  // the two facts are server/telegraph/conversationFacts.ts. The receipt reads
+  // went on 2026-10-03 (GET /threads/:id/receipts via useThreadReadState).
+  // check:telegraph-slos re-derives this list from the client tree on every run.
 ];

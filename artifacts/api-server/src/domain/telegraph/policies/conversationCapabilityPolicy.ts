@@ -42,7 +42,7 @@ import { isBlockedBetween } from "../../../lib/blockGuard.js";
 import { isAcceptedTripMember } from "../../../lib/http.js";
 import { logger as rootLogger } from "../../../lib/logger.js";
 import { getRestrictionState } from "../../../services/trust/TrustRestrictionService.js";
-import { historyBoundEnabled, membershipSelect, visibleFromOf } from "../../../services/groupChatHistoryBound.js";
+import { historyBoundEnabled, membershipSelect, visibleFromOf } from "../../../services/groupChatHistoryBound.js"; import { decideRestrictedCapability, decideRestrictedSend, readRestrictionSendFacts } from "./restrictionSendPolicy.js"; // OD-TRUST-5: the SAME decision the send guard takes
 import {
   CONVERSATION_CAPABILITY_NAMES,
   allDenied,
@@ -181,6 +181,11 @@ export async function resolveConversationCapabilities(
   const restriction = await getRestrictionState(sc, viewerId);
   inputsRead.push("safetyState");
   if (restriction.degradedReason === "fail_closed") markDegraded("TELEGRAPH_DEGRADED_TRUST_UNREADABLE");
+  // A restriction state we could not READ is never reported as a restriction.
+  // Every trust-derived term below is decided in ONE place,
+  // domain/telegraph/policies/restrictionSendPolicy.ts (decideRestrictedSend,
+  // decideRestrictedCapability): the degraded reason for an unreadable state,
+  // the restriction's own reason otherwise.
 
   // ── INPUT 5: age / policy ────────────────────────────────────────────────
   let ageRestricted = false;
@@ -255,30 +260,56 @@ export async function resolveConversationCapabilities(
 
   // ── DERIVATION ───────────────────────────────────────────────────────────
 
-  // canSendMessage — the projection of routes/messaging.ts's own gate.
+  // canSendMessage — the projection of the send gates. The restriction term is
+  // NOT re-derived here: it is `decideRestrictedSend`, the function the shared
+  // send guard (lib/telegraphThreadWrite.ts) and both inline doors call, over
+  // the same facts — so the projection cannot announce a refusal no door
+  // performs, nor miss one a door does (src/test/telegraphRestrictionSendGate.test.ts).
+  const restrictionSend = blockUnreadable
+    ? null
+    : decideRestrictedSend(
+        await readRestrictionSendFacts(sc, {
+          threadId: conversationId,
+          senderId: viewerId,
+          threadType: conversationType,
+          otherMemberIds: ((otherRows as any[]) ?? []).map((r) => String(r.user_id)),
+          safety: false,
+          restriction,
+        }),
+        { safety: false },
+      );
   if (!threadActive) deny(d, "canSendMessage", "TELEGRAPH_POLICY_THREAD_ARCHIVED");
   else if (blockUnreadable) deny(d, "canSendMessage", "TELEGRAPH_DEGRADED_MEMBERSHIP_UNREADABLE");
   else if (blocked) deny(d, "canSendMessage", "TELEGRAPH_AUTH_BLOCKED");
-  else if (!restriction.canMessage) deny(d, "canSendMessage", "TELEGRAPH_SAFETY_TRUST_RESTRICTED");
+  else if (restrictionSend && !restrictionSend.allowed) deny(d, "canSendMessage", restrictionSend.reason);
   else grant(d, "canSendMessage");
 
   // canCall — same membership and block inputs; the call engine re-checks its
-  // own rate limits and preferences at execution, which this cannot mirror.
+  // own rate limits and preferences at execution, which this cannot mirror. A
+  // messaging restriction refuses a call in ANY thread: that is the call
+  // gateway's own rule (lib/calls/callGatewayAdapter.ts, "messaging restriction
+  // implies calling restriction"), and the projection follows its gate.
+  const callTrust = decideRestrictedCapability("canCall", restriction); // the same table as the send scope
   if (!d.capabilities.canSendMessage) deny(d, "canCall", d.reasons.canSendMessage ?? "TELEGRAPH_AUTH_NOT_MEMBER");
+  else if (!callTrust.allowed) deny(d, "canCall", callTrust.reason);
   else if (ageRestricted) deny(d, "canCall", "TELEGRAPH_POLICY_RECIPIENT_PRIVACY");
   else grant(d, "canCall");
 
   // canCreatePlan — a trip thread needs accepted crew; every other thread type
-  // needs only active membership, which is what telegraphCommands enforces.
+  // needs only active membership, which is what telegraphCommands enforces. A
+  // `hosting` restriction refuses it (RESTRICTION_CAPABILITY_SCOPE): main's rule,
+  // kept until owner decision D-24 is answered (census-telegraph §45d.4).
+  const planTrust = decideRestrictedCapability("canCreatePlan", restriction);
   if (!threadActive) deny(d, "canCreatePlan", "TELEGRAPH_POLICY_THREAD_ARCHIVED");
-  else if (!restriction.canHost) deny(d, "canCreatePlan", "TELEGRAPH_SAFETY_TRUST_RESTRICTED");
+  else if (!planTrust.allowed) deny(d, "canCreatePlan", planTrust.reason);
   else if (tripId && !tripMember) deny(d, "canCreatePlan", "TELEGRAPH_AUTH_NOT_TRIP_MEMBER");
   else grant(d, "canCreatePlan");
 
   // canShareExactLocation — §15.1. Never true today, and the reason says which
   // of the two walls stopped it: no grant at all, or a grant whose precision
   // class is below EXACT.
-  if (!restriction.canJoinLocationPlans) deny(d, "canShareExactLocation", "TELEGRAPH_SAFETY_TRUST_RESTRICTED");
+  const locationTrust = decideRestrictedCapability("canShareExactLocation", restriction);
+  if (!locationTrust.allowed) deny(d, "canShareExactLocation", locationTrust.reason);
   else if (livePrecision === null) deny(d, "canShareExactLocation", "TELEGRAPH_LOCATION_NO_ACTIVE_GRANT");
   else deny(d, "canShareExactLocation", "TELEGRAPH_LOCATION_PRECISION_CEILING");
 

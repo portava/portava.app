@@ -45,6 +45,7 @@ import { resolve as resolvePath } from "node:path";
 
 import { _setTestClient } from "../lib/http.js";
 import messagingRouter from "../routes/messaging.js";
+import telegraphShareRouter from "../routes/telegraphShare.js";
 import { syncTripChatMembers } from "../services/groupChatSync.js";
 import { requireSafeReturnRecipient } from "../services/safeReturn/SafeReturnPrivacyGuard.js";
 import { toPublicSession, stripGPS } from "../services/safeReturn/SafeReturnPrivacyGuard.js";
@@ -508,29 +509,69 @@ describe("RLS-07 — private Memory shared without derivative authorization → 
 });
 
 // ── RLS-08 ────────────────────────────────────────────────────────────────────
+//
+// MOVED vacuous → enforced 2026-10-05 (lane T2, census T318). The case was
+// vacuous because no producer resolved a source object's CURRENT state; one does
+// now (services/telegraph/shareables.ts resolveShareProjections, census T46 C),
+// served by POST /threads/:id/share-projections. These cases drive that real
+// route: an authorized member reads the projection as the source is NOW, a
+// private source yields nothing, a non-member is refused before any resolve.
 
-describe("RLS-08 — authorized user reads current safe share projection → ALLOW (vacuous)", () => {
-  it("the authorization half answers, and there is no projection for it to authorize", () => {
-    const d = authorizeTelegraphShare({
-      family: "PUBLIC", sourceDomain: "discovery", sourceId: "place-1", viewerIds: [BOB],
-    });
-    assert.equal(d.allowed, true);
-    // The vacuity is the finding: no producer resolves a source object's CURRENT
-    // state, so there is no projection to read. Asserted structurally against the
-    // registry rather than described, so it changes when the tree changes.
-    assert.equal(
-      d.allowed && (d as any).disclosedId,
-      "place-1",
-      "the policy answers about an id, not about a resolved current state",
-    );
+const RLS08_PLACE = "77770000-0000-4000-8000-000000000001";
+const RLS08_POST = "77770000-0000-4000-8000-000000000002";
+
+describe("RLS-08 — authorized user reads current safe share projection → ALLOW (enforced)", () => {
+  let shareHarness: RouterHarness;
+  before(async () => { shareHarness = await startRouter(telegraphShareRouter); });
+  after(async () => { await shareHarness.close(); });
+
+  function shareState(placeName: string) {
+    const state = seed({ historyBoundFlag: false });
+    state.places = [{ id: RLS08_PLACE, name: placeName, city: "Hue", neighborhood: "Old town",
+      primary_category: "cafe", status: "active", updated_at: "2026-03-01T00:00:00.000Z" }];
+    state.posts = [{ id: RLS08_POST, author_id: MALLORY, content: "only for followers", visibility: "followers",
+      status: "active", deleted_at: null, media_urls: [], updated_at: "2026-03-01T00:00:00.000Z" }];
+    return state;
+  }
+  const ask = (asUser: string, objectType: string, objectId: string) =>
+    call(shareHarness.base, "POST", `/threads/${THREAD}/share-projections`, asUser, { refs: [{ objectType, objectId }] });
+
+  it("an authorized member reads the projection as the source is NOW, not as it was shared", async () => {
+    use(shareState("Cafe Giang"));
+    const first = await ask(ALICE, "PLACE", RLS08_PLACE);
+    assert.equal(first.status, 200);
+    assert.equal(first.body.projections[0].available, true);
+    assert.equal(first.body.projections[0].projection.title, "Cafe Giang");
+
+    use(shareState("Cafe Giang (moved upstairs)"));
+    const second = await ask(BOB, "PLACE", RLS08_PLACE);
+    assert.equal(second.body.projections[0].projection.title, "Cafe Giang (moved upstairs)",
+      "the projection is resolved at read time; nothing stored at share time is served");
   });
 
-  it("an empty audience is refused — a share addressed to nobody is a bug, not an allow", () => {
+  it("a source the viewer may not see yields an unavailable reference carrying nothing", async () => {
+    use(shareState("Cafe Giang"));
+    const r = await ask(ALICE, "POST", RLS08_POST);
+    assert.equal(r.status, 200);
+    assert.equal(r.body.projections[0].available, false);
+    assert.equal(r.body.projections[0].projection, null);
+    assert.deepEqual(r.body.projections[0].actions, []);
+    assert.ok(!JSON.stringify(r.body).includes("only for followers"));
+  });
+
+  it("a non-member is refused before anything is resolved", async () => {
+    use(shareState("Cafe Giang"));
+    const r = await ask(MALLORY, "PLACE", RLS08_PLACE);
+    assert.equal(r.status, 403);
+    assert.ok(!JSON.stringify(r.body).includes("Cafe Giang"));
+  });
+
+  it("an empty audience is still refused by the policy — a share addressed to nobody is a bug, not an allow", () => {
     const d = authorizeTelegraphShare({
       family: "PUBLIC", sourceDomain: "discovery", sourceId: "place-1", viewerIds: [],
     });
     assert.equal(d.allowed, false);
-    assert.equal((d as any).reason, "empty_audience");
+    assert.equal((d as { reason?: string }).reason, "empty_audience");
   });
 });
 

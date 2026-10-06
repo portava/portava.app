@@ -19,6 +19,14 @@
  * notice instead of the snapshot when the source is gone. Without a threadId —
  * a surface that has not been wired yet — behaviour is byte-identical to
  * before, which is why this is additive rather than a rewrite.
+ *
+ * TELEGRAPH §30A.20 — LIVE, NOT A SNAPSHOT (census T413 / T448). When the
+ * resolve answers, the card draws the SERVER's projection of the post for this
+ * viewer — its current text, image and author handle, and its deep link — and
+ * nothing the sender serialised except their own caption: not the author name
+ * or avatar, not the counts, not the location they captured. Loading draws
+ * nothing from the post; a resolve that was possible and failed draws the
+ * reference only (`features/telegraph/sharing/legacyCardView.ts`).
  */
 import React from 'react';
 import { View, Text, Pressable, StyleSheet } from 'react-native';
@@ -31,6 +39,9 @@ import { Avatar } from './ui/Avatar.tsx';
 import { color, space, radius, type as t } from '../theme/tokens.ts';
 import { TG } from '../theme/telegraphTokens.ts';
 import { useShareRevocation, revokedLabel } from '../features/telegraph/sharing/useShareRevocation.ts';
+import { legacyCardMode, REFERENCE_COPY } from '../features/telegraph/sharing/legacyCardView.ts';
+
+type Href = Parameters<typeof router.push>[0];
 
 export interface PostCardPayload {
   postId: string;
@@ -81,6 +92,7 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null 
     threadId,
     payload ? { objectType: 'POST', objectId: payload.postId, messageId } : null,
   );
+  const mode = legacyCardMode(revocation, Boolean(threadId && payload));
 
   if (revocation.state === 'unavailable') {
     return (
@@ -100,6 +112,76 @@ export function PostCardMessage({ body, mine, threadId = null, messageId = null 
     );
   }
 
+  if (mode === 'loading') {
+    return (
+      <View style={[card.wrap, mine && card.wrapMine]} testID="post-card-loading">
+        <Text style={[card.fallback, mine && { color: color.onInk + 'AA' }]}>Loading…</Text>
+      </View>
+    );
+  }
+
+  const openPostRef = () => router.push(`/post/${encodeURIComponent(payload.postId)}` as Href);
+
+  if (mode === 'reference') {
+    return (
+      <View style={[card.wrap, mine && card.wrapMine]} testID="post-card-reference">
+        <Text style={[card.brandLabel, mine && { color: color.onInk + 'BB' }]}>POST</Text>
+        {payload.caption ? (
+          <Text style={[card.caption, mine && card.captionMine]} numberOfLines={2}>"{payload.caption}"</Text>
+        ) : null}
+        <Text style={[card.fallback, mine && { color: color.onInk + 'AA' }]}>{REFERENCE_COPY}</Text>
+        <View style={card.actions}>
+          <Pressable style={card.actionBtn} onPress={openPostRef} testID="post-card-view">
+            <ExternalLink size={11} color={mine ? color.onInk : color.signal} />
+            <Text style={[card.actionLabel, mine && card.actionLabelMine]}>View Post</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
+  const live = mode === 'live' && revocation.resolved?.available ? revocation.resolved : null;
+  if (live) {
+    const p = live.projection;
+    const handle = p.subtitle && p.subtitle.startsWith('@') ? p.subtitle.slice(1) : null;
+    return (
+      <View style={[card.wrap, mine && card.wrapMine]} testID="post-card-live">
+        <View style={card.header}>
+          <View style={card.brandBadge}>
+            <ExternalLink size={11} color={color.onInk} />
+          </View>
+          <Text style={[card.brandLabel, mine && { color: color.onInk + 'BB' }]}>POST</Text>
+        </View>
+        {handle ? (
+          <UserIdentityLink userId="" handle={handle} testID="post-card-author-identity">
+            <Text style={[card.authorName, mine && card.authorNameMine]} numberOfLines={1}>@{handle}</Text>
+          </UserIdentityLink>
+        ) : null}
+        {p.imageUrl ? (
+          <DisplayMediaImage
+            uri={p.imageUrl}
+            width={CARD_MAX_WIDTH}
+            height={THUMBNAIL_HEIGHT}
+            resizeMode="cover"
+            style={card.thumbnail}
+            alt={p.title}
+          />
+        ) : null}
+        <Text style={[card.snippet, mine && card.snippetMine]} numberOfLines={3}>{p.title}</Text>
+        {payload.caption ? (
+          <Text style={[card.caption, mine && card.captionMine]} numberOfLines={2}>"{payload.caption}"</Text>
+        ) : null}
+        <View style={card.actions}>
+          <Pressable style={card.actionBtn} onPress={() => router.push(p.deepLink as Href)} testID="post-card-view">
+            <ExternalLink size={11} color={mine ? color.onInk : color.signal} />
+            <Text style={[card.actionLabel, mine && card.actionLabelMine]}>View Post</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
+  // `legacy`: no thread to resolve in — the pre-§5 card, unchanged.
   const loc = locationLabel(payload);
   const authorLabel =
     payload.authorName ||

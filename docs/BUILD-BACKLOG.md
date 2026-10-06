@@ -196,22 +196,22 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
   `isoTrackHandlers` (same file, added for voice) returns every track's handler
   type, so `sniffMedia`'s MP4 branch can answer `image`/`video`/neither from the
   tracks instead of from the `ftyp` brand.
-- [telegraph] `artifacts/api-server/src/domain/telegraph/projections/projectionRegistry.ts:113#id: "PRJ-06"`
+- [telegraph] `artifacts/api-server/src/domain/telegraph/projections/projectionRegistry.ts:143#id: "PRJ-06"`
   — PRJ-06's note says the content drawer is "dead-coded behind a literal
-  false". It is NOT, at HEAD: `travel-buddy-standalone/app/messages/[id].tsx:1959`
+  false". It is NOT, at HEAD: `travel-buddy-standalone/app/messages/[id].tsx:1919`
   mounts `onPress={() => setShowContentDrawer(true)}` on the header, and `GET
   /threads/:id/drawer` serves it. The registry's `status: "absent"` and
   census-telegraph T294's evidence are both stale on that clause.
 
   RE-VERIFIED 2026-10-03 — **BUILDABLE, NOT BLOCKED, and now BUILT in this
   branch**: `domain/telegraph/projections/projectionRegistry.ts` grades PRJ-06
-  `status: "partial"` (`:116`) instead of `absent`, and
+  `status: "partial"` (`:146`) instead of `absent`, and
   `scripts/TELEGRAPH_OBSERVABILITY_BASELINE.json` is lowered 4 → 3 in the same
   change, with the re-grade argued in its `//absentProjections` note. Two
   corrections to this entry on the way there. (1) The line drifted: the mount is
-  at `:1959`, not the `:1964` this entry recorded. (2) Soften one claim — the
+  at `:1919` (re-read 2026-10-06 on lane T2's merged tree), not the `:1964` this entry recorded. (2) Soften one claim — the
   mount is not literally UNCONDITIONAL. It sits inside `{!compact && (…)}` at
-  `:1932`, which
+  `:1892`, which
   is a header LAYOUT VARIANT, not a flag and not a dead-code gate; the drawer is
   reachable on the normal header and absent only on the compact one. PRJ-06's
   "literal false" is still wrong, which is what this entry was for.
@@ -226,9 +226,16 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
   refused the improvement until the baseline moved; and the baseline's own header
   says the number may only FALL, which is a shrink-only ratchet any lane may
   shrink and no lane may raise. The `absentProjections` pin this entry cites is
-  real and is at `:9` of that file — it now reads 3, not the 4 recorded above.
+  real and is at `:9` of that file — it read 3 on 2026-10-03 and reads 0 after lane T2's merge (below).
   "A ratchet the lead owns" was not. Re-grading census-telegraph T294 remains a
   census verdict this lane does not move.
+
+  MERGED 2026-10-06 (lane T2 merging main `94c6bb4ed3`, on the lead's ruling):
+  lane T2's branch had moved PRJ-06 to `status: "built"` on 2026-10-05; main's
+  `partial` stands — an on-demand route that answers is not a materialised
+  index. census-telegraph §45e moves T294 back to W. The `absentProjections`
+  count is what the merged tree measures with `check:telegraph-slos`: 0 absent
+  (PRJ-03 built; PRJ-01, -02, -04, -05 and -06 partial).
 - [telegraph] `travel-buddy-standalone/src/features/telegraph/voice/voiceApi.ts`
   — a voice upload that succeeds followed by a send that fails leaves the
   uploaded audio object in `post-media`, unreferenced by any message. This is

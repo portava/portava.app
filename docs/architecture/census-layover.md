@@ -1587,7 +1587,7 @@ cannot supply.
 | id | Was | Now | Evidence at `743ae78f` |
 | --- | --- | --- | --- |
 | L2 | W | **C** | Both halves that kept it `W` are closed. The header is consumed — `summarizeCertification` (`layoverReturnFacts.ts:159#summarizeCertification`) renders the server's own `engineVersion`/`confidence`/`bufferPercentile` rather than a client restatement of them — and the client's DUPLICATE thresholds are gone with the file that held them: `LayoverReturnPanel.tsx` no longer exists (`git rm`, commit `a718beb5`). Grepped for surviving threshold constants in the replacement: none. |
-| L146 | W | **C** | §9 said "Reachability is the missing half" in those words. It is closed: `returnToAirportNow` (`layover.ts:1124#returnToAirportNow`) calls `POST /:id/return-now`, `LayoverSafeReturnCard.tsx:96` calls it on a **RETURN TO AIRPORT** press, and the card is mounted (`app/layover/[id].tsx:690#<LayoverSafeReturnCard`). A double press is refused by a ref written synchronously (`:77, 92-93`) — state alone loses two presses in one frame. The abort's own `statusCapability` is reported to the traveller rather than swallowed (`:239-240`, `statusCapabilityNote`), so `flag_off` reads as "your layover stays open so you keep the countdown", not as a failure. |
+| L146 | W | **C** | §9 said "Reachability is the missing half" in those words. It is closed: `returnToAirportNow` (`layover.ts:1124#returnToAirportNow`) calls `POST /:id/return-now`, `LayoverSafeReturnCard.tsx:96` calls it on a **RETURN TO AIRPORT** press, and the card is mounted (`app/layover/[id].tsx:690#<LayoverSafeReturnCard`). A double press is refused by a ref written synchronously (`:77, 92-93`) — state alone loses two presses in one frame. The abort's own `statusCapability` is reported to the traveller rather than swallowed (`:240-241`, `statusCapabilityNote`), so `flag_off` reads as "your layover stays open so you keep the countdown", not as a failure. |
 | L114 | W | **C** | §9 ended "The endpoint it lives on is still dark from the app." It is not: `askCompass` (`layover.ts:1076#askCompass`) has an importer (`LayoverCompassCard.tsx:24, 48`), the card is mounted (`app/layover/[id].tsx:346`), and the single highest-value clarifying question is the thing actually rendered (`LayoverCompassCard.tsx:83-86`). The computation (`valueOfInformation`, `LayoverCompassService.ts:453`) was already built and pinned; a traveller can now be asked. |
 
 ### Rows I looked at and deliberately did NOT move
@@ -2864,7 +2864,7 @@ Three things now exist:
 
 | what | where |
 | --- | --- |
-| one plain-text thread writer, with the E2EE refusal that makes it safe to call from a second route | `artifacts/api-server/src/lib/threadMessage.ts:59#export async function postPlainThreadMessage` |
+| one plain-text thread writer, with the E2EE refusal that makes it safe to call from a second route | `artifacts/api-server/src/lib/threadMessage.ts:74#export async function postPlainThreadMessage` |
 | the route writing the traveller's own text, before the event that reports on it | `artifacts/api-server/src/routes/airport.ts:1778#const sent = await postPlainThreadMessage(sc, {` |
 | the screen navigating on `posted`, and saying something true when it is false | `travel-buddy-standalone/app/layover/[id].tsx:512#} else if (res.posted && overview.session.tripId) {` |
 
@@ -2885,7 +2885,7 @@ accept ciphertext. A caller needing those wants `POST /threads/:id/messages`.
 
 ### 14.2 The mutation that stayed green, and what it cost to fix
 
-Block B of `artifacts/api-server/src/test/layoverTelegraphMessage.test.ts:198#describe("B. the layover Telegraph route WRITES` reads the route's SOURCE
+Block B of `artifacts/api-server/src/test/layoverTelegraphMessage.test.ts:235#describe("B. the layover Telegraph route WRITES` reads the route's SOURCE
 TEXT. That was written first, and a mutation says why it is not enough: leaving
 the call site written but unreachable —
 `await Promise.resolve({ ok: true }) ?? await postPlainThreadMessage(...)` —
@@ -2894,7 +2894,7 @@ nowhere, which is L271 exactly. Source text is not behaviour.
 
 Block C is the repair: the route is exercised over HTTP against the layover
 database double, and the assertion is on the `messages` table rather than on the
-handler's prose (`artifacts/api-server/src/test/layoverTelegraphMessage.test.ts:321#describe("C. POST /airport/sessions/:id/telegraph`). Re-run against the same
+handler's prose (`artifacts/api-server/src/test/layoverTelegraphMessage.test.ts:358#describe("C. POST /airport/sessions/:id/telegraph`). Re-run against the same
 mutation it fails 2.
 
 | mutation | result |
@@ -2910,7 +2910,7 @@ mutation it fails 2.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| L271 | W | **C** | *"The message is discarded"* — the row's own words — is false at this commit. The traveller's text is inserted into the resolved trip thread (`artifacts/api-server/src/test/layoverTelegraphMessage.test.ts:334#assert.equal(tables.messages![0]!.body, text`), `posted` travels on the response and on the emitted event so the audit record is a fact rather than a guess, and the screen navigates to the chat only when the message is in it. Three refusals are asserted rather than assumed: a non-member gets no thread and no write, an E2EE thread is refused with `postFailure: "e2ee"` and no plaintext row, and a trip with no thread yet writes nothing and does not crash. Red-first, five mutations, including one that first exposed a source-reading test as worthless. |
+| L271 | W | **C** | *"The message is discarded"* — the row's own words — is false at this commit. The traveller's text is inserted into the resolved trip thread (`artifacts/api-server/src/test/layoverTelegraphMessage.test.ts:371#assert.equal(tables.messages![0]!.body, text`), `posted` travels on the response and on the emitted event so the audit record is a fact rather than a guess, and the screen navigates to the chat only when the message is in it. Three refusals are asserted rather than assumed: a non-member gets no thread and no write, an E2EE thread is refused with `postFailure: "e2ee"` and no plaintext row, and a trip with no thread yet writes nothing and does not crash. Red-first, five mutations, including one that first exposed a source-reading test as worthless. |
 
 ### 14.4 What this does NOT close
 
@@ -2929,7 +2929,7 @@ mutation it fails 2.
   `message.created` with `messageId` and no body, while the MEDIA path publishes
   `id` **and `body`** — against the payload field's own documented contract
   (*"Never include message bodies or other PII"*,
-  `artifacts/api-server/src/lib/telegraphEvents.ts:122#/** Event-specific data. Never include message bodies or other PII. */`).
+  `artifacts/api-server/src/lib/telegraphEvents.ts:123#/** Event-specific data. Never include message bodies or other PII. */`).
   The new helper follows the text path. The media path is census-telegraph's to
   answer for; copying it here would have made it two places instead of one.
 
