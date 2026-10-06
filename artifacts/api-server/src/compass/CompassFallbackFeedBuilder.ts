@@ -121,6 +121,10 @@ function buildSafeProfile(
     trustLevel:            null,
     activeUserScore:       null,
     hasActiveTrip:         false,
+    // This profile is SYNTHESISED, not read: no trip read happened, so there is
+    // no unread trip read to report. The safe profile exists precisely because
+    // the real one could not be built.
+    tripStateUnread:       false,
     hasActiveBooking:      false,
     upcomingTripWithin48h: false,
     hasFutureTripScheduled: false,
@@ -270,11 +274,21 @@ function buildSafetyTools(): FallbackItem[] {
   ];
 }
 
+/**
+ * The two trip fetchers report UNREADABILITY rather than swallowing it, the
+ * same way `buildFallbackFeed` already reports an unreadable block or mute list
+ * through `fallbackReason`. Returning `[]` for both "you have no trips" and
+ * "your trips could not be read" is the defect: the fallback feed exists for
+ * the degraded case, so it is the last surface that may present a degradation
+ * as an absence.
+ */
+interface TripSection { items: FallbackItem[]; unread: boolean }
+
 async function fetchActiveTrips(
   db:         SupabaseClient,
   userId:     string,
   blockedIds: Set<string>,
-): Promise<FallbackItem[]> {
+): Promise<TripSection> {
   try {
     // Fetch both trips the user owns AND trips where they are a member,
     // then deduplicate so a user's own trip isn't shown twice.
@@ -294,10 +308,20 @@ async function fetchActiveTrips(
         .limit(5),
     ]);
 
-    const ownedRows: any[] = ownedRes.status === "fulfilled"
+    // census-compass CT-02 / the master read rule. `allSettled` sees a
+    // REJECTED promise; a PostgREST failure RESOLVES as
+    // `{ data: null, error }`, so `.data ?? []` turned "the trips could not be
+    // read" into "this user has no trips" and the fallback feed — the surface
+    // that exists FOR the degraded case — quietly dropped the user's own trip
+    // from it. A fallback that degrades silently is a fallback with no floor.
+    const ownedErr = ownedRes.status === "rejected" || (ownedRes.status === "fulfilled" && (ownedRes.value as any).error);
+    const memberErr = memberRes.status === "rejected" || (memberRes.status === "fulfilled" && (memberRes.value as any).error);
+    if (ownedErr && memberErr) return { items: [], unread: true };
+
+    const ownedRows: any[] = !ownedErr && ownedRes.status === "fulfilled"
       ? ((ownedRes.value as any).data as any[] ?? []) : [];
 
-    const memberRows: any[] = memberRes.status === "fulfilled"
+    const memberRows: any[] = !memberErr && memberRes.status === "fulfilled"
       ? ((memberRes.value as any).data as any[] ?? [])
           .map((r: any) => r.trips)
           .filter(Boolean)
@@ -312,46 +336,59 @@ async function fetchActiveTrips(
       allTrips.push(r);
     }
 
-    return allTrips
-      .filter((r: any) => !blockedIds.has(r.owner_id as string))
-      .slice(0, 5)
-      .map((r: any): FallbackItem => ({
-        id:       r.id as string,
-        type:     "trip",
-        category: "active_trip",
-        title:    (r.destination_city as string) ?? "Active Trip",
-        authorId: r.owner_id as string,
-        data:     { startDate: r.start_date, endDate: r.end_date, status: r.status },
-      }));
-  } catch { return []; }
+    return {
+      // Partially unread (one of the two halves failed) is still unread: the
+      // list below is missing trips and nothing in it says so.
+      unread: Boolean(ownedErr || memberErr),
+      items: allTrips
+        .filter((r: any) => !blockedIds.has(r.owner_id as string))
+        .slice(0, 5)
+        .map((r: any): FallbackItem => ({
+          id:       r.id as string,
+          type:     "trip",
+          category: "active_trip",
+          title:    (r.destination_city as string) ?? "Active Trip",
+          authorId: r.owner_id as string,
+          data:     { startDate: r.start_date, endDate: r.end_date, status: r.status },
+        })),
+    };
+  } catch { return { items: [], unread: true }; }
 }
 
 async function fetchSavedTrips(
   db:         SupabaseClient,
   userId:     string,
   blockedIds: Set<string>,
-): Promise<FallbackItem[]> {
+): Promise<TripSection> {
   try {
     const today = new Date().toISOString().slice(0, 10);
-    const { data } = await db
+    const { data, error } = await db
       .from("trip_members")
       .select("trip_id, trips(id, destination_city, start_date, status, owner_id)")
       .eq("user_id", userId)
       .limit(5);
-    return ((data as any[]) ?? [])
-      .map((r: any) => r.trips)
-      .filter(Boolean)
-      .filter((t: any) => t.status !== "cancelled" && (t.start_date ?? "") >= today)
-      .filter((t: any) => !blockedIds.has(t.owner_id as string))
-      .map((t: any): FallbackItem => ({
-        id:       t.id as string,
-        type:     "trip",
-        category: "saved_trip",
-        title:    (t.destination_city as string) ?? "Upcoming Trip",
-        authorId: t.owner_id as string,
-        data:     { startDate: t.start_date, status: t.status },
-      }));
-  } catch { return []; }
+    // The `catch` below could not see this: supabase-js RESOLVES on a database
+    // error, so an unreadable membership table returned `[]` — no saved trips —
+    // with nothing distinguishing it from a user who has none. Throwing routes
+    // it into the same `catch` the author intended for a failure.
+    if (error) return { items: [], unread: true };
+    return {
+      unread: false,
+      items: ((data as any[]) ?? [])
+        .map((r: any) => r.trips)
+        .filter(Boolean)
+        .filter((t: any) => t.status !== "cancelled" && (t.start_date ?? "") >= today)
+        .filter((t: any) => !blockedIds.has(t.owner_id as string))
+        .map((t: any): FallbackItem => ({
+          id:       t.id as string,
+          type:     "trip",
+          category: "saved_trip",
+          title:    (t.destination_city as string) ?? "Upcoming Trip",
+          authorId: t.owner_id as string,
+          data:     { startDate: t.start_date, status: t.status },
+        })),
+    };
+  } catch { return { items: [], unread: true }; }
 }
 
 async function fetchActiveBookings(
@@ -684,7 +721,7 @@ export async function buildFallbackFeed(
 
   // Apply safety filter + privacy guard to all dynamic content
   const filtered = applySafetyAndPrivacy(
-    [...activeTrips, ...savedTrips, ...bookings, ...threads, ...events, ...cityGuide, ...posts, ...passport, ...discovery],
+    [...activeTrips.items, ...savedTrips.items, ...bookings, ...threads, ...events, ...cityGuide, ...posts, ...passport, ...discovery],
     safeProf,
     db,
     flags,
@@ -713,11 +750,19 @@ export async function buildFallbackFeed(
     ([name, items]) => ({ name, items, total: items.length }),
   );
 
+  // The trip sources say when they could not be read, through the same
+  // `fallbackReason` suffix device the block/mute refusal above already uses
+  // (`${reason}+block_list_unavailable`). Without it an unreadable
+  // `trip_members` produced a feed with no `active_trip` section and nothing
+  // anywhere distinguishing that from a traveller who is on no trip — on the
+  // surface whose entire job is to be honest about degradation.
+  const tripsUnread = activeTrips.unread || savedTrips.unread;
+
   return {
     sections,
     nextCursor:     null,
     fallback:       true,
-    fallbackReason: reason,
+    fallbackReason: tripsUnread ? `${reason}+trip_sources_unavailable` : reason,
     safeItems,
   };
 }

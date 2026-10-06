@@ -110,12 +110,26 @@ export interface HeartbeatRisk {
 }
 
 export interface TripHeartbeat {
-  status: "healthy" | "attention" | "at_risk";
+  /**
+   * `unknown` is a FIFTH state and the reason this interface changed.
+   *
+   * census-compass CT-02 / the master read rule. `computeHeartbeat` read the
+   * plan with `const { data } = …; return data ?? []`, so an unreadable
+   * `trip_plan_items` produced zero items, zero issues, zero risks and
+   * `status: "healthy"` — the Trip Heartbeat telling a traveller their trip is
+   * fine because the table that would have said otherwise could not be read.
+   * A health view that cannot distinguish "nothing is wrong" from "I could not
+   * look" is worse than no health view, because the first is reassuring.
+   */
+  status: "healthy" | "attention" | "at_risk" | "unknown";
   issues: TripIssue[];
   risks: HeartbeatRisk[];
-  pendingProposals: number;
-  itemCounts: { fixed: number; flexible: number; optional: number; total: number };
+  /** `null` when the pending-proposal read failed — never 0, which means none. */
+  pendingProposals: number | null;
+  itemCounts: { fixed: number; flexible: number; optional: number; total: number } | null;
   nextItem: { id: string; title: string; startsAt: string | null; dayDate: string | null } | null;
+  /** The sources that could not be read, named. Empty on a complete reading. */
+  unreadSources: string[];
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -187,24 +201,62 @@ export function defaultAutopilotSettings(): AutopilotSettings {
   return { enabled: true, allowMoveFlexible: true, allowMoveOptional: true, allowRemoveOptional: false };
 }
 
+/**
+ * Three-valued, because these four booleans are PERMISSIONS.
+ *
+ * ── THE DEFECT THIS SHAPE EXISTS TO STOP ────────────────────────────────────
+ * This function bound no `error`:
+ *
+ *     const { data } = await sc.from("trip_autopilot_settings")…maybeSingle();
+ *     if (!data) return defaultAutopilotSettings();
+ *
+ * supabase-js RESOLVES `{ data: null, error }` on a database error, so an
+ * unreadable settings row was indistinguishable from an absent one and both
+ * took `defaultAutopilotSettings()` — which is
+ * `enabled: true, allowMoveFlexible: true, allowMoveOptional: true`. A user who
+ * had turned Autopilot OFF, or revoked permission to move their flexible
+ * items, got every one of those permissions back for the duration of a
+ * transient read failure, and `applyProposal` re-reads this at CONFIRM time
+ * precisely to honour a revocation. A failed read was granting the permission
+ * it was called to check.
+ *
+ * `unread` is therefore not a nicety: it is the difference between "this user
+ * has not configured Autopilot" (defaults apply, by design) and "this user's
+ * configuration could not be read" (nothing may be moved).
+ */
+export type AutopilotSettingsRead =
+  | { status: "ok"; settings: AutopilotSettings; configured: boolean }
+  | { status: "unread"; reason: string };
+
 export async function getAutopilotSettings(
   sc: SupabaseClient,
   tripId: string,
   userId: string,
-): Promise<AutopilotSettings> {
-  const { data } = await sc
-    .from("trip_autopilot_settings")
-    .select("enabled, allow_move_flexible, allow_move_optional, allow_remove_optional")
-    .eq("trip_id", tripId)
-    .eq("user_id", userId)
-    .maybeSingle();
-  if (!data) return defaultAutopilotSettings();
+): Promise<AutopilotSettingsRead> {
+  let data: unknown = null;
+  try {
+    const res = await sc
+      .from("trip_autopilot_settings")
+      .select("enabled, allow_move_flexible, allow_move_optional, allow_remove_optional")
+      .eq("trip_id", tripId)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (res.error) return { status: "unread", reason: "trip_autopilot_settings could not be read" };
+    data = res.data;
+  } catch {
+    return { status: "unread", reason: "trip_autopilot_settings could not be read" };
+  }
+  if (!data) return { status: "ok", settings: defaultAutopilotSettings(), configured: false };
   const d = data as any;
   return {
-    enabled: d.enabled !== false,
-    allowMoveFlexible: d.allow_move_flexible !== false,
-    allowMoveOptional: d.allow_move_optional !== false,
-    allowRemoveOptional: d.allow_remove_optional === true,
+    status: "ok",
+    configured: true,
+    settings: {
+      enabled: d.enabled !== false,
+      allowMoveFlexible: d.allow_move_flexible !== false,
+      allowMoveOptional: d.allow_move_optional !== false,
+      allowRemoveOptional: d.allow_remove_optional === true,
+    },
   };
 }
 
@@ -213,10 +265,19 @@ export async function upsertAutopilotSettings(
   tripId: string,
   userId: string,
   patch: Partial<AutopilotSettings>,
-): Promise<AutopilotSettings> {
+): Promise<AutopilotSettingsRead> {
+  // A FAILED READ MUST NOT BECOME A WRITE.
+  //
+  // This read-merge-upsert writes all four columns, and the read it merges onto
+  // used to answer an unreadable row with `defaultAutopilotSettings()`. So a
+  // user toggling ONE switch while the read failed had the other three
+  // overwritten with defaults — their revoked `allowMoveFlexible` restored to
+  // `true`, by the act of changing something else. The transient failure became
+  // a durable grant, and nothing anywhere said so.
   const current = await getAutopilotSettings(sc, tripId, userId);
-  const next: AutopilotSettings = { ...current, ...patch };
-  await sc.from("trip_autopilot_settings").upsert(
+  if (current.status === "unread") return current;
+  const next: AutopilotSettings = { ...current.settings, ...patch };
+  const { error } = await sc.from("trip_autopilot_settings").upsert(
     {
       trip_id: tripId,
       user_id: userId,
@@ -228,19 +289,38 @@ export async function upsertAutopilotSettings(
     },
     { onConflict: "trip_id,user_id" },
   );
-  return next;
+  // The write's own error was discarded too, so a refused upsert returned the
+  // settings the caller asked for and the client rendered them as saved.
+  if (error) return { status: "unread", reason: "autopilot settings could not be saved" };
+  return { status: "ok", settings: next, configured: true };
 }
 
 // ── Data loading ──────────────────────────────────────────────────────────────
 
-export async function fetchPlanItems(sc: SupabaseClient, tripId: string): Promise<PlanItem[]> {
-  const { data } = await sc
-    .from("trip_plan_items")
-    .select("id, title, category, status, lock_type, day_date, starts_at, ends_at, location_name, lat, lng, source_type, source_id, sort_order")
-    .eq("trip_id", tripId)
-    .is("removed_at", null)
-    .neq("status", "cancelled");
-  return ((data ?? []) as any[]).map(toPlanItem);
+/**
+ * Three-valued for the reason `TripCompassProjection.planItems` is: an
+ * unreadable plan and an empty plan lead to opposite answers, and every
+ * consumer in this file derived a reassuring one from the empty case —
+ * `status: "healthy"`, `itemCounts.total: 0`, "no issues", and in
+ * `applyProposal` the per-item reason "item no longer exists".
+ */
+export type PlanItemsRead =
+  | { status: "ok"; items: PlanItem[] }
+  | { status: "unread"; reason: string };
+
+export async function fetchPlanItems(sc: SupabaseClient, tripId: string): Promise<PlanItemsRead> {
+  try {
+    const { data, error } = await sc
+      .from("trip_plan_items")
+      .select("id, title, category, status, lock_type, day_date, starts_at, ends_at, location_name, lat, lng, source_type, source_id, sort_order")
+      .eq("trip_id", tripId)
+      .is("removed_at", null)
+      .neq("status", "cancelled");
+    if (error) return { status: "unread", reason: "trip_plan_items could not be read" };
+    return { status: "ok", items: ((data ?? []) as any[]).map(toPlanItem) };
+  } catch {
+    return { status: "unread", reason: "trip_plan_items could not be read" };
+  }
 }
 
 // ── Monitors / conflict detection ─────────────────────────────────────────────
@@ -569,6 +649,13 @@ export interface AutopilotRunResult {
   issues: TripIssue[];
   proposalsCreated: RepairProposal[];
   proposalsSkipped: number; // deduped against existing pending proposals
+  /**
+   * The sources this run could not read, named. Non-empty means `issues` is an
+   * INCOMPLETE reading and must not be presented as "nothing is wrong", and
+   * that no proposal was created — proposing a repair from a plan that could
+   * not be read is inventing the problem as well as the fix.
+   */
+  unreadSources: string[];
 }
 
 export async function runAutopilotCheck(
@@ -577,13 +664,25 @@ export async function runAutopilotCheck(
   userId: string,
   opts: { simulate?: SimulatedDisruption[] } = {},
 ): Promise<AutopilotRunResult> {
-  const settings = await getAutopilotSettings(sc, tripId, userId);
-  const { data: trip } = await sc
+  const unreadSources: string[] = [];
+  const settingsRead = await getAutopilotSettings(sc, tripId, userId);
+  const itemsRead = await fetchPlanItems(sc, tripId);
+  const { data: trip, error: tripErr } = await sc
     .from("trips")
     .select("id, destination_city, start_date, end_date")
     .eq("id", tripId)
     .maybeSingle();
-  const items = await fetchPlanItems(sc, tripId);
+  if (tripErr) unreadSources.push("trips");
+  if (settingsRead.status === "unread") unreadSources.push("trip_autopilot_settings");
+
+  // An unreadable plan is the end of the run. Every detector below takes the
+  // item list as its whole universe, so `[]` makes all of them answer "nothing
+  // is wrong" — and `buildRepairProposals` would then propose nothing while
+  // the route reported a clean check.
+  if (itemsRead.status === "unread") {
+    return { issues: [], proposalsCreated: [], proposalsSkipped: 0, unreadSources: [...unreadSources, "trip_plan_items"] };
+  }
+  const items = itemsRead.items;
 
   const issues: TripIssue[] = [
     ...detectTimingConflicts(items),
@@ -598,21 +697,39 @@ export async function runAutopilotCheck(
   );
   issues.push(...weather.issues);
 
+  // Settings unreadable: report the issues that WERE found — the detectors ran
+  // on a plan that was read — and create nothing. The old code took
+  // `enabled: true` from the defaults here and proposed on a permission it had
+  // not observed.
+  if (settingsRead.status === "unread") {
+    return { issues, proposalsCreated: [], proposalsSkipped: 0, unreadSources };
+  }
+  const settings = settingsRead.settings;
+
   if (!settings.enabled) {
     // Autopilot off: still report issues (the Heartbeat stays honest) but
     // never create proposals.
-    return { issues, proposalsCreated: [], proposalsSkipped: 0 };
+    return { issues, proposalsCreated: [], proposalsSkipped: 0, unreadSources };
   }
 
   const proposals = buildRepairProposals(items, issues, settings);
 
   // Dedupe against existing pending proposals for this user+trip.
-  const { data: existing } = await sc
+  //
+  // AN UNREADABLE DEDUPE SET IS NOT AN EMPTY ONE. `existing ?? []` made every
+  // key look new, so a failed read did not skip the insert — it performed one,
+  // once per run, duplicating every pending proposal the user already had. A
+  // failed read becoming a WRITE is the worst shape in this class, and it was
+  // here.
+  const { data: existing, error: existingErr } = await sc
     .from("trip_autopilot_proposals")
     .select("dedupe_key")
     .eq("trip_id", tripId)
     .eq("user_id", userId)
     .eq("status", "pending");
+  if (existingErr) {
+    return { issues, proposalsCreated: [], proposalsSkipped: 0, unreadSources: [...unreadSources, "trip_autopilot_proposals"] };
+  }
   const existingKeys = new Set(((existing ?? []) as any[]).map((r) => String(r.dedupe_key)));
 
   const created: RepairProposal[] = [];
@@ -631,7 +748,7 @@ export async function runAutopilotCheck(
     });
     if (!error) created.push(p);
   }
-  return { issues, proposalsCreated: created, proposalsSkipped: skipped };
+  return { issues, proposalsCreated: created, proposalsSkipped: skipped, unreadSources };
 }
 
 // ── Confirm / decline ─────────────────────────────────────────────────────────
@@ -687,11 +804,24 @@ export async function revalidateProposalEvidence(
   } else if (type === "social_change") {
     present = (await detectSocialChanges(sc, items)).some((i) => i.dedupeKey === key);
   } else {
-    const { data: trip } = await sc
+    const { data: trip, error: tripErr } = await sc
       .from("trips")
       .select("id, destination_city, start_date, end_date")
       .eq("id", proposal.trip_id)
       .maybeSingle();
+    // The OUTCOME was already fail-closed and stays so — nothing is applied on
+    // evidence that could not be re-read. What was wrong was the SENTENCE: an
+    // unbound error made this indistinguishable from a forecast that had
+    // cleared, and the user was told the clash "no longer holds at confirm
+    // time" when the trip row had not been read at all. The reason reaches a
+    // screen; a refusal that gives a false reason teaches the user the wrong
+    // thing about their trip.
+    if (tripErr) {
+      return {
+        evidence: "expired",
+        reason: "the trip could not be read, so the weather clash this proposal repairs could not be re-checked — nothing was changed",
+      };
+    }
     const weather = await detectWeatherClashes(
       items,
       ((trip as any)?.destination_city as string | null) ?? null,
@@ -731,9 +861,39 @@ export async function applyProposal(
 ): Promise<ApplyProposalResult> {
   // Re-verify at confirm time: permissions may have changed and items may
   // have been re-typed since the proposal was created.
-  const settings = await getAutopilotSettings(sc, proposal.trip_id, proposal.user_id);
+  //
+  // THIS IS THE READ THE WHOLE RE-VERIFICATION RESTS ON. It answered an
+  // unreadable `trip_autopilot_settings` with `enabled/allowMoveFlexible/
+  // allowMoveOptional: true`, so a user who had REVOKED permission to move
+  // their flexible items had that permission handed back by the failure of the
+  // read whose entire purpose was to honour the revocation — and
+  // `isMovable(live, settings)` then let a Trip Kernel command through. A
+  // permission check may not supply its own answer.
+  const settingsRead = await getAutopilotSettings(sc, proposal.trip_id, proposal.user_id);
+  if (settingsRead.status === "unread") {
+    return {
+      applied: 0,
+      blocked: ["your autopilot permissions could not be read, so nothing was changed — this is temporary"],
+      evidence: "not_revalidated",
+      kernelAvailable: true,
+    };
+  }
+  const settings = settingsRead.settings;
   const changes: ItemChange[] = Array.isArray(proposal.changes) ? proposal.changes : [];
-  const items = await fetchPlanItems(sc, proposal.trip_id);
+  const itemsRead = await fetchPlanItems(sc, proposal.trip_id);
+  // An unreadable plan made `byId` empty, and every change was then refused
+  // with "item no longer exists" — a statement about the TRIP, made from a
+  // fact about the database, that invites the user to delete a proposal whose
+  // items are all still there.
+  if (itemsRead.status === "unread") {
+    return {
+      applied: 0,
+      blocked: ["the trip's plan could not be read, so nothing was changed — this is temporary, and the items still exist"],
+      evidence: "not_revalidated",
+      kernelAvailable: true,
+    };
+  }
+  const items = itemsRead.items;
   const byId = new Map(items.map((i) => [i.id, i]));
 
   // CCL-13 — the EVIDENCE is re-verified too, before any change is looked at.
@@ -829,12 +989,32 @@ export async function computeHeartbeat(
   opts: { nowMs?: number } = {},
 ): Promise<TripHeartbeat> {
   const nowMs = opts.nowMs ?? Date.now();
-  const { data: trip } = await sc
+  const unreadSources: string[] = [];
+  const { data: trip, error: tripErr } = await sc
     .from("trips")
     .select("id, destination_city, start_date, end_date")
     .eq("id", tripId)
     .maybeSingle();
-  const items = await fetchPlanItems(sc, tripId);
+  if (tripErr) unreadSources.push("trips");
+  const itemsRead = await fetchPlanItems(sc, tripId);
+
+  // `status: "unknown"` rather than `"healthy"`. The plan is the Heartbeat's
+  // whole subject: with no items every detector is silent, every count is 0 and
+  // the old code published "healthy" — the single most misleading value this
+  // view can carry, because it is the one the traveller acts on by doing
+  // nothing.
+  if (itemsRead.status === "unread") {
+    return {
+      status: "unknown",
+      issues: [],
+      risks: [],
+      pendingProposals: null,
+      itemCounts: null,
+      nextItem: null,
+      unreadSources: [...unreadSources, "trip_plan_items"],
+    };
+  }
+  const items = itemsRead.items;
 
   const issues: TripIssue[] = [
     ...detectTimingConflicts(items),
@@ -857,13 +1037,16 @@ export async function computeHeartbeat(
       detail: `${f.summary}, ${f.precipMm} mm — plans that day may need an indoor backup.`,
     }));
 
-  const { data: pendingRows } = await sc
+  const { data: pendingRows, error: pendingErr } = await sc
     .from("trip_autopilot_proposals")
     .select("id")
     .eq("trip_id", tripId)
     .eq("user_id", userId)
     .eq("status", "pending");
-  const pendingProposals = ((pendingRows ?? []) as any[]).length;
+  if (pendingErr) unreadSources.push("trip_autopilot_proposals");
+  // `null`, not 0: "you have no proposals waiting" and "I could not check" are
+  // different sentences, and only the first should make a badge disappear.
+  const pendingProposals = pendingErr ? null : ((pendingRows ?? []) as any[]).length;
 
   const itemCounts = {
     fixed: items.filter((i) => i.lockType === "fixed").length,
@@ -876,10 +1059,16 @@ export async function computeHeartbeat(
     .filter((i) => i.startsAt && Date.parse(String(i.startsAt)) > nowMs)
     .sort((a, b) => String(a.startsAt).localeCompare(String(b.startsAt)))[0] ?? null;
 
+  // "healthy" is only ever claimed over a COMPLETE reading. With a source
+  // missing the honest answer is `unknown`, even when everything that WAS read
+  // came back clean — the whole point is that a clean partial reading is
+  // indistinguishable from a clean complete one.
   const status: TripHeartbeat["status"] = issues.some((i) => i.severity === "high")
     ? "at_risk"
     : issues.length > 0 || risks.length > 0
     ? "attention"
+    : unreadSources.length > 0
+    ? "unknown"
     : "healthy";
 
   return {
@@ -891,5 +1080,6 @@ export async function computeHeartbeat(
     nextItem: upcoming
       ? { id: upcoming.id, title: upcoming.title, startsAt: upcoming.startsAt, dayDate: upcoming.dayDate }
       : null,
+    unreadSources,
   };
 }

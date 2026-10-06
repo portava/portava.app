@@ -12,7 +12,7 @@
  * The matching core (`matchCanonical`) is a pure function so it can be
  * unit-tested without a database.
  */
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js"; import { isTableAbsentError } from "./tableAbsence"; // one line: census docs cite this file by line
 import { logger as rootLogger } from "./logger"; import { LATIN_LETTER_FOLD, LATIN_MARKS_RE } from "./latinLetterFold"; // §73: the stroke/hook/bar table; §77: the four Latin mark blocks
 
 const logger = rootLogger.child({ lib: "canonicalLocations" });
@@ -331,9 +331,9 @@ let tableMissingLogged = false;
 const NULL_RESULT: ResolveResult = { canonicalId: null, canonical: {} };
 
 function isMissingTable(err: any): boolean {
-  const code = err?.code ?? "";
-  const msg = String(err?.message ?? "");
-  return code === "42P01" || code === "PGRST205" || /canonical_locations/.test(msg) && /not exist|not found/i.test(msg);
+  // lib/tableAbsence. The old `canonical_locations` + "not exist" message test read a 42703
+  // `column canonical_locations.<col> does not exist` as an absent table: suggest answered [].
+  return isTableAbsentError(err);
 }
 
 function rowToCanonicalFields(row: CanonicalRow): ResolveResult["canonical"] {

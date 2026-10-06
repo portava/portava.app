@@ -39,6 +39,7 @@
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { schedulerCoverage } from "../lib/schedulerCoverage.js";
 import http from "node:http";
 import { readFileSync } from "node:fs";
 import express, { type Express } from "express";
@@ -70,7 +71,7 @@ const EXPECTED_JOBS = [
   // in the aggregate, because decision 4 requires the job's last attempt, last
   // success, backlog and failures to be visible — a purge job that silently
   // stopped being reported is exactly the failure that list exists to catch.
-  "storyRetention",
+  "storyRetention", "discoveryServeLogRetention", // census-discovery §120 (3501): the serve-log retention must be as visible as the story one
 ].sort();
 
 // ── HTTP plumbing ────────────────────────────────────────────────────────────
@@ -164,6 +165,54 @@ describe("the aggregate covers every job — vacuity is failure", () => {
   });
 });
 
+/**
+ * THE SCOPE OF THE VERDICT. The aggregate above is honest about the jobs it can
+ * see, and that was the whole defect one level up: it could not say how many it
+ * could not see. `index.ts` starts 58 schedulers; this endpoint reports 11.
+ * "overall: healthy" over 11 reads exactly like "overall: healthy" over 58.
+ */
+describe("the body says what it is NOT looking at", () => {
+  it("states the denominator next to the verdict, and names the jobs it cannot see", async () => {
+    const r = await get(base, PATH);
+    assert.equal(r.status, 200);
+    const cov = schedulerCoverage();
+
+    assert.equal(
+      r.body.reportsOn,
+      `${EXPECTED_JOBS.length} of ${cov.started} schedulers this process starts`,
+      "an operator reading only the first two fields must learn the scope",
+    );
+    assert.equal(r.body.coverage.started, cov.started);
+    assert.equal(r.body.coverage.reported, cov.reported);
+    assert.equal(r.body.coverage.persisted, cov.persisted);
+    assert.equal(r.body.coverage.unobservableCount, cov.unobservable.length);
+    assert.deepEqual(r.body.coverage.unobservable, cov.unobservable, "named, not just counted");
+
+    // The numbers must be a real gap, not a formality: if reported ever equals
+    // started this assertion is the thing that tells us to delete the field.
+    assert.ok(
+      r.body.coverage.unobservableCount > 0,
+      "if nothing is unobservable any more, this disclosure has done its job and should go",
+    );
+    assert.ok(
+      r.body.coverage.persisted <= r.body.coverage.started,
+      "durable health cannot cover more jobs than are started",
+    );
+  });
+
+  /**
+   * A disclosure, not an alarm. A probe that answers 503 forever gets muted,
+   * which is the same reasoning that keeps `never_ran` at 200 — and muting this
+   * probe would lose the failing/stale signals that DO need acting on.
+   */
+  it("46 unobservable jobs does not by itself make the endpoint 503", async () => {
+    const r = await get(base, PATH);
+    assert.ok(r.body.coverage.unobservableCount > 0, "there is a gap to disclose");
+    assert.equal(r.status, 200, "a standing property of the deployment is not an incident");
+    assert.notEqual(r.body.overall, "failing");
+  });
+});
+
 describe("never_ran is distinguished, and does NOT alarm", () => {
   it("a fresh process reports never_ran for every job that tracks a run, at 200", async () => {
     const r = await get(base, PATH);
@@ -176,7 +225,7 @@ describe("never_ran is distinguished, and does NOT alarm", () => {
     for (const name of ["inviteSlotReconciler", "zombieTokenSweeper", "eventWaitlistSweeper",
                         "rentBuddyRequestSweeper", "inviteSlotSweeper", "tripCrewLiveShareScheduler",
                         "notificationMaintenanceScheduler", "dailyBriefCleanup", "suggestionSeenCleanup",
-                        "storyRetention"]) {
+                        "storyRetention", "discoveryServeLogRetention"]) {
       assert.equal(byJob.get(name)?.status, "never_ran", `${name} has not run and must say so`);
       assert.equal(byJob.get(name)?.lastRunAt, null);
     }

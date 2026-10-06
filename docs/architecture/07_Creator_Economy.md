@@ -208,7 +208,7 @@ balance UI and no cash pool exist; do not describe one.
 | Double-count defence: `content_stamps` is polymorphic and one user can hold two rows for one post — deduped on `(user_id, entity_id)` | `:925-955` |
 | Every `.in()` chunked at 100 — an unbounded list is a 414 that supabase-js *returns*, reading identically to "nobody engaged", **monotonically worse the more a creator posts** | `:129-149`, `:731-742` |
 | Trust veto collapses the score at `overall_score < 20` | `:1135` |
-| Ring / cluster / rapid-jump detection that **never auto-penalises** — it files a `trust_reviews` row of type `gaming_suspected` | `services/trust/TrustGamingDetectionService.ts:1-11`, `:68-80` |
+| Ring / cluster / rapid-jump detection that **never auto-penalises** — it files a `trust_reviews` row of type `gaming_suspected` | `services/trust/TrustGamingDetectionService.ts:1-11`, `:249-261` |
 | Per-creator frequency caps on assembled feeds (max 2 consecutive, 3 per page) | `services/ranking/CreatorCapEnforcer.ts:1-30` |
 | Admin concentration alarm — `creator_concentration` top-1/5/10 % with an `alert` boolean | `routes/adminRankingMetrics.ts:52` |
 
@@ -312,7 +312,7 @@ places it touches them are called out rather than left to be discovered.
   server's real per-domain strengths and recovery hints instead of client constants.
   *Consequence here:* **do not design a creator-facing "trust tier" or "impact tier"
   chip.** The tier vocabulary that exists (`new_inactive` … `highly_active`,
-  `routes/adminRankingMetrics.ts:73-95`) is an **admin distribution bucket**, not a user-facing
+  `routes/adminRankingMetrics.ts:83-105`) is an **admin distribution bucket**, not a user-facing
   label, and promoting it to the UI would recreate exactly the defect #467 is closing.
 - **#450 — restriction expiry** gets a caller and a bound. No creator-economy surface reads
   `trust_restrictions`, by the deliberate decision quoted above; no interaction.
@@ -323,7 +323,7 @@ places it touches them are called out rather than left to be discovered.
   `FOR ALL USING (FALSE)` deny-public policy — service role only, which bypasses RLS
   (`artifacts/api-server/supabase/migrations/20260801_ranking_discovery_foundation.sql:37-47`). No route returns a
   per-user score: the only reader outside the scorer and the ranker is
-  `routes/adminRankingMetrics.ts:305`, `:335`, which is `requireAdmin`-gated (`:160`) and returns
+  `routes/adminRankingMetrics.ts:467`, `:497`, which is `requireAdmin`-gated (`:322`) and returns
   **distributions and tier fractions**, never a named creator's number.
 - **No leaderboard exists, and none should.** The passport certification records the §34 non-goal
   and the shape it takes in code: no compatibility or match percentage, and city expertise derived
@@ -338,9 +338,9 @@ places it touches them are called out rather than left to be discovered.
 - **The reward ledger is not user-facing data** — RLS deny-default, no `anon`/`authenticated`
   grant at all, `service_role` INSERT+SELECT only (`2170:49-56`) — and it is **explicitly erased
   on account deletion** by its own deletion step, because the `ON DELETE CASCADE` never fires
-  under the anonymised tombstone (`lib/deletionDispositions.ts:86-93`).
+  under the anonymised tombstone (`lib/deletionDispositions.ts:90-97`).
 - **Known gap, named rather than papered over: `creator_activity_scores` is in
-  `UNCLASSIFIED_BACKLOG`** (`lib/deletionDispositions.ts:256`, `:324`) — its account-deletion fate
+  `UNCLASSIFIED_BACKLOG`** (`lib/deletionDispositions.ts:392#export const UNCLASSIFIED_BACKLOG`, `:460#creator_activity_scores`) — its account-deletion fate
   has not been triaged. It is a per-user behavioural derivative keyed on `user_id`; it should be
   classified before anything makes it user-visible or increases what it retains.
 

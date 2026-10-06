@@ -81,6 +81,25 @@ export interface LiveRollingContext {
   minutesToNext: number | null;
   recentEvents: LiveSessionEvent[];
   updatedAt: string;
+  /**
+   * TRUE when today's plan could not be READ on the tick that produced this
+   * context — census-compass CT-02 / the master read rule.
+   *
+   * This context is PERSISTED into `compass_live_sessions.context`, so a failed
+   * read here was not merely a degraded answer: `fetchTodayPlan` bound no
+   * `error` and answered `[]`, which made `currentStop` and `nextItem` null,
+   * and the tick then WROTE those nulls over the real context — erasing where
+   * the traveller was in their day because one query failed. It also looked
+   * like a transition, so the trail gained a bogus event, and the live card
+   * went on to say there was nothing next.
+   *
+   * On an unread plan the previous stop/next item are carried forward
+   * unchanged, no transition event is recorded, and this flag says the reading
+   * was incomplete. `CompassSenseEngine.fetchTodayPlanItems` was given this
+   * treatment by DV-83 (it rethrows and the source is marked unread); its Live
+   * twin, four hundred lines away, was not.
+   */
+  planUnread?: boolean;
 }
 
 export interface LiveSession {
@@ -127,6 +146,7 @@ function emptyContext(nowIso: string): LiveRollingContext {
     minutesToNext: null,
     recentEvents: [],
     updatedAt: nowIso,
+    planUnread: false,
   };
 }
 
@@ -145,6 +165,9 @@ function mapRow(row: any): LiveSession {
       minutesToNext: ctx.minutesToNext ?? null,
       recentEvents: Array.isArray(ctx.recentEvents) ? ctx.recentEvents : [],
       updatedAt: ctx.updatedAt ?? String(row.started_at ?? new Date(0).toISOString()),
+      // Absent on every row written before this field existed, which is the
+      // right default: those contexts were read, not un-read.
+      planUnread: ctx.planUnread === true,
     },
     checksRun: Number(row.checks_run ?? 0),
     nudgesDelivered: Number(row.nudges_delivered ?? 0),
@@ -234,27 +257,36 @@ async function fetchInProgressTrip(
   return { id: resolved.trip.id, city: resolved.trip.destinationCity };
 }
 
+type TodayPlanRead = { status: "ok"; items: LivePlanItem[] } | { status: "unread" };
+
 async function fetchTodayPlan(
   sc: SupabaseClient,
   tripId: string,
   today: string,
-): Promise<LivePlanItem[]> {
+): Promise<TodayPlanRead> {
   try {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("trip_plan_items")
       .select("id, title, starts_at, status, day_date, removed_at")
       .eq("trip_id", tripId)
       .eq("day_date", today);
-    return ((data ?? []) as any[])
-      .filter((i) => i.status !== "cancelled" && i.removed_at == null)
-      .map((i) => ({
-        id: String(i.id),
-        title: String(i.title ?? "Plan item"),
-        startsAt: (i.starts_at as string | null) ?? null,
-      }))
-      .sort((a, b) => String(a.startsAt ?? "").localeCompare(String(b.startsAt ?? "")));
+    // `const { data }` with no `error` bound, and a `catch` that could never
+    // fire because supabase-js RESOLVES on a database error. An unreadable plan
+    // was an empty day.
+    if (error) return { status: "unread" };
+    return {
+      status: "ok",
+      items: ((data ?? []) as any[])
+        .filter((i) => i.status !== "cancelled" && i.removed_at == null)
+        .map((i) => ({
+          id: String(i.id),
+          title: String(i.title ?? "Plan item"),
+          startsAt: (i.starts_at as string | null) ?? null,
+        }))
+        .sort((a, b) => String(a.startsAt ?? "").localeCompare(String(b.startsAt ?? ""))),
+    };
   } catch {
-    return [];
+    return { status: "unread" };
   }
 }
 
@@ -286,14 +318,25 @@ export async function buildLiveRollingContext(
 
   let currentStop: LivePlanItem | null = null;
   let nextItem: LivePlanItem | null = null;
+  let planUnread = false;
   if (trip) {
     const today = new Date(nowMs).toISOString().slice(0, 10);
-    const items = await fetchTodayPlan(sc, trip.id, today);
-    const timed = items.filter((i) => i.startsAt);
-    const past = timed.filter((i) => new Date(i.startsAt!).getTime() <= nowMs);
-    const future = timed.filter((i) => new Date(i.startsAt!).getTime() > nowMs);
-    currentStop = past[past.length - 1] ?? null;
-    nextItem = future[0] ?? null;
+    const read = await fetchTodayPlan(sc, trip.id, today);
+    if (read.status === "unread") {
+      // CARRY FORWARD, DO NOT OVERWRITE. This context is written back to the
+      // session row; replacing a real stop with null because a query failed
+      // erases the traveller's position in their own day, and the live card
+      // then tells them nothing is next.
+      planUnread = true;
+      currentStop = previous?.currentStop ?? null;
+      nextItem = previous?.nextItem ?? null;
+    } else {
+      const timed = read.items.filter((i) => i.startsAt);
+      const past = timed.filter((i) => new Date(i.startsAt!).getTime() <= nowMs);
+      const future = timed.filter((i) => new Date(i.startsAt!).getTime() > nowMs);
+      currentStop = past[past.length - 1] ?? null;
+      nextItem = future[0] ?? null;
+    }
   }
 
   const minutesToNext = nextItem?.startsAt
@@ -303,7 +346,12 @@ export async function buildLiveRollingContext(
   // Carry the event trail forward and record real transitions as events so
   // context provably accumulates across a sequence of checks.
   const events: LiveSessionEvent[] = [...(previous?.recentEvents ?? [])];
-  if (previous) {
+  // A transition is a fact about the PLAN, so it may only be recorded from a
+  // plan that was read. With `planUnread` the stop and next item are the
+  // previous ones by construction, so no comparison here could be true — the
+  // guard is explicit anyway, because an edit that stopped carrying them
+  // forward would otherwise start writing transitions out of a failed read.
+  if (previous && !planUnread) {
     if (currentStop && currentStop.id !== previous.currentStop?.id) {
       events.push({ at: nowIso, kind: "reached_stop", detail: currentStop.title });
     }
@@ -320,6 +368,7 @@ export async function buildLiveRollingContext(
     minutesToNext,
     recentEvents: events.slice(-RECENT_EVENTS_CAP),
     updatedAt: nowIso,
+    planUnread,
   };
 }
 

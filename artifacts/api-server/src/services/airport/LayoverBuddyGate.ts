@@ -99,23 +99,26 @@ export interface LayoverBuddyDecision {
 }
 
 /**
- * The gate, in the order §9.1 demands: safety first, everything else after.
+ * THE GATE ITSELF, as a function of the certified record ALONE.
  *
  * `passed` is false when the traveller cannot leave (`no`), has said they will
  * not (`stay_airside`), or is already on the escalation ladder — a person at
  * RETURN_SOON or beyond is heading for a gate, not for a meeting.
  *
- * ONE CERTIFICATION. The record is computed once here and every field below is
- * read off it, so the buddy list and the countdown on the same screen cannot
- * disagree about whether leaving is possible.
+ * ── WHY IT IS SEPARATE FROM `layoverBuddyDecision` ──────────────────────────
+ * `layoverBuddyDecision` takes an airport and a session because it may have to
+ * CERTIFY. §14's crew surface already holds a certified record for every member
+ * of a crew (`crewSolverMembers` → `certifyCrewMemberRecord`), and the crew
+ * meet-gate needs the same predicate over the record it already has.
+ *
+ * Re-deriving the predicate there would make a SECOND answer to "may this
+ * traveller be offered a landside meeting?", which is the exact defect L273
+ * recorded on this surface. Re-certifying there would add a second derivation
+ * of the same session's record in one request, which `layoverFeasibilityRecord`
+ * pins against. So the predicate is named once and read from two places.
  */
-export function layoverBuddyDecision(
-  airport: AirportProfile,
-  session: LayoverSession,
-  nowMs: number = Date.now(), /** The session owner's corridor (`resolveLayoverEntry`), as every certification takes it — census-discovery §65. Omitted = unresolved. */ entry?: EntryEligibility | null, /** census-discovery §81: the certified snapshot's record, when the caller read one; the gate then certifies nothing itself. */ certified?: LayoverFeasibilityRecord | null,
-): LayoverBuddyDecision {
-  const record = certified ?? certifySessionFeasibility(airport, session, { nowMs, entry });
-  const safetyGate: BuddySafetyGate = {
+export function buddySafetyGateFor(record: LayoverFeasibilityRecord): BuddySafetyGate {
+  return {
     passed:
       // A DENY-LIST, and `entry_unverified` is deliberately not on it: it means
       // the border could not be checked, not that the traveller is refused, and
@@ -129,6 +132,22 @@ export function layoverBuddyDecision(
     returnState: record.envelope.returnState,
     engineVersion: record.engineVersion,
   };
+}
+
+/**
+ * The gate, in the order §9.1 demands: safety first, everything else after.
+ *
+ * ONE CERTIFICATION. The record is computed once here and every field below is
+ * read off it, so the buddy list and the countdown on the same screen cannot
+ * disagree about whether leaving is possible.
+ */
+export function layoverBuddyDecision(
+  airport: AirportProfile,
+  session: LayoverSession,
+  nowMs: number = Date.now(), /** The session owner's corridor (`resolveLayoverEntry`), as every certification takes it — census-discovery §65. Omitted = unresolved. */ entry?: EntryEligibility | null, /** census-discovery §81: the certified snapshot's record, when the caller read one; the gate then certifies nothing itself. */ certified?: LayoverFeasibilityRecord | null,
+): LayoverBuddyDecision {
+  const record = certified ?? certifySessionFeasibility(airport, session, { nowMs, entry });
+  const safetyGate: BuddySafetyGate = buddySafetyGateFor(record);
   // `tight` is the ENGINE's own word for a window with no slack (45-89 usable
   // minutes). Meeting a stranger in an unfamiliar city on a window that tight
   // is the marketplace interaction L254 calls high-risk, and using the engine's

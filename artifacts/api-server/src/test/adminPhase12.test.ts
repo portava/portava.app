@@ -220,7 +220,10 @@ function makePostsFakeClient(opts: {
     storage: { from: () => ({ upload: async () => ({ data: null, error: null }), getPublicUrl: () => ({ data: { publicUrl: "" } }) }) },
     from: (table: string) => {
       if (table === "profiles") {
-        const profileRow = { id: TARGET_ID, account_status: accountStatus, handle: "testuser" };
+        // A ban / suspension is a user_account_states row (embedded on the gate's profiles read), not an
+        // account_status value: profiles_account_status_check cannot hold 'banned' or 'suspended'.
+        const moderated = accountStatus === "banned" || accountStatus === "suspended";
+        const profileRow = { id: TARGET_ID, account_status: moderated ? "active" : accountStatus, handle: "testuser", ...(moderated ? { user_account_states: [{ state: accountStatus, expires_at: null }] } : {}) };
         const b: any = {
           select:     () => b,
           eq:         () => b,
@@ -594,7 +597,7 @@ describe("Banned user enforcement", () => {
 });
 
 describe("Admin ban", () => {
-  it("sets account_status to banned and writes audit row", async () => {
+  it("bans through user_account_states and writes an audit row", async () => {
     const admin = makeAdminFakeClient({});
     _setTestClient(admin, true);
     _setTestServiceClient(admin);
