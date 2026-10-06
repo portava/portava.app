@@ -233,7 +233,7 @@ export const TELEGRAPH_ADVERSARIAL_FIXTURES: readonly AdversarialFixture[] = [
     scenario:
       "The source object behind a rendered share card is revoked while the " +
       "conversation is open",
-    status: "enforced",
+    status: "divergent",
     enforcedBy: [
       "travel-buddy-standalone/src/components/DiscoveryCardMessage.tsx",
       "travel-buddy-standalone/src/components/PostCardMessage.tsx",
@@ -241,14 +241,14 @@ export const TELEGRAPH_ADVERSARIAL_FIXTURES: readonly AdversarialFixture[] = [
       "src/services/telegraph/shareables.ts",
     ],
     note:
-      "ENFORCED since 2026-10-05 (lane T2, census T413/T448). Both legacy cards " +
-      "re-resolve their source for the viewer on every mount (useShareRevocation → " +
-      "POST /threads/:id/share-projections), draw the REVOKED notice when the server " +
-      "says the source is gone, draw nothing from the source while loading, draw the " +
-      "server's projection — never the frozen body — when it is live, and draw only " +
-      "the reference when a possible resolve fails. The fixture asserts that wiring " +
-      "over the real components; the behaviour is driven end to end in the client " +
-      "suites shareRevocation.component.test.tsx and legacyCardLive.component.test.tsx.",
+      "DIVERGENT AGAIN since 2026-10-05 (lane T2, census-telegraph §45c, verifier finding 5): " +
+      "lane T2 had moved this to enforced the same day, and that overstated it. Both legacy " +
+      "cards now re-resolve their source on MOUNT (useShareRevocation → POST " +
+      "/threads/:id/share-projections) and draw the revoked state, the live projection or the " +
+      "reference alone from that answer — but they resolve ONCE per mount, with no refresh and " +
+      "no revocation event, so a source revoked WHILE the conversation is open (this " +
+      "scenario) keeps its drawn projection and actions until the card remounts. The fixture " +
+      "pins that real outcome; it goes red when a mounted card learns to hear a revocation.",
   },
 ];
 

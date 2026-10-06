@@ -33,7 +33,7 @@
  *     reopens the window — failed the lock-order assertion (28/29); putting a
  *     direct `.from("messages").update(...)` back into the lifecycle route
  *     failed the one-call assertion (28/29).
- *   - F-01/F-03/F-07/F-09 are the DIVERGENT ones (F-12 was, until 2026-10-05) and went red the other way
+ *   - F-01/F-03/F-07/F-09/F-12 are the DIVERGENT ones (F-12 was briefly marked enforced on 2026-10-05) and went red the other way
  *     round: each was first written asserting the spec's required outcome and
  *     observed to fail on today's tree, and the assertion was then rewritten
  *     against the real outcome with the requirement quoted in the message.
@@ -699,16 +699,20 @@ describe("F-11 — unsend races recipient seen update", () => {
 
 // ── F-12 source object revoked while a cached share card is open ─────────────
 
-describe("F-12 — source object revoked while a cached share card is open (enforced)", () => {
+describe("F-12 — source object revoked while a cached share card is open (DIVERGENT)", () => {
   const component = (name: string) =>
     readFileSync(resolve(process.cwd(), `../../travel-buddy-standalone/src/components/${name}`), "utf8");
+  const hook = () =>
+    readFileSync(resolve(process.cwd(), "../../travel-buddy-standalone/src/features/telegraph/sharing/useShareRevocation.ts"), "utf8");
 
-  // MOVED divergent → enforced 2026-10-05 (lane T2). The two assertions that
-  // used to pin the divergence — "no fetch, no effect" and "no capability
-  // vocabulary" — went red when the cards learned to re-resolve, exactly as
-  // this fixture said they would. What is asserted now is the enforcing wiring.
+  // HISTORY. Divergent until 2026-10-05; lane T2 moved it to enforced that day
+  // when the cards learned to re-resolve, and independent verification showed
+  // that overstated it (census-telegraph §45c, finding 5): they re-resolve on
+  // MOUNT only. Restored to divergent. What the cards DO is asserted first, the
+  // divergence second — and the second goes red the day a mounted card can hear
+  // a revocation, which is the change that would make this enforced.
   for (const name of ["DiscoveryCardMessage.tsx", "PostCardMessage.tsx"]) {
-    it(`${name} re-resolves its source for the viewer and draws the revoked state from the answer`, () => {
+    it(`${name} re-resolves its source for the viewer on mount and draws the revoked state from the answer`, () => {
       const src = component(name);
       assert.match(src, /useShareRevocation\(/, `${name} no longer re-resolves its source`);
       assert.match(src, /if \(revocation\.state === 'unavailable'\) \{/, `${name} has no revoked branch`);
@@ -722,6 +726,21 @@ describe("F-12 — source object revoked while a cached share card is open (enfo
     assert.match(src, /offeredCardActions\(mode, live \? live\.actions : \[\]\)/);
     const post = component("PostCardMessage.tsx");
     assert.match(post, /const p = live\.projection;/);
+  });
+
+  it("DIVERGENT: the resolve runs once per mount — nothing re-asks while the conversation stays open", () => {
+    const src = hook().replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    assert.match(src, /\}, \[threadId, objectType, objectId, messageId\]\);/,
+      "the resolve effect's dependencies changed — re-read this fixture's status");
+    for (const [what, re] of [
+      ["an interval", /setInterval\s*\(/], ["a timeout", /setTimeout\s*\(/], ["AppState", /AppState/],
+      ["a focus effect", /useFocusEffect/], ["a subscription", /\.subscribe\s*\(|\.channel\s*\(/],
+    ] as const) {
+      assert.equal(re.test(src), false,
+        `EXPECTED BY §29: no source-object revocation bypass via a cached card. ACTUAL until now: ` +
+        `useShareRevocation resolved once per mount. It now uses ${what} — if a mounted card can ` +
+        `hear a revocation, prove it and move F-12 to enforced.`);
+    }
   });
 });
 
