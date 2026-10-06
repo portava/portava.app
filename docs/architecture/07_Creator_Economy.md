@@ -338,9 +338,9 @@ places it touches them are called out rather than left to be discovered.
 - **The reward ledger is not user-facing data** — RLS deny-default, no `anon`/`authenticated`
   grant at all, `service_role` INSERT+SELECT only (`2170:49-56`) — and it is **explicitly erased
   on account deletion** by its own deletion step, because the `ON DELETE CASCADE` never fires
-  under the anonymised tombstone (`lib/deletionDispositions.ts:86-93`).
+  under the anonymised tombstone (`lib/deletionDispositions.ts:90-97`).
 - **Known gap, named rather than papered over: `creator_activity_scores` is in
-  `UNCLASSIFIED_BACKLOG`** (`lib/deletionDispositions.ts:256`, `:324`) — its account-deletion fate
+  `UNCLASSIFIED_BACKLOG`** (`lib/deletionDispositions.ts:392#export const UNCLASSIFIED_BACKLOG`, `:460#creator_activity_scores`) — its account-deletion fate
   has not been triaged. It is a per-user behavioural derivative keyed on `user_id`; it should be
   classified before anything makes it user-visible or increases what it retains.
 

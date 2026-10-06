@@ -220,6 +220,7 @@ function baseProfile(overrides: Partial<CompassProfile> = {}): CompassProfile {
     trustLevel:            "trusted_traveler",
     activeUserScore:       null,
     hasActiveTrip:         false,
+    tripStateUnread:       false,
     hasActiveBooking:      false,
     upcomingTripWithin48h: false,
     hasFutureTripScheduled: false,
