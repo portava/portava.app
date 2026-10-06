@@ -2964,11 +2964,11 @@ const crewCreateSchema = z.object({
  * only through the same three gates `cityPresence` uses; a passport position is
  * not something it may disclose at all.
  *
- * Nothing is lost by leaving it out. `certifyCrewPlan` reads no verdict — it
- * takes `requiredReturnBy`, `usableMinutes` and `returnState`, all of them
- * clock facts that the entry gate does not touch — and `crewPayload` publishes
- * exactly those three per member. So the crew answer is identical either way,
- * and the read is one this feature has no use for.
+ * WHAT LEAVING IT OUT COSTS (it used to cost nothing; that stopped being true on
+ * 2026-10-06): `certifyCrewPlan` now reads each member's landside GATE for a branch
+ * with a stop outside the airport. With no entry fact a member's gate is never `open`
+ * — at best `caution` — and a REFUSED border is not seen as `closed`. `crewPayload`
+ * certifies the EMPTY plan, so nothing is published from that yet. Owner question.
  */
 function certifyCrewMemberRecord(
   airport: AirportProfile,
