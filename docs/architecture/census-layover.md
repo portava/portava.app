@@ -48,7 +48,7 @@
 >
 > **A live defect the body missed, on the path the body scored as working
 > (L74, L183):** the client renders "Add to plan" only when `rec.id` is set
-> (`LayoverRecsSection.tsx:63,81`), and with `layover_safety_engine_enabled`
+> (`LayoverRecsSection.tsx:63,92`), and with `layover_safety_engine_enabled`
 > TRUE every `GET /:id/recommendations` regenerated the cards by delete+insert
 > without reading ids back (`LayoverRecommendationService.ts` pre-2410). **No
 > production traveller has ever seen that control** — consistent with 0 plan
