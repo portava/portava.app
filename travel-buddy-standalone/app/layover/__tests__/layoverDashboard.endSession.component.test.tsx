@@ -74,14 +74,14 @@ jest.mock('../../../src/components/layover/AirportEssentialsCard', () => ({ Airp
 // NOTE: intentional stub — see above.
 jest.mock('../../../src/components/layover/LayoverPlanSection', () => ({ LayoverPlanSection: () => null }));
 // NOTE: intentional stub — see above.
-jest.mock('../../../src/components/layover/LayoverRecsSection', () => ({ LayoverRecsSection: () => null }));
+jest.mock('../../../src/components/layover/LayoverRecsSection', () => ({ LayoverRecsSection: (p: any) => { (global as any).__recsProps = p; return null; } })); // records props for the census L43 case
 // NOTE: intentional stub — see above.
 jest.mock('../../../src/components/layover/LayoverMapCard', () => {
   const { View } = require('react-native');
   return { LayoverMapCard: () => <View testID="layover-map-card-stub" /> };
 });
 // NOTE: intentional stub — see above.
-jest.mock('../../../src/components/layover/LayoverPeopleSection', () => ({ LayoverPeopleSection: () => null }));
+jest.mock('../../../src/components/layover/LayoverPeopleSection', () => ({ LayoverPeopleSection: (p: any) => { (global as any).__peopleProps = p; return null; } })); // records props for the census L129 case
 
 // ── The service the screen loads from ─────────────────────────────────────────
 const CERTIFIED_AT = '2026-09-08T10:00:00.000Z';
@@ -338,4 +338,28 @@ test('L275 — a Memory the server refused is reported with its sentence, not sw
   await act(async () => { fireEvent.press(screen.getByTestId('layover-end-memory-election')); });
   await act(async () => { fireEvent.press(screen.getByTestId('layover-end-completed')); });
   await waitFor(() => expect(screen.getByText(/the Memory could not be saved\. Could not read the layover/)).toBeTruthy());
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// census L43 / L129 — the dashboard passes the server's answers through
+// ══════════════════════════════════════════════════════════════════════════
+
+test('L43 — the recommendations\' landsideSuppression reaches the recs card', async () => {
+  const supp = { reason: 'airport_reentered', reportedAt: '2026-10-05T10:00:00.000Z' };
+  layoverService.getRecommendations.mockResolvedValueOnce({ ok: true, recommendations: [], landsideSuppression: supp });
+  await render(<LayoverDashboardScreen />);
+  await waitFor(() => expect((global as any).__recsProps?.landsideSuppression).toEqual(supp));
+});
+
+test('L129 — the overview\'s share.intentsEnabled and the session id reach the people section', async () => {
+  (global as any).__overview = { ...overview(), share: { enabled: true, othersInCity: 2, intentsEnabled: true } };
+  await render(<LayoverDashboardScreen />);
+  await waitFor(() => expect((global as any).__peopleProps?.intentsEnabled).toBe(true));
+  expect((global as any).__peopleProps?.sessionId).toBe('sess-1');
+});
+
+test('L129 — an overview without intentsEnabled (an older server) passes false', async () => {
+  await render(<LayoverDashboardScreen />);
+  await waitFor(() => expect((global as any).__peopleProps).toBeTruthy());
+  expect((global as any).__peopleProps.intentsEnabled).toBe(false);
 });

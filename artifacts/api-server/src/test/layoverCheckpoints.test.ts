@@ -26,11 +26,15 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import airportRouter from "../routes/airport.js";
 import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
+import { _setTestOpenAI } from "../lib/openai.js";
 import {
   CHECKPOINT_WRITE_FLAG,
   CHECKPOINT_VISIBLE_AFTER_DEPARTURE_MIN,
   airportPresenceFrom,
+  applyLandsideSuppression,
+  landsideSuppressionFrom,
   observedReturnFrom,
+  type LayoverCheckpoint,
 } from "../services/layover/LayoverCheckpointStore.js";
 
 let server: http.Server;
@@ -61,7 +65,7 @@ function req(method: string, path: string, body?: any, token = TOKEN): Promise<{
 
 const DEPARTURE = new Date(Date.now() + 6 * 3_600_000).toISOString();
 
-function stage(opts: { gate?: boolean; status?: string; checkpoints?: any[]; failures?: Record<string, { message: string; code?: string }> } = {}) {
+function stage(opts: { gate?: boolean; status?: string; checkpoints?: any[]; recommendations?: any[]; failures?: Record<string, { message: string; code?: string }> } = {}) {
   const tables: Record<string, any[]> = {
     feature_flags: [
       { flag: "airport_mode_enabled", enabled: true },
@@ -75,7 +79,7 @@ function stage(opts: { gate?: boolean; status?: string; checkpoints?: any[]; fai
       status: opts.status ?? "active",
     })],
     layover_checkpoints: opts.checkpoints ?? [],
-    layover_outcomes: [], layover_events: [], layover_plan_stops: [], layover_recommendations: [],
+    layover_outcomes: [], layover_events: [], layover_plan_stops: [], layover_recommendations: opts.recommendations ?? [],
     passport_stamps: [], passport_visibility_preferences: [], trip_plan_items: [],
   };
   _setTestClient(makeLayoverDb(tables, { users: { [TOKEN]: USER_ID, [STRANGER_TOKEN]: "user-2" }, failures: opts.failures }), true);
@@ -265,5 +269,113 @@ describe("the two pure derivations", () => {
   it("a re-entry BEFORE the last exit is not the return", () => {
     const o = observedReturnFrom({ ok: true, checkpoints: [cp("LANDSIDE_EXIT", 1000), cp("AIRPORT_REENTRY", 2000), cp("LANDSIDE_EXIT", 3000)] });
     assert.deepEqual(o, { leftAirport: true, actualAirportReturnAt: null });
+  });
+});
+
+// ── census L43 — RETURNING → AIRPORT_REENTERED: landside discovery stops ─────
+
+function rec(id: string, insideAirport: boolean, sort: number) {
+  return {
+    id, session_id: "session-1", rec_type: insideAirport ? "inside_airport" : "food", title: insideAirport ? "Lounge" : "Night market",
+    description: null, safety_rating: "safe", travel_time_min: insideAirport ? 0 : null, activity_time_min: 45,
+    return_buffer_min: 120, hard_return_time: null, warning_reason: null, inside_airport: insideAirport,
+    location_label: null, city: "Taoyuan", neighborhood: null, sort_order: sort, place_id: null, plan_item_id: null,
+    status: "active", created_at: new Date().toISOString(),
+  };
+}
+const RECS = () => [rec("r-air", true, 1), rec("r-land", false, 2)];
+const R = "/api/airport/sessions/session-1/recommendations";
+const cp = (id: string, type: string, minutesAgo: number) => ({
+  id, session_id: "session-1", checkpoint_type: type, observed_at: new Date(Date.now() - minutesAgo * 60_000).toISOString(),
+  source: "TRAVELLER", confidence: "MEDIUM", dedup_key: `${type}:${id}`, expires_at: DEPARTURE,
+});
+
+describe("L43 — once the traveller reports being back at the airport, landside suggestions stop", () => {
+  it("after 'I've left' then 'I'm back': only airport-side recommendations, and the response says why", async () => {
+    stage({ gate: true, recommendations: RECS(), checkpoints: [cp("c1", "LANDSIDE_EXIT", 90), cp("c2", "AIRPORT_REENTRY", 10)] });
+    const r = await req("GET", R);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body.recommendations.map((x: any) => x.id), ["r-air"]);
+    assert.equal(r.body.landsideSuppression?.reason, "airport_reentered");
+    assert.equal(typeof r.body.landsideSuppression?.reportedAt, "string");
+  });
+
+  it("a traveller still out (newest report 'I've left') keeps every suggestion", async () => {
+    stage({ gate: true, recommendations: RECS(), checkpoints: [cp("c1", "AIRPORT_REENTRY", 90), cp("c2", "LANDSIDE_EXIT", 10)] });
+    const r = await req("GET", R);
+    assert.deepEqual(r.body.recommendations.map((x: any) => x.id).sort(), ["r-air", "r-land"]);
+    assert.strictEqual(r.body.landsideSuppression, null);
+  });
+
+  it("no report, or the store OFF: nothing is withheld", async () => {
+    stage({ gate: false, recommendations: RECS() });
+    const off = await req("GET", R);
+    assert.deepEqual(off.body.recommendations.map((x: any) => x.id).sort(), ["r-air", "r-land"]);
+    assert.strictEqual(off.body.landsideSuppression, null);
+    stage({ gate: true, recommendations: RECS() });
+    const none = await req("GET", R);
+    assert.deepEqual(none.body.recommendations.map((x: any) => x.id).sort(), ["r-air", "r-land"]);
+    assert.strictEqual(none.body.landsideSuppression, null);
+  });
+
+  it("unreadable check-ins: landside is NOT hidden for everyone on an outage, and the response says it could not check", async () => {
+    stage({ gate: true, recommendations: RECS(), failures: { "layover_checkpoints:select": { message: "boom" } } });
+    const r = await req("GET", R);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body.recommendations.map((x: any) => x.id).sort(), ["r-air", "r-land"]);
+    assert.deepEqual(r.body.landsideSuppression, { reason: "checkpoints_unreadable", reportedAt: null });
+  });
+
+  it("re-entry never moves the certified deadline (it only withholds suggestions)", async () => {
+    stage({ gate: true, recommendations: RECS() });
+    const before = await req("GET", "/api/airport/sessions/session-1/overview");
+    await req("POST", P, { type: "AIRPORT_REENTRY", operationId: "op-back" });
+    const after = await req("GET", "/api/airport/sessions/session-1/overview");
+    assert.equal(after.body.window.hardReturnTime, before.body.window.hardReturnTime);
+    assert.equal(after.body.advice.verdict, before.body.advice.verdict);
+  });
+});
+
+describe("L43 — Compass is handed the same airport-side list after re-entry", () => {
+  it("getReachableExperiences lists only airport-side ideas once the traveller is back", async () => {
+    const t = stage({ gate: true, recommendations: RECS(), checkpoints: [cp("c1", "LANDSIDE_EXIT", 90), cp("c2", "AIRPORT_REENTRY", 10)] });
+    t.feature_flags.push({ flag: "layover_compass_enabled", enabled: true });
+    const seen: any[] = [];
+    let i = 0;
+    const turns = [
+      { tool_calls: [{ id: "t1", type: "function", function: { name: "getReachableExperiences", arguments: JSON.stringify({ sessionId: "session-1" }) } }] },
+      { content: "Stay near your gate." },
+    ];
+    _setTestOpenAI({ chat: { completions: { create: async (r: any) => { seen.push(r); const turn: any = turns[Math.min(i++, turns.length - 1)]; return { choices: [{ message: { role: "assistant", content: turn.content ?? null, tool_calls: turn.tool_calls } }] }; } } } } as any);
+    try {
+      const r = await req("POST", "/api/airport/sessions/session-1/compass", { question: "What can I do now?" });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      const toolMsg = seen[1]?.messages?.find((m: any) => m.role === "tool");
+      assert.ok(toolMsg, "the tool result must go back to the model");
+      const ids = JSON.parse(toolMsg.content).data.recommendations.map((x: any) => x.id);
+      assert.deepEqual(ids, ["r-air"], `Compass was handed landside ideas after re-entry: ${toolMsg.content}`);
+    } finally {
+      _setTestOpenAI(null);
+    }
+  });
+});
+
+describe("L43 — the pure suppression rule", () => {
+  const cp2 = (type: string, at: number): LayoverCheckpoint => ({ id: `${type}-${at}`, type, observedAt: new Date(at).toISOString(), source: "TRAVELLER", confidence: "MEDIUM" });
+  it("the NEWEST report decides, whatever order rows arrive in", () => {
+    assert.equal(landsideSuppressionFrom({ ok: true, checkpoints: [cp2("LANDSIDE_EXIT", 1000), cp2("AIRPORT_REENTRY", 2000)] }).state, "suppressed");
+    assert.equal(landsideSuppressionFrom({ ok: true, checkpoints: [cp2("AIRPORT_REENTRY", 2000), cp2("LANDSIDE_EXIT", 1000)] }).state, "suppressed");
+    assert.equal(landsideSuppressionFrom({ ok: true, checkpoints: [cp2("LANDSIDE_EXIT", 2000), cp2("AIRPORT_REENTRY", 1000)] }).state, "open");
+  });
+  it("the store OFF is 'open'; an unreadable store is 'unknown'", () => {
+    assert.deepEqual(landsideSuppressionFrom({ ok: false, reason: "persistence_disabled" }), { state: "open" });
+    assert.deepEqual(landsideSuppressionFrom({ ok: false, reason: "read_failed" }), { state: "unknown", reason: "checkpoints_unreadable" });
+  });
+  it("when suppressed, a candidate that does not SAY it is inside the airport is withheld", () => {
+    const s = { state: "suppressed", reportedAt: new Date().toISOString() } as const;
+    const kept = applyLandsideSuppression([{ id: "air", insideAirport: true }, { id: "land", insideAirport: false }, { id: "unsaid" }, { id: "truthy", insideAirport: 1 }], s);
+    assert.deepEqual(kept.map((r) => r.id), ["air"]);
+    assert.equal(applyLandsideSuppression([{ id: "unsaid" }], { state: "open" }).length, 1);
+    assert.equal(applyLandsideSuppression([{ id: "unsaid" }], { state: "unknown", reason: "checkpoints_unreadable" }).length, 1);
   });
 });

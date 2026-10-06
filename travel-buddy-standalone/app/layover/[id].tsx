@@ -30,7 +30,7 @@ import { color, space, radius, type as t, avatar } from '../../src/theme/tokens'
 import { ConfirmSheet } from '../../src/components/ui/ConfirmSheet';
 import {
   addStopFromRecommendation,
-  endLayoverSession, createMemoryFromLayover,
+  endLayoverSession, createMemoryFromLayover, type LayoverLandsideSuppression,
   getLayoverBuddies,
   getLayoverOverview,
   getLayoverPresence,
@@ -103,7 +103,7 @@ export default function LayoverDashboardScreen() {
   const [recsLoading, setRecsLoading] = useState(true);
   // census L294 (C2) — the SERVER's refusal sentence, or null when it served a
   // list. Never an empty list standing in for a failure.
-  const [recsError, setRecsError] = useState<string | null>(null);
+  const [recsError, setRecsError] = useState<string | null>(null); const [recsLandside, setRecsLandside] = useState<LayoverLandsideSuppression | null>(null); // census L43
   const [refreshing, setRefreshing] = useState(false);
   /**
    * census L156 — WHICH failure, not just THAT one happened.
@@ -338,7 +338,7 @@ export default function LayoverDashboardScreen() {
       // `recs` with `recsError` null is a measured "nothing fits"; a non-null
       // `recsError` is the server's refusal and carries its sentence.
       setRecs(recRes.ok ? recRes.recommendations : []);
-      setRecsError(recRes.ok ? null : recRes.message);
+      setRecsError(recRes.ok ? null : recRes.message); setRecsLandside(recRes.ok ? recRes.landsideSuppression : null);
     } catch {
       setRecsLoading(false);
       setRecs([]);
@@ -861,7 +861,7 @@ export default function LayoverDashboardScreen() {
               canPlan={!!canEdit}
               addedRecIds={addedRecIds}
               addingRecId={addingRecId}
-              onAddToPlan={handleAddRec}
+              onAddToPlan={handleAddRec} landsideSuppression={recsLandside}
             />
             {/* §13 L116/L117/L119/L121/L122/L125/L126 — the map's three server
                 inputs, all of which the server was ALREADY publishing and this
@@ -903,7 +903,7 @@ export default function LayoverDashboardScreen() {
               buddies={buddies}
               canEdit={!!canEdit}
               onToggleShare={handleToggleShare}
-              onOpenBuddy={(b) => router.push(`/(rent-a-buddy)/buddy/${b.id}` as any)}
+              onOpenBuddy={(b) => router.push(`/(rent-a-buddy)/buddy/${b.id}` as any)} intentsEnabled={overview.share.intentsEnabled === true} sessionId={id ?? null}
             />
 
             {/* §25.2 L269 — Layover Discovery. `getLayoverGems` and

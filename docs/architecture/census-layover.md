@@ -8802,6 +8802,66 @@ that says what kind of Memory a row is — a migration on lane A2's table.
 | CONSTRUCTED% | 77.4 % | **77.4 %** |
 | CORRECT% raw | 29.1 % | **28.4 %** |
 
+## §51 — 2026-10-05 (mission lane A, step 2): presence intents and the re-entry side effect are built; NO ROW MOVES
+
+Same branch family and rules as §49/§50 (built on `claude/mission-a-step2-20261005`, merged into the lane
+branch). Controlled evidence only; migration 3900 is applied to no database and no flag was touched.
+
+### 51.1 Presence intents — §4 `layover_presence`, §14 L1 (L27, L129, L187)
+
+`artifacts/api-server/src/migrations/3900_layover_presence.sql:70#CREATE TABLE IF NOT EXISTS public.layover_presence`
+creates the spec's record — intents from a CHECKed vocabulary, an availability window, an optional maximum
+travel time, a visibility scope, `precise_location_enabled` CHECKed FALSE, and an expiry — service-role only
+and with no coordinate column, and seeds `layover_presence_intents_enabled` FALSE. The traveller sets it
+through `artifacts/api-server/src/routes/airport.ts:4513#router.put("/airport/sessions/:id/presence/intents"`
+(refused unless they share their city and their sharing gate is open), and sees the city's counts through
+`artifacts/api-server/src/routes/airport.ts:4480#router.get("/airport/sessions/:id/presence/intents"`:
+`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:189#export async function intentCounts(`
+counts, per intent, only the ids `cityPresence` already cleared (same city, opted in, not blocked either way,
+sharing not paused) and only while each window is open — never an id, a name or a window on the wire. The
+client control renders only when the overview's `share.intentsEnabled` says the surface exists
+(`travel-buddy-standalone/src/components/layover/LayoverPeopleSection.tsx:145#intentsEnabled && shareEnabled && sessionId`).
+Tests: `artifacts/api-server/src/test/layoverPresenceIntents.test.ts` (31 cases, 23/23 mutants killed — eleven
+survived earlier drafts and were pinned, among them each GET read failing alone and the viewer's own record) and
+two jest suites (12 + 3 dashboard pass-through cases).
+
+- **L27 stays N, L129 stays N.** The record and the rung exist in code; the table exists only in 3900, which
+  is applied to no database, and its flag is FALSE. The H24 precedent grades storage that exists only as an
+  unapplied file N.
+- **L187 stays W.** `updatePresence` now sets the spec's record and not one boolean, behind the same
+  unapplied storage.
+
+### 51.2 L43's side effect — landside suggestions stop after re-entry
+
+`artifacts/api-server/src/services/layover/LayoverCheckpointStore.ts:235#export function landsideSuppressionFrom(`
+reads the traveller's newest check-in; when it is `AIRPORT_REENTRY`, `GET /:id/recommendations`
+(`artifacts/api-server/src/routes/airport.ts:1034#const landside = await landsideSuppressionFor(`) serves
+airport-side ideas only and says why, and Compass's `getReachableExperiences` is handed the same list. An
+unreadable check-in store hides nothing for everyone and says it could not check. §49.6 wrote that a
+self-report would not be allowed to gate the recommendations path; that stands for the direction it was
+written about — a report never RELAXES anything (deadline, verdict and return state are asserted unmoved) —
+and this side effect only ever withholds suggestions. Tests: nine cases in
+`artifacts/api-server/src/test/layoverCheckpoints.test.ts`, including the Compass tool path (8/8 mutants
+killed; the rule for a candidate that does not say it is airside survived a draft and was pinned), and six jest cases on the card's note.
+
+- **L43 stays N.** Its input (the check-in) and its first side effect are built; the check-in store is 2992,
+  unapplied, behind a FALSE gate, and "refresh gate/security" has no data to refresh.
+
+### 51.3 Re-triage of the open Layover rows (no verdict moves)
+
+Every Layover row the lane's triage had left NEEDS_INVESTIGATION now has a final class with a file:line in
+the lane's ledger (scratchpad, not this document). Two findings are recorded here because they correct this
+document's evidence without moving a verdict:
+
+- **L220's stated reason is stale.** It reads that at 4h neither airport model reaches landside and that
+  "visa allowed" is unrepresentable. At this tree the 4h international pair answers `no` (generic) and
+  `tight` (curated) — `artifacts/api-server/src/services/layover/replay/layoverScenarioCorpus.ts:130#s03-4h-international-permitted-curated` —
+  and entry permission is representable (`resolveLayoverEntry`). The row is held at W until a test pins the
+  4h pair against §21.1's sentence.
+- **L7 / L256 are unguarded on the surfaces they name.** `check:no-money-in-ranking` scans only
+  `services/airport/layoverRankingFeasibility.ts` for Layover; the recommendation ordering and the safety
+  engine are outside it. Extending the guard is the lead's (guard scripts).
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/test/docCitations.test.ts — The citation guard's own suite. §27.10 names its case 9 and §30.4 names it as npm test's one failing test; both report on the guard that measured this census. It is machinery this census reports on, not a subject it grades.

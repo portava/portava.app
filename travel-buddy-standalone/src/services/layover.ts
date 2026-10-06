@@ -558,7 +558,7 @@ export interface LayoverOverview {
   advice: LeaveAdvice;
   stops: PlanStop[];
   planFit: PlanFit;
-  share: { enabled: boolean; othersInCity: number };
+  share: { enabled: boolean; othersInCity: number; /** census L129 — the server says whether the intents surface exists here. Absent = off. */ intentsEnabled?: boolean };
   /**
    * §24 — what the SERVER thinks of the reminder it stored, recomputed against
    * the currently certified hard return on every overview read.
@@ -1019,7 +1019,7 @@ export async function updateLayoverSession(
  * the SERVER's own sentence for it.
  */
 export type LayoverRecsResult =
-  | { ok: true; recommendations: LayoverRecommendation[] }
+  | { ok: true; recommendations: LayoverRecommendation[]; /** census L43 — why landside ideas were withheld (re-entry), or that the check could not be made; null when neither. */ landsideSuppression: LayoverLandsideSuppression | null }
   | { ok: false; message: string };
 
 /** What a failure says when the server said nothing at all (offline, unparseable). */
@@ -1059,7 +1059,7 @@ export async function getRecommendations(sessionId: string): Promise<LayoverRecs
     };
   }
   return {
-    ok: true,
+    ok: true, landsideSuppression: landsideSuppressionOf(json.landsideSuppression),
     recommendations: Array.isArray(json.recommendations)
       ? (json.recommendations as LayoverRecommendation[])
       : [],
@@ -2344,4 +2344,126 @@ export async function updateLayoverConstraints(
     stored: json.stored === 'versioned' ? 'versioned' : 'session_booleans_only',
     unsaved: Array.isArray(json.unsaved) ? (json.unsaved as DeclarableConstraintField[]) : [],
   };
+}
+
+// ── census L43 — the server's reason for withholding landside ideas ───────────
+
+export type LayoverLandsideSuppression =
+  | { reason: 'airport_reentered'; reportedAt: string }
+  | { reason: 'checkpoints_unreadable'; reportedAt: null };
+
+/** The wire field, narrowed. Anything this client was not taught is `null`, never a guess. */
+export function landsideSuppressionOf(v: unknown): LayoverLandsideSuppression | null {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return null;
+  const r = v as Record<string, unknown>;
+  if (r.reason === 'airport_reentered' && typeof r.reportedAt === 'string') return { reason: 'airport_reentered', reportedAt: r.reportedAt };
+  if (r.reason === 'checkpoints_unreadable') return { reason: 'checkpoints_unreadable', reportedAt: null };
+  return null;
+}
+
+// ── census-layover L27 / L129 / L187 — presence intents, §14's L1 rung ─────────
+//
+// `GET` / `PUT` / `DELETE /api/airport/sessions/:id/presence/intents`. Behind
+// `layover_presence_intents_enabled` (migration 3900, seeded FALSE). Others see
+// COUNTS per intent among travellers the server already cleared — never who.
+
+export const PRESENCE_INTENT_KEYS = ['food', 'nightlife', 'shopping', 'culture', 'meetups'] as const;
+export type PresenceIntentKey = (typeof PRESENCE_INTENT_KEYS)[number];
+export type PresenceIntentCounts = Record<PresenceIntentKey, number>;
+
+export interface OwnPresenceIntents {
+  intents: PresenceIntentKey[];
+  availableUntil: string;
+  maxTravelMinutes: number | null;
+}
+
+export type PresenceIntentsRead =
+  | { ok: true; available: false }
+  | { ok: true; available: true; own: OwnPresenceIntents | null; counts: PresenceIntentCounts | null; countsWithheld: string | null }
+  | { ok: false; reason: 'unavailable' | 'unreachable' | 'refused'; message: string };
+
+export type PresenceIntentsWrite =
+  | { ok: true; own: OwnPresenceIntents | null }
+  | { ok: false; reason: 'off' | 'not_sharing' | 'invalid' | 'ended' | 'unavailable' | 'unreachable' | 'refused'; message: string };
+
+function isIntentKey(v: unknown): v is PresenceIntentKey {
+  return typeof v === 'string' && (PRESENCE_INTENT_KEYS as readonly string[]).includes(v);
+}
+
+function ownIntentsOf(v: unknown): OwnPresenceIntents | null {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return null;
+  const r = v as Record<string, unknown>;
+  const until = stringField(r, 'availableUntil');
+  if (!Array.isArray(r.intents) || !until) return null;
+  return {
+    intents: (r.intents as unknown[]).filter(isIntentKey),
+    availableUntil: until,
+    maxTravelMinutes: typeof r.maxTravelMinutes === 'number' ? r.maxTravelMinutes : null,
+  };
+}
+
+/** A complete counts object or null — a partial one is a contract mismatch, not "zero". */
+function intentCountsOf(v: unknown): PresenceIntentCounts | null {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return null;
+  const r = v as Record<string, unknown>;
+  const out = {} as PresenceIntentCounts;
+  for (const k of PRESENCE_INTENT_KEYS) {
+    const n = r[k];
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) return null;
+    out[k] = n;
+  }
+  return out;
+}
+
+const INTENTS_UNREACHABLE = 'Could not reach Portava to load what people are open to.';
+
+export async function getPresenceIntents(sessionId: string): Promise<PresenceIntentsRead> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'presence', 'intents'));
+  } catch {
+    return { ok: false, reason: 'unreachable', message: INTENTS_UNREACHABLE };
+  }
+  const json = await readJsonRecord(res);
+  const message = stringField(json, 'message') ?? 'What people are open to could not be loaded.';
+  if (!res.ok) return { ok: false, reason: res.status === 503 ? 'unavailable' : 'refused', message };
+  if (json?.available === false) return { ok: true, available: false };
+  if (json?.available !== true) return { ok: false, reason: 'refused', message: 'What people are open to could not be read.' };
+  const counts = json.counts === null ? null : intentCountsOf(json.counts);
+  if (json.counts !== null && counts === null) return { ok: false, reason: 'refused', message: 'What people are open to could not be read.' };
+  return {
+    ok: true, available: true,
+    own: json.own === null ? null : ownIntentsOf(json.own),
+    counts,
+    countsWithheld: stringField(json, 'countsWithheld'),
+  };
+}
+
+async function writeIntents(sessionId: string, init: RequestInit): Promise<PresenceIntentsWrite> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'presence', 'intents'), init);
+  } catch {
+    return { ok: false, reason: 'unreachable', message: 'Could not reach Portava. Nothing was changed — try again.' };
+  }
+  const json = await readJsonRecord(res);
+  const message = stringField(json, 'message') ?? 'That did not save.';
+  if (res.ok && json?.ok === true) return { ok: true, own: json.own === null ? null : ownIntentsOf(json.own) };
+  if (stringField(json, 'error') === 'feature_disabled') return { ok: false, reason: 'off', message };
+  if (res.status === 409 && stringField(json, 'reason')?.startsWith('sharing')) return { ok: false, reason: 'not_sharing', message };
+  if (res.status === 409) return { ok: false, reason: 'ended', message };
+  if (res.status === 400) return { ok: false, reason: 'invalid', message };
+  if (res.status === 503) return { ok: false, reason: 'unavailable', message };
+  return { ok: false, reason: 'refused', message };
+}
+
+export function setPresenceIntents(
+  sessionId: string,
+  input: { intents: PresenceIntentKey[]; availableUntil?: string; maxTravelMinutes?: number | null },
+): Promise<PresenceIntentsWrite> {
+  return writeIntents(sessionId, { method: 'PUT', body: JSON.stringify(input) });
+}
+
+export function clearPresenceIntents(sessionId: string): Promise<PresenceIntentsWrite> {
+  return writeIntents(sessionId, { method: 'DELETE' });
 }

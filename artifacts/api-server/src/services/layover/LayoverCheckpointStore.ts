@@ -208,3 +208,51 @@ export async function readTravellerCheckpoints(
   }
   return { ok: true, checkpoints: ((data ?? []) as Record<string, unknown>[]).map(toCheckpoint) };
 }
+
+// ── census L43 — RETURNING → AIRPORT_REENTERED: landside discovery stops ─────
+//
+// Spec §5: "checkpoint confirms re-entry; side effect = stop landside
+// discovery, refresh gate/security." The re-entry report is the traveller's
+// own, and that is acceptable HERE for one reason: this side effect can only
+// REDUCE what is suggested. It never touches the certified deadline, the
+// verdict or the return state, so a mistaken "I'm back" costs a traveller
+// some city suggestions, never time. (The header's rule — a report never
+// relaxes anything — still holds; this is the opposite direction.)
+//
+// THREE ANSWERS, never collapsed:
+//   suppressed  the newest report is AIRPORT_REENTRY: serve airport-side only.
+//   open        no report, the newest is LANDSIDE_EXIT, or the store is OFF.
+//   unknown     the reports could not be read. Landside is NOT suppressed for
+//               everyone on an outage — re-entry is the trigger, and an outage
+//               is not one — but the answer says it could not check.
+// "refresh gate/security" is not built: there is no gate or security data.
+
+export type LandsideSuppression =
+  | { state: "suppressed"; reportedAt: string }
+  | { state: "open" }
+  | { state: "unknown"; reason: "checkpoints_unreadable" };
+
+export function landsideSuppressionFrom(read: CheckpointRead): LandsideSuppression {
+  if (!read.ok) return read.reason === "read_failed" ? { state: "unknown", reason: "checkpoints_unreadable" } : { state: "open" };
+  let latest: LayoverCheckpoint | null = null;
+  for (const c of read.checkpoints) {
+    if (!latest || Date.parse(c.observedAt) > Date.parse(latest.observedAt)) latest = c;
+  }
+  return latest && latest.type === "AIRPORT_REENTRY" ? { state: "suppressed", reportedAt: latest.observedAt } : { state: "open" };
+}
+
+export async function landsideSuppressionFor(db: SupabaseClient, sessionId: string, nowMs: number): Promise<LandsideSuppression> {
+  return landsideSuppressionFrom(await readTravellerCheckpoints(db, sessionId, nowMs));
+}
+
+/** Airport-side candidates only, when suppressed. A candidate with no `insideAirport` flag is treated as landside. */
+export function applyLandsideSuppression<T extends { insideAirport?: unknown }>(recs: readonly T[], s: LandsideSuppression): T[] {
+  return s.state === "suppressed" ? recs.filter((r) => r.insideAirport === true) : [...recs];
+}
+
+/** The wire form beside a recommendation list. `null` when nothing was withheld and nothing went wrong. */
+export function landsideSuppressionWire(s: LandsideSuppression): { reason: "airport_reentered"; reportedAt: string } | { reason: "checkpoints_unreadable"; reportedAt: null } | null {
+  if (s.state === "suppressed") return { reason: "airport_reentered", reportedAt: s.reportedAt };
+  if (s.state === "unknown") return { reason: "checkpoints_unreadable", reportedAt: null };
+  return null;
+}
