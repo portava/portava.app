@@ -308,7 +308,7 @@ export const RETAINED_WITH_REASON: ReadonlyArray<{ table: string; reason: string
   // endpoint ('platform' | 'connect'), event_type, occurred_at, received_at,
   // processed_at and outcome — no party, no profile, no payload, no amount. The
   // event body is never stored (the allow-listed projection lands on the payment
-  // row it concerns, which is in AWAITING_OWNER_DECISION below). Same posture as
+  // row it concerns, which is retained below under OD-PAY-8). Same posture as
   // the two entries above: kept because nothing in it is a person's row.
   {
     table: "payment_webhook_events",
@@ -316,6 +316,34 @@ export const RETAINED_WITH_REASON: ReadonlyArray<{ table: string; reason: string
       "A record of which payment-provider notifications were received and processed, so a re-delivered notification is not applied twice. " +
       "No person, no account and no amount: the columns are the provider's event id and type, which endpoint it reached, and when it was received and processed. " +
       "Migration 3931 grants service_role SELECT/INSERT/UPDATE only (no DELETE) and fails if it ever could delete.",
+  },
+  // The Rent-a-Buddy payment slice's four money tables (migration 3931, lane B).
+  // Moved here from AWAITING_OWNER_DECISION on 2026-10-06 (lead ruling, to match
+  // lane P's #592): OD-PAY-8 decided the fate (pseudonymised retention, C-11
+  // answer B), and the period is the owner's DEFAULT pending legal confirmation.
+  {
+    table: "rent_buddy_payment_recipients",
+    reason:
+      "The buddy's provider account reference (recipient_ref), country, settlement currency, onboarding state and the provider's requirement CODES only: never a document, number or date of birth. Keyed by party_id. " +
+      "OWNER DECISION OD-PAY-8 / C-11 answer B (docs/ops/owner-decisions-20261004.md; question 22(a)), the same ruling lane P applies to the creator ledgers in PR #592: \"Pseudonymize accounting entries, removing direct identifiers and the identity link when deletion is requested. Keep only the records needed for tax, accounting, disputes, or legal claims, with a defined retention period\" (GDPR Art. 17(3)(b) legal obligation and 17(3)(e) legal claims). Pseudonymised by construction: every column naming a traveller or buddy is a payment party id (3821, ON DELETE RESTRICT), never a profile id, so removing the identity link (payment_parties.profile_id SET NULL, payment_party_remove_identity) changes one payment_parties row and no row here. PERIOD: the owner's DEFAULT, seven years after fiscal year-end, with jurisdiction-specific legal periods overriding it, PENDING LEGAL CONFIRMATION (not approved; 3823 payment_retention_settings stays seeded undecided). No purge: nothing deletes these rows on any schedule, so nothing is erased early. Migration 3931 grants service_role SELECT/INSERT/UPDATE and NOT DELETE, and fails if it ever could delete. NOT YET PSEUDONYMISED BY ACCOUNT DELETION: AccountDeletionService keeps a tombstone profile and does not call removePaymentIdentity (services/payments/PaymentLedger.ts, \"NOT YET CALLED\", PAY-T23), so after a deletion the party still links to the tombstone's uuid until that step is wired.",
+  },
+  {
+    table: "rent_buddy_monthly_payouts",
+    reason:
+      "One row per (party, provider, currency, month). held_by / released_by name the ADMIN who held or released a payout (a staff audit fact, no FK) and hold_reason / release_reason are free text up to 2000 characters. " +
+      "OWNER DECISION OD-PAY-8 / C-11 answer B (docs/ops/owner-decisions-20261004.md; question 22(a)), the same ruling lane P applies to the creator ledgers in PR #592: \"Pseudonymize accounting entries, removing direct identifiers and the identity link when deletion is requested. Keep only the records needed for tax, accounting, disputes, or legal claims, with a defined retention period\" (GDPR Art. 17(3)(b) legal obligation and 17(3)(e) legal claims). Pseudonymised by construction: every column naming a traveller or buddy is a payment party id (3821, ON DELETE RESTRICT), never a profile id, so removing the identity link (payment_parties.profile_id SET NULL, payment_party_remove_identity) changes one payment_parties row and no row here. PERIOD: the owner's DEFAULT, seven years after fiscal year-end, with jurisdiction-specific legal periods overriding it, PENDING LEGAL CONFIRMATION (not approved; 3823 payment_retention_settings stays seeded undecided). No purge: nothing deletes these rows on any schedule, so nothing is erased early. Migration 3931 grants service_role SELECT/INSERT/UPDATE and NOT DELETE, and fails if it ever could delete. NOT YET PSEUDONYMISED BY ACCOUNT DELETION: AccountDeletionService keeps a tombstone profile and does not call removePaymentIdentity (services/payments/PaymentLedger.ts, \"NOT YET CALLED\", PAY-T23), so after a deletion the party still links to the tombstone's uuid until that step is wired.",
+  },
+  {
+    table: "rent_buddy_booking_payments",
+    reason:
+      "One row per payment attempt: amounts, commission, tax components, provider references and an allow-listed projection of the provider's object (no client secret, name, email, phone, address or card digits). booking_id -> rent_buddy_bookings ON DELETE RESTRICT. " +
+      "OWNER DECISION OD-PAY-8 / C-11 answer B (docs/ops/owner-decisions-20261004.md; question 22(a)), the same ruling lane P applies to the creator ledgers in PR #592: \"Pseudonymize accounting entries, removing direct identifiers and the identity link when deletion is requested. Keep only the records needed for tax, accounting, disputes, or legal claims, with a defined retention period\" (GDPR Art. 17(3)(b) legal obligation and 17(3)(e) legal claims). Pseudonymised by construction: every column naming a traveller or buddy is a payment party id (3821, ON DELETE RESTRICT), never a profile id, so removing the identity link (payment_parties.profile_id SET NULL, payment_party_remove_identity) changes one payment_parties row and no row here. PERIOD: the owner's DEFAULT, seven years after fiscal year-end, with jurisdiction-specific legal periods overriding it, PENDING LEGAL CONFIRMATION (not approved; 3823 payment_retention_settings stays seeded undecided). No purge: nothing deletes these rows on any schedule, so nothing is erased early. Migration 3931 grants service_role SELECT/INSERT/UPDATE and NOT DELETE, and fails if it ever could delete. NOT YET PSEUDONYMISED BY ACCOUNT DELETION: AccountDeletionService keeps a tombstone profile and does not call removePaymentIdentity (services/payments/PaymentLedger.ts, \"NOT YET CALLED\", PAY-T23), so after a deletion the party still links to the tombstone's uuid until that step is wired.",
+  },
+  {
+    table: "rent_buddy_payment_refunds",
+    reason:
+      "Who asked for a refund, by role and (for a traveller or buddy) by party; support is the role 'admin' with no party. booking_payment_id -> rent_buddy_booking_payments ON DELETE RESTRICT. " +
+      "OWNER DECISION OD-PAY-8 / C-11 answer B (docs/ops/owner-decisions-20261004.md; question 22(a)), the same ruling lane P applies to the creator ledgers in PR #592: \"Pseudonymize accounting entries, removing direct identifiers and the identity link when deletion is requested. Keep only the records needed for tax, accounting, disputes, or legal claims, with a defined retention period\" (GDPR Art. 17(3)(b) legal obligation and 17(3)(e) legal claims). Pseudonymised by construction: every column naming a traveller or buddy is a payment party id (3821, ON DELETE RESTRICT), never a profile id, so removing the identity link (payment_parties.profile_id SET NULL, payment_party_remove_identity) changes one payment_parties row and no row here. PERIOD: the owner's DEFAULT, seven years after fiscal year-end, with jurisdiction-specific legal periods overriding it, PENDING LEGAL CONFIRMATION (not approved; 3823 payment_retention_settings stays seeded undecided). No purge: nothing deletes these rows on any schedule, so nothing is erased early. Migration 3931 grants service_role SELECT/INSERT/UPDATE and NOT DELETE, and fails if it ever could delete. NOT YET PSEUDONYMISED BY ACCOUNT DELETION: AccountDeletionService keeps a tombstone profile and does not call removePaymentIdentity (services/payments/PaymentLedger.ts, \"NOT YET CALLED\", PAY-T23), so after a deletion the party still links to the tombstone's uuid until that step is wired.",
   },
 ];
 
@@ -404,63 +432,6 @@ export const AWAITING_OWNER_DECISION: ReadonlyArray<{
       "This table makes the question sharper rather than easier: it names the ADMIN who acted (actor_user_id) and why (reason), so answer A erases the record of who held a creator's money and answer B pseudonymises the admin as well as the creator.",
     heldOpenBy:
       "migration 3510's row-level BEFORE DELETE refusal (SQLSTATE CL451). Its attribution_id is NOT NULL ON DELETE CASCADE, so without the refusal it would be erased with the attribution it audits.",
-  },
-  // The Rent-a-Buddy payment slice (migration 3931, lane B 2026-10-05). Four
-  // tables carrying money owed to or paid by a person, each naming people ONLY
-  // by payment party (3821), never by profile — the shape OD-PAY-8 asks for, so
-  // removing the identity link changes one payment_parties row and no row here.
-  // Their FATE is decided (pseudonymised retention, OD-PAY-8); their PERIOD is
-  // the open C-11 legal confirmation, which is why they sit here and not in
-  // RETAINED_WITH_REASON: a retention with no period is not a decided one.
-  // Each entry says what holds the DELETE refused; none says 3510 — 3510 does
-  // not touch them, and the refusal is 3931's own grants.
-  {
-    table: "rent_buddy_payment_recipients",
-    decision:
-      "C-11 / OD-PAY-8 (docs/ops/owner-decisions-20261004.md; question 22(a)): OD-PAY-8 decided the FATE — \"Pseudonymize accounting entries, removing direct identifiers and the identity link when deletion is requested\", keeping only what tax, accounting, disputes or legal claims need, \"with a defined retention period\". " +
-      "The PERIOD is the open part: C-11 was recorded as answer B on 2026-10-04 (seven years after fiscal year-end; jurisdiction-specific periods override) with legal confirmation still required (PR #592 on HOLD), and the payment ledger keeps that period in 3823 payment_retention_settings, seeded undecided. No period is set here and none is invented." +
-      " This table holds the buddy's provider account reference (recipient_ref, the provider's own account id), its country and settlement currency, onboarding state and the provider's requirement CODES only — never a document, number or date of birth.",
-    heldOpenBy:
-      "migration 3931: service_role is granted SELECT, INSERT and UPDATE and NOT DELETE (anon and authenticated hold nothing), and a 3931 postcondition fails the migration if service_role could DELETE. " +
-      "Every column naming a traveller or buddy is a payment_parties id ON DELETE RESTRICT (3821), and 3821 never deletes a party — erasure is payment_parties.profile_id SET NULL / payment_party_remove_identity — so no erasure path removes these rows early. " +
-      "NOT YET PSEUDONYMISED BY ACCOUNT DELETION: AccountDeletionService keeps a tombstone profile and does not call removePaymentIdentity (services/payments/PaymentLedger.ts, \"NOT YET CALLED\", PAY-T23), so after a deletion the party still links to the tombstone's uuid until that step is wired." +
-      " Keyed by party_id (PRIMARY KEY, RESTRICT).",
-  },
-  {
-    table: "rent_buddy_monthly_payouts",
-    decision:
-      "C-11 / OD-PAY-8 (docs/ops/owner-decisions-20261004.md; question 22(a)): OD-PAY-8 decided the FATE — \"Pseudonymize accounting entries, removing direct identifiers and the identity link when deletion is requested\", keeping only what tax, accounting, disputes or legal claims need, \"with a defined retention period\". " +
-      "The PERIOD is the open part: C-11 was recorded as answer B on 2026-10-04 (seven years after fiscal year-end; jurisdiction-specific periods override) with legal confirmation still required (PR #592 on HOLD), and the payment ledger keeps that period in 3823 payment_retention_settings, seeded undecided. No period is set here and none is invented." +
-      " Sharper here, as for creator_ledger_audit_events: held_by / released_by name the ADMIN who held or released a payout (a staff audit fact, no FK, written with the reason in the same UPDATE as the state change), and hold_reason / release_reason are free text up to 2000 characters.",
-    heldOpenBy:
-      "migration 3931: service_role is granted SELECT, INSERT and UPDATE and NOT DELETE (anon and authenticated hold nothing), and a 3931 postcondition fails the migration if service_role could DELETE. " +
-      "Every column naming a traveller or buddy is a payment_parties id ON DELETE RESTRICT (3821), and 3821 never deletes a party — erasure is payment_parties.profile_id SET NULL / payment_party_remove_identity — so no erasure path removes these rows early. " +
-      "NOT YET PSEUDONYMISED BY ACCOUNT DELETION: AccountDeletionService keeps a tombstone profile and does not call removePaymentIdentity (services/payments/PaymentLedger.ts, \"NOT YET CALLED\", PAY-T23), so after a deletion the party still links to the tombstone's uuid until that step is wired." +
-      " Keyed by recipient_party_id (RESTRICT); booking payments point at a payout through payout_id ON DELETE RESTRICT.",
-  },
-  {
-    table: "rent_buddy_booking_payments",
-    decision:
-      "C-11 / OD-PAY-8 (docs/ops/owner-decisions-20261004.md; question 22(a)): OD-PAY-8 decided the FATE — \"Pseudonymize accounting entries, removing direct identifiers and the identity link when deletion is requested\", keeping only what tax, accounting, disputes or legal claims need, \"with a defined retention period\". " +
-      "The PERIOD is the open part: C-11 was recorded as answer B on 2026-10-04 (seven years after fiscal year-end; jurisdiction-specific periods override) with legal confirmation still required (PR #592 on HOLD), and the payment ledger keeps that period in 3823 payment_retention_settings, seeded undecided. No period is set here and none is invented." +
-      " One row per payment attempt: amounts, commission, tax components, provider references and an allow-listed projection of the provider's object (no client secret, name, email, phone, address or card digits).",
-    heldOpenBy:
-      "migration 3931: service_role is granted SELECT, INSERT and UPDATE and NOT DELETE (anon and authenticated hold nothing), and a 3931 postcondition fails the migration if service_role could DELETE. " +
-      "Every column naming a traveller or buddy is a payment_parties id ON DELETE RESTRICT (3821), and 3821 never deletes a party — erasure is payment_parties.profile_id SET NULL / payment_party_remove_identity — so no erasure path removes these rows early. " +
-      "NOT YET PSEUDONYMISED BY ACCOUNT DELETION: AccountDeletionService keeps a tombstone profile and does not call removePaymentIdentity (services/payments/PaymentLedger.ts, \"NOT YET CALLED\", PAY-T23), so after a deletion the party still links to the tombstone's uuid until that step is wired." +
-      " Also booking_id -> rent_buddy_bookings ON DELETE RESTRICT: a hard DELETE of the booking, or of the traveller's profile (whose baseline traveler_id FK cascades to the booking), is REFUSED with SQLSTATE 23503 while a payment row exists. AccountDeletionService deletes neither (rent_buddy_bookings is UNCLASSIFIED_BACKLOG, D6), so in the deletion flow it does not fire.",
-  },
-  {
-    table: "rent_buddy_payment_refunds",
-    decision:
-      "C-11 / OD-PAY-8 (docs/ops/owner-decisions-20261004.md; question 22(a)): OD-PAY-8 decided the FATE — \"Pseudonymize accounting entries, removing direct identifiers and the identity link when deletion is requested\", keeping only what tax, accounting, disputes or legal claims need, \"with a defined retention period\". " +
-      "The PERIOD is the open part: C-11 was recorded as answer B on 2026-10-04 (seven years after fiscal year-end; jurisdiction-specific periods override) with legal confirmation still required (PR #592 on HOLD), and the payment ledger keeps that period in 3823 payment_retention_settings, seeded undecided. No period is set here and none is invented." +
-      " Records who asked for a refund by role and, for a traveller or buddy, by party (requested_by_party_id); support is recorded as the role 'admin' with no party (rbprf_admin_has_no_party).",
-    heldOpenBy:
-      "migration 3931: service_role is granted SELECT, INSERT and UPDATE and NOT DELETE (anon and authenticated hold nothing), and a 3931 postcondition fails the migration if service_role could DELETE. " +
-      "Every column naming a traveller or buddy is a payment_parties id ON DELETE RESTRICT (3821), and 3821 never deletes a party — erasure is payment_parties.profile_id SET NULL / payment_party_remove_identity — so no erasure path removes these rows early. " +
-      "NOT YET PSEUDONYMISED BY ACCOUNT DELETION: AccountDeletionService keeps a tombstone profile and does not call removePaymentIdentity (services/payments/PaymentLedger.ts, \"NOT YET CALLED\", PAY-T23), so after a deletion the party still links to the tombstone's uuid until that step is wired." +
-      " booking_payment_id -> rent_buddy_booking_payments ON DELETE RESTRICT; requested_by_party_id RESTRICT.",
   },
 ];
 
@@ -959,8 +930,8 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "creator_ledger_audit_events",
   // The Rent-a-Buddy payment slice (migration 3931, lane B). Post-baseline and
   // applied to no database, so — like the five above — the gate sees them only
-  // because they are named here. payment_webhook_events is RETAINED_WITH_REASON
-  // (no person); the other four are AWAITING_OWNER_DECISION (C-11 period).
+  // because they are named here. All five are RETAINED_WITH_REASON:
+  // payment_webhook_events (no person) and the four money tables (OD-PAY-8).
   // Migration 3930 adds a column to identity_verifications (ERASED_BY_CASCADE,
   // deleted by AccountDeletionService) and creates no table.
   "rent_buddy_payment_recipients",

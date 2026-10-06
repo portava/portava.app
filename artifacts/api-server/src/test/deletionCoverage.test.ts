@@ -98,11 +98,15 @@ describe("deletion coverage — the guard bites", () => {
     // The ledger tables that cite those rules are NOT here — their fate is the
     // open C-11 decision, asserted separately below. Any further entry must come
     // with the same kind of written reason.
-    assert.equal(RETAINED_WITH_REASON.length, 3,
+    //   * the four 3931 payment money tables (2026-10-06, lead ruling matching
+    //     lane P's #592): OD-PAY-8 / C-11 answer B decided pseudonymised
+    //     retention; the period is the owner's default pending legal confirmation.
+    assert.equal(RETAINED_WITH_REASON.length, 7,
       "once retentions are decided, update this expectation deliberately");
     assert.deepEqual(
       RETAINED_WITH_REASON.map((r) => r.table).sort(),
-      ["creator_rule_versions", "intel_state_snapshot_versions", "payment_webhook_events"],
+      ["creator_rule_versions", "intel_state_snapshot_versions", "payment_webhook_events",
+       "rent_buddy_booking_payments", "rent_buddy_monthly_payouts", "rent_buddy_payment_recipients", "rent_buddy_payment_refunds"],
     );
     // Asserted for EVERY entry, not just the first: indexing by [0] let a second
     // entry arrive with no reason at all and still pass.
@@ -117,7 +121,7 @@ describe("deletion coverage — the guard bites", () => {
 });
 
 describe("an open owner decision is recorded, not resolved (C-11)", () => {
-  it("the four creator / Rent-a-Buddy ledger tables and the four 3931 payment tables await C-11 and nothing else claims them", () => {
+  it("the four creator / Rent-a-Buddy ledger tables await C-11 and nothing else claims them", () => {
     // The point of the bucket: these five tables were in NO bucket at all, and
     // the two buckets that could have held the four ledgers would each have
     // ANSWERED C-11 — ERASED_BY_CASCADE is answer A (3511), RETAINED_WITH_REASON
@@ -129,11 +133,7 @@ describe("an open owner decision is recorded, not resolved (C-11)", () => {
         "creator_attributions",
         "creator_earning_entries",
         "creator_ledger_audit_events",
-        "rent_buddy_booking_payments",
         "rent_buddy_earnings_entries",
-        "rent_buddy_monthly_payouts",
-        "rent_buddy_payment_recipients",
-        "rent_buddy_payment_refunds",
       ],
     );
     const erased = new Set(ERASED_BY_CASCADE);
@@ -155,21 +155,8 @@ describe("an open owner decision is recorded, not resolved (C-11)", () => {
       assert.match(r.heldOpenBy, /3510/, `${r.table}: name the migration that refuses the DELETE meanwhile`);
       assert.match(r.heldOpenBy, /CL451/, `${r.table}: name the SQLSTATE the refusal raises`);
     }
-    // The 3931 payment tables are held by a different mechanism and the same
-    // question, and the assertions say which — 3510 does not touch them, so an
-    // entry that cited it would be false.
-    const payment = AWAITING_OWNER_DECISION.filter((x) => !CREATOR_LEDGER_TABLES.includes(x.table));
-    assert.equal(payment.length, 4, "every entry is either a creator-ledger table or a 3931 payment table");
-    for (const r of payment) {
-      assert.match(r.decision, /C-11/, `${r.table}: the decision must carry its identifier`);
-      assert.match(r.decision, /22\(a\)/, `${r.table}: the decision must say where it is written down`);
-      assert.match(r.decision, /OD-PAY-8/, `${r.table}: name the owner ruling that decided the fate`);
-      assert.match(r.decision, /payment_retention_settings, seeded undecided/, `${r.table}: say where the open period lives`);
-      assert.match(r.heldOpenBy, /3931/, `${r.table}: name the migration that refuses the DELETE meanwhile`);
-      assert.match(r.heldOpenBy, /NOT DELETE/, `${r.table}: name the refusal (no DELETE grant)`);
-      assert.match(r.heldOpenBy, /does not call removePaymentIdentity/, `${r.table}: say that account deletion does not yet pseudonymise`);
-      assert.doesNotMatch(r.heldOpenBy, /3510|CL451/, `${r.table}: 3510 does not hold this table`);
-    }
+    assert.deepEqual(AWAITING_OWNER_DECISION.filter((x) => !CREATOR_LEDGER_TABLES.includes(x.table)), [],
+      "every entry is a creator-ledger table: the 3931 payment tables are RETAINED_WITH_REASON (OD-PAY-8), asserted below");
   });
 
   it("REJECTS an entry that names no decision, and one that nothing holds open", () => {
@@ -206,3 +193,36 @@ describe("an open owner decision is recorded, not resolved (C-11)", () => {
 
 /** The four tables whose C-11 answers are held at reconciliation-staging/3511 and 3512 and whose DELETE 3510 refuses. */
 const CREATOR_LEDGER_TABLES: readonly string[] = ["rent_buddy_earnings_entries", "creator_attributions", "creator_earning_entries", "creator_ledger_audit_events"];
+
+// ── The 3931 payment money tables: retained under OD-PAY-8 / C-11 answer B (lead ruling 2026-10-06, matching #592) ──
+describe("the four 3931 payment tables are RETAINED_WITH_REASON with the decided basis and the unconfirmed period", () => {
+  const PAYMENT_MONEY_TABLES = ["rent_buddy_booking_payments", "rent_buddy_monthly_payouts", "rent_buddy_payment_recipients", "rent_buddy_payment_refunds"];
+  it("each is retained, none awaits a decision, none is erased", () => {
+    const retained = new Map(RETAINED_WITH_REASON.map((r) => [r.table, r.reason]));
+    const awaiting = new Set(AWAITING_OWNER_DECISION.map((r) => r.table));
+    const erased = new Set(ERASED_BY_CASCADE);
+    for (const t of PAYMENT_MONEY_TABLES) {
+      assert.ok(retained.has(t), `${t} retained`);
+      assert.ok(!awaiting.has(t), `${t} no longer awaits C-11`);
+      assert.ok(!erased.has(t), `${t} is not erased`);
+    }
+  });
+  it("each reason states the ruling, the lawful basis, the pseudonym, the DEFAULT period as unconfirmed, no purge, and the unwired deletion step", () => {
+    const retained = new Map(RETAINED_WITH_REASON.map((r) => [r.table, r.reason]));
+    for (const t of PAYMENT_MONEY_TABLES) {
+      const r = retained.get(t)!;
+      assert.match(r, /OD-PAY-8/, `${t}: the owner ruling`);
+      assert.match(r, /C-11 answer B/, `${t}: the answer`);
+      assert.match(r, /17\(3\)\(b\)/, `${t}: legal obligation`);
+      assert.match(r, /17\(3\)\(e\)/, `${t}: legal claims`);
+      assert.match(r, /payment party id/, `${t}: named by pseudonym, never profile`);
+      assert.match(r, /seven years after fiscal year-end/, `${t}: the owner's default period`);
+      assert.match(r, /jurisdiction-specific/, `${t}: overridden by jurisdiction`);
+      assert.match(r, /PENDING LEGAL CONFIRMATION/, `${t}: not approved`);
+      assert.doesNotMatch(r, /legally confirmed|approved period/i, `${t}: never claims legal approval`);
+      assert.match(r, /No purge/, `${t}: nothing erases early`);
+      assert.match(r, /NOT DELETE/, `${t}: the grant that refuses DELETE`);
+      assert.match(r, /does not call removePaymentIdentity/, `${t}: account deletion does not yet pseudonymise`);
+    }
+  });
+});
