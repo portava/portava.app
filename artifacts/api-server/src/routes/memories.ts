@@ -32,6 +32,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import {
   runMemorySearch,
+  runCrewMemorySearch,
   searchCapabilities,
 } from "../services/memory/memorySearchService.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
@@ -868,6 +869,103 @@ function chunkIds<T>(ids: readonly T[], size = IN_LIST_CHUNK): T[][] {
 const GRAPH_MEMORY_LIMIT = 2000;
 
 /* ============================================================================
+ * The SHARED_CREW half of POST /memories/search.
+ *
+ * WHY IT IS A SEPARATE RESPONSE SHAPE. A crew search can succeed PARTIALLY, and
+ * the single-target shape has nowhere to say so: it carries hits, a count and a
+ * projection id, and every one of those reads as complete. So the union adds
+ * `members`, `withheldMembers` and `unionComplete`, and the whole point of this
+ * change is that a client cannot render the hits without being handed the gap
+ * beside them. The idiom is `unenforceableOnFeed` on
+ * GET /highlights/resurfacing-controls.
+ *
+ * WHY A WITHHELD MEMBER IS NOT A 410. For one target, a revoked derivative IS
+ * the answer and 410 `gone` is right. For a union it would let any single
+ * member's privacy decision blank the crew's shared memory for everyone (a
+ * denial-of-service shape) and would announce, by the refusal alone, that
+ * somebody revoked something (a privacy leak by inference). See
+ * `CREW_UNION_PARTIAL_POLICY` in services/memory/memorySearchService.ts, which
+ * also records what the owner has still not decided.
+ *
+ * WHY A NON-MEMBER GETS 404 AND NOT 403. The same answer
+ * GET /trips/:tripId/memories/recap gives one screen over: a 403 would confirm
+ * the trip exists and that this person is not on it.
+ * ============================================================================ */
+async function serveCrewSearch(
+  req: any,
+  res: any,
+  sc: any,
+  viewerId: string,
+  body: { intent: { tripId?: string }; query?: string | null; people?: string[]; place?: string | null; trip?: string | null; event?: string | null; dateRange?: any; memoryType?: string | null; limit?: number },
+): Promise<void> {
+  const result = await runCrewMemorySearch(sc, viewerId, {
+    intent: { kind: "crew_trip", tripId: body.intent.tripId as string },
+    query: body.query ?? null,
+    people: body.people,
+    place: body.place ?? null,
+    trip: body.trip ?? null,
+    event: body.event ?? null,
+    dateRange: body.dateRange ?? null,
+    memoryType: body.memoryType ?? null,
+    limit: body.limit,
+  });
+
+  if (!result.ok) {
+    switch (result.reason) {
+      case "invalid_intent":
+      case "filter_unsupported":
+        sendError(res, "invalid_payload", result.detail);
+        return;
+      case "not_permitted":
+        sendError(res, "not_found", "No crew memories for this trip");
+        return;
+      case "audience_unavailable":
+        // A permission check that cannot establish its result must fail. An
+        // unreadable gate served as a narrow union would be a total, silent,
+        // plausible denial — and served as a WIDE one would be a disclosure.
+        req.log.error({ detail: result.detail, viewerId }, "memories: crew search could not run the §23 audience ladder — refusing");
+        sendError(res, "degraded_unavailable", "We could not search the crew's memories right now. Please try again.");
+        return;
+      default:
+        req.log.error({ detail: result.detail, viewerId, reason: result.reason }, "memories: crew search could not establish the trip's crew — refusing rather than searching an empty crew");
+        sendError(res, "degraded_unavailable", "We could not search the crew's memories right now. Please try again.");
+        return;
+    }
+  }
+
+  const v = result.value;
+  if (!v.union_complete) {
+    // Logged as well as returned: a union that is quietly partial for every
+    // reader, every time, is an outage nobody is paged for.
+    req.log.warn?.({
+      viewerId, tripId: v.trip_id,
+      withheld: v.withheld_members.map((m) => ({ memberId: m.memberId, reason: m.reason })),
+      audienceWithheldCount: v.audience_withheld_count,
+    }, "memories: crew search served a PARTIAL union");
+  }
+
+  res.status(200).json({
+    hits: v.hits.map((h) => ({ memoryId: h.memory_id, score: h.score, dimensions: h.dimensions, row: h.row })),
+    deterministicMatchCount: v.deterministic_match_count,
+    semanticRerankApplied: v.semantic_rerank_applied,
+    namespace: v.namespace,
+    projectionId: v.projection_id,
+    engineVersion: v.engine_version,
+    tripId: v.trip_id,
+    // Every member, served or not, each with `matchCount: null` rather than 0
+    // when withheld — "we did not look" is not "this member has no memories".
+    members: v.members,
+    withheldMembers: v.withheld_members,
+    unionComplete: v.union_complete,
+    crewSize: v.crew_size,
+    audienceWithheldCount: v.audience_withheld_count,
+    memberBound: v.member_bound,
+    partialPolicy: v.partial_policy,
+    capabilities: searchCapabilities(),
+  });
+}
+
+/* ============================================================================
  * POST /memories/search — §15 Memory Retrieval and Search.
  *
  * Highlights/Memories Development Architecture Spec v1 §15, §18, §28.6.
@@ -905,9 +1003,10 @@ router.post("/memories/search", async (req, res) => {
   const parsed = z
     .object({
       intent: z.object({
-        kind: z.enum(["mine", "mine_place", "public"]),
+        kind: z.enum(["mine", "mine_place", "public", "crew_trip"]),
         placeId: z.string().optional(),
         ownerId: z.string().optional(),
+        tripId: z.string().optional(),
       }),
       query: z.string().max(400).nullable().optional(),
       people: z.array(z.string()).max(50).optional(),
@@ -921,6 +1020,15 @@ router.post("/memories/search", async (req, res) => {
     .safeParse(req.body ?? {});
   if (!parsed.success) { sendError(res, "invalid_payload", "Invalid search request"); return; }
   const body = parsed.data;
+
+  if (body.intent.kind === "crew_trip") {
+    if (!body.intent.tripId || !isUuid(body.intent.tripId)) {
+      sendError(res, "invalid_payload", "tripId must be a UUID");
+      return;
+    }
+    await serveCrewSearch(req, res, sc, user.id, body);
+    return;
+  }
 
   if (body.intent.kind === "public") {
     if (!body.intent.ownerId || !isUuid(body.intent.ownerId)) {

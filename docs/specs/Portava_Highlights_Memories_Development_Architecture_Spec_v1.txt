@@ -131,7 +131,7 @@ Highlight {
   source_memory_ids: uuid[]
   highlight_type: text
   lifetime_class: LIVE | DAY | TRIP | SEASONAL | PERMANENT
-  lifecycle_state: DRAFT | ACTIVE | EXPIRED | PINNED | HIDDEN
+  lifecycle_state: DRAFT | ACTIVE | EXPIRED | HIDDEN   [2026-10-03 consistency correction, recording built behaviour: PINNED is a DERIVED presentation state, not a stored lifecycle_state value. It is derived from pinned_at at read time (services/highlights/highlightLifecycle.ts:325 returns provenance "derived", state "PINNED", from "pinned_at"; migration 2993_highlight_command_boundary.sql:461 states "No lifecycle_state is WRITTEN here"), and the column is nullable with no DEFAULT (migration 2723_highlight_class_lifecycle_and_pin.sql:106) and NULL on every row. This is why §5’s Highlight diagram needs no PINNED -> ACTIVE edge: nothing has to be undone, because nothing was stored. Owner ratification ("PINNED is derived — yes?") is still outstanding.]
   starts_at: timestamptz
   expires_at: timestamptz?
   ranking_score: numeric?
@@ -506,7 +506,7 @@ memory.visibility_changed
 highlight.created
 highlight.published
 highlight.expired
-highlight.pinned
+highlight.pinned   [2026-10-03 consistency correction, recording built behaviour: there is no highlight.unpinned, and §17’s UNPIN_HIGHLIGHT does not need one. UNPIN_HIGHLIGHT emits highlight.pinned carrying command_type and the resulting pinned boolean (artifacts/api-server/src/routes/highlights.ts:1536-1539), following the ADD_MEDIA / REMOVE_MEDIA precedent in lib/memoryCommandBus.ts. Owner ratification ("PINNED is derived — yes?") is still outstanding.]
 highlight.hidden
 Use an outbox pattern: canonical mutation and event-outbox insert occur in one database transaction. Consumers must be idempotent and may rebuild disposable projections asynchronously.
 18. Projections and Derived Artifact Registry

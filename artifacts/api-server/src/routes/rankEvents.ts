@@ -259,8 +259,8 @@ router.post("/rank-events/outcome", asyncHandler(async (req, res) => {
   // increment_distribution_stats: the latter moves eligible_impressions in the
   // same statement, and an outcome must never move the exposure denominator
   // (see the note at the end of this handler). Fire-and-forget.
-  if (outcome === DISMISS && !settled.duplicate) {  // §48 DV-37 — a replayed dismiss must not count twice in a cross-viewer statistic
-    void recordNegativeDistributionSignal(sc, item_id, user.id);
+  if (outcome === DISMISS && !settled.duplicate) {  // §48 DV-37 — a replayed dismiss must not count twice in a cross-viewer statistic; §83 DV-UNDO — and neither must a dismiss→undo→re-dismiss loop, which carries a NEW client_event_id and so is no replay at all
+    if (await negativeSignalBanked(sc, user.id, item_id, surface, row, req.log) === "not_counted") void recordNegativeDistributionSignal(sc, item_id, user.id);  // §83 — "unknown" does not increment: the counter is increment-only, so a wrong +1 is permanent
   }
 
   // Emit typed analytics event for this outcome (fire-and-forget).
@@ -1482,3 +1482,287 @@ async function readKeylessOrUpgradable(
     x.id !== picked.row.id && typeof x.outcome_at === "string" && Date.parse(x.outcome_at) >= nowMs - KEYLESS_OUTCOME_RETRY_WINDOW_MS);
   return hit ? { row: null, error: null, keylessReplay: true } : { ...picked, keylessReplay: false };
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// census-discovery §83 (lane B-DISCOVERY) — DV-UNDO: undoing a "Not interested"
+// POST /rank-events/undo-dismiss
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// APPENDED BELOW EVERY CITED LINE, for the reason the §55/§62/§82 sections give:
+// eight anchored doc citations point into lines 44-290 of this file. The ONE edit
+// inside that range (the numerator guard at :262-263) is written on lines it
+// already had, so no citation moves.
+//
+// WHAT WAS MISSING. `lib/discoveryDismissed.ts` states the cost of its own design
+// out loud — "a viewer who dismisses a lot in a thin city shrinks their own
+// results and there is no in-product way to undo one" — and `rank_events` has
+// only ever had three writers for this surface (`POST /rank-events`,
+// `/rank-events/outcome`, `/rank-events/dwell`). There was no undo at all.
+//
+// A DOWNGRADE, NOT A DELETE. The undo sets `outcome` back to `'impression'` and
+// clears `outcome_at`. It does NOT delete the row, and that is the whole point:
+// the row IS the exposure record, and `content_distribution_stats`'
+// eligible_impressions denominator is built from exposures (2297:36-44, :148-149
+// — "an outcome must never move the exposure denominator"). Deleting it would
+// destroy a real impression to retract an outcome, which is exactly the defect
+// 2297 was written to avoid, from the other side. Everything the viewer expects
+// an undo to restore is DERIVED FROM THE ROW AT READ TIME and therefore needs no
+// separate repair:
+//   • the place reappears — lib/discoveryDismissed.ts reads outcome='dismiss';
+//   • the per-viewer category penalty lifts — DiscoveryRankingService :1567-1570;
+//   • eligibility, place momentum (3417) and Trail positives all re-derive.
+//
+// WHAT THE UNDO DOES *NOT* ERASE, AND WHY — THE OWNER'S OPEN QUESTION
+// ===================================================================
+// `content_distribution_stats.negative_signal_count`, already incremented by the
+// dismiss through `record_distribution_negative_signal` (2297:123-169), is NOT
+// decremented. This is the DEFAULT, taken deliberately, and it is the owner's
+// open question — the only accumulator affected:
+//
+//   1. NO DECREMENT EXISTS. 2297's RPC is increment-only; there is no inverse
+//      anywhere in the schema, and inventing one here would make this route the
+//      sole writer able to lower a cross-viewer ranking statistic.
+//   2. IT CANNOT BE ATTRIBUTED. The RPC accepts `p_viewer_id` and deliberately
+//      does not use it (2297:115-117 — "accepted and unused … so a future
+//      per-viewer dedup has a place to stand"). The counter therefore carries no
+//      record of WHOSE dismissals built it, so "subtract mine" is not a
+//      statement the data can express.
+//   3. IT IS A DIFFERENT KIND OF FACT. The counter is a global exposure
+//      statistic — how often this item was waved away, across everyone — not a
+//      record of this person's preference. The person's preference is the row,
+//      and the row is what the undo restores.
+//   4. 2297'S OWN ROLLBACK REFUSES THE SAME THING, in the same words:
+//      "deleting recorded user feedback is a retention decision, not a rollback"
+//      (db/rollback/2026-09-28-2297-rank-events-dismiss-outcome-rollback.sql:40-43).
+//
+// So the undo is honest about its reach: the viewer's own results are fully
+// restored; one aggregate statistic keeps the single increment it already took.
+// If the owner decides otherwise, the change is a decrementing RPC plus
+// per-viewer attribution in 2297's function — not a change to this route.
+//
+// IDEMPOTENCE AGAINST SIGNAL INFLATION
+// ====================================
+// Given (1), a dismiss → undo → re-dismiss loop would be a free way to inflate a
+// cross-viewer statistic: one tap each way, +1 to `negative_signal_count` every
+// time round. `/rank-events/outcome`'s existing guard does not stop it. That
+// guard is `!settled.duplicate`, which keys on `client_event_id` / the receipt
+// (§62) — and a re-dismiss is a NEW user action, so the client mints a NEW key
+// and no receipt matches. The §82 keyless window does not stop it either: it is
+// ten minutes wide and compares landings, not undos.
+//
+// THE MECHANISM CHOSEN: an explicit idempotence marker, `features.<KEY>`, set by
+// the undo and consulted by the dismiss path before it touches the counter.
+// Why this one rather than preserving `outcome_client_event_id` across the
+// downgrade:
+//   • preserving the key only recognises a RETRY of the original dismiss (same
+//     key). It cannot recognise a genuinely new re-dismiss, which is precisely
+//     the loop. The column is nonetheless left ALONE by the undo, so a retry of
+//     the original dismiss still settles against its receipt as §62 intends;
+//   • the marker says the thing that is actually true and durable — "this
+//     viewer's negative signal for this item has already been banked in a
+//     counter that cannot be un-banked" — and it survives the place being served
+//     again, which a per-row outcome field would not;
+//   • `features` is a jsonb column that exists on every database this code runs
+//     on, so the guard needs no migration and cannot be defeated by an unapplied
+//     one. A marker column behind a pending migration would leave production —
+//     the only place the loop matters — unguarded.
+//
+// The guard is read-modify-write on a row keyed to the caller, so it races only
+// with this viewer's own ranking features for this exposure.
+
+/** The `features` key that records "this viewer's negative signal for this item is already banked". */
+export const NEGATIVE_SIGNAL_BANKED_KEY = "negativeSignalCounted";
+
+/** Does this row's `features` already carry the banked marker? */
+export function hasBankedNegativeSignal(features: unknown): boolean {
+  if (!features || typeof features !== "object" || Array.isArray(features)) return false;
+  return (features as Record<string, unknown>)[NEGATIVE_SIGNAL_BANKED_KEY] === true;
+}
+
+/** `features` with the banked marker set, preserving every key already on it. */
+export function bankNegativeSignal(features: unknown): Record<string, unknown> {
+  const base = features && typeof features === "object" && !Array.isArray(features)
+    ? (features as Record<string, unknown>)
+    : {};
+  return { ...base, [NEGATIVE_SIGNAL_BANKED_KEY]: true };
+}
+
+/**
+ * Has this viewer's negative signal for this item already been banked?
+ *
+ *   counted     — yes: the increment has happened and must not happen again.
+ *   not_counted — no: the dismiss may move the counter.
+ *   unknown     — the read did not complete.
+ *
+ * `unknown` MUST NOT be treated as `not_counted`. The repo's rule is that a
+ * check which cannot establish its result fails, and here "failing" means not
+ * writing: the counter is cross-viewer and increment-only, so a wrong +1 is
+ * permanent and un-retractable (see the §83 note above), while a missed +1 is a
+ * single under-count of a ratio the classifier already evaluates over hundreds
+ * of impressions. The loss is logged at error level, named, and never silent.
+ * The dismissal itself is unaffected — it is already recorded on the row by the
+ * time this runs, and the numerator write was always fire-and-forget.
+ */
+const BANKED_SIGNAL_COLUMNS = "id";
+
+export type NegativeSignalBankState = "counted" | "not_counted" | "unknown";
+
+async function negativeSignalBanked(
+  sc: any,
+  userId: string,
+  itemId: string,
+  surface: string,
+  row: Record<string, unknown> | null | undefined,
+  log: RouteLog | undefined,
+): Promise<NegativeSignalBankState> {
+  // The exposure this dismiss just moved is the common case: no read needed.
+  if (hasBankedNegativeSignal(row?.["features"])) return "counted";
+  try {
+    // Any OTHER exposure of this item for this viewer may carry the marker: an
+    // undo makes the place servable again, so the re-dismiss usually lands on a
+    // NEWER impression row than the one that was undone.
+    const { data, error } = await sc
+      .from("rank_events")
+      .select(BANKED_SIGNAL_COLUMNS)
+      .eq("user_id", userId)
+      .eq("item_id", itemId)
+      .eq("surface", surface)
+      .eq(`features->>${NEGATIVE_SIGNAL_BANKED_KEY}`, "true")
+      .limit(1);
+    // supabase-js RESOLVES with `{ error }` on a PostgREST rejection rather than
+    // throwing (CONTRIBUTING.md's rank_events entry), so `error` is destructured
+    // and inspected. A try/catch alone would read a refusal as "no marker".
+    if (error || !Array.isArray(data)) {
+      (log?.error ?? console.error).call(log ?? console,
+        { err: error ?? null, itemId, surface },
+        "rank-events/outcome: the negative-signal idempotence read did not complete — negative_signal_count was NOT incremented for this dismiss");
+      return "unknown";
+    }
+    return data.length > 0 ? "counted" : "not_counted";
+  } catch (err) {
+    (log?.error ?? console.error).call(log ?? console,
+      { err, itemId, surface },
+      "rank-events/outcome: the negative-signal idempotence read threw — negative_signal_count was NOT incremented for this dismiss");
+    return "unknown";
+  }
+}
+
+/** What the undo lookup reads, WITH 3420's key column. A literal const, for check:write-path-columns. */
+const UNDO_DISMISS_COLUMNS        = "id, user_id, outcome, outcome_at, features, outcome_client_event_id";
+/** The same list on a database where 3420 has not been applied. */
+const UNDO_DISMISS_COLUMNS_LEGACY = "id, user_id, outcome, outcome_at, features";
+
+const undoDismissBodySchema = z.object({
+  // Same validators as the outcome body: item_id is text (OSM ids), the surface
+  // enum is the only server-side validation of `surface`, session_id is a UUID.
+  item_id:    z.string().min(1).max(200),
+  surface:    z.enum(SURFACE_VALUES),
+  session_id: z.string().regex(UUID_RE, "session_id must be a valid UUID").optional(),
+});
+
+/**
+ * This viewer's most recent dismissal of this item on this surface.
+ *
+ * SCOPED TO THE CALLER by `.eq("user_id", userId)`, which is the whole of the
+ * authorization: another viewer's dismissal is not found, and the refusal is
+ * `not_found` rather than `forbidden` — whether somebody else dismissed this
+ * item is not this caller's to learn (the same reasoning as
+ * `refuseUnboundOutcome`).
+ *
+ * Two whole chains rather than a computed select list, for the reason the
+ * outcome handler gives: `check:write-path-columns` resolves a `.select`
+ * argument only from a string literal or a same-file const.
+ */
+async function readDismissedExposure(
+  sc: any,
+  userId: string,
+  itemId: string,
+  surface: string,
+  sessionId: string | undefined,
+  log: RouteLog | undefined,
+): Promise<{ row: any | null; error: any | null }> {
+  let first = canStampOutcomeKey()
+    ? sc.from("rank_events").select(UNDO_DISMISS_COLUMNS)
+        .eq("user_id", userId).eq("item_id", itemId).eq("surface", surface).eq("outcome", DISMISS)
+        .order("served_at", { ascending: false }).limit(1)
+    : sc.from("rank_events").select(UNDO_DISMISS_COLUMNS_LEGACY)
+        .eq("user_id", userId).eq("item_id", itemId).eq("surface", surface).eq("outcome", DISMISS)
+        .order("served_at", { ascending: false }).limit(1);
+  if (sessionId) first = first.eq("session_id", sessionId);
+  const r = await first;
+  if (!r?.error) return { row: ((r?.data as any[]) ?? [])[0] ?? null, error: null };
+  if (!isMissingOutcomeKeySchema(r.error)) return { row: null, error: r.error };
+
+  noteOutcomeKeyUnavailable(r.error, log, "undo-dismiss select");
+  let retry = sc.from("rank_events").select(UNDO_DISMISS_COLUMNS_LEGACY)
+    .eq("user_id", userId).eq("item_id", itemId).eq("surface", surface).eq("outcome", DISMISS)
+    .order("served_at", { ascending: false }).limit(1);
+  if (sessionId) retry = retry.eq("session_id", sessionId);
+  const second = await retry;
+  if (second?.error) return { row: null, error: second.error };
+  return { row: ((second?.data as any[]) ?? [])[0] ?? null, error: null };
+}
+
+router.post("/rank-events/undo-dismiss", asyncHandler(async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const parsed = undoDismissBodySchema.safeParse(req.body);
+  if (!parsed.success) {
+    sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
+    return;
+  }
+  const { item_id, surface, session_id } = parsed.data;
+
+  const sc = getServiceClient();
+  if (!sc) {
+    sendError(res, "server_not_configured", "Service client not available");
+    return;
+  }
+
+  const found = await readDismissedExposure(sc, user.id, item_id, surface, session_id, req.log);
+  // A read that did not complete REFUSES. Reporting `{ ok: true }` here would
+  // tell the viewer their place is back while nothing was written — the
+  // masquerade `11` §9 forbids, and the exact shape CONTRIBUTING.md records for
+  // this table (a resolved `{ error }` nobody inspected).
+  if (found.error) {
+    (req.log?.error ?? console.error).call(req.log ?? console,
+      { err: found.error }, "rank-events/undo-dismiss: select failed");
+    sendError(res, "db_error", String(found.error?.message ?? "db_error"));
+    return;
+  }
+  const row = found.row;
+  if (!row) {
+    // No dismissal of this item by this viewer — including the case where the
+    // dismissal belongs to somebody else. Nothing is created and nothing moves.
+    sendError(res, "not_found", "No dismissal to undo for this item");
+    return;
+  }
+
+  // The downgrade. `outcome_at` is cleared because there is no longer an outcome
+  // for it to time, and `features` carries the idempotence marker forward.
+  // `outcome_client_event_id` is deliberately NOT cleared — see the §83 note.
+  //
+  // The update re-asserts `user_id` (defence in depth: the read already scoped
+  // it, and a route that mutates rank_events should not rely on one filter) and
+  // `outcome = 'dismiss'` as a compare-and-set, so a row that changed between
+  // the read and the write is left alone rather than silently overwritten.
+  const { error: updateErr } = await sc
+    .from("rank_events")
+    .update({ outcome: "impression", outcome_at: null, features: bankNegativeSignal(row["features"]) })
+    .eq("id", row.id)
+    .eq("user_id", user.id)
+    .eq("outcome", DISMISS);
+  if (updateErr) {
+    reportRankEventsRejection(req.log, {
+      writer: RANK_EVENTS_WRITER, err: updateErr, extra: { where: "undo-dismiss downgrade" },
+    });
+    (req.log?.error ?? console.error).call(req.log ?? console,
+      { err: updateErr }, "rank-events/undo-dismiss: downgrade failed — the dismissal still stands");
+    sendError(res, "db_error", String(updateErr?.message ?? "db_error"));
+    return;
+  }
+
+  res.json({ ok: true });
+}));

@@ -21,6 +21,16 @@
  *   4. routes/telegraphDiagnostics.ts — the purpose-length check removed. The
  *      "an empty purpose is refused" assertion failed.
  *
+ * SHOWN RED 2026-10-03 for the two §24 projection-grade assertions (B13), each
+ * mutation applied to projectionRegistry.ts alone and restored:
+ *   5. PRJ-06 `status` back to "absent" → pass 23 / fail 1. Only the PRJ-06
+ *      assertion fired; the every-partial one went VACUOUSLY QUIET on PRJ-06
+ *      because an absent entry leaves the partial set, which is why the
+ *      per-entry assertion exists alongside the set-wide one.
+ *   6. PRJ-06 `builtBy` back to null → pass 22 / fail 2 (both).
+ *   7. the note's "no longer true" retraction softened to "is stale" → 23 / 1.
+ *   8. the note's "stores nothing" gap statement deleted → 23 / 1.
+ *
  * Run: node --import tsx/esm --test src/test/telegraphObservability.test.ts
  */
 
@@ -132,6 +142,43 @@ describe("§28 / §30A.17 registry — shape", () => {
       if (s.target.kind !== "unbounded") continue;
       assert.ok(s.target.intent.length >= 10, `${s.id} has no stated intent`);
     }
+  });
+
+  /**
+   * §24's projection grades. `ProjectionStatus`' own doc comment says a
+   * `partial` means "built, and missing a part the spec names. The gap must be
+   * in the note" — so the grade and the note are one claim, and a `partial`
+   * whose note does not say what is missing is a grade nobody can check. These
+   * assert the STATE of the registry, which is what `checkTelegraphSlos.ts`
+   * counts and what `GET /telegraph/diagnostics` serves.
+   */
+  it("every `partial` projection names what it is missing, and names what builds it", () => {
+    const partials = TELEGRAPH_PROJECTIONS.filter((p) => p.status === "partial");
+    assert.ok(partials.length > 0, "a registry with no partials would make this vacuous");
+    for (const p of partials) {
+      assert.ok(p.builtBy !== null, `${p.id} is partial but nothing is named as building it`);
+      assert.match(
+        p.note,
+        /not `built`|rather than `built`|does not have/i,
+        `${p.id} is graded partial but its note does not say what keeps it from \`built\``,
+      );
+    }
+  });
+
+  it("PRJ-06's content drawer is graded against the route that serves it, not the dead code it used to be", () => {
+    const prj06 = TELEGRAPH_PROJECTIONS.find((p) => p.id === "PRJ-06");
+    assert.ok(prj06, "PRJ-06 must exist in the registry");
+    // The STATE: it serves, so it is not `absent`; it is an on-demand route and
+    // not a server-built index, so it is not `built` either.
+    assert.equal(prj06!.status, "partial");
+    assert.equal(prj06!.builtBy, "src/routes/telegraphKinds.ts");
+    // The old note asserted dead code behind a literal false. The note must now
+    // RETRACT that rather than merely drop it — a reader who met the old claim
+    // needs to be told it was wrong, not left to wonder which is current.
+    assert.match(prj06!.note, /no longer true/i,
+      "PRJ-06's note must retract the old dead-code claim, not silently replace it");
+    assert.match(prj06!.note, /stores nothing/i,
+      "PRJ-06's note must say WHY it is not `built`: no materialised index");
   });
 
   it("a metric with no observation reads meetsTarget: null, never 'healthy'", () => {
