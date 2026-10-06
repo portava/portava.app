@@ -366,7 +366,7 @@ export async function requireUser(
   // revokes by setting it to now) refuses with 403, read per request — so a token
   // issued before the ban is refused too. deleted / deactivated / pending_deletion / no profile row are served.
   const accountStatus = statusRead.restriction.kind; // the MODERATION restriction ("none" | "banned" | "suspended"), not profiles.account_status
-  if (accountStatus !== "none") res = withRefusalReason(res, statusRead.restriction); // the 403 below also carries `reason` (lib/accountStateGate.ts)
+  if (accountStatus !== "none" && restrictedAccountMayUse(req)) { (req as any).accountRestriction = statusRead.restriction; return { client, user: data.user as User }; } if (accountStatus !== "none") res = withRefusalReason(res, statusRead.restriction); // TV-4b allow-list first (lib/restrictedAccountAccess.ts); the 403 below also carries `reason` (lib/accountStateGate.ts)
   if (accountStatus === "banned") {
     sendError(res, "forbidden", "Your account has been banned");
     return null;
@@ -705,3 +705,6 @@ export function requireIdempotencyKey(
   sendError(res, "invalid_payload", bound.message, { reason: bound.reason });
   return null;
 }
+
+// TV-4b (lane B, 2026-10-06): the routes a banned or suspended account may still use. Imported at the foot so every cited line keeps its number.
+import { restrictedAccountMayUse } from "./restrictedAccountAccess.js";
