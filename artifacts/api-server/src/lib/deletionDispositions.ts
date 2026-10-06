@@ -408,7 +408,7 @@ export const AWAITING_OWNER_DECISION: ReadonlyArray<{
   /** What stops either answer being taken by default in the meantime. */
   heldOpenBy: string;
 }> = [
-  // EMPTY SINCE 2026-10-06 (PR #592, lane P). Its first four entries were the
+  // THE FOUR CREATOR LEDGERS LEFT ON 2026-10-06 (PR #592, lane P): they were the
   // creator / Rent-a-Buddy ledgers awaiting C-11. The owner answered: OD-PAY-8
   // (docs/ops/owner-decisions-20261004.md), recorded as answer B on 2026-10-04
   // 15:52 UTC. Answer B is promoted into the chain as migration 3600 (was
@@ -417,7 +417,7 @@ export const AWAITING_OWNER_DECISION: ReadonlyArray<{
   // `pseudonymise_creator_ledger` step is wired to it, so all four moved to
   // RETAINED_WITH_REASON above, exactly as this bucket's header says an answered
   // entry does. The bucket and its checks stay for the next decision of the
-  // same kind.
+  // same kind (lane B's branch puts its 3931 payment tables here).
 ];
 
 /**
