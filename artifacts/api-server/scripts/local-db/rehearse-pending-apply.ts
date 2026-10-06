@@ -49,6 +49,7 @@ import {
   formatDryRun,
   listMigrationFiles,
   planApply,
+  readOrderOverrides,
   runPlan,
   type LedgerRow,
 } from "../../../../scripts/src/apply-migrations.js";
@@ -354,7 +355,7 @@ function modelLedger(): void {
 }
 
 function plan(): string[] {
-  const p = planApply(onDisk(), readLedger());
+  const p = planApply(onDisk(), readLedger(), [], readOrderOverrides());
   const classify = (f: string) => classifyMigration(read(f), f);
   console.log(formatDryRun(p, classify));
   const order = assertUnambiguousOrder(p.pending);
@@ -386,7 +387,7 @@ function plan(): string[] {
 }
 
 async function apply(): Promise<void> {
-  const p = planApply(onDisk(), readLedger());
+  const p = planApply(onDisk(), readLedger(), [], readOrderOverrides());
   if (p.pending.length === 0) {
     console.log(
       `apply: NOTHING TO DO — ${p.skipped.length} proven row(s), 0 pending. (The runner's idempotent re-run.)`,
