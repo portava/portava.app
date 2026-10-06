@@ -2433,6 +2433,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/telegraphTransportClasses.test.ts",
     "artifacts/api-server/src/test/telegraphThreadNotificationPolicy.test.ts",
     "artifacts/api-server/src/test/telegraphDiagnosticsDurableAudit.test.ts",
+    // WIDENED 2026-10-06 by lane T2 (§45b, §45c): the proving suites of the OD-TRUST-5 send gate and of
+    // verifier findings 1 and 8 (a post across a block; the DM header's identity).
+    "artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts",
+    "artifacts/api-server/src/test/telegraphPostProjectionByline.test.ts",
+    "artifacts/api-server/src/test/telegraphConversationHeaderIdentity.test.ts",
+    // T366's W (§45c.2) rests on the kernel's call shape here: a change to it can move that row.
+    "artifacts/api-server/src/lib/memoryCommandBus.ts",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as
