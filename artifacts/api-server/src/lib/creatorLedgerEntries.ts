@@ -746,7 +746,23 @@ export function buildCreatorReversal(
 
 export type CreatorRecomputeResult =
   | { status: "recomputed"; entries: CreatorLedgerEntry[]; reversed: string[] }
-  | { status: "refused"; reason: RecomputeRefusal | CreatorEarningRefusal; detail: string };
+  | {
+      status: "refused";
+      /**
+       * `beneficiary_not_in_entries` is named for what this function can
+       * actually establish, and deliberately NOT "identity_severed". It
+       * reconstructs the attribution from the entries alone, and from there two
+       * different states look identical: an erased identity (every leg's
+       * beneficiary nulled by the C-11 "retain pseudonymised" answer) and an
+       * earning whose legs never named anyone (a zero creator share books only
+       * platform legs, and those name nobody by construction). Collapsing them
+       * into one reason would assert an erasure that may not have happened; the
+       * refusal says only that these entries do not name a beneficiary, which
+       * is true of both and enough to stop the recomputation.
+       */
+      reason: RecomputeRefusal | CreatorEarningRefusal | "beneficiary_not_in_entries";
+      detail: string;
+    };
 
 /**
  * `07` §10 "historical recalculation is possible", per creator type. Recomputing
@@ -776,6 +792,21 @@ export function recomputeCreatorUnderRuleVersion(
   // a caller that hands in a DIFFERENT attribution would silently re-file the
   // earning under another party or another type.
   const seed = live[0];
+  // WHO the earning is for cannot be guessed. `?? ""` here would hand
+  // buildCreatorEarningEntries an empty beneficiary, which it does not
+  // validate: it would book a fresh `creator_payable` leg to nobody and report
+  // `recomputed`, i.e. a successful recomputation that assigns money to the
+  // empty string. There is no safe default for a party.
+  const beneficiaryUserId = live.find((e) => e.beneficiaryUserId !== null)?.beneficiaryUserId ?? null;
+  if (beneficiaryUserId === null) {
+    return {
+      status: "refused",
+      reason: "beneficiary_not_in_entries",
+      detail:
+        `${opts.attributionId}: no live entry names a beneficiary, so the attribution cannot be ` +
+        `reconstructed from its entries — recomputing would book creator_payable to nobody`,
+    };
+  }
   const rebuiltAgainst: CreatorAttribution = {
     id: opts.attributionId,
     creatorType: seed.creatorType,
@@ -786,7 +817,7 @@ export function recomputeCreatorUnderRuleVersion(
     valueEvent: "verified_booking",
     valueEventId: opts.attributionId,
     basis: "recorded_value_event",
-    beneficiaryUserId: live.find((e) => e.beneficiaryUserId !== null)?.beneficiaryUserId ?? "",
+    beneficiaryUserId,
     weight: 0,
     confidence: 0,
     grossRevenueMinor: 0,
