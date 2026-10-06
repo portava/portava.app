@@ -51,6 +51,7 @@ interface Builder extends PromiseLike<Result> {
   in(c: string, vs: readonly unknown[]): Builder;
   is(c: string, v: unknown): Builder;
   not(c: string, op: string, v: unknown): Builder;
+  or(expr: string): Builder;
   order(c?: string, o?: unknown): Builder;
   limit(n: number): Builder;
   maybeSingle(): Promise<Result>;
@@ -74,6 +75,42 @@ function project(row: Row, cols: string | null): Row {
     out[c] = row[c];
   }
   return out;
+}
+
+/**
+ * PostgREST's `.or()` for the two shapes the gates under test write —
+ * `and(a.eq.x,b.eq.y),and(...)` (lib/blockGuard.ts) and a flat `c.op.v,...`
+ * list — with `eq`, `is` and `gt`. Anything else throws, so a gate that starts
+ * writing a filter this fake cannot read fails loudly instead of matching all.
+ */
+function orFilter(expr: string): (r: Row) => boolean {
+  const parts: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of expr) {
+    if (ch === "(") depth++;
+    if (ch === ")") depth--;
+    if (ch === "," && depth === 0) { parts.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  if (cur) parts.push(cur);
+  const atom = (a: string): ((r: Row) => boolean) => {
+    const m = /^([a-z_]+)\.(eq|is|gt)\.(.*)$/.exec(a.trim());
+    if (!m) throw new Error(`fake: or() atom ${a} is not modelled`);
+    const [, col, op, raw] = m as unknown as [string, string, string, string];
+    if (op === "is") return (r) => (raw === "null" ? r[col] == null : String(r[col]) === raw);
+    if (op === "gt") return (r) => r[col] != null && String(r[col]) > raw;
+    return (r) => String(r[col]) === raw;
+  };
+  const clauses = parts.map((p) => {
+    const t = p.trim();
+    if (t.startsWith("and(") && t.endsWith(")")) {
+      const inner = t.slice(4, -1).split(",").map(atom);
+      return (r: Row) => inner.every((f) => f(r));
+    }
+    return atom(t);
+  });
+  return (r) => clauses.some((f) => f(r));
 }
 
 /** Every `from(table)` a request makes, in order — the query-count ceiling reads it (verifier F5). */
@@ -100,6 +137,7 @@ function makeClient(tables: Record<string, FakeTable>) {
       neq(c, v) { filters.push((r) => r[c] !== v); return b; },
       in(c, vs) { filters.push((r) => vs.includes(r[c])); return b; },
       is(c, v) { filters.push((r) => (r[c] ?? null) === v); return b; },
+      or(expr) { filters.push(orFilter(expr)); return b; },
       not(c, op, v) {
         if (op !== "is") throw new Error(`fake: not(${op}) is not implemented`);
         filters.push((r) => (r[c] ?? null) !== v);
@@ -127,7 +165,7 @@ function makeClient(tables: Record<string, FakeTable>) {
   };
 }
 
-function baseTables(viewer: string, entityType: "memory" | "highlight", entityId: string): Record<string, FakeTable> {
+function baseTables(viewer: string, entityType: "memory" | "highlight" | "post" | "trip" | "event", entityId: string): Record<string, FakeTable> {
   return {
     collections: { rows: [{ id: COL, owner_id: viewer, name: "Saved", is_default: true, position: 0 }] },
     collection_items: {
@@ -454,6 +492,163 @@ describe("collection preview — an unreadable table is logged when its previews
     const line = errors.find((e) => /preview read failed/.test(e.msg));
     assert.ok(line, `no error line for the withheld previews: ${JSON.stringify(errors)}`);
     assert.equal((line.obj as { type?: string }).type, "memory");
+  });
+});
+
+// ── lane R wave 2: the post, trip and event arms take their own read gates ─────
+
+const P_ID = "c0000000-0000-0000-0000-000000000001";
+const T_ID = "d0000000-0000-0000-0000-000000000001";
+const E_ID = "e0000000-0000-0000-0000-000000000001";
+
+function postRow(over: Row = {}): Row {
+  return { id: P_ID, author_id: OWNER, content: "A bar with no sign", visibility: "public", trip_id: null, status: "active", post_status: "published", ...over };
+}
+function tripRow(over: Row = {}): Row {
+  return { id: T_ID, owner_id: OWNER, destination_city: "Da Nang", cover_url: "https://cdn.example/t.jpg", visibility: "public", ...over };
+}
+function eventRow(over: Row = {}): Row {
+  return {
+    id: E_ID, host_id: OWNER, title: "Night market crawl", cover_url: "https://cdn.example/e.jpg", visibility: "public", state: "published",
+    circle_id: null, trip_id: null, verified_only: false, trust_score_min: null, age_min: null, age_max: null, ...over,
+  };
+}
+
+describe("collection preview of a saved POST — GET /posts/:postId's rule plus a two-way block", () => {
+  it("a public, published post previews its text (intended case)", async () => {
+    const t = baseTables(SAVER, "post", P_ID);
+    t.posts = { rows: [postRow()] };
+    assert.equal((await previews(t, "saver-token"))[0].title, "A bar with no sign");
+  });
+  it("a PRIVATE post saved by someone else shows nothing", async () => {
+    const t = baseTables(SAVER, "post", P_ID);
+    t.posts = { rows: [postRow({ visibility: "private" })] };
+    assert.equal((await previews(t, "saver-token"))[0].title, null);
+  });
+  it("a followers-only post previews only for a follower", async () => {
+    const t = baseTables(SAVER, "post", P_ID);
+    t.posts = { rows: [postRow({ visibility: "followers_only" })] };
+    assert.equal((await previews(t, "saver-token"))[0].title, null);
+    await close();
+    t.user_follows = { rows: [{ follower_id: SAVER, following_id: OWNER }] };
+    assert.equal((await previews(t, "saver-token"))[0].title, "A bar with no sign");
+  });
+  it("an unreadable follow table withholds a followers-only post", async () => {
+    const t = baseTables(SAVER, "post", P_ID);
+    t.posts = { rows: [postRow({ visibility: "followers_only" })] };
+    t.user_follows = { rows: [{ follower_id: SAVER, following_id: OWNER }], failSelect: true };
+    assert.equal((await previews(t, "saver-token"))[0].title, null);
+  });
+  it("a PENDING (unpublished) post shows nothing to anyone but its author", async () => {
+    const t = baseTables(SAVER, "post", P_ID);
+    t.posts = { rows: [postRow({ post_status: "pending_delay" })] };
+    assert.equal((await previews(t, "saver-token"))[0].title, null);
+    await close();
+    const own = baseTables(OWNER, "post", P_ID);
+    own.posts = { rows: [postRow({ post_status: "pending_delay" })] };
+    assert.equal((await previews(own, "owner-token"))[0].title, "A bar with no sign");
+  });
+  it("a DELETED post shows nothing", async () => {
+    const t = baseTables(SAVER, "post", P_ID);
+    t.posts = { rows: [postRow({ status: "deleted" })] };
+    assert.equal((await previews(t, "saver-token"))[0].title, null);
+  });
+  it("a trip-only post previews only for an accepted crew member", async () => {
+    const t = baseTables(SAVER, "post", P_ID);
+    t.posts = { rows: [postRow({ visibility: "trip_only", trip_id: T_ID })] };
+    t.trips = { rows: [tripRow({ visibility: "private" })] };
+    assert.equal((await previews(t, "saver-token"))[0].title, null);
+    await close();
+    t.trip_members = { rows: [{ trip_id: T_ID, user_id: SAVER, role: "member", status: "accepted" }] };
+    assert.equal((await previews(t, "saver-token"))[0].title, "A bar with no sign");
+  });
+  it("a public post by someone who blocked the saver, or whom the saver blocked, shows nothing", async () => {
+    for (const block of [{ blocker_id: OWNER, blocked_id: SAVER }, { blocker_id: SAVER, blocked_id: OWNER }]) {
+      const t = baseTables(SAVER, "post", P_ID);
+      t.posts = { rows: [postRow()] };
+      t.blocks = { rows: [block] };
+      assert.equal((await previews(t, "saver-token"))[0].title, null, JSON.stringify(block));
+      await close();
+    }
+  });
+});
+
+describe("collection preview of a saved TRIP — canViewTrip decides", () => {
+  it("a public trip previews its destination and cover (intended case)", async () => {
+    const t = baseTables(SAVER, "trip", T_ID);
+    t.trips = { rows: [tripRow()] };
+    const items = await previews(t, "saver-token");
+    assert.equal(items[0].title, "Da Nang");
+    assert.equal(items[0].coverUrl, "https://cdn.example/t.jpg");
+  });
+  it("a PRIVATE trip saved by a stranger shows neither destination nor cover", async () => {
+    const t = baseTables(SAVER, "trip", T_ID);
+    t.trips = { rows: [tripRow({ visibility: "private" })] };
+    const items = await previews(t, "saver-token");
+    assert.equal(items[0].title, null);
+    assert.equal(items[0].coverUrl, null);
+  });
+  it("a private trip previews for its accepted crew", async () => {
+    const t = baseTables(SAVER, "trip", T_ID);
+    t.trips = { rows: [tripRow({ visibility: "private" })] };
+    t.trip_members = { rows: [{ trip_id: T_ID, user_id: SAVER, role: "member", status: "accepted" }] };
+    assert.equal((await previews(t, "saver-token"))[0].title, "Da Nang");
+  });
+  it("a buddies trip previews only on a MUTUAL follow", async () => {
+    const t = baseTables(SAVER, "trip", T_ID);
+    t.trips = { rows: [tripRow({ visibility: "buddies" })] };
+    t.user_follows = { rows: [{ follower_id: SAVER, following_id: OWNER }] };
+    assert.equal((await previews(t, "saver-token"))[0].title, null);
+    await close();
+    t.user_follows = { rows: [{ follower_id: SAVER, following_id: OWNER }, { follower_id: OWNER, following_id: SAVER }] };
+    assert.equal((await previews(t, "saver-token"))[0].title, "Da Nang");
+  });
+  it("a public trip whose owner blocked the saver shows nothing; an unreadable blocks table shows nothing", async () => {
+    const t = baseTables(SAVER, "trip", T_ID);
+    t.trips = { rows: [tripRow()] };
+    t.blocks = { rows: [{ blocker_id: OWNER, blocked_id: SAVER }] };
+    assert.equal((await previews(t, "saver-token"))[0].title, null);
+    await close();
+    t.blocks = { rows: [], failSelect: true };
+    assert.equal((await previews(t, "saver-token"))[0].title, null);
+  });
+});
+
+describe("collection preview of a saved EVENT — block, canViewEvent, eligibility", () => {
+  it("a public, published event previews its title and cover (intended case)", async () => {
+    const t = baseTables(SAVER, "event", E_ID);
+    t.events = { rows: [eventRow()] };
+    const items = await previews(t, "saver-token");
+    assert.equal(items[0].title, "Night market crawl");
+    assert.equal(items[0].coverUrl, "https://cdn.example/e.jpg");
+  });
+  it("an INVITE-ONLY event shows nothing to a saver with no RSVP or role, and previews once they have one", async () => {
+    const t = baseTables(SAVER, "event", E_ID);
+    t.events = { rows: [eventRow({ visibility: "invite_only" })] };
+    assert.equal((await previews(t, "saver-token"))[0].title, null);
+    await close();
+    t.event_rsvps = { rows: [{ event_id: E_ID, user_id: SAVER, status: "going" }] };
+    assert.equal((await previews(t, "saver-token"))[0].title, "Night market crawl");
+  });
+  it("a CANCELLED public event shows nothing to anyone but its host", async () => {
+    const t = baseTables(SAVER, "event", E_ID);
+    t.events = { rows: [eventRow({ state: "cancelled" })] };
+    assert.equal((await previews(t, "saver-token"))[0].title, null);
+  });
+  it("a public event whose host blocked the saver, or whom the saver blocked, shows nothing", async () => {
+    for (const block of [{ blocker_id: OWNER, blocked_id: SAVER }, { blocker_id: SAVER, blocked_id: OWNER }]) {
+      const t = baseTables(SAVER, "event", E_ID);
+      t.events = { rows: [eventRow()] };
+      t.blocks = { rows: [block] };
+      assert.equal((await previews(t, "saver-token"))[0].title, null, JSON.stringify(block));
+      await close();
+    }
+  });
+  it("a public event the saver is BANNED from shows nothing (the eligibility gate)", async () => {
+    const t = baseTables(SAVER, "event", E_ID);
+    t.events = { rows: [eventRow()] };
+    t.event_roles = { rows: [{ event_id: E_ID, user_id: SAVER, role: "banned" }] };
+    assert.equal((await previews(t, "saver-token"))[0].title, null);
   });
 });
 
