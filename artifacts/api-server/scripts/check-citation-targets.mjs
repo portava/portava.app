@@ -625,7 +625,14 @@ import {
  * held 4; pinning it removes those 4 -> 157. Nothing else moved. The same
  * entry is added to check-citation-symbols.mjs, whose counts do not change
  * (the document carries no anchored citation). */
-export const MAX_DEAD_TARGETS = 157;
+/* RATCHETED 2026-10-06 157 -> 156 on lane D (#630). The gain is main's, not
+ * this lane's: --list is identical on origin/main b19f3c681 and on this
+ * branch, and diffed against 6b14fe96e (where 157 was measured) exactly one
+ * pointer left the list: `cross-cutting-obligations.md:343`
+ * `compass/CompassAutopilotEngine.ts:598`, which #589 (5e67ccc3c) repointed
+ * to :739, the `trip_autopilot_proposals` insert the sentence names. Every
+ * other difference is a line shift of a citation that is still dead. */
+export const MAX_DEAD_TARGETS = 156;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set([
