@@ -896,7 +896,7 @@ describe("H. Proposal confirmation flow", () => {
 // these cases pin the wire.
 describe("H2. Trust restrictions reach the plan-proposal confirm (TRV2-08)", () => {
   const BOB_MEMBER = { trip_id: TRIP_ID, user_id: BOB_ID, role: "member", status: "accepted" };
-  function seededDb(proposalId: string, restrictions: any[] = [], opts: { group?: boolean; aliceOwns?: boolean } = {}): Db {
+  function seededDb(proposalId: string, restrictions: any[] = [], opts: { group?: boolean; aliceOwns?: boolean; readOnly?: boolean } = {}): Db {
     const group = opts.group !== false;
     const aliceOwns = opts.aliceOwns !== false;
     return makeDb({
@@ -908,7 +908,7 @@ describe("H2. Trust restrictions reach the plan-proposal confirm (TRV2-08)", () 
       }],
       trips: [{ id: TRIP_ID, owner_id: aliceOwns ? ALICE_ID : BOB_ID, title: "Cebu trip", plan_edit_permission: "all_members", status: "upcoming" }],
       trip_members: [
-        { trip_id: TRIP_ID, user_id: ALICE_ID, role: aliceOwns ? "owner" : "member", status: "accepted" },
+        { trip_id: TRIP_ID, user_id: ALICE_ID, role: aliceOwns ? "owner" : "member", status: "accepted", ...(opts.readOnly ? { permissions: { access: "retained_record_only" } } : {}) },
         ...(group ? [aliceOwns ? BOB_MEMBER : { ...BOB_MEMBER, role: "owner" }] : []),
       ],
       discovery_places: [{ id: PLACE_ID, name: "Lantaw Cafe", category: "cafe", city: "Cebu" }],
@@ -958,6 +958,18 @@ describe("H2. Trust restrictions reach the plan-proposal confirm (TRV2-08)", () 
     const solo = makeClient(seededDb("93345678-1234-1234-1234-123456789abc", [{ ...HOSTING }], { group: false }));
     _setTestClient(solo, true);
     assert.equal((await post(`/api/compass/proposals/93345678-1234-1234-1234-123456789abc/confirm`, { conversationId: CONV_ID })).status, 201);
+  });
+
+  it("a member restored to an ENDED trip's record only (lane C's R5): 403 trip_record_read_only, no plan write, and no word about a restriction", async () => {
+    const pid = "95345678-1234-1234-1234-123456789abc";
+    const client = makeClient(seededDb(pid, [], { readOnly: true }));
+    _setTestClient(client, true);
+    const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
+    assert.equal(r.status, 403);
+    assert.equal(r.body.error, "trip_record_read_only");
+    assert.equal(r.body.restrictionTypes, undefined);
+    assert.doesNotMatch(String(r.body.message), /restrict/i);
+    assert.deepEqual(client._getInserts()["trip_plan_items"] ?? [], []);
   });
 
   it("a messaging restriction does not stop the confirm — it is not a conversation", async () => {

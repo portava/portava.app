@@ -82,16 +82,29 @@ export const TRIP_ACTION_RESTRICTIONS: Readonly<Record<TripRestrictedAction, rea
 
 const ACCEPTED_TRIP_ROLES: ReadonlySet<string> = new Set(["owner", "co_host", "member", "viewer"]);
 
+/**
+ * `actorAccess`: "retained_record_only" when the actor's membership was
+ * restored by an upheld appeal AFTER the trip ended (3974 stamps
+ * trip_members.permissions.access). The owner's ruling (2026-10-04): "if a
+ * trip has ended, restore access to its retained record only" — they may read
+ * the trip, not change it (census-trips §85, verifier R5).
+ */
+export type TripActorAccess = "full" | "retained_record_only";
+
 export type TripShape =
-  | { kind: "solo" }
-  | { kind: "group"; otherAcceptedMembers: number }
+  | { kind: "solo"; actorAccess: TripActorAccess }
+  | { kind: "group"; otherAcceptedMembers: number; actorAccess: TripActorAccess }
   | { kind: "unreadable"; reason: string };
+
+/** What a retained-record-only member is told. Not a Trust restriction, so not "restricted". */
+export const RETAINED_RECORD_ONLY_MESSAGE =
+  "This trip has ended and your access was restored to its record only. You can see it, but not change it.";
 
 export async function readTripShape(sc: SupabaseClient | null | undefined, tripId: string, actorId: string): Promise<TripShape> {
   if (!sc) return { kind: "unreadable", reason: "no service client" };
   try {
     const [members, trip] = await Promise.all([
-      sc.from("trip_members").select("user_id, status, role").eq("trip_id", tripId),
+      sc.from("trip_members").select("user_id, status, role, permissions").eq("trip_id", tripId),
       sc.from("trips").select("id, owner_id").eq("id", tripId).maybeSingle(),
     ]);
     if (members?.error) return { kind: "unreadable", reason: `trip_members: ${members.error.message ?? "read failed"}` };
@@ -99,14 +112,19 @@ export async function readTripShape(sc: SupabaseClient | null | undefined, tripI
     if (!trip?.data) return { kind: "unreadable", reason: "trip not found" };
     const accepted = new Set<string>();
     const withRow = new Set<string>();
-    for (const m of (members.data ?? []) as Array<{ user_id: unknown; status?: unknown; role?: unknown }>) {
+    let actorAccess: TripActorAccess = "full";
+    for (const m of (members.data ?? []) as Array<{ user_id: unknown; status?: unknown; role?: unknown; permissions?: unknown }>) {
       withRow.add(String(m.user_id));
       if (ACCEPTED_TRIP_ROLES.has(String(m.role)) && (m.status == null || m.status === "accepted")) accepted.add(String(m.user_id));
+      if (String(m.user_id) === actorId) {
+        const perms = m.permissions && typeof m.permissions === "object" ? (m.permissions as Record<string, unknown>) : null;
+        if (perms?.access === "retained_record_only") actorAccess = "retained_record_only";
+      }
     }
     const owner = (trip.data as { owner_id?: unknown }).owner_id;
     if (typeof owner === "string" && !withRow.has(owner)) accepted.add(owner);
     accepted.delete(actorId);
-    return accepted.size === 0 ? { kind: "solo" } : { kind: "group", otherAcceptedMembers: accepted.size };
+    return accepted.size === 0 ? { kind: "solo", actorAccess } : { kind: "group", otherAcceptedMembers: accepted.size, actorAccess };
   } catch (e) {
     return { kind: "unreadable", reason: e instanceof Error ? e.message : "read threw" };
   }
@@ -122,6 +140,7 @@ export async function readTripShape(sc: SupabaseClient | null | undefined, tripI
 export type TripActionVerdict =
   | { allowed: true; shape: "solo" | "group" }
   | { allowed: false; kind: "unverifiable"; message: string; reason: string }
+  | { allowed: false; kind: "read_only"; message: string }
   | { allowed: false; kind: "restricted"; restrictionTypes: GatedRestriction[]; message: string };
 
 export async function decideTripActionRestriction(
@@ -132,6 +151,7 @@ export async function decideTripActionRestriction(
 ): Promise<TripActionVerdict> {
   const shape = await readTripShape(sc, tripId, userId);
   if (shape.kind === "unreadable") return { allowed: false, kind: "unverifiable", message: RESTRICTION_UNVERIFIABLE_MESSAGE, reason: shape.reason };
+  if (shape.actorAccess === "retained_record_only") return { allowed: false, kind: "read_only", message: RETAINED_RECORD_ONLY_MESSAGE };
   if (shape.kind === "solo") return { allowed: true, shape: "solo" };
   let verdict: ReturnType<typeof decideTrustAction>;
   try {
@@ -161,6 +181,25 @@ export async function refuseTripActionIfRestricted(
   const v = await decideTripActionRestriction(sc, tripId, userId, action);
   if (v.allowed) return false;
   if (v.kind === "unverifiable") { sendError(res, "degraded_unavailable", RESTRICTION_UNVERIFIABLE_MESSAGE); return true; }
+  if (v.kind === "read_only") { res.status(403).json({ error: "trip_record_read_only", message: v.message }); return true; }
   res.status(403).json({ error: "trust_restriction", message: v.message, restrictionTypes: v.restrictionTypes });
   return true;
+}
+
+/**
+ * For a door that changes a trip but is not a Trust-gated act (every other
+ * command through POST /trips/:id/commands): refuse a retained-record-only
+ * member (verifier R5). True when it has refused. An unreadable membership is
+ * "try again", never a silent pass.
+ */
+export async function refuseIfRetainedRecordOnly(
+  res: Response,
+  sc: SupabaseClient | null | undefined,
+  tripId: string,
+  userId: string,
+): Promise<boolean> {
+  const shape = await readTripShape(sc, tripId, userId);
+  if (shape.kind === "unreadable") { sendError(res, "degraded_unavailable", RESTRICTION_UNVERIFIABLE_MESSAGE); return true; }
+  if (shape.actorAccess === "retained_record_only") { res.status(403).json({ error: "trip_record_read_only", message: RETAINED_RECORD_ONLY_MESSAGE }); return true; }
+  return false;
 }
