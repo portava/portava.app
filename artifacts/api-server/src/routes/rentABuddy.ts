@@ -7398,12 +7398,12 @@ type EarningsMonth = EarningsMonthAgg;
  *
  * ── WHY THIS TAKES BASIS POINTS AND NOT A FRACTION ─────────────────────────
  * It used to take `platformFeePct` as a decimal fraction and compute
- * `Math.round(gross * pct * 100) / 100`. That is wrong on the half-cent: at
- * 10 %, a $0.35 booking owes $0.035, which must round to $0.04, but
- * `0.35 * 0.1` is 0.034999999999999996 in IEEE 754 and the expression yields
- * $0.03. Taking basis points lets this call the single integer rounding rule
- * (`applyBasisPoints`), which is also the rule the SQL aggregation path uses,
- * so the two cannot disagree by a cent.
+ * `Math.round(gross * pct * 100) / 100` — float arithmetic on money, and
+ * half-up where the charge floors. Taking basis points lets this call the
+ * single integer rule (`applyBasisPoints`: floor, the commission the checkout
+ * actually takes), which is also the rule the SQL aggregation path uses once
+ * migration 3603 is applied, so the estimate, the SQL summary and the charge
+ * cannot disagree by a cent.
  *
  * `null` from the rounding rule means the row's total could not be priced. It
  * is NOT treated as a zero fee: the row is counted as unpriceable and the
@@ -7641,9 +7641,9 @@ router.get("/rent-a-buddy/dashboard/earnings/summary", async (req, res) => {
   // rewritten. The conversion is exact: for an integer bps ≤ 10000 the quotient
   // has at most four decimal places and the shortest round-trip JSON form of
   // the nearest double IS that decimal, so PostgreSQL parses an exact `numeric`.
-  // SQL then rounds with `ROUND(numeric, 2)` — halves away from zero — which on
-  // non-negative amounts is the same rule as `applyBasisPoints`, so this path
-  // and the fold below agree cent for cent.
+  // SQL then FLOORS the per-booking fee (migration 3603; 3530/2330 rounded
+  // half away from zero) — the same rule as `applyBasisPoints`, so this path
+  // and the fold below agree cent for cent once 3603 is applied.
   const rpc = await rbRpc(serviceClient, "rb_buddy_earnings_summary", {
     p_buddy_id: (bp as any).id,
     p_platform_fee_pct: basisPointsAsRateFraction(rule.platformFeeBasisPoints),

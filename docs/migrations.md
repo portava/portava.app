@@ -4051,6 +4051,40 @@ cannot be written.
 `telegraph_diagnostics` rows (they would violate the five-value CHECK — export them first; they are an
 audit trail), restores the five-value CHECK, deletes the flag row only if it carries this file's seed
 description, and deletes the ledger row. Turning the flag off keeps the trail and is usually what is wanted.
+## 2026-10-06 — `3601`, `3602`, `3603` (Rent-a-Buddy commission, PR #616), written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3601_rent_buddy_commission_basis_points.sql` | **not applied** | **not applied** |
+| `3602_rent_buddy_standard_level_commission_seed.sql` | **not applied** | **not applied** |
+| `3603_rb_earnings_summary_floor_commission.sql` | **not applied** | **not applied** |
+
+**Renumbered.** `3601` and `3602` were written as `3520` / `3521`; main has since used `3520` for
+`3520_user_stamps_client_column_grants.sql`, which IS applied to portava-ci. The commission files were
+applied nowhere under either number and do not self-register, so the rename (lane P band 3600–3619)
+moves nothing that exists. `3602` still runs directly after `3601`, which its precondition requires.
+
+**What they are.** OD-PAY-3 and the 2026-10-04 15:52 UTC decisions: a flat 10 % commission stored in
+basis points with market overrides only when separately approved, and the `standard` level priced at it.
+`3601` adds `rent_buddy_fee_rules.platform_fee_basis_points` (1000 = 10 %) with
+`commission_override_approval` and a CHECK that makes an unapproved off-flat rate unwritable, plus the
+rate column on `rent_buddy_earnings_ledger`; `3602` is one guarded `INSERT … ON CONFLICT DO NOTHING` for
+`standard` at 1000. `3603` replaces `rb_buddy_earnings_summary`'s body (2330, then 3530) so the
+per-booking fee is `FLOOR(total × rate × 100) / 100` — the rule the checkout's commission uses (lane B's
+`commissionMinor`), so the summary, the TypeScript estimate (`applyBasisPoints`) and the charge agree;
+every key and every other number is 3530's.
+
+**Order with the deploy.** `resolveFeeSchedule` selects `platform_fee_basis_points` explicitly, so
+against a database without `3601` every fee-dependent route refuses (42703 -> `read_failed`), never
+prices at a default. Apply `3601` before or with the code, `3602` after `3601`. `3603` is independent of
+both (until it is applied the RPC path rounds half-up while the fallback fold floors; both are labelled
+`isEstimated`). `rent_buddy_enabled` is FALSE and `pay-deposit` / `pay-full` are 503s.
+
+**Database-tier proofs** run only in CI's local-db job: `src/test/db/rentBuddyStandardSeed.db.test.ts`
+(3602) and `src/test/db/rentBuddyEarningsSummaryFloor.db.test.ts` (3603). The owner's condition for #616
+is that this tier actually runs and passes: "11/11 checks is not full certification when the
+live-database tier is absent."
+
 ## Apply-order overrides
 
 **What.** `artifacts/api-server/src/migrations/ORDER_OVERRIDES.json` is the single declared list of

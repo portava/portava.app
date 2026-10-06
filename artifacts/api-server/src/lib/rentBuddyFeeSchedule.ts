@@ -143,30 +143,34 @@ export const DEFAULT_BUDDY_LEVEL = "new";
  * THE ROUNDING RULE. Stated once, implemented once, used by every site in this
  * tree that turns a rate into money.
  *
- *   fee_cents = floor((total_cents × basis_points + 5000) / 10000)
+ *   fee_cents = floor(total_cents × basis_points / 10000)
  *
- * i.e. **half-up on the cent, computed entirely in integer cents.** No
- * floating-point multiplication of a dollar amount by a rate happens anywhere.
+ * i.e. **the commission is rounded DOWN to the cent and the seller keeps the
+ * remainder, computed entirely in integer cents.** No floating-point
+ * multiplication of a dollar amount by a rate happens anywhere.
+ *
+ * WHY FLOOR (changed 2026-10-06 from half-up, lane P): it is the rule the
+ * CHARGE uses. Lane B's payment slice computes the commission actually taken at
+ * checkout as `commissionMinor(serviceMinor, bps) = floor(serviceMinor × bps /
+ * 10000)` — "the floor favours the seller, and the remainder is the seller's:
+ * commission + seller share = service exactly"
+ * (services/payments/bookingPayments/commissionPolicy.ts on
+ * claude/mission-b-payments-identity-trust-20261005, which lands before this).
+ * Its header says this estimate path "converges when #616 lands". An earnings
+ * figure that rounded the half cent the other way would tell a buddy they earn
+ * one cent less than they are paid on every half-cent total, so the estimate,
+ * the per-booking ledger and the SQL summary (migration 3603) all use the
+ * charge's rule. Same rate (1000), same base (the service total, never a tip),
+ * same rounding.
  *
  * WHY INTEGERS AND NOT `total * bps / 10000`. The obvious spelling is wrong at
- * the boundary, and silently. $0.35 at 1000 basis points is $0.035, which must
- * round to $0.04; `0.35 * 0.1` is 0.034999999999999996 in IEEE 754, so
- * `Math.round(0.35 * 0.1 * 100) / 100` yields **$0.03**. One cent, on the half,
- * against the buddy, on an unbounded number of bookings — and it recurs: $1.45,
- * $10.35, $21.15, $21.95 and 2 500 more amounts under $2 000 land the same way.
- * The integer form gives 0.04 because `35 × 1000 + 5000 = 40000` and
- * `40000 / 10000 = 4` exactly.
+ * the boundary, and silently. $0.70 at 1000 basis points is exactly $0.07, but
+ * `0.7 * 0.1` is 0.06999999999999999 in IEEE 754, so
+ * `Math.floor(0.7 * 0.1 * 100) / 100` yields **$0.06** — a cent the seller is
+ * not owed taken off a whole-cent commission. The integer form gives 0.07
+ * because `70 × 1000 = 70000` and `70000 / 10000 = 7` exactly.
  * `src/test/rentBuddyCommissionBasisPoints.test.ts` pins the case AND the
- * control, so the claim that the old spelling was wrong is itself tested.
- *
- * WHY HALF-UP AND NOT BANKER'S ROUNDING. The SQL aggregation path
- * (`rb_buddy_earnings_summary`, migration 2330) computes the same fee as
- * `ROUND(total_usd::numeric * rate, 2)`, and PostgreSQL's `ROUND` on `numeric`
- * rounds halves AWAY FROM ZERO. Every amount here is non-negative (booking
- * totals and tips; `buildBookingEntries` refuses a negative input), so away
- * from zero and up are the same rule, and the two paths agree cent for cent.
- * Choosing anything else would make the SQL summary and the per-booking ledger
- * disagree by a cent on exactly the amounts a user is most likely to notice.
+ * control, so the claim that the float spelling is wrong is itself tested.
  *
  * MAGNITUDE. `total_usd` is `numeric(10,2)`, so `total_cents` ≤ 1e10 and
  * `total_cents × 10000` ≤ 1e14 — well inside `Number.MAX_SAFE_INTEGER` (≈9e15),
@@ -192,11 +196,18 @@ export function applyBasisPoints(amountUsd: number, basisPoints: number): number
   const scaled = amountMinor * basisPoints;
   if (!Number.isSafeInteger(scaled)) return null;
 
-  const feeMinor = Math.floor((scaled + BASIS_POINTS_PER_UNIT / 2) / BASIS_POINTS_PER_UNIT);
+  // Floor, exactly as the charge computes it (header): `scaled` is a safe
+  // non-negative integer, so this is integer division.
+  const feeMinor = Math.floor(scaled / BASIS_POINTS_PER_UNIT);
   return feeMinor / 100;
 }
 
-/** Round a USD amount to the cent under the same half-up rule. */
+/**
+ * Round a USD amount to the cent, half away from zero. NOT a commission rule
+ * (that is `applyBasisPoints`, which floors): this removes float noise from sums
+ * and differences of amounts that are already whole cents (flat fee + variable
+ * fee; total − fee), where no half cent can arise.
+ */
 export function roundUsd(amountUsd: number): number | null {
   const amount = Number(amountUsd);
   if (!Number.isFinite(amount)) return null;
@@ -211,8 +222,8 @@ export function roundUsd(amountUsd: number): number | null {
  * `bps / 10000` for an integer `bps` ≤ 10000 has at most four decimal places,
  * and the shortest round-trip JSON form of the nearest double to such a value
  * IS that decimal — so PostgreSQL parses an exact `numeric`, not an
- * approximation. The rounding then happens in SQL under the same half-away rule
- * documented on `applyBasisPoints`.
+ * approximation. The rounding then happens in SQL: migration 3603 makes the
+ * function FLOOR the per-booking fee, the same rule as `applyBasisPoints`.
  */
 export function basisPointsAsRateFraction(basisPoints: number): number {
   return basisPoints / BASIS_POINTS_PER_UNIT;

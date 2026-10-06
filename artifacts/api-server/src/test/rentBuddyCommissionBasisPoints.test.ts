@@ -15,9 +15,10 @@
  * on 1000, and an unapproved off-flat rate is unwritable.
  *
  * ── THE FOUR PROPERTIES THAT ARE ABOUT MONEY, NOT SCHEMA ───────────────────
- *   1. ROUNDING. One rule, in one function, half-up on the cent in integer
- *      cents. The boundary case is $1.15 at 1000 basis points: $0.115 must
- *      round to $0.12, and the float spelling this replaced yields $0.11.
+ *   1. ROUNDING. One rule, in one function, FLOOR to the cent in integer
+ *      cents — the rule the checkout's commission uses (lane B), so the
+ *      estimate equals the charge. $1.15 at 1000 basis points is $0.11; $0.70
+ *      is $0.07, where a float floor would give $0.06.
  *   2. AN UNREADABLE FEE RULE REFUSES. Not 0 %, not 10 %, not the flat rate —
  *      no price at all, at every call site that computes one.
  *   3. A TIP CREDITS THE BUDDY IN FULL. The commission base is the booking
@@ -248,63 +249,77 @@ describe("market overrides are permitted only when separately approved", () => {
 // 3. The rounding rule, at its boundary
 // ═══════════════════════════════════════════════════════════════════════════
 
-describe("one rounding rule: half-up on the cent, in integer cents", () => {
-  it("$0.35 at 1000 basis points is $0.04, not $0.03", () => {
-    // THE boundary. $0.35 x 10 % = $0.035 exactly, which rounds up to $0.04.
-    // The float spelling this replaced — Math.round(0.35 * 0.1 * 100) / 100 —
-    // yields 0.03, because 0.35 * 0.1 is 0.034999999999999996 in IEEE 754.
-    assert.equal(applyBasisPoints(0.35, 1000), 0.04);
-    assert.notEqual(
-      applyBasisPoints(0.35, 1000), 0.03,
-      "0.03 is the float answer: one cent, on the half, against the buddy",
-    );
-    // THE CONTROL. Without this the assertion above could be a tautology — a
-    // test of a repair has to show that the thing it replaced was broken.
-    assert.equal(
-      Math.round(0.35 * 0.1 * 100) / 100, 0.03,
-      "the arithmetic this replaced really did answer 0.03",
-    );
+describe("one rounding rule: floor to the cent, in integer cents — the CHARGE's rule", () => {
+  // Lane B's checkout takes commissionMinor(service, bps) = floor(service × bps
+  // / 10000) (services/payments/bookingPayments/commissionPolicy.ts on lane B's
+  // branch, which lands first). This is that formula, written out, so the
+  // estimate path is held to the charge without importing a module main does
+  // not have yet.
+  const chargeRuleMinor = (cents: number, bps: number) => Math.floor((cents * bps) / 10000);
+
+  it("agrees with the charge's floor rule on EVERY cent amount to $2,000, at 10 % and at an off-flat rate", () => {
+    for (const bps of [1000, 1050]) {
+      for (let cents = 0; cents <= 200_000; cents++) {
+        const fee = applyBasisPoints(cents / 100, bps);
+        assert.ok(fee !== null);
+        if (Math.round(fee! * 100) !== chargeRuleMinor(cents, bps)) {
+          assert.fail(`${cents} cents at ${bps} bps: estimate ${fee}, charge ${chargeRuleMinor(cents, bps) / 100}`);
+        }
+      }
+    }
   });
 
-  it("the divergence is systematic, not one unlucky amount", () => {
-    // Every cent amount up to $2,000, both ways. If the two rules differed only
-    // on a handful of values the integer form would be a micro-optimisation;
-    // the count is what makes it a correctness fix. Both directions are
-    // reported so a regression that rounds the OTHER way is also caught.
-    const floatRule = (usd: number) => Math.round(usd * 0.1 * 100) / 100;
+  it("the half cent is the SELLER's: $0.35 at 1000 basis points is $0.03, as the charge takes", () => {
+    // $0.35 x 10 % = $0.035. Half-up (this file's rule until 2026-10-06) said
+    // $0.04 — one cent more than the checkout takes, on half of all amounts.
+    assert.equal(applyBasisPoints(0.35, 1000), 0.03);
+    assert.equal(chargeRuleMinor(35, 1000), 3);
+    let halfUpWouldDiffer = 0;
+    for (let cents = 1; cents <= 200_000; cents++) {
+      if (Math.floor((cents * 1000 + 5000) / 10000) !== chargeRuleMinor(cents, 1000)) halfUpWouldDiffer += 1;
+    }
+    assert.equal(halfUpWouldDiffer, 100_000,
+      "half-up disagrees with the charge on half of all cent amounts at 10 % — not an edge case");
+  });
+
+  it("$0.70 at 1000 basis points is $0.07, not the $0.06 a float floor gives", () => {
+    assert.equal(applyBasisPoints(0.7, 1000), 0.07);
+    // THE CONTROL. Without it the assertion above could be a tautology: the
+    // float spelling of the same rule really does lose the cent.
+    assert.equal(Math.floor(0.7 * 0.1 * 100) / 100, 0.06,
+      "0.7 * 0.1 is 0.06999999999999999 in IEEE 754");
+  });
+
+  it("the float divergence is systematic, not one unlucky amount", () => {
+    const floatFloor = (usd: number) => Math.floor(usd * 0.1 * 100) / 100;
     let integerHigher = 0;
     let floatHigher = 0;
     for (let cents = 1; cents <= 200_000; cents++) {
       const usd = cents / 100;
-      const diff = applyBasisPoints(usd, 1000)! - floatRule(usd);
+      const diff = applyBasisPoints(usd, 1000)! - floatFloor(usd);
       if (diff > 1e-12) integerHigher += 1;
       else if (diff < -1e-12) floatHigher += 1;
     }
     assert.ok(
       integerHigher >= 400,
-      `the float spelling rounds a half-cent DOWN on ${integerHigher} of 200000 cent amounts; ` +
-      "expected the divergence to be systematic (>=400), which is what makes this a money " +
-      "bug rather than a micro-optimisation",
+      `the float spelling loses a whole cent on ${integerHigher} of 200000 cent amounts; ` +
+      "expected the divergence to be systematic (>=400)",
     );
-    assert.equal(
-      floatHigher, 0,
-      "half-up never rounds BELOW the float spelling; a non-zero count here means " +
-      "the rounding rule has started going the other way on some amounts",
-    );
+    assert.equal(floatHigher, 0, "the integer rule never takes MORE than the float spelling");
   });
 
-  it("rounds a half cent up and anything under it down", () => {
-    assert.equal(applyBasisPoints(0.05, 1000), 0.01, "$0.005 -> $0.01");
-    assert.equal(applyBasisPoints(0.04, 1000), 0.00, "$0.004 -> $0.00");
-    assert.equal(applyBasisPoints(0.15, 1000), 0.02, "$0.015 -> $0.02");
-    assert.equal(applyBasisPoints(0.25, 1000), 0.03, "$0.025 -> $0.03");
+  it("rounds anything under a whole cent down", () => {
+    assert.equal(applyBasisPoints(0.05, 1000), 0.00, "$0.005 -> $0.00");
+    assert.equal(applyBasisPoints(0.09, 1000), 0.00, "$0.009 -> $0.00");
+    assert.equal(applyBasisPoints(0.15, 1000), 0.01, "$0.015 -> $0.01");
+    assert.equal(applyBasisPoints(0.25, 1000), 0.02, "$0.025 -> $0.02");
   });
 
-  it("is exact on the amounts that have no half cent", () => {
+  it("is exact on amounts with no fraction of a cent, and floors the rest", () => {
     assert.equal(applyBasisPoints(100, 1000), 10);
     assert.equal(applyBasisPoints(0, 1000), 0);
-    assert.equal(applyBasisPoints(33.33, 1000), 3.33);
-    assert.equal(applyBasisPoints(99.99, 1000), 10);
+    assert.equal(applyBasisPoints(33.33, 1000), 3.33, "$3.333 -> $3.33");
+    assert.equal(applyBasisPoints(99.99, 1000), 9.99, "$9.999 -> $9.99, the seller keeps the $0.009");
     assert.equal(applyBasisPoints(1_000_000, 1000), 100_000);
   });
 
@@ -314,11 +329,11 @@ describe("one rounding rule: half-up on the cent, in integer cents", () => {
   });
 
   it("agrees with the SQL path's fraction on the same boundary", () => {
-    // `rb_buddy_earnings_summary` computes ROUND(total::numeric * rate, 2),
-    // and PostgreSQL rounds halves AWAY FROM ZERO on numeric. Amounts here are
-    // non-negative, so that is the same rule. This asserts the FRACTION handed
-    // to SQL is the exact decimal, which is what makes the two agree — a
-    // fraction that arrived as 0.09999999999999999 would not.
+    // `rb_buddy_earnings_summary` (migration 3603) computes
+    // FLOOR(total::numeric * rate * 100) / 100 — the same floor. This asserts
+    // the FRACTION handed to SQL is the exact decimal, which is what makes the
+    // two agree — a fraction that arrived as 0.09999999999999999 would floor
+    // $0.70 to $0.06 in SQL exactly as the float spelling does here.
     const fraction = basisPointsAsRateFraction(1000);
     assert.equal(JSON.stringify(fraction), "0.1", "SQL must receive an exact numeric");
     assert.equal(JSON.stringify(basisPointsAsRateFraction(1050)), "0.105");
@@ -333,7 +348,7 @@ describe("one rounding rule: half-up on the cent, in integer cents", () => {
       1000,
       new Date("2026-06-01T00:00:00Z"),
     );
-    assert.equal(folded.totalPlatformFeesUsd, 0.12, "the fold must round like the resolver");
+    assert.equal(folded.totalPlatformFeesUsd, 0.11, "the fold must round like the resolver and the charge ($0.115 -> $0.11)");
     assert.deepEqual(folded.unpriceableBookingIds, []);
   });
 
@@ -342,7 +357,7 @@ describe("one rounding rule: half-up on the cent, in integer cents", () => {
     assert.equal(percentToBasisPoints(10.5), 1050);
     assert.equal(basisPointsToPercent(1050), 10.5);
     assert.equal(applyBasisPoints(200, 1050), 21);
-    assert.equal(applyBasisPoints(19.1, 1050), 2.01, "$2.00550 -> $2.01");
+    assert.equal(applyBasisPoints(19.1, 1050), 2.00, "$2.00550 -> $2.00 (floor, as the charge)");
   });
 
   it("refuses a rate that is not a whole number of basis points", () => {
@@ -352,7 +367,7 @@ describe("one rounding rule: half-up on the cent, in integer cents", () => {
     assert.equal(percentToBasisPoints(10.005), null, "a tenth of a basis point is not a rate");
   });
 
-  it("roundUsd is the same half-up rule for a bare amount", () => {
+  it("roundUsd only removes float noise from sums of whole cents (it is not the commission rule)", () => {
     assert.equal(roundUsd(0.125), 0.13);
     assert.equal(roundUsd(0.124), 0.12);
     assert.equal(roundUsd(7.000000000000001), 7);
@@ -606,5 +621,48 @@ describe("the superseded percent column is not a pricing input", () => {
       "accepting the old percent field would let a client keep editing the rate " +
       "through a lossy integer",
     );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 3603: the SQL earnings summary floors the commission like the charge
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("3603: rb_buddy_earnings_summary floors the fee, and changes nothing else 3530 does", () => {
+  const FLOOR_FILE = "3603_rb_earnings_summary_floor_commission.sql";
+  const floorText = readFileSync(join(SRC, "migrations", FLOOR_FILE), "utf8");
+  const prevText = readFileSync(join(SRC, "migrations", "3530_rb_earnings_summary_nothing_collected.sql"), "utf8");
+  const sqlCode = (sql: string) => sql.split("\n").map((l) => l.replace(/--.*$/, "")).join("\n");
+  const keys = (sql: string) =>
+    [...sqlCode(sql).matchAll(/'([A-Za-z]+)',\s/g)].map((m) => m[1]).filter((k) => /^[a-z]/.test(k!)).sort();
+
+  it("floors the per-booking fee in code, and no ROUND of the fee survives", () => {
+    const c = sqlCode(floorText);
+    assert.match(c, /FLOOR\(COALESCE\(b\.total_usd, 0\)::numeric \* COALESCE\(p_platform_fee_pct, 0\) \* 100\) \/ 100\s+AS fee/);
+    assert.doesNotMatch(c, /ROUND\(COALESCE\(b\.total_usd/);
+  });
+
+  it("sorts after 3530, which it replaces, so the chain ends on the floor", () => {
+    const chain = readdirSync(join(SRC, "migrations")).filter((f) => f.endsWith(".sql")).sort();
+    assert.ok(chain.indexOf(FLOOR_FILE) > chain.indexOf("3530_rb_earnings_summary_nothing_collected.sql"));
+  });
+
+  it("emits exactly 3530's keys and keeps its security properties and grants", () => {
+    assert.deepEqual(keys(floorText), keys(prevText), "3603 must change the rounding, not the shape");
+    const c = sqlCode(floorText);
+    assert.match(c, /SECURITY DEFINER/);
+    assert.match(c, /SET search_path TO 'public'/);
+    assert.match(c, /GRANT EXECUTE ON FUNCTION public\.rb_buddy_earnings_summary\(uuid, numeric\) TO service_role;/);
+    for (const role of ["PUBLIC", "anon", "authenticated"]) {
+      assert.match(c, new RegExp(`REVOKE ALL ON FUNCTION public\\.rb_buddy_earnings_summary\\(uuid, numeric\\) FROM ${role};`));
+    }
+    assert.match(c, /'totalInAppUsd',\s+0::numeric/, "M5's collected zero is kept");
+  });
+
+  it("asserts its own change in a postcondition that can fail", () => {
+    const c = sqlCode(floorText);
+    // Each guard is a conditional RAISE over the INSTALLED source, not a NOTICE.
+    assert.match(c, /IF body !~ 'FLOOR[^\n]*THEN\s+RAISE EXCEPTION '3603: POSTCONDITION FAILED: the installed body does not FLOOR the per-booking fee'/);
+    assert.match(c, /IF body ~ 'ROUND[^\n]*THEN\s+RAISE EXCEPTION '3603: POSTCONDITION FAILED: the installed body still ROUNDs the per-booking fee/);
   });
 });
