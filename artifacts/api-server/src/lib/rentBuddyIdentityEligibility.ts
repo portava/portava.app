@@ -154,9 +154,9 @@ export async function checkBookingParties(
       httpStatus: 403,
       code: "account_restricted",
       side: "traveler",
-      message:
-        "Your account can't book in-person meetups while a restriction is in place. " +
-        "You can see what is restricted, for how long, and how to appeal in Safety history.",
+      message: // D-24 (2026-10-06): the restriction's own sentence (TrustPrivacyGuard), never a reason the person was not told
+        restrictionSentence("private_plan_access") + " " +
+        "You can ask for a review in Appeals.",
     };
   }
 
@@ -195,3 +195,6 @@ const PAYMENTS_UNAVAILABLE: BookingPartyRefusal = {
   side: null,
   message: "We couldn't complete this booking's checks right now, so it was not made. Please try again shortly.",
 };
+
+// D-24 (2026-10-06): the refusal text is the restriction's own sentence. Appended so no cited line moves.
+import { restrictionSentence } from "../services/trust/TrustPrivacyGuard.js";

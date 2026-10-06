@@ -65,6 +65,9 @@ describe("checkBookingParties", () => {
     if (r.allowed) return;
     assert.equal(r.code, "account_restricted");
     assert.match(r.message, /appeal/i);
+    // D-24: the person is told the restriction's own sentence, and not sent to a screen that does not show it.
+    assert.ok(r.message.startsWith(restrictionSentence("private_plan_access")), r.message);
+    assert.doesNotMatch(r.message, /Safety history/, "Safety history lists Safe Return sessions, not restrictions");
   });
 
   it("buddy not verified, a minor, or under a hosting restriction -> the SAME opaque 403 buddy_unavailable", async () => {
@@ -204,3 +207,6 @@ describe("readBuddyPaymentReadiness reads the stored recipient row", () => {
     assert.deepEqual(await readBuddyPaymentReadiness({ partyForProfile: async () => { throw new Error("x"); }, getRecipient: async () => ok(null) } as any, B), { state: "unreadable" });
   });
 });
+
+// D-24 (2026-10-06): appended so no cited line moves.
+import { restrictionSentence } from "../services/trust/TrustPrivacyGuard.js";
