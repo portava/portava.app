@@ -141,9 +141,9 @@ export function startCallSweepScheduler(): void {
     // reschedule below is unconditional by construction rather than by a
     // `.catch()` that a resolved PostgREST error would have walked straight past.
     void runCallSweepTick().finally(() => {
-      _timer = setTimeout(tick, CALL_CONFIG.SWEEP_INTERVAL_MS);
+      if (_timer !== null) { _timer = setTimeout(tick, CALL_CONFIG.SWEEP_INTERVAL_MS); _timer.unref?.(); } // a stop() during the run must not re-arm
     });
-  }, CALL_CONFIG.SWEEP_STARTUP_DELAY_MS);
+  }, CALL_CONFIG.SWEEP_STARTUP_DELAY_MS); _timer.unref?.(); // never keep a process alive for a scheduler: the server does that
 }
 
 export function stopCallSweepScheduler(): void {
