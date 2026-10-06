@@ -8980,7 +8980,22 @@ counted file of this census, ran nothing against any database, and read or flipp
   and Compass's layover answers would become mostly deterministic text. That is a product call. It is recorded and
   not made here.
 
-### 53.4 Headline
+### 53.4 Both of §52.2's follow-ups, closed
+
+- **An unread plan-item access is owner-only.**
+  `artifacts/api-server/src/services/safeReturn/safeReturnPlanItemAccess.ts:72#if (access.status !== "ok") return false;`
+  now refuses before the grants map is consulted, so `{ status: "unread" }` carrying a grant no longer admits the
+  grantee (probe P8b). Case:
+  `artifacts/api-server/src/test/safeReturnPrivatePlanItems.test.ts:243#an UNREAD access is owner-only even when its grants map holds the creator's grant`.
+  The mutant that deletes the line is killed. The seam is still lane C's to rebind; this guard travels with it.
+- **The presence `.neq("user_id")` is load-bearing.** A second, manual-city session of the viewer's in the same city
+  is excluded only by that line, and
+  `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:347#the traveller's record from ANOTHER of their own sessions in the same city never counts either`
+  goes red when it is deleted (verifier mutant M9, now killed). Fixture and test only; the route is unchanged.
+
+Neither moves a row: L27, L129 and L187 stay where §51.1 put them.
+
+### 53.5 Headline
 
 No row moves. `check:census-integrity` reads **C=84 W=145 N=67 X=0**, unchanged since §50.4.
 
@@ -8999,3 +9014,4 @@ No row moves. `check:census-integrity` reads **C=84 W=145 N=67 X=0**, unchanged 
 - NOT-GRADED: artifacts/api-server/src/routes/memories.ts — §49.1 item 3 cites the from-layover route that builds L275's memory half; the router is census-highlights-memories' subject, and L275's held W rests on the missing postcard, not on this file.
 - NOT-GRADED: artifacts/api-server/src/services/memory/layoverMemory.ts — §50.3 cites the layover Memory row builder to record the trip_id fix; the module is census-highlights-memories' (lane A2) subject, and L275's held W rests on the missing postcard, not on this file.
 - NOT-GRADED: artifacts/api-server/src/services/safeReturn/safeReturnPlanItemAccess.ts — §52.2 records a follow-up for lane C's rebinding of this Safe Return plan-item seam (the `access.status` guard); no layover row rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/safeReturnPrivatePlanItems.test.ts — §53.4 cites the case that pins the seam's `access.status` guard; the seam is Safe Return's and lane C's, and no layover row rests on it.
