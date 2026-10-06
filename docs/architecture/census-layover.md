@@ -2864,7 +2864,7 @@ Three things now exist:
 
 | what | where |
 | --- | --- |
-| one plain-text thread writer, with the E2EE refusal that makes it safe to call from a second route | `artifacts/api-server/src/lib/threadMessage.ts:59#export async function postPlainThreadMessage` |
+| one plain-text thread writer, with the E2EE refusal that makes it safe to call from a second route | `artifacts/api-server/src/lib/threadMessage.ts:74#export async function postPlainThreadMessage` |
 | the route writing the traveller's own text, before the event that reports on it | `artifacts/api-server/src/routes/airport.ts:1757#const sent = await postPlainThreadMessage(sc, {` |
 | the screen navigating on `posted`, and saying something true when it is false | `travel-buddy-standalone/app/layover/[id].tsx:512#} else if (res.posted && overview.session.tripId) {` |
 
@@ -2885,7 +2885,7 @@ accept ciphertext. A caller needing those wants `POST /threads/:id/messages`.
 
 ### 14.2 The mutation that stayed green, and what it cost to fix
 
-Block B of `artifacts/api-server/src/test/layoverTelegraphMessage.test.ts:198#describe("B. the layover Telegraph route WRITES` reads the route's SOURCE
+Block B of `artifacts/api-server/src/test/layoverTelegraphMessage.test.ts:235#describe("B. the layover Telegraph route WRITES` reads the route's SOURCE
 TEXT. That was written first, and a mutation says why it is not enough: leaving
 the call site written but unreachable —
 `await Promise.resolve({ ok: true }) ?? await postPlainThreadMessage(...)` —
@@ -2894,7 +2894,7 @@ nowhere, which is L271 exactly. Source text is not behaviour.
 
 Block C is the repair: the route is exercised over HTTP against the layover
 database double, and the assertion is on the `messages` table rather than on the
-handler's prose (`artifacts/api-server/src/test/layoverTelegraphMessage.test.ts:321#describe("C. POST /airport/sessions/:id/telegraph`). Re-run against the same
+handler's prose (`artifacts/api-server/src/test/layoverTelegraphMessage.test.ts:358#describe("C. POST /airport/sessions/:id/telegraph`). Re-run against the same
 mutation it fails 2.
 
 | mutation | result |
@@ -2910,7 +2910,7 @@ mutation it fails 2.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| L271 | W | **C** | *"The message is discarded"* — the row's own words — is false at this commit. The traveller's text is inserted into the resolved trip thread (`artifacts/api-server/src/test/layoverTelegraphMessage.test.ts:334#assert.equal(tables.messages![0]!.body, text`), `posted` travels on the response and on the emitted event so the audit record is a fact rather than a guess, and the screen navigates to the chat only when the message is in it. Three refusals are asserted rather than assumed: a non-member gets no thread and no write, an E2EE thread is refused with `postFailure: "e2ee"` and no plaintext row, and a trip with no thread yet writes nothing and does not crash. Red-first, five mutations, including one that first exposed a source-reading test as worthless. |
+| L271 | W | **C** | *"The message is discarded"* — the row's own words — is false at this commit. The traveller's text is inserted into the resolved trip thread (`artifacts/api-server/src/test/layoverTelegraphMessage.test.ts:371#assert.equal(tables.messages![0]!.body, text`), `posted` travels on the response and on the emitted event so the audit record is a fact rather than a guess, and the screen navigates to the chat only when the message is in it. Three refusals are asserted rather than assumed: a non-member gets no thread and no write, an E2EE thread is refused with `postFailure: "e2ee"` and no plaintext row, and a trip with no thread yet writes nothing and does not crash. Red-first, five mutations, including one that first exposed a source-reading test as worthless. |
 
 ### 14.4 What this does NOT close
 
