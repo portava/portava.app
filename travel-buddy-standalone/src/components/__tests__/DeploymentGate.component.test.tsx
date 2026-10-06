@@ -8,7 +8,7 @@ import React from 'react';
 import { Text } from 'react-native';
 import { render, screen } from '@testing-library/react-native';
 
-import { DeploymentGate } from '../DeploymentMisconfiguredScreen';
+import { DeploymentGate } from '../DeploymentMisconfiguredScreen.tsx';
 
 const mounted = jest.fn();
 function App() {
