@@ -4109,6 +4109,23 @@ lengthens no row; does not stop the sweep). **Proof:** `src/test/db/wallTelemetr
 Until 3702 is applied the sweep still deletes on the 90-day stamps; it fails as `error` (never "nothing
 expired") where 2308 is absent.
 
+## 2026-10-06 — `3703_sensing_consent_grants.sql`, written and NOT applied anywhere (lane L)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3703_sensing_consent_grants.sql` | **not applied** | **not applied** |
+
+**What it is.** OD-MAP-6's three separate, revocable passive-sensing consents: `sensing_consent_grants`, one
+row per (person, scope) for `capture` / `upload` / `surface`, each with the disclosure version agreed to;
+a withdrawal keeps the row and stamps `withdrawn_at`. RLS on, no policies, no client privilege (the API
+stamps the version as service_role); `user_id` → `auth.users` ON DELETE CASCADE (deletion fate in
+`lib/deletionDispositions.ts`). Flag `sensing_consent_split_enabled` **seeded FALSE**: off, no grant can be
+recorded (withdrawals always can) and the sensing session issuer issues nothing.
+**Pre/postconditions** in the file. **Rollback:** `db/rollback/2026-10-06-3703-sensing-consent-grants-rollback.sql`
+(refuses while the flag is TRUE; drops the table and the flag row). **Proof:**
+`src/test/db/sensingConsentGrants.db.test.ts` (live-DB tier; not run locally). **Activation** waits on the
+legal review of the words (`docs/contracts/sensing-consent-split-v1.md`), then 3703 applied, then the flag.
+
 ## Apply-order overrides
 
 **What.** `artifacts/api-server/src/migrations/ORDER_OVERRIDES.json` is the single declared list of
