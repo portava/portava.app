@@ -67,7 +67,11 @@ import { getIdentityProvider } from "../services/identityVerification/providers.
 import { identityProviderStatus } from "../services/identityVerification/readiness.js";
 import { toVerificationLevel } from "../services/identityVerification/types.js";
 import type { VerificationResult } from "../services/identityVerification/types.js";
-import { checkBookingKycGate, KYC_OVERRIDE_FLAG } from "../lib/rentBuddyKycGate.js";
+import { checkBookingKycGate } from "../lib/rentBuddyKycGate.js";
+// The retired override flag's row name, spelled here rather than imported: lane
+// B's N-1 deletes the exported constant along with the flag (migration 3932), and
+// this suite must keep proving that the coverage branch never reads that row.
+const KYC_OVERRIDE_FLAG = "rent_buddy_allow_bookings_without_kyc";
 import { mapStripeFailureCode } from "../services/identityVerification/stripeIdentity.js";
 import { identityKeyDecision } from "../lib/paymentsMode.js";
 
