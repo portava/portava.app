@@ -349,13 +349,13 @@ describe("Trip Autopilot", () => {
     const r = await api("POST", `/trips/${TRIP_ID}/autopilot/check`, {});
     assert.equal(r.status, 200);
     assert.doesNotMatch(JSON.stringify(r.json), /Clinic appointment/, "another member's private title reached the viewer");
-    assert.equal(r.json.issues.some((i: any) => i.type === "timing_conflict"), false, "a travel-time conflict was derived from a withheld place");
+    assert.equal((r.json as { issues: Array<{ type: string }> }).issues.some((i) => i.type === "timing_conflict"), false, "a travel-time conflict was derived from a withheld place");
 
     // The same item, made PUBLIC by its owner, is ordinary plan content again.
     const pub = store.trip_plan_items!.find((i) => i.id === I1)!;
     pub.location_is_private = false;
     const r2 = await api("POST", `/trips/${TRIP_ID}/autopilot/check`, {});
-    assert.ok(r2.json.issues.some((i: any) => i.type === "timing_conflict"), "control: the public item does conflict");
+    assert.ok((r2.json as { issues: Array<{ type: string }> }).issues.some((i) => i.type === "timing_conflict"), "control: the public item does conflict");
   });
 
   it("catches a timing conflict with a concrete reason and proposes moving only the affected flexible item", async () => {

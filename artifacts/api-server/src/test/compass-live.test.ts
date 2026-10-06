@@ -291,8 +291,9 @@ describe("Compass Live", () => {
     seedPlanItem(store, "item-a", "Women's shelter intake", atHour(9), { creatorId: "00000000-0000-0000-0000-0000000000bb" });
     await api("POST", "/compass/live/start");
     const c1 = await api("POST", "/compass/live/check");
-    assert.equal(c1.json.session.context.nextItem.id, "item-a", "the slot is still known");
-    assert.equal(c1.json.session.context.nextItem.title, "Private plan");
+    const next = (c1.json as { session: { context: { nextItem: { id: string; title: string } } } }).session.context.nextItem;
+    assert.equal(next.id, "item-a", "the slot is still known");
+    assert.equal(next.title, "Private plan");
     assert.doesNotMatch(JSON.stringify(c1.json), /shelter intake/, "another member's private title reached the viewer");
   });
 
