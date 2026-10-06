@@ -4033,8 +4033,9 @@ below is CI's `postgis/postgis:16-3.4` service container (ci.yml `api-server-loc
    - End state unchanged: 2140 and 2178 touch different parts of `user_deletion_requests` (2140 the key,
      columns, indexes and FKs; 2178 only the status CHECK, which 2140 reads).
 
-**Measured with all three in place:** see the run named in `KNOWN_UNREPLAYABLE.json`'s `_measured`
-and in the PR that added this section. That list now holds only `2490_destructive_privilege_boundary.sql`
+**Measured with all three in place:** run 37450105833 (job 112224419923, head `fff4e5bf6`) — 411 files
+applied in order, 2 known-unreplayable of 413, 0 applied on the post-chain retry, database suites
+580/580 with 0 skipped. `KNOWN_UNREPLAYABLE.json` now holds only `2490_destructive_privilege_boundary.sql`
 (a PostgreSQL 17 privilege on a 16 harness) and `2970_stamp_definitions_evidences_presence.sql` (seed
 rows a structure-only baseline cannot carry); neither is an order defect.
 
