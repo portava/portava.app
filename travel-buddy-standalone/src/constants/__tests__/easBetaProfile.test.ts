@@ -5,9 +5,10 @@
  * The profile pins the three public URLs the app inlines at build time
  * (EXPO_PUBLIC_SUPABASE_URL, EXPO_PUBLIC_API_BASE_URL, EXPO_PUBLIC_WEB_ORIGIN)
  * to portava-beta. eas.json's build-profile `env` outranks EAS environment
- * variables of the same name (https://docs.expo.dev/eas/workflows/environment/,
- * read 2026-10-06), so a production value stored in the EAS environment cannot
- * override them. The anon/publishable key is deliberately NOT in the file: it
+ * variables of the same name — documented for EAS Workflows build jobs
+ * (https://docs.expo.dev/eas/workflows/environment/, read 2026-10-06); the
+ * runbook has the owner confirm it in the first beta build's log. The
+ * anon/publishable key is deliberately NOT in the file: it
  * comes from the EAS environment the profile names (docs/eas-runbook.md
  * § "Private beta build").
  *

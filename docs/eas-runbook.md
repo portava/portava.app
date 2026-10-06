@@ -549,9 +549,12 @@ How EAS resolves these, as documented by Expo (read 2026-10-06):
   (<https://docs.expo.dev/eas/environment-variables/>,
   <https://docs.expo.dev/eas/environment-variables/usage/>).
 - A variable in the build profile's `env` outranks an EAS environment variable
-  of the same name (<https://docs.expo.dev/eas/workflows/environment/>). So a
-  production URL stored in the `preview` environment cannot override the beta
-  URLs above.
+  of the same name. Expo documents this precedence for EAS Workflows `build`
+  jobs (<https://docs.expo.dev/eas/workflows/environment/>). I found no
+  statement of it for a plain `eas build` from the CLI. So check the first beta
+  build's log: the environment it loaded must show the beta URLs. Until that
+  check passes, do not store a production `EXPO_PUBLIC_SUPABASE_URL` in the
+  `preview` environment.
 - `EXPO_PUBLIC_*` values are compiled into the app and are public. Use
   `plaintext` or `sensitive` visibility, never `secret`
   (<https://docs.expo.dev/eas/environment-variables/manage/>).

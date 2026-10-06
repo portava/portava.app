@@ -165,6 +165,10 @@ See `docs/eas-runbook.md` § "Private beta build". In short:
 2. Run `eas build --profile beta`.
 3. Distribute the internal build.
 
+In the first build's log, confirm that `EXPO_PUBLIC_SUPABASE_URL` is the beta
+URL. Expo documents that a profile's `env` outranks the EAS environment for
+Workflows build jobs, but not for a plain `eas build`.
+
 ## If the beta URL is not `portava-beta.replit.app`
 
 Three places name the expected origin:
