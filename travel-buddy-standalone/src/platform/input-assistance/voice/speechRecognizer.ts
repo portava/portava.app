@@ -25,6 +25,24 @@
  *   - With neither, `NO_SPEECH_RECOGNIZER` answers `unavailable/no_provider` —
  *     never a placeholder transcript.
  *
+ * OD-INPUT-5, ENFORCED IN THE RESOLVER (2026-10-06, consolidated review). The
+ * owner's rule — "use on-device operating-system speech recognition first; send
+ * audio to a cloud provider only with separate, explicit consent" — is decided
+ * HERE, once, by `resolveSpeechRecognizer`, so every surface that dictates
+ * inherits it: the trip-destination button, the paste box, and anything added
+ * later. The resolver returns a recognizer ONLY when that recognizer declares
+ * `onDeviceOnly: true` (the guarantee that audio never leaves the device). It
+ * never falls back to the browser's Web Speech API, whose default is remote
+ * processing; `web-speech`, and any recognizer that declares nothing, resolve
+ * to `NO_SPEECH_RECOGNIZER` — unavailable, said plainly, never a cloud engine.
+ * The declaration is the same one the Wall's push-to-talk checks
+ * (`isOnDeviceOnly`), so that check and this one can never disagree.
+ *
+ * THERE IS NO CLOUD PATH. A recognizer that may send audio away could be
+ * returned only through a separate-consent path, and that path does not exist
+ * yet: no function here returns an undeclared recognizer, and no consent flow
+ * for it has been designed or approved. Building one is an owner decision.
+ *
  * Pure module — no React, no RN import, no network. node:test-safe.
  */
 import type { TranscriptionResult } from './types.ts';
@@ -42,6 +60,12 @@ export interface RecognizeOnceOptions {
 export interface SpeechRecognizerPort {
   /** 'web-speech', 'native-speech', 'none'. */
   readonly providerId: string;
+  /**
+   * The port's GUARANTEE that audio never leaves the device. Only the literal
+   * `true` counts; absence means "may go to a server" (OD-INPUT-5). The
+   * resolver returns no recognizer without it.
+   */
+  readonly onDeviceOnly?: true;
   isAvailable(): Promise<boolean>;
   /** Listen for one utterance. Resolves an outcome envelope; never throws. */
   recognizeOnce(opts?: RecognizeOnceOptions): Promise<TranscriptionOutcome>;
@@ -57,7 +81,7 @@ export const NO_SPEECH_RECOGNIZER: SpeechRecognizerPort = {
       ok: false,
       unavailable: true,
       reason: 'no_provider',
-      error: 'This build has no speech recognizer.',
+      error: 'This build has no on-device speech recognizer.',
     };
   },
 };
@@ -73,9 +97,20 @@ export function clearSpeechRecognizer(): void {
   installed = null;
 }
 
-/** The installed recognizer, else the platform's own if it has one, else the honest none. */
-export function resolveSpeechRecognizer(scope: unknown = globalThis): SpeechRecognizerPort {
-  return installed ?? createWebSpeechRecognizer(scope) ?? NO_SPEECH_RECOGNIZER;
+/** Only an explicit, literal `onDeviceOnly: true` counts; absence is "may go to a server". */
+export function declaresOnDeviceOnly(port: SpeechRecognizerPort): boolean {
+  return (port as { onDeviceOnly?: unknown }).onDeviceOnly === true;
+}
+
+/**
+ * The recognizer every dictating surface uses: the INSTALLED one, and only if
+ * it declares on-device processing. Otherwise the honest none — and never the
+ * platform's browser engine, which is not consulted at all (OD-INPUT-5; see the
+ * file header). A cloud recognizer has no way through: the separate-consent
+ * path it would need does not exist yet.
+ */
+export function resolveSpeechRecognizer(): SpeechRecognizerPort {
+  return installed && declaresOnDeviceOnly(installed) ? installed : NO_SPEECH_RECOGNIZER;
 }
 
 // ── The web platform's own recognizer ──────────────────────────────────────
@@ -85,6 +120,14 @@ interface WebSpeechAlternative { transcript: string; confidence: number }
 interface WebSpeechResult { isFinal: boolean; length: number; [i: number]: WebSpeechAlternative }
 interface WebSpeechEvent { resultIndex: number; results: { length: number; [i: number]: WebSpeechResult } }
 interface WebSpeechRecognition {
+  /**
+   * Web Speech API: "when set to true, indicates a requirement that the speech
+   * recognition process MUST be performed locally on the user's device. If set
+   * to false, the user agent can choose between local and remote processing.
+   * The default value is false." (W3C CG draft, 18 Sep 2026, read 2026-10-05:
+   * https://webaudio.github.io/web-speech-api/). Absent on engines that predate it.
+   */
+  processLocally?: boolean;
   lang: string;
   interimResults: boolean;
   continuous: boolean;
@@ -96,7 +139,31 @@ interface WebSpeechRecognition {
   stop(): void;
   abort(): void;
 }
-type WebSpeechCtor = new () => WebSpeechRecognition;
+type WebAvailability = 'unavailable' | 'downloadable' | 'downloading' | 'available';
+type WebSpeechCtor = (new () => WebSpeechRecognition) & {
+  /** Static, same spec: `available({ langs, processLocally })` → AvailabilityStatus. */
+  available?: (options: { langs: string[]; processLocally?: boolean }) => Promise<WebAvailability>;
+};
+
+function defaultLanguage(scope: unknown): string {
+  const nav = (scope as { navigator?: { language?: unknown } } | null)?.navigator;
+  return typeof nav?.language === 'string' && nav.language ? nav.language : 'en-US';
+}
+
+/**
+ * Can this engine recognise `lang` ON THE DEVICE right now? Only an explicit
+ * "available" from the spec's own check counts. An engine without the check,
+ * one that answers anything else ("downloadable" — the model is not installed;
+ * "unavailable"), or one that throws, is NOT on-device — and therefore not used.
+ */
+async function webOnDeviceAvailable(Ctor: WebSpeechCtor, lang: string): Promise<boolean> {
+  if (typeof Ctor.available !== 'function') return false;
+  try {
+    return (await Ctor.available({ langs: [lang], processLocally: true })) === 'available';
+  } catch {
+    return false;
+  }
+}
 
 function webSpeechCtor(scope: unknown): WebSpeechCtor | null {
   if (!scope || typeof scope !== 'object') return null;
@@ -119,19 +186,48 @@ const ERROR_COPY: Record<'permission_denied' | 'capture_failed' | 'provider_erro
 };
 
 /**
+ * OD-INPUT-5 (docs/ops/owner-decisions-20261004.md): "Use on-device operating-
+ * system speech recognition first. Send audio to a cloud provider only with
+ * separate, explicit consent; don't retain raw audio by default."
+ */
+export const ON_DEVICE_UNAVAILABLE_COPY =
+  'Voice input here needs on-device speech recognition, which isn’t available for this language on this device. ' +
+  'Your voice is never sent to an online service without your permission.';
+
+const ON_DEVICE_UNAVAILABLE: TranscriptionOutcome = {
+  ok: false,
+  unavailable: true,
+  reason: 'on_device_unavailable',
+  error: ON_DEVICE_UNAVAILABLE_COPY,
+};
+
+/**
  * The Web Speech API, where the platform exposes it. Null when it does not
  * (every native build today, and browsers without it) — so a caller can never
  * mistake "absent" for "available but silent".
+ *
+ * NOT RETURNED BY THE RESOLVER, and it declares no `onDeviceOnly`. Its own
+ * checks below make a single session local when the engine says it can be,
+ * but that is the browser vendor's promise, re-asked on every call — not a
+ * guarantee this port can make. OD-INPUT-5 puts the operating system's own
+ * recognizer first, so this adapter is reachable only by a caller that passes
+ * it in by hand; no production surface does.
  */
 export function createWebSpeechRecognizer(scope: unknown = globalThis): SpeechRecognizerPort | null {
   const Ctor = webSpeechCtor(scope);
   if (!Ctor) return null;
   return {
     providerId: 'web-speech',
+    // OD-INPUT-5: a browser recognizer is used ONLY on the device. Without the
+    // spec's `processLocally` + `available()` the user agent may send the audio
+    // to a remote service, which needs a separate consent this build does not
+    // ask for — so such an engine is reported unavailable, not used.
     async isAvailable() {
-      return true;
+      return webOnDeviceAvailable(Ctor, defaultLanguage(scope));
     },
-    recognizeOnce(opts: RecognizeOnceOptions = {}): Promise<TranscriptionOutcome> {
+    async recognizeOnce(opts: RecognizeOnceOptions = {}): Promise<TranscriptionOutcome> {
+      const lang = opts.language ?? defaultLanguage(scope);
+      if (!(await webOnDeviceAvailable(Ctor, lang))) return ON_DEVICE_UNAVAILABLE;
       return new Promise((resolve) => {
         let rec: WebSpeechRecognition;
         try {
@@ -140,6 +236,16 @@ export function createWebSpeechRecognizer(scope: unknown = globalThis): SpeechRe
           resolve({ ok: false, unavailable: true, reason: 'provider_error', error: ERROR_COPY.provider_error });
           return;
         }
+        // An engine that does not HAVE the attribute cannot be told to process
+        // locally — assigning it would only create a plain property the engine
+        // never reads. (The earlier "read it back" check could not fail: a plain
+        // assignment always reads back; verifier finding 7.) Such an engine is
+        // not used.
+        if (!('processLocally' in rec)) {
+          resolve(ON_DEVICE_UNAVAILABLE);
+          return;
+        }
+        rec.processLocally = true;
         let final: TranscriptionResult | null = null;
         let failure: string | undefined;
         let settled = false;
@@ -152,7 +258,7 @@ export function createWebSpeechRecognizer(scope: unknown = globalThis): SpeechRe
         const onAbort = () => {
           try { rec.stop(); } catch { /* already stopped */ }
         };
-        rec.lang = opts.language ?? '';
+        rec.lang = lang;
         rec.interimResults = !!opts.onPartial;
         rec.continuous = false;
         rec.maxAlternatives = 1;
@@ -198,6 +304,17 @@ export function createWebSpeechRecognizer(scope: unknown = globalThis): SpeechRe
 export interface NativeSpeechModuleLike {
   requestPermissionsAsync(): Promise<{ granted: boolean }>;
   isRecognitionAvailable(): boolean;
+  /**
+   * expo-speech-recognition: "Whether the device supports on-device speech
+   * recognition." REQUIRED by OD-INPUT-5's posture: the module documents
+   * `requiresOnDeviceRecognition` as "Prevent device from sending audio over
+   * the network. Only enabled if the device supports it" — i.e. on a device
+   * without on-device support the flag does NOT stop the network path. So the
+   * adapter checks support itself and refuses, rather than trusting the flag.
+   * (README read 2026-10-05: https://github.com/jamsch/expo-speech-recognition.)
+   * Optional in the type only so an older module is REFUSED, not crashed on.
+   */
+  supportsOnDeviceRecognition?(): boolean;
   start(options: { lang?: string; interimResults?: boolean; continuous?: boolean; requiresOnDeviceRecognition?: boolean }): void;
   stop(): void;
   addListener(
@@ -206,20 +323,45 @@ export interface NativeSpeechModuleLike {
   ): { remove(): void };
 }
 
+/**
+ * `cloudConsentGranted` is the ONLY way audio may leave the device (OD-INPUT-5:
+ * "only with separate, explicit consent"). No such consent exists in this build,
+ * nothing passes `true`, and the default keeps recognition on the device.
+ */
+export interface NativeRecognizerConfig {
+  cloudConsentGranted?: boolean;
+}
+
 export function createNativeSpeechRecognizer(
   mod: NativeSpeechModuleLike,
-  config: { requiresOnDeviceRecognition: boolean } = { requiresOnDeviceRecognition: true },
+  config: NativeRecognizerConfig = {},
 ): SpeechRecognizerPort {
+  const onDeviceOnly = config.cloudConsentGranted !== true;
+  const onDeviceSupported = (): boolean => {
+    try {
+      return typeof mod.supportsOnDeviceRecognition === 'function' && mod.supportsOnDeviceRecognition() === true;
+    } catch {
+      return false;
+    }
+  };
   return {
     providerId: 'native-speech',
+    // The guarantee the resolver requires — made only in the on-device-only
+    // posture, which refuses (below) on a device that cannot recognise locally.
+    // With `cloudConsentGranted`, audio may leave the device, so the port
+    // declares nothing and the resolver will not return it.
+    ...(onDeviceOnly ? { onDeviceOnly: true as const } : {}),
     async isAvailable() {
       try {
-        return mod.isRecognitionAvailable() === true;
+        return mod.isRecognitionAvailable() === true && (!onDeviceOnly || onDeviceSupported());
       } catch {
         return false;
       }
     },
     async recognizeOnce(opts: RecognizeOnceOptions = {}): Promise<TranscriptionOutcome> {
+      // Checked BEFORE the microphone is asked for: a device that would send the
+      // audio away is refused without a permission prompt.
+      if (onDeviceOnly && !onDeviceSupported()) return ON_DEVICE_UNAVAILABLE;
       let perm: { granted: boolean };
       try {
         perm = await mod.requestPermissionsAsync();
@@ -252,12 +394,13 @@ export function createNativeSpeechRecognizer(
         const onAbort = () => { try { mod.stop(); } catch { /* already stopped */ } };
         opts.signal?.addEventListener('abort', onAbort);
         try {
+          // OD-INPUT-5: on the device, and NO `recordingOptions` — the module's
+          // `persist` defaults to false, so no raw audio is written anywhere.
           mod.start({
             lang: opts.language ?? undefined,
             interimResults: !!opts.onPartial,
             continuous: false,
-            // The owner-recommended posture: keep audio on the device.
-            requiresOnDeviceRecognition: config.requiresOnDeviceRecognition,
+            requiresOnDeviceRecognition: onDeviceOnly,
           });
         } catch {
           subs.forEach((s) => s.remove());

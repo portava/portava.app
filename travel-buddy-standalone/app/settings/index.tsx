@@ -12,6 +12,7 @@ import { deactivateAccount, requestAccountDeletion, reactivateAccount } from '..
 import { resolveAccountButton, applyReactivateResult } from '../../src/screens/settings/settings.machine';
 import { useRentABuddyFlag } from '../../src/hooks/useRentABuddyFlag';
 import { useFeatureFlags } from '../../src/context/FeatureFlagsContext';
+import { InputAssistanceSettings } from '../../src/platform/input-assistance/components/InputAssistanceSettings';
 import { KILL_SWITCH_FLAGS } from '../../src/screens/admin/featureFlags.machine';
 
 export default function Settings() {
@@ -574,6 +575,11 @@ export default function Settings() {
               <Text style={styles.item}>{i}</Text>
             </Pressable>
           ))}
+
+          {/* Input Intelligence opt-ins (OD-INPUT-1, OD-INPUT-3): shown to every signed-in person,
+              NOT behind the client's flag map — a person who opted in can always withdraw. Each row
+              asks the server and hides itself when it is neither offered nor on for this person. */}
+          {(configured && isAuthed) && <InputAssistanceSettings />}
 
           {(configured && isAuthed) && (
             <>

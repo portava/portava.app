@@ -153,10 +153,28 @@ function planWorld(flag: boolean): Rows {
   };
 }
 
+/**
+ * V4's world plus one place the VIEWER added. OD-TRIP-3 (owner-only private
+ * places) is applied after either source: OTHER's rows here carry no
+ * `location_is_private`, so both arms withhold them (fail closed), and the
+ * viewer's own row is served by both. Where the arms can NOT agree — another
+ * member's place that is NOT private, which the legacy read can see and the
+ * Trips projection cannot (it carries no privacy column) — is pinned on its own
+ * in inputPlanItemPrivacy.test.ts, not hidden here.
+ */
+function planWorldWithOwn(flag: boolean): Rows {
+  const w = planWorld(flag);
+  w.trip_plan_items = [
+    ...w.trip_plan_items!,
+    { id: "p5", title: "Harbour picnic", trip_id: "t-1", creator_id: VIEWER, created_at: "2026-09-06T00:00:00.000Z", removed_at: null, location_is_private: true },
+  ];
+  return w;
+}
+
 describe("V4 — plan-item search: ON equals OFF, and a refusal is the same named error", () => {
   it("the same results, byte for byte", async () => {
-    const off = await dispatchSearch(tracked(planWorld(false)).db, "harbour", VIEWER, new Set(), new Set(), "plans", 0, 20);
-    const on = await dispatchSearch(tracked(planWorld(true)).db, "harbour", VIEWER, new Set(), new Set(), "plans", 0, 20);
+    const off = await dispatchSearch(tracked(planWorldWithOwn(false)).db, "harbour", VIEWER, new Set(), new Set(), "plans", 0, 20);
+    const on = await dispatchSearch(tracked(planWorldWithOwn(true)).db, "harbour", VIEWER, new Set(), new Set(), "plans", 0, 20);
     assert.ok(off.length > 0, "fixture: the search must match something");
     assert.ok(!off.some((r) => r.id === "p3"), "fixture: a removed item is not a plan item");
     assert.equal(JSON.stringify(on), JSON.stringify(off));

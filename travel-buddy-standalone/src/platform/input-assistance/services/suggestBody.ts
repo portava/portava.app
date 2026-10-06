@@ -32,6 +32,8 @@ export function buildSuggestBody(req: SuggestRequest): Record<string, unknown> {
 
   // §22 opt-in — ONLY a literal true opts in. Anything else omits the key.
   if (req.aiAssist === true) body.aiAssist = true;
+  // §45 outcome-learning hint — ONLY a literal true; the server re-checks consent.
+  if (req.outcomeLearning === true) body.outcomeLearning = true;
 
   // Coarse city-level writing context (§29) — omitted unless present.
   if (typeof req.city === 'string' && req.city.trim().length > 0) {

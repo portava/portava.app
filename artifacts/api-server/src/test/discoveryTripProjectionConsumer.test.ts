@@ -122,8 +122,12 @@ function baseTrips(): Record<string, any>[] {
 }
 
 function basePlans(): Record<string, any>[] {
+  // `location_is_private` is NOT NULL (default TRUE) on the real table. FALSE
+  // models a place its creator shared with the crew: these cases are about which
+  // TRIPS admit their plans, and OD-TRIP-3's per-item rule is pinned on its own
+  // in inputPlanItemPrivacy.test.ts.
   const p = (id: string, trip_id: string, title: string, creator_id = ALICE) =>
-    ({ id, trip_id, title, creator_id, removed_at: null, created_at: "2026-01-01T00:00:00Z" });
+    ({ id, trip_id, title, creator_id, removed_at: null, created_at: "2026-01-01T00:00:00Z", location_is_private: false });
   return [
     p(P_PUB,     T_PUB,     "Belem tower"),
     p(P_PUB2,    T_PUB2,    "Belem again"),
@@ -641,7 +645,7 @@ describe("the policy consequence, pinned: the owner's non-member toggles reach a
     const s = baseState(flag);
     s.trips.push(trip({ id: T_TOGGLES, title: "Lisbon toggles", start_date: "2026-10-20", end_date: "2026-10-22",
       show_exact_dates: false, show_destination_city: false, show_header_publicly: false }));
-    s.trip_plan_items.push({ id: P_TOGGLES, trip_id: T_TOGGLES, title: "Belem toggles", creator_id: ALICE, removed_at: null, created_at: "2026-01-01T00:00:00Z" });
+    s.trip_plan_items.push({ id: P_TOGGLES, trip_id: T_TOGGLES, title: "Belem toggles", creator_id: ALICE, removed_at: null, created_at: "2026-01-01T00:00:00Z", location_is_private: false });
     return s;
   };
 
