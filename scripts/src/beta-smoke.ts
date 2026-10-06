@@ -17,14 +17,19 @@
  *   3. auth required     GET /api/verification/status with no token → 401
  *                        (a 503 server_not_configured here means the
  *                        service-role key is missing)
- *   4. no bookings       GET /api/rent-a-buddy/launch-status → {enabled:false}
+ *   4. booking stops     GET /api/feature-flags (the app's own unauthenticated flag
+ *      engaged          read) → 200 with disable_rent_buddy_booking, disable_rab_bookings
+ *                       and RENT_BUDDY_ADMIN_ONLY_MODE all true and rent_buddy_enabled
+ *                       false — the three engaged stops OBSERVED, not inferred from a
+ *                       capability. A missing service client answers 503 here, so
+ *                       this check cannot pass vacuously.
  *
  * REPORTED, NOT CHECKED — the API exposes no unauthenticated read of either,
  * and this lane does not add an endpoint that would publish configuration:
  *   • identity-verification readiness ("not operational for real bookings"):
  *     read the `payments/identity provider mode` startup line (booleans only,
  *     lib/paymentsStartupLog.ts) in the beta deployment's logs. Check 4 is the
- *     observable consequence: the booking surface is off.
+ *     observable consequence: the booking stops are engaged.
  *   • production runtime mode (NODE_ENV=production): observable only as the
  *     generic 5xx message in lib/errorEnvelope.ts, which this check will not
  *     provoke. Confirm it in the deployment's Secrets.
@@ -97,12 +102,20 @@ export async function runBetaSmoke(base: string, fetchImpl: SmokeFetch): Promise
     r.status === 401 ? null
       : r.status === 503 ? `got 503 — the service-role key is missing on the beta deployment (${r.raw.slice(0, 160)})`
       : `expected 401 without a token, got ${r.status} ${r.raw.slice(0, 200)}`);
-  await check("no Rent-a-Buddy bookings", "/api/rent-a-buddy/launch-status", (r) =>
-    r.status === 200 && typeof r.body === "object" && r.body !== null && (r.body as Record<string, unknown>).enabled === false
-      ? null
-      : `expected 200 with enabled:false, got ${r.status} ${r.raw.slice(0, 200)}`);
+  await check("Rent-a-Buddy booking stops engaged", "/api/feature-flags", (r) => {
+    const flags = typeof r.body === "object" && r.body !== null ? (r.body as { flags?: Record<string, unknown> }).flags : undefined;
+    if (r.status !== 200 || !flags) return `expected 200 {flags:{…}}, got ${r.status} ${r.raw.slice(0, 200)}`;
+    const wrong = [
+      ...BOOKING_STOPS.filter((f) => flags[f] !== true).map((f) => `${f}=${JSON.stringify(flags[f])} (want true)`),
+      ...(flags.rent_buddy_enabled !== false ? [`rent_buddy_enabled=${JSON.stringify(flags.rent_buddy_enabled)} (want false)`] : []),
+    ];
+    return wrong.length ? `booking stops not as the beta policy sets them: ${wrong.join(", ")}` : null;
+  });
   return results;
 }
+
+/** The three STOP flags that keep Rent-a-Buddy bookings shut on beta (scripts/src/beta-flag-policy.json). */
+export const BOOKING_STOPS = ["disable_rent_buddy_booking", "disable_rab_bookings", "RENT_BUDDY_ADMIN_ONLY_MODE"] as const;
 
 export const NOT_CHECKED = [
   "identity-verification readiness: no unauthenticated read exists; read the `payments/identity provider mode` startup line in the beta deployment logs (it must not report identity operational for real bookings).",

@@ -20,7 +20,7 @@ const HEALTHY: Routes = {
   "/api/healthz": { status: 200, body: { status: "ok" } },
   "/api/auth/signup-status": { status: 200, body: { signupsEnabled: false, inviteOnly: true } },
   "/api/verification/status": { status: 401, body: { error: "unauthenticated" } },
-  "/api/rent-a-buddy/launch-status": { status: 200, body: { enabled: false, categories: {} } },
+  "/api/feature-flags": { status: 200, body: { flags: { disable_rent_buddy_booking: true, disable_rab_bookings: true, RENT_BUDDY_ADMIN_ONLY_MODE: true, rent_buddy_enabled: false, invite_only_beta: true } } },
 };
 
 function stub(routes: Routes) {
@@ -42,7 +42,7 @@ describe("beta-smoke", () => {
       ["health", true],
       ["sign-up closed (invite-only)", true],
       ["auth required", true],
-      ["no Rent-a-Buddy bookings", true],
+      ["Rent-a-Buddy booking stops engaged", true],
     ]);
     assert.ok(s.calls.every((c) => c.method === "GET"));
     assert.deepEqual(s.calls.map((c) => c.url), Object.keys(HEALTHY).map((p) => `${BASE}${p}`));
@@ -55,7 +55,10 @@ describe("beta-smoke", () => {
     ["sign-up closed (invite-only)", "/api/auth/signup-status", { status: 503, body: { signupsEnabled: false, inviteOnly: false } }],
     ["auth required", "/api/verification/status", { status: 200, body: {} }],
     ["auth required", "/api/verification/status", { status: 503, body: { error: "server_not_configured" } }],
-    ["no Rent-a-Buddy bookings", "/api/rent-a-buddy/launch-status", { status: 200, body: { enabled: true, categories: {} } }],
+    ["Rent-a-Buddy booking stops engaged", "/api/feature-flags", { status: 200, body: { flags: { disable_rent_buddy_booking: true, disable_rab_bookings: true, RENT_BUDDY_ADMIN_ONLY_MODE: false, rent_buddy_enabled: false } } }],
+    ["Rent-a-Buddy booking stops engaged", "/api/feature-flags", { status: 200, body: { flags: { disable_rab_bookings: true, RENT_BUDDY_ADMIN_ONLY_MODE: true, rent_buddy_enabled: false } } }],
+    ["Rent-a-Buddy booking stops engaged", "/api/feature-flags", { status: 200, body: { flags: { disable_rent_buddy_booking: true, disable_rab_bookings: true, RENT_BUDDY_ADMIN_ONLY_MODE: true, rent_buddy_enabled: true } } }],
+    ["Rent-a-Buddy booking stops engaged", "/api/feature-flags", { status: 503, body: { error: "server_not_configured" } }],
   ];
   for (const [name, path, reply] of broken) {
     it(`FAILS "${name}" when ${path} answers ${reply.status} ${JSON.stringify(reply.body)}`, async () => {

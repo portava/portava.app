@@ -18,18 +18,29 @@ Replit deployment. Production is never reached by anything below.
 
 - **A beta deployment cannot reach production.** `PORTAVA_DEPLOYMENT_ENV=beta`
   makes the API refuse to start (exit 1, naming the variable) unless
-  `SUPABASE_URL` is the beta project's URL and no environment variable carries
-  production's ref (`artifacts/api-server/src/lib/deploymentEnvironment.ts`).
+  `SUPABASE_URL` is the beta project's URL and no environment variable names
+  production: its Supabase ref, or its API origin `portava.replit.app`
+  (`EXPO_PUBLIC_API_BASE_URL`, `EXPO_PUBLIC_WEB_ORIGIN`, `ALLOWED_ORIGINS`, …),
+  checked case-insensitively in every variable
+  (`artifacts/api-server/src/lib/deploymentEnvironment.ts`).
   `scripts/build-production.sh` refuses to build the same way, and also needs
   the beta `EXPO_PUBLIC_SUPABASE_URL`, because the web bundle inlines it
   (`scripts/deployment-env-guard.sh`). An unrecognised value (`Beta`,
   `beta `, `staging`) is refused, not ignored. The beta project's URL without
   the beta label is refused too. With the variable unset — production today —
   nothing changes.
-- **Sign-up is closed three ways.** Supabase Auth `disable_signup` (set by the
-  configuration step), the `disable_signups` stop, and `invite_only_beta`:
-  `POST /api/auth/signup` answers `403 invite_required` and creates nobody, and
-  the app's sign-up screen says the beta is invite-only before anyone types.
+- **Sign-up is closed three ways, on the app's own path.**
+  - Supabase Auth `disable_signup` is set by the configuration step.
+  - The `disable_signups` stop and `invite_only_beta` are enforced by
+    `POST /api/auth/signup`. That route answers `403 invite_required` and
+    creates nobody. The app's `signUp` now creates accounts only through this
+    route, then signs in.
+  - The sign-up screen says the beta is invite-only before anyone types.
+- **A build whose database and API disagree does not start.** The app compares
+  the Supabase ref with the API host (beta↔beta, production↔production). A beta
+  build (`EXPO_PUBLIC_DEPLOYMENT_ENV=beta`) must point every address at beta.
+  On a mismatch the app shows "This build is misconfigured" instead of starting
+  (`travel-buddy-standalone/src/lib/deploymentConsistency.ts`).
 - **Flags follow one reviewed policy**, `scripts/src/beta-flag-policy.json`,
   applied and read back by `.github/workflows/beta-config.yml`.
 
@@ -67,9 +78,12 @@ gh run watch
 
 It sets Supabase Auth `disable_signup=true`, `site_url=https://portava-beta.replit.app`
 and `uri_allow_list=travelbuddy://**,https://portava-beta.replit.app/**`, sets every
-feature flag to the policy in one audited transaction, then reads both back. It
-exits 1 if anything reads back differently, and writes nothing if a policy flag
-is missing from the database. Re-dispatch it whenever the policy changes.
+feature flag to the policy in one audited transaction, then reads both back.
+
+It reads and plans the flags **before** writing anything. If a policy flag is
+missing from the database, it exits 1 with nothing written: neither Auth nor
+any flag. It also exits 1 if anything reads back differently. Re-dispatch it
+whenever the policy changes.
 
 ### 4. Fork the Repl as `portava-beta` — *Replit account*
 
@@ -94,6 +108,8 @@ values the pull restores.
 | `EXPO_PUBLIC_SUPABASE_URL` | `https://emfpckykpzfturllshly.supabase.co` |
 | `SUPABASE_SERVICE_ROLE_KEY` | beta project → Settings → API → secret / service-role key |
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | beta project → Settings → API → publishable / anon key |
+| `EXPO_PUBLIC_API_BASE_URL` | `https://portava-beta.replit.app` — the web bundle sends every `/api/*` call here; production's value is a Replit Secret, not in `.replit`, so check the fork's Secrets |
+| `EXPO_PUBLIC_WEB_ORIGIN` | `https://portava-beta.replit.app` (same reason) |
 | `SUPABASE_ANON_KEY` | the same beta publishable key, if set at all |
 | `SESSION_SECRET` | **freshly generated** for beta (e.g. `openssl rand -hex 32`). Never production's. |
 | `INTERNAL_API_SECRET` | **freshly generated** for beta. Never production's. |
@@ -190,7 +206,9 @@ Expect four `PASS` lines:
 - health;
 - `signup-status` is exactly `{signupsEnabled:false, inviteOnly:true}`;
 - `401` without a token;
-- Rent-a-Buddy `launch-status` is `enabled:false`.
+- the Rent-a-Buddy booking stops are engaged: `GET /api/feature-flags` shows
+  `disable_rent_buddy_booking`, `disable_rab_bookings` and
+  `RENT_BUDDY_ADMIN_ONLY_MODE` all true and `rent_buddy_enabled` false.
 
 Two things print `NOT CHECKED`, because the API has no unauthenticated read
 for them:
@@ -221,24 +239,40 @@ on, Supabase Auth refuses to create a new user through them.
 
 See `docs/eas-runbook.md` § "Private beta build". In short:
 
-1. Put beta's publishable key in the EAS `preview` environment.
-2. Run `eas build --profile beta`.
-3. Distribute the internal build.
+1. Run `eas build --profile beta`.
+2. Distribute the internal build.
 
-In the first build's log, confirm that `EXPO_PUBLIC_SUPABASE_URL` is the beta
-URL. Expo documents that a profile's `env` outranks the EAS environment for
-Workflows build jobs, but not for a plain `eas build`.
+**Do not `eas env:set` or `eas env:create` anything for beta.** The `beta`
+profile in `eas.json` carries every value the app inlines:
+- both Supabase settings: the URL and beta's **publishable** key, which is
+  public by design;
+- both origins;
+- `EXPO_PUBLIC_DEPLOYMENT_ENV=beta`.
+
+The `preview` EAS environment stays as it is for the `preview` profile.
+
+The beta build still loads the `preview` environment: a profile without
+`environment` and with internal distribution loads `preview`
+(https://docs.expo.dev/eas/environment-variables/usage/, read 2026-10-06).
+Expo does not document whether that environment or the profile's `env` wins for
+a plain `eas build`. **So isolation cannot be made deterministic from the file
+alone.** The app closes the gap at startup: if the inlined database and API do
+not both name beta, it shows "This build is misconfigured" and does not start.
+In the first build's log, confirm that the `EXPO_PUBLIC_*` values are the beta
+ones.
 
 ## If the beta URL is not `portava-beta.replit.app`
 
-Three places name the expected origin:
+Four places name the expected origin:
 
 - `travel-buddy-standalone/eas.json` (`beta` profile);
+- `travel-buddy-standalone/src/lib/deploymentConsistency.ts` (the beta API host
+  the app's startup check expects);
 - `scripts/src/beta-config-core.ts` (`BETA_WEB_ORIGIN`: the Auth `site_url`
   and redirect list);
-- `ALLOWED_ORIGINS` in step 5.
+- `ALLOWED_ORIGINS`, `EXPO_PUBLIC_API_BASE_URL` and `EXPO_PUBLIC_WEB_ORIGIN` in step 5.
 
-Change all three in one PR, then re-run steps 3 and 9.
+Change all four in one PR, then re-run steps 3 and 9.
 
 ## What is still open
 

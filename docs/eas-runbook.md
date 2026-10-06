@@ -528,63 +528,65 @@ TODO: Migrate all four components to `@maplibre/maplibre-react-native` as a foll
 
 ## Private beta build
 
-*Added 2026-10-06. The whole beta sequence is in `docs/ops/beta-runtime-runbook.md`; this is its step 9.*
+*Added 2026-10-06, revised the same day after verification. The whole beta sequence is in
+`docs/ops/beta-runtime-runbook.md`; this is its step 9.*
 
-`eas.json` has a `beta` profile: internal distribution, the EAS environment
-named explicitly as `preview`, and the three public URLs the app inlines at
-build time pinned to portava-beta:
+`eas.json` has a `beta` profile with internal distribution. It carries **every** public value the app inlines at
+build time, so it needs nothing from an EAS environment:
 
-| Variable | Value | Where it comes from |
-|---|---|---|
-| `EXPO_PUBLIC_SUPABASE_URL` | `https://emfpckykpzfturllshly.supabase.co` | `eas.json` |
-| `EXPO_PUBLIC_API_BASE_URL` | `https://portava-beta.replit.app` (expected Replit name) | `eas.json` |
-| `EXPO_PUBLIC_WEB_ORIGIN` | `https://portava-beta.replit.app` | `eas.json` |
-| `EXPO_PUBLIC_SUPABASE_ANON_KEY` | the beta project's publishable key | the EAS `preview` environment — never the file |
+| Variable | Value |
+|---|---|
+| `EXPO_PUBLIC_DEPLOYMENT_ENV` | `beta` — the app's startup check demands that every address be beta's |
+| `EXPO_PUBLIC_SUPABASE_URL` | `https://emfpckykpzfturllshly.supabase.co` |
+| `EXPO_PUBLIC_SUPABASE_ANON_KEY` | the beta project's **publishable** key (`sb_publishable_…`). It is public by design, exactly as `.replit` commits production's. Never the legacy JWT anon key, the secret key or the service-role key. |
+| `EXPO_PUBLIC_API_BASE_URL` | `https://portava-beta.replit.app` (the expected Replit name) |
+| `EXPO_PUBLIC_WEB_ORIGIN` | `https://portava-beta.replit.app` |
 
-How EAS resolves these, as documented by Expo (read 2026-10-06):
+What Expo documents, read 2026-10-06:
 
-- A build profile reads the EAS environment named by its `environment` key.
-  Custom environment names need an Enterprise or Production plan; the three
-  built-ins are `development`, `preview` and `production`
-  (<https://docs.expo.dev/eas/environment-variables/>,
-  <https://docs.expo.dev/eas/environment-variables/usage/>).
-- A variable in the build profile's `env` outranks an EAS environment variable
-  of the same name. Expo documents this precedence for EAS Workflows `build`
-  jobs (<https://docs.expo.dev/eas/workflows/environment/>). I found no
-  statement of it for a plain `eas build` from the CLI. So check the first beta
-  build's log: the environment it loaded must show the beta URLs. Until that
-  check passes, do not store a production `EXPO_PUBLIC_SUPABASE_URL` in the
-  `preview` environment.
-- `EXPO_PUBLIC_*` values are compiled into the app and are public. Use
-  `plaintext` or `sensitive` visibility, never `secret`
-  (<https://docs.expo.dev/eas/environment-variables/manage/>).
+- **Which EAS environment a profile loads.** It is the one named by `environment`. Without that key, a build with
+  internal distribution loads `preview` (<https://docs.expo.dev/eas/environment-variables/usage/>). Custom
+  environment names need an Enterprise or Production plan
+  (<https://docs.expo.dev/eas/environment-variables/>). So the `beta` profile loads `preview` either way. The
+  profile names it explicitly so a reader sees it.
+- **Which side wins.** Expo documents that a profile's `env` outranks an EAS environment variable of the same name,
+  but only for EAS Workflows `build` jobs (<https://docs.expo.dev/eas/workflows/environment/>). There is no such
+  statement for a plain `eas build`. **Isolation from `preview` therefore cannot be made deterministic from the file
+  alone.**
+- **What closes the gap is the app, not the file.** At startup it compares the inlined Supabase ref with the API
+  and web hosts (`src/lib/deploymentConsistency.ts`, wired at the foot of `app/_layout.tsx`):
+  - a beta/production mix is refused, either way round;
+  - a build marked `EXPO_PUBLIC_DEPLOYMENT_ENV=beta` is refused unless every address is beta's;
+  - a refusal shows "This build is misconfigured" and does not start the app.
 
-`src/constants/__tests__/easBetaProfile.test.ts` fails if the `beta` profile
-names production's ref or `portava.replit.app`, or carries a key literal.
+  The marker exists only in the `beta` profile's `env`, so no EAS environment can supply it.
+
+`src/constants/__tests__/easBetaProfile.test.ts` fails if the `beta` profile:
+- names production's ref or `portava.replit.app`;
+- carries anything but a publishable key;
+- carries production's publishable key;
+- drops the marker.
 
 ### Owner commands (Expo account; Apple Developer and Google Play credentials)
 
 ```bash
 cd travel-buddy-standalone
 eas login
-# The beta publishable key, in the environment the beta profile reads:
-eas env:set --name EXPO_PUBLIC_SUPABASE_ANON_KEY --value <beta publishable key> --environment preview --visibility plaintext
 # iOS internal (ad hoc) builds install only on registered devices: register each tester's device first
 eas device:create
 eas build --profile beta --platform ios
 eas build --profile beta --platform android
 ```
 
+**Do not `eas env:set` or `eas env:create` anything for beta.** The `preview` environment stays as the `preview`
+profile needs it.
+
+In the first build's log, confirm that the `EXPO_PUBLIC_*` values are the beta ones. If they are not, the build
+still refuses to start on testers' devices.
+
 Share the install links from each build's EAS page with testers.
 
-**The `preview` environment is shared.** The existing `preview` profile reads
-the same environment. Once it holds beta's publishable key, a `preview` build
-carries beta's key. If your Expo plan supports custom environments, create a
-`beta` environment instead and change the profile's `environment` to `beta` in
-a reviewed PR.
-
-**TestFlight needs a store-distribution build.** The `beta` profile uses
-internal distribution, so its iOS builds are ad hoc and cannot be submitted to
-TestFlight. Distributing through TestFlight needs a profile with
-`"distribution": "store"`. That is a separate decision: such a build defaults
-to the `production` EAS environment unless `environment` is set.
+**TestFlight needs a store-distribution build.** The `beta` profile uses internal distribution, so its iOS builds
+are ad hoc and cannot be submitted to TestFlight. Distributing through TestFlight needs a profile with
+`"distribution": "store"`. That is a separate decision: such a build defaults to the `production` EAS environment
+unless `environment` is set.

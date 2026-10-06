@@ -86,6 +86,13 @@ export interface SeededFlag {
   /** "<file>:<line>" of the first seeding row. */
   seededIn: string;
   seededValue: boolean;
+  /**
+   * Did ANY migration ever turn it on — a TRUE seed row, or an
+   * `UPDATE feature_flags SET enabled = true` naming it (3501 does both)? The
+   * policy test uses this to catch a post-snapshot migration that seeds a flag
+   * TRUE without the policy deciding it explicitly.
+   */
+  everSetTrue: boolean;
 }
 
 /** Quote-aware SQL comment strip (same contract as check-flag-polarity's stripSqlComments). */
@@ -132,6 +139,7 @@ function statementAt(text: string, index: number): string {
 
 const INSERT_RE = /INSERT\s+INTO\s+(?:[A-Za-z_][A-Za-z0-9_]*\.)?feature_flags\b/gi;
 const DELETE_RE = /DELETE\s+FROM\s+(?:[A-Za-z_][A-Za-z0-9_]*\.)?feature_flags\b/gi;
+const UPDATE_RE = /UPDATE\s+(?:[A-Za-z_][A-Za-z0-9_]*\.)?feature_flags\b/gi;
 const ROW_RE = /\(\s*'([A-Za-z0-9_]+)'\s*,\s*(true|false)\b/gi;
 
 /**
@@ -146,13 +154,19 @@ export function seededFlagPopulation(
   const live = new Map<string, SeededFlag>();
   for (const f of files) {
     const text = stripSqlComments(read(f));
-    const events: Array<{ at: number; kind: "seed" | "delete"; flag: string; value?: boolean; line?: number }> = [];
+    const events: Array<{ at: number; kind: "seed" | "delete" | "set-true"; flag: string; value?: boolean; line?: number }> = [];
     for (const m of text.matchAll(INSERT_RE)) {
       const stmt = statementAt(text, m.index ?? 0);
       for (const r of stmt.matchAll(ROW_RE)) {
         const at = (m.index ?? 0) + (r.index ?? 0);
         events.push({ at, kind: "seed", flag: r[1], value: r[2].toLowerCase() === "true", line: text.slice(0, at).split("\n").length });
       }
+    }
+    for (const m of text.matchAll(UPDATE_RE)) {
+      const stmt = statementAt(text, m.index ?? 0);
+      if (!/\bSET\s+enabled\s*=\s*true\b/i.test(stmt)) continue;
+      const where = stmt.slice(stmt.search(/\bWHERE\b/i) >= 0 ? stmt.search(/\bWHERE\b/i) : stmt.length);
+      for (const r of where.matchAll(/'([A-Za-z0-9_]+)'/g)) events.push({ at: m.index ?? 0, kind: "set-true", flag: r[1] });
     }
     for (const m of text.matchAll(DELETE_RE)) {
       const stmt = statementAt(text, m.index ?? 0);
@@ -161,7 +175,14 @@ export function seededFlagPopulation(
     events.sort((a, b) => a.at - b.at);
     for (const e of events) {
       if (e.kind === "delete") live.delete(e.flag);
-      else if (!live.has(e.flag)) live.set(e.flag, { flag: e.flag, seededIn: `${f}:${e.line}`, seededValue: e.value === true });
+      else if (e.kind === "set-true") {
+        const cur = live.get(e.flag);
+        if (cur) cur.everSetTrue = true;
+      } else if (!live.has(e.flag)) {
+        live.set(e.flag, { flag: e.flag, seededIn: `${f}:${e.line}`, seededValue: e.value === true, everSetTrue: e.value === true });
+      } else if (e.value === true) {
+        live.get(e.flag)!.everSetTrue = true;
+      }
     }
   }
   return live;

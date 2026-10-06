@@ -942,7 +942,7 @@
       "flag": "discovery_serve_log_retention_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
-      "reason": "OFF: a retention purge whose period is not legally decided (owner-decisions Part 3); the beta holds test data only.",
+      "reason": "OFF although 3501_discovery_recommendations_retention.sql seeds it TRUE (newer than the 2026-09-22 snapshot): its 30-day period (Discovery Q11(a)) awaits legal review; discovery_serve_log_enabled is ON (production), so beta's serve log is unbounded.",
       "evidence": []
     },
     {
