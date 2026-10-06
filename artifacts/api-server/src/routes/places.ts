@@ -1204,9 +1204,21 @@ router.get("/places/fsq-photo", async (req, res) => {
 // and a provider record is labelled verified live only if its name matches and
 // it lies within LIVE_IDENTITY_MAX_DISTANCE_M of them. Without them nothing can
 // be confirmed as this place, so the answer is the can't-verify one and the
-// provider is not asked. Given, they must be given together and be valid.
-// `city` is accepted from older clients and no longer used.
+// provider is not asked. Given, they must be given together, as plain decimals
+// (no hex, binary, exponent, sign prefix or padding — `Number()` alone accepts
+// all of those), and in range. `city` is accepted from older clients and no
+// longer used.
+//
+// Cost (lead follow-up F5, 2026-10-06): an anchored request can spend
+// Foursquare quota, so the route is authenticated — as /places/nearby-venue
+// is — and an anchored request is rate limited per user with the house limiter.
+// A request with no anchor reaches no provider and is not counted.
+const LIVE_STATUS_RATE_LIMIT = 120;
+const LIVE_STATUS_RATE_WINDOW_MS = 10 * 60 * 1_000;
+const LIVE_STATUS_COORD_RE = /^-?\d{1,3}(\.\d{1,20})?$/;
 router.get("/places/live-status", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
   const name = String(req.query.name ?? "").trim();
   if (!name || name.length > 200) {
     res.status(400).json({ error: "invalid_payload", message: "name is required (max 200 chars)" });
@@ -1216,10 +1228,16 @@ router.get("/places/live-status", async (req, res) => {
   const lngGiven = req.query.lng !== undefined;
   let anchor: LiveVenueAnchor | null = null;
   if (latGiven || lngGiven) {
-    const coord = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? Number(v) : NaN);
+    const coord = (v: unknown) => (typeof v === "string" && LIVE_STATUS_COORD_RE.test(v) ? Number(v) : NaN);
     anchor = latGiven && lngGiven ? liveVenueAnchorOf(coord(req.query.lat), coord(req.query.lng)) : null;
     if (!anchor) {
-      res.status(400).json({ error: "invalid_payload", message: "lat and lng must be given together as valid coordinates" });
+      res.status(400).json({ error: "invalid_payload", message: "lat and lng must be given together as valid decimal coordinates" });
+      return;
+    }
+    const rate = checkRateLimit("places_live_status", auth.user.id, LIVE_STATUS_RATE_LIMIT, LIVE_STATUS_RATE_WINDOW_MS);
+    if (!rate.allowed) {
+      res.setHeader("Retry-After", String(Math.ceil(rate.retryAfterMs / 1_000)));
+      sendError(res, "rate_limited", "Too many live status lookups. Please try again shortly.");
       return;
     }
   }

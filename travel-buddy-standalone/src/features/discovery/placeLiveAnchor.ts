@@ -19,6 +19,16 @@ export interface PlaceLiveAnchor {
   lng: number | null | undefined;
 }
 
+/**
+ * A coordinate as the server's strict decimal grammar accepts it (lead
+ * follow-up F4): never an exponent, which `String(1e-7)` would produce.
+ * Seven decimals is about a centimetre; trailing zeros are trimmed.
+ */
+export function liveCoordParam(n: number): string {
+  const s = n.toFixed(7);
+  return s.includes('.') ? s.replace(/\.?0+$/, '') : s;
+}
+
 /** Both coordinates as finite, in-range numbers — or null (nothing to anchor on). */
 export function placeLiveAnchorOf(anchor: PlaceLiveAnchor | null | undefined): { lat: number; lng: number } | null {
   const lat = anchor?.lat;

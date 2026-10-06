@@ -5,7 +5,7 @@
 import type { DiscoveryEventPost } from '../types/discovery.ts';
 import { openDiscoveryLease, isCurrentDiscoveryScope, isLeaseViewerCurrent, onDiscoveryScopeChange, VIEWER_CHANGED_ERROR, type DiscoveryLease, type DiscoveryScope } from './discoveryViewerScope.ts';
 import { stampCandidateReceipt } from '../features/discovery/candidateProjection.ts';
-import { placeLiveAnchorOf, type PlaceLiveAnchor } from '../features/discovery/placeLiveAnchor.ts';
+import { placeLiveAnchorOf, liveCoordParam, type PlaceLiveAnchor } from '../features/discovery/placeLiveAnchor.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
@@ -319,15 +319,15 @@ export async function getPlaceLiveStatus(
   anchor: PlaceLiveAnchor | null,
 ): Promise<PlaceLiveStatus | null> {
   const base = apiBase();
-  if (!base || !name.trim()) return null;
-  const params = new URLSearchParams({ name: name.trim() });
-  const at = placeLiveAnchorOf(anchor);
+  const token = base && name.trim() ? await freshToken() : null; // lead follow-up F5: the route requires a signed-in user — signed out, there is no pill
+  if (!base || !name.trim() || !token) return null;
+  const at = placeLiveAnchorOf(anchor); const params = new URLSearchParams({ name: name.trim() });
   if (at) {
-    params.set('lat', String(at.lat));
-    params.set('lng', String(at.lng));
+    params.set('lat', liveCoordParam(at.lat));
+    params.set('lng', liveCoordParam(at.lng));
   }
   try {
-    const res = await fetch(`${base}/api/places/live-status?${params}`);
+    const res = await fetch(`${base}/api/places/live-status?${params}`, { headers: { Authorization: `Bearer ${token}` } });
     if (!res.ok) return null;
     const body = (await res.json()) as { liveStatus?: PlaceLiveStatus } | null;  // typed: under Node's lib `json()` is `unknown`
     return (body?.liveStatus as PlaceLiveStatus | undefined) ?? null;

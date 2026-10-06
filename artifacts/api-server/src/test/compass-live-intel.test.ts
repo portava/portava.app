@@ -32,7 +32,9 @@ import {
   CANT_VERIFY_NOTE,
   CONFIDENCE_LABELS,
   LIVE_IDENTITY_MAX_DISTANCE_M,
+  LIVE_CACHE_MAX_ENTRIES,
   normaliseVenueName,
+  _liveCacheSize,
   type LiveVenueAnchor,
 } from "../lib/liveIntelligence.js";
 import { executeCompassTool, sanitizeToolResult } from "../compass/CompassTools.js";
@@ -365,6 +367,30 @@ describe("D-67 — the identity rule", () => {
     assert.equal(await getLiveVenueStatus("Cafe Uno", CEBU), null);
   });
 
+  it("exactly 150 m is verified (the ruling's bound is inclusive), 150.01 m is not", async () => {
+    // Offsets on the code's own sphere (R = 6 371 000 m), so the distance it computes is the one named.
+    const metres = (m: number) => ({ latitude: CEBU.lat + (m * 180) / (Math.PI * 6_371_000), longitude: CEBU.lng });
+    stubFetch(() => ({ results: [record("fsq-150", "Cafe Uno", metres(150), true)] }));
+    assert.equal((await getLiveVenueStatus("Cafe Uno", CEBU))?.openNow, true, "a record exactly 150 m away is this place");
+    _clearLiveCache();
+    stubFetch(() => ({ results: [record("fsq-15001", "Cafe Uno", metres(150.01), true)] }));
+    assert.equal(await getLiveVenueStatus("Cafe Uno", CEBU), null);
+  });
+
+  it("a record with no name is never confirmed, however close", async () => {
+    stubFetch(() => ({ results: [{ fsq_place_id: "fsq-nameless", latitude: CEBU.lat, longitude: CEBU.lng, hours: { open_now: true } }] }));
+    assert.equal(await getLiveVenueStatus("Cafe Uno", CEBU), null);
+    assert.equal(fetchCalls.length, 1);
+  });
+
+  it("the cache does not cross names — a different venue at the same anchor is looked up, not served the first one's status", async () => {
+    stubFetch(() => FSQ_OPEN); // a Cafe Uno record at CEBU
+    assert.equal((await getLiveVenueStatus("Cafe Uno", CEBU))?.venueName, "Cafe Uno");
+    const other = await getLiveVenueStatus("Cafe Dos", CEBU);
+    assert.equal(other, null, "Cafe Dos is not served Cafe Uno's cached, verified status");
+    assert.equal(fetchCalls.length, 2, "a different name at the same coordinates is a different entry");
+  });
+
   it("a record with no coordinates cannot be placed, so it is never verified", async () => {
     stubFetch(() => ({ results: [record("fsq-nowhere", "Cafe Uno", null, true)] }));
     assert.equal(await getLiveVenueStatus("Cafe Uno", CEBU), null);
@@ -413,6 +439,7 @@ describe("D-67 — the identity rule", () => {
     assert.equal(u.searchParams.get("ll"), `${CEBU.lat},${CEBU.lng}`);
     assert.equal(u.searchParams.get("near"), null, "ll and near are alternatives; the anchor is the centre");
     assert.equal(u.searchParams.get("limit"), "5");
+    assert.equal(u.searchParams.get("radius"), "1000", "the bias radius is 1 km; identity is still decided at 150 m");
     const fields = (u.searchParams.get("fields") ?? "").split(",");
     for (const f of ["fsq_place_id", "name", "latitude", "longitude", "hours"]) assert.ok(fields.includes(f), `fields carries ${f}`);
   });
@@ -489,5 +516,20 @@ describe("get_place_details — a failed catalog read is unreadable, never 'Plac
     assert.equal(res.info, "Place not found.");
     assert.equal("unreadable" in res, false);
     assert.equal(fetchCalls.length, 0);
+  });
+});
+
+describe("live cache bound (lead follow-up F5)", () => {
+  it("holds at most LIVE_CACHE_MAX_ENTRIES and evicts the oldest entry first", async () => {
+    stubFetch(() => ({ results: [] })); // every lookup is a cached miss
+    const at = (i: number): LiveVenueAnchor => ({ lat: 10 + i * 1e-5, lng: CEBU.lng });
+    for (let i = 0; i <= LIVE_CACHE_MAX_ENTRIES; i++) await getLiveVenueStatus("Cafe Uno", at(i));
+    assert.equal(fetchCalls.length, LIVE_CACHE_MAX_ENTRIES + 1);
+    assert.equal(_liveCacheSize(), LIVE_CACHE_MAX_ENTRIES, "one entry past the cap evicts one");
+    await getLiveVenueStatus("Cafe Uno", at(LIVE_CACHE_MAX_ENTRIES)); // newest: still cached
+    assert.equal(fetchCalls.length, LIVE_CACHE_MAX_ENTRIES + 1);
+    await getLiveVenueStatus("Cafe Uno", at(0)); // oldest: evicted, so asked again
+    assert.equal(fetchCalls.length, LIVE_CACHE_MAX_ENTRIES + 2);
+    assert.equal(_liveCacheSize(), LIVE_CACHE_MAX_ENTRIES);
   });
 });

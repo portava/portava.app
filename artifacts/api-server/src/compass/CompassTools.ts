@@ -80,7 +80,7 @@ import { readTripAttention, applyAttentionSuppression, attentionNotConsulted, at
 import { buildCompassContext, defaultSignals } from "./CompassContextEngine.js";
 import { runPipeline } from "./CompassPipeline.js";
 import { qualifyWhyThis,
-  buildWhyThisText,
+  buildWhyThisText, whyThisRestsOnEstimate,
   loadCircleMemoryPreferenceTags,
   normalizeProfileForRanking,
 } from "./CompassRecommendationEngine.js";
@@ -745,7 +745,7 @@ interface ToolRankEntry {
   rank:           number;
   compassMatch:   number;
   communityScore: number;
-  whyThis:        string | null;
+  whyThis:        string | null; restsOnEstimate: boolean; // lead ruling D-67: the sentence rests on the listed-hours open-now estimate
 }
 
 /**
@@ -775,7 +775,7 @@ async function rankToolCandidates(
         rank:           idx,
         compassMatch:   r.compassMatch,
         communityScore: r.communityScore,
-        whyThis:        buildWhyThisText(r.rankingFactors),
+        whyThis:        buildWhyThisText(r.rankingFactors), restsOnEstimate: whyThisRestsOnEstimate(r.rankingFactors),
       });
     });
     return map;
@@ -805,7 +805,7 @@ function applyToolRanking<T extends { id: unknown }>(
         ...c,
         compassMatch: r.compassMatch,
         communityScore: r.communityScore,
-        whyThis: qualifyWhyThis(r.whyThis, isTruthClass(truthClass) ? truthClass : null),
+        whyThis: qualifyWhyThis(r.whyThis, isTruthClass(truthClass) ? truthClass : null, { restsOnEstimate: r.restsOnEstimate }),
         rank: r.rank,
       };
     })

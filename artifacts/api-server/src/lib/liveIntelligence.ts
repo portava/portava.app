@@ -147,9 +147,32 @@ interface LiveCacheEntry {
 
 const liveCache = new Map<string, LiveCacheEntry>();
 
+/**
+ * The most entries the live cache holds (lead follow-up F5). Every distinct
+ * name-and-anchor is a key, so without a bound a caller varying a coordinate's
+ * last decimal grows the map without end. At the cap the OLDEST entry goes:
+ * a Map iterates in insertion order and a write re-inserts its key.
+ */
+export const LIVE_CACHE_MAX_ENTRIES = 5_000;
+
+function liveCacheSet(key: string, entry: LiveCacheEntry): void {
+  liveCache.delete(key);
+  liveCache.set(key, entry);
+  while (liveCache.size > LIVE_CACHE_MAX_ENTRIES) {
+    const oldest = liveCache.keys().next().value;
+    if (oldest === undefined) break;
+    liveCache.delete(oldest);
+  }
+}
+
 /** TEST ONLY — clear the live-status cache. */
 export function _clearLiveCache(): void {
   liveCache.clear();
+}
+
+/** TEST ONLY — how many entries the live cache holds. */
+export function _liveCacheSize(): number {
+  return liveCache.size;
 }
 
 /**
@@ -208,7 +231,9 @@ export function isSameVenue(
   if (normaliseVenueName(String(record.name ?? "")) !== want) return false;
   const at = liveVenueAnchorOf(record.latitude, record.longitude);
   if (!at) return false;
-  return metresBetween(anchor, at) <= LIVE_IDENTITY_MAX_DISTANCE_M;
+  // Inclusive, to the millimetre: rounding first makes "exactly 150 m" one
+  // answer rather than whichever side a floating-point haversine lands on.
+  return Math.round(metresBetween(anchor, at) * 1_000) / 1_000 <= LIVE_IDENTITY_MAX_DISTANCE_M;
 }
 
 /** Same name at two different places is two entries, never one. */
@@ -244,6 +269,7 @@ export async function getLiveVenueStatus(
   const key = liveKey(name, at);
   const cached = liveCache.get(key);
   if (cached && nowMs - cached.cachedAt < LIVE_CACHE_TTL_MS) return cached.status;
+  if (cached) liveCache.delete(key); // expired: it no longer holds a slot
 
   const apiKey = getFoursquareApiKey();
   if (!apiKey) return null;
@@ -289,7 +315,7 @@ export async function getLiveVenueStatus(
       if (results.length > 0) {
         logger.info({ name, candidates: results.length }, "live venue lookup: no record confirmed as this place — no verified-live label");
       }
-      liveCache.set(key, { status: null, cachedAt: nowMs });
+      liveCacheSet(key, { status: null, cachedAt: nowMs });
       return null;
     }
 
@@ -302,7 +328,7 @@ export async function getLiveVenueStatus(
       source: "foursquare",
       checkedAt: new Date(nowMs).toISOString(),
     };
-    liveCache.set(key, { status, cachedAt: nowMs });
+    liveCacheSet(key, { status, cachedAt: nowMs });
     return status;
   } catch (err) {
     logger.warn({ err, name }, "live venue lookup error — degrading honestly");

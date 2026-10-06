@@ -16,6 +16,9 @@
  *   7. The place's own coordinates ride on the request as lat/lng — the
  *      server's identity anchor (D-67) — and are left off, not invented,
  *      when the place has none.
+ *   8. Lead follow-ups F4/F5: the request carries the viewer's bearer token
+ *      (the route requires a signed-in user); signed out, nothing is fetched;
+ *      a coordinate is never sent in exponent form.
  */
 import { describe, it, before, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,12 +31,14 @@ process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ??= 'test-anon-key';
 // runner rejects top-level await.
 let getPlaceLiveStatusCached: typeof import('../discovery.ts')['getPlaceLiveStatusCached'];
 let getPlaceLiveStatus: typeof import('../discovery.ts')['getPlaceLiveStatus'];
+let setTokenSource: typeof import('../discovery.ts')['_setDiscoveryTokenSourceForTests'];
+let token: string | null = 'viewer-token';
 
 // The place's own coordinates (Cebu), and a second same-named place 2 km north.
 const CEBU = { lat: 10.3157, lng: 123.8854 };
 const NORTH = { lat: 10.3337, lng: 123.8854 };
 
-interface FetchCall { url: string }
+interface FetchCall { url: string; auth: string | null }
 let fetchCalls: FetchCall[] = [];
 let concurrent = 0;
 let maxConcurrent = 0;
@@ -54,8 +59,8 @@ function okBody(openNow: boolean) {
   };
 }
 
-(globalThis as { fetch: unknown }).fetch = async (url: string) => {
-  fetchCalls.push({ url: String(url) });
+(globalThis as { fetch: unknown }).fetch = async (url: string, init?: { headers?: Record<string, string> }) => {
+  fetchCalls.push({ url: String(url), auth: init?.headers?.Authorization ?? null });
   concurrent++;
   maxConcurrent = Math.max(maxConcurrent, concurrent);
   try {
@@ -74,7 +79,8 @@ const unique = () => `Place ${Date.now()}-${n++}`;
 
 describe('getPlaceLiveStatusCached', () => {
   before(async () => {
-    ({ getPlaceLiveStatusCached, getPlaceLiveStatus } = await import('../discovery.ts'));
+    ({ getPlaceLiveStatusCached, getPlaceLiveStatus, _setDiscoveryTokenSourceForTests: setTokenSource } = await import('../discovery.ts'));
+    setTokenSource(async () => token);
   });
 
   beforeEach(() => {
@@ -82,6 +88,7 @@ describe('getPlaceLiveStatusCached', () => {
     concurrent = 0;
     maxConcurrent = 0;
     fetchImpl = async () => okBody(true);
+    token = 'viewer-token';
   });
 
   it('caches a successful lookup — second call makes no new fetch', async () => {
@@ -156,6 +163,25 @@ describe('getPlaceLiveStatusCached', () => {
     assert.equal(u.searchParams.get('name'), name);
     assert.equal(u.searchParams.get('lat'), String(CEBU.lat));
     assert.equal(u.searchParams.get('lng'), String(CEBU.lng));
+  });
+
+  it('sends the viewer\'s bearer token (the route requires a signed-in user)', async () => {
+    await getPlaceLiveStatus('Cafe Uno', CEBU);
+    assert.equal(fetchCalls[0]!.auth, 'Bearer viewer-token');
+  });
+
+  it('signed out, fetches nothing and answers null (no pill)', async () => {
+    token = null;
+    assert.equal(await getPlaceLiveStatus('Cafe Uno', CEBU), null);
+    assert.equal(await getPlaceLiveStatusCached(unique(), CEBU), null);
+    assert.equal(fetchCalls.length, 0);
+  });
+
+  it('never sends a coordinate in exponent form', async () => {
+    await getPlaceLiveStatus('Null Island Kiosk', { lat: 1e-7, lng: -3e-7 });
+    const u = new URL(fetchCalls[0]!.url);
+    assert.equal(u.searchParams.get('lat'), '0.0000001');
+    assert.equal(u.searchParams.get('lng'), '-0.0000003');
   });
 
   it('getPlaceLiveStatus sends the coordinates too, and none it does not have', async () => {
