@@ -77,8 +77,10 @@ afterEach(() => {
 
 // ── Minimal fake supabase client ──────────────────────────────────────────────
 
-function makeClient(db: Record<string, any[]>) {
-  function builder(rows: any[]) {
+/** `failReads` names tables whose reads resolve the way supabase-js reports a failure: `{ data: null, error }`. */
+function makeClient(db: Record<string, any[]>, failReads: string[] = []) {
+  function builder(rows: any[], table: string) {
+    const failed = failReads.includes(table) ? { message: `${table} read blew up`, code: "57014" } : null;
     let filtered = [...rows];
     const b: any = {
       select: () => b,
@@ -108,12 +110,12 @@ function makeClient(db: Record<string, any[]>) {
       is: () => b,
       order: () => b,
       limit: (n: number) => { filtered = filtered.slice(0, n); return b; },
-      maybeSingle: () => Promise.resolve({ data: filtered[0] ?? null, error: null }),
-      then: (resolve: any) => resolve({ data: filtered, error: null }),
+      maybeSingle: () => Promise.resolve(failed ? { data: null, error: failed } : { data: filtered[0] ?? null, error: null }),
+      then: (resolve: any) => resolve(failed ? { data: null, error: failed } : { data: filtered, error: null }),
     };
     return b;
   }
-  return { from: (table: string) => builder(db[table] ?? []) } as any;
+  return { from: (table: string) => builder(db[table] ?? [], table) } as any;
 }
 
 // The place's own stored coordinates — the live lookup's identity anchor (D-67).
@@ -464,5 +466,28 @@ describe("D-67 — get_place_details anchors the lookup on the place row", () =>
     assert.equal(fetchCalls.length, 0);
     assert.equal(res.place.liveStatus.available, false);
     assert.equal(res.place.liveStatus.confidence.sourceClass, "historical");
+  });
+});
+
+describe("get_place_details — a failed catalog read is unreadable, never 'Place not found'", () => {
+  it("a failed discovery_places read says unreadable and asks no live source", async () => {
+    stubFetch(() => FSQ_OPEN);
+    const sc = makeClient({ discovery_places: [PLACE] }, ["discovery_places"]);
+    const res: any = await executeCompassTool(sc, "user-1", null, "get_place_details", { placeId: "place-1" });
+    assert.equal(res.place, null);
+    assert.equal(res.unreadable, true);
+    assert.match(res.info, /unreadable right now/);
+    assert.doesNotMatch(res.info, /not found/i, "an outage is not a finding about the place");
+    assert.equal(fetchCalls.length, 0);
+  });
+
+  it("a real miss (no error, no row) is still 'Place not found.' and is not flagged unreadable", async () => {
+    stubFetch(() => FSQ_OPEN);
+    const sc = makeClient({ discovery_places: [PLACE] });
+    const res: any = await executeCompassTool(sc, "user-1", null, "get_place_details", { placeId: "no-such-place" });
+    assert.equal(res.place, null);
+    assert.equal(res.info, "Place not found.");
+    assert.equal("unreadable" in res, false);
+    assert.equal(fetchCalls.length, 0);
   });
 });

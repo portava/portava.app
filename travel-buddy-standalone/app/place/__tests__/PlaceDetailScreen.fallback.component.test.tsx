@@ -276,4 +276,18 @@ describe('PlaceDetailScreen — discovery-place fallback (lead ruling D-67)', ()
     await render(<PlaceDetailScreen />);
     await waitFor(() => expect(getPlaceLiveStatus).toHaveBeenCalledWith('Kawasan Falls Kiosk', { lat: 9.8063, lng: 123.3739 }));
   });
+
+  it('labels the stored hours "Listed hours", with the can\'t-verify note when the server could not confirm the place', async () => {
+    (getPlaceLiveStatus as jest.Mock).mockResolvedValueOnce({
+      available: false, openNow: null,
+      confidence: { sourceClass: 'historical', label: 'Historical', checkedAt: '2026-10-06T00:00:00Z' },
+    });
+    mockParams = { id: 'osm/node/1', placeJson: encodeURIComponent(JSON.stringify({ ...discoveryPlace, openingHours: 'Mo-Su 07:00-17:00' })) };
+    mockGetCanonicalPlace.mockResolvedValue(null);
+    mockGetPlaceLiving.mockResolvedValue(null);
+    const { findByTestId, findByText, queryByText } = await render(<PlaceDetailScreen />);
+    expect(await findByText(/can't verify live/)).toBeTruthy();
+    expect(await findByTestId('place-fallback-listed-hours')).toHaveTextContent(/^Listed hours: Mo-Su 07:00-17:00/);
+    expect(queryByText('Mo-Su 07:00-17:00')).toBeNull();
+  });
 });

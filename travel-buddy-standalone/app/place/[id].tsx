@@ -33,6 +33,7 @@ import { TripWishlistPicker } from '../../src/components/discovery/TripWishlistP
 import { checkSaved, toggleSave } from '../../src/services/collections';
 import { freshToken as freshApiToken } from '../../src/services/apiToken';
 import { getPlaceLiveStatus } from '../../src/services/discovery';
+import { listedHoursText, LISTED_HOURS_UNVERIFIED_NOTE } from '../../src/features/discovery/listedHours';
 import { categoryColor } from '../../src/components/discovery/PlaceCard';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { WorthItVoteRow } from '../../src/components/WorthItVoteRow';
@@ -195,10 +196,10 @@ function DiscoveryFallback({ place }: { place: DiscoveryPlace }) {
         {place.openingHours ? (
           <View style={fb.infoRow}>
             <Clock size={15} color={color.mute} />
-            <Text style={fb.infoText}>
-              {place.openingHours}
+            <Text style={fb.infoText} testID="place-fallback-listed-hours">
+              {listedHoursText(place.openingHours)}
               {liveStatus != null && liveOpenNow == null ? (
-                <Text style={fb.lastKnownNote}>  · Last known hours — can't verify live</Text>
+                <Text style={fb.lastKnownNote}>  · {LISTED_HOURS_UNVERIFIED_NOTE}</Text>
               ) : null}
             </Text>
           </View>

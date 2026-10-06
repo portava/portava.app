@@ -7,8 +7,10 @@
  *      the place has lat/lng, the distance is computed and shown.
  *   3. When neither source provides distance, the distance row is absent.
  *   4. Lead ruling D-67: the live open-now lookup carries the place's own
- *      coordinates (the server's identity anchor), and when the server cannot
- *      verify, listed hours are shown labelled as such — never as live.
+ *      coordinates (the server's identity anchor), and stored hours are always
+ *      labelled "Listed hours" — beside a verified-live pill, with no live
+ *      answer at all, and with a "can't verify live" note when the server
+ *      could not confirm the place.
  *
  * ## Modal strategy
  * PlaceDetailSheet IS a Modal. The Modal Proxy replaces react-native's Modal
@@ -192,9 +194,28 @@ describe('PlaceDetailSheet — live open-now lookup anchored on the place (lead 
       dataNote: "Live status can't be verified right now — showing the last known information instead.",
       confidence: { sourceClass: 'historical', label: 'Historical', checkedAt: '2026-10-06T00:00:00Z' },
     });
-    const { findByText, queryByText } = await mountSheet({ ...BASE_PLACE, openingHours: 'Mo-Su 08:00-18:00' });
-    expect(await findByText(/Last known hours — can't verify live/)).toBeTruthy();
+    const { findByText, getByTestId, queryByText } = await mountSheet({ ...BASE_PLACE, openingHours: 'Mo-Su 08:00-18:00' });
+    expect(await findByText(/can't verify live/)).toBeTruthy();
+    expect(getByTestId('place-detail-listed-hours')).toHaveTextContent(/^Listed hours: Mo-Su 08:00-18:00/);
     expect(queryByText('Open now')).toBeNull();
     expect(queryByText('Closed now')).toBeNull();
+  });
+
+  it('labels listed hours beside a verified-live pill, with no unverified note', async () => {
+    (getPlaceLiveStatus as jest.Mock).mockResolvedValueOnce({
+      available: true, openNow: false, source: 'foursquare', checkedAt: '2026-10-06T00:00:00Z',
+      confidence: { sourceClass: 'verified_live', label: 'Verified live', checkedAt: '2026-10-06T00:00:00Z' },
+    });
+    const { findByText, getByTestId, queryByText } = await mountSheet({ ...BASE_PLACE, openingHours: 'Mo-Su 08:00-18:00' });
+    expect(await findByText('Closed now')).toBeTruthy();
+    expect(getByTestId('place-detail-listed-hours')).toHaveTextContent('Listed hours: Mo-Su 08:00-18:00', { exact: true });
+    expect(queryByText(/can't verify live/)).toBeNull();
+  });
+
+  it('labels listed hours when no live answer arrived at all', async () => {
+    const { getByTestId, queryByText } = await mountSheet({ ...BASE_PLACE, openingHours: 'Mo-Su 08:00-18:00' });
+    await waitFor(() => expect(getPlaceLiveStatus).toHaveBeenCalled());
+    expect(getByTestId('place-detail-listed-hours')).toHaveTextContent('Listed hours: Mo-Su 08:00-18:00', { exact: true });
+    expect(queryByText('Mo-Su 08:00-18:00')).toBeNull();
   });
 });

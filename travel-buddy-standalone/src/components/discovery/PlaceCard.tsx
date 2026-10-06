@@ -5,6 +5,7 @@ import { StampIcon } from '../stamps/StampIcon.tsx';
 import type { DiscoveryPlace, PlaceLiveStatus } from '../../services/discovery.ts';
 import { getPlaceLiveStatusCached } from '../../services/discovery.ts';
 import { placeLiveAnchorOf } from '../../features/discovery/placeLiveAnchor.ts';
+import { listedHoursText } from '../../features/discovery/listedHours.ts';
 import { useFsqPhoto } from '../../hooks/useFsqPhoto.ts';
 import { isFoursquarePhotoUrl } from '../../services/fsqPhotoLookup.ts';
 import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
@@ -343,7 +344,10 @@ export function PlaceCard({ place, onPress, onAddToPlan, onAddToRoute, showDista
               </View>
             )}
             {place.openingHours ? (
-              <Text style={styles.hours} numberOfLines={1}>{formatHoursShort(place.openingHours)}</Text>
+              // Lead ruling D-67: stored hours are a listing, never a live check — labelled as such.
+              <Text style={styles.hours} numberOfLines={1} testID="place-card-listed-hours">
+                {listedHoursText(formatHoursShort(place.openingHours))}
+              </Text>
             ) : null}
           </View>
 

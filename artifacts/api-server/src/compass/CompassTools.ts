@@ -217,7 +217,7 @@ export const COMPASS_TOOL_DEFINITIONS = [
     type: "function" as const,
     function: {
       name: "get_place_details",
-      description: "Get full (privacy-safe) details for one place by its id from an earlier search_places result.",
+      description: "Get full (privacy-safe) details for one place by its id from an earlier search_places result. `unreadable: true` means the catalog could not be read right now — never tell the user the place does not exist; only `info: \"Place not found.\"` with no `unreadable` flag is a real miss.",
       parameters: {
         type: "object",
         properties: { placeId: { type: "string", description: "The place id" } },
@@ -1110,7 +1110,7 @@ async function toolGetPlaceDetails(sc: SupabaseClient, args: Record<string, unkn
     .select(PLACE_SAFE_COLUMNS + ", secondary_categories, place_type, lat, lng")
     .eq("id", placeId)
     .maybeSingle();
-  if (error || !data) return { place: null, info: "Place not found." };
+  if (error || !data) return error ? { place: null, unreadable: true, info: "The place catalog is unreadable right now — this is temporary, NOT a statement that the place does not exist; say its details are unavailable and offer to try again." } : { place: null, info: "Place not found." }; // a failed read is never "not found"; only no error AND no row is a miss
   const { lat: anchorLat, lng: anchorLng, ...p } = data as any; // lead ruling D-67: lat/lng are read ONLY as the live lookup's identity anchor — PLACE_SAFE_COLUMNS keeps coordinates out of every tool result, so they are split off here and never reach the returned place
 
   // Phase 8 — live open-now lookup at tool time (weather-cache pattern:

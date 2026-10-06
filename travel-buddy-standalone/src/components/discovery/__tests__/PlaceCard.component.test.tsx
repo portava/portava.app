@@ -8,6 +8,8 @@
  *   4. Lead ruling D-67: the live open-now lookup carries the place's own
  *      coordinates (the server's identity anchor), and a card without them
  *      makes no lookup at all.
+ *   5. Lead ruling D-67: stored hours are labelled "Listed hours", including
+ *      beside a verified-live pill, and never appear bare.
  *
  * Run with:  pnpm test:component
  *
@@ -170,5 +172,25 @@ describe('PlaceCard — live open-now lookup is anchored on the place (lead ruli
     await mountCard({ ...BASE_PLACE, id: 'place-nocoords', lat: null, lng: null });
     await new Promise((r) => setTimeout(r, 800)); // past the 600 ms viewport delay
     expect(getPlaceLiveStatusCached).not.toHaveBeenCalled();
+  });
+});
+
+describe('PlaceCard — stored hours are labelled as listed hours (lead ruling D-67)', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  it('labels the stored hours "Listed hours" and never shows them bare', async () => {
+    const { getByTestId, queryByText } = await mountCard({ ...BASE_PLACE, id: 'place-hours-1', openingHours: 'Mo-Su 08:00-18:00' });
+    expect(getByTestId('place-card-listed-hours')).toHaveTextContent('Listed hours: Mo-Su 08:00-18:00', { exact: true });
+    expect(queryByText('Mo-Su 08:00-18:00')).toBeNull();
+  });
+
+  it('keeps the label beside a verified-live pill', async () => {
+    (getPlaceLiveStatusCached as jest.Mock).mockResolvedValueOnce({
+      available: true, openNow: true, source: 'foursquare', checkedAt: '2026-10-06T00:00:00Z',
+      confidence: { sourceClass: 'verified_live', label: 'Verified live', checkedAt: '2026-10-06T00:00:00Z' },
+    });
+    const { findByText, getByTestId } = await mountCard({ ...BASE_PLACE, id: 'place-hours-2', openingHours: 'Mo-Su 08:00-18:00' });
+    expect(await findByText('Open now', {}, { timeout: 3000 })).toBeTruthy();
+    expect(getByTestId('place-card-listed-hours')).toHaveTextContent('Listed hours: Mo-Su 08:00-18:00', { exact: true });
   });
 });

@@ -17,6 +17,7 @@ import { useSession } from '../../context/SessionContext.tsx';
 import { GenerateHeaderSheet } from '../events/GenerateHeaderSheet.tsx';
 import type { DiscoveryPlace, PlaceLiveStatus, WikidataEnrichment } from '../../services/discovery.ts';
 import { getPlaceLiveStatus, getWikidataEnrichment, recordAlreadyKnown } from '../../services/discovery.ts';
+import { listedHoursText, LISTED_HOURS_UNVERIFIED_NOTE } from '../../features/discovery/listedHours.ts';
 import { checkSaved, toggleSave } from '../../services/collections.ts';
 import { color, space, radius, type as t, shadow, avatar, dot } from '../../theme/tokens.ts';
 import { categoryColor } from './PlaceCard.tsx';
@@ -408,10 +409,10 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, rankSur
           {place.openingHours && (
             <View style={styles.infoRow}>
               <Clock size={15} color={color.mute} />
-              <Text style={styles.infoText}>
-                {place.openingHours}
+              <Text style={styles.infoText} testID="place-detail-listed-hours">
+                {listedHoursText(place.openingHours)}
                 {liveStatus != null && liveOpenNow == null ? (
-                  <Text style={styles.lastKnownNote}>  · Last known hours — can't verify live</Text>
+                  <Text style={styles.lastKnownNote}>  · {LISTED_HOURS_UNVERIFIED_NOTE}</Text>
                 ) : null}
               </Text>
             </View>
