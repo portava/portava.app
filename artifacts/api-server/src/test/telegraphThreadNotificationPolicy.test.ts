@@ -296,3 +296,78 @@ describe("GET/PUT /threads/:id/notification-policy", () => {
     assert.equal((await putReq(BOB, { level: "ALL", muteForMinutes: 7 })).status, 400);
   });
 });
+
+/* ── verifier finding 3 (independent verification of 9920f0c83d) ─────────────
+ * PATCH /threads/:id/mute — the header icon on both conversation screens
+ * (`app/messages/[id].tsx`, `components/GroupChatScreen.tsx`) — wrote muted_at
+ * alone. With 3760's flag ON: Bob chose MUTED in the sheet, tapped the icon
+ * (`{muted:false}`), was told `muted:false`, and `notification_level='muted'`
+ * stayed, so GET said MUTED and his mention reached him 0 times. The toggle now
+ * writes through writeThreadNotificationChoice and answers its read-back. */
+
+const ON = [{ flag: THREAD_NOTIFICATION_POLICY_FLAG, enabled: true }];
+const bobRowOf = (c: FakeClient) =>
+  (c._store.message_thread_members as Array<Record<string, unknown>>).find((r) => r.user_id === BOB)!;
+async function putPolicy(body: unknown) {
+  const r = await fetch(`${policy.base}/threads/${THREAD}/notification-policy`, {
+    method: "PUT", headers: { authorization: `Bearer ${BOB}`, "content-type": "application/json" }, body: JSON.stringify(body),
+  });
+  return { status: r.status, body: (await r.json()) as Record<string, unknown> };
+}
+async function getPolicy() {
+  const r = await fetch(`${policy.base}/threads/${THREAD}/notification-policy`, { headers: { authorization: `Bearer ${BOB}` } });
+  return { status: r.status, body: (await r.json()) as Record<string, unknown> };
+}
+const toggle = (muted: boolean) => call(messaging.base, "PATCH", `/threads/${THREAD}/mute`, BOB, { muted });
+
+describe("verifier finding 3 — the header mute toggle and the 3760 level are one setting", () => {
+  it("flag ON: MUTED in the sheet, unmuted by the icon — the level is ALL and the mention arrives", async () => {
+    const c = use(seed({ notification_level: "all", muted_until: null }, ON));
+    assert.equal((await putPolicy({ level: "MUTED" })).status, 200);
+    const t = await toggle(false);
+    assert.equal(t.status, 200, JSON.stringify(t.body));
+    assert.equal(t.body.muted, false);
+    assert.equal(bobRowOf(c).notification_level, "all", "the icon said unmuted over a stored MUTED level");
+    assert.equal(bobRowOf(c).muted_at, null);
+    assert.equal((await getPolicy()).body.level, "ALL");
+    assert.equal((await mentionBob(c)).length, 1, "an unmuted member did not receive the mention");
+  });
+
+  it("flag ON: the icon clears a TEMPORARY mute in either direction", async () => {
+    const c = use(seed({ notification_level: "all", muted_until: null }, ON));
+    assert.equal((await putPolicy({ level: "MENTIONS", muteForMinutes: 60 })).status, 200);
+    assert.ok(typeof bobRowOf(c).muted_until === "string");
+    const on = await toggle(true);
+    assert.equal(on.body.muted, true);
+    assert.equal(bobRowOf(c).notification_level, "muted");
+    assert.equal(bobRowOf(c).muted_until, null, "a temporary mute survived the icon");
+    await putPolicy({ level: "ALL", muteForMinutes: 60 });
+    const off = await toggle(false);
+    assert.equal(off.body.muted, false);
+    assert.equal(bobRowOf(c).muted_until, null);
+    assert.equal((await mentionBob(c)).length, 1);
+  });
+
+  it("flag OFF (the seed): muted_at alone, as before — the 3760 columns are never named", async () => {
+    const c = use(seed());
+    const t = await toggle(true);
+    assert.equal(t.body.muted, true);
+    assert.ok(typeof bobRowOf(c).muted_at === "string");
+    assert.ok(!("notification_level" in bobRowOf(c)) || bobRowOf(c).notification_level === undefined);
+    assert.equal((await toggle(false)).body.muted, false);
+    assert.equal(bobRowOf(c).muted_at, null);
+  });
+
+  it("the levels flag cannot be read: the toggle and the sheet refuse, and nothing is written", async () => {
+    // An unreadable flag is not OFF: OFF would rewrite muted_at alone and leave a stored level behind.
+    const c = use(seed({ notification_level: "mentions", muted_until: null }, ON), {
+      errors: { feature_flags: { message: "flags unreadable", ops: ["select"] } },
+    });
+    const t = await toggle(true);
+    assert.equal(t.status >= 500, true, JSON.stringify(t.body));
+    assert.equal(bobRowOf(c).notification_level, "mentions");
+    assert.equal(bobRowOf(c).muted_at, null);
+    assert.equal((await getPolicy()).status, 503);
+    assert.equal((await putPolicy({ level: "ALL" })).status, 503);
+  });
+});

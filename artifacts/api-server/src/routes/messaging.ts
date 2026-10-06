@@ -94,7 +94,7 @@ import { getRestrictionState, DegradedPermissionCheckError } from '../services/t
 import { processTagging } from '../services/tagging/TaggingService.js';
 import { enrichSpans } from '../lib/enrichSpans';
 import { circleThreadTitle } from '../lib/displayName'; import { readRecentMessages, readRosterPaged, selectByIdsChunked, asSupabaseResult, asPageResult, sortByActivityDesc, nameVisibilitySetChunked, catchUpInbox, readNewestVisibleMessage, mapLimit, INBOX_CATCHUP_CONCURRENCY } from '../services/telegraph/inboxReads.js'; // past db-max-rows (TELEGRAPH lane 2026-10-03)
-import { NotificationService } from '../services/notifications/NotificationService.js'; import { readThreadNotificationStates, NO_THREAD_CHOICE } from '../services/telegraph/threadNotificationState.js'; import { decideThreadNotification } from '../domain/telegraph/policies/threadNotificationPolicy.js'; // §30A.6, census T398 — on this line so no cited line moves
+import { NotificationService } from '../services/notifications/NotificationService.js'; import { readThreadNotificationStates, NO_THREAD_CHOICE, writeThreadNotificationChoice } from '../services/telegraph/threadNotificationState.js'; import { decideThreadNotification } from '../domain/telegraph/policies/threadNotificationPolicy.js'; // §30A.6, census T398 — on this line so no cited line moves
 import { NotificationRouter } from '../services/notifications/NotificationRouter.js';
 import { readBlockExclusions, isExcluded } from '../lib/exclusionSet.js';
 
@@ -4070,7 +4070,7 @@ router.patch('/threads/:threadId/mute', async (req, res) => {
   if (!sc) { sendError(res, 'server_not_configured', 'Service client not ready'); return; }
   const { threadId } = req.params;
   const muted = req.body?.muted === true;
-  const now = new Date().toISOString();
+  const nowMs = Date.now(); // §45c verifier finding 3: the toggle writes through the ONE notification-choice writer below
 
   const { data: member, error: memberErr } = await sc
     .from('message_thread_members')
@@ -4083,15 +4083,15 @@ router.patch('/threads/:threadId/mute', async (req, res) => {
   if (memberErr) { refuseUnreadableAccess(req, res, 'message_thread_members', { err: memberErr, threadId, userId: user.id }); return; }
   if (!member) { sendError(res, 'forbidden', 'Not a member of this thread'); return; }
 
-  const { error } = await sc
-    .from('message_thread_members')
-    .update({ muted_at: muted ? now : null })
-    .eq('thread_id', threadId)
-    .eq('user_id', user.id);
+  // MUTED / ALL through writeThreadNotificationChoice, exactly as PUT /notification-policy writes
+  // them: with 3760's flag ON that also sets notification_level and clears a temporary mute, so
+  // the header icon and the level cannot disagree; with it OFF it is muted_at alone, as before.
+  const written = await writeThreadNotificationChoice(sc, threadId, user.id, { level: muted ? 'MUTED' : 'ALL', muteForMinutes: null }, nowMs);
 
-  if (error) { req.log.error({ err: error }, 'mute thread failed'); sendError(res, 'db_error', error.message); return; }
-
-  res.status(200).json({ ok: true, muted });
+  if (!written.ok) { req.log.error({ threadId, code: written.code }, 'mute thread failed'); sendError(res, 'db_error', 'Your notification setting was not saved. Please try again.'); return; }
+  // The answer is the READ-BACK — muted whenever muted_at is set, the policy route's own rule.
+  // A toggle that answered what was ASKED is how the icon said "unmuted" over a muted level.
+  res.status(200).json({ ok: true, muted: written.state.mutedAt !== null });
 });
 
 // ── Leave thread ──────────────────────────────────────────────────────────────

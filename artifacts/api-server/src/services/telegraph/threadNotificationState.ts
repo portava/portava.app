@@ -13,7 +13,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { readFlagState } from "../../lib/featureFlags.js";
 import {
   levelFromColumn,
   levelToColumn,
@@ -37,7 +37,18 @@ function stateOf(row: Row, levelsOn: boolean): ThreadNotificationState {
 }
 
 export async function threadNotificationLevelsEnabled(sc: SupabaseClient): Promise<boolean> {
-  return isFlagEnabled(sc, THREAD_NOTIFICATION_POLICY_FLAG);
+  return (await readFlagState(sc, THREAD_NOTIFICATION_POLICY_FLAG)) === "on";
+}
+
+/**
+ * The flag in THREE states. An unreadable flag is not OFF: with the levels in
+ * use, "off" would drop every MENTIONS / IMPORTANT / temporary-mute choice and
+ * deliver as if each member had chosen ALL (census-telegraph §45c, the class of
+ * verifier finding 2 met again here). Readers and the writer treat "unknown" as
+ * a failed read.
+ */
+async function levelsFlag(sc: SupabaseClient): Promise<"on" | "off" | "unknown"> {
+  return readFlagState(sc, THREAD_NOTIFICATION_POLICY_FLAG);
 }
 
 /**
@@ -50,7 +61,9 @@ export async function readThreadNotificationStates(
   threadId: string,
   userIds: readonly string[],
 ): Promise<{ ok: true; levelsOn: boolean; states: Map<string, ThreadNotificationState> } | { ok: false }> {
-  const levelsOn = await threadNotificationLevelsEnabled(sc);
+  const flag = await levelsFlag(sc);
+  if (flag === "unknown") return { ok: false };
+  const levelsOn = flag === "on";
   if (userIds.length === 0) return { ok: true, levelsOn, states: new Map() };
   const base = levelsOn
     ? sc.from("message_thread_members").select("user_id, muted_at, notification_level, muted_until")
@@ -88,7 +101,9 @@ export async function writeThreadNotificationChoice(
   choice: { level: ThreadNotificationLevel; muteForMinutes: number | null },
   nowMs: number,
 ): Promise<WriteChoiceResult> {
-  const levelsOn = await threadNotificationLevelsEnabled(sc);
+  const flag = await levelsFlag(sc);
+  if (flag === "unknown") return { ok: false, code: "db_error" };
+  const levelsOn = flag === "on";
   const now = new Date(nowMs).toISOString();
   let patch: Record<string, string | null>;
   if (!levelsOn) {
