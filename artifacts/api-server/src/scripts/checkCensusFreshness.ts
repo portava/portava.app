@@ -3087,6 +3087,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/inputOutcomeLearning.test.ts",
     "artifacts/api-server/src/test/inputMemoryContext.test.ts",
     "artifacts/api-server/src/test/inputTelemetryVocabularyParity.test.ts",
+    // ── ADDED 2026-10-06 by lane D (§38) ────────────────────────────────────
+    // 3780 is cited as evidence for the flag check inside both outcome RPCs
+    // and the 30-day window the reader applies (OD-INPUT-1/2, finding 1).
+    "artifacts/api-server/src/migrations/3780_input_outcome_learning.sql",
     // ── ADDED 2026-09-29 by §34 (testing-mode lane tm-ii, WP-19) ─────────────
     // §34 moves G154–G157, G160–G163, G133 and G362 on these files' evidence:
     // the two server suites that prove paste and "meet at" through the real

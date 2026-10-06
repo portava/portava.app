@@ -21,14 +21,18 @@ Backend paths are relative to `artifacts/api-server/src/`, client paths to
 | Measure | Value |
 | --- | --- |
 | **Denominator — testable requirements** | **373** |
-| BUILT-AND-CORRECT | **298** |
-| BUILT-BUT-WRONG | **51** |
+| BUILT-AND-CORRECT | **297** |
+| BUILT-BUT-WRONG | **52** |
 | NOT-BUILT | **20** |
 | CANNOT-VERIFY | **4** |
 | **CONSTRUCTED%** = (C+W)/373 | **349 / 373 = 93.6 %** |
-| **CORRECT%** (raw) = C/373 | **298 / 373 = 79.9 %** |
-| **THE GAP** = W/373 | **51 / 373 = 13.7 %** |
+| **CORRECT%** (raw) = C/373 | **297 / 373 = 79.6 %** |
+| **THE GAP** = W/373 | **52 / 373 = 13.9 %** |
 | CANNOT-VERIFY share | **4 / 373 = 1.1 %** |
+
+> **RESTATED 2026-10-06 BY §38** from §37's `298 / 51 / 20 / 4`: G326 `C → W` (device ledger not
+> run). G337 and G359 were moved to `C` prematurely by §37; both are re-graded `C` on new evidence
+> (§38.3), so neither changes the count. The previous restatement follows.
 
 > **RESTATED 2026-10-05 BY §37** from §36.5's `294 / 48 / 27 / 4` plus §37's eight moves
 > (G326, G30, G337, G359 to `C`; G25, G320, G370, G368 `N → W`). The previous restatement follows.
@@ -5759,3 +5763,160 @@ Four up to `C` (G326, G30, G337, G359), four `N → W` (G25, G320, G370, G368), 
 * A pasted URL's query, fragment or userinfo in any rendered field of an extract response.
 * A fifth independent typeahead engine outside `src/platform/input-assistance` that the detector does
   not catch — which would mean its three marks are not the shape engines are built in.
+
+## §38 — 2026-10-06 (lane D, wave 2): the independent verifier rejected §37's head, and what that changes
+
+Written by lane D from branch `claude/mission-d-input-intelligence-20261005`, after an independent
+verifier read §37's pushed head `41f17e7b7d` and REJECTED it. This section is append-only: §37 is not
+rewritten, and where a §37 cell is wrong this section says so and restates it. **All code evidence is
+CONTROLLED** (fakes, fixtures, the real routers over a fake Supabase client). **No database was read or
+written.** Migrations `3780`–`3783` are written and applied nowhere (docs/migrations.md, entry of
+2026-10-05). `head_commit` is NOT re-declared.
+
+### 38.1 What §37's head broke, said plainly
+
+§37's pushed head was red on three existing suites, and §37 did not say so:
+
+* `src/test/searchPlatformGolden.test.ts` — every serve, on every field, read `feature_flags` once more
+  than the golden expects, because outcome learning checked its flag before anything else.
+* `travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts` — the new setting rows used `color.signalStrong`.
+* `inputTelemetryFunnel.component.test.tsx` and `telemetryLinkage.component.test.tsx` — **broken by §37's
+  own G212 build** (the immediate shipped-dictionary tier): local rows shown while online resolve nothing
+  and doubled the impression count. §37.3 records that G212 was reverted after the full suite; this is
+  the statement that the revert is what restored those two suites, and that G212 stays `W`.
+
+The first two are fixed (38.2, fix 1; the rows now use `color.ink`). All four pass at this section's
+tree; the full-suite record is in the lane report.
+
+### 38.2 The verifier's ten findings, and what each now rests on
+
+1. **Reads per serve — measured, per state.** The serve reads nothing for outcome learning unless the
+   request carries the client's hint (`artifacts/api-server/src/routes/inputAssistance.ts:244#const outcomeLearning = body.outcomeLearning === true`,
+   sent only for a device that opted in: `travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:302#outcomeLearning: outcomeLearningConsented() ? true : undefined`),
+   and a hinted serve makes ONE round trip, `input_outcome_memory`, which checks the flag and the consent
+   inside the database (`artifacts/api-server/src/migrations/3780_input_outcome_learning.sql:174#IF NOT COALESCE((SELECT f.enabled FROM public.feature_flags f WHERE f.flag = 'input_outcome_learning_enabled'), false)`).
+   Measured by `artifacts/api-server/src/test/inputOutcomeLearning.test.ts:558#MEASURED COST (OD-INPUT-7)`:
+   no hint **0**; hinted with the flag off **1**; hinted, flag on, no consent **1**; hinted and active
+   **1**. `searchPlatformGolden` passes unchanged. The write RPC checks the flag too
+   (`artifacts/api-server/src/migrations/3780_input_outcome_learning.sql:133#IF NOT COALESCE((SELECT f.enabled FROM public.feature_flags f WHERE f.flag = 'input_outcome_learning_enabled'), false) THEN`),
+   so 3780's header is now true of the function, not just of the route.
+2. **G337 — four inputs that leaked.** A scheme-less URL, an unparseable `https` token inside a text
+   line, a password containing `/`, and tokens in the path. A pasted URL is now shown as scheme and host
+   only (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:120#export function displaySafeUrl`),
+   removed from a text query before anything else reads it (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:408#stripTime(stripUrls(part))`),
+   and an unreadable URL line is reported as `unsupported_link` rather than dropped. Each of the four goes
+   through `classifyPaste` and through the route (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:271#const SECRET_INPUTS`).
+3. **G359 — the detector was open on three sides.** It required an `AbortController`, scanned five
+   directories, and left its not-an-engine list open. It now scans the whole client root, needs no abort,
+   and pins BOTH lists with ceilings; a not-engine exemption covers only the timers it names
+   (`travel-buddy-standalone/src/platform/input-assistance/services/__tests__/noIndependentEngines.test.ts:132#const NOT_ENGINES:`).
+   **Measured: thirteen engines, not four** (`travel-buddy-standalone/src/platform/input-assistance/services/__tests__/noIndependentEngines.test.ts:94#const ENGINE_CEILING = 13;`).
+   `components/map/MapSearchSheet.tsx` is one of them — a 300 ms per-keystroke debounce over a request,
+   with no abort — and it is classified as an engine, not exempted.
+4. **Withdrawal always available.** The opt-in rows render for every signed-in person, not behind the
+   client's flag map (`travel-buddy-standalone/app/settings/index.tsx:582#{(configured && isAuthed) && <InputAssistanceSettings />}`);
+   proven with an EMPTY client flag map and a consent on record
+   (`travel-buddy-standalone/src/platform/input-assistance/components/__tests__/inputAssistanceSettings.component.test.tsx:34#flag turned OFF by the owner, client flag map EMPTY`).
+5. **The disclosure is now true of the data.** A consented `downstream_task_completed` is counted into
+   `input_outcome_task_daily` at ingest (migration 3783: day, context, task, ok, count — no user, session
+   or request id) and is never stored as a 90-day session-linked telemetry row
+   (`artifacts/api-server/src/routes/inputAssistance.ts:555#const agg = await recordTaskOutcomeAggregate(sc, {`;
+   `artifacts/api-server/src/test/inputOutcomeLearning.test.ts:441#with consent and the flag on it is AGGREGATED`).
+   G370 reads the aggregate, not rows.
+6. **Inspect shows exactly what is used.** One reader serves the starters and Inspect, with no query, so
+   a re-rank cannot make them differ (`artifacts/api-server/src/lib/inputAssistance/memoryContext.ts:135#export async function readCompassMemoryFacts(`;
+   `artifacts/api-server/src/test/inputMemoryContext.test.ts:325#Inspect and the starters are ONE set`).
+7. **No cloud path outside the gate.** The consent check and the no-retention rule are INSIDE the
+   installed port, so a direct call cannot bypass them (`travel-buddy-standalone/src/platform/input-assistance/voice/transcriptionPort.ts:161#function guardPort(`;
+   `travel-buddy-standalone/src/platform/input-assistance/voice/__tests__/voiceIntake.test.ts:430#installing a transcriber cannot bypass the consent`),
+   and every clip is discarded after transcription. The inert `rec.processLocally !== true` test is
+   replaced by a real one: an engine with no `processLocally` attribute is not used
+   (`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:202#if (!('processLocally' in rec)) {`).
+8. **Deletion.** The three user-keyed tables are `ERASED_BY_CASCADE`, by `user_id REFERENCES
+   auth.users (id) ON DELETE CASCADE` firing when AccountDeletionService calls `auth.admin.deleteUser`
+   (`artifacts/api-server/src/lib/deletionDispositions.ts:228#"input_outcome_consent",`). `check:deletion-coverage`
+   could NOT see them: it reads the 2026-08-19 baseline and was green with all three unregistered
+   (`artifacts/api-server/src/scripts/checkDeletionCoverage.ts:37#post-baseline tables. The baseline is the 2026-08-19 snapshot`).
+   A band-local test now reads every `CREATE TABLE` in 3780–3799 and requires a stated fate
+   (`artifacts/api-server/src/test/inputOutcomeLearning.test.ts:733#each user-keyed table cascades from auth.users`).
+9. **Two surviving mutants, pinned.** Inspect reading memory with the flag OFF
+   (`artifacts/api-server/src/test/inputMemoryContext.test.ts:339#flag OFF with a consent still on record: Inspect reads NO memory`);
+   a failed counter read ranking by the outcome formula with empty counts
+   (`artifacts/api-server/src/test/inputOutcomeLearning.test.ts:605#a FAILED outcome read ranks EXACTLY as acceptance-only`).
+10. **Text.** The migrations entry names 3783 and both 3780 functions' flag checks; the acknowledgement
+    lists G30; `outcomeLearning.ts` no longer names a file that does not exist; 3781's header says a batch
+    carrying a reversal is refused WHOLE before 3781 is applied — every event in it lost, the drop counted
+    — rather than "refused there (counted, never silently dropped)"; G28's two citations are repointed by
+    reading the claim (§4 table).
+
+### 38.3 Row corrections
+
+| ID | §37 said | **now** | why |
+| --- | --- | --- | --- |
+| G326 | C | **W** | §37's own cell ends on the open half: whether VoiceOver and TalkBack honour the focus call on a device. The device ledger for it is NOT RUN, and "opening never steals the cursor" is a ruling about what the overlay should do, not evidence that a screen reader does it. Built, unproven where it matters: `W`. |
+| G337 | C (premature) | **C** | §37's C was wrong at `41f17e7b7d` — four inputs leaked (38.2, finding 2). Re-graded on NEW evidence only: each input fixed and proven through `classifyPaste` and the route, and each fix killed by its mutation (raw shown whole, query keeps the URL, scheme-less line dropped, password split at `/`). |
+| G359 | C (premature) | **C** | §37's C was wrong at `41f17e7b7d` — the detector could not see an engine without an abort, outside five directories, or behind an open exemption list (38.2, finding 3). Re-graded on NEW evidence only: the row is a prohibition on NEW engines, and the detector now stops a new one in every shape it names, with eight mutations each red (planted abort-free engine, fourteenth engine, eleventh exemption, engine inside an exempted file, MapSearchSheet's entry dropped, old five roots, abort required again, a debounce helper). The truth is **thirteen engines, ratcheted at thirteen**. What it does not catch is stated in the file's header: a request on every keystroke with no timer at all, and a debounce whose callback names neither a request nor typed text. |
+
+**Restated, no verdict moves:**
+
+* **G6, G16 (`W`, stay).** Thirteen independent engines, not four. Nine carry no abort and were invisible
+  to §37's detector: `MapSearchSheet`, `DiscoveryShareSheet`, `ShareSheet`, `MediaActionPanels`, the event
+  invite search, `LayoverModeSheet`, `TelegraphSearchScreen`, `app/discover.tsx` and the main search
+  screen's live results (`travel-buddy-standalone/src/platform/input-assistance/services/__tests__/noIndependentEngines.test.ts:95#const KNOWN_ENGINES:`).
+* **G13 (`C`, confirmed).** Its cell says the shipped tier is reachable ONLY from the `unavailable` arm.
+  At this tree that is true: `offlineLocalRows` has one caller
+  (`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:400#const degradedRows = mayRetain ? offlineLocalRows(policy, trimmed, local ?? []) : [];`),
+  inside `else if (res.unavailable)`, and the comment above it says the same (the G212 tier that would
+  have added a second caller was reverted).
+* **G368 (`W`, stays) — no producer in the shipped app.** `selection_reversed` is emitted only after a
+  selection the field APPLIED (`travel-buddy-standalone/src/platform/input-assistance/components/SmartInput.tsx:378#const applied = result !== false && s.replacementText != null;`).
+  The only production `SmartInput` is the Wall header's (`travel-buddy-standalone/src/features/wall/components/WallHeader.tsx:148#<SmartInput`),
+  behind `wall_enabled`, and its `onSelectSuggestion` always returns `false`
+  (`travel-buddy-standalone/src/features/wall/components/WallHeader.tsx:71#return false;`). So the event
+  has no producer a user can reach; the metric is computed over a stream that is empty by construction
+  until a field that applies selections ships.
+* **G25 (`W`, stays).** "Inspect returns exactly what would be used" is now true by construction —
+  one reader, no query (finding 6) — and Inspect reads nothing while the flag is off (finding 9). Still
+  awaits 3782 applied, the disclosure approved and the flag.
+* **G163 (`W`, stays) — "no silent cloud path", restated.** True of the code that exists: the gate is in
+  the port (finding 7). But iOS and Android have NO recogniser at all — `expo-speech-recognition` is not a
+  dependency, and the native adapter takes a module nobody installs
+  (`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:252#The native module the owner has not yet approved`).
+  Dictation on a phone is a build gap, not a privacy property.
+* **G212 (`W`, stays).** See 38.1.
+* **G370 (`W`, stays).** Its source is now the 3783 aggregate (finding 5); awaits 3783 applied and a number.
+
+### 38.4 Headline, restated from the rows
+
+One down (G326 `C → W`); G337 and G359 corrected and re-graded `C` on new evidence (no net move).
+
+| Measure | §37 | **§38** |
+| --- | ---: | ---: |
+| Denominator | 373 | **373** |
+| BUILT-AND-CORRECT | 298 | **297** |
+| BUILT-BUT-WRONG | 51 | **52** |
+| NOT-BUILT | 20 | **20** |
+| CANNOT-VERIFY | 4 | **4** |
+| CONSTRUCTED% | 93.6 % | **93.6 %** (349 / 373) |
+| CORRECT% raw | 79.9 % | **79.6 %** (297 / 373) |
+
+### 38.5 What would turn this red
+
+* A personalised serve that reads the outcome store without the client's hint, or more than once with it.
+* A pasted URL's path, query, fragment, userinfo or port in any rendered field — scheme-less or not.
+* A fourteenth keystroke debounce over a request outside `src/platform/input-assistance`, or an eleventh
+  not-engine exemption.
+* An opted-in person who cannot see the switch to withdraw.
+* A `downstream_task_completed` stored as a telemetry row, or an aggregate cell with an identifying column.
+* Inspect and the starters disagreeing, or either reading memory while the flag is off.
+* Audio sent off the device without the separate consent, or a clip kept after transcription.
+* A user-keyed table in 3780–3799 without a stated deletion fate.
+
+**Files this section names without grading them** (each declared, not watched):
+
+- NOT-GRADED: artifacts/api-server/src/test/searchPlatformGolden.test.ts — named in §38.1 as a suite §37's head broke; it grades the search platform's reads, not an input-intelligence row, and it passes unchanged at this tree.
+- NOT-GRADED: travel-buddy-standalone/src/theme/__tests__/sharedSheetContrast.consumers.test.ts — named in §38.1 as a suite §37's head broke (a colour token); it is the theme's contrast guard and grades no row here.
+- NOT-GRADED: travel-buddy-standalone/src/components/map/MapSearchSheet.tsx — named as one of the thirteen engines. Its classification is pinned by the WATCHED detector (`noIndependentEngines.test.ts`): migrating or changing its keystroke loop turns that test red, and the test's change ages this census.
+- NOT-GRADED: travel-buddy-standalone/app/discover.tsx — as above: one of the thirteen, pinned by the watched detector.
+- NOT-GRADED: travel-buddy-standalone/app/settings/index.tsx — named for the mount line of finding 4. The watched component test reads this file and asserts the mount (`inputAssistanceSettings.component.test.tsx`), and many lanes edit Settings, so watching it here would age this census on every unrelated row.
+- NOT-GRADED: artifacts/api-server/src/lib/deletionDispositions.ts — named in finding 8 as where the three tables' fate is written. The watched band-local test in `inputOutcomeLearning.test.ts` pins that claim; the manifest itself is the deletion lane's and is edited by every lane that adds a table.
