@@ -385,7 +385,7 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 | S3 | No second social presence model | **BW** | Four coexist: `circle_presence`, `trip_crew_location_sessions`, `locateFriendsSession`, and the map's `social_zone`/`buddy_zone`/`crew_member` kinds. `src/presence/domain/types.ts` declares the intended single architecture but is *"Phase-0 types and a transport selector; no store, no fusion layer"* (`src/lib/crowdFlowProducer.ts:388`) and only `locateFriends` consumes it. |
 | S4 | Preserve null/unknown when canonical fact is unavailable | **BC** | `src/lib/mapObjects.ts:370-386` — `sourceClass` optional and the optionality documented as load-bearing (*"Every candidate default is a lie"*). `src/lib/mapProjection.ts:682` returns the object untouched when there are no claims. |
 | S5 | Do not weaken existing privacy / authz / safety / GPS stripping | **BC** | No weakening found; five standing ratchets: `src/scripts/checkLocationPurposes.ts`, `checkDataRights.ts`, `auditStorageExif.ts`, `checkAuthorizationContract.ts`, `checkSilentSupabaseWrites.ts`. |
-| S6 | Existing Map/Discovery/Wall/Compass keep functioning while new projections are partial or gated | **BC** | Every new producer is flag-gated fail-closed with the legacy path intact: `src/routes/mapProjection.ts:1056`, `src/lib/mapProducers/worldIntelligence.ts:62`, `2295_map_world_intelligence_flag.sql:93-95` (postcondition *refuses* to commit if the flag were seeded ON). |
+| S6 | Existing Map/Discovery/Wall/Compass keep functioning while new projections are partial or gated | **BC** | Every new producer is flag-gated fail-closed with the legacy path intact: `src/routes/mapProjection.ts:1057`, `src/lib/mapProducers/worldIntelligence.ts:62`, `2295_map_world_intelligence_flag.sql:93-95` (postcondition *refuses* to commit if the flag were seeded ON). |
 
 ### §2 Hard semantic separations
 
@@ -467,7 +467,7 @@ Legend: **BC** BUILT-AND-CORRECT · **BW** BUILT-BUT-WRONG · **NB** NOT-BUILT �
 
 | id | Requirement | V | Evidence / divergence |
 |---|---|---|---|
-| S58 | Keep current layer census and fallback; do not rewrite the gateway | **BC** | The gateway is intact; every Phase-7 kind is additive behind `map_world_intelligence_enabled` (`mapProducers/worldIntelligence.ts:62`, `routes/mapProjection.ts:1056`). |
+| S58 | Keep current layer census and fallback; do not rewrite the gateway | **BC** | The gateway is intact; every Phase-7 kind is additive behind `map_world_intelligence_enabled` (`mapProducers/worldIntelligence.ts:62`, `routes/mapProjection.ts:1057`). |
 | S59 | Add server-built `ExperienceState` to place/event projections rather than separate overlapping vibe pins | **BW** | The **shape** is right and the payload is wrong: `mapProjection.applyLiveClaims` (`:676-701`) folds live claims onto the place object instead of emitting parallel vibe pins — exactly what the spec asks — but what it folds on is individual claims, not an ExperienceState. |
 | S60 | Promote `world_pulse` into transient world-change projections: heating up, forming, moving, clearing, unexpected activity, event spillover, traveler surge | **BW** | `world_pulse` exists and is well built (`worldPulseProducer.ts`), but it is an **activity-concentration cell** with `payload.basis = 'observed_aggregates'` — a *level*, not a *change*. None of the seven named change types exists. `TREND_STATES` (`mapObjects.ts:233`) attach to places, not to world objects. |
 | S61 | Render crowd_flow / traveler_flow as privacy-safe directional geometry, not ordinary pins | **BC** | `mapAggregation.ts:1192,1236-1237` — a `LineString` between two zone centroids, with `:982` recording *"deliberately NO per-person field and no route geometry"*. `travelerFlowProducer.ts:277` runs its own privacy gate. |
@@ -948,7 +948,7 @@ states carry none of the four.
 `migrations/2350_map_sensing_projection_flags.sql:74#INSERT` seeds
 `map_experience_state_enabled`, `map_world_moments_enabled` and
 `map_display_resolver_enabled` FALSE and refuses to commit them ON;
-`routes/mapProjection.ts:539#map_experience_state_enabled` reads all three
+`routes/mapProjection.ts:540#map_experience_state_enabled` reads all three
 fail-closed, and `test/mapSensingProjectionGates.test.ts:131#ABSENT` proves
 that with every flag absent — production's state — not one new field reaches
 the wire while the live claims still flow. **S43** (Experience engine, N →
@@ -959,7 +959,7 @@ from one claim type and every leaf without a producer null, never a default
 (`test/mapExperienceState.test.ts:147#null`); the fold reads no personal
 preference (§1.1's pin); it is served on `payload.experienceState` behind the
 flag (`lib/mapProjection.ts:781#experienceState`;
-`routes/mapProjection.ts:1007#experienceState:`;
+`routes/mapProjection.ts:1008#experienceState:`;
 `test/mapSensingProjectionGates.test.ts:165#map_experience_state_enabled`).
 **S59** (ExperienceState on the place object, not separate pins, W → **C**):
 the same fold, onto the same object, and no new kind. **S64** (truth /
@@ -979,14 +979,14 @@ never observed (`lib/mapProducers/worldMomentProducer.ts:109#WORLD_CHANGE_TRUTH`
 (`test/mapWorldMoments.test.ts:183#unexpected`); hotspots are the pulse and
 rhythm is `city_model` (`lib/mapProducers/cityModelProducer.ts`); a sub-floor
 cell and a quiet cell serialize identically; wired at
-`routes/mapProjection.ts:1294#attachWorldMoments(pulses,` and served with
+`routes/mapProjection.ts:1299#attachWorldMoments(pulses,` and served with
 `moment: null` when nothing changed
 (`test/mapSensingProjectionGates.test.ts:272#map_world_moments_enabled`).
 **S65** (display resolver — safety, mode, zoom, intent, relevance, W → **C**):
 `lib/mapDisplayResolver.ts:268#resolveDisplay(` runs between ranking and
 paging, the band sets the budget, the mode allocates it across classes, the
 intent reorders within a tier, safety notices are never budgeted, and every
-drop is counted by kind (`routes/mapProjection.ts:1316#resolveDisplay(ranked,`;
+drop is counted by kind (`routes/mapProjection.ts:1321#resolveDisplay(ranked,`;
 `test/mapSensingProjectionGates.test.ts:195#map_display_resolver_enabled`).
 **S38** (coverage tracked separately from activity, W → **C**): the Map
 object now carries `coverage` beside `activity` (`lib/mapObjects.ts:455#coverage?:`),
@@ -4509,7 +4509,7 @@ It caches one `zones` array process-wide for 30 seconds with no viewer in the
 key — structurally the same shape as the defect above. It is **not** the same
 defect, for a reason that had to be read rather than guessed: its query filters
 on `active` alone, with no viewer predicate, and both call sites hand it a
-SERVICE-ROLE client — `routes/mapProjection.ts:456#getServiceClient` and the four
+SERVICE-ROLE client — `routes/mapProjection.ts:457#getServiceClient` and the four
 `withDiscoveryCandidates(getServiceClient(), …)` sites in `routes/discovery.ts`.
 A service-role read bypasses RLS, so every request sees the identical row set
 and the cached object carries no viewer's entitlement.

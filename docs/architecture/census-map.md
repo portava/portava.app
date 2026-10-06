@@ -35,7 +35,7 @@
 > **3. `geo_zones` holds 0 rows in production — an independent second blocker
 > this census does not record.** M5/M67/M119 attribute Crowd Flow's death solely
 > to the absent consent table. The empty zone model kills it separately:
-> `routes/mapProjection.ts:895#no_zone_model` refuses with `no_zone_model`. *(Line repointed 2026-09-14 from 836, which is 62 lines short of the branch; the fact is unchanged.)* Populating
+> `routes/mapProjection.ts:896#no_zone_model` refuses with `no_zone_model`. *(Line repointed 2026-09-14 from 836, which is 62 lines short of the branch; the fact is unchanged.)* Populating
 > `geo_zones` is an ops action, not a migration, so applying every pending
 > migration would still leave Crowd Flow dark.
 >
@@ -169,18 +169,18 @@ without querying anything:
 1. `protected_zones` **does not exist in production** (ground truth; ratcheted
    `unapplied` at `artifacts/api-server/src/scripts/checkProductionDrift.ts:110`).
 2. `loadProtectedZones` selects from it and returns `null` on any error —
-   `artifacts/api-server/src/routes/mapProjection.ts:196-203`. The header at
+   `artifacts/api-server/src/routes/mapProjection.ts:197-204`. The header at
    `:181-186` states the intent exactly: *"a failed read returns null, and the
    caller answers with the empty envelope instead of serving unprotected
    objects."*
-3. The caller does that — `artifacts/api-server/src/routes/mapProjection.ts:964-979`:
+3. The caller does that — `artifacts/api-server/src/routes/mapProjection.ts:965-980`:
    `if (zones === null)` → `res.json({ enabled: true, objects: [], … sources: [] })`.
 4. `GET /api/map/projection/temporal` has the identical branch at
    `artifacts/api-server/src/routes/mapProjectionTemporal.ts:574-591`.
 5. And if the flag is *off* — which is how migration 2201 seeds it,
    `artifacts/api-server/src/migrations/2201_map_projection_flag.sql:16-18`,
    `('map_projection_enabled', FALSE, …)` — the route returns
-   `{ enabled: false, objects: [] }` at `routes/mapProjection.ts:498-500`.
+   `{ enabled: false, objects: [] }` at `routes/mapProjection.ts:499-501`.
 
 Both branches are empty. This is a **fail-closed** design working exactly as
 written, so nothing leaks; but it means the §19 gateway has never served a
@@ -353,7 +353,7 @@ client paths to `travel-buddy-standalone/` unless stated.
 | M2 | ONE persistent Map Shell; the surfaces are coordinated states, not nine tabs | C | `src/features/map/state/mapMachine.ts:1-40` — one pure reducer over three orthogonal axes (mode, overlay, camera); D3 at `:57-64` forbids a secondary mode being silently exited by a selection. |
 | M3 | Live Map / Map Home | C | `mapMachine.ts:105` `HOME_MODE = 'LIVE'`; screen at `app/map/index.tsx`. |
 | M4 | Live Place | C | `src/components/map/LivePlaceSheet.tsx`; model `src/features/map/place/livePlaceModel.ts:2`. |
-| M5 | Crowd Flow | **W** | Producer (`lib/crowdFlowProducer.ts`), gateway lane and client renderer all exist. The mode gate is `src/stores/mapStore.tsx:100#CROWD_FLOW:` — `CROWD_FLOW: inputs.crowdFlowObjectCount > 0` — and the gateway serves zero objects in production. TWO independent blockers, not one: `route_flow_contribution_consent` is absent (M67) **and** `geo_zones` holds no curated rows, which the gateway refuses on separately at `routes/mapProjection.ts:895#no_zone_model`. *(Re-read 2026-09-14: the old citation, line 98, was the §11 TRIP comment two lines above the gate, and the CORRECTION HEADER's line 836 for `no_zone_model` was 62 lines short. Both repointed and anchored; verdict unchanged.)* **Turns red when:** a production `GET /api/map/projection` response over a backfilled viewport carries at least one `objects[].kind === "crowd_flow"`. That needs an ops backfill of `geo_zones` (ops, not a migration) *and* 2218 + 2224 applied (integration owner). Either one alone leaves it W. |
+| M5 | Crowd Flow | **W** | Producer (`lib/crowdFlowProducer.ts`), gateway lane and client renderer all exist. The mode gate is `src/stores/mapStore.tsx:100#CROWD_FLOW:` — `CROWD_FLOW: inputs.crowdFlowObjectCount > 0` — and the gateway serves zero objects in production. TWO independent blockers, not one: `route_flow_contribution_consent` is absent (M67) **and** `geo_zones` holds no curated rows, which the gateway refuses on separately at `routes/mapProjection.ts:896#no_zone_model`. *(Re-read 2026-09-14: the old citation, line 98, was the §11 TRIP comment two lines above the gate, and the CORRECTION HEADER's line 836 for `no_zone_model` was 62 lines short. Both repointed and anchored; verdict unchanged.)* **Turns red when:** a production `GET /api/map/projection` response over a backfilled viewport carries at least one `objects[].kind === "crowd_flow"`. That needs an ops backfill of `geo_zones` (ops, not a migration) *and* 2218 + 2224 applied (integration owner). Either one alone leaves it W. |
 | M6 | Trip Map | C | `src/features/trips/map/tripMapSources.ts`, `tripMapModel.ts`; capability hard-true at `src/stores/mapStore.tsx:96`. |
 | M7 | Locate My Friends | **W** | Complete server (`lib/locateFriendsSession.ts`, 48 KB) and client (`src/services/locateFriends.ts`, `src/components/map/LocateFriendsPanel.tsx`). **SUPERSEDED 2026-09-26 BY §44 — measured live, all four are now PRESENT on production (0 rows each); the blocker is now the flag `locate_friends_enabled=false`, not the schema. Kept as the record of what was true at the 2026-09-07 baseline.** All four storage tables were absent from production: none of `locate_friends_sessions`, `_members`, `_positions`, `_audit` appears in `artifacts/api-server/baseline/20260907_production_tables.txt` (431 names), and all four are created by `` `artifacts/api-server/src/migrations/2219_locate_friends_sessions.sql:74#CREATE TABLE IF NOT EXISTS public.locate_friends_sessions (` ``. *(Re-read 2026-09-14: the old citation — `checkProductionDrift.ts`, lines 176-179 — was wrong twice over — those lines are `wall_telemetry_events` / `passport_telemetry_events`, and **that file does not track any `locate_friends_*` table at all**, so the ratchet is silent about this lane. The baseline table list is the artifact that actually carries the fact.)* **Turns red when:** a refreshed `baseline/*_production_tables.txt` contains the four names. Supplied by the operator with production read access, after the integration owner applies 2219. A CI-only apply does not move it — the baseline is production's. |
 | M8 | Intent Mode | C | `src/components/map/IntentSheet.tsx:2`; opened at `app/map/index.tsx:2691`. |
@@ -666,7 +666,7 @@ open**. These verdicts describe code that is correct and would run.
 
 | id | Requirement | V | Evidence |
 | --- | --- | --- | --- |
-| M179 | Suppress sensitive locations **before** data reaches the client | **W** | The gate is written and cannot fire. `lib/protectedLocations.ts:2#protectedLocations`, `:860#applyProtection` is the last step before serialization, ordered correctly at `routes/mapProjection.ts` and (after PR #393's fix) in the temporal route. But `protected_zones` is **absent from production** (`` `artifacts/api-server/src/scripts/checkProductionDrift.ts:315#protected_zones` ``, and the name is not in `baseline/20260907_production_tables.txt`), so the read errors, `routes/mapProjection.ts:235#loadProtectedZones` returns null and the route answers the refusal envelope at `:1023#protection_unreadable`. *(Re-read 2026-09-14: three of these four citations were wrong — line 849 is a field inside an interface and `applyProtection` is 11 lines below it; drift's `protected_zones` entry is at line 157, not 110; and lines 964-979 are the §19 ordering block, not the envelope, which begins 60 lines later.)* The production behaviour is *refuse everything*, not *suppress sensitive locations* — safe, and not the requirement. **Turns red when:** 2217 is applied to production, a refreshed baseline lists `protected_zones`, and a projection response over a viewport containing a curated zone carries `protection` non-null with at least one object coarsened or withheld. Note the second half: applying the table is necessary and NOT sufficient — an empty `protected_zones` makes `applyProtection([], …)` an identity pass (`routes/mapProjection.ts:196#FAIL-CLOSED`), which suppresses nothing. A curated zone set is an ops act after the migration. |
+| M179 | Suppress sensitive locations **before** data reaches the client | **W** | The gate is written and cannot fire. `lib/protectedLocations.ts:2#protectedLocations`, `:860#applyProtection` is the last step before serialization, ordered correctly at `routes/mapProjection.ts` and (after PR #393's fix) in the temporal route. But `protected_zones` is **absent from production** (`` `artifacts/api-server/src/scripts/checkProductionDrift.ts:315#protected_zones` ``, and the name is not in `baseline/20260907_production_tables.txt`), so the read errors, `routes/mapProjection.ts:236#loadProtectedZones` returns null and the route answers the refusal envelope at `:1024#protection_unreadable`. *(Re-read 2026-09-14: three of these four citations were wrong — line 849 is a field inside an interface and `applyProtection` is 11 lines below it; drift's `protected_zones` entry is at line 157, not 110; and lines 964-979 are the §19 ordering block, not the envelope, which begins 60 lines later.)* The production behaviour is *refuse everything*, not *suppress sensitive locations* — safe, and not the requirement. **Turns red when:** 2217 is applied to production, a refreshed baseline lists `protected_zones`, and a projection response over a viewport containing a curated zone carries `protection` non-null with at least one object coarsened or withheld. Note the second half: applying the table is necessary and NOT sufficient — an empty `protected_zones` makes `applyProtection([], …)` an identity pass (`routes/mapProjection.ts:197#FAIL-CLOSED`), which suppresses nothing. A curated zone set is an ops act after the migration. |
 | M180 | The protected categories (residences, medical, shelters, sensitive government, policy-defined) | C | `lib/protectedLocations.ts:81-88` `PROTECTED_CATEGORIES`; migration `2217:66-72` CHECK-constrains the same five; `:102` `policy_ref NOT NULL` so *"a protected location with no recorded policy"* is unrepresentable; `:135` `'allow'` is deliberately not storable — "a protection row that permits is a hole". |
 | M181 | Safety and access warnings take precedence over activity ranking | C | `lib/mapObjects.ts:284` `safety: 120`; `lib/protectedLocations.ts:210` `PROTECTION_EXEMPT_KINDS = ['safety_notice']` — a hazard notice is never coarsened away. |
 | M182 | The public map never receives more location detail than the viewer is authorized to see | C | `lib/protectedLocations.ts:720#coarsenForZone`, `lib/protectedLocations.ts:798#COARSENED_PAYLOAD_KEYS`; `lib/mapObjects.ts:221-226#verified_firsthand` documents that the strip must be able to delete `sourceClass` because it *"publishes that someone was here"*. *(These three repointed 2026-09-14: line 793 was 5 lines short, and lines 376-381 sat 155 lines past the passage they quote.)* Also `lib/protectedLocations.ts:301#COARSEN_UNSAFE_KINDS` and `:325#RELATIONSHIP_GATED_KINDS` — REPOINTED 2026-09-14 by `check:citation-symbols`: the LINE NUMBERS were right and the FILE was wrong. Both constants live in `protectedLocations.ts`, but `lib/mapObjects.ts:376-381` was cited between them and the opening citation, and a bare `:301` inherits the most recently named file. Anchored so the next shift fails loudly. |
@@ -922,7 +922,7 @@ consequence:
 1. **`protected_zones` is absent from production, and it is a hard dependency of
    the gateway, not an optional one.** Both `/api/map/projection` and
    `/api/map/projection/temporal` answer the empty envelope when it cannot be
-   read (`routes/mapProjection.ts:964-979`, `routes/mapProjectionTemporal.ts:574-591`).
+   read (`routes/mapProjection.ts:965-980`, `routes/mapProjectionTemporal.ts:574-591`).
    This is the correct fail-closed direction and it means §19 has never served
    an object in production.
 2. **Flipping `map_projection_enabled` on today would blank the map, not fill
@@ -1428,9 +1428,9 @@ budget needs a device and a warm database, but the property the budget RESTS on
 does not.
 
 `routes/mapProjection.ts` carries three module-level read-through caches with
-30 s TTLs — `protected_zones` at `routes/mapProjection.ts:237#_clearProtectedZoneCache`, flow
-`geo_zones` at `routes/mapProjection.ts:258#_flowZoneCache`, and Phase 7's city
-model at `routes/mapProjection.ts:293#_cityZoneCache`. Each exports a
+30 s TTLs — `protected_zones` at `routes/mapProjection.ts:238#_clearProtectedZoneCache`, flow
+`geo_zones` at `routes/mapProjection.ts:259#_flowZoneCache`, and Phase 7's city
+model at `routes/mapProjection.ts:294#_cityZoneCache`. Each exports a
 `_clear*Cache()` hook, and **eleven map test files import one.** Every single one
 uses the hook to DEFEAT the cache so fixtures cannot leak between cases. Not one
 asserted that a cache hit avoids the read. The only thing this corpus pinned
@@ -1454,7 +1454,7 @@ unreadable `geo_zones` to refuse with `no_zone_model`; the route answers
 empty one are different operator problems, and the refusal says which. That is
 better than this pass assumed and is now pinned. And `loadProtectedZones` reads
 `Date.now()` itself while `loadFlowZones` takes the handler's injected `nowMs`,
-even though `routes/mapProjection.ts:462#ONE clock read` states the handler makes
+even though `routes/mapProjection.ts:463#ONE clock read` states the handler makes
 exactly one clock read. The invariant is stated and not held. It is harmless
 today — both are TTL comparisons — and it is not a Map-lane fix to smuggle into
 an evidence pass, so it is recorded here and nowhere else.
@@ -1552,7 +1552,7 @@ sub-property closed; the row's own measurement still needs a running server.
   re-measure the database. §41.7 stands unchanged.
 - **`geo_zones` row count.** The CORRECTION HEADER's "0 rows" is an ops
   observation with no artifact in this tree. The empty-zone refusal path is real
-  and now correctly cited (`routes/mapProjection.ts:895#no_zone_model`); whether
+  and now correctly cited (`routes/mapProjection.ts:896#no_zone_model`); whether
   it fires in production today is not checkable from here.
 - **Flag rows.** `map_projection_enabled`, `map_telemetry_enabled` and
   `map_world_intelligence_enabled` are rows, not tables, so a table list cannot
@@ -3003,8 +3003,8 @@ carries §47). No code changes in this section; `head_commit` is not re-declared
 M256's cell says its server half is *"a missing harness nobody has written"* and that this lane
 *"can see no such harness anywhere under `artifacts/api-server/src/test/`"*. It was written on
 2026-09-20/21 (`c36aac77d`, `62bee1776`) and is in the api-server `test` script:
-`artifacts/api-server/src/test/mapProjectionPerf.test.ts:266#describe("M256(a) — GET /api/map/projection, 50 warm-cache requests"`,
-gating p95 at the top of the band (`artifacts/api-server/src/test/mapProjectionPerf.test.ts:131#const P95_BUDGET_MS = 800;`)
+`artifacts/api-server/src/test/mapProjectionPerf.test.ts:271#describe("M256(a) — GET /api/map/projection, 50 warm-cache requests"`,
+gating p95 at the top of the band (`artifacts/api-server/src/test/mapProjectionPerf.test.ts:136#const P95_BUDGET_MS = 800;`)
 with four anti-vacuity guards that make a route which stops reading fail rather than get faster.
 Re-run on this tree: 9 / 9, in-process arm **p50 4.2 ms / p95 54.7 ms** over 50 warm requests.
 
@@ -3024,7 +3024,7 @@ seven families"*. Read family by family:
 - Fed, CAUSE-ONLY by design: `event_context`
   (`artifacts/api-server/src/lib/crowdFlowProducer.ts:278#export const CAUSE_ONLY_SIGNAL_FAMILIES`),
   produced and attached on the projection route
-  (`artifacts/api-server/src/routes/mapProjection.ts:935#causeHypotheses: causes.hypotheses,`).
+  (`artifacts/api-server/src/routes/mapProjection.ts:936#causeHypotheses: causes.hypotheses,`).
   It is not "producing nothing", and it can never enter `WIRED_SIGNAL_SOURCES`, because an event
   is a hypothesis about WHY a flow exists, never evidence that anybody moved (§10).
 - Unfed, each with its named finding
@@ -3090,3 +3090,70 @@ and its device half are unmeasured.
 | id | was | now | why |
 | --- | --- | --- | --- |
 | M256 | ? | **?** | §49. The harness's correctness guards gate; its timing is informational; the row's measurement is still the live arm and a device. |
+
+## §50 — 2026-10-06 (lane L): the projection's protection counts told a viewer that a friend was inside a protected zone; they are server telemetry now. NO VERDICT MOVES
+
+*Found by the Telegraph re-check (same class as the Nearby leak). Measured on branch
+`claude/mission-l-lead-residual-20261005` after merging `origin/main` (`824633ce45`). Not live:
+`map_projection_enabled` is seeded FALSE and its row is absent from production (§43.4). It must not
+ship.*
+
+### 50.1 The defect
+
+`GET /api/map/projection` answered `protection: { evaluated, allowed, coarsened, suppressed,
+safetyExempt }`. Circle members go through that pass. With one circle member on the map,
+`suppressed: 1` beside an empty object list said that the friend was **inside a protected zone** — a
+shelter, a home, a sensitive building — which is exactly the fact the zone exists to hide, and more
+than the coarse position it withheld would have said. M179 asks that sensitive locations be suppressed
+before data reaches the client; a count attributable to a zone is data reaching the client.
+
+### 50.2 The change
+
+The per-reason counts are removed from the response and recorded as SERVER TELEMETRY
+(`artifacts/api-server/src/routes/mapProjection.ts:1067#recordProtectionPass(req.log, "map_projection", protection.report);`;
+`artifacts/api-server/src/lib/mapProtectionTelemetry.ts:39#export function recordProtectionPass(`):
+logged with the request as counts and a route name only — no viewer, no object id, no zone — and
+handed to an in-process sink that tests read. The refusal envelopes keep `protection: null`, which says
+nothing about any zone.
+
+### 50.3 Proof
+
+- **Byte-identical responses**: a circle member inside a shelter zone and the same member who opted out
+  of sharing produce the same response, compared byte for byte with only `generatedAt` normalised
+  (`artifacts/api-server/src/test/mapProjectionLayers.test.ts:881#it("member inside a shelter zone ≡ member who opted out of sharing — byte-identical responses"`);
+  likewise against a member whose fix is stale
+  (`artifacts/api-server/src/test/mapProjectionLayers.test.ts:888#it("member inside a shelter zone ≡ member whose fix is stale — byte-identical responses"`).
+  A control case puts the zone elsewhere and the member IS served, so the comparisons are of real
+  absences.
+- **The gate still ran**: its counts reach the telemetry sink
+  (`artifacts/api-server/src/test/mapProjectionLayers.test.ts:900#it("the gate still RAN — its counts reach server telemetry, not the wire"`).
+- Eight suites that used the wire counts as evidence that §24 ran now read them from the sink (a
+  shared test helper), including the M256 harness's V3, which is now one telemetry event per measured
+  request. Map suites: mapProjection 78, mapProjectPlace 35, mapProjectionPerf 9, mapCrowdFlowLayer 27,
+  mapMeetingPointProducer 34, mapSafetyNoticeProducer 24, mapMemoryProducer 31, mapProjectionLayers 56,
+  mapProtectionUnreadable 5, mapProjectionTemporalRoute 24, geoZoneSeed 29, protectedLocations 68 — all
+  pass. `mapProjectionLiveDb` cannot run on this machine (the CI Supabase guard refuses it without the
+  sanctioned project); it was converted the same way and compiles.
+
+Mutations, each red then restored byte-identical (`cmp`):
+
+| mutation | result |
+| --- | --- |
+| the per-reason counts put back on the response | 3 red |
+| only `suppressed` put back, as a single number | 2 red (both byte-identity cases) |
+| the telemetry record removed | 1 red |
+
+### 50.4 What this does not change, and one thing left open
+
+- A member inside a COARSEN-class zone (a clinic) whose position is already `approximate` is served
+  unchanged, because that zone's floor is `approximate`; no count distinguishes it any more.
+- The temporal route (`/map/projection/temporal`) still reports its own protection counts. It serves
+  forecasts built from k-anonymous cohorts, never another person's position, so this defect class does
+  not reach it; the crowd-flow and Phase 7 `withheldForProtection` counts are aggregate objects for the
+  same reason. Recorded so the next reader checks rather than assumes.
+
+### 50.5 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| M179 | W | **W** | §50. A wire leak in this row's own subject is closed and pinned; the row still waits on `protected_zones` existing in production (§43.1). |

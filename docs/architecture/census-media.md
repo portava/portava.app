@@ -9559,7 +9559,7 @@ subject only.
     (`artifacts/api-server/src/routes/mapProjection.ts:91#THE ZONE MODEL IS THIS ROUTE'S JOB, AND ONLY THIS ROUTE'S.`).
   - The place-to-zone association the pairing needs already exists INSIDE the
     gateway and is not published
-    (`artifacts/api-server/src/routes/mapProjection.ts:900#const model = buildFlowZoneModel(zones, indexPlaceZones(placeRows, zones));`).
+    (`artifacts/api-server/src/routes/mapProjection.ts:901#const model = buildFlowZoneModel(zones, indexPlaceZones(placeRows, zones));`).
   - A flow carries zone ids only
     (`artifacts/api-server/src/lib/mapAggregation.ts:1250#export interface CrowdFlowPayload {`).
   - Names alone would not meet the RED WHEN, and a Media-side zone read is the

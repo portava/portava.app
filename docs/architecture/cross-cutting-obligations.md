@@ -167,7 +167,7 @@ Every one of these is counted **by `census-sensing.md` only**, inside its 127 de
 
 | # | Obligation (spec line) | Exists? | census-sensing | Counted elsewhere |
 |---|---|---|---|---|
-| SX-01 | Keep current layer census and fallback; do not rewrite the gateway (`:121`) | YES `routes/mapProjection.ts:1056` | S58 **BC** | census-map counts the gateway, not this clause |
+| SX-01 | Keep current layer census and fallback; do not rewrite the gateway (`:121`) | YES `routes/mapProjection.ts:1057` | S58 **BC** | census-map counts the gateway, not this clause |
 | SX-02 | Add server-built `ExperienceState` to place/event Map projections rather than separate overlapping vibe pins (`:122`) | PARTIAL — shape right, payload wrong; `lib/mapProjection.ts:676-701` folds individual claims | S59 **BW** | no |
 | SX-03 | Promote `world_pulse` into transient world-change projections: heating up, forming, moving, clearing, unexpected activity, event spillover, traveler surge (`:123`) | PARTIAL — `lib/mapProducers/worldPulseProducer.ts` exists (413 lines) but emits an activity *level*, not a *change*; none of the seven named types exists | S60 **BW** | **overlaps** census-map M282 (Phase 7, `W`) — see §5 |
 | SX-04 | Render `crowd_flow` / `traveler_flow` as privacy-safe directional geometry, not ordinary pins (`:124`) | YES `lib/mapAggregation.ts:1192,1236-1237` | S61 **BC** | **overlaps** census-map M63/M69 — see §5 |
