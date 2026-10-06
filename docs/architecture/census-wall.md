@@ -2239,7 +2239,7 @@ So the second claim — that no reading can decide W71 — is also false: the re
 answer is "built, and not live". **`?` is not available for a fact that has been measured.** The
 remaining blocker is a native module the owner has not approved. With neither it nor a browser
 recognizer bound, the seam answers an explicit no-provider rather than a placeholder transcript
-(`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:50#export const NO_SPEECH_RECOGNIZER: SpeechRecognizerPort = {`),
+(`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:74#export const NO_SPEECH_RECOGNIZER: SpeechRecognizerPort = {`),
 which is an owner decision about a dependency — the same class of blocker that sits under dozens of
 `W` rows across this corpus and under exactly none of its `?` rows.
 
