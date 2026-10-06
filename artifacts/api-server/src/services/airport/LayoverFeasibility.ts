@@ -37,7 +37,7 @@
  * (census L50) and this module deliberately leaves it open: it publishes the
  * verdict and the per-candidate rating, and no caller's filtering changed.
  */
-import type { EntryEligibility } from "./layoverEntryGate.js"; import { engineSession, gateLandside, namedConstraintInputs, type ConstraintInput, type LandsideGate, type LandsidePolicyInput, type SessionConstraintContext } from "./LayoverConstraints.js"; // same line: this file's lines are citation-anchored
+import type { EntryEligibility } from "./layoverEntryGate.js"; import { engineSession, gateForVerdict, gateLandside, landsideStatusOf, namedConstraintInputs, type ConstraintInput, type LandsideGate, type LandsidePolicyInput, type SessionConstraintContext } from "./LayoverConstraints.js"; // same line: this file's lines are citation-anchored
 import { createHash } from "node:crypto";
 import type { AirportProfile } from "./AirportProfileService.js";
 import type { LayoverSession } from "./LayoverSessionService.js";
@@ -81,7 +81,7 @@ import { statedTravelMin } from "./LayoverPlanFit.js";
  *                 shape's version moved; the arithmetic gained a term, so
  *                 `LAYOVER_ENGINE_VERSION` moved too and for its own reason.
  */
-export const LAYOVER_FEASIBILITY_VERSION = "2026.10.04-1"; // 2026.10.04-1: optional `constraints` / `policy` named inputs and `landsideGate` — history entry in LayoverConstraints.ts
+export const LAYOVER_FEASIBILITY_VERSION = "2026.10.06-1"; // 2026.10.06-1: `landsideGate` gains `status` / `cautions` and `open` narrows to the verdict `yes`; `constraints.read` may be `undeclared` — history (and 2026.10.04-1) in LayoverConstraints.ts
 
 // ── §6.2 Estimate representation ─────────────────────────────────────────────
 
@@ -612,7 +612,7 @@ function liveExtraEstimate(live: LiveConditions | null, minutes: number): Estima
  * `inputHash` an identity rather than a decoration.
  */
 export function certifyFeasibility(inputs: FeasibilityInputs): LayoverFeasibilityRecord {
-  const { airport, nowMs } = inputs; const session = engineSession(inputs.session, inputs.constraints); // the declared baggage mode replaces the boolean HERE, once, for every term below
+  const { airport, nowMs } = inputs; const session = engineSession(inputs.session, inputs.constraints); // what the constraint input charges (declared bag mode, separate tickets) replaces the boolean HERE, once, for every term below
 
   const live = inputs.liveConditions;
 
@@ -728,7 +728,7 @@ export function certifyFeasibility(inputs: FeasibilityInputs): LayoverFeasibilit
     reasonCodes: advice.reasonCodes,
     disclaimer: advice.disclaimer,
     landside,
-    windowOnly, landsideGate: gated.gate,
+    windowOnly: windowOnlyUnderGate(windowOnly, gated.gate, advice.verdict, advice.reasons), landsideGate: gated.gate,
   };
 }
 
@@ -955,6 +955,40 @@ export function certifyFeasibilityWithReturnCorridor(
     verdict: adjusted.verdict,
     reasons: adjusted.reasons,
     unknowns: adjusted.unknowns,
-    reasonCodes: adjusted.reasonCodes,
+    reasonCodes: adjusted.reasonCodes, landsideGate: gateForVerdict(base.landsideGate, adjusted.verdict), windowOnly: windowOnlyUnderGate(base.windowOnly, gateForVerdict(base.landsideGate, adjusted.verdict), adjusted.verdict, adjusted.reasons), // a verdict the corridor withdrew takes the open gate AND the `safe` rating with it
+  };
+}
+
+/**
+ * `windowOnly`, unable to say "safe" beside a landside gate that is not open.
+ *
+ * APPENDED AT THE FOOT: lines above are cited by line.
+ *
+ * `certifyFeasibility` already caps the rating by the VERDICT (`VERDICT_CEILING`
+ * above), and for the record it builds that is the same thing — its gate is
+ * open exactly when its verdict is `yes`. `certifyFeasibilityWithReturnCorridor`
+ * is the site where the two came apart: it withdrew the verdict (`yes` →
+ * `tight`) and the gate after the rating had been computed, and returned
+ * `windowOnly.rating: "safe"` beside a cautionary gate. No production caller
+ * supplies a corridor today, so nothing was ever served that way — and the
+ * rating is now capped by the GATE at both sites, so it cannot be.
+ *
+ * ONLY EVER A WITHDRAWAL: a rating that is not `safe` is returned untouched
+ * (`airport_only` is the traveller's own answer and is never rewritten).
+ */
+export function windowOnlyUnderGate(
+  windowOnly: SafetyAssessment,
+  gate: LandsideGate,
+  verdict: LeaveAdvice["verdict"],
+  reasons: readonly string[],
+): SafetyAssessment {
+  if (windowOnly.rating !== "safe") return windowOnly;
+  const status = landsideStatusOf({ landsideGate: gate, verdict });
+  if (status === "open") return windowOnly;
+  return {
+    ...windowOnly,
+    rating: status === "closed" ? "not_recommended" : "possible_but_risky",
+    // A demoted rating with no reason is a refusal nobody can explain (App C2).
+    warningReason: reasons[reasons.length - 1] ?? windowOnly.warningReason,
   };
 }

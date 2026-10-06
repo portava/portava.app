@@ -182,3 +182,32 @@ export async function engagedRabBookingKillSwitch(sc: any): Promise<string> {
   }
   return "rab_booking_kill_switch";
 }
+
+// ── Flags whose ON is the RESTRICTIVE state, and whose name does not say so ───
+//
+// `isKillSwitchEngaged` exists because `disable_*` inverts what false-on-error
+// means. The same inversion applies to a flag that is named like a capability
+// (`*_enabled`) and BEHAVES like a restriction: turning it on makes the product
+// refuse something. Read through `isFlagEnabled`, a database error answers
+// `false` — "the restriction is off" — at exactly the moment nobody could look.
+//
+// That is not hypothetical. PR #588 read both flags below through
+// `isFlagEnabled`; a failed `feature_flags` read then attached NO constraint
+// context to a layover, so a traveller's declared "my next flight leaves from a
+// different airport" was invisible and the landside gate stood open. Neither
+// `check:flag-polarity` (which classifies `*_enabled` as CAPABILITY by
+// convention) nor the `&& await isKillSwitchEngaged` ratchet (which matches a
+// different shape) could see it.
+//
+// A flag belongs here when BOTH are true: (1) ON withholds, refuses or closes
+// something a person is otherwise told they may do; (2) "off" and "could not
+// read" must not be the same answer. Such a flag is read through
+// `readFlagState` (lib/capability/schemaCapability.ts) — on / off / absent /
+// unreadable — and the caller says what it does with `unreadable`.
+// `src/test/verifyFailOpenStopReads.test.ts` fails on any other reader.
+export const RESTRICTIVE_WHEN_ON_FLAGS = [
+  /** ON: the declared constraint set is read, and an unknown in it can close the landside gate. */
+  "layover_constraints_enabled",
+  /** ON: an unconfirmed entry corridor forbids landside (spec §6.1). */
+  "layover_entry_forbid_landside_enabled",
+] as const;
