@@ -3975,6 +3975,8 @@ clause; the booking refusal's old copy; the gate honouring a TRUE override row (
 without the KYC gate; admin.ts forgetting the flag.
 
 - NOT-GRADED: artifacts/api-server/src/lib/paymentsMode.ts — the deployment-mode rule N-2 narrows; it decides whether the mock identity provider may run, and no census-trust verdict rests on it beyond TV-P4, which stays C.
+- NOT-GRADED: artifacts/api-server/src/test/protectiveActionsUnreadableRestriction.test.ts — the evidence of lead ruling D-24d (a block, mute, restrict or report is never stopped by an unreadable restriction state); D-24d is a ruling, not a row of this census.
+- NOT-GRADED: artifacts/api-server/src/test/rentABuddySpecBookingBypass.test.ts — the fifth booking door's N-1 evidence (no identity bypass); it backs no row of this census, whose booking verdict (TRV2-08) rests on the suites §35 cites.
 
 ### 36.2 Rows
 
