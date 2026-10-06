@@ -193,6 +193,12 @@ describe('AvailabilityView', () => {
     expect(screen.getByTestId('availability-audience').props.children.join('')).toBe('Who sees it: People you follow who follow you back');
   });
 
+  it("lead ruling L3: a following window's audience is named to its owner as the people they follow", async () => {
+    const editor = makeEditor();
+    await render(<AvailabilityView editor={{ ...editor, draft: { ...editor.draft, visibility: 'following' } }} />);
+    expect(screen.getByTestId('availability-audience').props.children.join('')).toBe('Who sees it: People you follow');
+  });
+
   it('toggles Open to Plans through the editor', async () => {
     const editor = makeEditor();
     await render(<AvailabilityView editor={editor} />);
