@@ -113,7 +113,7 @@ export const FREEDOM_READING =
  * for word. Whatever the hops, the certification cap is stated, because it holds
  * even with routing on: a window is certified only on HIGH-confidence travel
  * terms (TripFreedomEngine), and a Routes API answer is MEDIUM — one number, no
- * spread (GoogleRoutesTravelTimeProvider).
+ * spread (the Google Routes adapter).
  */
 export function freedomReadingFor(hops: ReadonlyArray<{ routed: boolean; travelMinutes: number | null }>): string {
   const known = hops.filter((h) => h.travelMinutes !== null);

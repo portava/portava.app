@@ -56,7 +56,8 @@ import { createHash } from "node:crypto";
  * owner-only rule applied at build time and then bypassed at serve time.
  * Stored on the cached brief; a cached brief whose digest differs from the
  * current one is rebuilt. A brief cached before this existed has none, so it
- * is rebuilt once.
+ * is rebuilt once — unless it names no trip, in which case it carries no plan
+ * item and there is nothing to rebuild for.
  */
 async function privatePlanAccessKey(tripId: string | null, userId: string): Promise<string> {
   if (!tripId) return "no-trip";
@@ -863,7 +864,7 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
     const cachedActiveTripId: string | null = cached.brief.activeTripId ?? null;
     const membershipValid = (!cachedActiveTripId
       || await isAcceptedTripMember(client, cachedActiveTripId, user.id))
-      && cached.brief.privatePlanAccessKey === await privatePlanAccessKey(cachedActiveTripId, user.id);
+      && (cached.brief.privatePlanAccessKey ?? (cachedActiveTripId ? undefined : "no-trip")) === await privatePlanAccessKey(cachedActiveTripId, user.id); // a brief with no trip carries no plan item, so its missing key is no trip's
     if (!membershipValid) {
       invalidateBriefCache(user.id, date);
       // fall through to regenerate with fresh active-trip lookup
@@ -884,7 +885,7 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
     const storedActiveTripId: string | null = stored.brief.activeTripId ?? null;
     const membershipValid = (!storedActiveTripId
       || await isAcceptedTripMember(client, storedActiveTripId, user.id))
-      && stored.brief.privatePlanAccessKey === await privatePlanAccessKey(storedActiveTripId, user.id);
+      && (stored.brief.privatePlanAccessKey ?? (storedActiveTripId ? undefined : "no-trip")) === await privatePlanAccessKey(storedActiveTripId, user.id); // a brief with no trip carries no plan item, so its missing key is no trip's
     if (!membershipValid) {
       await invalidateStoredBrief(client, user.id, date);
       // fall through to regenerate

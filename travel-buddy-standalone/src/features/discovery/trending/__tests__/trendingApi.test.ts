@@ -54,8 +54,7 @@ describe('A. the four lists', () => {
   it('A2. THE POINT: switched off is `off`, worded as not available — never an empty list', async () => {
     respond = () => json({ error: 'feature_disabled', message: 'trending lists are not enabled' }, 404);
     const r = await api.fetchTrending('places', 'Lisbon');
-    assert.equal(r.state, 'off');
-    if (r.state === 'ok') return;
+    assert.equal(r.state, 'off'); // node's strict assert narrows `r` to the off variant, so no guard is needed below
     assert.equal(api.trendingReadCopy(r), "Trending isn't available yet.");
   });
 
