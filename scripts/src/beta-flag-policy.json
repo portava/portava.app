@@ -1,0 +1,2193 @@
+{
+  "format": "portava-beta-flag-policy/1",
+  "project_ref": "emfpckykpzfturllshly",
+  "flags": [
+    {
+      "flag": "ACTIVITY_DISCOVERY_BOOST_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "COMPASS_ACTIVE_REWARDS_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "COMPASS_DIVERSITY_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "COMPASS_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-compass §4 (production 2026-09-07: true since 2026-07-17)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
+      "evidence": []
+    },
+    {
+      "flag": "COMPASS_FAIR_EXPOSURE_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "COMPASS_FALLBACK_MODE_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0051_compass_foundation.sql, so production likely runs it ON; not grounded in census evidence here.",
+      "evidence": []
+    },
+    {
+      "flag": "COMPASS_FEED_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-compass §4 (production 2026-09-07: true since 2026-07-17)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
+      "evidence": []
+    },
+    {
+      "flag": "COMPASS_TELEGRAPH",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "COMPASS_V1_RULE_BASED_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-compass §4 (production 2026-09-07: true since 2026-07-17)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
+      "evidence": []
+    },
+    {
+      "flag": "CREATOR_FATIGUE_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "DISCOVERY_DIVERSITY_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "DISCOVERY_ENGINE_MODE",
+      "kind": "CONFIG",
+      "enabled": false,
+      "reason": "config row: its value lives in metadata; enabled is not a gate, so it stays at its seeded false.",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_ACTIVE_CREATOR_BOOST_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_ADMIN_REVIEW_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_AI_PROVENANCE_LABELS_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_ANALYTICS_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_COMMENTS_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_CREATOR_FATIGUE_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_DEFAULT_VIEW_MODE",
+      "kind": "CONFIG",
+      "enabled": false,
+      "reason": "config row: its value lives in metadata; enabled is not a gate, so it stays at its seeded false.",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_FOLLOWING_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_FOR_YOU_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_GEMS_ADD_TO_TRIP_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_GEMS_DIRECTIONS_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_GEMS_RANKING_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_GEMS_SUBMIT_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_GEMS_WRONG_PLACE_REPORT_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_GRID_RANKING_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_HIDDEN_GEMS_CREATE_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 2084_codify_live_read_flags.sql, so production likely runs it ON; not grounded in census evidence here.",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_HIDDEN_GEMS_NEARBY_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_LIKES_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_NEW_CREATOR_BOOST_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_PROCESSING_PIPELINE_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_RANKING_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_RETURNING_CREATOR_BOOST_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_SAVES_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_SHARES_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_TAB_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_TAB_WORLD_DEFAULT_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_UNDEREXPOSED_BOOST_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_UPLOAD_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_UPLOAD_PHOTO_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_UPLOAD_VIDEO_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_VIEW_MODE_FULLSCREEN_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 2037_media_tab_flags.sql, so production likely runs it ON; not grounded in census evidence here.",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_VIEW_MODE_GRID_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 2037_media_tab_flags.sql, so production likely runs it ON; not grounded in census evidence here.",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_VIEW_MODE_HIDDEN_GEMS_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 2037_media_tab_flags.sql, so production likely runs it ON; not grounded in census evidence here.",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_WATCH_STAGE24_RANKING_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_WATCH_TAP_TO_PLAY_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "MEDIA_WORLD_SHELL_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "NEW_CONTRIBUTOR_BOOST_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "PORTAVA_FEATURED_BOOST_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "PORTAVA_PUBLISHER_BOOST_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "RANKING_EXPERIMENT_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "RENT_BUDDY_ADMIN_ONLY_MODE",
+      "kind": "STOP",
+      "enabled": true,
+      "reason": "ENGAGED: Rent-a-Buddy surfaces are admin-only in the beta; testers cannot offer or book while identity is not live-mode.",
+      "evidence": [
+        "OD-PAY-10"
+      ]
+    },
+    {
+      "flag": "RENT_BUDDY_BETA_ONLY_MODE",
+      "kind": "STOP",
+      "enabled": false,
+      "reason": "not engaged: RENT_BUDDY_ADMIN_ONLY_MODE (engaged) already confines Rent-a-Buddy to admins; booking and payments stay off.",
+      "evidence": [
+        "OD-PAY-10"
+      ]
+    },
+    {
+      "flag": "RENT_BUDDY_GROUP_BOOKINGS_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: Rent-a-Buddy booking and payments stay off — identity must be live-mode and test-mode verifications never satisfy a booking.",
+      "evidence": [
+        "OD-PAY-10",
+        "OD-PAY-11"
+      ]
+    },
+    {
+      "flag": "RENT_BUDDY_MVP_MODE",
+      "kind": "STOP",
+      "enabled": false,
+      "reason": "not engaged: RENT_BUDDY_ADMIN_ONLY_MODE (engaged) already confines Rent-a-Buddy to admins; booking and payments stay off.",
+      "evidence": [
+        "OD-PAY-10"
+      ]
+    },
+    {
+      "flag": "RENT_BUDDY_NIGHTLIFE_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: Rent-a-Buddy booking and payments stay off — identity must be live-mode and test-mode verifications never satisfy a booking.",
+      "evidence": [
+        "OD-PAY-10",
+        "OD-PAY-11"
+      ]
+    },
+    {
+      "flag": "RENT_BUDDY_OFFERS_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: Rent-a-Buddy booking and payments stay off — identity must be live-mode and test-mode verifications never satisfy a booking.",
+      "evidence": [
+        "OD-PAY-10",
+        "OD-PAY-11"
+      ]
+    },
+    {
+      "flag": "RENT_BUDDY_PACKAGES_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: Rent-a-Buddy booking and payments stay off — identity must be live-mode and test-mode verifications never satisfy a booking.",
+      "evidence": [
+        "OD-PAY-10",
+        "OD-PAY-11"
+      ]
+    },
+    {
+      "flag": "RETURNING_USER_BOOST_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "SEARCH_SIGNAL_DECAY_DAYS",
+      "kind": "CONFIG",
+      "enabled": false,
+      "reason": "config row: its value lives in metadata; enabled is not a gate, so it stays at its seeded false.",
+      "evidence": []
+    },
+    {
+      "flag": "UNDEREXPOSED_CONTENT_BOOST_ENABLED",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "account_deletion_worker_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: AccountDeletionService is not to be released before the required retention review (owner, 2026-10-04 12:05 UTC); deletions stay queued.",
+      "evidence": []
+    },
+    {
+      "flag": "ai_event_auto_suggest_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "ai_event_headers_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "ai_place_headers_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "ai_trip_covers_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "ai_visual_admin_review_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "ai_visual_provider_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "ai_visual_regeneration_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "airport_mode_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0127_layover_system.sql, so production likely runs it ON; not grounded in census evidence here.",
+      "evidence": []
+    },
+    {
+      "flag": "airport_pulse_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0127_layover_system.sql, so production likely runs it ON; not grounded in census evidence here.",
+      "evidence": []
+    },
+    {
+      "flag": "budget_fx_conversion_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "budget_intelligence_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "compass_ai_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "compass_ai_writing_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "compass_city_confidence_windowed_reads_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "compass_decision_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "compass_graph_decay_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "compass_location_context_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-compass §4 (production 2026-09-07: true)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
+      "evidence": []
+    },
+    {
+      "flag": "country_essentials_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "creator_attribution_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "disable_discovery_pde",
+      "kind": "STOP",
+      "enabled": false,
+      "reason": "not engaged: the surface it stops stays available to testers (production's own state); an operator can engage it from the admin flag list.",
+      "evidence": []
+    },
+    {
+      "flag": "disable_intel_live_labels",
+      "kind": "STOP",
+      "enabled": true,
+      "reason": "ENGAGED: no Live / verified-live labels until the identity-confirmed rule (provider id, or normalised name within 150 m) is proven on the beta.",
+      "evidence": [
+        "D-67"
+      ]
+    },
+    {
+      "flag": "disable_location_sharing",
+      "kind": "STOP",
+      "enabled": false,
+      "reason": "not engaged: the surface it stops stays available to testers (production's own state); an operator can engage it from the admin flag list.",
+      "evidence": []
+    },
+    {
+      "flag": "disable_media_uploads",
+      "kind": "STOP",
+      "enabled": false,
+      "reason": "not engaged: the surface it stops stays available to testers (production's own state); an operator can engage it from the admin flag list.",
+      "evidence": []
+    },
+    {
+      "flag": "disable_messaging",
+      "kind": "STOP",
+      "enabled": false,
+      "reason": "not engaged: the surface it stops stays available to testers (production's own state); an operator can engage it from the admin flag list.",
+      "evidence": []
+    },
+    {
+      "flag": "disable_new_event_creation",
+      "kind": "STOP",
+      "enabled": false,
+      "reason": "not engaged: the surface it stops stays available to testers (production's own state); an operator can engage it from the admin flag list.",
+      "evidence": []
+    },
+    {
+      "flag": "disable_posting",
+      "kind": "STOP",
+      "enabled": false,
+      "reason": "not engaged: the surface it stops stays available to testers (production's own state); an operator can engage it from the admin flag list.",
+      "evidence": []
+    },
+    {
+      "flag": "disable_profile_search",
+      "kind": "STOP",
+      "enabled": false,
+      "reason": "not engaged: the surface it stops stays available to testers (production's own state); an operator can engage it from the admin flag list.",
+      "evidence": []
+    },
+    {
+      "flag": "disable_rab_bookings",
+      "kind": "STOP",
+      "enabled": true,
+      "reason": "ENGAGED: the second Rent-a-Buddy booking stop, for the same reason — identity must be live-mode; test-mode verifications never satisfy a booking.",
+      "evidence": [
+        "OD-PAY-10",
+        "OD-PAY-11"
+      ]
+    },
+    {
+      "flag": "disable_rent_buddy_booking",
+      "kind": "STOP",
+      "enabled": true,
+      "reason": "ENGAGED: no Rent-a-Buddy booking — identity must be live-mode, and a test-mode verification never satisfies a booking (no tester bypass, no sandbox key).",
+      "evidence": [
+        "OD-PAY-10",
+        "OD-PAY-11"
+      ]
+    },
+    {
+      "flag": "disable_signups",
+      "kind": "STOP",
+      "enabled": true,
+      "reason": "ENGAGED: no self-service sign-up in the private beta; testers are created by an operator, and POST /auth/signup answers 403 feature_disabled.",
+      "evidence": [
+        "OD-PAY-11"
+      ]
+    },
+    {
+      "flag": "disable_tagging",
+      "kind": "STOP",
+      "enabled": false,
+      "reason": "not engaged: the surface it stops stays available to testers (production's own state); an operator can engage it from the admin flag list.",
+      "evidence": []
+    },
+    {
+      "flag": "disable_unknown_message_requests",
+      "kind": "STOP",
+      "enabled": false,
+      "reason": "not engaged: the surface it stops stays available to testers (production's own state); an operator can engage it from the admin flag list.",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_buddy_launch_gate_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: Rent-a-Buddy booking and payments stay off — identity must be live-mode and test-mode verifications never satisfy a booking.",
+      "evidence": [
+        "OD-PAY-10",
+        "OD-PAY-11"
+      ]
+    },
+    {
+      "flag": "discovery_cache_a_ranked_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_candidate_projection_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_candidate_sources_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_circle_candidates_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_cold_start_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_community_byline_canonical_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_diversity_axes_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_dwell_telemetry_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_engagement_integrity_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_exploration_inventory_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_feature_families_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_for_you_pde_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_integrity_stage_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_intent_term_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_live_rank_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_outcome_learning_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_output_kinds_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_place_cooccurrence_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_platform_graph_provenance_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_ranking_modifiers_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_search_protected_zones_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_serve_log_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_serve_log_retention_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: a retention purge whose period is not legally decided (owner-decisions Part 3); the beta holds test data only.",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_stop_enforcement_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_surface_objectives_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_trail_exploration_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_trail_health_order_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_trail_objective_rank_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_trend_lists_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_trend_normalised_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_trend_post_convergence_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_trend_rebuild_scheduler_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_trend_rediscovery_retest_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_trend_snapshot_retention_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: a retention purge whose period is not legally decided (owner-decisions Part 3); the beta holds test data only.",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_trending_api_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_trending_objective_rank_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_trip_match_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_trip_planning_objective_rank_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_trip_projection_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "discovery_trip_viewer_projections_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "event_start_transition_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "events_chat_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "events_cohosts_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "events_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "events_invites_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "events_join_leave_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "events_reminders_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "events_reports_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "events_share_links_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "events_trust_gates_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "events_waitlist_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "experience_session_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "external_places_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "find_your_circle_disabled",
+      "kind": "STOP",
+      "enabled": false,
+      "reason": "not engaged: the surface it stops stays available to testers (production's own state); an operator can engage it from the admin flag list.",
+      "evidence": []
+    },
+    {
+      "flag": "find_your_circle_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "fsq_places_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "hidden_gem_verification_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0043_hidden_gems.sql, so production likely runs it ON; not grounded in census evidence here.",
+      "evidence": []
+    },
+    {
+      "flag": "hidden_gems_compass_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-compass §4 (production 2026-09-07: true)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
+      "evidence": []
+    },
+    {
+      "flag": "hidden_gems_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0037_feature_flags.sql, so production likely runs it ON; not grounded in census evidence here.",
+      "evidence": []
+    },
+    {
+      "flag": "hidden_gems_layover_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0043_hidden_gems.sql, so production likely runs it ON; not grounded in census evidence here.",
+      "evidence": []
+    },
+    {
+      "flag": "hidden_gems_passport_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0043_hidden_gems.sql, so production likely runs it ON; not grounded in census evidence here.",
+      "evidence": []
+    },
+    {
+      "flag": "hidden_gems_pulse_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0043_hidden_gems.sql, so production likely runs it ON; not grounded in census evidence here.",
+      "evidence": []
+    },
+    {
+      "flag": "highlights_feed_bounded_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "input_memory_context_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "input_outcome_learning_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "intel_calibration_report",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "intel_capture_quick_signal",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "intel_claim_projection_crowd",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "intel_compass_rhythm_actor_gate",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "intel_contribution_retention_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: a retention purge whose period is not legally decided (owner-decisions Part 3); the beta holds test data only.",
+      "evidence": []
+    },
+    {
+      "flag": "intel_coverage",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "intel_limited_live",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "intel_live_label_crowd",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "intel_live_scope_admin_surface_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "intel_live_scope_promotion_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "intel_missions",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "intel_outcome_attribution_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "intel_pattern_learning",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "intel_presence_verification_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "intel_retention_sweep_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: a retention purge whose period is not legally decided (owner-decisions Part 3); the beta holds test data only.",
+      "evidence": []
+    },
+    {
+      "flag": "intel_rewards",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "intel_safety_candidates_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "intel_trail_followup",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "invite_only_beta",
+      "kind": "CAPABILITY",
+      "enabled": true,
+      "reason": "ON: the beta is invite-only — POST /auth/signup answers 403 invite_required and the sign-up screen says so before anyone types.",
+      "evidence": [
+        "OD-PAY-11"
+      ]
+    },
+    {
+      "flag": "layover_compass_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-compass §4 (production 2026-09-07: true)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
+      "evidence": []
+    },
+    {
+      "flag": "layover_constraints_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "layover_crowd_reports_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 3513_layover_crowd_reports_flag.sql, so production likely runs it ON; not grounded in census evidence here.",
+      "evidence": []
+    },
+    {
+      "flag": "layover_decision_persistence_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "layover_discovery_mode_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "layover_entry_forbid_landside_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "layover_event_ingest_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "layover_live_intersection_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "layover_maturity_gate_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "layover_place_dwell_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "layover_plans_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0127_layover_system.sql, so production likely runs it ON; not grounded in census evidence here.",
+      "evidence": []
+    },
+    {
+      "flag": "layover_presence_intents_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: presence intents need the min-k (k-anonymity floor) prerequisite, which is not proven on the beta.",
+      "evidence": []
+    },
+    {
+      "flag": "layover_presence_ladder_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "layover_safe_return_status_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "layover_safety_engine_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0127_layover_system.sql, so production likely runs it ON; not grounded in census evidence here.",
+      "evidence": []
+    },
+    {
+      "flag": "layover_snapshot_consumers_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "layover_stable_recommendation_ids_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "live_places_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "local_guides_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0043_hidden_gems.sql, so production likely runs it ON; not grounded in census evidence here.",
+      "evidence": []
+    },
+    {
+      "flag": "locate_friends_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "location_snapshot_purge_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: a retention purge whose period is not legally decided (owner-decisions Part 3); the beta holds test data only.",
+      "evidence": []
+    },
+    {
+      "flag": "map_compass_commands_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-compass §4 (production 2026-09-07: true)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
+      "evidence": []
+    },
+    {
+      "flag": "map_contributions_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "map_crowd_flow_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "map_display_resolver_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "map_experience_state_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "map_projection_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "map_search_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "map_telemetry_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "map_telemetry_retention_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: a retention purge whose period is not legally decided (owner-decisions Part 3); the beta holds test data only.",
+      "evidence": []
+    },
+    {
+      "flag": "map_trip_projection_read_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "map_world_intelligence_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "map_world_moments_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "media_canonical_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "media_canonical_read_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "media_canonical_schema_fallback_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "media_captions_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "media_evidence_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "media_find_busier_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "media_moderation_classifier_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "media_neighborhood_only_mode_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "media_pending_upload_sweep_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: a retention purge whose period is not legally decided (owner-decisions Part 3); the beta holds test data only.",
+      "evidence": []
+    },
+    {
+      "flag": "media_perspective_vantage_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "media_private_buckets_enabled",
+      "kind": "CAPABILITY",
+      "enabled": true,
+      "reason": "ON (protective): post and profile media stay in PRIVATE buckets behind the signed-URL relay; off would widen who can fetch a person's media.",
+      "evidence": [
+        "OD-PAY-11",
+        "census-media:MD368"
+      ]
+    },
+    {
+      "flag": "media_processing_worker_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "media_request_a_view_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "media_transcoder_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "media_vision_provider_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "memory_kernel_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "memory_location_precision_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "memory_projection",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "memory_public_feed_projection_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "memory_recaps",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "moment_recaps_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "nearby_reachable_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "neighborhood_match_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "nl_trip_creation_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "open_to_plans_windows_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "opportunity_engine_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "passport_contribution_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "passport_contribution_events_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 2084_codify_live_read_flags.sql, so production likely runs it ON; not grounded in census evidence here.",
+      "evidence": []
+    },
+    {
+      "flag": "passport_entry_intelligence_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "passport_event_share_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "passport_map_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "passport_memories_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "passport_stamps_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "passport_telemetry_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "passport_travel_dna_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "place_days_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "place_recaps_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "plan_geofence_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "plan_geofence_full_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "presence_cleanup_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: a retention purge whose period is not legally decided (owner-decisions Part 3); the beta holds test data only.",
+      "evidence": []
+    },
+    {
+      "flag": "push_notifications_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0062_notifications_schema.sql, so production likely runs it ON; not grounded in census evidence here.",
+      "evidence": []
+    },
+    {
+      "flag": "rent_buddy_allow_bookings_without_kyc",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: Rent-a-Buddy booking and payments stay off — identity must be live-mode and test-mode verifications never satisfy a booking.",
+      "evidence": [
+        "OD-PAY-10",
+        "OD-PAY-11"
+      ]
+    },
+    {
+      "flag": "rent_buddy_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: Rent-a-Buddy booking and payments stay off — identity must be live-mode and test-mode verifications never satisfy a booking.",
+      "evidence": [
+        "OD-PAY-10",
+        "OD-PAY-11"
+      ]
+    },
+    {
+      "flag": "reservation_import_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "safe_return_admin_logs_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0166_feature_flags_reconcile.sql, so production likely runs it ON; not grounded in census evidence here.",
+      "evidence": []
+    },
+    {
+      "flag": "safe_return_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "safe_return_live_share_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0117_beta_feature_flags.sql, so production likely runs it ON; not grounded in census evidence here.",
+      "evidence": []
+    },
+    {
+      "flag": "safe_return_trusted_circle_alerts_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "sensing_presence_context_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "sensing_publication_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "shared_moments_chat_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-highlights-memories §AB (hosted read 2026-10-03: shared_moments_* true)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
+      "evidence": []
+    },
+    {
+      "flag": "shared_moments_clustering_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-highlights-memories §AB (hosted read 2026-10-03: shared_moments_* true)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
+      "evidence": []
+    },
+    {
+      "flag": "shared_moments_compass_suggestions_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-compass §4 (production 2026-09-07: true)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
+      "evidence": []
+    },
+    {
+      "flag": "shared_moments_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-highlights-memories §AB (hosted read 2026-10-03: shared_moments_* true)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
+      "evidence": []
+    },
+    {
+      "flag": "stamp_admin_award_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
+      "evidence": []
+    },
+    {
+      "flag": "stamp_admire_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "stamp_auto_approve_artwork",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "stamp_criteria_engine_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "stamp_premium_rendering_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "stamp_showcase_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "stamp_system_v2_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "stamp_unified_view_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "stories_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-highlights-memories §AB (hosted read 2026-10-03: true)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
+      "evidence": []
+    },
+    {
+      "flag": "tag_permission_approval_required_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "tag_permission_consent_copy_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "telegraph_diagnostics_durable_audit_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "telegraph_discovery_actions_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "telegraph_history_bound_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "telegraph_live_references_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "telegraph_message_kernel_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "telegraph_report_evidence_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "telegraph_request_origin_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "telegraph_thread_notification_policy_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "trip_absence_guard_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "trip_crew_ghost_mode_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "trip_crew_live_share_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "trip_crew_map_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "trip_kernel_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "trip_map_projection_worker_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "trip_operational_projections_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "trip_readiness_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "trip_retention_sweep_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: a retention purge whose period is not legally decided (owner-decisions Part 3); the beta holds test data only.",
+      "evidence": []
+    },
+    {
+      "flag": "trust_engine_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "trust_gaming_detection_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "wall_compass_handoff_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "wall_context_threads_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "wall_discovery_insertions_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "wall_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "wall_input_intelligence_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "wall_live_for_you_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "wall_moments_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
+      "evidence": []
+    },
+    {
+      "flag": "wall_rab_integration_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: Rent-a-Buddy booking and payments stay off — identity must be live-mode and test-mode verifications never satisfy a booking.",
+      "evidence": [
+        "OD-PAY-10",
+        "OD-PAY-11"
+      ]
+    }
+  ]
+}
