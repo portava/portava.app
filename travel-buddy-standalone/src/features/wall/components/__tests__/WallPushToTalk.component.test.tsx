@@ -40,7 +40,7 @@ jest.mock('../../../../context/FeatureFlagsContext', () => ({
 
 import { WallHeader } from '../WallHeader.tsx';
 import { WALL_PTT_UNAVAILABLE } from '../WallPushToTalk.tsx';
-import type { SpeechRecognizerPort } from '../../../../platform/input-assistance/voice/speechRecognizer.ts';
+import { clearSpeechRecognizer, installSpeechRecognizer, type SpeechRecognizerPort } from '../../../../platform/input-assistance/voice/speechRecognizer.ts';
 
 interface FakeRecognizer extends SpeechRecognizerPort {
   sessions: Array<{ aborted: boolean }>;
@@ -207,8 +207,9 @@ describe('W71 — the Wall never sends a voice off the device, and is dark when 
   afterEach(() => { delete (globalThis as { webkitSpeechRecognition?: unknown }).webkitSpeechRecognition; });
 
   it('on a WEB build with the browser recognizer present, nothing is started and it says why', async () => {
-    // What the shared resolver falls back to on react-native-web: the Web
-    // Speech API, which may process audio on the browser vendor's servers.
+    // What the shared resolver USED to fall back to on react-native-web (before
+    // #630): the Web Speech API, which may process audio on the browser
+    // vendor's servers. It must not be constructed, let alone started.
     const constructed: string[] = [];
     class FakeWebSpeech {
       lang = ''; interimResults = false; continuous = false; maxAlternatives = 1;
@@ -242,6 +243,41 @@ describe('W71 — the Wall never sends a voice off the device, and is dark when 
     await settle();
     expect(rec.sessions).toHaveLength(0);
     expect(field().props.value).toBe('');
+  });
+
+  it('with nothing injected it uses the SHARED resolver: an installed recognizer that does not declare on-device processing never starts', async () => {
+    const undeclared = holdingRecognizer('to a server', { onDevice: false });
+    installSpeechRecognizer(undeclared);
+    try {
+      await render(<WallHeader />);
+      await settle();
+      expect(ptt().props.accessibilityLabel).toBe('Voice input unavailable');
+      expect(ptt().props.accessibilityHint).toBeUndefined();
+      await act(async () => { await fireEvent(ptt(), 'pressIn'); });
+      await act(async () => { await fireEvent(ptt(), 'pressOut'); });
+      await settle();
+      expect(undeclared.sessions).toHaveLength(0);
+      expect(field().props.value).toBe('');
+    } finally {
+      clearSpeechRecognizer();
+    }
+  });
+
+  it('with nothing injected it uses the SHARED resolver: an installed on-device recognizer is the one that listens', async () => {
+    const onDevice = holdingRecognizer('coffee near me');
+    installSpeechRecognizer(onDevice);
+    try {
+      await render(<WallHeader />);
+      await settle();
+      expect(ptt().props.accessibilityHint).toMatch(/on this device/);
+      await act(async () => { await fireEvent(ptt(), 'pressIn'); });
+      await act(async () => { await fireEvent(ptt(), 'pressOut'); });
+      await settle();
+      expect(onDevice.sessions).toHaveLength(1);
+      expect(field().props.value).toBe('coffee near me');
+    } finally {
+      clearSpeechRecognizer();
+    }
   });
 
   it('with wall_enabled off (or not yet loaded) there is no microphone at all', async () => {

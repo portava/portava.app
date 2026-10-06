@@ -8,16 +8,19 @@
  * provider only with separate, explicit consent."
  *
  * HOW EACH CLAUSE IS MET, AND WHERE
- * - On-device only. This control accepts ONLY a recognizer that declares
- *   `onDeviceOnly: true` (`isOnDeviceOnly`, below) and treats every other one —
- *   including the browser's Web Speech API, which the shared resolver falls
- *   back to on the web build and which may process audio on a server — as
- *   UNAVAILABLE. No recognizer in this tree declares it today, so on every
- *   build the Wall's microphone says, truthfully, that it is not available.
- *   (Corrected 2026-10-06 after independent verification: the first version
- *   used whatever the shared resolver returned, so on the web build it would
- *   have sent a person's voice to the browser vendor with no consent asked.)
- *   There is therefore no consent screen: no path here sends audio anywhere.
+ * - On-device only, decided in ONE place. The recognizer comes from the shared
+ *   resolver (`resolveSpeechRecognizer`), which since #630 returns only an
+ *   installed recognizer that declares `onDeviceOnly: true` and otherwise the
+ *   honest none — it never falls back to the browser's Web Speech API, whose
+ *   default is remote processing. This control re-checks the same declaration
+ *   (`isOnDeviceOnly` IS the resolver's `declaresOnDeviceOnly`), so an injected
+ *   recognizer cannot route around it either. No recognizer is installed in
+ *   this app today, so on every build the Wall's microphone says, truthfully,
+ *   that it is not available. (History: the first version, 2026-10-05, used
+ *   whatever the resolver returned while the resolver still fell back to Web
+ *   Speech, so on the web build it would have sent a person's voice to the
+ *   browser vendor with no consent asked — independent verification, finding
+ *   1.) There is no consent screen because no path here sends audio anywhere.
  * - Push-to-talk: listening runs only while the control is HELD. Press-in
  *   starts the recognizer; release stops it and whatever was final is used. A
  *   release before the recognizer has even started starts nothing
@@ -41,7 +44,7 @@ import { Mic, MicOff } from 'lucide-react-native';
 import { color, icon as iconToken, radius, type as t } from '../../../theme/tokens.ts';
 import type { InputContext } from '../../../platform/input-assistance/types/inputContext.ts';
 import { useVoiceDictation } from '../../../platform/input-assistance/hooks/useVoiceDictation.ts';
-import { resolveSpeechRecognizer, type SpeechRecognizerPort } from '../../../platform/input-assistance/voice/speechRecognizer.ts';
+import { declaresOnDeviceOnly, resolveSpeechRecognizer, type SpeechRecognizerPort } from '../../../platform/input-assistance/voice/speechRecognizer.ts';
 import { useFeatureFlags } from '../../../context/FeatureFlagsContext.tsx';
 
 export interface WallPushToTalkProps {
@@ -87,9 +90,12 @@ export interface OnDeviceSpeechRecognizerPort extends SpeechRecognizerPort {
   readonly onDeviceOnly: true;
 }
 
-/** Only an explicit, literal `onDeviceOnly: true` counts; absence is "may go to a server". */
+/**
+ * Only an explicit, literal `onDeviceOnly: true` counts; absence is "may go to a
+ * server". The shared resolver's own test, so the two can never disagree.
+ */
 export function isOnDeviceOnly(port: SpeechRecognizerPort): port is OnDeviceSpeechRecognizerPort {
-  return (port as { onDeviceOnly?: unknown }).onDeviceOnly === true;
+  return declaresOnDeviceOnly(port);
 }
 
 export const WALL_PTT_UNAVAILABLE =

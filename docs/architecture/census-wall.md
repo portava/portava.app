@@ -2341,12 +2341,12 @@ destination editor — the Wall steer bar had none).
 
 ### 21.2 What was built
 
-- `travel-buddy-standalone/src/features/wall/components/WallPushToTalk.tsx:101#export function WallPushToTalk(props: WallPushToTalkProps) {`
+- `travel-buddy-standalone/src/features/wall/components/WallPushToTalk.tsx:107#export function WallPushToTalk(props: WallPushToTalkProps) {`
   — listening runs only while the control is held: press-in starts the platform recognizer, release
-  aborts it and whatever was final is used (`travel-buddy-standalone/src/features/wall/components/WallPushToTalk.tsx:127#const onPressOut = () => {`).
+  aborts it and whatever was final is used (`travel-buddy-standalone/src/features/wall/components/WallPushToTalk.tsx:133#const onPressOut = () => {`).
   It names no provider and installs none; it consumes lane D's `useVoiceDictation` unchanged.
 - A release that lands before the recognizer has started starts nothing
-  (`travel-buddy-standalone/src/features/wall/components/WallPushToTalk.tsx:69#export function pushToTalkPort(inner: SpeechRecognizerPort): SpeechRecognizerPort {`):
+  (`travel-buddy-standalone/src/features/wall/components/WallPushToTalk.tsx:72#export function pushToTalkPort(inner: SpeechRecognizerPort): SpeechRecognizerPort {`):
   both platform adapters attach their abort listener only when they start, so a signal that fired
   during the availability check was never seen and the recognizer would have kept listening after the
   finger lifted.
@@ -2378,7 +2378,7 @@ OD-TRUST-8's three clauses, against this tree:
 
 | clause | state |
 | --- | --- |
-| on-device by default | the native adapter asks for on-device recognition (`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:403#requiresOnDeviceRecognition: onDeviceOnly,` *(cited at `:260` with the text `requiresOnDeviceRecognition: config.requiresOnDeviceRecognition,` until #630 rewrote the adapter; repointed 2026-10-06 by reading the claim — the adapter now derives the flag from the absence of cloud consent, see §23)*), but **no speech module is a dependency of this app**, so on the hosted iOS/Android build the control answers "unavailable". Lane D's branch makes both adapters refuse rather than fall back to a server (its OD-INPUT-5 commit); not on this tree. |
+| on-device by default | the native adapter asks for on-device recognition (`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:403#requiresOnDeviceRecognition: onDeviceOnly,` *(cited at line 260, on the text "requiresOnDeviceRecognition: config.requiresOnDeviceRecognition,", until #630 rewrote the adapter; repointed 2026-10-06 by reading the claim — the adapter now derives the flag from the absence of cloud consent, see §23)*), but **no speech module is a dependency of this app**, so on the hosted iOS/Android build the control answers "unavailable". Lane D's branch makes both adapters refuse rather than fall back to a server (its OD-INPUT-5 commit); not on this tree. |
 | push-to-talk | built and pinned (§21.2) |
 | separate ask before audio leaves; no raw audio kept | no path on the Wall can send audio off the device and nothing receives audio at all — the port returns text. If a cloud path is ever added, its separate consent belongs in front of it. |
 
@@ -2420,16 +2420,16 @@ deep link).
 ### 22.2 What changed
 
 - The Wall's microphone accepts only a recognizer that DECLARES on-device processing
-  (`travel-buddy-standalone/src/features/wall/components/WallPushToTalk.tsx:91#export function isOnDeviceOnly(port: SpeechRecognizerPort): port is OnDeviceSpeechRecognizerPort {`),
+  (`travel-buddy-standalone/src/features/wall/components/WallPushToTalk.tsx:97#export function isOnDeviceOnly(port: SpeechRecognizerPort): port is OnDeviceSpeechRecognizerPort {`),
   and treats every other one, the web recognizer included, as unavailable whatever it says about itself
-  (`travel-buddy-standalone/src/features/wall/components/WallPushToTalk.tsx:75#isAvailable: async () => (onDevice ? inner.isAvailable() : false),`).
+  (`travel-buddy-standalone/src/features/wall/components/WallPushToTalk.tsx:78#isAvailable: async () => (onDevice ? inner.isAvailable() : false),`).
   **No recognizer in this tree declares it, so on every build today the Wall's microphone is
   unavailable and says that the voice is never sent online.** That is the honest state, not a defect.
 - The on-device hint appears only once availability is confirmed; the control renders only when
   `wall_enabled` is on.
 - Pinned by `travel-buddy-standalone/src/features/wall/components/__tests__/WallPushToTalk.component.test.tsx:209#it('on a WEB build with the browser recognizer present, nothing is started and it says why'`
   (a browser-like scope exposing `webkitSpeechRecognition`; nothing is constructed or started) and
-  `travel-buddy-standalone/src/features/wall/components/__tests__/WallPushToTalk.component.test.tsx:247#it('with wall_enabled off (or not yet loaded) there is no microphone at all'`.
+  `travel-buddy-standalone/src/features/wall/components/__tests__/WallPushToTalk.component.test.tsx:283#it('with wall_enabled off (or not yet loaded) there is no microphone at all'`.
   11 / 11. Mutations: the on-device check removed → 2 red; the flag gate removed → 1 red; the hint
   shown before availability is confirmed → 1 red.
 
