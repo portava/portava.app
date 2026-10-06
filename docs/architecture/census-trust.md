@@ -4041,6 +4041,8 @@ flag writers (F9) are not rows of this census. They are recorded in the lane rep
    the Buddy clauses. The sentences now carry #636's text verbatim, including "change a group trip's shared plan" for
    hosting and "propose changes to a group trip" for messaging. `trust.test.ts` pins each whole sentence by equality.
 
+- NOT-GRADED: artifacts/api-server/src/test/paymentsLiveGuard.test.ts — the evidence that corrects §35.4's claim about the provider_mode write; it backs no row verdict of this census.
+
 ### 37.2 Built for rows this census grades
 
 - **TV-4b / the restriction screen (F8).** `GET /api/appeals/me/restrictions` is on the restricted-account
