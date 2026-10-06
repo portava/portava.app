@@ -257,7 +257,7 @@ describe("T. the Trail allowance (census-discovery §84)", () => {
     }
     const before = (c._store.trails ?? []).length;
     const res = await fetch(`${harness.base}/v1/discovery/trails`, { method: "POST", headers: { authorization: `Bearer ${ANA}`, "content-type": "application/json" }, body: JSON.stringify({ title: "Yet Another Distinct Zebra Theme", destination: "zz" }) });
-    const body = await res.json();
+    const body = (await res.json()) as { error?: string };
     assert.equal(res.status, 429, JSON.stringify(body));
     assert.equal(body.error, "rate_limited");
     assert.ok(Number(res.headers.get("retry-after")) >= 1);

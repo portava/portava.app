@@ -9831,12 +9831,12 @@ alone does not grant access."*
 The projection applies it unconditionally — no flag weakens the owner-only default —
 `artifacts/api-server/src/server/trips/readRoutes/tripMapProjection.ts:227#privateAnchors = await visiblePrivateAnchorLayer(`.
 Per-anchor grants are written only by the anchor's owner, to accepted members of the same trip,
-`artifacts/api-server/src/routes/tripAnchorShares.ts:89#router.post("/trips/:tripId/anchors/:itemId/shares"`,
+`artifacts/api-server/src/routes/tripAnchorShares.ts:91#router.post("/trips/:tripId/anchors/:itemId/shares"`,
 into `artifacts/api-server/src/migrations/3970_trip_private_anchor_shares.sql:68#CREATE TABLE public.trip_private_anchor_shares (`
 behind `trip_private_anchor_sharing_enabled` (seeded FALSE); a revoke is honoured with the flag off.
 With 3970 absent the reader treats 42P01 as zero grants, which is the owner-only default exactly. The
 app shows a traveller's own private places and the ones shared with them, with a per-person switch
-(`travel-buddy-standalone/src/features/trips/anchors/PrivatePlacesCard.tsx:47#export function PrivatePlacesCard(`).
+(`travel-buddy-standalone/src/features/trips/anchors/PrivatePlacesCard.tsx:59#export function PrivatePlacesCard(`).
 
 **A finding beside it, not fixed here.** `routes/tripReservations.ts` adds a reservation to the plan as
 `location_is_private: false` with the reservation's `location_name` and its confirmation reference in
@@ -9851,17 +9851,17 @@ owner's decision: *"Routes API: Yes, for a bounded rollout ... Put calls behind 
 interface, set daily quotas and a hard budget, and fall back gracefully when the limit is reached."*
 
 **What was built.** The three seams bind one provider:
-`artifacts/api-server/src/routes/tripFeasibility.ts:111#const PROVIDER = TRIP_TRAVEL_TIME_PROVIDER;`,
+`artifacts/api-server/src/routes/tripFeasibility.ts:113#const PROVIDER = TRIP_TRAVEL_TIME_PROVIDER;`,
 `artifacts/api-server/src/domain/trips/projections/TripFreedomProjection.ts:45#const BOUND_PROVIDER = TRIP_TRAVEL_TIME_PROVIDER;`,
-`artifacts/api-server/src/domain/trips/projections/TripRouteChainProjection.ts:42#const BOUND_PROVIDER = TRIP_TRAVEL_TIME_PROVIDER;`.
-It is `artifacts/api-server/src/domain/trips/contracts/GatedRoutedTravelTimeProvider.ts:37#export function createGatedRoutedTravelTimeProvider(`:
+`artifacts/api-server/src/domain/trips/projections/TripRouteChainProjection.ts:44#const BOUND_PROVIDER = TRIP_TRAVEL_TIME_PROVIDER;`.
+It is `artifacts/api-server/src/domain/trips/contracts/GatedRoutedTravelTimeProvider.ts:56#export function createGatedRoutedTravelTimeProvider(`:
 a cached routed answer, else one unit from the spend gate, else the straight-line bound naming why
 (`routes-api-fallback:<reason>`). The gate's numbers come from deployment configuration only —
-`artifacts/api-server/src/domain/trips/contracts/RoutesSpendGate.ts:57#export function readRoutesSpendConfig(` —
+`artifacts/api-server/src/domain/trips/contracts/RoutesSpendGate.ts:73#export function readRoutesSpendConfig(` —
 and the allowance is shared across instances and taken under a row lock by
 `artifacts/api-server/src/migrations/3971_trip_routes_api_spend_gate.sql:70#CREATE OR REPLACE FUNCTION public.routes_api_try_spend(`.
 A routed answer is marked per result, so the departure band is never stacked on a live route and never
-stripped from a fallback (`artifacts/api-server/src/domain/trips/services/TripDepartureAssumptions.ts:142#if (inner.routed || r.assumption === null)`).
+stripped from a fallback (`artifacts/api-server/src/domain/trips/services/TripDepartureAssumptions.ts:145#&& isRoutedSourceClass(r.estimate.sourceClass)) return` (it read "if (inner.routed || r.assumption === null)" when written; the walk substitution showed that claim false — corrected in §82.1)).
 The feasibility and freedom-window disclosure now says what the hops were; with none routed it is
 the old sentence word for word.
 
@@ -10015,7 +10015,7 @@ writers' default.
 
 ### §81.7 Tests and mutations
 
-`artifacts/api-server/src/test/tripPrivateAnchorReaders.test.ts` (119 cases; 76 of 122 red when run against
+`artifacts/api-server/src/test/tripPrivateAnchorReaders.test.ts` (119 cases; 75 red when run against
 `85bb3c5339`'s tree; 21 per-path mutants each killed), `artifacts/api-server/src/test/tripPrivateAnchorLifecycle.test.ts`
 (35 cases; 14 mutants killed: revoke gate, owner and grantee acceptance, grant owner = creator, unread flag,
 three-valued answer, each clearing site, the organizer's field refusal and redaction),
@@ -10025,6 +10025,10 @@ component suite (6). Fixture-only changes elsewhere: `location_is_private: false
 - NOT-GRADED: artifacts/api-server/src/test/tripPrivateAnchorReaders.test.ts — §81's per-path suite; TR256 rests on the policy, loader and reader files cited.
 - NOT-GRADED: artifacts/api-server/src/test/tripPrivateAnchorLifecycle.test.ts — §81.5's lifecycle suite and 3972's text; TR256 rests on the files cited.
 - NOT-GRADED: artifacts/api-server/src/test/routesIndexMounting.test.ts — §81.1's mounting guard over routes/index.ts.
+- NOT-GRADED: artifacts/api-server/src/routes/telegraphSharedContext.ts — §81.3 names it as a Telegraph (T1/T2) reader that must still apply the rule; not graded by this census.
+- NOT-GRADED: artifacts/api-server/src/lib/mapProducers/meetingPointProducer.ts — §81.3 names it as the lead's Map reader that must still apply the rule.
+- NOT-GRADED: artifacts/api-server/src/services/wall/LiveForYouService.ts — §81.3 names it as the lead's Wall reader that must still apply the rule.
+- NOT-GRADED: artifacts/api-server/src/routes/airport.ts — §81.3 lists it among the writers whose plan-item reads are dedupe reads only; Layover (lane A) grades it.
 
 ## §82 Lane C wave 2 (2026-10-05): what the Routes API can and cannot certify, a walk that keeps its band, disclosures said from the hops, and a share per member and per trip — corrections to §80.2, NO ROW MOVES BUCKET
 
@@ -10064,6 +10068,9 @@ charges a per-user and a per-trip daily share, both required configuration
 under row locks in one order (day, trip, user) — the same argument as 3971's, extended to three rows. Over
 any bound the answer is the labelled straight-line estimate.
 
+§82's suite is `artifacts/api-server/src/test/tripRoutedTravelTime.test.ts` (36 cases; 15 mutants killed — the
+three walk layers, the request budget's four bounds, the gate's scope and shares, the computed disclosures).
+
 ### §82.3 Row statements
 
 | id | Was | Now | Why |
@@ -10073,7 +10080,6 @@ any bound the answer is the labelled straight-line estimate.
 | TR341 | W | W | **Restated.** The bundle carries the last certified context, and says how many windows are certified and what its travel terms were. No window is certified on this tree even with routing on (§82.1) — that cap, not the provider's absence, is now the reason. |
 | TR412 | W | W | **Restated.** The property holds on every window the engine emits and is vacuous on certified ones, which cannot exist here while routed answers are MEDIUM (§82.1). |
 
-- NOT-GRADED: artifacts/api-server/src/test/tripRoutedTravelTime.test.ts — §80.2/§82's suite (36 cases; 15 mutants killed); the rows rest on the provider, engine and seam files cited.
 
 ## §83 Lane C wave 2 (2026-10-05): the Trip Kernel can restore an appealed removal — ADMIN_RESTORE_PARTICIPANT written (3974), NO ROW MOVES BUCKET
 

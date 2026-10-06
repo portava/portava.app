@@ -10917,7 +10917,7 @@ The migrations' own probes and postconditions also refuse M02, M09, M38, M43, M4
 
 ### 61.10 Line-neutral edits
 
-- **`services/trails/TrailService.ts`** is 1,626 lines before and after. The 20 lines the census cited in it at the base still carry their whole anchors, including `servableMembers`'s, where `export` was added in front of the anchor. §59 and §58.4 quoted two lines that this section then changed in place, `:646#r.outcome` (DV-25) and `:972#trailMomentum` (H-P8-1). Those quotations are de-pointered (§61.14).
+- **`services/trails/TrailService.ts`** is 1,626 lines before and after. The 20 lines the census cited in it at the base still carry their whole anchors, including `servableMembers`'s, where `export` was added in front of the anchor. §59 and §58.4 quoted two lines that this section then changed in place, `:659#r.outcome` (DV-25) and `:985#trailMomentum` (H-P8-1). Those quotations are de-pointered (§61.14).
 - **`lib/discoveryTrailObject.ts`** is 421 lines before and after. Its cited lines hold, and `.normalize("NFKD")` stays on `:162#.normalize(`.
 - **`lib/discoveryLocalMomentum.ts`** is 320 lines before and after. Only `weightFor`'s first line changed.
 - **`routes/trails.ts`**: the two lines the census cited at the base are unchanged. `artifacts/api-server/src/routes/trails.ts:342#trending: r.momentumUnread ? null : (r.momentum ?? 0) > 0,` changed in place for H-P8-1, and §58.4's quotation of it is de-pointered.
@@ -16878,8 +16878,8 @@ gated."*
   no score (`11` §4), and nothing the server withheld under Q12's floors.
 - **Entry.** Trails and Trending chips on the Discovery tab, carrying the tab's city.
 - **One server route.** The Follow control needed the viewer's state:
-  `artifacts/api-server/src/routes/trails.ts:584#router.get("/v1/discovery/trails/:id/follow"` over
-  `artifacts/api-server/src/services/trails/TrailService.ts:2436#export async function readTrailFollow(`;
+  `artifacts/api-server/src/routes/trails.ts:586#router.get("/v1/discovery/trails/:id/follow"` over
+  `artifacts/api-server/src/services/trails/TrailService.ts:2457#export async function readTrailFollow(`;
   a failed read is the refusal map's server error, never `following: false`.
 
 Every read in the app is three-valued — ok, off (feature_disabled), unavailable with the server's
@@ -16941,7 +16941,8 @@ Three Trails per person per rolling 24 hours (lane C's number; `02_Trails.md` na
 API counts before it proposes (an unreadable count is a 503, never "none started"; over the allowance a 429
 with `Retry-After`), and `artifacts/api-server/src/migrations/3975_trail_proposal_daily_allowance.sql:63#PERFORM pg_advisory_xact_lock(hashtextextended('trail_propose:proposer:'`
 decides it where the insert is, under a per-proposer lock taken before 3415's token locks; otherwise 3415's
-function byte for byte. Moderation of a proposed Trail is unchanged and still absent (`02` §15).
+function byte for byte. Proven, with every Discovery door's restriction cases and a mutation per door, by
+`artifacts/api-server/src/test/trustRestrictionDoors.test.ts`. Moderation of a proposed Trail is unchanged and still absent (`02` §15).
 
 ### 109.3 Two Hidden Gems reads that carried another member's private place (census-trips §81)
 

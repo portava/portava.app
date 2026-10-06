@@ -10391,3 +10391,15 @@ question, are in lane C's report.
 | T242 | C | **W** | **Corrected (§44.2).** The two thread readers forward the show-both decision and the app draws it (§43), but the inbox preview shows a translation alone, and the confidence behind the decision is detection confidence, not translation certainty. |
 | T418 | W | W | §43.3's burst-limit sentence is now proven by behaviour at both doors (§44.1). |
 | T419 | W | W | As T418. |
+
+### 44.3 Counted
+
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **239** |
+| BUILT-BUT-WRONG | **177** |
+| NOT-BUILT | **33** |
+| CANNOT-VERIFY | **2** |
+
+451 rows. CONSTRUCTED (C + W) is 416 of 451 = 92.2 %; CORRECT is 239 of 451 = 53.0 %. The one move (T242
+C → W) is a correction of §43's own statement.

@@ -49,7 +49,7 @@ interface Item { id: string; trip_id: string; creator_id: string; title: string;
                  starts_at: string | null; ends_at: string | null;
                  location_name: string | null; notes: string | null;
                  sort_order: number; visibility: string;
-                 removed_at: string | null;
+                 removed_at: string | null; location_is_private?: boolean | null;
                  created_at: string; updated_at: string;
                  approximate_lat?: number; approximate_lng?: number }
 interface Meetup { id: string; title: string; starts_at: string | null; location_name: string | null }
