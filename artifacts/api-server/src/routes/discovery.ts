@@ -23,7 +23,7 @@ import { provenanceStamp } from "../lib/placeProvenance.js";
 import { z } from "zod";
 import { getServiceClient } from "../lib/supabase";
 import { osmNeighborhood } from "../lib/osmPlaceShape";
-import { sendError, requireUser } from "../lib/http";
+import { sendError, requireUser, getGatedUser, rethrowAccountGateRefusal } from "../lib/http";
 import { nameVisibilitySet } from "../lib/publicIdentity";
 import { buildDiscoveryContext } from "../services/location/DiscoveryLocationContext";
 import { loadPreferences } from "../services/location/LocationPermissionService";
@@ -1592,7 +1592,7 @@ router.get("/discovery", async (req, res) => {
     try {
       const token = authHeader.slice(7).trim();
       const sc = _authSc;
-      const { data: authData } = await sc.auth.getUser(token);
+      const { data: authData } = await getGatedUser(sc, token, { log: req.log });  // the account-state gate (lib/accountStateGate.ts), not a bare auth lookup, which served a banned or suspended token the signed-in context
       if (authData?.user) {
         callerUserId = authData.user.id;
         const rawMode = (req.query.context as string | undefined) ?? "";
@@ -1616,7 +1616,7 @@ router.get("/discovery", async (req, res) => {
           currentCity, currentCountry,
         });
       }
-    } catch { /* degrade — non-fatal */ }
+    } catch (gateErr) { rethrowAccountGateRefusal(gateErr); /* a ban, a suspension or an unreadable account state is REFUSED (403 / 503), never degraded to an anonymous request; anything else: degrade — non-fatal */ }
   }
 
   // Resolve effective destination: explicit query param takes priority; fall back
@@ -2630,7 +2630,7 @@ router.get("/discovery/feed", async (req, res) => {
       const authHeader = req.headers.authorization;
       if (authHeader?.startsWith("Bearer ")) {
         const token = authHeader.slice(7);
-        const { data: userData, error: userErr } = await sc.auth.getUser(token); if (!userData?.user?.id && userErr && authServiceUnreachable(userErr)) viewerUnresolved = true;  // §98 (D-W11X2-21): a REJECTED token (Auth's coded 4xx verdict, or auth-js's named rejection) is an anonymous caller; a lookup that did not happen (throw, network, 408, 429, 5xx, a code-less 4xx, no status) leaves the viewer unresolved
+        const { data: userData, error: userErr } = await getGatedUser(sc, token, { log: req.log }); if (!userData?.user?.id && userErr && authServiceUnreachable(userErr)) viewerUnresolved = true;  // §98 (D-W11X2-21): a REJECTED token (Auth's coded 4xx verdict, or auth-js's named rejection) is an anonymous caller; a lookup that did not happen (throw, network, 408, 429, 5xx, a code-less 4xx, no status) leaves the viewer unresolved
         if (userData?.user?.id) {
           viewerId = userData.user.id;
           // Both directions of the block relationship, through the one helper
@@ -2657,7 +2657,7 @@ router.get("/discovery/feed", async (req, res) => {
         }
       }
     } else if (req.headers.authorization?.startsWith("Bearer ")) viewerUnresolved = true;  // §98: a presented token and no service client to resolve it with
-  } catch (err) {
+  } catch (err) { rethrowAccountGateRefusal(err);  // a banned or suspended caller, or an unreadable account state, is refused (403 / 503) by the global handler — never served as an unresolved or anonymous viewer
     // Reached for an unresolved viewer (the documented case) AND for a rejected
     // blocks read that threw rather than resolving. Both leave `blockedIds`
     // empty, so both are worth a line.
@@ -2907,14 +2907,14 @@ router.get("/discovery/community", async (req, res) => {
         const authSc = getServiceClient();
         if (!authSc) return null;
         try {
-          const { data: authData } = await authSc.auth.getUser(authHeader.slice(7).trim());
+          const { data: authData } = await getGatedUser(authSc, authHeader.slice(7).trim(), { log: req.log });
           communityViewerId = (authData?.user?.id as string | undefined) ?? null;
-        } catch { /* degrade gracefully — an unresolved viewer is not an error here */ }
+        } catch (gateErr) { rethrowAccountGateRefusal(gateErr); /* degrade gracefully — an unresolved viewer is not an error here; a restricted account or an unreadable account state is, and is refused */ }
         return communityViewerId;
       })();
     }
     return commViewerPromise;
-  }
+  } if (req.headers.authorization?.startsWith("Bearer ")) await resolveCommunityViewer();  // a PRESENTED token meets the account-state gate before anything is served: the lookup is lazy, and a banned or suspended caller whose request never needed a viewer id would otherwise have been served. Memoised, so this is the one Auth round trip the request was already going to make; a request with no token still makes none.
 
   // Optional auth — needed only for open_to_me to resolve caller DOB
   let commCallerAge: number | null = null;

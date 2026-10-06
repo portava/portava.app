@@ -32,7 +32,7 @@
 import { Router } from "express";
 import { randomUUID } from "node:crypto"; import { recordGemContributionSignal, recordGemAcceptedSignal, recordGemArrivalIfAttributable } from "../lib/mediaAnalytics.js";
 import { z } from "zod";
-import { requireUser, sendError, canEditPlan } from "../lib/http.js";
+import { requireUser, sendError, canEditPlan, optionalUserFromToken } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import {
   tripKernelClient,
@@ -254,12 +254,12 @@ async function resolveCallerId(req: any, sc: any): Promise<string | null> {
   const authHeader = req.headers.authorization ?? "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : null;
   if (!token) return null;
-  try {
-    const { data } = await sc.auth.getUser(token);
-    return (data?.user?.id as string) ?? null;
-  } catch {
-    return null;
-  }
+  // optionalUserFromToken (lib/accountStateGate.ts), not a bare auth.getUser, which
+  // skipped the ban gate: a banned or suspended token kept its caller standing here.
+  // It THROWS 403 (restricted) / 503 (state unreadable) to the global handler; an
+  // Auth call that itself throws is still anonymous, as the old catch made it.
+  const user = await optionalUserFromToken(sc, token.trim(), { log: req.log, authThrowIsAnonymous: true });
+  return user?.id ?? null;
 }
 
 // ── POST /api/hidden-gems — submit a new gem ───────────────────────────────────
