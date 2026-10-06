@@ -2341,9 +2341,9 @@ destination editor — the Wall steer bar had none).
 
 ### 21.2 What was built
 
-- `travel-buddy-standalone/src/features/wall/components/WallPushToTalk.tsx:84#export function WallPushToTalk({`
+- `travel-buddy-standalone/src/features/wall/components/WallPushToTalk.tsx:101#export function WallPushToTalk(props: WallPushToTalkProps) {`
   — listening runs only while the control is held: press-in starts the platform recognizer, release
-  aborts it and whatever was final is used (`travel-buddy-standalone/src/features/wall/components/WallPushToTalk.tsx:100#const onPressOut = () => {`).
+  aborts it and whatever was final is used (`travel-buddy-standalone/src/features/wall/components/WallPushToTalk.tsx:127#const onPressOut = () => {`).
   It names no provider and installs none; it consumes lane D's `useVoiceDictation` unchanged.
 - A release that lands before the recognizer has started starts nothing
   (`travel-buddy-standalone/src/features/wall/components/WallPushToTalk.tsx:69#export function pushToTalkPort(inner: SpeechRecognizerPort): SpeechRecognizerPort {`):
@@ -2359,8 +2359,8 @@ destination editor — the Wall steer bar had none).
 
 **Tests** — `WallPushToTalk.component.test.tsx`, 7 / 7, driving the real `WallHeader` →
 `WallPushToTalk` → `useVoiceDictation` → `voiceIntake` path with an injected recognizer that keeps
-listening until its signal aborts (`travel-buddy-standalone/src/features/wall/components/__tests__/WallPushToTalk.component.test.tsx:95#it('is not a toggle`,
-`travel-buddy-standalone/src/features/wall/components/__tests__/WallPushToTalk.component.test.tsx:115#it('a release that lands before`).
+listening until its signal aborts (`travel-buddy-standalone/src/features/wall/components/__tests__/WallPushToTalk.component.test.tsx:110#it('is not a toggle`,
+`travel-buddy-standalone/src/features/wall/components/__tests__/WallPushToTalk.component.test.tsx:130#it('a release that lands before`).
 The other Wall component suites (25 suites, 166 tests) and the standalone typecheck pass.
 
 **Mutations, each seen red, file restored byte-identical (`cmp`):**
@@ -2399,3 +2399,51 @@ anyway. The Wall closes the larger window itself (§21.2); the adapter-side fix 
 | id | was | now | why |
 | --- | --- | --- | --- |
 | W71 | W | **W** | §21.3. Push-to-talk and a Wall voice control are built and pinned under OD-TRUST-8; the row waits on a native speech module, an EAS build and a device run. |
+
+## §22 — 2026-10-06 (lane L): §21's on-device claim was FALSE on the web build, found by independent verification and fixed. NO ROW MOVES
+
+*Measured on branch `claude/mission-l-lead-residual-20261005` after merging `origin/main`
+(`824633ce45`). §21's four citations above were repointed by reading each claim (the file grew).*
+
+### 22.1 What §21 got wrong
+
+§21.3 said *"no path on the Wall can send audio off the device"*. That was false. The control took
+whatever the shared recognizer resolution returned, and on the web build — this app has one
+(`react-native-web`, the `web` script, and a web block in the Expo app config) — that resolution falls back to the
+browser's Web Speech API, whose recognition the browser may perform on its vendor's servers. So on web,
+holding the button would have sent a person's voice off the device with no consent asked, under a hint
+telling them it was recognised on the device. OD-TRUST-8 and OD-INPUT-5 both forbid exactly that. §21.3
+also said lane D's on-device fix "is not on this tree" in the same table, which should have been read as
+the warning it was. And the control rendered on a Wall whose flag is off (the route is reachable by
+deep link).
+
+### 22.2 What changed
+
+- The Wall's microphone accepts only a recognizer that DECLARES on-device processing
+  (`travel-buddy-standalone/src/features/wall/components/WallPushToTalk.tsx:91#export function isOnDeviceOnly(port: SpeechRecognizerPort): port is OnDeviceSpeechRecognizerPort {`),
+  and treats every other one, the web recognizer included, as unavailable whatever it says about itself
+  (`travel-buddy-standalone/src/features/wall/components/WallPushToTalk.tsx:75#isAvailable: async () => (onDevice ? inner.isAvailable() : false),`).
+  **No recognizer in this tree declares it, so on every build today the Wall's microphone is
+  unavailable and says that the voice is never sent online.** That is the honest state, not a defect.
+- The on-device hint appears only once availability is confirmed; the control renders only when
+  `wall_enabled` is on.
+- Pinned by `travel-buddy-standalone/src/features/wall/components/__tests__/WallPushToTalk.component.test.tsx:209#it('on a WEB build with the browser recognizer present, nothing is started and it says why'`
+  (a browser-like scope exposing `webkitSpeechRecognition`; nothing is constructed or started) and
+  `travel-buddy-standalone/src/features/wall/components/__tests__/WallPushToTalk.component.test.tsx:247#it('with wall_enabled off (or not yet loaded) there is no microphone at all'`.
+  11 / 11. Mutations: the on-device check removed → 2 red; the flag gate removed → 1 red; the hint
+  shown before availability is confirmed → 1 red.
+
+### 22.3 What W71 now needs for `C`
+
+An on-device recognizer that can truthfully declare `onDeviceOnly`: a native speech module whose
+adapter refuses rather than falling back to a server when on-device recognition is unavailable for the
+language (lane D's OD-INPUT-5 work is that adapter behaviour), an EAS build, and a device run. Until
+then the Wall has no working microphone anywhere, which is the outcome OD-TRUST-8 requires over a
+working one that might leave the device.
+
+### 22.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| W71 | W | **W** | §22. The on-device half of §21 was false on web and is now enforced by the control itself; the row waits on a native on-device recognizer, an EAS build and a device run. |
+
