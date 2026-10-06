@@ -288,7 +288,7 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
 
 ## integrating lane — 2026-09-16
 
-- [integration] `artifacts/api-server/src/routes/telegraphKinds.ts:74` — the
+- [integration] `artifacts/api-server/src/routes/telegraphKinds.ts:73` — the
   typed-message route ACCEPTS `replyToId` in its request schema (`:74`, not the
   `:72` this entry first recorded — corrected 2026-10-03) and never writes
   it. A client that sends a typed kind as a reply gets a 201 and a message that
@@ -300,9 +300,9 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
 
   **FIXED IN THIS BRANCH 2026-10-03 — the second option this entry offered was
   taken: `replyToId` is now REFUSED BY NAME on the typed path.** It is gone from
-  `TypedMessageSchema` (`routes/telegraphKinds.ts:70-74`) and an explicitly
+  `TypedMessageSchema` (`routes/telegraphKinds.ts:69-73`) and an explicitly
   supplied non-null `replyToId` is answered `invalid_payload` with a message the
-  caller can act on (`:205-216`), the reasoning written out at `:183-204`. An
+  caller can act on (`:204-215`), the reasoning written out at `:182-203`. An
   explicit `null` is the absence of a reply, not a request for one, and is not
   refused. The silent acceptance is closed; a client that sends a typed kind as
   a reply now learns so instead of getting a 201 and a non-reply.
@@ -310,14 +310,15 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
   REFRAMED 2026-10-03 — **the reason this entry recorded for deferring was the
   wrong question**, and the refusal note in the code now records the right one. It
   is not "what does a reply to a typed kind render as in the drawer": the DRAWER
-  IS REPLY-BLIND BY CONSTRUCTION. `DRAWER_COLUMNS` (`routes/telegraphKinds.ts:106`)
-  does not select `reply_to_id`, and `DrawerRow` (`:109-120`) has no reply field
+  IS REPLY-BLIND BY CONSTRUCTION. `DRAWER_COLUMNS` (`routes/telegraphKinds.ts:105`)
+  does not select `reply_to_id`, and `DrawerRow` (`:108-119`) has no reply field
   at all, so no §6.4 decision is waiting on anything. Replies render in the
   THREAD read (`routes/messaging.ts:2436-2512`), which emits `replyToId`,
   `replyToBody` and `replyToSenderName` at `:2587-2592`, and that path is
   `msg_type`-agnostic — it would carry a typed reply today without a line
   changing. The REAL coupling: a typed message's `body` is
-  `JSON.stringify(validated.envelope)` (`telegraphKinds.ts:295`) and the thread
+  `JSON.stringify(input.envelope)` in the one envelope writer
+  (`services/telegraph/threadEnvelopeWrites.ts:131`) and the thread
   read's quote builder copies a replied-to body VERBATIM (`messaging.ts:2504`),
   so persisting `reply_to_id` on the typed path would quote a raw JSON envelope
   into the thread. That is a display question on the THREAD READ, not a §6.4
@@ -328,7 +329,10 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
   (Line citations in `routes/telegraphKinds.ts` are as of 2026-10-03 on this
   branch; that file is being changed by more than one lane this pass, and
   `DRAWER_COLUMNS` / `DrawerRow` above are at `:106` and `:109-120` at the
-  moment of writing.)
+  moment of writing. Repointed 2026-10-06 when main was merged into the T1
+  Telegraph-core branch, which moved the typed insert into
+  `writeThreadEnvelope` and shifted this file by one line: the citations in
+  the two paragraphs above now name the merged tree.)
 
   SUPERSEDES an earlier entry here that claimed `routes/messaging.ts` accepted
   `reply_to_id` without checking the thread. IT DOES CHECK — `messaging.ts:2761`,

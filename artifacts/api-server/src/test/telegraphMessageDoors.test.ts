@@ -276,7 +276,10 @@ describe("C. every writer into `messages` is declared, and a user door holds its
       // guard through a helper — matching the helper's DEFINITION would pass
       // with the call deleted, which is exactly how this case first survived a
       // mutation.
-      const files = d.file === "services/telegraph/coordinationSessions.ts" ? ["routes/telegraphCoordination.ts"] : [d.file];
+      const files =
+        d.file === "services/telegraph/coordinationSessions.ts" ? ["routes/telegraphCoordination.ts"]
+        : d.file === "services/telegraph/threadEnvelopeWrites.ts" ? ["routes/telegraphKinds.ts", "routes/telegraphCoordination.ts"]
+        : [d.file];
       // The two doors closed in the OD-TRUST-5 wave name their clients differently; each is held
       // to its OWN call text, and their behaviour is driven in telegraphRestrictionSendGate.test.ts.
       const CALL_TEXT: Record<string, RegExp> = {
@@ -309,7 +312,9 @@ describe("C. every writer into `messages` is declared, and a user door holds its
     const set = src.match(/const GUARDED_WRITE_COMMANDS: ReadonlySet<string> = new Set\(\[([^\]]*)\]\)/);
     assert.ok(set, "GUARDED_WRITE_COMMANDS is not declared as a literal set");
     const guarded = [...set![1]!.matchAll(/"([A-Z_]+)"/g)].map((m) => m[1]).sort();
-    assert.deepEqual(guarded, ["ADD_REACTION", "CREATE_COORDINATION_SESSION"]);
+    assert.deepEqual(guarded, [
+      "ADD_REACTION", "CREATE_COORDINATION_SESSION", "CREATE_DECISION", "SET_COORDINATION_STATUS", "SHARE_LOCATION",
+    ]);
     // And the helper it calls really is the shared guard, not a second copy of it.
     const helper = src.slice(src.indexOf("async function refuseGuardedWrite("));
     assert.match(helper, /const guard = await guardTelegraphThreadWrite\(sc, conversationId, userId\);/);

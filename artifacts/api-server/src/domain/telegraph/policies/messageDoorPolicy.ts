@@ -230,13 +230,6 @@ export const MESSAGE_WRITERS: readonly MessageWriterDeclaration[] = [
       "Also the request-accept preview insert, which re-states a message the request already carried.",
   },
   {
-    file: "routes/telegraphKinds.ts",
-    writer: "user_door",
-    guard: "shared",
-    owner: "telegraph",
-    note: "POST /threads/:id/typed-messages. SAFETY is counted in its own bucket (sendBucketForKind).",
-  },
-  {
     file: "routes/telegraphVoice.ts",
     writer: "user_door",
     guard: "shared",
@@ -251,11 +244,16 @@ export const MESSAGE_WRITERS: readonly MessageWriterDeclaration[] = [
     note: "POST /threads/:id/share.",
   },
   {
-    file: "routes/telegraphCoordination.ts",
+    file: "services/telegraph/threadEnvelopeWrites.ts",
     writer: "user_door",
     guard: "shared",
     owner: "telegraph",
-    note: "POST /threads/:id/coordination — decisions, votes, statuses, acknowledgements, sessions.",
+    note:
+      "The ONE writer of an envelope message for three doors: POST /threads/:id/typed-messages (routes/telegraphKinds.ts; " +
+      "SAFETY counted in its own bucket by sendBucketForKind), POST /threads/:id/coordination (routes/telegraphCoordination.ts — " +
+      "decisions, votes, statuses, acknowledgements, transitions) and POST /telegraph/commands CREATE_DECISION / " +
+      "SET_COORDINATION_STATUS / SHARE_LOCATION (server/telegraph/commandRoute.ts). It does not authorize and says so; " +
+      "every caller runs the shared guard first. The suite checks the CALLERS.",
   },
   {
     file: "services/telegraph/coordinationSessions.ts",

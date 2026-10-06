@@ -192,8 +192,12 @@ describe("T372 / T305 — the Shared Context Rail is mounted on both conversatio
   // re-indents nothing, or a condition computed elsewhere and hidden in `id`.
   const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
   const SCREENS: Array<[string, RegExp]> = [
-    ["travel-buddy-standalone/app/messages/[id].tsx", /^(\s*)\{id \? <SharedContextRail threadId=\{id\}[ />]/],
-    ["travel-buddy-standalone/src/components/GroupChatScreen.tsx", /^(\s*)\{thread\?\.id \? <SharedContextRail threadId=\{thread\.id\}[ />]/],
+    // The rail may share its line with ONE earlier sibling ternary that closes
+    // with `: null}` (lane T1 keeps SafetyModeBar on the same cited line so no
+    // census line moves); anything else before the rail — a wrapper, a second
+    // condition — still fails, because the prefix must be exactly that shape.
+    ["travel-buddy-standalone/app/messages/[id].tsx", /^(\s*)(?:\{id \? <[A-Za-z]+ [^\n]*? : null\})?\{id \? <SharedContextRail threadId=\{id\}[ />]/],
+    ["travel-buddy-standalone/src/components/GroupChatScreen.tsx", /^(\s*)(?:\{thread\?\.id \? <[A-Za-z]+ [^\n]*? : null\})?\{thread\?\.id \? <SharedContextRail threadId=\{thread\.id\}[ />]/],
   ];
   for (const [rel, mount] of SCREENS) {
     it(`${rel} mounts <SharedContextRail> beside the message list, conditional only on the thread id`, () => {

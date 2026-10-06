@@ -2083,7 +2083,7 @@ router.get('/me/threads', async (req, res) => {
   if (lastMsgIds.length > 0) {
     const { data: tRows, error: tErr } = await sc
       .from('message_translations')
-      .select('message_id, translated_body, status, source_language')
+      .select('message_id, translated_body, status, source_language, target_language') // §18.2 T242: the full row buildDisplayFields reads; never `confidence` (2991 is applied nowhere)
       .in('message_id', lastMsgIds)
       .eq('recipient_id', user.id);
 
@@ -2197,20 +2197,20 @@ router.get('/me/threads', async (req, res) => {
 
     let lastMessagePreview: any = null;
     if (lm) {
-      let displayBody = lm.body?.slice(0, 80) ?? '';
-      if (lm.sender_id !== user.id) {
-        const tRow = translationsByMsgId[lm.id];
-        if (tRow?.status === 'translated' && tRow.translated_body) {
-          displayBody = tRow.translated_body.slice(0, 80);
-        }
-      }
+      const tRow = lm.sender_id !== user.id ? translationsByMsgId[lm.id] : undefined; // §18.2 T242 — the preview
+      const display = buildDisplayFields( // decides exactly as the thread reader does, from the same row and the same helper
+        { body: lm.body ?? null, deleted: false, senderId: lm.sender_id },
+        user.id,
+        tRow ? { source_language: tRow.source_language, target_language: tRow.target_language, translated_body: tRow.translated_body, status: tRow.status } : null,
+      ); // no `confidence` is read or passed: the helper treats "no reading" as not-high, so a translated preview shows its original
+      const displayBody = (display.displayBody ?? lm.body ?? '').slice(0, 80);
       lastMessagePreview = {
         body: lm.body?.slice(0, 80) ?? '',
         displayBody,
         senderId: lm.sender_id,
         createdAt: lm.created_at,
         msgType: lm.msg_type ?? 'text',
-        subtype: lm.subtype ?? null,
+        subtype: lm.subtype ?? null, translated: display.translated, showOriginalAlongside: display.showOriginalAlongside, // §18.2 T242
         // T344: present ONLY when the translations table could not be read, so
         // an untranslated preview is a stated failure rather than a silent one.
         // Omitted in the normal case — a field that is always there says
