@@ -14,6 +14,11 @@
  * presentation: a sentence per closure, a label per mode. A closure or a state
  * this build has never been taught survives as itself rather than as a blank.
  *
+ * The lifecycle BADGE is no longer worded here. It lived in a `STATE_COPY`
+ * table keyed on `layoverState` alone, which is how a green "You can go out"
+ * came to sit under an amber verdict; it is `describeLandsideBadge` in
+ * `layoverVerdictFacts.ts` now, a function of the verdict both cards share.
+ *
  * THE ONE RULE IT MIRRORS is `conservativeCheckedBags`, and only for a server
  * that predates `baggageMode`: that server reads `checkedBags` alone, so the
  * start sheet sends the cautious boolean beside the mode. It is pinned to the
@@ -21,10 +26,15 @@
  */
 import type {
   BaggageMode,
+  ConstraintQuestion,
   DeclarableConstraintField,
   LandsideClosure,
+  LayoverConstraintPatch,
   LayoverConstraintsAnswer,
+  LayoverCreationConstraints,
+  PlanFit,
 } from '../../services/layover.ts';
+import { describeCautions } from './layoverVerdictFacts.ts';
 
 export const BAGGAGE_MODE_ORDER: BaggageMode[] = ['CARRY_ON_ONLY', 'CHECKED_THROUGH', 'COLLECT_RECHECK', 'UNKNOWN'];
 
@@ -43,7 +53,15 @@ export function conservativeCheckedBags(mode: BaggageMode): boolean {
   return mode === 'COLLECT_RECHECK' || mode === 'UNKNOWN';
 }
 
-/** Yes / No / Not sure, for the two connection facts. `null` is "not stated". */
+/**
+ * Yes / No / Not sure, for the two connection facts. `null` is "not stated".
+ *
+ * "Not sure" is a real declaration and is SENT as `null` — it withdraws an
+ * earlier answer. It is NOT "no": the server treats an unstated airport change
+ * as an unknown that closes landside and asks the traveller to confirm, and an
+ * unstated ticketing answer as the cautious case. (It used to read both as
+ * "no", and this chip was how a traveller said so.)
+ */
 export const TRI_STATE_OPTIONS: Array<{ value: boolean | null; label: string }> = [
   { value: false, label: 'No' },
   { value: true, label: 'Yes' },
@@ -68,6 +86,9 @@ const CLOSURE_COPY: Record<LandsideClosure, string> = {
   entry_unconfirmed: 'We could not confirm that your passport lets you into this country.',
   baggage_unknown: 'We need to know what happens to your checked bag.',
   airport_change: 'Your next flight leaves from a different airport.',
+  constraints_unreadable: 'We could not read your bag and connection details just now. Try again shortly before deciding to leave.',
+  airport_change_unknown: 'We need to know whether your next flight leaves from this airport or a different one.',
+  recheck_unknown: 'We need to know whether your flights are on one ticket or booked separately.',
 };
 
 /** One sentence per closure, in the server's order. An untaught closure is shown as its own code. */
@@ -78,29 +99,68 @@ export function describeClosures(closedBy: readonly string[]): Array<{ code: str
   }));
 }
 
-const STATE_COPY: Record<string, { label: string; tone: 'ask' | 'closed' | 'open' | 'return' | 'done' }> = {
-  NEEDS_INFO: { label: 'One answer needed', tone: 'ask' },
-  AIRPORT_ONLY: { label: 'Airport only', tone: 'closed' },
-  LANDSIDE_AVAILABLE: { label: 'You can go out', tone: 'open' },
-  PLAN_SELECTED: { label: 'Plan set', tone: 'open' },
-  RETURN_SOON: { label: 'Head back soon', tone: 'return' },
-  RETURN_NOW: { label: 'Head back now', tone: 'return' },
-  RETURNING: { label: 'Returning to the airport', tone: 'return' },
-  COMPLETED: { label: 'Completed', tone: 'done' },
-  CANCELLED: { label: 'Ended', tone: 'done' },
-  EXPIRED: { label: 'Ended', tone: 'done' },
+/**
+ * The patch that answers the server's one question with one of its options.
+ *
+ * The card used to send `{ baggageMode: option }` for every question, because
+ * bags were the only thing ever asked about. The field is the QUESTION's.
+ * Returns null for a question or a value this build cannot express as a
+ * declaration — the card then sends nothing rather than a guess.
+ */
+export function questionPatch(question: ConstraintQuestion, value: unknown): LayoverConstraintPatch | null {
+  if (question.field === 'baggageMode') {
+    return typeof value === 'string' && (BAGGAGE_MODE_ORDER as string[]).includes(value)
+      ? { baggageMode: value as BaggageMode }
+      : null;
+  }
+  if (typeof value !== 'boolean') return null;
+  if (question.field === 'airportChangeRequired') return { airportChangeRequired: value };
+  if (question.field === 'recheckRequired') return { recheckRequired: value };
+  return null;
+}
+
+/** Why the traveller is being asked: the sentence under the question, per field. */
+const QUESTION_WHY: Record<DeclarableConstraintField, string> = {
+  baggageMode:
+    'Your answer decides whether you have time to leave the airport, so we are holding back anything outside it until you tell us.',
+  airportChangeRequired:
+    'If your next flight leaves from a different airport, getting there comes first — so we are holding back anything outside this one until you confirm.',
+  recheckRequired:
+    'On separate tickets you check in again, which takes time — so we are holding back anything outside the airport until you tell us.',
 };
 
+export function questionWhy(field: string): string {
+  return (QUESTION_WHY as Record<string, string | undefined>)[field] ?? QUESTION_WHY.baggageMode;
+}
+
 /**
- * The lifecycle state as a badge, or null when the server withheld it. A state
- * this build does not know is rendered as its own token — never dropped, and
- * never guessed into one of the known ones.
+ * What the dashboard says when the answers given AT THE START were not kept.
+ *
+ * `POST /airport/sessions` reports what it did with them and the client used
+ * to throw that away, so a traveller who chose "Not sure" on the start sheet
+ * landed on a dashboard that showed no sign their answer had not been stored.
+ * Null when everything sent was kept (or nothing was reported).
  */
-export function describeLayoverState(
-  state: string | null,
-): { label: string; tone: 'ask' | 'closed' | 'open' | 'return' | 'done' | 'unknown' } | null {
-  if (!state) return null;
-  return STATE_COPY[state] ?? { label: state, tone: 'unknown' };
+export function creationNote(constraints: LayoverCreationConstraints | null | undefined): string | null {
+  if (!constraints) return null;
+  if (constraints.stored === 'not_stored') {
+    return 'Your bag details were not saved when you started this layover. Set them here — until you do, we count the time to collect and re-check a bag.';
+  }
+  return unsavedNote(constraints.unsaved);
+}
+
+/** The route-param value the start sheet hands the dashboard, or null when there is nothing to say. */
+export function creationNoteParam(constraints: LayoverCreationConstraints | null | undefined): 'not_stored' | 'unsaved' | null {
+  if (!constraints) return null;
+  if (constraints.stored === 'not_stored') return 'not_stored';
+  return constraints.unsaved.length > 0 ? 'unsaved' : null;
+}
+
+/** The sentence for a route-param value. An unknown value says nothing rather than something wrong. */
+export function creationNoteForParam(param: string | null | undefined): string | null {
+  if (param === 'not_stored') return creationNote({ stored: 'not_stored', reason: 'unknown', message: '', retryable: true });
+  if (param === 'unsaved') return 'Some of what you told us when you started could not be kept yet. Check your bag and connection details here.';
+  return null;
 }
 
 /**
@@ -143,4 +203,67 @@ export function unsavedNote(unsaved: readonly DeclarableConstraintField[]): stri
 /** The mode a control should show as selected: the declared one, or none. */
 export function selectedBaggageMode(answer: Pick<LayoverConstraintsAnswer, 'constraints'>): BaggageMode | null {
   return answer.constraints?.baggageMode ?? null;
+}
+
+export type PlanFitTone = 'fits' | 'unconfirmed' | 'unknown' | 'over' | 'blocked';
+
+/**
+ * The plan's fit meter, as words — FIVE answers, and only one of them green.
+ *
+ * The meter read `usableMinutes` and nothing else, and the usable window is the
+ * same number whether or not the traveller may leave the airport. So a plan
+ * through the city read "fits with room", in green, under a verdict of "No —
+ * stay airside" for a refused border. The server now folds the landside gate
+ * into `fit` and says why in `landside`; this renders both.
+ *
+ *   fits         every leg stated, inside the window, and the gate is open.
+ *   unconfirmed  it fits the clock and the gate is not open — said in amber,
+ *                with the server's cautions.
+ *   blocked      the plan leaves the airport and the gate is closed — said
+ *                with the server's closures.
+ *   over         the lower bound overflows. Arithmetic, and certain.
+ *   unknown      a leg nobody stated — and ANY value this build has not been
+ *                taught, which is never rendered as a fit.
+ *
+ * `fmt` is the caller's duration formatter, passed in so this file keeps no
+ * runtime import of the theme.
+ */
+export function describePlanFit(
+  planFit: PlanFit,
+  stopCount: number,
+  fmt: (minutes: number) => string,
+): { tone: PlanFitTone; text: string; reasons: Array<{ code: string; sentence: string }> } {
+  const planned = `Planned ${fmt(planFit.totalPlannedMin)} of ${fmt(planFit.usableMinutes)} usable`;
+  switch (planFit.fit) {
+    case 'fits':
+      return { tone: 'fits', text: `${planned} — fits with room`, reasons: [] };
+    case 'over':
+      return {
+        tone: 'over',
+        text: `Over by ${fmt(planFit.overflowMin)} — trim ${stopCount > 1 ? 'a stop' : 'this stop'} or shorten it`,
+        reasons: [],
+      };
+    case 'blocked':
+      return {
+        tone: 'blocked',
+        text: 'This plan leaves the airport, and we are not suggesting that for this layover.',
+        reasons: describeClosures(planFit.landside?.closedBy ?? []),
+      };
+    case 'unconfirmed':
+      return {
+        tone: 'unconfirmed',
+        text: `${planned} — it fits the clock, but that is not a yes yet`,
+        reasons: describeCautions(planFit.landside?.cautions ?? []),
+      };
+    default:
+      return {
+        tone: 'unknown',
+        text: `At least ${fmt(planFit.neededMin)} of ${fmt(planFit.usableMinutes)} usable — ${
+          planFit.unstatedTravelStops > 0
+            ? `${planFit.unstatedTravelStops === 1 ? 'one stop has' : `${planFit.unstatedTravelStops} stops have`} no travel time yet, so this is not a fit we can promise`
+            : 'part of this plan has no time on it yet, so this is not a fit we can promise'
+        }`,
+        reasons: [],
+      };
+  }
 }

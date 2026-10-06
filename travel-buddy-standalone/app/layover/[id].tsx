@@ -93,7 +93,7 @@ import { KeyboardSafeScrollView } from '../../src/components/ui/KeyboardSafeView
 const UNREACHABLE_COPY = "We couldn't reach Portava. Check your connection and try again.";
 
 export default function LayoverDashboardScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, constraints: constraintsAtStart } = useLocalSearchParams<{ id: string; constraints?: string }>(); // `constraints`: what the start sheet learned about the answers it sent (`not_stored` | `unsaved`) — see LayoverModeSheet
   const router = useRouter();
   const insets = useSafeAreaInsets();
 
@@ -794,7 +794,7 @@ export default function LayoverDashboardScreen() {
           window={win}
           airport={airport}
           airportIntelligence={overview.airportIntelligence ?? null}
-        /><LayoverConstraintsCard sessionId={session.id} canEdit={!!canEdit} refreshKey={dataEpoch} onChanged={() => load(true)} />{/* §4/§5/§12.1 (census L22, L35, L49): the declared bags and connection, and the one question when the answer could change the verdict. */}
+        /><LayoverConstraintsCard sessionId={session.id} canEdit={!!canEdit} refreshKey={dataEpoch} onChanged={() => load(true)} creationNotice={typeof constraintsAtStart === 'string' ? constraintsAtStart : null} />{/* §4/§5/§12.1 (census L22, L35, L49): the declared bags and connection, and the one question when the answer could change the verdict. */}
         {/* The one §11 event producer this tree has: the traveller. A flight
             time the gate agent just announced is a fact no feed here carries,
             and the server runs the whole §11.1 pipeline over it. */}

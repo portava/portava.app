@@ -66,7 +66,7 @@ const REASON_TEXT: Record<CrewInfeasibilityReason, string> = {
   unknown_member_in_branch: 'The plan names someone who is not in the crew.',
   empty_branch: 'Part of the plan has nobody doing it.',
   plan_exceeds_usable_minutes: 'The plan needs more time than the tightest crewmate has.',
-  plan_ends_after_shared_return: 'The plan would finish after the crew has to be back.',
+  plan_ends_after_shared_return: 'The plan would finish after the crew has to be back.', landside_closed_for_member: 'The plan leaves the airport, and a crewmate may not — their layover does not allow it.',
 };
 
 interface Props {
