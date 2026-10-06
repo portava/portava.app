@@ -1510,18 +1510,6 @@ async function main(): Promise<never> {
   }));
 
   const plan = planApply(onDisk, ledger, applyUnproven, overrides);
-  const overrideLines = describeOrderOverrides(
-    orderMigrations(files, overrides),
-    overrides,
-    new Set(plan.pending),
-  );
-  const printOverrides = () => {
-    console.log(
-      `\nApply-order overrides (${ORDER_OVERRIDES_FILE}): ${overrides.length} declared, each ` +
-        `applied to the whole ${files.length}-file chain before the pending set was taken:`,
-    );
-    for (const line of overrideLines) console.log(`  ↪ ${line}`);
-  };
 
   const unknownForced = applyUnproven.filter((f) => !plan.pending.includes(f));
   if (unknownForced.length > 0) {
@@ -1565,8 +1553,17 @@ async function main(): Promise<never> {
 
   const classify = (f: string) => classifyMigration(read(f), f);
 
+  // Every run that gets this far states the overrides it applied — dry or not,
+  // and whether or not either file of an entry is pending.
+  console.log(
+    `\nApply-order overrides (${ORDER_OVERRIDES_FILE}): ${overrides.length} declared, each ` +
+      `applied to the whole ${files.length}-file chain before the pending set was taken:`,
+  );
+  for (const line of describeOrderOverrides(orderMigrations(files, overrides), overrides, new Set(plan.pending))) {
+    console.log(`  ↪ ${line}`);
+  }
+
   if (dryRun) {
-    printOverrides();
     console.log("");
     console.log(formatDryRun(plan, classify));
     console.log("");
@@ -1619,7 +1616,6 @@ async function main(): Promise<never> {
     .filter(Boolean)
     .join(" ");
 
-  printOverrides();
   console.log(`\nApplying ${plan.pending.length} migration(s), in canonical order:`);
   for (const f of plan.pending) console.log(`  · ${f}`);
   console.log("");

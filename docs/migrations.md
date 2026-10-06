@@ -3924,3 +3924,107 @@ the function. `rent_buddy_enabled` is FALSE in production and this file does not
 
 **Rollback:** re-apply `2330`'s definition of the function. There is no dependent object, so the revert
 is one statement and loses nothing.
+
+## Apply-order overrides
+
+**What.** `artifacts/api-server/src/migrations/ORDER_OVERRIDES.json` is the single declared list of
+departures from byte-wise filename order. The canonical apply order is: sort every `*.sql` filename
+byte-wise (§ "Prefix collisions" above; the header of `scripts/src/apply-migrations.ts` explains why
+that base is safe), then apply the file's `overrides` in list order — each entry removes `move` and
+re-inserts it immediately `before` or `after` its anchor. Nothing else moves. Two places honour it,
+and nothing else may replay the chain in a different order:
+
+- the applier, `scripts/src/apply-migrations.ts` — `orderMigrations` (byte order, then
+  `applyOrderOverrides`). `planApply` applies the overrides to the WHOLE on-disk list before it takes
+  the pending set, so a pending set that contains neither file of an entry (portava-ci today: every
+  file is in the ledger) is unaffected. Every run that reaches the plan, dry or not, prints each
+  override with the neighbours it landed between and whether either file is pending;
+- the local replay harness, `artifacts/api-server/scripts/local-db/up.sh`, through
+  `resolve-order.mjs` — the same algorithm in plain Node; `scripts/src/migration-order-overrides.test.ts`
+  asserts the two produce the identical order for the real tree.
+
+An entry naming a file that is not on disk is a hard refusal: the applier exits 2 before it reaches a
+network, the harness aborts. A missing overrides file is the same refusal, not "no overrides". A
+stale entry is never silently ignored, because a chain that quietly went back to byte order replays
+the very precondition refusals the entries exist to prevent.
+
+The file sits beside the migrations it reorders and is not one: every reader of `src/migrations`
+(`check:migration-prefixes`, the ledger and inventory checks, `auditMigrationsVsLive.ts`, the
+telegraph inventory, `check:frozen-dir`'s `MIGRATION_SHAPED_RE`) filters on `.sql`.
+
+**Why.** A clean replay must be deterministic AND must match what the reference database
+(`portava-ci`) actually received. Where a file's precondition is satisfied only by files that sort
+after it, and the reference database received them first, byte order refuses at that precondition
+and every later file that names it fails as a consequence.
+
+**The entry (one).**
+
+- **`2136_profiles_auth_users_convergence.sql` AFTER `2139_shared_content_tombstones.sql`.** 2136 has
+  two preconditions that only later-sorting files satisfy. Its second refuses while any FK to
+  `public.profiles` is NO ACTION/RESTRICT, or SET NULL onto a NOT NULL column — `2138` performs those 61
+  conversions. Its third refuses while any of 16 named shared-content tables keeps a CASCADE edge to
+  profiles — `2139` re-rules them; its header calls itself "Second prerequisite for 2136". Placing
+  2136 after 2139 puts both ahead of it.
+  - Provenance: PR #111 (`claude/d6-rulings-20260823`, merged 2026-08-23) introduced 2138 and 2139 as
+    2136's prerequisites and applied 2138 before 2136 on portava-ci; the ledger rows for 2136 and
+    2138 are `applied_by='backfill'` (2254's seed), so the ledger cannot order them and 2136's own
+    preconditions do.
+  - Replay, CI's `postgis/postgis:16-3.4` (ci.yml `api-server-local-db`). Byte order, run 37442240254
+    (main `b102255da`): 2136 refuses "PRECONDITION FAILED: 54 foreign key(s) to public.profiles would
+    reject a cascading delete" and applies only on the post-chain retry — i.e. once 2138 AND 2139 have
+    run. With 2138 moved before 2136 and nothing else, run 37445105786: 2136 refuses at its third
+    precondition instead, "PRECONDITION FAILED: 14 CASCADE edge(s) would DELETE records belonging to
+    other users once this migration lands." With 2136 after 2139, run 37446087758: 2136 replays in
+    order, and `KNOWN_UNREPLAYABLE.json` lost its entry.
+  - End state unchanged, which is why the auditors may keep reading byte order: 2136 writes only
+    `profiles_id_fkey` (profiles → auth.users, CASCADE) and its comment, and only READS the FKs onto
+    profiles; 2137 writes intel triggers, 2138 and 2139 rewrite FKs owned by other tables. No object is
+    written on both sides of the move.
+
+**Not an order defect either: `2140_deletion_receipt.sql`.** Its `KNOWN_UNREPLAYABLE.json` entry used to
+say it failed because of 2136's shape. Measured with 2136 replaying cleanly ahead of it (run
+37446087758), it still refuses: "POSTCONDITION FAILED: status CHECK does not permit 'completed', which
+AccountDeletionService writes;". The baseline is PRODUCTION's 2026-08-19 structure, whose
+`user_deletion_requests` status CHECK lacks `completed`; portava-ci's CHECK had it all along
+(`2178_deletion_status_check_converge.sql`'s header records that drift), and 2178 adds it on the
+harness later in the chain — which is why the post-chain retry applies 2140. Moving 2140 after 2178
+would NOT match portava-ci, where 2140 (committed 2026-08-23) predates 2178 (2026-08-27) and passed on
+CI's own CHECK. It is a baseline-vs-reference drift, so it stays listed with its cause corrected.
+
+**Considered and refused: `2137_intel_stmt_trigger_removal.sql`.** It was proposed to move it after
+`2279_intel_historical_patterns.sql`, because `2276_intel_presence_verification.sql` (applied to
+portava-ci by CI on 2026-09-04, `applied_by='ci'`) requires at its lines 73-74 the
+`intel_append_only_stmt()` that 2137 drops, and 2137's own ledger row is an unverified `backfill`
+row. Measured in run 37445105786: 2276, 2277, 2278 and 2279 then replay, but 2137 fails —
+"ERROR:  cannot drop function intel_append_only_stmt() because other objects depend on it". No
+position of 2137 works, and this is a proof from the files, not a single measurement:
+
+- 2130 creates `intel_append_only_stmt()` and a statement-level trigger using it on each of
+  intel_observations / intel_evidence / intel_confirmations; 2276, 2277 and 2279 each attach one more
+  to their own new table; 2137 drops 2130's three and then the function, WITHOUT CASCADE;
+  `2292_intel_stmt_trigger_removal_ig_campaign.sql` drops the three campaign ones and then, if the
+  function still exists, refuses while ANY other trigger executes it.
+- 2137 before 2276 (byte order): 2276 and 2277 refuse, function missing; 2278, 2279, 2292, 3002, 3003,
+  3310 follow.
+- 2137 anywhere between 2276 and 2292: its `DROP FUNCTION` refuses (measured, above).
+- 2137 after 2292: 2292's postcondition refuses — 2130's three triggers still execute the function.
+
+So the state portava-ci had when 2276 ran — the function present, and (for 2292 to pass on 2026-09-05,
+`applied_by='manual'`) 2130's statement triggers already gone — is not the product of ANY order of
+these files as written. That is a provenance gap, not an order defect, and an override would paper
+over it. (Consistent with `2175_security_lint_hygiene.sql`'s header: CI's 2130 apply predates the
+`_stmt` variant.) The intel entries stay in `KNOWN_UNREPLAYABLE.json` with their original errors.
+
+**Adding an entry.** Only with a MEASURED fact about what the reference database received — the
+ledger provenance (`applied_by`, `applied_at`) of both files — plus a replay that refuses in byte
+order and passes with the entry, both recorded in `why` / `evidence`. Never to paper over a NEW
+migration's ordering: a new migration must sort correctly by its own number (`check:migration-prefixes`,
+the 2100-2999 band); if it needs a file that sorts after it, it needs a later number, not an override.
+Check that the entry leaves the chain's end state unchanged (the auditors read byte order), then
+re-run the local-db CI job and remove every `KNOWN_UNREPLAYABLE.json` entry that now replays —
+`up.sh` aborts until you do.
+
+**Not yet honoured:** `.github/scripts/clean-build-proof.sh` (workflow_dispatch only, destructive,
+targets portava-ci) still replays `>= "2100"` in plain byte order. It would run 2136 ahead of its
+prerequisites exactly as the harness did before this entry; it was left untouched here, and is the
+third replayer that should read `resolve-order.mjs`.
