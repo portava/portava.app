@@ -71,6 +71,7 @@ const DINNER = "cccccccc-0000-4000-8000-00000000000c";
 const STAGE = "eeeeeeee-0000-4000-8000-00000000000e";
 const PORTO = "ffffffff-0000-4000-8000-00000000000f";
 const GEM = "99999999-0000-4000-8000-000000000099";
+const ANA_ROUTE = "dddddddd-0000-4000-8000-0000000000a0"; // Ana's route plan (§86)
 const GEM_AUTHOR = "55555555-0000-4000-8000-000000000005"; // submitted the gem; not on the trip
 
 const HOTEL_LAT = 38.70417;
@@ -109,7 +110,17 @@ function seed(viewer: string, scenario: Scenario, hotelOver: Record<string, unkn
     places: [{ id: PORTO, name: "Porto", latitude: 41.15, longitude: -8.61, lat: 41.15, lng: -8.61 }],
     hidden_gems: [{ id: GEM, status: "active", title: "Segreta Gem", created_at: "2026-10-01T00:00:00Z" }],
     route_plans: [{ id: "dddddddd-0000-4000-8000-00000000000d", trip_id: TRIP, owner_user_id: viewer, status: "active",
-      updated_at: "2026-10-02T00:00:00Z", created_at: "2026-10-02T00:00:00Z" }],
+      updated_at: "2026-10-02T00:00:00Z", created_at: "2026-10-02T00:00:00Z" },
+      // census-trips §86: ANA's own route on this trip, one stop made from her private stay.
+      { id: ANA_ROUTE, trip_id: TRIP, owner_user_id: ANA, status: "active", updated_at: "2026-10-01T00:00:00Z", created_at: "2026-10-01T00:00:00Z" }],
+    route_stops: [
+      { id: "5a000000-0000-4000-8000-0000000000a1", route_plan_id: ANA_ROUTE, source_type: "plan_item", source_id: HOTEL, title: "Casa Segreta",
+        structured_location: { label: "Casa Segreta", lat: HOTEL_LAT, lng: -9.13853 }, order_index: 0, notes: "door code 4471", checkpoint_status: "pending" },
+      { id: "5a000000-0000-4000-8000-0000000000a2", route_plan_id: ANA_ROUTE, source_type: "plan_item", source_id: DINNER, title: "Dinner",
+        structured_location: { label: "Dinner", lat: DINNER_LAT, lng: -9.14 }, order_index: 1, notes: null, checkpoint_status: "pending" },
+    ],
+    route_legs: [{ id: "5b000000-0000-4000-8000-0000000000b1", route_plan_id: ANA_ROUTE, from_stop_id: "5a000000-0000-4000-8000-0000000000a1",
+      to_stop_id: "5a000000-0000-4000-8000-0000000000a2", distance_meters: 1234, duration_seconds: 900, mode: "walk", provider: "approximated", created_at: "2026-10-01T00:00:00Z" }],
   };
 }
 
@@ -138,6 +149,9 @@ const PATHS: ReaderPath[] = [
   { name: "meeting-point", method: "POST", path: `/trips/${TRIP}/meeting-point`, body: {} },
   { name: "offline-bundle", method: "GET", path: `/trips/${TRIP}/offline-bundle` },
   { name: "route-plan-stay", method: "GET", path: `/route-plans/for-trip/${TRIP}` },
+  // census-trips §86: another member's route, read by id — a stop made from the private stay, and the leg from it.
+  { name: "route-plan-stops", method: "GET", path: `/route-plans/${ANA_ROUTE}`,
+    shown: (b, t) => SECRET.test(t) || ((b?.legs ?? []) as any[]).some((l) => l.distanceMeters === 1234) },
   { name: "plan-list", method: "GET", path: `/trips/${TRIP}/plan` },
   { name: "map-projection", method: "GET", path: `/trips/${TRIP}/map` },
   { name: "feasibility", method: "GET", path: `/trips/${TRIP}/feasibility`,

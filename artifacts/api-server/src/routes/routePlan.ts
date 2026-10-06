@@ -32,8 +32,8 @@ import type { CompassContext } from "../compass/types.js";
 import { makeConfidence } from "../lib/liveIntelligence.js";
 import { resolveLocalHour } from "../lib/localTime.js";
 import { canSeePlanItemLocation, PLAN_ITEM_PRIVACY_COLUMNS } from "../domain/trips/policies/privateAnchorAccess.js";
-import { planItemAccessFor } from "../server/trips/privateAnchorShares.js";
-import { ownerOnlyAccess } from "../domain/trips/policies/privateAnchorAccess.js";
+import { planItemAccessFor, withheldPlanItemStopIds } from "../server/trips/privateAnchorShares.js";
+import { ownerOnlyAccess, WITHHELD_PLAN_TITLE } from "../domain/trips/policies/privateAnchorAccess.js";
 import { logger } from "../lib/logger.js";
 
 const router = Router();
@@ -875,15 +875,30 @@ async function fetchFullPlan(client: ReturnType<typeof import("../lib/supabase.j
     }
   }
 
+  // census-trips §86 (lane C, wave 5): a stop made from a PRIVATE plan item
+  // carries that item's title and coordinates, and another crew member reading
+  // this route (GET /route-plans/:id) received them. Lead ruling D-65: owner-only
+  // covers the place and its name. A viewer who is not the route's owner gets
+  // such a stop as a slot — no title, no location, no notes, no source id — and
+  // no leg to or from it (a leg's distance is derived from the place). An
+  // unreadable item or access read withholds every plan-item stop.
+  const rawStops = (stopsResult.data ?? []) as Array<Record<string, unknown>>;
+  const withheldStopIds = await withheldPlanItemStopIds(client, rawStops, tripId, viewerId, () => (plan as Record<string, unknown>).owner_user_id as string | null);
+  const visibleStops = rawStops.map((s) => withheldStopIds.has(String(s.id))
+    ? { ...s, title: WITHHELD_PLAN_TITLE, structured_location: {}, notes: null, source_id: null, location_withheld: true }
+    : s);
+  const visibleLegs = ((legsResult.data ?? []) as Array<Record<string, unknown>>)
+    .filter((l) => !withheldStopIds.has(String(l.from_stop_id)) && !withheldStopIds.has(String(l.to_stop_id)));
+
   return {
     plan: {
       ...toCamel(plan as Record<string, unknown>),
       tripAccommodationLocation,
     },
-    stops: (stopsResult.data ?? []).map((s: Record<string, unknown>) => toCamel(s)),
+    stops: visibleStops.map((s: Record<string, unknown>) => toCamel(s)),
     // Phase 8 — route timing is approximated (no live routing source is
     // configured): label each leg's timing honestly as historical estimate.
-    legs: (legsResult.data ?? []).map((l: Record<string, unknown>) => ({
+    legs: visibleLegs.map((l: Record<string, unknown>) => ({
       ...toCamel(l),
       timingConfidence: makeConfidence(
         (l.provider as string) === "approximated" ? "historical" : "verified_live",

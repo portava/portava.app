@@ -154,7 +154,7 @@ export function ownerOnlyAccess(viewerId: string, status: "ok" | "unread" = "ok"
   return { viewerId, status, ...(reason ? { reason } : {}), grants: new Map() };
 }
 
-type PlanRowLike = Record<string, unknown> & { id?: unknown; creator_id?: unknown; location_is_private?: unknown; removed_at?: unknown };
+export type PlanRowLike = Record<string, unknown> & { id?: unknown; creator_id?: unknown; location_is_private?: unknown; removed_at?: unknown };
 
 /** May this viewer see this plan item's location and name? */
 export function canSeePlanItemLocation(access: PlanItemAccess, row: PlanRowLike): boolean {

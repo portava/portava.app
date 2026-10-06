@@ -25,7 +25,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { isAbsentTableError } from "../../lib/absentTableError.js";
 import {
-  anchorsVisibleTo, ownerOnlyAccess, type AnchorGrantRead, type PlanItemAccess,
+  anchorsVisibleTo, ownerOnlyAccess, canSeePlanItemLocation, type AnchorGrantRead, type PlanItemAccess, type PlanRowLike,
 } from "../../domain/trips/policies/privateAnchorAccess.js";
 import { ok, unread, type Layer, type MapPoint } from "../../domain/trips/projections/TripMapProjection.js";
 
@@ -217,4 +217,39 @@ export async function privateItemEditRefusal(
     return { refusal: { code: "forbidden", message: `Only the person who added a private place can change its ${touched.join(", ")}` }, withheld: true };
   }
   return { refusal: null, withheld: true };
+}
+
+/**
+ * census-trips §86 (lane C, wave 5): which route stops were made from a plan
+ * item this viewer may not see. A route stop made from a private plan item
+ * (`source_type = 'plan_item'`) carries the item's title and coordinates; the
+ * owner of the ROUTE sees every stop of it, anyone else gets the stop only when
+ * canSeePlanItemLocation admits the item. Fail closed: an item that cannot be
+ * read, or an access read that failed, withholds every plan-item stop.
+ * One rule for every reader of route stops (GET /route-plans/:id, the trip map).
+ */
+export async function withheldPlanItemStopIds(
+  client: any,
+  stops: ReadonlyArray<Record<string, unknown>>,
+  tripId: string | null,
+  viewerId: string,
+  routeOwnerOf: (stop: Record<string, unknown>) => string | null,
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  const fromItems = stops.filter((s) => s.source_type === "plan_item" && routeOwnerOf(s) !== viewerId);
+  if (fromItems.length === 0) return out;
+  const isUuid = (x: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(x);
+  const ids = [...new Set(fromItems.map((s) => String(s.source_id ?? "")).filter(isUuid))];
+  const access: PlanItemAccess = tripId ? await planItemAccessFor(client, tripId, viewerId) : ownerOnlyAccess(viewerId, "unread");
+  let items: PlanRowLike[] | null = [];
+  if (ids.length > 0) {
+    const { data, error } = await client.from("trip_plan_items").select("id, removed_at, creator_id, location_is_private").in("id", ids);
+    items = error ? null : ((data ?? []) as PlanRowLike[]);
+  }
+  const byId = new Map((items ?? []).map((r) => [String(r.id), r]));
+  for (const s of fromItems) {
+    const item = items === null ? undefined : byId.get(String(s.source_id ?? ""));
+    if (!item || !canSeePlanItemLocation(access, item)) out.add(String(s.id));
+  }
+  return out;
 }
