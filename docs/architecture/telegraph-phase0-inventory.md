@@ -92,7 +92,7 @@ touch no messaging table.
 | `src/routes/rentABuddy.ts` | 117 | message_thread_members, message_threads, messages |
 | `src/routes/telegraphChat.ts` | 7 | message_thread_members, message_threads, messages |
 | `src/routes/telegraphCoordination.ts` | 9 | message_thread_members, message_threads, messages |
-| `src/routes/telegraphKinds.ts` | 4 | message_thread_members, message_threads, messages |
+| `src/routes/telegraphKinds.ts` | 4 | message_thread_members, messages |
 | `src/routes/telegraphLifecycle.ts` | 3 | message_thread_members, messages |
 | `src/routes/telegraphMemory.ts` | 2 | message_thread_members, messages, saved_messages |
 | `src/routes/telegraphShare.ts` | 2 | message_thread_members, message_threads, messages |
