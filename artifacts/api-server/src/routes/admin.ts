@@ -3631,13 +3631,13 @@ router.get("/admin/verification/attempt-metrics", async (req, res) => {
 //
 // THE MODERATOR'S IDENTITY AND NOTE NEVER GO ON THE REPORT ROW. The reporter can
 // select their own moderation_reports rows directly (RLS
-// moderation_reports_select_own / modrep_reporter_read; `authenticated` holds
-// table SELECT). So resolver_id and resolver_note are not written here; the
-// note is the moderation_actions row's `reason` and the moderator is its
-// `performed_by` — a service-role-only table (2033). Chosen over a migration
-// restricting the reporter's columns because it closes the exposure without a
-// grant change on a table other surfaces read, and loses nothing: the audit row
-// carries both facts.
+// moderation_reports_select_own / modrep_reporter_read). So resolver_id and
+// resolver_note are not written here; the note is the moderation_actions row's
+// `reason` and the moderator is its `performed_by` — a service-role-only table
+// (2033). Migration 3700 makes it a database guarantee as well: once applied,
+// neither client role can SELECT resolver_id or resolver_note at all. Until it
+// is applied, this route writing neither is what keeps them from the reporter;
+// the audit row carries both facts.
 const moderationReportReviewSchema = z.object({
   decision: z.enum(["reviewing", "actioned", "dismissed"]),
   note: z.string().trim().max(2000).optional(),
