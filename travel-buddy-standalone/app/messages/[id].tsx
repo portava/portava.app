@@ -1244,7 +1244,7 @@ export default function TelegraphThread() {
   const { data: tripData } = useTrip(threadType === 'trip' ? contextId : undefined);
   const [showTranslationSheet, setShowTranslationSheet] = useState(false);
   // DM profile for richer header
-  const [dmProfile, setDmProfile] = useState<{ name: string | null; avatarUrl: string | null; handle: string | null; city: string | null } | null>(null);
+  const [dmProfile, setDmProfile] = useState<{ name: string | null; avatarUrl: string | null; handle: string | null } | null>(null);
   // DM receipts come from useThreadReadState (server receipts, re-read when a read lands); this
   // used to hold the other party's last_read_at, read once when the thread opened and never again.
   // Member count for trip/circle threads — measured by the server, or null (never a guess).
@@ -1378,25 +1378,10 @@ export default function TelegraphThread() {
     });
   }, []);
 
-  // Fetch DM partner's profile for the rich Direct header
-  useEffect(() => {
-    if ((threadType !== 'direct' && threadType !== 'rent_buddy_booking') || !otherUserId) return;
-    supabase
-      .from('profiles')
-      .select('name, handle, avatar_url, city')
-      .eq('id', otherUserId)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (data) {
-          setDmProfile({
-            name: (data as any).name ?? null,
-            handle: (data as any).handle ?? null,
-            avatarUrl: (data as any).avatar_url ?? null,
-            city: (data as any).city ?? null,
-          });
-        }
-      });
-  }, [threadType, otherUserId]);
+  // The DM partner's identity for the rich Direct header comes from the SERVER's projection
+  // (GET /threads/:id/conversation-header → participant.identity), set below once that hook is
+  // read. census-telegraph T295 §45c: this used to read `profiles` directly and draw `name`
+  // whatever the person's show_real_name choice was — the rule every server projection applies.
 
   // §7.2 / §7.3 / §30A.15 — SEEN is marked with the newest message actually on screen, only while
   // this screen is focused and the app is in the foreground (POST /threads/:id/seen), and receipts
@@ -1549,6 +1534,12 @@ export default function TelegraphThread() {
   const threadRecap = useThreadRecap(id ?? null);
   /** §2.2's availability + safe presence axes for the header. One read. */
   const telegraphHeader = useConversationHeader(id ?? null);
+  useEffect(() => {
+    if ((threadType !== 'direct' && threadType !== 'rent_buddy_booking') || !otherUserId) { setDmProfile(null); return; }
+    const who = telegraphHeader.other && telegraphHeader.other.userId === otherUserId ? telegraphHeader.other.identity ?? null : null;
+    // A failed or absent projection discloses nothing: the header shows the thread title alone.
+    setDmProfile(who ? { name: who.name, handle: who.handle, avatarUrl: who.avatarUrl } : null);
+  }, [threadType, otherUserId, telegraphHeader.other]);
   // Telegraph §6.1: the composer's + menu, and the two typed-compose sheets.
   const [showPlusMenu, setShowPlusMenu] = useState(false);
   const [typedCompose, setTypedCompose] = useState<TypedComposeKind | null>(null); const [locationDraft, setLocationDraft] = useState<TelegraphLocationDraft | null>(null); const [showVoiceRecorder, setShowVoiceRecorder] = useState(false); // §6.2 VOICE — the sheet the + menu's Voice entry opens. Shares a line because census-telegraph cites every line below it.
@@ -1793,10 +1784,11 @@ export default function TelegraphThread() {
     // nothing anywhere measured it. §4's hard rule is that AVAILABLE, ONLINE,
     // NEARBY and SHARING LOCATION are separate states that must never be
     // collapsed — asserting one of them for free is the cheapest way to break
-    // it. The city is a real fact and stays; the presence claim is now the
-    // server's two consent-gated axes, and says nothing when they say nothing.
+    // it. The presence claim is now the server's two consent-gated axes, and says
+    // nothing when they say nothing. The city went with the raw profiles read
+    // (census-telegraph T295 §45c): no server identity projection carries it.
     const directSubtitle =
-      headerSubtitle(telegraphHeader.other, dmProfile?.city ? [dmProfile.city] : []);
+      headerSubtitle(telegraphHeader.other, []);
     const subtitle = threadType === 'trip'
       ? (memberCount !== null ? `${memberCount} members` : 'Trip Chat')
       : threadType === 'circle'

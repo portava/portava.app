@@ -43,7 +43,7 @@ import {
   type ViewerRelationship,
 } from "../services/passport/OpenToPlansService.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
-import { canViewCirclePresenceBatch } from "../lib/circleAccessGuard.js";
+import { canViewCirclePresenceBatch } from "../lib/circleAccessGuard.js"; import { nameVisibilitySet, presentedName, resolveHandle } from "../lib/publicIdentity.js"; // census-telegraph T295 §45c: the header identity
 
 const log = rootLogger.child({ route: "telegraphSharedContext" });
 const router = Router();
@@ -217,6 +217,15 @@ interface HeaderParticipant {
     checkedIn: boolean;
     stale: boolean;
   } | null;
+  /**
+   * WHO this is, as the server presents a person to someone else (census-telegraph
+   * T295, §45c): the handle, the avatar, and a NAME only when they chose to show
+   * it (`profile_privacy_settings.show_real_name`, lib/publicIdentity.ts — the
+   * rule GET /me/threads applies). The DM header read `profiles` directly and
+   * showed `name` whatever that choice was. Null when profiles could not be read:
+   * a failed read discloses nothing and the header shows the thread title alone.
+   */
+  identity: { handle: string | null; name: string | null; avatarUrl: string | null } | null;
 }
 
 router.get(
@@ -271,7 +280,35 @@ router.get(
         userId: other,
         availability: { enabled: windowsEnabled, state, intents, expiresAt },
         safePresence: null,
+        identity: null,
       });
+    }
+
+    // ── identity (census-telegraph T295, §45c) ─────────────────────────────────
+    // The server's projection of each other participant, so the client never
+    // reads `profiles` for the header. Names follow show_real_name; a failed
+    // privacy read hides every name (nameVisibilitySet fails closed).
+    if (others.length > 0) {
+      const { data: profileRows, error: profileErr } = await client
+        .from("profiles")
+        .select("id, handle, username, name, display_name, full_name, avatar_url")
+        .in("id", others);
+      if (profileErr) {
+        log.warn({ threadId, message: profileErr.message }, "header identities unreadable; header shows the thread title alone");
+      } else {
+        const nameAllowed = await nameVisibilitySet(client, others);
+        const byId = new Map<string, Record<string, unknown>>();
+        for (const row of (profileRows ?? []) as Array<Record<string, unknown>>) byId.set(String(row.id), row);
+        for (const p of participants) {
+          const row = byId.get(p.userId);
+          if (!row) continue;
+          p.identity = {
+            handle: resolveHandle(row),
+            name: presentedName(row, nameAllowed.has(p.userId)),
+            avatarUrl: typeof row.avatar_url === "string" ? row.avatar_url : null,
+          };
+        }
+      }
     }
 
     // ── safe presence (§2.2, the SAFE PRESENCE axis) ───────────────────────────
