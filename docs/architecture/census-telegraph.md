@@ -11300,8 +11300,8 @@ no flag touched, no migration added, nothing written to any database.
   `artifacts/api-server/src/routes/hiddenGems.ts:1240#if (insertErr)`) and
   `artifacts/api-server/src/routes/telegraphChat.ts:602#const guard = await guardTelegraphThreadWrite(client, threadId, user.id);`
   (last, immediately before its insert). Both are declared `guard: "shared"` and the ceiling fell:
-  `artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:321#export const KNOWN_WEAK_DOOR_CEILING = 2;`.
-  The two doors left are `routes/highlights.ts` (lane A2) and `lib/threadMessage.ts` (lane A).
+  `artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:328#export const KNOWN_WEAK_DOOR_CEILING =`
+  (2 on this branch; T2 closed `routes/highlights.ts` and `lib/threadMessage.ts` on main, so the merged value is 0).
 
 ### 43.3 Row moves
 
@@ -11360,8 +11360,9 @@ T418 and T419 keep their verdicts; §43.3's sentence about them is now true.
 
 The row: *"Low-confidence operational translation shows original plus translation instead of pretending
 certainty."* §43.3 moved it to C on the two thread readers. Two things make that false: the **inbox
-preview** still shows a translation alone, with no decision forwarded
-(`artifacts/api-server/src/routes/messaging.ts:2204#displayBody = tRow.translated_body.slice(0, 80);`); and the
+preview** still showed a translation alone, with no decision forwarded (line 2204 of routes/messaging.ts at
+87df318f4; main's Telegraph merge #626 now builds the preview through the same helper:
+`artifacts/api-server/src/routes/messaging.ts:2206#const displayBody = (display.displayBody ?? lm.body ?? '').slice(0, 80);`); and the
 "confidence" the decision reads is the provider's language-DETECTION confidence, not a measure of the
 translation's quality (`artifacts/api-server/src/services/messageTranslation.ts:452#detectionConfidence = detected.confidence;`).
 `routes/messaging.ts` is lane T1's file and is not edited here. The change T1 must make, and the open
@@ -11384,3 +11385,24 @@ question, are in lane C's report.
 
 451 rows. CONSTRUCTED (C + W) is 416 of 451 = 92.2 %; CORRECT is 239 of 451 = 53.0 %. The one move (T242
 C → W) is a correction of §43's own statement.
+
+## §47 — Lane C (2026-10-06, wave 4): merging main `ca49bbd286` (#626 T1, #628 T2). NO ROW MOVES
+
+Telegraph is lane C's again (lanes T1 and T2 merged and closed). This section records the merge only.
+
+- **The weak-door ceiling is 0.** T2 closed `routes/highlights.ts` and `lib/threadMessage.ts` on main; this branch
+  closed `routes/telegraphChat.ts` (start-poll) and `routes/hiddenGems.ts` (share-telegraph). No user door is
+  declared with a `missing` list, and the ceiling says so
+  (`artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:328#export const KNOWN_WEAK_DOOR_CEILING = 0;`).
+- **§44.2's inbox-preview defect is fixed on main** (#626 builds the preview through `buildDisplayFields`).
+  T242 stays **W** on §44.2's second ground: the confidence the decision reads is detection confidence.
+- §44.3's headline described this branch before the merge. Counted from the rows of the merged tree:
+
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **257** |
+| BUILT-BUT-WRONG | **172** |
+| NOT-BUILT | **20** |
+| CANNOT-VERIFY | **2** |
+
+451 rows. CONSTRUCTED (C + W) is 429 of 451 = 95.1 %; CORRECT is 257 of 451 = 57.0 %.
