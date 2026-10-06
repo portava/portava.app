@@ -46,10 +46,10 @@ export function placeLine(city: string | null | undefined, country: string | nul
 }
 
 export function MemoryRowsScreen({
-  title, intro, load, emptyTitle, emptyBody, testID,
+  title, intro, load, emptyTitle, emptyBody, testID, header,
 }: {
   title: string;
-  intro?: string | null;
+  intro?: string | null; /** Rendered above the list in every state (the §7 candidate inbox on the timeline). */ header?: React.ReactNode;
   load: MemoryRowsLoad;
   emptyTitle: string;
   emptyBody: string;
@@ -75,7 +75,7 @@ export function MemoryRowsScreen({
         <Text style={s.title} numberOfLines={1}>{title}</Text>
         <View style={s.spacer} />
       </View>
-      {state.kind === 'loading' ? (
+      {header ?? null}{state.kind === 'loading' ? (
         <View style={s.center}><ActivityIndicator color={color.signal} /></View>
       ) : state.kind === 'error' ? (
         <View style={s.center} testID="memory-rows-error">

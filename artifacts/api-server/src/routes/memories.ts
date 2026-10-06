@@ -29,7 +29,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isFlagEnabled } from "../lib/featureFlags.js"; import { readMemoryPrecisionGate, precisionColumnSelectable, precisionClampApplies, PRECISION_GATE_UNREADABLE_MESSAGE } from "../lib/memoryPrecisionGate.js"; // §10: an unreadable precision gate clamps, never widens (verifier finding 7)
 import {
   runMemorySearch,
   runCrewMemorySearch,
@@ -471,7 +471,7 @@ router.post("/memories", async (req, res) => {
     return;
   }
 
-  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+  const precisionGate = await readMemoryPrecisionGate(sc); const precisionEnabled = precisionColumnSelectable(precisionGate); const precisionClamp = precisionClampApplies(precisionGate);
 
   // A client may not name a column this database does not have: PostgREST fails
   // the WHOLE insert on an unknown key (PGRST204), so an accepted-but-unwritable
@@ -490,7 +490,7 @@ router.post("/memories", async (req, res) => {
   // Write-side normalization: only an exact ladder value is ever named; anything
   // else leaves the column to its DEFAULT (whose value is the owner's pending
   // decision, not this route's).
-  const precisionValue = precisionEnabled ? normalizeMemoryPrecisionForWrite(d.locationPrecision) : undefined;
+  if (precisionGate === "unreadable" && d.locationPrecision !== undefined) { sendError(res, "degraded_unavailable", PRECISION_GATE_UNREADABLE_MESSAGE); return; } const precisionValue = precisionEnabled ? normalizeMemoryPrecisionForWrite(d.locationPrecision) : undefined;
 
   const insertRow = {
     location_precision: precisionValue,
@@ -597,7 +597,7 @@ router.get("/memories", async (req, res) => {
   const limit = Math.min(Number(req.query.limit ?? 30), 100);
   const cursor = typeof req.query.cursor === "string" ? req.query.cursor : null;
 
-  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+  const precisionGate = await readMemoryPrecisionGate(sc); const precisionEnabled = precisionColumnSelectable(precisionGate); const precisionClamp = precisionClampApplies(precisionGate);
 
   // ── Two defects lived in the shape this route used to have ─────────────────
   //
@@ -713,7 +713,7 @@ router.get("/memories", async (req, res) => {
   // flag off would serve rows that carry an owner's narrowed rung while ignoring
   // it — a privacy regression produced by a configuration nobody intended.
   // Neither flag may widen disclosure; only narrow it.
-  const clampPrecision = precisionEnabled || useProjection;
+  const clampPrecision = precisionClamp || useProjection;
   // Kept as an alias rather than folded away: `visible` is read below for the
   // saved-collection lookup and the cursor, and both read only `id` and
   // `created_at`, which no coarsening touches. The coarsened rows are the ones
@@ -1577,7 +1577,7 @@ router.get("/memories/:id", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+  const precisionGate = await readMemoryPrecisionGate(sc); const precisionEnabled = precisionColumnSelectable(precisionGate); const precisionClamp = precisionClampApplies(precisionGate);
 
   const { data: memoryRow, error } = await sc
     .from("memories")
@@ -1655,7 +1655,7 @@ router.get("/memories/:id", async (req, res) => {
   // Location protection (fail-closed) — the stricter of the Hidden-Gem ceiling
   // and the owner's §10 precision rung, for non-owner reads.
   const singleMemoryGemCtx = await loadMemoryGemContext(sc, [memory]);
-  const safeMemory = protectMemoryRow(memory, singleMemoryGemCtx, user.id, precisionEnabled);
+  const safeMemory = protectMemoryRow(memory, singleMemoryGemCtx, user.id, precisionClamp);
 
   // §10's person visibility ladder, and §23's `canSeeParticipant`. Before this,
   // EVERY memory_tags row went out with its `tagged_user_id` to every viewer
@@ -1730,7 +1730,7 @@ router.patch("/memories/:id", async (req, res) => {
   const idempotencyKey = requireIdempotencyKey(req, res);
   if (idempotencyKey === null) return;
 
-  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+  const precisionGate = await readMemoryPrecisionGate(sc); const precisionEnabled = precisionColumnSelectable(precisionGate); const precisionClamp = precisionClampApplies(precisionGate);
 
   const loaded = await loadMemoryForCommand(sc, id);
   if (!loaded.ok) { sendCommandFailure(req, res, loaded); return; }
@@ -1792,7 +1792,7 @@ router.patch("/memories/:id", async (req, res) => {
   if (d.canonicalLocationId !== undefined) patch.canonical_location_id = d.canonicalLocationId;
   // Same schema-presence rule as create: never name the column unless the
   // database has it. See MEMORY_SELECT_WITH_PRECISION.
-  if (precisionEnabled && d.locationPrecision !== undefined) {
+  if (precisionGate === "unreadable" && d.locationPrecision !== undefined) { sendError(res, "degraded_unavailable", PRECISION_GATE_UNREADABLE_MESSAGE); return; } if (precisionEnabled && d.locationPrecision !== undefined) {
     const rung = normalizeMemoryPrecisionForWrite(d.locationPrecision);
     if (rung !== undefined) patch.location_precision = rung;
   }
@@ -2811,7 +2811,7 @@ router.get("/trips/:tripId/memory", async (req, res) => {
 
   const tripOwnerId = (trip as any).owner_id as string;
 
-  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+  const precisionGate = await readMemoryPrecisionGate(sc); const precisionEnabled = precisionColumnSelectable(precisionGate); const precisionClamp = precisionClampApplies(precisionGate);
 
   const { data: memory, error } = await sc
     .from("memories")
@@ -2871,7 +2871,7 @@ router.get("/trips/:tripId/memory", async (req, res) => {
   // Location protection (fail-closed) — the stricter of the Hidden-Gem ceiling
   // and the owner's §10 precision rung, for non-owner reads.
   const tripMemoryGemCtx = await loadMemoryGemContext(sc, [memory]);
-  const safeTripMemory = protectMemoryRow(memory, tripMemoryGemCtx, user.id, precisionEnabled);
+  const safeTripMemory = protectMemoryRow(memory, tripMemoryGemCtx, user.id, precisionClamp);
 
   res.json({
     memory: {
@@ -3089,7 +3089,7 @@ router.get("/users/:userId/memories", async (req, res) => {
   const limit = Math.min(Number(req.query.limit ?? 30), 100);
   const cursor = typeof req.query.cursor === "string" ? req.query.cursor : null;
 
-  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+  const precisionGate = await readMemoryPrecisionGate(sc); const precisionEnabled = precisionColumnSelectable(precisionGate); const precisionClamp = precisionClampApplies(precisionGate);
 
   let q = sc
     .from("memories")
@@ -3125,7 +3125,7 @@ router.get("/users/:userId/memories", async (req, res) => {
   // `GET /memories` and EXACT from here — the same row, the same viewer, two
   // disclosures decided by which handler was reached. The fix is where it is so
   // that a fifth list read cannot repeat it by omission.
-  const enriched = await enrichMemories(sc, visible, user.id, precisionEnabled, req.log);
+  const enriched = await enrichMemories(sc, visible, user.id, precisionClamp, req.log);
   if (!enriched.ok) {
     // §28.11 — see the same branch on GET /memories.
     sendError(res, "degraded_unavailable", "Could not load memories. Please try again.");
@@ -3394,9 +3394,9 @@ router.get("/users/:userId/memories/highlights", async (req, res) => {
   );
   const readable = owned.filter((_m, i) => verdicts[i]);
 
-  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+  const precisionGate = await readMemoryPrecisionGate(sc); const precisionEnabled = precisionColumnSelectable(precisionGate); const precisionClamp = precisionClampApplies(precisionGate);
   const gemCtx = await loadMemoryGemContext(sc, readable);
-  const safeRows = readable.map((m) => protectMemoryRow(m, gemCtx, user.id, precisionEnabled));
+  const safeRows = readable.map((m) => protectMemoryRow(m, gemCtx, user.id, precisionClamp));
 
   const itemRes = await readMemoryItems(sc, safeRows.map((m) => m.id as string));
   if (!itemRes.ok) {
@@ -3468,7 +3468,7 @@ router.get("/me/saved-memories", asyncHandler(async (req: any, res: any) => {
   const order = ((saves ?? []) as any[]).map((r) => r.memory_id as string);
   if (order.length === 0) { res.json({ memories: [], truncated: false }); return; }
 
-  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+  const precisionGate = await readMemoryPrecisionGate(sc); const precisionEnabled = precisionColumnSelectable(precisionGate); const precisionClamp = precisionClampApplies(precisionGate);
   const rows: any[] = [];
   for (const batch of chunkIds(order)) {
     const { data, error } = await (precisionEnabled // two literal selects, not a ternary inside one, so check:write-path-columns can verify both column lists
@@ -3496,7 +3496,7 @@ router.get("/me/saved-memories", asyncHandler(async (req: any, res: any) => {
   const byId = new Map(rows.filter((_, i) => readable[i]).map((m) => [m.id as string, m]));
   const visible = order.map((id) => byId.get(id)).filter((m): m is any => Boolean(m));
 
-  const enriched = await enrichMemories(sc, visible, user.id, precisionEnabled, req.log);
+  const enriched = await enrichMemories(sc, visible, user.id, precisionClamp, req.log);
   if (!enriched.ok) {
     sendError(res, "degraded_unavailable", "We could not load your saved memories. Please try again.");
     return;

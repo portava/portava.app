@@ -358,3 +358,64 @@ export async function recordDiscoveryAlreadyKnown(
     return "error";
   }
 }
+
+// ── A Memory's place reference → the ONE current catalog row (census-highlights-memories §AD) ──
+//
+// The second sanctioned crossing in this module, and kept here for the reason
+// the first one is: one place where an id from one space is turned into an id
+// in another. A Memory names its place two ways (routes/memories.ts POST
+// /memories): `place_id`, the picker's own id (a `places.id` only when the
+// person picked a catalog place — usually a provider id such as a Foursquare or
+// Nominatim key), and `canonical_location_id`, which POST /locations/resolve
+// fills from `canonical_locations` (lib/canonicalLocations.ts) — the SAME id
+// space `places.canonical_location_id` references (FK). Note the trap the name
+// sets: `discovery_places.canonical_location_id` is a `places.id`, not a
+// `canonical_locations.id`. This function never reads `discovery_places`.
+//
+//   one        exactly one catalog row is this Memory's place
+//   none       the Memory names no place, or none in the catalog
+//   ambiguous  more than one catalog row shares its canonical location, and
+//              nothing says which is the Memory's — refused rather than
+//              guessed (choosing by status picked the OTHER venue once)
+//   unreadable a read failed: unknown, not absent
+//
+// Merges are NOT followed here; the caller follows `merged_into_place_id` from
+// the row this returns, because what to do with a closed or duplicate row is the
+// caller's policy, not the bridge's.
+
+export const MEMORY_PLACE_COLUMNS =
+  "id, name, primary_category, latitude, longitude, address, city, country_code, status, merged_into_place_id";
+/** More matches than this is a data problem, not a choice; the count is what matters (>1 ⇒ ambiguous). */
+const MEMORY_PLACE_SCAN = 10;
+
+export type MemoryPlaceRefResult<Row> =
+  | { state: "one"; row: Row; via: "place_id" | "canonical_location_id" }
+  | { state: "none"; named: boolean }
+  | { state: "ambiguous"; candidates: number }
+  | { state: "unreadable" };
+
+export async function resolveMemoryPlaceRef<Row = Record<string, unknown>>(
+  sc: DbLike,
+  ref: { place_id: string | null; canonical_location_id: string | null },
+): Promise<MemoryPlaceRefResult<Row>> {
+  const named = Boolean(ref.place_id) || Boolean(ref.canonical_location_id);
+  if (ref.place_id && UUID_RE.test(ref.place_id)) {
+    const { data, error } = await sc.from("places").select(MEMORY_PLACE_COLUMNS).eq("id", ref.place_id).maybeSingle();
+    if (error) return { state: "unreadable" };
+    // The person picked THIS catalog row: it is the Memory's own place, and a
+    // sibling sharing its canonical location never outranks it.
+    if (data) return { state: "one", row: data as Row, via: "place_id" };
+  }
+  if (ref.canonical_location_id && UUID_RE.test(ref.canonical_location_id)) {
+    const { data, error } = await sc
+      .from("places")
+      .select(MEMORY_PLACE_COLUMNS)
+      .eq("canonical_location_id", ref.canonical_location_id)
+      .limit(MEMORY_PLACE_SCAN);
+    if (error) return { state: "unreadable" };
+    const rows = Array.isArray(data) ? (data as Row[]) : [];
+    if (rows.length > 1) return { state: "ambiguous", candidates: rows.length };
+    if (rows.length === 1) return { state: "one", row: rows[0]!, via: "canonical_location_id" };
+  }
+  return { state: "none", named };
+}
