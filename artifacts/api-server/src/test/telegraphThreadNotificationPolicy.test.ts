@@ -358,6 +358,23 @@ describe("verifier finding 3 — the header mute toggle and the 3760 level are o
     assert.equal(bobRowOf(c).muted_at, null);
   });
 
+  it("the answer is the ROW, not the request: a mute the row does not hold is not reported as a mute", async () => {
+    // A concurrent unmute lands between the write and the read-back (the second
+    // members read). The toggle must say what the database holds.
+    let membersReads = 0;
+    const c = use(seed(), {
+      onRead: (table, store) => {
+        if (table !== "message_thread_members") return;
+        membersReads += 1;
+        if (membersReads === 2) for (const r of store.message_thread_members!) if (r.user_id === BOB) r.muted_at = null;
+      },
+    });
+    const t = await toggle(true);
+    assert.equal(t.status, 200, JSON.stringify(t.body));
+    assert.equal(t.body.muted, false, "the toggle reported a mute the row does not hold");
+    assert.equal(bobRowOf(c).muted_at, null);
+  });
+
   it("the levels flag cannot be read: the toggle and the sheet refuse, and nothing is written", async () => {
     // An unreadable flag is not OFF: OFF would rewrite muted_at alone and leave a stored level behind.
     const c = use(seed({ notification_level: "mentions", muted_until: null }, ON), {
