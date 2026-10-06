@@ -39,8 +39,10 @@ const TRIP = "33333333-3333-4333-8333-333333333333";
 const LAT = 41.157944, LNG = -8.629105;
 const CLAT = LAT + 0.01, CLNG = LNG + 0.01;
 
-function world(opts: { zone: boolean; consent: boolean; staleDays?: number }): FakeClientSpec {
+const AVAILABLE_UNTIL = new Date(Date.now() + 2 * 3_600_000).toISOString();
+function world(opts: { zone: boolean; consent: boolean; staleDays?: number; available?: boolean }): FakeClientSpec {
   const fresh = new Date(Date.now() - 60_000).toISOString();
+  const soon = AVAILABLE_UNTIL; // one instant for every world, so two bodies can be compared byte for byte
   const crewAt = opts.staleDays ? new Date(Date.now() - opts.staleDays * 86_400_000).toISOString() : fresh;
   return {
     users: { tok: VIEWER },
@@ -62,8 +64,8 @@ function world(opts: { zone: boolean; consent: boolean; staleDays?: number }): F
         { user_id: VIEWER, lat: LAT, lng: LNG, last_known_at: fresh },
         { user_id: CREWMATE, lat: CLAT, lng: CLNG, last_known_at: crewAt },
       ],
-      user_availability: [{ user_id: CREWMATE, open_to_meet: false }],
-      quick_availability_status: [],
+      user_availability: [{ user_id: CREWMATE, open_to_meet: opts.available === true }],
+      quick_availability_status: opts.available ? [{ user_id: CREWMATE, status: "free_now", expires_at: soon }] : [],
       availability_windows: [],
       protected_zones: opts.zone
         ? [{ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", category: "medical_facility", action: null, privacy_floor: null,
@@ -137,6 +139,32 @@ describe("F1 — the viewer is never told WHY a person is not shown", () => {
     assert.equal(zoned.body.people.length, 0, "a person in a protected zone was published");
     assert.equal(JSON.stringify(zoned.body).includes("protected_zone"), false);
     assert.equal(comparable(zoned.body), comparable(declined.body));
+  });
+
+  // Re-verification (2026-10-06, on b3d14e8494): every case above has the
+  // crewmate publishing NO availability, so a zone always ended in "not shown".
+  // With availability published the person IS shown (as available, without a
+  // bucket) — and then the CARD must not tell a zone from sharing-off. The
+  // mutant "keep freshness live in a zone" (`reachablePeople.ts`, the
+  // `freshness` line) survived all 45 Nearby tests because nothing compared
+  // those two cards; these do.
+  for (const staleDays of [undefined, 10]) {
+    const age = staleDays ? "a 10-day-old position" : "a fresh position";
+    it(`AVAILABLE, ${age} inside a zone: the same card as an available crewmate sharing no location`, async () => {
+      const zoned = await call(world({ zone: true, consent: true, available: true, staleDays }));
+      const off = await call(world({ zone: false, consent: false, available: true }));
+      assert.equal(zoned.status, 200, JSON.stringify(zoned.body));
+      assert.equal(zoned.body.people.length, 1, "an available person in a zone is still shown as available");
+      assert.equal(JSON.stringify(zoned.body).includes("protected_zone"), false);
+      assert.equal(comparable(zoned.body), comparable(off.body));
+    });
+  }
+
+  it("CONTROL: an available crewmate sharing a fresh position outside any zone gets a bucket — the card above is not the only card", async () => {
+    const shared = await call(world({ zone: false, consent: true, available: true }));
+    const off = await call(world({ zone: false, consent: false, available: true }));
+    assert.equal(shared.body.people.length, 1);
+    assert.notEqual(comparable(shared.body), comparable(off.body));
   });
 
   it("CONTROL: a consenting, fresh crewmate outside any zone is published with a bucket", async () => {
