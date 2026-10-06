@@ -28,7 +28,7 @@ import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
 import { toCamel, readPlanItemsInOrder } from "./plan.js"; import { withholdPrivatePlanItems, redactWithheldPlanItem } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, privateItemEditRefusal, clearAnchorGrantsForItem, clearAnchorGrantsForMember } from "../server/trips/privateAnchorShares.js"; import { refuseTripActionIfRestricted } from "../lib/tripTrustGate.js";
 import { logTripActivity, findTripActivityByKey } from "../domain/trips/events/tripActivityLog.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
-import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
+import { getRestrictionState } from "../services/trust/TrustRestrictionService.js"; import { refuseIfTrustRestricted } from "../lib/discoveryTrustGate.js";
 import { sendTripPush } from "../domain/trips/policies/tripPush.js";
 import { recordOpportunityCompletion } from "../domain/trips/services/tripOpportunityMetrics.js";
 import { awardStamp, type StampLogger } from "../services/passport/StampAwardEngine.js";
@@ -284,26 +284,26 @@ router.post("/trips", async (req, res) => {
   if (!auth) return;
   const { client, user } = auth;
 
-  // Trust Engine: check if user is restricted from hosting.
-  // canHost=false means one of two different things, and they must never be
-  // shown the same message: a real restriction, or a degraded read that
-  // failed CLOSED as a precaution (the check itself could not be performed).
-  // Labelling the latter as "restricted" tells a user something false about
-  // their account. A degraded read that failed OPEN never reaches here at
-  // all — canHost is true in that case, same as a clean allowed read.
-  const trustState = await getRestrictionState(client, user.id);
-  if (!trustState.canHost) {
-    if (trustState.degradedReason === "fail_closed") {
-      sendError(
-        res,
-        "degraded_unavailable",
-        "We could not verify your permissions right now. Please try again shortly.",
-      );
-      return;
-    }
-    res.status(403).json({ error: "trust_restriction", message: "Your account is currently restricted from creating trips." });
-    return;
-  }
+  // Lead ruling D-24a (2026-10-06): a hosting restriction does NOT stop a solo
+  // trip, and a trip being created is its creator's alone by construction —
+  // CreateTripSchema carries no members, so the one solo/group test
+  // (lib/tripTrustGate.ts readTripShape) could only answer "solo" and there is
+  // nothing to read. Creation therefore reads no restriction state. What makes
+  // a trip a GROUP trip is inviting someone, and that door carries the hosting
+  // gate (POST /trips/:tripId/invite; census-trips §85). This used to refuse
+  // every creation under a hosting restriction, telling the person they could
+  // not create trips at all — more than "You cannot host group trips" says.
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
+  //
 
   const parsedBody = CreateTripSchema.safeParse(req.body);
   if (!parsedBody.success) {
@@ -1195,7 +1195,7 @@ router.post("/trips/:tripId/invite", async (req, res) => {
   // §6.1 canInviteParticipant — owner only, as the kernel's INVITE_PARTICIPANT
   // capability is. Passed the row already read.
   const invite = await canInviteParticipant(client, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
-  if (!invite.allowed) { sendTripRefusal(res, "forbidden", invite.reason, "Only the trip owner can invite members"); return; }
+  if (!invite.allowed) { sendTripRefusal(res, "forbidden", invite.reason, "Only the trip owner can invite members"); return; } if (await refuseIfTrustRestricted(res, getServiceClient() ?? client, user.id, "hosting")) return; // lead ruling D-24/D-24a: inviting someone makes it a group trip — hosting; unreadable → "try again"
 
   // Blocked-user guard: cannot invite a user with an active block in either
   // direction. Fail-closed shared helper — the previous .maybeSingle() raised on

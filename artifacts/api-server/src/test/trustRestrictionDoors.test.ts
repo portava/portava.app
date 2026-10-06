@@ -49,6 +49,7 @@ import tripReservationsRouter from "../routes/tripReservations.js";
 import eventsRouter from "../routes/events.js";
 import airportRouter from "../routes/airport.js";
 import telegraphChatRouter from "../routes/telegraphChat.js";
+import tripsExpansionRouter from "../routes/trips-expansion.js";
 import { RESTRICTION_SENTENCES, RESTRICTION_UNVERIFIABLE_MESSAGE } from "../lib/discoveryTrustGate.js";
 import { decideTripActionRestriction, readTripShape } from "../lib/tripTrustGate.js";
 import { TRAIL_PROPOSALS_PER_DAY } from "../services/trails/TrailService.js";
@@ -166,6 +167,8 @@ const DOORS: Door[] = [
     solo: { path: `/airport/sessions/${SESSION}/plan`, body: { tripId: SOLO, title: "Coffee near gate" } } },
   { name: "telegraph-suggestion-add-to-plan", mapped: ["hosting"], method: "POST", path: `/threads/${THREAD}/telegraph/suggestions/${SUGGESTION}/add-to-plan`, body: { tripId: TRIP },
     solo: { path: `/threads/${THREAD}/telegraph/suggestions/${SUGGESTION}/add-to-plan`, body: { tripId: SOLO } } },
+  { name: "trip-invite", mapped: ["hosting"], method: "POST", path: `/trips/${TRIP}/invite`, body: { userId: BEN }, as: ORGANIZER },
+  { name: "trip-invite-link", mapped: ["hosting"], method: "POST", path: `/trips/${TRIP}/invite-link`, body: {}, as: ORGANIZER },
   { name: "command-create-proposal", mapped: ["hosting", "messaging"], method: "POST", path: `/trips/${TRIP}/commands`,
     body: { type: "CREATE_PROPOSAL", idempotency_key: "p-1", payload: { proposal_type: "move", decision_rule: "majority", payload_json: {} } },
     solo: { path: `/trips/${SOLO}/commands`, body: { type: "CREATE_PROPOSAL", idempotency_key: "p-2", payload: { proposal_type: "move", decision_rule: "majority", payload_json: {} } } } },
@@ -176,7 +179,7 @@ const DOORS: Door[] = [
 let harness: RouterHarness;
 before(async () => {
   const all = express.Router();
-  for (const r of [trailsRouter, hiddenGemsRouter, discoveryRouter, tripsRouter, planRouter, commandRouter, tripProjectionsRouter, tripReservationsRouter, eventsRouter, airportRouter, telegraphChatRouter]) all.use(r);
+  for (const r of [trailsRouter, hiddenGemsRouter, discoveryRouter, tripsRouter, planRouter, commandRouter, tripProjectionsRouter, tripReservationsRouter, eventsRouter, airportRouter, telegraphChatRouter, tripsExpansionRouter]) all.use(r);
   harness = await startRouter(all);
 });
 after(async () => {

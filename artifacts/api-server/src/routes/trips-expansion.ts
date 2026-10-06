@@ -40,7 +40,7 @@ import {
   TRIP_LIFECYCLE_STATES,
   type LifecycleInputs,
 } from "../domain/trips/services/TripLifecycle.js";
-import { operationalState } from "../domain/trips/projections/TripSafetyProjection.js";
+import { operationalState } from "../domain/trips/projections/TripSafetyProjection.js"; import { refuseIfTrustRestricted } from "../lib/discoveryTrustGate.js";
 import {
   isTripKernelEnabled,
   readCommandEnvelope,
@@ -1311,7 +1311,7 @@ router.post("/trips/:tripId/invite-link", async (req, res) => {
   if (tripErr) throw readUnavailable("trips", tripErr);
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   const createLinkAuth = await canEditTrip(sc, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
-  if (!createLinkAuth.allowed) { sendTripRefusal(res, "forbidden", createLinkAuth.reason, "Only the owner can create invite links"); return; }
+  if (!createLinkAuth.allowed) { sendTripRefusal(res, "forbidden", createLinkAuth.reason, "Only the owner can create invite links"); return; } if (await refuseIfTrustRestricted(res, sc, user.id, "hosting")) return; // lead ruling D-24/D-24a: a join link opens the trip to others — hosting
 
   const parsedLink = InviteLinkSchema.safeParse(req.body ?? {});
   if (!parsedLink.success) { sendError(res, "invalid_payload", "maxUses and expiresInHours must be numbers when given"); return; }
