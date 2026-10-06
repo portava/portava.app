@@ -47,6 +47,7 @@ import commandRouter from "../server/trips/commandRoute.js";
 import tripProjectionsRouter from "../server/trips/readRoutes/tripProjections.js";
 import tripReservationsRouter from "../routes/tripReservations.js";
 import { RESTRICTION_SENTENCES, RESTRICTION_UNVERIFIABLE_MESSAGE } from "../lib/discoveryTrustGate.js";
+import { decideTripActionRestriction, readTripShape } from "../lib/tripTrustGate.js";
 import { TRAIL_PROPOSALS_PER_DAY } from "../services/trails/TrailService.js";
 import { makeFakeClient, startRouter, call, type FakeClient, type FakeDbOptions, type RouterHarness } from "./telegraphCertificationHarness.js";
 
@@ -136,6 +137,8 @@ const DOORS: Door[] = [
     solo: { path: `/trips/${SOLO}/plan/items/${SOLO_ITEM}` } },
   { name: "plan-reorder", mapped: ["hosting"], method: "POST", path: `/trips/${TRIP}/plan/items/${ITEM}/reorder`, body: { sortOrder: 3 }, as: ORGANIZER,
     solo: { path: `/trips/${SOLO}/plan/items/${SOLO_ITEM}/reorder`, body: { sortOrder: 3 } } },
+  { name: "plan-reorder-batch", mapped: ["hosting"], method: "POST", path: `/trips/${TRIP}/plan/reorder`, body: { orderedItemIds: [ITEM] }, as: ORGANIZER,
+    solo: { path: `/trips/${SOLO}/plan/reorder`, body: { orderedItemIds: [SOLO_ITEM] } } },
   { name: "place-add-to-plan", mapped: ["hosting"], method: "POST", path: `/places/${PLACE}/add-to-trip-plan`, body: { tripId: TRIP },
     solo: { path: `/places/${PLACE}/add-to-trip-plan`, body: { tripId: SOLO } } },
   { name: "meetup-add-to-plan", mapped: ["hosting"], method: "POST", path: `/meetups/${MEETUP}/add-to-trip-plan`, body: { tripId: TRIP },
@@ -228,6 +231,89 @@ describe("U2. a restriction table that is not there is not 'no restriction' eith
       assert.equal(r.body.message, RESTRICTION_UNVERIFIABLE_MESSAGE);
     });
   }
+});
+
+describe("R5 (census-trips §85). A membership restored to an ENDED trip's retained record only reads it and changes nothing", () => {
+  // 3974 stamps trip_members.permissions.access = 'retained_record_only' when an
+  // upheld appeal restores someone after the trip ended (owner, 2026-10-04: "if
+  // a trip has ended, restore access to its retained record only"). The
+  // verifier found nothing read it, so the restored person could change the trip.
+  const retained = (access: string): Record<string, Rows> => {
+    const s = seed(null);
+    s.trip_members = s.trip_members!.map((m) => (m.trip_id === TRIP && m.user_id === ANA ? { ...m, permissions: { access, restored_by_appeal: "appeal-1" } } : m));
+    s.trips = s.trips!.map((t) => (t.id === TRIP ? { ...t, status: "completed" } : t));
+    return s;
+  };
+  // The reorder doors are owner-only and refuse Ana before any of this.
+  const doors = DOORS.filter((d) => (d.path.startsWith(`/trips/${TRIP}/plan`) && !d.name.includes("reorder")) || d.name === "place-add-to-plan" || d.name === "command-create-proposal");
+  for (const d of doors) {
+    it(`R5 ${d.name}: retained_record_only → 403 trip_record_read_only, never "restricted", nothing written`, async () => {
+      const c = use(retained("retained_record_only"));
+      const r = await call(harness.base, d.method, d.path, ANA, d.body);
+      assert.equal(r.status, 403, JSON.stringify(r.body).slice(0, 300));
+      assert.equal(r.body.error, "trip_record_read_only");
+      assert.doesNotMatch(String(r.body.message), /restrict/i);
+      assert.equal(writes(c), 0);
+    });
+  }
+  it("R5 /commands, any non-safety command (ADD_GOAL): refused, nothing written", async () => {
+    const c = use(retained("retained_record_only"));
+    const r = await call(harness.base, "POST", `/trips/${TRIP}/commands`, ANA, { type: "ADD_GOAL", idempotency_key: "r5-add", payload: { title: "Late goal" } });
+    assert.equal(r.status, 403, JSON.stringify(r.body).slice(0, 300));
+    assert.equal(r.body.error, "trip_record_read_only");
+    assert.equal(writes(c), 0);
+  });
+  it("R5 CONTROL: the same member restored with access 'membership' is not refused by this rule", async () => {
+    use(retained("membership"));
+    const r = await call(harness.base, "POST", `/trips/${TRIP}/plan/items`, ANA, { title: "Museum", category: "activity" });
+    assert.notEqual(r.body?.error, "trip_record_read_only", JSON.stringify(r.body).slice(0, 300));
+    const k = await call(harness.base, "POST", `/trips/${TRIP}/commands`, ANA, { type: "ADD_GOAL", idempotency_key: "r5-ctl", payload: { title: "Late goal" } });
+    assert.notEqual(k.body?.error, "trip_record_read_only", JSON.stringify(k.body).slice(0, 300));
+  });
+  it("R5 a safety path (DECLARE_DISRUPTION) is never refused by it", async () => {
+    use(retained("retained_record_only"));
+    const r = await call(harness.base, "POST", `/trips/${TRIP}/commands`, ANA, { type: "DECLARE_DISRUPTION", idempotency_key: "r5-d", payload: { kind: "lodging", severity: "major" } });
+    assert.notEqual(r.body?.error, "trip_record_read_only", JSON.stringify(r.body).slice(0, 300));
+  });
+  it("R5 the shared helper says so to Compass too (decideTripActionRestriction)", async () => {
+    const c = use(retained("retained_record_only"));
+    const v = await decideTripActionRestriction(c as never, TRIP, ANA, "change_shared_plan");
+    assert.equal(v.allowed, false);
+    assert.equal(!v.allowed && v.kind, "read_only");
+  });
+});
+
+describe("D-24a. ONE solo/group test (readTripShape), the one lane L's Compass gate calls", () => {
+  it("solo: nobody but the actor is an accepted member", async () => {
+    const c = use(seed(null));
+    assert.deepEqual(await readTripShape(c as never, SOLO, ANA), { kind: "solo", actorAccess: "full" });
+  });
+  it("group: someone else is an accepted member", async () => {
+    const c = use(seed(null));
+    const s = await readTripShape(c as never, TRIP, ANA);
+    assert.equal(s.kind, "group");
+  });
+  it("an invited (not accepted) person does not make it a group trip", async () => {
+    const st = seed(null);
+    st.trip_members = [...st.trip_members!, { trip_id: SOLO, user_id: BEN, role: "member", status: "pending" }];
+    const c = use(st);
+    assert.equal((await readTripShape(c as never, SOLO, ANA)).kind, "solo");
+  });
+  it("unreadable membership → unreadable, and the decision is 'try again', never 'restricted' (even with a restriction on file)", async () => {
+    const c = use(seed("hosting"), { errors: { trip_members: { message: "members down", code: "57P01", ops: ["select"] } } });
+    assert.equal((await readTripShape(c as never, SOLO, ANA)).kind, "unreadable");
+    const v = await decideTripActionRestriction(c as never, SOLO, ANA, "change_shared_plan");
+    assert.equal(!v.allowed && v.kind, "unverifiable");
+  });
+  it("a trip that is not there is unreadable, not solo", async () => {
+    const c = use(seed(null));
+    assert.equal((await readTripShape(c as never, "aaaaaaaa-0000-4000-8000-0000000000ff", ANA)).kind, "unreadable");
+  });
+  it("a solo trip is decided without reading the restriction state (an unreadable state does not refuse it)", async () => {
+    const c = use(seed("hosting"), UNREADABLE);
+    const v = await decideTripActionRestriction(c as never, SOLO, ANA, "change_shared_plan");
+    assert.deepEqual(v, { allowed: true, shape: "solo" });
+  });
 });
 
 describe("S. safety paths are not gated", () => {

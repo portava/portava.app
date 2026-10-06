@@ -2478,7 +2478,7 @@ router.post("/trips/:tripId/plan/reorder", async (req, res) => {
   }
   if (!trip) { sendError(res, "not_found", "Trip not found"); return; }
   const reorderAuth = await canEditTrip(client, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as { owner_id: string }).owner_id } });
-  if (!reorderAuth.allowed) { sendTripRefusal(res, "forbidden", reorderAuth.reason, "Only the trip owner can reorder plan items"); return; }
+  if (!reorderAuth.allowed) { sendTripRefusal(res, "forbidden", reorderAuth.reason, "Only the trip owner can reorder plan items"); return; } if (await refuseTripActionIfRestricted(res, getServiceClient() ?? client, tripId, user.id, "change_shared_plan")) return; // census-trips §85 (verifier R4): the batch reorder is the same act as the single-item one
 
   // Current sort_order of exactly the requested items, scoped to this trip and
   // excluding soft-deleted rows.

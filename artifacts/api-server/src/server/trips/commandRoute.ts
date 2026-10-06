@@ -51,7 +51,7 @@ import { requireUser, requireTripMember, sendError } from "../../lib/http.js";
 import { getServiceClient } from "../../lib/supabase.js";
 import { logger } from "../../lib/logger.js";
 import { asyncHandler } from "../../lib/asyncHandler.js";
-import { executeTripCommand, type TripCommandType } from "../../domain/trips/commands/tripKernel.js"; import { refuseTripActionIfRestricted } from "../../lib/tripTrustGate.js";
+import { executeTripCommand, type TripCommandType } from "../../domain/trips/commands/tripKernel.js"; import { refuseTripActionIfRestricted, refuseIfRetainedRecordOnly } from "../../lib/tripTrustGate.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripCommands" });
@@ -205,7 +205,7 @@ router.post("/trips/:tripId/commands", asyncHandler(async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   const membership = await requireTripMember(sc, tripId, user.id);
-  if (!membership) { sendError(res, "forbidden", "Not a trip member"); return; } if (type === "CREATE_PROPOSAL" && await refuseTripActionIfRestricted(res, sc, tripId, user.id, "create_proposal")) return; // census-trips §84 / TRV2-08 (lane C reading)
+  if (!membership) { sendError(res, "forbidden", "Not a trip member"); return; } if (type === "CREATE_PROPOSAL" ? await refuseTripActionIfRestricted(res, sc, tripId, user.id, "create_proposal") : !SAFETY_COMMANDS.has(type) && await refuseIfRetainedRecordOnly(res, sc, tripId, user.id)) return; // census-trips §84 / TRV2-08; §85 (R5): a retained-record-only member changes nothing but a safety path
 
   const result = await executeTripCommand(sc, {
     commandId: randomUUID(),
@@ -346,3 +346,6 @@ router.get("/trips/:tripId/snapshots/:version", asyncHandler(async (req, res) =>
 }));
 
 export default router;
+
+/** census-trips §85 (R5): never refused for a retained-record-only member, nor on an unreadable membership read. */
+const SAFETY_COMMANDS: ReadonlySet<string> = new Set(["DECLARE_DISRUPTION", "RESOLVE_DISRUPTION", "CREATE_MEETING_CHECKPOINT", "CLOSE_MEETING_CHECKPOINT", "SET_MEETING_ARRIVAL"]);
