@@ -6,8 +6,12 @@
 -- telemetry.ts) now rebuilds a fifteenth, and an insert carrying a name the
 -- CHECK does not list fails THE WHOLE BATCH at the database — the route answers
 -- 422 and every event queued with it is lost. So the code change and this file
--- must ship together, and until this file is applied the client's reversal
--- events are refused there (counted, never silently dropped).
+-- must ship together. Until this file is applied, ANY batch that carries one
+-- reversal event is refused whole: the route answers 422 (retryable: false,
+-- accepted: 0), the client batcher drops the batch and counts the drop
+-- (telemetryBatcher.ts `dropped()`), and the reversal is lost together with
+-- every other event queued beside it. The loss is visible — a 422 with its
+-- reason and a counted drop, not an empty success — but nothing is retried.
 --
 -- WHAT IT DOES. Replaces the CHECK with the same fourteen names plus one. The
 -- new set is a strict SUPERSET of the old, so every row 2950 ever admitted still
