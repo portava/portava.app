@@ -10847,6 +10847,29 @@ reverted. No migration, no flag, no database.
 
 - NOT-GRADED: artifacts/api-server/src/routes/compass.ts — cited in §45f.2 only to show which way Compass reads a window's `followers` audience; no Telegraph verdict rests on it.
 
-### 45f.4 Net effect
+### 45f.4 Two live-DB-tier findings on #628, fixed (no row moves)
+
+- **`check:write-path-columns`** could not read the columns of the notification-choice update: its
+  payload was assembled in a `let` before the call. The update now passes one object literal per flag
+  state, inline
+  (`artifacts/api-server/src/services/telegraph/threadNotificationState.ts:115#.update(levelsOn`),
+  so the guard's extractor resolves `notification_level`, `muted_until` and `muted_at` at that site.
+  Behaviour is unchanged: `telegraphThreadNotificationPolicy.test.ts` is 23/23, and three mutations of
+  the rewritten payload or its flag-off refusal each turn it red. The same job reports
+  `message_thread_members.notification_level` and `muted_until` as missing from the live schema, as
+  does `check:missing-live-columns`. Those are migration 3760's columns. 3760 is applied only from
+  main, so these are the expected reds for a PR that adds a migration (D-1), and they are not
+  allowlisted.
+- **`check:memory-table-ownership`** refused `conversationMemoryBoundary.ts` for naming both memory
+  event logs. It reads and writes neither. It names both as data, in the closed list of tables a
+  conversation must not create rows in. Both entries are used by its SQL detector: projector
+  triggers append to one log and the §17 kernel appends to the other. The policy is therefore
+  declared in the guard's both-allowed list, with that reason written there, as `guardRegistry.ts`
+  already is. A new case pins the need for both
+  (`artifacts/api-server/src/test/telegraphConversationMemoryBoundary.test.ts:234#every memory event log a migration appends to is on the closed list`).
+  It finds the logs that migrations append to without typing their names. Dropping either entry from
+  the list turns it red.
+
+### 45f.5 Net effect
 
 No row moves. §1's headline is unchanged (249 / 179 / 21 / 2).
