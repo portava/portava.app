@@ -262,6 +262,7 @@ run_check "check:place-id-bridge" pnpm run check:place-id-bridge
 # that is check:route-auth-gate's job and is enforced independently.
 run_check "check:trip-write-validation" pnpm run check:trip-write-validation
 run_check "check:trip-decision-diff" pnpm run check:trip-decision-diff
+run_check "check:layover-decision-diff" pnpm run check:layover-decision-diff
 run_check "check:trip-write-path-inventory" pnpm run check:trip-write-path-inventory
 # check:trip-push-policy — census-trips TR200 ("Trip events must pass an attention
 # policy") read C because NotificationRouter consults preferences, dedup and the
@@ -460,6 +461,36 @@ run_check "check:telegraph-inventory" pnpm run check:telegraph-inventory
 # docs/discovery/query-paths.md carries them; this fails when a migration creates
 # a Discovery table or index with no registry row there, or a row goes stale.
 run_check "check:discovery-query-paths" pnpm run check:discovery-query-paths
+# check:scheduler-coverage — `lib/schedulerCoverage.ts` is the denominator
+# GET /healthz/schedulers reports its own scope from: how many schedulers
+# index.ts starts, how many the endpoint reports, how many write a durable
+# job_health row, and how many leave no trace at all. A denominator nobody
+# checks drifts, and a drifted one is what makes a partial aggregate read as a
+# complete one. This fails when a scheduler is started with no row, when a row
+# outlives its scheduler, when a row claims reporting the code does not do, or
+# when a new job_health writer goes unrecorded.
+run_check "check:scheduler-coverage" pnpm run check:scheduler-coverage
+
+# check:scheduler-relative-windows — the query SHAPE that loses work on a quiet
+# night. A scheduled job that selects its work with a window relative to now and
+# keeps no watermark cannot see rows that fell inside a gap longer than the
+# window, and on an autoscale host that suspends after 15 idle minutes such a gap
+# is routine. An absolute predicate self-heals; a relative one forgets, silently.
+# This fails when a new scheduled job reaches a bare relative lower bound, and it
+# refuses rather than guesses when it cannot resolve one. The sites it allows are
+# named one by one with the mechanism that covers them, and the ones it cannot
+# defend are ledgered as known defects rather than allowed.
+run_check "check:scheduler-relative-windows" pnpm run check:scheduler-relative-windows
+
+# check:no-money-in-ranking — `08` §6 (ranking is never purchasable) and `09` §10
+# (no money field in a graph node, a feed payload or a ranking feature vector). Reads
+# the files that rank, score, build a feature vector, a graph node or a feed payload and
+# fails when a money identifier appears in one, unless an allowlist entry names it and
+# says why it enforces a non-goal or is not money there. A REAL money input is an OPEN
+# OWNER QUESTION: printed with a ::warning on every run and NOT failed (none open: the
+# buddy match's price fit was answered 2026-10-04 and removed); the set is pinned EMPTY.
+# Fails on any other money identifier, an empty scope entry, an unclassified ranker/scorer.
+run_check "check:no-money-in-ranking" pnpm run check:no-money-in-ranking
 run_gate  "check:rank-events-surfaces" pnpm run check:rank-events-surfaces
 
 echo ""

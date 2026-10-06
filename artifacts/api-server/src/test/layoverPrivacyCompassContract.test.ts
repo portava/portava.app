@@ -253,7 +253,7 @@ describe("§12 the twelve deterministic tools", () => {
   });
 
   it("simulatePlan compares a candidate set against the certified window, and refuses one that does not fit", () => {
-    const fits = runLayoverTool("simulatePlan", CTX, {
+    const fits = runLayoverTool("simulatePlan", OPEN_CTX, { // LAY-FIX: a landside candidate `fits` only under an OPEN gate — a confirmed border. OPEN_CTX and the cautionary half (CTX itself) are at the foot of this file; lines 287/409/426 are cited.
       candidateSet: [{ durationMin: 30, travelMin: 10, insideAirport: false }],
     });
     assert.equal((fits as any).data.fitsWindow, true);
@@ -431,5 +431,42 @@ describe("the deterministic answer speaks the AIRPORT's clock, and satisfies its
     if (answer.clarifyingQuestion) {
       assert.ok(answer.clarifyingQuestion.valueOfInformation > 0);
     }
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// LAY-FIX — appended at the foot: lines 287, 409 and 426 above are cited and
+// may not move.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** `RECORD`'s session at the same instant, certified with a CONFIRMED border — the only way a gate is open. */
+const OPEN_RECORD = certifySessionFeasibility(AIRPORT, SESSION, {
+  nowMs: NOW, entry: { state: "permitted", status: "visa_free", corridor: { passportCountry: "GB", destinationCountry: "TW" } },
+});
+const OPEN_CTX: LayoverToolContext = { ...CTX, record: OPEN_RECORD };
+
+describe("§12 simulatePlan goes through the landside gate, not the clock alone", () => {
+  it("FIXTURE: the border moves the verdict and the gate, and not one minute of the window", () => {
+    assert.equal(OPEN_RECORD.envelope.usableMinutes, USABLE);
+    assert.equal(OPEN_RECORD.deadline.hardReturnTime.toISOString(), RECORD.deadline.hardReturnTime.toISOString());
+    assert.equal(OPEN_RECORD.landsideGate.open, true);
+    assert.equal(RECORD.verdict, "entry_unverified");
+    assert.equal(RECORD.landsideGate.open, false);
+  });
+
+  it("the SAME candidate set on a border nobody confirmed does not `fit`, and says it is unconfirmed", () => {
+    const candidateSet = [{ durationMin: 30, travelMin: 10, insideAirport: false }];
+    const unconfirmed = runLayoverTool("simulatePlan", CTX, { candidateSet });
+    assert.equal((unconfirmed as any).data.fitsWindow, false, "a plan through the city fit the window on a border nobody confirmed");
+    assert.equal((unconfirmed as any).data.fit, "unconfirmed");
+    assert.equal((unconfirmed as any).data.clockFit, "fits");
+    assert.deepEqual((unconfirmed as any).data.landsideCautions, ["entry_unconfirmed"]);
+    assert.equal((unconfirmed as any).data.neededMin, 50, "the gate withholds the affirmative; it does not move a number");
+    // A candidate that OMITS `insideAirport` is a landside stop, not an airside one.
+    const omitted = runLayoverTool("simulatePlan", CTX, { candidateSet: [{ durationMin: 30, travelMin: 10 }] });
+    assert.equal((omitted as any).data.fitsWindow, false);
+    // An airside-only candidate is not the landside gate's business.
+    const airside = runLayoverTool("simulatePlan", CTX, { candidateSet: [{ durationMin: 30, travelMin: 0, insideAirport: true }] });
+    assert.equal((airside as any).data.fitsWindow, true);
   });
 });

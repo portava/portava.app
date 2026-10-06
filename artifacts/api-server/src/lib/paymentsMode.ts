@@ -246,8 +246,8 @@ export function paymentsStartupSummary(env: NodeJS.ProcessEnv = process.env): Pa
  */
 export function mockIdentityPermitted(env: NodeJS.ProcessEnv = process.env): boolean {
   if (env["NODE_ENV"] === "production") return false;
-  const deployment = env["REPLIT_DEPLOYMENT"];
-  if (typeof deployment === "string" && deployment.length > 0) return false;
+  const deployment = env["REPLIT_DEPLOYMENT"]; // PRESENT counts, even empty — see "REPLIT_DEPLOYMENT, present but empty" at the foot
+  if (deployment !== undefined) return false;
   if (env["NODE_ENV"] === "development" || env["NODE_ENV"] === "test") return true;
   const testContext = env["NODE_TEST_CONTEXT"];
   return typeof testContext === "string" && testContext.length > 0;
@@ -270,3 +270,119 @@ export class MockWebhookRefusedError extends Error {
     this.name = "MockWebhookRefusedError";
   }
 }
+
+// ── PAYMENT provider keys (appended at the foot so every line above keeps its number) ──
+//
+// The header's last sentence — "any future payment code must call
+// `assertProviderKeyAllowed` the same way" — is carried out here. A payment
+// secret key is classified by the SAME function, with the SAME prefixes, as the
+// identity key: nothing below re-states a prefix or re-decides what "live
+// allowed" means. `evaluateProviderKey` is the only decision; these exports say
+// which variable holds the key and which process may run the fake.
+//
+//   PAYMENT_PROVIDER      none (default) | fake | <a registered adapter's name>
+//   STRIPE_SECRET_KEY     sk_test_/rk_test_ -> test · sk_live_/rk_live_ -> live ·
+//                         anything else -> unknown (always refused)
+//   PAYMENTS_ALLOW_LIVE   the exact string "true" lets a LIVE key or a
+//                         livemode event through. It never rescues an unknown key.
+//
+// Consumers: services/payments/providerRegistry.ts (before a provider is handed
+// out and again before every operation), services/payments/readiness.ts, and
+// every adapter's own key reader (assertProviderKeyAllowed, before any fetch).
+
+/** Payment providers whose secret key carries a documented mode prefix. */
+export type KeyedPaymentProvider = "stripe";
+
+/** The env var naming the payment provider. Absent or empty means `none`. */
+export const PAYMENT_PROVIDER_ENV = "PAYMENT_PROVIDER" as const;
+
+/** The env var holding each payment provider's SECRET key. */
+export const PAYMENT_KEY_ENV: Record<KeyedPaymentProvider, string> = {
+  stripe: "STRIPE_SECRET_KEY",
+};
+
+/** The env var holding the signing secret of each payment provider's PLATFORM webhook endpoint. */
+export const PAYMENT_WEBHOOK_SECRET_ENV: Record<KeyedPaymentProvider, string> = {
+  stripe: "STRIPE_WEBHOOK_SECRET",
+};
+
+/**
+ * The env var holding the signing secret of each payment provider's CONNECT
+ * webhook endpoint — the one that receives events about recipients' (connected)
+ * accounts. It is a different endpoint with a different secret; under direct
+ * charges it is where a payment's own events arrive.
+ */
+export const PAYMENT_CONNECT_WEBHOOK_SECRET_ENV: Record<KeyedPaymentProvider, string> = {
+  stripe: "STRIPE_CONNECT_WEBHOOK_SECRET",
+};
+
+export function isKeyedPaymentProvider(name: string): name is KeyedPaymentProvider {
+  return name === "stripe";
+}
+
+/** Configured payment provider name, trimmed and lowercased. Default `none`. */
+export function configuredPaymentProvider(env: NodeJS.ProcessEnv = process.env): string {
+  const name = (env[PAYMENT_PROVIDER_ENV] ?? "").trim().toLowerCase();
+  return name === "" ? "none" : name;
+}
+
+/**
+ * The key decision for one keyed payment provider, read from its env var.
+ * This IS `evaluateProviderKey`: same prefixes, same live rule, same refusals.
+ */
+export function evaluatePaymentKey(
+  provider: KeyedPaymentProvider,
+  env: NodeJS.ProcessEnv = process.env,
+): ProviderKeyDecision {
+  return evaluateProviderKey(provider, env[PAYMENT_KEY_ENV[provider]], env);
+}
+
+/**
+ * The key decision for the CONFIGURED payment provider, or null when the
+ * configured provider holds no key (`none`, `fake`, an unknown name).
+ */
+export function paymentKeyDecision(env: NodeJS.ProcessEnv = process.env): ProviderKeyDecision | null {
+  const provider = configuredPaymentProvider(env);
+  if (!isKeyedPaymentProvider(provider)) return null;
+  return evaluatePaymentKey(provider, env);
+}
+
+/**
+ * Is a webhook envelope's `livemode` a live claim this process must refuse?
+ * The boolean form of `assertWebhookLivemodeAllowed`, for callers that answer
+ * with a tagged result instead of a throw. Only the boolean `true` is a live
+ * claim, and only `liveAllowed` lets it through.
+ */
+export function webhookLivemodeRefused(livemode: unknown, env: NodeJS.ProcessEnv = process.env): boolean {
+  return livemode === true && !liveAllowed(env);
+}
+
+/**
+ * May the FAKE payment provider (and the fake tax provider) run in this process?
+ * Exactly the mock identity provider's rule — one function, not a copy of it:
+ * refused in production, refused whenever REPLIT_DEPLOYMENT is set, and refused
+ * without positive evidence of a local run.
+ */
+export function fakePaymentProviderPermitted(env: NodeJS.ProcessEnv = process.env): boolean {
+  return mockIdentityPermitted(env);
+}
+
+// ── REPLIT_DEPLOYMENT, present but empty ─────────────────────────────────────
+//
+// `mockIdentityPermitted` used to treat REPLIT_DEPLOYMENT="" as unset. It now
+// treats ANY defined value, the empty string included, as a hosted deployment.
+//
+// Replit's own convention is set-versus-unset: "Set to 1 if the code is running
+// in a published project, unset otherwise" (docs.replit.com, Secrets → predefined
+// environment variables). Replit therefore never produces an empty value; one
+// can only come from configuration someone wrote (`REPLIT_DEPLOYMENT=` in an
+// env file, a blanked Secret). The rule above is fail-closed and asks for
+// POSITIVE evidence of a local run, and a deployment marker that has been
+// blanked is not that: reading it as "not a deployment" would let one blank
+// line re-admit the unsigned mock identity provider and the fake payment
+// provider on a hosted app. A local machine does not define the variable at
+// all, so nothing local changes; the fix for a local run that does define it is
+// to remove the line.
+//
+// One function decides this for identity (mock provider, unsigned webhook) and
+// payments (fake payment and tax providers) alike.

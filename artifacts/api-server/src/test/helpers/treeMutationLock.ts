@@ -28,10 +28,35 @@
  * is logged, never silent.
  */
 import { mkdirSync, rmSync, readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
-const LOCK_DIR = join(tmpdir(), "portava-tree-mutation.lock");
+/**
+ * ONE LOCK PER CHECKOUT, not one per machine.
+ *
+ * The lock exists because two suites share ONE source tree. It used to live at
+ * `<tmpdir>/portava-tree-mutation.lock`, a single directory for every checkout
+ * on the machine, so two worktrees of this repository running at the same time
+ * made each other wait for a tree neither of them touches — and after the
+ * deadline the second one failed with 17 cancellations that read like a
+ * finding (measured 2026-10-05 with several worktrees under test at once).
+ * Worse, a waiter could BREAK a lock that a live suite in another checkout had
+ * held past the stale threshold.
+ *
+ * The directory name now carries a digest of the tree the lock protects, so
+ * suites in the same checkout still take turns exactly as before and suites in
+ * different checkouts never meet. CI has one checkout, so nothing changes there.
+ */
+export function treeLockDirFor(treeRoot: string, tmp: string = tmpdir()): string {
+  const key = createHash("sha256").update(resolve(treeRoot)).digest("hex").slice(0, 16);
+  return join(tmp, `portava-tree-mutation-${key}.lock`);
+}
+
+/** artifacts/api-server — the tree both suites read and one of them writes. */
+const TREE_ROOT = resolve(fileURLToPath(new URL("../../../", import.meta.url)));
+const LOCK_DIR = treeLockDirFor(TREE_ROOT);
 const OWNER_FILE = join(LOCK_DIR, "owner.json");
 /** Longer than the slowest of these suites, so a live holder is never mistaken for a corpse. */
 const STALE_AFTER_MS = 180_000;

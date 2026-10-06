@@ -120,6 +120,96 @@ const unquote = (s: string): string =>
   s.startsWith('"') && s.endsWith('"') ? s.slice(1, -1) : s;
 
 /**
+ * Length-preserving blanking of SQL comments: every byte of a `--` line comment
+ * and of a (nestable) block comment is replaced with a space, so every
+ * index-based scan below keeps working on unchanged offsets while comment PROSE
+ * can no longer be read as SQL.
+ *
+ * WHY THIS EXISTS, AND WHY ITS ABSENCE WAS INVISIBLE FOR 23 RUNS.
+ * balancedParenBody/splitTopLevel/readStatement track single-quoted literals so
+ * a paren or a semicolon inside a string does not end the scan. They did not
+ * track comments — and an APOSTROPHE IN A COMMENT ("the writer's expiry") then
+ * opens a literal that runs to the next apostrophe hundreds of lines away,
+ * swallowing the real parens in between. balancedParenBody returns null on the
+ * unbalanced result, the whole CREATE TABLE body is silently skipped, and every
+ * constraint that table declares is missing from the model. The fixture suite
+ * never saw it because fixtures are written without prose.
+ *
+ * Quote-aware in BOTH directions, which is the point: `--` inside a string
+ * literal is data, an apostrophe inside a comment is prose. Single-quoted
+ * literals (with '' escapes), double-quoted identifiers and dollar-quoted
+ * bodies ($$ … $$ / $tag$ … $tag$, as every plpgsql function body here is) are
+ * passed through untouched.
+ */
+export function blankSqlComments(sql: string): string {
+  const out = sql.split("");
+  let i = 0;
+  const n = sql.length;
+  while (i < n) {
+    const ch = sql[i];
+
+    if (ch === "'" || ch === '"') {
+      const q = ch;
+      i++;
+      while (i < n) {
+        if (sql[i] === q && sql[i + 1] === q) i += 2;
+        else if (sql[i] === q) {
+          i++;
+          break;
+        } else i++;
+      }
+      continue;
+    }
+
+    // Dollar quoting: $$ … $$ or $tag$ … $tag$.
+    if (ch === "$") {
+      const m = /^\$([A-Za-z_][\w]*)?\$/.exec(sql.slice(i));
+      if (m) {
+        const tag = m[0];
+        const close = sql.indexOf(tag, i + tag.length);
+        i = close === -1 ? n : close + tag.length;
+        continue;
+      }
+    }
+
+    if (ch === "-" && sql[i + 1] === "-") {
+      while (i < n && sql[i] !== "\n") {
+        out[i] = " ";
+        i++;
+      }
+      continue;
+    }
+
+    if (ch === "/" && sql[i + 1] === "*") {
+      let depth = 1;
+      out[i] = " ";
+      out[i + 1] = " ";
+      i += 2;
+      while (i < n && depth > 0) {
+        if (sql[i] === "/" && sql[i + 1] === "*") {
+          depth++;
+          out[i] = " ";
+          out[i + 1] = " ";
+          i += 2;
+        } else if (sql[i] === "*" && sql[i + 1] === "/") {
+          depth--;
+          out[i] = " ";
+          out[i + 1] = " ";
+          i += 2;
+        } else {
+          if (sql[i] !== "\n") out[i] = " ";
+          i++;
+        }
+      }
+      continue;
+    }
+
+    i++;
+  }
+  return out.join("");
+}
+
+/**
  * From `src` at/after `from`, find the first '(' and return the balanced body
  * (without the outer parens), tracking single-quoted strings so parens inside
  * literals do not unbalance the scan. Returns null if unbalanced.
@@ -259,6 +349,19 @@ const TYPE_SYNONYMS: Record<string, string> = {
   float8: "double precision",
   float4: "real",
   decimal: "numeric",
+  // Bare aliases a migration writes and the live side never echoes back.
+  // 2297 declares record_distribution_negative_signal(... FLOAT), Postgres
+  // stores float8, and pg_get_function_identity_arguments prints
+  // 'double precision' — so the model said `float`, live said
+  // `double precision`, and a function the repository plainly declares read as
+  // UNEXPLAINED_LIVE. Bare FLOAT is float8 in Postgres (a precision-qualified
+  // FLOAT(1..24) is real, and FLOAT(n) is not folded here — it would stay
+  // unexplained rather than be guessed at).
+  float: "double precision",
+  timestamp: "timestamp without time zone",
+  time: "time without time zone",
+  char: "character",
+  bpchar: "character",
 };
 // First tokens that BEGIN a multiword built-in type (so the first token is the
 // type, not an argument name).
@@ -337,14 +440,328 @@ export function normalizePrivilege(p: string): string {
 // NET-NEW-INVENTORY / CLOSURE EXTRACTORS (pure)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** 'table.conname' from ALTER TABLE ... ADD CONSTRAINT and inline table constraints. */
+/** From `from`, skip WHITESPACE ONLY; if the next character is '(' return its
+ *  balanced body, else null. Unlike balancedParenBody this does not jump over
+ *  intervening SQL, so `CREATE TABLE x PARTITION OF y (…)` and
+ *  `CREATE TABLE x AS SELECT f(…)` are not misread as a column list. */
+function immediateParenBody(src: string, from: number): string | null {
+  let i = from;
+  while (i < src.length && /\s/.test(src[i]!)) i++;
+  if (src[i] !== "(") return null;
+  return balancedParenBody(src, i);
+}
+
+/** Leading identifier of a column-list element ('session_id', '"order" DESC'). */
+function leadingIdent(s: string): string | null {
+  const m = /^\s*(?:"([^"]+)"|([A-Za-z_][\w$]*))/.exec(s);
+  if (!m) return null;
+  return (m[1] ?? m[2]!).toLowerCase();
+}
+
+/** Column names of a parenthesized column list, in order. */
+function columnListNames(body: string): string[] {
+  const out: string[] = [];
+  for (const part of splitTopLevel(body)) {
+    const id = leadingIdent(part);
+    if (id) out.push(id);
+  }
+  return out;
+}
+
+/** The table-constraint keywords that can open a top-level CREATE TABLE element;
+ *  anything else at that position is a column definition. */
+const TABLE_CONSTRAINT_OPENERS = new Set([
+  "constraint",
+  "primary",
+  "unique",
+  "foreign",
+  "check",
+  "exclude",
+  "like",
+  "partition",
+]);
+
+/** NAMEDATALEN - 1. Postgres truncates a longer generated name by shortening
+ *  its components; this module does NOT reproduce that truncation and instead
+ *  emits nothing, so an over-long live constraint stays UNEXPLAINED_LIVE rather
+ *  than being matched against a guess. Loud beats confidently wrong. */
+const PG_NAME_MAX = 63;
+
+/**
+ * The names Postgres GENERATES for constraints a migration declares WITHOUT a
+ * CONSTRAINT clause, plus the backing indexes PK/UNIQUE constraints create.
+ *
+ * WHY THE MODEL CANNOT DO WITHOUT THIS. pg_dump writes every constraint out as
+ * `ALTER TABLE … ADD CONSTRAINT <name> …`, so the baseline dump names them all
+ * and the model reads them straight off. A HAND-WRITTEN migration does not:
+ * `id uuid PRIMARY KEY`, `session_id uuid REFERENCES …`, `status text CHECK (…)`
+ * and `UNIQUE (session_id, dedup_key)` declare four constraints and name none of
+ * them. Postgres then names them itself, by the rule in its ChooseConstraintName
+ * / makeObjectName:
+ *
+ *   PRIMARY KEY              <table>_pkey
+ *   UNIQUE, column-level     <table>_<column>_key
+ *   UNIQUE, table-level      <table>_<col>_<col>…_key
+ *   REFERENCES, column-level <table>_<column>_fkey
+ *   FOREIGN KEY, table-level <table>_<col>_<col>…_fkey
+ *   CHECK, column-level      <table>_<column>_check
+ *   CHECK, table-level       <table>_check
+ *
+ * and on a collision it re-derives with a numeric suffix on the label — a second
+ * unnamed CHECK on one column is `<table>_<column>_check1`, as `pass` starts at
+ * 1. Those names are live in the database and appear in pg_constraint; without
+ * deriving them the inverse audit reports every post-baseline table's own
+ * constraints as objects "the canonical model does not explain", which is what
+ * it has been doing.
+ *
+ * This DERIVES, it does not relax: a name is emitted only for a constraint the
+ * migration text actually declares, on the table it declares it on. An
+ * undeclared live constraint is still unexplained.
+ *
+ * NOT derived, deliberately — each stays unexplained rather than guessed:
+ *   * EXCLUDE (`<table>_<col>_excl`), whose elements are expressions and
+ *     operators rather than a plain column list.
+ *   * Anything whose derived name would exceed PG_NAME_MAX.
+ *   * PG >= 17's named NOT NULL constraints (`<table>_<column>_not_null`),
+ *     which are rows in pg_constraint on that version and have no counterpart
+ *     in any migration text at all. portava-ci is below 17 today; the day it is
+ *     upgraded this audit goes red on every NOT NULL column, and that is a
+ *     server-version fact to handle then, not a name to guess now.
+ */
+export function deriveImplicitConstraints(sql: string): {
+  constraints: Set<string>;
+  indexes: Set<string>;
+  skippedTooLong: string[];
+} {
+  const src = blankSqlComments(sql);
+  const constraints = new Set<string>();
+  const indexes = new Set<string>();
+  const skippedTooLong: string[] = [];
+
+  /** Per-table taken-name set, so the collision suffix matches Postgres. */
+  const taken = new Map<string, Set<string>>();
+  const takenFor = (t: string): Set<string> => {
+    if (!taken.has(t)) taken.set(t, new Set());
+    return taken.get(t)!;
+  };
+
+  const emit = (table: string, base: string, backsIndex: boolean): void => {
+    const used = takenFor(table);
+    let name = base;
+    let pass = 0;
+    while (used.has(name)) name = `${base}${++pass}`;
+    if (Buffer.byteLength(name, "utf8") > PG_NAME_MAX) {
+      skippedTooLong.push(`${table}.${name}`);
+      return;
+    }
+    used.add(name);
+    constraints.add(`${table}.${name}`);
+    if (backsIndex) indexes.add(name);
+  };
+
+  const claimExplicit = (table: string, name: string, backsIndex: boolean): void => {
+    takenFor(table).add(name);
+    constraints.add(`${table}.${name}`);
+    if (backsIndex) indexes.add(name);
+  };
+
+  // ── CREATE TABLE bodies ────────────────────────────────────────────────────
+  const createRe =
+    /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:"?[A-Za-z_][\w$]*"?\.)?("?[A-Za-z_][\w$]*"?)/gi;
+  for (const m of src.matchAll(createRe)) {
+    const table = unquote(m[1]!).toLowerCase();
+    const body = immediateParenBody(src, (m.index ?? 0) + m[0].length);
+    if (body === null) continue;
+
+    for (const part of splitTopLevel(body)) {
+      const opener = leadingIdent(part);
+      if (!opener) continue;
+
+      if (TABLE_CONSTRAINT_OPENERS.has(opener)) {
+        if (opener === "like" || opener === "partition") continue;
+        // Table-level element. An explicit CONSTRAINT <name> names whatever
+        // follows it; otherwise derive from the kind and its column list.
+        const named = /^\s*constraint\s+(?:"([^"]+)"|([A-Za-z_][\w$]*))\s*/i.exec(part);
+        const rest = named ? part.slice(named[0].length) : part;
+        const kind = leadingIdent(rest);
+        const backsIndex = kind === "primary" || kind === "unique";
+        if (named) {
+          claimExplicit(table, (named[1] ?? named[2]!).toLowerCase(), backsIndex);
+          continue;
+        }
+        const listIdx = rest.indexOf("(");
+        const cols =
+          listIdx === -1 ? [] : columnListNames(balancedParenBody(rest, listIdx) ?? "");
+        if (kind === "primary") emit(table, `${table}_pkey`, true);
+        else if (kind === "unique") emit(table, `${table}_${cols.join("_")}_key`, true);
+        else if (kind === "foreign") emit(table, `${table}_${cols.join("_")}_fkey`, false);
+        else if (kind === "check") emit(table, `${table}_check`, false);
+        // 'exclude': deliberately not derived — see the header.
+        continue;
+      }
+
+      // Column definition. Walk its clauses at paren depth 0, in order.
+      for (const c of columnClauses(part, opener)) {
+        if (c.explicit) {
+          claimExplicit(table, c.explicit, c.kind === "p" || c.kind === "u");
+          continue;
+        }
+        if (c.kind === "p") emit(table, `${table}_pkey`, true);
+        else if (c.kind === "u") emit(table, `${table}_${opener}_key`, true);
+        else if (c.kind === "f") emit(table, `${table}_${opener}_fkey`, false);
+        else if (c.kind === "c") emit(table, `${table}_${opener}_check`, false);
+      }
+    }
+  }
+
+  // ── ALTER TABLE … , one action at a time ───────────────────────────────────
+  // ADD COLUMN carries constraints too, and that is how most post-baseline
+  // constraints on a BASELINE table arrive: `ALTER TABLE media_assets ADD
+  // COLUMN purge_status text … CHECK (…)` creates media_assets_purge_status_
+  // check, and `ADD COLUMN trip_id uuid REFERENCES trips(id)` creates
+  // compass_conversations_trip_id_fkey. Neither is named in the migration.
+  const alterHeadRe =
+    /alter\s+table\s+(?:only\s+)?(?:"?[A-Za-z_][\w$]*"?\.)?("?[A-Za-z_][\w$]*"?)/gi;
+  let am: RegExpExecArray | null;
+  while ((am = alterHeadRe.exec(src)) !== null) {
+    const table = unquote(am[1]!).toLowerCase();
+    const { stmt, end } = readStatement(src, am.index);
+    alterHeadRe.lastIndex = end;
+    const actions = stmt.slice(am[0].length);
+
+    for (const action of splitTopLevel(actions)) {
+      const addCol =
+        /^\s*add\s+column\s+(?:if\s+not\s+exists\s+)?(?:"([^"]+)"|([A-Za-z_][\w$]*))/i.exec(
+          action,
+        );
+      if (addCol) {
+        const col = (addCol[1] ?? addCol[2]!).toLowerCase();
+        for (const c of columnClauses(action.slice(addCol[0].length - col.length), col)) {
+          if (c.explicit) {
+            claimExplicit(table, c.explicit, c.kind === "p" || c.kind === "u");
+            continue;
+          }
+          if (c.kind === "p") emit(table, `${table}_pkey`, true);
+          else if (c.kind === "u") emit(table, `${table}_${col}_key`, true);
+          else if (c.kind === "f") emit(table, `${table}_${col}_fkey`, false);
+          else if (c.kind === "c") emit(table, `${table}_${col}_check`, false);
+        }
+        continue;
+      }
+
+      const named =
+        /^\s*add\s+constraint\s+(?:"([^"]+)"|([A-Za-z_][\w$]*))\s+(primary\s+key|unique)?/i.exec(
+          action,
+        );
+      if (named) {
+        claimExplicit(table, (named[1] ?? named[2]!).toLowerCase(), !!named[3]);
+        continue;
+      }
+
+      const bare = /^\s*add\s+(primary\s+key|unique|foreign\s+key|check)\b/i.exec(action);
+      if (!bare) continue;
+      const kind = bare[1]!.toLowerCase().split(/\s+/)[0]!;
+      const rest = action.slice(bare[0].length);
+      const listIdx = rest.indexOf("(");
+      const cols =
+        kind === "primary" || kind === "check" || listIdx === -1
+          ? []
+          : columnListNames(balancedParenBody(rest, listIdx) ?? "");
+      if (kind === "primary") emit(table, `${table}_pkey`, true);
+      else if (kind === "unique") emit(table, `${table}_${cols.join("_")}_key`, true);
+      else if (kind === "foreign") emit(table, `${table}_${cols.join("_")}_fkey`, false);
+      else if (kind === "check") emit(table, `${table}_check`, false);
+    }
+  }
+
+  // ── CREATE CONSTRAINT TRIGGER ──────────────────────────────────────────────
+  // A constraint trigger is a pg_constraint row (contype 't') as well as a
+  // pg_trigger row, and the live census does not filter contype. parseMigration
+  // already reads it as a TRIGGER, so it is explained in that inventory and was
+  // unexplained in this one — one object, two inventories, one of them blind.
+  const conTrigRe =
+    /create\s+constraint\s+trigger\s+(?:"([^"]+)"|([A-Za-z_][\w$]*))[\s\S]*?\son\s+(?:"?[A-Za-z_][\w$]*"?\.)?("?[A-Za-z_][\w$]*"?)/gi;
+  for (const m of src.matchAll(conTrigRe)) {
+    const name = (m[1] ?? m[2]!).toLowerCase();
+    const table = unquote(m[3]!).toLowerCase();
+    constraints.add(`${table}.${name}`);
+  }
+
+  return { constraints, indexes, skippedTooLong };
+}
+
+type ColumnClause = { kind: "p" | "u" | "f" | "c"; explicit: string | null };
+
+/**
+ * The constraint clauses one column definition declares, in declaration order.
+ * Scans at paren depth 0 only, so `CHECK (x IN ('primary','unique'))` does not
+ * read its own literals as keywords. A `CONSTRAINT <name>` clause names the
+ * constraint that follows it.
+ */
+function columnClauses(part: string, columnName: string): ColumnClause[] {
+  const out: ColumnClause[] = [];
+  let pendingName: string | null = null;
+  let depth = 0;
+  // Start past the column name itself so a column called 'check' or 'unique'
+  // does not register as its own constraint.
+  const nameEnd = /^\s*(?:"[^"]+"|[A-Za-z_][\w$]*)/.exec(part)?.[0].length ?? 0;
+  const re =
+    /[()]|'(?:[^']|'')*'|\bconstraint\s+(?:"([^"]+)"|([A-Za-z_][\w$]*))|\bprimary\s+key\b|\bunique\b|\breferences\b|\bcheck\b/gi;
+  re.lastIndex = nameEnd;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(part)) !== null) {
+    const tok = m[0];
+    if (tok === "(") {
+      depth++;
+      continue;
+    }
+    if (tok === ")") {
+      depth--;
+      continue;
+    }
+    if (depth > 0 || tok.startsWith("'")) continue;
+    const low = tok.toLowerCase();
+    if (low.startsWith("constraint")) {
+      pendingName = (m[1] ?? m[2]!).toLowerCase();
+      continue;
+    }
+    const kind: ColumnClause["kind"] | null = low.startsWith("primary")
+      ? "p"
+      : low === "unique"
+        ? "u"
+        : low === "references"
+          ? "f"
+          : low === "check"
+            ? "c"
+            : null;
+    if (!kind) continue;
+    out.push({ kind, explicit: pendingName });
+    pendingName = null;
+  }
+  // columnName is used by the caller to build the derived name; referenced here
+  // only so the signature documents the pairing.
+  void columnName;
+  return out;
+}
+
+/**
+ * 'table.conname' for every constraint the SQL declares: the explicitly named
+ * ones (ALTER TABLE … ADD CONSTRAINT, and inline CONSTRAINT <name>) AND the
+ * names Postgres generates for the unnamed ones, via deriveImplicitConstraints.
+ *
+ * Comments are blanked first. Before that they were read as SQL, and an
+ * apostrophe in a comment opened a string literal that ran to the next one —
+ * unbalancing the CREATE TABLE body, which was then skipped whole. Every
+ * constraint of every post-baseline table went missing from the model that way.
+ */
 export function extractConstraints(sql: string): Set<string> {
+  const src = blankSqlComments(sql);
   const out = new Set<string>();
 
   // ALTER TABLE [ONLY] [schema.]<table> ... ADD CONSTRAINT <name>
   const alterRe =
     /alter\s+table\s+(?:only\s+)?(?:"?[A-Za-z_][\w$]*"?\.)?("?[A-Za-z_][\w$]*"?)\s+add\s+constraint\s+("?[A-Za-z_][\w$]*"?)/gi;
-  for (const m of sql.matchAll(alterRe)) {
+  for (const m of src.matchAll(alterRe)) {
     const table = unquote(m[1]).toLowerCase();
     const con = unquote(m[2]).toLowerCase();
     out.add(`${table}.${con}`);
@@ -353,9 +770,9 @@ export function extractConstraints(sql: string): Set<string> {
   // Inline: CREATE TABLE [schema.]<t> ( ... CONSTRAINT <name> ... )
   const createRe =
     /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:"?[A-Za-z_][\w$]*"?\.)?("?[A-Za-z_][\w$]*"?)/gi;
-  for (const m of sql.matchAll(createRe)) {
+  for (const m of src.matchAll(createRe)) {
     const table = unquote(m[1]).toLowerCase();
-    const body = balancedParenBody(sql, (m.index ?? 0) + m[0].length);
+    const body = immediateParenBody(src, (m.index ?? 0) + m[0].length);
     if (body === null) continue;
     for (const part of splitTopLevel(body)) {
       const cm = /^\s*constraint\s+("?[A-Za-z_][\w$]*"?)/i.exec(part);
@@ -363,15 +780,18 @@ export function extractConstraints(sql: string): Set<string> {
     }
   }
 
+  for (const c of deriveImplicitConstraints(src).constraints) out.add(c);
+
   return out;
 }
 
 /** extname from CREATE EXTENSION [IF NOT EXISTS] <name>. */
 export function extractExtensions(sql: string): Set<string> {
+  const src = blankSqlComments(sql);
   const out = new Set<string>();
   const re =
     /create\s+extension\s+(?:if\s+not\s+exists\s+)?("([^"]+)"|([A-Za-z_][\w$-]*))/gi;
-  for (const m of sql.matchAll(re)) {
+  for (const m of src.matchAll(re)) {
     out.add((m[2] ?? m[3]).toLowerCase());
   }
   return out;
@@ -380,11 +800,12 @@ export function extractExtensions(sql: string): Set<string> {
 /** proname -> set of normalized identity-arg strings, from CREATE FUNCTION [schema.]name(args). */
 export function extractFunctionSignatures(sql: string): Map<string, Set<string>> {
   const out = new Map<string, Set<string>>();
+  const src = blankSqlComments(sql);
   const re =
     /create\s+(?:or\s+replace\s+)?function\s+(?:"?[A-Za-z_][\w$]*"?\.)?("?[A-Za-z_][\w$]*"?)/gi;
-  for (const m of sql.matchAll(re)) {
+  for (const m of src.matchAll(re)) {
     const name = unquote(m[1]).toLowerCase();
-    const body = balancedParenBody(sql, (m.index ?? 0) + m[0].length);
+    const body = balancedParenBody(src, (m.index ?? 0) + m[0].length);
     const args = normalizeArgTypes(body ?? "");
     if (!out.has(name)) out.set(name, new Set());
     out.get(name)!.add(args);
@@ -405,10 +826,11 @@ export function extractPolicyPredicates(
     { using: string | null; withCheck: string | null; roles: string[] }
   >();
 
+  const src = blankSqlComments(sql);
   const headRe = /create\s+policy\s+/gi;
   let m: RegExpExecArray | null;
-  while ((m = headRe.exec(sql)) !== null) {
-    const { stmt, end } = readStatement(sql, m.index);
+  while ((m = headRe.exec(src)) !== null) {
+    const { stmt, end } = readStatement(src, m.index);
     headRe.lastIndex = end;
 
     // policy name (quoted or bare) then ON <target>.
@@ -457,7 +879,7 @@ export function extractColumnGrants(sql: string): Map<string, Set<string>> {
   // Only lines whose privilege list carries a paren column list are column grants.
   const re =
     /grant\s+([A-Za-z]+\s*\([^)]*\)(?:\s*,\s*[A-Za-z]+\s*\([^)]*\))*)\s+on\s+(?:table\s+)?(?:"?[A-Za-z_][\w$]*"?\.)?("?[A-Za-z_][\w$]*"?)\s+to\s+([A-Za-z_][\w$]*)/gi;
-  for (const m of sql.matchAll(re)) {
+  for (const m of blankSqlComments(sql).matchAll(re)) {
     const privClause = m[1];
     const table = unquote(m[2]).toLowerCase();
     const grantee = m[3].toLowerCase();
@@ -483,10 +905,11 @@ export function extractColumnGrants(sql: string): Map<string, Set<string>> {
  *  inside the CREATE TYPE body, so without this the model carries zero enum
  *  values and flags every live label as unexplained. */
 export function extractEnumValues(sql: string): Set<string> {
+  const src = blankSqlComments(sql);
   const out = new Set<string>();
   const re =
     /create\s+type\s+(?:[\w"]+\.)?"?([a-z_][a-z0-9_]*)"?\s+as\s+enum\s*\(([^)]*)\)/gi;
-  for (const m of sql.matchAll(re)) {
+  for (const m of src.matchAll(re)) {
     const name = m[1].toLowerCase();
     for (const v of m[2].matchAll(/'([^']*)'/g)) out.add(`${name}.${v[1]}`.toLowerCase());
   }
@@ -498,10 +921,15 @@ export function extractEnumValues(sql: string): Set<string> {
  *  CONSTRAINT (not CREATE INDEX), but pg_indexes lists them live, so without
  *  this every PK/UNIQUE index reads as UNEXPLAINED_LIVE. */
 export function extractConstraintBackedIndexes(sql: string): Set<string> {
+  const src = blankSqlComments(sql);
   const out = new Set<string>();
   const re =
     /add\s+constraint\s+(?:"([^"]+)"|([a-z_][a-z0-9_]*))\s+(?:primary\s+key|unique)\b/gi;
-  for (const m of sql.matchAll(re)) out.add((m[1] ?? m[2]).toLowerCase());
+  for (const m of src.matchAll(re)) out.add((m[1] ?? m[2]).toLowerCase());
+  // The same index exists for a PK/UNIQUE declared INLINE, named or not — a
+  // hand-written migration declares most of them that way, and pg_indexes lists
+  // every one of them live.
+  for (const ix of deriveImplicitConstraints(src).indexes) out.add(ix);
   return out;
 }
 
@@ -520,7 +948,13 @@ export function buildModel(args: {
   parseMig: ParseMig;
 }): Model {
   const { baselineSql, baselineTables, canonicalSqls, ledger, parseMig } = args;
-  const allSqls = [baselineSql, ...canonicalSqls];
+  // Comments blanked ONCE, here, and every reader below sees the blanked text —
+  // the injected forward parser included. parseMigration is shared with
+  // audit:schema and is not changed; only what THIS model feeds it is. Offsets
+  // are preserved (comment bytes become spaces), so index-based scans are
+  // unaffected. See blankSqlComments for the apostrophe-in-a-comment failure
+  // this closes.
+  const allSqls = [baselineSql, ...canonicalSqls].map(blankSqlComments);
 
   const relations = new Set<string>();
   const columns = new Set<string>();

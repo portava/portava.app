@@ -1,795 +1,274 @@
-# Supabase Production SQL Runbook — Beta Launch
-*Source of truth: `docs/beta-closeout-report.md` (2026-07-03)*
-*All steps below are manual. Nothing in this document has been applied to production yet.*
+# portava-beta — building the beta Supabase environment
+
+*Replaces the 2026-07-03 "Supabase Production SQL Runbook — Beta Launch" (a
+hand-applied 0077–0089 checklist against production). That procedure is
+history; nothing in this document touches production.*
+
+The beta database is built by one reviewed, repeatable, fail-closed workflow:
+[`.github/workflows/beta-db.yml`](../.github/workflows/beta-db.yml). It runs on
+GitHub Actions, talks to Supabase only through the Management API, and builds
+the project from the repository's schema truth — never from
+`src/lib/database.types.ts`, and never by hand in the SQL editor.
+
+## The three projects
+
+| Project | Ref | Role here |
+| --- | --- | --- |
+| production | `ajrurzioarfkagpuxfnb` | **Never touched, never read.** Every script and workflow involved refuses it by ref (`KNOWN_PROD_PROJECT_REF`). |
+| portava-ci | `hwokxgbmezheskbzskfr` | The CI reference database (repo variable `CI_SUPABASE_PROJECT_REF`). Beta's reference rows are **read** from it, with SELECTs inside read-only transactions. |
+| portava-beta | `emfpckykpzfturllshly` | The target. `https://emfpckykpzfturllshly.supabase.co`, created 2026-10-06 on the owner's authorization, Postgres 17, us-east-1. |
+
+Projects are compared by ref only. Display names are not identities (the CI
+credential once listed two different projects with the same name).
+
+## What the workflow builds
+
+Schema truth is two inputs, the same two the local replay
+(`artifacts/api-server/scripts/local-db/up.sh`) uses:
+
+1. **The baseline** — `artifacts/api-server/baseline/20260819_baseline_structure.sql`,
+   a pg_dump 17 structure-only dump of production as of 2026-08-19.
+2. **The canonical chain** — `artifacts/api-server/src/migrations/*.sql`, from
+   `2093_` on. Every file sorting before `2093_` (280 of them) is already in the
+   baseline; `2093_` is the first whose objects it lacks.
+
+Because the baseline has no rows, the rows that pre-`2093_` migrations seeded
+come from a **reference snapshot** of portava-ci.
+
+The workflow has four jobs:
+
+| Job | Touches | What it does |
+| --- | --- | --- |
+| `preflight` | nothing | `assert-ci-scripts.mjs`; the `confirm`/`reset` inputs must be exact. |
+| `reference-snapshot` | portava-ci, **read-only** | `db:beta-reference-snapshot` → `beta-reference-snapshot.json`, uploaded as an artifact. |
+| `beta-bootstrap` | portava-beta | `db:beta-bootstrap`, then `db:apply-migrations:dry-run`, the apply loop (`db:apply-migrations`, with `db:beta-bootstrap --apply-refused` where it stops on a refused-by-shape file), `certify:migrations`, `audit:schema`. |
+| `verdict` | nothing | `live-db-verdict.sh`: anything skipped or cancelled is not a pass. |
+
+### `db:beta-bootstrap` step by step (`scripts/src/beta-bootstrap.ts`)
+
+- **a. Guards.** The repo's strict front door (`ciSupabaseGuard.mjs`) **and** a
+  hard-coded `BETA_PROJECT_REF`. Any other ref exits 2 — portava-ci included,
+  even if the allowlist were pointed at it — because this step restores a
+  baseline over whatever it finds.
+- **b. Emptiness.** `auth.users` must be empty, always. `public` may hold no
+  base table except a leftover `schema_migration_ledger` (and that ledger may
+  record no chain file). Otherwise exit 2, unless the reset was requested.
+- **c. Extensions.** `postgis` and `pg_trgm` are created in `public` (three
+  generated columns call `public.st_setsrid(public.st_makepoint(…))::public.geography`);
+  the census is then compared with portava-ci's: `pgcrypto` (a column default
+  calls `extensions.gen_random_bytes`) and `uuid-ossp` in `extensions`, and
+  `plpgsql`, are required; `pg_stat_statements` and `supabase_vault` are
+  expected and only warned about.
+  `unaccent` is deliberately not installed: its one baseline use is inside the
+  plpgsql body of `public.upsert_city_stamp()`, which is not resolved at create
+  time and already tolerates the extension's absence; portava-ci lacks it too.
+- **d. Baseline plan.** 5,200 top-level statements (split with the applier's
+  `maskNonCode`); 5,066 executed; 134 skipped by four named rules, each printed
+  with its first 100 characters:
+
+  | Rule | Count | Why |
+  | --- | --- | --- |
+  | `dump-session-preamble` | 13 | pg_dump's own `SET …` and `set_config('search_path', '', false)`; a fixed prelude runs instead |
+  | `platform-schema` | 2 | `CREATE SCHEMA public` / `storage` exist on every project |
+  | `storage-platform-object` | 107 | the Storage service owns schema `storage` (types, functions, tables, indexes, triggers, constraints, RLS switches, grants, default privileges) |
+  | `supabase-admin-default-privileges` | 12 | `postgres` cannot alter `supabase_admin`'s default privileges; Supabase sets them |
+
+  The four app policies on `storage.objects` (`post_media_storage_owner_delete`,
+  `post_media_storage_owner_insert`, `stamp_artwork_public_read`,
+  `stamp_artwork_service_write`) are **kept**. These counts are pinned in
+  `BASELINE_SHAPE` and in `scripts/src/beta-bootstrap.test.ts`; a refreshed
+  baseline that moves any of them makes the script refuse until the rules are
+  re-read.
+- **e. Execution.** 26 batches of ≤ 200 statements. Each batch is one
+  Management API call: a `SET LOCAL` prelude and one
+  `SELECT … FROM beta_bootstrap.run(ARRAY[$bb$…$bb$, …])`. `run()` (a scratch
+  function, dropped at the end) executes each statement in its own
+  sub-transaction and tolerates only already-exists errors (42P06, 42P07, 42710,
+  42723) — on a first run that count must be 0. Any other error re-raises, the
+  batch rolls back whole, and the log prints the failing statement in full.
+- **f. Census.** Public tables (387), views (10), policies (737), functions
+  (59), enum types (69) and the four `storage.objects` policies must equal the
+  baseline's; any delta is listed and exits 1.
+- **g. Reference rows.** The snapshot is validated against the current
+  baseline, then imported table by table with
+  `INSERT … ON CONFLICT (primary key) DO NOTHING`; `storage.buckets` rows
+  (`id, name, public, file_size_limit, allowed_mime_types`) likewise.
+- **h. Ledger.** `2254_schema_migration_ledger.sql`'s DDL (its 382-row INSERT
+  and its postcondition cut) plus one row per pre-`2093_` file with
+  `checksum='backfill'`, `applied_by='backfill'` — 2254's own vocabulary — in
+  one transaction. Every chain file has no row, so the **unchanged** applier
+  treats all of them as pending, and 2254 later runs as an ordinary pending
+  migration.
+- **i. Refused-by-shape preview.** The chain files the applier will refuse are
+  computed against the ledger just written and printed (2182 and 2190 today);
+  they are applied later, where the applier stops on each — see below.
+
+### The two files the applier refuses by shape — applied by the bootstrap
+
+The unchanged applier wraps every migration in ONE transaction together with
+its ledger row, so it refuses a file whose own transaction control it cannot
+wrap, and its header names the remedy: *apply it by hand, verify it, then
+INSERT its ledger row with `applied_by='manual'`*. On portava-ci such files
+sit under 2254's backfill rows and are never classified. On beta every chain
+file is pending, so the applier meets them. Measured by running
+`classifyMigration` over every chain file at or after `2093_` with no ledger
+row, the set is exactly:
+
+| File | Why the applier refuses it |
+| --- | --- |
+| `2182_close_authz_rpc_oracle.sql` | a `BEGIN … COMMIT` body followed by a top-level `BEGIN … ROLLBACK` verification probe (line 167) |
+| `2190_memory_lifecycle_fixes.sql` | two `BEGIN … COMMIT` blocks (lines 61–362 and 376–407) |
+
+`scripts/src/beta-bootstrap.test.ts` pins that set, so a newly refused file
+turns the test red instead of being absorbed.
+
+The bootstrap is the hand: `db:beta-bootstrap --apply-refused <file>`. It
+refuses unless the file is in the computed set, has no ledger row, and every
+chain file sorting before it already has one — i.e. the applier stopped
+exactly there. It then sends the file's bytes **verbatim** as one Management
+API call (not through `beta_bootstrap.run()`: PL/pgSQL cannot execute
+`BEGIN`/`COMMIT`/`ROLLBACK`; verbatim is what the SQL editor does — the file's
+own `BEGIN … COMMIT` commits its body and its `BEGIN … ROLLBACK` probe rolls
+itself back), and in a **second** call inserts the ledger row:
+`applied_by='manual'`, `checksum` = the applier's `checksumOf(bytes)`, `notes`
+= `beta-bootstrap 2026-10-06: applied verbatim by the bootstrap because the
+applier refuses its shape (<first sentence of the refusal>)`,
+`ON CONFLICT (filename) DO NOTHING`.
+
+**This is not atomic.** The apply and the row are two calls, so a failure
+between them leaves the file applied and unrecorded; the script says so and
+names the row to insert by hand before the applier runs again. If the
+verbatim call itself fails, no row is written and the file's own
+preconditions and transaction blocks decide what persisted. The mode is
+idempotent: a file that already has a ledger row is skipped.
+
+Because 2182 and 2190 depend on the files before them, and the files after
+them depend on them, the hand apply can only happen where the applier stops.
+The workflow's apply step is therefore a bounded loop:
+
+1. `db:apply-migrations` — applies everything before 2182, stops at 2182 (`refused`).
+2. `db:beta-bootstrap --apply-refused 2182_close_authz_rpc_oracle.sql`
+3. `db:apply-migrations` — continues, stops at 2190 (`refused`).
+4. `db:beta-bootstrap --apply-refused 2190_memory_lifecycle_fixes.sql`
+5. `db:apply-migrations` — to the end.
+
+The loop continues only when the applier exits 1 reporting a `refused` stop
+for a file the same run's dry run listed (and the bootstrap re-checks the
+set); any other applier failure ends it red. It runs the applier at most
+(refused files + 1) times. The dry run before it exits 1 whenever a pending
+file is refused; that is accepted only when `db:beta-bootstrap --check-refused`
+confirms every file it named is in the refused set.
+
+### The reference snapshot (`scripts/src/beta-reference-snapshot.ts`)
+
+Allowlist (nothing else is read): `feature_flags`, `stamp_definitions`,
+`stamp_collections`, `country_essentials`, `compass_intent_modes`,
+`compass_frontload_rules`, `price_baselines`, `destination_identities`,
+`geofence_admin_settings`, `rent_buddy_global_controls`,
+`rent_buddy_city_rollouts`, and `storage.buckets`.
+
+- Only the columns the baseline's `CREATE TABLE` declares, each read as text.
+- NULLed: every column the baseline declares as a foreign key to
+  `public.profiles` or `auth.users` (`rent_buddy_global_controls.updated_by_admin_id`,
+  `rent_buddy_city_rollouts.status_changed_by`), plus the user-id column that
+  has no FK (`price_baselines.verified_by`).
+- `feature_flags.enabled` is `false` on **every** row.
+- A table over 20,000 rows is refused.
+- `place_coverage_buckets` is **not** on the list: no migration seeds it (it is
+  a runtime post counter), and its primary key is a NOT NULL foreign key to
+  `public.places`, which is not copied, so any row would fail the import.
+
+## How to dispatch it
+
+`workflow_dispatch` workflows can only be started once the file is on the
+default branch.
 
----
-
-## Pre-apply Checklist
-
-Before running any SQL, confirm every item below. Do not proceed until all are checked.
-
-| # | Check | How to verify |
-|---|-------|---------------|
-| ☐ 1 | You are connected to the **production** Supabase project, not a dev/staging project | Supabase dashboard URL matches the `SUPABASE_URL` in `artifacts/api-server/.env` (`https://ajrurzioarfkagpuxfnb.supabase.co`) |
-| ☐ 2 | You have access to **Supabase SQL Editor** with a service-role or admin postgres connection | Open Dashboard → SQL Editor and verify you can run `SELECT NOW();` |
-| ☐ 3 | Last applied migration in production is **0087** | `SELECT MAX(name) FROM schema_migrations;` — or manually confirm `profiles.cover_photo_url` exists |
-| ☐ 4 | No active writes to the database during migration window | Schedule a low-traffic window or put the API server in maintenance mode |
-| ☐ 5 | You have read through each migration SQL below before executing it | — |
-| ☐ 6 | All migration files are present in `artifacts/api-server/src/migrations/` | `ls artifacts/api-server/src/migrations/` shows 0077–0089 |
-
----
-
-## Step 0 — Backup / Snapshot
-
-**Supabase does not auto-snapshot before SQL Editor runs.**
-
-> Manual action required before applying any migrations:
->
-> 1. Go to **Supabase Dashboard → Database → Backups**
-> 2. Trigger a **manual backup** (or confirm an automatic backup exists from today)
-> 3. Record the backup ID/timestamp here before continuing: `_______________`
->
-> If anything fails mid-run, restore from this backup. **Stop and restore before retrying any failing migration.**
-
----
-
-## Migration Apply Order
-
-Apply in exactly this order. Do not skip steps. Apply and verify one at a time.
-
-```
-0077 → 0078 → 0079 → 0080 → 0086 → 0088 → 0089 → 0085
-```
-
----
-
-## Migration 1 of 8 — `0077_trips_expansion.sql`
-
-### What it does
-- Adds `draft` and `archived` values to the `trip_status` enum
-- Adds 14 new columns to the `trips` table: `trip_type`, `timezone`, `destination_lat`, `destination_lng`, `destination_place_id`, `trip_notes`, and 8 privacy/discoverability boolean columns
-
-All new columns have safe defaults. Existing trip rows are not affected.
-
-### Why beta needs it
-- The trip edit screen writes `trip_notes`, `destination_lat/lng`, and privacy columns (`show_destination_city`, `show_exact_dates`, etc.). Without this migration, all privacy settings from the edit screen silently save to an API response but never persist in the database.
-- The lifecycle routes (`/trips/me/past`, `/trips/me/active`) need `draft` and `archived` status values in the enum.
-
-### Dependency / risk
-- Must run before 0078 and 0079.
-- Idempotent: all `ADD COLUMN IF NOT EXISTS` and `ADD VALUE IF NOT EXISTS` — safe to re-run.
-- Enum `ADD VALUE` requires PostgreSQL 12+. Supabase runs Postgres 14+ — no issue.
-
-### SQL to apply
-Copy the full contents of `artifacts/api-server/src/migrations/0077_trips_expansion.sql` and paste into **Supabase SQL Editor → Run**.
-
-```sql
--- Paste exact file contents of 0077_trips_expansion.sql
-```
-
-### Verification SQL — run after applying
-```sql
--- Confirm new enum values
-SELECT enumlabel
-FROM pg_enum
-JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
-WHERE typname = 'trip_status'
-ORDER BY enumlabel;
--- Expected output includes: archived, cancelled, completed, draft, in_progress, planned, planning
-
--- Confirm new columns on trips
-SELECT column_name, data_type, column_default
-FROM information_schema.columns
-WHERE table_name = 'trips'
-  AND column_name IN (
-    'trip_notes', 'trip_type', 'destination_lat', 'destination_lng',
-    'show_destination_city', 'show_exact_dates', 'allow_join_requests'
-  )
-ORDER BY column_name;
--- Expected: 7 rows returned
-```
-
-> **Stop if:** The verification query returns fewer than 7 rows, or `trip_status` enum does not include `draft` and `archived`. Check for error output in SQL Editor before continuing.
-
----
-
-## Migration 2 of 8 — `0078_trip_members_expansion.sql`
-
-### What it does
-- Adds `co_host` and `viewer` values to the `member_role` enum
-- Adds three columns to `trip_members`: `status` (text, default `'accepted'`), `permissions` (JSONB), `joined_at` (timestamptz)
-- Backfills `status = 'invited'` for existing rows where `role = 'invited'`
-- Backfills `joined_at = created_at` for existing owner/member rows
-
-### Why beta needs it
-- Trip join-request approve/decline routes update `trip_members.status = 'accepted'`. Without this column, approve/decline returns a PostgreSQL error.
-- The `requireTripMember` middleware reads `trip_members.status` to filter out pending invites.
-
-### Dependency / risk
-- Must run after 0077.
-- Backfill is safe on existing data.
-- The API server was already fixed to use `.neq("role","invited")` instead of enumerating `co_host`/`viewer` — so applying 0078 will not break currently-working routes.
-
-### SQL to apply
-Paste the full contents of `artifacts/api-server/src/migrations/0078_trip_members_expansion.sql` into Supabase SQL Editor.
-
-### Verification SQL — run after applying
-```sql
--- Confirm new enum values
-SELECT enumlabel
-FROM pg_enum
-JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
-WHERE typname = 'member_role'
-ORDER BY enumlabel;
--- Expected: co_host, invited, member, owner, viewer
-
--- Confirm new columns on trip_members
-SELECT column_name, data_type
-FROM information_schema.columns
-WHERE table_name = 'trip_members'
-  AND column_name IN ('status', 'permissions', 'joined_at')
-ORDER BY column_name;
--- Expected: 3 rows
-
--- Confirm backfill ran
-SELECT COUNT(*) FROM trip_members WHERE role = 'invited' AND status != 'invited';
--- Expected: 0 (all invited rows should now have status='invited')
-```
-
-> **Stop if:** `member_role` enum is missing `co_host` or `viewer`, or the column query returns fewer than 3 rows.
-
----
-
-## Migration 3 of 8 — `0079_trip_sub_tables.sql`
-
-### What it does
-Creates 11 new trip sub-resource tables, each with RLS enabled and trip-member policies:
-
-| Table | Purpose |
-|-------|---------|
-| `trip_budget` | One-row-per-trip budget tracker (currency, total, spent, breakdown JSONB) |
-| `trip_documents` | Trip-scoped documents (itinerary, packing list, visa, insurance, other) |
-| `trip_join_requests` | Join requests with status (pending/approved/declined/cancelled) |
-| `trip_invite_links` | Shareable invite tokens with max_uses, expiry, revocation |
-| `trip_saved_places` | Per-user place bookmarks within a trip |
-| `trip_notes` | Trip-scoped notes (public or private to author) |
-| `trip_checklists` | Named checklists per trip |
-| `trip_checklist_items` | Individual checklist items with assignment + due date |
-| `trip_activity_log` | Append-only audit log of trip events |
-| `trip_reminders` | Per-user trip reminders with remind_at timestamp |
-| `trip_destinations` | Multi-city destination list per trip |
-
-### Why beta needs it
-Every `trips-expansion.ts` sub-resource route (budget, documents, notes, checklists, join-requests, invite-links, saved-places, destinations) queries one of these tables. Without this migration, all such routes return:
-`ERROR: relation "trip_budget" does not exist`
-
-### Dependency / risk
-- Must run after 0078 (the `co_host` role in policies references the expanded enum).
-- All 11 `CREATE TABLE IF NOT EXISTS` — idempotent.
-- `can_see_trip(trip_id)` helper function must exist (applied in an earlier migration). If any policy fails with "function does not exist", check that an earlier migration created `can_see_trip`.
-
-### SQL to apply
-Paste the full contents of `artifacts/api-server/src/migrations/0079_trip_sub_tables.sql` into Supabase SQL Editor.
-
-### Verification SQL — run after applying
-```sql
--- Confirm all 11 tables created
-SELECT table_name
-FROM information_schema.tables
-WHERE table_schema = 'public'
-  AND table_name IN (
-    'trip_budget', 'trip_documents', 'trip_join_requests',
-    'trip_invite_links', 'trip_saved_places', 'trip_notes',
-    'trip_checklists', 'trip_checklist_items', 'trip_activity_log',
-    'trip_reminders', 'trip_destinations'
-  )
-ORDER BY table_name;
--- Expected: 11 rows
-
--- Confirm RLS is enabled on all tables
-SELECT tablename, rowsecurity
-FROM pg_tables
-WHERE tablename IN (
-    'trip_budget', 'trip_documents', 'trip_join_requests',
-    'trip_invite_links', 'trip_saved_places', 'trip_notes',
-    'trip_checklists', 'trip_checklist_items', 'trip_activity_log',
-    'trip_reminders', 'trip_destinations'
-  )
-ORDER BY tablename;
--- Expected: 11 rows, all with rowsecurity = true
-```
-
-> **Stop if:** Fewer than 11 tables returned, or any table has `rowsecurity = false`. Check SQL Editor for the failing CREATE TABLE statement.
-
----
-
-## Migration 4 of 8 — `0080_events_extension.sql`
-
-### What it does
-Extends the `events` table with new columns and creates 10 new event sub-tables:
-
-**New columns on `events`:**
-- `show_exact_location` (boolean, default false)
-- `rsvp_closed` (boolean, default false)
-- `safety_notes` (text)
-- `tags` (text[], default `{}`)
-- `is_recurring` (boolean, default false)
-- `recurring_config` (JSONB)
-- `ticket_url` (text)
-- `circle_id` (UUID)
-- `trip_id` (UUID)
-
-**New tables:**
-
-| Table | Purpose |
-|-------|---------|
-| `event_attendees` | Confirmed attendees (denormalised from RSVP) |
-| `event_saves` | User saves/bookmarks for events |
-| `event_invites` | Per-user invitations to events |
-| `event_cohosts` | Co-host assignments |
-| `event_posts` | Posts scoped to an event |
-| `event_media` | Media attached to events |
-| `event_reports` | Moderation reports for events |
-| `event_activity_log` | Append-only event audit log |
-| `event_share_links` | Shareable event links |
-| `event_reminders` | Per-user event reminders |
-| `event_drafts` | Draft events saved by the host before publishing |
-
-Also seeds event-related feature flags in `feature_flags`.
-
-### Why beta needs it
-All extended `events.ts` routes (invites, co-hosts, posts, media, reports, drafts, share-links, reminders) query these tables. Without this migration, those routes return "relation does not exist" errors. Core event CRUD and RSVP already work — this migration unblocks the extended events feature surface.
-
-### Dependency / risk
-- Must run after 0079.
-- All `CREATE TABLE IF NOT EXISTS` and `ADD COLUMN IF NOT EXISTS` — idempotent.
-- The `event_roles` table is referenced in a policy (`event_attendees_participant_read`). If `event_roles` does not exist, this policy will fail. Wrap the failing policy in a `DO $$ BEGIN ... EXCEPTION WHEN others THEN NULL; END $$` block if needed (the migration already does this with `DO $$ BEGIN` blocks).
-
-### SQL to apply
-Paste the full contents of `artifacts/api-server/src/migrations/0080_events_extension.sql` into Supabase SQL Editor.
-
-### Verification SQL — run after applying
-```sql
--- Confirm new columns on events
-SELECT column_name
-FROM information_schema.columns
-WHERE table_name = 'events'
-  AND column_name IN ('show_exact_location', 'rsvp_closed', 'safety_notes', 'tags', 'ticket_url')
-ORDER BY column_name;
--- Expected: 5 rows
-
--- Confirm all 11 new event tables
-SELECT table_name
-FROM information_schema.tables
-WHERE table_schema = 'public'
-  AND table_name IN (
-    'event_attendees', 'event_saves', 'event_invites', 'event_cohosts',
-    'event_posts', 'event_media', 'event_reports', 'event_activity_log',
-    'event_share_links', 'event_reminders', 'event_drafts'
-  )
-ORDER BY table_name;
--- Expected: 11 rows
-
--- Confirm feature flag seeds from 0080
-SELECT flag, enabled
-FROM feature_flags
-WHERE flag LIKE 'event%'
-ORDER BY flag;
--- Expected: at least 1 row (event-specific feature flags)
-```
-
-> **Stop if:** Fewer than 5 columns on `events`, or fewer than 11 new event tables. Check SQL Editor error output for the specific failing statement.
-
----
-
-## Migration 5 of 8 — `0086_discovery_places_osm_id.sql`
-
-### What it does
-- Adds `osm_id` (text, nullable) column to `discovery_places`
-- Creates a partial unique index `discovery_places_osm_id_idx ON discovery_places(osm_id) WHERE osm_id IS NOT NULL`
-- Sets `DEFAULT ''` on the `city` column (so OSM-sourced rows can be inserted without a city name)
-
-### Why beta needs it
-`wishlist.ts` calls `trackOsmPlaceSave()` which upserts a row into `discovery_places` using `ON CONFLICT (osm_id)`. Without the `osm_id` column, this upsert fails with a column-not-found error for any OSM-sourced place (Overpass API results). All wishlist saves for OSM places fail until this is applied.
-
-### Dependency / risk
-- Must run before 0088.
-- `ADD COLUMN IF NOT EXISTS` and `CREATE UNIQUE INDEX IF NOT EXISTS` — idempotent.
-- Partial unique index: existing rows with `osm_id IS NULL` are unaffected.
-
-### SQL to apply
-Paste the full contents of `artifacts/api-server/src/migrations/0086_discovery_places_osm_id.sql` into Supabase SQL Editor.
-
-```sql
-ALTER TABLE discovery_places
-  ADD COLUMN IF NOT EXISTS osm_id TEXT;
-
-CREATE UNIQUE INDEX IF NOT EXISTS discovery_places_osm_id_idx
-  ON discovery_places (osm_id)
-  WHERE osm_id IS NOT NULL;
-
-ALTER TABLE discovery_places
-  ALTER COLUMN city SET DEFAULT '';
-```
-
-### Verification SQL — run after applying
-```sql
--- Confirm column exists
-SELECT column_name, data_type, is_nullable
-FROM information_schema.columns
-WHERE table_name = 'discovery_places'
-  AND column_name = 'osm_id';
--- Expected: 1 row, data_type = text, is_nullable = YES
-
--- Confirm partial unique index exists
-SELECT indexname, indexdef
-FROM pg_indexes
-WHERE tablename = 'discovery_places'
-  AND indexname = 'discovery_places_osm_id_idx';
--- Expected: 1 row
-
--- Confirm city column has default
-SELECT column_name, column_default
-FROM information_schema.columns
-WHERE table_name = 'discovery_places'
-  AND column_name = 'city';
--- Expected: column_default = ''
-```
-
-> **Stop if:** `osm_id` column does not appear, or the index is missing. The wishlist save flow will fail for OSM places without this.
-
----
-
-## Migration 6 of 8 — `0088_wishlist_places.sql`
-
-### What it does
-- Creates the `wishlist_places` table with columns: `id`, `user_id`, `place_id`, `place_data` (JSONB), `list_id`, `saved_at`
-- Enables RLS with an owner-only `FOR ALL` policy
-- Creates index `wishlist_places_user_list_idx ON wishlist_places(user_id, list_id, saved_at DESC)`
-- Creates `prevent_wishlist_places_truncate()` function and `block_wishlist_places_truncate` trigger (prevents accidental TRUNCATE from wiping all wishlists)
-
-### Why beta needs it
-Every wishlist route depends on this table:
-- `GET /api/wishlist` → SELECT from `wishlist_places`
-- `POST /api/wishlist` → INSERT into `wishlist_places`
-- `DELETE /api/wishlist/:placeId` → DELETE from `wishlist_places`
-
-Without this migration, all three routes return: `ERROR: relation "wishlist_places" does not exist`
-
-### Dependency / risk
-- Must run after 0086 (`osm_id` index must exist before the wishlist insert uses the upsert on `discovery_places`).
-- `CREATE TABLE IF NOT EXISTS` — idempotent.
-- The API server uses the **service role key** to write to this table (bypasses RLS). The RLS policy is a belt-and-suspenders guard for any direct database access.
-
-### SQL to apply
-Paste the full contents of `artifacts/api-server/src/migrations/0088_wishlist_places.sql` into Supabase SQL Editor.
-
-### Verification SQL — run after applying
-```sql
--- Confirm table exists
-SELECT table_name
-FROM information_schema.tables
-WHERE table_schema = 'public' AND table_name = 'wishlist_places';
--- Expected: 1 row
-
--- Confirm RLS is enabled
-SELECT tablename, rowsecurity
-FROM pg_tables
-WHERE tablename = 'wishlist_places';
--- Expected: rowsecurity = true
-
--- Confirm index exists
-SELECT indexname
-FROM pg_indexes
-WHERE tablename = 'wishlist_places' AND indexname = 'wishlist_places_user_list_idx';
--- Expected: 1 row
-
--- Confirm trigger exists
-SELECT trigger_name, event_manipulation, event_object_table
-FROM information_schema.triggers
-WHERE trigger_name = 'block_wishlist_places_truncate';
--- Expected: 1 row
-
--- Confirm function exists
-SELECT routine_name
-FROM information_schema.routines
-WHERE routine_name = 'prevent_wishlist_places_truncate';
--- Expected: 1 row
-```
-
-> **Stop if:** Any of the 5 checks above returns 0 rows. All 5 objects must exist before continuing.
-
----
-
-## Migration 7 of 8 — `0089_decrement_discovery_place_saved_count.sql`
-
-### What it does
-Creates the `decrement_discovery_place_saved_count(p_id uuid)` PostgreSQL function.
-This function atomically decrements `discovery_places.saved_count` for a given place row ID, floors at 0, and returns the new count.
-
-The function is created with `SECURITY DEFINER` and `SET search_path = public`, and explicitly revokes the default `PUBLIC` execute grant so only the `service_role` backend account can invoke it via RPC.
-
-### Why beta needs it
-`wishlist.ts` DELETE route calls:
-```
-svc.rpc("decrement_discovery_place_saved_count", { p_id: <discovery_places.id> })
-```
-Without this function, unwishlisting any DB-sourced place returns:
-`ERROR: function decrement_discovery_place_saved_count(uuid) does not exist`
-
-### SQL to apply
-Paste the full contents of `artifacts/api-server/src/migrations/0089_decrement_discovery_place_saved_count.sql` into Supabase SQL Editor.
-
-> **Important:** Use the full migration file — do not use an abbreviated version. The file includes `SET search_path = public`, `REVOKE ALL FROM PUBLIC, anon, authenticated`, and `GRANT EXECUTE TO service_role` statements that are required for correct security posture. Omitting them would leave the function callable by any authenticated PostgREST user.
-
-### Verification SQL — run after applying
-```sql
--- Confirm function exists with correct return type
-SELECT routine_name, data_type AS return_type, security_type
-FROM information_schema.routines
-WHERE routine_name = 'decrement_discovery_place_saved_count'
-  AND routine_schema = 'public';
--- Expected: 1 row, return_type = integer, security_type = DEFINER
-
--- Confirm service_role EXECUTE grant (and only service_role)
-SELECT grantee, privilege_type
-FROM information_schema.role_routine_grants
-WHERE routine_name = 'decrement_discovery_place_saved_count'
-  AND grantee = 'service_role';
--- Expected: 1 row — grantee = service_role, privilege_type = EXECUTE
-
--- Smoke test (safe to run — GREATEST(0,...) prevents negative values)
--- Replace with a real discovery_places.id if available:
--- SELECT decrement_discovery_place_saved_count('<real-uuid-here>');
-```
-
-> **Stop if:** The function does not appear in `information_schema.routines`, `security_type` is not `DEFINER`, or the `service_role` grant row is missing. Do not proceed to 0085 until the wishlist unsave path is fully unblocked.
-
----
-
-## Migration 8 of 8 — `0085_enable_passport_flags.sql`
-
-### What it does
-Sets the following feature flags to `enabled = true` in the `feature_flags` table (using `ON CONFLICT DO UPDATE` — safe to re-run):
-
-| Flag | Feature |
-|------|---------|
-| `passport_stamps_enabled` | Passport stamps for all users |
-| `passport_memories_enabled` | Passport memories for all users |
-| `stamp_system_v2_enabled` | Stamp system v2 tables (requires 0081 for full effect) |
-| `stamp_admin_award_enabled` | Admin stamp award endpoint |
-
-### Why beta needs it
-Migrations 0037 and 0042 seeded `passport_stamps_enabled` and `passport_memories_enabled` as `false` (feature-gate defaults). Without 0085, the passport stamps and memories features are globally disabled for all users, even though the UI, routes, and tables are fully deployed.
-
-### Dependency / risk
-- Apply last — after all table-creating migrations are confirmed.
-- `ON CONFLICT (flag) DO UPDATE SET enabled = true` — idempotent, safe to re-run.
-- **`stamp_system_v2_enabled` will become `true`** via this migration, but the stamp system v2 routes are gated by a separate check that also verifies the `stamp_definitions` table exists (from migration 0081, which is NOT applied yet). Setting the flag will not break anything — stamps routes will still return 503 until 0081 is applied separately.
-
-### SQL to apply
-Paste the full contents of `artifacts/api-server/src/migrations/0085_enable_passport_flags.sql` into Supabase SQL Editor.
-
-```sql
-INSERT INTO feature_flags (flag, enabled, description)
-VALUES
-  ('passport_stamps_enabled',    true, 'Passport stamps feature'),
-  ('passport_memories_enabled',  true, 'Passport memories feature'),
-  ('stamp_system_v2_enabled',    true, 'Stamp system v2 (user_stamps table)'),
-  ('stamp_admin_award_enabled',  true, 'Admin stamp award endpoint')
-ON CONFLICT (flag) DO UPDATE SET enabled = true;
-```
-
-### Verification SQL — run after applying
-```sql
-SELECT flag, enabled
-FROM feature_flags
-WHERE flag IN (
-  'passport_stamps_enabled',
-  'passport_memories_enabled',
-  'stamp_system_v2_enabled',
-  'stamp_admin_award_enabled'
-)
-ORDER BY flag;
--- Expected: 4 rows, all with enabled = true
-```
-
-> **Stop if:** Any of the 4 flags shows `enabled = false`. The passport stamps / memories UI will remain globally disabled.
-
----
-
-## Storage Bucket Setup
-
-Supabase Storage buckets must be created manually via the Supabase Dashboard.
-
-### How to create a bucket
-1. Go to **Supabase Dashboard → Storage**
-2. Click **New bucket**
-3. Set the bucket name exactly as listed below
-4. Set **Public bucket: ON** for all three buckets
-5. Leave file size and MIME type limits at default unless you have specific requirements
-6. Click **Create bucket**
-
----
-
-### Bucket 1 — `profile-media`
-
-| Property | Value |
-|----------|-------|
-| Bucket name | `profile-media` |
-| Visibility | **Public** |
-| Used by | Avatar upload (`POST /api/me/profile/avatar`), cover photo upload (`POST /api/me/profile/cover`) |
-| Path convention | `avatars/{userId}/{uuid}.{ext}`, `covers/{userId}/{uuid}.{ext}` |
-| Notes | `profile.ts` calls `ensureStorageBucket("profile-media")` at startup, which attempts to auto-create via service role. The bucket still needs to exist — `ensureStorageBucket` only handles the case where creation is idempotent, not the case where the API server lacks bucket-create permission. |
-
-**Verification:**
-```
-Supabase Dashboard → Storage → confirm "profile-media" appears in bucket list
-```
-Or via API:
 ```bash
-curl -H "apikey: <SUPABASE_ANON_KEY>" \
-  https://ajrurzioarfkagpuxfnb.supabase.co/storage/v1/bucket \
-  | grep profile-media
+gh workflow run beta-db.yml -f confirm=BOOTSTRAP-BETA
 ```
 
----
+Then follow it with `gh run watch`. The `confirm` input must be exactly
+`BOOTSTRAP-BETA`, or nothing runs.
 
-### Bucket 2 — `post-media`
+### Reset
 
-| Property | Value |
-|----------|-------|
-| Bucket name | `post-media` |
-| Visibility | **Public** |
-| Used by | Post image/video upload (`POST /api/media/upload`) |
-| Path convention | `posts/{userId}/{uuid}.{ext}` |
-| Accepted types | `image/jpeg`, `image/png`, `image/gif`, `image/webp`, `video/mp4` (enforced in route) |
-| Notes | No auto-create logic — bucket must exist before any post upload is attempted |
-
-**Verification:**
-```
-Supabase Dashboard → Storage → confirm "post-media" appears in bucket list
+```bash
+gh workflow run beta-db.yml -f confirm=BOOTSTRAP-BETA -f reset=RESET-BETA
 ```
 
----
+The reset runs as one transaction before the build: drop the scratch schema and
+the four app policies on `storage.objects`, drop every extension living in
+`public` (PostGIS objects are platform-owned, so dropping the schema alone would
+fail on them), `DROP SCHEMA public CASCADE`, `CREATE SCHEMA public`, and restore
+Supabase's default grants (`USAGE` to `anon, authenticated, service_role`,
+`ALL` to `postgres`, and `postgres`'s default privileges on tables, sequences
+and functions). It is refused when `auth.users` has any row — users are the
+one thing a reset destroys that the build cannot recreate. A `reset` value other
+than empty or `RESET-BETA` fails the preflight instead of running without it.
 
-### Bucket 3 — `memories`
+Use the reset after any failed run: batches commit one by one, so a failure
+partway leaves tables behind and the next plain run is refused as not empty.
 
-| Property | Value |
-|----------|-------|
-| Bucket name | `memories` |
-| Visibility | **Public** |
-| Used by | Memory media deletion cleanup (`DELETE /api/memories/:id` removes storage file on delete) |
-| Path convention | `{userId}/{uuid}.{ext}` (from memory media upload path) |
-| Notes | Not auto-created. If the bucket is missing, memory delete will throw a storage error (non-fatal — the DB row is still deleted, but the orphaned file warning will appear in logs) |
+## What it refuses, and why
 
-**Verification:**
-```
-Supabase Dashboard → Storage → confirm "memories" appears in bucket list
-```
+| Refusal | Exit | Why |
+| --- | --- | --- |
+| target ref is not `emfpckykpzfturllshly` | 2 | restoring a baseline over portava-ci or anything else is never intended |
+| production ref, anywhere | 2 | twice over: the allowlist's secondary assertion and the script's own check |
+| no Management API token | 2 | a build that did not run is not a skip |
+| `auth.users` not empty (even with reset) | 2 | a project people have signed in to is not a bootstrap target |
+| `public` not empty, no reset | 2 | the baseline is restored over whatever is there |
+| baseline shape changed | 2 | the skip rules must be re-read against a new dump |
+| snapshot missing, from another baseline, carrying an unlisted table, a non-NULL user-id column, or an enabled flag | 2 | the import accepts only what the plan allows |
+| `--apply-refused` for a file the applier does not refuse by shape, or before every earlier chain file is recorded | 2 | only the applier's refused files are hand-applied, and only where it stopped |
+| `--apply-refused` for a file that already has a ledger row | 0 (skips) | idempotent |
+| a statement, the census, an import, the ledger check, a verbatim apply or its ledger row failed | 1 | the log names the statement and the error |
 
-> **Stop if:** Any of the three buckets is missing after the creation step. The related upload/delete routes will fail in production without them.
+## What it does NOT configure
 
----
+These are separate steps, deliberately outside this workflow:
 
-## Required Environment Variables
+- **Auth**: providers, redirect URLs, SMTP, email templates, hooks, MFA, rate
+  limits. `auth.users` stays empty.
+- **Storage** beyond the bucket rows: CORS, image transformation, and any
+  per-bucket setting not in `id, name, public, file_size_limit,
+  allowed_mime_types`. No objects are copied.
+- **API keys** and the **runtime environment**: the beta API server's
+  `SUPABASE_URL`, service-role and anon keys, and the mobile app's
+  `EXPO_PUBLIC_*` values are set where those services are configured.
+- **Feature-flag policy**: every flag arrives OFF. Which flags beta turns on is
+  an explicit owner decision, made after the build.
+- Realtime publication membership, Edge Functions, database webhooks, Vault
+  secrets, scheduled jobs.
 
-Set these on the **deployed API server** (not just the local `.env` file). If you are deploying via Replit Deployments, set them in the Deployment environment variable panel.
+## What could stop the first run
 
-### Critical — app is broken without these
+In the order the workflow would meet them:
 
-| Variable | Where to get it | Used by |
-|----------|----------------|---------|
-| `SUPABASE_URL` | Supabase Dashboard → Settings → API → Project URL | All DB routes |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase Dashboard → Settings → API → `service_role` key (secret) | All DB writes, storage uploads |
-| `SESSION_SECRET` | Any strong random string (already set as Replit secret) | Express session middleware |
-| `PORT` | Set by workflow config (default 8080) | Express listen |
-
-> **Verify `SUPABASE_SERVICE_ROLE_KEY` is set:** `GET /api/healthz` should return HTTP 200. If it returns 503 with `{"error":"service unavailable"}`, the service role key is missing or wrong.
-
-### Important — AI features and admin routes degrade without these
-
-| Variable | Where to get it | What breaks if missing |
-|----------|----------------|----------------------|
-| `AI_INTEGRATIONS_OPENAI_API_KEY` | Replit AI Integrations proxy (see `.local/skills/ai-integrations-openai`) | Telegraph AI chat, Daily Brief generation, Compass feed |
-| `AI_INTEGRATIONS_OPENAI_BASE_URL` | Same as above | Same |
-| `COMPASS_TOKEN_SECRET` | Any strong random string | Compass feed token validation fails; Compass returns 401 |
-| `INTERNAL_API_SECRET` | Any strong random string | Internal admin API calls rejected |
-
-### Mobile app — must be set in `travel-buddy-standalone/.env.local`
-
-| Variable | Value |
-|----------|-------|
-| `EXPO_PUBLIC_SUPABASE_URL` | Same as `SUPABASE_URL` |
-| `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Supabase Dashboard → Settings → API → `anon` key (use `sb_publishable_*` format) |
-| `EXPO_PUBLIC_API_BASE_URL` | Deployed API server URL (e.g. `https://your-app.replit.app/api`) |
-
-### Tunable — have safe defaults, set if you want custom values
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DAILY_BRIEF_RETENTION_DAYS` | `60` | Days to keep daily brief rows |
-| `DAILY_BRIEF_CLEANUP_INTERVAL_HOURS` | `24` | How often the cleanup job runs |
-| `WEATHER_CACHE_RETENTION_HOURS` | Internal default | Weather cache TTL |
-| `MUTE_RATE_LIMIT_PER_DAY` | Internal default | Mute actions per user per day |
-| `REPORT_RATE_LIMIT_PER_HOUR` | Internal default | Report submissions per user per hour |
-| `LOG_LEVEL` | `info` | Pino log level (`debug`, `info`, `warn`, `error`) |
-| `NODE_ENV` | `development` | Set to `production` in deployment |
-| `TICKETMASTER_API_KEY` | — | External event discovery; returns empty results if missing |
-| `TRANSLATION_ENABLED` | `false` | Enable/disable message translation pipeline |
-
----
-
-## Admin User Bootstrap
-
-At least one user must have `role = 'admin'` in the `profiles` table for admin routes to work (`/api/admin/*`, `/api/feature-flags`, stamp award admin).
-
-### Step 1 — Find the user to promote
-
-```sql
--- Find by email (replace with the admin user's email)
-SELECT id, email, username, role
-FROM profiles
-WHERE email = 'your-admin-email@example.com';
--- Note the UUID in the id column
-```
-
-If profiles does not have an email column, query via auth.users:
-```sql
-SELECT p.id, p.username, p.role, u.email
-FROM profiles p
-JOIN auth.users u ON u.id = p.id
-WHERE u.email = 'your-admin-email@example.com';
-```
-
-### Step 2 — Promote to admin
-
-```sql
--- Replace the UUID with the actual user ID from Step 1
-UPDATE profiles
-SET role = 'admin'
-WHERE id = '<paste-user-uuid-here>';
-```
-
-> **Caution:** Only promote users you intend to have full admin access. Admin routes include: moderation actions, feature flag control, stamp award, compass config.
-
-### Step 3 — Verify
-
-```sql
-SELECT id, username, role
-FROM profiles
-WHERE role = 'admin';
--- Expected: at least 1 row
-```
-
-> **Stop if:** 0 rows returned. Admin routes (`GET /api/feature-flags`, `POST /api/admin/*`) will return 403 for all users until an admin exists.
-
----
-
-## Final Post-Apply Verification Checklist
-
-Run all queries below in **Supabase SQL Editor** after all steps above are complete.
-
-```sql
--- ── 1. Trip sub-resource tables (0079) ────────────────────────────────────────
-SELECT COUNT(*) AS trip_sub_table_count
-FROM information_schema.tables
-WHERE table_schema = 'public'
-  AND table_name IN (
-    'trip_budget', 'trip_documents', 'trip_join_requests',
-    'trip_invite_links', 'trip_saved_places', 'trip_notes',
-    'trip_checklists', 'trip_checklist_items', 'trip_activity_log',
-    'trip_reminders', 'trip_destinations'
-  );
--- Expected: 11
-
--- ── 2. Event extension tables (0080) ──────────────────────────────────────────
-SELECT COUNT(*) AS event_ext_table_count
-FROM information_schema.tables
-WHERE table_schema = 'public'
-  AND table_name IN (
-    'event_attendees', 'event_saves', 'event_invites', 'event_cohosts',
-    'event_posts', 'event_media', 'event_reports', 'event_activity_log',
-    'event_share_links', 'event_reminders', 'event_drafts'
-  );
--- Expected: 11
-
--- ── 3. Wishlist table (0088) ───────────────────────────────────────────────────
-SELECT table_name FROM information_schema.tables
-WHERE table_schema = 'public' AND table_name = 'wishlist_places';
--- Expected: 1 row
-
--- ── 4. OSM column (0086) ──────────────────────────────────────────────────────
-SELECT column_name FROM information_schema.columns
-WHERE table_name = 'discovery_places' AND column_name = 'osm_id';
--- Expected: 1 row
-
--- ── 5. Decrement RPC (0089) ───────────────────────────────────────────────────
-SELECT routine_name, security_type FROM information_schema.routines
-WHERE routine_name = 'decrement_discovery_place_saved_count'
-  AND routine_schema = 'public';
--- Expected: 1 row, security_type = DEFINER
-
--- ── 6. Passport feature flags (0085) ──────────────────────────────────────────
-SELECT flag, enabled FROM feature_flags
-WHERE flag IN ('passport_stamps_enabled', 'passport_memories_enabled')
-ORDER BY flag;
--- Expected: 2 rows, both enabled = true
-
--- ── 7. Trip expansion columns (0077) ──────────────────────────────────────────
-SELECT COUNT(*) AS trip_col_count FROM information_schema.columns
-WHERE table_name = 'trips'
-  AND column_name IN ('trip_notes', 'trip_type', 'destination_lat', 'show_destination_city');
--- Expected: 4
-
--- ── 8. Trip member expansion (0078) ───────────────────────────────────────────
-SELECT COUNT(*) AS tm_col_count FROM information_schema.columns
-WHERE table_name = 'trip_members' AND column_name IN ('status', 'permissions', 'joined_at');
--- Expected: 3
-
--- ── 9. Admin user ─────────────────────────────────────────────────────────────
-SELECT COUNT(*) AS admin_count FROM profiles WHERE role = 'admin';
--- Expected: >= 1
-
--- ── 10. All flags summary ─────────────────────────────────────────────────────
-SELECT flag, enabled FROM feature_flags
-WHERE flag IN (
-  'passport_stamps_enabled', 'passport_memories_enabled',
-  'stamp_system_v2_enabled', 'stamp_admin_award_enabled'
-)
-ORDER BY flag;
--- Expected: 4 rows, all enabled = true
-```
-
-> **All 10 checks must pass before opening the app to beta users.**
-> If any check fails, re-apply the corresponding migration and re-run the check before continuing.
-
----
-
-## Smoke Test Checklist
-
-After all migrations and setup steps are applied, perform these manual tests with a real device on the production build:
-
-| # | Test | Pass criteria |
-|---|------|--------------|
-| ☐ 1 | **Create a trip** | Trip appears in Trips tab; title, destination, dates saved correctly |
-| ☐ 2 | **Edit trip** | Open trip → Edit → change title + destination → save → changes persist on reload |
-| ☐ 3 | **Trip privacy settings** | Edit trip → toggle "Show destination city" → save → verify via a second account's view |
-| ☐ 4 | **Delete trip** | Trip disappears from Trips tab |
-| ☐ 5 | **Add trip plan item** | Trip detail → Plan tab → add item → item appears in list |
-| ☐ 6 | **Trip join request** | Second user requests to join a private trip → first user sees and approves → second user appears in member list |
-| ☐ 7 | **Event invite** | Create event → invite a user → invited user sees event in notification/inbox |
-| ☐ 8 | **Event co-host** | Add co-host to event → co-host sees elevated access |
-| ☐ 9 | **Event media upload** | Attach media to event → media appears in event detail |
-| ☐ 10 | **Save place to wishlist** | Tap save on a discovery place (OSM or DB-sourced) → appears in wishlist |
-| ☐ 11 | **Unsave wishlist place** | Remove saved place → disappears from wishlist → `saved_count` decrements |
-| ☐ 12 | **Passport stamps load** | Navigate to Passport tab → stamps section loads without error |
-| ☐ 13 | **Passport memories load** | Passport tab → memories section loads without error |
-| ☐ 14 | **Upload profile photo** | Edit Profile → upload avatar → new photo appears in profile header |
-| ☐ 15 | **Upload post media** | Create post with image → image appears in post feed |
-| ☐ 16 | **Admin route access** | Log in as admin user → `GET /api/feature-flags` returns 200 with flag list (not 403) |
-| ☐ 17 | **Non-admin route blocked** | Log in as regular user → `GET /api/feature-flags` returns 403 |
-| ☐ 18 | **Blocked user not in My Circle** | Block a user → they no longer appear in My Circle list |
-| ☐ 19 | **Unblock from profile** | View blocked user's profile → tap Unblock → user is unblocked |
-| ☐ 20 | **Accept trip invite navigates** | Trips tab → pending invite → accept → lands on trip detail screen |
-
----
-
-## What NOT to Apply Yet
-
-The following migrations and features are intentionally deferred. Do not apply them as part of the beta launch.
-
-| Item | Why deferred | When to apply |
-|------|-------------|---------------|
-| **`0081_stamp_system_v2.sql`** | Stamp system v2 tables — routes are gated by `stamp_system_v2_enabled` flag and return 503 cleanly. Feature is not in beta scope. | When stamp system v2 is ready for users |
-| **`0082_stamp_definitions_v2.sql`** | Seeds stamp definitions — depends on 0081 tables existing | Apply immediately after 0081 |
-| **RAB 501 stubs** (reschedule, dispute CRUD, refund-eligibility, no-show in `rentABuddy.ts`) | Payment/dispute module not implemented. No UI calls these routes. | When payment module is built |
-| **`upsert_city_stamp` and `increment_counter` functions** | Not found in any local migration file. Origin unknown. Referenced only by stamp system (gated) and hidden gems feature. Not blocking for beta. | Verify in Supabase dashboard; write migration files if found missing |
-| **Redis / queue infrastructure** | `REDIS_URL` env var is referenced in code but no active Redis usage found. All background work is in-process `setInterval`. | When scale requires it |
-| **Translation pipeline** | `TRANSLATION_ENABLED` defaults to `false`. No beta requirement. | When translation feature is ready |
-
----
-
-*Runbook generated 2026-07-03. Source: `docs/beta-closeout-report.md`.*
-*All SQL is idempotent where noted — safe to re-run if a step was interrupted.*
-*Confirm production status of every item in this document in the Supabase dashboard before treating any step as complete.*
+- **Token scope.** The beta job reads `SUPABASE_PROJECT_TOKEN`, but in that
+  job the name is mapped from the environment secret
+  `BETA_SUPABASE_PROJECT_TOKEN` — a Management API token scoped to
+  portava-beta. The CI job's `SUPABASE_PROJECT_TOKEN` is project-scoped to
+  portava-ci (docs/ci/README.md § "Setting up the non-production project"
+  prescribes that), and the first dispatch on 2026-10-06 (run 37462712102)
+  measured the consequence: the Management API answered 403 on beta's first
+  query and nothing was written. Until the beta secret exists the job fails at
+  its preflight with a message naming it; nothing in code works around a
+  missing or wrongly scoped token.
+- **Management API limits.** Baseline batches are 5–108 KB of SQL (32 KB on
+  average); each call has a 10-minute client timeout. A request that does not
+  complete leaves its batch's outcome unknown — re-dispatch with the reset
+  rather than retrying over it.
+- **Chain order — merge #632 first.** The beta apply needs the declared
+  apply-order overrides added to the applier by PR #632 (its entries are
+  documented there). Without it, the chain apply stops at the first
+  chain-order defect.
+- **The refused-by-shape files.** Handled by the loop above. A verbatim apply
+  that fails stops the loop with the file's own error.
+- **Other replay gaps.** `artifacts/api-server/scripts/local-db/KNOWN_UNREPLAYABLE.json`
+  records the files that fail when the chain is replayed onto this baseline on
+  plain PostgreSQL. `2490` (the `MAINTAIN` privilege) is PostgreSQL-16-only and
+  does not apply to beta's 17; `2970` needs the stamp slugs the reference
+  snapshot now supplies; the intel files (`2276`–`2292`, `3002`, `3003`,
+  `3310`) and `2140` are the most likely next stops if #632's overrides do not
+  cover them.

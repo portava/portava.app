@@ -55,6 +55,8 @@ import type { SensitivityLevel } from "../services/hiddenGems/HiddenGemPrivacyGu
 const REAL_COLUMNS: Record<string, ReadonlySet<string>> = Object.fromEntries(
   Object.entries({
     blocks: "blocked_id blocker_id created_at id",
+    // Embedded by the auth gate's profiles read (lib/accountStateGate.ts); read on the testing database 2026-10-03.
+    user_account_states: "created_at expires_at id reason set_by state updated_at user_id",
     canonical_locations:
       "aliases city country country_code created_at display_name id kind lat lng name " +
       "normalized_name postal_code provider_ids region search_key updated_at",
@@ -457,6 +459,21 @@ beforeEach(() => {
 
 // ── Schema fidelity of the emitters themselves ────────────────────────────────
 
+/** Split a select list on its TOP-LEVEL commas (an embed's own column list stays whole). */
+function splitTopLevel(list: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of list) {
+    if (ch === "(") depth++;
+    if (ch === ")") depth--;
+    if (ch === "," && depth === 0) { out.push(cur.trim()); cur = ""; continue; }
+    cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out.filter(Boolean);
+}
+
 describe("discovery search — emitter SELECTs and filters name only real schema", () => {
   it("every column in every emitter SELECT exists in the live schema", async () => {
     setup({
@@ -478,8 +495,17 @@ describe("discovery search — emitter SELECTs and filters name only real schema
       const real = REAL_COLUMNS[table];
       if (!real) continue; // tables outside this lane's fixtures
       for (const list of lists) {
-        for (const col of list.split(",").map((c) => c.trim()).filter(Boolean)) {
-          if (!real.has(col)) unknown.push(`${table}.${col}`);
+        for (const item of splitTopLevel(list)) {
+          // A PostgREST EMBED (`rel!fk_hint(cols)`, e.g. the auth gate's
+          // user_account_states read) names a RELATION, not a column of this
+          // table: check its columns against the embedded table instead.
+          const embed = /^([a-z_]+)(?:![a-z_]+)?\((.*)\)$/.exec(item);
+          if (embed) {
+            const embReal = REAL_COLUMNS[embed[1]!];
+            if (embReal) for (const c of splitTopLevel(embed[2]!)) if (!embReal.has(c)) unknown.push(`${embed[1]}.${c}`);
+            continue;
+          }
+          if (!real.has(item)) unknown.push(`${table}.${item}`);
         }
       }
     }

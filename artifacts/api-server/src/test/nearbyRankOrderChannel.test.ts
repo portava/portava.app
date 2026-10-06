@@ -77,6 +77,7 @@ function inputsFor(personId: string, km: number): ReachablePersonInputs {
     blocked: false,
     blockStateKnown: true,
     personInvisible: VISIBLE,
+    personInProtectedZone: false,
     viewerInvisible: VISIBLE,
     personPresenceConsent: true,
     availabilityPublished: true,

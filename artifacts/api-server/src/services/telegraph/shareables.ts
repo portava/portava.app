@@ -270,13 +270,46 @@ const loadPost: Loader = async (client, id, viewerId) => {
   const mine = r.author_id === viewerId;
   if (!mine && r.visibility !== "public") return { state: UNAVAILABLE("private"), projection: null };
   const body = typeof r.content === "string" ? r.content : "";
+  // A BLOCK, EITHER WAY, REFUSES THE POST — the rule every post route already
+  // applies ("Bidirectional block check — matches /stamps access control",
+  // routes/posts.ts), so this door is not the weaker one. Census-telegraph
+  // §45c (verifier finding 1): the byline below used to show a blocker's handle
+  // to the person they blocked, through a door any thread member can call with
+  // any post id on the service client. An unreadable block read is UNKNOWN,
+  // never "no block", as loadProfile treats it.
+  if (!mine && typeof r.author_id === "string") {
+    const { data: blockRows, error: blockErr } = await client
+      .from("blocks")
+      .select("blocker_id")
+      .or(`and(blocker_id.eq.${viewerId},blocked_id.eq.${r.author_id}),and(blocker_id.eq.${r.author_id},blocked_id.eq.${viewerId})`)
+      .limit(1);
+    if (blockErr) return { state: UNAVAILABLE("unknown"), projection: null };
+    if (((blockRows as unknown[]) ?? []).length > 0) return { state: UNAVAILABLE("unauthorized"), projection: null };
+  }
+  // The author's CURRENT public handle, read at resolve time — so a legacy post
+  // card can say whose post it is without drawing the sender's snapshot of it
+  // (census T413/T448). Only an ACTIVE account is named: loadProfile degrades a
+  // banned, suspended or deleted account, and the byline is that profile's name
+  // on another card. A failed or empty read leaves the subtitle null; it never
+  // fails the projection and never substitutes a stored name.
+  let byline: string | null = null;
+  if (typeof r.author_id === "string") {
+    const { data: author, error: authorErr } = await client
+      .from("profiles")
+      .select("handle, account_status")
+      .eq("id", r.author_id)
+      .maybeSingle();
+    const a = !authorErr && author ? (author as Row) : null;
+    const active = a !== null && ((a.account_status as string | null) ?? "active") === "active";
+    if (active && typeof a.handle === "string" && a.handle.length > 0) byline = `@${a.handle}`;
+  }
   return {
     state: AVAILABLE(String(r.status)),
     projection: proj(
       "POST",
       id,
       body.slice(0, 80) || "Post",
-      null,
+      byline,
       Array.isArray(r.media_urls) && r.media_urls.length > 0 ? String(r.media_urls[0]) : null,
       (r.updated_at as string) ?? null,
     ),

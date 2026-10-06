@@ -87,16 +87,16 @@ export function MissedCheckinPrompt({ visible, session, onDismiss, onSafe, onExt
             </Pressable>
 
             {/* Level 1+: Alert Trusted Circle */}
-            {session.escalationLevel >= 1 && session.trustedCircleEnabled && (
-              <Pressable style={[styles.btn, styles.btnSecondary]} onPress={() => { onAlertContacts?.(); onDismiss(); }}>
+            {session.escalationLevel >= 1 && session.trustedCircleEnabled && onAlertContacts && ( // no handler = no button: an alert that goes nowhere is worse than none
+              <Pressable style={[styles.btn, styles.btnSecondary]} onPress={() => { onAlertContacts(); onDismiss(); }}>
                 <Shield size={15} color={color.ink} />
                 <Text style={styles.btnSecondaryText}>Alert my Trusted Circle</Text>
               </Pressable>
             )}
 
             {/* Level 2+: Share location */}
-            {session.escalationLevel >= 2 && session.liveShareEnabled && (
-              <Pressable style={[styles.btn, styles.btnSecondary]} onPress={() => { onShareLocation?.(); onDismiss(); }}>
+            {session.escalationLevel >= 2 && session.liveShareEnabled && onShareLocation && (
+              <Pressable style={[styles.btn, styles.btnSecondary]} onPress={() => { onShareLocation(); onDismiss(); }}>
                 <Text style={styles.btnSecondaryText}>Share my approximate location</Text>
               </Pressable>
             )}
@@ -116,7 +116,7 @@ export function MissedCheckinPrompt({ visible, session, onDismiss, onSafe, onExt
         </View>
       </Modal>
 
-      <EmergencyHelpSheet visible={showEmergency} onClose={() => setShowEmergency(false)} />
+      <EmergencyHelpSheet visible={showEmergency} onClose={() => setShowEmergency(false)} tripId={session.tripId} onShareLocation={onShareLocation} />
     </>
   );
 }

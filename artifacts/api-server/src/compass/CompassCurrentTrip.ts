@@ -166,6 +166,72 @@ function toCandidate(row: any): CompassTripCandidate {
 }
 
 /**
+ * THE MEMBERSHIP ROLE SETS, named rather than inlined — CT-02.
+ *
+ * `trip_members.role` is `member_role`, and three Compass surfaces asked it
+ * three different questions with three different role lists. The lists stay
+ * DIFFERENT, as named constants in this one module, for the reason §15.4 gave
+ * for keeping `TOOL_TRIP_STATUSES` and `CONTEXT_TRIP_STATUSES` apart: which
+ * roles count as "on this trip" is a product decision nobody has written down,
+ * and unifying them here would be a user-visible behaviour change made by a
+ * lane with no spec to make it from.
+ *
+ * What CT-02 buys is that the READ is one read, in one place, that cannot
+ * answer "not a member of anything" because the table was unreadable.
+ */
+/** Selection: who may have a *current* trip. `resolveUserTrips`'s own list. */
+export const SELECTION_TRIP_ROLES = ["owner", "member"] as const;
+/** The social graph's wider list — a `viewer` is on the trip for context purposes. */
+export const SOCIAL_CONTEXT_TRIP_ROLES = ["owner", "co_host", "member", "viewer"] as const;
+
+/**
+ * Three-valued for the same reason `CurrentTripOutcome` is: an unreadable
+ * `trip_members` is a fact about the database, and a caller that cannot tell it
+ * from "this user is on no trips" will state the second having observed the
+ * first. There is no `none` arm because an empty id list is a perfectly good
+ * `ok` answer — the distinction that matters is read / did-not-read.
+ */
+export type MemberTripIdsOutcome =
+  | { status: "ok"; tripIds: string[] }
+  | { status: "unread"; reason: string };
+
+/**
+ * The trip ids this user is on, by role — the ONE read of `trip_members` that
+ * answers "which trips is this user on" for all of Compass.
+ *
+ * `acceptedOnly` is explicit and defaults to the *wider* answer because that is
+ * what `resolveUserTrips` has always done (it filters nothing on `status`, and
+ * `trip_members.status` is NOT NULL DEFAULT 'accepted', so the two differ only
+ * where a row is `invited` / `declined` / `removed` / `left`). A caller that
+ * wants the narrower set says so; nothing is narrowed on a caller's behalf,
+ * because silently narrowing an authorization set is the mirror image of the
+ * defect this module exists to stop.
+ */
+export async function resolveMemberTripIds(
+  sc: SupabaseClient,
+  userId: string,
+  opts: { roles: readonly string[]; acceptedOnly?: boolean },
+): Promise<MemberTripIdsOutcome> {
+  // An unreadable membership table must NOT read as "not a member of
+  // anything": that silently narrows the union and the caller then answers
+  // about the wrong trip, or about none.
+  try {
+    const { data: memberRows, error: memberErr } = await sc
+      .from("trip_members")
+      .select("trip_id, role, status")
+      .eq("user_id", userId)
+      .in("role", opts.roles as string[]);
+    if (memberErr) return { status: "unread", reason: "trip_members could not be read" };
+    const rows = ((memberRows ?? []) as any[]).filter((r) =>
+      opts.acceptedOnly === true ? r.status == null || r.status === "accepted" : true,
+    );
+    return { status: "ok", tripIds: rows.map((r) => String(r.trip_id)) };
+  } catch {
+    return { status: "unread", reason: "trip_members could not be read" };
+  }
+}
+
+/**
  * Every trip the user owns or is an accepted member of, in the given statuses.
  *
  * Exported because two callers want the SET (Sense and Live ask "any of my
@@ -177,21 +243,9 @@ export async function resolveUserTrips(
   userId: string,
   statuses: readonly string[] = TOOL_TRIP_STATUSES,
 ): Promise<{ status: "ok"; trips: CompassTripCandidate[] } | { status: "unread"; reason: string }> {
-  // Membership. An unreadable membership table must NOT read as "not a member
-  // of anything": that silently narrows the union and the caller then answers
-  // about the wrong trip, or about none.
-  let memberTripIds: string[] = [];
-  try {
-    const { data: memberRows, error: memberErr } = await sc
-      .from("trip_members")
-      .select("trip_id, role")
-      .eq("user_id", userId)
-      .in("role", ["owner", "member"]);
-    if (memberErr) return { status: "unread", reason: "trip_members could not be read" };
-    memberTripIds = ((memberRows ?? []) as any[]).map((r) => String(r.trip_id));
-  } catch {
-    return { status: "unread", reason: "trip_members could not be read" };
-  }
+  const membership = await resolveMemberTripIds(sc, userId, { roles: SELECTION_TRIP_ROLES });
+  if (membership.status === "unread") return membership;
+  const memberTripIds = membership.tripIds;
 
   let owned: any[] = [];
   try {

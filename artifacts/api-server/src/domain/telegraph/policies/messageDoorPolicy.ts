@@ -163,16 +163,19 @@ export function sendLimiterId(bucket: SendBucket, tier: string): string {
 /* ───────────────────────────── 3. the door registry ───────────────────────────── */
 
 /**
- * The five gates, in the words `lib/telegraphThreadWrite.ts` uses for them.
+ * The six gates, in the words `lib/telegraphThreadWrite.ts` uses for them.
  *
- *   stop        `disable_messaging`, fail-closed on an unreadable or absent read
- *   membership  ACTIVE membership (`left_at IS NULL`)
- *   block       the 1:1 block guard, fail-closed on an unreadable roster
- *   e2ee        an E2EE thread never receives server-readable plaintext
- *   rate        §22's adaptive burst limit
+ *   stop         `disable_messaging`, fail-closed on an unreadable or absent read
+ *   membership   ACTIVE membership (`left_at IS NULL`)
+ *   block        the 1:1 block guard, fail-closed on an unreadable roster
+ *   e2ee         an E2EE thread never receives server-readable plaintext
+ *   restriction  OD-TRUST-5: a Trust restriction, decided by restrictionSendPolicy.ts
+ *                (the same function the capabilities projection reads); never
+ *                refuses a safety send; an unreadable state is a retryable refusal
+ *   rate         §22's adaptive burst limit
  */
-export type DoorGate = "stop" | "membership" | "block" | "e2ee" | "rate";
-export const DOOR_GATES: readonly DoorGate[] = ["stop", "membership", "block", "e2ee", "rate"];
+export type DoorGate = "stop" | "membership" | "block" | "e2ee" | "restriction" | "rate";
+export const DOOR_GATES: readonly DoorGate[] = ["stop", "membership", "block", "e2ee", "restriction", "rate"];
 
 export type MessageWriterClass =
   /** A person chose to put this row in this thread. All five gates apply. */
@@ -227,13 +230,6 @@ export const MESSAGE_WRITERS: readonly MessageWriterDeclaration[] = [
       "Also the request-accept preview insert, which re-states a message the request already carried.",
   },
   {
-    file: "routes/telegraphKinds.ts",
-    writer: "user_door",
-    guard: "shared",
-    owner: "telegraph",
-    note: "POST /threads/:id/typed-messages. SAFETY is counted in its own bucket (sendBucketForKind).",
-  },
-  {
     file: "routes/telegraphVoice.ts",
     writer: "user_door",
     guard: "shared",
@@ -248,11 +244,16 @@ export const MESSAGE_WRITERS: readonly MessageWriterDeclaration[] = [
     note: "POST /threads/:id/share.",
   },
   {
-    file: "routes/telegraphCoordination.ts",
+    file: "services/telegraph/threadEnvelopeWrites.ts",
     writer: "user_door",
     guard: "shared",
     owner: "telegraph",
-    note: "POST /threads/:id/coordination — decisions, votes, statuses, acknowledgements, sessions.",
+    note:
+      "The ONE writer of an envelope message for three doors: POST /threads/:id/typed-messages (routes/telegraphKinds.ts; " +
+      "SAFETY counted in its own bucket by sendBucketForKind), POST /threads/:id/coordination (routes/telegraphCoordination.ts — " +
+      "decisions, votes, statuses, acknowledgements, transitions) and POST /telegraph/commands CREATE_DECISION / " +
+      "SET_COORDINATION_STATUS / SHARE_LOCATION (server/telegraph/commandRoute.ts). It does not authorize and says so; " +
+      "every caller runs the shared guard first. The suite checks the CALLERS.",
   },
   {
     file: "services/telegraph/coordinationSessions.ts",
@@ -269,7 +270,7 @@ export const MESSAGE_WRITERS: readonly MessageWriterDeclaration[] = [
   {
     file: "routes/telegraphChat.ts",
     writer: "user_door",
-    missing: ["stop", "block", "rate"],
+    missing: ["stop", "block", "restriction", "rate"],
     owner: "telegraph",
     note:
       "start-poll from an AI suggestion. Holds membership and the E2EE refusal; a person in a 1:1 thread with " +
@@ -278,7 +279,7 @@ export const MESSAGE_WRITERS: readonly MessageWriterDeclaration[] = [
   {
     file: "routes/hiddenGems.ts",
     writer: "user_door",
-    missing: ["stop", "block", "e2ee", "rate"],
+    missing: ["stop", "block", "e2ee", "restriction", "rate"],
     owner: "discovery",
     note:
       "POST /hidden-gems/:id/share-telegraph. Membership only, the membership read's error is not bound, the " +
@@ -288,20 +289,26 @@ export const MESSAGE_WRITERS: readonly MessageWriterDeclaration[] = [
   {
     file: "routes/highlights.ts",
     writer: "user_door",
-    missing: ["stop", "e2ee", "rate"],
+    guard: "shared",
     owner: "highlights-memories",
     note:
-      "The highlight reply. It resolves messaging permission (which covers blocks) but writes the reply as " +
-      "plaintext into the existing DM, which may be end-to-end encrypted.",
+      "POST /highlights/:id/reply. CLOSED 2026-10-05 (lane T2): it runs the shared guard on the resolved DM " +
+      "before either insert, and a DM thread the request itself created is removed again when the guard " +
+      "refuses. It used to lack the stop, the E2EE refusal and the burst limit (it wrote plaintext into a DM " +
+      "that may be end-to-end encrypted), and — because canMessage does not read Trust — let a person under a " +
+      "messaging restriction open a new conversation. The guard call is on existing lines (lane A2 appends to " +
+      "this file).",
   },
   {
     file: "lib/threadMessage.ts",
     writer: "user_door",
-    missing: ["stop", "block", "rate"],
+    guard: "shared",
     owner: "layover",
     note:
-      "postPlainThreadMessage, called by the layover Telegraph route into a TRIP thread after an accepted-" +
-      "membership check. Refuses E2EE. A trip thread is a group, so the pairwise block guard would not fire.",
+      "postPlainThreadMessage, called by the layover Telegraph route into a TRIP thread. CLOSED 2026-10-05 " +
+      "(lane T2): it runs the shared guard before anything else, so the stop, the block, the restriction and " +
+      "the burst limit hold here too and active membership is re-checked rather than trusted to the caller. " +
+      "Its result vocabulary keeps `e2ee` and `unverifiable` for the caller's existing branches.",
   },
 
   // ── server-authored rows ───────────────────────────────────────────────────
@@ -318,7 +325,7 @@ export const MESSAGE_WRITERS: readonly MessageWriterDeclaration[] = [
  * User doors that are known not to hold every gate. A CEILING: it may only fall.
  * Closing a door means removing its `missing` list and lowering this by one.
  */
-export const KNOWN_WEAK_DOOR_CEILING = 4;
+export const KNOWN_WEAK_DOOR_CEILING = 2; // 4 → 2 on 2026-10-05 (lane T2: highlights reply, lib/threadMessage). Lane C's branch closes the other two (telegraphChat start-poll, hiddenGems share): merged, this must read 0.
 
 export function knownWeakDoors(): readonly MessageWriterDeclaration[] {
   return MESSAGE_WRITERS.filter((d) => d.writer === "user_door" && (d.missing?.length ?? 0) > 0);

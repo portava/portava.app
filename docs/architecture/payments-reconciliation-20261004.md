@@ -151,8 +151,8 @@ vocabulary admits three of `09` §3's eight states and can never produce `payabl
 |---|---|---|
 | `routes/creatorEconomy.ts` | 3 creator-own reads, e.g. `artifacts/api-server/src/routes/creatorEconomy.ts:64#asyncHandler(async` | `requireUser` + the flag; payout eligibility **deliberately not served** |
 | `routes/adminCreatorLedger.ts` | 5: audit read, hold, release, recompute, `artifacts/api-server/src/routes/adminCreatorLedger.ts:101#asyncHandler(async` | `artifacts/api-server/src/routes/adminCreatorLedger.ts:85#requireAdmin(req,` + the flag re-checked in every service function |
-| `routes/rentABuddy.ts` pay | `pay-deposit` / `pay-full`, both **503**, no side effects (`artifacts/api-server/src/routes/rentABuddy.ts:2292#async`) | none needed — constant responses |
-| `routes/rentABuddy.ts` refund | `refund-eligibility`, **501** (`artifacts/api-server/src/routes/rentABuddy.ts:4076#async`) | none |
+| `routes/rentABuddy.ts` pay | `pay-deposit` / `pay-full`, both **503**, no side effects (`artifacts/api-server/src/routes/rentABuddy.ts:2298#async`) | none needed — constant responses |
+| `routes/rentABuddy.ts` refund | `refund-eligibility`, **501** (`artifacts/api-server/src/routes/rentABuddy.ts:4082#async`) | none |
 | `routes/rentABuddySpec.ts` payouts | hold (`artifacts/api-server/src/routes/rentABuddySpec.ts:2446#asyncHandler(async`), release (`:2495#asyncHandler(async`) | `requireAdmin`; now **compare-and-swap** (§3) |
 | `routes/verification.ts` | session create, status, webhook | rate-limited, signature-enforced, key-mode-gated |
 
@@ -221,7 +221,7 @@ It imports nothing, and no ledger module imports it.
 
 ### 1.7 Tests
 
-Nineteen files, **all registered in the main runner** (`artifacts/api-server/package.json:89#SUPABASE_URL=http://127.0.0.1:9`)
+Nineteen files, **all registered in the main runner** (`artifacts/api-server/package.json:93#SUPABASE_URL=http://127.0.0.1:9`)
 — so they run in CI's unstarvable static tier, not only on a developer's machine.
 
 The two that bear directly on §11: `test/paymentsLiveGuard.test.ts` (694 lines, A–H) drives the real
@@ -278,7 +278,7 @@ decision; nothing implements it.**
 - **"Shown before checkout" — unknown.** Not established: this pass did not trace the mobile
   checkout surface, and the 503 on `pay-deposit` means no checkout executes.
 - **No deposit — CONTRADICTED in code.** A booking in `deposit_plus_cash` mode still computes a
-  30 % deposit from a hard-coded literal (`artifacts/api-server/src/routes/rentABuddy.ts:2160#Number(buddyProfile.hourly_rate_usd)`
+  30 % deposit from a hard-coded literal (`artifacts/api-server/src/routes/rentABuddy.ts:2166#Number(buddyProfile.hourly_rate_usd)`
   and the three lines below it), ignoring the `deposit_percent` columns that exist. Unreachable
   today because `rent_buddy_enabled` is FALSE, but the first release would ship it.
 
@@ -292,7 +292,7 @@ compare-and-swap (§3).
 
 ### D5 Refunds — "full refund when the provider cancels, the service is unavailable, or a safety issue is upheld… don't promise fees or deposits are non-refundable" → **ABSENT**
 
-`refund-eligibility` is 501 (`artifacts/api-server/src/routes/rentABuddy.ts:4076#async`) and there
+`refund-eligibility` is 501 (`artifacts/api-server/src/routes/rentABuddy.ts:4082#async`) and there
 is **no refund-execution route at all**. What exists is ledger **reversal** — a different thing,
 correctly distinguished: `POST /admin/creator-ledger/transactions/reverse` appends negating entries
 and never edits or deletes. Two residual hazards, both pre-existing: seeded support-template text
@@ -317,7 +317,7 @@ has never fired.
 Verified in §3.3. No provider, no interface, no rate table, no per-country configuration, no
 withholding. `tax_withheld` exists only as a reserved doc concept and is **not** in the ledger's
 account CHECK. The single tax-adjacent artifact is a hardcoded disclaimer shown to buddies
-(`artifacts/api-server/src/routes/rentABuddy.ts:7547#documents`) — which is honest, and is the whole
+(`artifacts/api-server/src/routes/rentABuddy.ts:7575#documents`) — which is honest, and is the whole
 of it.
 
 ### D8 Identity — "no unverified bookings; identity and payment-provider verification before offering or booking; Sumsub behind a provider interface, with per-country availability checks" → **PARTIAL**
@@ -354,13 +354,20 @@ of it.
   inconsistently — 2901 via `SET NULL` (which the append-only trigger refuses, failing with the
   wrong cause) and 2920/3387 via `CASCADE` (which silently deleted the whole creator ledger).
 - **Retention period: ABSENT.** No statutory period is stated anywhere for these tables.
-- **A blind spot this pass found.** None of the five new ledger/attribution/audit tables appears in
-  `lib/deletionDispositions.ts` at all — not in `RETAINED_WITH_REASON`, not even in
-  `UNCLASSIFIED_BACKLOG`, which that file is explicit is *"NOT a decision"*. The three legacy money
-  tables *are* in that backlog (`artifacts/api-server/src/lib/deletionDispositions.ts:430#rent_buddy_earnings_ledger`,
-  `:437#rent_buddy_payouts`, `:445#rent_buddy_tips`). Because the new tables are absent from the
-  production baseline the coverage guard reads, they are unclassified **and** green — the
-  deletion-coverage blind spot, recurring on the money tables.
+- **A blind spot this pass found — since CLOSED, and the hole behind it measured.** As graded here,
+  none of the five new ledger/attribution/audit tables appeared in `lib/deletionDispositions.ts` at
+  all — not in `RETAINED_WITH_REASON`, not even in `UNCLASSIFIED_BACKLOG`, which that file is
+  explicit is *"NOT a decision"* — while the three legacy money tables *are* in that backlog
+  (`artifacts/api-server/src/lib/deletionDispositions.ts:554#rent_buddy_earnings_ledger`,
+  `:551#rent_buddy_payouts`, `:559#rent_buddy_tips`). All five are now classified: the four ledgers
+  in a new `AWAITING_OWNER_DECISION` bucket that records C-11 without answering it, and
+  `creator_rule_versions` in `RETAINED_WITH_REASON` (it carries no beneficiary and no actor, so it
+  is not a C-11 subject). The CAUSE is not fixed and is bigger than these five: the coverage guard
+  reads the 2026-08-19 baseline plus a hand-typed `POST_BASELINE_TABLES` list and never reads
+  `src/migrations/`, so registration is a thing a person must remember and forgetting cannot be
+  reported. A baseline **recapture cannot close it either**, because recapture snapshots PRODUCTION
+  and these migrations are not applied. Measured against `scripts/lib/canonicalSchema.ts`, which
+  already replays the whole chain: 529 tables, 142 post-baseline, **114 of them named in no bucket**.
 
 ### D10 Launch flags — "keep payments in test mode until payment, identity and tax readiness are established" → **PARTIAL**
 
@@ -409,7 +416,7 @@ Every `stripe` code hit in the tree is **Stripe *Identity***, a KYC product, con
 Zero hits worktree-wide for `avalara`, `taxjar`, `stripe tax`, `sovos`, `quaderno`, `taxProvider`,
 `TaxProvider`, `tax_provider`, `calculateTax`, `taxRate`, `sales_tax`, `tax_document`,
 `taxDocument`, and `vat` / `gst` / `1099` at word boundaries. `withholding` matches only
-privacy-language. The only tax artifact is the disclaimer string at `artifacts/api-server/src/routes/rentABuddy.ts:7547#documents`.
+privacy-language. The only tax artifact is the disclaimer string at `artifacts/api-server/src/routes/rentABuddy.ts:7575#documents`.
 
 ### 3.4 No payout scheduler — proved by enumeration
 

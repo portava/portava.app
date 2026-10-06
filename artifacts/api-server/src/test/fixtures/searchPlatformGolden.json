@@ -108,7 +108,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -275,7 +275,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -450,7 +450,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -585,7 +585,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -712,7 +712,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -724,7 +724,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "trips",
@@ -888,7 +888,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -1014,7 +1014,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -1112,7 +1112,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -1239,7 +1239,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -1372,7 +1372,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -1448,7 +1448,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -1496,7 +1496,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -1573,7 +1573,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -1661,7 +1661,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -1744,7 +1744,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -1805,7 +1805,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -1866,7 +1866,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -1966,7 +1966,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -2140,7 +2140,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -2224,7 +2224,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -2853,7 +2853,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -2929,7 +2929,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "profiles",
@@ -3292,7 +3292,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -3368,7 +3368,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "profiles",
@@ -3645,7 +3645,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -3717,7 +3717,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "profiles",
@@ -4422,7 +4422,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -4498,7 +4498,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "profiles",
@@ -5218,7 +5218,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -5294,7 +5294,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "profiles",
@@ -5483,7 +5483,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -6090,7 +6090,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -6166,7 +6166,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "profiles",
@@ -6923,7 +6923,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -6999,7 +6999,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "profiles",
@@ -7229,7 +7229,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -7291,7 +7291,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -7850,7 +7850,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -7946,7 +7946,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "profiles",
@@ -8234,7 +8234,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -8650,7 +8650,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -8738,7 +8738,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "canonical_locations",
@@ -8856,7 +8856,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         }
       ],
       "ors": [],
@@ -9415,7 +9415,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -9507,7 +9507,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "profiles",
@@ -10235,7 +10235,7 @@
       "selects": [
         {
           "table": "profiles",
-          "cols": "account_status"
+          "cols": "account_status, user_account_states!user_account_states_user_id_fkey(state, expires_at)"
         },
         {
           "table": "blocks",
@@ -10327,7 +10327,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "profiles",
@@ -10826,7 +10826,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "profiles",

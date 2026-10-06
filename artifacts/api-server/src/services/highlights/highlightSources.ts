@@ -320,7 +320,7 @@ export async function linkHighlightSources(
     // EPISODE source against, so writing one would be an unverified link.
     return fail(
       "invalid",
-      "EPISODE sources are declared by 2722 and cannot be verified: no memory_episodes table exists in this tree (census H23)",
+      "EPISODE sources are declared by 2722 and are not accepted: a memory_episodes candidate becomes a Highlight only through the Memory its owner confirmed (services/memory/episodeCandidates.ts) — so a rejected candidate never can (census H238)",
     );
   }
   const provenance = input.provenance ?? "USER_ASSERTED";

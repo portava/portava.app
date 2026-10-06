@@ -6,8 +6,8 @@
 #   1. shim.sql            — the Supabase surface the chain references (roles, auth schema, PostGIS)
 #   2. the baseline        — baseline/20260819_baseline_structure.sql (production's structure, no rows)
 #   3. the canonical chain — src/migrations/*.sql from $LOCAL_DB_FROM (default 2093, the first
-#                            file whose objects the baseline lacks) in byte order, each file as
-#                            psql runs it. A file may fail ONLY if KNOWN_UNREPLAYABLE.json names it.
+#                            file the baseline lacks) in APPLY order (byte order + ORDER_OVERRIDES.json,
+#                            resolve-order.mjs), each as psql runs it. A file may fail ONLY if KNOWN_UNREPLAYABLE.json names it.
 #
 # What it is NOT: a drift audit. docs/ci/BOOTSTRAP.md §1 explains why replaying the
 # chain into the CI project would make check:schema-references vacuous; this database
@@ -102,10 +102,19 @@ TABLES=$(psql -X -tA "$URL" -c "SELECT count(*) FROM pg_tables WHERE schemaname 
 [ "$TABLES" -ge 380 ] || die "baseline restored only $TABLES public tables (expected >= 380)"
 
 # ── 3. the chain ──────────────────────────────────────────────────────────────
+# In the APPLIER'S order: byte order, then the declared overrides in src/migrations/ORDER_OVERRIDES.json
+# (docs/migrations.md § "Apply-order overrides"). resolve-order.mjs computes it; the authority is
+# orderMigrations() in scripts/src/apply-migrations.ts, and scripts/src/migration-order-overrides.test.ts
+# holds the two identical on this tree. Captured BEFORE the loop: a failing $(...) inside `for ... in`
+# does not trip `set -e`, and a stale override must stop the replay, not quietly fall back to byte order.
+ORDER=$(node "$HERE/resolve-order.mjs" "$MIGRATIONS") || die "resolve-order.mjs refused the declared order overrides (see above)"
+[ -n "$ORDER" ] || die "resolve-order.mjs printed no migrations"
 applied=0; skipped=0; n=0
-for f in $(ls "$MIGRATIONS"/*.sql | LC_ALL=C sort); do
-  b=$(basename "$f"); [[ "$b" < "$FROM" ]] && continue
-  if [ -n "$TO" ] && ! [[ "$b" < "$TO" ]]; then continue; fi
+for b in $ORDER; do
+  f="$MIGRATIONS/$b"; [[ "$b" < "$FROM" ]] && continue
+  # $TO bounds the replay in APPLY order: it stops at the first file at or past $TO, so a truncated
+  # chain is a prefix of what the applier runs, never a byte-order filter that re-sorts a moved file.
+  if [ -n "$TO" ] && ! [[ "$b" < "$TO" ]]; then break; fi
   n=$((n+1))
   if psql -X -q -v ON_ERROR_STOP=1 "$URL" -f "$f" >"$WORK/last.out" 2>&1; then
     applied=$((applied+1))
@@ -121,9 +130,11 @@ for f in $(ls "$MIGRATIONS"/*.sql | LC_ALL=C sort); do
   fi
 done
 [ -z "${STALE:-}" ] || die "KNOWN_UNREPLAYABLE.json names file(s) that replay cleanly in order; remove them:$STALE"
-# Second pass: a known-unreplayable file whose precondition a LATER file satisfies
-# (2136's FK rulings arrive in 2138) is retried once after the chain. Order-dependent
-# and said so; the entry stays in the list because in-order replay still fails.
+# Second pass: a known-unreplayable file whose precondition a LATER file satisfies is
+# retried once after the chain. Order-dependent and said so; the entry stays in the list
+# because in-order replay still fails. (Where the reference database's real order is
+# MEASURED to differ from byte order, the fix is an ORDER_OVERRIDES.json entry instead —
+# 2136, whose prerequisites 2138 and 2139 sort after it, needed this pass until it had one.)
 retried=0
 for b in $(node -e 'console.log(Object.keys(require(process.argv[1]).files).join("\n"))' "$KNOWN"); do
   if [ -n "$TO" ] && ! [[ "$b" < "$TO" ]]; then continue; fi
