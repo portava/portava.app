@@ -369,7 +369,7 @@ async function storeCandidate(
   const digest = detectionDigest(input.ownerId, input.episode);
   type Row = { id: string; started_at: string; ended_at: string | null; state: string };
   const { data: overlapping, error: overlapErr } = await sc
-    .from(EPISODES_TABLE)
+    .from("memory_episodes")
     .select("id, started_at, ended_at, state, created_at")
     .eq("user_id", input.ownerId)
     .eq("detection_reason", CANDIDATE_DETECTION_REASON)
@@ -392,7 +392,7 @@ async function storeCandidate(
   }
   if (!episodeRow) {
     const { data: inserted, error: insertErr } = await sc
-      .from(EPISODES_TABLE)
+      .from("memory_episodes")
       .insert({
         user_id: input.ownerId,
         episode_kind: CANDIDATE_EPISODE_KIND,
@@ -417,7 +417,7 @@ async function storeCandidate(
         return { ok: false, reason: "write_failed", detail: `${EPISODES_TABLE} insert: ${insertErr.message}` };
       }
       const again = await sc
-        .from(EPISODES_TABLE)
+        .from("memory_episodes")
         .select("id, started_at, ended_at, state")
         .eq("user_id", input.ownerId)
         .eq("detection_reason", CANDIDATE_DETECTION_REASON)
@@ -447,7 +447,7 @@ async function storeCandidate(
     weight: Math.max(0, Math.min(1, e.confidence)),
   }));
   const { data: written, error: evErr } = await sc
-    .from(EVIDENCE_TABLE)
+    .from("memory_evidence")
     .upsert(rows, { onConflict: "episode_id,source_table,source_id,truth_level", ignoreDuplicates: true })
     .select("id");
   if (evErr) return { ok: false, reason: "write_failed", detail: `${EVIDENCE_TABLE} write: ${evErr.message}` };
@@ -497,7 +497,7 @@ export async function listCandidates(sc: SupabaseClient, ownerId: string): Promi
   // before its Memory was linked must stay in front of the owner, or the retry
   // that finishes it would be unreachable. Those are the ones with no link.
   const { data, error } = await sc
-    .from(EPISODES_TABLE)
+    .from("memory_episodes")
     .select(EPISODE_SELECT)
     .eq("user_id", ownerId)
     .in("state", ["candidate", "confirmed"])
@@ -508,7 +508,7 @@ export async function listCandidates(sc: SupabaseClient, ownerId: string): Promi
   if (read.length === 0) return { ok: true, candidates: [] };
 
   const { data: ev, error: evErr } = await sc
-    .from(EVIDENCE_TABLE)
+    .from("memory_evidence")
     .select("episode_id, source_table, source_id")
     .eq("user_id", ownerId)
     .in("episode_id", read.map((e) => e.id));
@@ -563,7 +563,7 @@ export type DecideOutcome =
 
 async function loadOwnEpisode(sc: SupabaseClient, ownerId: string, episodeId: string): Promise<{ ok: true; episode: MemoryEpisode } | { ok: false; reason: "unavailable" | "not_found"; detail: string }> {
   if (!UUID_RE.test(episodeId)) return { ok: false, reason: "not_found", detail: "not an id" };
-  const { data, error } = await sc.from(EPISODES_TABLE).select(EPISODE_SELECT).eq("id", episodeId).eq("user_id", ownerId).maybeSingle();
+  const { data, error } = await sc.from("memory_episodes").select(EPISODE_SELECT).eq("id", episodeId).eq("user_id", ownerId).maybeSingle();
   if (error) return { ok: false, reason: "unavailable", detail: `${EPISODES_TABLE}: ${error.message}` };
   const episode = data ? parseEpisodeRow(data) : null;
   if (!episode) return { ok: false, reason: "not_found", detail: "no such candidate for this owner" };
@@ -573,7 +573,7 @@ async function loadOwnEpisode(sc: SupabaseClient, ownerId: string, episodeId: st
 /** The Memory a confirmation already created, if any — the link is EXPLICIT evidence on the episode. */
 async function linkedMemoryId(sc: SupabaseClient, ownerId: string, episodeId: string): Promise<{ ok: true; memoryId: string | null } | { ok: false; detail: string }> {
   const { data, error } = await sc
-    .from(EVIDENCE_TABLE)
+    .from("memory_evidence")
     .select("source_id")
     .eq("user_id", ownerId)
     .eq("episode_id", episodeId)
@@ -603,7 +603,7 @@ export async function rejectCandidate(sc: SupabaseClient, input: { ownerId: stri
   if (!link.ok) return { ok: false, reason: "unavailable", detail: link.detail };
   if (link.memoryId) return { ok: false, reason: "not_a_candidate", detail: "this suggestion was already kept as a Memory" };
   const { data, error } = await sc
-    .from(EPISODES_TABLE)
+    .from("memory_episodes")
     .update({ state: "rejected", state_changed_at: input.now.toISOString() })
     .eq("id", input.episodeId)
     .eq("user_id", input.ownerId)
@@ -677,7 +677,7 @@ export async function confirmCandidate(
     const decision = decideTransition("candidate", "confirmed", { significance: significance.score, significanceBasis: "user_affirmed" });
     if (!decision.ok) return { ok: false, reason: "not_a_candidate", detail: decision.detail };
     const { data, error } = await sc
-      .from(EPISODES_TABLE)
+      .from("memory_episodes")
       .update({
         state: "confirmed",
         state_changed_at: input.now.toISOString(),
@@ -704,7 +704,7 @@ export async function confirmCandidate(
   }
 
   const { data: evData, error: evErr } = await sc
-    .from(EVIDENCE_TABLE)
+    .from("memory_evidence")
     .select("source_table, source_id")
     .eq("user_id", input.ownerId)
     .eq("episode_id", ep.id);
@@ -759,7 +759,7 @@ export async function confirmCandidate(
 
     // (3)
     const { error: linkErr } = await sc
-      .from(EVIDENCE_TABLE)
+      .from("memory_evidence")
       .upsert({
         episode_id: ep.id,
         user_id: input.ownerId,

@@ -25,7 +25,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  DETECTION_REASONS,
+  DETECTION_REASONS, EPISODES_TABLE, EVIDENCE_TABLE,
   EPISODE_KINDS,
   EPISODE_STATES,
   EPISODE_TRANSITIONS,
@@ -648,5 +648,22 @@ describe("the spine is inert by construction", () => {
       assert.ok(body.slice(firstAwait).startsWith("await candidateStoreState(sc)"),
         `${fn} must ask whether 2320's store exists before anything else (its first await is: ${body.slice(firstAwait, firstAwait + 60)})`);
     }
+  });
+
+  it("the sanctioned consumer names the spine's tables as literals that equal the contract's constants", () => {
+    // check:write-path-columns resolves `.from("literal")` only — `.from(EPISODES_TABLE)`
+    // is "dynamic table name" to it, and every column it would have checked at that
+    // site goes unchecked (PR #625's live-DB red, 2026-10-06). So the consumer writes
+    // the literal at each call site, and THIS pins the literal to the constant: a
+    // rename of the spine's table fails here instead of drifting silently.
+    const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+    const consumer = readFileSync(resolve(root, "services/memory/episodeCandidates.ts"), "utf8");
+    const dynamicFrom = consumer.match(/\.from\((?:EPISODES_TABLE|EVIDENCE_TABLE)\)/g) ?? [];
+    assert.deepEqual(dynamicFrom, [], `the write-path guard cannot resolve ${dynamicFrom.join(", ")}; write the literal`);
+    const literalFroms = [...consumer.matchAll(/\.from\("(memory_episodes|memory_evidence)"\)/g)].map((m) => m[1]);
+    assert.ok(literalFroms.includes(EPISODES_TABLE) && literalFroms.includes(EVIDENCE_TABLE),
+      `the consumer must read and write both spine tables by their literal names (saw: ${[...new Set(literalFroms)].join(", ")})`);
+    assert.equal(EPISODES_TABLE, "memory_episodes");
+    assert.equal(EVIDENCE_TABLE, "memory_evidence");
   });
 });
