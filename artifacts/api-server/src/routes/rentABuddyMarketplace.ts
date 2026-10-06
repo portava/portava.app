@@ -2252,7 +2252,7 @@ router.get("/rent-a-buddy/me/earnings/summary", async (req, res) => {
     .reduce((s, b) => s + Number(b.cash_balance_usd ?? 0), 0);
 
   // Platform fee estimate — one take rate, from the schedule of record, in
-  // basis points (3520), rounded by the one rule in `applyBasisPoints`.
+  // basis points (3601), rounded by the one rule in `applyBasisPoints`.
   const feeBasisPoints = feeSchedule.rule.platformFeeBasisPoints;
   const estimatedPlatformFee = platformFeeUsdFor(completedTotal, feeSchedule.rule);
   const estimatedBuddyEarnings =
@@ -2374,8 +2374,8 @@ export function toLedgerEntryView(row: any) {
     totalBookingUsd: row.total_booking_usd,
     addonsUsd: row.addons_usd,
     tipUsd: row.tip_usd,
-    // The rate this row was priced at, in basis points (3520). `null` on rows
-    // written before 3520 — which is a fact about the row, not a rate — and the
+    // The rate this row was priced at, in basis points (3601). `null` on rows
+    // written before 3601 — which is a fact about the row, not a rate — and the
     // percentage is published beside it, DERIVED from the basis points when
     // they exist and falling back to the row's own legacy mirror only when they
     // do not. Neither is ever a number this function made up: see the mobile
@@ -2733,7 +2733,7 @@ router.get("/rent-a-buddy/admin/pricing/outliers", async (req, res) => {
  * The three refusals, in order:
  *   1. no `platformFeeBasisPoints` — the percent field is NOT accepted, because
  *      silently converting a percent would keep the rate editable through the
- *      lossy integer unit that migration 3520 removed.
+ *      lossy integer unit that migration 3601 removed.
  *   2. not a whole number of basis points in 0–10000.
  *   3. not the flat rate, with no way to approve an override from here — the
  *      second half of "market overrides only when separately approved". The
@@ -2794,7 +2794,7 @@ export function judgeFeeRuleUpdate(upd: any): FeeRuleUpdateVerdict {
  * is written by no route at all, so the only way to approve an override is a
  * reviewed migration that names it.
  *
- * The database CHECK `rbfr_flat_rate_unless_approved` (3520) would refuse an
+ * The database CHECK `rbfr_flat_rate_unless_approved` (3601) would refuse an
  * off-flat write anyway. The explicit refusal below exists so the operator gets
  * a sentence instead of a constraint-violation string, and so the rule is
  * legible at the surface an operator actually touches.
@@ -2802,7 +2802,7 @@ export function judgeFeeRuleUpdate(upd: any): FeeRuleUpdateVerdict {
  * `platformFeePercent` is deliberately NOT accepted. Silently converting a
  * percent to basis points would mean a client that still speaks the old field
  * keeps editing the rate through a lossy integer, which is the expressibility
- * defect 3520 removed. An ambiguous payload is rejected rather than guessed.
+ * defect 3601 removed. An ambiguous payload is rejected rather than guessed.
  */
 router.patch("/rent-a-buddy/admin/fee-rules", async (req, res) => {
   const admin = await requireAdmin(req, res);
@@ -2823,7 +2823,7 @@ router.patch("/rent-a-buddy/admin/fee-rules", async (req, res) => {
         buddy_level: upd.buddyLevel,
         platform_fee_basis_points: verdict.basisPoints,
         // The legacy mirror, rounded here rather than by the integer column it
-        // lands in. Nothing prices from it (3520).
+        // lands in. Nothing prices from it (3601).
         platform_fee_percent: Math.round(basisPointsToPercent(verdict.basisPoints)),
         traveler_service_fee_usd: upd.travelerServiceFeeUsd ?? 0,
         traveler_service_fee_pct: upd.travelerServiceFeePct ?? 0,

@@ -268,7 +268,7 @@ decision; nothing implements it.**
 > **CORRECTED 2026-10-04 by PR #616, after this document was written.** The two findings below
 > that this section records as open are now CLOSED, and the body is left unedited — same treatment
 > this document gives `09` §11. The commission is a **flat 10 % across every buddy level, carried
-> as 1000 BASIS POINTS** (`artifacts/api-server/src/migrations/3520_rent_buddy_commission_basis_points.sql:1#3520_rent_buddy_commission_basis_points.sql`,
+> as 1000 BASIS POINTS** (`artifacts/api-server/src/migrations/3601_rent_buddy_commission_basis_points.sql:1#3601_rent_buddy_commission_basis_points.sql`,
 > written and **not applied**), which also removes the expressibility defect this section names:
 > the `integer` percent column could not hold a fractional rate, so "configurable by market" was
 > unrepresentable. Market overrides remain possible but require a separately recorded approval,

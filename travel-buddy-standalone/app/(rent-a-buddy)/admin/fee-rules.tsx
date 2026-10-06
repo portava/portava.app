@@ -16,7 +16,7 @@ const apiBase = () => (process.env.EXPO_PUBLIC_API_BASE_URL ?? '');
  *
  * THE RATE IS BASIS POINTS. 1000 == 10 %. `platform_fee_percent` still exists
  * in the table as a rounded legacy mirror and is deliberately NOT part of this
- * shape: an integer percent cannot express 10.5 %, which is why migration 3520
+ * shape: an integer percent cannot express 10.5 %, which is why migration 3601
  * moved the rate to basis points, and an editor that round-trips the mirror
  * would quietly put the lossy value back.
  */
@@ -198,7 +198,7 @@ export default function FeeRulesEditor() {
         ))}
 
         {rules.length === 0 && (
-          <Text style={s.empty}>No fee rules found. Every fee-dependent screen will refuse until the schedule is seeded — check that the Rent-a-Buddy marketplace migration and 3520 have run.</Text>
+          <Text style={s.empty}>No fee rules found. Every fee-dependent screen will refuse until the schedule is seeded — check that the Rent-a-Buddy marketplace migration and 3601 have run.</Text>
         )}
 
         <Pressable

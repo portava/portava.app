@@ -7354,7 +7354,7 @@ export function nightlifePublicMeetupViolation(meetupLocation: string, category:
 // was the defect and not the safety net.
 //
 // The rate is now a flat 10 % across every buddy level, carried as 1000 BASIS
-// POINTS (owner decision 2026-10-04, migration 3520). The per-level rates this
+// POINTS (owner decision 2026-10-04, migration 3601). The per-level rates this
 // comment used to quote are history; nothing in this file names a rate.
 // `foldEarningsRows` takes basis points, not a fraction, so the fee is computed
 // by the one rounding rule in `applyBasisPoints` instead of by a float multiply

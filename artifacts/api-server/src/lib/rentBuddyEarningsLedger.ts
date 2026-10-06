@@ -215,7 +215,7 @@ export async function createEarningsLedgerEntry(
     total_booking_usd: total,
     addons_usd: Number(booking.addons_total_usd ?? 0),
     tip_usd: Number(booking.tip_usd ?? 0),
-    // The rate, recorded losslessly (3520). `platform_fee_percent` beside it is
+    // The rate, recorded losslessly (3601). `platform_fee_percent` beside it is
     // the LEGACY MIRROR: an `integer` column, so it is rounded HERE, visibly,
     // rather than left to be rounded on its way into the column by PostgreSQL.
     // Nothing computes money from the mirror — `platform_fee_amount` on the

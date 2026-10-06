@@ -4798,7 +4798,7 @@ describe("toLedgerEntryView", () => {
     total_booking_usd: 120,
     addons_usd: 20,
     tip_usd: 10,
-    // A row written before 3520: it carries the legacy percent mirror and no
+    // A row written before 3601: it carries the legacy percent mirror and no
     // basis points. The view must publish the rate the row records and not
     // invent one — see the `?? 22` the mobile ledger screen used to render.
     platform_fee_percent: 22,

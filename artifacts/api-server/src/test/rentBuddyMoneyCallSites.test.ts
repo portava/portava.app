@@ -221,7 +221,7 @@ function dashboardClient(): any {
 }
 
 /**
- * A schedule row at a given rate in BASIS POINTS (3520). A rate other than the
+ * A schedule row at a given rate in BASIS POINTS (3601). A rate other than the
  * flat 1000 also needs the separate approval the owner decision requires, or
  * the resolver refuses it — so the fixture supplies one, which is what makes
  * the level-sensitivity below still exercisable.

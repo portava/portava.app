@@ -1,4 +1,11 @@
--- 3520_rent_buddy_commission_basis_points.sql
+-- 3601_rent_buddy_commission_basis_points.sql
+--
+-- RENUMBERED 3520 -> 3601 on 2026-10-06 (lane P, PR #616). Main took 3520 for
+-- 3520_user_stamps_client_column_grants.sql (applied to portava-ci). This file
+-- was applied to no database under either number and does not self-register,
+-- so nothing that exists moved; every "3601" below that once read "3520" is the
+-- same statement about this file. It sorts after 3530 now; 3530 replaces
+-- rb_buddy_earnings_summary and names neither table this file alters.
 --
 -- The Rent-a-Buddy platform commission becomes expressible, and becomes flat.
 --
@@ -115,10 +122,10 @@
 -- ── SUPERSEDED, LATER THE SAME DAY, BY A PRICING DECISION ───────────────────
 -- The owner subsequently priced it: "Seed the `standard` Buddy level at the
 -- approved flat 10% commission so its fee routes work."
--- `3521_rent_buddy_standard_level_commission_seed.sql` carries that seed, in its
+-- `3602_rent_buddy_standard_level_commission_seed.sql` carries that seed, in its
 -- own file so that THIS file's record — that the storage change invented no
 -- price — stays true and separable. The paragraph above is therefore still an
--- accurate statement about 3520 and no longer the final state of the schedule.
+-- accurate statement about 3601 and no longer the final state of the schedule.
 --
 -- ══════════════════════════════════════════════════════════════════════════════
 -- DEPLOY ORDERING — READ THIS BEFORE SHIPPING THE CODE
@@ -223,7 +230,7 @@ COMMENT ON COLUMN public.rent_buddy_fee_rules.commission_override_approval IS
   'deliberate migration that names the approval — no route can set it.';
 
 COMMENT ON COLUMN public.rent_buddy_fee_rules.platform_fee_percent IS
-  'SUPERSEDED by platform_fee_basis_points (3520). Kept because it is NOT NULL '
+  'SUPERSEDED by platform_fee_basis_points (3601). Kept because it is NOT NULL '
   'and cannot be dropped additively, and kept IN STEP with the basis points, '
   'but no pricing path reads it. Where an approved override is not a whole '
   'percent this mirror is rounded and therefore wrong; do not compute money '
@@ -253,7 +260,7 @@ END $$;
 
 COMMENT ON COLUMN public.rent_buddy_earnings_ledger.platform_fee_basis_points IS
   'The commission rate this estimate row was computed under, in basis points. '
-  'NULL only for rows written before 3520. platform_fee_percent beside it is '
+  'NULL only for rows written before 3601. platform_fee_percent beside it is '
   'the rounded legacy mirror.';
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -280,16 +287,16 @@ BEGIN
 
   IF v_atttype IS NULL THEN
     RAISE EXCEPTION
-      '3520 postcondition FAILED: rent_buddy_fee_rules.platform_fee_basis_points does not exist.';
+      '3601 postcondition FAILED: rent_buddy_fee_rules.platform_fee_basis_points does not exist.';
   END IF;
   IF v_atttype <> 'integer' THEN
     RAISE EXCEPTION
-      '3520 postcondition FAILED: platform_fee_basis_points is %, expected integer (a basis point is a whole number by construction).',
+      '3601 postcondition FAILED: platform_fee_basis_points is %, expected integer (a basis point is a whole number by construction).',
       v_atttype;
   END IF;
   IF NOT v_notnull THEN
     RAISE EXCEPTION
-      '3520 postcondition FAILED: platform_fee_basis_points is nullable; a schedule row with no rate must be impossible, not merely unusual.';
+      '3601 postcondition FAILED: platform_fee_basis_points is nullable; a schedule row with no rate must be impossible, not merely unusual.';
   END IF;
 
   IF NOT EXISTS (
@@ -298,7 +305,7 @@ BEGIN
        AND attname = 'commission_override_approval' AND attnum > 0 AND NOT attisdropped
   ) THEN
     RAISE EXCEPTION
-      '3520 postcondition FAILED: rent_buddy_fee_rules.commission_override_approval does not exist, so an override has nothing to be approved by.';
+      '3601 postcondition FAILED: rent_buddy_fee_rules.commission_override_approval does not exist, so an override has nothing to be approved by.';
   END IF;
 
   -- 2. Both constraints are present BY NAME. A CHECK that was never added is
@@ -308,7 +315,7 @@ BEGIN
      WHERE conrelid = 'public.rent_buddy_fee_rules'::regclass
        AND conname = 'rbfr_basis_points_range' AND contype = 'c'
   ) THEN
-    RAISE EXCEPTION '3520 postcondition FAILED: rbfr_basis_points_range is missing.';
+    RAISE EXCEPTION '3601 postcondition FAILED: rbfr_basis_points_range is missing.';
   END IF;
 
   IF NOT EXISTS (
@@ -317,7 +324,7 @@ BEGIN
        AND conname = 'rbfr_flat_rate_unless_approved' AND contype = 'c'
   ) THEN
     RAISE EXCEPTION
-      '3520 postcondition FAILED: rbfr_flat_rate_unless_approved is missing, so an unapproved market override is still writable.';
+      '3601 postcondition FAILED: rbfr_flat_rate_unless_approved is missing, so an unapproved market override is still writable.';
   END IF;
 
   -- 3. The data. Zero rows is a legitimate state (see the header) — these
@@ -334,18 +341,18 @@ BEGIN
 
   IF v_null_bps > 0 THEN
     RAISE EXCEPTION
-      '3520 postcondition FAILED: % schedule row(s) still carry no basis-point rate.', v_null_bps;
+      '3601 postcondition FAILED: % schedule row(s) still carry no basis-point rate.', v_null_bps;
   END IF;
 
   IF v_approved > 0 THEN
     RAISE EXCEPTION
-      '3520 postcondition FAILED: % row(s) carry a commission_override_approval. No market override is approved as of 2026-10-04; this migration must never be the thing that approves one.',
+      '3601 postcondition FAILED: % row(s) carry a commission_override_approval. No market override is approved as of 2026-10-04; this migration must never be the thing that approves one.',
       v_approved;
   END IF;
 
   IF v_not_flat > 0 THEN
     RAISE EXCEPTION
-      '3520 postcondition FAILED: % row(s) are not at 1000 basis points and carry no approval.', v_not_flat;
+      '3601 postcondition FAILED: % row(s) are not at 1000 basis points and carry no approval.', v_not_flat;
   END IF;
 
   -- 4. The legacy mirror agrees with the rate it mirrors.
@@ -358,7 +365,7 @@ BEGIN
 
   IF v_mirror_off IS NOT NULL THEN
     RAISE EXCEPTION
-      '3520 postcondition FAILED: the legacy percent mirror disagrees with the basis points on: %', v_mirror_off;
+      '3601 postcondition FAILED: the legacy percent mirror disagrees with the basis points on: %', v_mirror_off;
   END IF;
 
   -- 5. The ledger column and its range check.
@@ -368,7 +375,7 @@ BEGIN
        AND attname = 'platform_fee_basis_points' AND attnum > 0 AND NOT attisdropped
   ) THEN
     RAISE EXCEPTION
-      '3520 postcondition FAILED: rent_buddy_earnings_ledger.platform_fee_basis_points does not exist.';
+      '3601 postcondition FAILED: rent_buddy_earnings_ledger.platform_fee_basis_points does not exist.';
   END IF;
 
   IF NOT EXISTS (
@@ -376,15 +383,15 @@ BEGIN
      WHERE conrelid = 'public.rent_buddy_earnings_ledger'::regclass
        AND conname = 'rbel_basis_points_range' AND contype = 'c'
   ) THEN
-    RAISE EXCEPTION '3520 postcondition FAILED: rbel_basis_points_range is missing.';
+    RAISE EXCEPTION '3601 postcondition FAILED: rbel_basis_points_range is missing.';
   END IF;
 
   IF v_rows = 0 THEN
     RAISE NOTICE
-      '3520 OK (schema only): rent_buddy_fee_rules holds ZERO rows on this database, so no rate was converted and none was invented. Every fee-dependent route will REFUSE (no_such_level) until an operator seeds the schedule. Columns, NOT NULL and both CHECKs are in place.';
+      '3601 OK (schema only): rent_buddy_fee_rules holds ZERO rows on this database, so no rate was converted and none was invented. Every fee-dependent route will REFUSE (no_such_level) until an operator seeds the schedule. Columns, NOT NULL and both CHECKs are in place.';
   ELSE
     RAISE NOTICE
-      '3520 OK: % schedule row(s) [%] all at 1000 basis points (10 %%), no override approved, legacy percent mirror in step. ''standard'' is absent unless listed, and its refusal is preserved. Ledger rate column added (nullable for pre-3520 rows).',
+      '3601 OK: % schedule row(s) [%] all at 1000 basis points (10 %%), no override approved, legacy percent mirror in step. ''standard'' is absent unless listed, and its refusal is preserved. Ledger rate column added (nullable for pre-3601 rows).',
       v_rows, v_levels;
   END IF;
 END $$;

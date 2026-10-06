@@ -19,7 +19,7 @@
  *
  * ── THE SCHEDULE'S CONTENTS ARE NOT PINNED HERE ────────────────────────────
  * The rate is a flat 10 % — 1000 basis points — across every buddy level
- * (owner decision 2026-10-04), and migration 3520 is what puts it there.
+ * (owner decision 2026-10-04), and migration 3601 is what puts it there.
  * `src/test/rentBuddyCommissionBasisPoints.test.ts` asserts THAT: the migration
  * converts faithfully, lands on 1000 for every level, and makes an unapproved
  * override unwritable.
@@ -149,7 +149,7 @@ describe("resolveFeeSchedule — no_such_level", () => {
     // 'standard' is accepted by PATCH /rent-a-buddy/admin/buddies/:id/level and
     // long had no fee row (`08` §2.5). It used to silently mean 22 %.
     //
-    // Migration 3521 now seeds 'standard', so this is no longer a claim about
+    // Migration 3602 now seeds 'standard', so this is no longer a claim about
     // that level's configuration — it is the RESOLVER's contract when a row is
     // absent, which is the property that must not regress. Any level with no
     // row (one an operator invents, or an unseeded schedule) takes this path,
@@ -207,7 +207,7 @@ describe("resolveFeeSchedule — read_failed", () => {
   it("refuses an off-flat rate that records no approval", async () => {
     // "Market overrides only when separately approved" has to be a refusal
     // somewhere or it is a sentence. The database CHECK makes such a row
-    // unwritable; this makes it unusable on a database that has not run 3520,
+    // unwritable; this makes it unusable on a database that has not run 3601,
     // on a restored dump, or after a hand edit.
     for (const approval of [null, undefined, "", "   "]) {
       const { client } = feeClient({
@@ -231,7 +231,7 @@ describe("resolveFeeSchedule — read_failed", () => {
     assert.equal(res.status, "read_failed");
   });
 
-  it("a database without 3520's column refuses rather than pricing at zero", async () => {
+  it("a database without 3601's column refuses rather than pricing at zero", async () => {
     // PostgREST answers an explicit select of a missing column with 42703. The
     // resolver must read that as "I do not know the rate", never as "no rate".
     const { client } = feeClient({

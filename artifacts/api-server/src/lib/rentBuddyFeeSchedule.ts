@@ -16,7 +16,7 @@
  * because it is the only one an operator can change without a deploy.** The
  * literals are drift. This module is the single reader; the literals are gone.
  *
- * ── THE RATE IS BASIS POINTS, AND THAT IS NOT COSMETIC (3520) ───────────────
+ * ── THE RATE IS BASIS POINTS, AND THAT IS NOT COSMETIC (3601) ───────────────
  * Owner decision, 2026-10-04:
  *
  *   "Set the Rent-a-Buddy commission to a flat 10% across Buddy levels. Store
@@ -25,7 +25,7 @@
  *
  * The storage column was `integer` PERCENT, which cannot express 10.5 % at all
  * — so the override half of that decision was unrepresentable in the column it
- * would have to live in. `3520_rent_buddy_commission_basis_points.sql` adds
+ * would have to live in. `3601_rent_buddy_commission_basis_points.sql` adds
  * `platform_fee_basis_points` (10 % == 1000) and converts existing rows
  * faithfully (25 % -> 2500). This module reads ONLY that column.
  * `platform_fee_percent` survives as a rounded legacy mirror because it is NOT
@@ -41,7 +41,7 @@
  *     rate other than 1000 only if it also holds a non-empty
  *     `commission_override_approval`, and no route can write that column; and
  *   • `resolveFeeSchedule` below, which refuses a row presenting an unapproved
- *     off-flat rate even on a database that has not run 3520.
+ *     off-flat rate even on a database that has not run 3601.
  *
  * Two layers, because the constraint protects the table and the resolver
  * protects the price.
@@ -53,9 +53,9 @@
  *
  *   • the fee table is unreadable (outage, permissions, renamed column)
  *   • the buddy's level has no row  — `'standard'` is settable by the admin
- *     route and long had no fee row (`08` §2.5). Migration 3521 seeds it at the
+ *     route and long had no fee row (`08` §2.5). Migration 3602 seeds it at the
  *     approved flat rate (owner decision 2026-10-04), so that particular hole
- *     is closed on a database that has run 3521 — but the STATE is not retired
+ *     is closed on a database that has run 3602 — but the STATE is not retired
  *     and must not be: any level an operator invents, or a schedule that was
  *     never seeded, still lands here, and `no_such_level` remains a refusal
  *     rather than a rate.
@@ -68,8 +68,8 @@
  *
  * So the resolver returns a THREE-STATE result — `resolved` / `no_such_level` /
  * `read_failed` — and every caller must decide what to do with the two failure
- * states. There is no arm that yields a percentage nobody configured. 3520
- * extends that to the storage change itself: against a database where 3520 has
+ * states. There is no arm that yields a percentage nobody configured. 3601
+ * extends that to the storage change itself: against a database where 3601 has
  * not run, the explicit select of `platform_fee_basis_points` fails and this
  * returns `read_failed`. A missing column reads as "I do not know the rate",
  * never as "the rate is zero".
@@ -122,7 +122,7 @@ export interface FeeScheduleRule {
  *                    level. The buddy's level is not in the schedule; that is a
  *                    configuration hole (`08` §2.5), not a 22 % default.
  *  `read_failed`   — the schedule could not be established at all: the query
- *                    errored (including "this database has not run 3520, so
+ *                    errored (including "this database has not run 3601, so
  *                    there is no basis-point column"), or a row came back that
  *                    cannot be read as a rate — null, non-integer, out of
  *                    range, or an off-flat rate with no recorded approval.
@@ -324,7 +324,7 @@ export async function resolveFeeSchedule(
     return {
       status: "read_failed",
       buddyLevel: level,
-      // A database that has not run 3520 lands here (42703: column
+      // A database that has not run 3601 lands here (42703: column
       // platform_fee_basis_points does not exist). That is the intended
       // outcome — see the module header's deploy-ordering note.
       message: `${FEE_SCHEDULE_TABLE} read failed: ${error.message ?? String(error)}`,
@@ -351,7 +351,7 @@ export async function resolveFeeSchedule(
   const commissionOverrideApproval = asApproval(data.commission_override_approval);
 
   // The second half of "market overrides only when separately approved". The
-  // database CHECK (3520) makes such a row unwritable; this makes it unusable
+  // database CHECK (3601) makes such a row unwritable; this makes it unusable
   // even where the CHECK is absent — an un-migrated database, a restored dump,
   // a hand-edited row. An off-flat rate with nothing recording who approved it
   // is a price no decision stands behind, so it is not a price.

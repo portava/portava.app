@@ -28,7 +28,7 @@ import type { LedgerEntry } from "./creatorLedgerEntries.js";
  *
  * `/v1` is the per-level ladder: 25 / 22 / 15 / 12 / 12 percent, seeded by the
  * frozen legacy tree and stored in an integer percent column. `/v2` is the flat
- * 10 % carried in basis points (3520) with `standard` priced (3521). Those are
+ * 10 % carried in basis points (3601) with `standard` priced (3602). Those are
  * two different schedules, so entries computed under them are two different
  * generations and must not be conflated.
  *
@@ -84,7 +84,7 @@ import type { LedgerEntry } from "./creatorLedgerEntries.js";
 /** The superseded generation: the per-level percent ladder. Written by nothing; still read. */
 export const RENT_BUDDY_FEE_RULE_VERSION_V1 = "rent-buddy-fee-schedule/v1";
 
-/** The current generation: flat 10 % in basis points (3520), `standard` priced (3521). */
+/** The current generation: flat 10 % in basis points (3601), `standard` priced (3602). */
 export const RENT_BUDDY_FEE_RULE_VERSION_V2 = "rent-buddy-fee-schedule/v2";
 
 /**

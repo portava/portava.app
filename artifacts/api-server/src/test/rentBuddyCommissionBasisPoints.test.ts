@@ -10,7 +10,7 @@
  * `rent_buddy_fee_rules.platform_fee_percent` is `integer`. An integer percent
  * cannot express 10.5 %, so the "market overrides when separately approved"
  * half of that decision was unrepresentable in the column it would live in.
- * Migration 3520 adds `platform_fee_basis_points` and this file reads it as
+ * Migration 3601 adds `platform_fee_basis_points` and this file reads it as
  * text: the conversion is faithful (25 % -> 2500, never 25), every level lands
  * on 1000, and an unapproved off-flat rate is unwritable.
  *
@@ -52,7 +52,7 @@ import { judgeFeeRuleUpdate, toLedgerEntryView } from "../routes/rentABuddyMarke
 import { foldEarningsRows } from "../routes/rentABuddy.js";
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..");
-const MIGRATION = "3520_rent_buddy_commission_basis_points.sql";
+const MIGRATION = "3601_rent_buddy_commission_basis_points.sql";
 const migrationText = readFileSync(join(SRC, "migrations", MIGRATION), "utf8");
 
 /**
@@ -127,7 +127,7 @@ describe("the commission is a flat 10 %, carried as 1000 basis points", () => {
     }
   });
 
-  it("migration 3520 sets every row to 1000 and converts the old ones faithfully", () => {
+  it("migration 3601 sets every row to 1000 and converts the old ones faithfully", () => {
     // Faithful: 25 % must become 2500, not 25. The multiply is the assertion —
     // a migration that copied the percent across would leave the schedule
     // claiming 0.25 %, which is a rate 100x too small on a money record.
@@ -150,13 +150,13 @@ describe("the commission is a flat 10 %, carried as 1000 basis points", () => {
     );
   });
 
-  it("3520 is additive and idempotent, and writes no ledger row for itself", () => {
+  it("3601 is additive and idempotent, and writes no ledger row for itself", () => {
     assert.match(migrationStatements, /ADD COLUMN IF NOT EXISTS\s+platform_fee_basis_points/);
     assert.match(migrationStatements, /ADD COLUMN IF NOT EXISTS\s+commission_override_approval/);
     for (const forbidden of [/DROP TABLE/i, /DROP COLUMN/i, /TRUNCATE/i, /DELETE FROM/i]) {
       assert.equal(
         forbidden.test(migrationStatements), false,
-        `3520 must be additive; found ${forbidden}`,
+        `3601 must be additive; found ${forbidden}`,
       );
     }
     assert.equal(
@@ -172,7 +172,7 @@ describe("the commission is a flat 10 %, carried as 1000 basis points", () => {
     }
   });
 
-  it("3520 carries postconditions that can actually fail", () => {
+  it("3601 carries postconditions that can actually fail", () => {
     const raises = migrationStatements.match(/RAISE EXCEPTION/g) ?? [];
     assert.ok(
       raises.length >= 8,
@@ -367,7 +367,7 @@ describe("one rounding rule: half-up on the cent, in integer cents", () => {
 describe("an unreadable fee rule refuses — never 0 %, never the flat rate", () => {
   const unreadable: Array<[string, any]> = [
     ["the table errored", { error: { message: "permission denied" } }],
-    ["the basis-point column does not exist (3520 unapplied)", {
+    ["the basis-point column does not exist (3601 unapplied)", {
       error: { message: "column rent_buddy_fee_rules.platform_fee_basis_points does not exist" },
     }],
     ["the row carries no rate", { row: { platform_fee_basis_points: null } }],
@@ -416,7 +416,7 @@ describe("an unreadable fee rule refuses — never 0 %, never the flat rate", ()
     );
   });
 
-  it("a view of a pre-3520 ledger row publishes its rate, and never invents one", () => {
+  it("a view of a pre-3601 ledger row publishes its rate, and never invents one", () => {
     const withBps = toLedgerEntryView({ platform_fee_basis_points: 1000, platform_fee_percent: 10 });
     assert.equal(withBps.platformFeeBasisPoints, 1000);
     assert.equal(withBps.platformFeePercent, 10);
@@ -530,7 +530,7 @@ describe("the superseded percent column is not a pricing input", () => {
     assert.equal(
       src.includes("platform_fee_percent"), false,
       "reading the rounded legacy mirror to compute money would reintroduce the " +
-      "expressibility defect 3520 removed — an approved 10.5 % would price at 10 % or 11 %",
+      "expressibility defect 3601 removed — an approved 10.5 % would price at 10 % or 11 %",
     );
   });
 

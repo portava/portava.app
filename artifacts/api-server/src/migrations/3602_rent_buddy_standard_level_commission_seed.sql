@@ -1,4 +1,8 @@
--- 3521_rent_buddy_standard_level_commission_seed.sql
+-- 3602_rent_buddy_standard_level_commission_seed.sql
+--
+-- RENUMBERED 3521 -> 3602 on 2026-10-06 (lane P, PR #616), with its storage
+-- change 3520 -> 3601; applied nowhere under either number. It still runs
+-- directly after the file it depends on.
 --
 -- The `standard` Buddy level acquires the price the owner approved for it:
 -- a flat 10 % commission, 1000 basis points.
@@ -20,9 +24,9 @@
 --    fee routes work."
 --
 -- ══════════════════════════════════════════════════════════════════════════════
--- WHY THIS IS A SEPARATE FILE FROM 3520, AND NOT A LINE ADDED TO IT
+-- WHY THIS IS A SEPARATE FILE FROM 3601, AND NOT A LINE ADDED TO IT
 -- ══════════════════════════════════════════════════════════════════════════════
--- `3520_rent_buddy_commission_basis_points.sql` is the STORAGE change: it adds
+-- `3601_rent_buddy_commission_basis_points.sql` is the STORAGE change: it adds
 -- `platform_fee_basis_points`, converts whatever rows exist faithfully, and
 -- seeds NOTHING. Its header argues at length why it seeds nothing, and that
 -- argument is correct and still load-bearing:
@@ -30,23 +34,23 @@
 --   "a level nobody priced must not acquire a price as a side effect of a
 --    storage change."
 --
--- The owner has now priced it. That is a NEW FACT, dated after 3520 was
+-- The owner has now priced it. That is a NEW FACT, dated after 3601 was
 -- written, and it belongs in a file of its own for three reasons:
 --
---   1. PROVENANCE. 3520's record of "the storage change invented no price"
---      stays true. If the seed were folded into 3520, the file would both make
+--   1. PROVENANCE. 3601's record of "the storage change invented no price"
+--      stays true. If the seed were folded into 3601, the file would both make
 --      that claim and contradict it, and a reader a year from now could not
 --      tell which rows came from a storage decision and which from a pricing
 --      decision. Here, the pricing decision carries its own quote and its own
 --      date.
---   2. 3520's ZERO-ROW POSTCONDITION STAYS MEANINGFUL. 3520 ends by reporting
+--   2. 3601's ZERO-ROW POSTCONDITION STAYS MEANINGFUL. 3601 ends by reporting
 --      "rent_buddy_fee_rules holds ZERO rows on this database, so no rate was
 --      converted and none was invented". Seeding inside it would make that
 --      branch unreachable and delete the signal that the schedule was empty —
 --      which is the one fact about production nobody has established.
 --   3. SEPARATELY REVERTABLE. Un-pricing `standard` is deleting one row.
 --      Reverting a storage change is dropping columns and losing the only
---      lossless record of the rate the ledger was computed under (3520's
+--      lossless record of the rate the ledger was computed under (3601's
 --      own ROLLBACK note). Those are not the same risk and should not be
 --      welded into one file.
 --
@@ -61,14 +65,14 @@
 --   * `commission_override_approval` is NOT in the INSERT's column list, so the
 --     row takes NULL. 1000 is the approved flat rate and needs no override; a
 --     seed that wrote an approval would be approving something, and nothing
---     here is authorised to do that. 3520's CHECK
+--     here is authorised to do that. 3601's CHECK
 --     `rbfr_flat_rate_unless_approved` is satisfied by the rate being 1000, not
 --     by an approval — which is the whole point of seeding at the flat rate.
 --
 --   * `platform_fee_percent` = 10. It is `NOT NULL` with no default, so an
---     INSERT cannot omit it. It is the LEGACY MIRROR (3520's comment on the
---     column); 10 is exactly `ROUND(1000 / 100.0)`, so 3520's mirror-agreement
---     postcondition holds for this row on a later re-run of 3520.
+--     INSERT cannot omit it. It is the LEGACY MIRROR (3601's comment on the
+--     column); 10 is exactly `ROUND(1000 / 100.0)`, so 3601's mirror-agreement
+--     postcondition holds for this row on a later re-run of 3601.
 --
 --   * `traveler_service_fee_usd` and `traveler_service_fee_pct` are NOT in the
 --     column list either, so the row takes the column defaults, which are 0 and
@@ -81,7 +85,7 @@
 --       legacy tree seeded carry `traveler_service_fee_pct = 5`
 --       (`artifacts/api-server/migrations/0134_rent_buddy_schema_rebuild.sql:1208#traveler_service_fee_pct`).
 --       Copying that 5 onto `standard` would be this file deciding a
---       traveller-side price, which is precisely the kind of invention 3520
+--       traveller-side price, which is precisely the kind of invention 3601
 --       refused to make. 0 is the column default and the only value here that
 --       asserts nothing.
 --
@@ -95,7 +99,7 @@
 --     flagged in the PR rather than guessed at here.
 --
 -- Nothing else. The other buddy levels are not touched, not created, and not
--- re-rated: 3520 already converged every row that exists to 1000, and this file
+-- re-rated: 3601 already converged every row that exists to 1000, and this file
 -- asserts below that it changed none of them.
 --
 -- ══════════════════════════════════════════════════════════════════════════════
@@ -122,12 +126,12 @@
 -- THE ORDERING CONSEQUENCE IS UNCHANGED BY THIS FILE
 -- ══════════════════════════════════════════════════════════════════════════════
 -- `resolveFeeSchedule` selects `platform_fee_basis_points` explicitly. Against a
--- database where 3520 has not run, that select fails (42703) and the resolver
+-- database where 3601 has not run, that select fails (42703) and the resolver
 -- returns `read_failed`, so EVERY fee-dependent route refuses — for `standard`
 -- exactly as for every other level. Seeding `standard` does not change that and
 -- cannot: a row this file inserts is unreadable by a resolver that cannot name
 -- the column. The migrations must be applied BEFORE or WITH the deploy that
--- carries the code, and 3520 must be applied before this file.
+-- carries the code, and 3601 must be applied before this file.
 --
 -- ══════════════════════════════════════════════════════════════════════════════
 -- WHAT THIS DOES NOT MAKE TRUE
@@ -145,7 +149,7 @@
 -- Safe ONLY while no booking has been priced against it. Once a
 -- `rent_buddy_earnings_entries` row exists for a `standard` buddy, that row
 -- records the rate it was computed under
--- (`rent_buddy_earnings_ledger.platform_fee_basis_points`, 3520) and deleting
+-- (`rent_buddy_earnings_ledger.platform_fee_basis_points`, 3601) and deleting
 -- the schedule row does not and must not alter it. The consequence of the
 -- DELETE is that `standard`'s fee routes go back to refusing, which is the
 -- state this file changed and a legitimate state to return to.
@@ -153,7 +157,7 @@
 
 BEGIN;
 
--- ─── Precondition: 3520 must have run ───────────────────────────────────────
+-- ─── Precondition: 3601 must have run ───────────────────────────────────────
 -- Checked explicitly rather than left to the INSERT's own 42703, so the failure
 -- names the file to apply instead of a missing column. A precondition that is
 -- not met is a REFUSAL, never a skip: silently doing nothing here would leave
@@ -162,7 +166,7 @@ DO $$
 BEGIN
   IF to_regclass('public.rent_buddy_fee_rules') IS NULL THEN
     RAISE EXCEPTION
-      '3521 PRECONDITION FAILED: public.rent_buddy_fee_rules does not exist.';
+      '3602 PRECONDITION FAILED: public.rent_buddy_fee_rules does not exist.';
   END IF;
 
   IF NOT EXISTS (
@@ -172,7 +176,7 @@ BEGIN
        AND attnum > 0 AND NOT attisdropped
   ) THEN
     RAISE EXCEPTION
-      '3521 PRECONDITION FAILED: rent_buddy_fee_rules.platform_fee_basis_points does not exist. Apply 3520_rent_buddy_commission_basis_points.sql first — seeding a percent-only row would store the rate 100x too small.';
+      '3602 PRECONDITION FAILED: rent_buddy_fee_rules.platform_fee_basis_points does not exist. Apply 3601_rent_buddy_commission_basis_points.sql first — seeding a percent-only row would store the rate 100x too small.';
   END IF;
 
   IF NOT EXISTS (
@@ -181,7 +185,7 @@ BEGIN
        AND conname  = 'rbfr_flat_rate_unless_approved' AND contype = 'c'
   ) THEN
     RAISE EXCEPTION
-      '3521 PRECONDITION FAILED: rbfr_flat_rate_unless_approved is absent, so the flat-rate rule this seed relies on is not being enforced. Apply 3520 first.';
+      '3602 PRECONDITION FAILED: rbfr_flat_rate_unless_approved is absent, so the flat-rate rule this seed relies on is not being enforced. Apply 3601 first.';
   END IF;
 END $$;
 
@@ -216,9 +220,9 @@ ON CONFLICT ON CONSTRAINT rent_buddy_fee_rules_buddy_level_key DO NOTHING;
 
 COMMENT ON TABLE public.rent_buddy_fee_rules IS
   'The Rent-a-Buddy fee schedule of record, one row per buddy_level. The rate '
-  'lives in platform_fee_basis_points (3520); platform_fee_percent is a rounded '
+  'lives in platform_fee_basis_points (3601); platform_fee_percent is a rounded '
   'legacy mirror that nothing prices from. ''standard'' was seeded at the '
-  'approved flat 1000 basis points by 3521 (owner decision 2026-10-04); a level '
+  'approved flat 1000 basis points by 3602 (owner decision 2026-10-04); a level '
   'with no row here is UNPRICED and every fee route refuses for it, which is a '
   'configuration state and not a default.';
 
@@ -243,14 +247,14 @@ BEGIN
 
   IF v_bps IS NULL THEN
     RAISE EXCEPTION
-      '3521 postcondition FAILED: there is no ''standard'' row carrying a basis-point rate. The seed did not take, so standard''s fee routes still refuse.';
+      '3602 postcondition FAILED: there is no ''standard'' row carrying a basis-point rate. The seed did not take, so standard''s fee routes still refuse.';
   END IF;
 
   SELECT count(*) INTO v_rows
     FROM public.rent_buddy_fee_rules WHERE buddy_level = 'standard';
   IF v_rows <> 1 THEN
     RAISE EXCEPTION
-      '3521 postcondition FAILED: % rows for buddy_level ''standard''; the schedule''s unique key is the identity of a level and exactly one row may carry it.',
+      '3602 postcondition FAILED: % rows for buddy_level ''standard''; the schedule''s unique key is the identity of a level and exactly one row may carry it.',
       v_rows;
   END IF;
 
@@ -283,12 +287,12 @@ BEGIN
 
     IF v_changed IS NOT NULL THEN
       RAISE EXCEPTION
-        '3521 postcondition FAILED: a pre-existing ''standard'' row was MODIFIED (%). This file must never overwrite a rate an operator set; ON CONFLICT DO NOTHING is the guarantee and it did not hold.',
+        '3602 postcondition FAILED: a pre-existing ''standard'' row was MODIFIED (%). This file must never overwrite a rate an operator set; ON CONFLICT DO NOTHING is the guarantee and it did not hold.',
         v_changed;
     END IF;
 
     RAISE NOTICE
-      '3521 OK (no-op): ''standard'' already carried % basis points and was left exactly as it was. A re-run neither duplicates nor overwrites.',
+      '3602 OK (no-op): ''standard'' already carried % basis points and was left exactly as it was. A re-run neither duplicates nor overwrites.',
       v_bps;
   ELSE
     -- Freshly seeded: it must be the approved flat rate, with no approval and a
@@ -296,24 +300,24 @@ BEGIN
     -- operator's pre-existing row is their business and is covered above.
     IF v_bps <> 1000 THEN
       RAISE EXCEPTION
-        '3521 postcondition FAILED: ''standard'' was seeded at % basis points, not the approved flat 1000. The owner approved 10 %%; any other rate is a price nobody decided.',
+        '3602 postcondition FAILED: ''standard'' was seeded at % basis points, not the approved flat 1000. The owner approved 10 %%; any other rate is a price nobody decided.',
         v_bps;
     END IF;
 
     IF v_approval IS NOT NULL THEN
       RAISE EXCEPTION
-        '3521 postcondition FAILED: the seeded ''standard'' row carries commission_override_approval=%. A seed must never approve an override; 1000 needs no approval.',
+        '3602 postcondition FAILED: the seeded ''standard'' row carries commission_override_approval=%. A seed must never approve an override; 1000 needs no approval.',
         v_approval;
     END IF;
 
     IF v_percent IS DISTINCT FROM 10 THEN
       RAISE EXCEPTION
-        '3521 postcondition FAILED: the legacy percent mirror is % and must be 10 to agree with 1000 basis points (3520 asserts this agreement for every row).',
+        '3602 postcondition FAILED: the legacy percent mirror is % and must be 10 to agree with 1000 basis points (3601 asserts this agreement for every row).',
         v_percent;
     END IF;
 
     RAISE NOTICE
-      '3521 OK: ''standard'' seeded at 1000 basis points (10 %%), no override approved, legacy percent mirror 10, traveller service fee at the column default of 0 (ruling R1 is unmade). Its fee routes now resolve instead of refusing.';
+      '3602 OK: ''standard'' seeded at 1000 basis points (10 %%), no override approved, legacy percent mirror 10, traveller service fee at the column default of 0 (ruling R1 is unmade). Its fee routes now resolve instead of refusing.';
   END IF;
 
   -- 3. NOTHING ELSE MOVED. Not one other level was re-rated, and none vanished.
@@ -337,7 +341,7 @@ BEGIN
 
   IF v_changed IS NOT NULL THEN
     RAISE EXCEPTION
-      '3521 postcondition FAILED: this file changed a level it has no business touching: %. It seeds ''standard'' and nothing else.',
+      '3602 postcondition FAILED: this file changed a level it has no business touching: %. It seeds ''standard'' and nothing else.',
       v_changed;
   END IF;
 
@@ -350,7 +354,7 @@ BEGIN
 
   IF v_vanished IS NOT NULL THEN
     RAISE EXCEPTION
-      '3521 postcondition FAILED: schedule row(s) for % are gone. This file deletes nothing.',
+      '3602 postcondition FAILED: schedule row(s) for % are gone. This file deletes nothing.',
       v_vanished;
   END IF;
 
@@ -361,7 +365,7 @@ BEGIN
        AND conname = 'rbfr_flat_rate_unless_approved' AND contype = 'c'
   ) THEN
     RAISE EXCEPTION
-      '3521 postcondition FAILED: rbfr_flat_rate_unless_approved is no longer present. A seed must not disturb the rule it seeds within.';
+      '3602 postcondition FAILED: rbfr_flat_rate_unless_approved is no longer present. A seed must not disturb the rule it seeds within.';
   END IF;
 
   IF NOT EXISTS (
@@ -370,7 +374,7 @@ BEGIN
        AND conname = 'rbfr_basis_points_range' AND contype = 'c'
   ) THEN
     RAISE EXCEPTION
-      '3521 postcondition FAILED: rbfr_basis_points_range is no longer present.';
+      '3602 postcondition FAILED: rbfr_basis_points_range is no longer present.';
   END IF;
 END $$;
 

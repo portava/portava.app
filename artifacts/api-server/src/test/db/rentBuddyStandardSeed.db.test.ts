@@ -1,5 +1,5 @@
 /**
- * 3521 — the `standard` commission seed, executed against real PostgreSQL.
+ * 3602 — the `standard` commission seed, executed against real PostgreSQL.
  *
  * Run: LOCAL_DB_URL=postgresql://… node --import tsx/esm --test src/test/db/rentBuddyStandardSeed.db.test.ts
  *      (or pnpm run test:db-local). Skips without a database, like every
@@ -18,7 +18,7 @@
  * database is left modified by this suite.
  *
  * PROPERTIES
- *   S0  3520 then 3521 on the replayed chain: 'standard' exists, at 1000 basis
+ *   S0  3601 then 3602 on the replayed chain: 'standard' exists, at 1000 basis
  *       points, no approval, mirror 10, traveller fee 0.
  *   S1  IDEMPOTENT: the body runs three times in one transaction and there is
  *       still exactly one 'standard' row.
@@ -30,7 +30,7 @@
  *       rate is still unwritable after the seed.
  *   S6  the postconditions are not decorative: a body whose seeded rate is
  *       mutated to 1500 RAISES instead of storing a price nobody approved.
- *   S7  the precondition refuses on a database that has not run 3520, rather
+ *   S7  the precondition refuses on a database that has not run 3601, rather
  *       than silently seeding nothing.
  */
 import { describe, it } from "node:test";
@@ -41,8 +41,8 @@ import { fileURLToPath } from "node:url";
 import { HAVE_DB, psql, rows, scalar } from "./localDb.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
-const M3520 = resolve(__dir, "../../migrations/3520_rent_buddy_commission_basis_points.sql");
-const M3521 = resolve(__dir, "../../migrations/3521_rent_buddy_standard_level_commission_seed.sql");
+const M3520 = resolve(__dir, "../../migrations/3601_rent_buddy_commission_basis_points.sql");
+const M3521 = resolve(__dir, "../../migrations/3602_rent_buddy_standard_level_commission_seed.sql");
 
 /** A migration's statements without its own BEGIN … COMMIT, so a test can run them in its transaction. */
 function body(path: string): string {
@@ -91,8 +91,8 @@ const STANDARD_TUPLE = (tag: string) =>
   `       traveler_service_fee_usd || '|' || traveler_service_fee_pct ` +
   `  FROM public.rent_buddy_fee_rules WHERE buddy_level='standard';`;
 
-describe("3521: the 'standard' level is priced at the approved flat rate", { skip: !HAVE_DB && "no LOCAL_DB_URL" }, () => {
-  it("S0: after 3520 + 3521, 'standard' carries 1000 basis points and no approval", () => {
+describe("3602: the 'standard' level is priced at the approved flat rate", { skip: !HAVE_DB && "no LOCAL_DB_URL" }, () => {
+  it("S0: after 3601 + 3602, 'standard' carries 1000 basis points and no approval", () => {
     const r = psql(
       `BEGIN;\n${CHAIN}\n` +
       `SELECT platform_fee_basis_points, platform_fee_percent, ` +
@@ -102,7 +102,7 @@ describe("3521: the 'standard' level is priced at the approved flat rate", { ski
       `FROM public.rent_buddy_fee_rules WHERE buddy_level='standard';\n` +
       `ROLLBACK;\n`,
     );
-    ok(r, "3520 + 3521");
+    ok(r, "3601 + 3602");
     const line = r.stdout.split("\n").map((s) => s.trim()).find((s) => /\|/.test(s) && /^\s*1000\s*\|/.test(s));
     assert.ok(line, `no 'standard' row in output:\n${r.stdout}`);
     const f = line.split("|").map((s) => s.trim());
@@ -120,7 +120,7 @@ describe("3521: the 'standard' level is priced at the approved flat rate", { ski
       `SELECT 'STANDARD_ROWS=' || count(*)::text FROM public.rent_buddy_fee_rules WHERE buddy_level='standard';\n` +
       `ROLLBACK;\n`,
     );
-    ok(r, "3521 x3");
+    ok(r, "3602 x3");
     assert.equal(
       tagged(r.stdout, "STANDARD_ROWS"), "1",
       "three applies must leave exactly one row — ON CONFLICT DO NOTHING is what makes the " +
@@ -130,9 +130,9 @@ describe("3521: the 'standard' level is priced at the approved flat rate", { ski
     // AND the row after three applies must be IDENTICAL to the row after one.
     //
     // This replaces an earlier assertion that counted the migration's own
-    // "3521 OK (no-op)" NOTICE. That was testing the migration's LOGGING, not
+    // "3602 OK (no-op)" NOTICE. That was testing the migration's LOGGING, not
     // its behaviour, and psql notice capture turned out to be unreliable here
-    // (3520's notices arrived on stderr while 3521's did not, in the same
+    // (3601's notices arrived on stderr while 3602's did not, in the same
     // script). Comparing the resulting ROW is strictly stronger: a notice can
     // be right while the data is wrong, but if the row is byte-identical after
     // N applies then the 2nd and 3rd applies changed nothing, whatever they
@@ -142,13 +142,13 @@ describe("3521: the 'standard' level is priced at the approved flat rate", { ski
       `DELETE FROM public.rent_buddy_fee_rules WHERE buddy_level <> 'standard';\n` +
       STANDARD_TUPLE("ROW") + `\nROLLBACK;\n`,
     );
-    ok(once, "3521 x1");
+    ok(once, "3602 x1");
     const thrice = psql(
       `BEGIN;\n${B3520}\n${B3521}\n${B3521}\n${B3521}\n` +
       `DELETE FROM public.rent_buddy_fee_rules WHERE buddy_level <> 'standard';\n` +
       STANDARD_TUPLE("ROW") + `\nROLLBACK;\n`,
     );
-    ok(thrice, "3521 x3 (tuple)");
+    ok(thrice, "3602 x3 (tuple)");
     assert.equal(
       tagged(thrice.stdout, "ROW"), tagged(once.stdout, "ROW"),
       "the 'standard' row after THREE applies must equal the row after ONE — that is what " +
@@ -206,12 +206,12 @@ describe("3521: the 'standard' level is priced at the approved flat rate", { ski
     assert.equal(
       tagged(r.stdout, "OTHER"), "2200|22|fixture approval|5.00",
       "the other level's rate, mirror, approval and traveller fee must all be untouched — " +
-      "3521 seeds 'standard' and nothing else",
+      "3602 seeds 'standard' and nothing else",
     );
     // Both levels present. Deliberately NOT a total row count: whether the
     // replayed chain carries other schedule rows is a property of the harness,
     // not of this migration, and asserting a count would make this test fail
-    // for a reason 3521 did not cause.
+    // for a reason 3602 did not cause.
     const present = tagged(r.stdout, "PRESENT").split(",");
     assert.ok(present.includes("standard"), `'standard' missing from ${present.join(",")}`);
     assert.ok(present.includes("fixture_level"), `the fixture level was deleted: ${present.join(",")}`);
@@ -257,8 +257,8 @@ describe("3521: the 'standard' level is priced at the approved flat rate", { ski
     );
   });
 
-  it("S7: on a database without 3520, the seed REFUSES rather than skipping", () => {
-    // The precondition path. 3520's columns are removed inside the transaction
+  it("S7: on a database without 3601, the seed REFUSES rather than skipping", () => {
+    // The precondition path. 3601's columns are removed inside the transaction
     // so the file meets a genuinely un-migrated table.
     const r = inRolledBackTx(
       `ALTER TABLE public.rent_buddy_fee_rules
@@ -270,8 +270,8 @@ describe("3521: the 'standard' level is priced at the approved flat rate", { ski
       `${B3521}\n`,
     );
     assert.notEqual(r.status, 0, "the seed ran against a table with no basis-point column");
-    assert.match(r.stderr, /3521 PRECONDITION FAILED/, r.stderr);
-    assert.match(r.stderr, /3520/, "the refusal must name the file to apply first");
+    assert.match(r.stderr, /3602 PRECONDITION FAILED/, r.stderr);
+    assert.match(r.stderr, /3601/, "the refusal must name the file to apply first");
   });
 
   it("S8: 'standard' resolves where it previously had no row at all", () => {
@@ -295,15 +295,15 @@ describe("3521: the 'standard' level is priced at the approved flat rate", { ski
     assert.ok(before !== null, "the harness answered no count at all");
   });
 
-  it("S9: the schedule rows all agree with 3520's mirror rule after the seed", () => {
-    // 3520 asserts percent = ROUND(bps/100) for EVERY row. If 3521's seeded
-    // mirror disagreed, a later re-run of 3520 would fail — so this is the
+  it("S9: the schedule rows all agree with 3601's mirror rule after the seed", () => {
+    // 3601 asserts percent = ROUND(bps/100) for EVERY row. If 3602's seeded
+    // mirror disagreed, a later re-run of 3601 would fail — so this is the
     // forward-compatibility property, not a restatement.
     const r = psql(`BEGIN;\n${CHAIN}\n${B3520}\nROLLBACK;\n`);
-    ok(r, "3520 re-run after the seed");
+    ok(r, "3601 re-run after the seed");
     assert.ok(
       !/postcondition FAILED/.test(r.stderr),
-      `re-running 3520 after the seed failed:\n${r.stderr}`,
+      `re-running 3601 after the seed failed:\n${r.stderr}`,
     );
   });
 

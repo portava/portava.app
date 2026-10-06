@@ -67,7 +67,7 @@ const BOOKING = {
   total_usd: 100, deposit_usd: 20, cash_balance_usd: 80, tip_usd: 10,
 };
 const BUDDY = { user_id: "buddy-user-1", buddy_level: "trusted" };
-// 1500 basis points (3520). Not the flat rate, so the fixture also records the
+// 1500 basis points (3601). Not the flat rate, so the fixture also records the
 // separate approval the owner decision of 2026-10-04 requires.
 const FEE = {
   platform_fee_basis_points: 1500,

@@ -9,7 +9,7 @@
  *
  * ── HOW THE SEED IS TESTED, AND WHY NOT BY READING THE SQL ──────────────────
  * There is no PostgreSQL in the local harness, so this file cannot EXECUTE
- * migration 3521. What it does instead is make the migration's seeded values
+ * migration 3602. What it does instead is make the migration's seeded values
  * LOAD-BEARING THROUGH REAL CODE: the INSERT's column list and VALUES tuple are
  * parsed into a row object, that row is handed to the real `resolveFeeSchedule`
  * and the real `createEarningsLedgerEntry`, and the assertions are about what
@@ -59,7 +59,7 @@ import {
 } from "../lib/creatorLedgerEntries.js";
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..");
-const SEED_FILE = "3521_rent_buddy_standard_level_commission_seed.sql";
+const SEED_FILE = "3602_rent_buddy_standard_level_commission_seed.sql";
 const seedText = readFileSync(join(SRC, "migrations", SEED_FILE), "utf8");
 
 /** The executable half. These files carry more prose than SQL, and the prose quotes SQL. */
@@ -75,7 +75,7 @@ const seedStatements = seedText
 /**
  * Column defaults from the schema of record
  * (`artifacts/api-server/baseline/20260819_baseline_structure.sql:9062#rent_buddy_fee_rules`),
- * plus 3520's two added columns. A column the seed omits takes its default, so
+ * plus 3601's two added columns. A column the seed omits takes its default, so
  * these are what the row ACTUALLY carries — modelling the seed without them
  * would test a row no database would ever return.
  */
@@ -84,8 +84,8 @@ const COLUMN_DEFAULTS: Record<string, unknown> = {
   platform_fee_percent: undefined,   // NOT NULL, no default
   traveler_service_fee_usd: 0,       // DEFAULT 0 NOT NULL
   traveler_service_fee_pct: 0,       // DEFAULT 0 NOT NULL
-  platform_fee_basis_points: undefined, // 3520: NOT NULL after backfill
-  commission_override_approval: null,   // 3520: nullable, no default
+  platform_fee_basis_points: undefined, // 3601: NOT NULL after backfill
+  commission_override_approval: null,   // 3601: nullable, no default
 };
 
 interface ParsedSeed {
@@ -213,8 +213,8 @@ describe("the seed prices 'standard' at the approved flat rate", () => {
   });
 
   it("the legacy percent mirror agrees with the basis points", () => {
-    // 3520 asserts `platform_fee_percent = ROUND(bps/100)` for EVERY row, so a
-    // seed that disagreed would make a later re-run of 3520 fail.
+    // 3601 asserts `platform_fee_percent = ROUND(bps/100)` for EVERY row, so a
+    // seed that disagreed would make a later re-run of 3601 fail.
     assert.equal(seed.row.platform_fee_percent, Math.round(1000 / 100));
   });
 
@@ -293,7 +293,7 @@ describe("the seed is a seed, not a reset (structural; executable proof is the .
     );
   });
 
-  it("does not touch the CHECKs 3520 installed", () => {
+  it("does not touch the CHECKs 3601 installed", () => {
     for (const c of ["rbfr_flat_rate_unless_approved", "rbfr_basis_points_range"]) {
       assert.ok(
         !new RegExp(`DROP\\s+CONSTRAINT[^;]*${c}`, "i").test(seedStatements),
@@ -301,12 +301,12 @@ describe("the seed is a seed, not a reset (structural; executable proof is the .
       );
       assert.ok(
         !new RegExp(`ADD\\s+CONSTRAINT\\s+${c}`, "i").test(seedStatements),
-        `${c} must not be re-stated here — 3520 owns it`,
+        `${c} must not be re-stated here — 3601 owns it`,
       );
     }
   });
 
-  it("refuses rather than skips when 3520 has not run", () => {
+  it("refuses rather than skips when 3601 has not run", () => {
     // A precondition that is not met must be a REFUSAL. Silently doing nothing
     // would leave 'standard' unpriced on a database an operator believes was
     // seeded — the fee routes would still refuse, with nothing saying why.
@@ -320,7 +320,7 @@ describe("the seed is a seed, not a reset (structural; executable proof is the .
     assert.ok(blocks.length >= 2, `expected a precondition and a postcondition block, found ${blocks.length}`);
 
     const pre = blocks.find((b) => /platform_fee_basis_points[\s\S]*does not exist/.test(b));
-    assert.ok(pre, "no precondition block checks for 3520's basis-point column");
+    assert.ok(pre, "no precondition block checks for 3601's basis-point column");
 
     // The guard on the column's absence must END IN A RAISE, with no control
     // flow in it that could carry the apply past the missing column.
@@ -330,14 +330,14 @@ describe("the seed is a seed, not a reset (structural; executable proof is the .
     assert.ok(guard, "the basis-point check is not an IF NOT EXISTS … THEN … END IF guard");
     assert.match(
       guard[1]!, /RAISE\s+EXCEPTION/i,
-      "the precondition must RAISE when 3520 has not run; a RETURN or a NOTICE would let the " +
+      "the precondition must RAISE when 3601 has not run; a RETURN or a NOTICE would let the " +
       "apply report success having seeded nothing",
     );
     assert.ok(
       !/\bRETURN\b/i.test(guard[1]!),
       "a RETURN inside the guard turns the refusal into a silent skip",
     );
-    assert.match(guard[1]!, /3520/, "the refusal must name the file an operator has to apply first");
+    assert.match(guard[1]!, /3601/, "the refusal must name the file an operator has to apply first");
     assert.match(seedText, /PRECONDITION FAILED/);
   });
 
@@ -524,7 +524,7 @@ describe("a /v1 entry survives the cutover, readable and recomputable", () => {
 describe("an unreadable fee rule refuses — never 1000, never 0", () => {
   const unreadable: Array<[string, any]> = [
     ["the table errored", { feeError: { message: "permission denied" } }],
-    ["3520 has not run", { feeError: { message: 'column "platform_fee_basis_points" does not exist' } }],
+    ["3601 has not run", { feeError: { message: 'column "platform_fee_basis_points" does not exist' } }],
     ["the rate is NULL", { feeRow: { ...seed.row, platform_fee_basis_points: null } }],
     ["the rate is not a number", { feeRow: { ...seed.row, platform_fee_basis_points: "ten percent" } }],
     ["the rate is a fractional basis point", { feeRow: { ...seed.row, platform_fee_basis_points: 1000.5 } }],
