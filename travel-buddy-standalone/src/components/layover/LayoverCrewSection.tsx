@@ -241,6 +241,9 @@ export function LayoverCrewSection({ sessionId, timezone, refreshKey = 0 }: Prop
   }
 
   // Not in a crew: the openings here, and the way to make one.
+  // §14.1 / L138: `safety_gate_not_passed` is the server's own refusal reason,
+  // read rather than re-derived — this section decides nothing about time.
+  const gateClosed = state.reason === 'safety_gate_not_passed';
   return (
     <View style={styles.card}>
       <Header />
@@ -277,6 +280,20 @@ export function LayoverCrewSection({ sessionId, timezone, refreshKey = 0 }: Prop
             </View>
           ))}
         </View>
+      ) : gateClosed ? (
+        /**
+         * §14.1 / census-layover L138 — a REFUSAL, not an empty city.
+         *
+         * `crews: []` with `reason: 'safety_gate_not_passed'` means the server's
+         * certified record says this traveller must not be offered a landside
+         * meeting. "No crews here yet. Start one." would be the fabricated zero
+         * this lane keeps catching, and it would invite exactly the thing the
+         * gate just refused.
+         */
+        <Text style={styles.body}>
+          Your layover does not leave room to go and meet a crew in the city right now, so
+          none is being offered. This changes with your return deadline.
+        </Text>
       ) : state.city ? (
         <Text style={styles.body}>No crews here yet. Start one.</Text>
       ) : null}
