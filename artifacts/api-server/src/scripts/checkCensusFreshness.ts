@@ -2424,6 +2424,25 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/hooks/useGroupChat.ts",
     "artifacts/api-server/src/test/telegraphEditE2eeRefusal.test.ts",
     "artifacts/api-server/src/test/telegraphMessageReportReason.test.ts",
+    // WIDENED 2026-10-05 by lane T2 (census-telegraph §45): the rows §45 moves cite these suites as
+    // their proving tests (T291/T294/T295, T366, T367, T408, T415/T416, T398, T435).
+    "artifacts/api-server/src/test/telegraphProjectionRegistryHonesty.test.ts",
+    "artifacts/api-server/src/test/telegraphConversationMemoryBoundary.test.ts",
+    "artifacts/api-server/src/test/telegraphNearbyNotFromGps.test.ts",
+    "artifacts/api-server/src/test/telegraphScreenshotInformational.test.ts",
+    "artifacts/api-server/src/test/telegraphTransportClasses.test.ts",
+    "artifacts/api-server/src/test/telegraphThreadNotificationPolicy.test.ts",
+    "artifacts/api-server/src/test/telegraphDiagnosticsDurableAudit.test.ts",
+    // WIDENED 2026-10-06 by lane T2 (§45b, §45c): the proving suites of the OD-TRUST-5 send gate and of
+    // verifier findings 1 and 8 (a post across a block; the DM header's identity).
+    "artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts",
+    "artifacts/api-server/src/test/telegraphPostProjectionByline.test.ts",
+    "artifacts/api-server/src/test/telegraphConversationHeaderIdentity.test.ts",
+    // WIDENED 2026-10-06 by lane T2 (§45f): the proving suite of §45d.3's correction (the header's
+    // availability across a block and the window relationship; verification of a58aa01d3f, finding 1).
+    "artifacts/api-server/src/test/telegraphConversationHeaderAvailability.test.ts",
+    // T366's W (§45c.2) rests on the kernel's call shape here: a change to it can move that row.
+    "artifacts/api-server/src/lib/memoryCommandBus.ts",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as

@@ -33,6 +33,12 @@ interface FakeOpts {
   failInsert?: Set<string>;
   /** Tables whose UPDATE resolves with an error. */
   failUpdate?: Set<string>;
+  /**
+   * Tables whose SELECT fails only AFTER the message insert has landed — so a
+   * read that happens after the write (the realtime audience) can fail without
+   * also failing the send gates that run before it (OD-TRUST-5 wave).
+   */
+  failSelectAfterInsert?: Set<string>;
 }
 
 function makeFake(store: Record<string, Row[]>, opts: FakeOpts = {}) {
@@ -58,6 +64,7 @@ function makeFake(store: Record<string, Row[]>, opts: FakeOpts = {}) {
         return { data: null, error: null };
       }
       if (opts.failSelect?.has(table)) return { data: null, error: { message: `${table} unreadable` } };
+      if (opts.failSelectAfterInsert?.has(table) && inserted.length > 0) return { data: null, error: { message: `${table} unreadable` } };
       const rows = (store[table] ?? []).filter((r) => filters.every((f) => f(r)));
       return { data: rows, error: null };
     };
@@ -88,7 +95,11 @@ function makeFake(store: Record<string, Row[]>, opts: FakeOpts = {}) {
     return b;
   }
 
-  return { client: { from: (name: string) => builder(name) } as any, inserted, updated };
+  const client = { from: (name: string) => builder(name) } as any;
+  // postPlainThreadMessage now runs the shared send guard, which reads the
+  // messaging stop through the SERVICE client; this double is that client too.
+  _setTestClient(client, true);
+  return { client, inserted, updated };
 }
 
 const PLAIN_THREAD = { id: "t1", is_e2ee: false };
@@ -119,7 +130,7 @@ describe("A. postPlainThreadMessage — the message reaches the thread, or the c
     // The whole claim of the flag is that the server cannot read the
     // conversation. A second write path that stored plaintext anyway would be
     // the one place that quietly can.
-    const store: Record<string, Row[]> = { message_threads: [{ id: "t1", is_e2ee: true }], messages: [], message_thread_members: [] };
+    const store: Record<string, Row[]> = { message_threads: [{ id: "t1", is_e2ee: true }], messages: [], message_thread_members: [{ thread_id: "t1", user_id: "u1" }] };
     const { client, inserted } = makeFake(store);
 
     const r = await postPlainThreadMessage(client, SEND);
@@ -140,7 +151,7 @@ describe("A. postPlainThreadMessage — the message reaches the thread, or the c
     // `unverifiable` is a SEPARATE answer from `e2ee` because the caller tells
     // the user different things: one is "this conversation does not take this
     // kind of message", the other is "try again".
-    const store: Record<string, Row[]> = { message_threads: [{ ...PLAIN_THREAD }], messages: [], message_thread_members: [] };
+    const store: Record<string, Row[]> = { message_threads: [{ ...PLAIN_THREAD }], messages: [], message_thread_members: [{ thread_id: "t1", user_id: "u1" }] };
     const { client, inserted } = makeFake(store, { failSelect: new Set(["message_threads"]) });
 
     const r = await postPlainThreadMessage(client, SEND);
@@ -150,7 +161,7 @@ describe("A. postPlainThreadMessage — the message reaches the thread, or the c
   });
 
   it("A4 — a thread that is not there is `no_thread`, not a silent success", async () => {
-    const store: Record<string, Row[]> = { message_threads: [], messages: [], message_thread_members: [] };
+    const store: Record<string, Row[]> = { message_threads: [], messages: [], message_thread_members: [{ thread_id: "t1", user_id: "u1" }] };
     const { client, inserted } = makeFake(store);
 
     const r = await postPlainThreadMessage(client, SEND);
@@ -160,7 +171,7 @@ describe("A. postPlainThreadMessage — the message reaches the thread, or the c
   });
 
   it("A5 — a REJECTED insert is reported, not swallowed", async () => {
-    const store: Record<string, Row[]> = { message_threads: [{ ...PLAIN_THREAD }], messages: [], message_thread_members: [] };
+    const store: Record<string, Row[]> = { message_threads: [{ ...PLAIN_THREAD }], messages: [], message_thread_members: [{ thread_id: "t1", user_id: "u1" }] };
     const { client } = makeFake(store, { failInsert: new Set(["messages"]) });
 
     const r = await postPlainThreadMessage(client, SEND);
@@ -173,7 +184,7 @@ describe("A. postPlainThreadMessage — the message reaches the thread, or the c
     // The message IS in the thread once the insert lands. Reporting failure
     // after that would make the caller tell the traveller their text was lost
     // while it sits in the conversation, and a retry would double-post it.
-    const store: Record<string, Row[]> = { message_threads: [{ ...PLAIN_THREAD }], messages: [], message_thread_members: [{ thread_id: "t1", user_id: "u2" }] };
+    const store: Record<string, Row[]> = { message_threads: [{ ...PLAIN_THREAD }], messages: [], message_thread_members: [{ thread_id: "t1", user_id: "u1" }, { thread_id: "t1", user_id: "u2" }] };
     const { client } = makeFake(store, { failUpdate: new Set(["message_threads"]) });
 
     const r = await postPlainThreadMessage(client, SEND);
@@ -183,13 +194,39 @@ describe("A. postPlainThreadMessage — the message reaches the thread, or the c
   });
 
   it("A7 — an unreadable MEMBER table (so no realtime audience) does not un-send it either", async () => {
-    const store: Record<string, Row[]> = { message_threads: [{ ...PLAIN_THREAD }], messages: [], message_thread_members: [{ thread_id: "t1", user_id: "u2" }] };
-    const { client } = makeFake(store, { failSelect: new Set(["message_thread_members"]) });
+    const store: Record<string, Row[]> = { message_threads: [{ ...PLAIN_THREAD }], messages: [], message_thread_members: [{ thread_id: "t1", user_id: "u1" }, { thread_id: "t1", user_id: "u2" }] };
+    // AFTER the insert: before it, an unreadable roster is now a send gate's refusal (A8).
+    const { client } = makeFake(store, { failSelectAfterInsert: new Set(["message_thread_members"]) });
 
     const r = await postPlainThreadMessage(client, SEND);
 
     assert.equal(r.ok, true, "realtime is a delivery optimisation; the durable row is the message");
     assert.equal(store.messages!.length, 1);
+  });
+
+  // A8–A9 added 2026-10-05 (lane T2, OD-TRUST-5 wave): the writer now runs the
+  // shared send guard first, so the gates every other door holds are its own.
+  it("A8 — an unreadable MEMBER table BEFORE the insert refuses as `unverifiable`, and nothing is written", async () => {
+    // The block guard reads the roster; a roster it cannot read must not read
+    // as "a group thread, skip the block check" (lib/telegraphThreadWrite.ts gate 3).
+    const store: Record<string, Row[]> = { message_threads: [{ ...PLAIN_THREAD }], messages: [], message_thread_members: [{ thread_id: "t1", user_id: "u1" }, { thread_id: "t1", user_id: "u2" }] };
+    const { client, inserted } = makeFake(store, { failSelect: new Set(["message_thread_members"]) });
+
+    const r = await postPlainThreadMessage(client, SEND);
+
+    assert.deepEqual(r, { ok: false, reason: "unverifiable" });
+    assert.equal(inserted.length, 0);
+  });
+
+  it("A9 — a sender who is not an ACTIVE member is refused by the guard, not trusted to the caller", async () => {
+    const store: Record<string, Row[]> = { message_threads: [{ ...PLAIN_THREAD }], messages: [], message_thread_members: [{ thread_id: "t1", user_id: "u2" }] };
+    const { client, inserted } = makeFake(store);
+
+    const r = await postPlainThreadMessage(client, SEND);
+
+    assert.equal(r.ok, false);
+    assert.equal((r as { reason: string }).reason, "forbidden");
+    assert.equal(inserted.length, 0);
   });
 });
 

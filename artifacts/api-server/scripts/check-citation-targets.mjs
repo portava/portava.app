@@ -625,13 +625,16 @@ import {
  * held 4; pinning it removes those 4 -> 157. Nothing else moved. The same
  * entry is added to check-citation-symbols.mjs, whose counts do not change
  * (the document carries no anchored citation). */
-/* RATCHETED 2026-10-06 157 -> 156 on lane D (#630). The gain is main's, not
- * this lane's: --list is identical on origin/main b19f3c681 and on this
- * branch, and diffed against 6b14fe96e (where 157 was measured) exactly one
- * pointer left the list: `cross-cutting-obligations.md:343`
- * `compass/CompassAutopilotEngine.ts:598`, which #589 (5e67ccc3c) repointed
- * to :739, the `trip_autopilot_proposals` insert the sentence names. Every
- * other difference is a line shift of a citation that is still dead. */
+/* RATCHETED 2026-10-06 157 -> 156 on lane T2 (census-telegraph §45f; the
+ * verifier of a58aa01d3f found the guard printing "156 < 157"). The gain is
+ * main's, not this lane's, and it is isolated by diffing --list between the
+ * tree that set 157 (6b14fe96e) and main at 94c6bb4ed3: the one pointer that
+ * left the list is cross-cutting-obligations.md's
+ * `compass/CompassAutopilotEngine.ts:206,598`, which #613 (merged through
+ * #589) repointed to `:280,739`. Line 739 is the `trip_autopilot_proposals`
+ * insert the T-01 violator claim is about, so the pointer now carries its
+ * claim rather than having slid onto unrelated code. Every other line of the
+ * list is the same pointer at a shifted line. Same rule as above. */
 export const MAX_DEAD_TARGETS = 156;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */

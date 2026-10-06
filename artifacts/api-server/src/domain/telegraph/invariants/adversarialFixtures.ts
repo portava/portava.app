@@ -237,16 +237,18 @@ export const TELEGRAPH_ADVERSARIAL_FIXTURES: readonly AdversarialFixture[] = [
     enforcedBy: [
       "travel-buddy-standalone/src/components/DiscoveryCardMessage.tsx",
       "travel-buddy-standalone/src/components/PostCardMessage.tsx",
-      "src/domain/telegraph/policies/shareAuthorizationPolicy.ts",
+      "travel-buddy-standalone/src/features/telegraph/sharing/legacyCardView.ts",
+      "src/services/telegraph/shareables.ts",
     ],
     note:
-      "The card cannot notice. The fixture reads both card components and asserts " +
-      "each contains no fetch, no effect and no capability read — they render " +
-      "frozen JSON from messages.body forever. This is §29's revocation-bypass " +
-      "invariant failing at the card, and it is structural rather than timing " +
-      "dependent, which is why the fixture is a static assertion over the real " +
-      "components rather than a race. It goes red the moment a card learns to " +
-      "re-resolve, which is the change that fixes it.",
+      "DIVERGENT AGAIN since 2026-10-05 (lane T2, census-telegraph §45c, verifier finding 5): " +
+      "lane T2 had moved this to enforced the same day, and that overstated it. Both legacy " +
+      "cards now re-resolve their source on MOUNT (useShareRevocation → POST " +
+      "/threads/:id/share-projections) and draw the revoked state, the live projection or the " +
+      "reference alone from that answer — but they resolve ONCE per mount, with no refresh and " +
+      "no revocation event, so a source revoked WHILE the conversation is open (this " +
+      "scenario) keeps its drawn projection and actions until the card remounts. The fixture " +
+      "pins that real outcome; it goes red when a mounted card learns to hear a revocation.",
   },
 ];
 

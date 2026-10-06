@@ -38,7 +38,7 @@
 | 7 | `src/components/media/WatchItemOverlay.tsx:198` | Watch overlay | media | inline | platform-split; iOS `url: posterUrl`, Android appends URL to message; `recordMediaShare` | UniversalShareSheet |
 | 8 | `src/components/media/WatchFeedList.tsx:194` | Watch feed row | media | inline `handleShareTelegraph` | despite the name, calls native `Share.share` with caption only — **no URL, no Telegraph** | UniversalShareSheet |
 | 9 | `src/components/map/MapEntityActionRow.tsx:225` | Map entity action row | place / person / event | inline | `travelbuddy.app` + `entity.detailRoute` (untyped `as any`) | UniversalShareSheet |
-| 10 | `app/messages/[id].tsx:799` | AI recommendation card in chat | compass_recommendation | TelegraphRecommendationCard | title + reason text only, **no link, no entity id** | UniversalShareSheet |
+| 10 | `app/messages/[id].tsx:800` | AI recommendation card in chat | compass_recommendation | TelegraphRecommendationCard | title + reason text only, **no link, no entity id** | UniversalShareSheet |
 | 11 | `src/hooks/usePassportShare.ts:74` | Passport share (image) | profile/passport | usePassportShare | captured JPEG via RN Share `url` | UniversalShareSheet image branch |
 | 12 | `src/hooks/usePassportShare.ts:84` | Passport share (Android fallback) | profile/passport | usePassportShare | message + title | ″ |
 | 13 | `src/hooks/usePassportShare.ts:96` | Passport share (text fallback) | profile/passport | usePassportShare | message + title | ″ |
@@ -62,7 +62,7 @@
 | 20 | `app/stamp/[stampId].tsx:83` | Stamp detail | stamp | copies `makeStampShareLinks().webUrl` | ″ |
 | 21 | `src/components/stamps/StampDetailModal.tsx:74` | Stamp modal | stamp | copies `makeStampShareLinks().webUrl` | ″ |
 
-> `app/messages/[id].tsx:175` and `src/components/GroupChatScreen.tsx:208` also call `Clipboard.setStringAsync`, but they copy **message text**, not a URL. Not share triggers — excluded.
+> `app/messages/[id].tsx:176` and `src/components/GroupChatScreen.tsx:208` also call `Clipboard.setStringAsync`, but they copy **message text**, not a URL. Not share triggers — excluded.
 
 ### In-app send (Telegraph)
 
@@ -279,7 +279,7 @@ const subtype    = typeof req.body?.subtype === 'string' ? req.body.subtype : nu
 | event | `app/event/[id].tsx` | ✅ |
 | place | `app/place/[id].tsx` (+ `/day`, `/moments` sub-routes) | ✅ |
 | memory | `app/memory/[id].tsx` | ✅ |
-| compass_recommendation | — | ⚠️ **ZERO ROUTE.** Only `app/compass-settings`, `app/compass-memories`, `app/compass-preferences` exist. The share at `app/messages/[id].tsx:799` therefore cannot include a link — and doesn't. |
+| compass_recommendation | — | ⚠️ **ZERO ROUTE.** Only `app/compass-settings`, `app/compass-memories`, `app/compass-preferences` exist. The share at `app/messages/[id].tsx:800` therefore cannot include a link — and doesn't. |
 | buddy_profile | `app/(rent-a-buddy)/buddy/[id].tsx` | ✅ |
 | stamp | `app/stamp/[stampId].tsx` (+ list `app/stamps.tsx`, deep link `travelbuddy://stamps/{id}`) | ✅ |
 

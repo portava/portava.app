@@ -7,8 +7,9 @@
  * block guard is the one that matters most, because blocking deliberately does
  * not close an existing thread and is re-checked per send instead.
  *
- * FIVE gates (four until the §22 burst limit joined them — it had been on the
- * text door alone, so every other door was unlimited):
+ * SIX gates (four until the §22 burst limit joined them — it had been on the
+ * text door alone, so every other door was unlimited — and five until the
+ * OD-TRUST-5 restriction gate joined them):
  *   1. `disable_messaging` kill switch — fail CLOSED on a read error AND on an
  *      absent service client, the same fact (`messagingStopUnknownRefusal`).
  *   2. ACTIVE membership (`left_at IS NULL`).
@@ -17,13 +18,18 @@
  *      unreachable, and `routes/messaging.ts` records the day it happened.
  *   4. E2EE refusal. An E2EE thread's promise is that the server never stores
  *      plaintext; a structured envelope IS plaintext, so it is refused by name.
- *   5. §22's adaptive send rate limit, LAST, so a send refused by 1–4 never
+ *   5. Trust restriction (OD-TRUST-5), decided by
+ *      `domain/telegraph/policies/restrictionSendPolicy.ts` — the SAME function
+ *      the capabilities projection reads. A `safety` send is never refused by it;
+ *      an unreadable restriction state refuses as retryable, never as restricted.
+ *   6. §22's adaptive send rate limit, LAST, so a send refused by 1–5 never
  *      spends the sender's allowance. See `sendRateRefusal` at the end of file.
  */
 import type { SupabaseClient } from "@supabase/supabase-js"; import { sendLimiterId, type SendBucket } from "../domain/telegraph/policies/messageDoorPolicy.js";
 import { getServiceClient } from "./supabase.js"; import { checkSendRateLimit, SEND_LIMITS, SEND_WINDOW_MS } from "../domain/telegraph/policies/sendRateLimit.js";
 import { isKillSwitchEngaged } from "./featureFlags.js"; import { checkRateLimit } from "./rateLimit.js";
 import { isBlockedBetween } from "./blockGuard.js"; import { sendError } from "./http.js";
+import { decideRestrictedSend, readRestrictionSendFacts, RESTRICTION_SEND_SCOPE, RESTRICTION_UNKNOWN_MESSAGE } from "../domain/telegraph/policies/restrictionSendPolicy.js"; import { getRestrictionState } from "../services/trust/TrustRestrictionService.js"; import type { TelegraphReason } from "../domain/telegraph/contracts/telegraphReasonCodes.js";
 
 export type ThreadWriteRefusal =
   | "feature_disabled"
@@ -33,7 +39,7 @@ export type ThreadWriteRefusal =
 
 export type ThreadWriteGuard =
   | { ok: true; otherMemberIds: string[] }
-  | { ok: false; code: ThreadWriteRefusal; message: string; retryAfterMs?: number };
+  | { ok: false; code: ThreadWriteRefusal; message: string; retryAfterMs?: number; /** Set by the restriction gate only, so a door can tell "restricted" from "not a member". */ reason?: TelegraphReason };
 
 /**
  * The refusal for a flag client we do not have.
@@ -81,7 +87,15 @@ export async function guardTelegraphThreadWrite(
   client: SupabaseClient,
   threadId: string,
   userId: string,
-  opts: { sendBucket?: SendBucket } = {},
+  opts: {
+    sendBucket?: SendBucket;
+    /**
+     * A send safety needs (the §6.2 SAFETY kind, the NEED_HELP quick state). The
+     * restriction gate never refuses it and does not even read the restriction.
+     * Defaults to true exactly when the send is counted in the safety bucket.
+     */
+    safety?: boolean;
+  } = {},
 ): Promise<ThreadWriteGuard> {
   const flagSc = getServiceClient();
   const stopUnknown = messagingStopUnknownRefusal(flagSc);
@@ -129,7 +143,7 @@ export async function guardTelegraphThreadWrite(
 
   const { data: meta, error: metaErr } = await client
     .from("message_threads")
-    .select("is_e2ee")
+    .select("is_e2ee, thread_type")
     .eq("id", threadId)
     .maybeSingle();
   if (metaErr) {
@@ -147,7 +161,27 @@ export async function guardTelegraphThreadWrite(
     };
   }
 
-  // 5. The burst limit, last. Everything above is a reason this sender may not
+  // 5. Trust restriction (OD-TRUST-5). One decision, shared with the projection.
+  const restrictionVerdict = decideRestrictedSend(
+    await readRestrictionSendFacts(flagSc ?? client, {
+      threadId,
+      senderId: userId,
+      threadType: ((meta as { thread_type?: unknown } | null)?.thread_type as string | undefined) ?? null,
+      otherMemberIds,
+      safety: opts.safety ?? opts.sendBucket === "safety",
+    }),
+    { safety: opts.safety ?? opts.sendBucket === "safety" },
+  );
+  if (!restrictionVerdict.allowed) {
+    return {
+      ok: false,
+      code: restrictionVerdict.refusal === "unknown" ? "degraded_unavailable" : "forbidden",
+      message: restrictionVerdict.message,
+      reason: restrictionVerdict.reason,
+    };
+  }
+
+  // 6. The burst limit, last. Everything above is a reason this sender may not
   // write HERE; this is a reason they may not write YET, and a send that was
   // never going to be admitted must not cost them one they are entitled to.
   const rate = await sendRateRefusal(flagSc ?? client, userId, opts.sendBucket ?? "ordinary");
@@ -250,3 +284,54 @@ export async function refuseSendOverRate(
 
 /** Re-exported so the text door takes its whole door policy from one module. */
 export { resolveClientDiscriminator } from "../domain/telegraph/policies/messageDoorPolicy.js";
+
+/* ─────────────────────── the restriction gate, for the inline doors ───────────────────────
+ *
+ * The text and media doors in `routes/messaging.ts` carry their own copies of
+ * the other gates (they accept ciphertext, which the shared guard refuses), so
+ * they take this one as a call, like `refuseSendOverRate`. It is the SAME
+ * decision the shared guard and the capabilities projection take
+ * (`decideRestrictedSend` over `readRestrictionSendFacts`); only the reads are
+ * ordered for a door that has not loaded the thread: the restriction state
+ * first, and the thread's shape only when a restriction could apply to it.
+ * A person with no restriction pays one read.
+ *
+ * Returns true when it has ANSWERED the request.
+ */
+export async function refuseRestrictedSend(
+  req: { log?: { warn: (...args: any[]) => unknown } },
+  res: Parameters<typeof sendError>[0],
+  sc: SupabaseClient,
+  threadId: string,
+  senderId: string,
+): Promise<boolean> {
+  const restriction = await getRestrictionState(sc, senderId);
+  const mayApply =
+    restriction.degradedReason === "fail_closed" ||
+    restriction.activeRestrictions.some((t) => RESTRICTION_SEND_SCOPE[t] !== "none");
+  if (!mayApply) return false;
+
+  const [{ data: thread, error: threadErr }, { data: others, error: othersErr }] = await Promise.all([
+    sc.from("message_threads").select("thread_type").eq("id", threadId).maybeSingle(),
+    sc.from("message_thread_members").select("user_id").eq("thread_id", threadId).is("left_at", null).neq("user_id", senderId),
+  ]);
+  if (threadErr || othersErr) {
+    sendError(res, "degraded_unavailable", RESTRICTION_UNKNOWN_MESSAGE);
+    return true;
+  }
+  const verdict = decideRestrictedSend(
+    await readRestrictionSendFacts(sc, {
+      threadId,
+      senderId,
+      threadType: ((thread as { thread_type?: unknown } | null)?.thread_type as string | undefined) ?? null,
+      otherMemberIds: ((others as Array<{ user_id?: unknown }>) ?? []).map((m) => String(m.user_id)),
+      safety: false,
+      restriction,
+    }),
+    { safety: false },
+  );
+  if (verdict.allowed) return false;
+  req.log?.warn({ senderId, threadId, refusal: verdict.refusal }, "telegraph send refused by the restriction gate");
+  sendError(res, verdict.refusal === "unknown" ? "degraded_unavailable" : "forbidden", verdict.message);
+  return true;
+}
