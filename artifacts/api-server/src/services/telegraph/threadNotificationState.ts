@@ -104,23 +104,21 @@ export async function writeThreadNotificationChoice(
   const flag = await levelsFlag(sc);
   if (flag === "unknown") return { ok: false, code: "db_error" };
   const levelsOn = flag === "on";
-  const now = new Date(nowMs).toISOString();
-  let patch: Record<string, string | null>;
-  if (!levelsOn) {
-    if (choice.muteForMinutes !== null || (choice.level !== "ALL" && choice.level !== "MUTED")) {
-      return { ok: false, code: "feature_disabled" };
-    }
-    patch = { muted_at: choice.level === "MUTED" ? now : null };
-  } else {
-    patch = {
-      notification_level: levelToColumn(choice.level),
-      muted_until: choice.muteForMinutes === null ? null : new Date(nowMs + choice.muteForMinutes * 60_000).toISOString(),
-      muted_at: choice.level === "MUTED" ? now : null,
-    };
+  if (!levelsOn && (choice.muteForMinutes !== null || (choice.level !== "ALL" && choice.level !== "MUTED"))) {
+    return { ok: false, code: "feature_disabled" };
   }
+  const mutedAt = choice.level === "MUTED" ? new Date(nowMs).toISOString() : null;
+  // One object literal per flag state, written inline, so check:write-path-columns
+  // reads every column this update names (it cannot see a payload assembled in a variable).
   const { error } = await sc
     .from("message_thread_members")
-    .update(patch)
+    .update(levelsOn
+      ? {
+          notification_level: levelToColumn(choice.level),
+          muted_until: choice.muteForMinutes === null ? null : new Date(nowMs + choice.muteForMinutes * 60_000).toISOString(),
+          muted_at: mutedAt,
+        }
+      : { muted_at: mutedAt })
     .eq("thread_id", threadId)
     .eq("user_id", userId)
     .is("left_at", null);
