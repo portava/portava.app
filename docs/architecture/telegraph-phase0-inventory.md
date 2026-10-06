@@ -167,16 +167,16 @@ Processing and EXIF policy: `src/lib/mediaProcessing.ts`. Access: `src/lib/media
 
 `subtype` (static literals): `call_ended`, `call_started`, `compass_card`, `discovery_card`, `e2ee_welcome`, `event_context_card`, `hidden_gem`, `layover_suggestion`, `meetup`, `meetup_cancelled`, `meetup_confirmed`, `post_card`
 
-21 site(s) COMPUTE a message type rather than writing a literal, so no
+22 site(s) COMPUTE a message type rather than writing a literal, so no
 fixed enumeration of `subtype` is complete. They are declared in
 `src/domain/telegraph/policies/shareAuthorizationPolicy.ts` and re-derived by
 `check:telegraph-share-producers`:
 
 - `artifacts/api-server/src/lib/threadMessage.ts` — `` subtype: params.subtype ?? null ``
 - `artifacts/api-server/src/routes/telegraphShare.ts` — `` msg_type: msgTypeOf("PORTAVA_OBJECT") | subtype: objectType.toLowerCase() | subtype: m.subtype ``
-- `artifacts/api-server/src/routes/telegraphKinds.ts` — `` subtype: (row.subtype as string) ?? null | msg_type: validated.msgType | subtype: validated.subtype | subtype: m.subtype ``
+- `artifacts/api-server/src/routes/telegraphKinds.ts` — `` subtype: (row.subtype as string) ?? null | subtype: validated.subtype | subtype: m.subtype `` (parser / passthrough, writes no message)
 - `artifacts/api-server/src/services/telegraph/messageKinds.ts` — `` subtype: subtypeFor(kind, parsed.data) `` (parser / passthrough, writes no message)
-- `artifacts/api-server/src/routes/telegraphCoordination.ts` — `` msg_type: validated.msgType | subtype: validated.subtype | subtype: m.subtype ``
+- `artifacts/api-server/src/routes/telegraphCoordination.ts` — `` subtype: validated.subtype | subtype: m.subtype `` (parser / passthrough, writes no message)
 - `artifacts/api-server/src/services/telegraph/coordinationSessions.ts` — `` msg_type: validated.msgType | subtype: validated.subtype ``
 - `artifacts/api-server/src/services/telegraph/coordination.ts` — `` subtype: coordinationSubtype(kind, data) `` (parser / passthrough, writes no message)
 - `artifacts/api-server/src/routes/telegraphStream.ts` — `` msgType: r.msg_type ?? "text" | subtype: r.subtype ?? null `` (parser / passthrough, writes no message)
@@ -193,6 +193,7 @@ fixed enumeration of `subtype` is complete. They are declared in
 - `travel-buddy-standalone/src/hooks/useMessaging.ts` — `` subtype: opts?.subtype ?? null | subtype: failed.subtype ?? undefined `` (parser / passthrough, writes no message)
 - `travel-buddy-standalone/src/services/messaging.ts` — `` subtype: m.subtype ?? null | subtype: E2EE_WELCOME_SUBTYPE `` (parser / passthrough, writes no message)
 - `travel-buddy-standalone/src/lib/e2ee/e2eeThread.ts` — `` subtype: E2EE_WELCOME_SUBTYPE `` (parser / passthrough, writes no message)
+- `artifacts/api-server/src/services/telegraph/threadEnvelopeWrites.ts` — `` msg_type: input.msgType | subtype: input.subtype | subtype: m.subtype | subtype: v.subtype ``
 
 ---
 
