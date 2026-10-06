@@ -6149,11 +6149,11 @@ file of this census, ran nothing against any database, and read or flipped no fl
 | need | rows |
 | --- | --- |
 | an observation on a running deployment, a device or handset run, an on-device recognizer, or the production apply of 3780–3783 with its flags and disclosure approval | 27 |
-| another owner's surface (Discovery hours and verification: lane C; Rent-a-Buddy eligibility: lane B; Telegraph composer: lane C) | 12 |
+| another owner's surface (Discovery hours, verification and the search endpoint's missing relationship filter for G98/G116: lane C; Rent-a-Buddy eligibility: lane B; Telegraph composer: lane C) | 14 |
 | an owner decision (G141: does `caption` cover postcards and Memories) | 1 |
 | intended by OD-INPUT-6 (no paid typeahead provider in the initial release) | 4 |
 | a new migration (G229's query-completion storage) | 1 |
-| code this lane can build | 31 |
+| code this lane can build | 29 |
 
 ### 40.2 One class corrected
 
