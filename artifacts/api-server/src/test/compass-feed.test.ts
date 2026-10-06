@@ -25,7 +25,7 @@ import {
   recordActivityEvent,
   type ActiveUserScoreResult,
 } from "../compass/CompassActiveUserRewardEngine.js";
-import { buildFeed, rankItemsForDiscovery, SECTION_NAMES } from "../compass/CompassFeedBuilder.js";
+import { buildFeed, loadBoostLiftWithheld, rankItemsForDiscovery, SECTION_NAMES } from "../compass/CompassFeedBuilder.js";
 import type { PipelineResult } from "../compass/CompassPipeline.js";
 import type { CompassItem, CompassProfile, CompassContext } from "../compass/types.js";
 
@@ -770,5 +770,135 @@ describe("rankItemsForDiscovery — discovery exclusion regression", () => {
       !returnedIds.includes("place:suspended"),
       "Compass-rejected (suspended) item must NOT appear in discovery results",
     );
+  });
+});
+
+// ── Lead ruling D-24c (2026-10-06): a messaging restriction withholds the boost lift ──
+//
+// "While a messaging restriction is active, the person's posts get no boost lift.
+// Their stored boost preference is kept, and the lift comes back when the
+// restriction ends. If the restriction state cannot be read, apply no boost."
+// Verifier finding 3: boost_visibility_enabled defaults TRUE and the feed applied
+// the lift with no restriction read at all.
+describe("D-24c — the boost lift under a messaging restriction", () => {
+  const ambassador = (userId: string): ActiveUserScoreResult => ({
+    userId, score24h: 5, score7d: 10, score30d: 20, score90d: 30, scoreLifetime: 50,
+    activeUserScore: 90, trustMultiplier: 1.0, tier: "city_ambassador_candidate",
+    boostEligible: true, boostVisibilityEnabled: true, badgeEligibility: [],
+  });
+  const LIFT = computeItemVisibilityBoost(ambassador(BOB_ID));
+  const scores = () => new Map([[BOB_ID, ambassador(BOB_ID)], [CAROL_ID, ambassador(CAROL_ID)]]);
+  const items = (): CompassItem[] => [
+    { id: "post:bob", type: "suggestion", authorId: BOB_ID },
+    { id: "post:carol", type: "suggestion", authorId: CAROL_ID },
+  ];
+  const R = (userId: string, t: string, extra: Record<string, unknown> = {}) =>
+    ({ user_id: userId, restriction_type: t, lifted_at: null, expires_at: null, ...extra });
+
+  /** PostgREST-shaped: trust_restrictions answers rows (or an error); every write is recorded. */
+  function fakeDb(restrictions: Array<Record<string, unknown>>, opts: { unreadable?: boolean } = {}) {
+    const writes: string[] = [];
+    const db: any = {
+      writes,
+      from(table: string) {
+        const filters: Array<(r: any) => boolean> = [];
+        const rows = () => (table === "trust_restrictions" ? restrictions : []).filter((r) => filters.every((f) => f(r)));
+        const result = () => (table === "trust_restrictions" && opts.unreadable)
+          ? { data: null, error: { message: "trust_restrictions unavailable", code: "XX000" } }
+          : { data: rows(), error: null };
+        const chain: any = {
+          select: () => chain,
+          eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return chain; },
+          is: (c: string, v: unknown) => { filters.push((r) => (r[c] ?? null) === v); return chain; },
+          or: () => chain, in: () => chain, gt: () => chain, gte: () => chain, lt: () => chain, order: () => chain, limit: () => chain,
+          insert: () => { writes.push(`insert:${table}`); return chain; },
+          update: () => { writes.push(`update:${table}`); return chain; },
+          upsert: () => { writes.push(`upsert:${table}`); return chain; },
+          maybeSingle: async () => { const r = result(); return { data: Array.isArray(r.data) ? r.data[0] ?? null : null, error: r.error }; },
+          single: async () => { const r = result(); return { data: Array.isArray(r.data) ? r.data[0] ?? null : null, error: r.error }; },
+          then: (ok: any, bad: any) => Promise.resolve(result()).then(ok, bad),
+        };
+        return chain;
+      },
+      rpc: async () => ({ data: null, error: null }),
+    };
+    return db;
+  }
+  const rank = (db: any, extra: Record<string, unknown> = {}) => rankItemsForDiscovery(items(), baseProfile(), baseContext(), db, {
+    safetyFilter: () => ({ allowed: true }),
+    eligibilityCheck: () => ({ eligible: true }),
+    scoreItem: () => ({ finalScore: 50, components: {} as any }),
+    skipFairExposure: true,
+    skipActiveRewards: true,
+    authorScores: scores(),
+    ...extra,
+  });
+  const liftOf = (rs: PipelineResult[], id: string) => rs.find((r) => r.item.id === id)?.item.activeVisibilityBoost ?? 0;
+
+  it("control: with no restriction both authors get the lift", async () => {
+    assert.ok(LIFT > 0);
+    const rs = await rank(fakeDb([]));
+    assert.equal(liftOf(rs, "post:bob"), LIFT);
+    assert.equal(liftOf(rs, "post:carol"), LIFT);
+  });
+
+  it("an active MESSAGING restriction withholds that author's lift — only theirs — and the feed re-sorts", async () => {
+    const db = fakeDb([R(BOB_ID, "messaging")]);
+    const rs = await rank(db);
+    assert.equal(liftOf(rs, "post:bob"), 0);
+    assert.equal(rs.find((r) => r.item.id === "post:bob")!.finalScore, 50);
+    assert.equal(liftOf(rs, "post:carol"), LIFT);
+    assert.equal(rs[0].item.id, "post:carol");
+  });
+
+  it("the stored preference is kept: withholding writes nothing", async () => {
+    const db = fakeDb([R(BOB_ID, "messaging")]);
+    await rank(db);
+    assert.deepEqual(db.writes, []);
+  });
+
+  it("a hosting restriction does not touch the lift (D-24c names messaging)", async () => {
+    const rs = await rank(fakeDb([R(BOB_ID, "hosting")]));
+    assert.equal(liftOf(rs, "post:bob"), LIFT);
+  });
+
+  it("a LIFTED messaging restriction gives the lift back", async () => {
+    const rs = await rank(fakeDb([R(BOB_ID, "messaging", { lifted_at: "2026-10-01T00:00:00Z" })]));
+    assert.equal(liftOf(rs, "post:bob"), LIFT);
+  });
+
+  it("an UNREADABLE restriction state applies no lift to anyone (fail-closed for reach), and refuses nothing — every post is still served", async () => {
+    const rs = await rank(fakeDb([], { unreadable: true }));
+    assert.equal(liftOf(rs, "post:bob"), 0);
+    assert.equal(liftOf(rs, "post:carol"), 0);
+    assert.deepEqual(rs.map((r) => r.item.id).sort(), ["post:bob", "post:carol"]);
+  });
+
+  it("no client at all is unreadable too: no lift", async () => {
+    const withheld = await loadBoostLiftWithheld(null, [BOB_ID, CAROL_ID]);
+    assert.deepEqual([...withheld].sort(), [BOB_ID, CAROL_ID].sort());
+  });
+
+  it("buildFeed applies the same rule at its own boost site: the withheld author gets no lift, the other keeps it", async () => {
+    const run = (boostWithheld?: Set<string>) => buildFeed(items(), baseProfile(), baseContext(), null, null, {
+      safetyFilter: () => ({ allowed: true }),
+      eligibilityCheck: () => ({ eligible: true }),
+      scoreItem: () => ({ finalScore: 50, components: {} as any }),
+      skipFairExposure: true,
+      skipActiveRewards: true,
+      authorScores: scores(),
+      ...(boostWithheld ? { boostWithheld } : {}),
+    });
+    const all = (page: Awaited<ReturnType<typeof buildFeed>>) => page.sections.flatMap((s) => s.items);
+    const lifted = (page: Awaited<ReturnType<typeof buildFeed>>, id: string) =>
+      (all(page).find((i: any) => (i.item?.id ?? i.id) === id) as any);
+    const withheldBob = await run(new Set([BOB_ID]));
+    const bob = lifted(withheldBob, "post:bob"); const carol = lifted(withheldBob, "post:carol");
+    assert.ok(bob && carol, JSON.stringify(all(withheldBob)).slice(0, 400));
+    assert.equal((bob.item ?? bob).activeVisibilityBoost ?? 0, 0);
+    assert.equal((carol.item ?? carol).activeVisibilityBoost ?? 0, LIFT);
+    // With no client and no override, nobody's restriction state can be read: no lift.
+    const unread = await run();
+    assert.equal((lifted(unread, "post:carol").item ?? lifted(unread, "post:carol")).activeVisibilityBoost ?? 0, 0);
   });
 });
