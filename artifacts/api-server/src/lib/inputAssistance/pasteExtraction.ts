@@ -119,23 +119,53 @@ export function sanitizePastedText(raw: unknown): string {
  */
 export function displaySafeUrl(text: string): string {
   const s = (text ?? '').trim();
-  if (!/^https?:\/\//i.test(s)) return text;
-  let url: URL;
-  try {
-    url = new URL(s);
-  } catch {
-    // Not parseable as a URL: never echo what might be a userinfo segment.
-    return s.replace(/^(https?:\/\/)[^/@\s]*@/i, '$1');
-  }
-  const port = url.port ? `:${url.port}` : '';
-  const path = url.pathname === '/' ? '' : url.pathname.slice(0, 120);
-  const trailing = url.search || url.hash ? '…' : '';
-  return `${url.protocol}//${url.hostname}${port}${path}${trailing}`;
+  const scheme = (s.match(/^https?:\/\//i) ?? [''])[0];
+  const host = urlHost(s);
+  if (!host) return scheme ? `${scheme}…` : '…';
+  const at = s.toLowerCase().lastIndexOf(host.toLowerCase());
+  // An internationalised host comes back from the parser in punycode and is not
+  // found verbatim: show it, and assume something followed it.
+  if (at < 0) return `${scheme}${host}…`;
+  const rest = s.slice(at + host.length);
+  return `${scheme}${host}${rest.length > 0 ? '…' : ''}`;
 }
 
-/** Every http(s) URL inside a rendered line, in its display-safe form. */
+/**
+ * The host of a URL-like token, or null. The URL parser is trusted when it
+ * parses (userinfo is then never part of `hostname`); when it does not — a
+ * password containing "/", a bad percent-escape — everything up to the LAST
+ * "@" is treated as userinfo and dropped, and only a plain host is accepted.
+ * Scheme-less tokens (`www.…`, `booking.com/…`) are read as https.
+ */
+function urlHost(token: string): string | null {
+  const withScheme = /^https?:\/\//i.test(token) ? token : `https://${token}`;
+  try {
+    const u = new URL(withScheme);
+    if (u.hostname && /^[\p{L}\p{N}.-]+$/u.test(u.hostname)) return u.hostname;
+  } catch {
+    // fall through to the defensive read below
+  }
+  let rest = withScheme.replace(/^https?:\/\//i, '');
+  const at = rest.lastIndexOf('@');
+  if (at >= 0) rest = rest.slice(at + 1);
+  const host = rest.split(/[\/?#;:\\]/)[0] ?? '';
+  return /^[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+$/u.test(host) ? host : null;
+}
+
+/**
+ * A URL-like token: with a scheme, starting `www.`, or a bare domain followed
+ * by a path, query, fragment or parameter (`booking.com/hotel?sid=…`).
+ */
+const URL_TOKEN = /(?:\bhttps?:\/\/|\bwww\.)\S+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}[\/?#;]\S*/gi;
+
+/** Every URL-like token inside a rendered line, in its display-safe form. */
 export function redactUrlsForDisplay(line: string): string {
-  return (line ?? '').replace(/\bhttps?:\/\/\S+/gi, (m) => displaySafeUrl(m));
+  return (line ?? '').replace(URL_TOKEN, (m) => displaySafeUrl(m));
+}
+
+/** A text line with every URL-like token removed — what may become a place query. */
+export function stripUrls(line: string): string {
+  return (line ?? '').replace(URL_TOKEN, ' ').replace(/\s+/g, ' ').trim();
 }
 
 /** What an item's `raw` may hold: sanitized text with every URL display-safe, bounded. */
@@ -351,7 +381,14 @@ function stripTime(text: string): { query: string; timeHint: string | null } {
 }
 
 function isUrlLine(line: string): boolean {
-  return /^(?:https?:\/\/|geo:)\S+$/i.test(line.trim());
+  const t = line.trim();
+  return /^(?:https?:\/\/|geo:|www\.)\S+$/i.test(t) || /^(?:[a-z0-9-]+\.)+[a-z]{2,}[\/?#;]\S*$/i.test(t);
+}
+
+/** A URL-only line in the form parseMapLink reads (scheme-less → https). */
+function asParseableUrl(line: string): string {
+  const t = line.trim();
+  return /^(?:https?:\/\/|geo:)/i.test(t) ? t : `https://${t}`;
 }
 
 function textItems(line: string, dayLabel: string | null): Array<Omit<PasteItem, 'index'>> {
@@ -362,13 +399,13 @@ function textItems(line: string, dayLabel: string | null): Array<Omit<PasteItem,
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
   for (const part of parts.length > 0 ? parts : [line]) {
-    const { query: timed, timeHint } = stripTime(part);
-    // A URL inside a text line is never part of a place name, and its query
-    // string is exactly what G337 forbids repeating — the query is rendered (as
-    // the item's label and in "No place matched “…”") and is sent to search.
-    // So the URL is taken out of the QUERY entirely; `raw` keeps its
-    // display-safe form so the person can still see what they pasted.
-    const query = timed.replace(/\bhttps?:\/\/\S+/gi, ' ').replace(/\s+/g, ' ').trim();
+    // A URL inside a text line is never part of a place name, and every part
+    // of it after the host is what G337 forbids repeating — the query is
+    // rendered (as the item's label and in "No place matched “…”") and is sent
+    // to search. So every URL-like token — scheme-less ones included — leaves
+    // the QUERY before anything else reads the line (a port or a path digit
+    // must not become a "time"); `raw` keeps its display-safe form.
+    const { query, timeHint } = stripTime(stripUrls(part));
     if (!query) continue;
     out.push({
       raw: displayRaw(part),
@@ -391,8 +428,15 @@ function lineItems(line: string, dayLabel: string | null): Array<Omit<PasteItem,
     return [{ raw: displayRaw(line), source: 'coordinates', provider: null, query: null, ...coords, timeHint: null, dayLabel, unsupported: null }];
   }
   if (isUrlLine(line)) {
-    const link = parseMapLink(line);
-    if (!link) return [];
+    const link = parseMapLink(asParseableUrl(line));
+    // A line that LOOKS like a link but cannot be parsed is reported as a link
+    // this endpoint cannot read — never dropped, which would answer "nothing was
+    // pasted" for a paste that plainly had something in it. (isUrlLine admits
+    // only http(s), geo:, www. and bare-domain shapes, so a `javascript:` string
+    // never reaches here.)
+    if (!link) {
+      return [{ raw: displayRaw(line), source: 'map_link', provider: null, query: null, lat: null, lng: null, timeHint: null, dayLabel, unsupported: 'unsupported_link' }];
+    }
     if (link.unsupported || link.stops.length === 0) {
       return [{ raw: displayRaw(line), source: 'map_link', provider: link.provider, query: null, lat: null, lng: null, timeHint: null, dayLabel, unsupported: link.unsupported ?? 'unsupported_link' }];
     }

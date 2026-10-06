@@ -232,14 +232,18 @@ describe("classifyPaste — the shapes §24 names", () => {
 
 // ═══ 2. The route, through the real gateway ══════════════════════════════════
 describe("§47 sanitize pasted URLs before rendering (G337) — what `raw` may echo back", () => {
-  it("drops credentials, query and fragment; keeps what lets a person recognise the link", () => {
+  it("shows ONLY the host — userinfo, path, query, fragment and port never survive", () => {
+    // RESTATED 2026-10-05 (verifier finding 2): the path was kept, and paths
+    // carry tokens too (/reset-password/<token>, ;jsessionid=…). The host is
+    // what lets a person recognise the link; everything after it is "…".
     assert.equal(
       displaySafeUrl("https://alice:hunter2@maps.example.com/place/Dragon-Bridge?token=s3cr3t&utm_source=mail#frag"),
-      "https://maps.example.com/place/Dragon-Bridge…",
+      "https://maps.example.com…",
     );
-    assert.equal(displaySafeUrl("https://maps.app.goo.gl/AbCdEf123"), "https://maps.app.goo.gl/AbCdEf123");
-    assert.equal(displaySafeUrl("http://example.com:8080/x"), "http://example.com:8080/x");
-    assert.equal(displaySafeUrl("Hội An"), "Hội An", "a non-URL is untouched");
+    assert.equal(displaySafeUrl("https://maps.app.goo.gl/AbCdEf123"), "https://maps.app.goo.gl…", "a short-link code is a token");
+    assert.equal(displaySafeUrl("http://example.com:8080/x"), "http://example.com…");
+    assert.equal(displaySafeUrl("https://example.com"), "https://example.com", "nothing after the host, nothing hidden");
+    assert.equal(displaySafeUrl("Hội An"), "…", "displaySafeUrl is only ever handed URL-like tokens");
   });
 
   it("an unparseable http string still never echoes a userinfo segment", () => {
@@ -249,16 +253,57 @@ describe("§47 sanitize pasted URLs before rendering (G337) — what `raw` may e
   it("a URL inside a text line is redacted in place, the words around it kept", () => {
     assert.equal(
       redactUrlsForDisplay("Dinner here https://booking.example.com/r/123?session=abc then bar"),
-      "Dinner here https://booking.example.com/r/123… then bar",
+      "Dinner here https://booking.example.com… then bar",
     );
+    assert.equal(redactUrlsForDisplay("Hội An, Vietnam"), "Hội An, Vietnam", "a line with no URL is untouched");
   });
 
   it("classifyPaste: an UNREADABLE link shows its display form, never its token", () => {
     const c = classifyPaste("https://user:pw@example.com/itinerary?share_token=XYZ");
     const item = c.items[0]!;
     assert.equal(item.unsupported, "unsupported_link", "still reported, not dropped");
-    assert.equal(item.raw, "https://example.com/itinerary…");
-    assert.ok(!/pw|XYZ/.test(item.raw));
+    assert.equal(item.raw, "https://example.com…");
+    assert.ok(!/pw|XYZ|itinerary/.test(item.raw));
+  });
+
+  // ── The verifier's four inputs (finding 2), each through classifyPaste — the
+  //    /extract route's own path — and through the route itself below. ───────
+  const SECRET_INPUTS: Array<[string, string, RegExp]> = [
+    ["a SCHEME-LESS url (www.)", "www.booking.com/hotel?sid=SESSIONSECRET", /SESSIONSECRET|sid=|hotel/],
+    ["an UNPARSEABLE https url inside a text line", "Dinner https://exa%zzmple.com/?token=SECRET 7pm", /SECRET|token|%zz/],
+    ["a PASSWORD containing '/'", "https://user:pa/ss@host.com/x?token=SECRET", /SECRET|pa\/ss|user:|token/],
+    ["tokens in the PATH", "https://example.com/reset-password/TOKENinPATH;jsessionid=JSESSIONSECRET", /TOKENinPATH|JSESSIONSECRET|reset-password/],
+  ];
+  for (const [label, input, secret] of SECRET_INPUTS) {
+    it(`classifyPaste: ${label} leaks nothing into raw or the query`, () => {
+      const c = classifyPaste(input);
+      for (const item of c.items) {
+        assert.ok(!secret.test(item.raw), `raw leaked: ${item.raw}`);
+        assert.ok(!secret.test(item.query ?? ""), `query leaked: ${item.query}`);
+      }
+    });
+  }
+
+  it("an UNPARSEABLE URL-only line is reported as a link it cannot read — not dropped into 'nothing was pasted'", () => {
+    const c = classifyPaste("https://user:pa/ss@host.com/x?token=SECRET");
+    assert.equal(c.shape === "empty", false);
+    assert.equal(c.items[0]!.unsupported, "unsupported_link");
+    assert.equal(c.items[0]!.raw, "https://host.com…");
+  });
+
+  it("a scheme-less URL-only line is REPORTED as a link it cannot read, not silently dropped", () => {
+    const c = classifyPaste("www.booking.com/hotel?sid=SESSIONSECRET");
+    assert.equal(c.items.length, 1);
+    assert.equal(c.items[0]!.source, "map_link");
+    assert.equal(c.items[0]!.unsupported, "unsupported_link");
+    assert.equal(c.items[0]!.raw, "www.booking.com…");
+  });
+
+  it("the words around an unparseable URL still resolve, and its time is still the time", () => {
+    const c = classifyPaste("Dinner https://exa%zzmple.com/?token=SECRET 7pm");
+    const item = c.items[0]!;
+    assert.equal(item.query, "Dinner");
+    assert.equal(item.timeHint, "7pm");
   });
 
   it("classifyPaste: a READABLE link still resolves from the FULL url — only the display is trimmed", () => {
@@ -266,6 +311,16 @@ describe("§47 sanitize pasted URLs before rendering (G337) — what `raw` may e
     const item = c.items[0]!;
     assert.equal(item.query, "Dragon Bridge", "parsing read the query string");
     assert.ok(!item.raw.includes("tracking123"), "the display form does not repeat it");
+  });
+
+  it("through the route: none of the verifier's four inputs reaches the response in any field", async () => {
+    for (const [label, input, secret] of SECRET_INPUTS) {
+      _resetRateLimit();
+      const r = await extract({ context: "trip_destination", fieldId: "trip.destination", text: input });
+      assert.equal(r.status, 200, label);
+      const text = JSON.stringify(await r.json());
+      assert.ok(!secret.test(text), `${label}: ${text}`);
+    }
   });
 
   it("through the route: the response a review screen renders carries no credential or token", async () => {
