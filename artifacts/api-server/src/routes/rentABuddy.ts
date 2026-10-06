@@ -2505,7 +2505,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/accept", async (req, res) => {
     });
   }
 
-  // Conflict detection: check for overlapping scheduled/in_progress bookings for this buddy
+  if (!await requireBookingKyc(serviceClient, res)) return; if (!await requireVerifiedBookingParties(serviceClient, res, { travelerId: (booking as any).traveler_id, buddyUserId: auth.user.id })) return; // verifier F7: CONFIRMING re-checks identity readiness and both people, as creating did (either may have lapsed since the request). Then conflict detection: overlapping scheduled/in_progress bookings for this buddy
   const { data: existingBookings } = await serviceClient
     .from("rent_buddy_bookings")
     .select("id, booking_date, start_time, duration_h")
