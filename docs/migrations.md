@@ -4117,6 +4117,29 @@ Trail read 503 (the review column cannot be read), never "approved".
 
 **Rollback:** `db/rollback/2026-10-06-3977-trail-review-before-visible-rollback.sql` — refuses while
 `trail_creation_enabled` is TRUE; publishes every pending and rejected Trail, and says so.
+## 2026-10-06 — `3978_route_stops_private_plan_item_door.sql`, written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3978_route_stops_private_plan_item_door.sql` | **not applied** | **not applied** |
+
+**What it is.** census-trips §86 (wave 5 item 4; OD-TRIP-3; lead ruling D-65). A route stop made from a plan item
+copies its title and `structured_location`; 2334's `route_stops_member_select` and `route_legs_member_select` let
+every accepted crew member read every stop and leg (polyline included) of the trip's routes through PostgREST, so a
+private item on a member's route reached the whole crew around 3972's door on `trip_plan_items`. 3978 replaces both
+crew policies with 2334's predicate plus the API's rule (`withheldPlanItemStopIds` / `canSeePlanItemLocation`): a
+crew member who does not own the route sees a plan-item stop only when the item is not private, or they created it,
+or it is not removed and `authz.private_anchor_granted` holds on the route's trip; a leg only when both of its stops
+pass. A `source_id` that is not an item id, or names no item, is withheld. Two SECURITY DEFINER functions in `authz`
+(`plan_item_stop_visible`, `route_leg_endpoints_visible`) carry the rule, so no policy reads a table through RLS.
+The route owner keeps everything through 0058's untouched owner policies. Postconditions assert both policies, 2334's
+13-policy census, and that the function answers FALSE with no viewer, for a malformed id and for an id naming no item.
+
+**Needs** 2334 and 3972 (preconditions refuse otherwise). No table, column, grant or row changes; no screen reads
+these tables directly and every route reads them as service_role, so no answer the API gives changes.
+
+**Rollback:** `db/rollback/2026-10-06-3978-route-stops-private-plan-item-door-rollback.sql` — restores 2334's two
+policies verbatim and drops the two functions; it reopens the door, and says so.
 ## 2026-10-05 — `3900_layover_presence.sql`, written and NOT applied anywhere
 
 | | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
