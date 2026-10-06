@@ -587,7 +587,7 @@ export interface LayoverOverview {
    * block every real place on earth, so the absence of a coordinate produces
    * the absence of an envelope and never a default one.
    */
-  safeEnvelope: LayoverSafeEnvelope | null;
+  safeEnvelope: LayoverSafeEnvelope | null; /** The landside gate `safeEnvelope` was published under: WITHHELD (null, `withheld: "landside_closed"`) when closed; not to be called "safe" unless `status === "open"`. ABSENT on a server that predates it — which a client must read as not-open. */ safeEnvelopeGate?: LayoverSafeEnvelopeGate | null;
   returnReminderAt: string | null;
   localTimes: LayoverLocalTimes;
 }
@@ -1783,7 +1783,7 @@ export type CrewState =
       solution: CrewSolution;
       members: CrewMemberCard[];
       degraded: boolean;
-      degradedReasons: string[];
+      degradedReasons: string[]; /** The VIEWER's own landside gate (`open` | `caution` | `closed` | `unknown`), certified with their own entry fact. Never a crewmate's. Absent on an older server. */ yourLandside?: string; /** Always `each_member_checks_their_own`: a crew is never cleared to leave the airport as a group. */ landsideClearance?: string;
     }
   | {
       inCrew: false;
@@ -2283,4 +2283,13 @@ export async function updateLayoverConstraints(
     unsaved: Array.isArray(json.unsaved) ? (json.unsaved as DeclarableConstraintField[]) : [],
     unchanged: json.unchanged === true,
   };
+}
+
+// ── PR #624 follow-ups — appended: lines above are cited by line ─────────────
+
+/** `GET /overview`'s `safeEnvelopeGate`. */
+export interface LayoverSafeEnvelopeGate {
+  status: 'open' | 'caution' | 'closed';
+  cautions: LandsideCaution[];
+  withheld: 'landside_closed' | 'no_airport_coordinate' | null;
 }

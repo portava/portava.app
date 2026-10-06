@@ -881,7 +881,7 @@ export default function LayoverDashboardScreen() {
               airport={airport}
               stops={stops}
               airportReturn={airportReturn}
-              envelope={overview.safeEnvelope ?? null}
+              envelope={overview.safeEnvelope ?? null} envelopeGate={overview.safeEnvelopeGate ?? null}
               candidateFeasibility={candidateFeasibility}
               offline={overview.offlineBundle ?? null}
               nowMs={nowMs}

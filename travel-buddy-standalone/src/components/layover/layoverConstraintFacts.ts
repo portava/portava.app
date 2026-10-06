@@ -207,6 +207,13 @@ export function selectedBaggageMode(answer: Pick<LayoverConstraintsAnswer, 'cons
 
 export type PlanFitTone = 'fits' | 'unconfirmed' | 'unknown' | 'over' | 'blocked';
 
+const PLAN_BLOCKED_TEXT = 'This plan leaves the airport, and we are not suggesting that for this layover.';
+/** A landside plan whose gate the server did not state — an older server, or a payload that lost the field. */
+const PLAN_GATE_NOT_REPORTED: { code: string; sentence: string } = {
+  code: 'gate_not_reported',
+  sentence: 'we could not confirm whether leaving the airport is cleared — check the answer at the top of this page',
+};
+
 /**
  * The plan's fit meter, as words — FIVE answers, and only one of them green.
  *
@@ -225,18 +232,46 @@ export type PlanFitTone = 'fits' | 'unconfirmed' | 'unknown' | 'over' | 'blocked
  *   unknown      a leg nobody stated — and ANY value this build has not been
  *                taught, which is never rendered as a fit.
  *
- * `fmt` is the caller's duration formatter, passed in so this file keeps no
- * runtime import of the theme.
+ * ── `fit: "fits"` IS NOT BELIEVED ON ITS OWN ─────────────────────────────────
+ * A server that predates the gate sends `fit: "fits"` from the clock alone, with
+ * no `landside` and no `hasLandsideStop` — and the hosted app runs such a build
+ * while clients update independently. Trusting the word drew "fits with room"
+ * in green under a refused border (PR #624's verification, item 1). So green
+ * needs one of two things the payload must actually say:
+ *
+ *   - the plan never leaves the airport (no stop outside it, by the server's
+ *     flag AND by the stops this screen holds — either saying "landside" wins);
+ *   - or `landside.status === "open"`.
+ *
+ * A landside plan whose gate was not reported is `unconfirmed`. A landside plan
+ * whose gate is reported closed is `blocked`, whatever `fit` says.
+ *
+ * `stops` are the stops the caller renders; `fmt` is its duration formatter,
+ * passed in so this file keeps no runtime import of the theme.
  */
 export function describePlanFit(
   planFit: PlanFit,
-  stopCount: number,
+  stops: ReadonlyArray<{ insideAirport?: boolean | null }>,
   fmt: (minutes: number) => string,
 ): { tone: PlanFitTone; text: string; reasons: Array<{ code: string; sentence: string }> } {
+  const stopCount = stops.length;
   const planned = `Planned ${fmt(planFit.totalPlannedMin)} of ${fmt(planFit.usableMinutes)} usable`;
   switch (planFit.fit) {
-    case 'fits':
-      return { tone: 'fits', text: `${planned} — fits with room`, reasons: [] };
+    case 'fits': {
+      const leavesAirport = planFit.hasLandsideStop === true || stops.some((s) => s.insideAirport !== true);
+      const status = planFit.landside?.status;
+      if (!leavesAirport || status === 'open') {
+        return { tone: 'fits', text: `${planned} — fits with room`, reasons: [] };
+      }
+      if (status === 'closed') {
+        return { tone: 'blocked', text: PLAN_BLOCKED_TEXT, reasons: describeClosures(planFit.landside?.closedBy ?? []) };
+      }
+      return {
+        tone: 'unconfirmed',
+        text: `${planned} — it fits the clock, but that is not a yes yet`,
+        reasons: status === 'caution' ? describeCautions(planFit.landside?.cautions ?? []) : [PLAN_GATE_NOT_REPORTED],
+      };
+    }
     case 'over':
       return {
         tone: 'over',
@@ -246,7 +281,7 @@ export function describePlanFit(
     case 'blocked':
       return {
         tone: 'blocked',
-        text: 'This plan leaves the airport, and we are not suggesting that for this layover.',
+        text: PLAN_BLOCKED_TEXT,
         reasons: describeClosures(planFit.landside?.closedBy ?? []),
       };
     case 'unconfirmed':

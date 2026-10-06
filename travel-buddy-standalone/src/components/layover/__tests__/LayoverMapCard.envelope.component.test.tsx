@@ -394,3 +394,90 @@ describe('L126 — offline state shows the last-certified timestamp and a stale 
     expect(screen.queryByTestId('layover-map-envelope-stale')).toBeNull();
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// PR #624 verification, item 3 — the envelope is drawn THROUGH the landside gate
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// The envelope is cut from the usable window, which is the same number whether
+// or not the traveller may leave the airport. A refused border with 493 usable
+// minutes was drawn a ring under the words "SAFE ENVELOPE". The server now
+// publishes the gate beside the envelope and withholds the geometry when the
+// gate is closed; the label and the decision to draw are
+// `layoverEnvelopeFacts.describeEnvelope`'s (exhaustively swept in its own
+// node:test suite). These cases prove the CARD is wired to it.
+describe('the envelope is called SAFE only under an OPEN gate, and is not drawn under a closed one', () => {
+  const OPEN = { status: 'open', cautions: [], withheld: null };
+  const CAUTION = { status: 'caution', cautions: ['entry_unconfirmed'], withheld: null };
+  const CLOSED = { status: 'closed', cautions: [], withheld: 'landside_closed' };
+
+  it('OPEN: the diagram is drawn under "SAFE ENVELOPE", with no not-a-clearance note', async () => {
+    await render(
+      <LayoverMapCard airport={AIRPORT as any} stops={[]} airportReturn={ANCHOR} envelope={envelope()} envelopeGate={OPEN} />,
+    );
+    expect(screen.getByTestId('layover-map-safe-envelope')).toBeTruthy();
+    expect(screen.getByTestId('layover-map-envelope-label-clear').props.children).toBe('SAFE ENVELOPE');
+    expect(screen.queryByTestId('layover-map-envelope-not-a-clearance')).toBeNull();
+  });
+
+  it('CAUTION: the diagram is drawn, and the word "safe" is not on it', async () => {
+    await render(
+      <LayoverMapCard airport={AIRPORT as any} stops={[]} airportReturn={ANCHOR} envelope={envelope()} envelopeGate={CAUTION} />,
+    );
+    // The clock's reach is still drawn — the verdict card above still says time is fine.
+    expect(screen.getByTestId('layover-map-envelope-proved-ring')).toBeTruthy();
+    expect(screen.getByTestId('layover-map-envelope-label-caution').props.children).toBe('TIME ENVELOPE — NOT A CLEARANCE');
+    expect(screen.queryByTestId('layover-map-envelope-label-clear')).toBeNull();
+    expect(screen.queryByText('SAFE ENVELOPE')).toBeNull();
+    expect(screen.getByTestId('layover-map-envelope-not-a-clearance')).toBeTruthy();
+    expect(screen.getByText(/not a yes to leaving the airport/)).toBeTruthy();
+    expect(screen.getByText(/passport/)).toBeTruthy();
+  });
+
+  it('OLD SERVER: an envelope with no gate beside it is drawn and is NOT called safe', async () => {
+    await render(
+      <LayoverMapCard airport={AIRPORT as any} stops={[]} airportReturn={ANCHOR} envelope={envelope()} />,
+    );
+    expect(screen.getByTestId('layover-map-envelope-proved-ring')).toBeTruthy();
+    expect(screen.getByTestId('layover-map-envelope-label-caution')).toBeTruthy();
+    expect(screen.queryByText('SAFE ENVELOPE')).toBeNull();
+  });
+
+  it('CLOSED: nothing is drawn — the withheld state, with its own sentence', async () => {
+    await render(
+      <LayoverMapCard airport={AIRPORT as any} stops={[]} airportReturn={ANCHOR} envelope={null} envelopeGate={CLOSED} />,
+    );
+    expect(screen.queryByTestId('layover-map-safe-envelope')).toBeNull();
+    expect(screen.queryByTestId('layover-map-envelope-proved-ring')).toBeNull();
+    expect(screen.getByTestId('layover-map-envelope-withheld')).toBeTruthy();
+    expect(screen.queryByTestId('layover-map-envelope-unavailable')).toBeNull();
+    expect(screen.getByText(/Leaving the airport is not on for this layover/)).toBeTruthy();
+    expect(screen.queryByText(/SAFE ENVELOPE/)).toBeNull();
+  });
+
+  it('CLOSED, and a server sent the geometry anyway: the 493-minute refused border draws NO ring', async () => {
+    await render(
+      <LayoverMapCard
+        airport={AIRPORT as any}
+        stops={[stop()]}
+        airportReturn={ANCHOR}
+        envelope={envelope({ usableMinutes: 493 })}
+        envelopeGate={CLOSED}
+      />,
+    );
+    expect(screen.queryByTestId('layover-map-safe-envelope')).toBeNull();
+    expect(screen.queryByTestId('layover-map-envelope-proved-ring')).toBeNull();
+    expect(screen.getByTestId('layover-map-envelope-withheld')).toBeTruthy();
+    // The landside stop on the plan is said to be off, not "inside the edge we plan on".
+    expect(screen.getByText(/this stop is not on offer/)).toBeTruthy();
+    expect(screen.queryByText(/inside the edge we plan on/)).toBeNull();
+  });
+
+  it('CONTROL: no envelope and no closure is still the plain "unavailable" state', async () => {
+    await render(
+      <LayoverMapCard airport={AIRPORT as any} stops={[]} airportReturn={ANCHOR} envelope={null} envelopeGate={{ status: 'open', cautions: [], withheld: 'no_airport_coordinate' }} />,
+    );
+    expect(screen.getByTestId('layover-map-envelope-unavailable')).toBeTruthy();
+    expect(screen.queryByTestId('layover-map-envelope-withheld')).toBeNull();
+  });
+});

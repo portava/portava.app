@@ -37,7 +37,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, ActivityIndicator, TextInput } from 'react-native';
 import { Users, UserPlus, LogOut, AlertTriangle, RefreshCw } from 'lucide-react-native';
-import { color, space, radius, type as t } from '../../theme/tokens.ts';
+import { CREW_EACH_CHECKS_OWN, crewOwnGateNote } from './layoverEnvelopeFacts.ts'; import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { fmtClock } from './layoverFormat.ts';
 import {
   createLayoverCrew,
@@ -166,7 +166,7 @@ export function LayoverCrewSection({ sessionId, timezone, refreshKey = 0 }: Prop
               <Text style={styles.deadlineLabel}>Everyone must be back by</Text>
               <Text style={styles.deadline}>{fmtClock(solution.sharedReturnBy, timezone)}</Text>
               <Text style={styles.deadlineNote}>
-                The earliest deadline in the crew, so it is everyone&rsquo;s.
+                The earliest deadline in the crew, so it is everyone&rsquo;s.{' '}<Text testID="layover-crew-not-a-clearance">{CREW_EACH_CHECKS_OWN}</Text>{crewOwnGateNote(state.yourLandside) ? <Text testID="layover-crew-own-gate-closed">{' '}{crewOwnGateNote(state.yourLandside)}</Text> : null}
               </Text>
             </>
           ) : (
@@ -298,7 +298,7 @@ export function LayoverCrewSection({ sessionId, timezone, refreshKey = 0 }: Prop
         <Text style={styles.body}>No crews here yet. Start one.</Text>
       ) : null}
 
-      {state.city ? (
+      {state.city && !gateClosed ? (
         composing ? (
           <View style={styles.composer}>
             <TextInput

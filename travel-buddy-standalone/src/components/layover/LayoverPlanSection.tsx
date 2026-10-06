@@ -94,7 +94,7 @@ export function LayoverPlanSection({
   const pct = planFit.usableMinutes > 0
     ? Math.min(100, (planFit.neededMin / planFit.usableMinutes) * 100)
     : 100;
-  const fit = describePlanFit(planFit, stops.length, fmtDur);
+  const fit = describePlanFit(planFit, stops, fmtDur);
 
   return (
     <View style={styles.card}>
