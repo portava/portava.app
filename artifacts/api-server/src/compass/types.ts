@@ -115,6 +115,12 @@ export interface CompassProfile {
   trustLevel: string | null;
   activeUserScore: number | null;
   hasActiveTrip: boolean;
+  /**
+   * TRUE when the trip reads behind the three booleans below FAILED, so `false`
+   * on them is "not read" rather than "no such trip" — census-compass CT-02.
+   * `getCompassProfile` refuses to cache a profile with this set.
+   */
+  tripStateUnread: boolean;
   hasActiveBooking: boolean;
   upcomingTripWithin48h: boolean;
   hasFutureTripScheduled: boolean;
