@@ -151,12 +151,12 @@ export function decideRestrictedSend(facts: RestrictionSendFacts, opts: { safety
  *   canCall                messaging — the call gateway's own rule ("messaging
  *                          restriction implies calling restriction",
  *                          lib/calls/callGatewayAdapter.ts), in ANY thread.
- *   canCreatePlan          none. `hosting` is "cannot host group trips" and is
- *                          enforced where trips are created (routes/trips.ts);
- *                          neither Telegraph plan door (the command door's
- *                          meetup draft, Compass's plan draft) is hosting a group
- *                          trip, and the projection used to refuse it under
- *                          `hosting` while the command door did not.
+ *   canCreatePlan          hosting — main's rule, KEPT while owner decision
+ *                          D-24 is open (census-telegraph §45d.4). The lanes'
+ *                          reading (a conversation plan is not hosting a group
+ *                          trip) is NOT shipped. Compass's plan draft is the
+ *                          enforcing consumer; an unreadable state now refuses
+ *                          it retryably, never as the restriction.
  *   canShareExactLocation  location_plan_join — the rule lane B applied to the
  *                          crew live-location share (routes/tripCrewLocation.ts),
  *                          the one door that shares a live position.
@@ -167,7 +167,7 @@ export function decideRestrictedSend(facts: RestrictionSendFacts, opts: { safety
  */
 export const RESTRICTION_CAPABILITY_SCOPE: Readonly<Record<"canCall" | "canCreatePlan" | "canShareExactLocation", readonly RestrictionType[]>> = {
   canCall: ["messaging"],
-  canCreatePlan: [],
+  canCreatePlan: ["hosting"],
   canShareExactLocation: ["location_plan_join"],
 };
 

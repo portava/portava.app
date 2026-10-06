@@ -296,9 +296,9 @@ export async function resolveConversationCapabilities(
   else grant(d, "canCall");
 
   // canCreatePlan — a trip thread needs accepted crew; every other thread type
-  // needs only active membership, which is what telegraphCommands enforces. No
-  // restriction reaches it (RESTRICTION_CAPABILITY_SCOPE; it used to refuse under
-  // `hosting`, a refusal the command door never performed — §45d).
+  // needs only active membership, which is what telegraphCommands enforces. A
+  // `hosting` restriction refuses it (RESTRICTION_CAPABILITY_SCOPE): main's rule,
+  // kept until owner decision D-24 is answered (census-telegraph §45d.4).
   const planTrust = decideRestrictedCapability("canCreatePlan", restriction);
   if (!threadActive) deny(d, "canCreatePlan", "TELEGRAPH_POLICY_THREAD_ARCHIVED");
   else if (!planTrust.allowed) deny(d, "canCreatePlan", planTrust.reason);

@@ -135,10 +135,10 @@ function seed(): Record<string, any[]> {
     // from "resolved for somebody else in the thread" — see the mutation P5
     // note in §15.4.
     trust_restrictions: [
-      // CHANGED 2026-10-06 (lane T2, census-telegraph §45d): was `hosting`, read through
-      // canCreatePlan. No restriction reaches canCreatePlan any more (RESTRICTION_CAPABILITY_SCOPE),
-      // so the asymmetry is now carried by canCall, which a messaging restriction refuses in any
-      // thread. The property tested is unchanged: the block is resolved for the CALLER.
+      // CHANGED 2026-10-06 (lane T2, census-telegraph §45d.4): was `hosting`, read through
+      // canCreatePlan, whose restriction mapping awaits owner decision D-24 (hosting still refuses
+      // it: main's rule). canCall under a messaging restriction is the call gateway's own rule, not
+      // under decision, so it carries the asymmetry. Same property: resolved for the CALLER.
       { id: "77770000-0000-4000-8000-000000000001", user_id: BOB, restriction_type: "messaging", lifted_at: null, expires_at: null },
     ],
     rent_buddy_bookings: [],
