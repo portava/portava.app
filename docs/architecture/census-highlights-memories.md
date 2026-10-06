@@ -371,7 +371,7 @@ Verdicts as tabulated in the 16-table section above: `memories` (H22) BBW, `memo
 | H43 | `VisibilityClass` | BBW | `0067_memories.sql:13` — `public/friends_only/trip_crew/circle_only/only_me/custom`. `friends_only` is **mutual follow** (`routes/memories.ts:156-167`), not the spec's `FOLLOWERS` | pre |
 | H44 | `LocationPrecision` | BBW | A precise 6-rung ladder exists — `lib/mediaLocationVisibility.ts:41` `hidden/country/city/neighborhood/place/precise_private` — but it lives on `media_assets`, is not stored per Memory, and is not owner-selectable on a Memory | pre |
 | H45 | `MemoryRelationType` | NB | | |
-| H46 | `HighlightLifetime` | NB | `highlights` has only `expires_at`; the composer passes `expiresInHours` (`routes/highlights.ts:152`) | |
+| H46 | `HighlightLifetime` | NB | `highlights` has only `expires_at`; the composer passes `expiresInHours` (`routes/highlights.ts:153`) | |
 | H47 | Truth precedence ordering (correction > assertion > mutual > observation > inference > unknown) | NB | No precedence encoded | |
 | H48 | Lower-confidence inference may never overwrite a user correction | BBW | Genuinely implemented — `2213_memory_passport_controls.sql:164-176`, a suppression matched on the durable subject key so it survives re-projection — but it guards `memory_projections`, not Memory facts. `routes/memories.ts` has no correction concept at all | pre |
 | H49 | Negative constraints from corrections must be durable | BBW | Same artifact, same scope limit | pre |
@@ -430,9 +430,9 @@ column but ships no detector.
 | H79 | Public search queries only public derivatives, never private canonical storage plus post-query filtering | BBW | `routes/memories.ts:242-284` — the discovery feed reads canonical `memories` through the **service client** (RLS bypassed), applies `.limit()` **before** block filtering, then post-filters blocks in TypeScript. This is precisely the pattern §10 and §28.6 forbid | pre |
 | H80 | Media visibility independent from Memory visibility | NB | `memory_items` has no visibility of its own; it inherits the memory's | |
 | H81 | Publishing location must never exceed the owner's selected precision | NB | There is no owner-selected precision on a Memory; the only clamp is the gem ceiling | |
-| H82 | Temporary operational location must not leak into durable public Highlights | NB | `routes/highlights.ts:153-160` persists `location_name`/`city`/`country` verbatim with no precision control and no TTL distinct from the media's | |
+| H82 | Temporary operational location must not leak into durable public Highlights | NB | `routes/highlights.ts:154-161` persists `location_name`/`city`/`country` verbatim with no precision control and no TTL distinct from the media's | |
 | H83 | Being tagged or referenced does not make another user a co-owner | **BAC** | `routes/memories.ts:670-712` — a tagged user may only approve/remove **their own** tag (`userId !== user.id → 403`); no edit, no visibility, no delete rights accrue. Owner-only checks at `:607-609`, `:670-675` | pre |
-| H84 | Blocking and account deletion suppress future social resurfacing and unlink identity | **BAC** | Memories feed fails **closed** on a block-lookup error rather than serving an unfiltered feed (`routes/memories.ts:268-284`); highlights filter both directions (`routes/highlights.ts:788-797`, `:38-53`); deletion reaches `memories`/`memory_likes`/`memory_saves` (`lib/deletionDispositions.ts:156`), the derived family (`:200`) and every highlight table (`:370`), executed at `services/accountDeletion/AccountDeletionService.ts:964-975` | pre |
+| H84 | Blocking and account deletion suppress future social resurfacing and unlink identity | **BAC** | Memories feed fails **closed** on a block-lookup error rather than serving an unfiltered feed (`routes/memories.ts:268-284`); highlights filter both directions (`routes/highlights.ts:808-817`, `:39-54`); deletion reaches `memories`/`memory_likes`/`memory_saves` (`lib/deletionDispositions.ts:156`), the derived family (`:200`) and every highlight table (`:370`), executed at `services/accountDeletion/AccountDeletionService.ts:964-975` | pre |
 | H85 | Public sharing assumes copyability; screenshot prevention is not a privacy boundary | **BAC** | No screenshot-prevention code exists anywhere in `travel-buddy-standalone/src` or `app/` — no `ScreenCapture`, no `FLAG_SECURE`. The stance is respected by construction | — |
 
 ### §11 Sensitive context and resurfacing controls (7)
@@ -451,17 +451,17 @@ column but ships no detector.
 
 | id | Requirement | Bucket | Evidence / divergence | Attr |
 |---|---|---|---|---|
-| H93 | Highlights are disposable audience-specific projections over Memories/Episodes | BBW | `routes/highlights.ts:128-183` inserts an independent row from a client-supplied `mediaUrl`. A Highlight has no source Memory and cannot be rebuilt from one. This is a Stories product — §1's stated non-goal — wearing the spec's noun | pre |
+| H93 | Highlights are disposable audience-specific projections over Memories/Episodes | BBW | `routes/highlights.ts:129-184` inserts an independent row from a client-supplied `mediaUrl`. A Highlight has no source Memory and cannot be rebuilt from one. This is a Stories product — §1's stated non-goal — wearing the spec's noun | pre |
 | H94 | `LIVE` class | NB | | |
-| H95 | `DAY` class | NB | Only a free `expiresInHours` knob (`routes/highlights.ts:152`) | |
+| H95 | `DAY` class | NB | Only a free `expiresInHours` knob (`routes/highlights.ts:153`) | |
 | H96 | `TRIP` class | NB | `0026_highlights.sql:12` had a `trip_id`; it is absent from the live column set the routes select | |
 | H97 | `SEASONAL` class | NB | | |
 | H98 | `PERMANENT` class | NB | Unmerged PR #461 only — and its committed migration is broken (see below) | |
-| H99 | Ranking (`manual_pin + recency + significance + current_relevance + audience_relevance + presentation_quality + diversity`) | NB | `routes/highlights.ts:938` orders by `created_at` ascending. No score exists | |
+| H99 | Ranking (`manual_pin + recency + significance + current_relevance + audience_relevance + presentation_quality + diversity`) | NB | `routes/highlights.ts:958` orders by `created_at` ascending. No score exists | |
 | H100 | Pinned/manual order outranks automatic ordering | NB | No pin exists in schema, route or client | |
 | H101 | Diversity constraints across trip/person/venue/activity | NB | | |
 | H102 | Actions: DO THIS / SAVE / ADD TO TRIP / VIEW PLACE / ASK / MEET | NB | The viewer offers like (`:532`), reply (`:661`), report (`:801`) — the engagement verbs of a Stories product, not the action verbs of an executable Highlight | |
-| H103 | Highlights remain finite and contextual; not an endless feed | BBW | `routes/highlights.ts:932-939` has **no `.limit()` and no pagination** — it returns every unexpired highlight of every followed user. Finiteness rests entirely on the 24h expiry; for a high-follow account the response is unbounded | pre |
+| H103 | Highlights remain finite and contextual; not an endless feed | BBW | `routes/highlights.ts:952-959` has **no `.limit()` and no pagination** — it returns every unexpired highlight of every followed user. Finiteness rests entirely on the 24h expiry; for a high-follow account the response is unbounded | pre |
 
 ### §13 Memory graph and compression (3)
 H104 compression hierarchy (SIGNAL→MOMENT→EPISODE→DAY→TRIP→SEASON→LIFE CHAPTER) ·
@@ -501,7 +501,7 @@ not the verb, so each is BBW:
 `REMOVE_MEDIA` (`:727`) · `ADD_PERSON` (`:396`) · `REMOVE_PERSON` (`:838` — and only the *tagged*
 user may remove; the owner cannot) · `CHANGE_PLACE` (`:616`) ·
 `PUBLISH_HIGHLIGHT` (`routes/stories.ts:609`, forced public) · `HIDE_HIGHLIGHT`
-(`artifacts/api-server/src/routes/highlights.ts:1959#deleted_at`, a soft delete, not a reversible hide) — **11 BBW**.
+(`artifacts/api-server/src/routes/highlights.ts:1985#deleted_at`, a soft delete, not a reversible hide) — **11 BBW**.
 
 `CONFIRM_MEMORY`, `MERGE_MEMORY`, `SPLIT_MEMORY`, `PIN_HIGHLIGHT`, `UNPIN_HIGHLIGHT`,
 `SET_RESURFACING_POLICY` — **6 NB**.
@@ -520,7 +520,7 @@ consumers.
 |---|---|---|---|
 | MemoryTimelineProjection | BBW | `travel-buddy-standalone/src/lib/memoryTimeline.ts:1-13` — a pure **client-side** month grouping over `passport_memories`, declaring itself Passport §15. Not a server projection, not over Memories | pre |
 | PassportMemoryProjection | BBW | `services/passport/PassportConsumerProjections.ts` projects Passport artefacts, not Memories | pre |
-| ProfileHighlightProjection | BBW | `routes/highlights.ts:193` returns raw highlight rows filtered by viewer permission; no audience-specific projection, no field narrowing | pre |
+| ProfileHighlightProjection | BBW | `routes/highlights.ts:194` returns raw highlight rows filtered by viewer permission; no audience-specific projection, no field narrowing | pre |
 | TripMemoryProjection | BBW | `routes/memories.ts:1055` returns a raw list for a trip | pre |
 | PlaceMemoryProjection | NB | | |
 | PeopleMemoryProjection | NB | | |
@@ -549,7 +549,7 @@ consumers.
 | H181 | Staged pipeline: ingest metadata → fingerprint → cheap association → thumbnail → expensive analysis | BBW | A staged pipeline exists for `post_media` (`2046_phash_dedup.sql`, moderation/processing status guarded at `2158_post_media_write_boundary.sql:41`). **Memory media bypasses all of it**: `routes/memories.ts:540-548` inserts a client-supplied `media_url` straight into `memory_items` with no `media_assets` row, no fingerprint, no moderation state | pre |
 | H182 | Distinct original / viewer / card / tiny signed renditions | NB | `lib/mediaAssets.ts:151` carries `thumbnail_path`/`thumbnail_url` only — two tiers, not four | |
 | H183 | Perceptual fingerprints detect duplicate imports without filename dependence | BBW | `2046_phash_dedup.sql` implements pHash — for `post_media`. `memory_items` has no `phash` column and never enters that path | pre |
-| H184 | Video scenes as logical segments without duplicating originals | NB | `highlights.video_duration_seconds` is a length cap (`routes/highlights.ts:140-150`), not segmentation | |
+| H184 | Video scenes as logical segments without duplicating originals | NB | `highlights.video_duration_seconds` is a length cap (`routes/highlights.ts:141-151`), not segmentation | |
 | H185 | Face recognition must not be a dependency for People Memories | **BAC** | People on a Memory are `memory_tags` — an explicit social-graph primitive with consent (`routes/memories.ts:207-217`, `:2340#memory_tags`). No face-recognition code exists in the repo | — |
 
 ### §21 Deletion, forgetting and revocation (8)
@@ -559,7 +559,7 @@ consumers.
 | H186 | Archive: retain canonical, remove from normal browsing | **BAC** | `0067_memories.sql:22` permits `archived`; PATCH accepts it (`routes/memories.ts:249`); the feed filters `state='published'` (`:428`) so archived drops out of browsing while single-fetch by the owner still returns it (`:525` filters only `state != 'deleted'`) | pre |
 | H187 | Do not resurface (retain + search privately, suppress proactive resurfacing) | NB | No such control on a Memory | |
 | H188 | Do not personalize (retain, exclude from inference) | NB | | |
-| H189 | Make private: revoke public derivatives and public indexing, retain the Memory | BBW | PATCH visibility works (`routes/memories.ts:449`) but revokes nothing — there are no derivatives or indexes to revoke, and no cache invalidation on the memories path (contrast `routes/highlights.ts:5`, which does invalidate the Compass cache) | pre |
+| H189 | Make private: revoke public derivatives and public indexing, retain the Memory | BBW | PATCH visibility works (`routes/memories.ts:449`) but revokes nothing — there are no derivatives or indexes to revoke, and no cache invalidation on the memories path (contrast `routes/highlights.ts:6`, which does invalidate the Compass cache) | pre |
 | H190 | Delete Memory: revoke derivatives, remove indexes/embeddings, purge canonical/eligible evidence | BBW | `routes/memories.ts:504` writes `state:"deleted"` and stops. The media bytes stay publicly served — documented in the repo's own words at `services/accountDeletion/AccountDeletionService.ts:565-570` | pre |
 | H191 | Delete media asset: remove asset and derivatives; the Memory survives | **BAC** | `routes/memories.ts:594-622` deletes the row first, then removes the storage object, and refuses any path outside the owner's `memories/{userId}/` prefix. The Memory is untouched | pre |
 | H192 | Revocation propagates to public projection, search index, embedding, profile Highlight, Trip story, Passport reference, cached narrative and share links | NB | None of those destinations exists to propagate to | |
@@ -575,7 +575,7 @@ spec's model has been started. H197 "never fabricate trip/place/participant/visi
 
 | id | Requirement | Bucket | Evidence / divergence | Attr |
 |---|---|---|---|---|
-| H198 | Owner-only access to canonical private Memory facts **by default** | BBW | RLS exists (`docs/migrations/0067_memories.sql:30-38`; `0026_highlights.sql:24-33`) — but **every** server read and write on both surfaces uses `getServiceClient()`, which bypasses RLS entirely (`routes/memories.ts:350`, `:425`; `artifacts/api-server/src/routes/highlights.ts:1075#getServiceClient`). The effective default is the TypeScript helper `canViewMemory`, not the database | pre |
+| H198 | Owner-only access to canonical private Memory facts **by default** | BBW | RLS exists (`docs/migrations/0067_memories.sql:30-38`; `0026_highlights.sql:24-33`) — but **every** server read and write on both surfaces uses `getServiceClient()`, which bypasses RLS entirely (`routes/memories.ts:350`, `:425`; `artifacts/api-server/src/routes/highlights.ts:1095#getServiceClient`). The effective default is the TypeScript helper `canViewMemory`, not the database | pre |
 | H199 | Participant membership alone does not grant full Memory access | **BAC** | `routes/memories.ts:128-205` — a tag grants nothing; `trip_crew` requires both `visibility='trip_crew'` **and** live `trip_members` membership; a hidden viewer is denied under **every** visibility mode (`:144-147`, fixing audit MEM·M1) | pre |
 | H200 | Public derivatives behind an explicit publication policy | NB | | |
 | H201 | Exact location and private notes require tighter policies than public-safe summary | NB | Exact `location_lat/lng` are stored in the same row and gated only by the gem ceiling | |
@@ -722,7 +722,7 @@ moved both of those functions out of `public` and into the `authz` schema
 `public`, and 2313 uses that one correctly at `:111`. So two of the three predicate references in
 the rewritten policies will not resolve on any database where 2182 has been applied.
 
-Separately worth flagging for whoever fixes 2313: `routes/highlights.ts:938` filters
+Separately worth flagging for whoever fixes 2313: `routes/highlights.ts:958` filters
 `.gt("expires_at", now)`, which is exactly the bare `> now()` that 2313's own column comment
 (`:76-77`) warns "hides every permanent Highlight". The migration's postcondition guards the RLS
 policies but cannot see the application query.
@@ -733,7 +733,7 @@ policies but cannot see the application query.
 
 1. **`highlights` is a Stories table wearing this spec's noun.** §1 lists "building an Instagram
    Stories clone" as a non-goal, and §12 defines Highlights as *projections over Memories or
-   Episodes*. `artifacts/api-server/src/routes/highlights.ts:817#media_url: d.mediaUrl` creates a highlight from a raw `mediaUrl` with no source.
+   Episodes*. `artifacts/api-server/src/routes/highlights.ts:837#media_url: d.mediaUrl` creates a highlight from a raw `mediaUrl` with no source.
    Until a Highlight has a source Memory, §12, §18 and half of §21 have nothing to attach to.
 2. **The discovery feed is the exact anti-pattern §10 and §28.6 name.** `routes/memories.ts:242-284`
    reads canonical storage through a service client, limits before filtering, and post-filters in
@@ -764,10 +764,10 @@ body gave them.
 | MERGE / SPLIT / PIN / UNPIN / PUBLISH_HIGHLIGHT / HIDE_HIGHLIGHT / SET_RESURFACING_POLICY are **not** declared | **Yes, and the code says why** | `lib/memoryCommandBus.ts:381-388` — `MEMORY_COMMAND_TYPES_NOT_DECLARED`, each with its reason. They stay NOT-BUILT. |
 | `memoryProjections/**` — registry, evidence, episodes, significance, graph | **Yes, and reachable from nothing** | `evidence.ts:246, 435`; `episodeDetection.ts:244`; `significance.ts:162`; `memoryGraph.ts:246`; `projectionRegistry.ts:501`; `derivativeRegistry.ts:287`. **No route or lib outside `src/test/` imports any of them** — grepped across `src/routes/`, `src/lib/`, `src/services/` and `src/scripts/` at this commit. |
 | `memoryRetrieval/**` | **Yes, test-only** | `searchMemories.ts:169`, namespace table at `:49`. Same reachability finding. |
-| `highlights/**` — ranking, lifecycle, projection policy, resurfacing, revocation | **Three of five are wired** | Wired: `highlightResurfacing` (`routes/highlights.ts:18`), `highlightProjectionPolicy` (`:23`), `highlightRevocation` (`:24`, executed `routes/highlights.ts:1919#router.delete("/highlights/:id"`). **Not wired:** `highlightRanking.ts` and `highlightLifecycle.ts` — test-only. |
-| `highlightPermissions.ts` reconciled to one rule | **Yes, and it is live** | `lib/highlightPermissions.ts:1-55` records the fork it closed: `canEngageHighlight` had **zero callers** while five routes re-derived the rule inline and disagreed with it on self-like and self-reply. The routes' behaviour was kept — widening is a product decision — and every route now calls `canViewHighlight` / `canEngageHighlight` (`routes/highlights.ts:6-13`). No migration is involved, so this one **is** in production. |
-| `highlights.archived_at` wired as a reversible archive | **Yes, and it is live** | `artifacts/api-server/src/routes/highlights.ts:100#archived_at` (projected), `:2056#/highlights/:id/archive` archive, `:2120#/highlights/:id/archive` unarchive, `:2185#/highlights/archived` `GET /highlights/archived`, and `.is("archived_at", null)` on the three list reads (`:982#archived_at`, `:1182#archived_at`, and the following-feed at `:2708#archived_at`). **`archived_at` exists on `public.highlights` in production** (schema snapshot), so this is the one Highlights change in this range that a deployed database can actually hold. |
-| 2710, 2711, 2720–2724, 2730 written and NOT applied | **Yes** | None appears among the 35 entries in `lib/capability/production-applied-migrations.json`; none of their tables (`memory_domain_events`, `memory_event_outbox`, `highlight_resurfacing_preferences`, `highlight_projection_policies`, `highlight_sources`, `highlight_revocation_log`, `memory_derivative_registry`) appears in the production schema snapshot. `routes/highlights.ts:85-87` and `highlightProjectionPolicy.ts:228` say so in their own words. |
+| `highlights/**` — ranking, lifecycle, projection policy, resurfacing, revocation | **Three of five are wired** | Wired: `highlightResurfacing` (`routes/highlights.ts:19`), `highlightProjectionPolicy` (`:24`), `highlightRevocation` (`:25`, executed `routes/highlights.ts:1945#router.delete("/highlights/:id"`). **Not wired:** `highlightRanking.ts` and `highlightLifecycle.ts` — test-only. |
+| `highlightPermissions.ts` reconciled to one rule | **Yes, and it is live** | `lib/highlightPermissions.ts:1-55` records the fork it closed: `canEngageHighlight` had **zero callers** while five routes re-derived the rule inline and disagreed with it on self-like and self-reply. The routes' behaviour was kept — widening is a product decision — and every route now calls `canViewHighlight` / `canEngageHighlight` (`routes/highlights.ts:7-14`). No migration is involved, so this one **is** in production. |
+| `highlights.archived_at` wired as a reversible archive | **Yes, and it is live** | `artifacts/api-server/src/routes/highlights.ts:101#archived_at` (projected), `:2082#/highlights/:id/archive` archive, `:2146#/highlights/:id/archive` unarchive, `:2211#/highlights/archived` `GET /highlights/archived`, and `.is("archived_at", null)` on the three list reads (`:1002#archived_at`, `:1202#archived_at`, and the following-feed at `:2734#archived_at`). **`archived_at` exists on `public.highlights` in production** (schema snapshot), so this is the one Highlights change in this range that a deployed database can actually hold. |
+| 2710, 2711, 2720–2724, 2730 written and NOT applied | **Yes** | None appears among the 35 entries in `lib/capability/production-applied-migrations.json`; none of their tables (`memory_domain_events`, `memory_event_outbox`, `highlight_resurfacing_preferences`, `highlight_projection_policies`, `highlight_sources`, `highlight_revocation_log`, `memory_derivative_registry`) appears in the production schema snapshot. `routes/highlights.ts:86-88` and `highlightProjectionPolicy.ts:228` say so in their own words. |
 
 ### A.2 The scoring rule applied here, stated once
 
@@ -791,7 +791,7 @@ has yet been protected.
 
 | id | Was | Now | Evidence at `cdfff599` | Attr |
 |---|---|---|---|---|
-| H84 | BAC | **BBW** | **A false green, corrected.** Blocking half stands (`routes/memories.ts:268-284`, `routes/highlights.ts:788-797`). Deletion half is false: `highlights`, `highlight_likes`, `highlight_reports`, `highlight_views` are in `UNCLASSIFIED_BACKLOG` (`lib/deletionDispositions.ts:498-501#highlight_likes`), `highlight_replies` in `DENOMINATOR_CORRECTION_BACKLOG` (`:595`); `AccountDeletionService.ts:100-104` confirms. `memories` / `memory_likes` / `memory_saves` remain genuinely cascaded (`services/accountDeletion/AccountDeletionService.ts:162#/** Per-step outcome. Steps are independent so one failure cannot hide another. */`). | pre |
+| H84 | BAC | **BBW** | **A false green, corrected.** Blocking half stands (`routes/memories.ts:268-284`, `routes/highlights.ts:808-817`). Deletion half is false: `highlights`, `highlight_likes`, `highlight_reports`, `highlight_views` are in `UNCLASSIFIED_BACKLOG` (`lib/deletionDispositions.ts:498-501#highlight_likes`), `highlight_replies` in `DENOMINATOR_CORRECTION_BACKLOG` (`:595`); `AccountDeletionService.ts:100-104` confirms. `memories` / `memory_likes` / `memory_saves` remain genuinely cascaded (`services/accountDeletion/AccountDeletionService.ts:162#/** Per-step outcome. Steps are independent so one failure cannot hide another. */`). | pre |
 | H7 | NB | **BBW** | MemoryEvidenceService: `services/memoryProjections/evidence.ts` — normalization (`:246`), dedup (`:332`), precedence merge (`:364`), eligibility (`:435`), versioned (`:34`, `:36`). No route imports it; `memory_evidence` does not exist. | spec |
 | H8 | NB | **BBW** | EpisodeDetectionService: `episodeDetection.ts:244` `detectEpisodes`, deterministic (sorted output, digest ids), `EPISODE_DETECTOR_VERSION` (`:32`). No inputs exist — `memory_evidence` and `memory_episodes` are still absent. | spec |
 | H9 | NB | **BBW** | MemoryEligibilityService: `evidence.ts:435` `evaluateEligibility` with a closed rejection-reason set (`:391`). Test-only. | spec |
@@ -806,21 +806,21 @@ has yet been protected.
 | H65 | NB | **BBW** | `MEDIA_QUALITY_MAX_CONTRIBUTION` (`significance.ts:86`) caps media quality at its own weight. Same limit as H64. | spec |
 | H66 | NB | **BBW** | Explicit intent is a hard rule inside `scoreSignificance` rather than a weight (`significance.ts:162` and the contribution list it returns). Same limit. | spec |
 | H75 | NB | **BBW** | `MEMORY_CONSENT_DIMENSIONS` (`highlightProjectionPolicy.ts:63`) is the spec's five, with `consentFromRow` / `mayProject` (`:87, 101`) treating `unknown` as withheld. `highlight_projection_policies` is 2721, **unapplied**, so `readProjectionPolicies` returns `absent` and nothing is enforced (`:228`). | spec |
-| H81 | NB | **BBW** | `clampLocationToPrecision` (`highlightProjectionPolicy.ts:165`) and `resolveLocationDisclosure` (`:205`), wired into the feeds (`routes/highlights.ts:23`, applied at `:332#applyLocationPrecision`). Unenforced today for exactly the reason the file states: no policy table. | spec |
+| H81 | NB | **BBW** | `clampLocationToPrecision` (`highlightProjectionPolicy.ts:165`) and `resolveLocationDisclosure` (`:205`), wired into the feeds (`routes/highlights.ts:24`, applied at `:333#applyLocationPrecision`). Unenforced today for exactly the reason the file states: no policy table. | spec |
 | H82 | NB | **BBW** | Same clamp, and `strictestPrecision` (`:134`) means a policy can only tighten. Same unapplied storage. | spec |
 | H86 | NB | **BBW** | `SENSITIVE_CONTEXT_CATEGORIES` (`highlightResurfacing.ts:66`) plus `SENSITIVE_CATEGORY_REGISTRY_MAPPING` (`:93`) binding them to the existing `lib/protectedLocations.ts` registry — which is the connection the body found missing. The mapping is declared; no read on either surface consults it yet. | spec |
-| H89 | NB | **BBW** | `HIDE_PERSON_FROM_RESURFACING` is a declared control (`highlightResurfacing.ts:129`) and is applied on the proactive feeds by owner id (`routes/highlights.ts:265#function applyResurfacingControls`). Storage is 2720, **unapplied**: `applyResurfacingControls` logs "§11 resurfacing controls are NOT DEPLOYED — feed served without them" (`:108-114`) and suppresses nothing. | spec |
+| H89 | NB | **BBW** | `HIDE_PERSON_FROM_RESURFACING` is a declared control (`highlightResurfacing.ts:129`) and is applied on the proactive feeds by owner id (`routes/highlights.ts:266#function applyResurfacingControls`). Storage is 2720, **unapplied**: `applyResurfacingControls` logs "§11 resurfacing controls are NOT DEPLOYED — feed served without them" (`:109-115`) and suppresses nothing. | spec |
 | H90 | NB | **BBW** | `HIDE_TRIP` declared (`highlightResurfacing.ts:129`) with its surface effects (`:157`). Same unapplied storage; no trip-keyed subject reaches the feed filter. | spec |
-| H91 | NB | **BBW** | `KEEP_PRIVATE_FOREVER` declared and in the feed-enforceable set (`artifacts/api-server/src/services/highlights/highlightResurfacing.ts:229#export const FEED_ENFORCEABLE_CONTROLS`, applied at `artifacts/api-server/src/routes/highlights.ts:310#for (const c of FEED_ENFORCEABLE_CONTROLS) {`). Same unapplied storage. **POINTER REPAIRED 2026-09-22 by §Q, judgement untouched.** `routes/highlights.ts:91` was a BLANK LINE at `1fe72289b` and at `812720cc0` — `check:citation-targets` had it in its dead-target population for both — and §Q's edits to that file moved a comment onto line 83, which would have taken the pointer out of the population without making it any truer. The list the row means is no longer called `FEED_SUPPRESSING_CONTROLS`; it is `FEED_ENFORCEABLE_CONTROLS`, and it is DERIVED from `CONTROL_EFFECTS` rather than retyped (§O.6). Anchored, so `check:doc-citations` holds it from here rather than an offset. | spec |
+| H91 | NB | **BBW** | `KEEP_PRIVATE_FOREVER` declared and in the feed-enforceable set (`artifacts/api-server/src/services/highlights/highlightResurfacing.ts:229#export const FEED_ENFORCEABLE_CONTROLS`, applied at `artifacts/api-server/src/routes/highlights.ts:311#for (const c of FEED_ENFORCEABLE_CONTROLS) {`). Same unapplied storage. **POINTER REPAIRED 2026-09-22 by §Q, judgement untouched.** `routes/highlights.ts:92` was a BLANK LINE at `1fe72289b` and at `812720cc0` — `check:citation-targets` had it in its dead-target population for both — and §Q's edits to that file moved a comment onto line 83, which would have taken the pointer out of the population without making it any truer. The list the row means is no longer called `FEED_SUPPRESSING_CONTROLS`; it is `FEED_ENFORCEABLE_CONTROLS`, and it is DERIVED from `CONTROL_EFFECTS` rather than retyped (§O.6). Anchored, so `check:doc-citations` holds it from here rather than an offset. | spec |
 | H99 | NB | **BBW** | `HIGHLIGHT_RANKING_FACTORS` (`highlightRanking.ts:61`) is §12's seven verbatim and `rankHighlights` (`:278`) computes them. No `ranking_score` column (2723) and no route calls it — `routes/highlights.ts` still orders by `created_at`. | spec |
 | H100 | NB | **BBW** | `manual_pin` is the first ranking factor and outranks the rest by construction. No pin column, no pin route, no pin in the client. | spec |
 | H101 | NB | **BBW** | `DIVERSITY_DIMENSIONS` (`highlightRanking.ts:74`) is trip/person/venue/activity, applied inside `rankHighlights`. Unreachable. | spec |
 | H175 | NB | **BBW** | `Idempotency-Key` is now read on the memory command routes (`lib/memoryCommandBus.ts:578, 440`; `routes/memories.ts:309`) and carried into every dispatch. The receipt table is 2710, **unapplied**, so with the kernel off a replayed key produces a second write and only a log line records the key (`MemoryDomainService.ts:360-370`). | spec |
 | H187 | NB | **BBW** | `DO_NOT_RESURFACE` is declared, its surface effects are enumerated against §21's table (`highlightResurfacing.ts:157`), and it is applied to both proactive feeds. Storage unapplied (2720). Still no such control on a **Memory** — this is the Highlights surface only. | spec |
 | H188 | NB | **BBW** | `RETAIN_BUT_DO_NOT_PERSONALIZE` is separated from `DO_NOT_RESURFACE` — the body's complaint that the two were inseparable no longer holds in the vocabulary (`highlightResurfacing.ts:144-157`). Storage unapplied. | spec |
-| H192 | NB | **BBW** | `REVOCATION_DESTINATIONS` (`highlightRevocation.ts:168`) is §21's eight verbatim and `executeRevocation` (`:305`) is wired into `DELETE /highlights/:id` (`routes/highlights.ts:1919#router.delete("/highlights/:id"`). **One of the eight is actually reached** — `cached_narrative`, and the outcome text says frankly that even that is guaranteed only for the in-process L1 cache. The rest report `not_applicable` or `not_implemented`, which the type distinguishes from success (`:192-200`). | spec |
+| H192 | NB | **BBW** | `REVOCATION_DESTINATIONS` (`highlightRevocation.ts:168`) is §21's eight verbatim and `executeRevocation` (`:305`) is wired into `DELETE /highlights/:id` (`routes/highlights.ts:1945#router.delete("/highlights/:id"`). **One of the eight is actually reached** — `cached_narrative`, and the outcome text says frankly that even that is guaranteed only for the in-process L1 cache. The rest report `not_applicable` or `not_implemented`, which the type distinguishes from success (`:193-201`). | spec |
 | H200 | NB | **BBW** | The publication policy exists as an artifact (`highlightProjectionPolicy.ts:333` `PROJECTION_POLICY_COLUMNS`, `:364` `readProjectionPolicies`) and is consulted on the feeds. Its table is 2721, **unapplied**, so there is no policy to be behind. | spec |
-| H201 | NB | **BBW** | The precision ladder is now applied on a durable public surface — Highlight `location_name` / `city` / `country` are rewritten to the owner's rung before serving (`artifacts/api-server/src/routes/highlights.ts:332#applyLocationPrecision`, `highlightProjectionPolicy.ts:165`). It does not reach a Memory's `location_lat` / `location_lng`, and it is unenforced until 2721 lands. | spec |
+| H201 | NB | **BBW** | The precision ladder is now applied on a durable public surface — Highlight `location_name` / `city` / `country` are rewritten to the owner's rung before serving (`artifacts/api-server/src/routes/highlights.ts:333#applyLocationPrecision`, `highlightProjectionPolicy.ts:165`). It does not reach a Memory's `location_lat` / `location_lng`, and it is unenforced until 2721 lands. | spec |
 | H209 | NB | **BBW** | `PERSON_VISIBILITY_LADDER` is §10's five rungs (`highlightProjectionPolicy.ts:261`) and `discloseParticipant` (`:307`) answers per viewer. Not wired to `memory_tags`; no per-participant policy is stored. | spec |
 | H210 | NB | **BBW** | `canUseForPersonalization` exists in substance: `CONTROL_EFFECTS` names `personalization` as a suppressible surface distinct from resurfacing and recap (`highlightResurfacing.ts:144-157`), so the question is answerable. Storage unapplied; no personalization path consults it. | spec |
 
@@ -853,7 +853,7 @@ read; the body does the same, and the counts below follow its own enumeration.
 | §25's 12 fixtures, 9 invariants, 9 chaos scenarios | **unchanged** | Ten new memory/highlight suites landed, but they test the new modules, not the spec's named fixtures. I declined to re-map them onto §25's list: doing so would be scoring a resemblance. |
 | H79 (public search must query a derivative, never canonical + post-filter) | **BBW** | `routes/memories.ts:242-284` is untouched by this range: still the service client over canonical `memories`, still `.limit()` before block filtering. `PublicMemoryProjection` exists in the registry and nothing routes through it. This is the single largest gap between the code that landed and the code that serves traffic. |
 | H93 (Highlights are projections over Memories) | **BBW** | `highlight_sources` — the link that would give a Highlight a source Memory — is migration 2722, written, **unapplied**, and has no TypeScript writer. `POST /highlights` still inserts a client-supplied `mediaUrl`. |
-| H103 (Highlights remain finite) | **BBW** | A bound now exists (`routes/highlights.ts:431-432`, `FOLLOWING_FEED_DEFAULT_LIMIT`) but only behind `highlights_feed_bounded_enabled` (migration 2339), which is **not in the applied list**, so the flag has no row and `isFlagEnabled` fails closed. The following-feed is unbounded in production. |
+| H103 (Highlights remain finite) | **BBW** | A bound now exists (`routes/highlights.ts:432-433`, `FOLLOWING_FEED_DEFAULT_LIMIT`) but only behind `highlights_feed_bounded_enabled` (migration 2339), which is **not in the applied list**, so the flag has no row and `isFlagEnabled` fails closed. The following-feed is unbounded in production. |
 | H204 | **CV** | Still cannot-verify, and for a sharper reason than the body had. `2150_passport_memories_write_boundary.sql` is not among the 35 entries in `production-applied-migrations.json` — but that file's own header says it is *"a record of what WE applied, not proof of everything that is applied … a staleness tripwire, not an inventory"*. Absence there is not proof of absence in production. Resolving H204 needs a live query, which this pass did not make. |
 | H197 | **CV** | No backfill code exists in the branch. Unchanged. |
 | H2 (automatic Memories private-first) | **BBW** | `routes/stories.ts` "save to Highlight" is outside this range and still hard-codes `visibility: "public"`. |
@@ -898,7 +898,7 @@ been applied.
    land, `memory_kernel_enabled` has no row, every write is the unaudited direct
    write, and §17 cannot leave BBW no matter how good `memoryCommandBus.ts` is.
 2. **Apply 2720 + 2721.** The §10/§11 controls are wired into the live feeds and
-   suppress nothing; `routes/highlights.ts:108-114` logs that on every request.
+   suppress nothing; `routes/highlights.ts:109-115` logs that on every request.
    A user's "never show me this again" is currently a no-op the server announces
    to its own logs.
 3. **Apply 2730** before any derivative is built, since it is the cleanup graph
@@ -1102,8 +1102,8 @@ nothing.
    `2710`, `2711`, `2720`–`2724`, `2730` — is outside what it can see, and the module
    header says so.
 2. **Seven of the nine invariants hold on code no route imports.** Only **H240** and
-   **H241** sit on modules a route imports: `artifacts/api-server/src/routes/highlights.ts:41#import`
-   pulls in the revocation service and `artifacts/api-server/src/routes/highlights.ts:332#function`
+   **H241** sit on modules a route imports: `artifacts/api-server/src/routes/highlights.ts:42#import`
+   pulls in the revocation service and `artifacts/api-server/src/routes/highlights.ts:333#function`
    is the §10 clamp applied to the feeds. The other seven are proved against `evidence.ts`,
    `projectionRegistry.ts`, `derivativeRegistry.ts` and `searchMemories.ts`, which
    `src/routes/`, `src/lib/` and `src/services/` still do not import. Every one of those
@@ -1327,7 +1327,7 @@ and each write is the legacy direct write with a log line marked `durable:false`
 | H142 | `PIN_HIGHLIGHT` | NB | Not declared ("routes/highlights.ts is owned by another lane"), no pin column in production, no pin route, no pin in the client. `artifacts/api-server/src/migrations/2723_highlight_class_lifecycle_and_pin.sql:7#pinned_at` would add one and is unapplied |
 | H143 | `UNPIN_HIGHLIGHT` | NB | Same |
 | H144 | `PUBLISH_HIGHLIGHT` | BBW | An ad-hoc REST write with no command boundary, no idempotency key, no audit row and no outbox insert: `artifacts/api-server/src/routes/stories.ts:890#const` decides the audience and the insert follows. It is genuinely better than the body describes — the audience can no longer be widened — but the requirement is the boundary, not the verb |
-| H145 | `HIDE_HIGHLIGHT` | BBW | A reversible archive now exists on a column production has (`highlights.archived_at`, projected at `artifacts/api-server/src/routes/highlights.ts:100#archived_at`, and the three list reads filter it), so the body's "a soft delete, not a reversible hide" is out of date. Still no command boundary |
+| H145 | `HIDE_HIGHLIGHT` | BBW | A reversible archive now exists on a column production has (`highlights.archived_at`, projected at `artifacts/api-server/src/routes/highlights.ts:101#archived_at`, and the three list reads filter it), so the body's "a soft delete, not a reversible hide" is out of date. Still no command boundary |
 | H146 | `SET_RESURFACING_POLICY` | NB | Not declared: "no resurfacing-policy storage exists". `highlight_resurfacing_preferences` is 2720, unapplied |
 | H147 | `memory.created` | BBW | Declared verbatim at `artifacts/api-server/src/lib/memoryOutbox.ts:114#MEMORY_EVENT_TYPES` and mapped from CREATE_MEMORY. **Never emitted**: the emit is inside 2711 |
 | H148 | `memory.confirmed` | BBW | Declared and mapped from CONFIRM_MEMORY. Never emitted |
@@ -1442,7 +1442,7 @@ gives 22 BAC, 7 BBW, 1 NB.
 | H238 | Invariant: rejected candidate cannot become a Highlight | NB | `NO_SURFACE`. The rejection half is real and asserted; the second half has nothing to assert against, because nothing turns a candidate into a Highlight — `highlight_sources` is 2722, unapplied, with no writer, and `POST /highlights` inserts a client-supplied `mediaUrl`. The suite asserts this exact status at `artifacts/api-server/src/test/memoryCertificationInvariants.test.ts:117#reports` so it can never drift into looking like a pass |
 | H239 | Invariant: planned activity without occurrence cannot earn a visit Memory/Stamp | BBW | HELD: PLANNED+SAVED alone is refused with `PLANNED_OR_SAVED_ONLY` and the same set plus one OCCURRED record is eligible, so the refusal is the intent rule and not a blanket deny. BBW because it is proved on `evidence.ts`, which no route imports; the live stamp path enforces the rule by requiring a real check-in (H4) and is not covered by this test |
 | H240 | Invariant: blocked person cannot be newly resurfaced through shared-memory recommendations | **BAC** | HELD on a module a route imports, and the live half was already covered: `HIDE_PERSON_FROM_RESURFACING` suppresses exactly its subject across proactive resurfacing and recap, does not leak to another participant, and an UNREADABLE preference set suppresses rather than serving. `artifacts/api-server/src/test/memoriesBlockFailClosed.test.ts:109#describe` covers the live feed's fail-closed block filter. **Ceiling: 2720 is unapplied, so in production the set is `absent` and suppresses nothing** |
-| H241 | Invariant: public location precision cannot exceed owner policy | **BAC** | HELD over the whole ladder: the disclosed field set is monotone toward HIDDEN, HIDDEN discloses nothing, `strictestPrecision` can only tighten, and both an unreadable policy row and an unparseable one clamp to HIDDEN. The module is imported by `artifacts/api-server/src/routes/highlights.ts:332#function`. Mutation 4 turned it red. **Ceiling: 2721 is unapplied, so no rung is ever stored and the clamp never runs** |
+| H241 | Invariant: public location precision cannot exceed owner policy | **BAC** | HELD over the whole ladder: the disclosed field set is monotone toward HIDDEN, HIDDEN discloses nothing, `strictestPrecision` can only tighten, and both an unreadable policy row and an unparseable one clamp to HIDDEN. The module is imported by `artifacts/api-server/src/routes/highlights.ts:333#function`. Mutation 4 turned it red. **Ceiling: 2721 is unapplied, so no rung is ever stored and the clamp never runs** |
 | H242 | Invariant: user correction cannot be overwritten by weaker inference | BBW | HELD: a USER_CORRECTION at confidence 0.5 beat a CAMERA_CAPTURE observed the NEXT DAY at 0.7, and the refusal was reported in `refused` rather than applied silently. So the ordering is precedence, not recency and not score. BBW because `evidence.ts` is imported by no route and `memory_corrections` does not exist |
 | H243 | Invariant: historical memory cannot assert current venue availability | BBW | HELD on two levels: every `CompassMemoryProjection` row carries a `confidence_note` naming it a historical record, and the field whitelist contains no availability, status or hours field that could be misread. Mutation 5 turned it red. BBW because no Compass tool reads the projection |
 | H244 | Invariant: projection consumers must tolerate duplicate / out-of-order events | BBW | HELD: a replayed rebuild produced byte-identical rows, the same source version and exactly one registration; a rebuild arriving AFTER a revocation reported `was_revoked` and did not resurrect the payload. Mutation 7 turned it red. BBW because there is no consumer — `memory_event_outbox` is 2710, unapplied, and nothing acks `published_at` |
@@ -3444,7 +3444,7 @@ and was never re-asserted.
 | what | where | why it is there and not somewhere else |
 |---|---|---|
 | Location protection moved INTO the list serializer | `artifacts/api-server/src/routes/memories.ts:3239#async function enrichMemories` and `artifacts/api-server/src/routes/memories.ts:3249#const safeRows` | It was the CALLER's job and one caller did not know. Every list response on this surface goes through this one function, so a fifth list read cannot omit the protection without omitting the serializer. It cannot be applied twice by accident either: coarsening is a grid snap, not an idempotent clamp, so `GET /memories` stopped pre-protecting in the same change |
-| §10 clamp on the third Highlight read | `artifacts/api-server/src/routes/highlights.ts:1094#applyLocationPrecision` | Matches the two existing call sites exactly. **No owner bypass was introduced**, because neither existing call site has one — `GET /highlights/active` clamps the viewer's own Highlights — while the Memory sibling `protectMemoryRow` does bypass. Matching what exists can only narrow disclosure; inventing a bypass on one of three routes would widen it |
+| §10 clamp on the third Highlight read | `artifacts/api-server/src/routes/highlights.ts:1114#applyLocationPrecision` | Matches the two existing call sites exactly. **No owner bypass was introduced**, because neither existing call site has one — `GET /highlights/active` clamps the viewer's own Highlights — while the Memory sibling `protectMemoryRow` does bypass. Matching what exists can only narrow disclosure; inventing a bypass on one of three routes would widen it |
 | `readProjectionPolicies(null, …)` answers `unreadable` | `artifacts/api-server/src/services/highlights/highlightProjectionPolicy.ts:381#no service client is configured` | `getServiceClient()` can return null and the profile read tolerates that for its author lookup. `absent` means "this deployment has no such control"; a missing client means "there IS a control and we cannot see it". Deciding it in the function rather than at each call site is what stops the third caller picking the other one |
 | A compare-and-swap on the field the §5 guard judged | `artifacts/api-server/src/routes/memories.ts:1864#write = existing.state == null` and the zero-row disambiguation at `artifacts/api-server/src/routes/memories.ts:1903#code: "conflict"` | Pinned to `state` and **nothing else**, which is the field-level half of §19's sentence. A whole-row precondition (`updated_at`) would refuse a caption edit racing a title edit — two commands that are not in competition — and §19 asks for the opposite. Zero matched rows are re-read so that "somebody changed it first" (409) is answered differently from "the write broke" (500) and from "it is gone" (404) |
 
@@ -3807,14 +3807,14 @@ Every claim below was re-run against this tree, not inherited (rule §3 of the l
 
 | claim | re-executed | verdict |
 |---|---|---|
-| `compass_feed_cache` is never invalidated on a Memory visibility change (H189) | `grep -n "CompassCacheEngine\|invalidate" src/routes/memories.ts` → **nothing**, while `routes/highlights.ts:5` imports it and `routes/highlights.ts:1735#await invalidateCompassCache(` calls it (was cited at line 1014, which is now a bare `}` — anchored so the next move is loud) | **accurate** |
+| `compass_feed_cache` is never invalidated on a Memory visibility change (H189) | `grep -n "CompassCacheEngine\|invalidate" src/routes/memories.ts` → **nothing**, while `routes/highlights.ts:6` imports it and `routes/highlights.ts:1761#await invalidateCompassCache(` calls it (was cited at line 1014, which is now a bare `}` — anchored so the next move is loud) | **accurate** |
 | the compression hierarchy and Life Chapters are called by nothing (H104, H105) | `grep -rn "buildCompressionHierarchy\|buildLifeChapters" src --include=*.ts` outside the module → only `src/test/memoryProjectionGraph.test.ts` | **accurate** |
 | nothing outside `src/test/` and the certification suite imports the projection registry (§18 preamble, H163–H173) | same grep over `getProjectionDefinition` / `PROJECTION_DEFINITIONS` | **accurate at `7d1f2d498`; falsified by J.2** |
 | per-Memory deletion has no named step, no report, no retry (H193) | `DELETE /memories/:id` was one `UPDATE` and a 204 | **accurate** |
 | `routes/memories.ts` inserts a client-supplied `media_url` straight into `memory_items` (H181) | `addItemSchema.mediaUrl` was `z.string().url()` and nothing else | **accurate, and worse than the row says — see J.4** |
 | 2338/2339/2710/2711/2720/2721/2722/2723/2730 are unapplied | not one appears in `production-applied-migrations.json`, whose newest entry is `2741_layover_session_returning_status` | **accurate** (that file is a tripwire, not an inventory — its own `$comment` says so — but a list that reaches 2741 and omits 2710 is evidence) |
 | `routes/highlights.ts` still orders by `created_at` and imports neither the ranking nor the lifecycle module (H12, H99–H101) | `grep -n "highlightRanking\|highlightLifecycle" src/routes/highlights.ts` → **nothing**; the three `.order(` calls on the feeds are `created_at` | **accurate** |
-| `POST /highlights` still inserts a client-supplied `mediaUrl` with no source Memory (H93) | `routes/highlights.ts:513` | **accurate** |
+| `POST /highlights` still inserts a client-supplied `mediaUrl` with no source Memory (H93) | `routes/highlights.ts:514` | **accurate** |
 | `PassportConsumerProjections.ts` projects no Memory and no Highlight (H164) | both greps return **0** | **accurate** |
 | `memory_relations` has no migration anywhere in the tree (H45, H62, H106, H124) | its only `.sql` appearance is a comment in `2711_memory_kernel_execute.sql` | **accurate** |
 
@@ -4522,7 +4522,7 @@ error**: the six `blocks` reads in `routes/highlights.ts` and `routes/memories.t
 **content** reads, and they are listed so the next pass does not have to find them again:
 `routes/memories.ts:745#userCols` and `:755#savedItems` (`isSaved` reads as false), `routes/memories.ts:2840#media_url` (a trip
 Memory's cover photograph reads as absent), `routes/memories.ts:3254#coverRows` (the feed's cover, owner and
-like reads), `routes/highlights.ts:1060#viewedRows`, `:1078#avatar_url`, `:1325#profileRows` (view/like counts and the author profile).
+like reads), `routes/highlights.ts:1080#viewedRows`, `:1098#avatar_url`, `:1351#profileRows` (view/like counts and the author profile).
 None of them is a privacy leak and all of them can report a thing that exists as absent.
 
 ### M.7 Files changed outside this lane, and one request handed over
@@ -4957,7 +4957,7 @@ The list is now DERIVED: `artifacts/api-server/src/services/highlights/highlight
 selects every control whose `suppresses` includes `proactive_resurfacing` and whose scope this
 surface can key, `artifacts/api-server/src/services/highlights/highlightResurfacing.ts:238#feedSubjectScope` says which key, and
 `artifacts/api-server/src/services/highlights/highlightResurfacing.ts:305#unenforceableControls` names the ones it cannot. The route withholds on those
-rather than skipping them (`artifacts/api-server/src/routes/highlights.ts:299#const unenforceable = unenforceableControls(set)`),
+rather than skipping them (`artifacts/api-server/src/routes/highlights.ts:300#const unenforceable = unenforceableControls(set)`),
 which is the same direction this module already takes twice — an unreadable set suppresses
 everything, and a set carrying an unrecognised control is downgraded whole *"rather than enforcing
 a partial policy that looks complete"*.
@@ -5123,7 +5123,7 @@ where a violation would live.
 
 §O.2, verbatim: *"There is no route, no service and no script by which a user can set a §11
 resurfacing control or a §10 precision rung."* At HEAD there are three routes and one service:
-`artifacts/api-server/src/routes/highlights.ts:1713#router.put("/highlights/resurfacing-controls"`, `artifacts/api-server/src/routes/highlights.ts:1746#router.delete("/highlights/resurfacing-controls"`, `artifacts/api-server/src/routes/highlights.ts:1820#router.put("/highlights/:id/projection-policy"`, over `artifacts/api-server/src/services/highlights/highlightControlWrites.ts:235#export async function setResurfacingControl` and `artifacts/api-server/src/services/highlights/highlightControlWrites.ts:443#export async function setProjectionPolicy`. `verifyFlowHighlightControls.test.ts`
+`artifacts/api-server/src/routes/highlights.ts:1739#router.put("/highlights/resurfacing-controls"`, `artifacts/api-server/src/routes/highlights.ts:1772#router.delete("/highlights/resurfacing-controls"`, `artifacts/api-server/src/routes/highlights.ts:1846#router.put("/highlights/:id/projection-policy"`, over `artifacts/api-server/src/services/highlights/highlightControlWrites.ts:235#export async function setResurfacingControl` and `artifacts/api-server/src/services/highlights/highlightControlWrites.ts:443#export async function setProjectionPolicy`. `verifyFlowHighlightControls.test.ts`
 drives PUT → GET → the proactive feed → DELETE over one express app and one table-backed store and
 shows a control SET by a person is FELT by a person. §O.2's "they will stay empty" was true of the
 tree it measured and is not true of this one. No row moves on it — see P.7 for why.
@@ -5147,7 +5147,7 @@ had zero production callers (§O.2's own finding on H75), and no surface read th
 asks the question: `artifacts/api-server/src/services/highlights/highlightPublicProjection.ts:211#export function publicProjectionVerdict`, with `artifacts/api-server/src/services/highlights/highlightPublicProjection.ts:162#export function controlsSuppressing` DERIVED from `CONTROL_EFFECTS` the way
 `FEED_ENFORCEABLE_CONTROLS` is, and `artifacts/api-server/src/services/highlights/highlightPublicProjection.ts:91#export const SURFACE_CONSENT_DIMENSIONS` naming which consent dimension each surface must not have
 been refused — RESURFACE and SHARE on a feed, SHARE alone on a surface the viewer navigated to.
-Wired at `artifacts/api-server/src/routes/highlights.ts:626#const projectable = filterProjectable([record], viewerId, "public_projection", inputs, log, "resolveViewAccess");` (the five engagement routes), `artifacts/api-server/src/routes/highlights.ts:1049#? filterProjectable(permitted as any[], user.id, "public_projection", inputs, req.log, "GET /users/:userId/highlights")` (the profile listing), `artifacts/api-server/src/routes/highlights.ts:1310#surviving as any[], user.id, "proactive_resurfacing", { controls: suppressed, viewerControls: viewerSuppressed, policies }, req.log, "GET /highlights/active",` and `artifacts/api-server/src/routes/highlights.ts:2803#surviving as any[], user.id, "proactive_resurfacing", { controls: suppressed, viewerControls: viewerSuppressed, policies }, req.log, "GET /highlights/following-feed",` *(Both calls repointed 2026-09-22, and the anchor text CHANGED rather than merely moved: the H89 fix threads `viewerControls: viewerSuppressed` through the same argument object, so a person-scoped control is evaluated against the VIEWER whose feed is being built and not only against the owner of the row. The old anchors matched nothing, which is the guard working.)*
+Wired at `artifacts/api-server/src/routes/highlights.ts:649#const projectable = filterProjectable([record], viewerId, "public_projection", inputs, log, "resolveViewAccess");` (the five engagement routes), `artifacts/api-server/src/routes/highlights.ts:1069#? filterProjectable(permitted as any[], user.id, "public_projection", inputs, req.log, "GET /users/:userId/highlights")` (the profile listing), `artifacts/api-server/src/routes/highlights.ts:1330#surviving as any[], user.id, "proactive_resurfacing", { controls: suppressed, viewerControls: viewerSuppressed, policies }, req.log, "GET /highlights/active",` and `artifacts/api-server/src/routes/highlights.ts:2829#surviving as any[], user.id, "proactive_resurfacing", { controls: suppressed, viewerControls: viewerSuppressed, policies }, req.log, "GET /highlights/following-feed",` *(Both calls repointed 2026-09-22, and the anchor text CHANGED rather than merely moved: the H89 fix threads `viewerControls: viewerSuppressed` through the same argument object, so a person-scoped control is evaluated against the VIEWER whose feed is being built and not only against the owner of the row. The old anchors matched nothing, which is the guard working.)*
 (the feeds, consent added beside the controls they already applied, before the page is cut), and
 `artifacts/api-server/src/services/telegraph/shareables.ts:671#const verdict = publicProjectionVerdict({ id, owner_id: r.owner_id as string }, viewerId, "public_projection", inputs);` (Telegraph). The owner is never refused their own record. 36 → 39 cases in
 `highlightPublicProjectionEnforcement.test.ts`: 25 pass / 11 fail before the gate, 39 / 0 after,
@@ -5221,7 +5221,7 @@ Named so the gate is not read as complete:
 | surface | what it serves | why not wired here |
 |---|---|---|
 | `artifacts/api-server/src/routes/engagement.ts:99#case "highlight_like": {` | an access verdict for a `highlight_like` target: `owner === viewer \|\| visibility === "public"` | its own visibility rule is already cruder than `canViewHighlight` (no circle, no trip, no block); it wants the whole gate, not a bolt-on |
-| `artifacts/api-server/src/routes/collections.ts:525#} else if (type === "highlight") {` | `caption` and `media_url` of any Highlight id saved into a collection, no visibility check at all | a collection preview of a Highlight that has since gone private or `KEEP_PRIVATE_FOREVER` still carries its caption; the media bytes are separately gated by `mediaAccess` |
+| `artifacts/api-server/src/routes/collections.ts:543#} else if (type === "highlight") {` | `caption` and `media_url` of any Highlight id saved into a collection, no visibility check at all | a collection preview of a Highlight that has since gone private or `KEEP_PRIVATE_FOREVER` still carries its caption; the media bytes are separately gated by `mediaAccess` |
 | `artifacts/api-server/src/lib/mediaAccess.ts:766#3e. Highlight media` | the media bytes: public + unexpired | §10's own invariant, *"Media visibility is independent from Memory visibility"*; whether `KEEP_PRIVATE_FOREVER` should reach the bytes is a product decision this lane does not take |
 | recap | — | `GET /compass/me/recaps` and `GET /trips/:tripId/memories/recap` project Memories, not Highlights; there is no Highlight recap surface for `DO_NOT_INCLUDE_IN_RECAPS` to act on, so by rule 7 the control has nothing to violate today |
 | personalization | — | unchanged from H210: named, stored, consulted by no personalization path |
@@ -5293,7 +5293,7 @@ blocker after. The blockers are quoted from this document and are FALSE at HEAD:
   `HIGHLIGHT_COLUMNS` does not project it, so `describeHighlightLifetime` still answers
   `unavailable` on every live read."* Both halves are now false. The class is written by the create
   path and projected through
-  `artifacts/api-server/src/routes/highlights.ts:121#const HIGHLIGHT_CLASS_COLUMNS = ["lifetime_class", "lifecycle_state", "pinned_at"] as const;` — a PROBE rather than an append to the column
+  `artifacts/api-server/src/routes/highlights.ts:122#const HIGHLIGHT_CLASS_COLUMNS = ["lifetime_class", "lifecycle_state", "pinned_at"] as const;` — a PROBE rather than an append to the column
   constant, because one unknown column fails the whole PostgREST select and appending would take
   every Highlight read on a database without 2723 from working to 500.
 
@@ -5305,8 +5305,8 @@ blocker after. The blockers are quoted from this document and are FALSE at HEAD:
 
 - **H142, H143** (`PIN_HIGHLIGHT` / `UNPIN_HIGHLIGHT`). §B.5: *"no pin column in production, no pin
   route, no pin in the client"*. The first two are false —
-  `artifacts/api-server/src/routes/highlights.ts:1463#router.post("/highlights/:id/pin", async (req, res) => {` and
-  `artifacts/api-server/src/routes/highlights.ts:1517#router.delete("/highlights/:id/pin", async (req, res) => {`, on a column the 2026-09-15 snapshot
+  `artifacts/api-server/src/routes/highlights.ts:1489#router.post("/highlights/:id/pin", async (req, res) => {` and
+  `artifacts/api-server/src/routes/highlights.ts:1543#router.delete("/highlights/:id/pin", async (req, res) => {`, on a column the 2026-09-15 snapshot
   carries. The third is still true, and it is not what these rows are graded on.
 
 None of that was built by this section. Recording it is the section's first job, because a census
@@ -5324,13 +5324,13 @@ H237's report still reads *"highlight_sources is migration 2722, unapplied, with
 writer"*, of which the first half was already false.
 
 `POST /highlights` now accepts `sourceMemoryIds`
-(`artifacts/api-server/src/routes/highlights.ts:736#sourceMemoryIds: z.array(z.string().uuid()).max(MAX_HIGHLIGHT_SOURCES).optional(),`), and the ORDER
-is the design: `artifacts/api-server/src/routes/highlights.ts:789#const ready = await sourceStoreReady(client);` probes the link table and
+(`artifacts/api-server/src/routes/highlights.ts:756#sourceMemoryIds: z.array(z.string().uuid()).max(MAX_HIGHLIGHT_SOURCES).optional(),`), and the ORDER
+is the design: `artifacts/api-server/src/routes/highlights.ts:809#const ready = await sourceStoreReady(client);` probes the link table and
 `artifacts/api-server/src/services/highlights/highlightSources.ts:240#export async function verifyMemorySources(` checks every named id against `memories` BEFORE the
 Highlight row is inserted, so the two failures a deployment can have are decided while there is
 still nothing to undo. The one that cannot be decided first — a transient failure of the link
 write, which can only run after the foreign key's target exists — is COMPENSATED at
-`artifacts/api-server/src/routes/highlights.ts:899#const linked = await linkHighlightSources(client, {`, which soft-deletes the Highlight and
+`artifacts/api-server/src/routes/highlights.ts:919#const linked = await linkHighlightSources(client, {`, which soft-deletes the Highlight and
 refuses. A Highlight standing with a provenance it does not have is worse than no Highlight:
 `artifacts/api-server/src/services/highlights/highlightSources.ts:442#export async function highlightIdsProjecting(` is the reverse index §21 revocation walks, so a
 bad link is a stranger's deletion reaching this row, or this owner's deletion missing it.
@@ -5339,7 +5339,7 @@ bad link is a stranger's deletion reaching this row, or this owner's deletion mi
 request. A partial link would store a Highlight whose provenance is a SUBSET of what the person
 said it was built from, and nothing downstream could tell that subset from a complete one.
 
-**The read is owner-only**, at `artifacts/api-server/src/routes/highlights.ts:1884#router.get("/highlights/:id/sources", async (req, res) => {`, and that is 2722's decision rather
+**The read is owner-only**, at `artifacts/api-server/src/routes/highlights.ts:1910#router.get("/highlights/:id/sources", async (req, res) => {`, and that is 2722's decision rather
 than this route's: *"A viewer who may see the Highlight still sees the Highlight; they do not learn
 what it was built from."* A non-owner and a Highlight that does not exist get the same answer.
 
@@ -5438,7 +5438,7 @@ finding on H75. So exactly two of the five bite, and the lane's claim holds.
 
 `artifacts/api-server/src/services/highlights/highlightPublicProjection.ts:140#export function consentEnforcement(): ConsentEnforcementMap {` is the answer, DERIVED from that
 table rather than listed beside it, and served at
-`artifacts/api-server/src/routes/highlights.ts:1806#consentEnforcement: consentEnforcement(),`. It is the same shape `unenforceableOnFeed` already
+`artifacts/api-server/src/routes/highlights.ts:1832#consentEnforcement: consentEnforcement(),`. It is the same shape `unenforceableOnFeed` already
 has for §11 controls, for the same reason: the ceiling is a fact the server knows, so the server
 says it.
 `artifacts/api-server/src/test/highlightConsentEnforcementMap.test.ts:54#it("enforced + unenforced PARTITION §10's five — no overlap, nothing invented, nothing dropped", () => {`
@@ -5507,7 +5507,7 @@ precisely instead of a fix that trades a wrong sentence for a broken index.
   which the ratchet's own rule requires of a measured gain. Measured both ways rather than
   inferred: the tree at `812720cc0` was exported to a scratch directory and the check run with
   `--list` against both it and this one, giving 183 and 182, whose diff is exactly one line —
-  H91's `routes/highlights.ts:91`, which had been pointing at a BLANK LINE for two head_commits.
+  H91's `routes/highlights.ts:92`, which had been pointing at a BLANK LINE for two head_commits.
   §Q's edits would have pushed a comment onto that line and taken the pointer out of the population
   WITHOUT making it truer, so it was instead repointed by reading its claim
   (`FEED_SUPPRESSING_CONTROLS` no longer exists; the list is `FEED_ENFORCEABLE_CONTROLS`) and
@@ -5851,8 +5851,8 @@ reversed by the same lane, and the SQL applier has not been told.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| H158 | N | W | The row read *"same, and there is no pin"*, inheriting H155's *"no command maps to it"*. Both clauses are false. `PIN_HIGHLIGHT` and `UNPIN_HIGHLIGHT` both map to `highlight.pinned` (`artifacts/api-server/src/lib/memoryCommandBus.ts:441#PIN_HIGHLIGHT`), `highlights.pinned_at` is DEPLOYED — it is in the 2026-09-22 production schema snapshot — and two routes cross the boundary onto it (`artifacts/api-server/src/routes/highlights.ts:1463#/highlights/:id/pin`, `:1517#router.delete`). The event now also has a §18 subscriber (`artifacts/api-server/src/services/memoryProjections/outboxConsumer.ts:617#highlight.pinned`). W and not C for exactly H147–H154's reason: the event has never been EMITTED, because emission is the kernel's, and 2993 is unapplied. |
-| H159 | N | W | Same measurement on the hide half. `HIDE_HIGHLIGHT` is declared, maps to `highlight.hidden` (`artifacts/api-server/src/lib/memoryCommandBus.ts:446#HIDE_HIGHLIGHT`), and `POST /highlights/:id/archive` dispatches it (`artifacts/api-server/src/routes/highlights.ts:2070#dispatchMemoryCommand`). It has a §18 subscriber (`artifacts/api-server/src/services/memoryProjections/outboxConsumer.ts:622#highlight.hidden`) and a §25 replay fold (`artifacts/api-server/src/services/memoryProjections/highlightEventReplay.ts:280#replayAgreesWithRow`). Never emitted, for the same reason. |
+| H158 | N | W | The row read *"same, and there is no pin"*, inheriting H155's *"no command maps to it"*. Both clauses are false. `PIN_HIGHLIGHT` and `UNPIN_HIGHLIGHT` both map to `highlight.pinned` (`artifacts/api-server/src/lib/memoryCommandBus.ts:441#PIN_HIGHLIGHT`), `highlights.pinned_at` is DEPLOYED — it is in the 2026-09-22 production schema snapshot — and two routes cross the boundary onto it (`artifacts/api-server/src/routes/highlights.ts:1489#/highlights/:id/pin`, `:1543#router.delete`). The event now also has a §18 subscriber (`artifacts/api-server/src/services/memoryProjections/outboxConsumer.ts:617#highlight.pinned`). W and not C for exactly H147–H154's reason: the event has never been EMITTED, because emission is the kernel's, and 2993 is unapplied. |
+| H159 | N | W | Same measurement on the hide half. `HIDE_HIGHLIGHT` is declared, maps to `highlight.hidden` (`artifacts/api-server/src/lib/memoryCommandBus.ts:446#HIDE_HIGHLIGHT`), and `POST /highlights/:id/archive` dispatches it (`artifacts/api-server/src/routes/highlights.ts:2096#dispatchMemoryCommand`). It has a §18 subscriber (`artifacts/api-server/src/services/memoryProjections/outboxConsumer.ts:622#highlight.hidden`) and a §25 replay fold (`artifacts/api-server/src/services/memoryProjections/highlightEventReplay.ts:280#replayAgreesWithRow`). Never emitted, for the same reason. |
 
 ### §W.2 §U.2 is overturned, and this is the correction rather than a rewrite
 
@@ -5892,11 +5892,11 @@ Declaring the command did not finish the job, and the unfinished half is a
 hazard rather than a gap:
 
 1. **No route dispatches it.** `DELETE /highlights/:id/archive` is still a direct
-   write (`artifacts/api-server/src/routes/highlights.ts:2154#archived_at: null`). It
+   write (`artifacts/api-server/src/routes/highlights.ts:2180#archived_at: null`). It
    logged the divergence under a reason code naming a premise the repository no
    longer holds — §17 naming no inverse — and that was **corrected in this same
    pass**: the runtime warning now reads
-   `artifacts/api-server/src/routes/highlights.ts:2144#commandType: "UNHIDE_HIGHLIGHT"`,
+   `artifacts/api-server/src/routes/highlights.ts:2170#commandType: "UNHIDE_HIGHLIGHT"`,
    which is the true blocker, and names the command as declared rather than absent.
 2. **The applier would REFUSE the command if the route sent it.** 2993's write
    path admits exactly three types and rejects anything else by name
@@ -5973,14 +5973,14 @@ assertion is now the invariant over the **three artifacts that must agree**:
 |---|---|
 | `artifacts/api-server/src/lib/memoryCommandBus.ts:331#UNHIDE_HIGHLIGHT` | is it declared? |
 | `artifacts/api-server/src/migrations/2993_highlight_command_boundary.sql:386#NOT IN` | does the applier admit it? |
-| `artifacts/api-server/src/routes/highlights.ts:2120#/highlights/:id/archive` | does the un-hide dispatch it? |
+| `artifacts/api-server/src/routes/highlights.ts:2146#/highlights/:id/archive` | does the un-hide dispatch it? |
 
 Exactly two combinations are coherent: all three agree, or the route bypasses the
 boundary **and says why in the request that causes it**. Anything else is a
 contradiction someone shipped. The middle state is currently occupied, and the
 suite permits it only while the route's runtime warning names the CURRENT
 blocker — which it now does
-(`artifacts/api-server/src/routes/highlights.ts:2144#commandType: "UNHIDE_HIGHLIGHT"`).
+(`artifacts/api-server/src/routes/highlights.ts:2170#commandType: "UNHIDE_HIGHLIGHT"`).
 
 MUTATION-TESTED, three mutations, each red by name and each quoted from the run:
 
@@ -6178,7 +6178,7 @@ instead of breaking.
 > the reason code on the runtime warning. The warning was removed **because its
 > premise stopped being true** — 3001 admits the command — so there is no line
 > to repoint to and no honest way to keep the old anchor. Both now cite
-> `routes/highlights.ts:2144#commandType: "UNHIDE_HIGHLIGHT"`, the dispatch that
+> `routes/highlights.ts:2170#commandType: "UNHIDE_HIGHLIGHT"`, the dispatch that
 > replaced it, and the third cites the direct write at its new home inside the
 > `legacy` arm. The prose around them is left as written: §W.3 and §X described
 > the tree they were measured against, and §Y is where this document says what
@@ -6197,7 +6197,7 @@ was measured end to end, by following it rather than by grepping for a name:
 | --- | --- |
 | screen | `travel-buddy-standalone/app/highlights/archived.tsx:105#unarchiveHighlight(id);` — the owner's archive screen, `restore` handler |
 | client service | `travel-buddy-standalone/src/services/highlights.ts:498#unarchiveHighlight(`, which issues `:506#method:` `DELETE` against `/api/highlights/:id/archive` |
-| route | the dispatch §Y.4 built, `artifacts/api-server/src/routes/highlights.ts:2144#commandType: "UNHIDE_HIGHLIGHT"` |
+| route | the dispatch §Y.4 built, `artifacts/api-server/src/routes/highlights.ts:2170#commandType: "UNHIDE_HIGHLIGHT"` |
 | applier | 3001, rehearsed and applied nowhere (§Y.3, §Y.6) |
 
 It is also tested at the client, and the tests pin the fail-closed half rather
@@ -6614,14 +6614,14 @@ Any of the following makes the suites above go red:
    - The client is `MemoryActionBar` on the Memory screen.
    - Evidence: `artifacts/api-server/src/test/memoryActions.test.ts:429#compiles a plan on the trip going THERE`, `artifacts/api-server/src/test/memoryActions.test.ts:278#refuses every venue action on a place the catalog says has CLOSED`, `artifacts/api-server/src/test/memoryActions.test.ts:341#withholds a protected Hidden Gem` and `artifacts/api-server/src/test/memoryActions.test.ts:598#BOOK_AGAIN, NEW_TRIP_WITH_CREW and USE_AS_INSPIRATION`. That is 31 cases, and 28 of 28 mutants were killed.
 2. **§12's Highlight verbs.**
-   - The route: `artifacts/api-server/src/routes/highlights.ts:2910#router.get("/highlights/:id/actions"`. It sits behind the same `resolveViewAccess` gate as every engagement route.
+   - The route: `artifacts/api-server/src/routes/highlights.ts:2940#router.get("/highlights/:id/actions"`. It sits behind the same `resolveViewAccess` gate as every engagement route.
    - The venue verbs run on the Memory the Highlight projects, under the MEMORY's read gate for this viewer (`artifacts/api-server/src/services/highlights/highlightActions.ts:171#const loaded = await loadMemoryForViewer`).
    - ASK is offered on the same verdict that the reply route enforces (`artifacts/api-server/src/services/highlights/highlightActions.ts:131#const verdict = await canMessage(sc, viewerId`).
    - MEET is refused by name (`artifacts/api-server/src/services/highlights/highlightActions.ts:153#const meet = refusedH("MEET", "CONSUMER_UNAVAILABLE")`).
    - Evidence: `artifacts/api-server/src/test/highlightActions.test.ts:154#seeing the Highlight is not being shown the Memory` (8 cases; 9 of 9 mutants killed).
 3. **A pin outranks automatic order on every surface that orders Highlights.**
-   - The profile (`artifacts/api-server/src/routes/highlights.ts:996#const highlights = pinnedFirst`) and `/active` (`artifacts/api-server/src/routes/highlights.ts:1285#rankHighlightRows(permitted`) already did this.
-   - This pass adds the following-feed's per-person groups (`artifacts/api-server/src/routes/highlights.ts:2893#highlights: pinnedFirst(g.highlights)`) and the archive (`artifacts/api-server/src/routes/highlights.ts:2210#highlights: pinnedFirst((rows`).
+   - The profile (`artifacts/api-server/src/routes/highlights.ts:1016#const highlights = pinnedFirst`) and `/active` (`artifacts/api-server/src/routes/highlights.ts:1305#rankHighlightRows(permitted`) already did this.
+   - This pass adds the following-feed's per-person groups (`artifacts/api-server/src/routes/highlights.ts:2923#highlights: pinnedFirst(g.highlights)`) and the archive (`artifacts/api-server/src/routes/highlights.ts:2236#highlights: pinnedFirst((rows`).
    - The feed's cursor is taken from the page before the regroup, so a pin cannot make the cursor skip a row.
    - Evidence: `artifacts/api-server/src/test/highlightPinnedEverySurface.test.ts:39#the following-feed plays a person's pinned`.
 4. **The §7 candidate inbox on 2320.** This is the first writer of `memory_episodes` / `memory_evidence`, and the first production caller of `evidence.ts`, `episodeDetection.ts` and `significance.ts`.
