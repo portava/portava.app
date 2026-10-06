@@ -20,7 +20,7 @@ import {
   getTrail, getTrailModules, getRelatedTrails, getTrailFollow, setTrailFollow, followAfter, reportTrail,
   TRAIL_REPORT_REASONS, type TrailDetail, type TrailModule, type RelatedTrail, type TrailModuleItem, type TrailReportReason,
 } from './trailsApi.ts';
-import { moduleLabel, hrefForItem, SOURCE_LABEL, REPORT_REASON_LABEL, lifecycleNote } from './trailModel.ts';
+import { moduleLabel, hrefForItem, SOURCE_LABEL, REPORT_REASON_LABEL, lifecycleNote, reviewNote, isUnderReview } from './trailModel.ts';
 
 export interface TrailDetailDeps {
   loadTrail?: typeof getTrail;
@@ -74,6 +74,8 @@ export function TrailDetailView({
     );
   }
   const { trail, status } = detail.data;
+  // Lead ruling D-66: a Trail under review is its creator's alone — it cannot be followed, reported or linked yet.
+  const underReview = isUnderReview(trail.review);
 
   const toggleFollow = async () => {
     if (typeof following !== 'boolean') return;
@@ -98,8 +100,11 @@ export function TrailDetailView({
         {trail.destination ? <Text style={ds.detail}>{trail.destination}</Text> : null}
         {trail.description ? <Text style={[ds.body, { marginTop: space.sm }]}>{trail.description}</Text> : null}
         {status ? <Text style={ds.detail} testID="trail-status">{status.charAt(0).toUpperCase() + status.slice(1)}</Text> : null}
-        {lifecycleNote(trail.lifecycle) ? <Text style={ds.detail}>{lifecycleNote(trail.lifecycle)}</Text> : null}
-        <View style={[ds.chips, { paddingHorizontal: 0 }]}>
+        {lifecycleNote(trail.lifecycle) && !underReview ? <Text style={ds.detail}>{lifecycleNote(trail.lifecycle)}</Text> : null}
+        {underReview ? (
+          <Text style={trail.review?.state === 'rejected' ? ds.warn : ds.detail} testID={`trail-review-${trail.review?.state ?? 'unknown'}`}>{reviewNote(trail.review)}</Text>
+        ) : null}
+        {underReview ? null : <View style={[ds.chips, { paddingHorizontal: 0 }]}>
           {following === undefined ? (
             <ActivityIndicator size="small" color={color.signal} />
           ) : following === 'unknown' ? (
@@ -116,7 +121,7 @@ export function TrailDetailView({
           <Pressable style={ds.ghost} onPress={() => setReporting((v) => !v)} accessibilityRole="button" accessibilityLabel="Report a problem with this Trail" testID="trail-report-open">
             <Flag size={14} color={color.ink} />
           </Pressable>
-        </View>
+        </View>}
         {followError ? <Text style={ds.warn} testID="trail-follow-error">{followError}</Text> : null}
         {reporting ? (
           <View testID="trail-report-menu" style={{ marginTop: space.sm }}>
@@ -151,7 +156,7 @@ export function TrailDetailView({
         ))
       )}
 
-      {related?.state === 'ok' && related.data.length > 0 ? (
+      {!underReview && related?.state === 'ok' && related.data.length > 0 ? (
         <View style={ds.card} testID="trail-related">
           <Text style={ds.heading}>Related Trails</Text>
           {related.data.map((r, i) => (

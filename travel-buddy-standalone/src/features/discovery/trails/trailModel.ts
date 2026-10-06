@@ -60,3 +60,23 @@ export const CANONICAL_CHECK_COPY: Record<string, string> = {
 export function canonicalCheckCopy(check: string): string {
   return CANONICAL_CHECK_COPY[check] ?? `Refused by the Trail rules (${check}).`;
 }
+
+/**
+ * Lead ruling D-66: what the creator is told about a Trail under review. Null
+ * for an approved Trail (or one the server did not mark), which needs no note.
+ */
+export function reviewNote(review: { state: string; reason: string | null } | undefined): string | null {
+  if (!review) return null;
+  if (review.state === 'pending') return 'Waiting for review. Only you can see this Trail until it is approved.';
+  if (review.state === 'rejected') {
+    return review.reason
+      ? `Not approved: ${review.reason}. Only you can see this Trail.`
+      : 'Not approved. Only you can see this Trail.';
+  }
+  return null;
+}
+
+/** Is this Trail one only its creator can see (pending or rejected)? */
+export function isUnderReview(review: { state: string } | undefined): boolean {
+  return !!review && review.state !== 'approved';
+}

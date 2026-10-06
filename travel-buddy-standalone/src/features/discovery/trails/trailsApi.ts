@@ -24,7 +24,15 @@ export interface Trail {
   parentTrailId: string | null;
   lifecycle: string;
   createdAt: string;
+  /**
+   * Lead ruling D-66: a new Trail is reviewed before anyone else can see it.
+   * The server sends "pending" or "rejected" only to the Trail's creator; a
+   * rejection carries its reason. Absent on an older server.
+   */
+  review?: TrailReview;
 }
+
+export interface TrailReview { state: 'pending' | 'approved' | 'rejected' | string; reason: string | null }
 
 export interface TrailDetail {
   trail: Trail;
@@ -69,6 +77,15 @@ export async function listTrails(opts: { q?: string | null; destination?: string
   const qs = p.toString();
   const r = await readDiscoveryJson<{ trails: Trail[] }>(
     `/api/v1/discovery/trails${qs ? `?${qs}` : ''}`,
+    (b) => Array.isArray(b?.trails) && b.trails.every(isTrail),
+  );
+  return r.state === 'ok' ? { state: 'ok', data: r.data.trails } : r;
+}
+
+/** The signed-in person's own Trails, each with its review state (D-66). The only list a Trail under review is in. */
+export async function listMyTrails(): Promise<ApiRead<Trail[]>> {
+  const r = await readDiscoveryJson<{ trails: Trail[] }>(
+    '/api/v1/discovery/me/trails',
     (b) => Array.isArray(b?.trails) && b.trails.every(isTrail),
   );
   return r.state === 'ok' ? { state: 'ok', data: r.data.trails } : r;

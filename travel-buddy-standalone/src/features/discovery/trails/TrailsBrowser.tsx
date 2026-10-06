@@ -11,8 +11,8 @@ import { Route as RouteIcon } from 'lucide-react-native';
 
 import { color, space } from '../../../theme/tokens.ts';
 import { ds } from '../shared/discoveryStyles.ts';
-import { listTrails, type Trail } from './trailsApi.ts';
-import { lifecycleNote } from './trailModel.ts';
+import { listTrails, listMyTrails, type Trail } from './trailsApi.ts';
+import { lifecycleNote, reviewNote, isUnderReview } from './trailModel.ts';
 import type { ApiRead } from '../shared/discoveryApi.ts';
 
 interface Props {
@@ -20,12 +20,17 @@ interface Props {
   onOpen: (trailId: string) => void;
   onCreate: (destination: string | null) => void;
   load?: typeof listTrails;
+  loadMine?: typeof listMyTrails;
 }
 
-export function TrailsBrowser({ initialDestination = null, onOpen, onCreate, load = listTrails }: Props) {
+export function TrailsBrowser({ initialDestination = null, onOpen, onCreate, load = listTrails, loadMine = listMyTrails }: Props) {
   const [q, setQ] = useState('');
   const [destination, setDestination] = useState(initialDestination ?? '');
   const [read, setRead] = useState<ApiRead<Trail[]> | undefined>(undefined);
+  // Lead ruling D-66: the person's own Trails under review are in no public list; they are shown here, to them.
+  const [mine, setMine] = useState<ApiRead<Trail[]> | undefined>(undefined);
+  useEffect(() => { let live = true; void loadMine().then((r) => { if (live) setMine(r); }); return () => { live = false; }; }, [loadMine]);
+  const reviewing = mine?.state === 'ok' ? mine.data.filter((t) => isUnderReview(t.review)) : [];
 
   const run = useCallback(async (query: string, dest: string) => {
     setRead(undefined);
@@ -54,6 +59,26 @@ export function TrailsBrowser({ initialDestination = null, onOpen, onCreate, loa
           <Text style={ds.ghostText}>Start a Trail</Text>
         </Pressable>
       </View>
+
+      {mine?.state === 'unavailable' ? (
+        <Text style={ds.notice} testID="trails-mine-unavailable">Your Trails waiting for review couldn't be loaded — {mine.detail}.</Text>
+      ) : reviewing.length > 0 ? (
+        <View style={ds.card} testID="trails-mine-review">
+          <Text style={ds.heading}>Your Trails under review</Text>
+          {reviewing.map((trail, i) => (
+            <Pressable
+              key={trail.id} style={[ds.row, i > 0 && ds.rowDivider]} onPress={() => onOpen(trail.id)}
+              accessibilityRole="button" accessibilityLabel={`Open your Trail ${trail.title}`} testID={`trail-mine-${trail.id}`}
+            >
+              <RouteIcon size={18} color={color.mute} />
+              <View style={{ flex: 1 }}>
+                <Text style={ds.title}>{trail.title}</Text>
+                <Text style={trail.review?.state === 'rejected' ? ds.warn : ds.detail}>{reviewNote(trail.review)}</Text>
+              </View>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
 
       {read === undefined ? (
         <ActivityIndicator style={{ margin: space.xl }} color={color.signal} testID="trails-loading" />

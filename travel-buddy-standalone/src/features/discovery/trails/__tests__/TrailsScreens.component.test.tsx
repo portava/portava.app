@@ -12,13 +12,14 @@ import { TrailCreateForm } from '../TrailCreateForm.tsx';
 
 const T = { id: 't1', slug: 's', title: 'Bangkok After Dark', description: 'Night markets and rooftops', destination: 'bangkok', parentTrailId: null, lifecycle: 'active', createdAt: '2026-09-01T00:00:00Z' };
 const ok = <D,>(data: D) => ({ state: 'ok' as const, data });
+const noneMine = jest.fn().mockResolvedValue({ state: 'ok', data: [] });
 const placeName = jest.fn().mockResolvedValue({ state: 'ok', data: { name: 'Talad Rot Fai', category: 'market' } });
 
 describe('TrailsBrowser', () => {
   it('lists Trails and opens one; a failed read is said with Retry, never "no Trails"', async () => {
     const load = jest.fn().mockResolvedValueOnce({ state: 'unavailable', detail: 'HTTP 503' }).mockResolvedValue(ok([T]));
     const onOpen = jest.fn();
-    await render(<TrailsBrowser initialDestination="Bangkok" onOpen={onOpen} onCreate={jest.fn()} load={load} />);
+    await render(<TrailsBrowser initialDestination="Bangkok" onOpen={onOpen} onCreate={jest.fn()} load={load} loadMine={noneMine} />);
     await waitFor(() => screen.getByTestId('trails-unavailable'));
     expect(screen.queryByTestId('trails-empty')).toBeNull();
     expect(load).toHaveBeenCalledWith({ q: '', destination: 'Bangkok', limit: 50 });
@@ -29,13 +30,61 @@ describe('TrailsBrowser', () => {
   });
 
   it('switched off says so; an empty answer offers to start one', async () => {
-    await render(<TrailsBrowser onOpen={jest.fn()} onCreate={jest.fn()} load={jest.fn().mockResolvedValue({ state: 'off' })} />);
+    await render(<TrailsBrowser onOpen={jest.fn()} onCreate={jest.fn()} load={jest.fn().mockResolvedValue({ state: 'off' })} loadMine={noneMine} />);
     await waitFor(() => screen.getByTestId('trails-off'));
     const onCreate = jest.fn();
-    await render(<TrailsBrowser initialDestination="Kyoto" onOpen={jest.fn()} onCreate={onCreate} load={jest.fn().mockResolvedValue(ok([]))} />);
+    await render(<TrailsBrowser initialDestination="Kyoto" onOpen={jest.fn()} onCreate={onCreate} load={jest.fn().mockResolvedValue(ok([]))} loadMine={noneMine} />);
     await waitFor(() => screen.getByTestId('trails-empty'));
     await fireEvent.press(screen.getByTestId('trails-create'));
     expect(onCreate).toHaveBeenCalledWith('Kyoto');
+  });
+});
+
+describe('Trail review (lead ruling D-66)', () => {
+  const PENDING = { ...T, id: 'tp', title: 'My Tiles Walk', lifecycle: 'proposed', review: { state: 'pending', reason: null } };
+  const REJECTED = { ...T, id: 'tr', title: 'My Old Walk', review: { state: 'rejected', reason: 'Duplicates an existing Trail' } };
+
+  it('the browser shows the person their own Trails under review, with the reason a rejection gave', async () => {
+    const onOpen = jest.fn();
+    await render(<TrailsBrowser onOpen={onOpen} onCreate={jest.fn()} load={jest.fn().mockResolvedValue(ok([T]))}
+      loadMine={jest.fn().mockResolvedValue(ok([PENDING, REJECTED, { ...T, review: { state: 'approved', reason: null } }]))} />);
+    await waitFor(() => screen.getByTestId('trails-mine-review'));
+    expect(screen.getByText('Waiting for review. Only you can see this Trail until it is approved.')).toBeTruthy();
+    expect(screen.getByText('Not approved: Duplicates an existing Trail. Only you can see this Trail.')).toBeTruthy();
+    expect(screen.queryByTestId('trail-mine-t1')).toBeNull();
+    await fireEvent.press(screen.getByTestId('trail-mine-tp'));
+    expect(onOpen).toHaveBeenCalledWith('tp');
+  });
+
+  it('a failed read of the person\'s own Trails is said — never an empty "nothing under review"', async () => {
+    await render(<TrailsBrowser onOpen={jest.fn()} onCreate={jest.fn()} load={jest.fn().mockResolvedValue(ok([T]))}
+      loadMine={jest.fn().mockResolvedValue({ state: 'unavailable', detail: 'HTTP 503' })} />);
+    await waitFor(() => screen.getByTestId('trails-mine-unavailable'));
+    expect(screen.queryByTestId('trails-mine-review')).toBeNull();
+  });
+
+  it('a pending Trail\'s page says it is waiting for review and offers no Follow, Report or related Trails', async () => {
+    await render(<TrailDetailView trailId="tp" onNavigate={jest.fn()}
+      loadTrail={jest.fn().mockResolvedValue(ok({ trail: PENDING, status: null, memberCount: 0 }))}
+      loadModules={jest.fn().mockResolvedValue(ok([]))}
+      loadRelated={jest.fn().mockResolvedValue(ok([{ trail: T, edgeType: 'related', direction: 'out' }]))}
+      loadFollow={jest.fn().mockResolvedValue({ state: 'unavailable', detail: 'HTTP 404' })}
+      follow={jest.fn()} report={jest.fn()} loadPlaceName={placeName} />);
+    await waitFor(() => screen.getByTestId('trail-review-pending'));
+    expect(screen.queryByTestId('trail-follow')).toBeNull();
+    expect(screen.queryByTestId('trail-follow-unknown')).toBeNull();
+    expect(screen.queryByTestId('trail-report-open')).toBeNull();
+    expect(screen.queryByTestId('trail-related')).toBeNull();
+  });
+
+  it('a rejected Trail\'s page shows the reason', async () => {
+    await render(<TrailDetailView trailId="tr" onNavigate={jest.fn()}
+      loadTrail={jest.fn().mockResolvedValue(ok({ trail: REJECTED, status: null, memberCount: 0 }))}
+      loadModules={jest.fn().mockResolvedValue(ok([]))} loadRelated={jest.fn().mockResolvedValue(ok([]))}
+      loadFollow={jest.fn().mockResolvedValue(ok(false))} follow={jest.fn()} report={jest.fn()} loadPlaceName={placeName} />);
+    await waitFor(() => screen.getByTestId('trail-review-rejected'));
+    expect(screen.getByText('Not approved: Duplicates an existing Trail. Only you can see this Trail.')).toBeTruthy();
+    expect(screen.queryByTestId('trail-follow')).toBeNull();
   });
 });
 
