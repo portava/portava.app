@@ -4,6 +4,7 @@ import { getCleanupStatus, queryCleanupHealth } from "../lib/dailyBriefCleanup.j
 import { getSuggestionSeenStatus } from "../lib/suggestionSeenCleanup.js";
 import { queryPublisherHealth } from "../lib/delayedPostPublisher.js";
 import { callPurgeOldWeatherCache } from "../lib/weatherCacheCleanup.js";
+import { schedulerCoverage } from "../lib/schedulerCoverage.js";
 import { logger } from "../lib/logger.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { safeSecretEquals } from "../lib/http.js";
@@ -29,7 +30,7 @@ import {
   hydrateStoryRetentionStatus,
   runStoryRetentionTick,
   STORY_RETENTION_STALE_AFTER_MS,
-} from "../lib/storyRetentionScheduler.js";
+} from "../lib/storyRetentionScheduler.js"; import { getDiscoveryServeLogRetentionStatus } from "../lib/discoveryServeLogRetentionScheduler.js"; // census-discovery §120
 
 const router: IRouter = Router();
 
@@ -517,7 +518,7 @@ function schedulerReports(): JobReport[] {
     detail: seen.lastOutcome ? `last outcome: ${seen.lastOutcome}` : undefined,
   });
 
-  return reports;
+  const serveLog = getDiscoveryServeLogRetentionStatus(); reports.push({ job: "discoveryServeLogRetention", status: classify({ lastRunAt: serveLog.lastAttemptAt, lastSuccessAt: serveLog.lastSuccessAt, consecutiveFailures: serveLog.consecutiveFailures, requiresSuccess: true }), lastRunAt: serveLog.lastAttemptAt, lastSuccessAt: serveLog.lastSuccessAt, consecutiveFailures: serveLog.consecutiveFailures, detail: [serveLog.lastFailures.length > 0 ? `last failures: ${serveLog.lastFailures.join("; ")}` : null, serveLog.lastReport ? `last pass: deleted ${serveLog.lastReport.deleted} in ${serveLog.lastReport.batches} batch(es), cutoff ${serveLog.lastReport.cutoff ?? "unknown"}${serveLog.lastReport.backlogRemains ? ", backlog remains" : ""}` : null].filter(Boolean).join(" | ") || undefined }); /* census-discovery §120: the owner's 30-day TESTING retention for public.recommendations (3501); like storyRetention it must SUCCEED to read healthy, and a failed or disabled purge is failing. On this line so no cited line of this file moves. */ return reports;
 }
 
 router.get("/healthz/schedulers", (_req, res) => {
@@ -564,8 +565,35 @@ router.get("/healthz/schedulers", (_req, res) => {
   // database at startup, so a fresh process inherits the real age instead of a
   // clean slate. A job that has not succeeded within its own decided cadence is
   // the exact condition an operator's probe exists to catch.
+  // ── THE SCOPE OF THE VERDICT ABOVE ──────────────────────────────────────
+  // Everything above is about the jobs this endpoint can see. `index.ts`
+  // starts far more than that, and an aggregate over a subset reads exactly
+  // like an aggregate over the whole: "overall: healthy" over eleven jobs,
+  // while forty-five others could have stopped hours ago and left nothing to
+  // read. So the body says what it is NOT looking at, next to the verdict
+  // rather than in a document somebody has to find.
+  //
+  // This deliberately does NOT change the status code. Forty-five unobservable
+  // jobs is a standing property of the deployment, not an incident, and a
+  // probe that answers 503 forever is a probe that gets muted — the same
+  // reasoning that keeps `never_ran` at 200. It is a disclosure, not an alarm.
+  const coverage = schedulerCoverage();
   res.status(failing.length > 0 || stale.length > 0 ? 503 : 200).json({
     overall,
+    // Read this before `overall`: it is the denominator `overall` is computed
+    // over. `lib/schedulerCoverage.ts` is kept equal to `index.ts` by
+    // check:scheduler-coverage, so these numbers cannot quietly drift.
+    reportsOn: `${jobs.length} of ${coverage.started} schedulers this process starts`,
+    coverage: {
+      started: coverage.started,
+      reported: coverage.reported,
+      // The only count that survives a restart. An in-memory counter comes
+      // back cleared, so for every job outside this number a missed window is
+      // indistinguishable from a fresh process.
+      persisted: coverage.persisted,
+      unobservableCount: coverage.unobservable.length,
+      unobservable: coverage.unobservable,
+    },
     jobCount: jobs.length,
     failingCount: failing.length,
     staleCount: stale.length,

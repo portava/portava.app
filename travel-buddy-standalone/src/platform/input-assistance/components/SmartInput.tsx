@@ -61,6 +61,7 @@ import {
   emitRawSearchSubmitted,
   emitCorrectionAccepted,
   emitDisambiguationSelected,
+  emitSelectionReversed,
   type TelemetryField,
 } from '../services/inputTelemetry.ts';
 import { recordSuggestionSelection } from '../services/selectionRecorder.ts';
@@ -178,6 +179,12 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
   // recorded. Refs, not state: an analytics fact must not cause a re-render.
   const shownRef = useRef<{ signature: string; count: number } | null>(null);
   const acceptedRef = useRef(false);
+  // §57 G368 — the RESOLUTION a suggestion made: the text it put in the field,
+  // the type of the row, and when. Set only when the row's replacementText was
+  // actually applied by this component (a caller that handled insertion itself
+  // owns its own value and is not tracked); cleared the first time the value
+  // moves away from that text, which is the reversal.
+  const resolvedRef = useRef<{ text: string; type: string; at: number; requestId: string | null } | null>(null);
 
   const { suggestions, loading, unavailable, policy, requestId } = useInputAssistance({
     fieldId,
@@ -324,6 +331,21 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
     if (restore) moveAccessibilityFocusTo(inputRef.current);
   }, [overlayVisible, focused]);
 
+  // ── §57 wrong-selection reversal (census G368) ──────────────────────────────
+  // A field resolved from a suggestion, then edited AWAY from the accepted text:
+  // the user un-took the row. Emitted once per resolution — the ref is cleared
+  // on the first departure, so typing on afterwards is one reversal, not many.
+  // Arriving AT the accepted text (the parent applying onChangeText) is not a
+  // departure, and neither is a re-render with the value unchanged.
+  useEffect(() => {
+    const r = resolvedRef.current;
+    if (!r || value === r.text) return;
+    resolvedRef.current = null;
+    // Attributed to the serve that produced the SELECTION (§44 linkage, G355),
+    // not to whatever serve the edit has since triggered.
+    if (telemetryField) emitSelectionReversed({ ...telemetryField, requestId: r.requestId }, r.type, Date.now() - r.at);
+  }, [value, telemetryField]);
+
   const handleSelect = useCallback(
     (s: InputSuggestion) => {
       if (policy) {
@@ -354,6 +376,11 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
       // Default: apply replacementText to the field (never touches text outside
       // the field, §22). A caller returning false has handled insertion itself.
       const applied = result !== false && s.replacementText != null;
+      // Recorded BEFORE onChangeText so the value effect below sees the field
+      // arrive at the accepted text and does not mistake it for a departure.
+      resolvedRef.current = applied
+        ? { text: s.replacementText as string, type: s.type, at: Date.now(), requestId: requestId ?? null }
+        : null;
       if (applied) {
         onChangeText(s.replacementText as string);
       }

@@ -36,7 +36,16 @@ import { freshToken as freshApiToken } from '../../services/apiToken.ts';
 export type MemorySearchIntent =
   | { kind: 'mine' }
   | { kind: 'mine_place'; placeId: string }
-  | { kind: 'public'; ownerId: string };
+  | { kind: 'public'; ownerId: string }
+  /**
+   * SHARED_CREW: the crew's Memories of one trip, served as a UNION of the
+   * trip's current accepted crew members' per-owner derivatives.
+   *
+   * This is the one intent whose answer can come back PARTIAL, which is why its
+   * page is its own type below rather than more optional fields on the shared
+   * one.
+   */
+  | { kind: 'crew_trip'; tripId: string };
 
 export interface MemorySearchHit {
   memoryId: string;
@@ -58,6 +67,31 @@ export interface MemorySearchCapabilities {
   /** H111: `none`. The scorer is token overlap; no model is called. */
   semanticIndex: 'none';
   projectionsByNamespace: Record<string, string[]>;
+  /**
+   * SHARED_CREW's ceilings, arriving with the page for the same reason
+   * `semanticIndex` does: so a client can render what the answer does NOT cover.
+   * `memberBound` is the crew size past which a union is certainly partial.
+   */
+  crewUnion?: { partialPolicy: string; memberBound: number };
+}
+
+/** Why a crew member is not in the union. Never absent on a withheld member. */
+export type CrewWithholdReason = 'derivative_revoked' | 'derivative_unavailable' | 'over_member_bound';
+
+/**
+ * One crew member's line in a crew union.
+ *
+ * `matchCount` is NULL for a withheld member and never 0. 0 would be a claim
+ * about the world — "this person has no memories of the trip" — and we do not
+ * know it: we either did not look or looked and failed. Rendering a withheld
+ * member as an empty one is the §28.11 failure in a single field.
+ */
+export interface CrewMemberDisclosure {
+  memberId: string;
+  state: 'served' | 'withheld';
+  reason: CrewWithholdReason | null;
+  detail: string | null;
+  matchCount: number | null;
 }
 
 export interface MemorySearchPage {
@@ -73,6 +107,32 @@ export interface MemorySearchPage {
   projectionId: string;
   engineVersion: string;
   capabilities: MemorySearchCapabilities;
+}
+
+/**
+ * The answer to a `crew_trip` search.
+ *
+ * `members`, `withheldMembers` and `unionComplete` are REQUIRED, not optional,
+ * and that is the point of having a separate type: a crew union can succeed for
+ * four of six people and still be a 200, so a surface must not be able to render
+ * `hits` without also being handed the gap beside them. The server does not
+ * refuse the whole search when one member's derivative is revoked — that would
+ * let one person's privacy decision blank the crew's shared memory for everyone,
+ * and the refusal itself would announce that somebody revoked something.
+ */
+export interface MemoryCrewSearchPage extends MemorySearchPage {
+  tripId: string;
+  /** Every current accepted crew member, served or withheld. */
+  members: CrewMemberDisclosure[];
+  /** Just the withheld ones, so they cannot be missed by not filtering. */
+  withheldMembers: CrewMemberDisclosure[];
+  /** FALSE whenever any member or any row was withheld. Read it before `hits`. */
+  unionComplete: boolean;
+  crewSize: number;
+  /** Rows the §23 audience ladder removed. A short page is not a complete one. */
+  audienceWithheldCount: number;
+  memberBound: number;
+  partialPolicy: string;
 }
 
 export type MemorySearchResult =

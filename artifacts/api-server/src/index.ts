@@ -42,7 +42,7 @@ import { startMediaDedupWorker } from "./lib/media/mediaDedupWorker.js"; import 
 import { startPlaceCollectionsWorker } from "./lib/places/placeCollectionsWorker.js";
 import { startCompassSearchDecayFlushScheduler } from "./lib/compassSearchDecayFlushScheduler.js";
 import { startAccountDeletionScheduler } from "./lib/accountDeletionScheduler.js";
-import { startStoryRetentionScheduler } from "./lib/storyRetentionScheduler.js";
+import { startStoryRetentionScheduler } from "./lib/storyRetentionScheduler.js"; import { startDiscoveryServeLogRetentionScheduler } from "./lib/discoveryServeLogRetentionScheduler.js"; // census-discovery §120
 import { startLocationSnapshotPurgeScheduler } from "./lib/locationSnapshotPurgeScheduler.js";
 import { startIntelRetentionScheduler } from "./lib/intelRetentionScheduler.js";
 import { startSensingRetentionScheduler } from "./lib/sensingRetentionScheduler.js";
@@ -149,8 +149,8 @@ app.listen(port, (err) => {
   // row here is already invisible (its only reader filters expires_at) and 72h
   // is a structural CHECK, so a flag would only add a way to retain expired
   // personal data. It is gated on the SCHEMA instead — the sweep probes for the
-  // table and never calls the RPC where 2315 is not applied, which today means
-  // production, where this is an inert heartbeat.
+  // table and never calls the RPC where 2315 is not applied. CORRECTED 2026-10-03, on these three lines so no cited line below moves: this used to continue "which today means production, where this is an inert heartbeat", and that is no longer true. 2315 IS applied to production — read-only catalog query on 2026-10-03: table present, RLS on, one policy, zero rows — so the sweep calls the RPC there and the schema gate protects nothing.
+  // Zero rows is a fact about traffic, not a gate.
   startSensingRetentionScheduler();
   // The publisher census-sensing §21.4 named as S39/S24's blocker #2: the one
   // caller of publishThroughDifferencingGate outside tests. Three gates, in
@@ -244,7 +244,7 @@ app.listen(port, (err) => {
   // and the tick records the failure. Reordering those two calls would let the
   // engagement purge delete viewers, reactions and replies on a database with
   // no purge ledger behind it. Keep enqueue first.
-  startStoryRetentionScheduler();
+  startStoryRetentionScheduler(); startDiscoveryServeLogRetentionScheduler(); // census-discovery §120 (3501): hourly purge of public.recommendations rows past the owner's 30-day TESTING retention (created_at), bounded batches, reported at /healthz/schedulers
   startInviteSlotReconciler();
   startInviteSlotSweeper();
   // Reload coordinate-learned city timezones so a restart doesn't reset

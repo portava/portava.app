@@ -59,6 +59,7 @@ function base(overrides: Partial<ReachablePersonInputs> = {}): ReachablePersonIn
     blocked: false,
     blockStateKnown: true,
     personInvisible: VISIBLE,
+    personInProtectedZone: false,
     viewerInvisible: VISIBLE,
     personPresenceConsent: true,
     availabilityPublished: true,

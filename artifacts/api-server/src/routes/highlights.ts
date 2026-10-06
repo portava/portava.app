@@ -62,7 +62,7 @@ import {
   MAX_HIGHLIGHT_SOURCES,
   type SourceLinkFailure,
 } from "../services/highlights/highlightSources.js";
-import { canMessage } from "../lib/messagingPermissions";
+import { canMessage } from "../lib/messagingPermissions"; import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js"; // the shared send gates (lane T2, OD-TRUST-5 wave) — on this line so no line below moves
 import { isFlagEnabled } from "../lib/featureFlags";
 import {
   readMemoryCommandEnvelope,
@@ -2207,7 +2207,7 @@ router.get("/highlights/archived", async (req, res) => {
     return;
   }
 
-  res.status(200).json({ highlights: (rows ?? []).map((h: any) => ({ ...h, ...describeLifetimeFields(h, archivedProjection.classProjected) })) });
+  res.status(200).json({ highlights: pinnedFirst((rows ?? []) as unknown as ReadonlyArray<Record<string, unknown> & { pinned_at?: string | null; id?: string }>).map((h: any) => ({ ...h, ...describeLifetimeFields(h, archivedProjection.classProjected) })) }); // pinned first (§12, census H100), archived_at order kept within each partition
 });
 
 /* ============================================================================
@@ -2451,7 +2451,7 @@ router.post("/highlights/:id/reply", async (req, res) => {
   }
 
   const myThreadIds = (myMemberships ?? []).map((m: any) => m.thread_id as string);
-  let threadId: string | null = null;
+  let threadId: string | null = null; let createdHere = false; // a thread THIS request creates is removed again if the send gates then refuse
 
   if (myThreadIds.length > 0) {
     const { data: allMembers, error: allMemErr } = await sc
@@ -2490,7 +2490,7 @@ router.post("/highlights/:id/reply", async (req, res) => {
       sendError(res, "db_error", "Could not create message thread", { exposeDetail: true });
       return;
     }
-    threadId = (newThread as any).id as string;
+    threadId = (newThread as any).id as string; createdHere = true;
     const now2 = new Date().toISOString();
     // supabase-js resolves rather than throws on a write error — membership is
     // the only gate on the thread, so an unchecked failure here creates a
@@ -2508,7 +2508,7 @@ router.post("/highlights/:id/reply", async (req, res) => {
     }
   }
 
-  // Send a system context message linking to the highlight (cosmetic — a
+  const guard = await guardTelegraphThreadWrite(sc, threadId, user.id); if (!guard.ok) { if (createdHere) { const { error: rollbackErr } = await sc.from("message_threads").delete().eq("id", threadId); if (rollbackErr) req.log.error({ err: rollbackErr, threadId }, "highlight reply: refused send — the empty thread it created could not be removed"); } sendThreadWriteRefusal(res, guard); return; } // the six send gates: stop, membership, block, E2EE, Trust restriction, burst limit. Then a system context message linking to the highlight (cosmetic — a
   // failure is logged but does not block the actual reply below).
   const { error: ctxErr } = await sc.from("messages").insert({
     thread_id: threadId,
@@ -2890,12 +2890,37 @@ router.get("/highlights/following-feed", async (req, res) => {
       handle: g.profile.handle,
       name: g.profile.name,
       avatarUrl: g.profile.avatarUrl,
-      highlights: g.highlights,
+      highlights: pinnedFirst(g.highlights), // §12 "pinned/manual order always outranks automatic ordering", within each person's group; nextCursor was derived above from the unreordered page, so the cursor cannot skip rows (census H100)
     }));
 
   // nextCursor is present only while the cap is engaged; unbounded responses
   // keep the exact shape they had before 2339.
   res.status(200).json(feedLimit != null ? { users, nextCursor } : { users });
 });
+
+// ── GET /highlights/:id/actions — §12 DO THIS / SAVE / ADD TO TRIP / VIEW PLACE / ASK / MEET (census H102)
+//
+// Appended at the tail, imports included (ESM hoists them), so no cited line in
+// this file moves. The view gate is the same `resolveViewAccess` every
+// engagement route uses — blocks, visibility, circle/trip membership and the
+// owner's §10/§11 public_projection controls — so a Highlight this viewer may
+// not see is the same 404 here. The venue actions are the Memory's, on the
+// Memory this Highlight projects, under the MEMORY's read gate for this viewer:
+// see services/highlights/highlightActions.ts. Read-only.
+router.get("/highlights/:id/actions", asyncHandler(async (req: Request, res: Response) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+  const id = String(req.params.id ?? "");
+  if (!UUID.test(id)) { sendError(res, "invalid_payload", "Invalid highlight id"); return; }
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+  const access = await resolveViewAccess(sc, user.id, id, res, req.log);
+  if (!access) return;
+  res.json({ menu: await buildHighlightActionMenu(sc, access.h, user.id) });
+}));
+import { asyncHandler } from "../lib/asyncHandler.js";
+import type { Request } from "express";
+import { buildHighlightActionMenu } from "../services/highlights/highlightActions.js";
 
 export default router;

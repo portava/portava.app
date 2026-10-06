@@ -3736,6 +3736,159 @@ So every migration changed here is unapplied everywhere.
     grep -c 'DO \$pre\$' src/migrations/336[2-5]_*.sql src/migrations/342[12]_*.sql   # 1 each
     grep -c 'schema_migration_ledger' ../../db/rollback/2026-09-2?-33[3-5][0-9]-*-rollback.sql   # >= 2 each
 
+## 2026-10-04 — Correction: `2160_portava_featured_write_boundary.sql` is SUPERSEDED by 2332 (recorded here, not in the file)
+
+**Do not apply 2160, and never after `2332_money_grant_boundary.sql`.** 2160 ends with `anon` and
+`authenticated` holding SELECT on `public.portava_featured`. 2332 ends with them holding nothing. Applied
+in prefix order the result is 2332's. Applied the other way round, which only a hand-apply can do, 2160
+re-grants the SELECT 2332 revoked, and 2160's own postcondition still reports PASSED, because
+`anon=SELECT` is the state it was written to demand.
+
+This warning was first written into 2160's header by PR #566 (`1a87c51d0`). The integration of #566
+restored 2160 to its previous bytes (sha256 `4b14124d77ed…`) and moved the warning here and into
+`3504_client_table_privilege_boundary.sql`'s header, for the reason "An applied migration file is a
+historical artifact: do not annotate it" gives above: once a file has been applied anywhere its bytes are
+frozen, and a correction is written in this document, keyed by filename.
+
+What #566 measured, read-only, on 2026-10-03, and what follows from it:
+
+- Both databases carry a ledger row for 2160 with `applied_by='backfill'` and the literal `backfill` in
+  place of a checksum. The applier therefore never runs the file on either database, and no checksum
+  pins its bytes today. That is why #566's edit did not turn `db:apply-migrations:dry-run` red.
+- It is still an applied file. 3504's header records that on `portava-ci` `portava_featured` had
+  already been reduced to SELECT by 2160 before 2332 took the rest. A `backfill` row can also be upgraded
+  to a real checksum later (`--apply-unproven`), and from that moment an annotated file and the bytes
+  that ran would differ.
+- On the testing database (`ajrurzioarfkagpuxfnb`) the object state says neither 2160 nor 2332 has run
+  (`anon=arwd`). The remedy there is 2332 alone.
+
+### Re-establish independently
+
+    sha256sum artifacts/api-server/src/migrations/2160_portava_featured_write_boundary.sql   # 4b14124d77ed…
+    git diff --stat f71cfb85f -- artifacts/api-server/src/migrations/2160_portava_featured_write_boundary.sql   # empty
+
+## 2026-10-04 — the seven of the migration integration (3501, 3504, 3505, 3513, 3520, 3560, 3561): REHEARSED on a local PostgreSQL 16; applied NOWHERE
+
+Six pull requests that each added migrations (#549, #566, #561, #565, #577, #571) were integrated on
+`claude/integration-migrations-20261004` in prefix order. **Nothing in this entry was applied to `portava-ci`
+or to the testing database.** The set, in the order the applier plans it over a ledger that holds every file
+`main` carries at `f71cfb85f`:
+
+| # | file | sha256 (first 12) | shape | changes vs its PR head |
+|---|---|---|---|---|
+| 1 | `3501_discovery_recommendations_retention.sql` | `587b5668bf60` | unwrapped +postconditions | none |
+| 2 | `3504_client_table_privilege_boundary.sql` | `065abcb32a7f` | unwrapped | header wording; `$pre$` tag; `$post$` block re-runnable after COMMIT |
+| 3 | `3505_scheduler_watermarks.sql` | `0c7fc3f6d074` | bare | REVOKE/GRANT and a `$post$` block added |
+| 4 | `3513_layover_crowd_reports_flag.sql` | `323e900c3661` | unwrapped | none |
+| 5 | `3520_user_stamps_client_column_grants.sql` | `812b65e3fe67` | unwrapped +postconditions | none |
+| 6 | `3560_creator_fatigue_increment_rpc.sql` | `d99a6ada4e93` | unwrapped | none |
+| 7 | `3561_compass_search_signal_log.sql` | `bfb1d54b7eba` | unwrapped | none |
+
+**3504 and 3505 are not the bytes on #566 and #561.** If either PR-head file was ever hand-applied to a
+database, that database's ledger checksum will not match this tree and `db:apply-migrations:dry-run` will say
+so (exit 1, "the ledger records these files as applied, but their contents on disk no longer match"). Both
+PRs state that nothing was applied by hand.
+
+### Why a PR that adds one of these is red on `schema drift`, and what it will read
+
+`live-db.yml` applies only on `refs/heads/main`; on a pull request it plans, applies nothing, and then
+`audit:schema` reads `portava-ci`. So the objects these files create are reported missing until the branch
+merges or the files are applied under decision A (the 2991 and 3350 entries above record both routes). Run
+against a local database carrying `main`'s chain and not the seven, `audit:schema` names exactly these, and
+no other object the set is responsible for:
+
+    ✖ 3501_discovery_recommendations_retention.sql
+        missing function discovery_recommendations_retention_cutoff
+        missing function purge_expired_discovery_recommendations
+        missing index recommendations_created_at
+    ✖ 3505_scheduler_watermarks.sql
+        missing table scheduler_watermarks
+    ✖ 3560_creator_fatigue_increment_rpc.sql
+        missing function increment_creator_fatigue_batch
+    ✖ 3561_compass_search_signal_log.sql
+        missing table compass_search_signal_log
+        missing function upsert_compass_search_signal
+        missing function purge_compass_search_signal_log
+        missing index compass_search_signal_log_last_nudge_at_idx
+        missing policy "cssl_deny_client_roles" on compass_search_signal_log
+
+Ten objects in four files. 3504, 3513 and 3520 create no object the auditor models (a REVOKE, a flag row,
+a column-level GRANT), which is why #566 and #565 were green on this job before the merge.
+
+### Two certification failures found before the merge, and fixed in the files
+
+`certify:migrations` runs only on `main`, after the apply, so neither of these could be seen on any PR. Both
+were found by running the repository's own `certify:migrations --files <the seven>` against the local
+database after applying the set there (the method of `docs/ops/discovery-portava-ci-apply-plan.md` §7.3).
+
+- **3505, stage 3.** The file created `public.scheduler_watermarks`, enabled RLS and named no role, so the
+  default ACL left `anon` and `authenticated` every privilege on it: *"role 'anon' holds INSERT on
+  public.scheduler_watermarks, and no migration in scope grants it"*, eight lines of it. The file now revokes
+  PUBLIC, `anon` and `authenticated` by name, grants `service_role` SELECT, INSERT, UPDATE and DELETE, and
+  asserts that in a `$post$` block. It also gained the rollback file it did not have.
+- **3504, stage 4.** Its precondition and postcondition both read `_p3504_targets`, a temp table that is
+  `ON COMMIT DROP`, and neither was tagged `$pre$`, so both re-runs failed with *"relation "_p3504_targets"
+  does not exist"*. This is F4 of the apply plan's §5.3 (3390). The precondition is now `$pre$`; the
+  postcondition is `$post$`, carries the 53 names as a literal for the re-run, and in the applying
+  transaction raises if that literal and the temp table name different tables.
+
+After both: stages 1–4 pass (8 assertion blocks re-run after commit, 5 `$pre$` blocks held back). Stage 5's
+`audit:schema` reports 37 objects in 11 files on the local database, all of them present in the reading
+taken before the apply and all from files that database cannot replay (the entries of
+`scripts/local-db/KNOWN_UNREPLAYABLE.json`, and three policies the baseline structure lacks). None is in the
+set, and the set adds none: no earlier file claims a grant that 3504 or 3520 takes back, so the `ALLOWLIST`
+needs no entry for them. `check:missing-live-columns`, `check:write-path-columns` and
+`check:authorization-contract` print the same findings before and after the apply.
+
+### The rest of the rehearsal
+
+- **Apply.** 7 applied in the order above, each in one transaction with its ledger row; 3501's and 3520's
+  post-`COMMIT` tails verified.
+- **Idempotence.** The applier's second run: *"NOTHING TO DO — 308 proven row(s), 0 pending"*. Each file run
+  a second time as plain SQL: six re-ran and left the catalogue and the flags unchanged. **3520 refuses a
+  second run** by its own `$pre$` (*"anon and authenticated do not both hold a plain table-level SELECT"*),
+  as 3362 and 3363 do; the ledger is what keeps the applier from sending it twice.
+- **Flags.** Two rows added, both seeded **TRUE**: `discovery_serve_log_retention_enabled`
+  (`metadata.keep_days = 30`, `retention_scope = testing`; 3501) and `layover_crowd_reports_enabled` (3513).
+  Every pre-existing row is unchanged.
+- **Rollbacks, newest first.** 3561, 3560 and 3520 ran and removed their ledger rows. 3513's refuses while
+  the flag reads TRUE, as it is written to, and ran once the flag was turned off; **it leaves 3513's ledger
+  row**, so the applier will not re-seed the flag until that row is deleted by hand. 3505's ran, printed the
+  mark count and removed its row. 3504 has no rollback by design. 3501's ran (it refuses while
+  `discovery_serve_log_enabled` is ON; that flag is absent on the local database). Afterwards the flags are
+  identical to the starting state and the catalogue differs from it only in the 53 ACLs 3504 narrowed.
+- **Re-apply.** The six pending again applied, and the catalogue is identical to the first apply's.
+- **The whole chain in byte order**, which is what the `kernel SQL executed on a throwaway database` job
+  does: 398 files applied in order, 12 known-unreplayable, 2 applied on retry, none unexpected.
+
+The local database is PostgreSQL 16.15 with no PostGIS package. `geography` and `geometry` were text
+domains and the four `ST_*` functions the baseline names were stubs, in scratch copies of the shim and the
+baseline; nothing geospatial is exercised by these seven files. It is a rehearsal, not `portava-ci`.
+
+### What the hosted application needs before each file reaches the testing database
+
+The hosted API runs a build older than these changes. "Before" and "after" below are relative to deploying
+a build that contains this branch.
+
+| file | apply it | why |
+|---|---|---|
+| 3513 | **before** the deploy | The new observation handlers read `layover_crowd_reports_enabled` fail-closed. With the build live and the row absent, both crowd-report routes refuse. The old build does not read the flag, so the row is inert until the deploy. |
+| 3501 | before the deploy; after 3376 and 3491 | Its precondition requires 3376's table. Until it is applied, the new build's `discoveryServeLogRetention` job reports failing and `GET /healthz/schedulers` answers 503. Once both are live the hourly purge deletes `recommendations` rows older than 30 days. |
+| 3504 | either side; after 2810 | No client path reaches the 53 tables on either build. A table absent when it runs is not reached, so it must follow 2810 (`telegraph_outbox`). |
+| 3505 | either side | The watermark reader answers a refusal for an absent table and every caller keeps its old lookback. |
+| 3520 | either side | No client-token read of `user_stamps` exists in either build; the API reads it as `service_role`. |
+| 3560 | either side | Called only under `CREATOR_FATIGUE_ENABLED`, which is FALSE. |
+| 3561 | either side | Records nothing until `SEARCH_SIGNAL_DECAY_DAYS` is ON. Before it is applied each search nudge logs a 42883 warning, as today. |
+
+### Re-establish independently
+
+    cd artifacts/api-server
+    sha256sum src/migrations/350[145]_*.sql src/migrations/3513_*.sql src/migrations/3520_*.sql src/migrations/356[01]_*.sql
+    grep -c 'DO \$pre\$' src/migrations/3504_client_table_privilege_boundary.sql     # 1
+    grep -c 'DO \$post\$' src/migrations/350[45]_*.sql                               # 1 each
+    grep -c 'REVOKE ALL ON TABLE public.scheduler_watermarks' src/migrations/3505_scheduler_watermarks.sql   # 2
+    LOCAL_DB_URL=… node --import tsx/esm --test src/test/db/schedulerWatermarksBoundary.db.test.ts src/test/db/clientTablePrivileges.db.test.ts   # 6 + 13
+
 ## 2026-10-04 — `3530_rb_earnings_summary_nothing_collected.sql`, written and NOT applied anywhere
 
 | | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
@@ -3771,3 +3924,259 @@ the function. `rent_buddy_enabled` is FALSE in production and this file does not
 
 **Rollback:** re-apply `2330`'s definition of the function. There is no dependent object, so the revert
 is one statement and loses nothing.
+
+## 2026-10-05 — `3900_layover_presence.sql`, written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3900_layover_presence.sql` | **not applied** | **not applied** |
+
+**What it is.** Layover spec §4 `layover_presence` and §14's L1 rung ("5 open to food"), census-layover
+L27 / L129 / L187. One row per layover session: a closed intent vocabulary (`food`, `nightlife`,
+`shopping`, `culture`, `meetups`, CHECKed), an availability window bounded by the writer to the
+session's departure, an optional `max_travel_minutes` (5–240), `visibility_scope`
+(`aggregate` | `intent`), `precise_location_enabled` CHECKed FALSE until §14 L4 exists, and
+`expires_at` as a read filter (not a retention promise). Plus the flag
+`layover_presence_intents_enabled`, seeded FALSE.
+
+**Posture.** RLS on with NO policies and every privilege revoked from `anon` / `authenticated`:
+service-role writes only, through `services/layover/LayoverPresenceStore.ts`. No coordinate column,
+asserted by the postcondition. Others are only ever shown COUNTS per intent among travellers
+`cityPresence` already cleared (same city, opted in, not blocked, sharing not paused).
+
+**Depends on** `0127` (`layover_sessions`) and `profiles`; independent of 2700 / 2992.
+**Pre/postconditions** in the file. **Rollback:** `db/rollback/2026-10-05-3900-layover-presence-rollback.sql`
+(refuses while the flag is TRUE; drops the table — its rows are short-lived by design).
+**Activation** is an owner decision: apply 3900, then flip the flag.
+## 2026-10-05 — `3780`, `3781`, `3782`, `3783` (Input Intelligence, lane D), written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3780_input_outcome_learning.sql` | **not applied** | **not applied** |
+| `3781_input_telemetry_selection_reversed.sql` | **not applied** | **not applied** |
+| `3782_input_memory_context_consent.sql` | **not applied** | **not applied** |
+| `3783_input_outcome_task_aggregate.sql` | **not applied** | **not applied** |
+
+**`3780` — outcome learning (owner decisions OD-INPUT-1, OD-INPUT-2; census G320/G370/G5/G14/G322/G323).**
+`input_outcome_consent` (one row per user, service_role only, server-stamped disclosure version and
+timestamps, absent = off), `input_outcome_counters` (per user, input context, canonical entity and UTC
+DAY, so each completion is deleted whole 30 days after its day), `input_record_outcome(uuid, text,
+text, text)` (SECURITY DEFINER, service_role only, re-checks BOTH the flag and the consent itself and
+records nothing without them), `input_outcome_memory(uuid, text, date)` (SECURITY DEFINER, service_role
+only: the serve's single read — `{active:false}` unless the flag is on and the consent active, else the
+person's in-window counts, so a hinted serve costs one round trip), and the flag
+`input_outcome_learning_enabled` seeded FALSE. Both tables cascade from `auth.users`. The 30-day deletion is `runInputOutcomeRetentionSweep`, registered flagless on the existing
+retention timer.
+
+**`3781` — §57 wrong-selection reversal (census G368).** Replaces 2950's `iate_event_name_known` CHECK
+with the same fourteen names plus `selection_reversed`: a strict superset, so every existing row still
+satisfies it. Must ship with (not after) the ingest change that admits the name: until it is applied,
+any batch carrying one reversal is refused WHOLE (422, `accepted: 0`) and every event in it is lost;
+`src/test/inputTelemetryVocabularyParity.test.ts` pins the newest CHECK to the code's vocabulary.
+
+**`3782` — Compass memory opt-in (owner decision OD-INPUT-3; census G25).** `input_memory_context_consent`
+(same shape as 3780's consent, a separate table so one purpose's grant is never another's) and the flag
+`input_memory_context_enabled` seeded FALSE. Stores no memory; it governs only whether Input
+Intelligence may read the person's own `CompassMemoryProjection`.
+
+**`3783` — downstream task outcomes aggregated at ingest (OD-INPUT-1/2; census G370).**
+`input_outcome_task_daily` (one row per UTC day, input context, task and ok, with a count — no user,
+session, request or field id, asserted by its postcondition) and `input_record_task_outcome(text, text,
+boolean)` (service_role only, takes no user argument, re-checks the 3780 flag). A consented
+`downstream_task_completed` event is counted here and never stored as a 90-day session-linked
+telemetry row. Depends on 3780.
+
+**Flags:** both new capability flags ship FALSE; turning either on is an owner decision after approving
+the disclosure text (`lib/inputAssistance/outcomeLearning.ts`, `lib/inputAssistance/memoryContext.ts`).
+
+**Rollback:** `db/rollback/2026-10-05-3780-input-outcome-learning-rollback.sql`,
+`db/rollback/2026-10-05-3781-input-telemetry-selection-reversed-rollback.sql`,
+`db/rollback/2026-10-05-3782-input-memory-context-consent-rollback.sql` and
+`db/rollback/2026-10-05-3783-input-outcome-task-aggregate-rollback.sql`. The first three REFUSE rather
+than discard a decision: 3780/3782 while their flag is TRUE or any consent row exists, 3781 while any
+`selection_reversed` row exists. 3783's drops its aggregate counts (they are no one's), and must run
+after the ingest code that calls `input_record_task_outcome` is reverted.
+
+**Numbering:** first written with prefixes above 4000, which `check:migration-prefixes` rejects; renumbered into lane D's corrected band 3780–3799 before
+anything was applied anywhere (lead correction, 2026-10-05).
+## 2026-10-05 — `3760_telegraph_thread_notification_policy.sql`, written and NOT applied anywhere (lane T2)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3760_telegraph_thread_notification_policy.sql` | **not applied** | **not applied** |
+
+**What it is.** Telegraph §30A.6's per-thread notification policy (census-telegraph T398). Two columns on
+`message_thread_members` — `notification_level text NOT NULL DEFAULT 'all'` with a CHECK of
+`all | mentions | important | muted`, and `muted_until timestamptz NULL` (a temporary mute, read rather
+than swept) — and the flag `telegraph_thread_notification_policy_enabled`, seeded **FALSE**. Nothing is
+backfilled; a postcondition refuses a row carrying a level or a temporary mute.
+
+**What works without it.** The live defect T398 found — `muted_at` was stored and never consulted when a
+notification was created, so an @mention in a muted thread notified the member — is fixed in code on every
+deployment: the mention dispatch in `routes/messaging.ts` decides through
+`domain/telegraph/policies/threadNotificationPolicy.ts`, which reads `muted_at` as MUTED. With the flag
+OFF no code names either new column; `PUT /api/threads/:id/notification-policy` stores ALL and MUTED
+through `muted_at` and refuses MENTIONS, IMPORTANT and a temporary mute with `409 feature_disabled`.
+
+**Flag ON (after the apply):** the route reads and writes both columns (keeping `muted_at` equal to
+"MUTED" so the inbox icon agrees), and every thread-scoped notification the dispatch decides honours the
+level. SAFETY is never suppressed by any level.
+
+**Prefix band.** 3760 is in lane T2's band (3760-3779), inside the existing 3000-3999 range; the
+prefix guard is unchanged.
+
+**Rollback:** `db/rollback/2026-10-05-3760-telegraph-thread-notification-policy-rollback.sql` drops the
+two columns and the CHECK, deletes the flag row only if it still carries this file's seed description,
+and deletes the ledger row. Turning the flag off is almost always what is wanted instead.
+
+## 2026-10-05 — `3761_telegraph_diagnostics_durable_audit.sql`, written and NOT applied anywhere (lane T2)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3761_telegraph_diagnostics_durable_audit.sql` | **not applied** | **not applied** |
+
+**What it is.** census-telegraph T435's ceiling: the audit of `GET /api/telegraph/diagnostics` (§30A.17's
+internal support tooling) was a log line because `admin_access_log_record_type_check` admitted five
+values and none was this. The file re-creates that CHECK with the five values verbatim plus
+`telegraph_diagnostics`, and seeds `telegraph_diagnostics_durable_audit_enabled` **FALSE**. No table,
+column or grant changes; no row is written.
+
+**Flag OFF (the seed, and every database without 3761):** the route audits by its structured log line,
+exactly as before, and never asks the database to store the new value. **ON:** every served read first
+writes one `admin_access_log` row (`record_type 'telegraph_diagnostics'`, `record_id 'snapshot'`,
+`reason` = the admin's stated purpose, `action_taken 'view'`), and the read is refused with 503 if the row
+cannot be written.
+
+**Rollback:** `db/rollback/2026-10-05-3761-telegraph-diagnostics-durable-audit-rollback.sql` deletes any
+`telegraph_diagnostics` rows (they would violate the five-value CHECK — export them first; they are an
+audit trail), restores the five-value CHECK, deletes the flag row only if it carries this file's seed
+description, and deletes the ledger row. Turning the flag off keeps the trail and is usually what is wanted.
+## Apply-order overrides
+
+**What.** `artifacts/api-server/src/migrations/ORDER_OVERRIDES.json` is the single declared list of
+departures from byte-wise filename order. The canonical apply order is: sort every `*.sql` filename
+byte-wise (§ "Prefix collisions" above; the header of `scripts/src/apply-migrations.ts` explains why
+that base is safe), then apply the file's `overrides` in list order. There are two kinds of entry:
+
+- a **move** — `{move, before|after, why, evidence}` — removes `move` and re-inserts it immediately
+  before or after its anchor;
+- a **skip** — `{skip, superseded_by, why, evidence}` — leaves `skip` out of the chain altogether. It
+  is never applied and never pending, and the harness never runs it. On a real apply, a skipped file
+  with no ledger row is recorded with 2254's backfill semantics — `applied_by='backfill'`,
+  `checksum='backfill'`, a note naming the override, `ON CONFLICT (filename) DO NOTHING` — a row that
+  asserts the filename exists and never that it ran. `--apply-unproven` naming a skipped file exits 2.
+
+Nothing else moves. Two places honour the list, and nothing else may replay the chain in a different
+order:
+
+- the applier, `scripts/src/apply-migrations.ts` — `orderMigrations` (byte order, then
+  `applyOrderOverrides`). `planApply` applies the overrides to the WHOLE on-disk list before it takes
+  the pending set, so a pending set that contains neither file of a move is unaffected. Every run that
+  reaches the plan prints each override (a move's new neighbours and whether either file is pending; a
+  skip's successors and whether a backfill row will be recorded), and the dry run lists skipped files;
+- the local replay harness, `artifacts/api-server/scripts/local-db/up.sh`, through
+  `resolve-order.mjs` — the same algorithm in plain Node; `scripts/src/migration-order-overrides.test.ts`
+  asserts the two produce the identical chain for the real tree.
+
+An entry naming a file that is not on disk — moved, skipped, anchor or `superseded_by` — is a hard
+refusal: the applier exits 2 before it reaches a network, the harness aborts. A missing overrides file
+is the same refusal, not "no overrides". A stale entry is never silently ignored, because a chain that
+quietly went back to byte order replays the very precondition refusals the entries exist to prevent.
+
+The file sits beside the migrations it reorders and is not one: every reader of `src/migrations`
+(`check:migration-prefixes`, the ledger and inventory checks, `auditMigrationsVsLive.ts`, the
+telegraph inventory, `check:frozen-dir`'s `MIGRATION_SHAPED_RE`) filters on `.sql`.
+
+**Why.** A clean replay must be deterministic AND must reach the state the reference database
+(`portava-ci`) actually holds. Byte order did not, for ten files: the local-db job carried them in
+`KNOWN_UNREPLAYABLE.json` (2136, 2140, 2276, 2277, 2278, 2279, 2292, 3002, 3003, 3310). Every replay
+below is CI's `postgis/postgis:16-3.4` service container (ci.yml `api-server-local-db`), chain from
+2093 onto the 2026-08-19 baseline.
+
+**The entries (three).**
+
+1. **`2136_profiles_auth_users_convergence.sql` AFTER `2139_shared_content_tombstones.sql`.** 2136 has
+   two preconditions that only later-sorting files satisfy. Its second refuses while any FK to
+   `public.profiles` is NO ACTION/RESTRICT, or SET NULL onto a NOT NULL column — `2138` performs those 61
+   conversions. Its third refuses while any of 16 named shared-content tables keeps a CASCADE edge to
+   profiles — `2139` re-rules them; its header calls itself "Second prerequisite for 2136". Placing
+   2136 after 2139 puts both ahead of it.
+   - Provenance: PR #111 (`claude/d6-rulings-20260823`, merged 2026-08-23) introduced 2138 and 2139 as
+     2136's prerequisites and applied 2138 before 2136 on portava-ci; the ledger rows for 2136 and
+     2138 are `applied_by='backfill'` (2254's seed), so the ledger cannot order them and 2136's own
+     preconditions do.
+   - Measured. Byte order, run 37442240254 (main `b102255da`): 2136 refuses "PRECONDITION FAILED: 54
+     foreign key(s) to public.profiles would reject a cascading delete" and applies only on the
+     post-chain retry. With 2138 moved before 2136 and nothing else, run 37445105786: 2136 refuses at
+     its third precondition instead, "PRECONDITION FAILED: 14 CASCADE edge(s) would DELETE records
+     belonging to other users once this migration lands." With 2136 after 2139, run 37446087758: 2136
+     replays in order.
+   - End state unchanged, which is why the auditors may keep reading byte order: 2136 writes only
+     `profiles_id_fkey` (profiles → auth.users, CASCADE) and its comment, and only READS the FKs onto
+     profiles; 2137 writes intel triggers, 2138 and 2139 rewrite FKs owned by other tables.
+
+2. **SKIP `2137_intel_stmt_trigger_removal.sql`, superseded by
+   `2134_intel_stmt_triggers_dropped_before_campaign.sql` and `2292_intel_stmt_trigger_removal_ig_campaign.sql`.**
+   - 2130 creates `intel_append_only_stmt()` and a statement-level trigger executing it on each of
+     intel_observations / intel_evidence / intel_confirmations. 2276 and 2277 require the function at
+     their preconditions (2276's lines 73-74), and 2276, 2277 and 2279 each attach one more statement
+     trigger to their own new table. 2292 drops those three and then, if the function still exists,
+     refuses while ANY other trigger executes it, and drops it. 2137 drops 2130's three triggers AND
+     the function, without CASCADE, in one transaction.
+   - So the state portava-ci holds — read 2026-10-06: `intel_append_only_stmt()` absent,
+     `intel_append_only()` present, no `*_no_update_delete_stmt` trigger on any intel table, the
+     `*_no_truncate` guards present; ledger: 2137 `backfill` (unverified), 2276 `ci` 2026-09-04
+     15:27:27, 2292 `manual` 2026-09-05 11:36:06 — needs 2130's triggers gone BEFORE 2292 while the
+     function survives UNTIL 2292. No position of 2137 gives that, measured and proved: before 2276
+     (byte order, run 37442240254) 2276 refuses "2130 append-only trigger functions are missing" and
+     seven files follow it down; between 2276 and 2292 (2137 after 2279, run 37445105786) "ERROR:
+     cannot drop function intel_append_only_stmt() because other objects depend on it"; after 2292,
+     2292's postcondition refuses because 2130's three triggers still execute the function.
+   - **The 2134 reissue.** `2134_intel_stmt_triggers_dropped_before_campaign.sql` (new, 2026-10-06, at a
+     free prefix in the 2100-2999 band) is 2137's trigger half and nothing else: precondition 2130's
+     tables exist; `DROP TRIGGER IF EXISTS` on the three `*_no_update_delete_stmt`; postconditions that
+     none remain and that the three row-level `*_no_update_delete` and three `*_no_truncate` guards do.
+     It must never drop the function — 2276-2279 need it and 2292 owns its removal. Replayed: 2130 →
+     2134 (triggers gone, function kept) → 2276/2277/2279 (function present; their own statement
+     triggers created) → 2292 (drops those, finds no other executor, drops the function) → 3002, 3003,
+     3310. On portava-ci 2134 is a no-op: every DROP is IF EXISTS and none of the triggers exists there.
+     It is a new migration, so it applies to portava-ci on merge like any other.
+   - End state unchanged for the auditors: byte order still ends with no statement trigger and no
+     function (2137 then 2292 IF EXISTS); the replay order ends the same way (2134 then 2292).
+
+3. **`2140_deletion_receipt.sql` AFTER `2178_deletion_status_check_converge.sql`.** 2140's
+   postcondition requires `user_deletion_requests`' status CHECK to permit `completed`. The replay's
+   baseline is PRODUCTION's structure, whose CHECK is `('pending','cancelled','executed')`; 2178 adds
+   `completed`. With 2136 replaying cleanly ahead of it (run 37446087758) 2140 still refuses
+   "POSTCONDITION FAILED: status CHECK does not permit 'completed', which AccountDeletionService
+   writes;" — its old `KNOWN_UNREPLAYABLE.json` entry blamed 2136's shape, wrongly. portava-ci's CHECK
+   read 2026-10-06 is `status = ANY (ARRAY['pending','executing','cancelled','executed','completed','failed'])`
+   and 2178's header records that CI always had `completed`. No file in 2141-2177 references
+   `user_deletion_requests`.
+   - **Stated plainly: this entry reproduces the CHECK 2140 found on portava-ci, not the calendar.**
+     2140 (committed 2026-08-23) predates 2178 (2026-08-27) and passed there on CI's own drifted CHECK;
+     the harness's baseline does not have that drift, so 2140 must follow the file that supplies it.
+   - End state unchanged: 2140 and 2178 touch different parts of `user_deletion_requests` (2140 the key,
+     columns, indexes and FKs; 2178 only the status CHECK, which 2140 reads).
+
+**Measured with all three in place:** run 37450105833 (job 112224419923, head `fff4e5bf6`) — 411 files
+applied in order, 2 known-unreplayable of 413, 0 applied on the post-chain retry, database suites
+580/580 with 0 skipped. `KNOWN_UNREPLAYABLE.json` now holds only `2490_destructive_privilege_boundary.sql`
+(a PostgreSQL 17 privilege on a 16 harness) and `2970_stamp_definitions_evidences_presence.sql` (seed
+rows a structure-only baseline cannot carry); neither is an order defect.
+
+**Adding an entry.** Only with a MEASURED fact about what the reference database received or holds —
+the ledger provenance (`applied_by`, `applied_at`) of the files involved, and for a skip the live state
+its successors reach — plus a replay that refuses without the entry and passes with it, all recorded in
+`why` / `evidence`. A skip is for a file that NO position replays and whose effect other files reach;
+it never hides a file that merely fails. Never add an entry to paper over a NEW migration's ordering:
+a new migration must sort correctly by its own number (`check:migration-prefixes`, the 2100-2999 and
+3000-3999 bands); if it needs a file that sorts after it, it needs a later number, not an override.
+Check that the entry leaves the chain's end state unchanged (the auditors read byte order), then re-run
+the local-db CI job and remove every `KNOWN_UNREPLAYABLE.json` entry that now replays — `up.sh` aborts
+until you do.
+
+**Not yet honoured:** `.github/scripts/clean-build-proof.sh` (workflow_dispatch only, destructive,
+targets portava-ci) still replays `>= "2100"` in plain byte order. It would run 2136, 2137 and 2140
+exactly as the harness did before these entries; it was left untouched here, and is the third replayer
+that should read `resolve-order.mjs`.

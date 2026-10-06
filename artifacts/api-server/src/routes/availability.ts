@@ -78,11 +78,11 @@ router.get("/me/availability", async (req, res) => {
   if (error) { req.log.error({ err: error }, "get availability"); sendError(res, "db_error", error.message); return; }
 
   // Also fetch quick status
-  const { data: qs } = await client
+  const { data: qs, error: qsErr } = await client
     .from("quick_availability_status")
     .select("*")
     .eq("user_id", user.id)
-    .maybeSingle();
+    .maybeSingle(); if (qsErr) { req.log.error({ err: qsErr }, "get availability: quick status unreadable"); sendError(res, "degraded_unavailable", "Your quick status could not be read. Please try again."); return; } // a failed read is not "no status"
 
   const quickStatus = qs && (qs as any).expires_at > new Date().toISOString()
     ? { status: (qs as any).status, expiresAt: (qs as any).expires_at }
@@ -143,11 +143,11 @@ router.get("/me/quick-availability", async (req, res) => {
   if (!ctx) return;
   const { client, user } = ctx;
 
-  const { data } = await client
+  const { data, error } = await client
     .from("quick_availability_status")
     .select("*")
     .eq("user_id", user.id)
-    .maybeSingle();
+    .maybeSingle(); if (error) { req.log.error({ err: error }, "get quick-availability: unreadable"); sendError(res, "degraded_unavailable", "Your quick status could not be read. Please try again."); return; } // never `status: null` for a failed read
 
   if (!data || (data as any).expires_at <= new Date().toISOString()) {
     res.json({ status: null, expiresAt: null });
@@ -220,21 +220,21 @@ router.get("/trips/:tripId/availability", async (req, res) => {
   if (!member) { sendError(res, "not_member", "You must be an accepted trip member to view availability"); return; }
 
   // Get all accepted members
-  const { data: members } = await client
+  const { data: members, error: membersErr } = await client
     .from("trip_members")
     .select("user_id")
     .eq("trip_id", tripId)
-    .in("role", ["owner", "member"]);
+    .in("role", ["owner", "member"]); if (membersErr) { req.log.error({ err: membersErr }, "trip availability: members unreadable"); sendError(res, "degraded_unavailable", "Trip availability could not be read. Please try again."); return; }
 
   const memberIds = (members ?? []).map((m: any) => m.user_id as string);
 
-  const [{ data: tripAvRows }, { data: globalAvRows }, { data: qsRows }, { data: profiles }, { data: tripRow }] = await Promise.all([
+  const [{ data: tripAvRows, error: e1 }, { data: globalAvRows, error: e2 }, { data: qsRows, error: e3 }, { data: profiles, error: e4 }, { data: tripRow, error: e5 }] = await Promise.all([
     client.from("trip_availability").select("user_id, open_days").eq("trip_id", tripId).in("user_id", memberIds),
     client.from("user_availability").select("user_id, weekly_days, open_to_meet").in("user_id", memberIds),
     client.from("quick_availability_status").select("user_id, status, expires_at").in("user_id", memberIds),
     client.from("profiles").select("id, handle, name, avatar_url").in("id", memberIds),
     client.from("trips").select("start_date, end_date").eq("id", tripId).maybeSingle(),
-  ]);
+  ]); { const err = e1 ?? e2 ?? e3 ?? e4 ?? e5; if (err) { req.log.error({ err }, "trip availability: a member read failed"); sendError(res, "degraded_unavailable", "Trip availability could not be read. Please try again."); return; } } // an unreadable table is not "nobody is free"
 
   const now = new Date().toISOString();
 
@@ -358,7 +358,7 @@ router.patch("/trips/:tripId/availability", async (req, res) => {
 
 // ─── Availability nudge helper ─────────────────────────────────────────────────
 
-async function sendAvailabilityNudges(
+export async function sendAvailabilityNudges(
   tripId: string,
   senderId: string,
   freeDates: string[],
@@ -370,23 +370,23 @@ async function sendAvailabilityNudges(
   const today = new Date().toISOString().slice(0, 10);
 
   // Fetch accepted trip members (excluding the sender)
-  const { data: memberRows } = await sc
+  const { data: memberRows, error: memberErr } = await sc
     .from("trip_members")
     .select("user_id")
     .eq("trip_id", tripId)
     .in("role", ["owner", "member"])
-    .neq("user_id", senderId);
+    .neq("user_id", senderId); if (memberErr) { log.warn({ err: memberErr, tripId }, "availability nudges: recipients unreadable — none sent"); return; }
 
   const recipientIds = (memberRows ?? []).map((r: any) => r.user_id as string);
   if (recipientIds.length === 0) return;
 
   // Fetch existing trip availability for all recipients so we can skip those
   // who already have any of the free dates in their own open_days.
-  const { data: existingAv } = await sc
+  const { data: existingAv, error: existingErr } = await sc
     .from("trip_availability")
     .select("user_id, open_days")
     .eq("trip_id", tripId)
-    .in("user_id", recipientIds);
+    .in("user_id", recipientIds); if (existingErr) { log.warn({ err: existingErr, tripId }, "availability nudges: existing days unreadable — none sent (a failed read must not nudge people who already answered)"); return; }
 
   const existingAvMap: Record<string, Record<string, string[]>> = {};
   for (const row of existingAv ?? []) {
@@ -495,12 +495,12 @@ router.patch("/circles/:circleId/availability", async (req, res) => {
   // Gate: must be circle owner or member
   const isOwner = user.id === circleId;
   if (!isOwner) {
-    const { data: mem } = await client
+    const { data: mem, error: memErr } = await client
       .from("circle_memberships")
       .select("other_id")
       .eq("user_id", circleId)
       .eq("other_id", user.id)
-      .maybeSingle();
+      .maybeSingle(); if (memErr) { req.log.error({ err: memErr }, "circle availability: membership unreadable"); sendError(res, "degraded_unavailable", "Circle membership could not be checked. Please try again."); return; }
     if (!mem) { sendError(res, "forbidden", "Not a circle member"); return; }
   }
 
@@ -558,11 +558,11 @@ router.get("/me/availability-nudges", async (req, res) => {
   const senderIds = [...new Set((rows as any[]).map((r) => r.sender_id as string))];
   const tripIds   = [...new Set((rows as any[]).map((r) => r.trip_id   as string))];
 
-  const [{ data: profiles }, { data: trips }, allowedNames] = await Promise.all([
+  const [{ data: profiles, error: pErr }, { data: trips, error: tErr }, allowedNames] = await Promise.all([
     sc.from("profiles").select("id, name, handle, avatar_url").in("id", senderIds),
     sc.from("trips").select("id, title, destination_city").in("id", tripIds),
     nameVisibilitySet(sc, senderIds),
-  ]);
+  ]); if (pErr || tErr) { req.log.error({ err: pErr ?? tErr }, "availability nudges: enrichment unreadable"); sendError(res, "degraded_unavailable", "Nudges could not be read. Please try again."); return; }
 
   const profileMap: Record<string, any> = {};
   for (const p of profiles ?? []) profileMap[(p as any).id] = p;
@@ -606,28 +606,28 @@ router.get("/circles/:circleId/availability", async (req, res) => {
   // Gate: must be the circle owner or a member
   const isOwner = user.id === circleId;
   if (!isOwner) {
-    const { data: mem } = await client
+    const { data: mem, error: memErr } = await client
       .from("circle_memberships")
       .select("other_id")
       .eq("user_id", circleId)
       .eq("other_id", user.id)
-      .maybeSingle();
+      .maybeSingle(); if (memErr) { req.log.error({ err: memErr }, "circle availability: membership unreadable"); sendError(res, "degraded_unavailable", "Circle membership could not be checked. Please try again."); return; }
     if (!mem) { sendError(res, "forbidden", "Not a circle member"); return; }
   }
 
   // Get all circle members (owner + members)
-  const { data: memRows } = await client
+  const { data: memRows, error: memRowsErr } = await client
     .from("circle_memberships")
     .select("other_id")
-    .eq("user_id", circleId);
+    .eq("user_id", circleId); if (memRowsErr) { req.log.error({ err: memRowsErr }, "circle availability: members unreadable"); sendError(res, "degraded_unavailable", "Circle availability could not be read. Please try again."); return; }
 
   const memberIds = [circleId, ...((memRows ?? []).map((r: any) => r.other_id as string))];
 
-  const [{ data: avRows }, { data: qsRows }, { data: profiles }] = await Promise.all([
+  const [{ data: avRows, error: c1 }, { data: qsRows, error: c2 }, { data: profiles, error: c3 }] = await Promise.all([
     client.from("user_availability").select("user_id, weekly_days, open_to_meet").in("user_id", memberIds),
     client.from("quick_availability_status").select("user_id, status, expires_at").in("user_id", memberIds),
     client.from("profiles").select("id, handle, name, avatar_url").in("id", memberIds),
-  ]);
+  ]); { const err = c1 ?? c2 ?? c3; if (err) { req.log.error({ err }, "circle availability: a member read failed"); sendError(res, "degraded_unavailable", "Circle availability could not be read. Please try again."); return; } }
 
   const now = new Date().toISOString();
   const avMap: Record<string, any> = {};

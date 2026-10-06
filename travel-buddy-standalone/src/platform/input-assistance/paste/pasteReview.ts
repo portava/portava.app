@@ -52,6 +52,12 @@ export interface PasteDestination {
   lat: number | null;
   lng: number | null;
   placeId: string | null;
+  /**
+   * Which id-space `placeId` is in: a canonical CITY id or a PLACE id. Carried
+   * so a completed write can credit the right entity (§45 outcome learning) —
+   * the two id-spaces are different tables and must never be confused.
+   */
+  entityType?: 'city' | 'place';
 }
 
 /** itemIndex → the chosen candidate's index within that item's candidates. */
@@ -140,10 +146,11 @@ export function destinationFromCandidate(c: InputSuggestion, itemIndex = -1): Pa
       lat: num(v.lat),
       lng: num(v.lng),
       placeId: typeof v.cityId === 'string' && v.cityId ? v.cityId : null,
+      entityType: 'city',
     };
   }
   if (c.entityType === 'place' && c.label) {
-    return { itemIndex, city: c.label, country: null, lat: null, lng: null, placeId: c.entityId ?? null };
+    return { itemIndex, city: c.label, country: null, lat: null, lng: null, placeId: c.entityId ?? null, entityType: 'place' };
   }
   return null;
 }

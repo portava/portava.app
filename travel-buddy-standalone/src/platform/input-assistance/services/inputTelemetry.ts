@@ -284,3 +284,33 @@ export function emitActionCompleted(f: TelemetryField, actionType: string, ok: b
 export function emitDownstreamTaskCompleted(f: TelemetryField, task: string, ok: boolean): void {
   emitInputEvent('downstream_task_completed', f.fieldId, f.context, { task, ok }, f.policy, f.requestId);
 }
+
+/**
+ * §57 `selection_reversed` — the WRONG-SELECTION REVERSAL arm (census G368).
+ *
+ * A field the user resolved FROM A SUGGESTION was then edited away from the
+ * text that suggestion put there. §57 asks for the rate at which that happens,
+ * and until this event nothing recorded it: `suggestion_selected` said a row
+ * was taken and nothing ever said it was un-taken, so the metric was refused.
+ *
+ * Carries the TYPE of the row that had resolved the field (so the rate can be
+ * restricted to entity-resolving types) and how long the resolution lasted in
+ * whole seconds, capped at the ingest's integer bound. Never the text, never
+ * the entity — "the user changed their mind about Paris" is not something this
+ * stream may know.
+ */
+export const MAX_REVERSAL_SECONDS = 100_000;
+
+export function emitSelectionReversed(f: TelemetryField, suggestionType: string, msSinceSelect: number): void {
+  const seconds = Number.isFinite(msSinceSelect) && msSinceSelect > 0
+    ? Math.min(MAX_REVERSAL_SECONDS, Math.floor(msSinceSelect / 1000))
+    : 0;
+  emitInputEvent(
+    'selection_reversed',
+    f.fieldId,
+    f.context,
+    { suggestionType, secondsSinceSelect: seconds },
+    f.policy,
+    f.requestId,
+  );
+}

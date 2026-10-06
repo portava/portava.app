@@ -98,8 +98,8 @@ function sourceFor(file: string): string {
 const LIVE_COLUMNS: Record<string, Set<string>> = Object.fromEntries(
   [
     "profiles", "stamp_award_events", "stamp_campaigns", "stamp_definitions",
-    "rank_events", "trust_events", "trust_profiles", "trust_restrictions",
-    "trust_reviews", "trust_settings",
+    "rank_events", "job_health", "trust_events", "trust_profiles",
+    "trust_restrictions", "trust_reviews", "trust_settings",
   ].map((t) => [t, liveColumns(t)]),
 );
 
@@ -108,7 +108,18 @@ const ROUTE_TABLES: Record<string, string[]> = {
   "adminStamps.ts": [
     "profiles", "stamp_award_events", "stamp_campaigns", "stamp_definitions",
   ],
-  "adminRankingMetrics.ts": ["profiles", "rank_events"],
+  // job_health is listed so this route's select is drift-checked at all; it
+  // was not before. Read what this entry can and cannot prove: the generated
+  // liveColumns.json was taken on 2026-08-31 and lists job_health as (job,
+  // last_run_at, updated_at), but migration 2998 added `last_success_at` and
+  // production carried it when it was measured on 2026-10-03. So for THIS
+  // table the guard is currently checking against a stale list, and a select
+  // on `last_success_at` would be rejected here although production would
+  // answer it. That is a false alarm, not the silent-zeroing failure this
+  // guard exists to catch, and the fix is to refresh the generated file rather
+  // than to drop the table from this list. See the buildJobHealth block
+  // comment in routes/adminRankingMetrics.ts.
+  "adminRankingMetrics.ts": ["profiles", "rank_events", "job_health"],
   "trust-admin.ts": [
     // trust_admin_actions is insert-only in this route (no select/filter
     // chains), so the read-path extractor has nothing to guard there.

@@ -55,8 +55,11 @@ import {
   type LocationPrefsRow,
 } from "../../lib/mapTravelers.js";
 import { coarsePointFor, type CoarsePoint } from "../../lib/proximityBuckets.js";
+import { classifyAgainstProtected, type ProtectedZone } from "../../lib/protectedLocations.js";
+import { loadActiveProtectedZones } from "../../lib/protectedZoneStore.js";
 import {
   resolveInvisibleMode,
+  suppressesSurface,
   type InvisibleModeState,
 } from "../../lib/invisibleMode.js";
 import {
@@ -93,7 +96,8 @@ export type ReachableStage =
   | "candidate_profile_privacy"
   | "candidate_presence"
   | "availability"
-  | "availability_windows";
+  | "availability_windows"
+  | "protected_zones";
 
 export interface ReachableLoadOk {
   readonly ok: true;
@@ -234,6 +238,44 @@ function availabilityFor(opts: {
     window,
     publishedUntil: opts.quick.expires_at,
   };
+}
+
+/**
+ * §4.3 "Privacy zones can suppress discovery around home, lodging or
+ * user-defined sensitive places", decided against the RAW position — the only
+ * place a zone can tell whether someone is inside it — and strictly before any
+ * coarse point is made from that position.
+ *
+ * ANY zone that covers the point withholds it, whatever the zone's action. The
+ * map's §24 gate may COARSEN an object inside a medical-facility zone, but a
+ * person on this surface is already at the coarsest rung the ladder has (a
+ * ≥ 5 km bucket); there is no coarser bucket to fall back to, so the only
+ * honest coarsening left is none at all — the same escalation §24 applies to
+ * presence-bearing objects, whose association with the place is the disclosure.
+ *
+ * A point with no finite coordinate has nothing a zone could be asked about and
+ * returns false; such a person has no position to publish in any case.
+ */
+export function positionInProtectedZone(
+  lat: unknown,
+  lng: unknown,
+  zones: readonly ProtectedZone[],
+): boolean {
+  if (typeof lat !== "number" || typeof lng !== "number") return false;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+  if (zones.length === 0) return false;
+  const decision = classifyAgainstProtected(
+    {
+      id: "nearby-reachable-probe",
+      kind: "crew_member",
+      geometry: { type: "Point", coordinates: [lng, lat] },
+      title: "person",
+      privacyClass: "precise_temporary",
+      renderingPriority: 0,
+    },
+    zones,
+  );
+  return decision.action !== "allow";
 }
 
 /**
@@ -399,6 +441,15 @@ export async function loadReachablePeople(
     };
   }
 
+  // 4b. §4.3's privacy zones. The ONE reader of the policy (protectedZoneStore)
+  //     answers null for a read it could not make, and an unreadable policy is
+  //     not an absent one: nobody's position can be shown to lie outside a zone
+  //     we could not read, so the answer is refused, exactly as for `blocks`.
+  const zones = await loadActiveProtectedZones(db);
+  if (zones === null) {
+    return { ok: false, stage: "protected_zones", message: "protected-zone policy could not be read" };
+  }
+
   const prefsById = new Map<string, LocationPrefsRow>(
     (prefsQ.data ?? []).map((r: any) => [r.user_id as string, r as LocationPrefsRow]),
   );
@@ -435,8 +486,18 @@ export async function loadReachablePeople(
   const viewerFresh = viewerState.error
     ? "stale"
     : freshnessOf((viewerState.data as any)?.last_known_at ?? null, nowMs);
+  // A viewer standing inside a zone measures from nowhere, as an invisible one
+  // does: §4.2's reciprocity is that a viewer who publishes no position
+  // receives no bucket, and inside a zone nobody publishes one.
+  const viewerInZone =
+    !viewerState.error &&
+    positionInProtectedZone(
+      (viewerState.data as { lat?: unknown } | null)?.lat,
+      (viewerState.data as { lng?: unknown } | null)?.lng,
+      zones,
+    );
   const viewerPoint: CoarsePoint | null =
-    viewerState.error || !viewerVisibility || viewerFresh === "stale"
+    viewerState.error || !viewerVisibility || viewerFresh === "stale" || viewerInZone
       ? null
       : coarsePointFor(
           viewerId,
@@ -509,6 +570,15 @@ export async function loadReachablePeople(
       blocked: blockedSet.has(personId) || verdict.reason === "blocked",
       blockStateKnown: verdict.reason !== "unavailable",
       personInvisible,
+      // §4.3's zones are asked ONLY about a position that would otherwise be
+      // published — consented, fresh and not suppressed by invisible mode. A
+      // person who withheld their position is never tested against a zone:
+      // the answer would be a fact about where they are that they did not share
+      // (verifier F1, 2026-10-05).
+      personInProtectedZone:
+        personPoint !== null &&
+        !suppressesSurface(personInvisible, "nearby") &&
+        positionInProtectedZone(st?.lat, st?.lng, zones),
       viewerInvisible,
       personPresenceConsent: presenceConsent,
       availabilityPublished: availability.published,

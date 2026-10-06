@@ -22,6 +22,8 @@ import type { CompassProfile } from "./types.js";
 import { getDecayedWeights } from "./CompassSearchDecayService.js";
 
 import { getTrustProfileResult } from "../services/trust/TrustScoreService.js";
+// census-compass CT-02 — the ONE membership seam; this file had the fourth copy.
+import { resolveMemberTripIds, SELECTION_TRIP_ROLES } from "./CompassCurrentTrip.js";
 const CACHE_TTL_MS = 2 * 60 * 1_000; // 2 minutes
 const FUTURE_WINDOW_48H_MS = 48 * 60 * 60 * 1_000;
 
@@ -57,17 +59,15 @@ async function buildProfile(
   const nowMs = now.getTime();
   const nowIso = now.toISOString();
 
-  // ── Trips: two-step to avoid invalid PostgREST subquery syntax ────────────
-  // Step 1: find trip_ids where user is a member (owner or accepted member)
-  const tripMemberRes = await db
-    .from("trip_members")
-    .select("trip_id")
-    .eq("user_id", userId)
-    .in("role", ["owner", "member"]);
-
-  const memberTripIds: string[] = (tripMemberRes.data as any[] ?? []).map(
-    (r: any) => r.trip_id as string,
-  );
+  // ── Trips: through the ONE membership seam (census-compass CT-02) ─────────
+  // This was a fourth copy of the owner ∪ member union, and it read
+  // `tripMemberRes.data as any[] ?? []` without ever touching
+  // `tripMemberRes.error` — so an unreadable `trip_members` produced no member
+  // trip ids, which produced `hasActiveTrip: false`, and that answer was then
+  // CACHED for two minutes and served as the user's profile.
+  const membership = await resolveMemberTripIds(db, userId, { roles: SELECTION_TRIP_ROLES });
+  const tripStateUnread = membership.status === "unread";
+  const memberTripIds: string[] = membership.status === "ok" ? membership.tripIds : [];
 
   // Step 2: fetch owned trips + member trips in parallel
   const [ownedTripsRes, memberTripsRes, ...otherResults] = await Promise.allSettled([
@@ -144,6 +144,13 @@ async function buildProfile(
   // ── Trips aggregation ──────────────────────────────────────────────────────
   const ownedTrips  = ownedTripsRes.status  === "fulfilled" ? ((ownedTripsRes.value.data as any[]) ?? []) : [];
   const memberTrips = memberTripsRes.status === "fulfilled" ? ((memberTripsRes.value.data as any[]) ?? []) : [];
+  // Same rule one level down: `allSettled` makes a REJECTED promise visible and
+  // says nothing about a RESOLVED `{ data: null, error }`, which is how a
+  // PostgREST failure actually arrives.
+  const tripsReadFailed =
+    tripStateUnread ||
+    ownedTripsRes.status  === "rejected" || (ownedTripsRes.status  === "fulfilled" && (ownedTripsRes.value  as any).error) ||
+    memberTripsRes.status === "rejected" || (memberTripsRes.status === "fulfilled" && (memberTripsRes.value as any).error);
   // Deduplicate by id (a user can appear as owner in trip_members too)
   const tripMap = new Map<string, any>();
   for (const t of [...ownedTrips, ...memberTrips]) tripMap.set(t.id, t);
@@ -257,6 +264,10 @@ async function buildProfile(
     trustLevel: trust?.public_level ?? null,
     activeUserScore: null, // Phase 4 (active user scoring) populates this
     hasActiveTrip,
+    // `false` on these three is now distinguishable from "not read": see
+    // `tripStateUnread` on CompassProfile, which `getCompassProfile` also
+    // refuses to CACHE.
+    tripStateUnread: Boolean(tripsReadFailed),
     hasActiveBooking: bookings.length > 0,
     upcomingTripWithin48h,
     hasFutureTripScheduled,
@@ -290,6 +301,10 @@ export async function getCompassProfile(
     }
   }
   const profile = await buildProfile(db, userId);
-  _cache.set(userId, { profile, cachedAt: Date.now() });
+  // A PROFILE BUILT OVER AN UNREAD TRIP STATE IS NOT CACHEABLE. The window is
+  // two minutes, so one transient `trip_members` failure used to freeze
+  // "no trips" for the whole of it and serve that to every Compass surface
+  // that asks — long after the database recovered.
+  if (!profile.tripStateUnread) _cache.set(userId, { profile, cachedAt: Date.now() });
   return profile;
 }

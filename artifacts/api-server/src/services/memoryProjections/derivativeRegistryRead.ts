@@ -32,6 +32,7 @@ import {
 } from "./derivativeRegistry.js";
 import type { ProjectedRow, ProjectionId, ProjectionScope } from "./projectionRegistry.js";
 import { scopeKeyOf } from "./projectionRegistry.js";
+import { isTableAbsentError } from "../../lib/tableAbsence.js";
 
 /** Columns a registration read needs. Kept here so the SERVE path owns its own shape. */
 const REGISTRATION_COLUMNS =
@@ -39,12 +40,13 @@ const REGISTRATION_COLUMNS =
   "source_tables, source_memory_ids, source_version, source_version_json, payload_json, " +
   "row_count, generated_at, revocation_state, revoked_at, revocation_reason";
 
-/** PostgREST's "relation does not exist" — a missing table is not retryable. */
+/**
+ * A missing TABLE is not retryable (lib/tableAbsence). A bare /does not exist/
+ * on the message also matched a missing column, function or operator, and
+ * marked an ordinary read failure as one no retry could fix.
+ */
 function isSchemaAbsent(err: { code?: string | null; message?: string | null } | null | undefined): boolean {
-  if (!err) return false;
-  const code = String(err.code ?? "");
-  const msg = String(err.message ?? "");
-  return code === "42P01" || code === "PGRST205" || /does not exist/i.test(msg);
+  return isTableAbsentError(err);
 }
 
 /**

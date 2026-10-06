@@ -21,7 +21,7 @@ import { space, radius, type as t } from '../../../theme/tokens.ts';
 import { useReducedMotionSetting } from '../../wall/hooks/useReducedMotionSetting.ts';
 import { useTelegraphPalette, type TelegraphPalette } from '../theme/telegraphTheme.ts';
 import { parseKindEnvelope, type EnvelopeKind } from './kindsApi.ts';
-import { VoiceMessagePlayer } from '../voice/VoiceMessagePlayer.tsx';
+import { VoiceMessagePlayer } from '../voice/VoiceMessagePlayer.tsx'; import { openMapsNavigation, type MapsPlace } from '../../../lib/maps.ts'; // §8.1 navigate — shares a line so nothing below moves
 const CARD_MAX_WIDTH = 280; // census-telegraph cites :33/:65/:129/:164 — the blank line that was here paid for the import above, so nothing below shifts.
 
 /**
@@ -95,7 +95,7 @@ export function TypedMessageRenderer({
           {p.approximateLabel ? <Text style={styles.subtitle}>{p.approximateLabel}</Text> : null}
           {/* §4.3: the precision the SENDER chose is shown, not inferred. */}
           <Text style={styles.meta}>{precisionWord(p.precision)}</Text>
-          {p.caption ? <Text style={styles.caption}>{p.caption}</Text> : null}
+          {p.caption ? <Text style={styles.caption}>{p.caption}</Text> : null}{locationDestination(p) ? (<Pressable accessibilityRole="button" accessibilityLabel={`Directions to ${p.label}`} onPress={() => openMapsNavigation(locationDestination(p)!)} style={styles.actionButton} testID="telegraph-kind-location-directions"><Text style={styles.actionButtonText}>Directions</Text></Pressable>) : null}
         </View>
       );
 
@@ -256,6 +256,31 @@ export function TypedMessageRenderer({
         </View>
       );
   }
+}
+
+/**
+ * §8.1 / §1.3 Act — a LOCATION message becomes navigation.
+ *
+ * What is handed to the maps app is exactly what the SENDER shared, at the
+ * precision they chose: coordinates only when they shared an EXACT location
+ * (an exact share is opt-in per message, §4.3), otherwise the label they wrote,
+ * as a place-name search. Nothing finer is invented, and nothing is posted —
+ * starting navigation declares no status (§9.1).
+ */
+export function locationDestination(p: unknown, nowMs: number = Date.now()): MapsPlace | null {
+  const o = p !== null && typeof p === 'object' ? (p as Record<string, unknown>) : null;
+  const label = typeof o?.label === 'string' ? o.label.trim() : '';
+  if (!label) return null;
+  // A scoped share that has ENDED is not sharing its coordinates any more: only
+  // the label is handed on (verifier, T6's gap).
+  const endsMs = typeof o?.expiresAt === 'string' ? Date.parse(o.expiresAt) : NaN;
+  const ended = Number.isFinite(endsMs) && endsMs <= nowMs;
+  const exact = !ended && o?.precision === 'exact' && typeof o.lat === 'number' && typeof o.lng === 'number'
+    && Number.isFinite(o.lat) && Number.isFinite(o.lng);
+  const area = typeof o?.approximateLabel === 'string' && o.approximateLabel.trim() ? o.approximateLabel.trim() : null;
+  return exact
+    ? { name: label, lat: o!.lat as number, lng: o!.lng as number }
+    : { name: label, city: area };
 }
 
 function precisionWord(p: unknown): string {

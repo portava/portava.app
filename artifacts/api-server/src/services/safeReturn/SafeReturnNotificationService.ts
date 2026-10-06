@@ -152,19 +152,19 @@ async function fetchAreaLabel(db: SupabaseClient, userId: string): Promise<strin
 
 async function fetchPlanItemTitle(
   db: SupabaseClient,
-  planItemId: string | null,
+  planItemId: string | null, viewerId: string, // OD-TRIP-3: the session's traveller — a crewmate's private place is not theirs to send to people off the trip
 ): Promise<string | null> {
   if (!planItemId) return null;
   try {
     const { data, error } = await db
       .from("trip_plan_items")
-      .select("location_name")
+      .select("location_name, trip_id, creator_id, location_is_private")
       .eq("id", planItemId)
       .maybeSingle();
     if (error) {
       logger.warn({ err: error, planItemId }, "fetchPlanItemTitle: read failed — alert will omit the plan location");
     }
-    return (data as any)?.location_name ?? null;
+    if (!data) return null; const [row] = withholdPrivatePlanItems([data as Record<string, unknown>], await planItemAccessFor(db, String((data as { trip_id?: unknown }).trip_id ?? ""), viewerId)); return typeof row?.location_name === "string" ? row.location_name : null;
   } catch {
     return null;
   }
@@ -260,7 +260,7 @@ export async function notifyTrustedCircle(
   const [userName, area, planTitle] = await Promise.all([
     fetchDisplayName(db, session.userId),
     fetchAreaLabel(db, session.userId),
-    fetchPlanItemTitle(db, session.planItemId),
+    fetchPlanItemTitle(db, session.planItemId, session.userId),
   ]);
 
   const missedTime = session.timerEndAt
@@ -456,3 +456,5 @@ export async function notifyTripCrew(
     return alertOutcome(0, 0, true, String((err as any)?.message ?? err));
   }
 }
+
+import { planItemAccessFor, withholdPrivatePlanItems } from "./safeReturnPlanItemAccess.js";

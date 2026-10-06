@@ -7,7 +7,7 @@ import { View, Text, StyleSheet, Pressable, ActivityIndicator } from 'react-nati
 import { Compass, Plus, Check } from 'lucide-react-native';
 import { color, space, radius, type as t, avatar } from '../../theme/tokens.ts';
 import { fmtDur, REC_EMOJI, safetyColors } from './layoverFormat.ts';
-import type { LayoverRecommendation } from '../../services/layover.ts';
+import type { LayoverLandsideSuppression, LayoverRecommendation } from '../../services/layover.ts';
 
 interface Props {
   recs: LayoverRecommendation[];
@@ -27,13 +27,13 @@ interface Props {
   canPlan: boolean;
   addedRecIds: Set<string>;
   addingRecId: string | null;
-  onAddToPlan: (recId: string) => void;
+  onAddToPlan: (recId: string) => void; /** census L43 — why the SERVER withheld landside ideas (re-entry), or that it could not check; absent = nothing withheld. */ landsideSuppression?: LayoverLandsideSuppression | null;
 }
 
 type Filter = 'all' | 'inside' | 'outside';
 
 export function LayoverRecsSection({
-  recs, loading, error, onRetry, canPlan, addedRecIds, addingRecId, onAddToPlan,
+  recs, loading, error, onRetry, canPlan, addedRecIds, addingRecId, onAddToPlan, landsideSuppression = null,
 }: Props) {
   const [filter, setFilter] = useState<Filter>('all');
 
@@ -63,6 +63,17 @@ export function LayoverRecsSection({
           </Pressable>
         ))}
       </View>
+      )}
+
+      {!loading && !error && landsideSuppression?.reason === 'airport_reentered' && (
+        <Text style={styles.empty} testID="layover-recs-landside-suppressed">
+          You told us you're back at the airport, so ideas out in the city are hidden.
+        </Text>
+      )}
+      {!loading && !error && landsideSuppression?.reason === 'checkpoints_unreadable' && (
+        <Text style={styles.empty} testID="layover-recs-landside-unknown">
+          We couldn't check whether you're back at the airport, so city ideas are still shown.
+        </Text>
       )}
 
       {loading && <ActivityIndicator color={color.deep} style={{ marginVertical: space.lg }} />}

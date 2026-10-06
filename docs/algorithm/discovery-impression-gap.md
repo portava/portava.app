@@ -297,7 +297,7 @@ Every read of `rank_events` in the tree was checked against the new rows:
 | `services/ranking/MediaFeedRankingService.ts:936` | `.in("event_type",[watch_*])` | **No** — Stage 0 rows set no `event_type` |
 | Place-affinity boost (`lib/portavaRank.ts:95`, `compass/CompassScoringEngine.ts:518`) | `event_type='place_view'` | **No** — same reason |
 | `routes/rankEvents.ts:132` (outcome finder) | `surface` + `outcome='impression'` | **Yes — intended.** This is what makes engagement measurable on cache-served traffic |
-| `routes/adminRankingMetrics.ts:162`, `:309` | `served_at >= cutoff` only | **Yes — the accepted discontinuity** |
+| `routes/adminRankingMetrics.ts:324`, `:471` | `served_at >= cutoff` only | **Yes — the accepted discontinuity** |
 
 **There is no ranking feedback loop.** No boost, cap, allocator or affinity
 signal reads impression rows, so Stage 0 cannot change what any ranker produces.

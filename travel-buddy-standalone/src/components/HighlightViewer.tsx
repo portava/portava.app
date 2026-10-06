@@ -636,6 +636,8 @@ export function HighlightViewer({
           {current.caption ? (
             <Text style={s.caption} numberOfLines={3}>{current.caption}</Text>
           ) : null}
+          {/* §12 executable verbs (census H102): Do this / Add to trip / View place / Save, on the Memory this Highlight projects */}
+          <HighlightActionChips highlightId={current.id} onClose={onClose} />
 
           {replyOpen && (
             <View style={s.replyRow}>
@@ -913,3 +915,5 @@ const s = StyleSheet.create({
   replyBtn: { backgroundColor: color.signal, borderRadius: radius.pill, paddingHorizontal: space.md, paddingVertical: 8 },
   replyBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
 });
+// §12 Highlight actions (census H102). Imported at the TAIL so no cited line above moves; ESM hoists it.
+import { HighlightActionChips } from '../features/highlights/actions/HighlightActionChips.tsx';

@@ -16,12 +16,26 @@ import {
   type ConnectionView,
   type RequestOutcome,
 } from './connectionState.ts';
+import { deriveBandwidthSignal, LATENCY_WINDOW, type BandwidthView } from './bandwidthSignal.ts';
 
 let outcomes: RequestOutcome[] = [];
 let realtime: RealtimeStatus = 'idle';
 let everOpen = false;
 let view: ConnectionView = { state: 'ONLINE', cause: null };
 const listeners = new Set<(v: ConnectionView) => void>();
+// §17.4's bandwidth signal: how long recent ANSWERED requests took.
+let durations: number[] = [];
+let bandwidth: BandwidthView = { signal: 'normal', cause: null };
+const bandwidthListeners = new Set<(b: BandwidthView) => void>();
+
+function recomputeBandwidth() {
+  const next = deriveBandwidthSignal({ connection: view.state, durationsMs: durations });
+  if (next.signal === bandwidth.signal && next.cause === bandwidth.cause) return;
+  bandwidth = next;
+  for (const l of [...bandwidthListeners]) {
+    try { l(bandwidth); } catch { /* isolate a listener */ }
+  }
+}
 
 function recompute() {
   const next = deriveConnectionState({ realtime, everOpen, outcomes, previous: view.state });
@@ -32,10 +46,18 @@ function recompute() {
   }
 }
 
-/** Record how one request to the API ended. Called by the messaging transport. */
-export function noteTelegraphRequest(outcome: RequestOutcome): void {
+/**
+ * Record how one request to the API ended. Called by the messaging transport.
+ * `durationMs`, when the transport timed the request, feeds §17.4's bandwidth
+ * signal; only ANSWERED requests are timed — a failure has no useful duration.
+ */
+export function noteTelegraphRequest(outcome: RequestOutcome, durationMs?: number): void {
   outcomes = [...outcomes, outcome].slice(-OUTCOME_WINDOW);
+  if (outcome === 'ok' && typeof durationMs === 'number' && Number.isFinite(durationMs) && durationMs >= 0) {
+    durations = [...durations, durationMs].slice(-LATENCY_WINDOW);
+  }
   recompute();
+  recomputeBandwidth();
 }
 
 /** The realtime service's status, as the store last saw it. */
@@ -43,6 +65,28 @@ export function noteRealtimeStatus(status: RealtimeStatus): void {
   realtime = status;
   if (status === 'open') everOpen = true;
   recompute();
+  recomputeBandwidth();
+}
+
+/** §17.4's measured bandwidth signal, as the monitor last derived it. */
+export function currentBandwidth(): BandwidthView {
+  return bandwidth;
+}
+
+export function subscribeBandwidth(l: (b: BandwidthView) => void): () => void {
+  bandwidthListeners.add(l);
+  return () => { bandwidthListeners.delete(l); };
+}
+
+/** The measured bandwidth signal, for a hook. */
+export function useBandwidthSignal(): BandwidthView {
+  const [b, setB] = useState<BandwidthView>(currentBandwidth());
+  useEffect(() => {
+    const unsub = subscribeBandwidth(setB);
+    setB(currentBandwidth());
+    return unsub;
+  }, []);
+  return b;
 }
 
 export function currentConnection(): ConnectionView {
@@ -61,6 +105,9 @@ export function _resetConnectionMonitor(): void {
   everOpen = false;
   view = { state: 'ONLINE', cause: null };
   listeners.clear();
+  durations = [];
+  bandwidth = { signal: 'normal', cause: null };
+  bandwidthListeners.clear();
 }
 
 /**

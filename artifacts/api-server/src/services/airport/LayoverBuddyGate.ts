@@ -45,7 +45,7 @@
  * flake. L254 therefore stays `W` with the tight-window arm closed.
  */
 import type { AirportProfile } from "./AirportProfileService.js";
-import type { LayoverSession } from "./LayoverSessionService.js"; import type { EntryEligibility } from "./layoverEntryGate.js";
+import type { LayoverSession } from "./LayoverSessionService.js"; import type { EntryEligibility } from "./layoverEntryGate.js"; import { landsideStatusOf, type LandsideStatus } from "./LayoverConstraints.js";
 import {
   certifySessionFeasibility,
   type LayoverFeasibilityRecord,
@@ -82,7 +82,7 @@ export interface BuddySafetyGate {
   usableMinutes: number;
   returnState: LayoverFeasibilityRecord["envelope"]["returnState"];
   /** The rules that produced the three fields above. */
-  engineVersion: string;
+  engineVersion: string; /** The record's three-valued landside gate (`landsideStatusOf`). `passed` can be true under `caution`: not forbidden is not confirmed. */ landside: LandsideStatus;
 }
 
 /** What a high-risk layover REQUIRES of a buddy profile. */
@@ -99,11 +99,43 @@ export interface LayoverBuddyDecision {
 }
 
 /**
- * The gate, in the order §9.1 demands: safety first, everything else after.
+ * THE GATE ITSELF, as a function of the certified record ALONE.
  *
  * `passed` is false when the traveller cannot leave (`no`), has said they will
  * not (`stay_airside`), or is already on the escalation ladder — a person at
  * RETURN_SOON or beyond is heading for a gate, not for a meeting.
+ *
+ * ── WHY IT IS SEPARATE FROM `layoverBuddyDecision` ──────────────────────────
+ * `layoverBuddyDecision` takes an airport and a session because it may have to
+ * CERTIFY. §14's crew surface already holds a certified record for every member
+ * of a crew (`crewSolverMembers` → `certifyCrewMemberRecord`), and the crew
+ * meet-gate needs the same predicate over the record it already has.
+ *
+ * Re-deriving the predicate there would make a SECOND answer to "may this
+ * traveller be offered a landside meeting?", which is the exact defect L273
+ * recorded on this surface. Re-certifying there would add a second derivation
+ * of the same session's record in one request, which `layoverFeasibilityRecord`
+ * pins against. So the predicate is named once and read from two places.
+ */
+export function buddySafetyGateFor(record: LayoverFeasibilityRecord): BuddySafetyGate {
+  return {
+    passed:
+      // A DENY-LIST, and `entry_unverified` is deliberately not on it: it means
+      // the border could not be checked, not that the traveller is refused, and
+      // the advice they hold says so in words. A verdict added later passes by
+      // default here — check this list when the union grows.
+      record.verdict !== "no" && landsideStatusOf(record) !== "closed" && // the one gate read every surface shares — an unreadable or undeclared constraint closes it
+      record.verdict !== "stay_airside" &&
+      record.envelope.returnState === "NORMAL",
+    verdict: record.verdict,
+    usableMinutes: record.envelope.usableMinutes,
+    returnState: record.envelope.returnState,
+    engineVersion: record.engineVersion, landside: landsideStatusOf(record),
+  };
+}
+
+/**
+ * The gate, in the order §9.1 demands: safety first, everything else after.
  *
  * ONE CERTIFICATION. The record is computed once here and every field below is
  * read off it, so the buddy list and the countdown on the same screen cannot
@@ -115,20 +147,7 @@ export function layoverBuddyDecision(
   nowMs: number = Date.now(), /** The session owner's corridor (`resolveLayoverEntry`), as every certification takes it — census-discovery §65. Omitted = unresolved. */ entry?: EntryEligibility | null, /** census-discovery §81: the certified snapshot's record, when the caller read one; the gate then certifies nothing itself. */ certified?: LayoverFeasibilityRecord | null,
 ): LayoverBuddyDecision {
   const record = certified ?? certifySessionFeasibility(airport, session, { nowMs, entry });
-  const safetyGate: BuddySafetyGate = {
-    passed:
-      // A DENY-LIST, and `entry_unverified` is deliberately not on it: it means
-      // the border could not be checked, not that the traveller is refused, and
-      // the advice they hold says so in words. A verdict added later passes by
-      // default here — check this list when the union grows.
-      record.verdict !== "no" &&
-      record.verdict !== "stay_airside" &&
-      record.envelope.returnState === "NORMAL",
-    verdict: record.verdict,
-    usableMinutes: record.envelope.usableMinutes,
-    returnState: record.envelope.returnState,
-    engineVersion: record.engineVersion,
-  };
+  const safetyGate: BuddySafetyGate = buddySafetyGateFor(record);
   // `tight` is the ENGINE's own word for a window with no slack (45-89 usable
   // minutes). Meeting a stranger in an unfamiliar city on a window that tight
   // is the marketplace interaction L254 calls high-risk, and using the engine's

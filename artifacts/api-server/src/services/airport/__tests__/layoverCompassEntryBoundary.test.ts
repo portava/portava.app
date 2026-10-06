@@ -123,9 +123,9 @@ describe("L101/L3 — a model may not talk the certified risk band upward", () =
 });
 
 describe("the violation vocabulary is declared, not spelled at the call sites", () => {
-  it("names all four kinds and nothing else", () => {
+  it("names all five kinds and nothing else", () => {
     assert.deepEqual([...COMPASS_BOUNDARY_KINDS].sort(), [
-      "entry_status_asserted",
+      "entry_status_asserted", "operational_state_asserted",
       "return_deadline_widened",
       "risk_band_widened",
       "usable_time_widened",
