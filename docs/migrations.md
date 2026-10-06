@@ -3874,3 +3874,29 @@ In code, each Trips read is also capped (12 gate asks, 8 s of routed waiting; `R
 
 **Rollback:** `db/rollback/2026-10-05-3973-trip-routes-api-user-trip-shares-rollback.sql` — refuses while
 `trip_routes_api_enabled` is TRUE; drops the function, both tables and the ledger row.
+
+## 2026-10-05 — `3974_trip_kernel_admin_restore_participant.sql`, written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3974_trip_kernel_admin_restore_participant.sql` | **not applied** | **not applied** |
+
+**What it is.** census-trips §83: the Trip Kernel command `ADMIN_RESTORE_PARTICIPANT` (admin family:
+actor_role `admin` and `profiles.role = 'admin'`), added to `trip_kernel_execute` by transform (2764 / 2798's
+method: anchors counted, one branch and one dispatch entry added and checked, postconditions re-read the
+installed function). Base: the post-2798 kernel; refuses otherwise. It re-checks lane B's restoration plan
+against the kernel's own ledger — the removal event is a `trip.participant_removed` of this person on this
+trip recording this role, and the latest one; the role is member / co_host / viewer / invited; `access` is
+`retained_record_only` for a completed / archived / cancelled trip and `membership` for planning / active —
+then inserts the `trip_members` row in that role with `permissions = {access, restored_by_appeal}`, stops any
+active location session for the person on the trip, and emits `trip.participant_added` with
+`via = 'admin_restore'` (an existing, folded event type). The crew cap trigger still applies
+(`TRIP_PARTICIPANT_CAPACITY_REACHED`). The caller is `domain/trips/commands/adminRestoreTripParticipant.ts`.
+
+**Nothing waits on the press, and nothing is restored without it.** Lane B's executor refuses
+(`ADMIN_RESTORE_COMMAND_ABSENT`) until it calls `adminRestoreTripParticipant`; with this file absent the kernel
+answers `TRIP_COMMAND_UNKNOWN_TYPE`. Not executed anywhere (no Postgres on the authoring machine; not run on
+`db/harness/run.sh`).
+
+**Rollback:** `db/rollback/2026-10-05-3974-trip-kernel-admin-restore-participant-rollback.sql` — the inverse
+transform; restored memberships stay.
