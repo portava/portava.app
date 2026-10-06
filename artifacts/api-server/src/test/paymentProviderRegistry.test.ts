@@ -185,8 +185,8 @@ async function attestedCharge(e: NodeJS.ProcessEnv, spec: Partial<Parameters<typ
 }
 
 describe("PR2 — the registry resolves only `none` and `fake`", () => {
-  it("no adapter is registered", () => {
-    assert.deepEqual(registeredPaymentAdapters(), []);
+  it("exactly one adapter is registered — stripe, UNCERTIFIED (lane B 2026-10-05; it has never spoken to Stripe)", () => {
+    assert.deepEqual(registeredPaymentAdapters(), ["stripe"]);
   });
 
   it("absent, empty and `none` resolve to the no-money provider, whose every operation is payments_disabled", async () => {
@@ -219,7 +219,7 @@ describe("PR2 — the registry resolves only `none` and `fake`", () => {
   });
 
   it("every other name is refused — and a live or unrecognised key is the first thing said", () => {
-    for (const name of ["stripe", "paypal", "adyen", "wise", "mock", "test"]) {
+    const stripe = resolvePaymentProvider(env({ ...LOCAL_ENV, PAYMENT_PROVIDER: "stripe", STRIPE_SECRET_KEY: TEST_KEY })); assert.deepEqual([stripe.ok, !stripe.ok && stripe.reason, stripe.kind], [false, "provider_not_certified", "adapter"], "stripe is registered but uncertified"); for (const name of ["paypal", "adyen", "wise", "mock", "test"]) {
       const r = resolvePaymentProvider(env({ ...LOCAL_ENV, PAYMENT_PROVIDER: name, STRIPE_SECRET_KEY: TEST_KEY }));
       assert.deepEqual([r.ok, !r.ok && r.reason, r.kind], [false, "provider_not_registered", "unregistered"], name);
     }
@@ -228,7 +228,7 @@ describe("PR2 — the registry resolves only `none` and `fake`", () => {
     const unknown = resolvePaymentProvider(env({ PAYMENT_PROVIDER: "stripe", STRIPE_SECRET_KEY: "pk_test_x" }));
     assert.deepEqual([unknown.ok, !unknown.ok && unknown.reason], [false, "unknown_key_prefix"]);
     const allowed = resolvePaymentProvider(env({ PAYMENT_PROVIDER: "stripe", STRIPE_SECRET_KEY: LIVE_KEY, PAYMENTS_ALLOW_LIVE: "true" }));
-    assert.deepEqual([allowed.ok, !allowed.ok && allowed.reason], [false, "provider_not_registered"], "allowing live does not conjure an adapter");
+    assert.deepEqual([allowed.ok, !allowed.ok && allowed.reason], [false, "provider_not_certified"], "allowing live does not certify an adapter");
     assert.ok(!JSON.stringify(live).includes(LIVE_KEY), "a resolution must not carry the key");
   });
 
@@ -432,7 +432,7 @@ describe("PR5 — the readiness report", () => {
 
   it("a refused key is reported first, as mode and booleans — never the key", () => {
     const live = paymentsReadiness(env({ PAYMENT_PROVIDER: "stripe", STRIPE_SECRET_KEY: "sk_live_SECRETVALUE123", PAYMENTS_ENABLED_MARKETS: "US" }));
-    assert.deepEqual([live.operational, live.provider, live.providerKind, live.keyMode, live.keyPresent, live.keyRefused, live.liveAllowed], [false, "stripe", "unregistered", "live", true, true, false]);
+    assert.deepEqual([live.operational, live.provider, live.providerKind, live.keyMode, live.keyPresent, live.keyRefused, live.liveAllowed], [false, "stripe", "adapter", "live", true, true, false]);
     assert.match(live.reason, /^not operational: live key not allowed/);
     assert.ok(!JSON.stringify(live).includes("SECRETVALUE"));
 
@@ -443,7 +443,7 @@ describe("PR5 — the readiness report", () => {
 
     const test = paymentsReadiness(env({ PAYMENT_PROVIDER: "stripe", STRIPE_SECRET_KEY: TEST_KEY }));
     assert.deepEqual([test.operational, test.keyMode, test.keyRefused], [false, "test", false]);
-    assert.match(test.reason, /provider_not_registered/, "a test key does not make an unwritten adapter operational");
+    assert.match(test.reason, /provider_not_certified/, "a test key does not make an uncertified adapter operational");
 
     for (const [allow, expected] of [["true", true], ["TRUE", false], ["1", false], [undefined, false]] as const) {
       assert.equal(paymentsReadiness(env({ PAYMENTS_ALLOW_LIVE: allow })).liveAllowed, expected, String(allow));
