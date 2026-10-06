@@ -127,7 +127,7 @@ describe("PA4 — the four safety routes succeed under an unreadable restriction
     app.use(express.json());
     app.use((req: any, _res, next) => { req.log = { error() {}, warn() {}, info() {}, debug() {} }; next(); });
     app.use("/api", blocksRouter, mutesRouter, restrictRouter, reportsRouter);
-    await new Promise<void>((r) => { server = app.listen(0, "127.0.0.1", r); });
+    await new Promise<void>((r) => { server = app.listen(0, "127.0.0.1", () => r()); });
     base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   });
   after(() => new Promise<void>((r) => server.close(() => r())));

@@ -58,7 +58,7 @@ function authClient() {
 let keySeq = 0;
 /** Every call carries a fresh Idempotency-Key unless `key` is given (or `null` to send none). */
 async function call(method: string, path: string, token: string | null, body?: unknown, key?: string | null): Promise<{ status: number; body: any }> {
-  const idem = key === null ? {} : { "idempotency-key": key ?? `test-key-${++keySeq}-${Date.now()}` };
+  const idem: Record<string, string> = key === null ? {} : { "idempotency-key": key ?? `test-key-${++keySeq}-${Date.now()}` };
   const res = await fetch(`${base}${path}`, {
     method,
     headers: { "content-type": "application/json", ...idem, ...(token ? { authorization: `Bearer ${token}` } : {}) },
