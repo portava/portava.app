@@ -9857,7 +9857,7 @@ interface, set daily quotas and a hard budget, and fall back gracefully when the
 It is `artifacts/api-server/src/domain/trips/contracts/GatedRoutedTravelTimeProvider.ts:56#export function createGatedRoutedTravelTimeProvider(`:
 a cached routed answer, else one unit from the spend gate, else the straight-line bound naming why
 (`routes-api-fallback:<reason>`). The gate's numbers come from deployment configuration only —
-`artifacts/api-server/src/domain/trips/contracts/RoutesSpendGate.ts:73#export function readRoutesSpendConfig(` —
+`artifacts/api-server/src/domain/trips/contracts/RoutesSpendGate.ts:86#export function readRoutesSpendConfig(` —
 and the allowance is shared across instances and taken under a row lock by
 `artifacts/api-server/src/migrations/3971_trip_routes_api_spend_gate.sql:70#CREATE OR REPLACE FUNCTION public.routes_api_try_spend(`.
 A routed answer is marked per result, so the departure band is never stacked on a live route and never
@@ -9943,11 +9943,11 @@ WRITTEN and applied nowhere; no flag was touched.*
 
 ### §81.2 The rule, and the one loader every reader calls
 
-The rule is pure: `artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:157#export function canSeePlanItemLocation(` —
+The rule is pure: `artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:160#export function canSeePlanItemLocation(` —
 a non-private item is everyone's; the creator sees their own; anyone else only through a grant whose owner
 is the item's creator, never on a removed item. A withheld item is served as its time window under the
 label "Private plan", with every locating field nulled
-(`artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:167#export function redactWithheldPlanItem<`).
+(`artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:170#export function redactWithheldPlanItem<`).
 **LEAD'S READING, for the owner to confirm:** OD-TRIP-3 says "access", not which fields; the withheld set
 is coordinates, address, place id, location name, title, notes and description.
 
@@ -10116,3 +10116,45 @@ retryable 503 that never says "restricted". Eleven doors, each mutation-proven b
 `artifacts/api-server/src/test/trustRestrictionDoors.test.ts`.
 
 - NOT-GRADED: artifacts/api-server/src/test/trustRestrictionDoors.test.ts — §84's door suite (Trips and Discovery); the gates rest on the two lib files cited.
+
+## §85 Lane C wave 4 (2026-10-06): the verifier's R1–R5 on `87df318f4`, lead rulings D-24a / D-65, and the owner's Routes ceiling — NO ROW MOVES
+
+Every item below is built and tested on this branch; no row is re-graded here, because each row these touch
+(TR256, TR1/TR435, TR128/TR267/TR341/TR412, §84's doors) also waits on an unapplied migration (3970–3976) or
+an OFF flag. The lead re-verifies before any row moves.
+
+- **R1 — `trip_events` was a direct door to private places.** 3976 withdraws the crew policy
+  (`artifacts/api-server/src/migrations/3976_trip_events_private_place_minimised.sql:245#DROP POLICY IF EXISTS trip_events_crew_select ON public.trip_events;`),
+  minimises every plan-family event whose item is not known public at write
+  (`artifacts/api-server/src/migrations/3976_trip_events_private_place_minimised.sql:164#CREATE TRIGGER trg_trip_events_minimise`),
+  and makes a public→private flip take the item's history and snapshot title with it
+  (`artifacts/api-server/src/migrations/3976_trip_events_private_place_minimised.sql:188#CREATE OR REPLACE FUNCTION public.trip_plan_item_redact_history()`).
+  3974's restore event loses the admin reason and the appeal id. Proven by `tripEventsPrivatePlace.db.test.ts`
+  E1–E6 on CI's local-db job only (no PostgreSQL here; it skips locally) and by 3976's postconditions.
+- **R2 — a cached daily brief kept a place after a public→private flip.** The cache digest now covers which items
+  the viewer may not see (`artifacts/api-server/src/routes/dailyBrief.ts:74#const withheld =`), and a digest that
+  cannot be computed never matches (`artifacts/api-server/src/routes/dailyBrief.ts:85#if (current === UNREAD_ACCESS_KEY) return false;`).
+  `tripPrivateAnchorReaders.test.ts` daily-brief 8 and 9, each mutation-proven.
+- **R4 — `POST /trips/:tripId/plan/reorder` had no Trust gate.** It now has §84's
+  (`artifacts/api-server/src/routes/trips.ts:2481#if (!reorderAuth.allowed)`); door `plan-reorder-batch`.
+- **R5 — "retained record only" restricted nothing.** The one solo/group reader now reads the actor's restored access
+  (`artifacts/api-server/src/lib/tripTrustGate.ts:103#export async function readTripShape(`) and every Trips door and
+  lane L's Compass gate refuse a retained-record-only member with `trip_record_read_only`
+  (`artifacts/api-server/src/lib/tripTrustGate.ts:154#if (shape.actorAccess === "retained_record_only") return`);
+  `POST /trips/:id/commands` refuses every non-safety command for them
+  (`artifacts/api-server/src/lib/tripTrustGate.ts:195#export async function refuseIfRetainedRecordOnly(`).
+  NOT covered: doors outside Trips a member can use (live location share, the trip's Telegraph thread, meetups).
+- **D-24a — ONE solo/group test.** `readTripShape` / `decideTripActionRestriction`
+  (`artifacts/api-server/src/lib/tripTrustGate.ts:146#export async function decideTripActionRestriction(`) is what every
+  Trips door calls and what lane L's Compass gate is to call. Four more doors call it: `POST /events/:id/add-to-trip`,
+  `POST /airport/sessions/:id/plan`, the Telegraph suggestion add-to-plan, and (messaging) `PATCH /hidden-gems/:id`.
+- **D-65 — owner-only covers the name and every derived text.** The withheld fields gain the town, country,
+  neighbourhood and venue name (`artifacts/api-server/src/domain/trips/policies/privateAnchorAccess.ts:135#name and any text derived from them — the town and venue name too.`);
+  the reader suite's secret includes the town and the description on all twenty reader paths (121/121). Defence in
+  depth: no reader emits a plan item's city today, so removing those four names fails no test.
+- **D-7 — the owner's Routes ceiling.** A configuration above $10/day, 500/day, 5 per person or 3 per trip reads as
+  OFF (`artifacts/api-server/src/domain/trips/contracts/RoutesSpendGate.ts:78#export const OWNER_ROUTES_CEILING = Object.freeze({`).
+  **Every Trips Routes call goes through the gate; the Layover corridor does NOT:**
+  `lib/providers/googleRoutesCorridorProvider.ts` calls the same API behind its own env flag with no spend ceiling
+  (the lead's file; recorded, not edited).
+- NOT-GRADED: artifacts/api-server/src/lib/providers/googleRoutesCorridorProvider.ts — Layover's corridor adapter (the lead's); cited in §85 only to record that the Trips spend gate does not bound it.
