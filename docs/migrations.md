@@ -4089,6 +4089,26 @@ lengthens no row). **Proof:** `src/test/db/mapTelemetryRetention30Days.db.test.t
 locally). Collection itself stays off (`map_telemetry_enabled` FALSE). Not covered here, recorded for
 the Wall: `wall_telemetry_events` (2308) also defaults to 90 days and no sweep deletes it at all.
 
+## 2026-10-06 — `3702_wall_telemetry_retention_30_days.sql`, written and NOT applied anywhere (lane L)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3702_wall_telemetry_retention_30_days.sql` | **not applied** | **not applied** |
+
+**What it is.** The owner's Q11(a) ruling (raw behavioural rows kept 30 days, then deleted) for
+`wall_telemetry_events` (2308: per-viewer, `expires_at` DEFAULT 90 days, and nothing ever deleted a row).
+3702 sets the default to `now() + 30 days` and shortens any row stamped later to `occurred_at + 30 days`
+(never lengthens one). The delete is code, not SQL: `lib/wallTelemetryRetention.ts`
+`runWallTelemetryRetentionSweep`, registered FLAGLESS on the intel retention scheduler (service_role
+already holds DELETE; `wall_telemetry_events_expiry_idx` serves the predicate). **No flag**, as 3701 has
+none: a retention control shipped off is a promise nothing keeps; collection stays behind `wall_enabled`.
+**Pre/postconditions** in the file. **Rollback:**
+`db/rollback/2026-10-06-3702-wall-telemetry-retention-30-days-rollback.sql` (restores the 90-day default;
+lengthens no row; does not stop the sweep). **Proof:** `src/test/db/wallTelemetryRetention30Days.db.test.ts`
+(live-DB tier; not run locally) and the sweep's unit tests in `intelRetentionScheduler.test.ts`.
+Until 3702 is applied the sweep still deletes on the 90-day stamps; it fails as `error` (never "nothing
+expired") where 2308 is absent.
+
 ## Apply-order overrides
 
 **What.** `artifacts/api-server/src/migrations/ORDER_OVERRIDES.json` is the single declared list of

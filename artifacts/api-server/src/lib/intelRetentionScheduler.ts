@@ -20,6 +20,7 @@ import { logger } from "./logger.js";
 import { isFlagEnabled } from "./featureFlags.js";
 import { INTEL_IDENTIFIABLE_RETENTION_SECONDS } from "./locationPurposes.js";
 import { runInputOutcomeRetentionSweep } from "./inputAssistance/outcomeLearning.js";
+import { runWallTelemetryRetentionSweep } from "./wallTelemetryRetention.js";
 
 const STARTUP_DELAY_MS = 7 * 60 * 1000;
 
@@ -586,6 +587,8 @@ export const RETENTION_PASSES: readonly RetentionPass[] = [
   // OD-INPUT-2: per-user outcome counters, deleted 30 days after their day (3780). Flagless — see the sweep.
   { name: "input_outcome_retention", flag: null, run: runInputOutcomeRetentionSweep },
   { name: "map_telemetry_retention", flag: "map_telemetry_retention_enabled", run: runMapTelemetryRetentionSweep },
+  // Q11(a): Wall telemetry rows deleted 30 days after the event (3702). Flagless — see the sweep.
+  { name: "wall_telemetry_retention", flag: null, run: runWallTelemetryRetentionSweep },
   { name: "presence_cleanup", flag: "presence_cleanup_enabled", run: runPresenceCleanup },
   { name: "sensing_credential_cleanup", flag: null, run: runSensingCredentialCleanup },
   { name: "sensing_session_cleanup", flag: null, run: runSensingSessionCleanup },
