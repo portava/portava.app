@@ -28,6 +28,7 @@ import {
   sanitizeToolResult,
   COMPASS_TOOL_DEFINITIONS,
 } from "../compass/CompassTools.js";
+import { RESTRICTION_SENTENCES } from "../lib/discoveryTrustGate.js";
 import type { CompassProfile } from "../compass/types.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -887,10 +888,12 @@ describe("H. Proposal confirmation flow", () => {
   });
 });
 
-// ── H2. census-trust TRV2-08 / OD-TRUST-5 — a hosting restriction reaches the
-// Compass plan-proposal confirm for the HOST of a GROUP trip (narrowed
-// 2026-10-06: compass/CompassRestrictionGate.ts). compassRestrictionGate.test.ts
-// pins the mapping; these cases pin the wire.
+// ── H2. census-trust TRV2-08 / OD-TRUST-5 / lead rulings D-24, D-24a — a
+// hosting restriction reaches the Compass plan-proposal confirm on a GROUP trip
+// (any accepted member: it changes the group trip's shared plan), never on a
+// SOLO trip. compass/CompassRestrictionGate.ts asks lib/tripTrustGate.ts, the
+// Trips doors' own decision; compassRestrictionGate.test.ts pins the mapping,
+// these cases pin the wire.
 describe("H2. Trust restrictions reach the plan-proposal confirm (TRV2-08)", () => {
   const BOB_MEMBER = { trip_id: TRIP_ID, user_id: BOB_ID, role: "member", status: "accepted" };
   function seededDb(proposalId: string, restrictions: any[] = [], opts: { group?: boolean; aliceOwns?: boolean } = {}): Db {
@@ -938,7 +941,7 @@ describe("H2. Trust restrictions reach the plan-proposal confirm (TRV2-08)", () 
     assert.equal(refused.status, 403);
     assert.equal(refused.body.error, "trust_restriction");
     assert.deepEqual(refused.body.restrictionTypes, ["hosting"]);
-    assert.match(String(refused.body.message), /hosting group trips/);
+    assert.equal(String(refused.body.message), RESTRICTION_SENTENCES.hosting, "the restriction's own sentence, nothing wider");
     assert.deepEqual(client._getInserts()["trip_plan_items"] ?? [], [], "a restricted confirm wrote a plan item");
 
     db.trust_restrictions[0].lifted_at = "2026-10-05T00:00:00Z";
@@ -947,10 +950,11 @@ describe("H2. Trust restrictions reach the plan-proposal confirm (TRV2-08)", () 
     assert.equal(client._getInserts()["trip_plan_items"].length, 1);
   });
 
-  it("a hosting restriction does not stop a MEMBER who does not host, nor the host of a solo trip", async () => {
+  it("a hosting restriction stops a MEMBER of a group trip too (it changes the group's shared plan, D-24), with no write; it does NOT stop a solo trip (D-24a)", async () => {
     const asMember = makeClient(seededDb("92345678-1234-1234-1234-123456789abc", [{ ...HOSTING }], { aliceOwns: false }));
     _setTestClient(asMember, true);
-    assert.equal((await post(`/api/compass/proposals/92345678-1234-1234-1234-123456789abc/confirm`, { conversationId: CONV_ID })).status, 201);
+    assert.equal((await post(`/api/compass/proposals/92345678-1234-1234-1234-123456789abc/confirm`, { conversationId: CONV_ID })).status, 403);
+    assert.deepEqual(asMember._getInserts()["trip_plan_items"] ?? [], [], "a restricted member's confirm wrote a plan item");
     const solo = makeClient(seededDb("93345678-1234-1234-1234-123456789abc", [{ ...HOSTING }], { group: false }));
     _setTestClient(solo, true);
     assert.equal((await post(`/api/compass/proposals/93345678-1234-1234-1234-123456789abc/confirm`, { conversationId: CONV_ID })).status, 201);

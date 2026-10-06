@@ -1549,13 +1549,23 @@ export async function toolReplanDay(sc: SupabaseClient, userId: string, args: Re
   const strs = (v: unknown) => Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
   const r = await computeReplan(sc, t.id, userId, { day: typeof args.day === "string" ? args.day : null, constraints: { lockedPlanIds: strs(args.lockedPlanIds), dropPlanIds: strs(args.dropPlanIds), maxMoves: Number.isInteger(args.maxMoves) ? (args.maxMoves as number) : undefined, preferIndoor: args.preferIndoor === true } });
   if (!r.ok) return { replan: null, info: `Replan unavailable (${r.reason}): ${r.message}` };
+  // A replan writes nothing, so no restriction refuses it. But its reply must
+  // not point the model at create_proposal when the same shared decision would
+  // refuse that (TRV2-08; lead ruling D-24 — one rule for every door).
+  let proposalsInfo: string | null = null;
+  if (r.diff.proposals.length > 0) {
+    const gate = await checkCompassActionRestriction(sc, userId, t.id, "create_proposal");
+    proposalsInfo = gate.allowed
+      ? "The shared mutations are proposals: use create_proposal for each one the user wants to put to the crew."
+      : `The shared mutations would be proposals to the crew, and none can be made for this person now. ${compassRestrictionToolInfo(gate)}`;
+  }
   return {
     replan: {
       day: r.day, summary: wrapUgc(r.diff.summary), counts: r.diff.counts, requiresUserConfirmation: r.diff.requiresUserConfirmation,
       entries: r.diff.entries.map((e) => ({ op: e.op, planId: e.planId, title: e.title ? wrapUgc(e.title) : null, from: e.from, to: e.to, reason: e.reason, detail: wrapUgc(e.detail), sharedMutation: e.sharedMutation, experienceId: e.experienceId, bookingSideEffects: e.impact?.bookingSideEffects ?? null, governance: e.impact?.governance ?? null })),
       proposals: r.diff.proposals.length,
     },
-    info: r.diff.proposals.length > 0 ? "The shared mutations are proposals: use create_proposal for each one the user wants to put to the crew." : null,
+    info: proposalsInfo,
   };
 }
 
@@ -1687,6 +1697,10 @@ async function toolAddToTrip(
   const permitted = await canEditPlan(sc, tripId, userId);
   if (permitted === null) return { error: "Trip not found." };
   if (!permitted) return { error: "The user does not have permission to edit this trip's plan." };
+  // TRV2-08 / lead ruling D-24: on a GROUP trip a hosting restriction stops
+  // adding to the shared plan — the same decision the confirm door makes.
+  const restriction = await checkCompassActionRestriction(sc, userId, tripId, "add_to_trip");
+  if (!restriction.allowed) return { error: compassRestrictionToolInfo(restriction) };
 
   // BOUND, both of them. supabase-js RESOLVES on a database failure, so a
   // discarded `error` here is byte-identical to "no such row" — and the two
