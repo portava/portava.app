@@ -73,6 +73,7 @@ const A = "aaaaaaaa-0000-4000-8000-000000000001"; // the sender in every case
 const B = "bbbbbbbb-0000-4000-8000-000000000002";
 const C = "cccccccc-0000-4000-8000-000000000003";
 const D = "dddddddd-0000-4000-8000-000000000004"; // a highlight owner
+const E = "eeeeeeee-0000-4000-8000-000000000005"; // accepted A's message request (re-verification 3)
 
 const T = (n: string) => `00000000-0000-4000-8000-0000000000${n}`;
 const DM_NEW = T("a1"); //     direct, A+B; B has never written — a send here INITIATES contact
@@ -84,6 +85,7 @@ const CIRCLE = T("a6"); //     circle, A+B
 const DM_E2EE = T("a7"); //    direct, end-to-end encrypted, B has written
 const DM_FOREIGN = T("a8"); // direct, B+C — A is not a member
 const DM_D = T("b1"); //       direct, A+D (section 6)
+const DM_ACCEPTED = T("b2"); // direct, A+E; E ACCEPTED A's message request and has not written yet
 
 const M_REPLY = "11111111-0000-4000-8000-000000000001";
 const M_E2EE = "11111111-0000-4000-8000-000000000002";
@@ -112,7 +114,7 @@ function seed(over: Partial<Record<string, any[]>> = {}): Record<string, any[]> 
     // messaging stop has no row, which reads as "not engaged".
     feature_flags: [{ flag: "telegraph_message_kernel_enabled", enabled: true }],
     blocks: [],
-    profiles: [A, B, C, D].map((id, i) => ({
+    profiles: [A, B, C, D, E].map((id, i) => ({
       id, handle: `u${i}`, name: `U${i}`, preferred_language: "en", avatar_url: null, show_name_publicly: true,
     })),
     reports: [],
@@ -125,11 +127,13 @@ function seed(over: Partial<Record<string, any[]>> = {}): Record<string, any[]> 
     trip_members: [],
     trust_profiles: [],
     trust_restrictions: [],
-    message_requests: [],
+    // E accepted A's request: the accept route inserts only the REQUESTER's
+    // preview (routes/messaging.ts), so E has engaged without writing.
+    message_requests: [{ id: "66666666-0000-4000-8000-000000000001", sender_id: A, recipient_id: E, status: "accepted", preview_text: null }],
     message_threads: [
       thread(DM_NEW, "direct"), thread(DM_REPLY, "direct"), thread(DM_BOOKING, "direct"),
       thread(TRIP, "trip"), thread(TRIP_PAIR, "trip"), thread(CIRCLE, "circle"),
-      thread(DM_E2EE, "direct", true), thread(DM_FOREIGN, "direct"),
+      thread(DM_E2EE, "direct", true), thread(DM_FOREIGN, "direct"), thread(DM_ACCEPTED, "direct"),
     ],
     message_thread_members: [
       member(DM_NEW, A), member(DM_NEW, B),
@@ -140,6 +144,7 @@ function seed(over: Partial<Record<string, any[]>> = {}): Record<string, any[]> 
       member(CIRCLE, A), member(CIRCLE, B),
       member(DM_E2EE, A), member(DM_E2EE, B),
       member(DM_FOREIGN, B), member(DM_FOREIGN, C),
+      member(DM_ACCEPTED, A), member(DM_ACCEPTED, E),
     ],
     messages: [message(M_REPLY, DM_REPLY, B), message(M_E2EE, DM_E2EE, B), message(M_TRIP, TRIP, B)],
     message_translations: [],
@@ -452,6 +457,7 @@ describe("3. a restriction refuses no more than the ruling asks, at every door",
   const admitted: Array<[string, World, string]> = [
     ["a reply to someone who has written", "messaging", DM_REPLY],
     ["a thread a booking owns", "messaging", DM_BOOKING],
+    ["a DM opened by the recipient ACCEPTING the sender's request (re-verification 3)", "messaging", DM_ACCEPTED],
     ["a trip thread", "messaging", TRIP],
     ["a two-person trip thread (the roster is the trip's, not a DM)", "messaging", TRIP_PAIR],
     ["a circle thread", "messaging", CIRCLE],
@@ -499,6 +505,31 @@ describe("3. a restriction refuses no more than the ruling asks, at every door",
     const blocked = await http(`/telegraph/commands`, { type: "CREATE_COORDINATION_SESSION", conversationId: DM_REPLY, idempotency_key: "cmd-blocked", params: { title: "x" } });
     assert.equal(blocked.reason, "TELEGRAPH_AUTH_NOT_MEMBER", "the block stays indistinguishable from not-a-member");
   });
+});
+
+describe("3c. an ACCEPTED message request is the recipient engaging (re-verification 3)", () => {
+  const req = (status: string, from = A, to = E) =>
+    ({ message_requests: [{ id: "66666666-0000-4000-8000-000000000001", sender_id: from, recipient_id: to, status, preview_text: null }] });
+  for (const door of DOORS) {
+    it(`${door.name}: a request that was NOT accepted (pending, declined, cancelled) is still starting contact`, async () => {
+      for (const status of ["pending", "declined", "cancelled"]) {
+        const c = use("messaging", req(status));
+        const got = await attempt(door, c, DM_ACCEPTED);
+        assertRefused(`${door.name} — ${status}`, got, "forbidden");
+        assert.equal(got.out.message, RESTRICTED_SEND_MESSAGE);
+      }
+    });
+    it(`${door.name}: the OTHER person's request, accepted by the sender, counts too`, async () => {
+      const c = use("messaging", req("accepted", E, A));
+      assertAdmitted(door.name, await attempt(door, c, DM_ACCEPTED));
+    });
+    it(`${door.name}: an unreadable message_requests read refuses retryably, never as restricted`, async () => {
+      const c = use("messaging", {}, { errors: { message_requests: { message: "requests: timeout", ops: ["select"] } } });
+      const got = await attempt(door, c, DM_ACCEPTED);
+      assertRefused(door.name, got, "retryable");
+      assert.notEqual(got.out.message, RESTRICTED_SEND_MESSAGE);
+    });
+  }
 });
 
 describe("3b. the inline doors' own reads for the restriction gate fail CLOSED (re-verification 2)", () => {
@@ -599,7 +630,7 @@ describe("4. safety sends and safety actions are never refused by a restriction"
  * ════════════════════════════════════════════════════════════════════════ */
 
 describe("5. canSendMessage (the projection) and the send gates cannot disagree", () => {
-  const THREADS = [DM_NEW, DM_REPLY, DM_BOOKING, TRIP, TRIP_PAIR, CIRCLE];
+  const THREADS = [DM_NEW, DM_REPLY, DM_BOOKING, TRIP, TRIP_PAIR, CIRCLE, DM_ACCEPTED];
   const WORLDS: Array<[World, Partial<Record<string, any[]>>, string]> = [
     ...ALL_WORLDS.map((w) => [w, {}, w] as [World, Partial<Record<string, any[]>>, string]),
     ["none", { blocks: [{ blocker_id: B, blocked_id: A }] }, "blocked"],

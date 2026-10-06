@@ -25,8 +25,13 @@
  *   messaging           "cannot initiate new conversations"
  *                       → refuses a send that would INITIATE contact: a message
  *                         in a person-to-person (`direct`) thread the other
- *                         person has never written in, and which no booking
- *                         owns (a booking is contact both parties entered into).
+ *                         person has never written in, has not engaged with by
+ *                         ACCEPTING a message request between the two (either
+ *                         direction — the accept route writes only the
+ *                         requester's preview, so the recipient may not have
+ *                         written yet; census-telegraph §45d), and which no
+ *                         booking owns (a booking is contact both parties
+ *                         entered into).
  *                         Replying to someone who has written
  *                         to you, and writing in a trip or circle thread whose
  *                         roster the source domain decided, is continuing a
@@ -138,6 +143,9 @@ export function decideRestrictedSend(facts: RestrictionSendFacts, opts: { safety
   return { allowed: true, reason: null };
 }
 
+/** A participant id that is safe to place inside a PostgREST `or()` filter. */
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** The thread types whose roster a source domain decides: writing there never initiates contact. */
 const SOURCE_DOMAIN_ROSTERS: readonly string[] = ["trip", "circle"];
 
@@ -148,7 +156,9 @@ const SOURCE_DOMAIN_ROSTERS: readonly string[] = ["trip", "circle"];
  * active member — reads nothing either, because no restriction type refuses it.
  * Otherwise: the restriction state (unless the caller already holds it), and
  * only when a contact-scoped restriction is active, whether the other person
- * has ever written in this thread or owns a booking that this thread belongs to.
+ * has ever written in this thread, accepted (or sent) a message request between
+ * the two, or owns a booking that this thread belongs to. Any of those reads
+ * failing is `initiatesContact: null` — a retryable refusal, never a guess.
  */
 export async function readRestrictionSendFacts(
   sc: SupabaseClient,
@@ -180,6 +190,22 @@ export async function readRestrictionSendFacts(
     .limit(1);
   if (theirsErr) return { restriction, initiatesContact: null };
   if (((theirs as unknown[]) ?? []).length > 0) return { restriction, initiatesContact: false };
+
+  // An ACCEPTED request between the two, either way round, is the other person
+  // having engaged. Both ids are interpolated into a PostgREST filter, so a
+  // value that is not a UUID is refused as unknown rather than built into one.
+  if (!UUID_SHAPE.test(input.senderId) || !UUID_SHAPE.test(counterpartId)) return { restriction, initiatesContact: null };
+  const { data: accepted, error: acceptedErr } = await sc
+    .from("message_requests")
+    .select("id")
+    .eq("status", "accepted")
+    .or(
+      `and(sender_id.eq.${input.senderId},recipient_id.eq.${counterpartId}),` +
+        `and(sender_id.eq.${counterpartId},recipient_id.eq.${input.senderId})`,
+    )
+    .limit(1);
+  if (acceptedErr) return { restriction, initiatesContact: null };
+  if (((accepted as unknown[]) ?? []).length > 0) return { restriction, initiatesContact: false };
 
   const { data: booking, error: bookingErr } = await sc
     .from("rent_buddy_bookings")
