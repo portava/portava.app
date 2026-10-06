@@ -10,7 +10,8 @@ export type AppealTargetType =
   | 'no_show'
   | 'event_membership'
   | 'trip_membership'
-  | 'review';
+  | 'review'
+  | 'trust_restriction';
 
 export type AppealState = 'submitted' | 'under_review' | 'approved' | 'denied';
 
@@ -76,4 +77,21 @@ export async function getMyAppeals(
   });
   if (!res.ok) throw new Error('Failed to load appeals');
   return res.json();
+}
+
+// ── The person's own active Trust restrictions (OD-TRUST-4, lead ruling D-24) ──
+import { parseMyRestrictions, type MyRestriction } from './appealRestrictions.ts';
+export type { MyRestriction } from './appealRestrictions.ts';
+
+/**
+ * GET /api/appeals/me/restrictions. A refusal or an unreadable answer THROWS:
+ * the caller must never show "no restrictions" for a list it could not load.
+ */
+export async function getMyRestrictions(): Promise<MyRestriction[]> {
+  const res = await fetch(api('appeals/me/restrictions'), { headers: await authHeaders() });
+  if (!res.ok) {
+    const json = await res.json().catch(() => ({}));
+    throw Object.assign(new Error((json as any).message ?? 'Failed to load restrictions'), { code: (json as any).error });
+  }
+  return parseMyRestrictions(await res.json());
 }

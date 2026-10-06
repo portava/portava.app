@@ -511,6 +511,24 @@ export async function resolveAppeal(
       return { ok: true, action: "account_warning_acknowledged" };
     }
 
+    // ── Trust restriction (3933, lane B wave 3) ─────────────────────────────
+    // The owner's appeal ruling: an upheld appeal restores exactly the access
+    // that decision removed. Lift THIS restriction, only if it is the
+    // appellant's own and still active, and nothing else.
+
+    case "trust_restriction": {
+      const { data, error } = await sc
+        .from("trust_restrictions")
+        .update({ lifted_at: new Date().toISOString() })
+        .eq("id", target_id)
+        .eq("user_id", appellant_id)
+        .is("lifted_at", null)
+        .select("id");
+      if (error) return { ok: false, action: "noop", reason: `trust restriction lift failed: ${error.message}` };
+      if (affectedRows(data) === 0) return matchedNothing(appeal, "trust restriction lift");
+      return { ok: true, action: "trust_restriction_lifted" };
+    }
+
     // ── Unknown ────────────────────────────────────────────────────────────
 
     default: {

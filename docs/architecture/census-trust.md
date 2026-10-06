@@ -3948,9 +3948,8 @@ read or written; migration 3932 is written and applied nowhere. Lead rulings are
    is the one source. The booking refusal for a restricted traveller now shows that sentence
    (`artifacts/api-server/src/lib/rentBuddyIdentityEligibility.ts:158#restrictionSentence("private_plan_access") + " " +`).
    Its previous text pointed at "Safety history", which lists Safe Return sessions, not restrictions.
-   **Stated, not hidden:** `getSafeTrustSummary` is the only producer of these sentences. Its one consumer,
-   the Passport projection, does not forward `restrictions`, so no screen shows a person their Trust
-   restrictions today. The refusal at a door is where the text reaches them.
+   The sentences now reach the person on a screen of their own (item 5). The Passport projection, the other
+   consumer of `getSafeTrustSummary`, still does not forward `restrictions` (lead's file).
 2. **D-24d re-proven on the merged tree.** Block, mute, restrict and report succeed when the restriction
    state cannot be read (`artifacts/api-server/src/test/protectiveActionsUnreadableRestriction.test.ts:121#PA4 — the four safety routes succeed under an unreadable restriction state`).
    Mutations: dropping `{ protective: true }` from any one of the four routes turns PA4 red; an engine
@@ -3969,6 +3968,27 @@ read or written; migration 3932 is written and applied nowhere. Lead rulings are
    (`artifacts/api-server/src/test/rentABuddyGateConsolidation.test.ts:860#N-1: every booking door refuses while identity verification is not operational`;
    the spec door is in `rentABuddySpecBookingBypass.test.ts`). The mock identity provider now runs under
    the test runner only, never on a dev host (N-2, lane B's `lib/paymentsMode.ts`, NOT-GRADED below).
+5. **A restricted person sees what is restricted, until when, and appeals THAT restriction** (OD-TRUST-4,
+   OD-TRUST-5, D-24; migration 3933 adds `appeal_target_type` 'trust_restriction', written and applied
+   nowhere). `GET /api/appeals/me/restrictions`
+   (`artifacts/api-server/src/routes/appeals.ts:536#router.get("/appeals/me/restrictions"`) lists the
+   caller's ACTIVE restrictions. Each carries its D-24 sentence, its end date (or "until it is reviewed")
+   and the appeal path. The moderator's free text is never sent. An unreadable table answers 503, never an
+   empty list. `POST /api/appeals` accepts the new target only for the caller's own active restriction.
+   Approval lifts exactly that restriction
+   (`artifacts/api-server/src/services/appeals/resolveAppeal.ts:519#case "trust_restriction": {`), the
+   owner's restoration ruling. The mobile Appeals screen (reached from Settings) lists them, with an
+   "Appeal this restriction" action.
+   Proof: `artifacts/api-server/src/test/appealTrustRestriction.test.ts:170#describe("GET /appeals/me/restrictions`
+   (13 cases, including the PATCH whole path) and the mobile `appeals.restrictions.component.test.tsx`
+   (R1-R4). Mutations, all killed:
+   - expiry not filtered;
+   - ownership not checked;
+   - a lift that ignores the appellant;
+   - a failed read shown as empty;
+   - 22P02 surfacing as db_error;
+   - on mobile: a failed load shown as empty, the button keeping the default target, and the client
+     rewriting the sentence.
 
 Mutations for items 1 and 4 are in the lane report: old messaging sentence; hosting without the Buddy
 clause; the booking refusal's old copy; the gate honouring a TRUE override row (23 red); package-book
@@ -3982,7 +4002,7 @@ without the KYC gate; admin.ts forgetting the flag.
 
 | id | was | now | the evidence |
 |---|---|---|---|
-| TRV2-08 | W | **W** | The OWNER half is closed: lead ruling D-24 (2026-10-06) confirms the mapping that §35 recorded as lane B's reading, and the sentences now name what each restriction stops (36.1 item 1). The row stays W for the doors other lanes own: Trips (lane C; `routes/trips.ts` still refuses ALL trip creation under `hosting`, which D-24a rules out for a solo trip) and Compass (lane L / the lead). It also stays W because no surface shows a restricted person the summary (Passport, lead). |
+| TRV2-08 | W | **W** | The OWNER half is closed: lead ruling D-24 (2026-10-06) confirms the mapping that §35 recorded as lane B's reading, and the sentences now name what each restriction stops (36.1 item 1). The row stays W for the doors other lanes own: Trips (lane C; `routes/trips.ts` still refuses ALL trip creation under `hosting`, which D-24a rules out for a solo trip) and Compass (lane L / the lead). The person-facing summary now exists (36.1 item 5). |
 | TV-4b | W | **W** | Re-proven on the merged tree (36.1 item 3). §35's three reasons stand: the GoTrue session lock, no appeal target for a ban or suspension, and the client screen. |
 
 ### 36.3 Headline
