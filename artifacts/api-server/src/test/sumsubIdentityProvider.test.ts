@@ -69,6 +69,7 @@ import { toVerificationLevel } from "../services/identityVerification/types.js";
 import type { VerificationResult } from "../services/identityVerification/types.js";
 import { checkBookingKycGate, KYC_OVERRIDE_FLAG } from "../lib/rentBuddyKycGate.js";
 import { mapStripeFailureCode } from "../services/identityVerification/stripeIdentity.js";
+import { identityKeyDecision } from "../lib/paymentsMode.js";
 
 const SECRET = "whsec_test_sumsub_6b1f0a";
 const MANIFEST_PATH = "/virtual/identity-market-coverage.json";
@@ -925,6 +926,37 @@ describe("the provider is written, tested and UNREACHABLE", () => {
     assert.equal(s.operational, false);
     assert.match(s.reason, /live key not allowed/i);
     assert.equal(s.reason.includes("prd:a-production-token"), false, "the key must never appear");
+  });
+
+  // The seam lane B's per-person check reads (identityKeyDecision ->
+  // sessionProviderMode -> identity_verifications.provider_mode, migration
+  // 3930; and verificationIsBookingGrade in the booking gate). A Sumsub SANDBOX
+  // token must classify as `test` under provider `sumsub`, so an attempt made
+  // with it is recorded as a sandbox check and never counts for a booking; only
+  // a `prd:` token with PAYMENTS_ALLOW_LIVE exactly "true" is `live`.
+  it("the configured Sumsub token is classified through the SAME key decision the per-person check reads", () => {
+    const sbx = identityKeyDecision({ IDENTITY_PROVIDER: "sumsub", SUMSUB_APP_TOKEN: "sbx:not-a-real-token" } as any);
+    assert.ok(sbx, "sumsub must be a keyed provider, or no attempt can record a mode");
+    assert.equal(sbx?.provider, "sumsub");
+    assert.equal(sbx?.mode, "test");
+    assert.equal(sbx?.allowed, true);
+
+    const prdRefused = identityKeyDecision({ IDENTITY_PROVIDER: "sumsub", SUMSUB_APP_TOKEN: "prd:a-production-token" } as any);
+    assert.equal(prdRefused?.mode, "live");
+    assert.equal(prdRefused?.allowed, false);
+    assert.equal(prdRefused?.refusal, "live_key_not_allowed");
+
+    const prdAllowed = identityKeyDecision({
+      IDENTITY_PROVIDER: "sumsub",
+      SUMSUB_APP_TOKEN: "prd:a-production-token",
+      PAYMENTS_ALLOW_LIVE: "true",
+    } as any);
+    assert.equal(prdAllowed?.mode, "live");
+    assert.equal(prdAllowed?.allowed, true);
+
+    const absent = identityKeyDecision({ IDENTITY_PROVIDER: "sumsub" } as any);
+    assert.equal(absent?.allowed, false);
+    assert.equal(absent?.refusal, "key_absent");
   });
 
   it("an UNRECOGNISED app-token prefix is refused too — being wrong about the format fails closed", () => {
