@@ -47,7 +47,23 @@ export const SOCIAL_AVAILABILITY = ["open", "maybe", "crew_only", "following_onl
 export type SocialAvailability = (typeof SOCIAL_AVAILABILITY)[number];
 
 /** Viewer relationship used when projecting another traveler's windows. */
-export type ViewerRelationship = "self" | "public" | "follower" | "following" | "crew";
+export type ViewerRelationship = "self" | "public" | "follower" | "following" | "mutual" | "crew";
+
+/**
+ * Lead ruling D-103 (2026-10-06): THE rule for a `followers` availability
+ * window, on every surface (Telegraph header, Compass, Nearby, Passport): the
+ * viewer follows the owner AND the owner follows the viewer. `user_follows` is
+ * one-way with no approval, so either one-way reading lets anyone in with one
+ * tap; mutual is a strict subset of both readings in use before, so no surface
+ * widens. The editor calls it "People you follow who follow you back". An
+ * unread edge is not an edge (fail closed).
+ */
+export function isMutualFollow(edges: { viewerFollowsOwner: boolean | null | undefined; ownerFollowsViewer: boolean | null | undefined }): boolean {
+  return edges.viewerFollowsOwner === true && edges.ownerFollowsViewer === true;
+}
+
+/** What the editor shows for the `followers` option (D-103). */
+export const FOLLOWERS_WINDOW_LABEL = "People you follow who follow you back";
 
 // ── Model (TABLE 8) ────────────────────────────────────────────────────────────
 
@@ -151,7 +167,7 @@ export function visibilityAdmits(visibility: VisibilityPolicy, viewer: ViewerRel
   if (viewer === "self") return true;
   switch (visibility) {
     case "public": return true;
-    case "followers": return viewer === "follower";
+    case "followers": return viewer === "mutual"; // D-103: one-way in either direction is refused
     case "following": return viewer === "following";
     case "crew": return viewer === "crew";
     case "private": return false;

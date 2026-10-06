@@ -49,7 +49,7 @@ import telegraphShareRouter from "../routes/telegraphShare.js";
 import { syncTripChatMembers } from "../services/groupChatSync.js";
 import { requireSafeReturnRecipient } from "../services/safeReturn/SafeReturnPrivacyGuard.js";
 import { toPublicSession, stripGPS } from "../services/safeReturn/SafeReturnPrivacyGuard.js";
-import { isVisibleTo, visibilityAdmits } from "../services/passport/OpenToPlansService.js";
+import { isVisibleTo, visibilityAdmits, isMutualFollow, FOLLOWERS_WINDOW_LABEL } from "../services/passport/OpenToPlansService.js";
 import { isRabBookingCallEligible } from "../lib/calls/callGatewayAdapter.js";
 import { authorizeTelegraphShare } from "../domain/telegraph/policies/shareAuthorizationPolicy.js";
 import { TELEGRAPH_RLS_MATRIX } from "../domain/telegraph/invariants/rlsAuthorizationMatrix.js";
@@ -435,8 +435,16 @@ describe("RLS-06 — availability audience excludes viewer → DENY", () => {
   });
 
   it("the audience predicate admits exactly the named relationship and nothing else", () => {
-    assert.equal(visibilityAdmits("followers", "follower"), true);
+    // Lead ruling D-103 (2026-10-06): a followers window admits a MUTUAL follow only.
+    assert.equal(visibilityAdmits("followers", "mutual"), true);
+    assert.equal(visibilityAdmits("followers", "follower"), false);
     assert.equal(visibilityAdmits("followers", "following"), false);
+    assert.equal(visibilityAdmits("following", "following"), true, "D-103 changes followers windows only");
+    assert.equal(isMutualFollow({ viewerFollowsOwner: true, ownerFollowsViewer: true }), true);
+    assert.equal(isMutualFollow({ viewerFollowsOwner: true, ownerFollowsViewer: false }), false);
+    assert.equal(isMutualFollow({ viewerFollowsOwner: false, ownerFollowsViewer: true }), false);
+    assert.equal(isMutualFollow({ viewerFollowsOwner: true, ownerFollowsViewer: null }), false, "an unread edge is no edge");
+    assert.equal(FOLLOWERS_WINDOW_LABEL, "People you follow who follow you back");
     assert.equal(visibilityAdmits("crew", "crew"), true);
     assert.equal(visibilityAdmits("crew", "follower"), false);
     assert.equal(visibilityAdmits("private", "crew"), false);

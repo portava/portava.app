@@ -275,3 +275,43 @@ describe("a degraded relationship read does not become a published relationship"
     assert.equal(result.telemetry.refusals["blocked"], 1);
   });
 });
+
+describe("lead ruling D-103: a FOLLOWERS availability window on Nearby admits a mutual follow only", () => {
+  // The crewmate's only availability is an explicit followers-only window. The
+  // viewer shares no circle with them (the crew relationship would decide
+  // first), so the follow edges alone decide whether the window is read.
+  const verdict = (viewerFollows: boolean, ownerFollows: boolean): MessagePermissionVerdict => ({
+    allowed: true,
+    verdict: "allowed",
+    relationship_context: { isFriend: false, senderFollowsRecipient: viewerFollows, recipientFollowsSender: ownerFollows, sharedTrip: true, sharedCircle: false },
+  });
+  const followersWindowWorld = () => {
+    const w = world();
+    w.quick_availability_status = w.quick_availability_status!.filter((r) => r.user_id !== CREWMATE);
+    w.availability_windows = [{
+      id: "w-1", user_id: CREWMATE, type: "today", start_at: new Date(NOW - 3_600_000).toISOString(), end_at: SOON,
+      trip_id: null, open_to_plans: true, intents: ["food"], group_preference: null, max_travel_minutes: null,
+      visibility: "followers", source: "explicit", social_availability: "open", expires_at: null,
+      created_at: FRESH, updated_at: FRESH,
+    }];
+    return w;
+  };
+  const stateFor = async (viewerFollows: boolean, ownerFollows: boolean) => {
+    const db = makeFailClosedClient({ rows: followersWindowWorld() });
+    const result = await loadReachablePeople(db, { viewerId: VIEWER, nowMs: NOW, resolveRelationship: async () => verdict(viewerFollows, ownerFollows) });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    if (!result.ok) return null;
+    return result.people.find((p) => p.personId === CREWMATE)?.availability.state ?? "not_published";
+  };
+  it("CONTROL: mutual → the window is read", async () => {
+    const mutual = await stateFor(true, true);
+    assert.notEqual(mutual, "not_published");
+    assert.notEqual(mutual, await stateFor(false, false), "vacuity guard: the window changes the answer");
+  });
+  it("viewer follows owner only → refused (the same answer as no follow at all)", async () => {
+    assert.equal(await stateFor(true, false), await stateFor(false, false));
+  });
+  it("owner follows viewer only → refused (the same answer as no follow at all)", async () => {
+    assert.equal(await stateFor(false, true), await stateFor(false, false));
+  });
+});

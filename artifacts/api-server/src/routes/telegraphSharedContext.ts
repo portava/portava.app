@@ -39,7 +39,7 @@ import {
   collapsedSummary,
 } from "../services/telegraph/sharedContext.js";
 import {
-  projectPublicWindows,
+  projectPublicWindows, isMutualFollow,
   type ViewerRelationship,
 } from "../services/passport/OpenToPlansService.js"; import { canMessage } from "../lib/messagingPermissions.js"; // the header's window relationship (§45f)
 import { isFlagEnabled } from "../lib/featureFlags.js";
@@ -440,7 +440,8 @@ async function windowRelationshipFor(
   if (verdict.degraded === true || verdict.reason === "unavailable") {
     log.warn({ ownerId, reason: verdict.reason ?? null }, "follow edge not established; availability read as public only");
   }
-  return verdict.relationship_context.senderFollowsRecipient ? "follower" : "public";
+  // Lead ruling D-103: a followers window is the MUTUAL follows' (viewer = sender, owner = recipient).
+  return isMutualFollow({ viewerFollowsOwner: verdict.relationship_context.senderFollowsRecipient, ownerFollowsViewer: verdict.relationship_context.recipientFollowsSender }) ? "mutual" : "public";
 }
 
 // ── GET /api/threads/:threadId/discover-together ────────────────────

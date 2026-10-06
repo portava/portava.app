@@ -64,7 +64,7 @@ import {
   visibleFromOf,
   withinWindow,
 } from "../services/groupChatHistoryBound.js";
-import { projectPublicWindows, type ViewerRelationship } from "../services/passport/OpenToPlansService.js";
+import { projectPublicWindows, isMutualFollow, type ViewerRelationship } from "../services/passport/OpenToPlansService.js"; import { canMessage } from "../lib/messagingPermissions.js";
 
 const log = rootLogger.child({ mod: "telegraphCompassTools" });
 
@@ -341,14 +341,17 @@ export async function telegraphGetParticipantAvailability(
   // membership is 'crew'; anything else is 'public'. It never widens: the
   // window's own visibility policy decides, and this only tells it who is
   // asking.
-  const relationship: ViewerRelationship =
-    (gate.verdict.canUseTripContext || gate.verdict.canUseCircleContext) ? "crew" : "public";
+  const crewContext = gate.verdict.canUseTripContext || gate.verdict.canUseCircleContext;
 
   const others = gate.memberIds.filter((id) => id !== userId).slice(0, 25);
   const out: Array<{ userId: string; windows: Array<Record<string, unknown>> }> = [];
   let unreadable = 0;
   for (const other of others) {
     try {
+      // Lead ruling D-103: outside a crew context, a followers window is the
+      // MUTUAL follows' — read per member from canMessage's two edges; an
+      // unread edge is no edge, so it falls back to public windows only.
+      const relationship: ViewerRelationship = crewContext ? "crew" : await mutualOrPublic(sc, userId, other);
       const windows = await projectPublicWindows(sc, other, relationship);
       out.push({
         userId: other,
@@ -748,5 +751,16 @@ export async function executeTelegraphConversationTool(
     case "telegraph_find_safe_public_meetup":      return telegraphFindSafePublicMeetup(sc, userId, args);
     case "telegraph_search_conversation":          return telegraphSearchConversation(sc, userId, args);
     default:                                       return undefined;
+  }
+}
+
+/** Lead ruling D-103: "mutual" when the viewer and the owner follow each other, otherwise "public". */
+async function mutualOrPublic(sc: SupabaseClient, viewerId: string, ownerId: string): Promise<ViewerRelationship> {
+  try {
+    const verdict = await canMessage(sc, viewerId, ownerId);
+    const ctx = verdict.relationship_context;
+    return isMutualFollow({ viewerFollowsOwner: ctx.senderFollowsRecipient, ownerFollowsViewer: ctx.recipientFollowsSender }) ? "mutual" : "public";
+  } catch {
+    return "public";
   }
 }

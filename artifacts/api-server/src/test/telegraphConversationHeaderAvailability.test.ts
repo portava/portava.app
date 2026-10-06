@@ -130,9 +130,14 @@ describe("finding 1 — availability on the conversation header never crosses a 
 });
 
 describe("finding 1 — the window's audience is tested against the viewer's REAL relationship", () => {
-  it("CONTROL: ALICE follows BOB — his followers-only window is shown to her", async () => {
-    const { body } = await header(seed({ visibility: "followers", follows: [{ follower_id: ALICE, following_id: BOB }] }));
+  it("CONTROL (lead ruling D-103): ALICE and BOB follow each other — his followers-only window is shown to her", async () => {
+    const { body } = await header(seed({ visibility: "followers", follows: [{ follower_id: ALICE, following_id: BOB }, { follower_id: BOB, following_id: ALICE }] }));
     assert.equal(body.participants[0]!.availability.state, "open");
+  });
+
+  it("D-103: ALICE follows BOB but he does not follow her back — one-way is refused", async () => {
+    const { body } = await header(seed({ visibility: "followers", follows: [{ follower_id: ALICE, following_id: BOB }] }));
+    assert.deepEqual(body.participants[0]!.availability, WITHHELD);
   });
 
   it("only BOB follows ALICE — that makes her someone he follows, not his follower: not shown", async () => {
@@ -140,9 +145,9 @@ describe("finding 1 — the window's audience is tested against the viewer's REA
     assert.deepEqual(body.participants[0]!.availability, WITHHELD);
   });
 
-  it("ALICE follows BOB but the follow edge cannot be read — not a follower (fails closed)", async () => {
+  it("ALICE and BOB follow each other but the follow edges cannot be read — not mutual (fails closed)", async () => {
     const { body } = await header(
-      seed({ visibility: "followers", follows: [{ follower_id: ALICE, following_id: BOB }] }),
+      seed({ visibility: "followers", follows: [{ follower_id: ALICE, following_id: BOB }, { follower_id: BOB, following_id: ALICE }] }),
       { errors: { user_follows: { message: "follows: timeout" } } },
     );
     assert.deepEqual(body.participants[0]!.availability, WITHHELD);

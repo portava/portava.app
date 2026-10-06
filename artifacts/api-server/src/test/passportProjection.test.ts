@@ -543,8 +543,13 @@ describe("buildAvailability/buildIntent — §8 explicit windows in the aggregat
       availability_windows: [window({ visibility: "followers" })],
     });
 
+    // Lead ruling D-103 (2026-10-06): a followers window admits a MUTUAL follow
+    // only; Passport's `follower` context is one-way (the owner follows the
+    // viewer), so it is refused. Passport has no mutual window relationship
+    // yet (toWindowViewerRelationship: lane L), so no Passport viewer is
+    // admitted to a followers window until it does — narrower, never wider.
     const asFollower = (await buildPassportProjection(mkDb(), OWNER, "f1", { resolveViewerContext: resolver(followerRes) }))!;
-    assert.ok(asFollower.availability?.explicitWindow, "follower sees a followers-only window");
+    assert.equal(asFollower.availability?.explicitWindow, null, "a one-way follower does not see a followers-only window (D-103)");
 
     const asPublic = (await buildPassportProjection(mkDb(), OWNER, "p1", { resolveViewerContext: resolver(publicRes) }))!;
     assert.equal(asPublic.availability?.explicitWindow, null, "public does not see a followers-only window");
