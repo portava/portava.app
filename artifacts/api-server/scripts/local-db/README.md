@@ -22,12 +22,17 @@ pnpm --filter @workspace/api-server db:local:down     # stop a cluster up.sh boo
    `CREATE SCHEMA public`); any other error aborts.
 3. **The canonical chain** from `2093` (the first file whose objects the
    baseline lacks; `2092` is the last one present), each file as `psql` runs
-   it, in byte order. A file may fail **only** if `KNOWN_UNREPLAYABLE.json`
+   it, in the applier's order: byte order plus the declared
+   `src/migrations/ORDER_OVERRIDES.json` (docs/migrations.md § "Apply-order
+   overrides"), resolved by `resolve-order.mjs`, which a parity test holds
+   identical to `scripts/src/apply-migrations.ts`. A stale override aborts the
+   replay. A file may fail **only** if `KNOWN_UNREPLAYABLE.json`
    names it with its verbatim error, and a listed file that replays in order
-   aborts the run so the list can only shrink. The eight listed files are
-   profile-deletion and intel migrations plus one PostgreSQL 17 privilege;
-   every `trip_*` object, the kernel and the projection worker replay cleanly,
-   and `up.sh` refuses to finish unless they are all present.
+   aborts the run so the list can only shrink. The ten listed files are the
+   intel chain that starts at 2276 (not an order defect — see docs/migrations.md
+   § "Apply-order overrides"), one PostgreSQL 17 privilege and one seed-row
+   precondition; every `trip_*` object, the kernel and the projection worker
+   replay cleanly, and `up.sh` refuses to finish unless they are all present.
 
 Two modes: `LOCAL_DB_URL` set (CI's `postgis/postgis:16-3.4` service
 container) or unset (boot a cluster under `/tmp/portava-local-db`; as root it

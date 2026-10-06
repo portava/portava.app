@@ -134,7 +134,7 @@ done
 # retried once after the chain. Order-dependent and said so; the entry stays in the list
 # because in-order replay still fails. (Where the reference database's real order is
 # MEASURED to differ from byte order, the fix is an ORDER_OVERRIDES.json entry instead —
-# 2136, whose FK rulings arrive in 2138, was the case that needed this pass until then.)
+# 2136, whose prerequisites 2138 and 2139 sort after it, needed this pass until it had one.)
 retried=0
 for b in $(node -e 'console.log(Object.keys(require(process.argv[1]).files).join("\n"))' "$KNOWN"); do
   if [ -n "$TO" ] && ! [[ "$b" < "$TO" ]]; then continue; fi

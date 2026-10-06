@@ -43,10 +43,11 @@ const resolver = (await import(pathToFileURL(RESOLVER).href)) as {
   resolveOrder: (filenames: readonly string[], overrides: readonly OrderOverride[]) => string[];
 };
 
-const PREP_2138 = '2138_profiles_fk_convergence_prep.sql';
 const CONV_2136 = '2136_profiles_auth_users_convergence.sql';
 const STMT_2137 = '2137_intel_stmt_trigger_removal.sql';
-const HIST_2279 = '2279_intel_historical_patterns.sql';
+const PREP_2138 = '2138_profiles_fk_convergence_prep.sql';
+const TOMB_2139 = '2139_shared_content_tombstones.sql';
+const RCPT_2140 = '2140_deletion_receipt.sql';
 
 const ov = (move: string, where: { before: string } | { after: string }): OrderOverride => ({
   move,
@@ -177,37 +178,39 @@ describe('the declared overrides on the real migration list', () => {
     assert.deepEqual(files, [...files].sort(compareMigrationFilenames));
   });
 
-  it('declares exactly the two measured entries', () => {
+  it('declares exactly the one measured entry', () => {
     assert.deepEqual(
       overrides.map((o) => [o.move, o.before !== undefined ? 'before' : 'after', o.before ?? o.after]),
-      [
-        [PREP_2138, 'before', CONV_2136],
-        [STMT_2137, 'after', HIST_2279],
-      ],
+      [[CONV_2136, 'after', TOMB_2139]],
     );
   });
 
-  it('places 2138 immediately before 2136', () => {
-    assert.equal(order[order.indexOf(CONV_2136) - 1], PREP_2138);
+  it('places 2136 after BOTH of its prerequisites (2138, 2139) and before its dependant 2140', () => {
+    assert.deepEqual(order.slice(order.indexOf(PREP_2138), order.indexOf(RCPT_2140) + 1), [
+      PREP_2138,
+      TOMB_2139,
+      CONV_2136,
+      RCPT_2140,
+    ]);
   });
 
-  it('places 2137 immediately after 2279', () => {
-    assert.equal(order[order.indexOf(HIST_2279) + 1], STMT_2137);
+  it('leaves 2137 in byte order — no position of it replays cleanly (docs/migrations.md)', () => {
+    assert.ok(!overrides.some((o) => [o.move, o.before, o.after].includes(STMT_2137)));
+    assert.equal(order[order.indexOf(STMT_2137) + 1], PREP_2138, 'still immediately before 2138, as in byte order');
   });
 
   it('is a permutation of the same files that moves nothing else', () => {
     assert.equal(order.length, files.length);
     assert.deepEqual([...order].sort(compareMigrationFilenames), files);
-    assert.deepEqual(without(order, [PREP_2138, STMT_2137]), without(files, [PREP_2138, STMT_2137]));
+    assert.deepEqual(without(order, [CONV_2136]), without(files, [CONV_2136]));
   });
 
-  it('the dry-run description names the neighbours each file landed between', () => {
-    const lines = describeOrderOverrides(order, overrides, new Set([STMT_2137]));
-    assert.equal(lines.length, 2);
-    assert.match(lines[0], new RegExp(`^${PREP_2138} BEFORE ${CONV_2136} — now 2135_\\S+ < ${PREP_2138} < ${CONV_2136}`));
-    assert.match(lines[0], /\[2138_\S+: not pending; 2136_\S+: not pending\]$/);
-    assert.match(lines[1], new RegExp(`^${STMT_2137} AFTER ${HIST_2279} — now ${HIST_2279} < ${STMT_2137} < 2280_\\S+`));
-    assert.match(lines[1], /\[2137_\S+: pending; 2279_\S+: not pending\]$/);
+  it('the dry-run description names the neighbours the file landed between', () => {
+    const lines = describeOrderOverrides(order, overrides, new Set([CONV_2136]));
+    assert.deepEqual(lines, [
+      `${CONV_2136} AFTER ${TOMB_2139} — now ${TOMB_2139} < ${CONV_2136} < ${RCPT_2140}` +
+        ` [${CONV_2136}: pending; ${TOMB_2139}: not pending]`,
+    ]);
   });
 
   it('planApply honours them on an empty ledger (a fresh database) ...', () => {
@@ -227,8 +230,8 @@ describe('the declared overrides on the real migration list', () => {
   });
 
   it('planApply refuses, by throwing, an override that names a file not on disk', () => {
-    const onDisk = files.filter((f) => f !== PREP_2138).map((filename) => ({ filename, sql: '' }));
-    assert.throws(() => planApply(onDisk, [], [], overrides), new RegExp(`${PREP_2138}.*not in the migration list`, 's'));
+    const onDisk = files.filter((f) => f !== TOMB_2139).map((filename) => ({ filename, sql: '' }));
+    assert.throws(() => planApply(onDisk, [], [], overrides), new RegExp(`${TOMB_2139}.*not in the migration list`, 's'));
   });
 
   it('the overrides file is not a migration: listMigrationFiles never returns it', () => {
@@ -246,8 +249,7 @@ describe('resolve-order.mjs is the same algorithm', () => {
     assert.equal(run.status, 0, run.stderr);
     const printed = run.stdout.split('\n').filter((l) => l !== '');
     assert.deepEqual(printed, orderMigrations(listMigrationFiles(), readOrderOverrides()));
-    assert.match(run.stderr, new RegExp(`order override: ${PREP_2138} BEFORE ${CONV_2136}`));
-    assert.match(run.stderr, new RegExp(`order override: ${STMT_2137} AFTER ${HIST_2279}`));
+    assert.match(run.stderr, new RegExp(`order override: ${CONV_2136} AFTER ${TOMB_2139} — now ${TOMB_2139} < ${CONV_2136} < ${RCPT_2140}`));
   });
 
   it('agrees with the TS function on synthetic inputs, including list-order chaining', () => {
