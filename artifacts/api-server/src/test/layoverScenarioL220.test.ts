@@ -25,8 +25,10 @@
  *
  * WHAT IT DOES NOT CLAIM. Production carries no curated airport today (census
  * header note 2: 0 of 3,206 verified), so every production 4h international
- * layover takes the generic branch. That is census L243's owner decision about
- * buffers, not this row; this row is the engine's §21.1 behaviour.
+ * layover takes the generic branch and no production session can reach the
+ * curated one. That is why the row stays `W` (census-layover §53.5): L143 was
+ * held at `W` on the same fact, and §41's rule is that a capability no
+ * production session can reach stays `W`. It moves when an airport is curated.
  *
  * Run: node --import tsx/esm --test src/test/layoverScenarioL220.test.ts
  */

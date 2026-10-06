@@ -44,6 +44,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { mayDiscloseGemIdentity } from "../hiddenGems/HiddenGemPrivacyGuard.js";
 import { canReadMemory } from "../memory/memoryReadPolicy.js";
 import { decideHighlightViewAccess } from "../../routes/highlights.js";
+import { canViewEvent, checkEventEligibility } from "../../routes/events.js";
+import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { ABSENCE_GUARD_FLAG, absenceDisclosure } from "../../lib/privacy/absenceDisclosure.js";
+import { nameVisibilitySet, presentedName, resolveHandle } from "../../lib/publicIdentity.js";
+import { resolveAccountRestriction } from "../../lib/accountStateGate.js";
 import {
   readProjectionInputs,
   publicProjectionVerdict,
@@ -233,11 +238,51 @@ interface Loaded {
   projection: TelegraphShareProjection | null;
 }
 
+/** What a loader may log through. `req.log` (pino-http) satisfies it. */
+export interface ShareLog {
+  error: (obj: unknown, msg: string) => void;
+}
+
 type Loader = (
   client: SupabaseClient,
   objectId: string,
   viewerId: string,
+  log?: ShareLog,
 ) => Promise<Loaded>;
+
+/**
+ * A block between the viewer and an object's owner, in EITHER direction.
+ *
+ * Lane R wave-1 delta verification, N1 (2026-10-06): `loadStamp`, `loadEvent`
+ * and `loadMedia` read no `blocks` at all and `loadProfile` read one direction,
+ * while the object's own read route refuses a block either way —
+ * `GET /stamps/:stampId` (isBlocked), `GET /events/:id` (isBlocked, "blocking
+ * overrides all other relationships"), `GET /users/:userId` (both directions),
+ * `GET /trips/:tripId` (canViewTrip, block first) and the media byte gate
+ * (lib/mediaAccess.ts "Blocks, both directions, fail-closed"). A share card is
+ * a read of the object, so it takes the same rule.
+ *
+ * Two reads with `.eq` pairs, not one `.or()`: the answer must tell "blocked"
+ * from "could not read", which `isBlockedBetween` folds together, and an
+ * unreadable `blocks` is `unknown` on this path, never "not blocked". A row
+ * with no owner names nobody to be blocked by.
+ */
+type BlockRead = "clear" | "blocked" | "unreadable";
+
+async function readBlockBetween(client: SupabaseClient, viewerId: string, ownerId: unknown): Promise<BlockRead> {
+  if (typeof ownerId !== "string" || ownerId.length === 0 || ownerId === viewerId) return "clear";
+  const [byOwner, byViewer] = await Promise.all([
+    client.from("blocks").select("blocker_id").eq("blocker_id", ownerId).eq("blocked_id", viewerId).limit(1),
+    client.from("blocks").select("blocker_id").eq("blocker_id", viewerId).eq("blocked_id", ownerId).limit(1),
+  ]);
+  if (byOwner.error || byViewer.error) return "unreadable";
+  const any = (rows: unknown) => Array.isArray(rows) && rows.length > 0;
+  return any(byOwner.data) || any(byViewer.data) ? "blocked" : "clear";
+}
+
+function refusedByBlock(b: Exclude<BlockRead, "clear">): Loaded {
+  return { state: UNAVAILABLE(b === "blocked" ? "unauthorized" : "unknown"), projection: null };
+}
 
 function proj(
   objectType: TelegraphObjectType,
@@ -262,7 +307,7 @@ function proj(
 const loadPost: Loader = async (client, id, viewerId) => {
   const { data, error } = await client
     .from("posts")
-    .select("id, author_id, content, visibility, status, deleted_at, media_urls, updated_at")
+    .select("id, author_id, content, visibility, status, post_status, deleted_at, media_urls, updated_at")
     .eq("id", id)
     .maybeSingle();
   if (error) return { state: UNAVAILABLE("unknown"), projection: null };
@@ -271,6 +316,13 @@ const loadPost: Loader = async (client, id, viewerId) => {
   if (r.deleted_at || r.status !== "active") return { state: UNAVAILABLE("deleted"), projection: null };
   const mine = r.author_id === viewerId;
   if (!mine && r.visibility !== "public") return { state: UNAVAILABLE("private"), projection: null };
+  // An UNPUBLISHED post (a draft, or a delayed post not yet released) is the
+  // author's alone — `GET /posts/:postId` answers not_found to anyone else
+  // ("!isPublished && !isAuthor"). Lane R N1 sweep, 2026-10-06: this loader
+  // never selected `post_status`, so a public draft resolved into a card.
+  if (!mine && Boolean(r.post_status) && r.post_status !== "published") {
+    return { state: UNAVAILABLE("private"), projection: null };
+  }
   const body = typeof r.content === "string" ? r.content : "";
   // A BLOCK, EITHER WAY, REFUSES THE POST — the rule every post route already
   // applies ("Bidirectional block check — matches /stamps access control",
@@ -318,18 +370,38 @@ const loadPost: Loader = async (client, id, viewerId) => {
   };
 };
 
-/** Travel — a Trip. Private trips degrade for anyone who is not a member. */
+/**
+ * Travel — a Trip. Private trips degrade for anyone who is not a member.
+ *
+ * Lane R N1 sweep (2026-10-06), held to `GET /trips/:tripId`, whose ladder is
+ * `canViewTrip` (domain/trips/policies/tripPolicy.ts):
+ *   - a block, EITHER way, refuses first — "blocking overrides membership".
+ *     This loader read no `blocks`, so a blocked viewer resolved a public trip;
+ *   - a non-member is shown the route's PUBLIC PREVIEW (toPrivateTripPreview),
+ *     not the member view: the destination city only when
+ *     `show_destination_city` is not false, the dates only when
+ *     `show_exact_dates` is not false and the §6.3 absence guard
+ *     (`trip_absence_guard_enabled`) does not withhold a future start, and the
+ *     cover only when `show_header_publicly` is true. This card used to show
+ *     all three to anyone a public trip was shared with.
+ * A `buddies` trip stays refused here (the route previews it for a mutual
+ * follow) — narrower than the route, never wider.
+ */
 const loadTrip: Loader = async (client, id, viewerId) => {
   const { data, error } = await client
     .from("trips")
-    .select("id, owner_id, title, destination_city, start_date, end_date, status, visibility, cover_url, updated_at")
+    .select(
+      "id, owner_id, title, destination_city, start_date, end_date, status, visibility, cover_url, show_destination_city, show_exact_dates, show_header_publicly, updated_at",
+    )
     .eq("id", id)
     .maybeSingle();
   if (error) return { state: UNAVAILABLE("unknown"), projection: null };
   if (!data) return { state: UNAVAILABLE("not_found"), projection: null };
   const r = data as Row;
-  let allowed = r.owner_id === viewerId || r.visibility === "public";
-  if (!allowed) {
+  const block = await readBlockBetween(client, viewerId, r.owner_id);
+  if (block !== "clear") return refusedByBlock(block);
+  let authorized = r.owner_id === viewerId;
+  if (!authorized) {
     const { data: member, error: mErr } = await client
       .from("trip_members")
       .select("user_id, status")
@@ -337,27 +409,49 @@ const loadTrip: Loader = async (client, id, viewerId) => {
       .eq("user_id", viewerId)
       .maybeSingle();
     if (mErr) return { state: UNAVAILABLE("unknown"), projection: null };
-    allowed = Boolean(member) && (member as Row).status === "accepted";
+    authorized = Boolean(member) && (member as Row).status === "accepted";
   }
-  if (!allowed) return { state: UNAVAILABLE("unauthorized"), projection: null };
+  if (!authorized && r.visibility !== "public") return { state: UNAVAILABLE("unauthorized"), projection: null };
+  let city: string | null = (r.destination_city as string | null) ?? null;
+  let start: string | null = (r.start_date as string | null) ?? null;
+  let cover: string | null = (r.cover_url as string | null) ?? null;
+  if (!authorized) {
+    const absence = absenceDisclosure(r, Date.now(), await isFlagEnabled(client, ABSENCE_GUARD_FLAG));
+    city = r.show_destination_city !== false ? city : null;
+    start = !absence.withholdDates && r.show_exact_dates !== false ? start : null;
+    cover = r.show_header_publicly === true ? cover : null;
+  }
   return {
     state: AVAILABLE(String(r.status)),
     projection: proj(
       "TRIP",
       id,
       (r.title as string) ?? "Trip",
-      [r.destination_city, r.start_date].filter(Boolean).join(" · ") || null,
-      (r.cover_url as string) ?? null,
+      [city, start].filter(Boolean).join(" · ") || null,
+      cover,
       (r.updated_at as string) ?? null,
     ),
   };
 };
 
-/** Travel — an Event. A draft or cancelled event degrades. */
+/**
+ * Travel — an Event. A draft or cancelled event degrades.
+ *
+ * Lane R N1 sweep (2026-10-06), held to `GET /events/:id`, which refuses in
+ * this order: a block either way ("blocking overrides all other
+ * relationships"), then `canViewEvent`, then `checkEventEligibility` (a ban,
+ * and the age / trust / verified gates). This loader applied none of the three,
+ * so a viewer the host blocked, or a minor on an 18+ event, resolved its title,
+ * city, start and cover into a card. Each is now applied, on top of this
+ * loader's own narrower attendee rule — never wider than either. An
+ * eligibility read that could not be performed is `unknown`.
+ */
 const loadEvent: Loader = async (client, id, viewerId) => {
   const { data, error } = await client
     .from("events")
-    .select("id, host_id, title, city, starts_at, state, visibility, cover_url, updated_at")
+    .select(
+      "id, host_id, title, city, starts_at, state, visibility, cover_url, circle_id, trip_id, age_min, age_max, trust_score_min, verified_only, updated_at",
+    )
     .eq("id", id)
     .maybeSingle();
   if (error) return { state: UNAVAILABLE("unknown"), projection: null };
@@ -370,6 +464,10 @@ const loadEvent: Loader = async (client, id, viewerId) => {
   if (!mine && (r.state === "draft" || r.state === "cancelled" || r.state === "archived")) {
     return { state: UNAVAILABLE("deleted"), projection: null };
   }
+  if (!mine) {
+    const block = await readBlockBetween(client, viewerId, r.host_id);
+    if (block !== "clear") return refusedByBlock(block);
+  }
   if (!mine && r.visibility !== "public") {
     const { data: att, error: aErr } = await client
       .from("event_attendees")
@@ -379,6 +477,13 @@ const loadEvent: Loader = async (client, id, viewerId) => {
       .maybeSingle();
     if (aErr) return { state: UNAVAILABLE("unknown"), projection: null };
     if (!att) return { state: UNAVAILABLE("private"), projection: null };
+  }
+  if (!mine) {
+    if (!(await canViewEvent(client, r, viewerId))) return { state: UNAVAILABLE("private"), projection: null };
+    const eligible = await checkEventEligibility(client, r, viewerId);
+    if (!eligible.ok) {
+      return { state: UNAVAILABLE(eligible.unavailable === true ? "unknown" : "unauthorized"), projection: null };
+    }
   }
   return {
     state: AVAILABLE(String(r.state)),
@@ -571,11 +676,33 @@ const loadMemory: Loader = async (client, id, viewerId) => {
   };
 };
 
-/** Social — a profile. A banned, suspended or deleted account degrades. */
+/**
+ * Social — a profile. A banned, suspended or deleted account degrades.
+ *
+ * Lane R wave-1 delta verification, N1 (2026-10-06), held to
+ * `GET /users/:userId` (routes/follows.ts):
+ *   - BLOCKS, BOTH DIRECTIONS. This loader read owner -> viewer only, so a
+ *     viewer who had blocked the owner still resolved the card. The route
+ *     refuses either direction, and an unreadable `blocks` is `unknown` here as
+ *     it is a 503 there;
+ *   - THE NAME RULE (lib/publicIdentity.ts: "a hidden name must never leave the
+ *     API in any response that describes another user"). The card's title was
+ *     `profiles.name` — the REAL name — whatever `show_real_name` said, and
+ *     `profile_privacy_settings` was never read. The title is now
+ *     `presentedName` over the viewer's allow-set: the name only for the owner
+ *     or a subject who opted in, otherwise the @handle. The handle stays;
+ *   - A MODERATION RESTRICTION (`user_account_states`, through the gate's own
+ *     read) degrades the card as the route degrades the passport; an
+ *     unreadable restriction is `unknown`;
+ *   - A PRIVATE profile (`is_private` or `passport_visibility = 'private'`)
+ *     carries no avatar to a non-owner — the route's locked preview has none.
+ *     The route shows it to an accepted friend; this card does not, which is
+ *     narrower, never wider.
+ */
 const loadProfile: Loader = async (client, id, viewerId) => {
   const { data, error } = await client
     .from("profiles")
-    .select("id, handle, name, avatar_url, account_status, updated_at")
+    .select("id, handle, name, avatar_url, account_status, is_private, passport_visibility, updated_at")
     .eq("id", id)
     .maybeSingle();
   if (error) return { state: UNAVAILABLE("unknown"), projection: null };
@@ -583,23 +710,26 @@ const loadProfile: Loader = async (client, id, viewerId) => {
   const r = data as Row;
   const status = (r.account_status as string) ?? "active";
   if (status !== "active") return { state: UNAVAILABLE("deleted"), projection: null };
-  if (r.id !== viewerId) {
-    const { data: blocks, error: bErr } = await client
-      .from("blocks")
-      .select("blocker_id, blocked_id")
-      .eq("blocker_id", r.id)
-      .eq("blocked_id", viewerId);
-    if (bErr) return { state: UNAVAILABLE("unknown"), projection: null };
-    if ((blocks ?? []).length > 0) return { state: UNAVAILABLE("unauthorized"), projection: null };
+  const own = r.id === viewerId;
+  if (!own) {
+    const block = await readBlockBetween(client, viewerId, r.id);
+    if (block !== "clear") return refusedByBlock(block);
+    const restriction = await resolveAccountRestriction(client, String(r.id));
+    if (restriction.state === "unavailable") return { state: UNAVAILABLE("unknown"), projection: null };
+    if (restriction.restriction.kind !== "none") return { state: UNAVAILABLE("deleted"), projection: null };
   }
+  const allowed = own || (await nameVisibilitySet(client, [String(r.id)])).has(String(r.id));
+  const name = presentedName(r, allowed);
+  const handle = resolveHandle(r);
+  const isPrivate = r.is_private === true || r.passport_visibility === "private";
   return {
     state: AVAILABLE(status),
     projection: proj(
       "PROFILE",
       id,
-      (r.name as string) ?? (r.handle as string) ?? "Traveler",
-      r.handle ? `@${r.handle}` : null,
-      (r.avatar_url as string) ?? null,
+      name ?? (handle ? `@${handle}` : "Traveler"),
+      name !== null && handle ? `@${handle}` : null,
+      own || !isPrivate ? ((r.avatar_url as string) ?? null) : null,
       (r.updated_at as string) ?? null,
     ),
   };
@@ -649,7 +779,7 @@ const loadBooking: Loader = async (client, id, viewerId) => {
  * reason `loadMemory` states: the other three need a relationship read owned by
  * another surface, and approximating it here is the backdoor §5.3 forbids.
  */
-const loadHighlight: Loader = async (client, id, viewerId) => {
+const loadHighlight: Loader = async (client, id, viewerId, log) => {
   const { data, error } = await client
     .from("highlights")
     .select(
@@ -679,7 +809,7 @@ const loadHighlight: Loader = async (client, id, viewerId) => {
   // just below, which already tells an unreadable control table (`unknown`)
   // from a real refusal (`private`); every other rung answers here.
   if (!mine) {
-    const access = await decideHighlightViewAccess(client, viewerId, id);
+    const access = await decideHighlightViewAccess(client, viewerId, id, log);
     if (!access.ok && access.reason !== "withheld") {
       const state =
         access.reason === "unreadable" || access.reason === "blocks_unreadable" ? "unknown"
@@ -757,6 +887,14 @@ const loadStamp: Loader = async (client, id, viewerId) => {
   if (!mine && (r.visibility !== "public" || r.display_on_passport === false)) {
     return { state: UNAVAILABLE("private"), projection: null };
   }
+  // A block, EITHER way, refuses — `GET /stamps/:stampId` answers not_found on
+  // `isBlocked` (bidirectional, fail-closed). Lane R N1, 2026-10-06: this
+  // loader read no `blocks`, so a blocked viewer resolved the stamp's title,
+  // city, country and artwork by id.
+  if (!mine) {
+    const block = await readBlockBetween(client, viewerId, r.user_id);
+    if (block !== "clear") return refusedByBlock(block);
+  }
   let title = (r.title_override as string) ?? null;
   let icon: string | null = null;
   if (r.stamp_definition_id) {
@@ -830,12 +968,13 @@ const loadNeighborhood: Loader = async (client, id) => {
  * is `route_plan_members`, which is the table the route surface itself uses —
  * a trip or circle id on the row is NOT taken as membership, because being on
  * the trip a route was planned for is not the same as having been added to the
- * route.
+ * route. It is, though, REQUIRED as well: `GET /route-plans/:id` admits a
+ * non-owner only as an accepted member of the plan's trip (see below).
  */
 const loadRoute: Loader = async (client, id, viewerId) => {
   const { data, error } = await client
     .from("route_plans")
-    .select("id, owner_user_id, title, route_style, status, is_approximated, updated_at")
+    .select("id, owner_user_id, trip_id, title, route_style, status, is_approximated, updated_at")
     .eq("id", id)
     .maybeSingle();
   if (error) return { state: UNAVAILABLE("unknown"), projection: null };
@@ -845,6 +984,21 @@ const loadRoute: Loader = async (client, id, viewerId) => {
   const mine = r.owner_user_id === viewerId;
   if (!mine) {
     if (r.status === "draft") return { state: UNAVAILABLE("private"), projection: null };
+    // `GET /route-plans/:id` admits a non-owner ONLY as an accepted member of
+    // the plan's trip, and refuses outright a plan with no trip ("Not the route
+    // owner"). Lane R N1 sweep, 2026-10-06: this loader took a
+    // `route_plan_members` row alone, so a plan with no trip — or a member who
+    // has left the trip — resolved here while the route refused it. Both are
+    // required now; never wider than either.
+    if (!r.trip_id) return { state: UNAVAILABLE("unauthorized"), projection: null };
+    const { data: crew, error: cErr } = await client
+      .from("trip_members")
+      .select("user_id, status")
+      .eq("trip_id", r.trip_id)
+      .eq("user_id", viewerId)
+      .maybeSingle();
+    if (cErr) return { state: UNAVAILABLE("unknown"), projection: null };
+    if (!crew || (crew as Row).status !== "accepted") return { state: UNAVAILABLE("unauthorized"), projection: null };
     const { data: member, error: mErr } = await client
       .from("route_plan_members")
       .select("user_id")
@@ -892,6 +1046,10 @@ const loadReservation: Loader = async (client, id, viewerId) => {
   const r = data as Row;
   if (r.status === "dismissed") return { state: UNAVAILABLE("deleted"), projection: null };
   if (r.user_id !== viewerId) {
+    // The grant below is trip crew, and the trip's own ladder refuses a block
+    // before it looks at crew (canViewTrip). Lane R N1 sweep, 2026-10-06.
+    const block = await readBlockBetween(client, viewerId, r.user_id);
+    if (block !== "clear") return refusedByBlock(block);
     const { data: member, error: mErr } = await client
       .from("trip_members")
       .select("user_id, status")
@@ -941,6 +1099,9 @@ const loadLayoverPlan: Loader = async (client, id, viewerId) => {
   }
   if (r.user_id !== viewerId) {
     if (!r.trip_id) return { state: UNAVAILABLE("private"), projection: null };
+    // As for a reservation: the grant is trip crew, and a block outranks crew.
+    const block = await readBlockBetween(client, viewerId, r.user_id);
+    if (block !== "clear") return refusedByBlock(block);
     const { data: member, error: mErr } = await client
       .from("trip_members")
       .select("user_id, status")
@@ -1000,6 +1161,11 @@ const loadMedia: Loader = async (client, id, viewerId) => {
   if (!mine) {
     if (r.visibility !== "public") return { state: UNAVAILABLE("private"), projection: null };
     if (r.moderation_status !== "approved" && r.moderation_status !== "active") return { state: UNAVAILABLE("unauthorized"), projection: null }; // §36 'active' = legacy 'approved' (census-media §20)
+    // A block, EITHER way, refuses — the byte gate (lib/mediaAccess.ts, "2.
+    // Blocks, both directions, fail-closed") already refuses the bytes, and
+    // the card carried the caption and the thumbnail URL past it. Lane R N1.
+    const block = await readBlockBetween(client, viewerId, r.owner_user_id);
+    if (block !== "clear") return refusedByBlock(block);
   }
   if (processing !== "ready") return { state: UNAVAILABLE("unknown"), projection: null };
   return {
@@ -1104,12 +1270,13 @@ export function shareableFor(
   objectType: TelegraphObjectType,
   objectId: string,
   conversationActions: TelegraphAction[] = shareActionsFor(objectType),
+  log?: ShareLog,
 ): TelegraphShareable | null {
   const loader = LOADERS[objectType];
   if (!loader) return null;
   let cache: Promise<Loaded> | null = null;
   const load = (viewerId: string) => {
-    if (!cache) cache = loader(client, objectId, viewerId);
+    if (!cache) cache = loader(client, objectId, viewerId, log);
     return cache;
   };
   return {
@@ -1188,11 +1355,12 @@ export async function resolveShareProjections(
   viewerId: string,
   conversationId: string,
   refs: ShareRef[],
+  log?: ShareLog,
 ): Promise<ResolvedShare[]> {
   const out: ResolvedShare[] = [];
   for (const ref of refs) {
     const deepLink = deepLinkFor(ref.objectType, ref.objectId);
-    const shareable = shareableFor(client, ref.objectType, ref.objectId);
+    const shareable = shareableFor(client, ref.objectType, ref.objectId, undefined, log);
     if (!shareable) {
       out.push({
         objectType: ref.objectType,

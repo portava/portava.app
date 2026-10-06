@@ -141,8 +141,8 @@ function fixture(): Record<string, any[]> {
     ],
     route_plans: [
       { id: ROUTE_DRAFT, owner_user_id: BOB, title: "Unfinished", route_style: "custom", status: "draft", is_approximated: true, updated_at: "2026-05-01T00:00:00.000Z" },
-      { id: ROUTE_SHARED, owner_user_id: BOB, title: "Riverside walk", route_style: "walking", status: "active", is_approximated: true, updated_at: "2026-05-02T00:00:00.000Z" },
-      { id: ROUTE_STRANGER, owner_user_id: BOB, title: "Not yours", route_style: "walking", status: "active", is_approximated: false, updated_at: "2026-05-03T00:00:00.000Z" },
+      { id: ROUTE_SHARED, owner_user_id: BOB, trip_id: TRIP_SHARED, title: "Riverside walk", route_style: "walking", status: "active", is_approximated: true, updated_at: "2026-05-02T00:00:00.000Z" },
+      { id: ROUTE_STRANGER, owner_user_id: BOB, trip_id: TRIP_SHARED, title: "Not yours", route_style: "walking", status: "active", is_approximated: false, updated_at: "2026-05-03T00:00:00.000Z" },
       { id: ROUTE_CANCELLED, owner_user_id: BOB, title: "Called off", route_style: "walking", status: "cancelled", is_approximated: false, updated_at: "2026-05-04T00:00:00.000Z" },
     ],
     route_plan_members: [
