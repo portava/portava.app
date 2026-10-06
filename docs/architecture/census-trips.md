@@ -10166,6 +10166,6 @@ created is its creator's alone, so creation reads no restriction state
 (`artifacts/api-server/src/routes/trips.ts:287#// Lead ruling D-24a (2026-10-06): a hosting restriction does NOT stop a solo`).
 Inviting someone is what makes a trip a group trip, so the invite door carries the hosting gate
 (`artifacts/api-server/src/routes/trips.ts:1198#if (!invite.allowed)`), as does `POST /trips/:tripId/invite-link`.
-census-trust's TRV2-08 evidence still lists `routes/trips.ts:288` as a restriction consumer; that line is now this
+census-trust's TRV2-08 evidence still lists line 288 of routes/trips.ts as a restriction consumer; that line is now this
 explanation (lane B's census; recorded, not edited). The refusal copy becomes lane B's `restrictionSentence("hosting")`
 once lane B lands.
