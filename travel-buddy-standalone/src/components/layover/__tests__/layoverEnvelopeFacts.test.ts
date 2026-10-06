@@ -18,6 +18,8 @@ import assert from 'node:assert/strict';
 import {
   CREW_EACH_CHECKS_OWN,
   ENVELOPE_LABEL_CAUTION,
+  MEETING_POINT_PLACE_NEEDED,
+  MEETING_POINT_PLACE_OPTIONS,
   ENVELOPE_LABEL_CLEAR,
   STOP_NOT_ON_OFFER,
   crewOwnGateNote,
@@ -118,17 +120,38 @@ test('EXHAUSTIVE: the label says "safe" ONLY for the literal status `open`, and 
   assert.ok(safe > 0, 'NON-VACUITY: nothing in the sweep was ever called safe');
 });
 
-test('the crew sentence is unconditional and says a deadline is not a clearance', () => {
+test('the crew sentence is unconditional: a deadline is not a clearance, and each member checks their own entry before leaving', () => {
   assert.match(CREW_EACH_CHECKS_OWN, /deadline, not a clearance/);
-  assert.match(CREW_EACH_CHECKS_OWN, /own passport/);
+  assert.match(CREW_EACH_CHECKS_OWN, /Before leaving the airport, each of you must check your own entry/);
   assert.match(CREW_EACH_CHECKS_OWN, /everyone checks their own/);
-  // Nothing in it says the group can go.
+  // Nothing in it says the group can go…
   assert.doesNotMatch(CREW_EACH_CHECKS_OWN, /you can (all )?(go|leave|head)|cleared to|safe to/i);
+  // …and nothing in it says a crew IS a trip out of the airport, or that being in one needs a clearance.
+  assert.doesNotMatch(CREW_EACH_CHECKS_OWN, /cannot (start|join)|not allowed to (start|join)/i);
 });
 
-test('a member whose OWN gate is closed is told so; nobody else is told anything', () => {
-  assert.match(String(crewOwnGateNote('closed')), /does not allow leaving the airport/);
-  for (const other of ['open', 'caution', 'unknown', 'not_applicable', '', null, undefined]) {
+test('a member is told what THEIR OWN gate says about the landside part — never that the crew is closed to them', () => {
+  const closed = String(crewOwnGateNote('closed'));
+  assert.match(closed, /Your own layover does not allow leaving the airport/);
+  assert.match(closed, /You can still meet this crew inside the airport/, 'a closed landside gate was said as a closed crew');
+  assert.match(closed, /anything in the city is not open to you/);
+  assert.doesNotMatch(closed, /cannot (start|join|be in)|leave (this|the) crew/i);
+
+  const caution = String(crewOwnGateNote('caution'));
+  assert.match(caution, /not confirmed/);
+  assert.match(caution, /not a yes for you/);
+  assert.doesNotMatch(caution, /does not allow/, 'a caution was said as a refusal');
+  assert.notEqual(caution, closed);
+
+  // Open, unknown, unstated: nothing is claimed about a gate that is open or that nobody stated.
+  for (const other of ['open', 'unknown', 'not_applicable', 'CLOSED', '', null, undefined]) {
     assert.equal(crewOwnGateNote(other), null, String(other));
   }
+});
+
+test('the meeting-point place has exactly two answers, airside first, and neither is a default', () => {
+  assert.deepEqual(MEETING_POINT_PLACE_OPTIONS.map((o) => o.insideAirport), [true, false]);
+  assert.match(MEETING_POINT_PLACE_OPTIONS[0].label, /Inside the airport/);
+  assert.match(MEETING_POINT_PLACE_OPTIONS[1].label, /city/);
+  assert.match(MEETING_POINT_PLACE_NEEDED, /inside the airport or in the city/);
 });

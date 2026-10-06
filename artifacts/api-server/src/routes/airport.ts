@@ -2988,7 +2988,7 @@ async function sessionEntry(
 
 const crewCreateSchema = z.object({
   title: z.string().min(1).max(120),
-  meetingPointLabel: z.string().min(1).max(200).optional().nullable(),
+  meetingPointLabel: z.string().min(1).max(200).optional().nullable(), /** Is the meeting point inside the airport? The same question, with the same name, a plan stop answers with `insideAirport`. The label is free text nothing here can classify, so the CREATOR says; unstated is `unstated`, never guessed. NOT STORED (no column) — it is used once, to decide whether setting this meeting point needs the landside gate. */ meetingPointInsideAirport: z.boolean().optional().nullable(),
   maxMembers: z.number().int().min(2).max(12).optional(),
 });
 
@@ -3116,7 +3116,7 @@ async function crewPayload(
   // untouched, because those bind every member whether the meet is on or not.
   const meetingPoint = crewMeetingPointFor(
     crew.meetingPointLabel,
-    viewerGatedMeetFacts(crewMeetFactsFrom(viewerId, crew.id, members, solver.members, cards.blockedRelation), viewerLandside),
+    crewMeetFactsFrom(viewerId, crew.id, members, solver.members, cards.blockedRelation),
   );
 
   return {
@@ -3425,7 +3425,7 @@ router.post("/airport/sessions/:id/crew", async (req, res) => {
 
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
-  const record = certifyCrewMemberRecord(airport, session, nowMs); const mineGate = crewMeetGateFor(sc, user.id, airport, session, nowMs, await sessionEntry(sc, airport, session)); if (!mineGate.offer.allowed) { sendError(res, "conflict", CREW_REQUESTER_REFUSAL, { reason: "safety_gate_not_passed" }); return; } // the REQUESTER's own record, with their own entry fact — the same gate GET /crew refuses the roster on
+  const record = certifyCrewMemberRecord(airport, session, nowMs); const mineGate = crewMeetGateFor(sc, user.id, airport, session, nowMs, await sessionEntry(sc, airport, session)); const place = crewMeetingPointPlace(parsed.data); if (place === "outside_airport" && mineGate.landside === "closed") { sendError(res, "conflict", CREW_LANDSIDE_MEETING_POINT_REFUSAL, { reason: "landside_meeting_point_closed" }); return; } // ONLY what is landside is gated, on the REQUESTER's own record with their own entry fact. A crew that meets inside the airport — or has no meeting point — is nobody's landside trip, and no gate stops it.
 
   const created = await createCrew(sc, {
     userId: user.id,
@@ -3454,7 +3454,7 @@ router.post("/airport/sessions/:id/crew", async (req, res) => {
 
   const payload = await crewPayload(sc, user.id, created.value.crew, created.value.members, nowMs, mineGate.landside);
   if (!payload.ok) { sendError(res, "degraded_unavailable", "Your crew was created but could not be certified. Please refresh."); return; }
-  res.json({ ok: true, inCrew: true, ...payload.body });
+  res.json({ ok: true, inCrew: true, ...payload.body, meetingPointPlace: place });
 });
 
 router.post("/airport/sessions/:id/crew/:crewId/join", async (req, res) => {
@@ -3482,7 +3482,7 @@ router.post("/airport/sessions/:id/crew/:crewId/join", async (req, res) => {
   }
 
   const nowMs = Date.now();
-  const nowIso = new Date(nowMs).toISOString(); const mineGate = crewMeetGateFor(sc, user.id, airport, session, nowMs, await sessionEntry(sc, airport, session)); if (!mineGate.offer.allowed) { sendError(res, "conflict", CREW_REQUESTER_REFUSAL, { reason: "safety_gate_not_passed" }); return; } // refused BEFORE the crew is read: a crew id must not get past a gate the roster would not have
+  const nowIso = new Date(nowMs).toISOString(); const mineGate = crewMeetGateFor(sc, user.id, airport, session, nowMs, await sessionEntry(sc, airport, session)); // NOT a gate: joining a crew is not leaving the airport. `mineGate.landside` is read so the joiner's OWN view can say whether the landside part is open to THEM.
 
   const joined = await joinCrew(sc, { userId: user.id, sessionId: session.id, crewId: req.params.crewId, city, admit: blockAdmission(sc, user.id) }, nowIso); // §48
   if (!joined.ok) {
@@ -4600,10 +4600,36 @@ function publishedSafeEnvelope(airport: AirportProfile, record: LayoverFeasibili
  */
 const CREW_LANDSIDE_CLEARANCE = "each_member_checks_their_own" as const;
 
-/** Why a traveller whose own gate refuses may not start or join a city crew. */
-const CREW_REQUESTER_REFUSAL =
-  "Your own layover does not allow leaving the airport right now, so you cannot start or join a crew in the city. " +
-  "Check the answer at the top of your layover.";
+/**
+ * Where a crew's meeting point is, as far as anything here can know.
+ *
+ * `layover_crews.meeting_point_label` is free TEXT ("Terminal 2 food court") with
+ * no coordinate and no place behind it — migration 2984 asserts the absence —
+ * so nothing can classify it. A plan stop answers the same question with
+ * `insideAirport`, and this reuses that vocabulary rather than minting another:
+ * the creator SAYS, and a meeting point nobody classified is `unstated`.
+ *
+ *   none             no meeting point was given.
+ *   inside_airport   declared inside the airport. Not a landside trip.
+ *   outside_airport  declared outside it. The ONE case the landside gate reads.
+ *   unstated         a label and no declaration (every client before this one).
+ *                    NOT gated: it may well be the food court, and refusing it
+ *                    would stop a traveller meeting people in the terminal on
+ *                    the strength of a guess. Nothing affirms it either — the
+ *                    crew card says each member checks their own answer.
+ */
+function crewMeetingPointPlace(
+  input: { meetingPointLabel?: string | null; meetingPointInsideAirport?: boolean | null },
+): "none" | "inside_airport" | "outside_airport" | "unstated" {
+  if (input.meetingPointLabel === null || input.meetingPointLabel === undefined) return "none";
+  if (input.meetingPointInsideAirport === true) return "inside_airport";
+  return input.meetingPointInsideAirport === false ? "outside_airport" : "unstated";
+}
+
+/** Why a traveller whose own landside gate is closed may not set a meeting point outside the airport. */
+const CREW_LANDSIDE_MEETING_POINT_REFUSAL =
+  "Your own layover does not allow leaving the airport right now, so you cannot set a meeting point outside it. " +
+  "Pick somewhere inside the airport, or leave the meeting point out.";
 
 /**
  * The VIEWER's own gate, for a crew they are already in.
@@ -4623,15 +4649,3 @@ async function crewViewerLandside(
   return crewMeetGateFor(sc, viewerId, resolved.airport, session, nowMs, await sessionEntry(sc, resolved.airport, session)).landside;
 }
 
-/**
- * The §14.1 meet facts, with the viewer's OWN entry-aware gate applied.
- *
- * `crewMeetFactsFrom` reads the viewer's record from the crew solver, which
- * certifies every member WITHOUT an entry fact — so a viewer whose own border
- * is refused cleared `safetyGateCleared` there. Their own gate can only take
- * the clearance away; `"unknown"` and the two non-closed values leave the
- * solver's answer standing.
- */
-function viewerGatedMeetFacts(facts: CrewMeetFacts, viewerLandside: LandsideStatus | "unknown"): CrewMeetFacts {
-  return viewerLandside === "closed" ? { ...facts, safetyGateCleared: false } : facts;
-}

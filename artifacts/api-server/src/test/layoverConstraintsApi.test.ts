@@ -735,9 +735,19 @@ describe("FOLLOW-UP 3 — the published envelope goes through the landside gate"
   });
 });
 
-describe("FOLLOW-UP 4 — a crew is started and joined on the REQUESTER's own record, and is never a group clearance", () => {
-  const CREW = { title: "Ramen in the old town", meetingPointLabel: "Terminal 2 food court" };
+describe("FOLLOW-UP 4 (as corrected) — a crew is not a landside trip: only what is LANDSIDE is gated, on the requester's own record", () => {
+  const AIRSIDE = { title: "Coffee at the gate", meetingPointLabel: "Terminal 2 food court", meetingPointInsideAirport: true };
+  const LANDSIDE = { title: "Ramen in the old town", meetingPointLabel: "Shilin night market", meetingPointInsideAirport: false };
+  const NO_POINT = { title: "Anyone up for a walk around the terminal?" };
+  const UNSTATED = { title: "Ramen", meetingPointLabel: "Terminal 2 food court" };
   const OTHER_SESSION = "session-other-traveller";
+
+  /** The three ways this lane can close the requester's OWN landside gate with hours to spare. */
+  const CLOSED_WORLDS: Array<{ name: string; make: () => Record<string, any[]> }> = [
+    { name: "a refused border", make: () => stageRefusedBorder() },
+    { name: "an unreadable constraint store", make: () => stage({ storage: true, entryPermitted: true, failures: { "layover_constraints:select": { message: "down" } } }) },
+    { name: "an airport change", make: () => stage({ storage: true, entryPermitted: true, constraints: [{ version: 1, baggage_mode: "CARRY_ON_ONLY", recheck_required: false, airport_change_required: true }] }) },
+  ];
 
   /** A second traveller in the same city, with NO passport on file (their border is unconfirmed, not refused). */
   function addOtherTraveller(t: Record<string, any[]>) {
@@ -750,86 +760,162 @@ describe("FOLLOW-UP 4 — a crew is started and joined on the REQUESTER's own re
   }
   const otherCrewUrl = (suffix = "") => `/api/airport/sessions/${OTHER_SESSION}/crew${suffix}`;
 
-  it("a requester whose OWN border is refused cannot START a crew, and nothing is written", async () => {
-    const t = stageRefusedBorder();
-    const r = await send("POST", CREW_URL, CREW);
-    assert.equal(r.status, 409, JSON.stringify(r.body));
-    assert.equal(r.body.error, "conflict");
-    assert.equal(r.body.reason, "safety_gate_not_passed");
-    assert.match(r.body.message, /does not allow leaving the airport/);
-    assert.equal(t.layover_crews.length, 0, "a crew was created past the gate");
-    assert.equal(t.layover_crew_members.length, 0);
+  it("FIXTURE: each closed world really closes the requester's own landside gate, with hours of usable time", async () => {
+    for (const w of CLOSED_WORLDS) {
+      w.make();
+      const o = await send("GET", OVERVIEW_URL);
+      assert.equal(o.body.landsideGate.status, "closed", `${w.name}: ${JSON.stringify(o.body.landsideGate)}`);
+      assert.ok(o.body.window.usableMinutes > 300, `${w.name}: usable ${o.body.window.usableMinutes}`);
+    }
   });
 
-  it("…nor one whose constraint store cannot be read, nor one whose next flight leaves from another airport", async () => {
-    const unreadable = stage({ storage: true, entryPermitted: true, failures: { "layover_constraints:select": { message: "down" } } });
-    assert.equal((await send("POST", CREW_URL, CREW)).status, 409);
-    assert.equal(unreadable.layover_crews.length, 0);
-
-    const change = stage({ storage: true, entryPermitted: true, constraints: [{ version: 1, baggage_mode: "CARRY_ON_ONLY", recheck_required: false, airport_change_required: true }] });
-    assert.equal((await send("POST", CREW_URL, CREW)).status, 409);
-    assert.equal(change.layover_crews.length, 0);
+  it("AIRSIDE crew, gate CLOSED (refused border / unreadable constraints / airport change): CREATED — a closed landside gate does not stop a crew that meets in the terminal", async () => {
+    for (const w of CLOSED_WORLDS) {
+      const t = w.make();
+      const r = await send("POST", CREW_URL, AIRSIDE);
+      assert.equal(r.status, 200, `${w.name}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body.inCrew, true, w.name);
+      assert.equal(t.layover_crews.length, 1, w.name);
+      assert.equal(t.layover_crews[0].meeting_point_label, "Terminal 2 food court", w.name);
+      assert.equal(r.body.meetingPointPlace, "inside_airport", w.name);
+      // Their own view still says the landside part is not open to THEM.
+      assert.equal(r.body.yourLandside, "closed", w.name);
+      assert.equal(r.body.landsideClearance, "each_member_checks_their_own", w.name);
+    }
   });
 
-  it("a requester whose OWN border is refused cannot JOIN a crew by id, and no membership is written", async () => {
-    const t = stageRefusedBorder();
-    addOtherTraveller(t);
-    const made = await send("POST", otherCrewUrl(), CREW, OTHER_TOKEN);
-    assert.equal(made.status, 200, `fixture: the other traveller could not start the crew (${JSON.stringify(made.body)})`);
-    const crewId = made.body.crew.id as string;
-    assert.equal(t.layover_crew_members.length, 1);
+  it("…and so is a crew with NO meeting point, and one whose label nobody classified (every client before this one)", async () => {
+    for (const w of CLOSED_WORLDS) {
+      const none = w.make();
+      const a = await send("POST", CREW_URL, NO_POINT);
+      assert.equal(a.status, 200, `${w.name} / no point: ${JSON.stringify(a.body)}`);
+      assert.equal(a.body.meetingPointPlace, "none", w.name);
+      assert.equal(none.layover_crews.length, 1, w.name);
 
-    const r = await send("POST", `${CREW_URL}/${crewId}/join`);
-    assert.equal(r.status, 409, JSON.stringify(r.body));
-    assert.equal(r.body.reason, "safety_gate_not_passed");
-    assert.equal(t.layover_crew_members.length, 1, "a membership was written past the gate");
-    assert.equal(t.layover_crew_members.some((m: any) => m.user_id === USER), false);
+      const unstated = w.make();
+      const b = await send("POST", CREW_URL, UNSTATED);
+      assert.equal(b.status, 200, `${w.name} / unstated: ${JSON.stringify(b.body)}`);
+      assert.equal(b.body.meetingPointPlace, "unstated", `${w.name}: an unclassified label was guessed into a place`);
+      assert.equal(unstated.layover_crews.length, 1, w.name);
+      assert.equal(b.body.yourLandside, "closed", w.name);
+    }
   });
 
-  it("CONTROL: an unconfirmed border is not a refusal — the crew is made, and the payload says it is nobody's clearance", async () => {
-    const t = stage();
-    const r = await send("POST", CREW_URL, CREW);
-    assert.equal(r.status, 200, JSON.stringify(r.body));
-    assert.equal(r.body.inCrew, true);
-    assert.equal(t.layover_crews.length, 1);
-    assert.equal(r.body.yourLandside, "caution", "the requester's own gate must be read with their own entry fact");
-    assert.equal(r.body.landsideClearance, "each_member_checks_their_own");
-    // The crew certifies the EMPTY plan: there is no group landside answer at all.
-    assert.equal(r.body.solution.landside, "not_applicable");
-    // The same from a later GET.
-    const got = await send("GET", CREW_URL);
-    assert.equal(got.body.yourLandside, "caution");
-    assert.equal(got.body.landsideClearance, "each_member_checks_their_own");
-  });
+  it("AIRSIDE crew under a CAUTION (a border nobody confirmed) and under an OPEN gate: created", async () => {
+    stage();
+    const caution = await send("POST", CREW_URL, AIRSIDE);
+    assert.equal(caution.status, 200, JSON.stringify(caution.body));
+    assert.equal(caution.body.yourLandside, "caution");
 
-  it("CONTROL: a confirmed border reads `open` for the requester — and the crew is still not cleared as a group", async () => {
     stage({ entryPermitted: true });
-    const r = await send("POST", CREW_URL, CREW);
-    assert.equal(r.status, 200, JSON.stringify(r.body));
-    assert.equal(r.body.yourLandside, "open");
-    assert.equal(r.body.landsideClearance, "each_member_checks_their_own");
-    assert.equal(r.body.solution.landside, "not_applicable");
+    const open = await send("POST", CREW_URL, AIRSIDE);
+    assert.equal(open.status, 200, JSON.stringify(open.body));
+    assert.equal(open.body.yourLandside, "open");
   });
 
-  it("CONTROL: a traveller with an unconfirmed border can JOIN — the gate refuses a closed record, not an unchecked one", async () => {
+  it("a LANDSIDE meeting point is REFUSED when the requester's own gate is closed — by name, and nothing is written", async () => {
+    for (const w of CLOSED_WORLDS) {
+      const t = w.make();
+      const r = await send("POST", CREW_URL, LANDSIDE);
+      assert.equal(r.status, 409, `${w.name}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.body.error, "conflict", w.name);
+      assert.equal(r.body.reason, "landside_meeting_point_closed", w.name);
+      assert.match(r.body.message, /cannot set a meeting point outside it/, w.name);
+      assert.match(r.body.message, /inside the airport/, `${w.name}: the refusal must say what IS open`);
+      assert.equal(t.layover_crews.length, 0, `${w.name}: a crew was created past the gate`);
+      assert.equal(t.layover_crew_members.length, 0, w.name);
+    }
+  });
+
+  it("a LANDSIDE meeting point under a CAUTION is allowed and the requester's view says unconfirmed; under an OPEN gate it is allowed and open", async () => {
+    const t = stage();
+    const caution = await send("POST", CREW_URL, LANDSIDE);
+    assert.equal(caution.status, 200, JSON.stringify(caution.body));
+    assert.equal(caution.body.meetingPointPlace, "outside_airport");
+    assert.equal(caution.body.yourLandside, "caution", "not forbidden is not confirmed: the view must say so");
+    assert.equal(caution.body.landsideClearance, "each_member_checks_their_own");
+    assert.equal(t.layover_crews.length, 1);
+
+    stage({ entryPermitted: true });
+    const open = await send("POST", CREW_URL, LANDSIDE);
+    assert.equal(open.status, 200, JSON.stringify(open.body));
+    assert.equal(open.body.yourLandside, "open");
+    // Even then the crew is nobody's group clearance.
+    assert.equal(open.body.landsideClearance, "each_member_checks_their_own");
+    assert.equal(open.body.solution.landside, "not_applicable");
+  });
+
+  it("JOIN with the gate CLOSED (all three ways): joined — and the joiner's own view says the landside part is not open to them", async () => {
+    for (const w of CLOSED_WORLDS) {
+      const t = w.make();
+      addOtherTraveller(t);
+      // An unreadable store and a storage-on world close the OTHER traveller's gate too, so the crew they
+      // start here is an airside one. (The landside-crew case is the next test, in the one world where the
+      // other traveller's own gate is not closed.)
+      const made = await send("POST", otherCrewUrl(), AIRSIDE, OTHER_TOKEN);
+      assert.equal(made.status, 200, `${w.name}: fixture: the other traveller could not start the crew (${JSON.stringify(made.body)})`);
+
+      const joined = await send("POST", `${CREW_URL}/${made.body.crew.id}/join`);
+      assert.equal(joined.status, 200, `${w.name}: ${JSON.stringify(joined.body)}`);
+      assert.equal(joined.body.inCrew, true, w.name);
+      assert.equal(t.layover_crew_members.filter((m: any) => m.user_id === USER).length, 1, w.name);
+      assert.equal(joined.body.yourLandside, "closed", w.name);
+      assert.equal(joined.body.landsideClearance, "each_member_checks_their_own", w.name);
+      assert.equal(joined.body.solution.landside, "not_applicable", `${w.name}: the crew answer implied a group landside verdict`);
+
+      // The same from a later GET — they can see the crew.
+      const got = await send("GET", CREW_URL);
+      assert.equal(got.body.inCrew, true, w.name);
+      assert.equal(got.body.crew.title, AIRSIDE.title, w.name);
+      assert.equal(got.body.yourLandside, "closed", w.name);
+    }
+  });
+
+  it("a crew that ALREADY has a landside meeting point: a member whose own gate is closed can still join and see it — their view says the landside part is not open to THEM", async () => {
+    const t = stageRefusedBorder();
+    addOtherTraveller(t);
+    // Set by somebody whose own gate allowed it: the other traveller has no passport on file, so theirs is a caution.
+    const made = await send("POST", otherCrewUrl(), LANDSIDE, OTHER_TOKEN);
+    assert.equal(made.status, 200, `fixture: ${JSON.stringify(made.body)}`);
+    assert.equal(made.body.meetingPointPlace, "outside_airport");
+    assert.equal(made.body.yourLandside, "caution");
+
+    const joined = await send("POST", `${CREW_URL}/${made.body.crew.id}/join`);
+    assert.equal(joined.status, 200, JSON.stringify(joined.body));
+    assert.equal(joined.body.inCrew, true);
+    assert.equal(joined.body.crew.title, LANDSIDE.title);
+    assert.equal(joined.body.yourLandside, "closed", "the joiner's own closed gate was not said");
+    assert.equal(joined.body.landsideClearance, "each_member_checks_their_own");
+    assert.equal(joined.body.solution.landside, "not_applicable", "the crew answer implied a group landside verdict");
+    assert.equal(joined.body.solution.feasible, true, "one member's closed landside gate made the CREW infeasible");
+    assert.equal(t.layover_crew_members.length, 2);
+  });
+
+  it("JOIN under a CAUTION and under an OPEN gate: joined, each with their own answer", async () => {
     const t = stage();
     addOtherTraveller(t);
-    const made = await send("POST", otherCrewUrl(), CREW, OTHER_TOKEN);
+    const made = await send("POST", otherCrewUrl(), AIRSIDE, OTHER_TOKEN);
     const joined = await send("POST", `${CREW_URL}/${made.body.crew.id}/join`);
     assert.equal(joined.status, 200, JSON.stringify(joined.body));
     assert.equal(t.layover_crew_members.length, 2);
     assert.equal(joined.body.yourLandside, "caution");
+
+    const t2 = stage({ entryPermitted: true });
+    addOtherTraveller(t2);
+    const made2 = await send("POST", otherCrewUrl(), AIRSIDE, OTHER_TOKEN);
+    const joined2 = await send("POST", `${CREW_URL}/${made2.body.crew.id}/join`);
+    assert.equal(joined2.status, 200, JSON.stringify(joined2.body));
+    assert.equal(joined2.body.yourLandside, "open");
   });
 
-  it("a MEMBER whose own border turns out refused is told so, and loses the meeting point — from their OWN entry fact, nobody else's", async () => {
+  it("OWN RECORD ONLY: one member's refused border changes THEIR view and nobody else's, and nothing passport-derived crosses", async () => {
     const t = stage();
     addOtherTraveller(t);
-    const made = await send("POST", CREW_URL, CREW);
+    const made = await send("POST", CREW_URL, AIRSIDE);
     assert.equal(made.status, 200);
-    assert.equal(made.body.crew.meetingPointLabel, "Terminal 2 food court");
     await send("POST", otherCrewUrl(`/${made.body.crew.id}/join`), undefined, OTHER_TOKEN);
 
-    // The requester's corridor is curated AFTER they joined — as a refusal.
+    // The first member's corridor is curated AFTER they joined — as a refusal.
     t.feature_flags.push({ flag: "passport_entry_intelligence_enabled", enabled: true });
     t.traveler_passports = [{ user_id: USER, issuing_country: "US", is_primary: true, created_at: "2026-01-01T00:00:00.000Z" }];
     t.entry_requirements = [{
@@ -841,18 +927,45 @@ describe("FOLLOW-UP 4 — a crew is started and joined on the REQUESTER's own re
 
     const mine = await send("GET", CREW_URL);
     assert.equal(mine.status, 200, JSON.stringify(mine.body));
-    assert.equal(mine.body.inCrew, true);
+    assert.equal(mine.body.inCrew, true, "a closed landside gate removed a member from their crew");
     assert.equal(mine.body.yourLandside, "closed");
-    assert.equal(mine.body.crew.meetingPointLabel, null, "a member whose own gate is closed was still handed the meeting point");
-    assert.ok(mine.body.crew.meetingPointWithheld.includes("safety_gate_not_cleared"), JSON.stringify(mine.body.crew.meetingPointWithheld));
+    // The airside meeting point is theirs to see: the meet gate is #599's and is unchanged by this lane.
+    assert.equal(mine.body.crew.meetingPointLabel, "Terminal 2 food court");
 
-    // The OTHER member — no passport on file, so nothing of theirs was read — is unaffected, and is told
-    // nothing about the first member's border: their own gate, their own answer.
     const theirs = await send("GET", otherCrewUrl(), undefined, OTHER_TOKEN);
     assert.equal(theirs.body.yourLandside, "caution");
     assert.equal(theirs.body.crew.meetingPointLabel, "Terminal 2 food court");
     assert.equal(JSON.stringify(theirs.body).includes("visa_required"), false);
     assert.equal(JSON.stringify(theirs.body).includes("entry_refused"), false);
+    assert.equal(JSON.stringify(theirs.body).includes("closed"), false, "the other member's payload carries the first member's closure");
+  });
+
+  it("the gate reads the REQUESTER's own entry fact: the same landside meeting point is refused for a refused border and allowed for an unchecked one", async () => {
+    stageRefusedBorder();
+    assert.equal((await send("POST", CREW_URL, LANDSIDE)).status, 409);
+    // The same world with entry intelligence switched off: the border is unchecked, a caution, not a refusal.
+    const t = stageRefusedBorder();
+    t.feature_flags = t.feature_flags.filter((f: any) => f.flag !== "passport_entry_intelligence_enabled");
+    stageSameTables(t);
+    const r = await send("POST", CREW_URL, LANDSIDE);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.yourLandside, "caution");
+  });
+
+  it("the place is the creator's own statement and nothing else: validated, never inferred from the label", async () => {
+    stage({ entryPermitted: true });
+    const bad = await send("POST", CREW_URL, { ...AIRSIDE, meetingPointInsideAirport: "yes" });
+    assert.equal(bad.status, 400);
+    // A declaration with no meeting point places nothing.
+    stageRefusedBorder();
+    const noPoint = await send("POST", CREW_URL, { title: "No point", meetingPointInsideAirport: false });
+    assert.equal(noPoint.status, 200, JSON.stringify(noPoint.body));
+    assert.equal(noPoint.body.meetingPointPlace, "none");
+    // A label that READS like the city is not classified by reading it.
+    stageRefusedBorder();
+    const reads = await send("POST", CREW_URL, { title: "x", meetingPointLabel: "Shilin night market, downtown" });
+    assert.equal(reads.status, 200);
+    assert.equal(reads.body.meetingPointPlace, "unstated");
   });
 
   it("RATCHET: the crew wrapper still certifies crewmates WITHOUT an entry fact — the privacy control is intact", () => {
@@ -860,6 +973,8 @@ describe("FOLLOW-UP 4 — a crew is started and joined on the REQUESTER's own re
     assert.match(src, /function certifyCrewMemberRecord\([\s\S]{0,200}?return certifySessionFeasibility\(airport, session, \{ nowMs \}\);/, "the crew wrapper now passes something beside nowMs");
     // The viewer's own gate is resolved for the VIEWER's session only: `crewViewerLandside` takes one session.
     assert.match(src, /async function crewViewerLandside\(\s*sc: any,\s*viewerId: string,\s*session: LayoverSession,/);
+    // And no crew route refuses on the roster's safety gate: create and join are not landside trips.
+    assert.doesNotMatch(src, /mineGate\.offer\.allowed/, "a crew route is gated on the requester's safety gate again");
   });
 });
 

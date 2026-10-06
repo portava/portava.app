@@ -97,19 +97,43 @@ export const STOP_NOT_ON_OFFER = 'Leaving the airport is not on for this layover
 // ── the crew card ────────────────────────────────────────────────────────────
 
 /**
- * Said on EVERY crew card, under the shared deadline.
+ * Said on EVERY crew surface — the crew card, and the roster of crews on offer.
  *
  * The server certifies a crew's deadline and nothing about its border: it never
  * reads a crewmate's passport (a privacy control, kept). So "Everyone must be
  * back by 14:10" must never read as "everyone may go" — and this is what stops
  * it. Not conditional on anything, because no payload can lift it.
+ *
+ * It does NOT say a crew is a trip into the city. A crew may meet in the
+ * terminal, and joining one is not leaving the airport; the sentence is about
+ * the moment somebody does.
  */
 export const CREW_EACH_CHECKS_OWN =
-  'This is a deadline, not a clearance. Whether each of you may leave the airport depends on your own passport and your own layover — everyone checks their own answer.';
+  'This is a deadline, not a clearance. Before leaving the airport, each of you must check your own entry and your own layover — everyone checks their own answer.';
 
-/** Said to a member whose OWN gate is closed. Null otherwise — including when the server did not say. */
+/**
+ * What a member is told about THEIR OWN landside gate, on a crew they are in.
+ *
+ * Their own record only. A closed gate does not stop them being in the crew —
+ * a crew can meet inside the airport — so this says what is not open to them
+ * and nothing about the group. Null when the gate is open, and when the server
+ * did not say (an older server): nothing is claimed about a gate nobody stated.
+ */
 export function crewOwnGateNote(yourLandside: string | null | undefined): string | null {
-  return yourLandside === 'closed'
-    ? 'Your own layover does not allow leaving the airport right now. See the answer at the top of this page.'
-    : null;
+  if (yourLandside === 'closed') {
+    return 'Your own layover does not allow leaving the airport right now. You can still meet this crew inside the airport; anything in the city is not open to you. See the answer at the top of this page.';
+  }
+  if (yourLandside === 'caution') {
+    return 'Whether you can leave the airport is not confirmed. Anything this crew does in the city is not a yes for you until it is — see the answer at the top of this page.';
+  }
+  return null;
 }
+
+/** The two answers to "where is that meeting point?", in the order the composer offers them. */
+export const MEETING_POINT_PLACE_OPTIONS: Array<{ insideAirport: boolean; label: string }> = [
+  { insideAirport: true, label: 'Inside the airport' },
+  { insideAirport: false, label: 'In the city' },
+];
+
+/** Asked when a meeting point was typed and not placed. The server cannot classify free text; the creator says. */
+export const MEETING_POINT_PLACE_NEEDED = 'Say whether that meeting point is inside the airport or in the city.';

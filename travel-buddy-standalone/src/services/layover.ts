@@ -1845,7 +1845,7 @@ async function crewAction(url: string, body?: unknown): Promise<CrewActionOutcom
 
 export function createLayoverCrew(
   sessionId: string,
-  input: { title: string; meetingPointLabel?: string | null; maxMembers?: number },
+  input: { title: string; meetingPointLabel?: string | null; /** Where the meeting point is — the creator's own statement; the server gates ONLY `false` (outside the airport) on the creator's own landside gate. */ meetingPointInsideAirport?: boolean | null; maxMembers?: number },
 ): Promise<CrewActionOutcome> {
   return crewAction(airportUrl('sessions', sessionId, 'crew'), input);
 }
