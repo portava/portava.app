@@ -352,6 +352,15 @@ describe("GET /threads/:id/coordination carries the three stage cells", () => {
     assert.equal(body.coordination.closeout, null);
   });
 
+  it("F9: ASSEMBLING with nothing open: the next step is the plan's LEAVE-BY, carried on the served plan", async () => {
+    const { status, body } = await getCoordination({ meetupStartsAt: min(20), meetupEndsAt: min(140), messages: [] });
+    assert.equal(status, 200, JSON.stringify(body));
+    assert.equal(body.coordination.state, "ASSEMBLING");
+    assert.equal(body.coordination.nextStep.kind, "LEAVE_BY");
+    assert.equal(body.coordination.nextStep.at, body.coordination.plan.leaveByAt);
+    assert.ok(body.coordination.nextStep.at);
+  });
+
   it("RETURNING with a SPLIT_RIDE proposal and a CONFIRMED answer: the ride lists both riders", async () => {
     const { status, body } = await getCoordination({
       meetupStartsAt: min(-180),

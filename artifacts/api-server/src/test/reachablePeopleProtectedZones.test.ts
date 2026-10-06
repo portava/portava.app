@@ -255,6 +255,11 @@ describe("positionInProtectedZone", () => {
     assert.equal(positionInProtectedZone(Number.NaN, 10, [zone]), false);
   });
 
+  it("F9: EVERY zone is asked — a point inside only the second of two zones is inside", () => {
+    const elsewhere = { ...zone, id: "z0", center: { lat: -30, lng: -30 } } as ProtectedZone;
+    assert.equal(positionInProtectedZone(10, 10, [elsewhere, zone]), true);
+  });
+
   it("no zones covers nothing", () => {
     assert.equal(positionInProtectedZone(10, 10, []), false);
   });
