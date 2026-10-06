@@ -553,6 +553,24 @@ describe("buildAvailability/buildIntent — §8 explicit windows in the aggregat
 
     const asPublic = (await buildPassportProjection(mkDb(), OWNER, "p1", { resolveViewerContext: resolver(publicRes) }))!;
     assert.equal(asPublic.availability?.explicitWindow, null, "public does not see a followers-only window");
+    // D-103: a mutual follow (context "following", label mutual_follow) IS admitted.
+    const mutualPerms = { ...permsPublic(), canSeeAvailability: true, relationshipLabel: "mutual_follow" };
+    const asMutual = (await buildPassportProjection(mkDb(), OWNER, "m1", { resolveViewerContext: resolver({ ...followerRes, context: "following", permissions: mutualPerms }) }))!;
+    assert.ok(asMutual.availability?.explicitWindow, "a mutual follow sees the followers-only window (D-103)");
+  });
+
+  it("L3: a following window shows to a viewer the OWNER follows — not to one who merely follows the owner", async () => {
+    const mkDb = () => makePassportDb({
+      profiles: [{ ...baseProfile }],
+      feature_flags: [{ flag: WINDOWS_FLAG, enabled: true }],
+      availability_windows: [window({ visibility: "following" })],
+    });
+    const res = (context: "follower" | "following", relationshipLabel: string): ViewerResolution =>
+      ({ context, permissions: { ...permsPublic(), canSeeAvailability: true, relationshipLabel }, sharedTrip: false, sharedEvent: false, ownerIsTripHost: false, buddyRole: null });
+    const followedByOwner = (await buildPassportProjection(mkDb(), OWNER, "o1", { resolveViewerContext: resolver(res("follower", "follower")) }))!;
+    assert.ok(followedByOwner.availability?.explicitWindow, "the owner follows this viewer: admitted");
+    const followsOwner = (await buildPassportProjection(mkDb(), OWNER, "v1", { resolveViewerContext: resolver(res("following", "following")) }))!;
+    assert.equal(followsOwner.availability?.explicitWindow, null, "the viewer follows the owner only: refused");
   });
 
   it("§31: an expired explicit window is never projected as current", async () => {

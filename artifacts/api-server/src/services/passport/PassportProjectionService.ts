@@ -59,7 +59,7 @@ import {
   isActive as isWindowActive,
   effectiveExpiry as windowEffectiveExpiry,
   type AvailabilityWindow,
-  type ViewerRelationship as WindowViewerRelationship,
+  type ViewerRelationship as WindowViewerRelationship, windowRelationshipFromEdges,
 } from "./OpenToPlansService.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { LOCATE_FRIENDS_CREW_PRESENCE } from "../../lib/capability/registry.js";
@@ -1019,12 +1019,12 @@ export function toWindowViewerRelationship(context: PassportViewerContext): Wind
 async function loadActiveExplicitWindow(
   sc: SupabaseClient,
   userId: string,
-  context: PassportViewerContext,
+  context: PassportViewerContext, relationshipLabel?: string | null,
 ): Promise<ActiveAvailabilityWindow | null> {
   try {
     if (!(await isFlagEnabled(sc, OPEN_TO_PLANS_WINDOWS_FLAG))) return null;
     const nowMs = Date.now();
-    const relationship = toWindowViewerRelationship(context);
+    const relationship = windowRelationshipFor(context, relationshipLabel); // D-103 + L3: from the follow edges
     let candidates: AvailabilityWindow[];
     if (relationship === "self") {
       // The owner sees their own active windows regardless of visibility, but
@@ -2219,7 +2219,7 @@ export async function buildPassportProjection(
   if (isSelf || permissions.canSeeAvailability) {
     // §8: an explicit availability window (visible to this viewer under §7) is
     // projected into the aggregate alongside the legacy quick-status/grid.
-    const explicitWindow = await loadActiveExplicitWindow(sc, userId, context);
+    const explicitWindow = await loadActiveExplicitWindow(sc, userId, context, permissions.relationshipLabel);
     availability = await buildAvailability(sc, userId, quick, explicitWindow);
     intent = buildIntent(profile, quick, explicitWindow);
   }
@@ -2509,4 +2509,24 @@ export function passportTrustConfidence(
   if (!Number.isFinite(w) || w < 0) return null;
   if (w >= TRUST_EARN_CONFIDENCE_WEIGHT) return "high";
   return w > 0 ? "medium" : "low";
+}
+
+/**
+ * Lead rulings D-103 and L3 (2026-10-06; lane C's hunk): the relationship an
+ * availability window's audience is tested against, from TABLE 5's context AND
+ * the follow edges the relationship label carries (interactionPermissions:
+ * `following` = viewer follows owner, `follower` = owner follows viewer,
+ * `mutual_follow` = both) — through windowRelationshipFromEdges, the rule every
+ * surface uses: mutual admits a `followers` window, owner-follows-viewer a
+ * `following` one, viewer-follows-owner alone nothing beyond public. Every
+ * other context maps as toWindowViewerRelationship always has.
+ */
+export function windowRelationshipFor(context: PassportViewerContext, relationshipLabel: string | null | undefined): WindowViewerRelationship {
+  if (context === "following" || context === "follower") {
+    return windowRelationshipFromEdges({
+      viewerFollowsOwner: relationshipLabel === "following" || relationshipLabel === "mutual_follow",
+      ownerFollowsViewer: relationshipLabel === "follower" || relationshipLabel === "mutual_follow",
+    });
+  }
+  return toWindowViewerRelationship(context);
 }

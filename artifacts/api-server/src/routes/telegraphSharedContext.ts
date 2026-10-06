@@ -39,7 +39,7 @@ import {
   collapsedSummary,
 } from "../services/telegraph/sharedContext.js";
 import {
-  projectPublicWindows, isMutualFollow,
+  projectPublicWindows, windowRelationshipFromEdges,
   type ViewerRelationship,
 } from "../services/passport/OpenToPlansService.js"; import { canMessage } from "../lib/messagingPermissions.js"; // the header's window relationship (§45f)
 import { isFlagEnabled } from "../lib/featureFlags.js"; import { getServiceClient } from "../lib/supabase.js"; import { planItemAccessFor } from "../server/trips/privateAnchorShares.js"; import { withholdPrivatePlanItems } from "../domain/trips/policies/privateAnchorAccess.js"; // census-trips §85 (R1): the trip-context door
@@ -441,7 +441,7 @@ async function windowRelationshipFor(
     log.warn({ ownerId, reason: verdict.reason ?? null }, "follow edge not established; availability read as public only");
   }
   // Lead ruling D-103: a followers window is the MUTUAL follows' (viewer = sender, owner = recipient).
-  return isMutualFollow({ viewerFollowsOwner: verdict.relationship_context.senderFollowsRecipient, ownerFollowsViewer: verdict.relationship_context.recipientFollowsSender }) ? "mutual" : "public";
+  return windowRelationshipFromEdges({ viewerFollowsOwner: verdict.relationship_context.senderFollowsRecipient, ownerFollowsViewer: verdict.relationship_context.recipientFollowsSender }); // D-103 + L3
 }
 
 // ── GET /api/threads/:threadId/discover-together ────────────────────

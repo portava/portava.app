@@ -315,3 +315,29 @@ describe("lead ruling D-103: a FOLLOWERS availability window on Nearby admits a 
     assert.equal(await stateFor(false, true), await stateFor(false, false));
   });
 });
+
+describe("lead ruling on verifier L3: a FOLLOWING availability window on Nearby admits the people the OWNER follows", () => {
+  const verdict = (viewerFollows: boolean, ownerFollows: boolean): MessagePermissionVerdict => ({
+    allowed: true, verdict: "allowed",
+    relationship_context: { isFriend: false, senderFollowsRecipient: viewerFollows, recipientFollowsSender: ownerFollows, sharedTrip: true, sharedCircle: false },
+  });
+  const stateFor = async (viewerFollows: boolean, ownerFollows: boolean) => {
+    const w = world();
+    w.quick_availability_status = w.quick_availability_status!.filter((r) => r.user_id !== CREWMATE);
+    w.availability_windows = [{
+      id: "w-2", user_id: CREWMATE, type: "today", start_at: new Date(NOW - 3_600_000).toISOString(), end_at: SOON,
+      trip_id: null, open_to_plans: true, intents: ["food"], group_preference: null, max_travel_minutes: null,
+      visibility: "following", source: "explicit", social_availability: "open", expires_at: null, created_at: FRESH, updated_at: FRESH,
+    }];
+    const result = await loadReachablePeople(makeFailClosedClient({ rows: w }), { viewerId: VIEWER, nowMs: NOW, resolveRelationship: async () => verdict(viewerFollows, ownerFollows) });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    if (!result.ok) return null;
+    return result.people.find((p) => p.personId === CREWMATE)?.availability.state ?? "not_published";
+  };
+  it("CONTROL: the owner follows the viewer → the window is read", async () => {
+    assert.notEqual(await stateFor(false, true), await stateFor(false, false));
+  });
+  it("the viewer follows the owner only → refused (the same answer as no follow at all)", async () => {
+    assert.equal(await stateFor(true, false), await stateFor(false, false));
+  });
+});
