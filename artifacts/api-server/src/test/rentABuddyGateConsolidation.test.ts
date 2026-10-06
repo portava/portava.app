@@ -844,6 +844,7 @@ const VERIFICATION_NOT_OPERATIONAL: ReadonlyArray<readonly [string, Readonly<Rec
   ["a dev host (pnpm dev, NODE_ENV=development, no test runner)", { NODE_ENV: "development", NODE_TEST_CONTEXT: undefined }],
   ["a hosted deployment (REPLIT_DEPLOYMENT)", { REPLIT_DEPLOYMENT: "1" }],
   ["a SANDBOX identity key (uncertified adapter, test key)", { IDENTITY_PROVIDER: "stripe", STRIPE_IDENTITY_SECRET_KEY: "sk_test_n1_not_real" }],
+  ["a LIVE key, live allowed, on an UNCERTIFIED adapter (booking-grade but not operational; verifier F3)", { IDENTITY_PROVIDER: "stripe", STRIPE_IDENTITY_SECRET_KEY: "sk_live_f3_not_real", PAYMENTS_ALLOW_LIVE: "true" }],
 ];
 
 async function underEnv<T>(overrides: Readonly<Record<string, string | undefined>>, fn: () => Promise<T>): Promise<T> {

@@ -594,6 +594,15 @@ describe("monthly payouts: finalised, completed, verified; small balances carrie
     assert.equal(w.store.payouts.size, 0);
   });
 
+  it("F5 an UNREADABLE buddy verification is never paid: skipped as verification_unreadable, no payout row", async () => {
+    await completedAndFinalised();
+    w.deps = { ...w.deps, personVerified: async () => "unreadable" };
+    const plan = await planMonthlyPayouts(w.deps, { minimumByCurrency: { USD: 100 } }, "2026-08");
+    assert.equal(rows(plan.body["report"])[0].reason, "verification_unreadable");
+    assert.equal(rows(plan.body["report"])[0].result, "skipped");
+    assert.equal(w.store.payouts.size, 0);
+  });
+
   it("plan -> hold (skipped by execute) -> release -> execute -> signed paid webhook -> booked; the buddy's books clear", async () => {
     await completedAndFinalised();
     const plan = await planMonthlyPayouts(w.deps, { minimumByCurrency: { USD: 1000 } }, "2026-08");
@@ -906,5 +915,22 @@ describe("F11: a second refund is refused before it reaches the provider while a
     const r2 = await requestBookingRefund(w.deps, { bookingId: BOOKING, actorUserId: BUDDY, actorIsAdmin: false, trigger: "provider_cancelled" });
     assert.equal(r2.httpStatus, 409, JSON.stringify(r2.body));
     assert.equal(r2.body["error"], "nothing_to_refund");
+  });
+});
+
+// ── Verifier F12a (2026-10-06): a provider snapshot with a different ORIGINAL amount is never booked ──
+describe("F12a: an intent event whose amount differs from the payment row is refused, not booked", () => {
+  it("503 retry_later, no capture posted, the payment not marked succeeded", async () => {
+    seedBooking(w);
+    await onboardBuddy(w);
+    const c = await startBookingCheckout(w.deps, { bookingId: BOOKING, actorUserId: TRAVELER });
+    await confirmBookingPayment(w.deps, { bookingId: BOOKING, actorUserId: TRAVELER, paymentMethodRef: "fake_pm_card", returnUrl: null });
+    const id = String(c.body["paymentId"]);
+    const p = w.store.payments.get(id)!;
+    w.store.payments.set(id, { ...p, amount: { ...p.amount, amountMinor: p.amount.amountMinor + 1 } }); // the row says one minor unit more than the provider charged
+    const statuses = await deliverAll(w);
+    assert.ok(statuses.includes(503), JSON.stringify(statuses));
+    assert.equal([...w.ledger.postings.values()].filter((x) => x.kind === "capture").length, 0, "nothing booked on a mismatched amount");
+    assert.notEqual(w.store.payments.get(id)!.state, "succeeded");
   });
 });

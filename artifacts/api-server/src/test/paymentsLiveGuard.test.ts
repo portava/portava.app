@@ -600,6 +600,40 @@ describe("route-level guards", () => {
 
   // ── G. unsigned mock webhook ──────────────────────────────────────────────
 
+  // ── Verifier F4 (2026-10-06): the provider_mode the session route WRITES (3930) ──
+  // sessionProviderMode() is unit-tested elsewhere; this pins the INSERTED row, the
+  // one write that decides whether an approval can ever be booking-grade.
+  describe("F4. POST /api/verification/session records the key's mode on the row it inserts", () => {
+    it("a TEST key: provider_mode 'test' (a sandbox approval never counts)", async () => {
+      useStripe(STRIPE_TEST);
+      const db = freshDb();
+      _setTestClient(makeClient(db, { updates: [] }) as any, true);
+      const res = await request("POST", "/api/verification/session", { level: "id" }, AUTH);
+      assert.equal(res.status, 201, JSON.stringify(res.body));
+      assert.equal(db.identity_verifications.length, 1);
+      assert.equal(db.identity_verifications[0].provider_mode, "test");
+    });
+
+    it("a LIVE key with live explicitly allowed: provider_mode 'live'", async () => {
+      useStripe(STRIPE_LIVE);
+      process.env["PAYMENTS_ALLOW_LIVE"] = "true";
+      const db = freshDb();
+      _setTestClient(makeClient(db, { updates: [] }) as any, true);
+      const res = await request("POST", "/api/verification/session", { level: "id" }, AUTH);
+      assert.equal(res.status, 201, JSON.stringify(res.body));
+      assert.equal(db.identity_verifications[0].provider_mode, "live");
+    });
+
+    it("the mock under the test runner: provider_mode 'local_mock'", async () => {
+      process.env["IDENTITY_PROVIDER"] = "mock";
+      const db = freshDb();
+      _setTestClient(makeClient(db, { updates: [] }) as any, true);
+      const res = await request("POST", "/api/verification/session", { level: "id" }, AUTH);
+      assert.ok(res.status === 201 || res.status === 200, JSON.stringify(res.body));
+      assert.equal(db.identity_verifications[0].provider_mode, "local_mock");
+    });
+  });
+
   describe("G. the unsigned mock webhook", () => {
     async function createMockSession(): Promise<string> {
       const db = freshDb();

@@ -155,3 +155,20 @@ describe("PA4 — the four safety routes succeed under an unreadable restriction
     });
   }
 });
+
+// ── Verifier F12b (2026-10-06): exactly the six safety capabilities survive ──
+// The engine already computes canMessage false under an unreadable state, so a
+// verdict-level test cannot tell whether protectiveOnly would let it through.
+// This drives protectiveOnly with EVERY capability true.
+import { protectiveOnly } from "../services/interactionPermissions.js";
+describe("F12b protectiveOnly keeps only block / unblock / mute / restrict / report / unsave", () => {
+  it("every other `can*` capability is forced false, whatever the input said", () => {
+    const allTrue: Record<string, unknown> = { reasonCodes: [] };
+    for (const f of [...REACH_FIELDS, "canBlock", "canUnblock", "canMute", "canRestrict", "canReport", "canUnsaveProfile", "canSaveProfile"]) allTrue[f] = true;
+    const out = protectiveOnly(allTrue as never, []) as unknown as Record<string, unknown>;
+    const kept = Object.entries(out).filter(([k, v]) => k.startsWith("can") && v === true).map(([k]) => k).sort();
+    assert.deepEqual(kept, ["canBlock", "canMute", "canReport", "canRestrict", "canUnblock", "canUnsaveProfile"]);
+    assert.equal(out["canMessage"], false);
+    assert.equal(out["degraded"], true);
+  });
+});

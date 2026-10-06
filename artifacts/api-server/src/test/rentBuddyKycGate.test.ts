@@ -209,3 +209,26 @@ describe("verificationIsBookingGrade", () => {
     assert.equal(verificationIsBookingGrade({ IDENTITY_PROVIDER: "acme", NODE_ENV: "production" } as any), false);
   });
 });
+
+// ── Verifier F3 (2026-10-06): the gate needs BOTH halves ──
+// A LIVE key with live allowed is booking-grade, but an adapter that is not
+// certified (IMPLEMENTED_PROVIDERS) cannot complete a real verification:
+// `operational` is false. Only `&&` refuses this; `||` would open every door.
+describe("F3: operational AND booking-grade, never either alone", () => {
+  const LIVE_UNCERTIFIED = { IDENTITY_PROVIDER: "stripe", STRIPE_IDENTITY_SECRET_KEY: "sk_live_f3_not_real", PAYMENTS_ALLOW_LIVE: "true", NODE_ENV: "production" } as const;
+  it("premise: this configuration is booking-grade but not operational", () => {
+    assert.equal(verificationIsBookingGrade(LIVE_UNCERTIFIED as any), true);
+    assert.equal(identityProviderStatus(LIVE_UNCERTIFIED as any).operational, false);
+  });
+  it("the gate refuses it with 503 verification_unavailable", async () => {
+    const saved = new Map<string, string | undefined>();
+    for (const [k, v] of Object.entries(LIVE_UNCERTIFIED)) { saved.set(k, process.env[k]); process.env[k] = v; }
+    try {
+      const gate = await checkBookingKycGate(flagClient({ enabled: true }));
+      assert.equal(gate.allowed, false);
+      assert.equal(gate.code, "verification_unavailable");
+    } finally {
+      for (const [k, v] of saved) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+  });
+});

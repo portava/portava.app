@@ -910,7 +910,7 @@ export async function resolveInteractionPermissions(
 // everything that grants reach — is false, the verdict marked degraded.
 const PROTECTIVE_CAPABILITIES: readonly string[] = ["canBlock", "canUnblock", "canMute", "canRestrict", "canReport", "canUnsaveProfile"];
 
-function protectiveOnly(v: InteractionPermissions, degradedReads: readonly string[]): InteractionPermissions {
+export function protectiveOnly(v: InteractionPermissions, degradedReads: readonly string[]): InteractionPermissions {
   const out: Record<string, unknown> = { ...v };
   for (const [k, val] of Object.entries(v)) {
     if (k.startsWith("can") && typeof val === "boolean" && !PROTECTIVE_CAPABILITIES.includes(k)) out[k] = false;

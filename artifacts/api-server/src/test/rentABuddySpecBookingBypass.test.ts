@@ -298,6 +298,7 @@ const SPEC_VERIFICATION_NOT_OPERATIONAL: ReadonlyArray<readonly [string, Readonl
   ["a dev host (pnpm dev, NODE_ENV=development, no test runner)", { NODE_ENV: "development", NODE_TEST_CONTEXT: undefined }],
   ["a hosted deployment (REPLIT_DEPLOYMENT)", { REPLIT_DEPLOYMENT: "1" }],
   ["a SANDBOX identity key (uncertified adapter, test key)", { IDENTITY_PROVIDER: "stripe", STRIPE_IDENTITY_SECRET_KEY: "sk_test_n1_not_real" }],
+  ["a LIVE key, live allowed, on an UNCERTIFIED adapter (verifier F3)", { IDENTITY_PROVIDER: "stripe", STRIPE_IDENTITY_SECRET_KEY: "sk_live_f3_not_real", PAYMENTS_ALLOW_LIVE: "true" }],
 ];
 
 describe("N-1: POST /rent-a-buddy/buddies/:buddyId/request refuses while identity verification is not operational, whatever the retired override row says", () => {
