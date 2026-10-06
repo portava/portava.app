@@ -121,6 +121,12 @@ export interface SuggestRequest {
    * Only the user's explicit gesture sets this true.
    */
   aiAssist?: boolean;
+  /**
+   * §45 / OD-INPUT-1: this device's account opted in to outcome learning. A
+   * hint the server re-checks against the stored consent; sent only as a
+   * literal true (services/suggestBody.ts), and only while the gate is open.
+   */
+  outcomeLearning?: boolean;
   /** §29 coarse city-level context for AI writing / compass refs (no coordinates). */
   city?: string | null;
   /** §29 coarse creation draft for AI writing / compass refs (no coordinates). */

@@ -53,6 +53,13 @@ export interface AudioCapturePort {
   stop(): Promise<CapturedAudio | null>;
   /** Abandon the recording without producing a clip. */
   cancel(): Promise<void>;
+  /**
+   * OD-INPUT-5 "don't retain raw audio by default": delete the clip's file (or
+   * drop its bytes). Called after EVERY transcription, success or failure. A
+   * capture surface without it is not used at all — the intake refuses before
+   * the microphone opens, rather than record audio it cannot remove.
+   */
+  discard?(clip: CapturedAudio): Promise<void>;
 }
 
 /** What a provider is asked to transcribe. */
@@ -78,6 +85,12 @@ export type TranscriptionOutcome =
 export interface TranscriptionPort {
   /** Stable id for telemetry / debugging, e.g. 'ios-speech', 'whisper-cloud'. */
   readonly providerId: string;
+  /**
+   * WHERE the audio is processed. OD-INPUT-5: "Send audio to a cloud provider
+   * only with separate, explicit consent." A port that does not declare
+   * `'on_device'` is treated as cloud — fail closed.
+   */
+  readonly processing?: 'on_device' | 'cloud';
   /** Can this device transcribe right now (module present, permission granted)? */
   isAvailable(): Promise<boolean>;
   transcribe(req: TranscriptionRequest): Promise<TranscriptionOutcome>;
@@ -92,6 +105,7 @@ export interface TranscriptionPort {
  */
 export const NO_TRANSCRIPTION_PROVIDER: TranscriptionPort = {
   providerId: 'none',
+  processing: 'on_device',
   async isAvailable(): Promise<boolean> {
     return false;
   },
@@ -105,7 +119,58 @@ export const NO_TRANSCRIPTION_PROVIDER: TranscriptionPort = {
   },
 };
 
-/** Process-global installed provider. One per app, set once at bootstrap. */
+// ── OD-INPUT-5: the cloud-audio consent, enforced INSIDE the port ─────────────
+//
+// "Use on-device operating-system speech recognition first. Send audio to a
+// cloud provider only with separate, explicit consent; don't retain raw audio
+// by default." No such consent exists in this build: the source below answers
+// false until a consent flow is built and approved, and nothing here can make
+// it answer true. It is consulted on EVERY transcription by a cloud port, by the
+// guard every installed port is wrapped in — so installing a transcriber cannot
+// bypass it, whoever calls `transcribe`.
+
+let cloudConsentSource: () => boolean = () => false;
+
+/** Bind the source of the cloud-audio consent (a future consent flow; tests). */
+export function setCloudAudioConsentSource(source: (() => boolean) | null): void {
+  cloudConsentSource = source ?? (() => false);
+}
+
+/** Has the person given the SEPARATE consent to send audio to a cloud provider? */
+export function cloudAudioConsentGranted(): boolean {
+  try {
+    return cloudConsentSource() === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Does this port send audio off the device? Undeclared counts as yes. */
+export function portSendsAudioOffDevice(port: TranscriptionPort): boolean {
+  return port.processing !== 'on_device';
+}
+
+const CLOUD_CONSENT_REQUIRED: TranscriptionOutcome = {
+  ok: false,
+  unavailable: true,
+  reason: 'cloud_consent_required',
+  error: 'This voice option would send your recording to an online service, which needs your separate permission. Nothing was sent.',
+};
+
+/** The guard every installed port is wrapped in. */
+function guardPort(port: TranscriptionPort): TranscriptionPort {
+  return {
+    providerId: port.providerId,
+    processing: port.processing,
+    isAvailable: () => port.isAvailable(),
+    async transcribe(req) {
+      if (portSendsAudioOffDevice(port) && !cloudAudioConsentGranted()) return CLOUD_CONSENT_REQUIRED;
+      return port.transcribe(req);
+    },
+  };
+}
+
+/** Process-global installed provider (already guarded). One per app, set once at bootstrap. */
 let installed: TranscriptionPort | null = null;
 
 /**
@@ -114,11 +179,12 @@ let installed: TranscriptionPort | null = null;
  *
  *   installTranscriptionPort(createOsSpeechPort())
  *
- * Returns the port so a bootstrap can install-and-use in one expression.
+ * The port is WRAPPED in the OD-INPUT-5 guard, and the guarded port is what is
+ * returned and resolved — there is no unguarded handle to call.
  */
 export function installTranscriptionPort(port: TranscriptionPort): TranscriptionPort {
-  installed = port;
-  return port;
+  installed = guardPort(port);
+  return installed;
 }
 
 /** Remove the installed provider (tests, hot-reload hygiene, sign-out). */

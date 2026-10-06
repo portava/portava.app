@@ -3925,6 +3925,57 @@ the function. `rent_buddy_enabled` is FALSE in production and this file does not
 **Rollback:** re-apply `2330`'s definition of the function. There is no dependent object, so the revert
 is one statement and loses nothing.
 
+## 2026-10-05 — `3780`, `3781`, `3782`, `3783` (Input Intelligence, lane D), written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3780_input_outcome_learning.sql` | **not applied** | **not applied** |
+| `3781_input_telemetry_selection_reversed.sql` | **not applied** | **not applied** |
+| `3782_input_memory_context_consent.sql` | **not applied** | **not applied** |
+| `3783_input_outcome_task_aggregate.sql` | **not applied** | **not applied** |
+
+**`3780` — outcome learning (owner decisions OD-INPUT-1, OD-INPUT-2; census G320/G370/G5/G14/G322/G323).**
+`input_outcome_consent` (one row per user, service_role only, server-stamped disclosure version and
+timestamps, absent = off), `input_outcome_counters` (per user, input context, canonical entity and UTC
+DAY, so each completion is deleted whole 30 days after its day), `input_record_outcome(uuid, text,
+text, text)` (SECURITY DEFINER, service_role only, re-checks BOTH the flag and the consent itself and
+records nothing without them), `input_outcome_memory(uuid, text, date)` (SECURITY DEFINER, service_role
+only: the serve's single read — `{active:false}` unless the flag is on and the consent active, else the
+person's in-window counts, so a hinted serve costs one round trip), and the flag
+`input_outcome_learning_enabled` seeded FALSE. Both tables cascade from `auth.users`. The 30-day deletion is `runInputOutcomeRetentionSweep`, registered flagless on the existing
+retention timer.
+
+**`3781` — §57 wrong-selection reversal (census G368).** Replaces 2950's `iate_event_name_known` CHECK
+with the same fourteen names plus `selection_reversed`: a strict superset, so every existing row still
+satisfies it. Must ship with (not after) the ingest change that admits the name: until it is applied,
+any batch carrying one reversal is refused WHOLE (422, `accepted: 0`) and every event in it is lost;
+`src/test/inputTelemetryVocabularyParity.test.ts` pins the newest CHECK to the code's vocabulary.
+
+**`3782` — Compass memory opt-in (owner decision OD-INPUT-3; census G25).** `input_memory_context_consent`
+(same shape as 3780's consent, a separate table so one purpose's grant is never another's) and the flag
+`input_memory_context_enabled` seeded FALSE. Stores no memory; it governs only whether Input
+Intelligence may read the person's own `CompassMemoryProjection`.
+
+**`3783` — downstream task outcomes aggregated at ingest (OD-INPUT-1/2; census G370).**
+`input_outcome_task_daily` (one row per UTC day, input context, task and ok, with a count — no user,
+session, request or field id, asserted by its postcondition) and `input_record_task_outcome(text, text,
+boolean)` (service_role only, takes no user argument, re-checks the 3780 flag). A consented
+`downstream_task_completed` event is counted here and never stored as a 90-day session-linked
+telemetry row. Depends on 3780.
+
+**Flags:** both new capability flags ship FALSE; turning either on is an owner decision after approving
+the disclosure text (`lib/inputAssistance/outcomeLearning.ts`, `lib/inputAssistance/memoryContext.ts`).
+
+**Rollback:** `db/rollback/2026-10-05-3780-input-outcome-learning-rollback.sql`,
+`db/rollback/2026-10-05-3781-input-telemetry-selection-reversed-rollback.sql`,
+`db/rollback/2026-10-05-3782-input-memory-context-consent-rollback.sql` and
+`db/rollback/2026-10-05-3783-input-outcome-task-aggregate-rollback.sql`. The first three REFUSE rather
+than discard a decision: 3780/3782 while their flag is TRUE or any consent row exists, 3781 while any
+`selection_reversed` row exists. 3783's drops its aggregate counts (they are no one's), and must run
+after the ingest code that calls `input_record_task_outcome` is reverted.
+
+**Numbering:** first written with prefixes above 4000, which `check:migration-prefixes` rejects; renumbered into lane D's corrected band 3780–3799 before
+anything was applied anywhere (lead correction, 2026-10-05).
 ## 2026-10-05 — `3760_telegraph_thread_notification_policy.sql`, written and NOT applied anywhere (lane T2)
 
 | | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |

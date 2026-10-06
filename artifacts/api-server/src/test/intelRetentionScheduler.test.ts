@@ -20,6 +20,7 @@ import {
   runIntelContributionRetentionSweep,
   runInputTelemetryRetentionSweep,
 } from "../lib/intelRetentionScheduler.js";
+import { runInputOutcomeRetentionSweep } from "../lib/inputAssistance/outcomeLearning.js";
 
 // ── registration ─────────────────────────────────────────────────────────────
 
@@ -41,13 +42,18 @@ test("every retention pass is registered on the scheduler's timer", () => {
     // retention bound. Registered FLAGLESS on purpose — see the sweep's own header:
     // a retention flag shipped unseeded declares a 90-day promise and never keeps it.
     input_telemetry_retention: runInputTelemetryRetentionSweep,
+    // ADDED 2026-10-05 with the §45 outcome counters (migration 3780). OD-INPUT-2:
+    // "retain for 30 days, then delete". FLAGLESS for the same reason as the line
+    // above — the feature flag decides whether counters are written, never
+    // whether expired ones are deleted.
+    input_outcome_retention: runInputOutcomeRetentionSweep,
   })) {
     assert.ok(registered.has(name), `${name} is exported but nothing on the timer calls it`);
     assert.equal(RETENTION_PASSES.find((p) => p.name === name)!.run, fn);
   }
   // The count is asserted so a pass cannot be added or dropped silently; the map
   // above is what says WHICH, so bumping this number alone will not satisfy it.
-  assert.equal(RETENTION_PASSES.length, 7);
+  assert.equal(RETENTION_PASSES.length, 8);
 });
 
 test("a registered pass survives its own rejection — one broken sweep cannot starve the others", async () => {

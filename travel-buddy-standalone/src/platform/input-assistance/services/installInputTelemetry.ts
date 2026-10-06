@@ -61,14 +61,14 @@
  * person physically did something. No §44 event is such a claim. Gating this
  * stream on D4 would widen what D4 means rather than honour it.
  *
- * ONE FUTURE EVENT DOES BELONG BEHIND THAT GATE, and it is worth naming before
- * someone writes it: `downstream_task_completed` (§45/§57, census G320/G370) has
- * an exported emitter and no caller. On the day a feature screen calls it, it
- * will be asserting that a real task really completed — the same class of claim
- * D4 governs — and it should be routed through `hasValidConsent` the way the
- * Wall routes its outcome arm. The gate belongs HERE, as one predicate around
- * `setTelemetrySink` or a per-name filter in front of it, which is the reason
- * this seam is its own module rather than three lines inside `_layout.tsx`.
+ * ONE EVENT DOES BELONG BEHIND A GATE, and since 2026-10-05 it is behind one:
+ * `downstream_task_completed` (§45/§57, census G320/G370) asserts that a real
+ * task really completed. The owner ruled on it directly (OD-INPUT-1: "explicit
+ * opt-in, off by default, purpose-limited, and separated from core
+ * assistance"), so it is NOT routed through D4 — D4 is consent to contribute to
+ * shared place intelligence, a different purpose — but through its own opt-in,
+ * `input_outcome_consent` (migration 3780). The per-name filter in front of the
+ * sink is `outcomeLearning.ts#gateOutcomeEvents`, applied below.
  *
  * ══════════════════════════════════════════════════════════════════════════════
  * WHAT THIS STILL DOES NOT MAKE TRUE
@@ -87,6 +87,7 @@
  */
 import { setTelemetrySink, resetTelemetrySink } from './inputTelemetry.ts';
 import type { TelemetryBatcher } from './telemetryBatcher.ts';
+import { gateOutcomeEvents } from './outcomeLearning.ts';
 
 /** The subset of React Native's `AppState` this module needs (injectable). */
 export interface AppStateLike {
@@ -125,7 +126,11 @@ export function installInputTelemetry(opts: InstallInputTelemetryOptions): Input
   if (current) return current;
 
   const batcher = opts.createBatcher();
-  setTelemetrySink(batcher.sink);
+  // OD-INPUT-1 — the gate this header always said belonged here. Every §44
+  // event reaches the batcher EXCEPT `downstream_task_completed` from a device
+  // whose account has not opted in to outcome learning (outcomeLearning.ts).
+  // The server refuses it too; this keeps the claim from leaving the device.
+  setTelemetrySink(gateOutcomeEvents(batcher.sink));
 
   // THE BUFFER IS IN MEMORY AND THE FLUSH IS ON A 5s IDLE TIMER, so a user who
   // types, taps a suggestion and immediately backgrounds the app would lose the
