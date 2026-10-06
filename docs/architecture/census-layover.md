@@ -8939,11 +8939,12 @@ clause and #624's rule in the golden's own note
 `LAYOVER_FEASIBILITY_VERSION` bump, proven by reverting it on a scratch run. **L241 stays W** (§49.2's grounds,
 unchanged); no row moves.
 
-## §53 — 2026-10-06 (mission lane R): the open Layover rows re-triaged from `main` after lane A closed; NO ROW MOVES
+## §53 — 2026-10-06 (mission lane R): the open Layover rows re-triaged from `main` after lane A closed; ONE ROW MOVES (L220 `W → C`)
 
 Lane R took over this surface after #629 merged. It re-read every non-`C` row at `ca49bbd286` against the
-code on `main` (ledger in the mission scratchpad, `lane-r/triage.psv`, not in this repository). It changed no
-counted file of this census, ran nothing against any database, and read or flipped no flag.
+code on `main` (ledger in the mission scratchpad, `lane-r/triage.psv`, not in this repository). Of this census's
+counted files it added one suite (§53.5) and two test cases (§53.4). It ran nothing against any database, and read or
+flipped no flag.
 
 ### 53.1 What the 212 open rows need
 
@@ -8995,9 +8996,40 @@ counted file of this census, ran nothing against any database, and read or flipp
 
 Neither moves a row: L27, L129 and L187 stay where §51.1 put them.
 
-### 53.5 Headline
+### 53.5 L220 moves `W → C`: the 4h pair is pinned against §21.1's sentence
 
-No row moves. `check:census-integrity` reads **C=84 W=145 N=67 X=0**, unchanged since §50.4.
+§51.3 corrected L220's stated reason and held the row at `W` "until a test pins the 4h pair against §21.1's sentence".
+`artifacts/api-server/src/test/layoverScenarioL220.test.ts:50#§21.1 L220 — 4h international, visa allowed → potential landside depending on airport model`
+is that test. It runs the corpus through `decideScenario`, the decision-diff CI's own entry point, and asserts each
+clause:
+- **4h international.** The two corpus scenarios are the same 240-minute international session at the same clock with
+  the same corridor, and only the airport model differs.
+- **Visa allowed.** The corridor is `permitted`. The same curated scenario with a `refused` corridor says `no`, and an
+  `unresolved` one carries `ENTRY_NOT_CONFIRMED`, which the permitted one does not.
+- **Potential landside.** The curated model answers `tight` / `possible_but_risky`, never `yes`.
+- **Depending on airport model.** The generic model answers `no` for the identical session.
+
+Three engine mutants are killed: the airport's international buffer replaced by the generic constant, a refused
+corridor no longer overriding the clock, and an unresolved corridor treated as confirmed.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L220 | W | C | §21.1's scenario holds clause by clause on the engine's own entry point, pinned by `layoverScenarioL220.test.ts` with three engine mutants killed. Its old `W` reasons were both corrected in §51.3: entry permission is representable, and at 4h the airport model decides. Production carries no curated airport (header note 2), so every production 4h international layover takes the generic branch. That is L243's owner decision about buffers, not this row. |
+
+`artifacts/api-server/src/test/layoverScenarioMatrix.test.ts` still asserts that both of ITS airport models refuse at
+4h. That is not a contradiction. Its fixture has the traveller at the gate at the instant of arrival, with no corridor
+supplied, and its generic model is a slower one (150-minute international buffer). The corpus scenarios are 20 minutes
+after arrival with the corridor permitted. That file's sentence "cannot be parameterised on entry permission" is stale
+in the same way §51.3 found L220's reason stale: entry reaches the engine as `EntryEligibility`, not as a session field.
+
+**One observation for L48, not a move.** An `unresolved` corridor costs a session the clock's `yes`, which becomes
+`entry_unverified`. At the risky band, it does not change `tight`; it only adds `ENTRY_NOT_CONFIRMED`. Both answers are
+`possible_but_risky`, so no band widens. Whether `tight` with an unconfirmed border should read as `entry_unverified`
+is L48's question.
+
+### 53.6 Headline
+
+One row moves, `W → C`. `check:census-integrity` reads **C=85 W=144 N=67 X=0** over 296.
 
 ## Cited, not graded (check:census-scope-coverage)
 
