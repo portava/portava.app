@@ -8623,14 +8623,14 @@ touched, no migration was added or applied, and nothing was written to or read f
    (`artifacts/api-server/src/scripts/checkLayoverDecisionDiff.ts:64#const report = compareToGolden(`) and is
    wired into `check:all` (`artifacts/api-server/scripts/run-all-checks.sh:265#check:layover-decision-diff`).
    Deadlines that moved LATER are printed first — the direction that strands a traveller.
-3. **A Memory of the layover** (L275). `artifacts/api-server/src/routes/memories.ts:3500#router.post("/memories/from-layover/:sessionId"`
+3. **A Memory of the layover** (L275). `artifacts/api-server/src/routes/memories.ts:3608#router.post("/memories/from-layover/:sessionId"`
    turns a COMPLETED layover, on the traveller's request from the end sheet
    (`travel-buddy-standalone/src/components/layover/LayoverEndSheet.tsx:79#layover-end-memory-election`),
    into one private, unpublished Memory carrying city, country and the layover window — never a
    coordinate, place id or operational input (§3 L19).
 4. **The outcome writer** (L32, and L10/L174/L195/L214 through it).
    `artifacts/api-server/src/services/layover/LayoverOutcomeStore.ts:116#export async function recordLayoverOutcome(`,
-   called from the close at `artifacts/api-server/src/routes/airport.ts:4009#const outcomeRecord = await recordLayoverOutcome(`,
+   called from the close at `artifacts/api-server/src/routes/airport.ts:4046#const outcomeRecord = await recordLayoverOutcome(`,
    writes one `layover_outcomes` row per closed session — BOARDED for "I made my flight", UNKNOWN for
    ending early, every unobserved column NULL and never `false` — behind
    `layover_decision_persistence_enabled`, the gate 2992 seeds FALSE. On production today it writes
@@ -8688,7 +8688,7 @@ mistaken for a regression.
 `artifacts/api-server/src/services/layover/LayoverCheckpointStore.ts:144#export async function recordTravellerCheckpoint(`
 records "I've left the airport" (`LANDSIDE_EXIT`) and "I'm back at the airport" (`AIRPORT_REENTRY`) as
 TRAVELLER / MEDIUM rows in 2992's `layover_checkpoints`, behind the same gate as the outcome writer, through
-`artifacts/api-server/src/routes/airport.ts:4553#router.post("/airport/sessions/:id/checkpoints"` (registered
+`artifacts/api-server/src/routes/airport.ts:4590#router.post("/airport/sessions/:id/checkpoints"` (registered
 at the tail; nothing cited moved). The outcome row takes `left_airport` and the actual return from them
 (`artifacts/api-server/src/services/layover/LayoverCheckpointStore.ts:130#export function observedReturnFrom(`),
 NULL — never false — when nothing was reported or nothing could be read. The client control renders only
@@ -8813,9 +8813,9 @@ branch). Controlled evidence only; migration 3900 is applied to no database and 
 creates the spec's record — intents from a CHECKed vocabulary, an availability window, an optional maximum
 travel time, a visibility scope, `precise_location_enabled` CHECKed FALSE, and an expiry — service-role only
 and with no coordinate column, and seeds `layover_presence_intents_enabled` FALSE. The traveller sets it
-through `artifacts/api-server/src/routes/airport.ts:4671#router.put("/airport/sessions/:id/presence/intents"`
+through `artifacts/api-server/src/routes/airport.ts:4708#router.put("/airport/sessions/:id/presence/intents"`
 (refused unless they share their city and their sharing gate is open), and sees the city's counts through
-`artifacts/api-server/src/routes/airport.ts:4638#router.get("/airport/sessions/:id/presence/intents"`:
+`artifacts/api-server/src/routes/airport.ts:4675#router.get("/airport/sessions/:id/presence/intents"`:
 `artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:189#export async function intentCounts(`
 counts, per intent, only the ids `cityPresence` already cleared (same city, opted in, not blocked either way,
 sharing not paused) and only while each window is open — never an id, a name or a window on the wire. The
@@ -8835,7 +8835,7 @@ two jest suites (12 + 3 dashboard pass-through cases).
 
 `artifacts/api-server/src/services/layover/LayoverCheckpointStore.ts:235#export function landsideSuppressionFrom(`
 reads the traveller's newest check-in; when it is `AIRPORT_REENTRY`, `GET /:id/recommendations`
-(`artifacts/api-server/src/routes/airport.ts:1044#const landside = await landsideSuppressionFor(`) serves
+(`artifacts/api-server/src/routes/airport.ts:1046#const landside = await landsideSuppressionFor(`) serves
 airport-side ideas only and says why, and Compass's `getReachableExperiences` is handed the same list. An
 unreadable check-in store hides nothing for everyone and says it could not check. §49.6 wrote that a
 self-report would not be allowed to gate the recommendations path; that stands for the direction it was
