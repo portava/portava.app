@@ -160,7 +160,7 @@ describe("check-flag-polarity seed scanner", () => {
     assert.ok(independent.flags.size > 0, "no seeded flag names extracted — the row matcher broke");
   });
 
-  it("check-flag-polarity itself passes", () => {
+  it("check-flag-polarity itself passes", async () => { const release = await acquireTreeLock("flagPolaritySeedScan"); try { // same scan as flagPhantomReads R9; see the tail import
     const { ok, out } = runCheck();
     assert.ok(
       ok,
@@ -169,7 +169,7 @@ describe("check-flag-polarity seed scanner", () => {
         "the scanner can no longer see, so the script correctly reports its own declarations as orphaned. " +
         "That is the fix from 2026-08-12 being undone.\n" + out,
     );
-  });
+  } finally { release(); } });
 
   it("the two schema-qualified migrations are in scope", () => {
     // Named explicitly so that deleting or rewriting them is a visible event
@@ -308,3 +308,7 @@ describe("check-flag-polarity seed scanner", () => {
     );
   });
 });
+
+// Imported at the TAIL so no line above moves: this file's full-tree scan takes
+// the tree lock for the reason flagPhantomReads.test.ts gives at its own tail.
+import { acquireTreeLock } from "./helpers/treeMutationLock.js";
