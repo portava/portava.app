@@ -178,9 +178,34 @@ export function stripSqlLineComments(sql: string): string {
   return out;
 }
 
+/** True when `OR` appears at parenthesis depth 0 of `body`, outside string literals. */
+function hasTopLevelOr(body: string): boolean {
+  let depth = 0;
+  let inStr = false;
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i]!;
+    if (inStr) { if (c === "'") { if (body[i + 1] === "'") { i++; continue; } inStr = false; } continue; }
+    if (c === "'") { inStr = true; continue; }
+    if (c === "(") depth++;
+    else if (c === ")") depth--;
+    else if (depth === 0 && /[Oo]/.test(c) && /^or\b/i.test(body.slice(i, i + 3)) && (i === 0 || /[\s)]/.test(body[i - 1]!))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function vocabularyFromCheck(rawBody: string): Map<string, Set<string>> {
   const body = stripSqlLineComments(rawBody);
   const out = new Map<string, Set<string>>();
+  // A CHECK whose expression is a top-level disjunction — `state IN ('a','b')
+  // OR significance IS NOT NULL` — does not confine the column to that
+  // in-list; the list is one branch of a rule about several columns. Reading
+  // it as a vocabulary would reject every value the OTHER branch admits (that
+  // is exactly what 2320's memory_episodes_eligibility_check did to
+  // 'confirmed'). Such a constraint contributes no vocabulary. A conjunction
+  // (`… AND other IS NOT NULL`) still confines the column, and is kept.
+  if (hasTopLevelOr(body)) return out;
   const add = (col: string, vals: string[]): void => {
     if (vals.length === 0) return;
     if (!out.has(col)) out.set(col, new Set());
@@ -281,6 +306,21 @@ function absorbCreateTables(sql: string, model: Model): void {
     const body = balanced(rest, rest.indexOf("("));
     if (body === null) { i = j; continue; }
 
+    // A table the model already knows is not created again. Postgres makes
+    // `CREATE TABLE IF NOT EXISTS` a no-op on an existing table, and a plain
+    // CREATE TABLE of one would have failed the migration — either way the
+    // statement's column CHECKs are not what the live table carries. The
+    // case that matters is every migration sorting before the baseline's
+    // cutover (`0041_trip_crew_location.sql` creates trip_crew_location_events
+    // with the labels that were later renamed): the baseline already holds
+    // the table's real shape, and re-registering the old inline CHECK under
+    // the same default name would overwrite it with history.
+    let known = false;
+    for (const key of model.columnTypes.keys()) {
+      if (key.startsWith(`${table}.`)) { known = true; break; }
+    }
+    if (known) { i = j; continue; }
+
     // Split on top-level commas into column / constraint definitions.
     const parts: string[] = [];
     let cur = "";
@@ -309,6 +349,20 @@ function absorbCreateTables(sql: string, model: Model): void {
       const cm = /^"?([A-Za-z0-9_]+)"?\s+((?:public\.)?"?[A-Za-z0-9_]+"?)/.exec(line);
       if (!cm) continue;
       model.columnTypes.set(`${table}.${cm[1]!}`, normalizeType(cm[2]!));
+      // A CHECK written INSIDE the column definition (`state text NOT NULL
+      // DEFAULT 'candidate' CHECK (state IN (…))`) is the column's vocabulary
+      // just as much as a table-level `CONSTRAINT … CHECK` is. Until
+      // 2026-10-06 it was invisible here, so a column whose only other CHECK
+      // was a compound eligibility rule (2320's memory_episodes.state) was
+      // modelled from the wrong constraint. Postgres names an anonymous
+      // column CHECK `<table>_<column>_check`; recording it under that name
+      // lets a later DROP CONSTRAINT / ADD CONSTRAINT of that name be
+      // honoured exactly like a table-level one.
+      const inlineCheck = /\bCHECK\s*\(/i.exec(line);
+      if (inlineCheck) {
+        const inner = balanced(line, line.indexOf("(", inlineCheck.index));
+        if (inner !== null) recordCheck(model, table, `${table}_${cm[1]!}_check`, inner);
+      }
     }
     i = j;
   }
@@ -433,10 +487,18 @@ export function buildCanonicalVocabulary(
   const files: string[] = [];
   for (const d of migrationDirs) files.push(...listSqlFiles(d));
   // Numeric prefix order, then name — the order check:migration-prefixes enforces.
+  // The chain's order is a plain byte-wise comparison of the whole filename
+  // (scripts/src/apply-migrations.ts, "THE ORDER"): `20260730_…` sorts BEFORE
+  // `2290_…`. The numeric sort this used to apply put every dated file LAST,
+  // so a dated file's CREATE TABLE re-registered the original narrow CHECK
+  // after a later `2xxx_` migration had dropped and widened it — which is how
+  // compass_conversation_messages.role "lost" 'system-event' (2996) and
+  // compass_graph_nodes.node_type regained the kinds 2290 retired. Absorb in
+  // apply order, and the last word is the migration that really had it.
   files.sort((a, b) => {
-    const na = Number(/(\d+)/.exec(a.split("/").pop() ?? "")?.[1] ?? 0);
-    const nb = Number(/(\d+)/.exec(b.split("/").pop() ?? "")?.[1] ?? 0);
-    return na === nb ? a.localeCompare(b) : na - nb;
+    const fa = a.split("/").pop() ?? a;
+    const fb = b.split("/").pop() ?? b;
+    return fa === fb ? 0 : fa < fb ? -1 : 1;
   });
   for (const f of files) {
     const sql = stripSqlComments(readFileSync(f, "utf8"));

@@ -308,6 +308,11 @@ jobs:
         shell: bash
         run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:workflow-paths
 
+      - name: 'scripts: test:migration-order-overrides'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:migration-order-overrides
+
       - name: 'scripts: test:truncate-guard'
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         shell: bash

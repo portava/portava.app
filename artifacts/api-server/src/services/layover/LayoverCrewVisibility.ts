@@ -277,7 +277,7 @@ export function publishedCrewSolution(
     bindingMemberIds: string[];
     feasible: boolean;
     reasons: string[];
-    split: boolean;
+    split: boolean; /** The solver's weakest landside gate across branches (`CrewSolution.landside`). */ landside?: string;
     members: Array<{ userId: string; requiredReturnBy: string | null; usableMinutes: number | null; returnState: string | null }>;
   },
   viewerId: string,
@@ -291,7 +291,7 @@ export function publishedCrewSolution(
     bindingMemberHidden: solution.bindingMemberIds.some((id) => !seen.has(id)),
     feasible: solution.feasible,
     reasons: solution.reasons,
-    split: solution.split,
+    split: solution.split, landside: solution.landside ?? "not_applicable", // no id in it: whether the PLAN leaves the airport under an open, cautionary or closed gate
     members: solution.members
       .filter((m) => seen.has(m.userId))
       .map((m) => ({

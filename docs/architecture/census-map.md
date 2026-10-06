@@ -2426,7 +2426,7 @@ every `src/test/db` suite).
 
 - **It applies each migration the way the runner does.** It uses the runner's
   own classifier and its own statement,
-  `` `scripts/src/apply-migrations.ts:984#export function buildApplyStatement(args: {` ``,
+  `` `scripts/src/apply-migrations.ts:1253#export function buildApplyStatement(args: {` ``,
   so the body and its ledger row are one transaction:
   `` `artifacts/api-server/src/test/db/intelEvidenceSealedReference.db.test.ts:92#function runnerApply(filename: string, sql: string)` ``.
 - **The CHECK** refuses a new plaintext photo or video reference. It admits a

@@ -17,7 +17,7 @@ import { ChevronDown, ChevronUp, DoorOpen, HelpCircle } from 'lucide-react-nativ
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
 import { fmtClock, fmtDur } from './layoverFormat.ts';
 import { summarizeAirportIntelligence } from './layoverReturnFacts.ts';
-import { describeReasonCodes, type LayoverReasonTone } from '../../lib/layoverReasonCodes.ts';
+import { describeReasonCodes, type LayoverReasonTone } from '../../lib/layoverReasonCodes.ts'; import { describeVerdict, type VerdictTone } from './layoverVerdictFacts.ts';
 import type {
   LeaveAdvice,
   LayoverWindow,
@@ -39,16 +39,16 @@ interface Props {
   airportIntelligence?: LayoverAirportIntelligence | null;
 }
 
-const VERDICT: Record<LeaveAdvice['verdict'], { label: string; bg: string; fg: string }> = {
-  yes:         { label: 'Yes — you have time',      bg: 'rgba(46,125,91,0.12)',  fg: color.success },
-  tight:       { label: 'Tight — stay close',       bg: 'rgba(200,133,26,0.14)', fg: color.warn },
-  no:          { label: 'No — stay airside',        bg: 'rgba(255,77,46,0.12)',  fg: color.signalDim },
-  // Not a time verdict. The clock allows the trip; what we could not confirm is
-  // that this passport may enter this country. Warn-coloured rather than
-  // refusal-coloured, because it is an unknown and not a no — and the reason
-  // beneath the label says which of the five unknowns it is.
-  entry_unverified: { label: 'Time is fine — entry unconfirmed', bg: 'rgba(200,133,26,0.14)', fg: color.warn },
-  stay_airside:{ label: 'Staying in — good call',   bg: 'rgba(10,61,74,0.10)',   fg: color.deep },
+// The LABEL and the TONE of a verdict come from `layoverVerdictFacts.ts` — the
+// one table this card and the constraints card mounted beneath it both read,
+// so the two cannot say different things about the same verdict (they did: an
+// amber "entry unconfirmed" here over a green "You can go out" there). Only
+// the colours live in this file. A verdict this build has never been taught
+// is drawn cautionary by `describeVerdict`, never green.
+const VERDICT_TONE: Record<VerdictTone, { bg: string; fg: string }> = {
+  affirm:  { bg: 'rgba(46,125,91,0.12)',  fg: color.success },
+  caution: { bg: 'rgba(200,133,26,0.14)', fg: color.warn }, // an unknown or a squeeze, not a no — the reason beneath says which
+  refuse:  { bg: 'rgba(255,77,46,0.12)',  fg: color.signalDim }, staying: { bg: 'rgba(10,61,74,0.10)', fg: color.deep },
 };
 
 /**
@@ -71,7 +71,7 @@ const PROVENANCE_FG: Record<string, string> = {
 
 export function CanILeaveCard({ advice, window: win, airport, airportIntelligence }: Props) {
   const [expanded, setExpanded] = useState(false);
-  const v = VERDICT[advice.verdict];
+  const verdict = describeVerdict(advice.verdict); const v = { label: verdict.label, ...VERDICT_TONE[verdict.tone] };
   const provenance = summarizeAirportIntelligence(airportIntelligence, airport.iataCode);
   // The server's list, de-duplicated and kept in its order. An unrecognised
   // code survives as itself — see `lib/layoverReasonCodes.ts`.
@@ -84,7 +84,7 @@ export function CanILeaveCard({ advice, window: win, airport, airportIntelligenc
         <Text style={styles.heading}>Can I leave the airport?</Text>
       </View>
 
-      <View style={[styles.verdictPill, { backgroundColor: v.bg }]}>
+      <View style={[styles.verdictPill, { backgroundColor: v.bg }]} testID={`layover-verdict-${verdict.tone}`}>
         <Text style={[styles.verdictText, { color: v.fg }]}>{v.label}</Text>
       </View>
 
