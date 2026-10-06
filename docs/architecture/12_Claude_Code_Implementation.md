@@ -362,7 +362,7 @@ refactor of anything that exists.**
     account rather than dropped.
 30. **The payout lifecycle** (`09` §9.1) — states, compare-and-swap on every transition (already
     done for the two existing routes by M3), and the first real INSERT path, closing **M2**. Gated
-    on the same KYC gate as bookings (`lib/rentBuddyKycGate.ts:57`), **not a second
+    on the same KYC gate as bookings (`lib/rentBuddyKycGate.ts:50`), **not a second
     independently-defaulting switch** — that reproduces the defect `2210` had to correct.
 31. **Refunds, chargebacks, reversals** (`09` §9.2) — three distinct things; a reversal is always a
     new transaction, never a DELETE, which I2 makes impossible anyway.

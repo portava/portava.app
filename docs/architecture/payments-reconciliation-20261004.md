@@ -177,9 +177,9 @@ integrations that call the vendors' APIs — not stubs. What keeps them non-oper
 one-element allowlist:
 `artifacts/api-server/src/services/identityVerification/readiness.ts:53#IMPLEMENTED_PROVIDERS`
 contains only `"mock"`. That closes the booking gate:
-`artifacts/api-server/src/lib/rentBuddyKycGate.ts:58#identityProviderStatus();` reads it,
+`artifacts/api-server/src/lib/rentBuddyKycGate.ts:51#identityProviderStatus();` reads it,
 `:62#KYC_OVERRIDE_FLAG);` reads the FALSE override flag, and the gate answers **503**
-(`artifacts/api-server/src/lib/rentBuddyKycGate.ts:78#httpStatus:`) on all five booking-creation
+(`artifacts/api-server/src/lib/rentBuddyKycGate.ts:70#httpStatus:`) on all five booking-creation
 paths. It fails closed on a database error.
 
 ### 1.5 The provider-mode guard, and the payout boundary
@@ -619,7 +619,7 @@ webhook over HTTP).
 
 - §1.4 and `09`'s lines that say booking creation is open "unless `rent_buddy_allow_bookings_without_kyc`
   is explicitly on": that override is **retired** (OD-PAY-10, no tester bypass) and no longer read
-  (`artifacts/api-server/src/lib/rentBuddyKycGate.ts:69#void KYC_OVERRIDE_FLAG;`).
+  (`artifacts/api-server/src/lib/rentBuddyKycGate.ts:52#if (status.operational && verificationIsBookingGrade()) return { allowed: true };`; 3932 deletes the row, N-1).
 - §2 D8 "No unverified bookings is BUILT": it was a deployment-level gate only. Both people are now
   checked on every creation path, and a sandbox-key verification does not count
   (`artifacts/api-server/src/services/identityVerification/currentVerification.ts:154#if (mode === "test")`).

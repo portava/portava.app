@@ -4,7 +4,7 @@
  * The service layer's apiFetch surfaces the server's error CODE and drops its
  * human-readable `message`. That is fine for genuine failures, but Rent a Buddy
  * is deliberately CLOSED for launch: identity verification and payments are
- * both stubbed, `rent_buddy_allow_bookings_without_kyc` stays false, and every
+ * not yet live, there is no override (the old KYC flag is retired), and every
  * booking-creating endpoint answers 503 `verification_unavailable`
  * (api-server/src/lib/rentBuddyKycGate.ts). Without the mapping below, a
  * traveller who has just filled in the whole checkout form is shown an alert

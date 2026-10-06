@@ -35,7 +35,7 @@ import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import rentABuddyRouter, { enforceBookingCreationGates } from "../routes/rentABuddy.js";
 import rentABuddySpecRouter from "../routes/rentABuddySpec.js";
-import { KYC_OVERRIDE_FLAG } from "../lib/rentBuddyKycGate.js";
+const KYC_OVERRIDE_FLAG = "rent_buddy_allow_bookings_without_kyc"; // RETIRED (3932): seeded TRUE here to prove it opens nothing
 
 const USER_TOKEN = "bfc-user-token";
 const USER_ID = "bfc-user-1";

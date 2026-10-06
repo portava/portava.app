@@ -10,7 +10,9 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { identityProviderStatus } from "../services/identityVerification/readiness.js";
-import { checkBookingKycGate, KYC_OVERRIDE_FLAG, verificationIsBookingGrade } from "../lib/rentBuddyKycGate.js";
+import { checkBookingKycGate, verificationIsBookingGrade } from "../lib/rentBuddyKycGate.js";
+import * as kycGateModule from "../lib/rentBuddyKycGate.js";
+const KYC_OVERRIDE_FLAG = "rent_buddy_allow_bookings_without_kyc"; // RETIRED by migration 3932; the gate module no longer names it
 
 // ── Fake client returning a flag row ─────────────────────────────────────────
 
@@ -162,6 +164,7 @@ describe("checkBookingKycGate", () => {
       assert.equal(gate.httpStatus, 503);
       assert.equal(gate.code, "verification_unavailable");
       assert.deepEqual(c._seen, [], "the gate reads no flag at all");
+      assert.equal("KYC_OVERRIDE_FLAG" in kycGateModule, false, "N-1: the gate module no longer even names the retired flag");
     });
   });
 

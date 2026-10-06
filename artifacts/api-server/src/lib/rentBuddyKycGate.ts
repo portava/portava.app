@@ -27,18 +27,11 @@
  * key"): the retired override flag is not read, and a sandbox (test) identity
  * key keeps bookings closed too (verificationIsBookingGrade, at the foot).
  */
-import { configuredIdentityProvider, identityKeyDecision, mockIdentityPermitted, mockVerificationIsBookingGrade } from "./paymentsMode.js";
+import { configuredIdentityProvider, identityKeyDecision, mockVerificationIsBookingGrade } from "./paymentsMode.js";
 import { identityProviderStatus } from "../services/identityVerification/readiness.js";
 import { logger as rootLogger } from "./logger.js";
 
 const logger = rootLogger.child({ gate: "RentBuddyKycGate" });
-
-/**
- * RETIRED 2026-10-05. Was an escape hatch for a pilot without KYC; the owner
- * ruled out any tester bypass, and the gate no longer reads it. Kept exported
- * so a stale row or a test that seeds it is visibly inert, not an error.
- */
-export const KYC_OVERRIDE_FLAG = "rent_buddy_allow_bookings_without_kyc";
 
 export interface KycGateResult {
   allowed: boolean;
@@ -61,12 +54,11 @@ export async function checkBookingKycGate(_sc: any): Promise<KycGateResult> {
   // Not operational, or operational only on a SANDBOX key. Nothing lets this
   // through: the owner ruled (2026-10-04) that first-release bookings require
   // REAL identity verification — "No tester bypass or sandbox verification
-  // key." KYC_OVERRIDE_FLAG used to be read here as an escape hatch for a
-  // pilot without KYC; it is no longer read by anything, so turning the row on
-  // changes nothing. A sandbox key verifies nobody for real, so a deployment
-  // whose identity key is a test key stays closed exactly like one with no
-  // provider at all (verificationIsBookingGrade, at the foot).
-  void KYC_OVERRIDE_FLAG;
+  // key." The old KYC override flag is read by nothing, hidden and unpatchable
+  // on the admin surface (routes/admin.ts HIDDEN_INERT_FLAGS), and its row is
+  // deleted by migration 3932_retire_rent_buddy_kyc_override.sql. A sandbox key
+  // verifies nobody for real, so a deployment whose identity key is a test key
+  // stays closed exactly like one with no provider at all (at the foot).
 
   logger.error(
     { provider: status.provider, reason: status.reason },

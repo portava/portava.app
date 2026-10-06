@@ -703,7 +703,7 @@ const HIDDEN_INERT_FLAGS = new Set([
   "notifications_enabled",
   "notification_digests_enabled",
   "realtime_activity_enabled",
-  "safety_notifications_enabled",
+  "safety_notifications_enabled", "rent_buddy_allow_bookings_without_kyc", // retired 2026-10-06 by 3932 (N-1, owner: "No tester bypass"); read by nothing, so never offered as a lever
 ]);
 
 /**

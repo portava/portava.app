@@ -81,7 +81,7 @@ other processor. The only Stripe reference in `artifacts/api-server/src` is **St
 neither is operational.
 
 Because identity verification does not work, **booking creation itself is hard-blocked**:
-`lib/rentBuddyKycGate.ts:57-80` returns 503 `verification_unavailable` on every creation path unless verification is operational on a booking-grade key (`:109-114`; a mock only under `node --test`). The old override
+`lib/rentBuddyKycGate.ts:50-77` returns 503 `verification_unavailable` on every creation path unless verification is operational on a booking-grade key (`:101-106`; a mock only under `node --test`). The old override
 `rent_buddy_allow_bookings_without_kyc` (seeded false, `migrations/2074_rent_buddy_kyc_gate_flag.sql:36-39`) is
 retired and no longer read (owner 2026-10-04: no tester bypass; lane B 2026-10-05). The master flag `rent_buddy_enabled` is
 seeded **false** by owner decision (`migrations/2210_rent_buddy_default_off.sql:29-31`), which
@@ -494,7 +494,7 @@ Failure states are first-class, because in payouts they are the common case:
 | `cancelled` | Withdrawn before instruction | No entries; the request row records the reason |
 
 **A payout must not be instructable while identity verification is non-operational.** That gate
-already exists in the tree for bookings (`lib/rentBuddyKycGate.ts:57-80`) and it fails **closed**
+already exists in the tree for bookings (`lib/rentBuddyKycGate.ts:50-77`) and it fails **closed**
 with no override at all (`:25-29`). Payout eligibility reads the same gate. Adding a second,
 independently-defaulting switch would reproduce the defect `2210` had to correct — a flag whose
 intended default was FALSE that a later migration forced TRUE
