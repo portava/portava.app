@@ -322,6 +322,28 @@ describe("GET /input-assistance/memory-context — inspect exactly what would be
     assert.ok(!JSON.stringify(b).includes("canon-"), "inspect shows the person their memories, not internal ids");
   });
 
+  it("Inspect and the starters are ONE set: same cities, same order — even when the serve carries a query a re-rank would reorder", async () => {
+    // Verifier finding 6: the starters used to read with a semanticQuery and
+    // Inspect without, and searchMemories re-ranks before its limit — so a
+    // starter could name a city Inspect never listed. "tokyo" would have
+    // pulled Tokyo first for the starters only.
+    setup({ feature_flags: [flag(true)], input_memory_context_consent: [consent(USER_A)], memory_derivative_registry: [registry(USER_A, MEMORIES)] });
+    const inspect = (await (await call("GET", "/input-assistance/memory-context")).json()) as any;
+    _resetRateLimit();
+    const served = (await (await call("POST", "/input-assistance/suggest", { context: "compass_prompt", text: "tokyo", sessionContext: { surface: "compass" } })).json()) as any;
+    const starterCities = memoryRows(served).map((s: any) => s.structuredValue.city);
+    assert.deepEqual(starterCities, inspect.facts.map((f: any) => f.city).slice(0, starterCities.length));
+    assert.deepEqual(starterCities, ["Hội An", "Tokyo"]);
+  });
+
+  it("flag OFF with a consent still on record: Inspect reads NO memory (verifier finding 9)", async () => {
+    setup({ feature_flags: [flag(false)], input_memory_context_consent: [consent(USER_A)], memory_derivative_registry: [registry(USER_A, MEMORIES)] });
+    const b = (await (await call("GET", "/input-assistance/memory-context")).json()) as any;
+    assert.equal(b.enabled, true, "the person's choice is still shown, so they can withdraw it");
+    assert.equal(b.facts, null);
+    assert.ok(!state.__reads!.includes("memory_derivative_registry"), "no memory read while the feature is off");
+  });
+
   it("not opted in: says so, and reads no memory to say it", async () => {
     setup({ feature_flags: [flag(true)], memory_derivative_registry: [registry(USER_A, MEMORIES)] });
     const b = (await (await call("GET", "/input-assistance/memory-context")).json()) as any;

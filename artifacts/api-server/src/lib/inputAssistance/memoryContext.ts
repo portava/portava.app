@@ -122,14 +122,20 @@ export type CompassMemoryRead =
 export type MemorySearch = (client: ClientLike, input: SearchMemoriesInput) => Promise<SearchResult>;
 
 /**
- * The person's own Compass-authorized memory facts, one per city, newest first.
+ * THE set of memory facts Input Intelligence uses — the ONLY reader, for both
+ * the Compass starters and the Settings inspect view (verifier finding 6), so
+ * what a person is shown in Inspect is, by construction, what their starters
+ * are built from. It takes NO query on purpose: a semantic re-rank before the
+ * limit would let a starter name a city Inspect never listed. One per city,
+ * newest first.
+ *
  * CALL ONLY BEHIND `memoryContextGate(...) === 'open'` — the gate is not
  * repeated here so that a test can prove the CALLERS check it.
  */
 export async function readCompassMemoryFacts(
   db: SupabaseClient,
   userId: string,
-  opts: { query?: string | null; search?: MemorySearch; now?: Date } = {},
+  opts: { search?: MemorySearch; now?: Date } = {},
 ): Promise<CompassMemoryRead> {
   const search = opts.search ?? searchMemories;
   let result: SearchResult;
@@ -139,7 +145,7 @@ export async function readCompassMemoryFacts(
       viewerId: userId,
       namespace: 'PRIVATE_PERSONAL',
       authorizedProjection: 'CompassMemoryProjection',
-      semanticQuery: opts.query && opts.query.trim() ? opts.query.trim() : null,
+      semanticQuery: null,
       limit: MEMORY_FACT_SCAN,
       now: opts.now,
     });
@@ -208,7 +214,8 @@ export async function buildMemoryContextStarters(
       if (gate === 'consent_unreadable') logger.warn({ context: p.context }, 'memory context: consent unreadable; no memory used');
       return [];
     }
-    const read = await readCompassMemoryFacts(db, p.userId, { query: p.query, search: p.search });
+    // The same read Inspect makes — no query (see readCompassMemoryFacts).
+    const read = await readCompassMemoryFacts(db, p.userId, { search: p.search });
     if (!read.ok) {
       logger.warn({ context: p.context, reason: read.reason }, 'memory context: memory read refused; no memory starters');
       return [];
