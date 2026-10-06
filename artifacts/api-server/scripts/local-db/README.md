@@ -25,15 +25,16 @@ pnpm --filter @workspace/api-server db:local:down     # stop a cluster up.sh boo
    it, in the applier's order: byte order plus the declared
    `src/migrations/ORDER_OVERRIDES.json` (docs/migrations.md § "Apply-order
    overrides"), resolved by `resolve-order.mjs`, which a parity test holds
-   identical to `scripts/src/apply-migrations.ts`. A stale override aborts the
-   replay. A file may fail **only** if `KNOWN_UNREPLAYABLE.json`
+   identical to `scripts/src/apply-migrations.ts`; a file the overrides SKIP is
+   never run. A stale override aborts the replay. A file may fail **only** if
+   `KNOWN_UNREPLAYABLE.json`
    names it with its verbatim error, and a listed file that replays in order
-   aborts the run so the list can only shrink. The eleven listed files are
-   the intel chain that starts at 2276 and `2140`'s status CHECK (neither an
-   order defect — see docs/migrations.md § "Apply-order overrides"), one
-   PostgreSQL 17 privilege and one seed-row precondition; every `trip_*`
-   object, the kernel and the projection worker
-   replay cleanly, and `up.sh` refuses to finish unless they are all present.
+   aborts the run so the list can only shrink. The two listed files are one
+   PostgreSQL 17 privilege and one seed-row precondition — neither an order
+   defect (docs/migrations.md § "Apply-order overrides" records the ten that
+   were, and how each was resolved); every `trip_*` object, the kernel and the
+   projection worker replay cleanly, and `up.sh` refuses to finish unless they
+   are all present.
 
 Two modes: `LOCAL_DB_URL` set (CI's `postgis/postgis:16-3.4` service
 container) or unset (boot a cluster under `/tmp/portava-local-db`; as root it
