@@ -38,6 +38,13 @@
  * account_status, places.name/address.
  */
 
+/**
+ * Re-exported for routes/admin.ts's review route, so that file gains no import
+ * LINE: its lines below the moderation block are cited by a commit-pinned
+ * record (docs/architecture/trust-unproduced-vocabulary.md) and must not move.
+ */
+export { resolveContentOwnerDetailed } from "./contentOwner.js";
+
 export const SNAPSHOT_EXCERPT_CHARS = 280;
 
 /** moderation_reports.category CHECK (baseline 20260819; 2029 widened it). */

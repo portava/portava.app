@@ -52,7 +52,16 @@ interface Fake {
 }
 
 /** A PostgREST-shaped fake whose updates and inserts persist; `errorOn` tables answer an error. */
-function makeFake(store: Record<string, Row[]>, opts: { role?: string; errorOn?: string[]; failInsertOn?: string[] } = {}): Fake {
+interface FakeOpts {
+  role?: string;
+  errorOn?: string[];
+  failInsertOn?: string[];
+  /** Called before each UPDATE on a table; return an error to make that update fail. */
+  onUpdate?: (table: string, store: Record<string, Row[]>, n: number) => { message: string } | void;
+}
+
+function makeFake(store: Record<string, Row[]>, opts: FakeOpts = {}): Fake {
+  const updateCount: Record<string, number> = {};
   const inserts: Array<{ table: string; row: Row }> = [];
   const tbl = (t: string) => (store[t] ??= []);
   const client: any = {
@@ -69,6 +78,11 @@ function makeFake(store: Record<string, Row[]>, opts: { role?: string; errorOn?:
           const row = { id: `ins-${inserts.length + 1}`, ...pending.payload };
           tbl(table).push(row); inserts.push({ table, row }); pending = null;
           return { data: single ? row : [row], error: null };
+        }
+        if (pending?.verb === "update") {
+          const n = (updateCount[table] = (updateCount[table] ?? 0) + 1);
+          const hookErr = opts.onUpdate?.(table, store, n);
+          if (hookErr) { pending = null; return { data: null, error: hookErr }; }
         }
         const hit = tbl(table).filter((r) => filters.every((f) => f(r)));
         if (pending?.verb === "update") { for (const r of hit) Object.assign(r, pending.payload); pending = null; }
@@ -214,30 +228,34 @@ describe("TV-4a §2 — what was reported, not a bare UUID", () => {
 
 describe("TV-4a §3 — a route that ACTS on a moderation_reports row", () => {
   const row = (f: Fake, id: string) => f.store.moderation_reports.find((r) => r.id === id)!;
+  const audits = (f: Fake) => f.inserts.filter((i) => i.table === "moderation_actions");
 
-  it("open → reviewing records the claim on the row and writes no moderation action", async () => {
+  it("open → reviewing moves the row and writes neither a moderation action nor the moderator's id", async () => {
     const f = makeFake(world()); install(f);
     const r = await call("POST", `/admin/moderation/reports/${R(1)}/review`, { decision: "reviewing" });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(row(f, R(1)).status, "reviewing");
-    assert.equal(row(f, R(1)).resolver_id, ADMIN);
+    assert.equal(row(f, R(1)).resolver_id, null, "the moderator's id went on a row the reporter can read");
     assert.equal(row(f, R(1)).resolved_at, null, "a claim is not a resolution");
-    assert.equal(f.inserts.filter((i) => i.table === "moderation_actions").length, 0);
+    assert.equal(audits(f).length, 0);
   });
 
-  it("actioned writes the audit row FIRST, naming the accountable author and the report, then closes the report", async () => {
+  it("actioned: the audit row names the accountable author, the moderator and the note; the report row carries neither", async () => {
     const f = makeFake(world()); install(f);
     const r = await call("POST", `/admin/moderation/reports/${R(2)}/review`, { decision: "actioned", note: "scam confirmed" });
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.audit, "recorded");
-    const audit = f.inserts.filter((i) => i.table === "moderation_actions");
-    assert.equal(audit.length, 1);
-    assert.equal(audit[0].row.target_user_id, AUTHOR);
-    assert.equal(audit[0].row.action_type, "report_actioned");
-    assert.equal(audit[0].row.metadata.report_id, R(2));
+    const a = audits(f);
+    assert.equal(a.length, 1);
+    assert.equal(a[0].row.target_user_id, AUTHOR);
+    assert.equal(a[0].row.performed_by, ADMIN);
+    assert.equal(a[0].row.action_type, "report_actioned");
+    assert.equal(a[0].row.reason, "scam confirmed");
+    assert.equal(a[0].row.metadata.report_id, R(2));
     assert.equal(row(f, R(2)).status, "actioned");
     assert.ok(row(f, R(2)).resolved_at, "a closing decision stamps resolved_at");
-    assert.equal(row(f, R(2)).resolver_note, "scam confirmed");
+    assert.equal(row(f, R(2)).resolver_id, null, "verifier finding 6: moderator identity on a reporter-readable row");
+    assert.equal(row(f, R(2)).resolver_note, null, "verifier finding 6: private note on a reporter-readable row");
   });
 
   it("dismissed closes it too, with its own action type", async () => {
@@ -245,14 +263,66 @@ describe("TV-4a §3 — a route that ACTS on a moderation_reports row", () => {
     const r = await call("POST", `/admin/moderation/reports/${R(4)}/review`, { decision: "dismissed" });
     assert.equal(r.status, 200);
     assert.equal(row(f, R(4)).status, "dismissed");
-    assert.equal(f.inserts.find((i) => i.table === "moderation_actions")?.row.action_type, "report_dismissed");
+    assert.equal(audits(f)[0]?.row.action_type, "report_dismissed");
   });
 
-  it("a FAILED audit write changes nothing (fail-closed)", async () => {
+  it("a CONCURRENT close (the claim matches no row) is a 409 and writes NO audit row", async () => {
+    // Another moderator dismisses the report between this request's read and its claim.
+    const f = makeFake(world(), {
+      onUpdate: (table, store, n) => {
+        if (table === "moderation_reports" && n === 1) store.moderation_reports.find((r) => r.id === R(2))!.status = "dismissed";
+      },
+    });
+    install(f);
+    const r = await call("POST", `/admin/moderation/reports/${R(2)}/review`, { decision: "actioned" });
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(audits(f).length, 0, "verifier finding 5(a): an audit row for an action that did not happen");
+    assert.equal(row(f, R(2)).status, "dismissed", "the other moderator's decision stands");
+  });
+
+  it("an UNREADABLE owner table is a retryable 503 and nothing is written (no report closed without its audit row)", async () => {
+    const f = makeFake(world(), { errorOn: ["messages"] }); install(f);
+    const r = await call("POST", `/admin/moderation/reports/${R(2)}/review`, { decision: "dismissed" });
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+    assert.equal(row(f, R(2)).status, "open", "verifier finding 5(b): closed with no audit row");
+    assert.equal(audits(f).length, 0);
+  });
+
+  it("the owner recorded at intake is used when the content has since gone", async () => {
+    const w = world();
+    w.moderation_reports.find((r) => r.id === R(6))!.subject_user_id = AUTHOR; // post GONE
+    const f = makeFake(w); install(f);
+    const r = await call("POST", `/admin/moderation/reports/${R(6)}/review`, { decision: "actioned" });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(audits(f)[0]?.row.target_user_id, AUTHOR);
+  });
+
+  it("a subject with no accountable user (an unowned place) is refused, and nothing is written", async () => {
+    const f = makeFake(world()); install(f);
+    const r = await call("POST", `/admin/moderation/reports/${R(5)}/review`, { decision: "dismissed" });
+    assert.equal(r.status, 409);
+    assert.equal(row(f, R(5)).status, "open");
+    assert.equal(audits(f).length, 0);
+  });
+
+  it("a FAILED audit write restores the report to where it was, and says so", async () => {
     const f = makeFake(world(), { failInsertOn: ["moderation_actions"] }); install(f);
     const r = await call("POST", `/admin/moderation/reports/${R(2)}/review`, { decision: "actioned" });
     assert.equal(r.status, 500);
+    assert.match(String(r.body.message), /restored to 'open'/);
     assert.equal(row(f, R(2)).status, "open", "the report closed although its audit row was never written");
+    assert.equal(row(f, R(2)).resolved_at, null);
+  });
+
+  it("if the audit fails AND the restore fails, the 500 says the report is closed with no audit row", async () => {
+    const f = makeFake(world(), {
+      failInsertOn: ["moderation_actions"],
+      onUpdate: (table, _s, n) => (table === "moderation_reports" && n === 2 ? { message: "restore refused" } : undefined),
+    });
+    install(f);
+    const r = await call("POST", `/admin/moderation/reports/${R(2)}/review`, { decision: "actioned" });
+    assert.equal(r.status, 500);
+    assert.match(String(r.body.message), /could not be restored/);
   });
 
   it("a terminal report cannot move again (409), and an unknown decision is 400", async () => {
