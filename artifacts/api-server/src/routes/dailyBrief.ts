@@ -62,10 +62,28 @@ import { createHash } from "node:crypto";
 async function privatePlanAccessKey(tripId: string | null, userId: string): Promise<string> {
   if (!tripId) return "no-trip";
   const sc = getServiceClient();
-  if (!sc) return "unread";
+  if (!sc) return UNREAD_ACCESS_KEY;
   const a = await planItemAccessFor(sc, tripId, userId);
-  if (a.status !== "ok") return "unread";
-  return createHash("sha256").update([...a.grants.keys()].sort().join(",")).digest("hex").slice(0, 16);
+  if (a.status !== "ok") return UNREAD_ACCESS_KEY;
+  // census-trips §85 (verifier R2): the grants alone do not decide what the
+  // brief may carry — an item its creator turns from public to private changes
+  // it too, and no grant moves. So the digest also covers WHICH of the trip's
+  // items this viewer may not see, read now.
+  const { data, error } = await sc.from("trip_plan_items").select("id, creator_id, location_is_private, removed_at").eq("trip_id", tripId);
+  if (error || !Array.isArray(data)) return UNREAD_ACCESS_KEY;
+  const withheld = (data as Array<{ id: string; creator_id: string | null; location_is_private: boolean | null; removed_at: string | null }>)
+    .filter((r) => !canSeePlanItemLocation(a, r))
+    .map((r) => String(r.id))
+    .sort();
+  return createHash("sha256").update(`${[...a.grants.keys()].sort().join(",")}|${withheld.join(",")}`).digest("hex").slice(0, 16);
+}
+
+/** An access digest that could not be computed. It never matches a cached brief, so nothing cached is served on it. */
+const UNREAD_ACCESS_KEY = "unread";
+async function cachedAccessStillHolds(cachedKey: unknown, tripId: string | null, userId: string): Promise<boolean> {
+  const current = await privatePlanAccessKey(tripId, userId);
+  if (current === UNREAD_ACCESS_KEY) return false;
+  return (cachedKey ?? (tripId ? undefined : "no-trip")) === current; // a brief with no trip carries no plan item, so its missing key is no trip's
 }
 
 const router = Router();
@@ -864,7 +882,7 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
     const cachedActiveTripId: string | null = cached.brief.activeTripId ?? null;
     const membershipValid = (!cachedActiveTripId
       || await isAcceptedTripMember(client, cachedActiveTripId, user.id))
-      && (cached.brief.privatePlanAccessKey ?? (cachedActiveTripId ? undefined : "no-trip")) === await privatePlanAccessKey(cachedActiveTripId, user.id); // a brief with no trip carries no plan item, so its missing key is no trip's
+      && await cachedAccessStillHolds(cached.brief.privatePlanAccessKey, cachedActiveTripId, user.id);
     if (!membershipValid) {
       invalidateBriefCache(user.id, date);
       // fall through to regenerate with fresh active-trip lookup
@@ -885,7 +903,7 @@ router.get("/trips/:tripId/daily-brief", async (req, res) => {
     const storedActiveTripId: string | null = stored.brief.activeTripId ?? null;
     const membershipValid = (!storedActiveTripId
       || await isAcceptedTripMember(client, storedActiveTripId, user.id))
-      && (stored.brief.privatePlanAccessKey ?? (storedActiveTripId ? undefined : "no-trip")) === await privatePlanAccessKey(storedActiveTripId, user.id); // a brief with no trip carries no plan item, so its missing key is no trip's
+      && await cachedAccessStillHolds(stored.brief.privatePlanAccessKey, storedActiveTripId, user.id);
     if (!membershipValid) {
       await invalidateStoredBrief(client, user.id, date);
       // fall through to regenerate

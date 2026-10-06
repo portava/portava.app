@@ -213,6 +213,19 @@ describe("§81 daily-brief cache: a brief built while a grant held is not served
     assert.equal(await read(brief, BEN, "on"), true, "vacuity guard: the first build carried the stay");
     assert.equal(await read(brief, BEN, "unread"), false);
   });
+  it("daily-brief 8 (R2). built while the stay was PUBLIC, then its creator made it private: the cached brief is rebuilt without it", async () => {
+    // No grant moves when an item turns private, so a digest of grants alone
+    // kept serving the brief built from the public item (verifier R2, 87df318f4).
+    assert.equal(await read({ ...brief, hotel: { location_is_private: false } }, CLEO, "on"), true, "vacuity guard: the public stay is in the first build");
+    assert.equal(await read(brief, CLEO, "on"), false);
+  });
+  it("daily-brief 9 (R2). a digest that could not be computed never matches: built and checked with the grants unreadable, the private stay is not served from cache", async () => {
+    // Built with the grant list unreadable (key "unread") while the stay was
+    // public, then checked with the grant list still unreadable after it went
+    // private: "unread" equal to "unread" must not count as "unchanged".
+    assert.equal(await read({ ...brief, hotel: { location_is_private: false } }, CLEO, "unread"), true, "vacuity guard: the public stay is in the first build");
+    assert.equal(await read(brief, CLEO, "unread"), false);
+  });
 });
 
 describe("§81 path gem-coords (a gem linked by a private plan item unlocks nothing for others)", () => {

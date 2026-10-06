@@ -4073,6 +4073,29 @@ different instances can overshoot by the number of instances.
 
 **Rollback:** `db/rollback/2026-10-05-3975-trail-proposal-daily-allowance-rollback.sql` — restores 3415's
 function verbatim.
+## 2026-10-06 — `3976_trip_events_private_place_minimised.sql`, written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3976_trip_events_private_place_minimised.sql` | **not applied** | **not applied** |
+
+**What it is.** census-trips §85 (verifier R1; lead ruling D-65). The kernel stored a private plan item's
+title, notes, location name, place and source ids, city and country in `trip_events`, which 2420's
+`trip_events_crew_select` let every accepted member read through PostgREST, and the snapshot fold copied the
+title into the crew-readable `trip_snapshots`. 3976 closes both layers: the crew policy and the
+`authenticated` SELECT grant on `trip_events` are withdrawn (no client reads it); a BEFORE INSERT trigger
+minimises every plan-family event whose item is not known public (`public.trip_event_minimised`); a public
+item made private takes its history with it (AFTER UPDATE trigger on `trip_plan_items`: its earlier events
+minimised, its snapshot title nulled); a restore event (3974) loses the admin reason and the appeal id.
+2420's append-only trigger now refuses every UPDATE except exactly that minimisation. Existing rows are
+minimised once. Postconditions assert the grant, the policy, the three triggers and the function's output.
+
+**Data change.** Existing events and snapshots lose the named keys for items not public now. Replay
+still verifies (the fold reads events; both paths see `"title": null`). The keys remain on
+`trip_plan_items` (owner-only by 3972) and in the service-role-only `trip_command_receipts`.
+
+**Rollback:** `db/rollback/2026-10-06-3976-trip-events-private-place-minimised-rollback.sql` — restores
+2420's policy, grant and append-only function; it cannot un-redact.
 ## 2026-10-05 — `3900_layover_presence.sql`, written and NOT applied anywhere
 
 | | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
