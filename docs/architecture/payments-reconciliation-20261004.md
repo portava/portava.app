@@ -175,7 +175,7 @@ with the flag on and an admin authenticated.
 **Identity verification is built and gated closed.** Stripe Identity and Persona are *real*
 integrations that call the vendors' APIs — not stubs. What keeps them non-operational is a
 one-element allowlist:
-`artifacts/api-server/src/services/identityVerification/readiness.ts:53#IMPLEMENTED_PROVIDERS`
+`artifacts/api-server/src/services/identityVerification/readiness.ts:67#IMPLEMENTED_PROVIDERS`
 contains only `"mock"`. That closes the booking gate:
 `artifacts/api-server/src/lib/rentBuddyKycGate.ts:58#identityProviderStatus();` reads it,
 `:62#KYC_OVERRIDE_FLAG);` reads the FALSE override flag, and the gate answers **503**
@@ -185,15 +185,15 @@ paths. It fails closed on a database error.
 ### 1.5 The provider-mode guard, and the payout boundary
 
 `lib/paymentsMode.ts` is a built, tested control with no analogue in §§3–10: it classifies a provider
-key by documented prefix (`artifacts/api-server/src/lib/paymentsMode.ts:53#Record<KeyedProvider,`,
+key by documented prefix (`artifacts/api-server/src/lib/paymentsMode.ts:59#Record<KeyedProvider,`,
 `:69#classifyProviderKey(provider:`), allows `live` only on the exact string `"true"`
-(`artifacts/api-server/src/lib/paymentsMode.ts:78#NodeJS.ProcessEnv`), refuses an unrecognised
+(`artifacts/api-server/src/lib/paymentsMode.ts:101#NodeJS.ProcessEnv`), refuses an unrecognised
 prefix outright, throws before any `fetch`
-(`artifacts/api-server/src/lib/paymentsMode.ts:138#assertProviderKeyAllowed(`), refuses a
+(`artifacts/api-server/src/lib/paymentsMode.ts:161#assertProviderKeyAllowed(`), refuses a
 signature-verified webhook claiming `livemode`
-(`artifacts/api-server/src/lib/paymentsMode.ts:153#assertWebhookLivemodeAllowed(`), and refuses the
+(`artifacts/api-server/src/lib/paymentsMode.ts:176#assertWebhookLivemodeAllowed(`), and refuses the
 unsigned mock outside a positively-evidenced local run
-(`artifacts/api-server/src/lib/paymentsMode.ts:224#mockIdentityPermitted(env:`).
+(`artifacts/api-server/src/lib/paymentsMode.ts:247#mockIdentityPermitted(env:`).
 
 `services/creators/PayoutProvider.ts` is `09` §9's interface verbatim — six operations
 (`artifacts/api-server/src/services/creators/PayoutProvider.ts:63#PayoutProvider`) — whose only
@@ -211,8 +211,8 @@ It imports nothing, and no ledger module imports it.
 | `rent_buddy_enabled` | DB flag | **FALSE** | `artifacts/api-server/src/migrations/2210_rent_buddy_default_off.sql:30#rent_buddy_enabled` |
 | `rent_buddy_allow_bookings_without_kyc` | DB flag | **FALSE** | `2074`, `2085` |
 | `budget_fx_conversion_enabled` | DB flag | **FALSE** | `0183` |
-| `PAYMENTS_ALLOW_LIVE` | env | unset ⇒ live refused | `artifacts/api-server/src/lib/paymentsMode.ts:78#NodeJS.ProcessEnv` |
-| `IDENTITY_PROVIDER` | env | defaults `mock` | `artifacts/api-server/src/lib/paymentsMode.ts:163#configuredIdentityProvider(env:` |
+| `PAYMENTS_ALLOW_LIVE` | env | unset ⇒ live refused | `artifacts/api-server/src/lib/paymentsMode.ts:101#NodeJS.ProcessEnv` |
+| `IDENTITY_PROVIDER` | env | defaults `mock` | `artifacts/api-server/src/lib/paymentsMode.ts:186#configuredIdentityProvider(env:` |
 | `CREATOR_PAYOUT_PROVIDER` | env | any value but `none` refused | `artifacts/api-server/src/services/creators/PayoutProvider.ts:109#resolvePayoutProvider(configured?:` |
 
 **Payments are in no mode at all**, and that is the accurate phrasing: there is no
@@ -249,7 +249,7 @@ content does not. **ABSENT** = nothing implements it.
 The *interface* half is BUILT and is §9's six operations verbatim
 (`artifacts/api-server/src/services/creators/PayoutProvider.ts:63#PayoutProvider`); a sandbox-only
 key guard with test/live prefix classification exists and is enforced before any request
-(`artifacts/api-server/src/lib/paymentsMode.ts:138#assertProviderKeyAllowed(`). The *Stripe Connect*
+(`artifacts/api-server/src/lib/paymentsMode.ts:161#assertProviderKeyAllowed(`). The *Stripe Connect*
 half is ABSENT and verified so in §3.1. Note the interface is the **payout** boundary only — there
 is no charge/checkout provider interface anywhere, so the seam the decision describes covers
 disbursement and not collection.
@@ -399,7 +399,7 @@ worktree-wide for `SetupIntent`, `stripe.accounts`, `acct_`, `transfer_data`, `a
 appear only as negative assertions in two tests and in scam-text scanners. `square`, `paddle`,
 `vertex`, `wise` otherwise match geometry, icons, a paddle boat and "byte-wise".
 
-**`artifacts/api-server/src/services/payments/` does not exist** — `artifacts/api-server/src/lib/paymentsMode.ts:36#(services/payments/*,` names it
+**`artifacts/api-server/src/services/payments/` does not exist** — `artifacts/api-server/src/lib/paymentsMode.ts:42#(services/payments/*,` names it
 as the future home.
 
 Every `stripe` code hit in the tree is **Stripe *Identity***, a KYC product, confined to
