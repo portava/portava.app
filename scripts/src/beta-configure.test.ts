@@ -49,6 +49,15 @@ const SNAPSHOT_DIR = join(REPO_ROOT, "artifacts/api-server/src/lib/capability/sn
 const PRODUCTION_SNAPSHOT = "20260922-production-schema.json";
 const PRODUCTION_FLAGS = (JSON.parse(readFileSync(join(SNAPSHOT_DIR, PRODUCTION_SNAPSHOT), "utf8")) as { flags: Record<string, boolean> }).flags;
 const RENT_A_BUDDY = /^(rent_buddy|RENT_BUDDY|wall_rab|discovery_buddy)/;
+/**
+ * Flags a migration NEWER than the production snapshot turns on (seeds TRUE or UPDATEs to TRUE) — absent from the
+ * snapshot, so "mirror production" cannot decide them. Each needs an explicit decision here; a new one turns the
+ * test below red until it is added (verifier F6).
+ */
+const POST_SNAPSHOT_SEEDED_TRUE = new Map<string, { on: boolean; why: string }>([
+  ["layover_crowd_reports_enabled", { on: true, why: "3513 seeds it TRUE as production's default; lead decision 2026-10-06" }],
+  ["discovery_serve_log_retention_enabled", { on: false, why: "3501 seeds it TRUE, but its 30-day period (Q11(a)) awaits legal review; held OFF, so beta's serve log is unbounded" }],
+]);
 const DECISION_GATED = [
   "layover_presence_intents_enabled", "discovery_dwell_telemetry_enabled", "discovery_trending_api_enabled",
   "discovery_trend_lists_enabled", "creator_attribution_enabled", "account_deletion_worker_enabled",
@@ -179,6 +188,13 @@ describe("beta-flag-policy.json — every flag the beta database will hold, deci
     assert.equal(byFlag.get("discovery_serve_log_retention_enabled")?.enabled, false, "Q11(a): 30 days pending legal review");
   });
 
+  it("every flag a post-snapshot migration turns on is decided explicitly, and the policy follows that decision", () => {
+    const found = [...population.values()].filter((x) => x.everSetTrue && !(x.flag in PRODUCTION_FLAGS)).map((x) => x.flag).sort();
+    assert.deepEqual(found, [...POST_SNAPSHOT_SEEDED_TRUE.keys()].sort(),
+      "a migration newer than the 2026-09-22 snapshot turns a flag on: decide it in POST_SNAPSHOT_SEEDED_TRUE (and the policy) explicitly");
+    for (const [flag, d] of POST_SNAPSHOT_SEEDED_TRUE) assert.equal(byFlag.get(flag)?.enabled, d.on, `${flag}: ${d.why}`);
+  });
+
   it("STOP parity: every stop production has engaged is engaged on beta", () => {
     const stopsRecorded = Object.keys(PRODUCTION_FLAGS).filter((f) => byFlag.get(f)?.kind === "STOP");
     // Not vacuous: the snapshot records every STOP (17 on 2026-09-22, none engaged). A later snapshot that records
@@ -204,7 +220,7 @@ describe("beta-flag-policy.json — every flag the beta database will hold, deci
       "RENT_BUDDY_ADMIN_ONLY_MODE", "disable_intel_live_labels", "disable_rab_bookings", "disable_rent_buddy_booking",
       "disable_signups", "invite_only_beta",
     ];
-    const SEEDED_TRUE_NEWER_THAN_SNAPSHOT = ["layover_crowd_reports_enabled"];
+    const SEEDED_TRUE_NEWER_THAN_SNAPSHOT = [...POST_SNAPSHOT_SEEDED_TRUE].filter(([, d]) => d.on).map(([f]) => f);
     const EXCEPTIONS = new Map<string, string>([
       ...policy.flags.filter((e) => RENT_A_BUDDY.test(e.flag) && e.kind === "CAPABILITY").map((e) => [e.flag, "(1) Rent-a-Buddy blocked by design"] as [string, string]),
       ["push_notifications_enabled", "(2) no Expo push credentials for the beta build yet"],
@@ -233,6 +249,12 @@ describe("beta-flag-policy.json — every flag the beta database will hold, deci
     assert.deepEqual([...p.keys()].sort(), ["x_enabled", "y_enabled"]);
     assert.equal(p.get("x_enabled")?.seededIn, "0003_c.sql:1");
     assert.equal(p.get("y_enabled")?.seededValue, true, "a commented DELETE retires nothing");
+    const q = seededFlagPopulation(["a.sql", "b.sql"], (f) => ({
+      "a.sql": "INSERT INTO public.feature_flags (flag, enabled) VALUES ('z_enabled', false), ('w_enabled', false);",
+      "b.sql": "UPDATE public.feature_flags SET enabled = true WHERE flag = 'z_enabled';\n-- UPDATE feature_flags SET enabled = true WHERE flag = 'w_enabled';\nUPDATE feature_flags SET enabled = false WHERE flag = 'w_enabled';",
+    } as Record<string, string>)[f]);
+    assert.equal(q.get("z_enabled")?.everSetTrue, true, "an UPDATE … SET enabled = true turns it on");
+    assert.equal(q.get("w_enabled")?.everSetTrue, false, "a commented or a FALSE update does not");
   });
 });
 
@@ -241,7 +263,7 @@ describe("beta-flag-policy.json — every flag the beta database will hold, deci
 // ─────────────────────────────────────────────────────────────────────────────
 
 const TINY_POPULATION: ReadonlyMap<string, SeededFlag> = new Map(
-  ["disable_signups", "invite_only_beta", "rent_buddy_enabled", "stories_enabled"].map((f) => [f, { flag: f, seededIn: "x.sql:1", seededValue: false }]),
+  ["disable_signups", "invite_only_beta", "rent_buddy_enabled", "stories_enabled"].map((f) => [f, { flag: f, seededIn: "x.sql:1", seededValue: false, everSetTrue: false }]),
 );
 const TINY_POLICY: FlagPolicy = {
   format: "portava-beta-flag-policy/1",
@@ -317,20 +339,22 @@ function run(api: ReturnType<typeof stubApi>, over: { argv?: string[]; env?: Nod
 }
 
 describe("beta-configure — the right calls, in order", () => {
-  it("PATCHes auth with exactly the three fields, reads it back, sets every flag in one statement, reads back", async () => {
+  it("reads and plans the flags FIRST, then PATCHes auth (three fields), reads it back, applies the flags in one statement, reads back", async () => {
     const api = stubApi({});
     const { code, errors } = await run(api);
     assert.equal(code, 0, errors.join("\n"));
     assert.deepEqual(api.calls.map((c) => `${c.method} ${c.path}`), [
+      "POST /database/query",
       "PATCH /config/auth",
       "GET /config/auth",
       "POST /database/query",
       "POST /database/query",
-      "POST /database/query",
     ]);
-    assert.deepEqual(api.calls[0].body, BETA_AUTH_CONFIG);
-    assert.deepEqual(Object.keys(api.calls[0].body).sort(), ["disable_signup", "site_url", "uri_allow_list"]);
-    assert.equal(api.calls[0].body.disable_signup, true);
+    assert.match(api.calls[0].body.query, /^SELECT flag, enabled FROM public\.feature_flags/, "the first request is the read, before any write");
+    assert.match(api.calls[3].body.query, /^WITH changed AS \(/);
+    assert.deepEqual(api.calls[1].body, BETA_AUTH_CONFIG);
+    assert.deepEqual(Object.keys(api.calls[1].body).sort(), ["disable_signup", "site_url", "uri_allow_list"]);
+    assert.equal(api.calls[1].body.disable_signup, true);
     // the resulting state
     assert.deepEqual(api.flags, { disable_signups: true, invite_only_beta: true, rent_buddy_enabled: false, stories_enabled: false });
     assert.deepEqual(api.audit.map((a) => a.flag).sort(), ["disable_signups", "invite_only_beta", "rent_buddy_enabled"]);
@@ -348,7 +372,8 @@ describe("beta-configure — the right calls, in order", () => {
     const api = stubApi({});
     const { code } = await run(api, { argv: ["--confirm=CONFIGURE-BETA", "--dry-run"] });
     assert.equal(code, 0);
-    assert.deepEqual(api.calls.map((c) => `${c.method} ${c.path}`), ["GET /config/auth", "POST /database/query"]);
+    assert.deepEqual(api.calls.map((c) => `${c.method} ${c.path}`), ["POST /database/query", "GET /config/auth"]);
+    assert.ok(!api.calls.some((c) => c.method === "PATCH"), "a dry run never PATCHes");
     assert.equal(api.flags.invite_only_beta, false);
   });
 });
@@ -392,12 +417,13 @@ describe("beta-configure — refusals send nothing", () => {
 });
 
 describe("beta-configure — read-backs that differ fail", () => {
-  it("auth read-back differs (disable_signup did not stick) → exit 1, and no flag is touched", async () => {
+  it("auth read-back differs (disable_signup did not stick) → exit 1, and no flag is written", async () => {
     const api = stubApi({ authAfterPatch: (b) => ({ ...b, disable_signup: false }) });
     const { code, errors } = await run(api);
     assert.equal(code, 1);
     assert.match(errors.join("\n"), /disable_signup/);
-    assert.ok(!api.calls.some((c) => c.path === "/database/query"), "flags must not be written after a failed auth read-back");
+    assert.ok(!api.calls.some((c) => c.body?.query?.startsWith("WITH changed AS (")), "flags must not be written after a failed auth read-back");
+    assert.deepEqual(api.audit, []);
   });
 
   it("auth read-back with a missing redirect → exit 1", async () => {
@@ -414,12 +440,17 @@ describe("beta-configure — read-backs that differ fail", () => {
     assert.match(errors.join("\n"), /invite_only_beta: reads false, policy says true/);
   });
 
-  it("a policy flag missing from the database → exit 1 with NOTHING written", async () => {
+  it("a policy flag missing from the database → exit 1 with NOTHING written: zero PATCH, zero flag writes (verifier F2)", async () => {
     const api = stubApi({ flags: { disable_signups: false, rent_buddy_enabled: false, stories_enabled: false } });
+    const authBefore = { ...api.auth };
     const { code, errors } = await run(api);
     assert.equal(code, 1);
     assert.match(errors.join("\n"), /invite_only_beta/);
+    assert.match(errors.join("\n"), /Nothing was written — neither Auth nor any flag/);
+    assert.deepEqual(api.calls.map((c) => `${c.method} ${c.path}`), ["POST /database/query"], "only the read happened");
+    assert.equal(api.calls.filter((c) => c.method === "PATCH").length, 0, "Auth must not be PATCHed before the plan is known");
     assert.ok(!api.calls.some((c) => c.body?.query?.startsWith("WITH changed AS (")), "no apply after a missing row");
+    assert.deepEqual(api.auth, authBefore, "Auth config unchanged");
   });
 
   it("a 403 from the Management API names the token and exits 1", async () => {
