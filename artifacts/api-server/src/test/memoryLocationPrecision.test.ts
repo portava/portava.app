@@ -193,7 +193,7 @@ describe("§10 — the effective ceiling is the STRICTER of owner policy and gem
 interface State {
   memories: any[]; blocks: any[]; feature_flags: any[]; profiles: any[];
   /** Every insert payload the route sent, per table — the wire shape under test. */
-  inserts: Array<{ table: string; payload: any }>;
+  inserts: Array<{ table: string; payload: any }>; flagsUnreadable?: boolean; selects?: Array<{ table: string; columns: string }>;
 }
 
 function makeClient(state: State) {
@@ -203,7 +203,7 @@ function makeClient(state: State) {
     let pendingInsert: any = null;
     let countMode = false;
     const builder: any = {
-      select(_c?: string, o?: any) { if (o?.count === "exact" && o?.head) countMode = true; return builder; },
+      select(_c?: string, o?: any) { if (typeof _c === "string") state.selects?.push({ table, columns: _c }); if (o?.count === "exact" && o?.head) countMode = true; return builder; },
       update(p: any) { pendingUpdate = p; return builder; },
       insert(p: any) { pendingInsert = p; state.inserts.push({ table, payload: p }); return builder; },
       upsert() { return builder; }, delete() { return builder; },
@@ -217,7 +217,7 @@ function makeClient(state: State) {
       then(f: any, r: any) { return resolve(false).then(f, r); },
     };
     async function resolve(single: boolean) {
-      if (table === "feature_flags" && (state as any).flagsUnreadable) {
+      if (table === "feature_flags" && state.flagsUnreadable) {
         return { data: null, error: { message: "feature_flags unavailable", code: "57014" }, count: null };
       }
       if (pendingInsert) {
@@ -533,7 +533,7 @@ describe("the flag is a schema-presence gate: OFF must be the pre-2338 behaviour
 describe("the gate read FAILS: the read clamps, the write refuses — nothing is published at 'exact' by accident", () => {
   const unreadable = (precision: string | undefined) => {
     const st = stateWith(precision, true);
-    (st as any).flagsUnreadable = true;
+    st.flagsUnreadable = true;
     return st;
   };
 
@@ -595,5 +595,64 @@ describe("the gate read FAILS: the read clamps, the write refuses — nothing is
       assert.equal(res.status, 201);
       assert.equal(state.inserts.find((i) => i.table === "memories")!.payload.location_precision, undefined);
     } finally { await app.close(); }
+  });
+});
+
+// ── verifier finding 7, site by site: every list and projection read clamps ──
+// Each case is made non-vacuous by its control: with the gate definitely OFF
+// the same route DOES serve the coordinate (the status quo), so its absence
+// under an unreadable gate is the clamp, not a route that served nothing.
+describe("an UNREADABLE gate clamps every non-owner read site in routes/memories.ts, not only GET /memories/:id", () => {
+  const TRIP = "22222222-2222-2222-2222-222222222222";
+  const coord = String(LAT);
+  const CITY = "Da Nang";
+  const withSite = (st: State, unreadableGate: boolean): State => {
+    st.flagsUnreadable = unreadableGate;
+    if (!unreadableGate) st.feature_flags = [];
+    st.memories[0].trip_id = TRIP;
+    delete st.memories[0].location_precision;
+    const extra = st as unknown as Record<string, unknown[]>;
+    extra.trips = [{ id: TRIP, owner_id: OWNER, title: "Da Nang", status: "active", visibility: "public" }];
+    extra.trip_members = [{ trip_id: TRIP, user_id: VIEWER, role: "member", status: "accepted" }];
+    extra.memory_saves = [{ memory_id: MEM, user_id: VIEWER, created_at: "2026-01-02T00:00:00.000Z" }];
+    return st;
+  };
+  const hit = async (st: State, path: string) => {
+    const app = await startApp(st);
+    try {
+      const res = await fetch(`${app.baseUrl}/api${path}`, { headers: { connection: "close", Authorization: "Bearer viewer-tok" } });
+      return { status: res.status, text: await res.text() };
+    } finally { await app.close(); }
+  };
+  for (const [site, path] of [
+    ["the feed (:715)", "/memories"],
+    ["a trip's Memories (:2766)", `/trips/${TRIP}/memory`],
+    ["a profile's Memories (:3020)", `/users/${OWNER}/memories`],
+    ["a profile's Memory highlights (:3291)", `/users/${OWNER}/memories/highlights`],
+    ["the saved shelf (:3391)", "/me/saved-memories"],
+  ] as const) {
+    it(`${site}: served at the status quo with the gate OFF, and with no place at all when the gate cannot be read`, async () => {
+      // The city is the marker every one of these serializes (the profile
+      // highlights projection carries no coordinate); the coordinate is checked
+      // wherever the control shows the route serves one.
+      const control = await hit(withSite(stateWith(undefined, false), false), path);
+      assert.equal(control.status, 200, `${path} control: ${control.text.slice(0, 300)}`);
+      assert.ok(control.text.includes(CITY), `${path} control must serve the place, or this case proves nothing: ${control.text.slice(0, 300)}`);
+      const r = await hit(withSite(stateWith(undefined, true), true), path);
+      assert.equal(r.status, 200, `${path}: ${r.text.slice(0, 300)}`);
+      assert.ok(r.text.includes(MEM), `${path} must still serve the Memory itself`);
+      assert.ok(!r.text.includes(CITY), `${path} served the city with the gate unreadable`);
+      if (control.text.includes(coord)) assert.ok(!r.text.includes(coord), `${path} served the coordinate with the gate unreadable`);
+    });
+  }
+
+  it("an unreadable gate never NAMES location_precision in a memories read (the column may not exist; the clamp reads the coarsest rung instead)", async () => {
+    const st = withSite(stateWith(undefined, true), true);
+    st.selects = [];
+    await hit(st, `/memories/${MEM}`);
+    await hit(st, "/memories");
+    const memReads = st.selects.filter((x) => x.table === "memories");
+    assert.ok(memReads.length > 0, "the routes must have read memories");
+    for (const x of memReads) assert.ok(!x.columns.includes("location_precision"), x.columns);
   });
 });
