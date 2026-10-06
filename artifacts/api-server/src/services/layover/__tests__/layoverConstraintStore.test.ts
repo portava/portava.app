@@ -400,7 +400,8 @@ describe("L40 / L77 / L230 — the two consumers that offer a city close on the 
     const got = landside(await generateRecommendations(db, AIRPORT, await owned(db), NOW));
     assert.ok(got.length > 0, "fixture: the ungated session was offered nothing landside, so the cases below would pass vacuously");
     const snap = await certifiedLayoverSnapshot(db, USER, { sessionId: SESSION, nowMs: NOW });
-    assert.ok(snap.ok && snap.snapshot.landsideOpen);
+    // Served, not affirmed: this world's border is unconfirmed, so the gate is a CAUTION.
+    assert.ok(snap.ok && snap.snapshot.landsideStatus === "caution" && snap.snapshot.landsideOpen === false, JSON.stringify(snap.ok && snap.snapshot.landsideStatus));
   });
 
   it("NOTHING declared, where declarations are kept: no landside recommendation, the snapshot closes, one question", async () => {
@@ -459,7 +460,7 @@ describe("L40 / L77 / L230 — the two consumers that offer a city close on the 
     const { db } = world({ entryPolicy: false });
     assert.ok(landside(await generateRecommendations(db, AIRPORT, await owned(db), NOW)).length > 0);
     const snap = await certifiedLayoverSnapshot(db, USER, { sessionId: SESSION, nowMs: NOW });
-    assert.ok(snap.ok && snap.snapshot.landsideOpen);
+    assert.ok(snap.ok && snap.snapshot.landsideStatus === "caution" && snap.snapshot.landsideOpen === false);
     assert.equal(snap.snapshot.verdict, "entry_unverified");
   });
 });
@@ -641,3 +642,168 @@ describe("SHOULD-FIX 6 — the external-event port certifies under the declared 
     assert.equal(await notified({ storage: true, constraints: [{ ...answered, airport_change_required: false }], failures: { "layover_constraints:select": { message: "boom" } } }), 0);
   });
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// PR #624 verification, follow-up 2 — the snapshot publishes the THREE-VALUED gate
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// `landsideOpen` was `!forbidden && !explorationCollapsed`: true for a
+// cautionary gate, with nothing beside it to tell a caution from an open gate.
+// General Compass built its context line from it and told the model "landside
+// open" for a traveller whose border nobody had checked.
+describe("FOLLOW-UP 2 — `landsideOpen` is true ONLY for an open gate, and the status says which of three it is", () => {
+  async function snapOf(db: any) {
+    const r = await certifiedLayoverSnapshot(db, USER, { sessionId: SESSION, nowMs: NOW });
+    assert.ok(r.ok, `fixture: no snapshot (${JSON.stringify(r)})`);
+    return r.snapshot;
+  }
+  const LANDSIDE_CANDIDATE = { id: "gem-landside", insideAirport: false, lat: 25.05, lng: 121.3, travelTimeMin: 20, returnTravelTimeMin: 20, activityTimeMin: 30 };
+  const AIRSIDE_CANDIDATE = { id: "lounge", insideAirport: true, activityTimeMin: 30 };
+  /** Every question answered "no": nothing in it closes anything. */
+  const ANSWERED = [{ version: 1, baggage_mode: "CARRY_ON_ONLY", recheck_required: false, airport_change_required: false }];
+  /** Ten hours, a confirmed border, and a constraint store that cannot be read: CLOSED with the whole window left. */
+  const UNREADABLE_STORE = { storage: true, entryPermitted: true, failures: { "layover_constraints:select": { message: "down" } } };
+
+  it("OPEN: a confirmed border and nothing unanswered — the one case the boolean is true", async () => {
+    const s = await snapOf(world({ entryPermitted: true }).db);
+    assert.equal(s.verdict, "yes");
+    assert.equal(s.landsideStatus, "open");
+    assert.equal(s.landsideOpen, true);
+    assert.deepEqual(s.landsideCautions, []);
+    assert.equal(s.landsideClosedReason, null);
+    assert.equal(landsideContextPhrase(s), "open");
+    assert.equal(landsideNotForbidden(s), true);
+  });
+
+  it("CAUTION: a border nobody confirmed is NOT `landsideOpen`, is not closed, and the model is told what it may not say", async () => {
+    const s = await snapOf(world().db);
+    assert.equal(s.verdict, "entry_unverified");
+    assert.equal(s.landsideStatus, "caution");
+    assert.equal(s.landsideOpen, false, "a cautionary gate was published as landsideOpen");
+    assert.deepEqual(s.landsideCautions, ["entry_unconfirmed"]);
+    assert.equal(s.landsideClosedReason, null, "a caution is not a closure and must not carry a closed reason");
+    assert.equal(landsideNotForbidden(s), true);
+
+    const phrase = landsideContextPhrase(s);
+    assert.match(phrase, /^not forbidden, not confirmed \(entry_unconfirmed\)/);
+    assert.match(phrase, /do NOT tell the traveller they can leave the airport/);
+    assert.doesNotMatch(phrase, /^open\b|landside open|\bis open\b/);
+  });
+
+  it("CLOSED: a refusal, an unreadable store and a collapsed exploration are all `closed`, with the reason", async () => {
+    const unreadable = await snapOf(world(UNREADABLE_STORE).db);
+    assert.ok(unreadable.usableMinutes > 300, "fixture: this closure must be one the clock did not cause");
+    assert.equal(unreadable.landsideStatus, "closed");
+    assert.equal(unreadable.landsideOpen, false);
+    assert.deepEqual(unreadable.landsideCautions, []);
+    assert.match(String(unreadable.landsideClosedReason), /"no"/);
+    assert.match(landsideContextPhrase(unreadable), /^closed \(/);
+    assert.equal(landsideNotForbidden(unreadable), false);
+
+    const short = await snapOf(world({ entryPermitted: true, minutes: 60 }).db);
+    assert.equal(short.landsideStatus, "closed");
+    assert.equal(short.landsideOpen, false);
+  });
+
+  it("EVERY world: the boolean is true exactly when the status is `open`, and `open` exactly when the verdict is `yes`", async () => {
+    const worlds: Array<Parameters<typeof world>[0]> = [
+      {}, { entryPermitted: true }, { entryPolicy: true }, { entryPolicy: false }, { storage: true }, { storage: true, entryPermitted: true },
+      { storage: true, entryPermitted: true, constraints: ANSWERED }, { storage: true, constraints: ANSWERED },
+      { entryPermitted: true, minutes: 60 }, { minutes: 60 }, { entryPermitted: true, session: { wants_to_leave: false } },
+      { failures: { "feature_flags:select": { message: "down" } } },
+      { storage: true, entryPermitted: true, failures: { "layover_constraints:select": { message: "down" } } },
+    ];
+    const seen = new Set<string>();
+    for (const w of worlds) {
+      const s = await snapOf(world(w).db);
+      const where: string = JSON.stringify(w);
+      seen.add(s.landsideStatus);
+      assert.equal(s.landsideOpen, s.landsideStatus === "open", where);
+      assert.equal(s.landsideStatus === "open", s.verdict === "yes" && !s.posture.explorationCollapsed, where);
+      if (s.landsideStatus !== "caution") assert.deepEqual(s.landsideCautions, [], where);
+      if (s.landsideStatus === "caution") assert.ok(s.landsideCautions.length > 0, `${where}: a caution that names nothing`);
+      assert.equal(s.landsideClosedReason === null, s.landsideStatus !== "closed", where);
+      if (s.landsideStatus !== "open") assert.notEqual(landsideContextPhrase(s), "open", where);
+    }
+    assert.deepEqual([...seen].sort(), ["caution", "closed", "open"], "NON-VACUITY: the worlds above did not reach all three statuses");
+  });
+
+  it("the action universe: landside is ADMITTED under open and caution, CLOSED under closed — and says which", async () => {
+    const open = await snapOf(world({ entryPermitted: true }).db);
+    const caution = await snapOf(world().db);
+    const closed = await snapOf(world(UNREADABLE_STORE).db);
+
+    const uOpen = await certifiedActionUniverse(open, [LANDSIDE_CANDIDATE, AIRSIDE_CANDIDATE]);
+    assert.deepEqual(uOpen.admittedIds, ["gem-landside", "lounge"]);
+    assert.equal(uOpen.landsideStatus, "open");
+    assert.equal(uOpen.landsideOpen, true);
+
+    // The owner's forbid policy is OFF: content is still served under a caution…
+    const uCaution = await certifiedActionUniverse(caution, [LANDSIDE_CANDIDATE, AIRSIDE_CANDIDATE]);
+    assert.deepEqual(uCaution.admittedIds, ["gem-landside", "lounge"]);
+    // …and the universe no longer calls that open.
+    assert.equal(uCaution.landsideStatus, "caution");
+    assert.equal(uCaution.landsideOpen, false);
+
+    const uClosed = await certifiedActionUniverse(closed, [LANDSIDE_CANDIDATE, AIRSIDE_CANDIDATE]);
+    assert.deepEqual(uClosed.admittedIds, ["lounge"]);
+    assert.deepEqual(uClosed.refusedIds, ["gem-landside"]);
+    assert.equal(uClosed.actions.find((a) => a.id === "gem-landside")?.state, "CLOSED");
+
+    // With the owner's policy ON the same unconfirmed border is a closure, and nothing landside is admitted.
+    const policyOn = await snapOf(world({ entryPolicy: true }).db);
+    assert.equal(policyOn.landsideStatus, "closed");
+    assert.deepEqual((await certifiedActionUniverse(policyOn, [LANDSIDE_CANDIDATE, AIRSIDE_CANDIDATE])).admittedIds, ["lounge"]);
+  });
+
+  it("a snapshot with NO status (built by hand, or by an older build) is not served landside content", async () => {
+    const open = await snapOf(world({ entryPermitted: true }).db);
+    for (const status of [undefined, null, "OPEN", "", "some_future_status"]) {
+      const handBuilt = { ...open, landsideOpen: true, landsideStatus: status as never };
+      const u = await certifiedActionUniverse(handBuilt, [LANDSIDE_CANDIDATE, AIRSIDE_CANDIDATE]);
+      assert.deepEqual(u.admittedIds, ["lounge"], `status=${String(status)}: landside admitted on a status nobody stated`);
+      assert.equal(landsideNotForbidden(handBuilt), false, String(status));
+      assert.match(landsideContextPhrase(handBuilt), /^closed/, String(status));
+    }
+  });
+
+  it("the Compass snapshot tool hands the model the status, and NO reach under a closed gate", async () => {
+    const cautioned: any = await toolGetLayoverSnapshot(world().db as never, USER);
+    assert.equal(cautioned.snapshot.landsideStatus, "caution");
+    assert.equal(cautioned.snapshot.landsideOpen, false);
+    assert.ok(cautioned.snapshot.envelope, "fixture: a cautionary snapshot must still carry its envelope");
+
+    // The snapshot itself still holds an envelope under this closure (banding needs it) — the TOOL withholds it.
+    assert.ok((await snapOf(world(UNREADABLE_STORE).db)).envelope, "fixture: the closed snapshot must hold an envelope for the tool to withhold");
+    const closed: any = await toolGetLayoverSnapshot(world(UNREADABLE_STORE).db as never, USER);
+    assert.equal(closed.snapshot.landsideStatus, "closed");
+    assert.equal(closed.snapshot.envelope, null, "a closed gate still handed the model an envelope to describe");
+    assert.equal(closed.snapshot.envelopeUnavailableReason, "landside_closed");
+    assert.equal("certifiedRecord" in closed.snapshot, false);
+  });
+
+  it("RATCHET: general Compass builds its context line from the three-valued phrase, not the boolean", () => {
+    const src = readFileSync(new URL("../../../routes/compass.ts", import.meta.url), "utf8");
+    assert.match(src, /landside \$\{landsideContextPhrase\(s\)\}/, "routes/compass.ts no longer phrases the gate through landsideContextPhrase");
+    assert.doesNotMatch(src, /s\.landsideOpen \? "open"/, "routes/compass.ts tells the model `open` from the boolean again");
+    // And every other production reader of the boolean is one this lane has looked at.
+    const READERS_OF_THE_BOOLEAN = ["lib/discoveryLayoverMode.ts", "services/airport/LayoverSnapshot.ts", "compass/CompassClarification.ts"];
+    const root = new URL("../../../", import.meta.url);
+    const found: string[] = [];
+    const walk = (dir: URL) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (e.isDirectory()) { if (e.name !== "test" && e.name !== "__tests__" && e.name !== "node_modules" && e.name !== "migrations") walk(new URL(`${e.name}/`, dir)); continue; }
+        if (!e.name.endsWith(".ts") || e.name.endsWith(".test.ts")) continue;
+        const text = readFileSync(new URL(e.name, dir), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+        if (/\blandsideOpen\b/.test(text)) found.push(new URL(e.name, dir).pathname.slice(root.pathname.length));
+      }
+    };
+    walk(root);
+    assert.deepEqual(found.sort(), [...READERS_OF_THE_BOOLEAN].sort(), "a production file reads or writes `landsideOpen` that is not on the reviewed list — read `landsideStatus` instead, or add it here with a reason");
+  });
+});
+
+// At the tail (an ESM import is hoisted wherever it is written).
+import { readFileSync, readdirSync } from "node:fs";
+import { certifiedActionUniverse, landsideContextPhrase, landsideNotForbidden } from "../../airport/LayoverSnapshot.js";
+import { toolGetLayoverSnapshot } from "../../../compass/CompassTools.js";

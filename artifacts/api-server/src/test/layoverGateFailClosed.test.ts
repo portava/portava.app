@@ -645,3 +645,166 @@ describe("SHOULD-FIX 7 — separate tickets cost time, and \"not sure\" about th
     assert.equal(gateOf(all).needsInfo, "airportChangeRequired");
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PR #624 verification — follow-ups 5 and 6
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Every context a loader does NOT write. Typed `unknown`: the point is that the type system was not there to stop it. */
+const MALFORMED_CONTEXTS: Array<{ name: string; ctx: unknown }> = [
+  { name: "declared with a null set (the verifier's case)", ctx: { read: "declared", set: null, entryForbidsLandside: false } },
+  { name: "declared with no set at all", ctx: { read: "declared", entryForbidsLandside: false } },
+  { name: "declared, version 0", ctx: { read: "declared", set: { version: 0, baggageMode: "CARRY_ON_ONLY", recheckRequired: false, airportChangeRequired: false }, entryForbidsLandside: false } },
+  { name: "declared, version not a number", ctx: { read: "declared", set: { version: "1", baggageMode: "CARRY_ON_ONLY", recheckRequired: false, airportChangeRequired: false }, entryForbidsLandside: false } },
+  { name: "declared, a baggage mode this build never heard of", ctx: { read: "declared", set: { version: 1, baggageMode: "TELEPORTED", recheckRequired: false, airportChangeRequired: false }, entryForbidsLandside: false } },
+  { name: "declared, airport change missing", ctx: { read: "declared", set: { version: 1, baggageMode: "CARRY_ON_ONLY", recheckRequired: false }, entryForbidsLandside: false } },
+  { name: "declared, airport change the string 'no'", ctx: { read: "declared", set: { version: 1, baggageMode: "CARRY_ON_ONLY", recheckRequired: false, airportChangeRequired: "no" }, entryForbidsLandside: false } },
+  { name: "declared, recheck 0", ctx: { read: "declared", set: { version: 1, baggageMode: "CARRY_ON_ONLY", recheckRequired: 0, airportChangeRequired: false }, entryForbidsLandside: false } },
+  { name: "a read state this build never heard of", ctx: { read: "cached", set: null, entryForbidsLandside: false } },
+  { name: "no read state", ctx: { set: null, entryForbidsLandside: false } },
+  { name: "undeclared carrying a set", ctx: { read: "undeclared", set: { version: 1, baggageMode: "CARRY_ON_ONLY", recheckRequired: false, airportChangeRequired: false }, entryForbidsLandside: false } },
+  { name: "storage_off carrying a set", ctx: { read: "storage_off", set: { version: 1, baggageMode: "CARRY_ON_ONLY", recheckRequired: false, airportChangeRequired: false }, entryForbidsLandside: false } },
+  { name: "a well-formed set with no policy", ctx: { read: "declared", set: { version: 1, baggageMode: "CARRY_ON_ONLY", recheckRequired: false, airportChangeRequired: false } } },
+  { name: "a policy that is the string 'false'", ctx: { read: "storage_off", set: null, entryForbidsLandside: "false" } },
+  { name: "an empty object", ctx: {} },
+  { name: "a string", ctx: "declared" },
+  { name: "an array", ctx: [] },
+  { name: "a number", ctx: 1 },
+];
+
+describe("FOLLOW-UP 5 — a context that is not a well-formed KNOWN shape closes the gate", () => {
+  it("every malformed context: 12 h on a CONFIRMED border is `no`, closed by name, and never the legacy arm", () => {
+    for (const { name, ctx } of MALFORMED_CONTEXTS) {
+      const r = certify(TWELVE_HOURS, ctx as SessionConstraintContext);
+      assert.equal(r.verdict, "no", `${name}: certified ${r.verdict}`);
+      assert.equal(gateOf(r).open, false, `${name}: OPEN`);
+      assert.equal(gateOf(r).status, "closed", name);
+      assert.ok(gateOf(r).closedBy.includes("constraints_unreadable"), `${name}: closedBy ${JSON.stringify(gateOf(r).closedBy)}`);
+      assert.equal(gateOf(r).constraintsRead, "unreadable", `${name}: read as ${gateOf(r).constraintsRead}`);
+      assert.equal(r.inputs.constraints?.read, "unreadable", name);
+      assert.equal(stateOf(r), "AIRPORT_ONLY", name);
+      assert.equal(landsideStatusOf(r), "closed", name);
+      assert.notEqual(r.windowOnly.rating, "safe", name);
+      assert.equal(certifiedPlanFit(r, [LANDSIDE_STOP]).fit, "blocked", name);
+    }
+  });
+
+  it("the projection itself: unreadable input, and the entry policy ON unless the context states a boolean", () => {
+    for (const { name, ctx } of MALFORMED_CONTEXTS) {
+      const got = namedConstraintInputs(ctx as SessionConstraintContext);
+      assert.deepEqual(got.constraints, { read: "unreadable", version: null, baggageMode: "UNKNOWN", recheckRequired: null, airportChangeRequired: null }, name);
+      const stated = ctx !== null && typeof ctx === "object" && typeof (ctx as { entryForbidsLandside?: unknown }).entryForbidsLandside === "boolean";
+      if (!stated) assert.deepEqual(got.policy, { entryForbidsLandside: true }, `${name}: an unstated policy was read as OFF`);
+    }
+    // A stated `false` is honoured; a stated `true` is carried.
+    assert.equal("policy" in namedConstraintInputs({ read: "declared", set: null, entryForbidsLandside: false } as never), false);
+    assert.deepEqual(namedConstraintInputs({ read: "declared", set: null, entryForbidsLandside: true } as never).policy, { entryForbidsLandside: true });
+  });
+
+  it("CONTROL: the four known shapes and the absent one are exactly what they were", () => {
+    // Absent — the legacy arm — and storage_off: the same computation, and open on a confirmed border.
+    for (const ctx of [undefined, { read: "storage_off", set: null, entryForbidsLandside: false } as SessionConstraintContext]) {
+      const r = certify(TWELVE_HOURS, ctx);
+      assert.equal(r.verdict, "yes", JSON.stringify(ctx));
+      assert.equal(gateOf(r).open, true, JSON.stringify(ctx));
+      assert.equal("constraints" in r.inputs, false, JSON.stringify(ctx));
+    }
+    assert.deepEqual(namedConstraintInputs(null), {});
+    assert.deepEqual(namedConstraintInputs(undefined), {});
+    // Declared and answered: open.
+    const answered = certify(TWELVE_HOURS, declared());
+    assert.equal(answered.verdict, "yes");
+    assert.equal(gateOf(answered).open, true);
+    assert.equal(gateOf(answered).constraintsRead, "declared");
+    // Undeclared: closed by its OWN name, not by `constraints_unreadable`.
+    const undeclared = certify(TWELVE_HOURS, UNDECLARED);
+    assert.deepEqual(gateOf(undeclared).closedBy, ["airport_change_unknown"]);
+    assert.equal(gateOf(undeclared).constraintsRead, "undeclared");
+    // Unreadable: closed by name, as before.
+    assert.ok(gateOf(certify(TWELVE_HOURS, UNREADABLE)).closedBy.includes("constraints_unreadable"));
+    // A set with a `null` (a stated "not sure") is WELL-FORMED: it asks, it is not an outage.
+    const notSure = certify(TWELVE_HOURS, declared({ airportChangeRequired: null }));
+    assert.deepEqual(gateOf(notSure).closedBy, ["airport_change_unknown"]);
+    assert.equal(gateOf(notSure).needsInfo, "airportChangeRequired");
+  });
+});
+
+describe("FOLLOW-UP 6 — the window rating cannot say `safe` beside a gate that is not open", () => {
+  const RISK: ReturnCorridorRisk = {
+    returnRouteUnreliable: true, fragileCorridor: true, contributingFactors: ["single_route"],
+    facts: {
+      independentReturnRoutes: 1, offeredReturnRoutes: 1, bestRouteInterruptibility: "committed",
+      allRoutesInterruptibility: "committed", minTransferCount: 0, maxTransferCount: 0, stale: false, unmeasured: [],
+    },
+  };
+
+  function inputsFor(minutes: number) {
+    return certify(minutes, undefined).inputs;
+  }
+
+  it("a corridor downgrade (`yes` → `tight`) takes the `safe` rating with it, and says why", () => {
+    const inputs = inputsFor(TWELVE_HOURS);
+    const base = certifyFeasibilityWithReturnCorridor(inputs, null);
+    assert.equal(base.verdict, "yes");
+    assert.equal(base.windowOnly.rating, "safe", "fixture: the unadjusted record must rate the window safe");
+
+    const adjusted = certifyFeasibilityWithReturnCorridor(inputs, RISK);
+    assert.equal(adjusted.verdict, "tight", "fixture: this corridor must downgrade the verdict");
+    assert.equal(adjusted.landsideGate.status, "caution");
+    assert.equal(adjusted.windowOnly.rating, "possible_but_risky", "the rating still said `safe` beside a cautionary gate");
+    assert.ok((adjusted.windowOnly.warningReason ?? "").length > 0, "a demoted rating with no reason");
+    assert.equal(adjusted.windowOnly.warningReason, adjusted.reasons[adjusted.reasons.length - 1]);
+    // Nothing else about the window assessment moved.
+    assert.deepEqual({ ...adjusted.windowOnly, rating: null, warningReason: null }, { ...base.windowOnly, rating: null, warningReason: null });
+  });
+
+  it("the helper only ever withdraws: open keeps `safe`, a closed gate is `not_recommended`, and no other rating is touched", () => {
+    const open = certify(TWELVE_HOURS, undefined);
+    assert.equal(windowOnlyUnderGate(open.windowOnly, open.landsideGate, open.verdict, open.reasons), open.windowOnly, "an open gate rewrote the rating");
+
+    const closedGate = certify(TWELVE_HOURS, declared({ airportChangeRequired: true })).landsideGate;
+    const forced = windowOnlyUnderGate(open.windowOnly, closedGate, "no", ["because"]);
+    assert.equal(forced.rating, "not_recommended");
+    assert.equal(forced.warningReason, "because");
+
+    const cautionGate = certify(TWELVE_HOURS, undefined, { entry: NO_DATA }).landsideGate;
+    assert.equal(windowOnlyUnderGate(open.windowOnly, cautionGate, "entry_unverified", []).rating, "possible_but_risky");
+    // A gate with no status at all (a record from before the field) is not open.
+    const legacyGate = { ...open.landsideGate, status: undefined } as unknown as LandsideGate;
+    assert.notEqual(windowOnlyUnderGate(open.windowOnly, legacyGate, "yes", []).rating, "safe");
+
+    // `airport_only` is the traveller's own answer, and every non-safe rating is returned as it came.
+    const staying = certify(TWELVE_HOURS, undefined, { over: { wantsToLeave: false } });
+    assert.equal(staying.windowOnly.rating, "airport_only");
+    assert.equal(windowOnlyUnderGate(staying.windowOnly, closedGate, "stay_airside", []), staying.windowOnly);
+  });
+
+  it("SWEEP: with and without a corridor, `safe` never sits beside a gate that is not open", () => {
+    let cases = 0;
+    let safe = 0;
+    const contexts: Array<SessionConstraintContext | undefined> = [undefined, declared(), UNDECLARED, UNREADABLE, declared({ baggageMode: "UNKNOWN" })];
+    for (const minutes of [60, TIGHT, 300, 400, TWELVE_HOURS]) {
+      for (const ctx of contexts) {
+        for (const entry of ALL_BORDERS) {
+          const inputs = certify(minutes, ctx, { entry }).inputs;
+          for (const risk of [null, RISK]) {
+            cases += 1;
+            const r = certifyFeasibilityWithReturnCorridor(inputs, risk);
+            const where: string = `min=${minutes} ctx=${JSON.stringify(ctx)} entry=${JSON.stringify(entry)} risk=${risk ? "yes" : "no"}`;
+            if (r.windowOnly.rating === "safe") {
+              safe += 1;
+              assert.equal(landsideStatusOf(r), "open", `${where}: rating safe, gate ${r.landsideGate.status}`);
+              assert.equal(r.verdict, "yes", where);
+            }
+          }
+        }
+      }
+    }
+    assert.ok(cases >= 200, `sweep ran only ${cases} cases`);
+    assert.ok(safe > 0, "NON-VACUITY: nothing in the sweep was ever rated safe");
+  });
+});
+
+// At the tail (an ESM import is hoisted wherever it is written).
+import { namedConstraintInputs } from "../services/airport/LayoverConstraints.js";
+import { windowOnlyUnderGate } from "../services/airport/LayoverFeasibility.js";

@@ -52,7 +52,7 @@ import { isPostPublished } from "../lib/postVisibility.js";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
 import {
   // LAY-FIX: the clock AND the landside gate, in one function every plan surface calls.
-  certifiedPlanFit, // (was `planFitTotals` / `planFitVerdict` from LayoverPlanFit — the clock alone)
+  certifiedPlanFit, landsideStatusOf, type LandsideCaution, type LandsideStatus, // (was `planFitTotals` / `planFitVerdict` from LayoverPlanFit — the clock alone)
 } from "../services/airport/LayoverConstraints.js";
 import {
   resolveByIata,
@@ -1164,7 +1164,7 @@ router.get("/airport/sessions/:id/safety", async (req, res) => {
     // envelope. Derived from the same certified record, so it cannot disagree.
     safeReturn: safeReturnPosture(record),
     // §8 — the outer edge of the safe envelope, cut from the window above.
-    safeEnvelope: safeEnvelopeFor(airport, record),
+    ...publishedSafeEnvelope(airport, record), // `safeEnvelope` + `safeEnvelopeGate`: WITHHELD under a closed landside gate, and not to be called "safe" under a cautionary one (foot of this file)
   });
 });
 
@@ -2295,7 +2295,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
     // §8 — the same outer edge, from the same certified window. The dashboard's
     // copy: a traveller who sees fewer landside cards than a city has places
     // can read the bound that removed them.
-    safeEnvelope: safeEnvelopeFor(airport, record),
+    ...publishedSafeEnvelope(airport, record), // `safeEnvelope` + `safeEnvelopeGate`: WITHHELD under a closed landside gate, and not to be called "safe" under a cautionary one (foot of this file)
     offlineBundle: buildOfflineBundle({
       session,
       airport,
@@ -3056,7 +3056,7 @@ async function crewPayload(
   viewerId: string,
   crew: { id: string; title: string; city: string; meetingPointLabel: string | null; status: string; maxMembers: number; expiresAt: string; createdBy: string },
   members: Array<{ userId: string; sessionId: string; role: string }>,
-  nowMs: number,
+  nowMs: number, /** The VIEWER's own three-valued landside gate, certified WITH their own entry fact (`crewViewerLandside`). Never a crewmate's. */ viewerLandside: LandsideStatus | "unknown" = "unknown",
 ): Promise<{ ok: true; body: Record<string, unknown> } | { ok: false }> {
   const solver = await crewSolverMembers(sc, members, nowMs);
   if (!solver.ok) return { ok: false };
@@ -3079,7 +3079,7 @@ async function crewPayload(
   // untouched, because those bind every member whether the meet is on or not.
   const meetingPoint = crewMeetingPointFor(
     crew.meetingPointLabel,
-    crewMeetFactsFrom(viewerId, crew.id, members, solver.members, cards.blockedRelation),
+    viewerGatedMeetFacts(crewMeetFactsFrom(viewerId, crew.id, members, solver.members, cards.blockedRelation), viewerLandside),
   );
 
   return {
@@ -3112,7 +3112,7 @@ async function crewPayload(
       // carry ids and are NOT published (`branches`, `certifiedOver`) stay off
       // the wire, as they always were.
       solution: publishedCrewSolution(solution, viewerId, cards.visibleIds),
-      members: cards.cards,
+      members: cards.cards, yourLandside: viewerLandside, landsideClearance: CREW_LANDSIDE_CLEARANCE, // the crew is NOT cleared to leave the airport as a group: each member reads their own gate, and this is the viewer's
       degraded: cards.degraded,
       degradedReasons: cards.degradedReasons,
     },
@@ -3257,9 +3257,9 @@ function crewMeetGateFor(
   session: LayoverSession,
   nowMs: number,
   entry: EntryEligibility | null,
-): CompassCrewMeetGate {
+): CompassCrewMeetGate & { /** The requester's own three-valued gate, off the same certification. */ landside: LandsideStatus } {
   const { safetyGate } = layoverBuddyDecision(airport, session, nowMs, entry);
-  return {
+  return { landside: safetyGate.landside,
     offer: crewMeetDecision(
       {
         // The OFFER surface enforces the block list upstream, in
@@ -3305,7 +3305,7 @@ router.get("/airport/sessions/:id/crew", async (req, res) => {
   if (mine.value) {
     const members = await crewMembers(sc, mine.value.crew.id);
     if (!members.ok) { sendError(res, "degraded_unavailable", "Your crew could not be loaded. Please try again."); return; }
-    const payload = await crewPayload(sc, user.id, mine.value.crew, members.value, nowMs);
+    const payload = await crewPayload(sc, user.id, mine.value.crew, members.value, nowMs, await crewViewerLandside(sc, user.id, session, nowMs));
     if (!payload.ok) { sendError(res, "degraded_unavailable", "Your crew could not be certified just now. Please try again."); return; }
     res.json({ ok: true, inCrew: true, ...payload.body });
     return;
@@ -3388,7 +3388,7 @@ router.post("/airport/sessions/:id/crew", async (req, res) => {
 
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
-  const record = certifyCrewMemberRecord(airport, session, nowMs);
+  const record = certifyCrewMemberRecord(airport, session, nowMs); const mineGate = crewMeetGateFor(sc, user.id, airport, session, nowMs, await sessionEntry(sc, airport, session)); if (!mineGate.offer.allowed) { sendError(res, "conflict", CREW_REQUESTER_REFUSAL, { reason: "safety_gate_not_passed" }); return; } // the REQUESTER's own record, with their own entry fact — the same gate GET /crew refuses the roster on
 
   const created = await createCrew(sc, {
     userId: user.id,
@@ -3415,7 +3415,7 @@ router.post("/airport/sessions/:id/crew", async (req, res) => {
     crewId: created.value.crew.id, city, title: parsed.data.title,
   });
 
-  const payload = await crewPayload(sc, user.id, created.value.crew, created.value.members, nowMs);
+  const payload = await crewPayload(sc, user.id, created.value.crew, created.value.members, nowMs, mineGate.landside);
   if (!payload.ok) { sendError(res, "degraded_unavailable", "Your crew was created but could not be certified. Please refresh."); return; }
   res.json({ ok: true, inCrew: true, ...payload.body });
 });
@@ -3445,7 +3445,7 @@ router.post("/airport/sessions/:id/crew/:crewId/join", async (req, res) => {
   }
 
   const nowMs = Date.now();
-  const nowIso = new Date(nowMs).toISOString();
+  const nowIso = new Date(nowMs).toISOString(); const mineGate = crewMeetGateFor(sc, user.id, airport, session, nowMs, await sessionEntry(sc, airport, session)); if (!mineGate.offer.allowed) { sendError(res, "conflict", CREW_REQUESTER_REFUSAL, { reason: "safety_gate_not_passed" }); return; } // refused BEFORE the crew is read: a crew id must not get past a gate the roster would not have
 
   const joined = await joinCrew(sc, { userId: user.id, sessionId: session.id, crewId: req.params.crewId, city, admit: blockAdmission(sc, user.id) }, nowIso); // §48
   if (!joined.ok) {
@@ -3474,7 +3474,7 @@ router.post("/airport/sessions/:id/crew/:crewId/join", async (req, res) => {
 
   await emitLayoverEvent(sc, session.id, user.id, "crew_joined", { crewId: joined.value.crew.id });
 
-  const payload = await crewPayload(sc, user.id, joined.value.crew, joined.value.members, nowMs);
+  const payload = await crewPayload(sc, user.id, joined.value.crew, joined.value.members, nowMs, mineGate.landside);
   if (!payload.ok) { sendError(res, "degraded_unavailable", "You joined, but the crew could not be certified. Please refresh."); return; }
   res.json({ ok: true, inCrew: true, ...payload.body });
 });
@@ -4447,8 +4447,8 @@ import {
  * ── NO SECOND DERIVATION ─────────────────────────────────────────────────────
  * Every number here comes from the record the caller already certified. The
  * envelope is `safeEnvelopeFor(airport, record)` — the same call, with the same
- * confidence haircut, that the response publishes as `safeEnvelope`, so a pin
- * that is blocked lies outside the radius drawn beside it. The band is
+ * confidence haircut, that `publishedSafeEnvelope` publishes (or withholds, under a
+ * closed gate) as `safeEnvelope`, so a blocked pin lies outside the radius drawn. The band is
  * `bandCandidates`, the same function the recommendation path uses, at the same
  * default provider, so a place is judged the same way whether it arrives as a
  * card or as a stop somebody already planned. `certifySessionFeasibility` is
@@ -4508,4 +4508,93 @@ async function bandPlanStops(
       },
     };
   });
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// LAY-FIX follow-ups (PR #624 verification, items 3 and 4). At the foot of the
+// file for the reason `bandPlanStops` gives above: lines above are cited.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * §8 `SafeEnvelope` AS PUBLISHED — through the landside gate.
+ *
+ * `safeEnvelopeFor` cuts the envelope from `usableMinutes`, and the usable
+ * window is the same number whether or not the traveller may leave the airport.
+ * So a refused border with 493 usable minutes was published a ring, and the
+ * client drew it under the words "SAFE ENVELOPE" beside a verdict of "No".
+ *
+ *   closed   WITHHELD (`safeEnvelope: null`, `withheld: "landside_closed"`).
+ *            There is no reach to draw for a traveller who is not leaving.
+ *   caution  published, with `status: "caution"` and the gate's own cautions.
+ *            The clock still has a reach and the verdict card still says so
+ *            ("Time is fine — entry unconfirmed"); what the client may not do is
+ *            call it SAFE. Same choice as the verdict card: said, in amber.
+ *   open     published as it always was.
+ *
+ * `bandPlanStops` keeps the RAW envelope: a band can refuse a stop and can never
+ * certify one, so withholding it would only un-block pins.
+ */
+function publishedSafeEnvelope(airport: AirportProfile, record: LayoverFeasibilityRecord): {
+  safeEnvelope: ReturnType<typeof safeEnvelopeFor>;
+  safeEnvelopeGate: { status: LandsideStatus; cautions: LandsideCaution[]; withheld: "landside_closed" | "no_airport_coordinate" | null };
+} {
+  const status = landsideStatusOf(record);
+  if (status === "closed") {
+    return { safeEnvelope: null, safeEnvelopeGate: { status, cautions: [], withheld: "landside_closed" } };
+  }
+  const envelope = safeEnvelopeFor(airport, record);
+  return {
+    safeEnvelope: envelope,
+    safeEnvelopeGate: {
+      status,
+      cautions: status === "caution" ? [...(record.landsideGate.cautions ?? [])] : [],
+      withheld: envelope ? null : "no_airport_coordinate",
+    },
+  };
+}
+
+/**
+ * What a crew payload says about leaving the airport as a GROUP: nothing.
+ *
+ * The crew wrapper certifies crewmates without an entry fact, deliberately — a
+ * crewmate's passport position is not this surface's to read or publish. So no
+ * crew answer can ever mean "this group may go landside", and the payload says
+ * so in a field rather than leaving a client to infer it from a deadline.
+ */
+const CREW_LANDSIDE_CLEARANCE = "each_member_checks_their_own" as const;
+
+/** Why a traveller whose own gate refuses may not start or join a city crew. */
+const CREW_REQUESTER_REFUSAL =
+  "Your own layover does not allow leaving the airport right now, so you cannot start or join a crew in the city. " +
+  "Check the answer at the top of your layover.";
+
+/**
+ * The VIEWER's own gate, for a crew they are already in.
+ *
+ * Their own session, their own passport: `layoverBuddyDecision` with their own
+ * entry fact, exactly as `GET /crew`'s roster gate certifies them. `"unknown"`
+ * when their airport could not be resolved — said as unknown, never as open.
+ */
+async function crewViewerLandside(
+  sc: any,
+  viewerId: string,
+  session: LayoverSession,
+  nowMs: number,
+): Promise<LandsideStatus | "unknown"> {
+  const resolved = await resolveAirportForSession(sc, session);
+  if (!resolved.ok) return "unknown";
+  return crewMeetGateFor(sc, viewerId, resolved.airport, session, nowMs, await sessionEntry(sc, resolved.airport, session)).landside;
+}
+
+/**
+ * The §14.1 meet facts, with the viewer's OWN entry-aware gate applied.
+ *
+ * `crewMeetFactsFrom` reads the viewer's record from the crew solver, which
+ * certifies every member WITHOUT an entry fact — so a viewer whose own border
+ * is refused cleared `safetyGateCleared` there. Their own gate can only take
+ * the clearance away; `"unknown"` and the two non-closed values leave the
+ * solver's answer standing.
+ */
+function viewerGatedMeetFacts(facts: CrewMeetFacts, viewerLandside: LandsideStatus | "unknown"): CrewMeetFacts {
+  return viewerLandside === "closed" ? { ...facts, safetyGateCleared: false } : facts;
 }

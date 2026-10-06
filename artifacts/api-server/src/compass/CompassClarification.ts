@@ -91,7 +91,7 @@ export type FactState =
 export interface ClarificationSnapshot {
   verdict: string;
   returnState: string;
-  landsideOpen: boolean;
+  landsideOpen: boolean; /** `open` | `caution` | `closed`. MATERIALITY READS THIS, not the boolean beside it: `landsideOpen` is true only for `open`, and a question about leaving matters just as much — more — when the gate is a caution. */ landsideStatus: string;
   landsideClosedReason: string | null;
   usableMinutes: number;
   minutesToHardReturn: number;
@@ -184,22 +184,22 @@ const IMMATERIAL = 0.05;
 function materiality(fact: ClarifiableFact, s: ClarificationSnapshot): number {
   switch (fact) {
     // Nothing landside is on the table when landside is closed, so the answer
-    // changes nothing — the certified `landsideOpen` is the whole test.
+    // changes nothing — the certified `landsideStatus` is the whole test.
     case "leave_or_stay":
-      return s.landsideOpen ? 0.9 : IMMATERIAL;
+      return landsideOnTheTable(s) ? 0.9 : IMMATERIAL;
     // Bags eat the usable window, but only for a traveller who could leave.
     case "checked_bags":
-      return s.landsideOpen ? 0.6 : IMMATERIAL;
+      return landsideOnTheTable(s) ? 0.6 : IMMATERIAL;
     // Asked only when the record itself says entry is not confirmed. The code
     // comes from the engine (`ENTRY_NOT_CONFIRMED`); this module does not decide
     // that entry is in doubt, it reads that the record said so.
     case "entry_permission":
-      return s.landsideOpen && s.reasonCodes.includes("ENTRY_NOT_CONFIRMED") ? 0.5 : IMMATERIAL;
+      return landsideOnTheTable(s) && s.reasonCodes.includes("ENTRY_NOT_CONFIRMED") ? 0.5 : IMMATERIAL;
     // Asked only when the record says no routed travel time exists — the exact
     // sentence the safety engine publishes, compared by identity rather than
     // pattern-matched, so a reword cannot silently switch this off.
     case "landside_destination":
-      return s.landsideOpen && s.unknowns.includes(TRAVEL_TIME_UNMEASURED_UNKNOWN)
+      return landsideOnTheTable(s) && s.unknowns.includes(TRAVEL_TIME_UNMEASURED_UNKNOWN)
         ? 0.4
         : IMMATERIAL;
   }
@@ -336,4 +336,18 @@ export function clarificationFactsFromToolArgs(
     out[fact] = { state: "ambiguous", readings };
   }
   return out;
+}
+
+/**
+ * Is anything landside still on the table — the gate `open` or a `caution`?
+ *
+ * At the foot of the file: line 272 above is cited. It replaced `s.landsideOpen`
+ * when that boolean became true only for an OPEN gate. Under a caution the
+ * entry question is the most material one there is (`ENTRY_NOT_CONFIRMED` is
+ * the caution), and reading the strict boolean would have stopped it ever being
+ * asked. Positive on the two known values: a snapshot with no status is not
+ * treated as having landside on the table.
+ */
+function landsideOnTheTable(s: ClarificationSnapshot): boolean {
+  return s.landsideStatus === "open" || s.landsideStatus === "caution";
 }

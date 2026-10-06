@@ -91,7 +91,7 @@ describe("certifiedLayoverSnapshot certifies with the airport routes' entry inpu
     for (const [label, tables, failures, reason] of cases) {
       const { s } = await snap(tables, failures);
       assert.equal(s.verdict, "entry_unverified", label);
-      assert.equal(s.landsideOpen, true, `${label}: a data gap must not close landside on its own`);
+      assert.equal(s.landsideStatus, "caution", `${label}: a data gap must not close landside on its own`); assert.equal(s.landsideOpen, false, `${label}: …and it is not an OPEN gate either — not forbidden is not confirmed`); assert.deepEqual(s.landsideCautions, ["entry_unconfirmed"], label);
       assert.deepEqual((s.certifiedRecord as any).inputs.entry, { state: "unresolved", reason }, label);
     }
   });
@@ -157,7 +157,7 @@ describe("an unreadable `feature_flags` is not a data gap that leaves landside o
   it("CONTROL: the same world with the flags READABLE is the data gap it always was — `entry_unverified`, landside not forbidden", async () => {
     const { s } = await snap(world({ flag: false }));
     assert.equal(s.verdict, "entry_unverified");
-    assert.equal(s.landsideOpen, true);
+    assert.equal(s.landsideStatus, "caution"); assert.equal(s.landsideOpen, false);
     assert.deepEqual((s.certifiedRecord as any).landsideGate.closedBy, []);
     assert.equal((s.certifiedRecord as any).landsideGate.open, false, "not forbidden is not affirmed");
   });

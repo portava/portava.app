@@ -211,11 +211,29 @@ export interface LandsidePolicyInput {
  * and was read, and this traveller has declared nothing — which is the same
  * unknown as a declared "not sure", and was being certified as a declared
  * "no". It carries no baggage mode, so the bag term stays the session's own.
+ *
+ * ── A CONTEXT THAT IS NOT ONE OF THE FOUR KNOWN SHAPES IS UNREADABLE ─────────
+ * `{ read: "declared", set: null }` used to match no arm below and fall out as
+ * "no constraint input" — the LEGACY arm, which can open. A context this build
+ * cannot recognise is not evidence that nothing was declared: it is something
+ * we were handed and could not read, so it certifies exactly as an unreadable
+ * store does (`constraints_unreadable`), with the entry policy taken as ON
+ * unless the context states a boolean. ABSENT (`null`/`undefined`) is still the
+ * legacy arm: it is the known shape of a session no loader has touched, and
+ * with both flags off it is the same computation as `storage_off`.
  */
 export function namedConstraintInputs(
   ctx: SessionConstraintContext | null | undefined,
 ): { constraints?: ConstraintInput; policy?: LandsidePolicyInput } {
-  if (!ctx) return {};
+  if (ctx === null || ctx === undefined) return {};
+  if (!wellFormedContext(ctx)) {
+    const policyStated = typeof (ctx as { entryForbidsLandside?: unknown }).entryForbidsLandside === "boolean";
+    const policyOn = policyStated ? (ctx as SessionConstraintContext).entryForbidsLandside === true : true;
+    return {
+      constraints: { read: "unreadable", version: null, baggageMode: "UNKNOWN", recheckRequired: null, airportChangeRequired: null },
+      ...(policyOn ? { policy: { entryForbidsLandside: true as const } } : {}),
+    };
+  }
   const out: { constraints?: ConstraintInput; policy?: LandsidePolicyInput } = {};
   if (ctx.read === "declared" && ctx.set) {
     out.constraints = {
@@ -244,6 +262,36 @@ export function namedConstraintInputs(
   }
   if (ctx.entryForbidsLandside === true) out.policy = { entryForbidsLandside: true };
   return out;
+}
+
+/** `true | false | null` and nothing else — `undefined`, `"yes"` and `0` are not answers. */
+function isTriState(v: unknown): v is boolean | null {
+  return v === true || v === false || v === null;
+}
+
+/** A declared set every member of which is in this build's vocabulary. */
+function wellFormedSet(set: unknown): set is LayoverConstraintSet {
+  if (set === null || typeof set !== "object") return false;
+  const s = set as Record<string, unknown>;
+  return (
+    typeof s.version === "number" && Number.isInteger(s.version) && s.version >= 1 &&
+    isBaggageMode(s.baggageMode) && isTriState(s.recheckRequired) && isTriState(s.airportChangeRequired)
+  );
+}
+
+/**
+ * One of the four shapes a loader produces, exactly:
+ *   declared     with a well-formed set;
+ *   undeclared / unreadable / storage_off   with NO set.
+ * and a boolean entry policy. Anything else is not a context this build wrote.
+ */
+function wellFormedContext(ctx: unknown): ctx is SessionConstraintContext {
+  if (ctx === null || typeof ctx !== "object") return false;
+  const c = ctx as Record<string, unknown>;
+  if (typeof c.entryForbidsLandside !== "boolean") return false;
+  if (c.read === "declared") return wellFormedSet(c.set);
+  if (c.read === "undeclared" || c.read === "unreadable" || c.read === "storage_off") return c.set === null || c.set === undefined;
+  return false;
 }
 
 /**
