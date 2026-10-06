@@ -1,0 +1,19 @@
+{
+  "_what": "The ONLY declared departures from byte-wise filename order in the canonical chain. scripts/src/apply-migrations.ts (orderMigrations / applyOrderOverrides) is the authority; artifacts/api-server/scripts/local-db/resolve-order.mjs implements the same algorithm for up.sh, and a parity test holds the two equal on this tree. docs/migrations.md § \"Apply-order overrides\" is the prose.",
+  "_algorithm": "Sort every *.sql filename byte-wise. Then apply the entries below IN LIST ORDER: remove `move` from the list and re-insert it immediately before `before` (or immediately after `after`). Nothing else moves. An entry naming a file that is not on disk is a HARD REFUSAL (the applier exits 2, the harness aborts) — a stale override is never silently ignored. This file is not a migration: every reader of src/migrations filters on .sql.",
+  "_rule": "An entry exists only for a MEASURED fact about what the reference database (portava-ci) actually received, with its ledger provenance in `evidence`. Never add one to paper over a new migration's ordering: a NEW migration must sort correctly by its own number.",
+  "overrides": [
+    {
+      "move": "2138_profiles_fk_convergence_prep.sql",
+      "before": "2136_profiles_auth_users_convergence.sql",
+      "why": "2136's second DO block refuses while any FK to public.profiles is NO ACTION/RESTRICT, or SET NULL onto a NOT NULL column. The 61 conversions that satisfy it are performed by 2138 (by-name list, idempotent, skips absent tables), and 2138's own header says it is the prerequisite for 2136. In byte order a clean replay runs 2136 first and it refuses: \"PRECONDITION FAILED: 54 foreign key(s) to public.profiles would reject a cascading delete\" (the 2026-08-19 baseline's 54 NO ACTION FKs; the other 7 are on tables the chain creates between 2093 and 2135). 2140 then fails as a consequence (\"status CHECK does not permit 'completed'\" — depends on 2136's shape).",
+      "evidence": "PR #111 (claude/d6-rulings-20260823, merged 2026-08-23) applied 2138 before 2136 on portava-ci. Both ledger rows on portava-ci are applied_by='backfill' (pre-ledger, 2254's seed). Local harness, PostgreSQL 16.13 + PostGIS 3.4.2, chain from 2093 (KNOWN_UNREPLAYABLE.json, measured 2026-09-12): 2136 and 2140 fail in byte order with the messages above."
+    },
+    {
+      "move": "2137_intel_stmt_trigger_removal.sql",
+      "after": "2279_intel_historical_patterns.sql",
+      "why": "2137 drops public.intel_append_only_stmt(). 2276_intel_presence_verification.sql requires (its lines 73-74) that BOTH public.intel_append_only and public.intel_append_only_stmt exist, so on portava-ci 2137's function drop was not in effect when 2276 ran. In byte order a clean replay runs 2137 first and 2276 refuses: \"PRECONDITION FAILED: 2130 append-only trigger functions are missing\"; 2277, 2278, 2279, 2292, 3002, 3003 and 3310 then fail as consequences, each a precondition naming the one before it.",
+      "evidence": "portava-ci ledger: 2276 applied_by='ci' at 2026-09-04 15:27:27; 2292_intel_stmt_trigger_removal_ig_campaign.sql (the campaign removal) applied_by='manual' at 2026-09-05 11:36:06; 2137's row is applied_by='backfill' (unverified, 2254's seed). Local harness, PostgreSQL 16.13 + PostGIS 3.4.2, chain from 2093 (KNOWN_UNREPLAYABLE.json, measured 2026-09-12): the eight failures above."
+    }
+  ]
+}

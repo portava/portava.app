@@ -24,9 +24,12 @@
  * THE ORDER, AND HOW IT WAS ESTABLISHED (not assumed)
  * ==================================================
  *
- * The canonical order is a PLAIN BYTE-WISE COMPARISON OF THE WHOLE FILENAME.
- * That was checked rather than taken on faith, because the repo has two
- * filename conventions and two documented prefix collisions:
+ * The canonical order is a PLAIN BYTE-WISE COMPARISON OF THE WHOLE FILENAME —
+ * the BASE order — followed by the declared overrides in
+ * artifacts/api-server/src/migrations/ORDER_OVERRIDES.json, which are the ONLY
+ * departures from it (point 5). The base was checked rather than taken on
+ * faith, because the repo has two filename conventions and two documented
+ * prefix collisions:
  *
  *   1. docs/migrations.md § "Prefix collisions" states it outright: "Migration
  *      files are applied in lexicographic order".
@@ -49,11 +52,26 @@
  *      it rather than picking a side — see assertUnambiguousOrder() below. The
  *      two documented collisions (2059, 2089) are both fully applied, so they
  *      are in the ledger and never enter the pending set.
+ *   5. Byte order is NOT always the order the reference database received. The
+ *      cases where it was measured not to be — a file applied to portava-ci
+ *      before a file that sorts ahead of it, so that a clean replay in byte
+ *      order refuses at a precondition the real history satisfied — are
+ *      DECLARED in ORDER_OVERRIDES.json, each with the ledger provenance that
+ *      establishes it. They are applied after the sort, in list order, and
+ *      move exactly the file they name (applyOrderOverrides() below). An
+ *      override naming a file that is not on disk is a hard refusal, never a
+ *      silent no-op. The local replay harness (artifacts/api-server/scripts/
+ *      local-db/up.sh, via resolve-order.mjs) honours the same list, so the
+ *      applier and the harness replay one chain.
  *
- * So: lexicographic IS correct, and it is correct because of (3), not by luck.
- * The comparator below is written out explicitly instead of calling `.sort()`
- * so that it is a byte-order comparison on purpose rather than by default, and
- * so no locale can ever be consulted.
+ * So: lexicographic IS the base and it is correct because of (3), not by luck;
+ * the overrides are the only departures, and each is a measured defect, never a
+ * convenience — a NEW migration must sort correctly by its own number. The
+ * auditors in (2) still read the base order; they model the chain's END state,
+ * and docs/migrations.md § "Apply-order overrides" records why each declared
+ * entry leaves that end state unchanged. The comparator below is written out
+ * explicitly instead of calling `.sort()` so that it is a byte-order comparison
+ * on purpose rather than by default, and so no locale can ever be consulted.
  *
  * MIGRATIONS THAT CARRY THEIR OWN BEGIN/COMMIT
  * ============================================
@@ -148,7 +166,8 @@
  * EXIT CODES
  *   0  every pending migration applied, or there were none
  *   1  a migration failed, or a file was refused; apply STOPPED at that file
- *   2  environment / precondition failure (no token, no ledger table, …)
+ *   2  environment / precondition failure (no token, no ledger table, an
+ *      apply-order override naming a file that is not on disk, …)
  */
 
 import { createHash } from "node:crypto";
@@ -198,12 +217,149 @@ export function compareMigrationFilenames(a: string, b: string): number {
   return a < b ? -1 : 1;
 }
 
-/** The canonical chain, in apply order. */
-export function orderMigrations(filenames: readonly string[]): string[] {
-  return [...filenames].sort(compareMigrationFilenames);
+/**
+ * One declared departure from byte-wise order (header, point 5). Exactly one of
+ * `before` / `after` names the file `move` is placed next to.
+ */
+export interface OrderOverride {
+  /** The file that moves. Nothing else moves. */
+  move: string;
+  /** Re-insert `move` immediately BEFORE this file. */
+  before?: string;
+  /** Re-insert `move` immediately AFTER this file. */
+  after?: string;
+  /** The measured defect the move repairs. */
+  why: string;
+  /** Where the measurement can be re-read: ledger rows, PR, CI run. */
+  evidence: string;
 }
 
-/** Every `.sql` file in the canonical tree, in apply order. */
+/** The declared overrides live beside the files they reorder. Not a migration: every reader filters on `.sql`. */
+export const ORDER_OVERRIDES_FILE = "ORDER_OVERRIDES.json";
+
+/**
+ * Validate the parsed ORDER_OVERRIDES.json. Pure; throws naming the first
+ * problem. The file is an object whose `_`-prefixed keys are prose and whose
+ * `overrides` is the list; anything else is refused rather than guessed at.
+ */
+export function parseOrderOverrides(raw: unknown): OrderOverride[] {
+  const isObject = (v: unknown): v is Record<string, unknown> =>
+    typeof v === "object" && v !== null && !Array.isArray(v);
+  const isName = (v: unknown): v is string => typeof v === "string" && v.endsWith(".sql") && !v.includes("/");
+  const isText = (v: unknown): v is string => typeof v === "string" && v.trim() !== "";
+
+  if (!isObject(raw)) throw new Error(`${ORDER_OVERRIDES_FILE}: the top level must be an object`);
+  for (const key of Object.keys(raw)) {
+    if (key !== "overrides" && !key.startsWith("_")) {
+      throw new Error(`${ORDER_OVERRIDES_FILE}: unknown top-level key "${key}"`);
+    }
+  }
+  const list = raw.overrides;
+  if (!Array.isArray(list)) throw new Error(`${ORDER_OVERRIDES_FILE}: "overrides" must be an array`);
+
+  const out: OrderOverride[] = [];
+  const moved = new Set<string>();
+  list.forEach((entry, idx) => {
+    const at = `${ORDER_OVERRIDES_FILE}: overrides[${idx}]`;
+    if (!isObject(entry)) throw new Error(`${at} must be an object`);
+    for (const key of Object.keys(entry)) {
+      if (!["move", "before", "after", "why", "evidence"].includes(key)) {
+        throw new Error(`${at}: unknown key "${key}"`);
+      }
+    }
+    const { move, before, after, why, evidence } = entry;
+    if (!isName(move)) throw new Error(`${at}: "move" must be a migration filename (*.sql)`);
+    if ((before === undefined) === (after === undefined)) {
+      throw new Error(`${at}: exactly one of "before" / "after" is required`);
+    }
+    const anchor = before ?? after;
+    if (!isName(anchor)) throw new Error(`${at}: "${before !== undefined ? "before" : "after"}" must be a migration filename (*.sql)`);
+    if (anchor === move) throw new Error(`${at}: ${move} cannot be placed next to itself`);
+    if (!isText(why)) throw new Error(`${at}: "why" must state the measured defect`);
+    if (!isText(evidence)) throw new Error(`${at}: "evidence" must state where the measurement can be re-read`);
+    if (moved.has(move)) throw new Error(`${at}: ${move} is moved by an earlier entry too; one entry per file`);
+    moved.add(move);
+    out.push(before !== undefined ? { move, before: anchor, why, evidence } : { move, after: anchor, why, evidence });
+  });
+  return out;
+}
+
+/** Read and validate `<dir>/ORDER_OVERRIDES.json`. A missing file is an error, not "no overrides". */
+export function readOrderOverrides(dir: string = MIGRATIONS_DIR): OrderOverride[] {
+  return parseOrderOverrides(JSON.parse(readFileSync(join(dir, ORDER_OVERRIDES_FILE), "utf8")));
+}
+
+/**
+ * Apply the declared overrides to an already-ordered list. Pure; the input is
+ * not mutated.
+ *
+ * In list order, each entry removes `move` and re-inserts it immediately before
+ * `before` (or immediately after `after`). Every other file keeps its relative
+ * position. An entry naming a file that is not in `ordered` THROWS: a stale
+ * override must never be silently ignored, because a chain that quietly went
+ * back to byte order is the defect this exists to close.
+ */
+export function applyOrderOverrides(
+  ordered: readonly string[],
+  overrides: readonly OrderOverride[],
+): string[] {
+  const out = [...ordered];
+  for (const o of overrides) {
+    if ((o.before === undefined) === (o.after === undefined)) {
+      throw new Error(`order override for ${o.move}: exactly one of "before" / "after" is required`);
+    }
+    const anchor = (o.before ?? o.after) as string;
+    const missing = [o.move, anchor].filter((f) => !out.includes(f));
+    if (missing.length > 0) {
+      throw new Error(
+        `order override "${o.move} ${o.before !== undefined ? "before" : "after"} ${anchor}" names ` +
+          `${missing.join(" and ")}, which ${missing.length > 1 ? "are" : "is"} not in the migration list. ` +
+          `A stale override is refused, never skipped: remove or correct the entry in ${ORDER_OVERRIDES_FILE}.`,
+      );
+    }
+    if (anchor === o.move) throw new Error(`order override for ${o.move}: cannot be placed next to itself`);
+    out.splice(out.indexOf(o.move), 1);
+    const at = out.indexOf(anchor);
+    out.splice(o.before !== undefined ? at : at + 1, 0, o.move);
+  }
+  return out;
+}
+
+/**
+ * The canonical chain, in apply order: byte-wise, then the declared overrides.
+ * `overrides` defaults to none so the base order stays directly testable; the
+ * applier passes readOrderOverrides().
+ */
+export function orderMigrations(
+  filenames: readonly string[],
+  overrides: readonly OrderOverride[] = [],
+): string[] {
+  return applyOrderOverrides([...filenames].sort(compareMigrationFilenames), overrides);
+}
+
+/**
+ * One line per applied override, naming the neighbours it landed between in
+ * `order` and whether the moved file and its anchor are pending. Pure.
+ */
+export function describeOrderOverrides(
+  order: readonly string[],
+  overrides: readonly OrderOverride[],
+  pending: ReadonlySet<string> = new Set(),
+): string[] {
+  return overrides.map((o) => {
+    const idx = order.indexOf(o.move);
+    const prev = idx > 0 ? order[idx - 1] : "(start of chain)";
+    const next = idx >= 0 && idx < order.length - 1 ? order[idx + 1] : "(end of chain)";
+    const anchor = (o.before ?? o.after) as string;
+    const state = (f: string) => (pending.has(f) ? "pending" : "not pending");
+    return (
+      `${o.move} ${o.before !== undefined ? "BEFORE" : "AFTER"} ${anchor} — now ${prev} < ${o.move} < ${next}` +
+      ` [${o.move}: ${state(o.move)}; ${anchor}: ${state(anchor)}]`
+    );
+  });
+}
+
+/** Every `.sql` file in the canonical tree, in BASE (byte-wise) order — the order every auditor reads. */
 export function listMigrationFiles(dir: string = MIGRATIONS_DIR): string[] {
   return orderMigrations(
     readdirSync(dir).filter((f) => f.endsWith(".sql")),
@@ -916,12 +1072,19 @@ export function planApply(
    * apart, so a human decides per file.
    */
   applyUnproven: readonly string[] = [],
+  /**
+   * The declared apply-order overrides (readOrderOverrides()). Applied to the
+   * WHOLE on-disk list, not the pending subset, so an override whose files are
+   * both already applied — the state on portava-ci — changes nothing, and one
+   * naming a file that is not on disk throws.
+   */
+  overrides: readonly OrderOverride[] = [],
 ): ApplyPlan {
   const byName = new Map(ledger.map((r) => [r.filename, r]));
   const diskNames = new Set(onDisk.map((m) => m.filename));
   const forced = new Set(applyUnproven);
 
-  const ordered = orderMigrations(onDisk.map((m) => m.filename));
+  const ordered = orderMigrations(onDisk.map((m) => m.filename), overrides);
   const sqlByName = new Map(onDisk.map((m) => [m.filename, m.sql]));
 
   const pending: string[] = [];
@@ -1164,6 +1327,23 @@ async function main(): Promise<never> {
     process.exit(2);
   }
 
+  // ── The declared apply-order overrides — read and checked BEFORE anything ──
+  // reaches a network. A stale entry (a file renamed or deleted since it was
+  // declared) is an environment failure, not a reason to fall back to byte
+  // order: a chain that silently went back to byte order replays the very
+  // precondition refusals the entries exist to prevent.
+  let overrides: OrderOverride[];
+  try {
+    overrides = readOrderOverrides();
+    orderMigrations(listMigrationFiles(), overrides);
+  } catch (err) {
+    console.error(
+      `::error::apply-migrations: the declared apply-order overrides in ` +
+        `${join(MIGRATIONS_DIR, ORDER_OVERRIDES_FILE)} were refused: ${(err as Error).message}`,
+    );
+    process.exit(2);
+  }
+
   const SUPABASE_URL = process.env.SUPABASE_URL;
   const ACCESS_TOKEN =
     process.env.SUPABASE_PROJECT_TOKEN || process.env.SUPABASE_ACCESS_TOKEN;
@@ -1329,7 +1509,19 @@ async function main(): Promise<never> {
     sql: read(filename),
   }));
 
-  const plan = planApply(onDisk, ledger, applyUnproven);
+  const plan = planApply(onDisk, ledger, applyUnproven, overrides);
+  const overrideLines = describeOrderOverrides(
+    orderMigrations(files, overrides),
+    overrides,
+    new Set(plan.pending),
+  );
+  const printOverrides = () => {
+    console.log(
+      `\nApply-order overrides (${ORDER_OVERRIDES_FILE}): ${overrides.length} declared, each ` +
+        `applied to the whole ${files.length}-file chain before the pending set was taken:`,
+    );
+    for (const line of overrideLines) console.log(`  ↪ ${line}`);
+  };
 
   const unknownForced = applyUnproven.filter((f) => !plan.pending.includes(f));
   if (unknownForced.length > 0) {
@@ -1374,6 +1566,7 @@ async function main(): Promise<never> {
   const classify = (f: string) => classifyMigration(read(f), f);
 
   if (dryRun) {
+    printOverrides();
     console.log("");
     console.log(formatDryRun(plan, classify));
     console.log("");
@@ -1426,6 +1619,7 @@ async function main(): Promise<never> {
     .filter(Boolean)
     .join(" ");
 
+  printOverrides();
   console.log(`\nApplying ${plan.pending.length} migration(s), in canonical order:`);
   for (const f of plan.pending) console.log(`  · ${f}`);
   console.log("");
