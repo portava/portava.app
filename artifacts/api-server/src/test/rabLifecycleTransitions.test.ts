@@ -181,7 +181,7 @@ function responder(bookingStatus: string, patchRows: unknown[], actor: string): 
 }
 
 function install(bookingStatus: string, patchRows: unknown[], actor: string): void {
-  const client = realClient(responder(bookingStatus, patchRows, actor));
+  const client = withVerifiedBookingParties(realClient(responder(bookingStatus, patchRows, actor)), [TRAVELER_ID, BUDDY_USER]); // accept re-checks both people (verifier F7)
   _setTestClient(client as any, true);
   _setTestServiceClient(client as any);
 }
@@ -261,8 +261,9 @@ describe("C: a failed transition is reported, not answered 200", () => {
         }
         return inner(c);
       });
-      _setTestClient(client as any, true);
-      _setTestServiceClient(client as any);
+      const verified = withVerifiedBookingParties(client, [TRAVELER_ID, BUDDY_USER]); // accept re-checks both people (verifier F7)
+      _setTestClient(verified as any, true);
+      _setTestServiceClient(verified as any);
 
       const res = await httpReq(`/api/rent-a-buddy/bookings/${BOOKING_ID}/${t.path}`, t.body ?? {}, t.actor);
       await settle();
@@ -308,3 +309,6 @@ describe("D: a dispute that opened nothing leaves no orphan dispute row", () => 
     assert.deepEqual(disputeDeletes(), [], "a dispute that was really opened must survive");
   });
 });
+
+// Accept re-checks both people's identity (verifier F7); appended so no cited line moves.
+import { withVerifiedBookingParties } from "./helpers/verifiedBookingParties.js";
