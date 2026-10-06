@@ -3654,7 +3654,7 @@ carried a freshness (TR368). No metric measured read-model lag (TR394).
   (`:108#TRIP_PROJECTION_UNAVAILABLE`), and a flag-off crew
   projection is served visibly degraded with `freshness: "unattributable"`
   (`:275#featureEnabled`). The map projection's own response
-  now spreads the envelope too (`server/trips/readRoutes/tripMapProjection.ts:460#liveEnvelope`).
+  now spreads the envelope too (`server/trips/readRoutes/tripMapProjection.ts:463#liveEnvelope`).
   `/plan`, `/plan/map`, `/crew/map`, `/map-projection` keep their shapes.
 - **Consumers.** `compass/CompassTools.ts:838#toolGetCurrentTrip`
   builds the context projection (`:521#buildTripCompassProjection`)
@@ -4704,7 +4704,7 @@ production baseline through the chain: 39 database tests, 0 skipped.
   `opportunities` layer, `no_source` since §40.3
   (`domain/trips/projections/TripTodayProjection.ts:284#opportunities = okLayer`), and as the map's
   `liveOpportunities` layer, `no_source` since §40.4
-  (`server/trips/readRoutes/tripMapProjection.ts:376#§14.1 live opportunities`).
+  (`server/trips/readRoutes/tripMapProjection.ts:379#§14.1 live opportunities`).
 - **2786 `RECORD_OPPORTUNITY_CHANGE` → `trip.opportunities_changed`** —
   `src/migrations/2786_trip_kernel_opportunity_events.sql:63#WHEN 'RECORD_OPPORTUNITY_CHANGE' THEN`: an
   engine-capability command whose payload is the §13.3 contract, refused as
@@ -5084,10 +5084,10 @@ re-derives and cites rather than argues.
   when they opted to notify the crew, placed at the plan each guards (a
   private anchor's plan yields no point, §14.4), plus 2782's transport
   segment endpoints through `public.places` under the gate that owns that
-  table (`server/trips/readRoutes/tripMapProjection.ts:400#safe_return_sessions`,
-  `server/trips/readRoutes/tripMapProjection.ts:446#transport_endpoint`); a layer is one status,
+  table (`server/trips/readRoutes/tripMapProjection.ts:403#safe_return_sessions`,
+  `server/trips/readRoutes/tripMapProjection.ts:449#transport_endpoint`); a layer is one status,
   so `safetyLogisticsReading` on the response says which half was assembled
-  (`server/trips/readRoutes/tripMapProjection.ts:395#safetyLogisticsReading`;
+  (`server/trips/readRoutes/tripMapProjection.ts:398#safetyLogisticsReading`;
   `src/test/tripMapProjection.test.ts:581#guards,`). One layer has no producer
   now: crew presence summaries.
 - **§20.2 the two deferred steps** — `close_operational_decision_tasks` is
@@ -10190,7 +10190,7 @@ trip into a group trip. Each is now closed:
   redeemer is told "This invite isn't available right now." and nothing else
   (`artifacts/api-server/src/lib/tripTrustGate.ts:221#export async function refuseIfInviterCannotHost(`).
 - **R3.** One guard before every trip router refuses every member-level write by a retained-record-only member
-  (`artifacts/api-server/src/lib/tripRetainedRecordGuard.ts:72#export function tripRetainedRecordWriteGuard()`),
+  (`artifacts/api-server/src/lib/tripRetainedRecordGuard.ts:127#export function tripRetainedRecordWriteGuard()`),
   mounted on the router `routes/index.ts` registers first
   (`artifacts/api-server/src/routes/trips.ts:40#const router = Router(); router.use(tripRetainedRecordWriteGuard());`).
   Not refused: reads, compute-only POSTs, safety, leaving, revoking a share, invite answers, /commands (its own
@@ -10203,3 +10203,57 @@ trip into a group trip. Each is now closed:
 Tests: `trustRestrictionDoors.test.ts` (171), `tripPrivateAnchorReaders.test.ts` (134), `tripMembers.test.ts`, and the
 Map meeting-point and Wall live-for-you suites; each fix mutation-proven (commits `06943d51c`,
 `856406d82`, `186046d98`). D-66 (the Trail review) is built in lane C's wave 5, not deferred.
+
+## §86 Lane C wave 5 (2026-10-06): a private plan item on a route, the corridor read under the owner's Routes caps, and the retained record outside the trip routers — NO ROW MOVES
+
+*Written 2026-10-06 by lane C. Controlled evidence only (route suites over the certification harness; the database
+suite runs in CI's local-db job). Migration 3978 was WRITTEN and applied nowhere; nothing was written to any
+database, no flag was flipped.*
+
+### §86.1 Route stops made from a private plan item (§81's rule, one more reader)
+
+A route stop made from a plan item (`source_type = 'plan_item'`) COPIES the item's title and coordinates. Another
+crew member reading a member's route (`GET /route-plans/:id`) or opening the trip map (its route-chains layer)
+received a PRIVATE item's name and place that way, and 2334's crew policies let them read it straight through
+PostgREST. One rule now decides it:
+`artifacts/api-server/src/server/trips/privateAnchorShares.ts:231#export async function withheldPlanItemStopIds(` — the
+route's owner sees every stop of it; anyone else gets a plan-item stop only when `canSeePlanItemLocation` admits the
+item; an unreadable read withholds. The route read serves a withheld stop as a slot and drops every leg touching it
+(`artifacts/api-server/src/routes/routePlan.ts:886#const withheldStopIds = await withheldPlanItemStopIds(`); the map
+leaves it off (`artifacts/api-server/src/server/trips/readRoutes/tripMapProjection.ts:356#const withheld = await withheldPlanItemStopIds(`).
+The client door: `artifacts/api-server/src/migrations/3978_route_stops_private_plan_item_door.sql:143#CREATE POLICY "route_stops_member_select" ON public.route_stops`
+and its leg twin carry the same rule through
+`artifacts/api-server/src/migrations/3978_route_stops_private_plan_item_door.sql:84#CREATE OR REPLACE FUNCTION authz.plan_item_stop_visible(p_source_id text, p_trip_id uuid)`
+(SECURITY DEFINER; a malformed or dangling source id is withheld). Reader path `route-plan-stops` in
+`tripPrivateAnchorReaders.test.ts`; the database suite
+`artifacts/api-server/src/test/db/routeStopsPrivatePlanItem.db.test.ts` (S1–S7) runs in CI's local-db job.
+
+### §86.2 The corridor read under the owner's Routes caps (lead ruling D-7)
+
+`lib/providers/googleRoutesCorridorProvider.ts` called the Routes API with no cap of its own. It now takes the same
+three bounds the Trips seam takes, before Google is asked: the read's hop cap, a person and a trip to charge
+(`artifacts/api-server/src/lib/providers/googleRoutesCorridorProvider.ts:306#return refuse(PROVIDER_ID, "PROVIDER_REJECTED", "no person and trip to charge this Routes API call to;`
+— an uncharged call is an uncapped one), and one unit of 3973's spend gate
+(`artifacts/api-server/src/lib/providers/googleRoutesCorridorProvider.ts:309#const verdict = await (opts.spendGate ?? tripSpendGate()).decide(`);
+anything but "granted" is no call. G1–G5 in `providerRouteCorridor.test.ts`. **Routed:** the Layover readers that use
+this provider must open a `withRoutesRequestBudget` scope (lane R's files); until they do they are refused as
+`unscoped` — a layover with no trip cannot be charged to a trip at all, which is the owner's question. §85's NOT-GRADED reason for this provider ("the Trips spend gate does not bound it") no longer holds; it is still Layover's to grade.
+
+### §86.3 The retained record outside the trip routers (§85.2 R3, carried further)
+
+A member restored to an ended trip's record only is still an accepted member, so they stayed in the trip's Telegraph
+thread and passed every meetup's trip check. The rule is now read by
+`artifacts/api-server/src/lib/tripRetainedRecordGuard.ts:114#export async function refuseRetainedTripWrite(`
+(403 `trip_record_read_only`; 503 when unreadable) at every write on a meetup that belongs to the trip — create,
+edit, invite, RSVP, time options, vote, confirm (cancelling one's own is not refused) — and such a member is not
+invitable (`artifacts/api-server/src/routes/meetups.ts:610#const eligibleSet = new Set((tripMembers ?? []).filter((r: any) => retainedAccessOf(r) !== "retained_record_only")`).
+Every Telegraph write into the trip's own thread is refused by
+`artifacts/api-server/src/lib/telegraphThreadWrite.ts:293#export async function retainedTripThreadRefusal(`
+(a safety send never; a direct thread that names the trip is untouched; census-telegraph §50). Starting a crew live
+share is under `/trips/:tripId`, which §85.2's guard already refuses. Proven by
+`artifacts/api-server/src/test/tripRetainedRecordOutsideDoors.test.ts` (26; 17 mutants killed).
+
+- NOT-GRADED: artifacts/api-server/src/test/tripRetainedRecordOutsideDoors.test.ts — §86.3's suite; no row's verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/providerRouteCorridor.test.ts — §86.2's G1–G5; the gate rests on the provider lines cited.
+- NOT-GRADED: artifacts/api-server/src/routes/meetups.ts — §86.3 cites its retained-record refusal; the meetup surface is graded elsewhere.
+- NOT-GRADED: artifacts/api-server/src/lib/telegraphThreadWrite.ts — §86.3 cites its gate 4b; census-telegraph grades the send guard (§50).

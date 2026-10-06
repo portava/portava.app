@@ -1653,7 +1653,7 @@ asset is not a kind.
   reach last month's photos through the drawer or find them by searching
   (`test/telegraphKinds.test.ts:565`, `:571`).
 - **The write gates are shared, not re-implemented.**
-  `lib/telegraphThreadWrite.ts:86#guardTelegraphThreadWrite` holds the four
+  `lib/telegraphThreadWrite.ts:91#guardTelegraphThreadWrite` holds the four
   checks the ordinary send path applies — kill switch, active membership, 1:1
   block guard, E2EE refusal — and the §5 share route and the §6.2 typed-kind
   route both call it. A second write endpoint that skipped one of them would be
@@ -10199,7 +10199,7 @@ database.
   and REFUSES everything else with 400 rather than rewriting it. The route takes its discriminator
   from it (`artifacts/api-server/src/routes/messaging.ts:2709#const discriminator = resolveClientDiscriminator(req.body?.msgType, req.body?.subtype);`).
 - **One allowance for every door.** The shared guard gained a fifth gate, last, so a send refused by
-  the other four never spends it (`artifacts/api-server/src/lib/telegraphThreadWrite.ts:187#const rate = await sendRateRefusal(`);
+  the other four never spends it (`artifacts/api-server/src/lib/telegraphThreadWrite.ts:200#const rate = await sendRateRefusal(`);
   the media door, which carries its own copies of the other gates, calls the same limiter
   (`artifacts/api-server/src/routes/messaging.ts:3399#if (await refuseSendOverRate(`). Every ordinary
   door counts against the id the text door already used; a §6.2 SAFETY message is counted in a
@@ -10383,9 +10383,9 @@ migration, no flag, no database. `head_commit` is not re-declared.
 - **One decision.** `artifacts/api-server/src/domain/telegraph/policies/restrictionSendPolicy.ts:121#export function decideRestrictedSend(`
   over facts read by `artifacts/api-server/src/domain/telegraph/policies/restrictionSendPolicy.ts:206#export async function readRestrictionSendFacts(`.
   The shared send guard calls it as gate 5, before the burst limit
-  (`artifacts/api-server/src/lib/telegraphThreadWrite.ts:164#// 5. Trust restriction (OD-TRUST-5)`); the
+  (`artifacts/api-server/src/lib/telegraphThreadWrite.ts:177#// 5. Trust restriction (OD-TRUST-5)`); the
   two inline doors in `routes/messaging.ts` call it through
-  `artifacts/api-server/src/lib/telegraphThreadWrite.ts:301#export async function refuseRestrictedSend(`;
+  `artifacts/api-server/src/lib/telegraphThreadWrite.ts:365#export async function refuseRestrictedSend(`;
   the capabilities projection's `canSendMessage` reads the same function. Before this, a Trust
   restriction was consulted on the message REQUEST and on none of the doors that write into
   `messages`, while the projection announced `canSendMessage: false` for every
@@ -11444,3 +11444,21 @@ Telegraph is lane C's again (lanes T1 and T2 merged and closed). This section re
   and so does Compass. Passport maps its follow relationship through it too
   (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:2524#export function windowRelationshipFor(`),
   so §48's "Passport admits no one to a followers window" no longer holds: it admits mutual follows.
+
+## §50 — Lane C (2026-10-06, wave 5): Compass's direct-thread availability under D-103, and the trip's thread under the retained-record rule. NO ROW MOVES
+
+- **D-103 on Compass, a direct conversation.** `telegraph_get_participant_availability` admits a `followers` window
+  only to a mutual follow; one-way in either direction is refused, and an unreadable edge is no edge. Proven through
+  the tool itself by `artifacts/api-server/src/test/telegraphCompassAvailabilityMutual.test.ts:74#it("M1. THE POINT: mutual follow → the followers window is returned"`
+  and M2–M5 (with §49's L3 rule, the owner-follows-viewer edge admits a `following` window, never a `followers` one).
+- **The trip's thread and the retained record (census-trips §86.3).** A member restored to an ended trip's record
+  only stayed in the trip's thread (groupChatSync keeps accepted members) and could write into it. The shared send
+  guard now has a gate 4b,
+  `artifacts/api-server/src/lib/telegraphThreadWrite.ts:172#const retained = await retainedTripThreadRefusal(flagSc ?? client, userId,`,
+  so every door through that guard (typed, voice, share, coordination, poll, the gem and highlight-reply sends, and the plain-message library) refuses such a member's write into a `trip`
+  thread with 403 `trip_record_read_only`; the text and media doors in `routes/messaging.ts` call the same rule. A
+  safety send (NEED_HELP) is never refused; a direct thread that names the trip is untouched; an unreadable access
+  row is "try again". Proven in `tripRetainedRecordOutsideDoors.test.ts` (TH cases).
+
+- NOT-GRADED: artifacts/api-server/src/test/telegraphCompassAvailabilityMutual.test.ts — §50's Compass D-103 suite; no row's verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/tripRetainedRecordOutsideDoors.test.ts — §50's thread cases (census-trips §86.3); no row's verdict rests on it.

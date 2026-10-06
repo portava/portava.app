@@ -197,7 +197,7 @@ export async function listTrails(
   const limit = Math.min(50, Math.max(1, params?.limit ?? 20));
   let q = sc.from("trails").select(TRAIL_COLUMNS)
     .neq("lifecycle_status", "archived")
-    .eq("review_state", "approved") // D-66: a pending or rejected Trail is listed to nobody (its creator reads it at GET …/mine/review)
+    .eq("review_state", "approved") // D-66: a pending or rejected Trail is listed to nobody (its creator reads it at GET /v1/discovery/me/trails)
     .order("created_at", { ascending: false })
     .limit(limit);
   const destination = typeof params?.destination === "string" ? params.destination.trim().toLowerCase() : "", destKey = destination ? trailDestinationKey(destination) : "";
