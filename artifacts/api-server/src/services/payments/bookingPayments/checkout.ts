@@ -270,8 +270,15 @@ export async function startBookingCheckout(deps: PaymentSliceDeps, req: StartChe
     tax: quote.tax,
   };
   const created = await deps.provider.createPaymentIntent(request);
-  const statusWrite = await deps.store.setBookingPaymentStatus(booking.bookingId, "pending");
-  if (!statusWrite.ok) return READ_FAILED();
+  // F10 (verifier): the booking reads `pending` only while an attempt is OPEN. A
+  // declined or definitively failed create marks it `failed`; a retriable one
+  // leaves it as it was (the row stays `creating` and the same key is re-sent).
+  const opened = created.status === "ok" || created.status === "requires_action";
+  const ended = created.status === "declined" || ((created.status === "failed" || created.status === "unavailable") && !created.retriable);
+  if (opened || ended) {
+    const statusWrite = await deps.store.setBookingPaymentStatus(booking.bookingId, opened ? "pending" : "failed");
+    if (!statusWrite.ok) return READ_FAILED();
+  }
   return answerIntent(deps, record, created, quote);
 }
 

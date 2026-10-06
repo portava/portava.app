@@ -161,6 +161,25 @@ export async function requestBookingRefund(deps: PaymentSliceDeps, req: RefundRe
   const seq = decision.amount === "full" ? "full" : req.requestKey ? `req:${req.requestKey}` : String(prior.value.length + 1);
   const idempotencyKey = `rab-refund:${captured.id}:${req.trigger}:${seq}`;
   const existing = prior.value.find((r) => r.idempotencyKey === idempotencyKey);
+  // F11 (verifier): `refundable` above is computed from what the WEBHOOK has
+  // booked. A different refund still `requested` or `pending` at the provider is
+  // money already on its way back, so a second refund is refused HERE, before it
+  // reaches the provider. A retry of THIS request (same key) is not a second one.
+  const others = prior.value.filter((x) => x.idempotencyKey !== idempotencyKey && x.state !== "failed" && x.state !== "canceled" && x.state !== "refused");
+  if (!existing && others.some((x) => x.state === "requested" || x.state === "pending")) {
+    return refusal(409, "refund_in_progress", "A refund for this booking is already being processed. Nothing else was refunded.");
+  }
+  // A refund the provider already answered `succeeded` counts too until its intent
+  // webhook moves amountRefundedMinor: the larger of the two is what is gone.
+  const capturedMinor = captured.amountCapturedMinor;
+  const byRows = others.reduce((sum, x) => sum + (x.amountMinor ?? capturedMinor), 0);
+  const remaining = capturedMinor - Math.max(captured.amountRefundedMinor, byRows);
+  if (!existing && remaining <= 0) {
+    return refusal(409, "refund_in_progress", "A refund for this booking is already being processed. Nothing else was refunded.");
+  }
+  if (!existing && decision.amount !== "full" && decision.amount > remaining) {
+    return refusal(409, "amount_exceeds_refundable", "That amount is more than is left to refund on this booking. Nothing was refunded.");
+  }
   const now = deps.now().toISOString();
   const record: RefundRecord = existing ?? {
     id: deps.newId(),

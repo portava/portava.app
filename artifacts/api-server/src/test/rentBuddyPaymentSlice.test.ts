@@ -812,3 +812,99 @@ describe("F1: concurrent deliveries for the same intent end in the newest state"
     assert.equal(w.store.bookings.get(BOOKING)?.paymentStatus, "captured", "the late `pending` projection was re-asserted from the newest row");
   });
 });
+
+// ── Verifier F10 (2026-10-06): a create that does not open an attempt never marks the booking `pending` ──
+describe("F10: the booking reads pending only while a payment attempt is open", () => {
+  function withCreate(result: (id: string) => unknown): void {
+    const real = w.deps.provider; // a frozen object of own operations: copy it with one operation replaced
+    const provider = { ...real, createPaymentIntent: (async () => result(real.id)) as unknown as typeof real.createPaymentIntent };
+    w.deps = { ...w.deps, provider };
+  }
+  async function ready(): Promise<void> { seedBooking(w); await onboardBuddy(w); }
+
+  it("F10a a DECLINED create: 402, the payment failed, and the booking reads failed, not pending", async () => {
+    await ready();
+    withCreate((id) => paymentDeclined(id, "card_declined", "declined at create"));
+    const c = await startBookingCheckout(w.deps, { bookingId: BOOKING, actorUserId: TRAVELER });
+    assert.equal(c.httpStatus, 402, JSON.stringify(c.body));
+    assert.equal(w.store.bookings.get(BOOKING)?.paymentStatus, "failed");
+    assert.ok(!w.store.bookingStatusWrites.some((x) => x.status === "pending"), "never written pending");
+  });
+
+  it("F10b a definitive (non-retriable) failure: the booking reads failed", async () => {
+    await ready();
+    withCreate((id) => paymentFailed(id, "invalid_request", "refused at create", false));
+    const c = await startBookingCheckout(w.deps, { bookingId: BOOKING, actorUserId: TRAVELER });
+    assert.equal(c.httpStatus, 422, JSON.stringify(c.body));
+    assert.equal(w.store.bookings.get(BOOKING)?.paymentStatus, "failed");
+  });
+
+  it("F10c a RETRIABLE unavailability: 503 and the booking's payment_status is untouched", async () => {
+    await ready();
+    w.fake.control.script.failNextOperation("createPaymentIntent", "provider_unreachable");
+    const c = await startBookingCheckout(w.deps, { bookingId: BOOKING, actorUserId: TRAVELER });
+    assert.equal(c.httpStatus, 503, JSON.stringify(c.body));
+    assert.equal(w.store.bookings.get(BOOKING)?.paymentStatus, "not_required");
+    assert.equal(w.store.bookingStatusWrites.length, 0);
+  });
+
+  it("control: an opened intent reads pending", async () => {
+    await ready();
+    const c = await startBookingCheckout(w.deps, { bookingId: BOOKING, actorUserId: TRAVELER });
+    assert.equal(c.httpStatus, 201, JSON.stringify(c.body));
+    assert.equal(w.store.bookings.get(BOOKING)?.paymentStatus, "pending");
+  });
+});
+import { paymentDeclined, paymentFailed } from "../services/payments/PaymentProvider.js";
+
+// ── Verifier F11 (2026-10-06): no second refund while one is requested or pending ──
+describe("F11: a second refund is refused before it reaches the provider while another is in flight", () => {
+  it("traveller cancels before start (202), then the buddy records provider_cancelled before any webhook: 409 refund_in_progress, one refund row, one provider call", async () => {
+    const paymentId = await paidBooking(w);
+    let refundCalls = 0;
+    const real = w.deps.provider;
+    w.deps = { ...w.deps, provider: { ...real, refundPayment: ((r: Parameters<typeof real.refundPayment>[0]) => { refundCalls++; return real.refundPayment(r); }) as typeof real.refundPayment } };
+    const r1 = await requestBookingRefund(w.deps, { bookingId: BOOKING, actorUserId: TRAVELER, actorIsAdmin: false, trigger: "cancelled_before_service" });
+    assert.equal(r1.httpStatus, 202, JSON.stringify(r1.body));
+    const r2 = await requestBookingRefund(w.deps, { bookingId: BOOKING, actorUserId: BUDDY, actorIsAdmin: false, trigger: "provider_cancelled" });
+    assert.equal(r2.httpStatus, 409, JSON.stringify(r2.body));
+    assert.equal(r2.body["error"], "refund_in_progress");
+    assert.equal(refundCalls, 1, "the second refund never reached the provider");
+    assert.equal([...w.store.refunds.values()].filter((x) => x.bookingPaymentId === paymentId).length, 1);
+  });
+
+  it("a support refund still REQUESTED (the provider was unreachable) blocks a second, smaller decision: 409, never sent", async () => {
+    await paidBooking(w);
+    w.fake.control.script.failNextOperation("refundPayment", "provider_unreachable");
+    const r1 = await requestBookingRefund(w.deps, { bookingId: BOOKING, actorUserId: ADMIN, actorIsAdmin: true, trigger: "support_decision", amountMinor: 1000, requestKey: "k-first" });
+    assert.equal(r1.httpStatus, 503, JSON.stringify(r1.body));
+    assert.equal([...w.store.refunds.values()][0]?.state, "requested", "premise: the first refund is in flight");
+    let refundCalls = 0;
+    const real = w.deps.provider;
+    w.deps = { ...w.deps, provider: { ...real, refundPayment: ((r: Parameters<typeof real.refundPayment>[0]) => { refundCalls++; return real.refundPayment(r); }) as typeof real.refundPayment } };
+    const r2 = await requestBookingRefund(w.deps, { bookingId: BOOKING, actorUserId: ADMIN, actorIsAdmin: true, trigger: "support_decision", amountMinor: 500, requestKey: "k-second" });
+    assert.equal(r2.httpStatus, 409, JSON.stringify(r2.body));
+    assert.equal(r2.body["error"], "refund_in_progress");
+    assert.equal(refundCalls, 0, "the second refund never reached the provider");
+    const retry = await requestBookingRefund(w.deps, { bookingId: BOOKING, actorUserId: ADMIN, actorIsAdmin: true, trigger: "support_decision", amountMinor: 1000, requestKey: "k-first" });
+    assert.equal(retry.httpStatus, 202, `the FIRST request, retried under its own key, goes through: ${JSON.stringify(retry.body)}`);
+  });
+
+  it("a RETRY of the same request (same trigger, same key) is the same refund, not refused as a second one", async () => {
+    await paidBooking(w);
+    const r1 = await requestBookingRefund(w.deps, { bookingId: BOOKING, actorUserId: TRAVELER, actorIsAdmin: false, trigger: "cancelled_before_service" });
+    const again = await requestBookingRefund(w.deps, { bookingId: BOOKING, actorUserId: TRAVELER, actorIsAdmin: false, trigger: "cancelled_before_service" });
+    assert.equal(r1.httpStatus, 202, JSON.stringify(r1.body));
+    assert.equal(again.httpStatus, 202, JSON.stringify(again.body));
+    assert.equal(w.store.refunds.size, 1);
+  });
+
+  it("once the first refund settles (webhook), the booking is fully refunded and a further request is nothing_to_refund", async () => {
+    await paidBooking(w);
+    await requestBookingRefund(w.deps, { bookingId: BOOKING, actorUserId: TRAVELER, actorIsAdmin: false, trigger: "cancelled_before_service" });
+    await deliverAll(w);
+    const r2 = await requestBookingRefund(w.deps, { bookingId: BOOKING, actorUserId: BUDDY, actorIsAdmin: false, trigger: "provider_cancelled" });
+    assert.equal(r2.httpStatus, 409, JSON.stringify(r2.body));
+    assert.equal(r2.body["error"], "nothing_to_refund");
+  });
+});
