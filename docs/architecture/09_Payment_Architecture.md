@@ -568,7 +568,7 @@ transaction as the entries; if it cannot be written, the money does not move.
 ledger resolved it easily: non-cash, so no tax obligation, so erase with the contributions that
 earned it (`2204:30-32`). **Real money cannot take that route.** Meanwhile the current money tables
 — `rent_buddy_bookings`, `rent_buddy_earnings_ledger`, `rent_buddy_payouts`, `rent_buddy_tips` —
-are all in `UNCLASSIFIED_BACKLOG` in `lib/deletionDispositions.ts:530-547`, which that file is
+are all in `UNCLASSIFIED_BACKLOG` in `lib/deletionDispositions.ts:557-574`, which that file is
 explicit is **"NOT a decision"**: the data survives account deletion and nobody has said whether it
 should (`lib/deletionDispositions.ts:20-27`). The design's position is that financial records are
 `RETAINED_WITH_REASON` with a stated statutory period and the **personal** columns pseudonymised at
