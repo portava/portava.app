@@ -22,8 +22,8 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isUuid } from "../lib/followDecisions.js";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
-import { canReadMemory, isBlocked } from "../services/memory/memoryReadPolicy.js";
-import { decideHighlightViewAccess } from "./highlights.js";
+import { blockedAmong, canReadMemory } from "../services/memory/memoryReadPolicy.js";
+import { decideHighlightViewAccessMany } from "./highlights.js";
 
 const router = Router();
 
@@ -511,15 +511,24 @@ router.get("/users/me/collections/:id/items", async (req, res) => {
           // addressed "single" surface plus the two-way block check, both fail
           // closed — and a withheld row keeps its entity id and shows no title,
           // exactly like an entity that no longer exists.
+          //
+          // The block check is ONE two-direction read over the page's owners
+          // (verifier F5), not two reads per row; the ladder reads only for the
+          // relational visibilities that need one.
           const { data, error } = await sc
             .from("memories")
             .select("id, title, owner_id, visibility, state, trip_id, allowed_user_ids, hidden_user_ids")
             .in("id", ids)
             .neq("state", "deleted");
           if (error) throw error;
-          for (const r of (data ?? []) as any[]) {
+          const memoryRows = (data ?? []) as any[];
+          const blocks = await blockedAmong(sc, user.id, memoryRows.map((r) => r.owner_id as string));
+          if (!blocks.ok) {
+            req.log.error({ err: blocks.error, type }, "collections: blocks read failed — withholding every Memory preview the viewer does not own");
+          }
+          for (const r of memoryRows) {
             if (r.owner_id !== user.id) {
-              if (await isBlocked(sc, user.id, r.owner_id)) continue;
+              if (!blocks.ok || blocks.blocked.has(r.owner_id)) continue;
               if (!(await canReadMemory(sc, r, user.id, "single"))) continue;
             }
             previewMap[r.id] = { title: r.title ?? "Memory", coverUrl: null };
@@ -544,24 +553,30 @@ router.get("/users/me/collections/:id/items", async (req, res) => {
           // Same defect, louder payload: a caption AND a media URL, for any
           // saved id, with no visibility, expiry, deletion, block or §11
           // KEEP_PRIVATE_FOREVER check (census-highlights-memories H81, H91).
-          // Each row now passes the gate in front of GET /highlights/:id
-          // (`decideHighlightViewAccess`) or shows nothing.
+          // Each row now passes the gate in front of the single-Highlight
+          // routes (`resolveViewAccess`: view, like, reply, report, actions),
+          // taken for the whole page in a fixed number of reads
+          // (`decideHighlightViewAccessMany`), or shows nothing.
           const { data, error } = await sc
             .from("highlights")
             .select("id, caption, media_url")
             .in("id", ids);
           if (error) throw error;
+          const access = await decideHighlightViewAccessMany(sc, user.id, ids, req.log);
           for (const r of (data ?? []) as any[]) {
-            const access = await decideHighlightViewAccess(sc, user.id, r.id as string, req.log);
-            if (!access.ok) continue;
+            if (!access.get(r.id as string)?.ok) continue;
             previewMap[r.id] = {
               title: (r.caption as string | null) ?? "Highlight",
               coverUrl: (r.media_url as string | null) ?? null,
             };
           }
         }
-      } catch {
-        // partial failure: leave previews absent; entity rows still returned
+      } catch (err) {
+        // Partial failure: previews of this type are withheld; entity rows are
+        // still returned. Withheld is right — an unreadable table must not
+        // become a preview — and it is LOGGED, because on the page it looks
+        // exactly like a saved item that no longer resolves (verifier F4).
+        req.log.error({ err, type }, "collections: preview read failed — previews of this type withheld");
       }
     }),
   );

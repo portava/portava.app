@@ -539,21 +539,38 @@ async function resolveViewAccess(
 /**
  * The verdict behind `resolveViewAccess`, with no response attached.
  *
+ * `resolveViewAccess` is the gate in front of the routes a viewer reaches for
+ * ONE Highlight they did not post: POST /highlights/:id/view, POST and DELETE
+ * /highlights/:id/like, POST /highlights/:id/reply, POST /highlights/:id/report
+ * and GET /highlights/:id/actions. (There is no GET /highlights/:id.)
+ *
  * WHY IT IS SEPARATE. `routes/collections.ts` previews a SAVED Highlight — a
  * caption and a media URL — for whatever id sits in a collection, and it did so
  * through the service client with no gate at all: an id saved while the
  * Highlight was visible kept serving its caption after the owner made it
  * private, deleted it, let it expire, set KEEP_PRIVATE_FOREVER or blocked the
- * saver (census-highlights-memories H81/H91/H189). A preview is a read of the
- * Highlight, so it must take THIS answer rather than a second copy of it; the
- * response-sending wrapper above could not be called from a list.
+ * saver (census-highlights-memories H81/H91/H189). The Telegraph share card
+ * (`services/telegraph/shareables.ts` loadHighlight) is the same read on a
+ * sibling door. A preview is a read of the Highlight, so it must take THIS
+ * answer rather than a second copy of it; the response-sending wrapper above
+ * could not be called from a list.
  *
  * Every refusal below is the one `resolveViewAccess` always gave. Nothing in
- * the ladder changed by the split.
+ * the ladder changed by the split. `reason` says WHICH rung refused, for
+ * callers that render a state rather than a 404 (the share card distinguishes
+ * "blocked" from "could not check"); `code` and `message` are unchanged.
  */
+export type HighlightViewRefusal =
+  | "unreadable"          // the highlights row could not be read
+  | "missing"             // no such row
+  | "blocks_unreadable"   // the two-way blocks read failed — withheld
+  | "blocked"             // a block in either direction
+  | "invisible"           // canViewHighlight: inactive, or visibility not met
+  | "withheld";           // a §10/§11 owner decision refuses public_projection
+
 export type HighlightViewVerdict =
   | { ok: true; h: HighlightRecord }
-  | { ok: false; code: "db_error" | "not_found"; message: string };
+  | { ok: false; code: "db_error" | "not_found"; message: string; reason: HighlightViewRefusal };
 
 export async function decideHighlightViewAccess(
   sc: SupabaseClient,
@@ -561,7 +578,8 @@ export async function decideHighlightViewAccess(
   highlightId: string,
   log?: { error: (obj: unknown, msg: string) => void },
 ): Promise<HighlightViewVerdict> {
-  const notFound: HighlightViewVerdict = { ok: false, code: "not_found", message: "Highlight not found" };
+  const notFound = (reason: Exclude<HighlightViewRefusal, "unreadable">): HighlightViewVerdict =>
+    ({ ok: false, code: "not_found", message: "Highlight not found", reason });
   // An unreadable `highlights` table is NOT a missing highlight. supabase-js
   // RESOLVES on a DB error, so `const { data: h }` bound null and this helper —
   // the gate in front of view, like, unlike, reply and report — answered a table
@@ -576,9 +594,9 @@ export async function decideHighlightViewAccess(
 
   if (hErr) {
     log?.error({ err: hErr, highlightId }, "highlights: highlight read failed — cannot resolve access");
-    return { ok: false, code: "db_error", message: hErr.message };
+    return { ok: false, code: "db_error", message: hErr.message, reason: "unreadable" };
   }
-  if (!h) return notFound;
+  if (!h) return notFound("missing");
 
   const record = h as HighlightRecord;
   const ownerId = record.owner_id;
@@ -600,7 +618,8 @@ export async function decideHighlightViewAccess(
       sc.from("blocks").select("blocked_id").eq("blocker_id", viewerId).eq("blocked_id", ownerId).maybeSingle(),
       sc.from("blocks").select("blocker_id").eq("blocker_id", ownerId).eq("blocked_id", viewerId).maybeSingle(),
     ]);
-    if (blockedByMe.error || blockingMe.error || blockedByMe.data || blockingMe.data) return notFound;
+    if (blockedByMe.error || blockingMe.error) return notFound("blocks_unreadable");
+    if (blockedByMe.data || blockingMe.data) return notFound("blocked");
   }
 
   // Resolve circle/trip membership when needed
@@ -633,7 +652,7 @@ export async function decideHighlightViewAccess(
     }
   }
 
-  if (!canViewHighlight(viewerId, record, { viewerFollowsOwner, sharesTrip })) return notFound;
+  if (!canViewHighlight(viewerId, record, { viewerFollowsOwner, sharesTrip })) return notFound("invisible");
 
   // §10/§11 — the owner's stored decisions about OTHER people. Every route
   // behind this gate (view, like, unlike, reply, report) is `public_projection`:
@@ -647,10 +666,118 @@ export async function decideHighlightViewAccess(
   if (viewerId !== ownerId) {
     const inputs = await readProjectionInputs(sc, [ownerId], [highlightId]);
     const projectable = filterProjectable([record], viewerId, "public_projection", inputs, log, "resolveViewAccess");
-    if (projectable.length === 0) return notFound;
+    if (projectable.length === 0) return notFound("withheld");
   }
 
   return { ok: true, h: record };
+}
+
+/**
+ * `decideHighlightViewAccess` for a LIST of ids, in a fixed number of reads.
+ *
+ * The collection preview used to call the single verdict once per saved
+ * Highlight — a highlights read, two blocks reads, maybe a circle or trip
+ * read and two §10/§11 reads, each awaited in turn, for up to a hundred rows
+ * (census-highlights-memories §AE, verifier F5). This is the same ladder, rung
+ * for rung, over the whole page: one highlights read, one two-direction blocks
+ * read over the owner set, one circle read and one trip read for the owners
+ * that need them, one §10/§11 read. `highlightViewAccessParity.test.ts` holds
+ * it to the single verdict row by row, so the two cannot drift.
+ *
+ * A failed read refuses only the rows it decides: an unreadable highlights read
+ * answers `unreadable` for every id, an unreadable blocks read `blocks_unreadable`
+ * for every row the viewer does not own.
+ */
+export async function decideHighlightViewAccessMany(
+  sc: SupabaseClient,
+  viewerId: string,
+  highlightIds: readonly string[],
+  log?: { error: (obj: unknown, msg: string) => void },
+): Promise<Map<string, HighlightViewVerdict>> {
+  const out = new Map<string, HighlightViewVerdict>();
+  const ids = [...new Set(highlightIds)];
+  if (ids.length === 0) return out;
+  const notFound = (reason: Exclude<HighlightViewRefusal, "unreadable">): HighlightViewVerdict =>
+    ({ ok: false, code: "not_found", message: "Highlight not found", reason });
+
+  const { data: rows, error: hErr } = await sc
+    .from("highlights")
+    .select("id, owner_id, visibility, expires_at, deleted_at, archived_at")
+    .in("id", ids);
+  if (hErr) {
+    log?.error({ err: hErr, count: ids.length }, "highlights: highlight read failed — cannot resolve access for the list");
+    for (const id of ids) out.set(id, { ok: false, code: "db_error", message: hErr.message, reason: "unreadable" });
+    return out;
+  }
+  const byId = new Map<string, HighlightRecord>();
+  for (const r of (rows ?? []) as HighlightRecord[]) byId.set(r.id, r);
+  for (const id of ids) if (!byId.has(id)) out.set(id, notFound("missing"));
+
+  const records = [...byId.values()];
+  const others = [...new Set(records.map((r) => r.owner_id).filter((o) => o !== viewerId))];
+
+  // Blocks, both directions, ONE request each way over the owner set.
+  let blocksUnreadable = false;
+  const blocked = new Set<string>();
+  if (others.length > 0) {
+    const [byMe, ofMe] = await Promise.all([
+      sc.from("blocks").select("blocked_id").eq("blocker_id", viewerId).in("blocked_id", others),
+      sc.from("blocks").select("blocker_id").eq("blocked_id", viewerId).in("blocker_id", others),
+    ]);
+    if (byMe.error || ofMe.error) {
+      blocksUnreadable = true;
+    } else {
+      for (const r of (byMe.data ?? []) as Array<{ blocked_id: string }>) blocked.add(r.blocked_id);
+      for (const r of (ofMe.data ?? []) as Array<{ blocker_id: string }>) blocked.add(r.blocker_id);
+    }
+  }
+
+  const circleOwners = [...new Set(records.filter((r) => r.owner_id !== viewerId && r.visibility === "circle_only").map((r) => r.owner_id))];
+  const tripOwners = [...new Set(records.filter((r) => r.owner_id !== viewerId && r.visibility === "trip_only").map((r) => r.owner_id))];
+  const circleMembers = new Set<string>();
+  let shared = new Set<string>();
+  const [circleRows, shares] = await Promise.all([
+    circleOwners.length > 0 && !blocksUnreadable
+      ? sc.from("circle_memberships").select("user_id").eq("other_id", viewerId).in("user_id", circleOwners)
+      : Promise.resolve(null),
+    tripOwners.length > 0 && !blocksUnreadable ? sharesAcceptedTrip(sc, viewerId, tripOwners) : Promise.resolve(null),
+  ]);
+  if (circleRows && circleRows.error) {
+    log?.error({ err: circleRows.error }, "highlights: circle membership lookup failed — withholding circle_only highlights");
+  } else if (circleRows) {
+    for (const r of (circleRows.data ?? []) as Array<{ user_id: string }>) circleMembers.add(r.user_id);
+  }
+  if (shares) {
+    if (shares.ok) shared = shares.shared;
+    else log?.error({ err: shares.error }, "highlights: trip membership lookup failed — withholding trip_only highlights");
+  }
+
+  const visibleToViewer: HighlightRecord[] = [];
+  for (const r of records) {
+    const mine = r.owner_id === viewerId;
+    if (!mine && blocksUnreadable) { out.set(r.id, notFound("blocks_unreadable")); continue; }
+    if (!mine && blocked.has(r.owner_id)) { out.set(r.id, notFound("blocked")); continue; }
+    const ok = canViewHighlight(viewerId, r, {
+      viewerFollowsOwner: mine || circleMembers.has(r.owner_id),
+      sharesTrip: mine || shared.has(r.owner_id),
+    });
+    if (!ok) { out.set(r.id, notFound("invisible")); continue; }
+    if (mine) { out.set(r.id, { ok: true, h: r }); continue; }
+    visibleToViewer.push(r);
+  }
+
+  if (visibleToViewer.length > 0) {
+    const inputs = await readProjectionInputs(
+      sc,
+      [...new Set(visibleToViewer.map((r) => r.owner_id))],
+      visibleToViewer.map((r) => r.id),
+    );
+    const projectable = new Set(
+      filterProjectable(visibleToViewer, viewerId, "public_projection", inputs, log, "decideHighlightViewAccessMany").map((r) => r.id),
+    );
+    for (const r of visibleToViewer) out.set(r.id, projectable.has(r.id) ? { ok: true, h: r } : notFound("withheld"));
+  }
+  return out;
 }
 
 /**
@@ -1326,8 +1453,13 @@ router.get("/highlights/active", async (req, res) => {
   // §10 — a refused RESURFACE or SHARE consent withholds from a proactive feed.
   // The policy read doubles as the location-precision read below.
   const policies = await readProjectionPolicies(sc, surviving.map((h: any) => h.id as string));
+  // ONE inputs object for the filter and the serving-step audit below, so the
+  // audit cannot be handed a narrower set of controls than the filter used
+  // (lane R wave-1 verification, F9: a viewer-scoped control dropped from the
+  // audit alone went unnoticed).
+  const projectionInputs = { controls: suppressed, viewerControls: viewerSuppressed, policies };
   const consented = filterProjectable(
-    surviving as any[], user.id, "proactive_resurfacing", { controls: suppressed, viewerControls: viewerSuppressed, policies }, req.log, "GET /highlights/active",
+    surviving as any[], user.id, "proactive_resurfacing", projectionInputs, req.log, "GET /highlights/active",
   );
 
   if (consented.length === 0) {
@@ -1343,9 +1475,7 @@ router.get("/highlights/active", async (req, res) => {
   // §24 `resurfacing_suppression_violations` — the serving step re-asks the
   // §11 question of every row it is about to hand over, counts any that should
   // not be here (must be zero) and drops them (census H221).
-  const served = auditServedResurfacing(
-    disclosed, user.id, { controls: suppressed, viewerControls: viewerSuppressed, policies }, req.log, "GET /highlights/active",
-  );
+  const served = auditServedResurfacing(disclosed, user.id, projectionInputs, req.log, "GET /highlights/active");
 
   // Batch metrics + author profiles
   const [viewRows, likeRows, viewedRows, likedRows, profileRows] = await Promise.all([
@@ -2825,8 +2955,13 @@ router.get("/highlights/following-feed", async (req, res) => {
   // 5c. §10 consent, ALSO before the page is cut, for the same reason. The
   // policy read is over the pre-slice set and is reused for the location clamp.
   const policies = await readProjectionPolicies(sc, surviving.map((h: any) => h.id as string));
+  // ONE inputs object for the filter and the serving-step audit below, so the
+  // audit cannot be handed a narrower set of controls than the filter used
+  // (lane R wave-1 verification, F9: a viewer-scoped control dropped from the
+  // audit alone went unnoticed).
+  const projectionInputs = { controls: suppressed, viewerControls: viewerSuppressed, policies };
   const consented = filterProjectable(
-    surviving as any[], user.id, "proactive_resurfacing", { controls: suppressed, viewerControls: viewerSuppressed, policies }, req.log, "GET /highlights/following-feed",
+    surviving as any[], user.id, "proactive_resurfacing", projectionInputs, req.log, "GET /highlights/following-feed",
   );
 
   const visible = feedLimit != null ? consented.slice(0, feedLimit) : consented;
@@ -2863,9 +2998,7 @@ router.get("/highlights/following-feed", async (req, res) => {
   // §10 — clamp each location to the owner's selected precision.
   const disclosed = applyLocationPrecision(visible as any[], policies, req.log, "GET /highlights/following-feed");
   // §24 `resurfacing_suppression_violations` — see GET /highlights/active.
-  const served = auditServedResurfacing(
-    disclosed, user.id, { controls: suppressed, viewerControls: viewerSuppressed, policies }, req.log, "GET /highlights/following-feed",
-  );
+  const served = auditServedResurfacing(disclosed, user.id, projectionInputs, req.log, "GET /highlights/following-feed");
 
   const [viewRows2, likeRows2, viewedRows2, likedRows2, profileRows] = await Promise.all([
     sc.from("highlight_views").select("highlight_id").in("highlight_id", highlightIds),

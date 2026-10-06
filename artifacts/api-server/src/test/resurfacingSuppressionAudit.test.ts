@@ -84,6 +84,22 @@ describe("the detector: a suppressed row at the serving step is counted AND drop
     assert.equal(readResurfacingSuppressionAudit().violations, 1);
   });
 
+  it("a VIEWER-scoped control (HIDE_PERSON_FROM_RESURFACING, set by the viewer about the owner) is a violation too", () => {
+    const { lines, log } = recordingLog();
+    const out = auditServedResurfacing(
+      [ROW_A, MINE], VIEWER,
+      {
+        controls: suppressions([]),
+        viewerControls: suppressions([{ control: "HIDE_PERSON_FROM_RESURFACING", subjectId: OWNER }]),
+        policies: NO_POLICIES,
+      },
+      log, "unit",
+    );
+    assert.deepEqual(out.map((r) => r.id), [MINE.id], "every row of the hidden person is dropped; the viewer's own stays");
+    assert.equal(readResurfacingSuppressionAudit().violations, 1);
+    assert.equal(lines[0]!.obj.metric, RESURFACING_SUPPRESSION_VIOLATIONS);
+  });
+
   it("a control that does not suppress proactive feeds is not a violation", () => {
     const { lines, log } = recordingLog();
     const out = auditServedResurfacing(
