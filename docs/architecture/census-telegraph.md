@@ -1398,7 +1398,7 @@ depends on DDL no database has would stay W however good the code was.
 
 | id | stays | why it did not move |
 | --- | --- | --- |
-| T9 | W | **Conversation header: name · availability · safe presence** — The SERVER half is built and tested — `routes/telegraphSharedContext.ts:232#/threads/:threadId/conversation-header` returns the counterpart's explicit, unexpired, visibility-admitted availability window and their consented coarse presence, and `needs_help` is never selected (`routes/telegraphSharedContext.ts:332#status_label`). The CLIENT header still renders name and one subtitle tag only; nothing consumes the new route yet. A route with no screen is not a header. |
+| T9 | W | **Conversation header: name · availability · safe presence** — The SERVER half is built and tested — `routes/telegraphSharedContext.ts:232#/threads/:threadId/conversation-header` returns the counterpart's explicit, unexpired, visibility-admitted availability window and their consented coarse presence, and `needs_help` is never selected (`routes/telegraphSharedContext.ts:357#status_label`). The CLIENT header still renders name and one subtitle tag only; nothing consumes the new route yet. A route with no screen is not a header. |
 | T28 | W | **Availability expires automatically and revokes across Telegraph, Discovery and Compass** — Telegraph now READS availability, which it never did, and re-evaluates expiry on the read through Passport's own predicate (`routes/telegraphSharedContext.ts:269#projectPublicWindows`), so an expired window cannot render as current (`test/telegraphSharedContext.test.ts:604`). It stays W for the ceiling §8.5 already records: `open_to_plans_windows_enabled` is seeded OFF and no database has it on, so on every deployment of this tree the read returns `enabled:false` and nothing else. |
 | T123 | W | **Components must support Portava light/dark themes** — The missing half is built — a dark palette, a resolver and a hook (`travel-buddy-standalone/src/features/telegraph/theme/telegraphTheme.ts:86#DARK`) — and the new feature components use it. The inbox, the conversation shell and the message bubbles still import the static single-palette `TG` from `travel-buddy-standalone/src/theme/telegraphTokens.ts:10`, so "components support both themes" is true of the rail and false of Telegraph. Adoption is the remaining work, not construction. |
 | T124 | W | **Restrained teal/cyan as operational emphasis; stronger attention reserved for safety and urgent changes** — Same boundary. The separation now EXISTS and is enforced by test (`travel-buddy-standalone/src/features/telegraph/__tests__/telegraphTheme.component.test.ts:92`), and the rail is the first surface where vermilion means only "urgent change". Everywhere else in Telegraph the accent is still `color.signal` for ordinary actions. |
@@ -2543,15 +2543,15 @@ why. The derivations that can be both true and false read real state:
 `canCreatePlan` refuses a trip thread to a non-crew viewer through
 `isAcceptedTripMember`, the same helper `routes/telegraphCommands.ts:410` calls
 at execution, so the projection cannot disagree with the gate
-(`domain/telegraph/policies/conversationCapabilityPolicy.ts:301`);
+(`domain/telegraph/policies/conversationCapabilityPolicy.ts:305`);
 `canViewPreMembershipHistory` reads the live §14.3 bound through the same
 `visibleFromOf` the message reader uses
-(`domain/telegraph/policies/conversationCapabilityPolicy.ts:334`), so with
+(`domain/telegraph/policies/conversationCapabilityPolicy.ts:339`), so with
 `telegraph_history_bound_enabled` OFF the membership query does not even NAME
 `visible_from_at` and a database without migration 2400 is never asked for it;
 `canShareExactLocation` names WHICH wall stopped it — no active grant, or a
 grant whose precision class is below EXACT
-(`domain/telegraph/policies/conversationCapabilityPolicy.ts:308-309`).
+(`domain/telegraph/policies/conversationCapabilityPolicy.ts:313-314`).
 
 **The block is not told.** `TELEGRAPH_AUTH_BLOCKED` is a true reason that would
 reveal the block to the person it was made about, so the policy returns it
@@ -2608,14 +2608,14 @@ places in a SEPARATE field from prose rather than merely sorting them higher.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T199 | W | **C** | §14.1 capability `canCreatePlan` — The capability is modelled and derived server-side, and the operation it names exists. `domain/telegraph/policies/conversationCapabilityPolicy.ts:301` refuses a trip thread to a non-crew viewer through `isAcceptedTripMember` — the same helper `routes/telegraphCommands.ts:410` calls at execution — and grants otherwise. The original row's complaint ("the enforcement is real; the capability is not modelled") is answered without moving the enforcement. |
-| T200 | W | **W** | §14.1 capability `canShareExactLocation` — Now modelled and derived from the location-scope input, and it names which wall stopped it (`conversationCapabilityPolicy.ts:308-309`). Holds W for the reason the original row gave and this work confirms: `trip_crew_location_sessions.visibility_level` tops out at `nearby`, which is APPROXIMATE, so the capability is structurally always false. A conversation still cannot grant exact location because no store can express it. |
-| T201 | N | **W** | §14.1 capability `canInvite` — Modelled and derived, with the §14.3-grounded reason: a DM answers `TELEGRAPH_POLICY_DM_INVITE_FORMS_NEW_GROUP`, a trip or circle thread answers `TELEGRAPH_POLICY_MEMBERSHIP_DERIVED` (`conversationCapabilityPolicy.ts:314`). W and not C: there is still no add-participant operation on any thread, so the capability is permanently false and `CAPABILITY_ENFORCEMENT_SITES` records `null` for it (`domain/telegraph/contracts/conversationCapabilities.ts:109`). |
-| T202 | N | **W** | §14.1 capability `canRequestPayment` — Modelled; §20's prohibition is now stated as a capability rather than left as an absence (`conversationCapabilityPolicy.ts:319`). W for the same reason as T201 — there is no payment request to gate, so the capability cannot be exercised in either direction. |
-| T203 | W | **C** | §14.1 capability `canCreateBooking` — Derived from the booking-state and conversation-type inputs: a thread that already owns a booking refuses a second one from inside itself, a group thread refuses because a booking is pairwise, a healthy DM grants (`conversationCapabilityPolicy.ts:323-326`). The Rent-a-Buddy gates remain the enforcement site and are named as such (`conversationCapabilities.ts:111`). |
-| T204 | N | **W** | §14.1 capability `canBroadcast` — Modelled and permanently false with `TELEGRAPH_POLICY_NO_BROADCAST` (`conversationCapabilityPolicy.ts:329`). No broadcast primitive exists; the capability now says so instead of being silent. |
-| T205 | W | **C** | §14.1 capability `canViewPreMembershipHistory` — Modelled and derived from the LIVE bound, through the same `visibleFromOf` the message reader uses (`conversationCapabilityPolicy.ts:334`). The original row said "not modelled — and the rule it would express is violated"; the violation half was closed on this tree by migration 2400 before this pass (see T211 below), and the model half is closed here. |
-| T206 | N | **C** | §14.1 capability `canSeeGroupReadReceipts` — Modelled (`conversationCapabilityPolicy.ts:340-342`) AND given something to gate: `GET /threads/:threadId/read-receipts` (`server/telegraph/readReceiptsRoute.ts:57`) returns per-member read positions for a group thread and refuses a direct one, clamping another member's position to the caller's own §14.3 floor (`:120`). |
+| T199 | W | **C** | §14.1 capability `canCreatePlan` — The capability is modelled and derived server-side, and the operation it names exists. `domain/telegraph/policies/conversationCapabilityPolicy.ts:305` refuses a trip thread to a non-crew viewer through `isAcceptedTripMember` — the same helper `routes/telegraphCommands.ts:410` calls at execution — and grants otherwise. The original row's complaint ("the enforcement is real; the capability is not modelled") is answered without moving the enforcement. |
+| T200 | W | **W** | §14.1 capability `canShareExactLocation` — Now modelled and derived from the location-scope input, and it names which wall stopped it (`conversationCapabilityPolicy.ts:313-314`). Holds W for the reason the original row gave and this work confirms: `trip_crew_location_sessions.visibility_level` tops out at `nearby`, which is APPROXIMATE, so the capability is structurally always false. A conversation still cannot grant exact location because no store can express it. |
+| T201 | N | **W** | §14.1 capability `canInvite` — Modelled and derived, with the §14.3-grounded reason: a DM answers `TELEGRAPH_POLICY_DM_INVITE_FORMS_NEW_GROUP`, a trip or circle thread answers `TELEGRAPH_POLICY_MEMBERSHIP_DERIVED` (`conversationCapabilityPolicy.ts:319`). W and not C: there is still no add-participant operation on any thread, so the capability is permanently false and `CAPABILITY_ENFORCEMENT_SITES` records `null` for it (`domain/telegraph/contracts/conversationCapabilities.ts:109`). |
+| T202 | N | **W** | §14.1 capability `canRequestPayment` — Modelled; §20's prohibition is now stated as a capability rather than left as an absence (`conversationCapabilityPolicy.ts:324`). W for the same reason as T201 — there is no payment request to gate, so the capability cannot be exercised in either direction. |
+| T203 | W | **C** | §14.1 capability `canCreateBooking` — Derived from the booking-state and conversation-type inputs: a thread that already owns a booking refuses a second one from inside itself, a group thread refuses because a booking is pairwise, a healthy DM grants (`conversationCapabilityPolicy.ts:328-331`). The Rent-a-Buddy gates remain the enforcement site and are named as such (`conversationCapabilities.ts:111`). |
+| T204 | N | **W** | §14.1 capability `canBroadcast` — Modelled and permanently false with `TELEGRAPH_POLICY_NO_BROADCAST` (`conversationCapabilityPolicy.ts:334`). No broadcast primitive exists; the capability now says so instead of being silent. |
+| T205 | W | **C** | §14.1 capability `canViewPreMembershipHistory` — Modelled and derived from the LIVE bound, through the same `visibleFromOf` the message reader uses (`conversationCapabilityPolicy.ts:339`). The original row said "not modelled — and the rule it would express is violated"; the violation half was closed on this tree by migration 2400 before this pass (see T211 below), and the model half is closed here. |
+| T206 | N | **C** | §14.1 capability `canSeeGroupReadReceipts` — Modelled (`conversationCapabilityPolicy.ts:345-347`) AND given something to gate: `GET /threads/:threadId/read-receipts` (`server/telegraph/readReceiptsRoute.ts:57`) returns per-member read positions for a group thread and refuses a direct one, clamping another member's position to the caller's own §14.3 floor (`:120`). |
 | T207 | W | **C** | §14.1 capabilities derived server-side from the named inputs — All eight inputs are read under labelled headings and recorded in `inputsRead` (`conversationCapabilityPolicy.ts:116`, `:132`, `:152`, `:180`, `:190`, `:203`, `:221`, `:234`), and the test asserts the recorded set against the declared one. Nothing is taken from a client: the route derives everything from the verified user id and the service-role reads. |
 | T211 | W | **W** | §14.3 new members do not automatically receive pre-membership history — **Re-derived, not re-measured by this pass's work.** The original verdict ("Violated") is STALE: migration `2400_telegraph_history_bound.sql` and `services/groupChatHistoryBound.ts:57` reached this tree in commit `42aeac38e`, and `routes/messaging.ts:1870` now applies the bound in the query. It holds W and not C for the reason the migration's own header gives: the bound is read only while `telegraph_history_bound_enabled` is TRUE, and no database has that flag on. |
 | T272 | N | **C** | §21 Telegraph search is object-aware and authorization-scoped — Three routes (`server/telegraph/searchRoute.ts:47`, `:70`, `:97`) over one service that computes the authorized set first (`services/telegraphSearch.ts:101`) and classifies every hit into a bucket (`domain/telegraph/contracts/conversationSearch.ts:137`). No migration, no flag: it reads columns that exist on every deployment. |
@@ -4952,7 +4952,7 @@ three here are three different kinds.
    membership was identical. A trust restriction is not: it is held by one
    person. One restriction row on BOB made "resolved for the caller"
    distinguishable from "resolved for somebody else in the thread"
-   (`artifacts/api-server/src/test/telegraphProjectionPermissions.test.ts:250#it("the block is resolved for the CALLER, not for anybody else in the thread", async () => {`),
+   (`artifacts/api-server/src/test/telegraphProjectionPermissions.test.ts:254#it("the block is resolved for the CALLER, not for anybody else in the thread", async () => {`),
    and P5 then failed. The lesson is narrower than "write more tests": a
    per-viewer assertion needs an input that is per-viewer, and a fixture built
    only from symmetric relations cannot make one.
@@ -4965,7 +4965,7 @@ move them, which is the question §13 exists to answer.
 
 | id | §13.4 said | why that is wrong | group |
 | --- | --- | --- | --- |
-| T201 | BRANCH — "An add-participant operation is code over `message_thread_members`; nothing storage-shaped is missing." | **There is no thread type on which an add-participant operation would be correct**, and the tree says so twice. `message_threads.thread_type` is exactly `direct` / `trip` / `circle`, enforced by a CHECK constraint (`artifacts/api-server/baseline/20260819_baseline_structure.sql:7526#CONSTRAINT`) and by `thread_type_enum` (`:855#CREATE`). §14.3 says extending a DM FORMS A NEW GROUP — and there is no group thread type to form, so that is a migration. On a trip or circle thread, `syncTripChatMembers` and `syncCircleChatMembers` set `left_at = now` on any member who is not in the source roster (`artifacts/api-server/src/services/groupChatSync.ts:39#export async function syncTripChatMembers(`), so a hand-added participant is removed by the next sync. The capability policy already states both refusals as policy, not as absence (`artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:314#deny(d, "canInvite", conversationType === "direct"`). | BRANCH → **NEITHER** |
+| T201 | BRANCH — "An add-participant operation is code over `message_thread_members`; nothing storage-shaped is missing." | **There is no thread type on which an add-participant operation would be correct**, and the tree says so twice. `message_threads.thread_type` is exactly `direct` / `trip` / `circle`, enforced by a CHECK constraint (`artifacts/api-server/baseline/20260819_baseline_structure.sql:7526#CONSTRAINT`) and by `thread_type_enum` (`:855#CREATE`). §14.3 says extending a DM FORMS A NEW GROUP — and there is no group thread type to form, so that is a migration. On a trip or circle thread, `syncTripChatMembers` and `syncCircleChatMembers` set `left_at = now` on any member who is not in the source roster (`artifacts/api-server/src/services/groupChatSync.ts:39#export async function syncTripChatMembers(`), so a hand-added participant is removed by the next sync. The capability policy already states both refusals as policy, not as absence (`artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:319#deny(d, "canInvite", conversationType === "direct"`). | BRANCH → **NEITHER** |
 | T218 | BRANCH — "Promotion under safety mode is client layout." | T218's subject is what SAFETY MODE promotes. T217 — the mode itself — is NEITHER in §13.4's own table: "A conversation-level safety mode does not exist in either tree." A layout that reorders affordances under a mode that has no referent cannot be written; there is nothing to reorder under. §13.1's tie-break is explicit that a row takes the HARDEST gate still standing, NEITHER first. | BRANCH → **NEITHER** |
 | T4 | BRANCH — "The rail has no `memories` resolver. OWNER DECISION on private-by-default before it is written." | The cell names the blocker itself. §13.1's NEITHER arm is the one this document already used for T202 ("An owner product decision, not a build") and T255 ("an owner product decision, not a deploy and not code"). A decision about whether private-by-default content may surface in a shared rail is the same kind of thing, and it stands before the resolver rather than after it. | BRANCH → **NEITHER** |
 | T396 | BRANCH — "OWNER DECISION: the spec states two different six-level ladders and they disagree at P3/P4/P5." | Same. A branch cannot pick which of two contradictory spec ladders is the real one; writing either is a guess that a later reading can overturn. This is the clearest case of the four, because the cell states that the SPEC is the obstacle. | BRANCH → **NEITHER** |
@@ -4983,7 +4983,7 @@ four move to NEITHER (50 → 46). NEITHER becomes 93. The four groups still sum 
 | T37 | W | **C** | §5's Travel family: Trip, Trip stage, plan, event, route, reservation-safe derivative, layover plan. Was four of seven. `ROUTE` had a vocabulary entry and no loader; RESERVATION and LAYOVER_PLAN had no name at all, though `trip_reservations` and `layover_sessions` are both in the production inventory — the gap was in the vocabulary, not the database. The reservation loader is the one that carries a rule beyond "does this viewer see it": SAFE means the projection carries no confirmation reference, no pasted email and no extraction, asserted by scanning the whole serialized reference rather than named fields. Seven of seven. |
 | T38 | W | **C** | §5's Places family: place, Hidden Gem, map pin, neighborhood, meetup point. Was four of five; NEIGHBORHOOD "deliberately has no loader ... rather than pretending". What §11 refused to pretend about was an authorization model, and `neighborhood_areas` has none to get wrong: it is derived public reference data with no owner and no visibility column. It now resolves, carrying its `confidence` as status so a low-confidence grid cell and a high-confidence OSM polygon are not the same claim. Five of five. **The citation this row carries, `test/telegraphShare.test.ts:295`, still resolves and its `it(...)` is unchanged — but the assertion inside it was FALSIFIED by this pass and now names `VISA_CARD`, which is the family that is in the vocabulary with no loader today.** |
 | T3 | W | **C** | Pillar **Share** — "any eligible Portava object moves through a safe permission-aware share projection". The projection half was already right; the row stayed W because "Media (§5's fifth family) is not a shareable type at all". It is now: `MEDIA` is in the vocabulary and resolves through `media_assets` with the same contract as the other twenty-one types. All five families have loaders and all twenty-two types answer preview, current state, actions, deep link, search behaviour and revocation. **Stated so nobody over-reads this C: `media_assets.media_type` admits `image` and `video` only, so §6.2's voice, GIF and file kinds remain unshareable — they have no row shape in any migration, which is T40 and is NEITHER. "Any eligible object" is satisfied because an object that cannot be stored is not an eligible object; it is not satisfied in the sense that Telegraph can carry a voice note.** |
-| T290 | W | **C** | §24 `ConversationProjection` — "renderable ordered thread WITH CURRENT PERMISSIONS". §12's restatement left exactly one gap: "it still carries no permissions block, which is the half §24 names explicitly". `GET /threads/:threadId/messages` now answers one (`artifacts/api-server/src/routes/messaging.ts:2660#permissions:`), carrying §14.1's ten capabilities, their per-capability reasons, which of the eight inputs were read, and `degraded` when one of them could not be. The block is ASKED of `resolveConversationCapabilities` (`artifacts/api-server/src/routes/messaging.ts:2652#const resolvedCapabilities = await resolveConversationCapabilities(sc, {`) rather than re-derived, and the test compares it field-by-field against that resolver run directly on the same fixture (`artifacts/api-server/src/test/telegraphProjectionPermissions.test.ts:213#it("the projection's block EQUALS resolveConversationCapabilities on the same fixture", async () => {`) — a second implementation of §14.1 would pass a "has ten keys" test and fail that one, which is the failure mode being guarded. It gates nothing: `CAPABILITY_ENFORCEMENT_SITES` still names where each refusal happens. `PRJ-02`'s note is corrected in the same pass (`artifacts/api-server/src/domain/telegraph/projections/projectionRegistry.ts:69#id: "PRJ-02",`), which had said the block "does not exist" — stale since T207 went C. **Why this is C and not W on history bounding: T290's requirement is the projection; the §14.3 bound is T211's, is flag-gated, and §12's own restatement recorded it as gained. PRJ-02 stays `partial` for that reason and this row does not.** |
+| T290 | W | **C** | §24 `ConversationProjection` — "renderable ordered thread WITH CURRENT PERMISSIONS". §12's restatement left exactly one gap: "it still carries no permissions block, which is the half §24 names explicitly". `GET /threads/:threadId/messages` now answers one (`artifacts/api-server/src/routes/messaging.ts:2660#permissions:`), carrying §14.1's ten capabilities, their per-capability reasons, which of the eight inputs were read, and `degraded` when one of them could not be. The block is ASKED of `resolveConversationCapabilities` (`artifacts/api-server/src/routes/messaging.ts:2652#const resolvedCapabilities = await resolveConversationCapabilities(sc, {`) rather than re-derived, and the test compares it field-by-field against that resolver run directly on the same fixture (`artifacts/api-server/src/test/telegraphProjectionPermissions.test.ts:217#it("the projection's block EQUALS resolveConversationCapabilities on the same fixture", async () => {`) — a second implementation of §14.1 would pass a "has ten keys" test and fail that one, which is the failure mode being guarded. It gates nothing: `CAPABILITY_ENFORCEMENT_SITES` still names where each refusal happens. `PRJ-02`'s note is corrected in the same pass (`artifacts/api-server/src/domain/telegraph/projections/projectionRegistry.ts:69#id: "PRJ-02",`), which had said the block "does not exist" — stale since T207 went C. **Why this is C and not W on history bounding: T290's requirement is the projection; the §14.3 bound is T211's, is flag-gated, and §12's own restatement recorded it as gained. PRJ-02 stays `partial` for that reason and this row does not.** |
 
 ### 15.7 The restated headline
 
@@ -6516,7 +6516,7 @@ a `friends_only` Memory resolving for a non-friend — measured, see §21.6.
 | T11 | **W** | The LAYER is built and served (§21.2) and unresolved actions are separated from conversation by a partition the route enforces. It stays W because the separation is not yet DRAWN: `travel-buddy-standalone/app/messages/[id].tsx` still renders one stream, and this lane holds no client file. The remaining work is a client that consumes `GET /threads/:id/layers`; the server half it needs now exists. |
 | T218 | **W** | §15.2's promotion list now EXISTS as server-side data in the spec's own order — trusted contact, current status, official help, route/return, call, block/report, location scope, with entertainment de-prioritized (`services/telegraph/safetyMode.ts:143#export const SAFETY_PROMOTED`) — and it is served with the mode, so the ordering is one answer both clients would get rather than two layouts. It stays W for exactly the half the row names: **nothing reorders**. `components/ThreadSafetySheet.tsx` and the conversation screen are client files this lane does not hold. §13.4's note that "a layout that reorders affordances under a mode that has no referent cannot be written" is answered — the referent is T217 — but the layout is not. |
 | T12 | **W** | **Semantic layer NOW.** The row's reason — "it is a PANEL, not a LAYER: the message stream underneath is unchanged" — is answered on the server by the same partition T11 gets: a §9.1 quick state, a rendezvous, a SAFETY message, a LOCATION message and a NOW-class action proposal are all lifted OUT of `talk` and into `now` (`services/telegraph/layers.ts:160#export function layerOfMessage`). "Minimal conversation" is now EXPRESSIBLE — the stream the client is handed is genuinely shorter while the thread is coordinating. It stays W for the same reason T11 does: nothing draws it yet, and this lane holds no client file. |
-| T262 | **W** | **§20 Trips.** Was two of five, corrected to three by §13.1 (TRIP is shareable). **Today/next context is now four of five**: `GET /api/threads/:id/trip-context` (`routes/telegraphSharedContext.ts:678#"/threads/:threadId/trip-context"`) reads `trip_plan_items` — Trips' own canonical table, written by nothing here — and answers today's items and the next one after them, membership-gated TWICE. The second gate is the point: it re-verifies ACCEPTED trip membership rather than trusting the thread roster, because T319 records that the two writes are not one transaction and a removed member is on the roster until a sync runs. It returns no coordinates at all — they are not selected, which is stronger than stripped (`routes/telegraphSharedContext.ts:611#const TRIP_CONTEXT_COLUMNS`) — and it states its own day frame as UTC rather than implying a destination-local one it cannot compute (census T423). Fifth item, the Trip Kernel commands, is wiring into `server/trips/commandRoute.ts`, which this lane does not own. |
+| T262 | **W** | **§20 Trips.** Was two of five, corrected to three by §13.1 (TRIP is shareable). **Today/next context is now four of five**: `GET /api/threads/:id/trip-context` (`routes/telegraphSharedContext.ts:703#"/threads/:threadId/trip-context"`) reads `trip_plan_items` — Trips' own canonical table, written by nothing here — and answers today's items and the next one after them, membership-gated TWICE. The second gate is the point: it re-verifies ACCEPTED trip membership rather than trusting the thread roster, because T319 records that the two writes are not one transaction and a removed member is on the roster until a sync runs. It returns no coordinates at all — they are not selected, which is stronger than stripped (`routes/telegraphSharedContext.ts:636#const TRIP_CONTEXT_COLUMNS`) — and it states its own day frame as UTC rather than implying a destination-local one it cannot compute (census T423). Fifth item, the Trip Kernel commands, is wiring into `server/trips/commandRoute.ts`, which this lane does not own. |
 | T40 | **W** | **Evidence correction, verdict unchanged.** "Photo and video only … No voice, GIF or file" is stale on the GIF clause: §6.2's GIF kind is sendable, validated and indexed — `GifPayload` (`services/telegraph/messageKinds.ts:61#export const GifPayload`), in `SENDABLE_ENVELOPE_KINDS` (`services/telegraph/messageKinds.ts:197#export const SENDABLE_ENVELOPE_KINDS`), with its own drawer tab and its own renderer (T64). So §5's Media family is three of five carriable, not two. It stays W and this lane did not touch it: voice and file both need the MIME and storage widening §13.4 names, and §13.4's other note stands — there is no GIF PROVIDER, so a kind that can be carried still cannot be obtained. A correction to the count is not a change to the verdict. |
 | T70 | **W** | §7.2's threshold is now checkable on one path: `POST /threads/:id/seen` takes a MESSAGE, not a clock reading, refuses one that is absent, deleted, in another thread or outside the caller's §14.3 window, and stamps the MESSAGE's own `created_at` so "seen" cannot run ahead of what was sent (`routes/telegraphLifecycle.ts:453#const threshold = String(t.created_at)`). The marker never moves backwards. It stays W because the legacy path in `routes/messaging.ts` still stamps `now()` on any authenticated call and this lane does not own that file — while both paths exist, seen is still whatever the client asserts on the one that is wired into the app. |
 
@@ -6725,7 +6725,7 @@ The programme's stated ratio — roughly one hollow assertion per five mutations
    stripping them, because there is then no branch that could stop stripping". Nothing pinned the
    SELECT. A test now reads the route's own source, parses `TRIP_CONTEXT_COLUMNS` and fails on
    `lat`, `lng`, `latitude`, `longitude` or `location_is_private`
-   (`routes/telegraphSharedContext.ts:611#const TRIP_CONTEXT_COLUMNS`). The narrow mutation then
+   (`routes/telegraphSharedContext.ts:636#const TRIP_CONTEXT_COLUMNS`). The narrow mutation then
    failed 39/1. The difference this buys is concrete: a later `...r` spread in `toContextItem`
    would leak coordinates with no change to the select, and the select is where the promise is made.
 
@@ -8693,7 +8693,7 @@ the first of them.
 | T191 | N | **C** | **§13.2 `coordination.started`.** Published when a session opens and NOT when a retry resolves to one (`lib/telegraphEvents.ts:893#export async function emitCoordinationStarted`) — a duplicate command is not a second evening. To the conversation, opener included: a session event that excluded the actor would leave the one device certainly showing the panel without the fact that opened it. |
 | T192 | N | **C** | **§13.2 `coordination.completed`.** Emitted from the ARROW the gate just accepted rather than from a re-read, so a REFUSED transition cannot fire it, and on BOTH of §9's terminal states with `terminalState` naming which (`lib/telegraphEvents.ts:917#export async function emitCoordinationCompleted`). See §33.4 for why one event covering two terminal states is the right reading of §13.2 and why collapsing them would not be. |
 | T150 | N | **W** | **`coordination_sessions`.** The evidence was "No table, service or route"; two thirds of that was stale by §21 and the third is answered the way T84's was — "a query is a route, not a table". `GET /api/me/coordination-sessions` (`routes/telegraphCoordination.ts:1391#  "/me/coordination-sessions",`) lists the caller's open sessions ACROSS every conversation they are still an active member of, each thread's rows bounded by that thread's own §14.3 window, from the SAME projection the thread view uses. Fourteen days rather than commitments' ninety, because §12 calls a session "TEMPORARY active real-world coordination state" and a session from three months ago is history. The per-thread read is no longer bounded by the general message scan either (`routes/telegraphCoordination.ts:205#async function readSessionRowsForThread`) — it was, and in a busy crew thread the coordination panel VANISHED mid-evening and came back when the chat went quiet. **It stays W because there is still no row per session**: nothing can be indexed, nothing a sweeper can advance, and no question can be asked that is not "scan the caller's own threads". §33.7 states why this lane did not write that table. |
-| T266 | N | **W** | **§20 Discovery — Discover Together.** `GET /api/threads/:id/discover-together` (`routes/telegraphSharedContext.ts:442#  "/threads/:threadId/discover-together",`) intersects the three inputs the row names and reports, per item, which of the three admitted it. AVAILABILITY invents no entitlement: it is read only on a TRIP thread and only after re-verifying ACCEPTED trip membership for the viewer AND for each other member — the gate `GET /api/trips/:id/availability` already runs for the same data, doubled for T262's reason, because the thread roster and the trip roster are not one transaction (T319). On a direct or circle thread the input is absent and the response names the reason rather than rendering "nobody is free". §4.3's expiry is re-evaluated on this read as well as being swept. TIME is an explicit number of hours with `frame: "UTC"` stated, never an implied destination-local "tonight" (T423). **It stays W for the half the row's title names**: the opportunity set is drawn from the conversation's own §3 shared context and NOT from Discovery's candidate corpus — ranking and proximity belong to another surface and this route does not reach into them. A reader who requires the Discovery corpus should read this row as unbuilt rather than partial. |
+| T266 | N | **W** | **§20 Discovery — Discover Together.** `GET /api/threads/:id/discover-together` (`routes/telegraphSharedContext.ts:467#  "/threads/:threadId/discover-together",`) intersects the three inputs the row names and reports, per item, which of the three admitted it. AVAILABILITY invents no entitlement: it is read only on a TRIP thread and only after re-verifying ACCEPTED trip membership for the viewer AND for each other member — the gate `GET /api/trips/:id/availability` already runs for the same data, doubled for T262's reason, because the thread roster and the trip roster are not one transaction (T319). On a direct or circle thread the input is absent and the response names the reason rather than rendering "nobody is free". §4.3's expiry is re-evaluated on this read as well as being swept. TIME is an explicit number of hours with `frame: "UTC"` stated, never an implied destination-local "tonight" (T423). **It stays W for the half the row's title names**: the opportunity set is drawn from the conversation's own §3 shared context and NOT from Discovery's candidate corpus — ranking and proximity belong to another surface and this route does not reach into them. A reader who requires the Discovery corpus should read this row as unbuilt rather than partial. |
 | T155 | N | **N** | **`conversation_snapshots` — evidence correction, verdict unchanged.** "Absent" is still true and this lane deliberately did not close it; see §33.7. Recorded here because the row was opened, priced and declined rather than overlooked. |
 
 **What would turn these red.** T168: a retry that mints a second session (the
@@ -10380,8 +10380,8 @@ migration, no flag, no database. `head_commit` is not re-declared.
 
 ### 45b.1 What changed
 
-- **One decision.** `artifacts/api-server/src/domain/telegraph/policies/restrictionSendPolicy.ts:116#export function decideRestrictedSend(`
-  over facts read by `artifacts/api-server/src/domain/telegraph/policies/restrictionSendPolicy.ts:153#export async function readRestrictionSendFacts(`.
+- **One decision.** `artifacts/api-server/src/domain/telegraph/policies/restrictionSendPolicy.ts:121#export function decideRestrictedSend(`
+  over facts read by `artifacts/api-server/src/domain/telegraph/policies/restrictionSendPolicy.ts:206#export async function readRestrictionSendFacts(`.
   The shared send guard calls it as gate 5, before the burst limit
   (`artifacts/api-server/src/lib/telegraphThreadWrite.ts:164#// 5. Trust restriction (OD-TRUST-5)`); the
   two inline doors in `routes/messaging.ts` call it through
@@ -10398,22 +10398,22 @@ migration, no flag, no database. `head_commit` is not re-declared.
   (`artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:330#export const KNOWN_WEAK_DOOR_CEILING = 2;`);
   lane C's branch closes `routes/telegraphChat.ts` (start-poll) and `routes/hiddenGems.ts`
   (share-telegraph), so **the merged result must read 0**.
-- **Proof.** `artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts:369#describe("2. every door x every gate"`:
+- **Proof.** `artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts:381#describe("2. every door x every gate"`:
   eight thread-addressed doors (text, media, typed, voice, share, coordination, the command door,
   `postPlainThreadMessage`) each refused by each of the six gates with nothing written, and the
   highlight door (§6 of the suite). The projection, the shared guard and the text door agree in
   every one of 9 worlds x 6 thread shapes
-  (`artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts:578#it("5.1 across every restriction world x thread shape`).
+  (`artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts:652#it("5.1 across every restriction world x thread shape`).
   40 mutations — every gate in the guard, every door's call to it, every inline gate on the two
   messaging doors, every term of the decision — and all 40 were killed (lane T2 report).
 
 ### 45b.2 What each restriction type stops — LANE T2's READING, FOR OWNER CONFIRMATION
 
-`artifacts/api-server/src/domain/telegraph/policies/restrictionSendPolicy.ts:78#export const RESTRICTION_SEND_SCOPE`:
+`artifacts/api-server/src/domain/telegraph/policies/restrictionSendPolicy.ts:83#export const RESTRICTION_SEND_SCOPE`:
 
 | Restriction | What the Trust service says it restricts | Sends refused |
 | --- | --- | --- |
-| `messaging` | "cannot initiate new conversations" | only a send that INITIATES contact: a `direct` thread with exactly one other active member who has never written in it, and that no `rent_buddy_bookings.telegraph_thread_id` owns |
+| `messaging` | "cannot initiate new conversations" | only a send that INITIATES contact: a `direct` thread with exactly one other active member who has never written in it, who has not ACCEPTED (or sent) a message request between the two (§45d.2), and that no `rent_buddy_bookings.telegraph_thread_id` owns |
 | `hosting` | cannot host group trips | none |
 | `private_plan_access` | cannot join private plans | none |
 | `location_plan_join` | cannot join location-based plans | none |
@@ -10435,20 +10435,27 @@ is not read at all.
   suite cases 4.1–4.3).
 - **Not through the gate at all.** Safe-return check-ins and alerts (`routes/safeReturn.ts`), the
   circle need-help alert (`routes/circle.ts` POST …/need-help), blocking (`routes/blocks.ts`),
-  reporting (`routes/moderation.ts`, `POST /messages/:id/report`, `POST /threads/:id/report`) and
-  appeals (`routes/appeals.ts`). Block, the three report doors and appeals are DRIVEN under every
-  restriction type (suite 4.4); reports and appeals under an unreadable state too.
+  muting and restricting a person (`routes/mutes.ts`, `routes/restrict.ts`), reporting
+  (`routes/reports.ts`, `routes/moderation.ts`, `POST /messages/:id/report`,
+  `POST /threads/:id/report`) and appeals (`routes/appeals.ts`). All of them are DRIVEN under every
+  restriction TYPE (suite 4.4). Under an unreadable state only the thread, message and moderation
+  report doors and appeals were driven and pass. *[Corrected 2026-10-06 (§45d.1): this said
+  "reports … under an unreadable state too" — true of three report doors, not of `POST /reports`.]*
 - **No moderation or appeals THREAD exists** — `message_threads.thread_type` admits direct, trip
   and circle — so there is no such reply to exempt.
-- **ONE MEASURED EXCEPTION, OUTSIDE THIS GATE, NOT FIXED HERE.** `POST /users/:id/block` answers
-  `500 "Permission check failed"` when the restriction state cannot be read: the permission engine
-  throws on `fail_closed`
+- **FOUR MEASURED EXCEPTIONS, OUTSIDE THIS GATE, NOT FIXED HERE** (re-measured 2026-10-06 after
+  merging `a27589615f`). When the restriction state cannot be read, four protective routes answer
+  `500 "Permission check failed"`: `POST /users/:id/block`
+  (`artifacts/api-server/src/routes/blocks.ts:33#const perms = await resolveInteractionPermissions(`),
+  `POST /users/:id/mute` (`artifacts/api-server/src/routes/mutes.ts:66#const perms = await resolveInteractionPermissions(`),
+  `POST /users/:id/restrict` (`artifacts/api-server/src/routes/restrict.ts:41#const perms = await resolveInteractionPermissions(`)
+  and `POST /reports` with `target_type: "user"`
+  (`artifacts/api-server/src/routes/reports.ts:107#const perms = await resolveInteractionPermissions(`).
+  The permission engine throws on `fail_closed`
   (`artifacts/api-server/src/services/interactionPermissions.ts:373#throw new DegradedPermissionCheckError(`)
-  and the block route maps every throw to `db_error`
-  (`artifacts/api-server/src/routes/blocks.ts:40#Permission check failed`). Pre-existing; a block
-  is a protective action and the ruling says it must never be suppressed. **Owner/lead decision:**
-  let a block through on an unreadable restriction state (and say what the suspension gate in
-  front of it should do then).
+  and each route maps every throw to `db_error`. Pre-existing; each is a protective action the
+  ruling says must never be suppressed. **Routed to the Trust lane (lane B)** — the permission
+  engine and those four routes; see §45c.4 item 3.
 
 ### 45b.4 Census line 896 (T295's original evidence) — the reads it cited are gone
 
@@ -10550,7 +10557,10 @@ migration, no flag, no database.
    plan changes, invitations, coordination, location, calls, safety
    (`artifacts/api-server/src/domain/telegraph/policies/threadNotificationPolicy.ts:58#export const IMPORTANT_CAUSES`).
    To be confirmed before `telegraph_thread_notification_policy_enabled` is turned on.
-3. **A block under an unreadable restriction state** (§45b.3): today it is refused (500).
+3. **Protective actions under an unreadable restriction state** (§45b.3): `POST /users/:id/block`,
+   `POST /users/:id/mute`, `POST /users/:id/restrict` and `POST /reports` (a user) are refused with a
+   500 today. Lane T2's recommendation: let each through on `DegradedPermissionCheckError`. **This
+   belongs to the Trust lane (lane B)**: the permission engine and those four routes.
 
 ### 45c.5 Net effect of this section, rows only
 
@@ -10566,4 +10576,115 @@ restated from the rows of THIS tree; other lanes' unmerged sections are not in i
 
 ### 45c.6 Cited, not graded
 
+- NOT-GRADED: artifacts/api-server/src/routes/mutes.ts — named in §45b.3 / §45d.1 as one of the four protective routes that answer 500 under an unreadable restriction state; the Trust lane's to fix, and no Telegraph verdict rests on it.
+- NOT-GRADED: artifacts/api-server/src/routes/restrict.ts — same, the restrict route.
+- NOT-GRADED: artifacts/api-server/src/migrations/2033_rls_hardening.sql — named in §45d.3 as the current definition of `profiles_select`, the rule the conversation-header endpoint now applies itself; the endpoint's own suite is the evidence, and a later re-creation of the policy is a Trust/privacy change this census would not grade.
+- NOT-GRADED: artifacts/api-server/src/lib/absentTableError.ts — named in §45d.5 for lane B's fail_open contract (a stale schema cache); no Telegraph verdict rests on it.
+
 - NOT-GRADED: artifacts/api-server/src/lib/featureFlags.ts — named in §45c.1 as where the three-state flag reader lives; T435's verdict rests on routes/telegraphDiagnostics.ts and its suite, and a shared flag helper would age this census on every unrelated flag change.
+
+## §45d — TELEGRAPH lane T2 (2026-10-06): the re-verification of `9e9c146d35` — six fixes and records. NO ROW MOVES
+
+The independent re-check of `9e9c146d35` was ACCEPT WITH REQUIRED FIXES. No defect the branch
+introduced reproduced. Findings 1–11 of the first pass were all held closed. This section records
+what the re-check required, and corrects §45b and §45c in place where they were wrong (each
+correction is marked there). **All evidence is CONTROLLED**: in-process suites over the
+certification harness, and mutations. No migration, no flag, no database. Measured after merging
+`origin/main` at `a27589615f`.
+
+### 45d.1 Corrections (re-verification 1 and 2)
+
+- **§45b.3 overstated the unreadable-state proof.** Only the thread, message and moderation report
+  doors and appeals were driven under `fail_closed`. Re-measured after the merge: `POST /reports`
+  (a user), `POST /users/:id/mute`, `POST /users/:id/restrict` and `POST /users/:id/block` all answer
+  500 under it. §45b.3 and §45c.4 item 3 now name all four and route them to the Trust lane. The
+  suite drives all four under every restriction TYPE
+  (`artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts:629#4.4`).
+- **An error branch of the inline gate was untested.** If the roster read failed, the other-member
+  list would be empty, no counterpart would be found, and a messaging-restricted first message
+  would be admitted. The code refused it, but no case pinned that. One case per inline door now
+  fails the roster read, and one fails the thread-type read, under a `messaging` restriction. Each
+  answers 503 with the gate's own sentence and writes nothing
+  (`artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts:542#describe("3b.`). The
+  verifier's surviving mutant (`if (false && (threadErr || othersErr))`) and both one-sided
+  variants are killed.
+
+### 45d.2 The mapping edge: an accepted request is the other person engaging (re-verification 3)
+
+A recipient who ACCEPTED the restricted person's message request opened the DM. The accept route
+inserts only the REQUESTER's preview, so the recipient may not have written yet, and the gate used
+to treat that thread as starting contact. `readRestrictionSendFacts` now counts an accepted
+`message_requests` row between the two, in either direction, as engagement
+(`artifacts/api-server/src/domain/telegraph/policies/restrictionSendPolicy.ts:242#.from("message_requests")`).
+An unreadable read is a retryable refusal. A participant id that is not a UUID is refused as
+unknown rather than built into the filter. A pending, declined or cancelled request is still
+starting contact. Suite: `artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts:517#describe("3c.`,
+24 cases at the eight doors, written red first. The agreement matrix (§45b.1) gains the thread. 4
+mutations are killed.
+
+### 45d.3 The conversation header across a block (re-verification 4)
+
+§45c.1 #8 moved the DM header's identity onto `GET /threads/:id/conversation-header`. That read
+uses the service client, so it bypassed the `profiles_select` RLS rule the old client read had
+obeyed (as last re-created by `artifacts/api-server/src/migrations/2033_rls_hardening.sql:43#CREATE POLICY profiles_select ON profiles FOR SELECT USING (`): `viewer_is_blocked` in both directions, and private profiles shown only to friends. The
+result was that a blocked pair saw each other's handle and avatar. The endpoint now applies that
+rule itself and fails CLOSED. An unreadable block read withholds every identity; an unreadable
+friendship read withholds the private ones
+(`artifacts/api-server/src/routes/telegraphSharedContext.ts:297#const [{ data: profileRows, error: profileErr }, { data: iBlocked`).
+Suite: `artifacts/api-server/src/test/telegraphConversationHeaderIdentity.test.ts:107#describe("re-verification 4`,
+6 cases, 4 of them red first. 5 mutations are killed.
+
+**Recorded, not fixed here:** `GET /me/threads`
+(`artifacts/api-server/src/routes/messaging.ts:1930#router.get('/me/threads'`) has the same
+pre-existing gap. It projects each member's handle and avatar with the service client and applies
+`show_real_name`, but no block or private-profile rule.
+
+### 45d.4 The projection's other restriction terms (re-verification 5)
+
+They now come from one table beside the send scope
+(`artifacts/api-server/src/domain/telegraph/policies/restrictionSendPolicy.ts:168#export const RESTRICTION_CAPABILITY_SCOPE`,
+decided by `artifacts/api-server/src/domain/telegraph/policies/restrictionSendPolicy.ts:174#export function decideRestrictedCapability(`):
+
+| Capability | Restriction that reaches it | Why |
+| --- | --- | --- |
+| `canCall` | messaging | the call gateway's own rule, in any thread (unchanged) |
+| `canCreatePlan` | **none** (was `hosting`) | `hosting` is "cannot host group trips" and `routes/trips.ts` enforces it where trips are created. The command door's meetup draft never refused under it. Compass's `createPlanDraft` did, through this projection. The two plan doors now agree. |
+| `canShareExactLocation` | location_plan_join | the rule lane B applied to the crew live-location share (`routes/tripCrewLocation.ts`). Never true today (§15.1); the table decides only whether the REASON is the restriction. |
+
+- **Behaviour change:** Compass's plan draft is no longer refused for a hosting-restricted member.
+- **Test change:** `telegraphProjectionPermissions.test.ts` used `hosting` → `canCreatePlan` as its
+  "resolved for the caller" asymmetry. It now uses `messaging` → `canCall`. The property is the
+  same, and the change is marked CHANGED in place.
+- Suite: `artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts:682#describe("5b.`.
+  4 mutations are killed.
+
+### 45d.5 Recorded, as the re-check asked (re-verification 6)
+
+- **"Never suppressible" holds for RESTRICTIONS only.** A NEED_HELP sent through
+  `POST /threads/:id/coordination` is still counted in the ORDINARY burst bucket, and the
+  `disable_messaging` stop stops it like any send. The SAFETY kind through typed-messages has its
+  own bucket, and the stop stops it too.
+- **A mention is DROPPED, not deferred, when the notification-levels flag cannot be read.** The
+  state read fails, so `decideThreadNotification` withholds the mention from every tagged member,
+  and nothing re-sends it later
+  (`artifacts/api-server/src/routes/messaging.ts:3109#const notifyStates = await readThreadNotificationStates(`).
+  The icon toggle answers a generic 500 and the sheet a 503.
+- **One test expectation rests on the OD-TRUST-5 reading.** `telegraphConversationCapabilities.test.ts`
+  expects a trip thread to allow `canSendMessage` under a messaging restriction. That follows the
+  NARROW reading (§45b.2), and it flips back if the owner chooses the broad one.
+- **A stale PostgREST schema cache would read as `fail_open`.** `getRestrictionState` admits on an
+  ABSENT-table error (`artifacts/api-server/src/lib/absentTableError.ts:45#if (code === "42P01" || code === "PGRST205") return true;`).
+  PGRST205 from a stale cache, on a database that does have `trust_restrictions`, would therefore
+  admit every restricted send until the cache reloads. This is a suspected edge in lane B's service
+  contract. It is not reproduced against a database, and nothing here changes it.
+
+### 45d.6 Owner decisions this adds (with §45c.4)
+
+4. **`hosting` and conversation plans** (§45d.4). Lane T2's reading is that a plan in a
+   conversation is not hosting a group trip. If the owner reads it as hosting, both plan doors must
+   refuse it: one line in the table, plus the command door.
+5. **`location_plan_join` and the LOCATION kind.** Lane B refuses the crew live-location share
+   under it. A Telegraph LOCATION message with an expiry is also a scoped live share, and under
+   §45b.2 it is NOT refused. Confirm whether it should be.
+
+No row moves. §1's headline is unchanged (250 / 178 / 21 / 2).
