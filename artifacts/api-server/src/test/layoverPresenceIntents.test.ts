@@ -27,6 +27,7 @@ import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.j
 import {
   PRESENCE_INTENTS,
   PRESENCE_INTENTS_FLAG,
+  clearPresenceIntents,
   intentCounts,
   parsePresenceInput,
 } from "../services/layover/LayoverPresenceStore.js";
@@ -246,7 +247,8 @@ describe("the pure parts", () => {
   it("a traveller with two sessions counts once per intent", async () => {
     const tables: Record<string, any[]> = {
       feature_flags: [{ flag: PRESENCE_INTENTS_FLAG, enabled: true }],
-      layover_presence: [presence("x1", A, ["food"]), presence("x2", A, ["food", "culture"])],
+      // Different windows, so the two rows differ in everything but the traveller: only a per-USER count gives 1.
+      layover_presence: [presence("x1", A, ["food"]), presence("x2", A, ["food", "culture"], { available_from: new Date(Date.now() - 2 * HOUR).toISOString() })],
     };
     const r = await intentCounts(makeLayoverDb(tables) as any, [A], Date.now());
     assert.equal(r.ok, true);
@@ -276,5 +278,90 @@ describe("the pure parts", () => {
     assert.ok(ok.ok && Date.parse(ok.value.availableUntil) === Date.parse(DEPARTURE));
     const bad = parsePresenceInput({ intents: ["food"], maxTravelMinutes: 12.5 }, { departureTime: DEPARTURE }, now);
     assert.ok(!bad.ok && bad.error === "max_travel_invalid");
+  });
+});
+
+// ── each read and write answers for itself ───────────────────────────────────
+// The route reads `layover_presence` twice on GET: the traveller's own record,
+// then the counts. One failure-injected table fails BOTH, which cannot tell
+// which refusal fired. `failNthPresenceCall` fails exactly one of them.
+function failNthPresenceCall(tables: Record<string, Record<string, unknown>[]>, n: number) {
+  const db = makeLayoverDb(tables, { users: { [TOKEN]: VIEWER } });
+  const failing = makeLayoverDb({ layover_presence: [] }, { failures: { "layover_presence:select": { message: "boom" } } });
+  const realFrom = db.from;
+  let calls = 0;
+  db.from = (t: string) => {
+    if (t !== "layover_presence") return realFrom(t);
+    calls += 1;
+    return calls === n ? failing.from(t) : realFrom(t);
+  };
+  _setTestClient(db, true);
+  return () => calls;
+}
+
+describe("each read answers for itself — a failure is never 'nobody' or 'none'", () => {
+  it("the OWN record unreadable while the counts would read: 503, and no counts are served", async () => {
+    const t = stage();
+    const calls = failNthPresenceCall(t, 1);
+    const r = await req("GET", I);
+    assert.equal(r.status, 503, r.raw);
+    assert.equal(r.body.error, "degraded_unavailable");
+    assert.equal(r.body.counts, undefined, r.raw);
+    assert.equal(calls(), 1, "the counts were read after the own record failed");
+  });
+
+  it("the COUNTS unreadable while the own record reads: 503 — not five zeros", async () => {
+    const t = stage();
+    const calls = failNthPresenceCall(t, 2);
+    const r = await req("GET", I);
+    assert.equal(r.status, 503, r.raw);
+    assert.equal(r.body.error, "degraded_unavailable");
+    assert.equal(calls(), 2);
+  });
+
+  it("who else is here unreadable (blocks): 503 — an outage is not an empty city", async () => {
+    stage({ failures: { "blocks:select": { message: "boom" } } });
+    const r = await req("GET", I);
+    assert.equal(r.status, 503, r.raw);
+    assert.equal(r.body.error, "degraded_unavailable");
+  });
+
+  it("a failed DELETE is 503 and the record still stands", async () => {
+    const t = stage({ failures: { "layover_presence:delete": { message: "boom" } } });
+    t.layover_presence.push(presence("session-1", VIEWER, ["food"]));
+    const r = await req("DELETE", I);
+    assert.equal(r.status, 503, r.raw);
+    assert.equal(r.body.error, "degraded_unavailable");
+    assert.ok(t.layover_presence.some((x) => x.session_id === "session-1"));
+  });
+
+  it("the traveller's own record never counts toward what THEY see", async () => {
+    const t = stage();
+    t.layover_presence.push(presence("session-1", VIEWER, ["food", "shopping"]));
+    const r = await req("GET", I);
+    assert.equal(r.status, 200, r.raw);
+    assert.deepEqual(r.body.own.intents, ["food", "shopping"]);
+    assert.deepEqual(r.body.counts, { food: 2, nightlife: 1, shopping: 0, culture: 0, meetups: 0 });
+  });
+
+  it("an expired own record reads as none", async () => {
+    const t = stage();
+    const past = new Date(Date.now() - 60_000).toISOString();
+    t.layover_presence.push(presence("session-1", VIEWER, ["food"], { available_from: new Date(Date.now() - 2 * HOUR).toISOString(), available_until: past, expires_at: past }));
+    const r = await req("GET", I);
+    assert.equal(r.status, 200, r.raw);
+    assert.strictEqual(r.body.own, null);
+  });
+
+  it("flag OFF: the counts and the delete read and write nothing, and say why", async () => {
+    const tables: Record<string, Record<string, unknown>[]> = { feature_flags: [], layover_presence: [presence("x1", A, ["food"])] };
+    const db = makeLayoverDb(tables);
+    let touched = 0;
+    const realFrom = db.from;
+    db.from = (t: string) => { if (t === "layover_presence") touched += 1; return realFrom(t); };
+    assert.deepEqual(await intentCounts(db, [A], Date.now()), { ok: false, reason: "intents_disabled" });
+    assert.deepEqual(await clearPresenceIntents(db, "x1"), { ok: false, reason: "intents_disabled" });
+    assert.equal(touched, 0);
+    assert.equal(tables.layover_presence.length, 1);
   });
 });

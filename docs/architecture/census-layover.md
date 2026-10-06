@@ -8821,8 +8821,8 @@ counts, per intent, only the ids `cityPresence` already cleared (same city, opte
 sharing not paused) and only while each window is open — never an id, a name or a window on the wire. The
 client control renders only when the overview's `share.intentsEnabled` says the surface exists
 (`travel-buddy-standalone/src/components/layover/LayoverPeopleSection.tsx:145#intentsEnabled && shareEnabled && sessionId`).
-Tests: `artifacts/api-server/src/test/layoverPresenceIntents.test.ts` (24 cases, 12/12 mutants killed — two
-survived the first draft and were pinned: the own-record read failure and the aggregate-scope filter) and
+Tests: `artifacts/api-server/src/test/layoverPresenceIntents.test.ts` (31 cases, 23/23 mutants killed — nine
+survived earlier drafts and were pinned, among them each GET read failing alone and the viewer's own record) and
 two jest suites (12 + 3 dashboard pass-through cases).
 
 - **L27 stays N, L129 stays N.** The record and the rung exist in code; the table exists only in 3900, which
@@ -8840,8 +8840,8 @@ airport-side ideas only and says why, and Compass's `getReachableExperiences` is
 unreadable check-in store hides nothing for everyone and says it could not check. §49.6 wrote that a
 self-report would not be allowed to gate the recommendations path; that stands for the direction it was
 written about — a report never RELAXES anything (deadline, verdict and return state are asserted unmoved) —
-and this side effect only ever withholds suggestions. Tests: six cases in
-`artifacts/api-server/src/test/layoverCheckpoints.test.ts`, including the Compass tool path (6/6 mutants
+and this side effect only ever withholds suggestions. Tests: nine cases in
+`artifacts/api-server/src/test/layoverCheckpoints.test.ts`, including the Compass tool path (8/8 mutants
 killed), and six jest cases on the card's note.
 
 - **L43 stays N.** Its input (the check-in) and its first side effect are built; the check-in store is 2992,

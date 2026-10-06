@@ -31,7 +31,10 @@ import {
   CHECKPOINT_WRITE_FLAG,
   CHECKPOINT_VISIBLE_AFTER_DEPARTURE_MIN,
   airportPresenceFrom,
+  applyLandsideSuppression,
+  landsideSuppressionFrom,
   observedReturnFrom,
+  type LayoverCheckpoint,
 } from "../services/layover/LayoverCheckpointStore.js";
 
 let server: http.Server;
@@ -354,5 +357,25 @@ describe("L43 — Compass is handed the same airport-side list after re-entry", 
     } finally {
       _setTestOpenAI(null);
     }
+  });
+});
+
+describe("L43 — the pure suppression rule", () => {
+  const cp2 = (type: string, at: number): LayoverCheckpoint => ({ id: `${type}-${at}`, type, observedAt: new Date(at).toISOString(), source: "TRAVELLER", confidence: "MEDIUM" });
+  it("the NEWEST report decides, whatever order rows arrive in", () => {
+    assert.equal(landsideSuppressionFrom({ ok: true, checkpoints: [cp2("LANDSIDE_EXIT", 1000), cp2("AIRPORT_REENTRY", 2000)] }).state, "suppressed");
+    assert.equal(landsideSuppressionFrom({ ok: true, checkpoints: [cp2("AIRPORT_REENTRY", 2000), cp2("LANDSIDE_EXIT", 1000)] }).state, "suppressed");
+    assert.equal(landsideSuppressionFrom({ ok: true, checkpoints: [cp2("LANDSIDE_EXIT", 2000), cp2("AIRPORT_REENTRY", 1000)] }).state, "open");
+  });
+  it("the store OFF is 'open'; an unreadable store is 'unknown'", () => {
+    assert.deepEqual(landsideSuppressionFrom({ ok: false, reason: "persistence_disabled" }), { state: "open" });
+    assert.deepEqual(landsideSuppressionFrom({ ok: false, reason: "read_failed" }), { state: "unknown", reason: "checkpoints_unreadable" });
+  });
+  it("when suppressed, a candidate that does not SAY it is inside the airport is withheld", () => {
+    const s = { state: "suppressed", reportedAt: new Date().toISOString() } as const;
+    const kept = applyLandsideSuppression([{ id: "air", insideAirport: true }, { id: "land", insideAirport: false }, { id: "unsaid" }, { id: "truthy", insideAirport: 1 }], s);
+    assert.deepEqual(kept.map((r) => r.id), ["air"]);
+    assert.equal(applyLandsideSuppression([{ id: "unsaid" }], { state: "open" }).length, 1);
+    assert.equal(applyLandsideSuppression([{ id: "unsaid" }], { state: "unknown", reason: "checkpoints_unreadable" }).length, 1);
   });
 });
