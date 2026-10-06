@@ -37,6 +37,7 @@ function makeProfile(overrides: Partial<CompassProfile> = {}): CompassProfile {
     trustLevel: null,
     activeUserScore: null,
     hasActiveTrip: false,
+    tripStateUnread: false,
     hasActiveBooking: false,
     upcomingTripWithin48h: false,
     hasFutureTripScheduled: false,

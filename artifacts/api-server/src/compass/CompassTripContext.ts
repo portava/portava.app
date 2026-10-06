@@ -37,8 +37,29 @@ const MAX_TODAY_ITEMS      = 5;
 const DAY_MS               = 86_400_000;
 
 // Trip COLUMNS and STATUSES moved to compass/CompassCurrentTrip.ts with the
-// selection they belonged to; this module now names only what it reads itself
-// (the day-scoped plan items below, which no Trip projection serves yet).
+// selection they belonged to; this module now names only what it reads itself.
+//
+// WHY THE DAY-SCOPED PLAN READS BELOW ARE STILL RAW — CT-02, re-measured.
+// The sentence here used to be "which no Trip projection serves yet", and
+// §15.4 gave two reasons, both of which are now FALSE:
+// `TripCompassProjection` carries `timezone` (CompassTripSummary.timezone) and
+// its plan window is anchored on the focus day (`CompassPlanWindow`), so
+// neither "the consumer guesses the day boundary" nor "day seven is past the
+// cap" holds any more. A stale reason on a live read is the source-(c) defect
+// this census grades, so here is the reason that does hold:
+//
+//   1. `CompassPlanItem` carries no `starts_at` and no `sort_order`. This block
+//      prints "Ramen (19:30)" and orders the day by time; consuming the
+//      projection would drop both — a narrower answer wearing a cleaner one's
+//      clothes, which is the trade CompassTools.ts:1201 already refuses for
+//      `check_trip_conflicts`.
+//   2. The window spans today FORWARD and is capped at ten items, so TOMORROW's
+//      count cannot be derived from it: a traveller with eleven items today
+//      would be told tomorrow is clear. That is the exact failure mode the
+//      window was built to remove, one day over.
+//
+// Closing it needs `startsAt` / `sortOrder` on `CompassPlanItem` and a
+// day-exact window — both additive, both the Trips owner's file.
 
 /** Parse a YYYY-MM-DD(-prefixed) string to a UTC-midnight timestamp. */
 function ymdToUtcMs(ymd: unknown): number | null {
