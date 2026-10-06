@@ -4009,3 +4009,56 @@ without the KYC gate; admin.ts forgetting the flag.
 
 Unchanged from §35.3: BUILT-AND-CORRECT **89** · BUILT-BUT-WRONG **13** · NOT-BUILT **4** · CANNOT-VERIFY **2**
 (108). No row moved.
+
+## §37 (lane B, wave 3, verifier fixes) — 2026-10-06 · The verifier's findings on `a183b1439a`, fixed and pinned; three overstatements corrected. **NO ROW MOVES.**
+
+The verifier (Fable 5.1) returned ACCEPT WITH REQUIRED FIXES on `a183b1439a`. This section records what changed for
+the rows this census grades, and corrects what §35 and §36 claimed. The payment findings (F1, F2, F10, F11) and the
+flag writers (F9) are not rows of this census. They are recorded in the lane report and in the commits.
+
+### 37.1 Corrections to earlier sections (last statement wins)
+
+1. **§35.4, "`provider_mode` … written as `live` for an attempt made with a test key … would turn this red":
+   it turned nothing red when §35 was written** (verifier F4: replacing the write with the literal `live` left every
+   suite green). It is now true. The session route's INSERTED row is asserted: `test` for a test key, `live` for an
+   allowed live key, `local_mock` for the mock under the runner
+   (`artifacts/api-server/src/test/paymentsLiveGuard.test.ts:606#describe("F4. POST /api/verification/session records the key's mode on the row it inserts"`).
+   The literal-`live` mutant is now killed (2 red).
+2. **§36 item 4, "N-1 … refuse … on four non-operational configurations": true, but it did not prove the
+   conjunction.** In all four configurations BOTH halves of the gate were false. A LIVE key with live allowed on an
+   UNCERTIFIED adapter is booking-grade but not operational, and only `&&` refuses it. That case is now in the gate
+   suite
+   (`artifacts/api-server/src/test/rentBuddyKycGate.test.ts:217#describe("F3: operational AND booking-grade, never either alone"`)
+   and in the N-1 lists for all five doors. `&&` → `||` turns 7 red.
+3. **§36 item 5, "Approval lifts exactly that restriction": exact, but it was unattributed.** The lift now records
+   the approving moderator
+   (`artifacts/api-server/src/services/appeals/resolveAppeal.ts:522#.update({ lifted_at: new Date().toISOString(), lifted_by: appeal.moderator_id })`),
+   and a lift with no moderator is refused (F6).
+4. **§36 item 4's door enumeration.** The five route doors refuse before their INSERT. The PostgREST door onto
+   `rent_buddy_bookings` (a client inserting directly) is closed by migration 3820's REVOKE, and only where 3820 is
+   applied. Where it is not applied, the closed-door claim rests on 3820 being applied, not on these routes.
+5. **§36 item 1's "The lead should confirm this reconciliation": confirmed.** PR #636 amends lead ruling D-24 with
+   the Buddy clauses. The sentences now carry #636's text verbatim, including "change a group trip's shared plan" for
+   hosting and "propose changes to a group trip" for messaging. `trust.test.ts` pins each whole sentence by equality.
+
+### 37.2 Built for rows this census grades
+
+- **TV-4b / the restriction screen (F8).** `GET /api/appeals/me/restrictions` is on the restricted-account
+  allow-list
+  (`artifacts/api-server/src/lib/restrictedAccountAccess.ts:59#Object.freeze({ method: "GET", path: "/api/appeals/me", why:`).
+  A suspended or banned account the auth service still accepts reaches its own list, and RA1/RA2 cover the entry.
+- **TRV2-08's booking leg (F7).** Accepting a booking re-runs `requireBookingKyc` and `requireVerifiedBookingParties`.
+  A booking requested while both people were verified is not confirmed after either lapses.
+- **D-24d (F12b).** `protectiveOnly` is driven with every capability true, and exactly the six safety capabilities
+  survive. Adding `canMessage` to the protective set is now killed.
+
+### 37.3 Rows
+
+| id | was | now | the evidence |
+|---|---|---|---|
+| TRV2-08 | W | **W** | Unchanged blockers: the Trips (lane C) and Compass (lane L / lead) doors. The booking leg now also re-checks at confirmation (37.2). |
+| TV-4b | W | **W** | §35's reasons stand: the GoTrue session lock, no appeal target for a ban or suspension, and the client screen. The restriction list is now reachable to a restricted account (37.2). |
+
+### 37.4 Headline
+
+Unchanged: BUILT-AND-CORRECT **89** · BUILT-BUT-WRONG **13** · NOT-BUILT **4** · CANNOT-VERIFY **2** (108).
