@@ -65,7 +65,20 @@ function networkMessage(e: unknown): string {
  * switch is a rollout control, not a security boundary — account creation is
  * still bounded server-side.
  */
-async function fetchSignupStatus(): Promise<{ signupsEnabled: boolean; inviteOnly: boolean }> {
+export interface SignupStatus { signupsEnabled: boolean; inviteOnly: boolean }
+
+/**
+ * The sign-up screen reads this BEFORE showing the form, so an invite-only
+ * beta says so up front instead of after the person has typed a password.
+ * Same contract as fetchSignupStatus below (it IS that function): never
+ * rejects, fail-open on an unreachable API — the server and Supabase Auth's
+ * own disable_signup are what actually refuse.
+ */
+export function getSignupStatus(): Promise<SignupStatus> {
+  return fetchSignupStatus();
+}
+
+async function fetchSignupStatus(): Promise<SignupStatus> {
   const allowed = { signupsEnabled: true, inviteOnly: false };
   const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
   if (!apiBase) return allowed;
