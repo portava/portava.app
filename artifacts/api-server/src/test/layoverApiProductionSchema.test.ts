@@ -152,7 +152,19 @@ function makeProductionSchemaClient(seed: Record<string, Row[]>, users: Record<s
     /** PostgREST's select list, reduced to bare column names. */
     function selectCols(cols?: string): string[] {
       if (!cols || cols.trim() === "*") return [];
-      return cols.split(",").map((p) => p.trim())
+      // TOP-LEVEL commas only: a plain split cut an embed `rel!fk(a, b)` in two and
+      // let `b)` through as a column of THIS table (the auth gate's embedded
+      // user_account_states read, lib/accountStateGate.ts). An embed names a relation.
+      const parts: string[] = [];
+      let depth = 0, cur = "";
+      for (const ch of cols) {
+        if (ch === "(") depth++;
+        if (ch === ")") depth--;
+        if (ch === "," && depth === 0) { parts.push(cur); cur = ""; continue; }
+        cur += ch;
+      }
+      parts.push(cur);
+      return parts.map((p) => p.trim())
         .filter((p) => p.length > 0 && !p.includes("("))
         .map((p) => (p.includes(":") ? p.slice(p.indexOf(":") + 1) : p).trim())
         .filter((p) => p.length > 0 && p !== "*");

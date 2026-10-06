@@ -1687,6 +1687,16 @@ export interface CrewSummary {
   title: string;
   city: string;
   meetingPointLabel: string | null;
+  /**
+   * §14.1 / census-layover L138 — why `meetingPointLabel` above is null.
+   *
+   * The server runs the meeting point through `meetActionAvailability` (the
+   * §14.1 "meet here" gate) and publishes the ENFORCED denials when it
+   * withholds: `blocked`, `safety_gate_not_cleared`, `return_state_escalated`.
+   * Empty means the label was served. ABSENT means an older server that does
+   * not publish the field — UNREPORTED, not "nothing was withheld".
+   */
+  meetingPointWithheld?: string[];
   status: 'open' | 'closed' | 'disbanded';
   maxMembers: number;
   expiresAt: string;
@@ -1775,7 +1785,20 @@ export type CrewState =
       degraded: boolean;
       degradedReasons: string[];
     }
-  | { inCrew: false; city: string | null; crews: CrewOpening[]; reason?: string };
+  | {
+      inCrew: false;
+      city: string | null;
+      crews: CrewOpening[];
+      /**
+       * `'city_unknown'` or, since §14.1 / L138, `'safety_gate_not_passed'` —
+       * the certified record says this traveller must not be OFFERED a landside
+       * meeting, so no crew is offered. `crews: []` with this reason is a
+       * REFUSAL and must not be drawn as an empty city.
+       */
+      reason?: string;
+      /** The enforced `meetActionAvailability` denials behind the refusal. */
+      meetWithheld?: string[];
+    };
 
 /**
  * The crew for this layover, or the open crews in this city.
