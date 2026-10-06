@@ -1,25 +1,22 @@
 /**
- * census-trust TRV2-08 / OD-TRUST-5 — Trust restrictions reach the Compass
- * actions that act for a person.
+ * census-trust TRV2-08 / OD-TRUST-5 — a Trust restriction reaches the Compass
+ * actions it covers, and no others.
  *
- * WHAT THIS PINS
+ * WHAT THIS PINS (narrowed 2026-10-06 after independent verification)
  * ==============
- *  1. The mapping (lane L's reading, compass/CompassRestrictionGate.ts) —
- *     exactly which restriction types refuse which Compass action, and that a
- *     type NOT needed for an action does not refuse it ("limit each restriction
- *     to the actions … needed").
- *  2. An unreadable restriction state refuses — in BOTH degraded shapes,
- *     including `fail_open`, whose can-flags all read true — and the words never
- *     say the person is restricted.
- *  3. Through the REAL tool, `create_proposal`: a hosting or messaging
- *     restriction, or an unreadable `trust_restrictions`, means NO kernel
- *     command is issued (the state assertion: the recorded rpc list is empty),
- *     while a clean record, a lifted restriction or an unrelated one still
- *     proposes.
+ *  1. The mapping is what the person's own restriction summary says
+ *     (TrustPrivacyGuard: hosting = "You cannot host group trips"): only
+ *     `hosting`, only for the HOST of a GROUP trip. A member who does not host,
+ *     the host of a solo trip, and every other restriction type are untouched.
+ *  2. An unreadable trip or restriction state refuses — in BOTH degraded
+ *     shapes, including `fail_open`, whose can-flags all read true — and the
+ *     words never say the person is restricted.
+ *  3. Through the REAL tool, `create_proposal`: a refused proposal issues NO
+ *     kernel command (the recorded rpc list is the state assertion).
  *
- * The three route call sites (plan-proposal confirm, autopilot confirm,
- * boost-visibility) are driven through their real routers in
- * compass-tools.test.ts §H2 and compassAutopilotKernelPath.test.ts.
+ * The two route call sites (plan-proposal confirm, autopilot confirm) are
+ * driven through their real routers in compass-tools.test.ts §H2 and
+ * compassAutopilotKernelPath.test.ts.
  *
  * Run: SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy \
  *   node --import tsx/esm --test src/test/compassRestrictionGate.test.ts
@@ -29,6 +26,7 @@ import assert from "node:assert/strict";
 
 import {
   COMPASS_ACTION_RESTRICTIONS,
+  COMPASS_HOSTING_RESTRICTED_MESSAGE,
   COMPASS_RESTRICTION_UNVERIFIABLE_MESSAGE,
   checkCompassActionRestriction,
   compassRestrictionToolInfo,
@@ -40,15 +38,13 @@ import { readTripProposal } from "../domain/trips/contracts/TripProposalContract
 import type { RestrictionState, RestrictionType } from "../services/trust/TrustRestrictionService.js";
 
 const USER = "a1a1a1a1-aaaa-4aaa-8aaa-000000000001";
+const OTHER = "c3c3c3c3-cccc-4ccc-8ccc-000000000003";
 const TRIP = "b2b2b2b2-bbbb-4bbb-8bbb-000000000002";
 
-const ACTIONS: CompassRestrictedAction[] = [
-  "create_proposal",
-  "confirm_plan_proposal",
-  "confirm_autopilot_proposal",
-  "boost_visibility_on",
-];
+const ACTIONS: CompassRestrictedAction[] = ["create_proposal", "confirm_plan_proposal", "confirm_autopilot_proposal"];
 const ALL_TYPES: RestrictionType[] = ["hosting", "private_plan_access", "messaging", "location_plan_join"];
+const HOST = { hostsGroupTrip: true };
+const NOT_HOST = { hostsGroupTrip: false };
 
 function clean(active: RestrictionType[] = []): RestrictionState {
   return {
@@ -62,61 +58,52 @@ function clean(active: RestrictionType[] = []): RestrictionState {
 
 // ── 1. The mapping ────────────────────────────────────────────────────────────
 
-describe("TRV2-08 §1 — which restriction refuses which Compass action", () => {
-  it("is exactly lane L's stated reading (a change here is a policy change, not a refactor)", () => {
+describe("TRV2-08 §1 — a restriction refuses only what the person is told it restricts", () => {
+  it("every mapped action maps to hosting and nothing else (a change here is a policy change)", () => {
     assert.deepEqual(
       Object.fromEntries(ACTIONS.map((a) => [a, [...COMPASS_ACTION_RESTRICTIONS[a]]])),
-      {
-        create_proposal: ["hosting", "messaging"],
-        confirm_plan_proposal: ["hosting"],
-        confirm_autopilot_proposal: ["hosting"],
-        boost_visibility_on: ["messaging"],
-      },
+      { create_proposal: ["hosting"], confirm_plan_proposal: ["hosting"], confirm_autopilot_proposal: ["hosting"] },
     );
   });
 
-  it("a clean record allows every action", () => {
-    for (const a of ACTIONS) assert.deepEqual(decideCompassAction(a, clean()), { allowed: true }, a);
-  });
-
-  it("each mapped type refuses its action, names only that type, and says so in words", () => {
+  it("hosting refuses the HOST of a group trip, in the summary's own words", () => {
     for (const a of ACTIONS) {
-      for (const t of COMPASS_ACTION_RESTRICTIONS[a]) {
-        const v = decideCompassAction(a, clean([t]));
-        assert.equal(v.allowed, false, `${a} under ${t}`);
-        assert.ok(!v.allowed && v.kind === "restricted");
-        if (!v.allowed && v.kind === "restricted") {
-          assert.deepEqual(v.restrictionTypes, [t]);
-          assert.match(v.message, /currently restricted from/);
-        }
+      const v = decideCompassAction(a, HOST, clean(["hosting"]));
+      assert.ok(!v.allowed && v.kind === "restricted", a);
+      if (!v.allowed && v.kind === "restricted") {
+        assert.deepEqual(v.restrictionTypes, ["hosting"]);
+        assert.equal(v.message, COMPASS_HOSTING_RESTRICTED_MESSAGE);
+        assert.match(v.message, /hosting group trips/);
       }
     }
   });
 
-  it("a type the action does not need does NOT refuse it (OD-TRUST-5: limit to the actions needed)", () => {
+  it("hosting does NOT refuse someone who is not hosting a group trip (a member, or a solo trip)", () => {
+    for (const a of ACTIONS) assert.deepEqual(decideCompassAction(a, NOT_HOST, clean(["hosting"])), { allowed: true }, a);
+  });
+
+  it("messaging, private_plan_access and location_plan_join refuse no Compass action, even for a host", () => {
     for (const a of ACTIONS) {
-      const unneeded = ALL_TYPES.filter((t) => !COMPASS_ACTION_RESTRICTIONS[a].includes(t));
-      assert.ok(unneeded.length > 0);
-      assert.deepEqual(decideCompassAction(a, clean(unneeded)), { allowed: true }, `${a} under ${unneeded.join(",")}`);
+      assert.deepEqual(decideCompassAction(a, HOST, clean(ALL_TYPES.filter((t) => t !== "hosting"))), { allowed: true }, a);
     }
   });
 });
 
-// ── 2. An unreadable state ────────────────────────────────────────────────────
+// ── 2. Unreadable state ───────────────────────────────────────────────────────
 
 describe("TRV2-08 §2 — 'could not read' is neither 'not restricted' nor 'restricted'", () => {
-  it("fail_closed refuses as unverifiable", () => {
+  it("fail_closed refuses a host as unverifiable", () => {
     const st: RestrictionState = { ...clean(), canHost: false, canMessage: false, canJoinPrivatePlans: false, canJoinLocationPlans: false, degraded: true, degradedReason: "fail_closed" };
     for (const a of ACTIONS) {
-      const v = decideCompassAction(a, st);
+      const v = decideCompassAction(a, HOST, st);
       assert.ok(!v.allowed && v.kind === "unverifiable" && v.reason === "fail_closed", a);
     }
   });
 
-  it("fail_open refuses too, although every can-flag reads TRUE — the table could not be read", () => {
+  it("fail_open refuses a host too, although every can-flag reads TRUE — the table could not be read", () => {
     const st: RestrictionState = { ...clean(), degraded: true, degradedReason: "fail_open" };
     for (const a of ACTIONS) {
-      const v = decideCompassAction(a, st);
+      const v = decideCompassAction(a, HOST, st);
       assert.ok(!v.allowed && v.kind === "unverifiable" && v.reason === "fail_open", a);
     }
   });
@@ -127,13 +114,12 @@ describe("TRV2-08 §2 — 'could not read' is neither 'not restricted' nor 'rest
     assert.match(info, /NOT a restriction/);
   });
 
-  it("a read that THROWS refuses as unverifiable rather than escaping", async () => {
+  it("a client that THROWS on the trip read is caught by the gate and refuses as unverifiable ('threw')", async () => {
+    // getRestrictionState catches its own errors; this throw happens in the
+    // gate's own trip read, which is the path its try/catch exists for.
     const throwing: any = { from: () => { throw new Error("boom"); } };
-    // getRestrictionState catches its own errors; this is the belt for a client
-    // that fails before the service can.
-    const v = await checkCompassActionRestriction(throwing, USER, "create_proposal");
-    assert.equal(v.allowed, false);
-    assert.ok(!v.allowed && v.kind === "unverifiable");
+    const v = await checkCompassActionRestriction(throwing, USER, TRIP, "create_proposal");
+    assert.ok(!v.allowed && v.kind === "unverifiable" && v.reason === "threw");
   });
 });
 
@@ -180,10 +166,13 @@ function makeClient(tables: Record<string, Row[]>, errorOn: string[] = []) {
   return client;
 }
 
-function world(restrictions: Row[] = []): Record<string, Row[]> {
+/** A group trip hosted by USER, with OTHER as an accepted member. */
+function world(restrictions: Row[] = [], opts: { solo?: boolean; ownerIsOther?: boolean } = {}): Record<string, Row[]> {
+  const members: Row[] = [{ trip_id: TRIP, user_id: USER, role: opts.ownerIsOther ? "member" : "owner", status: "accepted" }];
+  if (!opts.solo) members.push({ trip_id: TRIP, user_id: OTHER, role: opts.ownerIsOther ? "owner" : "member", status: "accepted" });
   return {
-    trips: [{ id: TRIP, owner_id: USER, status: "active" }],
-    trip_members: [{ trip_id: TRIP, user_id: USER, role: "owner", status: "accepted" }],
+    trips: [{ id: TRIP, owner_id: opts.ownerIsOther ? OTHER : USER, status: "active" }],
+    trip_members: members,
     feature_flags: [{ flag: "trip_kernel_enabled", enabled: true }],
     trust_restrictions: restrictions,
   };
@@ -191,6 +180,7 @@ function world(restrictions: Row[] = []): Record<string, Row[]> {
 
 const PROPOSE = { tripId: TRIP, proposalType: "cancel_plan", change: { targetId: "walk" }, rationale: "rain", affectedObjects: ["walk"] };
 const kernelCalls = (c: any) => c.rpcs.filter((r: any) => r.fn === "trip_kernel_execute").length;
+const R = (t: string, extra: Row = {}) => ({ user_id: USER, restriction_type: t, lifted_at: null, expires_at: null, ...extra });
 
 describe("TRV2-08 §3 — create_proposal, through the real tool", () => {
   it("a clean record proposes (control: the kernel IS reached on this fixture)", async () => {
@@ -200,43 +190,66 @@ describe("TRV2-08 §3 — create_proposal, through the real tool", () => {
     assert.equal(kernelCalls(c), 1);
   });
 
-  for (const t of ["messaging", "hosting"] as const) {
-    it(`an active ${t} restriction proposes NOTHING and says why`, async () => {
-      const c = makeClient(world([{ user_id: USER, restriction_type: t, lifted_at: null, expires_at: null }]));
-      const r: any = await toolCreateProposal(c, USER, PROPOSE);
-      assert.equal(r.proposal, null);
-      assert.match(r.info, /currently restricted from proposing changes to your trip crew/);
-      assert.equal(kernelCalls(c), 0, "no kernel command may be issued for a restricted proposer");
-    });
-  }
+  it("the HOST of a group trip under a hosting restriction proposes NOTHING and is told why", async () => {
+    const c = makeClient(world([R("hosting")]));
+    const r: any = await toolCreateProposal(c, USER, PROPOSE);
+    assert.equal(r.proposal, null);
+    assert.match(r.info, /restricted from hosting group trips/);
+    assert.equal(kernelCalls(c), 0, "no kernel command may be issued for a restricted host");
+  });
 
-  it("a LIFTED restriction no longer refuses", async () => {
-    const c = makeClient(world([{ user_id: USER, restriction_type: "messaging", lifted_at: "2026-10-01T00:00:00Z", expires_at: null }]));
+  it("a hosting restriction does not stop a MEMBER who does not host the trip", async () => {
+    const c = makeClient(world([R("hosting")], { ownerIsOther: true }));
+    const r: any = await toolCreateProposal(c, USER, PROPOSE);
+    assert.equal(r.proposal?.status, "pending");
+  });
+
+  it("a hosting restriction does not stop the host of a SOLO trip (not a group trip)", async () => {
+    const c = makeClient(world([R("hosting")], { solo: true }));
+    const r: any = await toolCreateProposal(c, USER, PROPOSE);
+    assert.equal(r.proposal?.status, "pending");
+  });
+
+  it("a messaging restriction does not stop a proposal — it does not start a conversation", async () => {
+    const c = makeClient(world([R("messaging")]));
     const r: any = await toolCreateProposal(c, USER, PROPOSE);
     assert.equal(r.proposal?.status, "pending");
     assert.equal(kernelCalls(c), 1);
+  });
+
+  it("a LIFTED hosting restriction no longer refuses", async () => {
+    const c = makeClient(world([R("hosting", { lifted_at: "2026-10-01T00:00:00Z" })]));
+    const r: any = await toolCreateProposal(c, USER, PROPOSE);
+    assert.equal(r.proposal?.status, "pending");
   });
 
   it("a restriction on ANOTHER person does not refuse this one", async () => {
-    const c = makeClient(world([{ user_id: "someone-else", restriction_type: "hosting", lifted_at: null, expires_at: null }]));
+    const c = makeClient(world([R("hosting", { user_id: OTHER })]));
     const r: any = await toolCreateProposal(c, USER, PROPOSE);
     assert.equal(r.proposal?.status, "pending");
   });
 
-  it("an unrelated restriction type (location_plan_join) does not refuse a proposal", async () => {
-    const c = makeClient(world([{ user_id: USER, restriction_type: "location_plan_join", lifted_at: null, expires_at: null }]));
-    const r: any = await toolCreateProposal(c, USER, PROPOSE);
-    assert.equal(r.proposal?.status, "pending");
-    assert.equal(kernelCalls(c), 1);
-  });
-
-  it("an UNREADABLE trust_restrictions proposes nothing, and tells the model it is NOT a restriction", async () => {
+  it("an UNREADABLE trust_restrictions (for a host) proposes nothing, and tells the model it is NOT a restriction", async () => {
     const c = makeClient(world(), ["trust_restrictions"]);
     const r: any = await toolCreateProposal(c, USER, PROPOSE);
     assert.equal(r.proposal, null);
     assert.match(r.info, /NOT a restriction/);
     assert.doesNotMatch(r.info, /currently restricted/);
     assert.equal(kernelCalls(c), 0);
+  });
+
+  it("an UNREADABLE trip_members (can't tell whether it is a group trip) is unverifiable, never 'allowed'", async () => {
+    // Through the gate directly: on the tool path the membership check above
+    // the gate already throws TripAccessUnavailableError for this table.
+    const c = makeClient(world([R("hosting")]), ["trip_members"]);
+    const v = await checkCompassActionRestriction(c, USER, TRIP, "create_proposal");
+    assert.ok(!v.allowed && v.kind === "unverifiable" && v.reason === "trip_unreadable");
+  });
+
+  it("an UNREADABLE trips row is unverifiable too", async () => {
+    const c = makeClient(world([R("hosting")]), ["trips"]);
+    const v = await checkCompassActionRestriction(c, USER, TRIP, "confirm_plan_proposal");
+    assert.ok(!v.allowed && v.kind === "unverifiable" && v.reason === "trip_unreadable");
   });
 
   it("CT-09: a proposal that IS made carries affectedObjects, rationale and impactSummary — read back through the contract's own reader", async () => {

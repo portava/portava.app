@@ -243,6 +243,9 @@ describe("§8.4 on Today, §8.3 readiness grouping, and the Compass tools", () =
     assert.equal(cancel.sharedMutation, true); assert.equal(cancel.bookingSideEffects.requiresUserConfirmation, true); assert.equal(cancel.governance.suggestedDecisionRule, "unanimous");
     assert.equal(r.replan.requiresUserConfirmation, true); assert.ok(r.replan.proposals >= 1);
     assert.match(r.info, /create_proposal/);
+    // census-compass §38 / verifier finding 2: the reply must not send the model to the replan route's
+    // createProposals door, which reaches CREATE_PROPOSAL with no restriction read.
+    assert.doesNotMatch(r.info, /createProposals/);
     assert.equal(calls.length, 0, "the tool proposes; it never issues a command");
     const locked: any = await toolReplanDay(c as any, OWNER_ID, { tripId: TRIP_ID, day: "2026-09-13", lockedPlanIds: ["walk"] });
     assert.ok(locked.replan); assert.ok(!locked.replan.entries.some((e: any) => e.planId === "walk" && e.op === "cancel"), "a locked plan is kept");

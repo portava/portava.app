@@ -922,14 +922,6 @@ router.put("/compass/me/boost-visibility", async (req, res) => {
     return;
   }
 
-  // census-trust TRV2-08 / OD-TRUST-5: turning the boost ON promotes this
-  // person to strangers as someone to meet, which a messaging restriction
-  // refuses. Turning it OFF only ever reduces exposure and is never gated.
-  if (parsed.data.enabled) {
-    const restriction = await checkCompassActionRestriction(sc, user.id, "boost_visibility_on");
-    if (!restriction.allowed) { sendCompassRestrictionRefusal(res, restriction); return; }
-  }
-
   const { error } = await sc
     .from("compass_active_user_scores")
     .upsert(
@@ -2192,11 +2184,11 @@ router.post("/compass/proposals/:proposalId/confirm", async (req, res) => {
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
   if (!permitted) { sendError(res, "forbidden", "You don't have permission to add items to this plan"); return; }
 
-  // census-trust TRV2-08 / OD-TRUST-5: adding a plan every member sees is
-  // refused under a hosting restriction, and refused retryably when the
-  // restriction state cannot be read (compass/CompassRestrictionGate.ts).
-  // After the membership checks, so a stranger still gets "not a member".
-  const restriction = await checkCompassActionRestriction(sc, user.id, "confirm_plan_proposal");
+  // census-trust TRV2-08 / OD-TRUST-5: the host of a group trip under a hosting
+  // restriction may not have Compass add to its shared plan; an unreadable
+  // state refuses retryably (compass/CompassRestrictionGate.ts). After the
+  // membership checks, so a stranger still gets "not a member".
+  const restriction = await checkCompassActionRestriction(sc, user.id, proposal.tripId, "confirm_plan_proposal");
   if (!restriction.allowed) { sendCompassRestrictionRefusal(res, restriction); return; }
 
   // Duplicate guard for catalog places (same rule as the plan route).

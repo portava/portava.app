@@ -1468,11 +1468,10 @@ export async function toolCreateProposal(sc: SupabaseClient, userId: string, arg
   if (!change) return { proposal: null, info: "change must be an object" };
   const rule = ["host", "majority", "unanimous", "anyone"].includes(String(args.decisionRule)) ? String(args.decisionRule) : "host";
   if (!(await isKernelFlagEnabled(sc, "trip_kernel_enabled"))) return { proposal: null, info: "Proposals go through the Trip Kernel, which is not enabled for this deployment (trip_kernel_enabled is false). Describe the change to the user instead." };
-  // census-trust TRV2-08 / OD-TRUST-5: a proposal organises the crew and puts
-  // text on their screens in this person's name, so a hosting or messaging
-  // restriction refuses it, and an unreadable restriction state refuses it
-  // retryably (compass/CompassRestrictionGate.ts).
-  const restriction = await checkCompassActionRestriction(sc, userId, "create_proposal");
+  // census-trust TRV2-08 / OD-TRUST-5: a hosting restriction ("You cannot host
+  // group trips") refuses a proposal to a group trip this person hosts, and an
+  // unreadable state refuses retryably (compass/CompassRestrictionGate.ts).
+  const restriction = await checkCompassActionRestriction(sc, userId, t.id, "create_proposal");
   if (!restriction.allowed) return { proposal: null, info: compassRestrictionToolInfo(restriction) };
   const r = await executeTripCommand(sc, {
     commandId: newCommandId(), tripId: t.id, actorUserId: userId, actorRole: "user",
@@ -1529,7 +1528,7 @@ export async function toolReplanDay(sc: SupabaseClient, userId: string, args: Re
       entries: r.diff.entries.map((e) => ({ op: e.op, planId: e.planId, title: e.title ? wrapUgc(e.title) : null, from: e.from, to: e.to, reason: e.reason, detail: wrapUgc(e.detail), sharedMutation: e.sharedMutation, experienceId: e.experienceId, bookingSideEffects: e.impact?.bookingSideEffects ?? null, governance: e.impact?.governance ?? null })),
       proposals: r.diff.proposals.length,
     },
-    info: r.diff.proposals.length > 0 ? "The shared mutations are proposals: use create_proposal, or ask the user to run the replan with createProposals." : null,
+    info: r.diff.proposals.length > 0 ? "The shared mutations are proposals: use create_proposal for each one the user wants to put to the crew." : null,
   };
 }
 

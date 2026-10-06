@@ -411,8 +411,9 @@ describe("CT-01 — a confirm the kernel could not carry out is not recorded as 
   // census-trust TRV2-08 / OD-TRUST-5 (compass/CompassRestrictionGate.ts): a
   // HOSTING restriction refuses the confirm before anything is applied, and the
   // proposal survives for when the restriction is lifted.
-  it("TRV2-08: a hosting restriction → 403, nothing applied, no kernel command, the proposal stays PENDING", async () => {
+  it("TRV2-08: the HOST of a group trip under a hosting restriction → 403, nothing applied, no kernel command, the proposal stays PENDING", async () => {
     seed(true);
+    sc._store.trip_members!.push({ trip_id: TRIP, user_id: "33333333-0000-4000-8000-000000000003", role: "member", status: "accepted" });
     sc._store.trust_restrictions = [{ user_id: USER, restriction_type: "hosting", lifted_at: null, expires_at: null }];
     const r = await confirm();
     assert.equal(r.status, 403, JSON.stringify(r.json));
@@ -423,8 +424,17 @@ describe("CT-01 — a confirm the kernel could not carry out is not recorded as 
     assert.equal(sc._store.trip_autopilot_proposals![0]!.status, "pending");
   });
 
-  it("TRV2-08: an UNREADABLE trust_restrictions → 503, retryable, never worded as a restriction, nothing applied", async () => {
+  it("TRV2-08: a hosting restriction does not stop the host of a SOLO trip (not a group trip)", async () => {
     seed(true);
+    sc._store.trust_restrictions = [{ user_id: USER, restriction_type: "hosting", lifted_at: null, expires_at: null }];
+    const r = await confirm();
+    assert.equal(r.status, 200, JSON.stringify(r.json));
+    assert.equal(r.json.status, "confirmed");
+  });
+
+  it("TRV2-08: a group-trip host's confirm with an UNREADABLE trust_restrictions → 503, retryable, never worded as a restriction, nothing applied", async () => {
+    seed(true);
+    sc._store.trip_members!.push({ trip_id: TRIP, user_id: "33333333-0000-4000-8000-000000000003", role: "member", status: "accepted" });
     const realFrom = sc.from;
     sc.from = (t: string) => {
       if (t !== "trust_restrictions") return realFrom(t);

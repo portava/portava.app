@@ -242,11 +242,11 @@ router.post("/autopilot/proposals/:id/confirm", asyncHandler(async (req, res) =>
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
   if (!permitted) { sendError(res, "forbidden", "You don't have permission to edit this trip's plan"); return; }
 
-  // census-trust TRV2-08 / OD-TRUST-5: moving or cancelling a shared plan is
-  // refused under a hosting restriction, and refused retryably — the proposal
-  // left pending — when the restriction state cannot be read. /decline is not
-  // gated: declining changes nothing for anyone else.
-  const restriction = await checkCompassActionRestriction(sc, auth.user.id, "confirm_autopilot_proposal");
+  // census-trust TRV2-08 / OD-TRUST-5: the host of a group trip under a hosting
+  // restriction may not have Autopilot move or cancel its shared plans; an
+  // unreadable state refuses retryably, the proposal left pending. /decline is
+  // not gated: declining changes nothing for anyone else.
+  const restriction = await checkCompassActionRestriction(sc, auth.user.id, String((proposal as any).trip_id), "confirm_autopilot_proposal");
   if (!restriction.allowed) { sendCompassRestrictionRefusal(res, restriction); return; }
 
   const { applied, blocked, evidence, kernelAvailable } = await applyProposal(sc, proposal);

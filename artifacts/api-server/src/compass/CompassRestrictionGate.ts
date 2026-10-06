@@ -1,63 +1,60 @@
 /**
- * CompassRestrictionGate — Trust restrictions reach the Compass actions that
- * act FOR a person (census-trust TRV2-08; owner decision OD-TRUST-5).
+ * CompassRestrictionGate — a Trust restriction reaches the Compass actions it
+ * covers, and no others (census-trust TRV2-08; owner decision OD-TRUST-5).
  *
- * ── WHAT WAS WRONG ──────────────────────────────────────────────────────────
  * OD-TRUST-5 (docs/ops/owner-decisions-20261004.md): "Enforce restrictions on
  * the server across all relevant APIs and surfaces; hiding controls in the
  * interface is not enough. Limit each restriction to the actions and duration
  * needed, and preserve access to appeals and permitted data exports."
  *
- * `getRestrictionState` had callers in messaging, calls, trip creation, trip
- * invitations and crew live-share — and none under `src/compass/` or the
- * Compass routes (census-trust TRV2-08, re-confirmed by grep). So an account
- * an admin had restricted from messaging could still have Compass deliver a
- * crew proposal, with its free-text rationale, to every other member's screen;
- * and an account restricted from hosting could still have Compass add plans to
- * a shared trip or rewrite them through Autopilot.
+ * ── A RESTRICTION MEANS WHAT THE PERSON IS TOLD IT MEANS ─────────────────────
+ * The person's own restriction summary (services/trust/TrustPrivacyGuard.ts —
+ * lane B's) says, per type:
+ *   hosting              "You cannot host group trips at this time."
+ *   messaging            "You cannot initiate new conversations at this time."
+ *   private_plan_access  "You cannot join private plans at this time."
+ *   location_plan_join   "You cannot join location-based plans at this time."
+ * A Compass refusal may not go further than those sentences: a restriction the
+ * person cannot read about is not one this file enforces. So the mapping is:
  *
- * ── THE MAPPING IS THIS LANE'S READING, NOT AN OWNER RULING ─────────────────
- * The four restriction types are lane B's (TrustRestrictionService); which of
- * them covers which Compass action was not decided by the owner. The reading
- * below follows the one precedent already in the tree for a conversational
- * surface — Telegraph's capability policy
- * (domain/telegraph/policies/conversationCapabilityPolicy.ts) maps
- * `canSendMessage ← messaging` and `canCreatePlan ← hosting` — and is listed in
- * lane-l/owner-decisions.md for the owner to confirm or change. Each entry is
- * the narrowest type that stops the harm the restriction exists for:
+ *   hosting → Compass may not change a GROUP trip's shared plans for the
+ *             person who HOSTS it (owns it, with at least one other accepted
+ *             member): create_proposal, confirming a Compass plan proposal,
+ *             confirming an Autopilot change. A member who does not host the
+ *             trip, and a host of a solo trip, are unaffected — that is not
+ *             hosting a group trip.
+ *   messaging, private_plan_access, location_plan_join → no Compass action.
+ *             None of these Compass actions starts a conversation or joins a
+ *             plan.
  *
- *   create_proposal            hosting + messaging — it organises a change the
- *                              whole crew must act on (Telegraph: creating a
- *                              plan is hosting) AND it puts model-written text
- *                              on other people's screens in this person's name
- *                              (that is messaging). Either restriction refuses.
- *   confirm_plan_proposal      hosting — adds a plan item every member sees
- *                              (Telegraph: canCreatePlan ← hosting).
- *   confirm_autopilot_proposal hosting — moves or cancels shared plan items.
- *   boost_visibility_on        messaging — raises how prominently this person
- *                              is shown to strangers as someone to meet; an
- *                              account restricted from contacting people is
- *                              not promoted for contact. Turning the boost OFF
- *                              is never gated.
+ * NARROWED 2026-10-06 after independent verification. The first version also
+ * refused create_proposal under a messaging restriction, refused the confirms
+ * for any member under hosting, and refused turning the visibility boost ON
+ * under messaging — beyond what the person is told. The boost door is gone for
+ * a second reason too: `boost_visibility_enabled` defaults TRUE and the feed
+ * applies it without reading this gate, so refusing only the re-enable
+ * restricted nothing (and the boost lifts the person's own feed posts; it is
+ * not "promotion as someone to meet", as the first header said). Whether a
+ * restricted person's posts should lose the boost is listed for the owner.
  *
- * NOT gated, deliberately: declining a proposal, reading anything, reporting,
- * Compass's own memory controls and exports, and proposals that stay inside the
- * person's own conversation (`add_to_trip` before confirm,
- * `compile_plan_from_experience`, `replan_day`, `simulate_plan`) — OD-TRUST-5
- * says to limit a restriction to the actions it is needed for.
+ * This is lane L's READING of the four types, listed for owner confirmation
+ * (lane-l/owner-decisions.md); it is not an owner ruling.
  *
  * ── AN UNREADABLE STATE REFUSES, AND NEVER SAYS "RESTRICTED" ────────────────
- * `getRestrictionState` returns `degraded: true` in two shapes. `fail_closed`
- * (a real read error) already sets the can-flags false; `fail_open` (the table
- * is not migrated) sets them all true. Both mean the same thing here: nobody
- * could read this person's restrictions. A Compass action that speaks or
- * organises for a person is not taken on a guess, so EITHER shape refuses with
- * the retryable 503 `degraded_unavailable` — and the words say the check could
- * not be done, never that the person is restricted. This is stricter than the
- * `fail_open` handling in routes/trips.ts on purpose, and the reason is the
- * same sentence of OD-TRUST-5: "could not read" is not "not restricted".
+ * Whether the person hosts the trip is read first; a read that fails refuses
+ * retryably. If they do host a group trip, their restriction state is read; in
+ * either degraded shape (`fail_closed`, or `fail_open` whose can-flags all read
+ * true) nobody could read their restrictions, so the action is refused with the
+ * retryable 503 `degraded_unavailable`, worded as "could not verify", never as
+ * a restriction. Declining, reading, reporting, memory controls and exports are
+ * never gated.
  *
- * PURE apart from the one injected read; the route/tool callers own the wire.
+ * ── WHAT THIS FILE DOES NOT CLOSE ───────────────────────────────────────────
+ * Sibling doors outside Compass reach the same writes with no restriction read
+ * (POST /trips/:id/commands CREATE_PROPOSAL, POST /trips/:id/replan with
+ * createProposals, the trip plan-item routes, POST /places/:id/add-to-trip-plan).
+ * Those are Trips files (lane C); census-compass §38 lists them and TRV2-08
+ * stays W until they read the same rule.
  */
 import type { Response } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -71,28 +68,34 @@ import { sendError } from "../lib/http.js";
 export type CompassRestrictedAction =
   | "create_proposal"
   | "confirm_plan_proposal"
-  | "confirm_autopilot_proposal"
-  | "boost_visibility_on";
+  | "confirm_autopilot_proposal";
 
-/** Lane L's reading (see header). Any listed type, if active, refuses the action. */
+/**
+ * Lane L's reading (see header). Every mapped action is a change to a group
+ * trip's shared plans, so every one maps to `hosting` — and only applies when
+ * the person hosts that group trip.
+ */
 export const COMPASS_ACTION_RESTRICTIONS: Readonly<Record<CompassRestrictedAction, readonly RestrictionType[]>> =
   Object.freeze({
-    create_proposal: Object.freeze(["hosting", "messaging"]) as readonly RestrictionType[],
+    create_proposal: Object.freeze(["hosting"]) as readonly RestrictionType[],
     confirm_plan_proposal: Object.freeze(["hosting"]) as readonly RestrictionType[],
     confirm_autopilot_proposal: Object.freeze(["hosting"]) as readonly RestrictionType[],
-    boost_visibility_on: Object.freeze(["messaging"]) as readonly RestrictionType[],
   });
-
-/** What the person was trying to do, in the words a refusal uses. */
-const ACTION_WORDS: Readonly<Record<CompassRestrictedAction, string>> = Object.freeze({
-  create_proposal: "proposing changes to your trip crew",
-  confirm_plan_proposal: "adding plans to a shared trip",
-  confirm_autopilot_proposal: "changing a shared trip's plans",
-  boost_visibility_on: "boosting your visibility to other travelers",
-});
 
 export const COMPASS_RESTRICTION_UNVERIFIABLE_MESSAGE =
   "We could not verify your permissions right now, so nothing was changed. This is temporary — please try again shortly.";
+
+/** The person's own summary says "You cannot host group trips"; this says the same thing about this action. */
+export const COMPASS_HOSTING_RESTRICTED_MESSAGE =
+  "Your account is currently restricted from hosting group trips, so Compass can't change this trip's shared plans for you.";
+
+/** Roles that make a trip_members row an accepted member (lib/http.ts requireTripMember). */
+const ACCEPTED_ROLES = new Set(["owner", "co_host", "member", "viewer"]);
+
+export interface TripHosting {
+  /** The person owns the trip AND at least one other accepted member is on it. */
+  hostsGroupTrip: boolean;
+}
 
 export type CompassRestrictionVerdict =
   | { allowed: true }
@@ -106,21 +109,25 @@ export type CompassRestrictionVerdict =
   | {
       allowed: false;
       kind: "unverifiable";
-      /** Why the state could not be read: the service's own discriminator, or a throw. */
-      reason: "fail_open" | "fail_closed" | "threw";
+      /** Why the check could not be completed: the service's own discriminator, or a read that failed or threw. */
+      reason: "fail_open" | "fail_closed" | "threw" | "trip_unreadable";
       message: string;
     };
 
-/** The decision, from a state already read. Exported so the rule is tested without a client. */
+/** The decision, from facts already read. Exported so the rule is tested without a client. */
 export function decideCompassAction(
   action: CompassRestrictedAction,
-  state: RestrictionState,
+  hosting: TripHosting,
+  state: RestrictionState | null,
 ): CompassRestrictionVerdict {
-  if (state.degraded) {
+  // Not hosting a group trip: no restriction this file enforces can apply, and
+  // the restriction state is not even needed.
+  if (!hosting.hostsGroupTrip) return { allowed: true };
+  if (!state || state.degraded) {
     return {
       allowed: false,
       kind: "unverifiable",
-      reason: state.degradedReason ?? "fail_closed",
+      reason: state?.degradedReason ?? "fail_closed",
       message: COMPASS_RESTRICTION_UNVERIFIABLE_MESSAGE,
     };
   }
@@ -128,32 +135,46 @@ export function decideCompassAction(
   const active = new Set(state.activeRestrictions ?? []);
   const hit = needed.filter((t) => active.has(t));
   if (hit.length === 0) return { allowed: true };
-  return {
-    allowed: false,
-    kind: "restricted",
-    restrictionTypes: hit,
-    // The same sentence shape every existing restriction refusal in this server
-    // uses (routes/trips.ts, routes/tripCrewLocation.ts). It points at no screen:
-    // the suspension experience OD-TRUST-4 describes (what, why, how long, how to
-    // appeal) is lane B's (census-trust TV-4b), and naming a settings page that
-    // does not list restrictions would be a false instruction.
-    message: `Your account is currently restricted from ${ACTION_WORDS[action]}.`,
-  };
+  return { allowed: false, kind: "restricted", restrictionTypes: hit, message: COMPASS_HOSTING_RESTRICTED_MESSAGE };
 }
 
-/** Read this person's restriction state and decide. Never throws. */
+/** Does this person host this trip as a GROUP trip? null = could not be read. */
+export async function readTripHosting(sc: SupabaseClient, userId: string, tripId: string): Promise<TripHosting | null> {
+  const { data: trip, error: tripErr } = await sc.from("trips").select("owner_id").eq("id", tripId).maybeSingle();
+  if (tripErr) return null;
+  if (!trip || (trip as { owner_id?: unknown }).owner_id !== userId) return { hostsGroupTrip: false };
+  const { data: members, error: memErr } = await sc
+    .from("trip_members")
+    .select("user_id, role, status")
+    .eq("trip_id", tripId);
+  if (memErr) return null;
+  const others = ((members ?? []) as Array<{ user_id?: unknown; role?: unknown; status?: unknown }>).filter(
+    (m) => m.user_id !== userId
+      && ACCEPTED_ROLES.has(String(m.role))
+      && (m.status === null || m.status === undefined || m.status === "accepted"),
+  );
+  return { hostsGroupTrip: others.length > 0 };
+}
+
+/** Read what is needed and decide. Never throws. */
 export async function checkCompassActionRestriction(
   sc: SupabaseClient,
   userId: string,
+  tripId: string,
   action: CompassRestrictedAction,
 ): Promise<CompassRestrictionVerdict> {
-  let state: RestrictionState;
+  let hosting: TripHosting | null;
   try {
-    state = await getRestrictionState(sc, userId);
+    hosting = await readTripHosting(sc, userId, tripId);
   } catch {
     return { allowed: false, kind: "unverifiable", reason: "threw", message: COMPASS_RESTRICTION_UNVERIFIABLE_MESSAGE };
   }
-  return decideCompassAction(action, state);
+  if (!hosting) {
+    return { allowed: false, kind: "unverifiable", reason: "trip_unreadable", message: COMPASS_RESTRICTION_UNVERIFIABLE_MESSAGE };
+  }
+  if (!hosting.hostsGroupTrip) return { allowed: true };
+  // getRestrictionState never throws (it answers a degraded state instead).
+  return decideCompassAction(action, hosting, await getRestrictionState(sc, userId));
 }
 
 /**
