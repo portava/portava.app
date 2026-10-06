@@ -501,6 +501,37 @@ describe("3. a restriction refuses no more than the ruling asks, at every door",
   });
 });
 
+describe("3b. the inline doors' own reads for the restriction gate fail CLOSED (re-verification 2)", () => {
+  // `refuseRestrictedSend` reads the thread's type and its roster itself. With
+  // the roster unreadable, the other-member list would be EMPTY, no counterpart
+  // would be found and a messaging-restricted FIRST message would be admitted —
+  // so an unreadable read must refuse, retryably. The door's own membership and
+  // block reads must SUCCEED, or the case would prove a refusal that came from
+  // somewhere else: the answer is pinned to the restriction gate's own sentence.
+  // The text door reads the roster three times before the gate (membership, the
+  // burst limit's tier, the block guard); the media door twice (membership, the
+  // block guard). A wrong count fails this case loudly — the door's own refusal
+  // says "We could not verify this conversation", not the gate's sentence.
+  const INLINE: Array<[Door, number]> = DOORS
+    .filter((d) => d.name.startsWith("text") || d.name.startsWith("media"))
+    .map((d) => [d, d.name.startsWith("text") ? 3 : 2]);
+  for (const [door, rosterReadsBefore] of INLINE) {
+    it(`${door.name}: the roster read fails under a messaging restriction — 503, the gate's own sentence, nothing written`, async () => {
+      const c = use("messaging", {}, { errors: { message_thread_members: { message: "roster: timeout", ops: ["select"], afterOps: rosterReadsBefore } } });
+      const got = await attempt(door, c, DM_NEW);
+      assertRefused(door.name, got, "retryable");
+      assert.equal(got.out.message, RESTRICTION_UNKNOWN_MESSAGE, got.out.raw);
+    });
+    it(`${door.name}: the thread-type read fails under a messaging restriction — 503, never the restriction sentence`, async () => {
+      // The door's own is_e2ee read is the first message_threads operation.
+      const c = use("messaging", {}, { errors: { message_threads: { message: "threads: timeout", ops: ["select"], afterOps: 1 } } });
+      const got = await attempt(door, c, DM_NEW);
+      assertRefused(door.name, got, "retryable");
+      assert.equal(got.out.message, RESTRICTION_UNKNOWN_MESSAGE, got.out.raw);
+    });
+  }
+});
+
 /* ══════════════════════════════════════════════════════════════════════════
  * 4. Never suppressible.
  * ════════════════════════════════════════════════════════════════════════ */
