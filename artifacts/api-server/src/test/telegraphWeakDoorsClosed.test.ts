@@ -220,3 +220,57 @@ describe("POST .../start-poll holds every gate", () => {
     assert.equal(rows(c, DM_E2EE).length, 0);
   });
 });
+
+/**
+ * census-telegraph §43 (verifier finding 8, 2026-10-05): the BURST LIMIT on
+ * both doors, by behaviour. Wave 1 asserted the guard's call by its text only,
+ * so the mutation `if (!guard.ok && guard.code !== "rate_limited")` — every
+ * gate but the burst limit — survived this file (11/11) and
+ * telegraphMessageDoors (20/20). Here the sender really sends until refused.
+ *
+ * The bucket is ONE per sender for every ordinary door (lib/telegraphThreadWrite.ts
+ * "ONE BUCKET, NOT ONE PER DOOR"), so the poll door is shown refused by a burst
+ * spent through the gem-share door — a limit per door would be the same defect
+ * with a limit on it.
+ */
+const MOST_GENEROUS_TIER = 160; // SEND_LIMITS.trusted: no sender gets more than this per window
+
+describe("§43 the burst limit holds at both doors", () => {
+  it("R1. THE POINT: sharing gems until refused — a 429 with Retry-After arrives within the most generous tier, and the refused send writes nothing", async () => {
+    const c = use(store());
+    let refused: Awaited<ReturnType<typeof shareGem>> | null = null; let admitted = 0;
+    for (let i = 0; i <= MOST_GENEROUS_TIER && !refused; i += 1) {
+      const r = await shareGem(DM);
+      if (r.status === 429) refused = r; else { assert.equal(r.status, 200, JSON.stringify(r.body)); admitted += 1; }
+    }
+    assert.ok(refused, `no refusal after ${admitted} gem shares — the burst limit is not enforced at this door`);
+    assert.equal(refused!.body.error, "rate_limited");
+    assert.ok(admitted >= 20, "vacuity guard: the strictest tier still admits twenty");
+    assert.equal(rows(c, DM).length, admitted, "the refused share wrote a card anyway");
+  });
+
+  it("R2. THE POINT: a burst spent at the gem door refuses the POLL door too — 429, no poll row, the suggestion untouched", async () => {
+    const c = use(store());
+    let spent = false;
+    for (let i = 0; i <= MOST_GENEROUS_TIER && !spent; i += 1) spent = (await shareGem(DM)).status === 429;
+    assert.ok(spent, "vacuity guard: the bucket was spent");
+    const before = rows(c, DM).length;
+    const r = await startPoll(DM);
+    assert.equal(r.status, 429, JSON.stringify(r.body));
+    assert.equal(r.body.error, "rate_limited");
+    assert.equal(rows(c, DM).length, before, "a poll card reached the thread past the burst limit");
+    const s = (c._store.telegraph_chat_suggestions ?? []).find((x: Record<string, unknown>) => x.id === SUGG) as Record<string, unknown>;
+    assert.equal(s.status, "shown", "a refused poll must not consume the suggestion");
+  });
+
+  it("R3. the Retry-After header is set on the refusal, so a client waits instead of bursting again", async () => {
+    use(store());
+    const res = { status: 0, retry: null as string | null };
+    for (let i = 0; i <= MOST_GENEROUS_TIER && res.status !== 429; i += 1) {
+      const r = await fetch(`${harness.base}/hidden-gems/${GEM}/share-telegraph`, { method: "POST", headers: { authorization: `Bearer ${A}`, "content-type": "application/json" }, body: JSON.stringify({ threadId: DM }) });
+      res.status = r.status; res.retry = r.headers.get("retry-after"); await r.text();
+    }
+    assert.equal(res.status, 429);
+    assert.ok(Number(res.retry) >= 1, `Retry-After was ${res.retry}`);
+  });
+});
