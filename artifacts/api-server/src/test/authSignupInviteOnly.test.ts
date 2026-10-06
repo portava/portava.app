@@ -29,12 +29,14 @@ import authRouter, { _resetAuthRateLimits } from "../routes/auth.js";
 const READ_ERROR = { message: "server closed the connection unexpectedly", code: "08006" };
 
 let created: Array<{ email: string }> = [];
+let createdArgs: Array<Record<string, unknown>> = [];
 
 function install(spec: FakeClientSpec) {
   const client = makeFailClosedClient(spec);
   client.auth.admin = {
     createUser: async (args: { email: string; password: string }) => {
       created.push({ email: args.email });
+      createdArgs.push(args as unknown as Record<string, unknown>);
       return { data: { user: { id: "00000000-0000-0000-0000-0000000000aa", email: args.email } }, error: null };
     },
   };
@@ -62,14 +64,15 @@ after(() => { server.close(); });
 
 beforeEach(() => {
   created = [];
+  createdArgs = [];
   _resetAuthRateLimits();
 });
 
-async function signup(email: string) {
+async function signup(email: string, extra: Record<string, unknown> = {}) {
   const res = await fetch(`${base}/auth/signup`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email, password: "correct-horse-battery" }),
+    body: JSON.stringify({ email, password: "correct-horse-battery", ...extra }),
   });
   return { status: res.status, body: (await res.json()) as any };
 }
@@ -94,6 +97,20 @@ describe("POST /api/auth/signup — invite_only_beta", () => {
     const r = await signup("Open@Example.com");
     assert.equal(r.status, 201, JSON.stringify(r.body));
     assert.deepEqual(created, [{ email: "open@example.com" }]);
+  });
+
+  it("OFF: the app's name / handle reach the auth user's metadata (what handle_new_user reads); junk is dropped", async () => {
+    install({ rows: { feature_flags: [
+      { flag: "disable_signups", enabled: false },
+      { flag: "invite_only_beta", enabled: false },
+    ] } });
+    const r = await signup("meta@example.com", { name: "  Ada  ", handle: "ada_l", role: "admin", is_official: true });
+    assert.equal(r.status, 201);
+    assert.deepEqual(createdArgs[0].user_metadata, { name: "Ada", handle: "ada_l" });
+    assert.ok(!("app_metadata" in createdArgs[0]), "nothing from the body may reach app_metadata");
+    const r2 = await signup("plain@example.com", { name: 42, handle: "x".repeat(51) });
+    assert.equal(r2.status, 201);
+    assert.ok(!("user_metadata" in createdArgs[1]), "non-string or over-long values are not stored");
   });
 
   it("UNREADABLE feature_flags: refused by the disable_signups STOP — no account, whatever invite_only_beta's polarity", async () => {
