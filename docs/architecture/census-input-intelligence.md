@@ -5674,7 +5674,7 @@ Two further builds rest on no decision and close rows on their own terms: the §
 | ID | from | **to** | evidence |
 | --- | --- | --- | --- |
 | G326 | N | **C** | A stale-table repair, not new code. The §4 cell already records the build (2026-09-21), but the §15 table that follows it still read `N`, and last-statement-wins counted `N`. Re-verified at this tree: focus is moved back to the field when the overlay closes (`travel-buddy-standalone/src/platform/input-assistance/components/a11yFocus.ts:54#AccessibilityInfo.setAccessibilityFocus(handle)`, reached from `travel-buddy-standalone/src/platform/input-assistance/components/SmartInput.tsx:331#if (restore) moveAccessibilityFocusTo(inputRef.current)`), and opening it never steals the cursor (`travel-buddy-standalone/src/platform/input-assistance/components/__tests__/suggestionAccessibility.component.test.tsx:293#OPENING the overlay never steals the cursor out of the field`). Both component files pass, 27/27, run this pass. Whether VoiceOver and TalkBack honour the call on a handset stays a device question, recorded under G327/G328. |
-| G337 | N | **C** | Controlled. The premise "no paste path exists" stopped being true at §34. Pasted text was already made safe to render; what was missing was the URL: an item's `raw` echoed credentials and tracking tokens, and a URL inside a text line rode into the rendered QUERY. Now every `raw` is display-safe (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:120#export function displaySafeUrl`) and a URL is removed from a text query (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:408#stripTime(stripUrls(part))` *(repointed 2026-10-05: the old `timed.replace` line was rewritten by verifier fix 2, §38)*), while parsing still reads the full URL. Proven through the route (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:326#through the route: the response a review screen renders carries no credential or token`). Mutations: raw unredacted, query kept, URL left in the query, `href` returned — each red. |
+| G337 | N | **C** | Controlled. The premise "no paste path exists" stopped being true at §34. Pasted text was already made safe to render; what was missing was the URL: an item's `raw` echoed credentials and tracking tokens, and a URL inside a text line rode into the rendered QUERY. Now every `raw` is display-safe (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:120#export function displaySafeUrl`) and a URL is removed from a text query (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:408#stripTime(stripUrls(part))` *(repointed 2026-10-05: the old `timed.replace` line was rewritten by verifier fix 2, §38)*), while parsing still reads the full URL. Proven through the route (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:337#through the route: the response a review screen renders carries no credential or token`). Mutations: raw unredacted, query kept, URL left in the query, `href` returned — each red. |
 | G359 | W | **C** | The row named its own blocker: "a prohibition with no detector is a convention." The detector now exists, in the shape it asked for, with the four pre-existing engines as named, closed, shrink-only exemptions and every other match classified with a reason (`travel-buddy-standalone/src/platform/input-assistance/services/__tests__/noIndependentEngines.test.ts:95#const KNOWN_ENGINES` *(repointed 2026-10-05: `CENSUS_NAMED_ENGINES` no longer exists; the verifier found this detector open on three sides and §38 restates the row — this cell's claim of four engines and a closed detector is superseded there)*). It runs in the mobile node suite, so CI enforces it. The second clause of the old cell — a client-side duplicate of the Compass starter set — is no longer true: the module is a thin adapter over the served rows (`travel-buddy-standalone/src/platform/input-assistance/compass/compassPrompt.ts:33#export function startersFromSuggestions`). Mutations: a planted fifth engine, a fifth name exempted, an entry dropped, an entry pointed at a missing file — each red. What it cannot catch is stated in its header. The four engines themselves are G6/G16, which stay `W`. |
 | G30 | N | **C** | A stale row, found by reading the code rather than the cell. The cell's own condition was "§32's substrate — a local dictionary or cached entity index that a field falls back to — plus a reader that picks the fallback by this member". Both now exist and neither section that built them restated this row: on an unreachable server the hook keeps or drops retained rows by the member (`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:399#const mayRetain = offlineSurfaceAllowed(policy.offlinePolicy);`, §30.4), and the shipped dictionaries are chosen by it (`travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts:193#const classes = SURFACE_ENTITY_CLASSES[policy.offlinePolicy as string];`, §32). Proven at both ends: `travel-buddy-standalone/src/platform/input-assistance/services/__tests__/localDictionary.test.ts:182#§32: a field the authority marks server_required gets NO local dictionary` and `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.offline.component.test.tsx:258#§32: a SERVER_REQUIRED field renders nothing offline`, both passing this pass; the two vocabularies were aligned and the parity moved from reported to asserted at §29.3. |
 | G25 | N | **W** | IMPLEMENTATION-COMPLETE; awaits 3782 applied, the owner's approval of the disclosure text, and `input_memory_context_enabled`. `allowMemoryContext` is no longer read by nothing: it is the FIRST of the three OD-INPUT-3 gates (`artifacts/api-server/src/lib/inputAssistance/memoryContext.ts:99#if (!policy || policy.allowMemoryContext !== true) return 'policy';`), and a false policy reads nothing at all, not even the flag (`artifacts/api-server/src/test/inputMemoryContext.test.ts:212#a field whose policy does not allow memory context reads NOTHING`). Behind it, the person's own CompassMemoryProjection is read through the memory layer's retrieval service and becomes at most two starters, pushed before the curated set (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:705#...(await buildMemoryContextStarters(sc`). Mutations on each gate, the ordering, the inspect read and the withdrawn-row predicate — each red (the last survived once; the case that kills it was added). |
@@ -6000,3 +6000,140 @@ and the trip-side verdict is census-trips' (TR256) to grade.
 - NOT-GRADED: travel-buddy-standalone/app/discover.tsx — as above: one of the thirteen, pinned by the watched detector.
 - NOT-GRADED: travel-buddy-standalone/app/settings/index.tsx — named for the mount line of finding 4. The watched component test reads this file and asserts the mount (`inputAssistanceSettings.component.test.tsx`), and many lanes edit Settings, so watching it here would age this census on every unrelated row.
 - NOT-GRADED: artifacts/api-server/src/lib/deletionDispositions.ts — named in finding 8 as where the three tables' fate is written. The watched band-local test in `inputOutcomeLearning.test.ts` pins that claim; the manifest itself is the deletion lane's and is edited by every lane that adds a table.
+
+## §39 — 2026-10-06 (lane D, wave 3): the re-verifier's one MEDIUM and four proof gaps, closed
+
+Written by lane D from branch `claude/mission-d-input-intelligence-20261005`, after a second independent
+verifier re-read §38's pushed head `62f960a7c` and recommended "merge after fixing 1". This section is
+append-only: §38 is not rewritten, and where a §38 sentence is wrong this section restates it. **All code
+evidence is CONTROLLED** (`classifyPaste` and the real routers over a fake Supabase client). **No database
+was read or written.** `head_commit` is NOT re-declared.
+
+### 39.1 What the verifier found
+
+* **MEDIUM — G337's class was still open.** §38.2 finding 2 and §38.5 say a pasted URL's userinfo, port,
+  path, query and fragment never render, "scheme-less or not". The scheme-less recogniser knew only `www.…`
+  and `host.tld` followed by `/`, `?`, `#` or `;`. Three shapes got past it, standalone or inside a text line:
+  - a userinfo (`user:pass9@host.com/path?token=…`);
+  - a port (`host.com:8443/reset?token=…`);
+  - an IPv4 host (`192.168.1.1/reset?token=…`).
+
+  Each was left in `raw`, kept in the query (which is also sent to search), and echoed by the no-match
+  reason ("No place matched “user:pass9@”"). Reproduced through the route. The verifier offered two
+  remedies: close the class, or regrade G337 to `W`.
+* **LOW — four proof gaps.** In each, the code was safe and no test would have noticed a regression:
+  - a bare domain without `www.` inside a text line (its mutant, M15b, survived);
+  - `canSeePlanItemLocation` ignored `access.status`, so an `unread` access that carried grants admitted a
+    private item (no producer builds one today);
+  - no lane-D test injected a failed `feature_flags` read (the fail-open mutant, M3, survived both suites);
+  - no `/suggest` test sent a foreign `userId` in the body (M14 survived).
+* **Two NOTES** on §38's wording, restated in 39.4.
+
+### 39.2 The MEDIUM, closed as a class
+
+The scheme-less shape is now ONE pattern
+(`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:156#const SCHEMELESS_URL = String.raw`).
+The in-line redactor and stripper use it
+(`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:158#const URL_TOKEN = new RegExp(`), and so
+does the URL-line recogniser (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:385#return URL_LINE.test(line.trim());`).
+So a token the redactor treats as a URL is a line the reader reports as one. Before the path, query,
+fragment or parameter it has always required, the pattern now admits:
+- an optional userinfo, whose password may contain `/` (§38's `https` case covered that; the scheme-less
+  one did not);
+- a domain, or an IPv4 host with octets bounded to 0–255;
+- an optional port.
+
+These now take the path an `https://` URL takes. `raw` shows the host only, the query loses the token,
+and a URL-only line is reported as `unsupported_link`. `mailto:`, `data:` and `javascript:` are refused as
+userinfo, so they stay plain text. A mailto's query is still redacted, and its local part no longer
+reaches the query.
+
+**Proven red-first.** The verifier's four inputs and the `/`-password variant were added to `SECRET_INPUTS`
+(`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:279#a SCHEME-LESS url with USERINFO`),
+with a host-only report test
+(`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:348#a scheme-less userinfo, port or IPv4 URL-only line is REPORTED`),
+BEFORE the extractor changed. That run was **7 red**: five `classifyPaste` cases, the route case and the report
+case. After the change the suite is 42/42.
+
+**False positives, pinned.** A time `19:30`, a ratio `3:1`, `Terminal 2/3`, prices `1,500/night`,
+`2.500.000/night` and `1.500.000.000/night`, and an e-mail address all stay text, unredacted
+(`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:366#const NOT_URLS`). So do
+`mailto:`, `data:` and `javascript:` (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:379#mailto:, data: and javascript: stay PLAIN TEXT`).
+
+**Mutations, each red:**
+- the scheme-less alternative removed from the token (M15b's analogue);
+- userinfo removed;
+- port removed;
+- IPv4 removed;
+- the non-web-scheme exclusion removed;
+- `/` refused in the password;
+- octets unbounded;
+- the line recogniser reverted to its two old shapes.
+
+The verifier's other eleven inputs classify as before, except `mailto:`, which drops its local part from
+the query.
+
+**Cost.** On a 5000-character pathological paste, classification takes at most ~67 ms (49 ms before this
+change). The paste cap bounds it.
+
+**G337 stays `C`**, now true of the class §38.5 names.
+
+### 39.3 The four proof gaps, closed
+
+1. **Bare domain inside a text line.** Added to `SECRET_INPUTS`
+   (`artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:286#a bare domain without www. inside a text line`).
+   Removing the scheme-less alternative turns it red.
+2. **Plan-item predicate.** `unread` now fails closed whatever `grants` holds
+   (`artifacts/api-server/src/lib/inputAssistance/planItemAccess.ts:72#if (access.status === "unread") return owner !== null && owner === access.viewerId;`).
+   The proof uses a NON-EMPTY grants map
+   (`artifacts/api-server/src/test/inputPlanItemPrivacy.test.ts:137#unread access fails closed EVEN WITH a non-empty grants map`):
+   red before the line, green after, and red again with the line removed. This line is NOT in lane C's
+   predicate, which the seam otherwise copies. When the seam binds to C's helpers, C's predicate or the
+   binding must keep it.
+3. **A failed `feature_flags` read fails closed.** Each case has the flag row ON, so only the failed read
+   stops it:
+   - the outcome grant answers 404 (`artifacts/api-server/src/test/inputOutcomeLearning.test.ts:752#a grant is refused (404) and nothing is written — the flag row says ON`);
+   - no memory starters (`artifacts/api-server/src/test/inputMemoryContext.test.ts:435#no memory starters, and neither the opt-in nor the memories are read`);
+   - Inspect reads no memory (`artifacts/api-server/src/test/inputMemoryContext.test.ts:444#Inspect reads NO memory and says the feature is not available`);
+   - the memory grant answers 404 (`artifacts/api-server/src/test/inputMemoryContext.test.ts:452#a grant is refused (404) and nothing is written`).
+
+   With `isFlagEnabled` made fail-open, the outcome grant case and all three memory cases go red. The file
+   was then restored byte for byte. The hinted serve still ranks acceptance-only
+   (`artifacts/api-server/src/test/inputOutcomeLearning.test.ts:759#a hinted serve ranks acceptance-only`),
+   and that case is NOT red under the fail-open mutant, by construction. The serve never reads the flag from
+   TypeScript: the check is inside `input_outcome_memory`, the one round trip. The test therefore asserts
+   that no TypeScript flag read happens on the serve path, so a read added there later is caught.
+4. **A foreign body `userId` on `/suggest`.** The outcome RPC receives the session's user, and the rank is
+   the session user's (`artifacts/api-server/src/test/inputOutcomeLearning.test.ts:786#the serve and the outcome RPC use the SESSION's user, never the body's`).
+   Scoping the serve by the body's id (M14) turns it red.
+
+### 39.4 Two of §38's sentences, restated
+
+* **§38.2 finding 6, "Inspect shows exactly what is used".** Inspect shows a superset of what the starters
+  use, in the same order. Inspect returns up to twenty facts
+  (`artifacts/api-server/src/lib/inputAssistance/memoryContext.ts:256#facts: read.facts.slice(0, MEMORY_FACT_SCAN)`).
+  The starters take the first two of the same list
+  (`artifacts/api-server/src/lib/inputAssistance/memoryContext.ts:183#return facts.slice(0, Math.max(0, max))`).
+  The test asserts exactly that prefix
+  (`artifacts/api-server/src/test/inputMemoryContext.test.ts:325#Inspect and the starters are ONE set`).
+  Both lists are the person's own facts, so this is a wording correction, not a privacy one.
+* **§38.3 G359, "ratcheted at thirteen".** The ceiling is the test's own constant
+  (`travel-buddy-standalone/src/platform/input-assistance/services/__tests__/noIndependentEngines.test.ts:94#const ENGINE_CEILING = 13;`),
+  and raising it to fourteen leaves the detector green (the verifier's M10). It is pinned by review and by
+  this census's freshness: the detector is a watched file, so changing the constant ages this census. G359
+  stays `C` on the detector's other rules.
+
+### 39.5 Headline
+
+No row moves. The headline is §38.4's, unchanged: of 373 rows, 297 BUILT-AND-CORRECT, 52 BUILT-BUT-WRONG,
+20 NOT-BUILT, 4 CANNOT-VERIFY.
+
+### 39.6 What would turn this red
+
+* Any shape §38.5 names, scheme-less userinfo, port or IPv4 host included, in `raw`, in a query, or in a
+  reason.
+* A `mailto:`, `data:` or `javascript:` string read as a link; a time, ratio, terminal or price read as one.
+* An `unread` plan-item access admitting another member's private item, whatever its grants.
+* A fail-open flag read on an outcome-learning or memory-context gate, or a TypeScript flag read on the
+  hinted serve.
+* A serve scoped by anything other than the session's user.

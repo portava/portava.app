@@ -266,13 +266,24 @@ describe("§47 sanitize pasted URLs before rendering (G337) — what `raw` may e
     assert.ok(!/pw|XYZ|itinerary/.test(item.raw));
   });
 
-  // ── The verifier's four inputs (finding 2), each through classifyPaste — the
-  //    /extract route's own path — and through the route itself below. ───────
+  // ── The verifiers' inputs (41f17e7b7d #2, 62f960a7c #1–2), each through
+  //    classifyPaste — the /extract route's own path — and the route below. ──
   const SECRET_INPUTS: Array<[string, string, RegExp]> = [
     ["a SCHEME-LESS url (www.)", "www.booking.com/hotel?sid=SESSIONSECRET", /SESSIONSECRET|sid=|hotel/],
     ["an UNPARSEABLE https url inside a text line", "Dinner https://exa%zzmple.com/?token=SECRET 7pm", /SECRET|token|%zz/],
     ["a PASSWORD containing '/'", "https://user:pa/ss@host.com/x?token=SECRET", /SECRET|pa\/ss|user:|token/],
     ["tokens in the PATH", "https://example.com/reset-password/TOKENinPATH;jsessionid=JSESSIONSECRET", /TOKENinPATH|JSESSIONSECRET|reset-password/],
+    // Re-verification of 62f960a7c (finding 1): the scheme-less class was open
+    // for a userinfo, a port and an IPv4 host — each echoed in `raw`, carried
+    // in the query and repeated in "No place matched “…”".
+    ["a SCHEME-LESS url with USERINFO", "user:pass9@host.com/path?token=SECRET9", /SECRET9|pass9|user:|token|\/path/],
+    ["a SCHEME-LESS url with a PORT", "host.com:8443/reset?token=SECRET10", /SECRET10|:8443|reset|token/],
+    ["a SCHEME-LESS url on an IPv4 host", "192.168.1.1/reset?token=SECRET11", /SECRET11|reset|token/],
+    ["USERINFO inside a text line", "Hoi An then user:pw12@booking.com/r?sid=SECRET12 at 8pm", /SECRET12|pw12|user:|sid=/],
+    ["a SCHEME-LESS password containing '/'", "user:pa/ss@host.com/x?token=SECRET17", /SECRET17|pa\/|user:|token/],
+    // (finding 2) a bare domain WITHOUT www. inside a text line — the only
+    // proof that the bare-domain alternative is load-bearing.
+    ["a bare domain without www. inside a text line", "Dinner booking.com/r?sid=SECRET16 then bar", /SECRET16|sid=|\/r\?/],
   ];
   for (const [label, input, secret] of SECRET_INPUTS) {
     it(`classifyPaste: ${label} leaks nothing into raw or the query`, () => {
@@ -313,7 +324,7 @@ describe("§47 sanitize pasted URLs before rendering (G337) — what `raw` may e
     assert.ok(!item.raw.includes("tracking123"), "the display form does not repeat it");
   });
 
-  it("through the route: none of the verifier's four inputs reaches the response in any field", async () => {
+  it("through the route: none of the verifiers' inputs reaches the response in any field", async () => {
     for (const [label, input, secret] of SECRET_INPUTS) {
       _resetRateLimit();
       const r = await extract({ context: "trip_destination", fieldId: "trip.destination", text: input });
@@ -332,6 +343,47 @@ describe("§47 sanitize pasted URLs before rendering (G337) — what `raw` may e
     assert.equal(r.status, 200);
     const text = JSON.stringify(await r.json());
     assert.ok(!/hunter2|s3cr3t|ref=y/.test(text), text);
+  });
+
+  it("a scheme-less userinfo, port or IPv4 URL-only line is REPORTED as a link it cannot read, host only", () => {
+    const cases: Array<[string, string]> = [
+      ["user:pass9@host.com/path?token=SECRET9", "host.com…"],
+      ["host.com:8443/reset?token=SECRET10", "host.com…"],
+      ["192.168.1.1/reset?token=SECRET11", "192.168.1.1…"],
+    ];
+    for (const [input, raw] of cases) {
+      const c = classifyPaste(input);
+      assert.equal(c.items.length, 1, input);
+      assert.equal(c.items[0]!.source, "map_link", input);
+      assert.equal(c.items[0]!.unsupported, "unsupported_link", input);
+      assert.equal(c.items[0]!.query, null, input);
+      assert.equal(c.items[0]!.raw, raw, input);
+    }
+  });
+
+  // ── What the scheme-less recogniser must NOT swallow: a time, a ratio, a
+  //    terminal, a price (both thousands separators), an e-mail address. ──────
+  const NOT_URLS = ["Dinner 19:30", "Hoi An 3:1", "Terminal 2/3", "1,500/night Da Nang", "2.500.000/night Da Nang", "1.500.000.000/night Da Nang", "Email anna@gmail.com about Hoi An"];
+  for (const input of NOT_URLS) {
+    it(`not a URL: ${JSON.stringify(input)} is left as text, unredacted`, () => {
+      assert.equal(redactUrlsForDisplay(input), input);
+      const c = classifyPaste(input);
+      assert.ok(c.items.length > 0, input);
+      for (const item of c.items) {
+        assert.equal(item.source, "text", `${input} became ${item.source}`);
+        assert.ok(!item.raw.includes("…"), `${input} was redacted: ${item.raw}`);
+      }
+    });
+  }
+
+  it("mailto:, data: and javascript: stay PLAIN TEXT — never a link item — and a mailto's query is still never rendered", () => {
+    for (const input of ["mailto:alice@example.com?subject=hi&body=SECRET2", "data:text/plain;base64,U0VDUkVUMw==", 'javascript:alert("x")']) {
+      const c = classifyPaste(input);
+      assert.ok(c.items.length > 0, input);
+      for (const item of c.items) assert.equal(item.source, "text", `${input} became ${item.source}`);
+    }
+    const mail = classifyPaste("mailto:alice@example.com?subject=hi&body=SECRET2").items[0]!;
+    assert.ok(!/SECRET2|subject|body=/.test(`${mail.raw} ${mail.query ?? ""}`), JSON.stringify(mail));
   });
 });
 

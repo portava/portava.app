@@ -68,6 +68,8 @@ type PlanRowLike = Record<string, unknown> & { id?: unknown; creator_id?: unknow
 export function canSeePlanItemLocation(access: PlanItemAccess, row: PlanRowLike): boolean {
   if (row.location_is_private === false) return true;
   const owner = typeof row.creator_id === "string" ? row.creator_id : null;
+  // NOT in lane C's copy (keep it on binding): unread fails closed REGARDLESS of `grants` — "unread ⇒ no grants" is a producer's promise.
+  if (access.status === "unread") return owner !== null && owner === access.viewerId;
   if (owner !== null && owner === access.viewerId) return true;
   if (row.removed_at !== undefined && row.removed_at !== null) return false;
   const grantOwner = typeof row.id === "string" ? access.grants.get(row.id) : undefined;

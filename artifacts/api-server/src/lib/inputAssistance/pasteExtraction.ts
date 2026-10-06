@@ -152,11 +152,11 @@ function urlHost(token: string): string | null {
   return /^[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+$/u.test(host) ? host : null;
 }
 
-/**
- * A URL-like token: with a scheme, starting `www.`, or a bare domain followed
- * by a path, query, fragment or parameter (`booking.com/hotel?sid=…`).
- */
-const URL_TOKEN = /(?:\bhttps?:\/\/|\bwww\.)\S+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}[\/?#;]\S*/gi;
+/** Scheme-less (G337): optional userinfo (a `mailto:`/`data:`/`javascript:` address is text), a domain or IPv4 host, optional port, then a path, query, fragment or parameter. */
+const SCHEMELESS_URL = String.raw`(?!(?:mailto|data|javascript):)(?:\w[^\s@:\/]*(?::(?!\/\/)[^\s@]*)?@)?(?:(?:[a-z0-9-]+\.)+[a-z]{2,}|(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d))(?::\d{1,5})?[\/?#;]\S*`;
+/** A URL-like token: with a scheme, starting `www.`, or scheme-less (`booking.com/r?sid=…`, `user:pw@host.com/…`, `host.com:8443/…`, `192.168.1.1/…`). */
+const URL_TOKEN = new RegExp(String.raw`(?:\bhttps?:\/\/|\bwww\.)\S+|\b` + SCHEMELESS_URL, 'gi');
+const URL_LINE = new RegExp(String.raw`^(?:(?:https?:\/\/|geo:|www\.)\S+|` + SCHEMELESS_URL + ')$', 'i');
 
 /** Every URL-like token inside a rendered line, in its display-safe form. */
 export function redactUrlsForDisplay(line: string): string {
@@ -381,8 +381,8 @@ function stripTime(text: string): { query: string; timeHint: string | null } {
 }
 
 function isUrlLine(line: string): boolean {
-  const t = line.trim();
-  return /^(?:https?:\/\/|geo:|www\.)\S+$/i.test(t) || /^(?:[a-z0-9-]+\.)+[a-z]{2,}[\/?#;]\S*$/i.test(t);
+  // The SAME scheme-less shape URL_TOKEN redacts, anchored — userinfo, port and IPv4 included.
+  return URL_LINE.test(line.trim());
 }
 
 /** A URL-only line in the form parseMapLink reads (scheme-less → https). */
@@ -432,8 +432,8 @@ function lineItems(line: string, dayLabel: string | null): Array<Omit<PasteItem,
     // A line that LOOKS like a link but cannot be parsed is reported as a link
     // this endpoint cannot read — never dropped, which would answer "nothing was
     // pasted" for a paste that plainly had something in it. (isUrlLine admits
-    // only http(s), geo:, www. and bare-domain shapes, so a `javascript:` string
-    // never reaches here.)
+    // only http(s), geo:, www. and scheme-less host shapes, so a `javascript:`
+    // or `mailto:` string never reaches here.)
     if (!link) {
       return [{ raw: displayRaw(line), source: 'map_link', provider: null, query: null, lat: null, lng: null, timeHint: null, dayLabel, unsupported: 'unsupported_link' }];
     }

@@ -134,4 +134,13 @@ describe("the seam's contract — lane C's, byte for byte where it is pure", () 
     assert.deepEqual(out.filter((r) => r.location_withheld === true).map((r) => r.id), ["p1", "p4"]);
     assert.ok(out.every((r) => r.location_withheld !== true || r.title === "Private plan"));
   });
+  it("unread access fails closed EVEN WITH a non-empty grants map — the predicate does not lean on 'unread ⇒ no grants'", () => {
+    // Re-verification of 62f960a7c (finding 3): only ownerOnlyAccess keeps the
+    // invariant; a reader that returned status "unread" WITH grants admitted p1.
+    const unread: PlanItemAccess = { viewerId: VIEWER, status: "unread", reason: "shares could not be read", grants: new Map([["p1", OTHER]]) };
+    assert.ok(!canSeePlanItemLocation(unread, rows[0]!), "a grant carried on unread access admits nothing");
+    assert.deepEqual(withholdPrivatePlanItems(rows, unread).filter((r) => r.location_withheld === true).map((r) => r.id), ["p1", "p4"]);
+    assert.ok(canSeePlanItemLocation(unread, rows[2]!), "the viewer's own private place is still theirs");
+    assert.ok(canSeePlanItemLocation(unread, rows[1]!), "a place that is not private is still not private");
+  });
 });

@@ -421,3 +421,38 @@ describe("the client shows the words the server stamps (a grant the server refus
     assert.equal(m![1], INPUT_MEMORY_CONTEXT_DISCLOSURE_VERSION);
   });
 });
+
+// ── Re-verification of 62f960a7c, finding 4: the fail-open mutant survived ────
+
+describe("an UNREADABLE feature_flags read fails CLOSED — the flag row says ON, only the read failed", () => {
+  const opted = (): FakeState => ({
+    feature_flags: [flag(true)],
+    input_memory_context_consent: [consent(USER_A)],
+    memory_derivative_registry: [registry(USER_A, MEMORIES)],
+    __fail: { feature_flags: true },
+  });
+
+  it("no memory starters, and neither the opt-in nor the memories are read", async () => {
+    setup(opted());
+    const r = await compass();
+    assert.equal(r.status, 200);
+    const body: unknown = await r.json();
+    assert.equal(memoryRows(body).length, 0);
+    assert.deepEqual(memoryReads(state), []);
+  });
+
+  it("Inspect reads NO memory and says the feature is not available", async () => {
+    setup(opted());
+    const b = (await (await call("GET", "/input-assistance/memory-context")).json()) as { available: boolean; facts: unknown };
+    assert.equal(b.available, false);
+    assert.equal(b.facts, null);
+    assert.ok(!state.__reads!.includes("memory_derivative_registry"));
+  });
+
+  it("a grant is refused (404) and nothing is written", async () => {
+    setup({ feature_flags: [flag(true)], __fail: { feature_flags: true } });
+    const r = await call("PUT", "/input-assistance/memory-context-consent", { enabled: true, disclosureVersion: INPUT_MEMORY_CONTEXT_DISCLOSURE_VERSION });
+    assert.equal(r.status, 404);
+    assert.equal((state.input_memory_context_consent ?? []).length, 0);
+  });
+});

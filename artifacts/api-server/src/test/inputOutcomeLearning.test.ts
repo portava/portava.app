@@ -745,3 +745,62 @@ describe("every table this lane's migrations create has a stated deletion fate (
     assert.ok(agg && !agg.anyUserColumn);
   });
 });
+
+// ── 7. Re-verification of 62f960a7c, findings 4 and 5 ────────────────────────
+
+describe("an UNREADABLE feature_flags read fails CLOSED (finding 4: the fail-open mutant survived this suite)", () => {
+  it("a grant is refused (404) and nothing is written — the flag row says ON, only the read failed", async () => {
+    setup({ feature_flags: [flag(true)], __fail: { feature_flags: true } });
+    const r = await call("PUT", "/input-assistance/outcome-consent", { enabled: true, disclosureVersion: INPUT_OUTCOME_DISCLOSURE_VERSION });
+    assert.equal(r.status, 404);
+    assert.equal((state.input_outcome_consent ?? []).length, 0);
+  });
+
+  it("a hinted serve ranks acceptance-only, value for value — and its only flag check is the database's, in the one round trip", async () => {
+    // The serve never reads the flag from TypeScript (OD-INPUT-7: one round
+    // trip); `input_outcome_memory` reads it in SQL. With the table unreadable
+    // that function's own read fails, so its call fails too.
+    const st = (): FakeState => ({
+      canonical_locations: [SANTA_ANA, SANTA_ROSA],
+      input_selection_history: [selRow(USER_A, SANTA_ANA.id, 5), selRow(USER_A, SANTA_ROSA.id, 2)],
+      input_outcome_counters: [
+        { user_id: USER_A, context: "city_picker", entity_type: "city", entity_id: SANTA_ROSA.id, bucket_day: today(), completed_count: 2 },
+      ],
+      feature_flags: [flag(true)],
+      input_outcome_consent: [consentRow(USER_A)],
+    });
+    setup({ ...st(), __fail: { feature_flags: true, "rpc:input_outcome_memory": true } });
+    const r = await suggest();
+    assert.equal(r.status, 200);
+    const failed: unknown = await r.json();
+    assert.ok(!state.__reads!.includes("feature_flags"), "no TypeScript flag read on the serve path that could fail open");
+    setup(st());
+    _resetRateLimit();
+    const plain: unknown = await (await suggest(A_TOK, false)).json();
+    assert.equal(conf(failed, SANTA_ANA.id), conf(plain, SANTA_ANA.id));
+    assert.equal(conf(failed, SANTA_ROSA.id), conf(plain, SANTA_ROSA.id));
+  });
+});
+
+describe("POST /suggest — a body-supplied userId scopes nothing (finding 5: the body-id mutant survived this suite)", () => {
+  it("the serve and the outcome RPC use the SESSION's user, never the body's", async () => {
+    // USER_B opted in, picked Santa Rosa 9 times and completed it twice; the
+    // session's USER_A picked Santa Ana more and completed nothing.
+    setup({
+      canonical_locations: [SANTA_ANA, SANTA_ROSA],
+      input_selection_history: [selRow(USER_A, SANTA_ANA.id, 5), selRow(USER_A, SANTA_ROSA.id, 2), selRow(USER_B, SANTA_ROSA.id, 9)],
+      input_outcome_counters: [
+        { user_id: USER_B, context: "city_picker", entity_type: "city", entity_id: SANTA_ROSA.id, bucket_day: today(), completed_count: 2 },
+      ],
+      feature_flags: [flag(true)],
+      input_outcome_consent: [consentRow(USER_A), consentRow(USER_B)],
+    });
+    const r = await call("POST", "/input-assistance/suggest", { context: "city_picker", text: "sant", outcomeLearning: true, userId: USER_B, user_id: USER_B });
+    assert.equal(r.status, 200);
+    const calls = state.__rpc!.filter((c) => c.name === "input_outcome_memory");
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]!.args.p_user_id, USER_A, "the outcome RPC receives the session's user");
+    const body: unknown = await r.json();
+    assert.ok(conf(body, SANTA_ANA.id) > conf(body, SANTA_ROSA.id), "USER_B's picks and completions do not move USER_A's rank");
+  });
+});
