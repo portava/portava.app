@@ -9029,7 +9029,16 @@ is L48's question.
 
 ### 53.6 Headline
 
-One row moves, `W → C`. `check:census-integrity` reads **C=85 W=144 N=67 X=0** over 296.
+One row moves, `W → C`. `check:census-integrity` reads **C=85 W=144 N=67 X=0** over 296 (§50.4: 84/145/67/0).
+
+| Measure | §50 | **§53** |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 84 | **85** |
+| BUILT-BUT-WRONG | 145 | **144** |
+| NOT-BUILT | 67 | **67** |
+| CANNOT-VERIFY | 0 | **0** |
+| CONSTRUCTED% | 77.4 % | **77.4 %** |
+| CORRECT% raw | 28.4 % | **28.7 %** |
 
 ## Cited, not graded (check:census-scope-coverage)
 
