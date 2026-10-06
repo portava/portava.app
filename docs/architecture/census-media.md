@@ -5032,7 +5032,7 @@ the one the Map's own pipeline would publish for it:
   It is not called. Search reads `places` BY ID, and only the places a result
   already names. That is the narrower read Discovery's search takes, for the
   reason Discovery gives
-  (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:1237#WHY IT DOES NOT CALL`):
+  (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:1262#WHY IT DOES NOT CALL`):
   search is not a projection, has no viewport, and serves no MapObject. The
   guard suite still passes with no approval added.
 - **The zone model.** It is the gateway's alone

@@ -3091,6 +3091,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // 3780 is cited as evidence for the flag check inside both outcome RPCs
     // and the 30-day window the reader applies (OD-INPUT-1/2, finding 1).
     "artifacts/api-server/src/migrations/3780_input_outcome_learning.sql",
+    // §38.7: the proving test for OD-TRIP-3 in plan-item candidates.
+    "artifacts/api-server/src/test/inputPlanItemPrivacy.test.ts",
     // ── ADDED 2026-09-29 by §34 (testing-mode lane tm-ii, WP-19) ─────────────
     // §34 moves G154–G157, G160–G163, G133 and G362 on these files' evidence:
     // the two server suites that prove paste and "meet at" through the real
