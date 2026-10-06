@@ -10124,11 +10124,11 @@ Every item below is built and tested on this branch; no row is re-graded here, b
 an OFF flag. The lead re-verifies before any row moves.
 
 - **R1 — `trip_events` was a direct door to private places.** 3976 withdraws the crew policy
-  (`artifacts/api-server/src/migrations/3976_trip_events_private_place_minimised.sql:245#DROP POLICY IF EXISTS trip_events_crew_select ON public.trip_events;`),
+  (`artifacts/api-server/src/migrations/3976_trip_events_private_place_minimised.sql:251#DROP POLICY IF EXISTS trip_events_crew_select ON public.trip_events;`),
   minimises every plan-family event whose item is not known public at write
-  (`artifacts/api-server/src/migrations/3976_trip_events_private_place_minimised.sql:164#CREATE TRIGGER trg_trip_events_minimise`),
+  (`artifacts/api-server/src/migrations/3976_trip_events_private_place_minimised.sql:170#CREATE TRIGGER trg_trip_events_minimise`),
   and makes a public→private flip take the item's history and snapshot title with it
-  (`artifacts/api-server/src/migrations/3976_trip_events_private_place_minimised.sql:188#CREATE OR REPLACE FUNCTION public.trip_plan_item_redact_history()`).
+  (`artifacts/api-server/src/migrations/3976_trip_events_private_place_minimised.sql:194#CREATE OR REPLACE FUNCTION public.trip_plan_item_redact_history()`).
   3974's restore event loses the admin reason and the appeal id. Proven by `tripEventsPrivatePlace.db.test.ts`
   E1–E6 on CI's local-db job only (no PostgreSQL here; it skips locally) and by 3976's postconditions.
 - **R2 — a cached daily brief kept a place after a public→private flip.** The cache digest now covers which items
@@ -10169,3 +10169,37 @@ Inviting someone is what makes a trip a group trip, so the invite door carries t
 census-trust's TRV2-08 evidence still lists line 288 of routes/trips.ts as a restriction consumer; that line is now this
 explanation (lane B's census; recorded, not edited). The refusal copy becomes lane B's `restrictionSentence("hosting")`
 once lane B lands.
+
+### §85.2 Lane C wave 4, the verification of `1867c97df` (2026-10-06): corrections to §81/§85/§85.1, R1–R3 and L1–L5 — NO ROW MOVES
+
+**Corrections first.** §81 and §85 said the Telegraph trip context applies the owner-only rule; that was true of
+`GET /trips/:id/telegraph-context` only. `GET /threads/:threadId/trip-context` served another member's private
+item's title, location name, town and country; §85's "no reader emits a plan item's city today" was therefore
+false. §85's "every Trips door … refuse a retained-record-only member" was false for every member-level write that
+checks membership only. §85.1's "the invite door carries the hosting gate" left out two doors that also turn a solo
+trip into a group trip. Each is now closed:
+
+- **R1.** The thread trip context applies the rule
+  (`artifacts/api-server/src/routes/telegraphSharedContext.ts:827#const rows = withholdPrivatePlanItems(`); reader
+  path `telegraph-thread-trip-context` in `tripPrivateAnchorReaders.test.ts`.
+- **R2.** `POST /trips/:tripId/members`
+  (`artifacts/api-server/src/routes/trips.ts:2250#if (await refuseIfTrustRestricted(res, getServiceClient() ?? client, user.id, "hosting")) return;`)
+  and the join-request approval, for the approver
+  (`artifacts/api-server/src/routes/trips-expansion.ts:1061#if (await refuseIfTrustRestricted(res, sc, user.id, "hosting")) return;`).
+  Lead ruling: while the inviter is hosting-restricted, their earlier invites and links are not redeemable; the
+  redeemer is told "This invite isn't available right now." and nothing else
+  (`artifacts/api-server/src/lib/tripTrustGate.ts:221#export async function refuseIfInviterCannotHost(`).
+- **R3.** One guard before every trip router refuses every member-level write by a retained-record-only member
+  (`artifacts/api-server/src/lib/tripRetainedRecordGuard.ts:72#export function tripRetainedRecordWriteGuard()`),
+  mounted on the router `routes/index.ts` registers first
+  (`artifacts/api-server/src/routes/trips.ts:40#const router = Router(); router.use(tripRetainedRecordWriteGuard());`).
+  Not refused: reads, compute-only POSTs, safety, leaving, revoking a share, invite answers, /commands (its own
+  per-type rule).
+- **L4.** `GET /trips/:tripId/snapshots/:version` serves a private plan's title only to those who may see it
+  (`artifacts/api-server/src/server/trips/commandRoute.ts:356#async function snapshotForViewer(`).
+- **L1** (the trip-gems link read selects `id`, so grants match), **L2** (Wall and the Map meeting-point producer
+  treat a null privacy as private) and **L5** (3976 checks the fold and 3972's grant function) are fixed with tests.
+
+Tests: `trustRestrictionDoors.test.ts` (171), `tripPrivateAnchorReaders.test.ts` (134), `tripMembers.test.ts`, and the
+Map meeting-point and Wall live-for-you suites; each fix mutation-proven (commits `06943d51c`,
+`856406d82`, `186046d98`). D-66 (the Trail review) is built in lane C's wave 5, not deferred.
