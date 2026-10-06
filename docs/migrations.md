@@ -4072,6 +4072,23 @@ reads both). **Rollback:** `db/rollback/2026-10-06-3700-moderation-reports-resol
 (re-opens the read). **Proof:** `src/test/db/moderationReportsResolverColumns.db.test.ts` (live-DB tier;
 no local PostgreSQL here, so not run by the lane). **Activation** is the owner's production press.
 
+## 2026-10-06 — `3701_map_telemetry_retention_30_days.sql`, written and NOT applied anywhere (lane L)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3701_map_telemetry_retention_30_days.sql` | **not applied** | **not applied** |
+
+**What it is.** The owner's Q11(a) ruling (`docs/ops/owner-decisions-20261004.md`: raw behavioural rows
+kept 30 days, then deleted) against 2202's 90-day `expires_at` DEFAULT on `map_telemetry_events` and
+`map_telemetry_drops` (both per-viewer). 3701 sets both defaults to `now() + 30 days` and shortens any
+row stamped later to `received_at + 30 days` (never lengthens one). 2960's sweep already deletes on
+`expires_at`, so it now deletes at 30 days. The viewer-less disabled-discard counter (2964) is untouched.
+**Pre/postconditions** in the file. **Rollback:**
+`db/rollback/2026-10-06-3701-map-telemetry-retention-30-days-rollback.sql` (restores the 90-day DEFAULT,
+lengthens no row). **Proof:** `src/test/db/mapTelemetryRetention30Days.db.test.ts` (live-DB tier; not run
+locally). Collection itself stays off (`map_telemetry_enabled` FALSE). Not covered here, recorded for
+the Wall: `wall_telemetry_events` (2308) also defaults to 90 days and no sweep deletes it at all.
+
 ## Apply-order overrides
 
 **What.** `artifacts/api-server/src/migrations/ORDER_OVERRIDES.json` is the single declared list of
