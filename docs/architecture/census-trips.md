@@ -10103,7 +10103,7 @@ Not executed (no Postgres here); proven against the corpus it transforms by
 
 ## §84 Lane C wave 2 (2026-10-05): trust restrictions at the Trips doors that do what Compass refuses (census-trust TRV2-08, OD-TRUST-5) — NO ROW MOVES BUCKET
 
-None of these read `getRestrictionState`. Gated by `artifacts/api-server/src/lib/tripTrustGate.ts:60#export async function refuseTripActionIfRestricted(`:
+None of these read `getRestrictionState`. Gated by `artifacts/api-server/src/lib/tripTrustGate.ts:64#export async function refuseTripActionIfRestricted(`:
 adding, editing, removing or reordering a GROUP trip's plan items (`routes/trips.ts`, `routes/plan.ts`'s
 two add-to-trip-plan doors, `POST /hidden-gems/:id/plan`, and a reservation confirmed with `addToPlan`, refused
 before the confirm) is **hosting**; a proposal through `/commands`
