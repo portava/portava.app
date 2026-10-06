@@ -230,4 +230,24 @@ describe("T366 — no migration crosses the boundary in SQL", () => {
       assert.match(schema, new RegExp(`CREATE TABLE (IF NOT EXISTS )?(public\\.)?${t}\\b`), `${t} is not a table any migration defines`);
     }
   });
+
+  it("every memory event log a migration appends to is on the closed list — both logs, kept distinct", () => {
+    // Verification of a58aa01d3f / check:memory-table-ownership (census-telegraph §45f). The
+    // projection family's log and the §17 command kernel's log are two different tables
+    // (lib/memoryTableOwnership.ts), and migrations append to each: projector triggers to the
+    // first, memory_kernel_execute to the second. A conversation must create rows in NEITHER,
+    // so both are on MEMORY_CREATION_TABLES; dropping either would let a trigger or migration
+    // that reads history and appends there pass the SQL check above. Names are found, not typed.
+    const appended = new Set<string>();
+    for (const n of readdirSync(join(SRC, "migrations")).filter((x) => x.endsWith(".sql"))) {
+      const sql = readFileSync(join(SRC, "migrations", n), "utf8").replace(/--.*$/gm, "");
+      for (const m of sql.matchAll(/INSERT\s+INTO\s+(?:public\.)?"?(memory_[a-z_]*events)"?\b/gi)) appended.add(m[1]!.toLowerCase());
+    }
+    assert.equal(appended.size, 2, `expected the two memory event logs, found: ${[...appended].join(", ")}`);
+    const listed = new Set<string>(MEMORY_CREATION_TABLES);
+    assert.deepEqual([...appended].filter((t) => !listed.has(t)).sort(), [], "a memory event log is missing from MEMORY_CREATION_TABLES");
+    for (const t of appended) {
+      assert.equal(sqlCrossesBoundary(`INSERT INTO public.${t} (x) SELECT body FROM public.messages;`), true, `${t}: the SQL check does not fire`);
+    }
+  });
 });
