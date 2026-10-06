@@ -62,7 +62,7 @@ import {
   MAX_HIGHLIGHT_SOURCES,
   type SourceLinkFailure,
 } from "../services/highlights/highlightSources.js";
-import { canMessage } from "../lib/messagingPermissions";
+import { canMessage } from "../lib/messagingPermissions"; import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js"; // the shared send gates (lane T2, OD-TRUST-5 wave) — on this line so no line below moves
 import { isFlagEnabled } from "../lib/featureFlags";
 import {
   readMemoryCommandEnvelope,
@@ -2451,7 +2451,7 @@ router.post("/highlights/:id/reply", async (req, res) => {
   }
 
   const myThreadIds = (myMemberships ?? []).map((m: any) => m.thread_id as string);
-  let threadId: string | null = null;
+  let threadId: string | null = null; let createdHere = false; // a thread THIS request creates is removed again if the send gates then refuse
 
   if (myThreadIds.length > 0) {
     const { data: allMembers, error: allMemErr } = await sc
@@ -2490,7 +2490,7 @@ router.post("/highlights/:id/reply", async (req, res) => {
       sendError(res, "db_error", "Could not create message thread", { exposeDetail: true });
       return;
     }
-    threadId = (newThread as any).id as string;
+    threadId = (newThread as any).id as string; createdHere = true;
     const now2 = new Date().toISOString();
     // supabase-js resolves rather than throws on a write error — membership is
     // the only gate on the thread, so an unchecked failure here creates a
@@ -2508,7 +2508,7 @@ router.post("/highlights/:id/reply", async (req, res) => {
     }
   }
 
-  // Send a system context message linking to the highlight (cosmetic — a
+  const guard = await guardTelegraphThreadWrite(sc, threadId, user.id); if (!guard.ok) { if (createdHere) { const { error: rollbackErr } = await sc.from("message_threads").delete().eq("id", threadId); if (rollbackErr) req.log.error({ err: rollbackErr, threadId }, "highlight reply: refused send — the empty thread it created could not be removed"); } sendThreadWriteRefusal(res, guard); return; } // the six send gates: stop, membership, block, E2EE, Trust restriction, burst limit. Then a system context message linking to the highlight (cosmetic — a
   // failure is logged but does not block the actual reply below).
   const { error: ctxErr } = await sc.from("messages").insert({
     thread_id: threadId,

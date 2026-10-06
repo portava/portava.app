@@ -724,7 +724,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "trips",
@@ -2929,7 +2929,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "profiles",
@@ -3368,7 +3368,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "profiles",
@@ -3717,7 +3717,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "profiles",
@@ -4498,7 +4498,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "profiles",
@@ -5294,7 +5294,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "profiles",
@@ -6166,7 +6166,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "profiles",
@@ -6999,7 +6999,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "profiles",
@@ -7946,7 +7946,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "profiles",
@@ -8738,7 +8738,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "canonical_locations",
@@ -9507,7 +9507,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "profiles",
@@ -10327,7 +10327,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "profiles",
@@ -10826,7 +10826,7 @@
         },
         {
           "table": "trip_plan_items",
-          "cols": "id, title, trip_id, creator_id, created_at"
+          "cols": "id, title, trip_id, created_at, creator_id, location_is_private"
         },
         {
           "table": "profiles",

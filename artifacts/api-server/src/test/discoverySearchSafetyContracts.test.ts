@@ -115,12 +115,15 @@ function world(): Partial<KitState> {
       trip_plan_items: [
         ...NAMES.map((n) => ({
           id: owned("plan", n), title: `zork plan ${n}`, trip_id: owned("trip", n), creator_id: CAST[n]!.id,
-          created_at: "2026-01-01T00:00:00Z", removed_at: null,
+          // NOT NULL (default TRUE) on the real table; FALSE models a place shared
+          // with the crew, so these cases test the OWNER gates and trip admission.
+          // OD-TRIP-3's per-item rule is pinned in inputPlanItemPrivacy.test.ts.
+          created_at: "2026-01-01T00:00:00Z", removed_at: null, location_is_private: false,
         })),
         { id: "plan-alice-private", title: "zork plan alice private", trip_id: "trip-alice-private", creator_id: ALICE,
-          created_at: "2026-01-01T00:00:00Z", removed_at: null },
+          created_at: "2026-01-01T00:00:00Z", removed_at: null, location_is_private: false },
         { id: "plan-viewer-own", title: "zork plan viewer own", trip_id: "trip-viewer-private", creator_id: VIEWER,
-          created_at: "2026-01-01T00:00:00Z", removed_at: null },
+          created_at: "2026-01-01T00:00:00Z", removed_at: null, location_is_private: false },
       ],
       hidden_gems: [
         ...NAMES.map((n) => ({

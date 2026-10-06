@@ -346,6 +346,14 @@ jobs:
         shell: bash
         run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts check:rent-buddy-contract
 
+      # The pure half of .github/workflows/beta-db.yml: the baseline split and
+      # skip-rule counts, batching, the ledger backfill set, the 2254 DDL cut
+      # and the reference snapshot's allowlist/nulling. No credentials.
+      - name: 'scripts: test:beta-bootstrap'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:beta-bootstrap
+
   standalone:
     name: unwired · travel-buddy-standalone guards
     runs-on: ubuntu-latest

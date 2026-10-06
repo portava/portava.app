@@ -2424,6 +2424,25 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/hooks/useGroupChat.ts",
     "artifacts/api-server/src/test/telegraphEditE2eeRefusal.test.ts",
     "artifacts/api-server/src/test/telegraphMessageReportReason.test.ts",
+    // WIDENED 2026-10-05 by lane T2 (census-telegraph §45): the rows §45 moves cite these suites as
+    // their proving tests (T291/T294/T295, T366, T367, T408, T415/T416, T398, T435).
+    "artifacts/api-server/src/test/telegraphProjectionRegistryHonesty.test.ts",
+    "artifacts/api-server/src/test/telegraphConversationMemoryBoundary.test.ts",
+    "artifacts/api-server/src/test/telegraphNearbyNotFromGps.test.ts",
+    "artifacts/api-server/src/test/telegraphScreenshotInformational.test.ts",
+    "artifacts/api-server/src/test/telegraphTransportClasses.test.ts",
+    "artifacts/api-server/src/test/telegraphThreadNotificationPolicy.test.ts",
+    "artifacts/api-server/src/test/telegraphDiagnosticsDurableAudit.test.ts",
+    // WIDENED 2026-10-06 by lane T2 (§45b, §45c): the proving suites of the OD-TRUST-5 send gate and of
+    // verifier findings 1 and 8 (a post across a block; the DM header's identity).
+    "artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts",
+    "artifacts/api-server/src/test/telegraphPostProjectionByline.test.ts",
+    "artifacts/api-server/src/test/telegraphConversationHeaderIdentity.test.ts",
+    // WIDENED 2026-10-06 by lane T2 (§45f): the proving suite of §45d.3's correction (the header's
+    // availability across a block and the window relationship; verification of a58aa01d3f, finding 1).
+    "artifacts/api-server/src/test/telegraphConversationHeaderAvailability.test.ts",
+    // T366's W (§45c.2) rests on the kernel's call shape here: a change to it can move that row.
+    "artifacts/api-server/src/lib/memoryCommandBus.ts",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as
@@ -3080,6 +3099,19 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // paths resolve) and the most client-weighted: its subject is the typing
   // surface, so the hooks ARE the measurement, not evidence about it.
   "census-input-intelligence.md": [
+    // ── ADDED 2026-10-05 by lane D (§37) ────────────────────────────────────
+    // The proving tests §37's moves rest on: G320/G370 and the outcome term
+    // (OD-INPUT-1/2), G25 (OD-INPUT-3), and G368's vocabulary pin. Cited as
+    // evidence for verdicts, so watched rather than declared NOT-GRADED.
+    "artifacts/api-server/src/test/inputOutcomeLearning.test.ts",
+    "artifacts/api-server/src/test/inputMemoryContext.test.ts",
+    "artifacts/api-server/src/test/inputTelemetryVocabularyParity.test.ts",
+    // ── ADDED 2026-10-06 by lane D (§38) ────────────────────────────────────
+    // 3780 is cited as evidence for the flag check inside both outcome RPCs
+    // and the 30-day window the reader applies (OD-INPUT-1/2, finding 1).
+    "artifacts/api-server/src/migrations/3780_input_outcome_learning.sql",
+    // §38.7: the proving test for OD-TRIP-3 in plan-item candidates.
+    "artifacts/api-server/src/test/inputPlanItemPrivacy.test.ts",
     // ── ADDED 2026-09-29 by §34 (testing-mode lane tm-ii, WP-19) ─────────────
     // §34 moves G154–G157, G160–G163, G133 and G362 on these files' evidence:
     // the two server suites that prove paste and "meet at" through the real

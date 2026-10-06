@@ -164,17 +164,21 @@ export const TELEGRAPH_RLS_MATRIX: readonly RlsMatrixCase[] = [
     censusRow: "T318",
     requirement: "Authorized user reads current safe share projection",
     expected: "ALLOW",
-    status: "vacuous",
-    enforcedBy: ["src/domain/telegraph/policies/shareAuthorizationPolicy.ts"],
+    status: "enforced",
+    enforcedBy: [
+      "src/routes/telegraphShare.ts",
+      "src/services/telegraph/shareables.ts",
+      "src/domain/telegraph/policies/shareAuthorizationPolicy.ts",
+    ],
     note:
-      "The POSITIVE case, and it has no implementation to admit. §5's share " +
-      "projection does not exist (T44): every share card in the tree is frozen " +
-      "JSON in messages.body with no current-state resolution, so there is no " +
-      "'current safe share projection' for an authorized user to read. The policy " +
-      "below answers the authorization half — an authorized viewer of a PUBLIC or " +
-      "AUTHORIZED_DERIVATIVE family is allowed — but nothing calls it with a live " +
-      "source object, because nothing resolves one. Counted as not-built, never as " +
-      "an allow.",
+      "ENFORCED since 2026-10-05 (lane T2). It was vacuous while every share card " +
+      "was frozen JSON with no current-state resolution. resolveShareProjections now " +
+      "resolves each source object FOR THE VIEWER at read time (census T46), served by " +
+      "POST /threads/:id/share-projections behind active thread membership. The test " +
+      "drives that route: an authorized member reads the projection as the source is " +
+      "NOW (a rename between two reads is visible), a source the viewer may not see " +
+      "yields an unavailable reference carrying nothing, and a non-member is refused " +
+      "before any resolve. The policy still refuses an empty audience.",
   },
   {
     id: "RLS-09",

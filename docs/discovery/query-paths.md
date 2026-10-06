@@ -79,7 +79,7 @@ The serve paths are the ones §47.2 of the census maps. "Rows examined" is the h
 
 ### QP-12 Search: places by free text
 
-`routes/discoverySearch.ts`: `name / city / blurb ILIKE %q%`, `status = 'active'`. **Index: none usable.** A leading-wildcard `ILIKE` needs a trigram index (`pg_trgm` is installed on the harness and on Supabase), and none exists. Harness: Seq Scan, 1,000 kept of 20,000. Production: 184 rows, where a trigram index would cost more than it saves. The same applies to the two sibling queries in that file (`lib/inputAssistance/searchCandidates.ts:1410`, `:1863`).
+`routes/discoverySearch.ts`: `name / city / blurb ILIKE %q%`, `status = 'active'`. **Index: none usable.** A leading-wildcard `ILIKE` needs a trigram index (`pg_trgm` is installed on the harness and on Supabase), and none exists. Harness: Seq Scan, 1,000 kept of 20,000. Production: 184 rows, where a trigram index would cost more than it saves. The same applies to the two sibling queries in that file (`lib/inputAssistance/searchCandidates.ts:1435`, `:1888`).
 
 ### QP-13 Trails for a destination
 

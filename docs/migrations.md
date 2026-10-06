@@ -3948,6 +3948,109 @@ asserted by the postcondition. Others are only ever shown COUNTS per intent amon
 **Pre/postconditions** in the file. **Rollback:** `db/rollback/2026-10-05-3900-layover-presence-rollback.sql`
 (refuses while the flag is TRUE; drops the table — its rows are short-lived by design).
 **Activation** is an owner decision: apply 3900, then flip the flag.
+## 2026-10-05 — `3780`, `3781`, `3782`, `3783` (Input Intelligence, lane D), written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3780_input_outcome_learning.sql` | **not applied** | **not applied** |
+| `3781_input_telemetry_selection_reversed.sql` | **not applied** | **not applied** |
+| `3782_input_memory_context_consent.sql` | **not applied** | **not applied** |
+| `3783_input_outcome_task_aggregate.sql` | **not applied** | **not applied** |
+
+**`3780` — outcome learning (owner decisions OD-INPUT-1, OD-INPUT-2; census G320/G370/G5/G14/G322/G323).**
+`input_outcome_consent` (one row per user, service_role only, server-stamped disclosure version and
+timestamps, absent = off), `input_outcome_counters` (per user, input context, canonical entity and UTC
+DAY, so each completion is deleted whole 30 days after its day), `input_record_outcome(uuid, text,
+text, text)` (SECURITY DEFINER, service_role only, re-checks BOTH the flag and the consent itself and
+records nothing without them), `input_outcome_memory(uuid, text, date)` (SECURITY DEFINER, service_role
+only: the serve's single read — `{active:false}` unless the flag is on and the consent active, else the
+person's in-window counts, so a hinted serve costs one round trip), and the flag
+`input_outcome_learning_enabled` seeded FALSE. Both tables cascade from `auth.users`. The 30-day deletion is `runInputOutcomeRetentionSweep`, registered flagless on the existing
+retention timer.
+
+**`3781` — §57 wrong-selection reversal (census G368).** Replaces 2950's `iate_event_name_known` CHECK
+with the same fourteen names plus `selection_reversed`: a strict superset, so every existing row still
+satisfies it. Must ship with (not after) the ingest change that admits the name: until it is applied,
+any batch carrying one reversal is refused WHOLE (422, `accepted: 0`) and every event in it is lost;
+`src/test/inputTelemetryVocabularyParity.test.ts` pins the newest CHECK to the code's vocabulary.
+
+**`3782` — Compass memory opt-in (owner decision OD-INPUT-3; census G25).** `input_memory_context_consent`
+(same shape as 3780's consent, a separate table so one purpose's grant is never another's) and the flag
+`input_memory_context_enabled` seeded FALSE. Stores no memory; it governs only whether Input
+Intelligence may read the person's own `CompassMemoryProjection`.
+
+**`3783` — downstream task outcomes aggregated at ingest (OD-INPUT-1/2; census G370).**
+`input_outcome_task_daily` (one row per UTC day, input context, task and ok, with a count — no user,
+session, request or field id, asserted by its postcondition) and `input_record_task_outcome(text, text,
+boolean)` (service_role only, takes no user argument, re-checks the 3780 flag). A consented
+`downstream_task_completed` event is counted here and never stored as a 90-day session-linked
+telemetry row. Depends on 3780.
+
+**Flags:** both new capability flags ship FALSE; turning either on is an owner decision after approving
+the disclosure text (`lib/inputAssistance/outcomeLearning.ts`, `lib/inputAssistance/memoryContext.ts`).
+
+**Rollback:** `db/rollback/2026-10-05-3780-input-outcome-learning-rollback.sql`,
+`db/rollback/2026-10-05-3781-input-telemetry-selection-reversed-rollback.sql`,
+`db/rollback/2026-10-05-3782-input-memory-context-consent-rollback.sql` and
+`db/rollback/2026-10-05-3783-input-outcome-task-aggregate-rollback.sql`. The first three REFUSE rather
+than discard a decision: 3780/3782 while their flag is TRUE or any consent row exists, 3781 while any
+`selection_reversed` row exists. 3783's drops its aggregate counts (they are no one's), and must run
+after the ingest code that calls `input_record_task_outcome` is reverted.
+
+**Numbering:** first written with prefixes above 4000, which `check:migration-prefixes` rejects; renumbered into lane D's corrected band 3780–3799 before
+anything was applied anywhere (lead correction, 2026-10-05).
+## 2026-10-05 — `3760_telegraph_thread_notification_policy.sql`, written and NOT applied anywhere (lane T2)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3760_telegraph_thread_notification_policy.sql` | **not applied** | **not applied** |
+
+**What it is.** Telegraph §30A.6's per-thread notification policy (census-telegraph T398). Two columns on
+`message_thread_members` — `notification_level text NOT NULL DEFAULT 'all'` with a CHECK of
+`all | mentions | important | muted`, and `muted_until timestamptz NULL` (a temporary mute, read rather
+than swept) — and the flag `telegraph_thread_notification_policy_enabled`, seeded **FALSE**. Nothing is
+backfilled; a postcondition refuses a row carrying a level or a temporary mute.
+
+**What works without it.** The live defect T398 found — `muted_at` was stored and never consulted when a
+notification was created, so an @mention in a muted thread notified the member — is fixed in code on every
+deployment: the mention dispatch in `routes/messaging.ts` decides through
+`domain/telegraph/policies/threadNotificationPolicy.ts`, which reads `muted_at` as MUTED. With the flag
+OFF no code names either new column; `PUT /api/threads/:id/notification-policy` stores ALL and MUTED
+through `muted_at` and refuses MENTIONS, IMPORTANT and a temporary mute with `409 feature_disabled`.
+
+**Flag ON (after the apply):** the route reads and writes both columns (keeping `muted_at` equal to
+"MUTED" so the inbox icon agrees), and every thread-scoped notification the dispatch decides honours the
+level. SAFETY is never suppressed by any level.
+
+**Prefix band.** 3760 is in lane T2's band (3760-3779), inside the existing 3000-3999 range; the
+prefix guard is unchanged.
+
+**Rollback:** `db/rollback/2026-10-05-3760-telegraph-thread-notification-policy-rollback.sql` drops the
+two columns and the CHECK, deletes the flag row only if it still carries this file's seed description,
+and deletes the ledger row. Turning the flag off is almost always what is wanted instead.
+
+## 2026-10-05 — `3761_telegraph_diagnostics_durable_audit.sql`, written and NOT applied anywhere (lane T2)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3761_telegraph_diagnostics_durable_audit.sql` | **not applied** | **not applied** |
+
+**What it is.** census-telegraph T435's ceiling: the audit of `GET /api/telegraph/diagnostics` (§30A.17's
+internal support tooling) was a log line because `admin_access_log_record_type_check` admitted five
+values and none was this. The file re-creates that CHECK with the five values verbatim plus
+`telegraph_diagnostics`, and seeds `telegraph_diagnostics_durable_audit_enabled` **FALSE**. No table,
+column or grant changes; no row is written.
+
+**Flag OFF (the seed, and every database without 3761):** the route audits by its structured log line,
+exactly as before, and never asks the database to store the new value. **ON:** every served read first
+writes one `admin_access_log` row (`record_type 'telegraph_diagnostics'`, `record_id 'snapshot'`,
+`reason` = the admin's stated purpose, `action_taken 'view'`), and the read is refused with 503 if the row
+cannot be written.
+
+**Rollback:** `db/rollback/2026-10-05-3761-telegraph-diagnostics-durable-audit-rollback.sql` deletes any
+`telegraph_diagnostics` rows (they would violate the five-value CHECK — export them first; they are an
+audit trail), restores the five-value CHECK, deletes the flag row only if it carries this file's seed
+description, and deletes the ledger row. Turning the flag off keeps the trail and is usually what is wanted.
 ## Apply-order overrides
 
 **What.** `artifacts/api-server/src/migrations/ORDER_OVERRIDES.json` is the single declared list of

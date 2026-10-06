@@ -35,6 +35,7 @@ import {
   currentInputTelemetry,
   type AppStateLike,
 } from '../installInputTelemetry.ts';
+import { applyOutcomeConsent, beginOutcomeAccount } from '../outcomeLearning.ts';
 
 /** A poster that records what it was handed and never touches the network. */
 function recordingPoster() {
@@ -333,4 +334,30 @@ test('§44/G319: app/search.tsx emits action_completed on BOTH picker outcomes',
     !/getAddToTripTarget\([\s\S]{0,400}?emitActionCompleted/.test(screen),
     'selecting the action row must not emit action_completed — only the picker outcome does',
   );
+});
+
+// OD-INPUT-1 (census G320): the gate this file's header always said belonged in
+// front of the sink. Every §44 event passes; `downstream_task_completed` passes
+// only for an account that opted in to outcome learning.
+test('OD-INPUT-1: the installed sink drops downstream_task_completed unless this account opted in', async () => {
+  const p = recordingPoster();
+  const handle = installInputTelemetry({ createBatcher: () => unscheduledBatcher(p.post) });
+  try {
+    beginOutcomeAccount('u1');
+    emitOne('downstream_task_completed');
+    emitOne('suggestion_selected');
+    assert.equal(handle.batcher.pending(), 1, 'without consent only the ordinary event was buffered');
+
+    applyOutcomeConsent('u1', true);
+    emitOne('downstream_task_completed');
+    assert.equal(handle.batcher.pending(), 2, 'with consent the outcome event is buffered too');
+
+    await handle.batcher.flush();
+    assert.deepEqual(
+      p.batches.flatMap((b) => b.events.map((e) => e.name)),
+      ['suggestion_selected', 'downstream_task_completed'],
+    );
+  } finally {
+    beginOutcomeAccount(null);
+  }
 });

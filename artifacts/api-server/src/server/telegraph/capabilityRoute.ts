@@ -48,6 +48,8 @@ import {
 } from "../../domain/telegraph/contracts/conversationCapabilities.js";
 import { redactForWire } from "../../domain/telegraph/contracts/telegraphReasonCodes.js";
 import { resolveConversationCapabilities } from "../../domain/telegraph/policies/conversationCapabilityPolicy.js";
+import { readConversationFacts } from "./conversationFacts.js";
+import { transportClassFor } from "../../domain/telegraph/policies/transportClass.js";
 
 const router = Router();
 const log = rootLogger.child({ route: "telegraphCapabilities" });
@@ -88,6 +90,11 @@ router.get(
       );
     }
 
+    // §24 / census T295: the member count and the E2EE flag the thread screen
+    // used to read from raw tables. Members only — a non-member gets nulls, the
+    // same answer as a thread that does not exist (see conversationFacts.ts).
+    const facts = await readConversationFacts(sc, threadId, user.id);
+
     res.status(200).json({
       conversationId: resolved.conversationId,
       conversationType: resolved.conversationType,
@@ -96,6 +103,16 @@ router.get(
       inputsRead: resolved.inputsRead,
       degraded: resolved.degraded,
       degradedReasons: resolved.degradedReasons.map(redactForWire),
+      conversation: {
+        memberCount: facts.memberCount,
+        isE2ee: facts.isE2ee,
+        // §30A.12 (census T415): the scale class, from the same table the fan-out
+        // and receipt routes use. Null when the roster could not be counted.
+        transportClass: facts.memberCount === null
+          ? null
+          : transportClassFor({ threadType: resolved.conversationType, activeMembers: facts.memberCount }),
+        degraded: facts.degraded,
+      },
     });
   }),
 );

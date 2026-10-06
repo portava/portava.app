@@ -78,6 +78,8 @@ import {
   emptyMemory,
   type SelectionMemory,
 } from './personalization';
+import { attachOutcomeMemory } from './outcomeLearning';
+import { buildMemoryContextStarters } from './memoryContext';
 import { buildSavedPlaceSuggestions } from './savedEntities';
 import {
   projectSearchResult,
@@ -224,6 +226,13 @@ export interface GenerateParams {
   tz?: string | null;
   /** §22 per-request opt-in for AI-assisted writing (default false). */
   aiAssist?: boolean; /** census-discovery §80: an optional coverage sink; absent ⇒ exactly as before. */ coverage?: GatewayCoverage;
+  /**
+   * §45 / OD-INPUT-1: the device says its account opted in to outcome learning.
+   * A HINT, never a grant — the gateway still checks the flag and the stored
+   * consent before reading anything. Absent (every non-consenting device) ⇒ the
+   * serve issues no outcome read at all and ranks acceptance-only.
+   */
+  outcomeLearning?: boolean;
 }
 
 function uniq<T>(arr: T[]): T[] {
@@ -238,7 +247,7 @@ export async function generateSuggestions(
   sc: any,
   params: GenerateParams,
 ): Promise<InputSuggestion[]> {
-  const { context, policy, text, userId, limit, sessionContext, lat, lng, city, draft, tz, aiAssist, coverage } = params;
+  const { context, policy, text, userId, limit, sessionContext, lat, lng, city, draft, tz, aiAssist, coverage, outcomeLearning } = params;
 
   // no_assistance fields produce nothing (§6). generic_text lands here.
   if (policy.mode === 'no_assistance') return [];
@@ -302,9 +311,18 @@ export async function generateSuggestions(
       : EMPTY_TASK_CONSTRAINT;
 
   const personalizationOn = policy.allowPersonalization === true;
-  const memory: SelectionMemory = personalizationOn
+  const acceptanceMemory: SelectionMemory = personalizationOn
     ? await fetchSelectionMemory(sc, { userId, context, max: 200 }).catch(() => emptyMemory())
     : emptyMemory();
+  // §45 OUTCOME LEARNING (OD-INPUT-1/2). Only for a field that already allows
+  // personalization, only when the device HINTS that its account opted in, and
+  // then only if the flag is on AND the stored consent is valid. The hint keeps
+  // the hot path free of extra round trips for everyone who never opted in
+  // (OD-INPUT-7's latency rule); it can only cost a ranking boost, never grant
+  // one. Any other state — including a failed read — is acceptance-only.
+  const memory: SelectionMemory = personalizationOn && outcomeLearning === true
+    ? await attachOutcomeMemory(sc, acceptanceMemory, userId, context)
+    : acceptanceMemory;
   const personalQueryKey = selectionQueryKey(trimmed);
 
   // ── §14 zero-character assistance (geographic pickers) ──────────────────────
@@ -676,6 +694,16 @@ export async function generateSuggestions(
     policy.allowAI &&
     policy.allowedSuggestionTypes.includes('ai_suggestion')
   ) {
+    // §6 `allowMemoryContext` (census G25) under OD-INPUT-3: the person's own
+    // Compass memory, ONLY behind the field's policy, the flag, and a separate
+    // opt-in — each checked before anything is read (memoryContext.ts). Off by
+    // default; a person who has not opted in gets exactly the curated starters.
+    // Pushed FIRST: the ordering below is stable within a type and confidence,
+    // and the curated set alone fills `maxSuggestions`, so starters appended
+    // after it would be capped out for the very person who asked for them.
+    suggestions.push(
+      ...(await buildMemoryContextStarters(sc, { policy, userId, context, query: q, policyVersion: POLICY_VERSION })),
+    );
     suggestions.push(
       ...buildCompassStarters(context, POLICY_VERSION, q, policy.maxSuggestions, {
         city,

@@ -19,6 +19,9 @@
  * legacy source type, a failed resolve) must render EXACTLY as before —
  * collapsing it into "revoked" would blank every card on a network blip, and
  * collapsing it into "available" is the backdoor. Both directions are asserted.
+ * AMENDED 2026-10-05 (lane T2): a FAILED resolve (one that was possible) now
+ * draws the reference, not the snapshot — see the superseded case below and
+ * legacyCardLive.component.test.tsx. No thread id / unmappable type: unchanged.
  *
  * SHOWN RED before commit, each reverted:
  *   • disable DiscoveryCardMessage's revoked branch (its pre-§5 behaviour) →
@@ -153,11 +156,19 @@ describe('§5.3 — DiscoveryCardMessage', () => {
     expect(mockedResolve).not.toHaveBeenCalled();
   });
 
-  it('a failed resolve renders the card unchanged — "could not tell" is not "revoked"', async () => {
+  // SUPERSEDED 2026-10-05 (lane T2, census T413/T448): this case used to assert
+  // that a failed resolve draws the sender's snapshot unchanged. §30A.20 forbids
+  // a shared card granting more than its authorized projection, and a failed
+  // resolve is exactly when a revoked place would still be shown in full — so
+  // the card now draws the REFERENCE (kind, caption, a way to open it), the way
+  // PortavaObjectMessage always has. "Could not tell" is still not "revoked".
+  it('a failed resolve is "could not tell" — not "revoked", and not the snapshot either', async () => {
     mockedResolve.mockResolvedValue({ ok: false, error: 'network' } as any);
     await render(<DiscoveryCardMessage body={discoveryBody} mine={false} threadId={THREAD} />);
-    expect(await screen.findByText('The rooftop with no sign')).toBeTruthy();
+    expect(await screen.findByTestId('discovery-card-reference')).toBeTruthy();
     expect(screen.queryByTestId('discovery-card-revoked')).toBeNull();
+    expect(screen.queryByText('The rooftop with no sign')).toBeNull();
+    expect(screen.queryByText('Ask for the back stairs')).toBeNull();
   });
 });
 
