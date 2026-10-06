@@ -103,6 +103,9 @@ export function makeKitClient(state: KitState, calls: KitCalls) {
     let limitN = Infinity;
     let mode: "select" | "write" = "select";
     let selectCols: string[] | null = null;
+    // PostgREST reverse to-many embeds through a named FK, `rel!rel_col_fkey(a, b)` (the auth
+    // gate's user_account_states read, lib/accountStateGate.ts): `rel` rows whose `col` is this row's id.
+    let embeds: Array<{ rel: string; col: string; cols: string[] }> = [];
 
     const failure = (terminal: "then" | "maybeSingle"): { data: null; error: KitError } | null => {
       if (state.errorTables[table]) return { data: null, error: state.errorTables[table]! };
@@ -117,14 +120,32 @@ export function makeKitClient(state: KitState, calls: KitCalls) {
     };
     const rowsNow = () => (state.rows[table] ?? []).filter((r) => filters.every((f) => f(r)));
     const project = (rs: any[]) =>
-      selectCols === null ? rs : rs.map((r) => Object.fromEntries(selectCols!.filter((c) => c in r).map((c) => [c, r[c]])));
+      selectCols === null ? rs : rs.map((r) => ({
+        ...Object.fromEntries(selectCols!.filter((c) => c in r).map((c) => [c, r[c]])),
+        ...Object.fromEntries(embeds.map((e) => [e.rel, (state.rows[e.rel] ?? []).filter((x) => x[e.col] === r.id)
+          .map((x) => Object.fromEntries(e.cols.map((c) => [c, x[c] ?? null])))])),
+      }));
 
     const b: any = {
       select(cols?: string) {
         if (mode === "write") return b; // RETURNING after a write
         calls.selects.push({ table, cols: typeof cols === "string" ? cols : "*" });
         if (typeof cols === "string" && cols.trim() !== "*") {
-          selectCols = cols.split(",").map((c) => c.trim()).filter(Boolean);
+          const items: string[] = [];
+          let depth = 0, cur = "";
+          for (const ch of cols) {
+            if (ch === "(") depth++;
+            if (ch === ")") depth--;
+            if (ch === "," && depth === 0) { items.push(cur.trim()); cur = ""; continue; }
+            cur += ch;
+          }
+          items.push(cur.trim());
+          embeds = items.flatMap((it) => {
+            const m = /^([a-z_]+)!([a-z_]+)\((.*)\)$/.exec(it);
+            if (!m || !m[2]!.startsWith(`${m[1]}_`) || !m[2]!.endsWith("_fkey")) return [];
+            return [{ rel: m[1]!, col: m[2]!.slice(m[1]!.length + 1, -"_fkey".length), cols: m[3]!.split(",").map((c) => c.trim()).filter(Boolean) }];
+          });
+          selectCols = items.filter((c) => c && !c.includes("("));
           for (const c of selectCols) named.add(c);
         }
         return b;

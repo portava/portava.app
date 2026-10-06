@@ -15,7 +15,10 @@
  * `creator_attribution_enabled` stays exactly as 2922 seeded it (FALSE), and a
  * suite asserts that it still is. No flag is written anywhere by this adapter.
  *
- * LOUD BY DESIGN (the discoverySearchPsqlClient precedent): it models `select`,
+ * LOUD BY DESIGN (the discoverySearchPsqlClient precedent): it models `select`
+ * (plain columns, and one level of FK-hinted embedding `relation!constraint(cols)`
+ * resolved against the REAL foreign key by ./postgrestEmbed.ts — the form the
+ * account-state gate's read of `profiles` uses on every authenticated request),
  * `eq`, `neq`, `in`, `lte`, `order`, `limit`, `range`, `single`, `maybeSingle`,
  * `insert … select`, `upsert(…, { onConflict, ignoreDuplicates: true })` and
  * `rpc`, and THROWS on anything else, so a new call shape cannot pass unproven.
@@ -25,6 +28,7 @@
  * its text and `details` its DETAIL line — what PostgREST would relay.
  */
 import { psql } from "./localDb.js";
+import { PostgrestEmbedError, selectListWithEmbeds } from "./postgrestEmbed.js";
 
 export function lit(v: unknown): string {
   if (v === null || v === undefined) return "NULL";
@@ -107,6 +111,8 @@ export function creatorPsqlClient(opts: CreatorPsqlClientOptions = {}): any {
       let offset: number | null = null;
       let single: "none" | "single" | "maybe" = "none";
       let write: null | { kind: "insert" | "upsert"; rows: any[]; onConflict?: string; ignore?: boolean; many: boolean } = null;
+      /** An embed PostgREST would refuse (no such relationship): the statement resolves with its error. */
+      let selectError: PgError | null = null;
 
       const buildSelect = () =>
         `SELECT ${cols} FROM public.${table}` +
@@ -116,6 +122,7 @@ export function creatorPsqlClient(opts: CreatorPsqlClientOptions = {}): any {
         (offset !== null ? ` OFFSET ${offset}` : "");
 
       const run = async () => {
+        if (selectError) return { data: null, error: selectError };
         if (table === "feature_flags" && !write) {
           const f = where.map((w) => /^flag = '(.*)'$/.exec(w)?.[1]).find(Boolean);
           const on = f ? flags[f] === true : false;
@@ -155,7 +162,18 @@ export function creatorPsqlClient(opts: CreatorPsqlClientOptions = {}): any {
 
       const b: any = {
         select(c?: string) {
-          if (c && c.trim() !== "*") cols = c.split(",").map((x) => ident(x.trim())).join(", ");
+          if (!c || c.trim() === "*") return b;
+          try {
+            const lookup = (sql: string): string[] | null => {
+              const r = psql(sql);
+              return r.status === 0 ? r.stdout.split("\n").filter((l) => l.length > 0) : null;
+            };
+            cols = (write ? null : selectListWithEmbeds(table, c, (x) => ident(x.trim()), lookup))
+              ?? c.split(",").map((x) => ident(x.trim())).join(", ");
+          } catch (err) {
+            if (!(err instanceof PostgrestEmbedError)) throw err;
+            selectError = { code: err.body.code, message: err.body.message, details: err.body.details ?? "" };
+          }
           return b;
         },
         eq(col: string, v: unknown) { where.push(`${ident(col)} = ${lit(v)}`); return b; },
