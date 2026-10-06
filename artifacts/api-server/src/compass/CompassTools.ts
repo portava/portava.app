@@ -145,6 +145,7 @@ import {
   MEMORY_COMPASS_PROMPT_RULES,
   executeMemoryCompassTool,
 } from "./MemoryCompassTools.js";
+import { PLAN_ITEM_PRIVACY_COLUMNS, WITHHELD_PLAN_TITLE, planItemAccessFor, readPlanItemPrivacy, withholdPrivatePlanItems } from "./planItemAccess.js";
 
 /**
  * The number of tools the file header states, as a number this process can
@@ -854,7 +855,7 @@ export async function toolGetCurrentTrip(sc: SupabaseClient, userId: string, tri
     // so `sourceTripVersion` described a row nobody had compared it to. The
     // projection's own summary is now the one trip row, and TRIP_NOT_FOUND is
     // its answer to "no such trip" instead of a second lookup's empty result.
-    return projectCurrentTrip(sc, tripId, null);
+    return projectCurrentTrip(sc, tripId, null, userId);
   }
   // Trips the user owns or is an accepted member of, active or upcoming.
   //
@@ -880,7 +881,7 @@ export async function toolGetCurrentTrip(sc: SupabaseClient, userId: string, tri
     id: t.id, title: t.title, destination_city: t.destinationCity,
     destination_country: t.destinationCountry, start_date: t.startDate,
     end_date: t.endDate, status: t.status,
-  });
+  }, userId);
 }
 
 /** The projection's trip summary on the wire shape this tool has always used. */
@@ -905,7 +906,7 @@ function tripSummaryRow(t: { id: string; title: string | null; destinationCity: 
  * passes null, so a projection it cannot build is answered as no trip at all
  * rather than as a trip with an empty plan.
  */
-async function projectCurrentTrip(sc: SupabaseClient, tripId: string, fallback: any | null): Promise<unknown> {
+async function projectCurrentTrip(sc: SupabaseClient, tripId: string, fallback: any | null, viewerId: string): Promise<unknown> {
   // §19.1: the plan comes from the projection, accepted or refused by the one
   // consumer rule. A refused projection is SAID to be refused — the old read
   // handed the assistant an empty plan when the table could not be read.
@@ -922,10 +923,17 @@ async function projectCurrentTrip(sc: SupabaseClient, tripId: string, fallback: 
   }
   const p = built.projection;
   const trip = tripSummaryRow(p.trip);
+  // OD-TRIP-3 (compass/planItemAccess.ts): the shared projection does not carry
+  // the two privacy columns on this tree, so they are read by id; an item that
+  // cannot be proven public is another member's private item and keeps only its
+  // slot. An unreadable privacy read withholds every such item.
+  const privacy = p.planItems.status === "ok" && p.planItems.items.length > 0 ? await readPlanItemPrivacy(sc, tripId) : new Map();
+  const access = await planItemAccessFor(sc, tripId, viewerId);
   const planItems = p.planItems.status === "ok"
-    ? p.planItems.items.map((i) => ({
-        title: wrapUgc(String(i.title ?? "")), category: i.category, day_date: i.dayDate, status: i.status,
-      }))
+    ? p.planItems.items.map((i) => {
+        const [shown] = withholdPrivatePlanItems([{ id: i.id, title: i.title, ...(privacy?.get(i.id) ?? {}) }], access);
+        return { title: wrapUgc(String(shown!.title ?? "")), category: i.category, day_date: i.dayDate, status: i.status };
+      })
     : [];
   return {
     trip,
@@ -1207,7 +1215,7 @@ async function toolCheckTripConflicts(
   let itemsUnread = false;
   const { data: items, error: itemsErr } = await sc
     .from("trip_plan_items")
-    .select("trip_id, title, day_date")
+    .select(`id, trip_id, title, day_date, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
     .in("trip_id", overlaps.map((t) => t.id))
     .gte("day_date", startDate)
     .lte("day_date", endDate)
@@ -1216,8 +1224,15 @@ async function toolCheckTripConflicts(
   // Unbound before, like the three selection reads above: an unreadable plan
   // became an empty `plannedItems`, which reads as "those days are free".
   if (itemsErr) itemsUnread = true;
-  else for (const i of (items ?? []) as any[]) {
-    conflictItems.push({ tripId: i.trip_id, title: wrapUgc(String(i.title ?? "")), dayDate: i.day_date });
+  else {
+    // OD-TRIP-3: per trip, another member's private item is "Private plan".
+    const accessByTrip = new Map<string, Awaited<ReturnType<typeof planItemAccessFor>>>();
+    for (const t of overlaps) accessByTrip.set(t.id, await planItemAccessFor(sc, t.id, userId));
+    for (const raw of (items ?? []) as any[]) {
+      const access = accessByTrip.get(String(raw.trip_id));
+      const i = access ? withholdPrivatePlanItems([raw], access)[0]! : { ...raw, title: WITHHELD_PLAN_TITLE };
+      conflictItems.push({ tripId: i.trip_id, title: wrapUgc(String(i.title ?? "")), dayDate: i.day_date });
+    }
   }
 
   return {
@@ -1445,6 +1460,18 @@ export async function toolSimulatePlan(sc: SupabaseClient, userId: string, args:
   if (kind !== "add_plan" && !targetId) return { simulation: null, info: "targetId is required for this kind" };
   const loaded = await loadImpactState(sc, t.id);
   if (!loaded.ok) return { simulation: null, info: `Simulation unavailable (${loaded.reason}): ${loaded.message}` };
+  // OD-TRIP-3: the impact state names every plan on the trip; another member's
+  // private plan is "Private plan" before any conflict or explanation is
+  // written from it (the shared loader does not carry the privacy columns on
+  // this tree, so they are read by id; unreadable → every unproven item withheld).
+  {
+    const privacy = loaded.state.plans.length > 0 ? await readPlanItemPrivacy(sc, t.id) : new Map();
+    const access = await planItemAccessFor(sc, t.id, userId);
+    loaded.state.plans = loaded.state.plans.map((pl) => {
+      const [shown] = withholdPrivatePlanItems([{ id: pl.id, title: pl.title, ...(privacy?.get(pl.id) ?? {}) }], access);
+      return shown!.title === pl.title ? pl : { ...pl, title: shown!.title as string | null };
+    });
+  }
   const freedom = await buildTripFreedomProjection(sc, t.id);
   if (!freedom.ok) return { simulation: null, info: `Simulation unavailable (${freedom.reason}): ${freedom.message}` };
   const v = simulateChange({ kind: kind as any, targetId, startsAt: typeof args.startsAt === "string" ? args.startsAt : null, endsAt: typeof args.endsAt === "string" ? args.endsAt : null, title: typeof args.title === "string" ? args.title : null, proposedBy: userId }, loaded.state, freedom.projection.windows, Date.now());

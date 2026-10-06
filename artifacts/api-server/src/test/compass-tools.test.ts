@@ -295,6 +295,46 @@ describe("E. check_trip_conflicts", () => {
   });
 });
 
+// ── E2. OD-TRIP-3 — another member's private plan item reaches no Compass tool ──
+describe("E2. OD-TRIP-3 — another member's private plan item reaches the model only as a slot", () => {
+  const OTHER = "c3c3c3c3-cccc-4ccc-8ccc-000000000003";
+  function sharedTripDb(): Db {
+    return makeDb({
+      trips: [{ id: TRIP_ID, owner_id: OTHER, title: "Cebu trip", destination_city: "Cebu", start_date: "2026-08-01", end_date: "2026-08-07", status: "upcoming" }],
+      trip_members: [
+        { trip_id: TRIP_ID, user_id: ALICE_ID, role: "member", status: "accepted" },
+        { trip_id: TRIP_ID, user_id: OTHER, role: "owner", status: "accepted" },
+      ],
+      trip_plan_items: [
+        { id: "p-mine", trip_id: TRIP_ID, title: "Alice's dive", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: ALICE_ID, location_is_private: true },
+        { id: "p-secret", trip_id: TRIP_ID, title: "Rehab clinic", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: OTHER, location_is_private: true },
+        { id: "p-null", trip_id: TRIP_ID, title: "Unknown flag place", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: OTHER, location_is_private: null },
+        { id: "p-public", trip_id: TRIP_ID, title: "Group dinner", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: OTHER, location_is_private: false },
+      ],
+    });
+  }
+
+  it("check_trip_conflicts: the viewer's own and the public items keep their titles; the private and NULL-flag ones are 'Private plan'", async () => {
+    const result: any = await executeCompassTool(makeClient(sharedTripDb()), ALICE_ID, profileFor(), "check_trip_conflicts", { startDate: "2026-08-05", endDate: "2026-08-06" });
+    const wire = JSON.stringify(result);
+    assert.match(wire, /Alice's dive/);
+    assert.match(wire, /Group dinner/);
+    assert.doesNotMatch(wire, /Rehab clinic/, "another member's private title reached the model");
+    assert.doesNotMatch(wire, /Unknown flag place/, "an item whose privacy flag is NULL was treated as public");
+    assert.equal(result.plannedItems.filter((i: any) => /Private plan/.test(i.title)).length, 2, "the slots are still there");
+  });
+
+  it("get_current_trip: the projection's plan items obey the same rule", async () => {
+    const result: any = await executeCompassTool(makeClient(sharedTripDb()), ALICE_ID, profileFor(), "get_current_trip", { tripId: TRIP_ID });
+    const wire = JSON.stringify(result);
+    assert.ok(Array.isArray(result.planItems) && result.planItems.length === 4, `expected the four slots, got ${wire.slice(0, 300)}`);
+    assert.match(wire, /Alice's dive/);
+    assert.match(wire, /Group dinner/);
+    assert.doesNotMatch(wire, /Rehab clinic/);
+    assert.doesNotMatch(wire, /Unknown flag place/);
+  });
+});
+
 describe("F. add_to_trip — proposal only", () => {
   function tripDb(): Db {
     return makeDb({
