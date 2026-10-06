@@ -1031,8 +1031,7 @@ router.get("/airport/sessions/:id/recommendations", async (req, res) => {
     recs = generated.recommendations;
   }
 
-  const landside = await landsideSuppressionFor(sc, session.id, Date.now()); // census L43: after a confirmed re-entry, airport-side only
-  res.json({ recommendations: applyLandsideSuppression(recs, landside), featureEnabled: true, landsideSuppression: landsideSuppressionWire(landside) });
+  const landside = await landsideSuppressionFor(sc, session.id, Date.now()); res.json({ recommendations: applyLandsideSuppression(recs, landside), featureEnabled: true, landsideSuppression: landsideSuppressionWire(landside) }); // census L43: after a confirmed re-entry, airport-side only
 });
 
 // ── GET /api/airport/sessions/:id/safety ─────────────────────────────────────
