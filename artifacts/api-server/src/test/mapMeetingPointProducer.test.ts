@@ -47,6 +47,13 @@ import {
 import { applyProtection, type ProtectedZone } from "../lib/protectedLocations.js";
 import { parseBbox } from "../lib/mapProjection.js";
 import { NEVER_AGGREGATED_KINDS, type BBox } from "../lib/mapAggregation.js";
+import { captureProtection } from "./helpers/protectionTelemetry.js";
+
+// §24 counts are server telemetry now, not the response (lib/mapProtectionTelemetry.ts):
+// with one circle member, `protection.suppressed: 1` on the wire disclosed that the
+// member was inside a protected zone. Read from the telemetry sink, cleared per test.
+const protectionTelemetry = captureProtection();
+beforeEach(() => protectionTelemetry.clear());
 
 // ── fixtures ──────────────────────────────────────────────────────────────────
 
@@ -460,7 +467,7 @@ describe("meeting_point through GET /api/map/projection", () => {
     assert.ok(typeof objs[0].expiresAt === "string");
     assert.ok(r.body.sources.includes("meeting_points"));
     assert.deepEqual(r.body.producers.meeting_point, { refusal: null, collected: 1 });
-    assert.equal(r.body.protection.evaluated, 1);
+    assert.equal(protectionTelemetry.last()!.evaluated, 1);
   });
 
   it("is never folded into an activity zone, even at city zoom", async () => {
@@ -510,6 +517,6 @@ describe("meeting_point through GET /api/map/projection", () => {
     assert.deepEqual(r.body.objects, []);
     // Collected by the producer, removed by the gate — both are visible.
     assert.deepEqual(r.body.producers.meeting_point, { refusal: null, collected: 1 });
-    assert.equal(r.body.protection.suppressed, 1);
+    assert.equal(protectionTelemetry.last()!.suppressed, 1);
   });
 });

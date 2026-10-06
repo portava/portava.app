@@ -54,6 +54,13 @@ import {
 import { AMBIENT_PRESENCE_KINDS, applyProtection, type ProtectedZone } from "../lib/protectedLocations.js";
 import { parseBbox } from "../lib/mapProjection.js";
 import type { BBox } from "../lib/mapAggregation.js";
+import { captureProtection } from "./helpers/protectionTelemetry.js";
+
+// §24 counts are server telemetry now, not the response (lib/mapProtectionTelemetry.ts):
+// with one circle member, `protection.suppressed: 1` on the wire disclosed that the
+// member was inside a protected zone. Read from the telemetry sink, cleared per test.
+const protectionTelemetry = captureProtection();
+beforeEach(() => protectionTelemetry.clear());
 
 // ── fixtures ──────────────────────────────────────────────────────────────────
 
@@ -454,8 +461,8 @@ describe("memory through GET /api/map/projection", () => {
     );
     assert.deepEqual(r.body.objects, []);
     assert.deepEqual(r.body.producers.memory, { refusal: null, collected: 1 });
-    assert.equal(r.body.protection.suppressed, 1);
-    assert.equal(r.body.protection.coarsened, 0);
+    assert.equal(protectionTelemetry.last()!.suppressed, 1);
+    assert.equal(protectionTelemetry.last()!.coarsened, 0);
   });
 });
 
