@@ -47,9 +47,9 @@ export function startRankingFatigueSweeper(): void {
     void runFatigueSweep()
       .catch((err) => logger.warn({ err }, "rankingFatigueSweeper: sweep failed"))
       .finally(() => {
-        _timer = setTimeout(tick, SWEEP_INTERVAL_MS);
+        if (_timer !== null) { _timer = setTimeout(tick, SWEEP_INTERVAL_MS); _timer.unref?.(); } // a stop() during the run must not re-arm
       });
-  }, SWEEP_STARTUP_DELAY_MS);
+  }, SWEEP_STARTUP_DELAY_MS); _timer.unref?.(); // never keep a process alive for a scheduler: the server does that
 }
 
 export function stopRankingFatigueSweeper(): void {

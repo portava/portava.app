@@ -24,6 +24,20 @@
  * The record returned is the record the stored version cites (`snapshot_id`),
  * computed once, from the session as it stands AFTER the declaration. The
  * route publishes that same record; it does not certify again.
+ *
+ * ── AN IDENTICAL DECLARATION IS NOT A NEW VERSION ───────────────────────────
+ * A declaration that changes nothing about the latest stored set appends
+ * nothing (`unchanged: true`). It used to append a version every time, so a
+ * double tap, a retry after a lost response, or a card re-submitting the
+ * selected option each grew an immutable table by a row that said nothing new
+ * and moved `constraintsVersion` — and with it the `inputHash` of every later
+ * certification — for no change in what the traveller had declared.
+ *
+ * ── THE POSTURE MUST BE KNOWN BEFORE ANYTHING IS WRITTEN ────────────────────
+ * If the two flags cannot be read, nothing is written and the declaration is
+ * refused as retryable. Guessing "storage off" would write the conservative
+ * boolean and report the four-way answer as kept-as-a-boolean when a table that
+ * should have held it may be live.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
@@ -40,6 +54,7 @@ import { syncSessionBaggage, type LayoverSession } from "../airport/LayoverSessi
 import {
   DECLARABLE_FIELDS,
   baggageChargesBags,
+  constraintsChargeBags,
   constraintQuestion,
   entryPermissionStateOf,
   layoverStateOf,
@@ -83,6 +98,8 @@ export type DeclareOutcome =
       /** FALSE when the version was stored and the `checked_bags` mirror was not. */
       sessionSynced: boolean;
       unsaved: DeclarableField[];
+      /** TRUE when the declaration matched the latest version and NOTHING was appended. */
+      unchanged?: boolean;
     }
   | {
       ok: true;
@@ -135,6 +152,9 @@ export async function declareLayoverConstraints(
   if (session.status !== "active") return refuse("session_closed");
 
   const flags = await readConstraintFlags(db);
+  // Not "storage off". See the header: the posture is not known, so nothing is
+  // written under a guess at it.
+  if (!flags.readable) return refuse("constraints_unreadable");
   const stated = DECLARABLE_FIELDS.filter((f) => patch[f] !== undefined);
 
   // ── flag OFF: the conservative boolean, on the schema that exists ──────────
@@ -167,6 +187,29 @@ export async function declareLayoverConstraints(
     // silently reset every field the patch does not name.
     if (latest.state === "unreadable") return refuse("constraints_unreadable");
 
+    // ── IDEMPOTENT: the same declaration twice is one version ───────────────
+    // Nothing is inserted and nothing is mirrored. The traveller is answered
+    // with the certified record for the set that is ALREADY stored, so the
+    // response is the one a GET would give.
+    if (latest.state === "declared" && !patchChangesSet(latest.set, patch)) {
+      const context: SessionConstraintContext = {
+        read: "declared",
+        set: latest.set,
+        entryForbidsLandside: flags.entryForbidsLandside,
+      };
+      const current: LayoverSession = { ...session, constraints: context };
+      return {
+        ok: true,
+        stored: "versioned",
+        session: current,
+        set: latest.set,
+        record: (await consumerLayoverRecord(db, airport, current, nowMs)) ?? certifySessionFeasibility(airport, current, { nowMs, entry }),
+        sessionSynced: true,
+        unsaved: [],
+        unchanged: true,
+      };
+    }
+
     const set = nextConstraintSet(latest.state === "declared" ? latest.set : null, patch);
     const context: SessionConstraintContext = {
       read: "declared",
@@ -175,7 +218,10 @@ export async function declareLayoverConstraints(
     };
     // Certified against the session as it will stand once the mirror below is
     // written, so the record published here is the record a later read
-    // recomputes.
+    // recomputes. The mirror is the BAGGAGE mode's own boolean: separate
+    // tickets are charged by the engine from the declared set
+    // (`constraintsChargeBags`), not by rewriting what the traveller said
+    // about their bags on the session row.
     const declaredSession: LayoverSession = {
       ...session,
       checkedBags: baggageChargesBags(set.baggageMode),
@@ -228,6 +274,16 @@ export async function declareLayoverConstraints(
   return refuse("write_failed");
 }
 
+/**
+ * Would laying this patch over `latest` change any declared field?
+ *
+ * Only the fields the patch NAMES are compared — an unnamed field keeps its
+ * stored value by `nextConstraintSet`'s own rule, so it cannot differ.
+ */
+export function patchChangesSet(latest: LayoverConstraintSet, patch: ConstraintPatch): boolean {
+  return DECLARABLE_FIELDS.some((f) => patch[f] !== undefined && patch[f] !== latest[f]);
+}
+
 /** What the plan read said about landside stops. */
 export type LandsidePlanRead = { ok: true; hasLandsidePlan: boolean } | { ok: false };
 
@@ -256,9 +312,16 @@ export interface ConstraintsPayload {
   /** What the arithmetic is charging right now, whichever source it came from. */
   baggageCharged: boolean;
   landsideGate: LayoverFeasibilityRecord["landsideGate"];
-  /** §4.1 state, or null with a reason when the plan could not be read. */
+  /**
+   * §4.1 state, or null with the reason.
+   *   plan_unreadable       the plan stops could not be read.
+   *   landside_unconfirmed  the gate is cautionary: §5 has no state for "nothing
+   *                         forbids landside and nothing confirms it". The
+   *                         gate's own `cautions` say which; `verdict` says the
+   *                         rest. NEVER reported as LANDSIDE_AVAILABLE.
+   */
   layoverState: LayoverState | null;
-  layoverStateUnavailableReason: "plan_unreadable" | null;
+  layoverStateUnavailableReason: "plan_unreadable" | "landside_unconfirmed" | null;
   /** §12.1 — the one question worth asking, or null. */
   question: ReturnType<typeof constraintQuestion>;
   verdict: LayoverFeasibilityRecord["verdict"];
@@ -282,6 +345,7 @@ export function constraintsPayload(args: {
   const { session, record, plan } = args;
   const ctx = session.constraints;
   const versioned = ctx !== undefined && ctx.read !== "storage_off";
+  const layoverState = plan.ok ? layoverStateOf(record, session.status, plan.hasLandsidePlan) : null;
   return {
     ok: true,
     storage: versioned ? "versioned" : "session_booleans_only",
@@ -289,8 +353,8 @@ export function constraintsPayload(args: {
     constraints: ctx?.read === "declared" ? ctx.set : null,
     baggageCharged: bagsCharged(record),
     landsideGate: record.landsideGate,
-    layoverState: plan.ok ? layoverStateOf(record, session.status, plan.hasLandsidePlan) : null,
-    layoverStateUnavailableReason: plan.ok ? null : "plan_unreadable",
+    layoverState,
+    layoverStateUnavailableReason: !plan.ok ? "plan_unreadable" : layoverState === null ? "landside_unconfirmed" : null,
     question: constraintQuestion(record.landsideGate),
     verdict: record.verdict,
     confidence: record.confidence,
@@ -307,5 +371,5 @@ export function constraintsPayload(args: {
  */
 function bagsCharged(record: LayoverFeasibilityRecord): boolean {
   const c = record.inputs.constraints;
-  return c ? baggageChargesBags(c.baggageMode) : record.inputs.session.checkedBags;
+  return c ? constraintsChargeBags(c, record.inputs.session.checkedBags) : record.inputs.session.checkedBags;
 }

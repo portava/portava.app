@@ -163,8 +163,8 @@ describe("census L239 — one layover walks detection → … → completion ove
     });
     assert.equal(planned.status, 200, "plan stage");
     assert.equal(planned.body.stops.length, 1);
-    assert.ok(planned.body.planFit, "the plan is certified against the window");
-    assert.equal(planned.body.planFit.fit, "fits");
+    assert.ok(planned.body.planFit, "the plan is certified against the window"); assert.equal(planned.body.planFit.clockFit, "fits"); // the CLOCK says it fits — which is all this stage ever established
+    assert.equal(planned.body.planFit.fit, "unconfirmed"); assert.deepEqual(planned.body.planFit.landside.cautions, ["entry_unconfirmed"]); // LAY-FIX (was `fit === "fits"`): this world has no curated entry corridor, so the verdict is `entry_unverified`, and a plan through the city is no longer a green `fits` — planFit reads the landside gate as well as the window. Same line: line 260 of this file is cited.
     const stopId = planned.body.stops[0].id;
 
     // ── 4. EXECUTION ────────────────────────────────────────────────────────

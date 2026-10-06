@@ -106,6 +106,54 @@ describe('createLayoverSession — the refusal keeps its code and its sentence',
     expect(r.ok).toBe(true);
     if (!r.ok) throw new Error('unreachable');
     expect(r.session.id).toBe('sess-9');
+    // A server that reported nothing about the constraints reported NOTHING —
+    // not "stored".
+    expect(r.constraints).toBeNull();
+  });
+
+  // LAY-FIX — the create's `constraints` was discarded. The bodies below are
+  // `declareConstraintsAtCreation`'s (artifacts/api-server/src/routes/
+  // layoverConstraints.ts), all three of them.
+  test('6. a 201 whose bag answer was NOT stored keeps that fact, with the server\'s sentence', async () => {
+    jest.spyOn(globalThis, 'fetch').mockResolvedValue(jsonResponse(201, {
+      ok: true, session: { id: 'sess-9' }, safeReturnSuggested: false, safeReturnReasons: [],
+      constraints: { stored: 'not_stored', reason: 'write_failed', message: 'Your bag and connection details could not be saved. Please try again.', retryable: true },
+    }));
+    const r = await createLayoverSession({ ...PAYLOAD, baggageMode: 'UNKNOWN', checkedBags: true });
+    if (!r.ok) throw new Error('unreachable');
+    expect(r.constraints).toEqual({
+      stored: 'not_stored', reason: 'write_failed', retryable: true,
+      message: 'Your bag and connection details could not be saved. Please try again.',
+    });
+  });
+
+  test('7. a stored answer and a boolean-only one are told apart, and what could not be kept is carried', async () => {
+    jest.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse(201, {
+      ok: true, session: { id: 'sess-9' }, safeReturnSuggested: false, safeReturnReasons: [],
+      constraints: { stored: 'versioned', version: 1, unsaved: [], sessionSynced: true },
+    }));
+    const versioned = await createLayoverSession({ ...PAYLOAD, baggageMode: 'UNKNOWN', checkedBags: true });
+    if (!versioned.ok) throw new Error('unreachable');
+    expect(versioned.constraints).toEqual({ stored: 'versioned', version: 1, unsaved: [], sessionSynced: true });
+
+    jest.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse(201, {
+      ok: true, session: { id: 'sess-9' }, safeReturnSuggested: false, safeReturnReasons: [],
+      constraints: { stored: 'session_booleans_only', version: null, unsaved: ['airportChangeRequired'], sessionSynced: true },
+    }));
+    const booleans = await createLayoverSession({ ...PAYLOAD, baggageMode: 'UNKNOWN', checkedBags: true, airportChangeRequired: true });
+    if (!booleans.ok) throw new Error('unreachable');
+    expect(booleans.constraints).toEqual({ stored: 'session_booleans_only', version: null, unsaved: ['airportChangeRequired'], sessionSynced: true });
+  });
+
+  test('8. a `constraints` that is not the contract is null — never coerced into "stored"', async () => {
+    for (const bad of ['yes', 42, { stored: 'definitely' }, []]) {
+      jest.spyOn(globalThis, 'fetch').mockResolvedValueOnce(jsonResponse(201, {
+        ok: true, session: { id: 'sess-9' }, safeReturnSuggested: false, safeReturnReasons: [], constraints: bad,
+      }));
+      const r = await createLayoverSession(PAYLOAD);
+      if (!r.ok) throw new Error('unreachable');
+      expect(r.constraints).toBeNull();
+    }
   });
 });
 

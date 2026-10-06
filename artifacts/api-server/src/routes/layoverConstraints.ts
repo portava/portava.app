@@ -144,6 +144,8 @@ router.put("/airport/sessions/:id/constraints", asyncHandler(async (req, res) =>
 
   // §20 — the traveller is being told a certified answer, so it is written
   // down. A side effect that cannot fail the response; see GET /:id/safety.
+  // (An unchanged declaration is told the same answer again, and recording it
+  // is the same idempotent write GET /:id/safety makes on every read.)
   const persisted = await persistDecision(sc, userId, outcome.session.id, outcome.record);
 
   res.json({
@@ -153,6 +155,8 @@ router.put("/airport/sessions/:id/constraints", asyncHandler(async (req, res) =>
       plan: await readLandsidePlan(sc, outcome.session.id),
     }),
     stored: outcome.stored,
+    // TRUE when this declaration matched the stored set and appended nothing.
+    unchanged: outcome.stored === "versioned" && outcome.unchanged === true,
     // Fields the traveller sent that this storage posture could not keep. Empty
     // is the norm; non-empty must be SAID, not swallowed.
     unsaved: outcome.unsaved,
@@ -192,6 +196,19 @@ export async function declareConstraintsAtCreation(
   if (stated.length === 0) return {};
 
   const flags = await readConstraintFlags(sc);
+  if (!flags.readable) {
+    // NOT "storage off". We could not establish whether declarations are being
+    // kept, so this one is reported as NOT STORED — which is what the client
+    // must show the traveller — rather than as kept-as-a-boolean.
+    return {
+      constraints: {
+        stored: "not_stored",
+        reason: "constraints_unreadable",
+        message: "Your bag and connection details could not be saved yet. Open your layover and set them there.",
+        retryable: true,
+      },
+    };
+  }
   if (!flags.storage) {
     // Nothing to append and nothing to mirror: the INSERT that created the
     // session wrote the conservative boolean already.

@@ -185,7 +185,7 @@ export interface DiscoveryLayoverSummary {
   confidence: string;
   usableMinutes: number;
   hardReturnBy: string;
-  landsideOpen: boolean;
+  landsideOpen: boolean; /** `open` | `caution` | `closed`. `landsideOpen` is true ONLY for `open`; under `caution` landside cards are still admitted and must not be presented as a yes. */ landsideStatus: string;
   /** How many of the candidates read were admitted — i.e. served. */
   admitted: number;
   /** Every candidate that was NOT served, with the state that withheld it. */
@@ -344,7 +344,7 @@ export async function discoveryLayoverGate(
       confidence: String(snapshot.confidence),
       usableMinutes: snapshot.usableMinutes,
       hardReturnBy: snapshot.hardReturnBy,
-      landsideOpen: snapshot.landsideOpen,
+      landsideOpen: snapshot.landsideOpen, landsideStatus: snapshot.landsideStatus,
       admitted: admittedIds.size,
       excluded: universe.actions
         .filter((a) => !a.admitted)
