@@ -387,9 +387,9 @@ function rulesAppliedFor(record: LayoverFeasibilityRecord): string[] {
   // `verdict.*`, and repeating them here would add a name to every record that
   // has one — the duplicate this function's header removed `reason.<CODE>` for.
   const constraints = record.inputs.constraints;
-  if (constraints) rules.push(`constraints.baggage.${constraints.baggageMode}`);
+  if (constraints && constraints.baggageMode !== null) rules.push(`constraints.baggage.${constraints.baggageMode}`); // null = undeclared: no mode was declared, so no baggage rule fired
   for (const closure of record.landsideGate.closedBy) {
-    if (closure === "baggage_unknown" || closure === "airport_change" || closure === "entry_unconfirmed") {
+    if (closure !== "insufficient_time" && closure !== "entry_refused" && closure !== "traveller_staying_airside") { // every closure the constraint gate ADDS — a deny-list of the three `verdict.*` already says, so a closure added later is recorded, not dropped
       rules.push(`gate.${closure}`);
     }
   }

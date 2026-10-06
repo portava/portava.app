@@ -599,7 +599,7 @@ export const COMPASS_TOOL_DEFINITIONS = [
     function: {
       name: "get_layover_snapshot",
       description:
-        "Layover §25 / census CL-03: the ONE certified LayoverSnapshot for the user's live layover session — verdict, return state, tier, usable minutes, the hard return-by deadline and the minutes to it, whether landside is open and why not, reason codes and unknowns. Call it before advising anyone in a layover; never compute a time budget yourself. Answers `noLayover` when the user has no live session, and `unavailable` when the session store could not be read (do not treat that as 'no layover').",
+        "Layover §25 / census CL-03: the ONE certified LayoverSnapshot for the user's live layover session — verdict, return state, tier, usable minutes, the hard return-by deadline and the minutes to it, the three-valued landside status (`open`; `caution` = not forbidden and NOT confirmed, so never tell the traveller they can leave; `closed`, and why), reason codes and unknowns. Call it before advising anyone in a layover; never compute a time budget yourself. Answers `noLayover` when the user has no live session, and `unavailable` when the session store could not be read (do not treat that as 'no layover').",
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
   },
@@ -2332,7 +2332,7 @@ export async function toolGetLayoverSnapshot(sc: SupabaseClient, userId: string)
     return { noLayover: true, reason: r.reason, info: r.message };
   }
   const { certifiedRecord: _record, ...snapshot } = r.snapshot;
-  return { snapshot: sanitizeToolResult(snapshot) };
+  return { snapshot: sanitizeToolResult(snapshot.landsideStatus === "closed" ? { ...snapshot, envelope: null, envelopeUnavailableReason: "landside_closed" } : snapshot) }; // a closed gate hands the model no reach to describe
 }
 
 async function toolGetDecision(sc: SupabaseClient, args: Record<string, unknown>): Promise<unknown> {

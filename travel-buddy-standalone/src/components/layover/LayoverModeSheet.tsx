@@ -18,7 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GlobalTimePicker } from '../selectors/GlobalTimePicker.tsx';
 import { GlobalCalendarPicker } from '../selectors/GlobalCalendarPicker.tsx';
 import { color, space, radius, type as t } from '../../theme/tokens.ts';
-import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx'; import { BAGGAGE_MODE_COPY, BAGGAGE_MODE_ORDER, conservativeCheckedBags } from './layoverConstraintFacts.ts';
+import { KeyboardSafeScrollView } from '../ui/KeyboardSafeView.tsx'; import { BAGGAGE_MODE_COPY, BAGGAGE_MODE_ORDER, conservativeCheckedBags, creationNoteParam } from './layoverConstraintFacts.ts';
 import {
   createLayoverSession,
   searchAirports,
@@ -240,7 +240,7 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
       }
       onClose();
       onSessionCreated?.(result.session.id, result.safeReturnSuggested);
-      router.push(`/layover/${result.session.id}` as any);
+      const kept = creationNoteParam(result.constraints); router.push(`/layover/${result.session.id}${kept ? `?constraints=${kept}` : ''}` as any); // the server SAID what it did with the bag answer; a "not sure" it could not store is handed to the dashboard, which shows it as not stored
     } catch (err: unknown) {
       // `createLayoverSession` resolves in every case; this is the belt to that
       // braces, so a future throw cannot leave the button spinning.
@@ -400,14 +400,14 @@ export function LayoverModeSheet({ visible, onClose, onSessionCreated, tripId, i
               bags (census L35). It is a four-way choice that starts at "Not
               sure", and "Not sure" is charged the collect-and-re-check time. */}
           <Text style={styles.sectionLabel}>Your bags</Text>
-          <View style={styles.comfortRow}>
+          <View style={styles.comfortRow} accessibilityRole="radiogroup" accessibilityLabel="Your bags">
             {BAGGAGE_MODE_ORDER.map((mode) => (
               <Pressable
                 key={mode}
                 style={[styles.comfortCard, baggageMode === mode && styles.comfortCardActive]}
                 onPress={() => setBaggageMode(mode)}
                 accessibilityRole="radio"
-                accessibilityState={{ selected: baggageMode === mode }}
+                accessibilityState={{ checked: baggageMode === mode, selected: baggageMode === mode }} // `checked` is the state a radio HAS; `selected` alone is not announced as the chosen radio by a screen reader
                 accessibilityLabel={`Bags: ${BAGGAGE_MODE_COPY[mode].label}`}
                 testID={`layover-start-baggage-${mode}`}
               >

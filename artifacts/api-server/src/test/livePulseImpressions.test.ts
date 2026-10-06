@@ -100,7 +100,7 @@ const EVENT_ID  = "e1111111-1111-4111-8111-111111111111"; // events.id
 const TRIP_A_ID = "70000001-1111-4111-8111-111111111111"; // trips.id — rail 'trip'
 const TRIP_B_ID = "70000002-2222-4222-8222-222222222222"; // trips.id — circle only
 const BUDDY_PROFILE_ID = "b0000001-1111-4111-8111-111111111111"; // rent_buddy_profiles.id
-const BOOKING_ID  = "bc000001-1111-4111-8111-111111111111";      // buddy_bookings.id
+const BOOKING_ID  = "bc000001-1111-4111-8111-111111111111";      // rent_buddy_bookings.id
 const GEM_MNL_ID  = "6e000001-1111-4111-8111-111111111111";      // hidden_gems.id (Manila)
 const GEM_CEB_ID  = "6e000002-2222-4222-8222-222222222222";      // hidden_gems.id (Cebu)
 const SAFE_RETURN_ID = "5a000001-1111-4111-8111-111111111111";   // safe_return_sessions.id
@@ -296,7 +296,7 @@ interface FakeState {
   trip_members?: any[];
   trips?: any[];
   trip_join_requests?: any[];
-  buddy_bookings?: any[];
+  rent_buddy_bookings?: any[];
   rent_buddy_profiles?: any[];
   hidden_gems?: any[];
   blocks?: any[];
@@ -320,7 +320,7 @@ function makeClient(
     trip_members:          state.trip_members          ?? [],
     trips:                 state.trips                 ?? [],
     trip_join_requests:    state.trip_join_requests    ?? [],
-    buddy_bookings:        state.buddy_bookings        ?? [],
+    rent_buddy_bookings:        state.rent_buddy_bookings        ?? [],
     rent_buddy_profiles:   state.rent_buddy_profiles   ?? [],
     hidden_gems:           state.hidden_gems           ?? [],
     blocks:                state.blocks                ?? [],
@@ -536,9 +536,9 @@ const FULL_RAIL: FakeState = {
   circle_presence: [
     { context_type: "trip", context_id: TRIP_B_ID, user_id: BOB_ID, updated_at: oneHourAgo },
   ],
-  buddy_bookings: [{
+  rent_buddy_bookings: [{
     id: BOOKING_ID, buddy_id: BUDDY_PROFILE_ID, traveler_id: ALICE_ID,
-    booking_date: in2h, city: "Manila", status: "requested",
+    booking_date: in2h, city: "Manila", status: "pending",
   }],
   // user_id (BOB_ID) is the id the ranked /pulse writer uses for buddies; `id`
   // is the rent_buddy_profiles PK the CARD navigates by.  Both are present and
@@ -991,7 +991,7 @@ describe("Live Pulse serve telemetry — rank_events rows", () => {
 
   // ── Supporting invariants ──────────────────────────────────────────────────
 
-  it("buddy_request (a buddy_bookings PK) is deliberately excluded", async () => {
+  it("buddy_request (a rent_buddy_bookings PK) is deliberately excluded", async () => {
     // MUTATION CAUGHT: adding `buddy_request: 'buddy'`. Booking PKs would be
     // written into the buddy namespace, asserting an impression of a person
     // the rail never recommended.

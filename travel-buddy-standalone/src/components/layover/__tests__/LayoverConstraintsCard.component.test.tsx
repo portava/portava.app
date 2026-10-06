@@ -23,6 +23,15 @@
  *  * OPTIMISTIC PAINT. Case 10: a save the server refused must leave the
  *    PREVIOUS answer selected and say the server's sentence.
  *  * A SWALLOWED PARTIAL SAVE. Case 11: `unsaved` must be said.
+ *  * A GREEN BADGE THE VERDICT DOES NOT SUPPORT (LAY-FIX). Cases 14–16: the
+ *    badge is named for its TONE (`layover-badge-open` / `-caution` / …), and
+ *    `-open` must exist only for the verdict `yes`. Case 14 is the payload
+ *    PR #588's server sends today — `LANDSIDE_AVAILABLE` beside
+ *    `entry_unverified` — and fails against a card that believed the state.
+ *  * THE WRONG FIELD. Case 17: the airport question must PUT
+ *    `airportChangeRequired`, not a bag mode. Case 18: "Not sure" must PUT
+ *    `null`, and the card must then show what the server made of it.
+ *  * A START THAT WAS NOT STORED LOOKING STORED. Case 19.
  */
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
@@ -122,9 +131,12 @@ describe('LayoverConstraintsCard — the read', () => {
     await waitFor(() => expect(screen.getByTestId('layover-constraints-card')).toBeTruthy());
     expect(String(fetchSpy.mock.calls[0][0])).toMatch(/\/api\/airport\/sessions\/sess-1\/constraints$/);
     expect(screen.getByTestId('layover-constraints-baggage-current').props.children.join('')).toMatch(/Checked through/);
-    expect(screen.getByTestId('layover-state-LANDSIDE_AVAILABLE')).toBeTruthy();
+    // verdict `yes`, gate open, LANDSIDE_AVAILABLE: the one combination that is green.
+    expect(screen.getByTestId('layover-badge-open').props.children).toBe('You can go out');
     expect(screen.queryByTestId('layover-constraints-question')).toBeNull();
     expect(screen.queryByTestId('layover-landside-closed')).toBeNull();
+    expect(screen.queryByTestId('layover-landside-caution')).toBeNull();
+    expect(screen.queryByTestId('layover-constraints-not-stored')).toBeNull();
     expect(screen.queryByTestId('layover-constraints-failed')).toBeNull();
   });
 
@@ -205,7 +217,8 @@ describe('LayoverConstraintsCard — what the server decided', () => {
     expect(screen.getByTestId('layover-constraints-answer-CARRY_ON_ONLY')).toBeTruthy();
     // "Not sure" is not an answer to the question — it is what raised it.
     expect(screen.queryByTestId('layover-constraints-answer-UNKNOWN')).toBeNull();
-    expect(screen.getByTestId('layover-state-NEEDS_INFO')).toBeTruthy();
+    expect(screen.getByTestId('layover-badge-ask').props.children).toBe('One answer needed');
+    expect(screen.queryByTestId('layover-badge-open')).toBeNull();
   });
 
   it('7. UNKNOWN with NO question from the server asks nothing — the card does not decide it matters', async () => {
@@ -260,7 +273,7 @@ describe('LayoverConstraintsCard — declaring', () => {
     const [url, init] = calls('PUT')[0];
     expect(String(url)).toMatch(/\/api\/airport\/sessions\/sess-1\/constraints$/);
     expect(JSON.parse(String((init as RequestInit).body))).toEqual({ baggageMode: 'CHECKED_THROUGH' });
-    expect(screen.getByTestId('layover-state-LANDSIDE_AVAILABLE')).toBeTruthy();
+    expect(screen.getByTestId('layover-badge-open')).toBeTruthy();
     expect(onChanged).toHaveBeenCalledTimes(1);
     expect(screen.queryByTestId('layover-constraints-unsaved')).toBeNull();
   });
@@ -333,5 +346,162 @@ describe('LayoverConstraintsCard — declaring', () => {
     await view.rerender(<LayoverConstraintsCard sessionId="sess-1" canEdit refreshKey={2} />);
     await waitFor(() => expect(screen.getByTestId('layover-constraints-failed')).toBeTruthy());
     expect(calls('GET')).toHaveLength(2);
+  });
+});
+
+/**
+ * LAY-FIX — the badge cannot say more than the verdict card mounted above it.
+ * Bodies are `constraintsPayload`'s, transcribed from
+ * artifacts/api-server/src/services/layover/LayoverConstraintService.ts.
+ */
+describe('LayoverConstraintsCard — the badge follows the verdict', () => {
+  it('14. a STALE server\'s LANDSIDE_AVAILABLE beside `entry_unverified` is NOT drawn as "You can go out"', async () => {
+    // Exactly what PR #588's server answers for a 12 h layover on a border
+    // nobody has checked: an open gate, an affirmative state, a cautionary verdict.
+    fetchSpy.mockResolvedValue(jsonResponse(200, answer({
+      verdict: 'entry_unverified',
+      landsideGate: { ...OPEN_GATE, entryPermissionState: 'UNKNOWN', constraintsRead: 'legacy', constraintsVersion: null },
+      layoverState: 'LANDSIDE_AVAILABLE',
+    })));
+    await mount();
+    await waitFor(() => expect(screen.getByTestId('layover-constraints-card')).toBeTruthy());
+    expect(screen.queryByTestId('layover-badge-open')).toBeNull();
+    expect(screen.queryByText('You can go out')).toBeNull();
+    expect(screen.getByTestId('layover-badge-caution').props.children).toBe('Entry unconfirmed');
+  });
+
+  it('15. the fixed server\'s cautionary answer: no state, a caution, and the reason said in the card', async () => {
+    fetchSpy.mockResolvedValue(jsonResponse(200, answer({
+      verdict: 'entry_unverified',
+      landsideGate: {
+        ...OPEN_GATE, open: false, status: 'caution', closedBy: [], cautions: ['entry_unconfirmed'],
+        entryPermissionState: 'UNKNOWN', constraintsRead: 'legacy', constraintsVersion: null,
+      },
+      layoverState: null,
+      layoverStateUnavailableReason: 'landside_unconfirmed',
+    })));
+    await mount();
+    await waitFor(() => expect(screen.getByTestId('layover-constraints-card')).toBeTruthy());
+    expect(screen.queryByTestId('layover-badge-open')).toBeNull();
+    expect(screen.getByTestId('layover-badge-caution').props.children).toBe('Entry unconfirmed');
+    expect(screen.getByTestId('layover-landside-caution-entry_unconfirmed')).toBeTruthy();
+    // A caution is not a closure, and is not worded as one.
+    expect(screen.queryByTestId('layover-landside-closed')).toBeNull();
+  });
+
+  it('16. a tight window is amber too, in the verdict\'s own words — and an unreadable store is closed, by name', async () => {
+    fetchSpy.mockResolvedValueOnce(jsonResponse(200, answer({
+      verdict: 'tight',
+      landsideGate: { ...OPEN_GATE, open: false, status: 'caution', closedBy: [], cautions: ['tight_window'] },
+      layoverState: null, layoverStateUnavailableReason: 'landside_unconfirmed',
+    })));
+    const view = await mount({ refreshKey: 1 });
+    await waitFor(() => expect(screen.getByTestId('layover-badge-caution')).toBeTruthy());
+    expect(screen.getByTestId('layover-badge-caution').props.children).toBe('Tight — stay close');
+    expect(screen.getByTestId('layover-landside-caution-tight_window')).toBeTruthy();
+
+    fetchSpy.mockResolvedValueOnce(jsonResponse(200, answer({
+      verdict: 'no',
+      landsideGate: { ...OPEN_GATE, open: false, status: 'closed', closedBy: ['constraints_unreadable'], cautions: [], constraintsRead: 'unreadable', constraintsVersion: null },
+      layoverState: 'AIRPORT_ONLY',
+    })));
+    await view.rerender(<LayoverConstraintsCard sessionId="sess-1" canEdit refreshKey={2} />);
+    await waitFor(() => expect(screen.getByTestId('layover-landside-closed-constraints_unreadable')).toBeTruthy());
+    expect(screen.getByTestId('layover-badge-closed').props.children).toBe('Airport only');
+    expect(screen.queryByTestId('layover-badge-open')).toBeNull();
+    expect(screen.queryByTestId('layover-landside-caution')).toBeNull();
+  });
+});
+
+/** `constraintsPayload` when "not sure" about the airport change is what closed landside. */
+function needsAirport() {
+  return answer({
+    constraints: { version: 2, baggageMode: 'CARRY_ON_ONLY', recheckRequired: false, airportChangeRequired: null },
+    landsideGate: {
+      ...OPEN_GATE, open: false, status: 'closed', closedBy: ['airport_change_unknown'], cautions: [],
+      needsInfo: 'airportChangeRequired', criticalUnknowns: ['airport_change_required'], constraintsVersion: 2,
+    },
+    layoverState: 'NEEDS_INFO',
+    verdict: 'no',
+    confidence: 'INSUFFICIENT',
+    question: {
+      field: 'airportChangeRequired',
+      prompt: 'Does your next flight leave from this airport, or a different airport?',
+      options: [{ value: false, label: 'This airport' }, { value: true, label: 'A different airport' }],
+    },
+  });
+}
+
+describe('LayoverConstraintsCard — "Not sure" on the airport change', () => {
+  it('17. the airport question is asked in the server\'s words and answered on ITS field', async () => {
+    fetchSpy.mockResolvedValueOnce(jsonResponse(200, needsAirport()));
+    await mount();
+    await waitFor(() => expect(screen.getByTestId('layover-constraints-question')).toBeTruthy());
+    expect(screen.getByText('Does your next flight leave from this airport, or a different airport?')).toBeTruthy();
+    expect(screen.getByTestId('layover-constraints-question-why').props.children).toMatch(/different airport/);
+    expect(screen.getByTestId('layover-constraints-answer-false')).toBeTruthy();
+    expect(screen.getByTestId('layover-constraints-answer-true')).toBeTruthy();
+    expect(screen.getByTestId('layover-badge-ask')).toBeTruthy();
+
+    fetchSpy.mockResolvedValueOnce(jsonResponse(200, {
+      ...answer({ constraints: { version: 3, baggageMode: 'CARRY_ON_ONLY', recheckRequired: false, airportChangeRequired: false } }),
+      stored: 'versioned', unsaved: [], sessionSynced: true, unchanged: false,
+    }));
+    await fireEvent.press(screen.getByTestId('layover-constraints-answer-false'));
+    await waitFor(() => expect(screen.queryByTestId('layover-constraints-question')).toBeNull());
+    // NOT `{ baggageMode: false }`, which is what a card that assumed every
+    // question was the bag question would have sent.
+    expect(JSON.parse(String((calls('PUT')[0][1] as RequestInit).body))).toEqual({ airportChangeRequired: false });
+    expect(screen.getByTestId('layover-badge-open')).toBeTruthy();
+  });
+
+  it('18. pressing "Not sure" PUTs null, and the card shows the closure the server made of it — not an open gate', async () => {
+    fetchSpy.mockResolvedValueOnce(jsonResponse(200, answer({
+      constraints: { version: 1, baggageMode: 'CARRY_ON_ONLY', recheckRequired: false, airportChangeRequired: false },
+    })));
+    await mount();
+    await waitFor(() => expect(screen.getByTestId('layover-badge-open')).toBeTruthy());
+
+    fetchSpy.mockResolvedValueOnce(jsonResponse(200, { ...needsAirport(), stored: 'versioned', unsaved: [], sessionSynced: true, unchanged: false }));
+    await fireEvent.press(screen.getByTestId('layover-constraints-airportChangeRequired-null'));
+
+    await waitFor(() => expect(screen.getByTestId('layover-constraints-question')).toBeTruthy());
+    expect(JSON.parse(String((calls('PUT')[0][1] as RequestInit).body))).toEqual({ airportChangeRequired: null });
+    expect(screen.queryByTestId('layover-badge-open')).toBeNull();
+    expect(screen.getByTestId('layover-badge-ask')).toBeTruthy();
+    expect(screen.getByTestId('layover-constraints-airportChangeRequired-null').props.accessibilityState.selected).toBe(true);
+  });
+});
+
+describe('LayoverConstraintsCard — what the start sheet could not keep', () => {
+  it('19. a start whose answers were NOT stored says so, until the traveller declares here', async () => {
+    fetchSpy.mockResolvedValueOnce(jsonResponse(200, answer({
+      storage: 'versioned', constraints: null, baggageCharged: true,
+      landsideGate: { ...OPEN_GATE, open: false, status: 'closed', closedBy: ['airport_change_unknown'], cautions: [], constraintsRead: 'undeclared', constraintsVersion: null },
+      layoverState: 'AIRPORT_ONLY', verdict: 'no',
+    })));
+    await mount({ creationNotice: 'not_stored' });
+    await waitFor(() => expect(screen.getByTestId('layover-constraints-not-stored')).toBeTruthy());
+    expect(screen.getByTestId('layover-constraints-not-stored').props.children).toMatch(/were not saved/);
+    // Nothing is shown as the traveller's chosen mode: none was kept.
+    expect(screen.queryByTestId('layover-constraints-baggage-current')).toBeNull();
+    for (const mode of ['CARRY_ON_ONLY', 'CHECKED_THROUGH', 'COLLECT_RECHECK', 'UNKNOWN']) {
+      expect(screen.getByTestId(`layover-constraints-baggage-${mode}`).props.accessibilityState.selected).toBe(false);
+    }
+
+    fetchSpy.mockResolvedValueOnce(jsonResponse(200, {
+      ...answer({ constraints: { version: 1, baggageMode: 'UNKNOWN', recheckRequired: null, airportChangeRequired: null } }),
+      stored: 'versioned', unsaved: [], sessionSynced: true, unchanged: false,
+    }));
+    await fireEvent.press(screen.getByTestId('layover-constraints-baggage-UNKNOWN'));
+    await waitFor(() => expect(screen.queryByTestId('layover-constraints-not-stored')).toBeNull());
+    expect(screen.getByTestId('layover-constraints-baggage-UNKNOWN').props.accessibilityState.selected).toBe(true);
+  });
+
+  it('20. CONTROL: with nothing reported from the start, nothing is said', async () => {
+    fetchSpy.mockResolvedValue(jsonResponse(200, answer()));
+    await mount({ creationNotice: null });
+    await waitFor(() => expect(screen.getByTestId('layover-constraints-card')).toBeTruthy());
+    expect(screen.queryByTestId('layover-constraints-not-stored')).toBeNull();
   });
 });

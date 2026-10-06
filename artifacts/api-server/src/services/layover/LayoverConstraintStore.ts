@@ -24,12 +24,24 @@
  * session: a failed read that came back as "undeclared" would hand the engine
  * the booleans on the row — the optimistic reading census L35 is about.
  *
+ * ── THE FLAGS ARE READ THE SAME WAY, AND THEY WERE NOT ──────────────────────
+ * For BOTH flags ON is the RESTRICTIVE state: one turns on the read that can
+ * close landside, the other closes it on an unconfirmed border. They were read
+ * through `isFlagEnabled`, which answers `false` on a database error — the
+ * right default for a capability and the wrong one here, because a failed read
+ * then meant "nothing declared, nothing forbidden" and the gate stood open on
+ * exactly the request where we could not look. They are read through
+ * `readFlagState` now, and an unreadable flag is an `unreadable` context: the
+ * gate closes with `constraints_unreadable`. `isKillSwitchEngaged` is the same
+ * inversion for `disable_*` flags; `src/test/verifyFailOpenStopReads.test.ts`
+ * is the ratchet that keeps either shape from coming back.
+ *
  * ── ROWS ARE IMMUTABLE ──────────────────────────────────────────────────────
  * 2992 raises on UPDATE (`layover_snapshot_rows_are_immutable`). An edit is a
  * new version; this module issues no UPDATE and no DELETE against the table.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { readFlagState } from "../../lib/capability/schemaCapability.js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import {
   isBaggageMode,
@@ -56,19 +68,52 @@ export const LAYOVER_CONSTRAINT_FLAGS = {
   entryForbidsLandside: "layover_entry_forbid_landside_enabled",
 } as const;
 
-export interface ConstraintFlags {
-  storage: boolean;
-  entryForbidsLandside: boolean;
-}
+/**
+ * The two flags, or the fact that they could not be read.
+ *
+ * `readable: false` is NOT `{ storage: false, entryForbidsLandside: false }`.
+ * That collapse is the defect this type exists to make unrepresentable: every
+ * caller has to say what it does when it could not look.
+ */
+export type ConstraintFlags =
+  | { readable: true; storage: boolean; entryForbidsLandside: boolean }
+  | { readable: false };
 
-/** Both flags, read together. Fail-closed: an unreadable flag is OFF. */
+/**
+ * Both flags, read together, THREE-VALUED.
+ *
+ *   on           the restrictive behaviour applies.
+ *   off/absent   it does not. An ABSENT row is off: it means migration 3640 has
+ *                not run on this database, not that something failed.
+ *   unreadable   `feature_flags` could not be read for either flag — the whole
+ *                answer is `readable: false`, and the caller closes the gate.
+ */
 export async function readConstraintFlags(db: SupabaseClient): Promise<ConstraintFlags> {
   const [storage, entryForbidsLandside] = await Promise.all([
-    isFlagEnabled(db, "layover_constraints_enabled"),
-    isFlagEnabled(db, "layover_entry_forbid_landside_enabled"),
+    readFlagState(db, "layover_constraints_enabled"),
+    readFlagState(db, "layover_entry_forbid_landside_enabled"),
   ]);
-  return { storage, entryForbidsLandside };
+  if (storage === "unreadable" || entryForbidsLandside === "unreadable") {
+    logger.warn(
+      { storage, entryForbidsLandside },
+      "layover constraint flags unreadable — the landside gate closes rather than reading 'off'",
+    );
+    return { readable: false };
+  }
+  return { readable: true, storage: storage === "on", entryForbidsLandside: entryForbidsLandside === "on" };
 }
+
+/**
+ * The context a session carries when the flags could not be read.
+ *
+ * `unreadable`, with the entry policy taken as ON: both are the restrictive
+ * reading, and the gate names the closure (`constraints_unreadable`).
+ */
+export const FLAGS_UNREADABLE_CONTEXT: SessionConstraintContext = Object.freeze({
+  read: "unreadable",
+  set: null,
+  entryForbidsLandside: true,
+}) as SessionConstraintContext;
 
 const COLUMNS = "session_id, version, baggage_mode, recheck_required, airport_change_required, created_at";
 
@@ -179,12 +224,16 @@ function contextOf(read: ConstraintRead, entryForbidsLandside: boolean): Session
  * BOTH FLAGS OFF RETURNS THE SESSION ITSELF — the same object, with no
  * `constraints` key — so a response that serialises the session and a
  * certification that hashes its inputs are both exactly what they were.
+ *
+ * FLAGS UNREADABLE IS NOT "BOTH OFF": the session carries an `unreadable`
+ * context and every certification of it closes the landside gate.
  */
 export async function attachConstraintContext<S extends { id: string }>(
   db: SupabaseClient,
   session: S,
 ): Promise<S & { constraints?: SessionConstraintContext }> {
   const flags = await readConstraintFlags(db);
+  if (!flags.readable) return { ...session, constraints: { ...FLAGS_UNREADABLE_CONTEXT } };
   if (!flags.storage && !flags.entryForbidsLandside) return session;
   if (!flags.storage) {
     return { ...session, constraints: { read: "storage_off", set: null, entryForbidsLandside: true } };
@@ -199,6 +248,7 @@ export async function attachConstraintContexts<S extends { id: string }>(
 ): Promise<Array<S & { constraints?: SessionConstraintContext }>> {
   if (sessions.length === 0) return sessions;
   const flags = await readConstraintFlags(db);
+  if (!flags.readable) return sessions.map((s) => ({ ...s, constraints: { ...FLAGS_UNREADABLE_CONTEXT } }));
   if (!flags.storage && !flags.entryForbidsLandside) return sessions;
   if (!flags.storage) {
     return sessions.map((s) => ({ ...s, constraints: { read: "storage_off" as const, set: null, entryForbidsLandside: true } }));
