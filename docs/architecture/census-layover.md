@@ -8939,6 +8939,51 @@ clause and #624's rule in the golden's own note
 `LAYOVER_FEASIBILITY_VERSION` bump, proven by reverting it on a scratch run. **L241 stays W** (§49.2's grounds,
 unchanged); no row moves.
 
+## §53 — 2026-10-06 (mission lane R): the open Layover rows re-triaged from `main` after lane A closed; NO ROW MOVES
+
+Lane R took over this surface after #629 merged. It re-read every non-`C` row at `ca49bbd286` against the
+code on `main` (ledger in the mission scratchpad, `lane-r/triage.psv`, not in this repository). It changed no
+counted file of this census, ran nothing against any database, and read or flipped no flag.
+
+### 53.1 What the 212 open rows need
+
+| need | rows |
+| --- | --- |
+| a production apply or flag (2700, 2992, 2740, 2860, 2977, 3640, 3900, 2981/3513; `layover_constraints_enabled`, `layover_stable_recommendation_ids_enabled`, `layover_safe_return_status_enabled`), a routing or flight-status provider and its secret, or airport data curation | 150 |
+| another owner's surface (PR #569 crew planning and location grants, still OPEN; Trips' temporal-freedom engine; Compass's tool flag; Rent-a-Buddy categories; the money-in-ranking guard script) | 29 |
+| an owner decision | 12 |
+| a new migration (the spec's vocabulary columns and state machine) | 11 |
+| code this lane can build | 10 |
+
+### 53.2 Three statuses this document carries that are no longer true
+
+- **#589 is merged** (2026-10-06). L82, L196 and L276 recorded it as in flight. The crowd-report channel is on
+  `main` (`artifacts/api-server/src/routes/airport.ts:2826#router.post("/airport/sessions/:id/observations"`). Their
+  verdicts are unchanged: production does not carry 2981 or 3513, so they stay `W` on the apply, not on the PR.
+- **#569 is still open.** L124, L132–L135, L137, L139, L158, L166, L203 and L232 stay where they are.
+- **L145 is not a code row.** `artifacts/api-server/src/services/airport/layoverSafeReturnDisruption.ts:276#export function recoveryPosture(`
+  publishes all three kinds of help as unavailable because there is no airline integration, no airline directory
+  and no airport help directory. Generic text written here would not be "rebooking / airline / airport help". It
+  needs a data source.
+
+### 53.3 Two rows that need a ruling before anyone builds them
+
+- **L18, L41, L99, L272 — who sends the return reminder.** `artifacts/api-server/src/services/airport/LayoverReturnEscalation.ts:38#IT SENDS NOTHING`
+  and the blocker ledger's `LAYOVER_RETURN_REMINDER_DELIVERY` (owner) is not among the lead's 2026-10-06 rulings.
+  Recommendation: client-scheduled local notifications at the certified RETURN_SOON and RETURN_NOW instants,
+  rescheduled when the certified deadline moves materially. Nothing leaves the device, and the escalation
+  priorities already published decide quiet-hours behaviour. Until then these rows stay `W`.
+- **L3, L101 — confining model prose.** §50.1 says what would make them `C`: compose the answer from certified
+  fields and refuse model text that names any of the five nouns. Doing that reverses a design an earlier pass chose
+  on purpose. That pass let cautious advice through the guard
+  (`artifacts/api-server/src/services/airport/__tests__/layoverCompassOperationalBoundary.test.ts:174#positive control: advice about the queue is published unchanged`),
+  and Compass's layover answers would become mostly deterministic text. That is a product call. It is recorded and
+  not made here.
+
+### 53.4 Headline
+
+No row moves. `check:census-integrity` reads **C=84 W=145 N=67 X=0**, unchanged since §50.4.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/test/docCitations.test.ts — The citation guard's own suite. §27.10 names its case 9 and §30.4 names it as npm test's one failing test; both report on the guard that measured this census. It is machinery this census reports on, not a subject it grades.

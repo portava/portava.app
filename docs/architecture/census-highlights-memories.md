@@ -6823,6 +6823,78 @@ Across pages of the bounded feed, the tests prove the opposite (H100 above).
 - **ASK** is offered on `canMessage` alone. It depends on lane T2's send-guard change for the send side.
 - **Pre-existing citation.** The H50 row's bare `MemoryDomainService.ts:240` was already stale on `main`: the claim it carries is `assertLifecycleTransition`. This section does not repoint it, because that row is not this lane's.
 
+## §AE — 2026-10-06 (mission lane R): a saved id stops being a read grant, two stale NB rows are re-measured, and §24's must-be-zero metric is counted where the feeds serve — THREE rows move `N → W`
+
+**What this section is.** Lane R took over this census's surface after lanes A and A2 closed (#625 merged). It re-triaged every non-`C` row from `main` at `ca49bbd286` (ledger in the mission scratchpad, `lane-r/triage.psv`, not in this repository) and built the three items below. Nothing was run against any database, no flag was read or flipped, and no migration was written. `head_commit` is not re-declared; the files this section changed are named, one reason each, in the `4f89330b9` entry of `artifacts/api-server/src/scripts/CENSUS_STALENESS_ACKNOWLEDGED.json`.
+
+### §AE.1 What was built
+
+1. **A saved Memory or Highlight previews only for a viewer who may still read it.** `GET /users/me/collections/:id/items` resolved a preview for every saved entity through the service client, and `POST /saves` accepts any UUID. The memory arm served the Memory's title and the highlight arm served its caption AND media URL with no visibility, expiry, deletion, block or §11 check — so an id saved while a Memory or Highlight was shared kept serving its text after the owner narrowed it, deleted it, let it expire, set `KEEP_PRIVATE_FOREVER` or blocked the saver (§21's revocation promise, H189), and an id learned anywhere else read a private one outright. The memory arm now takes `GET /memories/:id`'s own answer — deleted rows excluded, the two-way block check, then the §23 ladder on the addressed `"single"` surface (`artifacts/api-server/src/routes/collections.ts:523#if (!(await canReadMemory(sc, r, user.id, "single"))) continue;`). The highlight arm takes the verdict in front of `GET /highlights/:id` per row (`artifacts/api-server/src/routes/collections.ts:555#const access = await decideHighlightViewAccess(sc, user.id, r.id as string, req.log);`), which `resolveViewAccess` was split into without changing any refusal (`artifacts/api-server/src/routes/highlights.ts:558#export async function decideHighlightViewAccess(`). A withheld preview keeps its row with a null title and cover. Suite: `artifacts/api-server/src/test/collectionsPreviewPrivacy.test.ts:142#an only_me Memory saved by someone else shows NO title` and `artifacts/api-server/src/test/collectionsPreviewPrivacy.test.ts:206#a PRIVATE Highlight saved by someone else serves neither caption nor media URL` (16 cases; owner, public, mutual follower and circle member still preview).
+2. **§24's two correction rates, proven on the live routes.** H215 and H216 read *"No counter is incremented anywhere"* and *"counted by nothing"*. Both were stale: the counters exist (`artifacts/api-server/src/services/memory/memoryKernelMetrics.ts:164#if (commandType === "CHANGE_PLACE") counters.placeCorrections += 1;`, `artifacts/api-server/src/services/memory/memoryKernelMetrics.ts:165#if (commandType === "ADD_PERSON" || commandType === "REMOVE_PERSON") {`) and are fed from the one audit point every accepted §17 command passes, on the legacy path as well as the kernel path (`artifacts/api-server/src/services/memory/MemoryDomainService.ts:243#countAcceptedCommand(a.commandType, a.fromCandidate === true);`). What was missing was any proof that a real request reaches them. `artifacts/api-server/src/test/memoryCorrectionRatesLive.test.ts:229#a place edit is CHANGE_PLACE` drives `PATCH /memories/:id` with `memory_kernel_enabled` absent (the production posture); `artifacts/api-server/src/test/memoryCorrectionRatesLive.test.ts:265#the tagged person's approval is ADD_PERSON` and `artifacts/api-server/src/test/memoryCorrectionRatesLive.test.ts:277#the owner's removal is REMOVE_PERSON` drive `PATCH /memories/:id/tags/:userId`. A stranger's refused edit and a tag write that matched zero rows count nothing.
+3. **`resurfacing_suppression_violations`, counted and enforced at the serving step.** `artifacts/api-server/src/services/highlights/resurfacingSuppressionAudit.ts:84#export function auditServedResurfacing<` re-asks `publicProjectionVerdict(..., "proactive_resurfacing")` of every non-owner row a proactive feed is about to serve, with the same §10/§11 reads the handler filtered with. A row a stored §11 control suppresses is counted under §24's name, logged with its id, and DROPPED; any other refusal at that step is dropped and logged as the other gate's. Both feeds pass what they serve through it (`artifacts/api-server/src/routes/highlights.ts:1345#const disclosed = auditServedResurfacing(`, `artifacts/api-server/src/routes/highlights.ts:2865#const disclosed = auditServedResurfacing(`). The name leaves `MEMORY_METRICS_NOT_MEASURABLE`, whose refusal rested on the feeds being another lane's. Suite: `artifacts/api-server/src/test/resurfacingSuppressionAudit.test.ts:59#drops and counts a row a stored KEEP_PRIVATE_FOREVER covers` and `artifacts/api-server/src/test/resurfacingSuppressionAudit.test.ts:166#a KEEP_PRIVATE_FOREVER row stays off both feeds`.
+
+### §AE.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H215 | N | W | `place_correction_rate` is counted on the live `PATCH /memories/:id` path, flag off, and a refused edit counts nothing (§AE.1 item 2). Per-process counter, no aggregator: emitted, not aggregated, which is §K.2's `W`, the same standard H211, H212 and H218 were moved on. |
+| H216 | N | W | `participant_correction_rate` is counted on both participant commands of `PATCH /memories/:id/tags/:userId`; a stranger's refused decision and a zero-row tag write count nothing. §K.2's `W`. |
+| H221 | N | W | Counted where both proactive feeds serve; a violating row is dropped as well as counted; zero on a correct handler and non-zero when both earlier §11 filters are bypassed (mutant A6 below). Emitted, not aggregated: §K.2's `W`. |
+
+### §AE.3 Rows read, evidence extended, NOT moved
+
+- **H81, H91, H189.** The collection preview named in A2's triage as an unclamped Highlight surface is closed (§AE.1 item 1). Each row stays `W` on what remains: H81/H91 on the media bytes (`lib/mediaAccess.ts`, the Media owner's) and the personalization consumers (Compass, Discovery); H189 on the media bytes staying publicly served.
+- **H222** stays `N`. Its refusal text in `memoryKernelMetrics.ts` is unchanged and still true: nothing ties a Trips save back to the Do Again compile that preceded it.
+- **H100** stays `W` on §AD.1's reason. A pin still leads only inside the page each surface fetched.
+
+### §AE.4 Tests seen red, and mutations
+
+Every mutant was applied to the committed tree, the named suite run, and the file restored with `git checkout`; `git status` was clean after each batch.
+
+| mutant | suite | result |
+| --- | --- | --- |
+| C1 memory preview: block check removed | collectionsPreviewPrivacy | killed (2 red) |
+| C2 memory preview: §23 ladder removed | collectionsPreviewPrivacy | killed (2 red) |
+| C3 memory preview: deleted filter removed | collectionsPreviewPrivacy | killed (1 red) |
+| C4 memory preview: gate skipped for every viewer | collectionsPreviewPrivacy | killed (4 red) |
+| C5 highlight preview: verdict ignored | collectionsPreviewPrivacy | killed (6 red) |
+| C6 verdict: unreadable blocks no longer refuse | collectionsPreviewPrivacy | killed (1 red) |
+| C7 verdict: `canViewHighlight` bypassed | collectionsPreviewPrivacy | killed (4 red) |
+| K1 audit point no longer counts | memoryCorrectionRatesLive | killed (4 red) |
+| K2 every outcome counted, not only accepted | memoryCorrectionRatesLive | killed (1 red) |
+| K3 CHANGE_PLACE not a place correction | memoryCorrectionRatesLive | killed (1 red) |
+| K4 REMOVE_PERSON not a participant correction | memoryCorrectionRatesLive | killed (1 red) |
+| A1 `/active` not audited | resurfacingSuppressionAudit | killed (1 red) |
+| A2 following-feed not audited | resurfacingSuppressionAudit | killed (1 red) |
+| A3 violation counted but still served | resurfacingSuppressionAudit | killed (3 red) |
+| A4 viewer's own rows checked | resurfacingSuppressionAudit | killed (2 red) |
+| A5 any refusal counted as a §11 violation | resurfacingSuppressionAudit | killed (1 red) |
+| A6 both earlier §11 filters on `/active` bypassed | resurfacingSuppressionAudit | killed — the audit counted 1 and kept the row off the page |
+| A7 a §10 refusal served at the last step | resurfacingSuppressionAudit | killed (1 red) |
+
+### §AE.5 Recomputed headline
+
+| bucket | was (§AD.4) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 69 | 69 |
+| BUILT-BUT-WRONG | 152 | 155 |
+| NOT-BUILT | 43 | 40 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**266 = 69 C / 155 W / 40 N / 2 X.** CONSTRUCTED% is (69 + 155) / 266 = 84.2 %. CORRECT% raw is 69 / 266 = 25.9 %, unchanged.
+
+### §AE.6 Found, not fixed here
+
+- **The same preview defect on three more entity types.** The post, trip and event arms of the same collection preview read `posts.content`, `trips.destination_city`/`cover_url` and `events.title`/`cover_url` through the service client for any saved id, with no visibility check. Those surfaces are not this census's; they are recorded for their owners (Trips and Events: lane C; posts: the lead).
+- **What the remaining non-`C` rows need.** Of this census's 197 non-`C` rows on `main`, the lane's ledger classes 111 as needing a production apply or flag (2320, 2994, 2993/3001, `memory_kernel_enabled`, `memory_location_precision_enabled`, `highlights_feed_bounded_enabled`), 42 as the canonical-schema programme (new migrations), 32 as another owner's surface (Compass, Media, Passport, Map, account deletion; H81/H82/H91/H201 after §AE.1 item 1), 7 as owner decisions and 5 as code this lane can build — H215, H216 and H221, built here, and H100 and H222, not yet.
+
+### §AE.7 What would turn this red
+
+- A collection preview served for a Memory or Highlight the saver cannot open directly: `collectionsPreviewPrivacy` goes red.
+- A correction counted for a refused or unapplied command, or not counted for an applied one: `memoryCorrectionRatesLive` goes red.
+- A proactive feed that stops passing its served rows through the audit, or an audit that counts and still serves: `resurfacingSuppressionAudit` goes red.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/migrations/0067_reviews.sql — Cited once, in the headline's 2026-09-14 attribution restatement, to show that the migration the first headline credited to the Memories scrapbook is a cross-domain review system for trips and bookings. That paragraph moves no verdict, and no row grades reviews.

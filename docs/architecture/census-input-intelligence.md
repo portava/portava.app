@@ -6137,3 +6137,31 @@ No row moves. The headline is §38.4's, unchanged: of 373 rows, 297 BUILT-AND-CO
 * A fail-open flag read on an outcome-learning or memory-context gate, or a TypeScript flag read on the
   hinted serve.
 * A serve scoped by anything other than the session's user.
+
+## §40 — 2026-10-06 (mission lane R): the open Input Intelligence rows re-triaged from `main` after lane D closed; NO ROW MOVES
+
+Lane R took over this surface after #630 merged. It re-read every non-`C` row at `ca49bbd286` against the code on
+`main` (ledger in the mission scratchpad, `lane-r/triage.psv`, not in this repository). It changed no counted
+file of this census, ran nothing against any database, and read or flipped no flag.
+
+### 40.1 What the 76 open rows need
+
+| need | rows |
+| --- | --- |
+| an observation on a running deployment, a device or handset run, an on-device recognizer, or the production apply of 3780–3783 with its flags and disclosure approval | 27 |
+| another owner's surface (Discovery hours and verification: lane C; Rent-a-Buddy eligibility: lane B; Telegraph composer: lane C) | 12 |
+| an owner decision (G141: does `caption` cover postcards and Memories) | 1 |
+| intended by OD-INPUT-6 (no paid typeahead provider in the initial release) | 4 |
+| a new migration (G229's query-completion storage) | 1 |
+| code this lane can build | 31 |
+
+### 40.2 One class corrected
+
+G212 was ledgered as an open owner decision. OD-INPUT-7 already decides it: local results show at once while
+slower ones load. What reverted the earlier build was engineering — impressions counted twice, and a local
+entity row that could be tapped before it was bound. It is ledgered as code.
+
+### 40.3 Headline
+
+No row moves. The headline is §38.4's, unchanged: of 373 rows, 297 BUILT-AND-CORRECT, 52 BUILT-BUT-WRONG,
+20 NOT-BUILT, 4 CANNOT-VERIFY.
