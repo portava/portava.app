@@ -109,6 +109,21 @@ or the API refuses and names the variable.
 Provider keys: use test or sandbox mode only (payment test keys; a Google
 Routes key only with the quotas and hard budget of OD-TRUST-6).
 
+#### Keys the mirrored features need
+
+The flag policy mirrors production, so these features are ON. Each one does
+something only when its provider key is in the beta Secrets. Use beta-only
+keys, with quotas and spend caps; never production's.
+
+| Key | What uses it | Without it |
+| --- | --- | --- |
+| `FSQ_API_KEY_PROD` | The Foursquare places provider: place search, external place records (`external_places_enabled` → `live_places_enabled` → `place_days_enabled` → Shared Moments), and live "open now". The beta reads `FSQ_API_KEY_PROD` because `NODE_ENV=production` (`lib/foursquareApiKey.ts`); the legacy fallback is `FOURSQUARE_API_KEY`. | It degrades honestly: `/api/places/live-status` answers `available: false` with a data note, and Foursquare-backed results are empty. **Warning:** with the key, open unsafe path **N-7** becomes reachable on beta. "Open right now" takes Foursquare's top name match with no identity check (`lib/liveIntelligence.ts`; D-67's identity rule is not on `main`). Hold this key until D-67's build lands, unless the lead accepts N-7 on test data. |
+| `AI_INTEGRATIONS_OPENAI_API_KEY`, `AI_INTEGRATIONS_OPENAI_BASE_URL` | Compass's AI paths (`/compass/ask`), natural-language trip drafts (`nl_trip_creation_enabled`), AI visuals (the `ai_*` headers and covers), stamp artwork (`STAMP_IMAGE_MODEL`), and translation when `TRANSLATION_PROVIDER=openai` | Compass answers its honest fallback ("Compass AI assistant is temporarily unavailable…", census-compass CR-02). Trip drafts answer `degraded_unavailable` (`routes/tripDraft.ts`). The visual and stamp workers are expected to idle; not verified per worker. |
+| `GOOGLE_MAPS_API_KEY` | Google Routes travel time for layover, with OD-TRUST-6's quotas and hard budget; discovery place photos | The provider refusal path (`lib/providers/providerRefusal.ts`); not verified per surface. |
+| `TICKETMASTER_API_KEY` | Ticketmaster events near a trip's destination during its dates (`lib/eventsCache.ts`) | Skipped silently (that file's own contract): a trip shows no external events. |
+| `MAPBOX_TOKEN` | Server-side geocoding (`services/geocodingService.ts`) | Falls back to Nominatim (OSM; free and rate-limited), then to coordinates without a city name. |
+| Expo push credentials | `push_notifications_enabled`, which is OFF on beta until they exist | No pushes. |
+
 #### Identity verification: a SANDBOX key on beta, never a live one
 
 Two owner instructions govern identity on beta, and both hold:
@@ -232,21 +247,16 @@ Change all three in one PR, then re-run steps 3 and 9.
   before visible") is not enforceable by the flag policy until its build lands.
   When that build seeds its flag, the policy test turns red until the flag is
   listed OFF.
-- **Flag policy (lead decision 2026-10-06).**
-  - **ON (37):**
-    - the safety controls;
-    - one protection;
-    - the 12 flags production is measured to run ON;
-    - the flags migrations seed TRUE, as production's default.
-  - **OFF, against the lead's list:** `COMPASS_FALLBACK_MODE_ENABLED`.
-    Production reads it FALSE (2026-09-22 snapshot and census-compass §4),
-    so mirroring production keeps it off. This is flagged back to the lead.
-  - **OFF until Expo push credentials exist for the beta build:**
-    `push_notifications_enabled`.
-  - **Other production-ON flags.** The 2026-09-22 production snapshot shows
-    more flags TRUE in production that stay OFF on beta (lead: everything
-    else stays OFF). The rationale lists them, so beta still differs from
-    production there.
-  - Changing any value is a reviewed edit to `scripts/src/beta-flag-policy.json`,
-    followed by re-dispatching step 3.
+- **Flag policy (lead decision 2026-10-06: mirror production fully).** 108 flags are ON:
+  - the 6 beta safety controls (sign-up closed, Rent-a-Buddy booking stops, the D-67 live-label stop);
+  - every flag the 2026-09-22 production snapshot records TRUE (101);
+  - `layover_crowd_reports_enabled`, which is seeded TRUE by a migration newer than the snapshot.
+
+  These stay OFF although production runs them:
+  - the four Rent-a-Buddy capabilities;
+  - `push_notifications_enabled` (no Expo push credentials yet);
+  - `COMPASS_ACTIVE_REWARDS_ENABLED` (N-6's surface; inert).
+
+  `COMPASS_FALLBACK_MODE_ENABLED` is OFF, as in production. Changing any value is a reviewed edit to
+  `scripts/src/beta-flag-policy.json`, then re-dispatch step 3.
 - **Identity.** No real provider exists on `main` until #612. See step 5.

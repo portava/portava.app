@@ -46,6 +46,13 @@ const LEAD_RULINGS = readFileSync(join(REPO_ROOT, "docs/ops/lead-rulings-2026100
 const OWNER_DECISIONS = readFileSync(join(REPO_ROOT, "docs/ops/owner-decisions-20261004.md"), "utf8");
 
 const SNAPSHOT_DIR = join(REPO_ROOT, "artifacts/api-server/src/lib/capability/snapshots");
+const PRODUCTION_SNAPSHOT = "20260922-production-schema.json";
+const PRODUCTION_FLAGS = (JSON.parse(readFileSync(join(SNAPSHOT_DIR, PRODUCTION_SNAPSHOT), "utf8")) as { flags: Record<string, boolean> }).flags;
+const RENT_A_BUDDY = /^(rent_buddy|RENT_BUDDY|wall_rab|discovery_buddy)/;
+const DECISION_GATED = [
+  "layover_presence_intents_enabled", "discovery_dwell_telemetry_enabled", "discovery_trending_api_enabled",
+  "discovery_trend_lists_enabled", "creator_attribution_enabled", "account_deletion_worker_enabled",
+];
 const MIGRATIONS = join(REPO_ROOT, "artifacts/api-server/src/migrations");
 
 /** The text of a census section: from its heading (`## §AB …` or `## 4. …`) to the next heading of that level or higher. */
@@ -160,10 +167,25 @@ describe("beta-flag-policy.json — every flag the beta database will hold, deci
     assert.equal(byFlag.get("rent_buddy_allow_bookings_without_kyc")?.enabled, false);
   });
 
-  it("layover presence intents OFF (min-k prerequisite); every retention purge OFF", () => {
-    assert.equal(byFlag.get("layover_presence_intents_enabled")?.enabled, false);
+  it("the decision-gated flags stay OFF; a retention purge is ON only where production runs it", () => {
+    for (const f of DECISION_GATED) assert.equal(byFlag.get(f)?.enabled, false, `${f} is decision-gated`);
+    // Lead decision 2026-10-06 (mirror production): a purge production runs is mirrored; every other purge,
+    // whose legal period is undecided, stays OFF as the brief required.
     for (const e of policy.flags) {
-      if (/retention|purge/i.test(e.flag)) assert.equal(e.enabled, false, e.flag);
+      if (/retention|purge/i.test(e.flag) && e.enabled) {
+        assert.equal(PRODUCTION_FLAGS[e.flag], true, `${e.flag} is ON but production does not run it`);
+      }
+    }
+    assert.equal(byFlag.get("discovery_serve_log_retention_enabled")?.enabled, false, "Q11(a): 30 days pending legal review");
+  });
+
+  it("STOP parity: every stop production has engaged is engaged on beta", () => {
+    const stopsRecorded = Object.keys(PRODUCTION_FLAGS).filter((f) => byFlag.get(f)?.kind === "STOP");
+    // Not vacuous: the snapshot records every STOP (17 on 2026-09-22, none engaged). A later snapshot that records
+    // one engaged makes this demand it here too.
+    assert.ok(stopsRecorded.length >= 17, `only ${stopsRecorded.length} STOP flags in the snapshot`);
+    for (const flag of stopsRecorded) {
+      if (PRODUCTION_FLAGS[flag] === true) assert.equal(byFlag.get(flag)?.enabled, true, flag);
     }
   });
 
@@ -174,26 +196,31 @@ describe("beta-flag-policy.json — every flag the beta database will hold, deci
     }
   });
 
-  it("the ON set is exactly the reviewed one: safety controls, one protection, and the lead's 2026-10-06 promotions", () => {
-    const on = policy.flags.filter((e) => e.enabled).map((e) => e.flag).sort();
-    assert.deepEqual(on, [
-      // safety controls and the one protection (rationale: lane-beta flag-policy-rationale.md)
+  it("the ON set is exactly the reviewed one: the safety controls, plus production's TRUE flags minus the named exceptions", () => {
+    // Lead decision 2026-10-06: mirror production fully — every flag the committed 2026-09-22 production snapshot
+    // records TRUE is ON, except the exceptions below; plus the beta safety controls; plus the flags migrations
+    // seed TRUE that are newer than the snapshot. Changing any of these sets is a review decision, not a refresh.
+    const SAFETY = [
       "RENT_BUDDY_ADMIN_ONLY_MODE", "disable_intel_live_labels", "disable_rab_bookings", "disable_rent_buddy_booking",
-      "disable_signups", "invite_only_beta", "media_private_buckets_enabled",
-      // lead decision 2026-10-06 (a): production measured ON
-      "COMPASS_ENABLED", "COMPASS_FEED_ENABLED", "COMPASS_V1_RULE_BASED_ENABLED", "compass_location_context_enabled",
-      "hidden_gems_compass_enabled", "layover_compass_enabled", "map_compass_commands_enabled",
-      "shared_moments_chat_enabled", "shared_moments_clustering_enabled", "shared_moments_compass_suggestions_enabled",
-      "shared_moments_enabled", "stories_enabled",
-      // lead decision 2026-10-06 (b): seeded TRUE, production's default (COMPASS_FALLBACK_MODE_ENABLED excluded:
-      // production reads FALSE); local_guides_enabled on the live-DB proof of the guide write boundary
-      "MEDIA_HIDDEN_GEMS_CREATE_ENABLED", "MEDIA_VIEW_MODE_FULLSCREEN_ENABLED", "MEDIA_VIEW_MODE_GRID_ENABLED",
-      "MEDIA_VIEW_MODE_HIDDEN_GEMS_ENABLED", "airport_mode_enabled", "airport_pulse_enabled",
-      "hidden_gem_verification_enabled", "hidden_gems_enabled", "hidden_gems_layover_enabled",
-      "hidden_gems_passport_enabled", "hidden_gems_pulse_enabled", "layover_crowd_reports_enabled",
-      "layover_plans_enabled", "layover_safety_engine_enabled", "local_guides_enabled",
-      "passport_contribution_events_enabled", "safe_return_admin_logs_enabled", "safe_return_live_share_enabled",
-    ].sort(), "the ON set changed: re-read docs in the PR and the lead's review of the rationale before updating this list");
+      "disable_signups", "invite_only_beta",
+    ];
+    const SEEDED_TRUE_NEWER_THAN_SNAPSHOT = ["layover_crowd_reports_enabled"];
+    const EXCEPTIONS = new Map<string, string>([
+      ...policy.flags.filter((e) => RENT_A_BUDDY.test(e.flag) && e.kind === "CAPABILITY").map((e) => [e.flag, "(1) Rent-a-Buddy blocked by design"] as [string, string]),
+      ["push_notifications_enabled", "(2) no Expo push credentials for the beta build yet"],
+      ...DECISION_GATED.map((f) => [f, "(3) decision-gated"] as [string, string]),
+      ["COMPASS_ACTIVE_REWARDS_ENABLED", "(4) N-6's surface, open on main"],
+    ]);
+    const expected = new Set<string>(SAFETY);
+    for (const f of SEEDED_TRUE_NEWER_THAN_SNAPSHOT) { assert.ok(!(f in PRODUCTION_FLAGS), f); expected.add(f); }
+    for (const [flag, value] of Object.entries(PRODUCTION_FLAGS)) {
+      if (value === true && population.has(flag) && !EXCEPTIONS.has(flag)) expected.add(flag);
+    }
+    const on = policy.flags.filter((e) => e.enabled).map((e) => e.flag).sort();
+    assert.deepEqual(on, [...expected].sort(), "the ON set changed: re-read the rationale and the lead's review before updating this rule");
+    assert.equal(on.length, 108, "pinned count (lead decision 2026-10-06): 6 safety controls + 101 production-TRUE flags + 1 newer seeded-TRUE flag");
+    for (const f of EXCEPTIONS.keys()) assert.equal(byFlag.get(f)?.enabled ?? false, false, `${f}: ${EXCEPTIONS.get(f)}`);
+    assert.equal(byFlag.get("COMPASS_FALLBACK_MODE_ENABLED")?.enabled, false, "production reads FALSE");
   });
 
   it("population scan: a DELETE retires, a later re-seed brings back", () => {

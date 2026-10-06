@@ -13,15 +13,19 @@
       "flag": "COMPASS_ACTIVE_REWARDS_ENABLED",
       "kind": "CAPABILITY",
       "enabled": false,
-      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
-      "evidence": []
+      "reason": "OFF although production runs it ON: its surface is the active-user boost lift, which open unsafe path N-6 (a restricted person's posts keep the lift, D-24c) touches on main; the flag is inert (no reader), so this changes no behaviour; lead decision 2026-10-06.",
+      "evidence": [
+        "D-24c"
+      ]
     },
     {
       "flag": "COMPASS_DIVERSITY_ENABLED",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06. Inert (seeded, read by nothing), mirrored for parity.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "COMPASS_ENABLED",
@@ -36,9 +40,11 @@
     {
       "flag": "COMPASS_FAIR_EXPOSURE_ENABLED",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06. Inert (seeded, read by nothing), mirrored for parity.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "COMPASS_FALLBACK_MODE_ENABLED",
@@ -157,9 +163,11 @@
     {
       "flag": "MEDIA_FOR_YOU_ENABLED",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "MEDIA_GEMS_ADD_TO_TRIP_ENABLED",
@@ -185,9 +193,11 @@
     {
       "flag": "MEDIA_GEMS_SUBMIT_ENABLED",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06. Inert (seeded, read by nothing), mirrored for parity.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "MEDIA_GEMS_WRONG_PLACE_REPORT_ENABLED",
@@ -293,16 +303,20 @@
     {
       "flag": "MEDIA_UPLOAD_ENABLED",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "MEDIA_UPLOAD_PHOTO_ENABLED",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "MEDIA_UPLOAD_VIDEO_ENABLED",
@@ -419,7 +433,7 @@
       "flag": "RENT_BUDDY_GROUP_BOOKINGS_ENABLED",
       "kind": "CAPABILITY",
       "enabled": false,
-      "reason": "OFF: Rent-a-Buddy booking and payments stay off — identity must be live-mode and test-mode verifications never satisfy a booking.",
+      "reason": "OFF although production runs it ON: every Rent-a-Buddy capability stays off on beta by design (bookings blocked; test-mode identity never satisfies a booking); lead decision 2026-10-06.",
       "evidence": [
         "OD-PAY-10",
         "OD-PAY-11"
@@ -438,7 +452,7 @@
       "flag": "RENT_BUDDY_NIGHTLIFE_ENABLED",
       "kind": "CAPABILITY",
       "enabled": false,
-      "reason": "OFF: Rent-a-Buddy booking and payments stay off — identity must be live-mode and test-mode verifications never satisfy a booking.",
+      "reason": "OFF although production runs it ON: every Rent-a-Buddy capability stays off on beta by design (bookings blocked; test-mode identity never satisfies a booking); lead decision 2026-10-06.",
       "evidence": [
         "OD-PAY-10",
         "OD-PAY-11"
@@ -448,7 +462,7 @@
       "flag": "RENT_BUDDY_OFFERS_ENABLED",
       "kind": "CAPABILITY",
       "enabled": false,
-      "reason": "OFF: Rent-a-Buddy booking and payments stay off — identity must be live-mode and test-mode verifications never satisfy a booking.",
+      "reason": "OFF although production runs it ON: every Rent-a-Buddy capability stays off on beta by design (bookings blocked; test-mode identity never satisfies a booking); lead decision 2026-10-06.",
       "evidence": [
         "OD-PAY-10",
         "OD-PAY-11"
@@ -458,7 +472,7 @@
       "flag": "RENT_BUDDY_PACKAGES_ENABLED",
       "kind": "CAPABILITY",
       "enabled": false,
-      "reason": "OFF: Rent-a-Buddy booking and payments stay off — identity must be live-mode and test-mode verifications never satisfy a booking.",
+      "reason": "OFF although production runs it ON: every Rent-a-Buddy capability stays off on beta by design (bookings blocked; test-mode identity never satisfies a booking); lead decision 2026-10-06.",
       "evidence": [
         "OD-PAY-10",
         "OD-PAY-11"
@@ -495,30 +509,38 @@
     {
       "flag": "ai_event_auto_suggest_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "ai_event_headers_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "ai_place_headers_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "ai_trip_covers_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "ai_visual_admin_review_enabled",
@@ -530,16 +552,20 @@
     {
       "flag": "ai_visual_provider_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "ai_visual_regeneration_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06. Inert (seeded, read by nothing), mirrored for parity.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "airport_mode_enabled",
@@ -564,23 +590,29 @@
     {
       "flag": "budget_fx_conversion_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "budget_intelligence_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "compass_ai_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06. Inert (seeded, read by nothing), mirrored for parity.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "compass_ai_writing_enabled",
@@ -623,9 +655,11 @@
     {
       "flag": "country_essentials_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "creator_attribution_enabled",
@@ -898,9 +932,11 @@
     {
       "flag": "discovery_serve_log_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "discovery_serve_log_retention_enabled",
@@ -1046,72 +1082,92 @@
     {
       "flag": "events_chat_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "events_cohosts_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06. Inert (seeded, read by nothing), mirrored for parity.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "events_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "events_invites_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06. Inert (seeded, read by nothing), mirrored for parity.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "events_join_leave_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06. Inert (seeded, read by nothing), mirrored for parity.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "events_reminders_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06. Inert (seeded, read by nothing), mirrored for parity.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "events_reports_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06. Inert (seeded, read by nothing), mirrored for parity.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "events_share_links_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06. Inert (seeded, read by nothing), mirrored for parity.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "events_trust_gates_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "events_waitlist_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "experience_session_enabled",
@@ -1123,9 +1179,11 @@
     {
       "flag": "external_places_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "find_your_circle_disabled",
@@ -1137,16 +1195,20 @@
     {
       "flag": "find_your_circle_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "fsq_places_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "hidden_gem_verification_enabled",
@@ -1239,16 +1301,20 @@
     {
       "flag": "intel_capture_quick_signal",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "intel_claim_projection_crowd",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "intel_compass_rhythm_actor_gate",
@@ -1276,16 +1342,20 @@
     {
       "flag": "intel_limited_live",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "intel_live_label_crowd",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "intel_live_scope_admin_surface_enabled",
@@ -1304,9 +1374,11 @@
     {
       "flag": "intel_missions",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "intel_outcome_attribution_enabled",
@@ -1332,16 +1404,20 @@
     {
       "flag": "intel_retention_sweep_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: a retention purge whose period is not legally decided (owner-decisions Part 3); the beta holds test data only.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06. A retention purge production runs; mirrored by the lead's decision rather than the brief's legal-period rule.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "intel_rewards",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "intel_safety_candidates_enabled",
@@ -1353,9 +1429,11 @@
     {
       "flag": "intel_trail_followup",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "invite_only_beta",
@@ -1499,9 +1577,11 @@
     {
       "flag": "live_places_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "local_guides_enabled",
@@ -1576,9 +1656,11 @@
     {
       "flag": "map_search_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "map_telemetry_enabled",
@@ -1590,9 +1672,11 @@
     {
       "flag": "map_telemetry_retention_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: a retention purge whose period is not legally decided (owner-decisions Part 3); the beta holds test data only.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06. A retention purge production runs; mirrored by the lead's decision rather than the brief's legal-period rule.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "map_trip_projection_read_enabled",
@@ -1618,9 +1702,11 @@
     {
       "flag": "media_canonical_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "media_canonical_read_enabled",
@@ -1761,9 +1847,11 @@
     {
       "flag": "moment_recaps_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "nearby_reachable_enabled",
@@ -1775,16 +1863,20 @@
     {
       "flag": "neighborhood_match_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "nl_trip_creation_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "open_to_plans_windows_enabled",
@@ -1803,9 +1895,11 @@
     {
       "flag": "passport_contribution_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06. Inert (seeded, read by nothing), mirrored for parity.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "passport_contribution_events_enabled",
@@ -1820,9 +1914,11 @@
     {
       "flag": "passport_entry_intelligence_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "passport_event_share_enabled",
@@ -1834,23 +1930,29 @@
     {
       "flag": "passport_map_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "passport_memories_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "passport_stamps_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "passport_telemetry_enabled",
@@ -1869,30 +1971,38 @@
     {
       "flag": "place_days_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "place_recaps_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "plan_geofence_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "plan_geofence_full_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06. Inert (seeded, read by nothing), mirrored for parity.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "presence_cleanup_enabled",
@@ -1905,7 +2015,7 @@
       "flag": "push_notifications_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
-      "reason": "OFF: until Expo push credentials are configured for the beta build; lead decision 2026-10-06. Production runs it ON (2026-09-22 snapshot).",
+      "reason": "OFF although production runs it ON: until Expo push credentials are configured for the beta build; lead decision 2026-10-06.",
       "evidence": []
     },
     {
@@ -1931,9 +2041,11 @@
     {
       "flag": "reservation_import_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "safe_return_admin_logs_enabled",
@@ -1948,9 +2060,11 @@
     {
       "flag": "safe_return_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "safe_return_live_share_enabled",
@@ -1965,9 +2079,11 @@
     {
       "flag": "safe_return_trusted_circle_alerts_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "sensing_presence_context_enabled",
@@ -2026,58 +2142,74 @@
     {
       "flag": "stamp_admin_award_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: inert — seeded but read by nothing (check-flag-polarity INERT_SEEDED_FLAGS), so its value changes no behaviour.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06. Inert (seeded, read by nothing), mirrored for parity.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "stamp_admire_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "stamp_auto_approve_artwork",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "stamp_criteria_engine_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "stamp_premium_rendering_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "stamp_showcase_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "stamp_system_v2_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "stamp_unified_view_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "stories_enabled",
@@ -2169,23 +2301,29 @@
     {
       "flag": "trip_crew_ghost_mode_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "trip_crew_live_share_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "trip_crew_map_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "trip_kernel_enabled",
@@ -2211,9 +2349,11 @@
     {
       "flag": "trip_readiness_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "trip_retention_sweep_enabled",
@@ -2225,16 +2365,20 @@
     {
       "flag": "trust_engine_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "trust_gaming_detection_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF: not grounded for beta — seeded false and no census C evidence is recorded for turning it on (ungrounded flags stay off).",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production (TRUE in the 2026-09-22 production snapshot); lead decision 2026-10-06.",
+      "evidence": [
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "wall_compass_handoff_enabled",
