@@ -6086,7 +6086,7 @@ change). The paste cap bounds it.
 2. **Plan-item predicate.** `unread` now fails closed whatever `grants` holds
    (`artifacts/api-server/src/lib/inputAssistance/planItemAccess.ts:72#if (access.status === "unread") return owner !== null && owner === access.viewerId;`).
    The proof uses a NON-EMPTY grants map
-   (`artifacts/api-server/src/test/inputPlanItemPrivacy.test.ts:137#unread access fails closed EVEN WITH a non-empty grants map`):
+   (`artifacts/api-server/src/test/inputPlanItemPrivacy.test.ts:139#unread access fails closed EVEN WITH a non-empty grants map`):
    red before the line, green after, and red again with the line removed. This line is NOT in lane C's
    predicate, which the seam otherwise copies. When the seam binds to C's helpers, C's predicate or the
    binding must keep it.
