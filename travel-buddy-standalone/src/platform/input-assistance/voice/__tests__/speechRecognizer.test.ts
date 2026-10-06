@@ -57,7 +57,9 @@ function fakeWebScope(
     onerror: ((e: any) => void) | null = null;
     onend: (() => void) | null = null;
     start() {
-      log.push(`start lang=${this.lang} interim=${this.interimResults} local=${this.processLocally === true}`);
+      // `processLocally` is defined on the prototype below only for an engine that
+      // implements the spec attribute, so it is read reflectively here.
+      log.push(`start lang=${this.lang} interim=${this.interimResults} local=${Reflect.get(this, 'processLocally') === true}`);
       queueMicrotask(() => {
         (script.results ?? []).forEach((r, i) => {
           const results: any = { length: i + 1 };
