@@ -423,9 +423,9 @@ export function startLayoverCrewExpiryScheduler(): void {
   );
   _timer = setTimeout(function tick() {
     void runLayoverCrewExpiryTick().finally(() => {
-      _timer = setTimeout(tick, LAYOVER_CREW_EXPIRY_INTERVAL_MS);
+      if (_timer !== null) { _timer = setTimeout(tick, LAYOVER_CREW_EXPIRY_INTERVAL_MS); _timer.unref?.(); } // a stop() during the run must not re-arm
     });
-  }, STARTUP_DELAY_MS);
+  }, STARTUP_DELAY_MS); _timer.unref?.(); // never keep a process alive for a scheduler: the server does that
   // The sweep is housekeeping; it must never be the reason a process refuses to
   // exit. Every other scheduler in this band relies on the process being
   // long-lived, and unref keeps a test that forgets to stop it from hanging.
