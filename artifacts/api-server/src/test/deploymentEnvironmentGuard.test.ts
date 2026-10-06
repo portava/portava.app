@@ -1,0 +1,138 @@
+/**
+ * A BETA deployment can never reach PRODUCTION — lib/deploymentEnvironment.ts,
+ * lib/deploymentEnvironmentGuard.ts and their import at the top of src/index.ts.
+ *
+ * Three layers, each asserting the resulting STATE (an exit code and the line
+ * an operator reads), never just a return value:
+ *
+ *   1. the pure rule over a case table (accepted and refused, both polarities);
+ *   2. the guard module run as its own process — exit 1 with a message naming
+ *      PORTAVA_DEPLOYMENT_ENV, or exit 0 for production's own environment;
+ *   3. THE API ENTRY ITSELF (src/index.ts) run with PORTAVA_DEPLOYMENT_ENV=beta
+ *      and a non-beta SUPABASE_URL: it exits 1 with the guard's line, BEFORE
+ *      assertRequiredEnv runs. SUPABASE_SERVICE_ROLE_KEY and SESSION_SECRET are
+ *      deliberately absent, so if the guard were not wired (or wired after
+ *      ./app) the process would still exit 1 — on the required-env message —
+ *      and never listen. The URL is a made-up ref, so no real project is ever
+ *      contacted, even by the mutation proof.
+ *
+ * Run: node --import tsx/esm --test src/test/deploymentEnvironmentGuard.test.ts
+ */
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import {
+  BETA_SUPABASE_URL,
+  DEPLOYMENT_ENV_VAR,
+  PRODUCTION_SUPABASE_REF,
+  deploymentEnvironmentRefusal,
+} from "../lib/deploymentEnvironment.js";
+
+const PKG_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const PROD_URL = `https://${PRODUCTION_SUPABASE_REF}.supabase.co`;
+const FAKE_URL = "https://zzzzzzzzzzzzzzzzzzzz.supabase.co";
+
+describe("deploymentEnvironmentRefusal — the rule", () => {
+  it("production as it is today (no label, production URL) starts", () => {
+    assert.equal(deploymentEnvironmentRefusal({ SUPABASE_URL: PROD_URL }), null);
+  });
+
+  it("an explicit production label with production's URL starts", () => {
+    assert.equal(deploymentEnvironmentRefusal({ [DEPLOYMENT_ENV_VAR]: "production", SUPABASE_URL: PROD_URL }), null);
+  });
+
+  it("beta with the beta project's URL starts", () => {
+    assert.equal(deploymentEnvironmentRefusal({ [DEPLOYMENT_ENV_VAR]: "beta", SUPABASE_URL: BETA_SUPABASE_URL }), null);
+    assert.equal(deploymentEnvironmentRefusal({ [DEPLOYMENT_ENV_VAR]: "beta", SUPABASE_URL: `${BETA_SUPABASE_URL}/` }), null);
+  });
+
+  it("REFUSED: beta pointed at production (the inherited .replit value)", () => {
+    const r = deploymentEnvironmentRefusal({ [DEPLOYMENT_ENV_VAR]: "beta", SUPABASE_URL: PROD_URL });
+    assert.ok(r && r.includes(DEPLOYMENT_ENV_VAR) && r.includes("PRODUCTION"), String(r));
+  });
+
+  it("REFUSED: beta pointed at any other project, or with no URL", () => {
+    assert.ok(deploymentEnvironmentRefusal({ [DEPLOYMENT_ENV_VAR]: "beta", SUPABASE_URL: FAKE_URL }));
+    assert.ok(deploymentEnvironmentRefusal({ [DEPLOYMENT_ENV_VAR]: "beta" }));
+    assert.ok(deploymentEnvironmentRefusal({ [DEPLOYMENT_ENV_VAR]: "beta", SUPABASE_URL: `${BETA_SUPABASE_URL}.evil.example` }));
+  });
+
+  it("REFUSED: beta whose OTHER variables still carry production's ref — named, value not printed", () => {
+    const secretish = `postgresql://postgres.${PRODUCTION_SUPABASE_REF}:hunter2@pooler.example:6543/postgres`;
+    const r = deploymentEnvironmentRefusal({
+      [DEPLOYMENT_ENV_VAR]: "beta",
+      SUPABASE_URL: BETA_SUPABASE_URL,
+      EXPO_PUBLIC_SUPABASE_URL: PROD_URL,
+      DATABASE_URL: secretish,
+    });
+    assert.ok(r, "a beta process carrying production's ref must not start");
+    assert.ok(r.includes("DATABASE_URL") && r.includes("EXPO_PUBLIC_SUPABASE_URL"), r);
+    assert.ok(!r.includes("hunter2") && !r.includes("pooler.example"), "values are never printed");
+  });
+
+  it("REFUSED: an unrecognised label, so a typo cannot switch the guard off", () => {
+    for (const v of ["Beta", "beta ", "BETA", "staging", "prod"]) {
+      const r = deploymentEnvironmentRefusal({ [DEPLOYMENT_ENV_VAR]: v, SUPABASE_URL: PROD_URL });
+      assert.ok(r && r.includes("unrecognised"), `${JSON.stringify(v)} → ${r}`);
+    }
+  });
+
+  it("REFUSED: the beta project without the beta label (the label keeps the guard armed)", () => {
+    assert.ok(deploymentEnvironmentRefusal({ SUPABASE_URL: BETA_SUPABASE_URL }));
+    assert.ok(deploymentEnvironmentRefusal({ [DEPLOYMENT_ENV_VAR]: "production", SUPABASE_URL: BETA_SUPABASE_URL }));
+  });
+});
+
+/** A child environment with nothing Supabase-, Sentry- or deployment-shaped inherited from this runner. */
+function childEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (/^(SUPABASE_|EXPO_PUBLIC_|SENTRY_|PORTAVA_|SESSION_SECRET$|PORT$|DATABASE_URL$)/.test(k)) continue;
+    if (typeof v === "string" && v.includes(PRODUCTION_SUPABASE_REF)) continue;
+    env[k] = v;
+  }
+  return { ...env, ...extra };
+}
+
+function run(entry: string, extra: Record<string, string>, timeoutMs = 120_000) {
+  const r = spawnSync(process.execPath, ["--import", "tsx/esm", entry], {
+    cwd: PKG_ROOT,
+    env: childEnv(extra),
+    encoding: "utf8",
+    timeout: timeoutMs,
+  });
+  return { status: r.status, signal: r.signal, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
+}
+
+describe("deploymentEnvironmentGuard — the process", () => {
+  it("exits 1 naming PORTAVA_DEPLOYMENT_ENV when a beta process points at production", () => {
+    const r = run("src/lib/deploymentEnvironmentGuard.ts", { [DEPLOYMENT_ENV_VAR]: "beta", SUPABASE_URL: PROD_URL });
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /REFUSING TO START \(PORTAVA_DEPLOYMENT_ENV\)/);
+  });
+
+  it("exits 0 for production's own environment (behaviour unchanged)", () => {
+    const r = run("src/lib/deploymentEnvironmentGuard.ts", { SUPABASE_URL: PROD_URL });
+    assert.equal(r.status, 0, r.out);
+    assert.doesNotMatch(r.out, /REFUSING/);
+  });
+
+  it("exits 0 for a correctly configured beta process", () => {
+    const r = run("src/lib/deploymentEnvironmentGuard.ts", { [DEPLOYMENT_ENV_VAR]: "beta", SUPABASE_URL: BETA_SUPABASE_URL });
+    assert.equal(r.status, 0, r.out);
+  });
+});
+
+describe("src/index.ts — the API refuses to start before anything else runs", () => {
+  it("PORTAVA_DEPLOYMENT_ENV=beta with a non-beta SUPABASE_URL: exit 1 on the guard's line, not the required-env one", () => {
+    const r = run("src/index.ts", { [DEPLOYMENT_ENV_VAR]: "beta", SUPABASE_URL: FAKE_URL }, 170_000);
+    assert.equal(r.signal, null, `the entry did not exit by itself:\n${r.out.slice(-2000)}`);
+    assert.equal(r.status, 1, r.out.slice(-2000));
+    assert.match(r.out, /REFUSING TO START \(PORTAVA_DEPLOYMENT_ENV\)/, r.out.slice(-2000));
+    assert.doesNotMatch(r.out, /required variables missing/, "the guard must run BEFORE assertRequiredEnv and ./app");
+    assert.doesNotMatch(r.out, /Server listening/);
+  });
+});
