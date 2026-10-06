@@ -43,6 +43,8 @@ if (!read.ok) {
   console.error("Refusing to report a partial corpus as coverage.");
   process.exit(1);
 }
+// census-discovery §120: a window reaching past 3501's retention horizon reads the per-request rows as UNOBSERVED; say why.
+if (read.corpus.serveRequestsUnobserved) console.error(`report:discovery-trace-coverage: per-request rows UNOBSERVED — ${read.corpus.serveRequestsUnobserved}`);
 const report = buildTraceCoverageReport(read.corpus.rankEvents, read.corpus.serveRequests);
 if (argv.includes("--json")) {
   console.log(JSON.stringify({ window, rowsRead: read.corpus.rankEvents.length, report }, null, 2));

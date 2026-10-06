@@ -98,8 +98,14 @@ export function runReadOnly(dbUrl: string, sql: string, vars: Record<string, str
 
 export interface TraceCorpus {
   rankEvents: TraceRankEventRow[];
-  /** null ⇔ `public.recommendations` does not exist on this database. */
+  /**
+   * null ⇔ `public.recommendations` does not exist on this database, OR (§120) the
+   * window reaches before 3501's retention horizon, when `serveRequestsUnobserved`
+   * says so. Either way the per-request figures are UNOBSERVED, never short.
+   */
   serveRequests: TraceServeRequestRow[] | null;
+  /** Why `serveRequests` is null although the table exists; null otherwise. */
+  serveRequestsUnobserved?: string | null;
 }
 
 /** Read the corpus for a window. Never writes; returns an error rather than a partial corpus. */
@@ -113,12 +119,36 @@ export function readTraceCorpus(
   const present = runReadOnly(dbUrl, TRACE_SERVE_REQUESTS_PRESENT_SQL);
   if (!present.ok) return { ok: false, error: `recommendations probe failed: ${present.error}` };
   let serveRequests: TraceServeRequestRow[] | null = null;
+  let serveRequestsUnobserved: string | null = null;
   if (present.stdout === "t") {
-    const rq = runReadOnly(dbUrl, TRACE_SERVE_REQUESTS_SQL, vars);
-    if (!rq.ok) return { ok: false, error: `recommendations read failed: ${rq.error}` };
-    serveRequests = JSON.parse(rq.stdout || "[]") as TraceServeRequestRow[];
+    const horizon = retentionHorizonBreach(dbUrl, vars);
+    if (!horizon.ok) return { ok: false, error: horizon.error };
+    if (horizon.breach) {
+      serveRequestsUnobserved =
+        `the window starts before the per-request retention horizon (${horizon.horizon}; 3501, the owner's 30-day TESTING retention) — ` +
+        "request rows older than it may have been purged, so request counts, empty serves, anonymous serves and exposures naming no request row are unobservable for this window";
+    } else {
+      const rq = runReadOnly(dbUrl, TRACE_SERVE_REQUESTS_SQL, vars);
+      if (!rq.ok) return { ok: false, error: `recommendations read failed: ${rq.error}` };
+      serveRequests = JSON.parse(rq.stdout || "[]") as TraceServeRequestRow[];
+    }
   }
-  return { ok: true, corpus: { rankEvents: JSON.parse(ev.stdout || "[]") as TraceRankEventRow[], serveRequests } };
+  return { ok: true, corpus: { rankEvents: JSON.parse(ev.stdout || "[]") as TraceRankEventRow[], serveRequests, serveRequestsUnobserved } };
+}
+
+/** §120: does this window reach before 3501's retention horizon? No 3501 here ⇒ no horizon. */
+function retentionHorizonBreach(
+  dbUrl: string,
+  vars: Record<string, string>,
+): { ok: true; breach: boolean; horizon: string } | { ok: false; error: string } {
+  const present = runReadOnly(dbUrl, TRACE_RETENTION_PRESENT_SQL);
+  if (!present.ok) return { ok: false, error: `retention horizon probe failed: ${present.error}` };
+  if (present.stdout !== "t") return { ok: true, breach: false, horizon: "" };
+  const r = runReadOnly(dbUrl, TRACE_RETENTION_SQL, vars);
+  if (!r.ok) return { ok: false, error: `retention horizon read failed: ${r.error}` };
+  const [breach, horizon] = r.stdout.split("|");
+  if (breach !== "true" && breach !== "false") return { ok: false, error: `retention horizon read answered ${JSON.stringify(r.stdout)}` };
+  return { ok: true, breach: breach === "true", horizon: horizon ?? "" };
 }
 
 /** `--db-url <url>`, else REPORT_DB_URL. Never a default. */
@@ -131,3 +161,20 @@ export function dbUrlFrom(argv: readonly string[], env: Record<string, string | 
   const e = (env["REPORT_DB_URL"] ?? "").trim();
   return e === "" ? null : e;
 }
+
+/**
+ * census-discovery §120 — 3501's retention horizon. `public.recommendations` rows
+ * whose created_at is before it may have been PURGED (the owner's 30-day testing
+ * retention), so a window reaching before it cannot be read as a complete
+ * per-request record: its request counts would be short and every exposure whose
+ * request row was purged would read as "naming no request row" — a defect the
+ * data does not have. Probed first because a database without 3501 has no
+ * horizon and keeps every row.
+ */
+export const TRACE_RETENTION_PRESENT_SQL = `SELECT to_regprocedure('public.discovery_recommendations_retention_cutoff()') IS NOT NULL;`;
+
+/** One row `t|<horizon>` when the window starts before the horizon, `f|<horizon or ''>` otherwise. */
+export const TRACE_RETENTION_SQL = `
+SELECT (h IS NOT NULL AND h > :'since'::timestamptz)::text || '|' || COALESCE(h::text, '')
+  FROM (SELECT public.discovery_recommendations_retention_cutoff() AS h) x;
+`;

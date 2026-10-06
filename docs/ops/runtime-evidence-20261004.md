@@ -74,7 +74,7 @@ unauthenticated request, no credentials sent, measured from this session:
 Replit's edge for every path on a hostname that has no live deployment behind it.
 It is not a route-level 404 from the application: a route-level miss would come
 from Express, and the application's only health route is
-`artifacts/api-server/src/routes/health.ts:36`, mounted under `/api`
+`artifacts/api-server/src/routes/health.ts:37`, mounted under `/api`
 (`artifacts/api-server/src/routes/index.ts:168`, `artifacts/api-server/src/app.ts:189`).
 
 **So the answer to "what build is running at the configured production origin" is
@@ -112,7 +112,7 @@ would report this host green while reaching no API at all.** Nothing may treat a
 | # | Channel | Reachable from here? | What it says |
 |---|---|---|---|
 | 1 | `GET /healthz` on the deployed host | **Yes** (egress open as of today) | Nothing is serving — `404 This app isn't live yet`. And even on a live host it could not identify a build: see row 2 |
-| 2 | A version field in the health response | n/a — **does not exist** | `artifacts/api-server/src/routes/health.ts:36` returns `HealthCheckResponse.parse({ status: "ok" })`. The schema at `lib/api-zod/src/generated/api.ts:15` declares exactly one field, `status`, and `zod.object` strips unknown keys — so a build field added to the handler would be dropped before it reached the wire |
+| 2 | A version field in the health response | n/a — **does not exist** | `artifacts/api-server/src/routes/health.ts:37` returns `HealthCheckResponse.parse({ status: "ok" })`. The schema at `lib/api-zod/src/generated/api.ts:15` declares exactly one field, `status`, and `zod.object` strips unknown keys — so a build field added to the handler would be dropped before it reached the wire |
 | 3 | A dedicated `/version`, `/__version`, `/build`, `/readyz` or `/status` route | n/a — **no such route exists** | The only health-family routes in the repository are the four in `artifacts/api-server/src/routes/health.ts` (`/healthz`, `/healthz/cleanup`, `/healthz/delayed-publish`, `/healthz/schedulers`); none carries a build identifier |
 | 4 | A response header carrying a version | n/a — **none** | The only version headers in the server are per-row data versions (`X-Trip-Version` at `artifacts/api-server/src/domain/trips/commands/tripKernel.ts:564`; an `ETag` of a row version at `artifacts/api-server/src/routes/tripReservations.ts:484`). `artifacts/api-server/src/app.ts:28` applies `helmet()`, which removes even `X-Powered-By` |
 | 5 | A commit sha in the build or environment | n/a — **never injected** | No `GIT_SHA`/`COMMIT_SHA`/`BUILD_ID`/`SOURCE_VERSION`/`SENTRY_RELEASE` is read anywhere. `artifacts/api-server/build.mjs` passes no esbuild `define`. `artifacts/api-server/src/sentry-preload.ts:21-36` sets `environment` and `serverName` but no `release`. `scripts/build-production.sh` writes no stamp |
@@ -287,8 +287,8 @@ runtime — `.github/workflows/story-retention.yml:12-18`:
 > Zero requests reached the database in the two days that followed."
 
 The same timestamp is carried at `artifacts/api-server/src/lib/storyRetentionScheduler.ts:42`
-and `:174`, `artifacts/api-server/src/routes/health.ts:192`, and
-`artifacts/api-server/src/test/healthSchedulers.test.ts:271`. **This is a dated,
+and `:174`, `artifacts/api-server/src/routes/health.ts:193`, and
+`artifacts/api-server/src/test/healthSchedulers.test.ts:320`. **This is a dated,
 committed, measured observation that a production process was alive and serving
 until 2026-09-30T15:30:36Z and stopped at that moment.** It is consistent with
 today's measurement that nothing is serving at the configured origin, and it is

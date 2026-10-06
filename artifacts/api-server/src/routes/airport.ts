@@ -118,8 +118,10 @@ import { safetyLabel, type TravelTimeSource } from "../services/airport/LayoverS
 // persistence half — the handle derivation, the corpus read and the screened
 // write — which is what that module deliberately does not own.
 import {
+  CROWD_REPORTS_CLOSED_MESSAGE,
   OBSERVATION_RATE_LIMIT,
   TRAVELLER_SUBMITTABLE_FACT_TYPES,
+  crowdReportsEnabled,
   isTravellerSubmittableFactType,
   reconcileAirportFact,
   submitTravellerObservation,
@@ -2752,10 +2754,42 @@ function observationFactPayload(outcome: ReconciliationOutcome) {
   };
 }
 
+/**
+ * The crowd-report channel's own gate (migration 3513, seeded TRUE).
+ *
+ * DELIBERATELY NOT IN `requireOwnedSession`. That guard is shared by every route
+ * in this router — sessions, stops, plans, crew, the dashboard — and putting
+ * this check there would recreate the exact defect 3513 exists to remove: one
+ * switch for "stop crowd reports" and "stop Layover". Both observation handlers
+ * call this, and nothing else does.
+ *
+ * FAIL-CLOSED, AND THAT IS THE POINT. `crowdReportsEnabled` reads through
+ * `isFlagEnabled`, which answers false for a flag that is off, for a missing
+ * row, and for a `feature_flags` it could not read. A check that cannot
+ * establish its result must refuse, so all three refuse. The read itself lives
+ * in the service beside the flag literal, so `check:flag-polarity` can resolve
+ * which flag is being read — see that function's own note.
+ *
+ * `degraded_unavailable` AND NOT `feature_disabled`, for a reason the collapse
+ * above forces: this call site cannot tell "an operator closed the channel"
+ * from "we could not look", so it must not claim either. `feature_disabled`
+ * would be us asserting an operator decision on the strength of an outage. The
+ * message says what the traveller needs — reports are paused, their own plan is
+ * not — and makes no claim about which of the two it is.
+ *
+ * Returns true when the handler must stop; the refusal has already been sent.
+ */
+async function crowdReportsClosed(sc: any, res: any): Promise<boolean> {
+  if (await crowdReportsEnabled(sc)) return false;
+  sendError(res, "degraded_unavailable", CROWD_REPORTS_CLOSED_MESSAGE);
+  return true;
+}
+
 router.get("/airport/sessions/:id/observations", async (req, res) => {
   const ctx = await requireOwnedSession(req, res);
   if (!ctx) return;
   const { sc, session } = ctx;
+  if (await crowdReportsClosed(sc, res)) return;
 
   const airport = await airportOr503(sc, res, session);
   if (!airport) return;
@@ -2793,6 +2827,9 @@ router.post("/airport/sessions/:id/observations", async (req, res) => {
   const ctx = await requireOwnedSession(req, res);
   if (!ctx) return;
   const { sc, user, session } = ctx;
+  // Before the payload is even parsed: a closed channel must not write, and must
+  // not answer a validation complaint that implies it would have written.
+  if (await crowdReportsClosed(sc, res)) return;
 
   const parsed = observationSubmitSchema.safeParse(req.body);
   if (!parsed.success) {
