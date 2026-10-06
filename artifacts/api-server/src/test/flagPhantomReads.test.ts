@@ -455,9 +455,16 @@ describe("check-flag-polarity R9 — mutation proof", () => {
   // The real tree must be green. Belt and braces with `npm run check:flag-polarity`,
   // but this file is where a reader looks for the R9 story, so the end state
   // belongs here too.
-  it("the real repository passes R9", () => {
+  it("the real repository passes R9", async () => { const release = await acquireTreeLock("flagPhantomReads R9"); try { // the scan must not see guardCoverageReachability's probe appear and vanish
     const { code, out } = run({});
     assert.equal(code, 0, `check-flag-polarity must pass on the real tree.\n${out}`);
     assert.ok(out.includes("Read-but-unseeded: 0 phantoms"), `expected the R9 line in the report.\n${out}`);
-  });
+  } finally { release(); } });
 });
+
+// Imported at the TAIL so no line above moves. This case scans the REAL tree
+// (check-flag-polarity reads every source file), and guardCoverageReachability
+// writes a probe into src/lib/ and deletes it again while it runs: the two met
+// in the same process on 2026-10-05 and the scan died on the vanished probe
+// ("UNPARSEABLE … ENOENT"). The lock is the serialisation the helper exists for.
+import { acquireTreeLock } from "./helpers/treeMutationLock.js";
