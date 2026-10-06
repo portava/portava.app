@@ -60,6 +60,7 @@ import {
   postVote,
   STATE_AFFORDANCES,
   QUICK_STATES,
+  coordinationStateLabel,
   type CoordinationResponse,
 } from '../coordination/coordinationApi.ts';
 
@@ -242,6 +243,21 @@ describe('the panel and the network', () => {
     );
     expect(screen.getByTestId('telegraph-decision-d-open')).toBeTruthy();
     expect([...(onDrawn.mock.calls.at(-1)![0] as Set<string>)].sort()).toEqual(['c1', 'd-open']);
+  });
+
+  it('R1: an OLDER read that lands after a newer one does not overwrite it', async () => {
+    mockedFetch.mockResolvedValueOnce({ ok: true, data: response() });
+    const { rerender } = await render(<CoordinationPanel threadId="t1" refreshKey="m1" />);
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(1));
+    let releaseOld: (r: any) => void = () => {};
+    mockedFetch.mockImplementationOnce(() => new Promise((r) => { releaseOld = r; }));
+    await rerender(<CoordinationPanel threadId="t1" refreshKey="m2" />);
+    mockedFetch.mockResolvedValueOnce({ ok: true, data: response({ state: 'ACTIVE' }) });
+    await rerender(<CoordinationPanel threadId="t1" refreshKey="m3" />);
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(screen.getByTestId('telegraph-coordination-state').props.children).toBe(coordinationStateLabel('ACTIVE')));
+    await act(async () => { releaseOld({ ok: true, data: response({ state: 'ASSEMBLING' }) }); });
+    expect(screen.getByTestId('telegraph-coordination-state').props.children).toBe(coordinationStateLabel('ACTIVE'));
   });
 
   it('R1: a changed refresh key re-reads — a decision posted while the conversation is open arrives', async () => {
