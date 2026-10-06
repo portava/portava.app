@@ -39,7 +39,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { readRoutesSpendConfig, dbRoutesSpendGate, type RoutesSpendGate, type SpendVerdict } from "../domain/trips/contracts/RoutesSpendGate.js";
+import { readRoutesSpendConfig, OWNER_ROUTES_CEILING, dbRoutesSpendGate, type RoutesSpendGate, type SpendVerdict } from "../domain/trips/contracts/RoutesSpendGate.js";
 import { createGatedRoutedTravelTimeProvider, GATED_ROUTED_PROVIDER_ID } from "../domain/trips/contracts/GatedRoutedTravelTimeProvider.js";
 import { straightLineTravelTimeProvider, type TravelTimeProvider, type TravelTimeQuery, type TravelTimeResult } from "../domain/trips/contracts/TravelTimeProvider.js";
 import { withDepartureAssumptions } from "../domain/trips/services/TripDepartureAssumptions.js";
@@ -58,9 +58,9 @@ const FULL = {
   ROUTES_API_DAILY_QUOTA: "500",
   ROUTES_API_DAILY_BUDGET_USD: "10",
   ROUTES_API_COST_PER_CALL_USD: "0.005",
-  ROUTES_API_USER_DAILY_SHARE: "50",
-  ROUTES_API_TRIP_DAILY_SHARE: "100",
-};
+  ROUTES_API_USER_DAILY_SHARE: "5",
+  ROUTES_API_TRIP_DAILY_SHARE: "3",
+}; // exactly the owner's ceiling (D-7): $10/day, 500/day, 5 per person, 3 per trip
 
 const USER = "11111111-0000-4000-8000-000000000001";
 const TRIP = "aaaaaaaa-0000-4000-8000-00000000000a";
@@ -106,7 +106,7 @@ const LIVE_14: TravelTimeResult = {
 
 describe("A. configuration: all four, valid, or OFF", () => {
   it("A1. a full configuration reads as micro-USD; nothing is defaulted", () => {
-    assert.deepEqual(readRoutesSpendConfig(FULL), { dailyQuota: 500, dailyBudgetMicros: 10_000_000, costPerCallMicros: 5_000, userDailyShare: 50, tripDailyShare: 100 });
+    assert.deepEqual(readRoutesSpendConfig(FULL), { dailyQuota: 500, dailyBudgetMicros: 10_000_000, costPerCallMicros: 5_000, userDailyShare: 5, tripDailyShare: 3 });
   });
 
   it("A2. any missing, unparseable, zero or contradictory part is OFF (null)", () => {
@@ -121,6 +121,21 @@ describe("A. configuration: all four, valid, or OFF", () => {
     assert.equal(readRoutesSpendConfig({ ...FULL, ROUTES_API_COST_PER_CALL_USD: "11" }), null, "a single call over the whole budget is OFF");
     assert.equal(readRoutesSpendConfig({ ...FULL, ROUTES_API_USER_DAILY_SHARE: "501" }), null, "a user share above the day's quota is OFF");
     assert.equal(readRoutesSpendConfig({ ...FULL, ROUTES_API_TRIP_DAILY_SHARE: "0" }), null, "a zero trip share is OFF");
+  });
+});
+
+describe("A3. the owner's ceiling (D-7): above any limit is OFF; at or under it is ON", () => {
+  it("A3a. each limit one above the owner's number reads as OFF — never clamped", () => {
+    for (const [k, v] of [["ROUTES_API_DAILY_BUDGET_USD", "10.000001"], ["ROUTES_API_DAILY_QUOTA", "501"],
+      ["ROUTES_API_USER_DAILY_SHARE", "6"], ["ROUTES_API_TRIP_DAILY_SHARE", "4"]] as const) {
+      assert.equal(readRoutesSpendConfig({ ...FULL, [k]: v }), null, `${k}=${v}`);
+    }
+  });
+  it("A3b. CONTROL: exactly the owner's numbers, and anything stricter, read as ON", () => {
+    assert.notEqual(readRoutesSpendConfig(FULL), null);
+    assert.deepEqual(readRoutesSpendConfig({ ...FULL, ROUTES_API_DAILY_QUOTA: "100", ROUTES_API_DAILY_BUDGET_USD: "2", ROUTES_API_USER_DAILY_SHARE: "1", ROUTES_API_TRIP_DAILY_SHARE: "1" }),
+      { dailyQuota: 100, dailyBudgetMicros: 2_000_000, costPerCallMicros: 5_000, userDailyShare: 1, tripDailyShare: 1 });
+    assert.deepEqual({ ...OWNER_ROUTES_CEILING }, { dailyBudgetMicros: 10_000_000, dailyQuota: 500, userDailyShare: 5, tripDailyShare: 3 });
   });
 });
 
@@ -183,7 +198,7 @@ describe("B. the gate", () => {
       rpc: async (n: string, a: unknown) => { name = n; args = a; return { data: "granted", error: null }; } };
     assert.equal(await dbRoutesSpendGate({ client: () => sc as never, config: cfg }).decide(SCOPE), "granted");
     assert.equal(name, "routes_api_try_spend_scoped");
-    assert.deepEqual(args, { p_quota: 500, p_budget_micros: 10_000_000, p_cost_micros: 5_000, p_user_id: USER, p_trip_id: TRIP, p_user_share: 50, p_trip_share: 100 });
+    assert.deepEqual(args, { p_quota: 500, p_budget_micros: 10_000_000, p_cost_micros: 5_000, p_user_id: USER, p_trip_id: TRIP, p_user_share: 5, p_trip_share: 3 });
   });
 });
 
@@ -343,7 +358,9 @@ describe("F. §82 certification: what TR341/TR412 can and cannot get from the re
   const window = async (provider: TravelTimeProvider) => {
     const A = commitment("A", { startsAt: T("10"), endsAt: T("11"), place: { placeId: "pA", point: P } });
     const B = commitment("B", { requiredArrivalAt: T("15"), startsAt: T("15"), place: { placeId: "pB", point: R } });
-    const f = await checkFeasibility(provider, { departFrom: T("11"), fromPlace: P }, { toPlace: R, requiredArrivalAt: T("15"), startsAt: T("15"), prepMinutes: 0, latenessToleranceMinutes: 0 });
+    // `now` pinned to the adapter's clock: left to default, the real clock passed 11:00Z on 2026-10-06 and the
+    // fixed departure became a past one, so F1's vacuity guard fired on the calendar, not on the code.
+    const f = await checkFeasibility(provider, { departFrom: T("11"), fromPlace: P }, { toPlace: R, requiredArrivalAt: T("15"), startsAt: T("15"), prepMinutes: 0, latenessToleranceMinutes: 0 }, T("09"));
     const w = computeFreedomWindows({ commitments: [A, B], hops: [{ travelMinutes: f.travelMinutes, confidence: f.confidence, routed: f.routed, unknownReason: f.unknownReason }], participants: ["u"], tripStart: null, tripEnd: null }).windows.find((x) => x.position === "between")!;
     return { f, w };
   };
@@ -423,6 +440,22 @@ describe("G. §82 the per-read bound: no member drains the day from one read", (
     assert.ok(a.kind === "estimate" && a.estimate.sourceRefs.includes("routes-api-fallback:request_time_budget"));
     assert.ok(b.kind === "estimate" && b.estimate.sourceRefs.includes("routes-api-fallback:request_time_budget"));
     assert.equal(hanging.calls, 1, "the second hop never started a call");
+  });
+
+  it("G8 (verifier, 87df318f4). a nested read for a DIFFERENT trip is charged to that trip but spends the SAME per-read counter", async () => {
+    // The mutant that survived: a nested different-trip scope with a counter
+    // of its own would let one request spend maxCalls once per trip it touches.
+    const OTHER_TRIP = "bbbbbbbb-0000-4000-8000-0000000000bb";
+    const gate = gateOf("granted");
+    const p = createGatedRoutedTravelTimeProvider({ routed: routedOf(LIVE_14), fallback: straightLineTravelTimeProvider, gate });
+    await inRead(async () => {
+      await Promise.all([0, 1, 2, 3].map((k) => p.estimate(distinct(100 + k))));
+      await withRoutesRequestBudget({ userId: USER, tripId: OTHER_TRIP }, () => Promise.all([0, 1, 2, 3].map((k) => p.estimate(distinct(200 + k)))));
+    }, { maxCalls: 6 });
+    assert.equal(gate.calls, 6, "one read, one counter, whichever trip each hop is charged to");
+    const trips = gate.scopes.map((x) => (x as { tripId?: string }).tripId);
+    assert.equal(trips.filter((t) => t === TRIP).length, 4);
+    assert.equal(trips.filter((t) => t === OTHER_TRIP).length, 2, "the nested hops are charged to the trip they are for");
   });
 
   it("G7. a user's or a trip's exhausted share answers the labelled bound", async () => {

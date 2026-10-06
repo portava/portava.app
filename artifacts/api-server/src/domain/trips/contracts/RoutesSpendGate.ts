@@ -69,7 +69,20 @@ function usdMicros(v: string | undefined): number | null {
   return Number.isSafeInteger(micros) && micros > 0 ? micros : null;
 }
 
-/** The configured allowance, or null (= OFF) when any part is missing or invalid. */
+/**
+ * The owner's ceiling (Trips, D-7: "≤ $10/day, 500 requests/day, 5 per person
+ * per day, 3 per trip per day"). Configuration may be STRICTER; a value above
+ * any of these is not a configuration this deployment may run, so it reads as
+ * OFF — never clamped, never partly honoured (census-trips §85).
+ */
+export const OWNER_ROUTES_CEILING = Object.freeze({
+  dailyBudgetMicros: 10_000_000,
+  dailyQuota: 500,
+  userDailyShare: 5,
+  tripDailyShare: 3,
+});
+
+/** The configured allowance, or null (= OFF) when any part is missing or invalid, or above the owner's ceiling. */
 export function readRoutesSpendConfig(env: Record<string, string | undefined> = process.env): RoutesSpendConfig | null {
   if (!env["GOOGLE_MAPS_API_KEY"]) return null;
   const dailyQuota = positiveInt(env["ROUTES_API_DAILY_QUOTA"]);
@@ -81,6 +94,8 @@ export function readRoutesSpendConfig(env: Record<string, string | undefined> = 
   if (userDailyShare === null || tripDailyShare === null) return null;
   if (costPerCallMicros > dailyBudgetMicros) return null;
   if (userDailyShare > dailyQuota || tripDailyShare > dailyQuota) return null;
+  if (dailyBudgetMicros > OWNER_ROUTES_CEILING.dailyBudgetMicros || dailyQuota > OWNER_ROUTES_CEILING.dailyQuota) return null;
+  if (userDailyShare > OWNER_ROUTES_CEILING.userDailyShare || tripDailyShare > OWNER_ROUTES_CEILING.tripDailyShare) return null;
   return { dailyQuota, dailyBudgetMicros, costPerCallMicros, userDailyShare, tripDailyShare };
 }
 
