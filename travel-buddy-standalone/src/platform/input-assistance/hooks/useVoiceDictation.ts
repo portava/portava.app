@@ -43,7 +43,7 @@ export interface UseVoiceDictationOptions {
   context: InputContext;
   onTranscript: (text: string) => void;
   language?: string | null;
-  /** Injected in tests; defaults to the installed / platform recognizer. */
+  /** Injected in tests; defaults to `resolveSpeechRecognizer()` — on-device only (OD-INPUT-5). */
   recognizer?: SpeechRecognizerPort;
 }
 
@@ -51,8 +51,9 @@ export function useVoiceDictation({ fieldId, context, onTranscript, language, re
   const [state, setState] = useState<DictationState>({ phase: 'checking' });
   const abortRef = useRef<AbortController | null>(null);
   const mounted = useRef(true);
-  // Resolved once per mount: the web adapter is a fresh object per call, and a
-  // new port every render would re-run the availability check forever.
+  // Resolved once per mount, so the availability check runs once. The resolver
+  // returns an installed recognizer that declares on-device processing, or
+  // none — never the browser's own engine (speechRecognizer.ts header).
   const port = useMemo(() => recognizer ?? resolveSpeechRecognizer(), [recognizer]);
 
   useEffect(() => {

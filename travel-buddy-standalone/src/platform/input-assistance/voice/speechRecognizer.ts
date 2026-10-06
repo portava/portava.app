@@ -25,6 +25,24 @@
  *   - With neither, `NO_SPEECH_RECOGNIZER` answers `unavailable/no_provider` —
  *     never a placeholder transcript.
  *
+ * OD-INPUT-5, ENFORCED IN THE RESOLVER (2026-10-06, consolidated review). The
+ * owner's rule — "use on-device operating-system speech recognition first; send
+ * audio to a cloud provider only with separate, explicit consent" — is decided
+ * HERE, once, by `resolveSpeechRecognizer`, so every surface that dictates
+ * inherits it: the trip-destination button, the paste box, and anything added
+ * later. The resolver returns a recognizer ONLY when that recognizer declares
+ * `onDeviceOnly: true` (the guarantee that audio never leaves the device). It
+ * never falls back to the browser's Web Speech API, whose default is remote
+ * processing; `web-speech`, and any recognizer that declares nothing, resolve
+ * to `NO_SPEECH_RECOGNIZER` — unavailable, said plainly, never a cloud engine.
+ * The declaration is the same one the Wall's push-to-talk checks
+ * (`isOnDeviceOnly`), so that check and this one can never disagree.
+ *
+ * THERE IS NO CLOUD PATH. A recognizer that may send audio away could be
+ * returned only through a separate-consent path, and that path does not exist
+ * yet: no function here returns an undeclared recognizer, and no consent flow
+ * for it has been designed or approved. Building one is an owner decision.
+ *
  * Pure module — no React, no RN import, no network. node:test-safe.
  */
 import type { TranscriptionResult } from './types.ts';
@@ -42,6 +60,12 @@ export interface RecognizeOnceOptions {
 export interface SpeechRecognizerPort {
   /** 'web-speech', 'native-speech', 'none'. */
   readonly providerId: string;
+  /**
+   * The port's GUARANTEE that audio never leaves the device. Only the literal
+   * `true` counts; absence means "may go to a server" (OD-INPUT-5). The
+   * resolver returns no recognizer without it.
+   */
+  readonly onDeviceOnly?: true;
   isAvailable(): Promise<boolean>;
   /** Listen for one utterance. Resolves an outcome envelope; never throws. */
   recognizeOnce(opts?: RecognizeOnceOptions): Promise<TranscriptionOutcome>;
@@ -57,7 +81,7 @@ export const NO_SPEECH_RECOGNIZER: SpeechRecognizerPort = {
       ok: false,
       unavailable: true,
       reason: 'no_provider',
-      error: 'This build has no speech recognizer.',
+      error: 'This build has no on-device speech recognizer.',
     };
   },
 };
@@ -73,9 +97,20 @@ export function clearSpeechRecognizer(): void {
   installed = null;
 }
 
-/** The installed recognizer, else the platform's own if it has one, else the honest none. */
-export function resolveSpeechRecognizer(scope: unknown = globalThis): SpeechRecognizerPort {
-  return installed ?? createWebSpeechRecognizer(scope) ?? NO_SPEECH_RECOGNIZER;
+/** Only an explicit, literal `onDeviceOnly: true` counts; absence is "may go to a server". */
+export function declaresOnDeviceOnly(port: SpeechRecognizerPort): boolean {
+  return (port as { onDeviceOnly?: unknown }).onDeviceOnly === true;
+}
+
+/**
+ * The recognizer every dictating surface uses: the INSTALLED one, and only if
+ * it declares on-device processing. Otherwise the honest none — and never the
+ * platform's browser engine, which is not consulted at all (OD-INPUT-5; see the
+ * file header). A cloud recognizer has no way through: the separate-consent
+ * path it would need does not exist yet.
+ */
+export function resolveSpeechRecognizer(): SpeechRecognizerPort {
+  return installed && declaresOnDeviceOnly(installed) ? installed : NO_SPEECH_RECOGNIZER;
 }
 
 // ── The web platform's own recognizer ──────────────────────────────────────
@@ -170,6 +205,13 @@ const ON_DEVICE_UNAVAILABLE: TranscriptionOutcome = {
  * The Web Speech API, where the platform exposes it. Null when it does not
  * (every native build today, and browsers without it) — so a caller can never
  * mistake "absent" for "available but silent".
+ *
+ * NOT RETURNED BY THE RESOLVER, and it declares no `onDeviceOnly`. Its own
+ * checks below make a single session local when the engine says it can be,
+ * but that is the browser vendor's promise, re-asked on every call — not a
+ * guarantee this port can make. OD-INPUT-5 puts the operating system's own
+ * recognizer first, so this adapter is reachable only by a caller that passes
+ * it in by hand; no production surface does.
  */
 export function createWebSpeechRecognizer(scope: unknown = globalThis): SpeechRecognizerPort | null {
   const Ctor = webSpeechCtor(scope);
@@ -304,6 +346,11 @@ export function createNativeSpeechRecognizer(
   };
   return {
     providerId: 'native-speech',
+    // The guarantee the resolver requires — made only in the on-device-only
+    // posture, which refuses (below) on a device that cannot recognise locally.
+    // With `cloudConsentGranted`, audio may leave the device, so the port
+    // declares nothing and the resolver will not return it.
+    ...(onDeviceOnly ? { onDeviceOnly: true as const } : {}),
     async isAvailable() {
       try {
         return mod.isRecognitionAvailable() === true && (!onDeviceOnly || onDeviceSupported());

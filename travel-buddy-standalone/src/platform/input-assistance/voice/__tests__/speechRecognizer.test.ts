@@ -22,7 +22,9 @@ import {
   createWebSpeechRecognizer,
   installSpeechRecognizer,
   resolveSpeechRecognizer,
+  declaresOnDeviceOnly,
   type NativeSpeechModuleLike,
+  type SpeechRecognizerPort,
 } from '../speechRecognizer.ts';
 import { assistanceRequestFor, dictateIntoField } from '../voiceIntake.ts';
 
@@ -84,7 +86,7 @@ const FIELD = { fieldId: 'trip.destination', context: 'trip_destination' as cons
 test('no platform recognizer → unavailable/no_provider, before the microphone is asked for', async () => {
   clearSpeechRecognizer();
   assert.equal(createWebSpeechRecognizer({}), null, 'absent is null, not a silent recognizer');
-  assert.equal(resolveSpeechRecognizer({}), NO_SPEECH_RECOGNIZER);
+  assert.equal(resolveSpeechRecognizer(), NO_SPEECH_RECOGNIZER);
   let asked = false;
   const spy = { ...NO_SPEECH_RECOGNIZER, recognizeOnce: async () => { asked = true; return NO_SPEECH_RECOGNIZER.recognizeOnce(); } };
   const out = await dictateIntoField(FIELD, { recognizer: spy });
@@ -128,12 +130,84 @@ test('permission refused, silence and a mumble are three different honest outcom
   assert.deepEqual([mumble.state, mumble.state === 'refused' && mumble.reason], ['refused', 'low_confidence']);
 });
 
-test('an installed recognizer wins over the platform default', () => {
-  const mine = { ...NO_SPEECH_RECOGNIZER, providerId: 'installed' };
-  installSpeechRecognizer(mine);
-  assert.equal(resolveSpeechRecognizer(fakeWebScope({})), mine);
+// ── OD-INPUT-5 IN THE RESOLVER — every dictating surface inherits it ─────────
+
+/** A native module that recognises on the device and hears "Da Nang". */
+function onDeviceModule(): NativeSpeechModuleLike {
+  const listeners: Record<string, (e: any) => void> = {};
+  return {
+    requestPermissionsAsync: async () => ({ granted: true }),
+    isRecognitionAvailable: () => true,
+    supportsOnDeviceRecognition: () => true,
+    start() {
+      queueMicrotask(() => {
+        listeners.result?.({ isFinal: true, results: [{ transcript: 'Da Nang', confidence: 0.9 }] });
+        listeners.end?.({});
+      });
+    },
+    stop() {},
+    addListener(event, cb) { listeners[event] = cb; return { remove() { delete listeners[event]; } }; },
+  };
+}
+
+test('OD-INPUT-5 resolver: a browser engine on the global is NEVER used — the destination field constructs and starts nothing', async () => {
+  // The most permissive engine there is: it has the on-device controls and
+  // says "available". The old resolver fell back to it on every web build.
+  const log: string[] = [];
+  const Base = fakeWebScope({ results: [{ text: 'Hoi An', confidence: 0.9, isFinal: true }] }, log).webkitSpeechRecognition;
+  let constructed = 0;
+  class Counting extends Base { constructor() { super(); constructed += 1; } }
+  const g = globalThis as Record<string, unknown>;
+  const before = g.webkitSpeechRecognition;
+  g.webkitSpeechRecognition = Counting;
+  try {
+    clearSpeechRecognizer();
+    assert.equal(resolveSpeechRecognizer(), NO_SPEECH_RECOGNIZER, 'no fallback to web-speech');
+    // The trip-destination button's path: no recognizer passed, so the resolver decides.
+    const out = await dictateIntoField({ ...FIELD, language: 'en-US' });
+    assert.deepEqual([out.state, out.state === 'unavailable' && out.reason], ['unavailable', 'no_provider']);
+    assert.equal(constructed, 0, 'no SpeechRecognition was constructed');
+    assert.deepEqual(log, [], 'the engine was not even asked whether it is available, and never started');
+  } finally {
+    if (before === undefined) delete g.webkitSpeechRecognition; else g.webkitSpeechRecognition = before;
+  }
+});
+
+test('OD-INPUT-5 resolver: an installed recognizer is returned ONLY when it declares onDeviceOnly: true', () => {
+  const onDevice = createNativeSpeechRecognizer(onDeviceModule());
+  assert.equal(declaresOnDeviceOnly(onDevice), true, 'the on-device native adapter makes the guarantee');
+  installSpeechRecognizer(onDevice);
+  assert.equal(resolveSpeechRecognizer(), onDevice);
+
+  const undeclared = { ...NO_SPEECH_RECOGNIZER, providerId: 'installed', isAvailable: async () => true };
+  installSpeechRecognizer(undeclared);
+  assert.equal(resolveSpeechRecognizer(), NO_SPEECH_RECOGNIZER, 'declaring nothing means "may go to a server"');
+
+  const web = createWebSpeechRecognizer(fakeWebScope({}))!;
+  assert.equal(declaresOnDeviceOnly(web), false);
+  installSpeechRecognizer(web);
+  assert.equal(resolveSpeechRecognizer(), NO_SPEECH_RECOGNIZER, 'web-speech is not returned even when installed by hand');
+
+  const cloud = createNativeSpeechRecognizer(onDeviceModule(), { cloudConsentGranted: true });
+  assert.equal(declaresOnDeviceOnly(cloud), false, 'with cloud consent the native adapter makes no on-device guarantee');
+  installSpeechRecognizer(cloud);
+  assert.equal(resolveSpeechRecognizer(), NO_SPEECH_RECOGNIZER, 'there is no cloud path through the resolver');
+
+  const truthy = { ...onDevice, onDeviceOnly: 'yes' } as unknown as SpeechRecognizerPort;
+  installSpeechRecognizer(truthy);
+  assert.equal(resolveSpeechRecognizer(), NO_SPEECH_RECOGNIZER, 'only the literal true counts');
   clearSpeechRecognizer();
-  assert.equal(resolveSpeechRecognizer(fakeWebScope({})).providerId, 'web-speech');
+});
+
+test('OD-INPUT-5 resolver: an installed on-device recognizer serves the destination field end to end', async () => {
+  installSpeechRecognizer(createNativeSpeechRecognizer(onDeviceModule()));
+  try {
+    const out = await dictateIntoField(FIELD);
+    assert.equal(out.state, 'accepted');
+    assert.equal(out.state === 'accepted' && out.request.text, 'Da Nang');
+  } finally {
+    clearSpeechRecognizer();
+  }
 });
 
 test('the native-module adapter keeps audio on the device and maps events the same way', async () => {
