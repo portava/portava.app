@@ -373,9 +373,12 @@ describe("L43 — the pure suppression rule", () => {
   });
   it("when suppressed, a candidate that does not SAY it is inside the airport is withheld", () => {
     const s = { state: "suppressed", reportedAt: new Date().toISOString() } as const;
-    const kept = applyLandsideSuppression([{ id: "air", insideAirport: true }, { id: "land", insideAirport: false }, { id: "unsaid" }, { id: "truthy", insideAirport: 1 }], s);
+    type Candidate = { id: string; insideAirport?: unknown };
+    const candidates: Candidate[] = [{ id: "air", insideAirport: true }, { id: "land", insideAirport: false }, { id: "unsaid" }, { id: "truthy", insideAirport: 1 }];
+    const unsaid: Candidate[] = [{ id: "unsaid" }];
+    const kept = applyLandsideSuppression(candidates, s);
     assert.deepEqual(kept.map((r) => r.id), ["air"]);
-    assert.equal(applyLandsideSuppression([{ id: "unsaid" }], { state: "open" }).length, 1);
-    assert.equal(applyLandsideSuppression([{ id: "unsaid" }], { state: "unknown", reason: "checkpoints_unreadable" }).length, 1);
+    assert.equal(applyLandsideSuppression(unsaid, { state: "open" }).length, 1);
+    assert.equal(applyLandsideSuppression(unsaid, { state: "unknown", reason: "checkpoints_unreadable" }).length, 1);
   });
 });
