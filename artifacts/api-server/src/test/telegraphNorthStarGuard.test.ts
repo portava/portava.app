@@ -46,18 +46,21 @@ const CLIENT = join(REPO, "travel-buddy-standalone");
 // ── the vocabulary of §1.2's forbidden mechanics ─────────────────────────────
 
 /** Metric names that would make volume or attention an objective. */
-const VOLUME_METRIC = /(messages?_(sent|count|volume)|message_volume|time_in_chat|session_(length|duration)|streak|daily_active|engagement|minutes_in_app|dau|mau)/i;
+const VOLUME_METRIC = /(messages?_(sent|count|volume|per)|message_volume|time_(spent_)?in_(chat|thread|app)|minutes_in_(chat|thread|app)|streak|daily_active|engagement|dau|mau)/i;
 
 /** Code that implements a streak / time-in-chat / volume-goal mechanic. */
 const MECHANIC_PATTERNS: readonly RegExp[] = [
   // No leading \b: a camelCase identifier (`messageStreak`, `trackSessionLength`)
   // has no word boundary before the part that matters.
   /streaks?/i,
-  /time_?in_?chat/i,
-  /session_?length/i,
+  /time_?(spent_?)?in_?(chat|thread|app)/i,
+  /minutes_?in_?(chat|thread|app)/i,
+  /consecutive_?days/i,
   /messages?_?sent_?today/i,
   /daily_?message_?(goal|target)/i,
   /days_?in_?a_?row/i,
+  // NOT `session_?length`: a coordination session has a length, and measuring it
+  // is not an engagement mechanic (verifier F8 found the false positive).
 ];
 
 /** Words in a notification that nag for engagement rather than report an act. */
@@ -68,6 +71,8 @@ const NAG_PATTERNS: readonly RegExp[] = [
   /keep (it|the conversation|your) going/i,
   /(you('ve| have) been|it'?s been) (away|quiet)/i,
   /miss(ing)? you/i,
+  /beat your (record|streak|best)/i,
+  /keep chatting/i,
 ];
 
 /**
@@ -82,6 +87,7 @@ const TELEGRAPH_NOTIFICATION_EVENTS: Readonly<Record<string, string>> = {
   "telegraph.mention": "someone mentioned the person",
   "telegraph.reaction": "someone reacted to the person's message",
   "telegraph.thread_archived": "a participant archived the conversation",
+  "call.incoming": "someone is calling the person (filed under the telegraph category)",
 };
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -153,13 +159,17 @@ describe("§1.2 — Telegraph's objectives are outcomes, not volume", () => {
     assert.equal(VOLUME_METRIC.test("messages_sent_per_user"), true);
     assert.equal(VOLUME_METRIC.test("time_in_chat_p50"), true);
     assert.equal(VOLUME_METRIC.test("coordinated_actions_confirmed"), false);
+    assert.equal(VOLUME_METRIC.test("messages_per_active_user"), true);
   });
 });
 
 // ── 2. what Telegraph sends people ───────────────────────────────────────────
 
 describe("§1.2 — Telegraph notifications report acts; none nags for engagement", () => {
-  const telegraphTemplates = TEMPLATES.filter((t) => t.eventType.startsWith("telegraph."));
+  // By event type OR by category: a re-engagement template filed under
+  // `category: 'telegraph'` with another prefix is still a Telegraph notification
+  // (verifier F8).
+  const telegraphTemplates = TEMPLATES.filter((t) => t.eventType.startsWith("telegraph.") || t.category === "telegraph");
 
   it("every telegraph.* template is in the closed list, each with the act that triggers it", () => {
     const unlisted = telegraphTemplates.map((t) => t.eventType).filter((e) => !(e in TELEGRAPH_NOTIFICATION_EVENTS));
@@ -188,6 +198,7 @@ describe("§1.2 — Telegraph notifications report acts; none nags for engagemen
     assert.equal(NAG_PATTERNS.some((p) => p.test("You haven't chatted with Nina in a while")), true);
     assert.equal(NAG_PATTERNS.some((p) => p.test("Keep your 5-day streak going!")), true);
     assert.equal(NAG_PATTERNS.some((p) => p.test("Marcus mentioned you")), false);
+    assert.equal(NAG_PATTERNS.some((p) => p.test("Keep chatting to beat your record!")), true);
   });
 });
 
@@ -217,6 +228,9 @@ describe("§1.2 — no streak, time-in-chat or volume-goal mechanic in Telegraph
     assert.deepEqual(mechanicsIn("const streak = days.filter(Boolean).length;").length, 1);
     assert.deepEqual(mechanicsIn("// we deliberately have no streak here\nconst x = 1;"), []);
     assert.deepEqual(mechanicsIn("/* time_in_chat is not measured */ const y = 2;"), []);
-    assert.deepEqual(mechanicsIn("trackSessionLength(user)").length, 1);
+    assert.deepEqual(mechanicsIn("const minutesInThreadToday = 0;").length, 1);
+    assert.deepEqual(mechanicsIn("const consecutiveDaysChatting = 3;").length, 1);
+    // A coordination session has a length; measuring it is not an engagement mechanic.
+    assert.deepEqual(mechanicsIn("const sessionLengthMinutes = end - start;"), []);
   });
 });
