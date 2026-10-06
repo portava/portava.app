@@ -245,3 +245,42 @@ mechanical once approved.
 **The quarantine has NOT been executed.** `docs/ops/artifacts/storage-quarantine-plan.json`
 holds the reviewed plan for the 34 objects; no object has moved. The snapshot
 artifact for population B **has** been taken and is committed.
+
+---
+
+## Discovery serve log (`public.recommendations`) — 30-day TESTING retention
+
+**A separate rule from everything above, scoped to one table and to testing.**
+The owner decided it on 2026-09-30, when approving migration
+`3376_discovery_recommendations_per_request.sql` for the testing database
+(Supabase `ajrurzioarfkagpuxfnb`, called "production" elsewhere in this repo)
+with `discovery_serve_log_enabled` ON. The record is in
+`docs/architecture/census-discovery.md` §120. In the owner's words:
+
+> Implement and schedule cleanup using the appropriate record timestamp. […]
+> Deliver logging and cleanup together rather than leaving records to accumulate
+> indefinitely or disabling the feature. […] This decision covers recommendation
+> logs in testing only. It does not set retention for financial records or other
+> data.
+
+It does **not** change the rule in the first half of this page. Orphaned objects
+and orphaned rows are still never deleted automatically. This rule automates
+deletion for `public.recommendations` rows only, because the owner decided so for
+that table.
+
+| | |
+|---|---|
+| table | `public.recommendations`: one row per served Discovery request, signed-in or anonymous (3376, 3491) |
+| retention | **30 days**, a **testing** retention period. It is not a policy for any other data |
+| where the value lives | `feature_flags` row `discovery_serve_log_retention_enabled`, `metadata.keep_days = 30`, labelled `"retention_scope": "testing"` (seeded by `3501_discovery_recommendations_retention.sql`). The owner changes the period by changing that number; no deploy is needed |
+| clock | `created_at`, which the database assigns. No writer can set or move it. `served_at` is a value the API supplies |
+| expired when | `created_at < now() - keep_days`. A row exactly 30 days old is kept |
+| reaper | `lib/discoveryServeLogRetentionScheduler.ts`, an API scheduler (pg_cron is not installed there). It runs hourly and calls `purge_expired_discovery_recommendations(1000)` up to 25 times per tick. The purge is SECURITY DEFINER; only `service_role` may execute it |
+| health | `GET /api/healthz/schedulers`, job `discoveryServeLogRetention`, and `job_health`. The job reads **failing** (HTTP 503) when a purge errors, when the flag is off or unreadable, or when the answer is malformed |
+| what it never touches | `rank_events` (including its `serveId`, outcomes and receipts), `creator_attributions`, `creator_earning_entries` and every other table. No foreign key references `public.recommendations`, and the purge refuses to run if one appears |
+| readers past the horizon | `report:discovery-trace-coverage` and `report:discovery-outcomes` mark per-request figures **unobserved** for a window that starts before the horizon. They do not report those figures as short |
+
+**Before a real production launch** this table needs its own retention decision.
+3376's "exact retention must be decided with privacy/legal review" still applies
+there. The 30 days above was decided for testing and must not be carried over to
+production by default.

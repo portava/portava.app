@@ -13,6 +13,9 @@
  *   R4  both scripts refuse to run without a database (exit 2), before any read
  *   R5  a failed read is an error, never a partial or empty corpus; an absent
  *       recommendations table is `null` (unobserved), not []
+ *   R6  §120: a window reaching before 3501's retention horizon leaves the
+ *       per-request rows UNOBSERVED with the reason, never short; inside it,
+ *       or with no 3501 at all, they are read
  */
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -22,7 +25,7 @@ import { join, resolve, dirname } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
-  TRACE_RANK_EVENTS_SQL, TRACE_SERVE_REQUESTS_SQL, TRACE_SERVE_REQUESTS_PRESENT_SQL, WRITE_KEYWORDS,
+  TRACE_RANK_EVENTS_SQL, TRACE_SERVE_REQUESTS_SQL, TRACE_SERVE_REQUESTS_PRESENT_SQL, WRITE_KEYWORDS, TRACE_RETENTION_PRESENT_SQL, TRACE_RETENTION_SQL,
   runReadOnly, readTraceCorpus, dbUrlFrom,
 } from "../lib/discoveryTraceRead.js";
 
@@ -56,7 +59,7 @@ after(() => {
 
 describe("§55 — the reports' read-only door", () => {
   it("R1. the SQL is reads only, and selects no user id", () => {
-    for (const [name, sql] of Object.entries({ TRACE_RANK_EVENTS_SQL, TRACE_SERVE_REQUESTS_SQL, TRACE_SERVE_REQUESTS_PRESENT_SQL })) {
+    for (const [name, sql] of Object.entries({ TRACE_RANK_EVENTS_SQL, TRACE_SERVE_REQUESTS_SQL, TRACE_SERVE_REQUESTS_PRESENT_SQL, TRACE_RETENTION_PRESENT_SQL, TRACE_RETENTION_SQL })) {
       assert.doesNotMatch(sql, WRITE_KEYWORDS, `${name} contains a write/DDL keyword`);
       assert.match(sql.trim(), /^(WITH|SELECT)\b/, `${name} is a query`);
       assert.doesNotMatch(sql, /\buser_id\b/, `${name} must not read who`);
@@ -120,5 +123,46 @@ describe("§55 — the reports' read-only door", () => {
       assert.equal(read.corpus.rankEvents.length, 1);
       assert.equal(read.corpus.serveRequests, null, "absent is unobserved, not []");
     }
+  });
+  it("R6. a window reaching before 3501's retention horizon leaves per-request rows unobserved, said; inside it they are read", () => {
+    // Routes on what each statement asks: rank_events, the table probe, the horizon probe, the horizon, the request rows.
+    const fakePsql = (horizonAnswer: string, retentionPresent: string) => {
+      writeFileSync(join(bin, "psql"), [
+        "#!/usr/bin/env bash",
+        "input=$(cat)",
+        `if printf '%s' "$input" | grep -q "to_regprocedure"; then printf '${retentionPresent}';`,
+        `elif printf '%s' "$input" | grep -q "discovery_recommendations_retention_cutoff()"; then printf '${horizonAnswer}';`,
+        "elif printf '%s' \"$input\" | grep -q to_regclass; then printf 't';",
+        "elif printf '%s' \"$input\" | grep -q 'FROM public.recommendations'; then printf '[{\"id\":\"q1\"}]';",
+        "else printf '[]'; fi",
+      ].join("\n"));
+      chmodSync(join(bin, "psql"), 0o755);
+    };
+    const W = { since: "2026-08-01T00:00:00.000Z", until: null };
+
+    fakePsql("true|2026-08-31 16:00:00+00", "t");
+    const before = readTraceCorpus("postgres://x", W);
+    assert.ok(before.ok);
+    if (before.ok) {
+      assert.equal(before.corpus.serveRequests, null, "possibly purged is unobserved, not short");
+      assert.match(before.corpus.serveRequestsUnobserved ?? "", /before the per-request retention horizon \(2026-08-31 16:00:00\+00; 3501/);
+    }
+
+    fakePsql("false|2026-08-31 16:00:00+00", "t");
+    const inside = readTraceCorpus("postgres://x", W);
+    assert.ok(inside.ok);
+    if (inside.ok) {
+      assert.deepEqual(inside.corpus.serveRequests, [{ id: "q1" }]);
+      assert.equal(inside.corpus.serveRequestsUnobserved, null);
+    }
+
+    fakePsql("never asked", "f");
+    const no3501 = readTraceCorpus("postgres://x", W);
+    assert.ok(no3501.ok);
+    if (no3501.ok) assert.deepEqual(no3501.corpus.serveRequests, [{ id: "q1" }], "no 3501: nothing is purged, the record is whole");
+
+    fakePsql("garbage", "t");
+    const bad = readTraceCorpus("postgres://x", W);
+    assert.equal(bad.ok, false, "an unreadable horizon is an error, never a guess");
   });
 });
