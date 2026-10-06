@@ -315,6 +315,17 @@ describe("D-24a. ONE solo/group test (readTripShape), the one lane L's Compass g
     const s = await readTripShape(c as never, TRIP, ANA);
     assert.equal(s.kind, "group");
   });
+  it("an owner with NO trip_members row still counts: an accepted member of that trip is on a GROUP trip (L's verifier)", async () => {
+    // requireTripMember's owner fallback. Without it, the member alone would read
+    // as "solo" and a hosting-restricted member would pass every door.
+    const st = seed("hosting");
+    st.trip_members = st.trip_members!.filter((m) => !(m.trip_id === TRIP && m.user_id !== ANA));
+    const c = use(st);
+    const shape = await readTripShape(c as never, TRIP, ANA);
+    assert.deepEqual(shape, { kind: "group", otherAcceptedMembers: 1, actorAccess: "full" });
+    const v = await decideTripActionRestriction(c as never, TRIP, ANA, "change_shared_plan");
+    assert.equal(!v.allowed && v.kind, "restricted");
+  });
   it("an invited (not accepted) person does not make it a group trip", async () => {
     const st = seed(null);
     st.trip_members = [...st.trip_members!, { trip_id: SOLO, user_id: BEN, role: "member", status: "pending" }];
