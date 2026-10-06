@@ -105,7 +105,7 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
   the absent-projection ratchet is 0, and a suite probes each projection's route
   independently of the registry. The original note follows.
   — PRJ-06's note said the content drawer is "dead-coded behind a literal
-  false". It is NOT, at HEAD: `travel-buddy-standalone/app/messages/[id].tsx:1932`
+  false". It is NOT, at HEAD: `travel-buddy-standalone/app/messages/[id].tsx:1924`
   mounts an unconditional `onPress={() => setShowContentDrawer(true)}` on the
   header, and `GET /threads/:id/drawer` serves it. The registry's `status:
   "absent"` and census-telegraph T294's evidence are both stale on that clause.
