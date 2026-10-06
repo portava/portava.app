@@ -284,24 +284,49 @@ router.get(
       });
     }
 
-    // ── identity (census-telegraph T295, §45c) ─────────────────────────────────
+    // ── identity (census-telegraph T295, §45c; re-verification 4, §45d) ───────
     // The server's projection of each other participant, so the client never
-    // reads `profiles` for the header. Names follow show_real_name; a failed
+    // reads `profiles` for the header. It applies the rule the client's old read
+    // got from `profiles_select`, because this read uses the service client: a
+    // profile is shown when no block stands EITHER WAY and it is not private, or
+    // when no block stands and the two are friends. Every input fails CLOSED — an
+    // unreadable block read withholds every identity, an unreadable friendship
+    // read withholds the private ones. Names follow show_real_name; a failed
     // privacy read hides every name (nameVisibilitySet fails closed).
     if (others.length > 0) {
-      const { data: profileRows, error: profileErr } = await client
-        .from("profiles")
-        .select("id, handle, username, name, display_name, full_name, avatar_url")
-        .in("id", others);
-      if (profileErr) {
-        log.warn({ threadId, message: profileErr.message }, "header identities unreadable; header shows the thread title alone");
+      const [{ data: profileRows, error: profileErr }, { data: iBlocked, error: iBlockedErr }, { data: blockedMe, error: blockedMeErr }] = await Promise.all([
+        client.from("profiles").select("id, handle, username, name, display_name, full_name, avatar_url, is_private").in("id", others),
+        client.from("blocks").select("blocked_id").eq("blocker_id", user.id).in("blocked_id", others),
+        client.from("blocks").select("blocker_id").eq("blocked_id", user.id).in("blocker_id", others),
+      ]);
+      if (profileErr || iBlockedErr || blockedMeErr) {
+        log.warn({ threadId, message: (profileErr ?? iBlockedErr ?? blockedMeErr)?.message }, "header identities or block state unreadable; header shows the thread title alone");
       } else {
+        const blocked = new Set<string>([
+          ...((iBlocked ?? []) as Array<{ blocked_id?: unknown }>).map((r) => String(r.blocked_id)),
+          ...((blockedMe ?? []) as Array<{ blocker_id?: unknown }>).map((r) => String(r.blocker_id)),
+        ]);
+        const privateIds = ((profileRows ?? []) as Array<Record<string, unknown>>)
+          .filter((r) => r.is_private === true && !blocked.has(String(r.id)))
+          .map((r) => String(r.id));
+        let friends: Set<string> | null = new Set();
+        if (privateIds.length > 0) {
+          const [{ data: asA, error: asAErr }, { data: asB, error: asBErr }] = await Promise.all([
+            client.from("user_friendships").select("user_b").eq("user_a", user.id).in("user_b", privateIds),
+            client.from("user_friendships").select("user_a").eq("user_b", user.id).in("user_a", privateIds),
+          ]);
+          friends = asAErr || asBErr ? null : new Set<string>([
+            ...((asA ?? []) as Array<{ user_b?: unknown }>).map((r) => String(r.user_b)),
+            ...((asB ?? []) as Array<{ user_a?: unknown }>).map((r) => String(r.user_a)),
+          ]);
+        }
         const nameAllowed = await nameVisibilitySet(client, others);
         const byId = new Map<string, Record<string, unknown>>();
         for (const row of (profileRows ?? []) as Array<Record<string, unknown>>) byId.set(String(row.id), row);
         for (const p of participants) {
           const row = byId.get(p.userId);
-          if (!row) continue;
+          if (!row || blocked.has(p.userId)) continue;
+          if (row.is_private === true && !(friends?.has(p.userId) ?? false)) continue;
           p.identity = {
             handle: resolveHandle(row),
             name: presentedName(row, nameAllowed.has(p.userId)),

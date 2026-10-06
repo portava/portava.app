@@ -104,6 +104,59 @@ describe("T295 — the DM header identity is the server's projection", () => {
   });
 });
 
+describe("re-verification 4 — the header identity follows the profile read rule (block, privacy), failing closed", () => {
+  // The client read this replaced went through `profiles_select`: a profile is
+  // readable by its owner, or when it is not private and no block stands either
+  // way, or when no block stands and the two are friends. The endpoint reads with
+  // the service client, so it applies that rule itself.
+  const withRows = (over: Record<string, any[]>) => ({ ...seed(true), ...over });
+  const identityOf = (b: Awaited<ReturnType<typeof header>>) => b.participants[0]!.identity;
+
+  it("a block EITHER WAY withholds the identity — the other person's handle and avatar are not shown", async () => {
+    for (const blocks of [[{ blocker_id: BOB, blocked_id: ALICE }], [{ blocker_id: ALICE, blocked_id: BOB }]]) {
+      const b = await header(withRows({ blocks }));
+      assert.equal(identityOf(b), null, JSON.stringify(b));
+      assert.ok(!JSON.stringify(b).includes("\"bob\""), "the handle crossed the block");
+    }
+  });
+
+  it("an unreadable blocks read withholds the identity — 'could not check' is not 'no block'", async () => {
+    const b = await header(withRows({ blocks: [] }), { errors: { blocks: { message: "blocks unreadable" } } });
+    assert.equal(identityOf(b), null);
+  });
+
+  it("a PRIVATE profile is withheld from a non-friend", async () => {
+    const b = await header(withRows({ blocks: [], profiles: [
+      { id: ALICE, handle: "alice", name: "Alice Real", avatar_url: null, is_private: false },
+      { id: BOB, handle: "bob", name: "Robert Realname", avatar_url: "post-media/b/avatar.jpg", is_private: true },
+    ], user_friendships: [] }));
+    assert.equal(identityOf(b), null);
+  });
+
+  it("CONTROL: a private profile is shown to a friend (either column order)", async () => {
+    for (const f of [{ user_a: ALICE, user_b: BOB }, { user_a: BOB, user_b: ALICE }]) {
+      const b = await header(withRows({ blocks: [], profiles: [
+        { id: ALICE, handle: "alice", name: "Alice Real", avatar_url: null, is_private: false },
+        { id: BOB, handle: "bob", name: "Robert Realname", avatar_url: "post-media/b/avatar.jpg", is_private: true },
+      ], user_friendships: [f] }));
+      assert.equal(identityOf(b)?.handle, "bob", JSON.stringify(f));
+    }
+  });
+
+  it("a private profile with an unreadable friendships read is withheld", async () => {
+    const b = await header(withRows({ blocks: [], profiles: [
+      { id: ALICE, handle: "alice", name: "Alice Real", avatar_url: null, is_private: false },
+      { id: BOB, handle: "bob", name: "Robert Realname", avatar_url: null, is_private: true },
+    ] }), { errors: { user_friendships: { message: "friendships unreadable" } } });
+    assert.equal(identityOf(b), null);
+  });
+
+  it("CONTROL: no block, not private — the identity is shown", async () => {
+    const b = await header(withRows({ blocks: [] }));
+    assert.equal(identityOf(b)?.handle, "bob");
+  });
+});
+
 describe("T295 — the two conversation screens read no table directly", () => {
   const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
   for (const rel of ["travel-buddy-standalone/app/messages/[id].tsx", "travel-buddy-standalone/src/components/GroupChatScreen.tsx"]) {
