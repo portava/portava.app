@@ -134,6 +134,18 @@ const protectionTelemetry = captureProtection();
 // at the top of that band, because the promise is about what a user usually
 // experiences, and a p50 gate would let a route with a bad tail pass.
 const P95_BUDGET_MS = 800;
+/**
+ * THE REGRESSION GATE (verifier finding 9, 2026-10-06). The 800 ms p95 budget is
+ * the product promise, and against this harness's measured p50 ~3 ms / p95
+ * ~7 ms (in-process) it is two orders of magnitude loose: a route that got
+ * 120 ms slower on EVERY request still passed it. So the run also gates p50 —
+ * the median, which a few load spikes cannot move (the busiest full-suite run
+ * on record read p50 4.2 ms while its p95 jumped to 54.7 ms) — at 100 ms on
+ * both arms (live arm: median p50 33.7 ms). A per-request regression of 120 ms
+ * puts every sample, and so the median, above 120 ms: red. Mutation-proven by
+ * a 120 ms delay inserted at the top of the projection handler.
+ */
+const P50_REGRESSION_BUDGET_MS = 100;
 const ITERATIONS = 50;
 /** Unmeasured. Warms the JIT AND the route's 30 s zone caches — this is the
  *  "warm-cache" in the criterion, made literal. */
@@ -348,7 +360,7 @@ describe("M256(a) — GET /api/map/projection, 50 warm-cache requests", () => {
     app = null;
   });
 
-  test(`p50 and p95 over ${ITERATIONS} warm-cache requests; p95 must be under ${P95_BUDGET_MS} ms`, async () => {
+  test(`p50 and p95 over ${ITERATIONS} warm-cache requests; p95 must be under ${P95_BUDGET_MS} ms and p50 under ${P50_REGRESSION_BUDGET_MS} ms`, async () => {
     assert.ok(app, "the harness never started");
 
     const result = await benchmark(
@@ -367,7 +379,7 @@ describe("M256(a) — GET /api/map/projection, 50 warm-cache requests", () => {
     console.log(formatBenchmark(result));
     console.log(
       `[bench] M256(a) arm=${ARM} p50=${result.p50.toFixed(1)}ms p95=${result.p95.toFixed(1)}ms ` +
-        `budget(p95)=${P95_BUDGET_MS}ms` +
+        `budget(p95)=${P95_BUDGET_MS}ms budget(p50, regression)=${P50_REGRESSION_BUDGET_MS}ms` +
         (ARM === "in-process-double"
           ? "  NOTE: in-process over the test double — a regression gate on route work, NOT production latency"
           : "  arm: live Supabase"),
@@ -383,6 +395,11 @@ describe("M256(a) — GET /api/map/projection, 50 warm-cache requests", () => {
       result.p95 <= P95_BUDGET_MS,
       `p95 ${result.p95.toFixed(1)}ms exceeds the ${P95_BUDGET_MS}ms budget ` +
         `(p50 ${result.p50.toFixed(1)}ms, max ${result.max.toFixed(1)}ms, arm ${ARM})`,
+    );
+    assert.ok(
+      result.p50 <= P50_REGRESSION_BUDGET_MS,
+      `p50 ${result.p50.toFixed(1)}ms exceeds the ${P50_REGRESSION_BUDGET_MS}ms regression budget — ` +
+        `every request got slower, not just the tail (p95 ${result.p95.toFixed(1)}ms, arm ${ARM})`,
     );
   });
 
