@@ -198,6 +198,120 @@ describe("canonical vocabulary — the model the check judges against", () => {
     // stays unmodelled rather than getting a vocabulary that was guessed.
     assert.equal(vocabularyFromCheck("(char_length(bio) <= 500)").size, 0);
   });
+
+  it("a compound CHECK with a top-level OR confines nothing — its in-list is one branch, not a vocabulary", () => {
+    // 2320's memory_episodes_eligibility_check: `state IN ('candidate','rejected',
+    // 'deleted') OR (significance IS NOT NULL …)`. Read as a vocabulary it
+    // rejected 'confirmed', a state the column's OWN check admits.
+    const disjunction = vocabularyFromCheck(
+      "(state IN ('candidate', 'rejected', 'deleted')) OR (significance IS NOT NULL AND significance_basis IS NOT NULL)",
+    );
+    assert.equal(disjunction.size, 0, "a disjunction must not be read as a vocabulary");
+    // A conjunction still confines the column.
+    const conjunction = vocabularyFromCheck("status IN ('a', 'b') AND other IS NOT NULL");
+    assert.deepEqual([...(conjunction.get("status") ?? [])].sort(), ["a", "b"]);
+    // An OR inside a string literal or a nested parenthesis is not top level.
+    const nested = vocabularyFromCheck("status IN ('a', 'b or c') AND (x IS NULL OR y IS NULL)");
+    assert.deepEqual([...(nested.get("status") ?? [])].sort(), ["a", "b or c"]);
+  });
+
+  it("a CHECK written inside the column definition is the column's vocabulary, across lines", () => {
+    // memory_episodes.state (2320:167-168) — `state text NOT NULL DEFAULT 'candidate'`
+    // on one line, `CHECK (state IN (…))` on the next. Until 2026-10-06 only a
+    // table-level `CONSTRAINT … CHECK` was recorded, so this column was modelled
+    // from the eligibility check alone and 'confirmed' read as dead.
+    const dir = mkdtempSync(join(tmpdir(), "vocab-inline-"));
+    try {
+      const baseline = join(dir, "baseline.sql");
+      writeFileSync(baseline, "CREATE TABLE public.unrelated (\n    id uuid NOT NULL\n);\n");
+      const migrations = join(dir, "migrations");
+      mkdirSync(migrations);
+      writeFileSync(
+        join(migrations, "2320_spine.sql"),
+        "CREATE TABLE IF NOT EXISTS public.episodes (\n" +
+          "  id uuid PRIMARY KEY,\n" +
+          "  significance numeric,\n" +
+          "  state text NOT NULL DEFAULT 'candidate'\n" +
+          "    CHECK (state IN ('candidate','confirmed','rejected','deleted')),\n" +
+          "  CONSTRAINT episodes_eligibility_check CHECK (\n" +
+          "    state IN ('candidate','rejected','deleted')\n" +
+          "    OR significance IS NOT NULL\n" +
+          "  )\n" +
+          ");\n",
+      );
+      const built = buildCanonicalVocabulary(baseline, [migrations]);
+      assert.deepEqual(
+        [...(built.values.get("episodes.state") ?? [])].sort(),
+        ["candidate", "confirmed", "deleted", "rejected"],
+        "the column's own CHECK is the vocabulary; the compound rule adds nothing",
+      );
+      assert.equal(built.origin.get("episodes.state"), "check episodes_state_check");
+      // The real column, on the real tree.
+      const live = vocab().values.get("memory_episodes.state");
+      assert.ok(live && live.has("confirmed"), `memory_episodes.state must admit "confirmed" — got ${[...(live ?? [])].sort().join(" | ")}`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("absorbs files in the chain's byte-wise order, and never re-creates a table it already knows", () => {
+    // Two defects with one fixture. (a) Order: `20260730_…` sorts BEFORE `2290_…`
+    // in the chain (apply-migrations.ts, "THE ORDER"); a numeric sort put every
+    // dated file LAST, so a dated CREATE TABLE re-registered the original narrow
+    // CHECK after a later `2xxx_` migration had widened it (that is how
+    // compass_conversation_messages.role "lost" 'system-event'). (b) Re-creation:
+    // `CREATE TABLE IF NOT EXISTS` of a table the baseline already holds is a
+    // no-op in Postgres, so its column CHECK is history, not the live shape
+    // (0041 creates trip_crew_location_events with the labels later renamed).
+    const dir = mkdtempSync(join(tmpdir(), "vocab-order-"));
+    try {
+      const baseline = join(dir, "baseline.sql");
+      writeFileSync(
+        baseline,
+        "CREATE TABLE public.messages (\n" +
+          "    role text NOT NULL,\n" +
+          "    CONSTRAINT messages_role_check CHECK ((role = ANY (ARRAY['user'::text, 'assistant'::text])))\n" +
+          ");\n" +
+          "CREATE TABLE public.crew_events (\n" +
+          "    event_type text NOT NULL,\n" +
+          "    CONSTRAINT crew_events_event_type_check CHECK ((event_type = ANY (ARRAY['ghost_on'::text])))\n" +
+          ");\n",
+      );
+      const migrations = join(dir, "migrations");
+      mkdirSync(migrations);
+      // The pre-baseline creation, with the OLD label: must not override the baseline.
+      writeFileSync(
+        join(migrations, "0041_crew.sql"),
+        "CREATE TABLE IF NOT EXISTS crew_events (\n  event_type text NOT NULL CHECK (event_type IN ('ghost_mode_on'))\n);\n",
+      );
+      // The dated creation (pre-baseline, narrow) and the later widening.
+      writeFileSync(
+        join(migrations, "20260723_messages.sql"),
+        "CREATE TABLE IF NOT EXISTS public.messages (\n  role text NOT NULL CHECK (role IN ('user','assistant'))\n);\n",
+      );
+      writeFileSync(
+        join(migrations, "2996_widen.sql"),
+        "ALTER TABLE public.messages DROP CONSTRAINT IF EXISTS messages_role_check;\n" +
+          "ALTER TABLE public.messages ADD CONSTRAINT messages_role_check CHECK (role IN ('user','assistant','system-event'));\n",
+      );
+      const built = buildCanonicalVocabulary(baseline, [migrations]);
+      assert.deepEqual(
+        [...(built.values.get("messages.role") ?? [])].sort(),
+        ["assistant", "system-event", "user"],
+        "the 2996 widening is the last word; the dated file sorts before it",
+      );
+      assert.deepEqual(
+        [...(built.values.get("crew_events.event_type") ?? [])].sort(),
+        ["ghost_on"],
+        "a re-creation of a known table must not resurrect its old labels",
+      );
+      // On the real tree: the two live cases this fixture stands for.
+      assert.ok(vocab().values.get("compass_conversation_messages.role")?.has("system-event"), "2996 admits system-event");
+      assert.ok(!vocab().values.get("trip_crew_location_events.event_type")?.has("ghost_mode_on"), "0041's old label stays dead");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("filter-literal extraction", () => {
