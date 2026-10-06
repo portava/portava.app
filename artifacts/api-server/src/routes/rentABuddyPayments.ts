@@ -33,7 +33,7 @@ import { getPaymentProvider } from "../services/payments/providerRegistry.js";
 import { taxProviderOrNone } from "../services/payments/TaxProvider.js";
 import { paymentsReadiness } from "../services/payments/readiness.js";
 import type { WebhookEndpoint } from "../services/payments/PaymentProvider.js";
-import type { PaymentSliceDeps, SliceOutcome } from "../services/payments/bookingPayments/deps.js";
+import type { PaymentSliceDeps, SliceOutcome } from "../services/payments/bookingPayments/deps.js"; import type { BookingForPayment } from "../services/payments/bookingPayments/model.js";
 import { paymentLedgerAdapter } from "../services/payments/bookingPayments/ledgerAdapter.js";
 import { supabaseBookingPaymentStore } from "../services/payments/bookingPayments/supabaseStore.js";
 import { confirmBookingPayment, quoteBookingPayment, startBookingCheckout } from "../services/payments/bookingPayments/checkout.js";
@@ -91,17 +91,36 @@ const UUIDISH = /^[0-9a-f-]{8,64}$/i;
 async function boundRequestKey(
   req: Request, res: Response, deps: PaymentSliceDeps, userId: string, bookingId: string, operation: string, actsForPlatform = false,
 ): Promise<string | null> {
-  const b = await deps.store.loadBooking(bookingId);
-  if (!b.ok) { sendError(res, "degraded_unavailable", "The booking could not be read."); return null; }
-  if (!b.value) { res.status(404).json({ error: "not_found", message: "Booking not found." }); return null; }
-  const role = b.value.travelerId === userId ? "user_receivable" : "user_payable";
+  // AUTHORISE FIRST (verifier F2): nothing is ensured, bound or created for a
+  // caller who is not a party to this booking (support acting for the platform
+  // excepted), and a non-party learns nothing about whether the id exists.
+  const booking = await requireBookingParty(res, deps, userId, bookingId, actsForPlatform);
+  if (!booking) return null;
+  const role = booking.travelerId === userId ? "user_receivable" : "user_payable";
   // Support is not a payment party; it acts for the PLATFORM, whose party binds its keys.
-  const party = actsForPlatform ? await deps.store.ensurePlatformParty(b.value.currency) : await deps.store.ensureUserParty(userId, b.value.currency, role);
+  const party = actsForPlatform ? await deps.store.ensurePlatformParty(booking.currency) : await deps.store.ensureUserParty(userId, booking.currency, role);
   if (!party.ok) { sendError(res, "degraded_unavailable", "Your payment account could not be resolved."); return null; }
   const bound = requireIdempotencyKey(req, res, { operation, actorPartyId: party.value });
   if (!bound) return null;
   return createHash("sha256").update(`${bound.scope}|${bound.idempotencyKey}`).digest("hex").slice(0, 40);
 }
+
+/**
+ * The booking, when `userId` is its traveller or its buddy (or `actsForPlatform`,
+ * support with an admin token). Anyone else gets the SAME 404 an unknown id gets
+ * (verifier F2: no 403/404 oracle). An unreadable booking is a 503. Null after
+ * writing the refusal.
+ */
+async function requireBookingParty(
+  res: Response, deps: PaymentSliceDeps, userId: string, bookingId: string, actsForPlatform = false,
+): Promise<BookingForPayment | null> {
+  const b = await deps.store.loadBooking(bookingId);
+  if (!b.ok) { sendError(res, "degraded_unavailable", "The booking could not be read."); return null; }
+  const isParty = b.value !== null && (actsForPlatform || b.value.travelerId === userId || b.value.buddyUserId === userId);
+  if (!b.value || !isParty) { res.status(404).json(BOOKING_NOT_FOUND); return null; }
+  return b.value;
+}
+const BOOKING_NOT_FOUND = Object.freeze({ error: "not_found", message: "Booking not found." });
 
 /** The router, over injectable dependencies (tests pass an in-memory store and the fake provider). */
 export function createRentABuddyPaymentsRouter(makeDeps: (sc: any) => PaymentSliceDeps = productionPaymentDeps): Router {
@@ -120,6 +139,7 @@ export function createRentABuddyPaymentsRouter(makeDeps: (sc: any) => PaymentSli
     if (!ctx) return;
     const tip = intOrUndefined(req.query?.["tipMinor"]);
     if (tip === null) return sendError(res, "invalid_payload", "tipMinor must be a non-negative integer of minor units");
+    if (!(await requireBookingParty(res, ctx.deps, ctx.userId, String(req.params.bookingId)))) return; // F2: a non-party gets the unknown-id 404
     send(res, await quoteBookingPayment(ctx.deps, { bookingId: String(req.params.bookingId), actorUserId: ctx.userId, tipMinor: tip }));
   }));
 

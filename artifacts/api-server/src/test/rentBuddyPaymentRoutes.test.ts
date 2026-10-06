@@ -24,8 +24,8 @@ import type { PaymentSliceDeps } from "../services/payments/bookingPayments/deps
 import { createMemoryLedger, createMemoryStore, partyIdFor, type MemoryLedger, type MemoryStore } from "./helpers/memoryBookingPayments.js";
 
 const LOCAL = { NODE_TEST_CONTEXT: "child-v8" } as unknown as NodeJS.ProcessEnv; // the test runner: a dev host no longer counts (N-2)
-const TOKENS: Record<string, string> = { "t-traveler": "traveler-1", "t-buddy": "buddy-user-1", "t-admin": "admin-1" };
-const ROLES: Record<string, string> = { "traveler-1": "user", "buddy-user-1": "user", "admin-1": "admin" };
+const TOKENS: Record<string, string> = { "t-traveler": "traveler-1", "t-buddy": "buddy-user-1", "t-admin": "admin-1", "t-stranger": "stranger-9" };
+const ROLES: Record<string, string> = { "traveler-1": "user", "buddy-user-1": "user", "admin-1": "admin", "stranger-9": "user" };
 
 let flags: Record<string, boolean>;
 let fake: FakePaymentProvider;
@@ -263,5 +263,31 @@ describe("money routes require an Idempotency-Key bound to the caller's payment 
     const c = await call("POST", "/api/rent-a-buddy/bookings/booking-1/payment/refund", "t-admin", { trigger: "support_decision", amountMinor: 500 }, "support-click-2");
     assert.equal(c.status, 202, JSON.stringify(c.body));
     assert.equal(store.refunds.size, 2);
+  });
+});
+
+// ── Verifier F2 (2026-10-06): authorise BEFORE any payment party is ensured ──
+describe("F2: a caller who is not a party to the booking creates nothing and learns nothing", () => {
+  const routes: Array<[string, string, string, unknown]> = [
+    ["checkout", "POST", "payment/checkout", { tipMinor: 0 }],
+    ["confirm", "POST", "payment/confirm", { paymentMethodRef: "fake_pm_card" }],
+    ["refund", "POST", "payment/refund", { trigger: "cancelled_before_service" }],
+    ["quote", "GET", "payment/quote", undefined],
+  ];
+  for (const [name, method, tail, body] of routes) {
+    it(`${name}: a stranger on a REAL booking gets the same 404 as on an unknown id, and no party, account or payment is created`, async () => {
+      const real = await call(method, `/api/rent-a-buddy/bookings/booking-1/${tail}`, "t-stranger", body);
+      const unknown = await call(method, `/api/rent-a-buddy/bookings/booking-does-not-exist/${tail}`, "t-stranger", body);
+      assert.equal(real.status, 404, JSON.stringify(real.body));
+      assert.deepEqual([real.status, real.body], [unknown.status, unknown.body], "no 403/404 oracle");
+      assert.equal(store.parties.has("stranger-9"), false, "no payment party was ensured for a stranger");
+      assert.equal(store.payments.size, 0);
+      assert.equal(store.refunds.size, 0);
+    });
+  }
+  it("control: the traveller on the same booking is not refused as a stranger", async () => {
+    const r = await call("POST", "/api/rent-a-buddy/bookings/booking-1/payment/checkout", "t-traveler", { tipMinor: 0 });
+    assert.notEqual(r.status, 404, JSON.stringify(r.body));
+    assert.equal(store.parties.has("traveler-1"), true, "the traveller's own party is bound to their key");
   });
 });
