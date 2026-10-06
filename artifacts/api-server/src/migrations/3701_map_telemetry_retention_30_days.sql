@@ -1,6 +1,8 @@
 -- 3701_map_telemetry_retention_30_days.sql
--- Per-user map telemetry is kept 30 days, not 90 (owner decision Q11(a), 2026-10-04;
--- OD-INPUT-2's 30 days for per-user counters).
+-- Per-user map telemetry is kept 30 days, not 90. Basis: owner decision OD-INPUT-2
+-- (30 days for per-user behavioural counters, unconditional); the Discovery
+-- ruling Q11(a) (30 days for raw behavioural rows, a PROPOSED default pending
+-- legal review) is the analogue, not the authority.
 --
 -- POST-CUTOVER CANONICAL FORWARD MIGRATION (lane L band 3700-3719). APPLIED TO
 -- NO DATABASE by the lane that wrote it. Sequenced by the integration owner.
@@ -17,13 +19,15 @@
 -- map_telemetry_retention_enabled) deletes a row once expires_at has passed.
 -- Each map_telemetry_events row is a raw behavioural event stamped with the
 -- viewer's id (viewer_id, from the bearer token); each map_telemetry_drops row
--- is per-viewer, per-session drop accounting. The owner's ruling
--- (docs/ops/owner-decisions-20261004.md):
---
---   "Set Q11(a) raw behavioural-row retention to 30 days, then delete the
---    identifiable raw rows; retain only irreversibly aggregated data where
---    needed. Treat 30 days as the proposed product default pending the
---    required legal review."
+-- is per-viewer, per-session drop accounting. No owner decision names Map
+-- telemetry. The closest is OD-INPUT-2 (docs/ops/owner-decisions-20261004.md),
+-- for per-user outcome counters: "Retain for 30 days, then delete or
+-- irreversibly aggregate." Its analogue Q11(a) answers a Discovery question
+-- (recommendations, rank_events dwell, ranking_debug_samples) and is itself a
+-- proposed default "pending the required legal review", so it is cited here
+-- only as agreeing, never as the authority. The change only tightens privacy
+-- and contradicts no ruling: OD-MAP-7's 180 days is for contributions, and
+-- docs/ops/retention-policy.md's 90 days is the orphan-quarantine window.
 --
 -- So the default becomes 30 days on both tables, and any row already stamped
 -- with a later expiry is brought back to received_at + 30 days (production held

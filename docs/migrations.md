@@ -4078,8 +4078,8 @@ no local PostgreSQL here, so not run by the lane). **Activation** is the owner's
 |---|---|---|
 | `3701_map_telemetry_retention_30_days.sql` | **not applied** | **not applied** |
 
-**What it is.** The owner's Q11(a) ruling (`docs/ops/owner-decisions-20261004.md`: raw behavioural rows
-kept 30 days, then deleted) against 2202's 90-day `expires_at` DEFAULT on `map_telemetry_events` and
+**What it is.** Owner decision OD-INPUT-2's 30 days for per-user behavioural data (`docs/ops/owner-decisions-20261004.md`;
+the Discovery ruling Q11(a) agrees and is only the analogue — it is a proposed default pending legal review) against 2202's 90-day `expires_at` DEFAULT on `map_telemetry_events` and
 `map_telemetry_drops` (both per-viewer). 3701 sets both defaults to `now() + 30 days` and shortens any
 row stamped later to `received_at + 30 days` (never lengthens one). 2960's sweep already deletes on
 `expires_at`, so it now deletes at 30 days. The viewer-less disabled-discard counter (2964) is untouched.
