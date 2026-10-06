@@ -379,7 +379,7 @@ on `src/test/tripCrewRlsMembershipConvergence.test.ts`, a sibling's Trips file, 
 | Gaming / Cap / Restriction / Recovery built but never invoked | Gaming: **runs every 6 h on empty inputs.** Cap: **never invoked** (needs an admin confirm; 0 ever). Restriction: **read every request, never written.** Recovery: runs. (§3) |
 | `trustMaintenanceScheduler` registered and fires | **TRUE, with production evidence** (§2 C25). |
 | (second pass) Nine of the 13 unproduced types have "no triggering action anywhere" | **FALSE for three** (`plan_no_show` — owner override `routes/geofence.ts:1150#no_show`, on the owner-gated `POST /trips/:tripId/geofence/attendance/:userId/override` (`routes/geofence.ts:1044`, gate `routes/geofence.ts:1077`); `host_positive_review` / `host_negative_review` — `routes/reviews.ts:199`), **partly for four** (raw signal, no adjudication), **TRUE for two** (`event_host_no_show`, `plan_late_cancel`). [trust-unproduced-vocabulary.md](trust-unproduced-vocabulary.md) §0. |
-| (second pass) `plan_attendance_events` is read/written by four files | `routes/geofence.ts:154` writes; `routes/admin.ts:621#.from("plan_attendance_events")` and `TrustGamingDetectionService.ts:325#.from("plan_attendance_events")` read; `lib/crowdFlowProducer.ts` names it in comments only (`:152`, `:361`). 0 rows in production. |
+| (second pass) `plan_attendance_events` is read/written by four files | `routes/geofence.ts:154` writes; `routes/admin.ts:622#.from("plan_attendance_events")` and `TrustGamingDetectionService.ts:325#.from("plan_attendance_events")` read; `lib/crowdFlowProducer.ts` names it in comments only (`:152`, `:361`). 0 rows in production. |
 
 ---
 

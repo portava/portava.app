@@ -2378,7 +2378,7 @@ OD-TRUST-8's three clauses, against this tree:
 
 | clause | state |
 | --- | --- |
-| on-device by default | the native adapter asks for on-device recognition (`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:260#requiresOnDeviceRecognition: config.requiresOnDeviceRecognition,`), but **no speech module is a dependency of this app**, so on the hosted iOS/Android build the control answers "unavailable". Lane D's branch makes both adapters refuse rather than fall back to a server (its OD-INPUT-5 commit); not on this tree. |
+| on-device by default | the native adapter asks for on-device recognition (`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:403#requiresOnDeviceRecognition: onDeviceOnly,` *(cited at `:260` with the text `requiresOnDeviceRecognition: config.requiresOnDeviceRecognition,` until #630 rewrote the adapter; repointed 2026-10-06 by reading the claim — the adapter now derives the flag from the absence of cloud consent, see §23)*), but **no speech module is a dependency of this app**, so on the hosted iOS/Android build the control answers "unavailable". Lane D's branch makes both adapters refuse rather than fall back to a server (its OD-INPUT-5 commit); not on this tree. |
 | push-to-talk | built and pinned (§21.2) |
 | separate ask before audio leaves; no raw audio kept | no path on the Wall can send audio off the device and nothing receives audio at all — the port returns text. If a cloud path is ever added, its separate consent belongs in front of it. |
 
