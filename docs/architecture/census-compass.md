@@ -4364,15 +4364,15 @@ census-highlights-memories §AE grades that half.
 
 `artifacts/api-server/src/test/compass-live-intel.test.ts` gains two suites:
 
-- the identity rule — `artifacts/api-server/src/test/compass-live-intel.test.ts:342#same name within 150 m → verified live`,
-  `artifacts/api-server/src/test/compass-live-intel.test.ts:350#same name just past 150 m → not verified`,
-  `artifacts/api-server/src/test/compass-live-intel.test.ts:356#same name 2 km away → not verified`,
-  `artifacts/api-server/src/test/compass-live-intel.test.ts:361#different name at the same coordinates → not verified`,
-  `artifacts/api-server/src/test/compass-live-intel.test.ts:371#the second result is used when the first is a namesake elsewhere`,
-  `artifacts/api-server/src/test/compass-live-intel.test.ts:399#null anchor → the provider is not asked and the answer is null`,
-  and the cache crossing anchors in both orders (`artifacts/api-server/src/test/compass-live-intel.test.ts:418#the cache does not cross anchors`);
-- the tool — `artifacts/api-server/src/test/compass-live-intel.test.ts:437#passes the row's own coordinates and never returns them on the place`
-  and `artifacts/api-server/src/test/compass-live-intel.test.ts:449#a namesake 2 km away gives no verified-live label`.
+- the identity rule — `artifacts/api-server/src/test/compass-live-intel.test.ts:344#same name within 150 m → verified live`,
+  `artifacts/api-server/src/test/compass-live-intel.test.ts:352#same name just past 150 m → not verified`,
+  `artifacts/api-server/src/test/compass-live-intel.test.ts:358#same name 2 km away → not verified`,
+  `artifacts/api-server/src/test/compass-live-intel.test.ts:363#different name at the same coordinates → not verified`,
+  `artifacts/api-server/src/test/compass-live-intel.test.ts:373#the second result is used when the first is a namesake elsewhere`,
+  `artifacts/api-server/src/test/compass-live-intel.test.ts:401#null anchor → the provider is not asked and the answer is null`,
+  and the cache crossing anchors in both orders (`artifacts/api-server/src/test/compass-live-intel.test.ts:420#the cache does not cross anchors`);
+- the tool — `artifacts/api-server/src/test/compass-live-intel.test.ts:439#passes the row's own coordinates and never returns them on the place`
+  and `artifacts/api-server/src/test/compass-live-intel.test.ts:451#a namesake 2 km away gives no verified-live label`.
 
 Mutation-proved one at a time (revert → red → restore, tree clean after each): removing the distance
 test, the name test, the anchor guard, the anchor from the cache key or the `ll` centre; going back to
@@ -4402,3 +4402,42 @@ live events, route time — are untouched, so the row stays `W` for the vendor r
   place so a change is one visible line.
 
 - NOT-GRADED: artifacts/api-server/src/test/compass-live-intel.test.ts — §37.3 names the Phase 8 suite that holds D-67's identity rule and the get_place_details anchor; controlled evidence for a section that moves no verdict
+
+## §38 — 2026-10-06 (mission lane N7, lead follow-up): `get_place_details` reports a failed catalog read as unreadable, never as "Place not found" — NO VERDICT MOVES
+
+Same branch as §37. `head_commit` is **NOT** re-declared. Controlled evidence only: the Phase 8
+suite's fake PostgREST client now resolves a named table's read the way supabase-js reports a
+failure, `{ data: null, error }`.
+
+### 38.1 The defect
+
+`get_place_details` answered `if (error || !data)` with `{ place: null, info: "Place not found." }`.
+A failed `discovery_places` read therefore came back as a settled claim that the place does not
+exist, and the model relays a tool's denial to the person as fact. `add_to_trip` had already been
+fixed for the same read shape (`artifacts/api-server/src/compass/CompassTools.ts:1695#AN OUTAGE IS NOT A FINDING.`);
+this tool had not.
+
+### 38.2 The fix
+
+A failed read now returns `unreadable: true` with an info line that says the outage is temporary and
+is not a statement about the place. Only no error AND no row is `"Place not found."`
+(`artifacts/api-server/src/compass/CompassTools.ts:1113#if (error || !data) return error ? { place: null, unreadable: true`).
+The tool's description tells the model the difference
+(`artifacts/api-server/src/compass/CompassTools.ts:220#\`unreadable: true\` means the catalog could not be read right now`).
+Both edits replace a line with a line, so no citation into this file moves. Neither path asks the
+live source.
+
+### 38.3 Tests and mutation proofs
+
+- `artifacts/api-server/src/test/compass-live-intel.test.ts:473#a failed discovery_places read says unreadable and asks no live source`
+  — red when the tool answers a failed read as "Place not found." again.
+- `artifacts/api-server/src/test/compass-live-intel.test.ts:484#a real miss (no error, no row) is still 'Place not found.'`
+  — red when the tool answers every null as unreadable.
+
+Each was mutation-proven (revert → red → restore, tree clean after).
+
+### 38.4 Rows
+
+No row in this census cites `get_place_details`' miss branch. The fix sits under the same master
+invariant §21 and §35 enforced elsewhere: a failed read is never an absence. **0 up, 0 down.** The
+headline is §36.5's.
