@@ -43,6 +43,7 @@ import { logger as rootLogger } from "../../lib/logger.js";
 import { publishToThread } from "../../lib/telegraphEvents.js"; import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../../lib/telegraphThreadWrite.js";
 import { messageKernelEnabled } from "../../services/telegraphMessageKernel.js";
 import { createCoordinationSession } from "../../services/telegraph/coordinationSessions.js";
+import { guardTelegraphThreadWrite } from "../../lib/telegraphThreadWrite.js";
 import { unsendBeforeSeen } from "../../services/telegraph/unsend.js";
 import {
   ISSUABLE_COMMANDS,
@@ -194,6 +195,39 @@ router.post(
      * is where a generic retry wrapper would put it.
      */
     if (type === "CREATE_COORDINATION_SESSION") {
+      /**
+       * THE SAME WRITER HAS TWO DOORS, AND THIS ONE WAS THE WEAKER.
+       *
+       * `createCoordinationSession` writes a `messages` row, and
+       * `lib/telegraphThreadWrite.ts` opens by stating the rule this broke: "A
+       * second write endpoint that skipped one of them would be a weaker door
+       * into the same table." Its four gates are the kill switch, ACTIVE
+       * membership, the 1:1 block guard and the E2EE refusal. The coordination
+       * route applies all four (`routes/telegraphCoordination.ts:335`). This
+       * endpoint applied only the second, and `coordinationSessions.ts:151-157`
+       * recorded the asymmetry as a fact without noticing it was a hole, so all
+       * three of these were reachable by posting the command here:
+       *
+       *   - `disable_messaging` ENGAGED, and the write still lands. An operator
+       *     reaching for the stop does not stop this.
+       *   - A 1:1 thread where the other person has BLOCKED the caller. Blocking
+       *     deliberately leaves the thread open and is re-checked per send, so
+       *     skipping the check is not "already handled upstream".
+       *   - An E2EE thread. The envelope is `JSON.stringify`d plaintext
+       *     (`coordinationSessions.ts:209`), and an E2EE thread's whole promise
+       *     is that the server never stores plaintext.
+       *
+       * The membership check above is kept rather than folded into the guard:
+       * it answers `TELEGRAPH_AUTH_NOT_MEMBER`, which is the refusal this
+       * endpoint's callers read, while the guard reports a block and a
+       * non-member with the same `forbidden` code. One extra indexed lookup on
+       * this one command buys keeping both sentences distinct.
+       */
+      const guard = await guardTelegraphThreadWrite(sc, conversationId, user.id);
+      if (!guard.ok) {
+        sendError(res, guard.code, guard.message);
+        return;
+      }
       const envelopeKey = typeof body["idempotency_key"] === "string" ? body["idempotency_key"] : "";
       const paramKey = typeof params["idempotencyKey"] === "string" ? (params["idempotencyKey"] as string) : "";
       const created = await createCoordinationSession(sc, {

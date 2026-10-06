@@ -151,10 +151,20 @@ function partition(rows: any[]) {
 /**
  * §13.1 `CREATE_COORDINATION_SESSION`.
  *
- * The caller has ALREADY established that the actor may write to this thread —
- * `guardTelegraphThreadWrite` on the coordination route, active membership on
- * the command route. This function does not re-authorize, and says so here
- * rather than leaving a reader to assume either way.
+ * The caller has ALREADY established that the actor may write to this thread,
+ * through `guardTelegraphThreadWrite` — on the coordination route
+ * (`routes/telegraphCoordination.ts:335`) and, since 2026-10-03, on the command
+ * route (`server/telegraph/commandRoute.ts`) as well. This function does not
+ * re-authorize, and says so here rather than leaving a reader to assume either
+ * way.
+ *
+ * Until 2026-10-03 this comment read "active membership on the command route",
+ * which was accurate and was the defect: it recorded that one of the two doors
+ * into the same table applied one of the four gates, without noticing that the
+ * other three — the `disable_messaging` stop, the 1:1 block guard and the E2EE
+ * plaintext refusal — were therefore reachable past by posting
+ * CREATE_COORDINATION_SESSION to the command endpoint. A note that states an
+ * asymmetry is not a note that sanctions it.
  */
 export async function createCoordinationSession(
   client: SupabaseClient,
