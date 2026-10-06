@@ -37,7 +37,7 @@
  * (census L50) and this module deliberately leaves it open: it publishes the
  * verdict and the per-candidate rating, and no caller's filtering changed.
  */
-import type { EntryEligibility } from "./layoverEntryGate.js"; import { engineSession, gateLandside, namedConstraintInputs, type ConstraintInput, type LandsideGate, type LandsidePolicyInput, type SessionConstraintContext } from "./LayoverConstraints.js"; // same line: this file's lines are citation-anchored
+import type { EntryEligibility } from "./layoverEntryGate.js"; import { engineSession, gateForVerdict, gateLandside, namedConstraintInputs, type ConstraintInput, type LandsideGate, type LandsidePolicyInput, type SessionConstraintContext } from "./LayoverConstraints.js"; // same line: this file's lines are citation-anchored
 import { createHash } from "node:crypto";
 import type { AirportProfile } from "./AirportProfileService.js";
 import type { LayoverSession } from "./LayoverSessionService.js";
@@ -81,7 +81,7 @@ import { statedTravelMin } from "./LayoverPlanFit.js";
  *                 shape's version moved; the arithmetic gained a term, so
  *                 `LAYOVER_ENGINE_VERSION` moved too and for its own reason.
  */
-export const LAYOVER_FEASIBILITY_VERSION = "2026.10.04-1"; // 2026.10.04-1: optional `constraints` / `policy` named inputs and `landsideGate` — history entry in LayoverConstraints.ts
+export const LAYOVER_FEASIBILITY_VERSION = "2026.10.06-1"; // 2026.10.06-1: `landsideGate` gains `status` / `cautions` and `open` narrows to the verdict `yes`; `constraints.read` may be `undeclared` — history (and 2026.10.04-1) in LayoverConstraints.ts
 
 // ── §6.2 Estimate representation ─────────────────────────────────────────────
 
@@ -612,7 +612,7 @@ function liveExtraEstimate(live: LiveConditions | null, minutes: number): Estima
  * `inputHash` an identity rather than a decoration.
  */
 export function certifyFeasibility(inputs: FeasibilityInputs): LayoverFeasibilityRecord {
-  const { airport, nowMs } = inputs; const session = engineSession(inputs.session, inputs.constraints); // the declared baggage mode replaces the boolean HERE, once, for every term below
+  const { airport, nowMs } = inputs; const session = engineSession(inputs.session, inputs.constraints); // what the constraint input charges (declared bag mode, separate tickets) replaces the boolean HERE, once, for every term below
 
   const live = inputs.liveConditions;
 
@@ -955,6 +955,6 @@ export function certifyFeasibilityWithReturnCorridor(
     verdict: adjusted.verdict,
     reasons: adjusted.reasons,
     unknowns: adjusted.unknowns,
-    reasonCodes: adjusted.reasonCodes,
+    reasonCodes: adjusted.reasonCodes, landsideGate: gateForVerdict(base.landsideGate, adjusted.verdict), // a verdict the corridor withdrew takes the open gate with it
   };
 }

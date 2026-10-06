@@ -124,7 +124,7 @@ import {
 } from "./LayoverEventReplanner.js";
 import { snapshotIdFor } from "./layoverLedger.js"; import { resolveLayoverEntry, layoverAirportCountry } from "./layoverEntryGate.js";
 import { safeReturnPosture, type SafeReturnPosture } from "./LayoverSafeReturnService.js"; import { isFlagEnabled } from "../../lib/featureFlags.js";
-import { airportPoint, placePoint } from "./LayoverTravelTime.js";
+import { airportPoint, placePoint } from "./LayoverTravelTime.js"; import { landsideStatusOf } from "./LayoverConstraints.js";
 import type { LayoverReasonCode, ReturnCorridorRisk } from "./LayoverSafetyEngine.js";
 import {
   straightLineTravelTimeProvider,
@@ -376,7 +376,7 @@ export async function certifiedLayoverSnapshot(
       case "yes":
       case "tight":
       case "entry_unverified":
-        return false;
+        return landsideStatusOf(record) === "closed"; // the one gate read every surface shares: a closure always arrives as verdict `no` too, and this holds the two together by construction rather than by that coincidence
       default: {
         // A verdict added later and not considered here is forbidden, not open.
         const _exhaustive: never = record.verdict;

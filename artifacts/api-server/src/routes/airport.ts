@@ -51,9 +51,9 @@ import { postPlainThreadMessage } from "../lib/threadMessage.js";
 import { isPostPublished } from "../lib/postVisibility.js";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
 import {
-  planFitTotals,
-  planFitVerdict,
-} from "../services/airport/LayoverPlanFit.js";
+  // LAY-FIX: the clock AND the landside gate, in one function every plan surface calls.
+  certifiedPlanFit, // (was `planFitTotals` / `planFitVerdict` from LayoverPlanFit — the clock alone)
+} from "../services/airport/LayoverConstraints.js";
 import {
   resolveByIata,
   resolveByGps,
@@ -1946,22 +1946,22 @@ async function stopsOr503(sc: any, res: any, sessionId: string): Promise<any[] |
  * the wire because clients read it; it now carries the narrower claim.
  */
 function computePlanFit(record: LayoverFeasibilityRecord, stops: any[]) {
-  const window = record.envelope;
-  const totals = planFitTotals(stops);
-  const fit = planFitVerdict(totals, window.usableMinutes);
-  return {
-    totalPlannedMin: totals.totalPlannedMin,
-    returnTravelMin: totals.returnTravelMin,
-    neededMin:       totals.neededMin,
-    usableMinutes:   window.usableMinutes,
-    fitsWindow:      fit === "fits",
-    fit,
-    unstatedTravelStops:   totals.unstatedTravelStops,
-    unstatedDurationStops: totals.unstatedDurationStops,
-    neededMinIsLowerBound: totals.neededMinIsLowerBound,
-    overflowMin:     Math.max(0, totals.neededMin - window.usableMinutes),
-    backByTime:      window.hardReturnTime.toISOString(),
-  };
+  // THE GATE AS WELL AS THE CLOCK (LAY-FIX, after PR #588's verification).
+  // This used to read `record.envelope.usableMinutes` and nothing else — and
+  // the usable window is the same number whether or not the traveller may
+  // leave the airport. A refused border, a declared airport change and an
+  // unreadable constraint store all certify with hours of "usable" time, so a
+  // plan through the city came back `fit: "fits"` beside `verdict: "no"`.
+  //
+  // `certifiedPlanFit` (services/airport/LayoverConstraints.ts) is the one
+  // function this route, Compass `simulatePlan` and the crew solver now share.
+  // It publishes every field this function did, with the same names, plus:
+  //   fit          gains `blocked` (landside stop + CLOSED gate) and
+  //                `unconfirmed` (landside stop, fits the clock, gate not OPEN)
+  //   clockFit     what the clock alone says
+  //   landside     { status, closedBy, cautions } — so the client can say WHY
+  // `fitsWindow` stays on the wire and is TRUE only for `fit === "fits"`.
+  return certifiedPlanFit(record, stops);
 }
 
 /**

@@ -86,7 +86,7 @@ describe("certifiedLayoverSnapshot certifies with the airport routes' entry inpu
       ["no curated corridor",          world({ corridor: null }),     {}, "no_data_for_corridor"],
       ["traveler_passports unreadable", world(), { "traveler_passports:select": { message: "down" } }, "corridor_unreadable"],
       ["entry_requirements unreadable", world(), { "entry_requirements:select": { message: "down" } }, "corridor_unreadable"],
-      ["feature_flags unreadable",     world(), { "feature_flags:select": { message: "down" } }, "entry_intelligence_disabled"],
+      // LAY-FIX: `feature_flags unreadable` was the sixth row here, asserted `entry_unverified` with landside OPEN. It is its own case at the foot of this file — the two landside-constraint flags live in that table, and an unreadable one must CLOSE the gate. (Kept as a comment line: line 99 below is cited.)
     ];
     for (const [label, tables, failures, reason] of cases) {
       const { s } = await snap(tables, failures);
@@ -131,5 +131,34 @@ describe("certifiedLayoverSnapshot certifies with the airport routes' entry inpu
         : { state: routeEntry.state, status: routeEntry.status, corridor: routeEntry.corridor };
       assert.deepEqual((s.certifiedRecord as any).inputs.entry, expected, String(status));
     }
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// LAY-FIX — appended at the foot: line 99 above is cited and may not move.
+// ═════════════════════════════════════════════════════════════════════════════
+describe("an unreadable `feature_flags` is not a data gap that leaves landside open", () => {
+  // MOVED OUT OF THE "data gap" TABLE, where it was asserted `entry_unverified`
+  // with `landsideOpen === true`. An unreadable `feature_flags` is not only an
+  // ENTRY data gap: the two landside-constraint flags are in the same table,
+  // and for both ON is the restrictive state — so "could not read" was being
+  // taken as "nothing declared, nothing forbidden" (PR #588 blocker 3). The
+  // entry half is unchanged and still asserted; the gate now closes, by name,
+  // instead of standing open on a failed read.
+  it("the entry input is the same unresolved one, and the gate CLOSES on the constraint flags it could not read", async () => {
+    const { s } = await snap(world(), { "feature_flags:select": { message: "down" } });
+    assert.deepEqual((s.certifiedRecord as any).inputs.entry, { state: "unresolved", reason: "entry_intelligence_disabled" });
+    assert.equal(s.verdict, "no");
+    assert.equal(s.landsideOpen, false);
+    assert.ok((s.certifiedRecord as any).landsideGate.closedBy.includes("constraints_unreadable"));
+    assert.equal((s.certifiedRecord as any).landsideGate.constraintsRead, "unreadable");
+  });
+
+  it("CONTROL: the same world with the flags READABLE is the data gap it always was — `entry_unverified`, landside not forbidden", async () => {
+    const { s } = await snap(world({ flag: false }));
+    assert.equal(s.verdict, "entry_unverified");
+    assert.equal(s.landsideOpen, true);
+    assert.deepEqual((s.certifiedRecord as any).landsideGate.closedBy, []);
+    assert.equal((s.certifiedRecord as any).landsideGate.open, false, "not forbidden is not affirmed");
   });
 });
