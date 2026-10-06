@@ -135,7 +135,7 @@ export const TELEGRAPH_PROJECTIONS: readonly TelegraphProjection[] = [
       "state for the plan being coordinated, the latest USER-DECLARED quick state per " +
       "member with arrival counts, the rendezvous, decisions and commitments — served " +
       "per thread — and the safety-relevant state from GET /threads/:threadId/safety-mode " +
-      "in the same route module. `partial` for one stated reason: ETA is only what a " +
+      "in the same route module. `partial` and not `built` for one stated reason: ETA is only what a " +
       "member declares (ON_MY_WAY / RUNNING_LATE); there is no system-derived ETA " +
       "(census T27, T1's range), and §9.1 forbids presenting the one as the other.",
   },
