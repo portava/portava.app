@@ -22,14 +22,21 @@
  *   X1-X2  severed and "the entries do not say" are different states and are
  *          not reported under one reason;
  *   C1-C2  a severed row's chain is REFUSED, never answered as empty — a read
- *          that cannot establish the chain is not a chain of length zero.
+ *          that cannot establish the chain is not a chain of length zero;
+ *   K H P U B  the verifier's findings F1, F3-F6 on PR #594 (2026-10-06): 3600's
+ *          CL452 is `identity_severed`, the route answers it 409, severed is
+ *          checked first on every plan, an absent or malformed column is a read
+ *          fault and never "severed", and booking settles WHO before reading on.
  *
  * Run: node --import tsx/esm --test src/test/creatorLedgerSeveredIdentity.test.ts
  */
-import { describe, it } from "node:test";
+import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
+import http from "node:http";
+import express from "express";
 import {
   beneficiaryIsNamed,
+  beneficiaryState,
   isIdentitySevered,
   type AttributionRow,
 } from "../lib/creatorLedgerStatus.js";
@@ -45,9 +52,15 @@ import {
   type CreatorLedgerEntry,
 } from "../lib/creatorLedgerEntries.js";
 import {
+  bookCreatorEarningUnderRule,
+  classifyDbError,
   readAttributionChain,
   recordCreatorAttribution,
 } from "../services/creators/CreatorAttributionService.js";
+import { reverseCreatorTransaction } from "../services/creators/CreatorLedgerOperations.js";
+import adminCreatorLedgerRouter from "../routes/adminCreatorLedger.js";
+import { _setTestClient, _clearTestClient } from "../lib/http.js";
+import { makeRulesDb } from "./helpers/fakeTrailRulesDb.js";
 
 const CREATOR = "11111111-1111-4111-8111-111111111111";
 const OTHER = "22222222-2222-4222-8222-222222222222";
@@ -532,5 +545,234 @@ describe("R — a key replayed onto a severed record", () => {
     assert.equal(r.ok, false);
     assert.ok(!r.ok);
     assert.equal(r.reason, "conflicting_replay", "a real disagreement is still reported as one");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Verifier findings on PR #594 (2026-10-06), each pinned here:
+//   K  (F1) the database's own CL452 refusal is a decision, `identity_severed`,
+//          never `db_error` — through the classifier AND through the reverse door;
+//   H  (F3) the admin route answers `identity_severed` 409, not 5xx;
+//   P  (F4) severed is checked BEFORE every other state, on release and recompute;
+//   U  (F5) an ABSENT or malformed column is a read fault, never "severed", and
+//          "named" means a uuid — both directions;
+//   B  (F6) the booking path settles WHO before it reads anything else.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const AID = "44444444-4444-4444-8444-444444444444";
+const ADMIN_ID = ADMIN.userId;
+
+/** A CL452 error exactly as 3600's triggers raise it, as PostgREST hands it back. */
+const cl452 = (token: string) => ({
+  code: "CL452",
+  message: `${token} — creator_earning_entries row refused: the record it extends belongs to a person whose identity was removed`,
+  details: null,
+});
+
+function ledgerWorld(over: { attributions?: Record<string, unknown>[]; entries?: Record<string, unknown>[]; append?: () => { data: any; error: any } } = {}) {
+  return makeRulesDb(
+    {
+      profiles: [{ id: ADMIN_ID, role: "admin", account_status: "active" }],
+      feature_flags: [{ flag: "creator_attribution_enabled", enabled: true }],
+      creator_attributions: (over.attributions ?? []) as any[],
+      creator_earning_entries: (over.entries ?? []) as any[],
+    },
+    { rpc: { creator_ledger_append: over.append ?? (() => ({ data: null, error: cl452("creator_ledger_subject_pseudonymised") })) } },
+  );
+}
+
+/** Two legs of one transaction whose creator leg was pseudonymised (beneficiary NULL). */
+const severedTxnEntries = [
+  {
+    id: "e-creator", transaction_key: "txn-1", creator_type: "travel_partner", attribution_id: "a1",
+    account: "creator_payable", entry_reason: "earning", revenue_source: "booking_commission",
+    amount_minor: 7000, currency: "USD", rule_version: RULE, beneficiary_user_id: null,
+    reverses_entry_id: null, idempotency_key: "txn-1#0",
+  },
+  {
+    id: "e-platform", transaction_key: "txn-1", creator_type: "travel_partner", attribution_id: "a1",
+    account: "platform_receivable", entry_reason: "earning", revenue_source: "booking_commission",
+    amount_minor: -7000, currency: "USD", rule_version: RULE, beneficiary_user_id: null,
+    reverses_entry_id: null, idempotency_key: "txn-1#1",
+  },
+];
+
+describe("K — 3600's CL452 is a decision about a severed record, not a fault (F1)", () => {
+  it("K1. classifyDbError maps every CL452 token, and the bare SQLSTATE, to identity_severed", () => {
+    for (const token of ["creator_ledger_subject_pseudonymised", "creator_ledger_pseudonym_on_insert", "creator_ledger_retained"]) {
+      const r = classifyDbError(cl452(token));
+      assert.ok(!r.ok);
+      assert.equal(r.reason, "identity_severed", token);
+      // The token alone (a client that drops the code) is still recognised.
+      const noCode = classifyDbError({ message: cl452(token).message });
+      assert.ok(!noCode.ok);
+      assert.equal(noCode.reason, "identity_severed", `${token} without a code`);
+    }
+    const bare = classifyDbError({ code: "CL452", message: "refused" });
+    assert.ok(!bare.ok);
+    assert.equal(bare.reason, "identity_severed", "the SQLSTATE decides even when the message is unfamiliar");
+    // Controls: the neighbours keep their own meaning.
+    const c409 = classifyDbError({ code: "CL409", message: "conflict" });
+    assert.ok(!c409.ok);
+    assert.equal(c409.reason, "conflicting_replay");
+    const other = classifyDbError({ code: "XX000", message: "something broke" });
+    assert.ok(!other.ok);
+    assert.equal(other.reason, "db_error");
+  });
+
+  it("K2. the reverse door reaches the database and reports its CL452 as identity_severed", async () => {
+    const db = ledgerWorld({ entries: severedTxnEntries });
+    const r = await reverseCreatorTransaction(db as any, { transactionKey: "txn-1", reason: "chargeback", actor: ADMIN });
+    assert.ok(!r.ok);
+    assert.equal(r.reason, "identity_severed", `got ${r.reason}`);
+    assert.notEqual(r.reason, "db_error", "a 500 would tell the caller to retry something that can never succeed");
+    assert.equal(db.writes.filter((w) => w.op === "rpc" && w.table === "creator_ledger_append").length, 1,
+      "this door is decided by the database, so the append is attempted once and its refusal classified");
+  });
+});
+
+describe("H — the admin route answers identity_severed with 409 (F3)", () => {
+  const app = express();
+  app.use(express.json());
+  app.use(adminCreatorLedgerRouter);
+  const server = http.createServer(app);
+  let base = "";
+  before(async () => {
+    await new Promise<void>((resolve, reject) => {
+      server.once("listening", () => resolve());
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1");
+    });
+    base = `http://127.0.0.1:${(server.address() as any).port}`;
+  });
+  after(() => { server.close(); _clearTestClient(); });
+  async function call(method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> {
+    const res = await fetch(`${base}${path}`, {
+      method,
+      headers: { authorization: `Bearer ${ADMIN_ID}`, "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const text = await res.text();
+    return { status: res.status, body: text ? JSON.parse(text) : null };
+  }
+
+  it("H1. reverse on a pseudonymised transaction: 409 identity_severed (the database decided)", async () => {
+    const db = ledgerWorld({ entries: severedTxnEntries });
+    _setTestClient(db as any, true);
+    const r = await call("POST", "/admin/creator-ledger/transactions/reverse", { transactionKey: "txn-1", reason: "chargeback" });
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(r.body.reason, "identity_severed");
+  });
+
+  it("H2. hold on a severed attribution: 409 identity_severed, refused before the database", async () => {
+    const db = ledgerWorld({ attributions: [{ ...attr({ beneficiary_user_id: null }), id: AID }] });
+    _setTestClient(db as any, true);
+    const r = await call("POST", `/admin/creator-ledger/attributions/${AID}/hold`, { reason: "circular_transactions" });
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(r.body.reason, "identity_severed");
+    assert.equal(db.writes.filter((w) => w.op === "rpc").length, 0, "nothing was sent to the ledger door");
+  });
+
+  it("H3. an UNREADABLE beneficiary is a fault (5xx), never a 409 about an erasure", async () => {
+    const { beneficiary_user_id: _omitted, ...withoutColumn } = { ...attr({}), id: AID };
+    const db = ledgerWorld({ attributions: [withoutColumn] });
+    _setTestClient(db as any, true);
+    const r = await call("GET", `/admin/creator-ledger/attributions/${AID}/audit`);
+    assert.equal(r.status, 500, JSON.stringify(r.body));
+    assert.notEqual(r.body?.reason, "identity_severed");
+  });
+});
+
+describe("P — severed is decided before any other state (F4)", () => {
+  it("P1. release on a severed row that is NOT held answers identity_severed, not not_held", () => {
+    const r = planRelease(attr({ beneficiary_user_id: null, fraud_hold: false, fraud_hold_reason: null }), "appeal_upheld", ADMIN);
+    assert.ok(!r.ok);
+    assert.equal(r.reason, "identity_severed");
+  });
+
+  it("P2. recompute on a severed row that IS held answers identity_severed, not recompute_while_held", () => {
+    const heldSevered = attr({ beneficiary_user_id: null, fraud_hold: true, fraud_hold_reason: "fake_visits" });
+    const r = planRecompute(
+      [heldSevered], [], heldSevered,
+      { ruleVersion: RULE_V2, figures: { grossRevenueMinor: 10_000, creatorShareMinor: 6000, platformFeeMinor: 2000 } },
+      "rule_republished", ADMIN,
+    );
+    assert.ok(!r.ok);
+    assert.equal(r.reason, "identity_severed");
+  });
+});
+
+describe("U — absent or malformed is unreadable, not severed; named means a uuid (F5)", () => {
+  const withoutColumn = (): AttributionRow => {
+    const { beneficiary_user_id: _omitted, ...rest } = attr({});
+    return rest as unknown as AttributionRow;
+  };
+
+  it("U1. the three states, both directions", () => {
+    assert.equal(beneficiaryState(attr({ beneficiary_user_id: null })), "severed");
+    assert.equal(beneficiaryState(attr({})), "named");
+    assert.equal(beneficiaryState(withoutColumn()), "unreadable", "a column that was not read is not an erasure");
+    for (const v of ["", "   ", "not-a-uuid", "null", 0, false]) {
+      assert.equal(beneficiaryState({ beneficiary_user_id: v }), "unreadable", JSON.stringify(v));
+      assert.equal(beneficiaryIsNamed({ beneficiary_user_id: v } as any), false, `${JSON.stringify(v)} is not a name`);
+      assert.equal(isIdentitySevered({ beneficiary_user_id: v } as any), false, `${JSON.stringify(v)} is not an erasure`);
+    }
+    assert.equal(isIdentitySevered(withoutColumn()), false);
+    assert.equal(beneficiaryIsNamed(withoutColumn()), false);
+  });
+
+  it("U2. the model and every plan refuse an unreadable row as beneficiary_unreadable, never identity_severed", () => {
+    for (const row of [withoutColumn(), attr({ beneficiary_user_id: "" }), attr({ beneficiary_user_id: "  " })]) {
+      const m = attributionModelFromRow(row);
+      assert.ok(!m.ok);
+      assert.equal(m.reason, "beneficiary_unreadable");
+      for (const plan of [
+        planHold(row, "circular_transactions", ADMIN),
+        planRelease({ ...row, fraud_hold: true, fraud_hold_reason: "x" }, "appeal_upheld", ADMIN),
+      ]) {
+        assert.ok(!plan.ok);
+        assert.equal(plan.reason, "beneficiary_unreadable");
+        assert.equal("payload" in plan, false, "no payload is built from an unreadable beneficiary");
+      }
+    }
+  });
+
+  it("U3. the chain read refuses an absent column as beneficiary_unreadable, without a second query", async () => {
+    const s = stubClient(withoutColumn() as unknown as Record<string, unknown>);
+    const r = await readAttributionChain(s.sc as any, "a1");
+    assert.ok(!r.ok);
+    assert.equal(r.reason, "beneficiary_unreadable");
+    assert.equal(s.queries, 1);
+  });
+
+  it("U4. a replay onto a row read without its beneficiary column is beneficiary_unreadable", async () => {
+    const { beneficiary_user_id: _omitted, ...rest } = {
+      ...attr({}), recommendation_id: null, gross_revenue_minor: 0, provisional_share_minor: 0,
+    };
+    const r = await recordCreatorAttribution(replayClient(rest as Record<string, unknown>) as any, replayInput);
+    assert.ok(!r.ok);
+    assert.equal(r.reason, "beneficiary_unreadable");
+    assert.notEqual(r.reason, "identity_severed");
+    assert.notEqual(r.reason, "conflicting_replay");
+  });
+});
+
+describe("B — the booking path settles WHO before it reads or writes anything else (F6)", () => {
+  it("B1. bookCreatorEarningUnderRule refuses a severed row before reading the rule, and writes nothing", async () => {
+    const db = ledgerWorld({ attributions: [{ ...attr({ beneficiary_user_id: null }), id: AID }] });
+    const r = await bookCreatorEarningUnderRule(db as any, AID);
+    assert.ok(!r.ok);
+    assert.equal(r.reason, "identity_severed");
+    assert.equal(db.reads.includes("creator_rule_versions"), false, "no rule is read for a record that names nobody");
+    assert.deepEqual(db.writes, [], "and nothing is written");
+    assertNoPhantomIdentity("bookCreatorEarningUnderRule(severed)", r);
+  });
+
+  it("B2. an unreadable beneficiary is refused the same way, as a read fault", async () => {
+    const db = ledgerWorld({ attributions: [{ ...attr({ beneficiary_user_id: "" }), id: AID }] });
+    const r = await bookCreatorEarningUnderRule(db as any, AID);
+    assert.ok(!r.ok);
+    assert.equal(r.reason, "beneficiary_unreadable");
+    assert.deepEqual(db.writes, []);
   });
 });

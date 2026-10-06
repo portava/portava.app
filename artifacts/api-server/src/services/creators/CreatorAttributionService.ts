@@ -86,6 +86,8 @@ import {
 } from "../../lib/creatorServedRecommendation.js";
 import { evaluateCreatorRule, type RuleEvaluationRefusal } from "../../lib/creatorRuleEvaluation.js";
 import {
+  beneficiaryIsNamed,
+  beneficiaryState,
   indexChains,
   isIdentitySevered,
   type AttributionRow,
@@ -183,6 +185,13 @@ const TRIGGER_REFUSALS: ReadonlyArray<[RegExp, CreatorServiceRefusal]> = [
   [/names no served exposure/, "recommendation_not_served"],
   [/recompute_while_held/, "recompute_while_held"],
   [/ca_one_supersede_per_row/, "stale_head"],
+  // 3600 (C-11 answer B, PR #592): SQLSTATE CL452. A pseudonymised record is
+  // frozen (`creator_ledger_subject_pseudonymised`), no row is inserted already
+  // carrying a pseudonym (`creator_ledger_pseudonym_on_insert`), and no ledger
+  // row is deleted (`creator_ledger_retained`). Each is the database's DECISION
+  // about a record whose identity was severed or is retained for that reason —
+  // the same 409 the plans answer before reaching it, never a retryable 500.
+  [/creator_ledger_subject_pseudonymised|creator_ledger_pseudonym_on_insert|creator_ledger_retained/, "identity_severed"],
 ];
 
 /**
@@ -197,6 +206,7 @@ export function classifyDbError(error: any): CreatorServiceResult<never> {
   const text = `${message} ${String(error?.details ?? "")}`;
   for (const [re, reason] of TRIGGER_REFUSALS) if (re.test(text)) return fail(reason, message);
   if (code === "CL409") return fail("conflicting_replay", message);
+  if (code === "CL452") return fail("identity_severed", message); // 3600's SQLSTATE, whatever the message says
   // Narrow on purpose: 2921's own trigger says "attribution % does not exist"
   // about a ROW, and that is a refused write, not an unapplied migration.
   if (code === "42P01" || code === "42883" || code === "PGRST202" ||
@@ -383,14 +393,20 @@ export async function recordCreatorAttribution(
       // `"null"`, which would differ from every real id and report this as
       // "already recorded with different content", a sentence about a conflict
       // that does not exist. Said plainly instead, before any comparison.
-      const existingBeneficiary = (existing as { beneficiary_user_id?: string | null }).beneficiary_user_id ?? null;
-      if (existingBeneficiary === null) {
+      const existingState = beneficiaryState(existing as { beneficiary_user_id?: unknown });
+      if (existingState === "severed") {
         return fail(
           "identity_severed",
           `attribution key ${row.idempotency_key} is recorded on a row whose beneficiary identity was erased; ` +
             `that record names nobody, so this write is neither its replay nor a second claim about it`,
         );
       }
+      // An ABSENT or malformed column is a read fault, not an erasure (verifier F5):
+      // `?? null` here used to turn "the column was not read" into "erased".
+      if (existingState === "unreadable") {
+        return fail("beneficiary_unreadable", `attribution key ${row.idempotency_key}: the recorded row's beneficiary_user_id could not be read`);
+      }
+      const existingBeneficiary = String((existing as { beneficiary_user_id: string }).beneficiary_user_id);
       // A REPLAY IS ONLY A REPLAY IF IT SAYS THE SAME THING. Same key with a
       // different recommendation, beneficiary or figures is a second claim about
       // one event, and answering it `replayed` would silently discard it. The
@@ -491,6 +507,10 @@ export async function bookCreatorEarningUnderRule(
   if (!row) return fail("not_found", attributionRowId);
   const a = row as AttributionRow;
   if (!isCreatorType(a.creator_type)) return fail("unknown_creator_type", String(a.creator_type));
+  // Who the earning is for is settled BEFORE anything else is read: a severed or
+  // unreadable beneficiary has no earning to price (verifier F6 pins this).
+  const model = attributionModelFromRow(a);
+  if (!model.ok) return fail(model.reason, model.detail);
   const params = await readRuleParams(sc, a.creator_type, a.rule_version);
   if (!params.ok) return params;
   const figures = evaluateCreatorRule(params.value, {
@@ -505,8 +525,6 @@ export async function bookCreatorEarningUnderRule(
         `${figures.value.creatorShareMinor}; it was not computed by the rule it names`,
     );
   }
-  const model = attributionModelFromRow(a);
-  if (!model.ok) return fail(model.reason, model.detail);
   return recordCreatorEarning(sc, String(a.id), model.model, figures.value);
 }
 
@@ -565,6 +583,11 @@ export async function readAttributionChain(
       `attribution ${attributionId}'s beneficiary identity was erased; its chain cannot be grouped by ` +
         `beneficiary_user_id, and an empty chain would misreport the row as never acted on`,
     );
+  }
+  // ABSENT OR MALFORMED IS NOT ERASED (verifier F5): a row read without its
+  // beneficiary column, or with one that is not a uuid, is a read fault.
+  if (!beneficiaryIsNamed(row as AttributionRow)) {
+    return fail("beneficiary_unreadable", `attribution ${attributionId} was read without a readable beneficiary_user_id`);
   }
   const { data, error: e2 } = await sc
     .from("creator_attributions")

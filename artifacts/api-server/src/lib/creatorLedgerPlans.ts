@@ -32,6 +32,7 @@ import { buildCreatorEarningEntries, type CreatorEarningInput } from "./creatorL
 import { isCreatorType } from "./creatorTypes.js";
 import {
   beneficiaryIsNamed,
+  isIdentitySevered,
   indexChains,
   toNum,
   type AttributionRow,
@@ -123,6 +124,12 @@ export type PlanRefusal =
    * from `unknown_attribution` (no such row) and from a read that failed.
    */
   | "identity_severed"
+  /**
+   * The row's beneficiary column is absent or not a uuid: a READ FAULT, not an
+   * erasure (creatorLedgerStatus.ts `beneficiaryState`). Never reported as
+   * `identity_severed`, and not a 409 decision — the caller answers it as a fault.
+   */
+  | "beneficiary_unreadable"
   | "refused_by_model";
 
 export type Plan =
@@ -166,10 +173,10 @@ export function normaliseReason(reason: unknown): string | null {
  */
 export type AttributionModel =
   | { ok: true; model: CreatorAttribution }
-  | { ok: false; reason: "identity_severed"; detail: string };
+  | { ok: false; reason: "identity_severed" | "beneficiary_unreadable"; detail: string };
 
 export function attributionModelFromRow(row: AttributionRow): AttributionModel {
-  if (!beneficiaryIsNamed(row)) {
+  if (isIdentitySevered(row)) {
     return {
       ok: false,
       reason: "identity_severed",
@@ -178,6 +185,7 @@ export function attributionModelFromRow(row: AttributionRow): AttributionModel {
         `row retained, so it has no party to compute an earning for`,
     };
   }
+  if (!beneficiaryIsNamed(row)) return unreadableBeneficiary(row);
   const creatorType = isCreatorType(row.creator_type) ? row.creator_type : ("travel_partner" as const);
   const basis = row.attribution_basis === "recorded_value_event" ? "recorded_value_event" : "seam_no_producer";
   const model: CreatorAttribution = {
@@ -228,10 +236,10 @@ export function attributionModelFromRow(row: AttributionRow): AttributionModel {
  */
 type Successor =
   | { ok: true; attribution: DoorAttribution }
-  | { ok: false; reason: "identity_severed"; detail: string };
+  | { ok: false; reason: "identity_severed" | "beneficiary_unreadable"; detail: string };
 
 function successorOf(head: AttributionRow): Successor {
-  if (!beneficiaryIsNamed(head)) {
+  if (isIdentitySevered(head)) {
     return {
       ok: false,
       reason: "identity_severed",
@@ -240,6 +248,7 @@ function successorOf(head: AttributionRow): Successor {
         `so there is no party for a successor to carry forward`,
     };
   }
+  if (!beneficiaryIsNamed(head)) return unreadableBeneficiary(head);
   const attribution: DoorAttribution = {
     creator_type: head.creator_type,
     subject_kind: head.subject_kind,
@@ -513,5 +522,19 @@ export function planRecompute(
         idempotency_key: `audit:recompute:${head.id}@${next.ruleVersion}`,
       },
     },
+  };
+}
+
+/**
+ * The column was absent or not a uuid (creatorLedgerStatus.ts `beneficiaryState`).
+ * A read fault, named as one: neither an erasure nor a party.
+ */
+function unreadableBeneficiary(row: AttributionRow): { ok: false; reason: "beneficiary_unreadable"; detail: string } {
+  return {
+    ok: false,
+    reason: "beneficiary_unreadable",
+    detail:
+      `attribution ${String(row.id)} carries no readable beneficiary_user_id (absent, or not a uuid); ` +
+      `that is a read fault, not an erased identity, and nothing is computed from it`,
   };
 }

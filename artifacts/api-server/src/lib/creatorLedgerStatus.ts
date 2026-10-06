@@ -126,12 +126,12 @@ export interface EarningEntryRow {
 export function beneficiaryIsNamed<T extends { beneficiary_user_id: string | null }>(
   row: T,
 ): row is T & { beneficiary_user_id: string } {
-  return typeof row.beneficiary_user_id === "string";
+  return beneficiaryState(row) === "named"; // a uuid; NULL is severed, anything else unreadable (foot)
 }
 
-/** `beneficiaryIsNamed`'s negation, for the callers that need only the state. */
+/** Exactly NULL: erased. NOT the negation of `beneficiaryIsNamed` — see `beneficiaryState`. */
 export const isIdentitySevered = (row: { beneficiary_user_id: string | null }): boolean =>
-  !beneficiaryIsNamed(row);
+  beneficiaryState(row) === "severed";
 
 export const toNum = (v: unknown): number => {
   const n = typeof v === "string" ? Number(v) : (v as number);
@@ -440,4 +440,30 @@ export function impactSummary(rows: readonly AttributionRow[]): ImpactSummary {
       .sort((a, b) => a.valueEvent.localeCompare(b.valueEvent)),
     seams,
   };
+}
+
+// ── The three states of a persisted beneficiary column ───────────────────────
+// Appended at the foot so every cited line above keeps its number (verifier
+// finding F5 on PR #594, 2026-10-06).
+//
+//   named       a uuid-shaped string — the column is `uuid`, so anything else
+//               did not come from it intact;
+//   severed     exactly NULL — the identity was erased (C-11 "retain
+//               pseudonymised") and the accounting row kept;
+//   unreadable  anything else. `undefined` means the column was not selected or
+//               the row is not the shape this module thinks it is; `""`,
+//               whitespace, a non-uuid or a number cannot be a beneficiary. That
+//               is a READ FAULT, and it is never reported as `identity_severed`:
+//               doing so would assert an erasure that did not happen, which is
+//               the master invariant (a failed read is never an answer) seen from
+//               the other side.
+export type BeneficiaryState = "named" | "severed" | "unreadable";
+
+const BENEFICIARY_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function beneficiaryState(row: { beneficiary_user_id?: unknown }): BeneficiaryState {
+  const v = row?.beneficiary_user_id;
+  if (v === null) return "severed";
+  if (typeof v === "string" && BENEFICIARY_UUID.test(v)) return "named";
+  return "unreadable";
 }
