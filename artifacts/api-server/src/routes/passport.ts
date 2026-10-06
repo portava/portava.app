@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { createHash } from "node:crypto";
-import { requireUser, sendError } from "../lib/http";
+import { requireUser, sendError, optionalUserFromToken, rethrowAccountGateRefusal } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { stampOverlayCol, feedVariantCol } from "../lib/postMediaOverlay";
 import { resolveInteractionPermissions } from "../services/interactionPermissions";
@@ -127,13 +127,13 @@ async function getOptionalViewerId(
 ): Promise<string | null> {
   const token = extractBearerToken(req);
   if (!token) return null;
-  try {
-    const { data: { user }, error } = await sc.auth.getUser(token);
-    if (error || !user) return null;
-    return user.id;
-  } catch {
-    return null;
-  }
+  // optionalUserFromToken, not a bare auth.getUser: the bare call skipped the
+  // account-state gate, so a banned/suspended token kept its viewer standing.
+  // `authThrowIsAnonymous` keeps the old catch for an Auth call that throws;
+  // an unreadable account state still throws (503 via the global handler).
+  // Same line count as before: the census documents cite this file by line.
+  const user = await optionalUserFromToken(sc, token, { authThrowIsAnonymous: true });
+  return user?.id ?? null;
 }
 
 /** Build the default viewer object for unauthenticated callers or own-profile access. */
@@ -1535,7 +1535,7 @@ router.get("/passport/:userId/projection", async (req, res) => {
       return;
     }
     res.status(200).json({ projection, cache });
-  } catch (e: any) {
+  } catch (e: any) { rethrowAccountGateRefusal(e); // a banned / suspended viewer, or an unreadable account state, is the gate's 403 / 503 (global handler) — it used to be caught here and answered 500 db_error
     req.log.error({ err: e }, "passport projection failed");
     sendError(res, "db_error", e?.message ?? "Projection failed");
   }
@@ -1569,7 +1569,7 @@ router.get("/passport/:userId/shared-context", async (req, res) => {
       canMakePlan: resolution.permissions.canInviteToTripCrew,
     });
     res.status(200).json({ sharedContext, viewerContext: resolution.context });
-  } catch (e: any) {
+  } catch (e: any) { rethrowAccountGateRefusal(e); // a banned / suspended viewer, or an unreadable account state, is the gate's 403 / 503 (global handler) — it used to be caught here and answered 500 db_error
     req.log.error({ err: e }, "passport shared-context failed");
     sendError(res, "db_error", e?.message ?? "Shared context failed");
   }
@@ -1603,7 +1603,7 @@ router.get("/passport/:userId/journeys", async (req, res) => {
       viewerId,
     });
     res.status(200).json({ journeys, viewerContext: resolution.context });
-  } catch (e: any) {
+  } catch (e: any) { rethrowAccountGateRefusal(e); // a banned / suspended viewer, or an unreadable account state, is the gate's 403 / 503 (global handler) — it used to be caught here and answered 500 db_error
     req.log.error({ err: e }, "passport journeys failed");
     sendError(res, "db_error", e?.message ?? "Journeys failed");
   }
@@ -1733,7 +1733,7 @@ router.get("/passport/:userId/contributions", async (req, res) => {
     }
     const contributions = await buildReputationSummary(sc, targetId);
     res.status(200).json({ contributions, viewerContext: resolution.context });
-  } catch (e: any) {
+  } catch (e: any) { rethrowAccountGateRefusal(e); // a banned / suspended viewer, or an unreadable account state, is the gate's 403 / 503 (global handler) — it used to be caught here and answered 500 db_error
     req.log.error({ err: e }, "passport contributions failed");
     sendError(res, "db_error", e?.message ?? "Contributions failed");
   }

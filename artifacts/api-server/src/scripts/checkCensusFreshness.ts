@@ -4468,6 +4468,12 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/discoveryFeedNoServiceClient.test.ts",
     "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryEventPostsRail.refresh.component.test.tsx",
     "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.pullToRefresh.component.test.tsx",
+    // census-discovery §120 (the owner's 30-day testing retention for public.recommendations): the files its record cites.
+    "artifacts/api-server/src/migrations/3501_discovery_recommendations_retention.sql",
+    "db/rollback/2026-09-30-3501-discovery-recommendations-retention-rollback.sql",
+    "artifacts/api-server/src/lib/discoveryServeLogRetentionScheduler.ts",
+    "artifacts/api-server/src/test/discoveryServeLogRetention.test.ts",
+    "artifacts/api-server/src/test/db/discoveryServeLogRetention.db.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

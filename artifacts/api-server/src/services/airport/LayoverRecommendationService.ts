@@ -22,7 +22,7 @@ import {
 // 0 is a FACT, landside 0 is an ABSENCE. `layover_recommendations.travel_time_min`
 // is `INTEGER NOT NULL DEFAULT 0` exactly like `layover_plan_stops.travel_min`,
 // so the read path needs the same classifier the plan path already uses.
-import { statedTravelMin, statedDurationMin } from "./LayoverPlanFit.js"; import { consumerLayoverRecord } from "./LayoverSnapshot.js";
+import { statedTravelMin, statedDurationMin } from "./LayoverPlanFit.js"; import { consumerLayoverRecord } from "./LayoverSnapshot.js"; import { landsideStatusOf } from "./LayoverConstraints.js";
 import { airportPoint, placePoint, landsideLeg, travelTimeProvenanceColumn, type TravelTimeProvider } from "./LayoverTravelTime.js";
 // §8 — the outer edge of the safe envelope, which is the half a straight-line
 // LOWER BOUND can certify. See LayoverEnvelope's header for why the inner edge
@@ -499,7 +499,7 @@ export async function generateRecommendations(
   //    of day the traveler will actually be out there, and gated on the
   //    airport's data maturity as well as on the traveller's usable minutes.
   const tod = timeOfDayContext(airport, session, nowMs);
-  let discoveryCandidates = session.wantsToLeave && usableMinutes >= 90 && landside.allowed && certified.verdict !== "no"
+  let discoveryCandidates = session.wantsToLeave && usableMinutes >= 90 && landside.allowed && certified.verdict !== "no" && landsideStatusOf(certified) !== "closed"
     ? await fetchDiscoveryPlaces(db, city, session.vibeChips, airportPoint(airport), new Date(nowMs), opts.travelTimeProvider)
     : [];
   if (!tod.coversEvening) {
@@ -517,7 +517,7 @@ export async function generateRecommendations(
   // 3. Quick city escape for long layovers — same gate, same reason. The
   //    "half-day" wording and the 120-minute tour are claims about time the
   //    traveller actually has, so they are measured in the same units.
-  const cityEscapeCandidates = session.wantsToLeave && usableMinutes >= 180 && landside.allowed && certified.verdict !== "no"
+  const cityEscapeCandidates = session.wantsToLeave && usableMinutes >= 180 && landside.allowed && certified.verdict !== "no" && landsideStatusOf(certified) !== "closed"
     ? [{
         recType: "quick_city_escape",
         title: `Quick City Tour — ${city}`,

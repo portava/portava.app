@@ -124,7 +124,7 @@ import {
 } from "./LayoverEventReplanner.js";
 import { snapshotIdFor } from "./layoverLedger.js"; import { resolveLayoverEntry, layoverAirportCountry } from "./layoverEntryGate.js";
 import { safeReturnPosture, type SafeReturnPosture } from "./LayoverSafeReturnService.js"; import { isFlagEnabled } from "../../lib/featureFlags.js";
-import { airportPoint, placePoint } from "./LayoverTravelTime.js";
+import { airportPoint, placePoint } from "./LayoverTravelTime.js"; import { landsideStatusOf, type LandsideCaution, type LandsideStatus } from "./LayoverConstraints.js";
 import type { LayoverReasonCode, ReturnCorridorRisk } from "./LayoverSafetyEngine.js";
 import {
   straightLineTravelTimeProvider,
@@ -196,13 +196,13 @@ export interface LayoverSnapshot {
 
   // ── may this traveller be offered anything landside at all? ───────────────
   /**
-   * The engine's own verdict plus Safe Return's own exploration rule, and
-   * nothing else. `LayoverBuddyGate` requires `returnState === "NORMAL"` on top
-   * of this for its higher-risk interaction; browsing a city's places is not
-   * that interaction, so this is the weaker of the two and says so rather than
-   * inventing a third threshold.
+   * TRUE ONLY WHEN `landsideStatus === "open"` (since 2026-10-06): verdict `yes`
+   * on a confirmed border, nothing closed it, exploration not collapsed. It used
+   * to be true for a CAUTIONARY gate too, so a reader could not tell "you can
+   * go" from "nobody has checked", and Compass was told "landside open" for both.
+   * A reader that knows only this boolean now fails closed.
    */
-  landsideOpen: boolean;
+  landsideOpen: boolean; /** `landsideStatusOf(record)`, with Safe Return's exploration rule folded in as `closed`. `caution` = NOT FORBIDDEN, NOT CONFIRMED: content may still be served (the owner's `layover_entry_forbid_landside_enabled` decides whether an unconfirmed border forbids), and nothing may be affirmed. */ landsideStatus: LandsideStatus; /** Why it is a caution, in the gate's own vocabulary. Empty unless `landsideStatus === "caution"`. */ landsideCautions: LandsideCaution[];
   landsideClosedReason: string | null;
 
   /**
@@ -376,7 +376,7 @@ export async function certifiedLayoverSnapshot(
       case "yes":
       case "tight":
       case "entry_unverified":
-        return false;
+        return landsideStatusOf(record) === "closed"; // the one gate read every surface shares: a closure always arrives as verdict `no` too, and this holds the two together by construction rather than by that coincidence
       default: {
         // A verdict added later and not considered here is forbidden, not open.
         const _exhaustive: never = record.verdict;
@@ -384,7 +384,7 @@ export async function certifiedLayoverSnapshot(
       }
     }
   })();
-  const landsideOpen = !forbidden && !posture.explorationCollapsed;
+  const landsideStatus: LandsideStatus = forbidden || posture.explorationCollapsed ? "closed" : landsideStatusOf(record); const landsideOpen = landsideStatus === "open"; // `open` is the verdict `yes` on a confirmed border and nothing else; a data gap is `caution` — not forbidden, not confirmed
   const landsideClosedReason = forbidden
     ? `the certified verdict for this layover is "${record.verdict}"`
     : posture.explorationCollapsed
@@ -410,7 +410,7 @@ export async function certifiedLayoverSnapshot(
       posture,
       envelope,
       envelopeUnavailableReason: envelope ? null : "no_airport_coordinate",
-      landsideOpen,
+      landsideOpen, landsideStatus, landsideCautions: landsideStatus === "caution" ? [...(record.landsideGate.cautions ?? [])] : [],
       landsideClosedReason,
       certifiedRecord: record,
     },
@@ -478,7 +478,7 @@ export interface CertifiedActionUniverse {
   snapshotId: string;
   sessionId: string;
   certification: ReturnType<typeof certificationHeader>;
-  landsideOpen: boolean;
+  landsideOpen: boolean; /** The snapshot's three-valued gate. Landside candidates are ADMITTED under `open` and `caution` and CLOSED under `closed`; a surface showing them under `caution` must not call that a yes. */ landsideStatus: LandsideStatus;
   /** §11.1 step 5's own object, computed by `actionUniverseOf`. */
   universe: ActionUniverse;
   actions: CertifiedAction[];
@@ -578,7 +578,7 @@ export async function certifiedActionUniverse(
   // before a request is built, so each iteration returns without any I/O.
   // Skipped entirely when landside is closed — those candidates are refused
   // below whatever the corridor says, so asking would only spend.
-  for (const c of snapshot.landsideOpen ? landside : []) {
+  for (const c of landsideNotForbidden(snapshot) ? landside : []) {
     const point = pointOf(c);
     if (!point || !snapshot.envelope) continue;
     const outcome = await layoverReturnRisk(
@@ -619,7 +619,7 @@ export async function certifiedActionUniverse(
     }
     // 2. The session may not go landside at all. NOT a block — nothing measured
     //    this place — so the band stays whatever the envelope said.
-    if (!snapshot.landsideOpen && !insideAirport) {
+    if (!landsideNotForbidden(snapshot) && !insideAirport) {
       return {
         id: c.id,
         admitted: false,
@@ -683,7 +683,7 @@ export async function certifiedActionUniverse(
     snapshotId: snapshot.snapshotId,
     sessionId: snapshot.sessionId,
     certification: snapshot.certification,
-    landsideOpen: snapshot.landsideOpen,
+    landsideOpen: snapshot.landsideOpen, landsideStatus: snapshot.landsideStatus,
     universe: actionUniverseOf(record, candidates.map(replanCandidate)),
     actions,
     admittedIds: idsIn("ADMITTED"),
@@ -766,4 +766,50 @@ export async function consumerLayoverRecord(
   nowMs: number,
 ): Promise<LayoverFeasibilityRecord | null> {
   return (await consumerLayoverSnapshot(db, airport, session, nowMs))?.certifiedRecord ?? null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The three-valued landside gate, as a snapshot's consumers read it
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Appended at the foot, so every line the censuses cite above keeps its number.
+
+/**
+ * May landside CONTENT be served at all — `open` or `caution`?
+ *
+ * The admission test `certifiedActionUniverse` uses. It is deliberately NOT
+ * `landsideOpen`: that boolean is now strict, and using it here would withdraw
+ * every landside card from every traveller whose corridor nobody has curated —
+ * which is the owner's `layover_entry_forbid_landside_enabled` decision (ON
+ * closes the gate, and this is then false), not one a field rename may make.
+ *
+ * Positive on the two known values rather than `!== "closed"`: a snapshot with
+ * no status at all (built by hand, or by a build that predates the field) is
+ * NOT served landside content.
+ */
+export function landsideNotForbidden(snapshot: Pick<LayoverSnapshot, "landsideStatus">): boolean {
+  return snapshot.landsideStatus === "open" || snapshot.landsideStatus === "caution";
+}
+
+/**
+ * The gate as one clause of a MODEL's context line.
+ *
+ * Three answers, and the middle one tells the model what it may not say. Before
+ * this, the line read "landside open" for a cautionary gate, and a model told
+ * that says "you can head out".
+ */
+export function landsideContextPhrase(
+  snapshot: Pick<LayoverSnapshot, "landsideStatus" | "landsideCautions" | "landsideClosedReason">,
+): string {
+  switch (snapshot.landsideStatus) {
+    case "open":
+      return "open";
+    case "caution":
+      return `not forbidden, not confirmed (${snapshot.landsideCautions.join(", ") || "unconfirmed"}) — do NOT tell the traveller they can leave the airport; say what is unconfirmed`;
+    case "closed":
+      return `closed (${snapshot.landsideClosedReason ?? "unstated"})`;
+    default:
+      // A status this build does not know is not an open gate.
+      return "closed (status unreadable)";
+  }
 }

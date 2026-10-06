@@ -150,7 +150,7 @@ Not counted here. Checked because the brief asked what it marked wrong.
 | C4 | Gated by `trust_engine_enabled`; events and scoring share one gate (`:80-86`) | C | `isTrustEnabled:83-94` (fail-closed); imported by the scheduler (`trustMaintenanceScheduler.ts:294`); `trust.test.ts:337#it("flag_off: skips when trust_engine_enabled = false"`, `trust-integration.test.ts:975` *(cited at line 336 until 2026-09-22. Q1's nullable-scores lane added a `measured()` import and three reversed assertions to that suite, which moved the line; the citation is repointed by SEARCHING FOR THE TEST THIS CLAIM DESCRIBES, never by adding the diff's offset, and anchored on a string that occurs exactly once in the file. The verdict is unmoved, and the flag remains seeded FALSE.)*. |
 | C5 | "Serious/severe events are queued for admin review" (`:11`) | **W → C** | Measured: only the status was set. The queue an admin reads is `trust_reviews` (`trust-admin.ts:98-127`); no row was written for a pending event; `confirmEvent:82-85` and `dismissEvent:178-181` closed a review "for this event" that never existed; `getPendingEvents:317-332` had no route. `recordAdjudicatedTrustEvent`'s own comment records the gap (`:409-412`). Built: `queueEventForReview:330-362` writes an open `event_review` row keyed by `source_event_id`, non-fatal and logged; `GET /admin/trust/events/pending` (`trust-admin.ts:138-147`). Pinned by `trustCensusRepairs.test.ts` §1–§2. Production impact today: none (0 pending events); the next one will be visible. |
 | C6 | Never auto-bans (`:11`) | C | `applyRestriction` has exactly one non-test caller, `adminApplyRestriction` (`TrustAdminService.ts:311#const restriction = await applyRestriction(db, {`), reached only from the admin route. |
-| C7 | The counterpart of an event is recorded explicitly in `metadata[counterparty_user_id]`, never inferred from `source_id` (`:32-45`) | C | `recordTrustEvent:249-252`; `TrustGamingDetectionService.readCounterparty:26-34`; `trustMutualRings.test.ts`. |
+| C7 | The counterpart of an event is recorded explicitly in `metadata[counterparty_user_id]`, never inferred from `source_id` (`:32-45`) | C | `recordTrustEvent:249-252`; `TrustGamingDetectionService.readCounterparty:27-35#function readCounterparty(metadata: unknown): string | null {` *(cited as 26-34 until 2026-10-03; the one import this service gained for its scan watermark shifted the whole function down a line. The code is byte-identical and anchored now.)*; `trustMutualRings.test.ts`. |
 | C8 | Nine category scores + weighted overall; exponential decay; cap ceilings; public level; persist to `trust_profiles` (`TrustScoreService.ts:1-10`) | C | `recalculateTrustScore:307-488`; `scoreToLevel:217-224`; `trust.test.ts:350-398`. **The persist is CONDITIONAL from §23 on** and the row was re-derived rather than carried: `artifacts/api-server/src/services/trust/TrustScoreService.ts:621#if (events.length === 0) {` skips the write for a user who has no qualifying event, no existing row and no cap row ever. It stays `C` — every score the engine MEASURES is still persisted, and what it now withholds is a nine-category arithmetic 50 that no evidence stands behind. §23.3 argues the opposite reading and says why it loses. **Named, and owed to the owner:** the header sentence this row quotes still reads *"Derives public trust level and persists to trust_profiles"* and documents only ONE non-persist case (the fail-closed read). It now has two. |
 | C9 | Slow to earn, immediate to lose — the ramp applies only to positive movement (`:162-188`) | C | `computeCategoryScore:189-215`; `trustAsymmetryAndMaintenance.test.ts` pins the asymmetry and the worked example (56, not 80). |
 | C10 | `getDisplayTrustScore` is THE display number; no second engine (`:353-364`; `lib/trustScore.ts:1-25`) | C | `lib/trustScore.ts:124-149` delegates; `PassportProjectionService.ts:1428#getDisplayTrustScore` and `routes/rentABuddy.ts:1243` read through it; `passportTrustConsistency.test.ts`. |
@@ -166,7 +166,7 @@ Not counted here. Checked because the brief asked what it marked wrong.
 | C20 | Reporter identity never exposed; raw deltas/internal scores not returned; restrictions human-readable; pending_review invisible to the subject — at the API (`TrustPrivacyGuard.ts:1-10`) | C | `getSafeTrustSummary:89-129`, `RESTRICTION_MESSAGES:69-74`, `isEventLlmSafe:159-165`; `trust.test.ts:660-725`. The table-level contradiction was A8. |
 | C21 | Every admin write creates a `trust_admin_actions` row (`TrustAdminService.ts:1-6`) | C | `logAdminAction` at `:87,184,200,214,247,282,311`; route-level inserts at `trust-admin.ts:328-335` and `:431-440`; `trustAdminAuditInsertSchemaDrift.test.ts` pins the columns. |
 | C22 | `adminOverrideScore` overrides a category score (`:218`) | **W** | It creates a *ceiling* (`:230-235`) and writes the row once (`:239-243`), then `recalculateTrustScore:246` recomputes from events — so an override ABOVE the event-derived score does not hold; only downward overrides stick. `trust_caps` has no floor. Unwired to any route, so no live effect. Whether "override" means pin or cap is an **owner decision** (§5). |
-| C23 | Gaming detection never auto-penalises; it only opens `gaming_suspected` reviews (`TrustGamingDetectionService.ts:5`) | C | `createGamingReview:68-94` is the only write; dedup on an open review; `trust-integration.test.ts:1184#it("rapid jump pattern creates gaming_suspected review"` and `trust-integration.test.ts:1196#it("dedup: second scan does not create a second open review"` *(cited at line 786 until 2026-09-22. That line was ALREADY WRONG before this lane touched the file — at head_commit it was a `PLAN_NO_SHOW` event seed inside an unrelated test, not evidence for either clause of this row; it stayed green only because the line was non-blank. Q1's edits shifted it onto a blank line, which is what surfaced it. Repointed to the two tests the sentence actually names — the review is OPENED rather than a penalty applied, and a second scan does not open a second review — by reading the claim, not by offset. The verdict is unmoved.)*. |
+| C23 | Gaming detection never auto-penalises; it only opens `gaming_suspected` reviews (`TrustGamingDetectionService.ts:5`) | C | `createGamingReview:249-279#async function createGamingReview(` is the only write to a trust object; dedup on an open review; *(cited as 68-94 until 2026-10-03. The service gained a per-detector scan watermark, 195 lines of it above this function, so the range moved; re-found by reading the claim rather than by adding the diff's offset, and anchored. TWO THINGS CHANGED THAT THIS ROW SHOULD SAY. The function now RETURNS whether the review is represented in the queue instead of discarding that outcome, so a detector that could not record a flag withholds its watermark commit — the dedup and the insert themselves are untouched. And the service now has a SECOND write, `lib/schedulerWatermark.commitWatermark`'s upsert into `scheduler_watermarks`, which is why this clause is narrowed to "a trust object": that table is `(job, processed_through, updated_at)`, carries no user-linked column, and records how far a scan got. The verdict is unmoved — nothing auto-penalises, and the only row a user ever gets from this service is still an open `gaming_suspected` review.)* `trust-integration.test.ts:1184#it("rapid jump pattern creates gaming_suspected review"` and `trust-integration.test.ts:1196#it("dedup: second scan does not create a second open review"` *(cited at line 786 until 2026-09-22. That line was ALREADY WRONG before this lane touched the file — at head_commit it was a `PLAN_NO_SHOW` event seed inside an unrelated test, not evidence for either clause of this row; it stayed green only because the line was non-blank. Q1's edits shifted it onto a blank line, which is what surfaced it. Repointed to the two tests the sentence actually names — the review is OPENED rather than a penalty applied, and a second scan does not open a second review — by reading the claim, not by offset. The verdict is unmoved.)*. |
 | C24 | Three detectors, gated by `trust_gaming_detection_enabled`, thresholds from `trust_settings` (`:7-10`) | C | `runGamingDetectionScan:299-316`; `isGamingDetectionEnabled:55-66` fail-closed; check-in vocabulary matches the writer (`CHECKIN_CLUSTER_EVENT_TYPES:114`, `routes/geofence.ts:786#checked_in_successfully`). `trust.test.ts:771-826`, `trustAttendanceVocabulary.test.ts`, `trustMutualRings.test.ts`. **Liveness (§3):** flag ON in production; runs every pass; every input is empty. |
 | C25 | The maintenance scheduler is registered and fires: decay refresh, cap expiry, probation, gaming scan; fail-closed on the flag (`trustMaintenanceScheduler.ts:1-44`) | C | Registered unconditionally at `index.ts:264`; `startTrustMaintenanceScheduler:414-432` (startup delay 120 s, then every 6 h). **Fires in production**: both `trust_profiles` rows were created 2026-08-27 with `trust_admin_actions` = 0 (only the scheduler creates a row for a user with events and no profile, `findDirtyUsers:168-233`), and both were refreshed 2026-09-04 06:56 — one `STALE_DAYS` after — the `findStaleUsers:240-259` path observed working. Tested at `trustAsymmetryAndMaintenance.test.ts:280-400`, `trust-integration.test.ts:974-1070`. |
 | C26 | Every `/admin/trust/*` route is admin-guarded (`routes/trust-admin.ts:2`) | C | `requireAdmin` first in every handler (`:99,139,152,200,221,248,281,309,342,364,385,402`); `trust-integration.test.ts:285-308`; `check:route-auth-gate` exit 0. |
@@ -379,7 +379,7 @@ on `src/test/tripCrewRlsMembershipConvergence.test.ts`, a sibling's Trips file, 
 | Gaming / Cap / Restriction / Recovery built but never invoked | Gaming: **runs every 6 h on empty inputs.** Cap: **never invoked** (needs an admin confirm; 0 ever). Restriction: **read every request, never written.** Recovery: runs. (§3) |
 | `trustMaintenanceScheduler` registered and fires | **TRUE, with production evidence** (§2 C25). |
 | (second pass) Nine of the 13 unproduced types have "no triggering action anywhere" | **FALSE for three** (`plan_no_show` — owner override `routes/geofence.ts:1150#no_show`, on the owner-gated `POST /trips/:tripId/geofence/attendance/:userId/override` (`routes/geofence.ts:1044`, gate `routes/geofence.ts:1077`); `host_positive_review` / `host_negative_review` — `routes/reviews.ts:199`), **partly for four** (raw signal, no adjudication), **TRUE for two** (`event_host_no_show`, `plan_late_cancel`). [trust-unproduced-vocabulary.md](trust-unproduced-vocabulary.md) §0. |
-| (second pass) `plan_attendance_events` is read/written by four files | `routes/geofence.ts:154` writes; `routes/admin.ts:621#.from("plan_attendance_events")` and `TrustGamingDetectionService.ts:130` read; `lib/crowdFlowProducer.ts` names it in comments only (`:152`, `:361`). 0 rows in production. |
+| (second pass) `plan_attendance_events` is read/written by four files | `routes/geofence.ts:154` writes; `routes/admin.ts:621#.from("plan_attendance_events")` and `TrustGamingDetectionService.ts:325#.from("plan_attendance_events")` read; `lib/crowdFlowProducer.ts` names it in comments only (`:152`, `:361`). 0 rows in production. |
 
 ---
 
@@ -3644,3 +3644,204 @@ Unchanged, and recounted rather than carried forward from §31:
   deciding clause falls and the row is a `W` candidate without any owner decision at all.
 - 2870 applied: TV-1c is decidable, and §31 names the DB assertion that will fail there first.
 
+## §33 (moderation lane) — 2026-10-03 · Bans and suspensions are one state, `user_account_states`, and every gate reads it. **NO ROW MOVES.**
+
+> **Renumbered at the 2026-10-05 merge of `main` (`e3daeb739`) into PR #580's branch (lane F).** This section and the
+> next were written as §32 and §33 on that branch. Main's §32 (the 2026-10-04 integration re-census of PR #584) reached
+> `main` first, so they are §33 and §34, and every `§32` / `§33` inside them — and the one in this census's
+> acknowledgement entry — was renumbered with them; no other word changed. Both sections and main's §32 move no row.
+
+**The owner's decision (2026-10-03).** `user_account_states` is the canonical source for moderation
+bans and suspensions. `profiles.account_status` cannot hold either value: `profiles_account_status_check`
+admits `active | deactivated | pending_deletion | deleted`, verified read-only on the testing database and
+on portava-ci. So `POST /admin/users/:id/ban` and `/suspend` failed 23514 on every call before their
+`user_account_states` upsert ran, the PATCH moderation-action path folded the same failure into a 200,
+and every auth gate compared `account_status` with values no row can carry. A ban could not be applied,
+and if one had been, no gate would have read it. The CHECK is **not** widened, because a second ban state
+is exactly what the decision rules out.
+
+### §33.1 The contract (confirmed against the schema, not assumed)
+
+The table comes from `0063_interaction_foundation.sql` (:155) plus `0130` (`updated_at`). The fields:
+
+- **Key.** One row per `(user_id, state)`, so writers upsert on that key.
+- **`user_id`.** A foreign key to `profiles`, `ON DELETE CASCADE`, named `user_account_states_user_id_fkey`
+  on the baseline, the testing database and portava-ci.
+- **`state`.** Text, with no CHECK.
+- **In force.** A `banned` or `suspended` row is in force while `expires_at` is NULL or in the future.
+- **Revocation.** An unban sets `expires_at` to the revocation instant and keeps the row, including
+  `reason`, `set_by` and `created_at`. `moderation_actions` records who lifted it and why. This needs no
+  new column, and the expiry-aware readers (`circleAccessGuard`, `CompassNotificationEngine`) honour an
+  unban unchanged.
+- **RLS.** A signed-in user may SELECT their own rows and has no write policy, so a banned user cannot
+  lift their own ban through PostgREST. `service_role` writes.
+
+No migration was needed. The testing database holds 0 rows.
+
+### §33.2 One read path, every gate
+
+`resolveAccountRestriction` (`lib/accountStateGate.ts`) makes one `profiles` read with
+`user_account_states` embedded through that foreign key. It returns `ok` (the account status plus a
+restriction of `none`, `banned` or `suspended` with its end) or `unavailable`.
+
+The same answers apply on every path: `requireUser`, `optionalUser`, `requireUserFromToken` (Telegraph
+SSE) and the six files of hand-rolled optional-auth sites PR #580 routed.
+
+| Account state | Answer |
+|---|---|
+| In-force ban | 403 `forbidden`, `reason: account_banned` |
+| In-force suspension | 403 `forbidden`, `reason: account_suspended`; the message names the end |
+| GoTrue banned refusal | 403 `forbidden`, `reason: account_restricted`, never 401 |
+| Unreadable state | 503 `degraded_unavailable`, retryable |
+
+On an optional-auth route a restricted caller is now **refused, not served as anonymous**. This reverses
+PR #580's mapping, by the owner's ruling. The deleted, deactivated and pending_deletion behaviour is
+unchanged.
+
+TV-4b's cited `requireUser` lines in `lib/http.ts` still hold the statements they quote,
+now driven by the user_account_states read. The anchors in that row are therefore still true. What
+changed is what feeds them.
+
+### §33.3 Writers
+
+`artifacts/api-server/src/lib/accountModeration.ts` is the only writer, used by `/ban`, `/suspend`, `/restore` and PATCH
+moderation-action.
+
+- **Ban.** Upserts the row with no end.
+- **Suspend.** Upserts the row with an `expires_at`, which must be in the future. Otherwise the route
+  answers 400 before any audit row is written.
+- **Restore.** Revokes the in-force rows. It no longer DELETEs them, and no longer writes `account_status`,
+  which used to reactivate a deactivated account.
+
+The audit row comes first, as before. Every write's error is checked: a failed restriction write is 500
+with "nothing is in force", and a failed unlock is 502. The trust charge now runs only after the restriction
+lands.
+
+Each restriction also does two more things:
+
+- **Session lock.** It sets the GoTrue session lock (`ban_duration`), so refresh and sign-in stop and the
+  direct PostgREST, Realtime and Storage paths close within one access-token lifetime. The testing database
+  has 227 tables with a client write policy. The gate never reads this lock, and a lift clears it.
+- **Telegraph streams.** It closes the user's open Telegraph streams.
+
+### §33.4 Surfaces beyond the HTTP gates
+
+| Surface | How it is enforced |
+|---|---|
+| `GET /telegraph/stream` | Gated at connect. The writer terminates open streams, and the 30-minute max age forces re-auth. |
+| `GET /me/notifications/stream` | Re-reads the state every 60 s (`watchAccountRestriction`) and ends with `access.revoked`. |
+| Compass ask SSE | Per request, gated by `requireUser`. |
+| Websocket upgrades | None exist. |
+| `delayedPostPublisher` (publishes on the author's behalf) | Holds a restricted or unreadable author's post until the restriction ends. |
+| `profileVisibility` and `interactionPermissions` | Now honour `expires_at` and revocation. Both had ignored them, and `maybeSingle` turned a revoked ban beside a deactivated row into an error. |
+
+### §33.5 Tests and mutations
+
+- **`artifacts/api-server/src/test/moderationAccountState.test.ts`** (61 tests, registered) covers:
+  - permanent ban, suspension, expiry and revocation;
+  - a token issued before the ban;
+  - the GoTrue refusal and unreadable state;
+  - deleted, pending_deletion and deactivated controls;
+  - the admin writers with an audit row and with write errors;
+  - the notification stream, the publisher, profile visibility and interaction permissions.
+- **Red before.** Each fixed file, reverted alone to its pre-change source, turns its tests red.
+- **`artifacts/api-server/src/test/db/userAccountStatesContract.db.test.ts`** pins the real table's CHECK refusal, key, foreign
+  key name, revocation SQL and RLS.
+- **Mutations.** 58 mutants, each applied alone and restored byte-identically: 57 killed, 1 equivalent (profileVisibility's non-array guard, whose `.some` on null throws into the catch that already answers `unavailable`).
+
+### §33.6 Rows
+
+- **TV-4a stays W.** Its act criterion concerns `moderation_reports`, untouched here. The user-level
+  suspend and ban actions now land.
+- **TV-4b stays W.** Middleware on auth is now real rather than nominal. Banned users are locked out of
+  refresh by the session lock but are not shown a signed-out state. Suspended users get no read-only state
+  and no appeal contact. Owner decision **D-SUSPENSION-UX** stands.
+
+Cited in this section, graded by no row of this census:
+
+- NOT-GRADED: artifacts/api-server/src/lib/accountStateGate.ts — §33.2's single read path and refusals; the gate TV-4b grades is requireUser, whose cited lines stay where they were.
+- NOT-GRADED: artifacts/api-server/src/lib/accountModeration.ts — §33.3's writer for the admin routes TV-4a names; no verdict moves on it.
+- NOT-GRADED: artifacts/api-server/src/test/moderationAccountState.test.ts — §33.5's controlled evidence; no Trust verdict moves on it.
+- NOT-GRADED: artifacts/api-server/src/test/db/userAccountStatesContract.db.test.ts — §33.5's database evidence for the table contract; no Trust verdict moves on it.
+
+## §34 (trust lane, PR #580 taken over) — 2026-10-04 · The independent verifier's findings on §33, fixed test-first; the red database job; a missing moderation table is unread. **NO ROW MOVES.**
+
+§33 was verified independently at `9dd3aafc2` and **failed**. Its scenario checks passed; nine things it found did
+not. This section records what each was, what closes it, and what a reader of §33 must now read differently.
+Nothing here re-grades a row: the lead re-grades after another independent verification.
+
+### §34.1 Fail-open — four findings
+
+- **Four hand-rolled bearer sites still served a banned token.** `routes/discovery.ts` (GET /discovery,
+  /discovery/feed, /discovery/community) and `routes/hiddenGems.ts` (`resolveCallerId`) called
+  `sc.auth.getUser` themselves; §33.2's "six files of hand-rolled optional-auth sites" did not include them,
+  and `handRolledAuthAccountState.test.ts` pinned them as "known open". They now go through `getGatedUser` /
+  `optionalUserFromToken`, their catches hand the gate's refusal to `rethrowAccountGateRefusal`, and
+  /discovery/community resolves a presented token before it serves (the lookup was lazy, so a banned caller
+  whose request never needed a viewer id was served). The pin has **no exemption** any more.
+- **A catch that swallowed the refusal.** The same search found `routes/og.ts`'s image route answering a
+  banned viewer with the generic card. A source scan now fails on any call that can throw the gate's refusal
+  inside a `try` whose `catch` does not rethrow it. (`uncheckedSupabaseReads.test.ts` asserted that
+  `routes/discovery.ts` calls `auth.getUser` itself and asked to be revisited if that stopped being true; it
+  now asserts the opposite, and points its non-coverage note at the gate.)
+- **Suspending an already-banned user shortened the session lock.** `applyAccountRestriction` set GoTrue's
+  `ban_duration` from the row it had just written. The lock is now computed from every in-force row of that
+  user (`lockForRowsInForce`): permanent if any has no end, otherwise the latest end. If those rows cannot be
+  read back the lock is left alone and reported `failed`.
+- **`routes/follows.ts` served a banned user's passport.** GET /users/:userId and /users/by-handle/:handle
+  guarded on `profiles.account_status`, which cannot hold `banned` or `suspended`. Both now read the target
+  through `resolveAccountRestriction`: in force → the unavailable sentinel those routes already send;
+  unreadable → 503.
+- **A profile row with no restriction embed read as "no ban".** For every client `getServiceClient` builds
+  (`lib/supabase.ts` records them) a row without the `user_account_states` key is now `unavailable`: PostgREST
+  always returns the key of an embed a select names. Only an injected test double that models the status
+  column alone still reads as no rows, and a source scan pins that no other file builds a client.
+
+### §34.2 Wrong answer, integrity and test gaps
+
+- **`routes/passport.ts` answered a confirmed ban, and an unreadable state, as 500 `db_error`** on four
+  routes whose catch-all caught the gate's refusal. They now answer the gate's 403 / 503.
+- **`/suspend` accepted `"2099"`** (a date to `Date.parse`, not a timestamp to PostgreSQL) and failed after
+  the audit row. `parseRestrictionEnd` now requires a full ISO-8601 instant with an offset, in the future,
+  and stores it normalised; the writer applies the same rule to every caller.
+- **A failed restriction write left an audit row that looked landed.** The routes audit first, so the row
+  stays; a second row, `<action>_not_applied`, now names it and carries the write's error. If even that cannot
+  be written, the refusal says so.
+- **Test gaps closed:** a suspended author in the post publisher (held; published once the suspension is
+  lifted) and the GoTrue `user_banned` code check (the code alone decides; other codes at HTTP 403 are 401).
+
+### §34.3 What §33 said that is no longer the whole truth
+
+- **§33.2's table** gains one field: every 403 for a restricted account also carries
+  `restriction: { kind, until }` (absent for the auth service's own refusal, which names neither). That is the
+  server contract TV-4b's client would need to tell a restricted account from a connection fault; it decides
+  nothing about D-SUSPENSION-UX.
+- **§33.4's last row.** `profileVisibility` and `interactionPermissions` no longer exempt a **missing**
+  `user_account_states`: both now treat it as unread (profile withheld; the resolution refuses). §31's
+  absent-table rule was written for Phase-2 tables that may not exist yet. This table stopped being one when it
+  became the one moderation state, so "missing" means every ban is unread, not that nobody is banned. Three
+  tests that pinned the old answer were changed to pin the stricter one, and say so in place.
+- **§33.5's count.** `moderationAccountState.test.ts` is 87 tests and `handRolledAuthAccountState.test.ts` 136, the
+  second now driving every optional-viewer route over HTTP rather than two representatives.
+
+### §34.4 The red database job
+
+`api-server · kernel SQL executed on a throwaway database` failed on `9dd3aafc2` because the three database
+doubles (`trailPostgrestBridge`, `discoveryVerifyBridge`, `creatorLedgerPsqlClient`) threw on any embedded
+select, so the gate's read of `profiles` failed and the gate answered 503. They now translate one level of
+FK-hinted embedding against the real foreign key, and answer PGRST200 when the hinted constraint does not link
+the two tables. A new database suite pins the gate's read through all three. No assertion in any suite changed.
+
+### §34.5 Rows
+
+- **TV-4a stays W.** No route acts on a `moderation_reports` row; that criterion is untouched.
+- **TV-4b stays W.** The middleware is stricter and its refusal is machine-readable. A suspended user still
+  gets no read-only state and no appeal contact, and the client still has no branch for either state:
+  D-SUSPENSION-UX stands. One fact for that decision: while the session lock is in place the auth service
+  refuses the restricted user's token, so the API cannot identify them and no authenticated appeal route can
+  be reached by the people it exists for.
+
+Cited in this section, graded by no row of this census:
+
+- NOT-GRADED: artifacts/api-server/src/routes/og.ts — §34.1's one further site where a catch swallowed the gate's refusal; no Trust row grades the share-image route.
+- NOT-GRADED: artifacts/api-server/src/test/handRolledAuthAccountState.test.ts — §34.1 and §34.2's controlled evidence for the route-level refusals and the three source scans; no Trust verdict moves on it.

@@ -202,8 +202,8 @@ export function startIntelPatternScheduler(): void {
   _timer = setTimeout(function tick() {
     void runPatternLearningPass()
       .catch((err) => logger.warn({ err }, "pattern learning pass failed"))
-      .finally(() => { _timer = setTimeout(tick, INTERVAL_MS); });
-  }, STARTUP_DELAY_MS);
+      .finally(() => { if (_timer !== null) { _timer = setTimeout(tick, INTERVAL_MS); _timer.unref?.(); } });
+  }, STARTUP_DELAY_MS); _timer.unref?.(); // never keep a process alive for a scheduler: the server does that
 }
 
 export function stopIntelPatternScheduler(): void {

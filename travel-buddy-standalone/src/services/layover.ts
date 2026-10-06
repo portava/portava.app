@@ -171,9 +171,9 @@ export interface PlanFit {
    * §6.1's plan-level answer, three-valued because the server refuses to
    * certify a total that omits a leg nobody stated (census L47). `over` is
    * certain — even the lower bound overflows; `unknown` means the plan may fit
-   * and has not been measured; `fits` means every leg is stated and it does.
+   * and has not been measured; `fits` means every leg is stated and it does. TWO MORE since the landside gate (see `PlanFitGated` below): `blocked` and `unconfirmed`, for a plan that leaves the airport when the gate is not open.
    */
-  fit: 'fits' | 'over' | 'unknown';
+  fit: 'fits' | 'over' | 'unknown' | PlanFitGated; /** What the clock alone says, before the gate. Absent from an older server. */ clockFit?: 'fits' | 'over' | 'unknown'; /** A stop outside the airport is on the plan. */ hasLandsideStop?: boolean; /** The gate this fit was read under — so the plan can say WHY it is not a plain "fits". Absent from an older server. */ landside?: PlanFitLandside;
   /** Landside stops whose journey is not a stated figure. */
   unstatedTravelStops: number;
   /** Stops whose dwell time is not a stated figure. */
@@ -587,7 +587,7 @@ export interface LayoverOverview {
    * block every real place on earth, so the absence of a coordinate produces
    * the absence of an envelope and never a default one.
    */
-  safeEnvelope: LayoverSafeEnvelope | null;
+  safeEnvelope: LayoverSafeEnvelope | null; /** The landside gate `safeEnvelope` was published under: WITHHELD (null, `withheld: "landside_closed"`) when closed; not to be called "safe" unless `status === "open"`. ABSENT on a server that predates it — which a client must read as not-open. */ safeEnvelopeGate?: LayoverSafeEnvelopeGate | null;
   returnReminderAt: string | null;
   localTimes: LayoverLocalTimes;
 }
@@ -889,7 +889,7 @@ export async function resolveAirportByIata(iata: string): Promise<AirportProfile
  * server's own flag; `code: null` means no server answered at all.
  */
 export type CreateLayoverOutcome =
-  | { ok: true; session: LayoverSession; safeReturnSuggested: boolean; safeReturnReasons: string[] }
+  | { ok: true; session: LayoverSession; safeReturnSuggested: boolean; safeReturnReasons: string[]; /** What the server did with the bag/connection answers sent WITH the create — null when it reported nothing (none were sent, or an older server). Was discarded. */ constraints: LayoverCreationConstraints | null }
   | { ok: false; code: string | null; message: string; retryable: boolean };
 
 const CREATE_UNREACHABLE = "We couldn't reach Portava. Check your connection and try again.";
@@ -918,7 +918,7 @@ export async function createLayoverSession(payload: CreateSessionPayload): Promi
     ok: true,
     session: json.session as LayoverSession,
     safeReturnSuggested: json.safeReturnSuggested === true,
-    safeReturnReasons: Array.isArray(json.safeReturnReasons) ? (json.safeReturnReasons as string[]) : [],
+    safeReturnReasons: Array.isArray(json.safeReturnReasons) ? (json.safeReturnReasons as string[]) : [], constraints: toCreationConstraints(json.constraints),
   };
 }
 
@@ -1687,6 +1687,16 @@ export interface CrewSummary {
   title: string;
   city: string;
   meetingPointLabel: string | null;
+  /**
+   * §14.1 / census-layover L138 — why `meetingPointLabel` above is null.
+   *
+   * The server runs the meeting point through `meetActionAvailability` (the
+   * §14.1 "meet here" gate) and publishes the ENFORCED denials when it
+   * withholds: `blocked`, `safety_gate_not_cleared`, `return_state_escalated`.
+   * Empty means the label was served. ABSENT means an older server that does
+   * not publish the field — UNREPORTED, not "nothing was withheld".
+   */
+  meetingPointWithheld?: string[];
   status: 'open' | 'closed' | 'disbanded';
   maxMembers: number;
   expiresAt: string;
@@ -1718,7 +1728,7 @@ export type CrewInfeasibilityReason =
   | 'unknown_member_in_branch'
   | 'empty_branch'
   | 'plan_exceeds_usable_minutes'
-  | 'plan_ends_after_shared_return';
+  | 'plan_ends_after_shared_return' /** The plan leaves the airport and a crewmate's certified landside gate is closed. */ | 'landside_closed_for_member';
 
 /**
  * §14.1, server-certified. Transcribed from `certifyCrewPlan` in
@@ -1747,7 +1757,7 @@ export interface CrewSolution {
   bindingMemberHidden?: boolean;
   feasible: boolean;
   reasons: CrewInfeasibilityReason[];
-  split: boolean;
+  split: boolean; /** The plan's weakest landside gate across the crew: `open` | `caution` | `closed` | `not_applicable` (it stays in the airport). Absent from an older server. */ landside?: string;
   members: CrewMemberConstraint[];
 }
 
@@ -1773,9 +1783,22 @@ export type CrewState =
       solution: CrewSolution;
       members: CrewMemberCard[];
       degraded: boolean;
-      degradedReasons: string[];
+      degradedReasons: string[]; /** The VIEWER's own landside gate (`open` | `caution` | `closed` | `unknown`), certified with their own entry fact. Never a crewmate's. Absent on an older server. */ yourLandside?: string; /** Always `each_member_checks_their_own`: a crew is never cleared to leave the airport as a group. */ landsideClearance?: string;
     }
-  | { inCrew: false; city: string | null; crews: CrewOpening[]; reason?: string };
+  | {
+      inCrew: false;
+      city: string | null;
+      crews: CrewOpening[];
+      /**
+       * `'city_unknown'` or, since §14.1 / L138, `'safety_gate_not_passed'` —
+       * the certified record says this traveller must not be OFFERED a landside
+       * meeting, so no crew is offered. `crews: []` with this reason is a
+       * REFUSAL and must not be drawn as an empty city.
+       */
+      reason?: string;
+      /** The enforced `meetActionAvailability` denials behind the refusal. */
+      meetWithheld?: string[];
+    };
 
 /**
  * The crew for this layover, or the open crews in this city.
@@ -1822,7 +1845,7 @@ async function crewAction(url: string, body?: unknown): Promise<CrewActionOutcom
 
 export function createLayoverCrew(
   sessionId: string,
-  input: { title: string; meetingPointLabel?: string | null; maxMembers?: number },
+  input: { title: string; meetingPointLabel?: string | null; /** Where the meeting point is — the creator's own statement; the server gates ONLY `false` (outside the airport) on the creator's own landside gate. */ meetingPointInsideAirport?: boolean | null; maxMembers?: number },
 ): Promise<CrewActionOutcome> {
   return crewAction(airportUrl('sessions', sessionId, 'crew'), input);
 }
@@ -2003,28 +2026,97 @@ export type LandsideClosure =
   | 'entry_refused'
   | 'entry_unconfirmed'
   | 'baggage_unknown'
-  | 'airport_change';
+  | 'airport_change'
+  /** The declared set, or a flag that governs it, could not be read. */
+  | 'constraints_unreadable'
+  /** Whether the next flight leaves from another airport is not stated. */
+  | 'airport_change_unknown'
+  /** Whether the flights are on separate tickets is not stated, and it decides. */
+  | 'recheck_unknown';
 
-/** Spec §5's guard, evaluated server-side. The client renders it; it never re-derives it. */
+/** Why a gate that nothing CLOSED is still not open. */
+export type LandsideCaution = 'entry_unconfirmed' | 'tight_window';
+
+/**
+ * Spec §5's guard, evaluated server-side. The client renders it; it never
+ * re-derives it.
+ *
+ * `open` is TRUE only when the verdict is `yes`. It is not "nothing closed
+ * it": an unconfirmed border and a tight window leave `closedBy` empty and the
+ * gate NOT open (`status: 'caution'`). A surface draws an affirmative from
+ * `open`, and from nothing else.
+ */
 export interface LandsideGate {
   open: boolean;
+  /** `open` | `caution` | `closed`. Optional: a server that predates it sends none, and absent is never read as open. */
+  status?: 'open' | 'caution' | 'closed' | string;
   /** A bare string on the wire: a closure this build has not been taught must survive as itself. */
   closedBy: Array<LandsideClosure | string>;
-  needsInfo: 'baggageMode' | null;
+  /** Same rule as `closedBy`. Optional for the same reason as `status`. */
+  cautions?: Array<LandsideCaution | string>;
+  needsInfo: DeclarableConstraintField | null;
   criticalUnknowns: string[];
   entryPermissionState: 'CONFIRMED_ALLOWED' | 'CONFIRMED_NOT_ALLOWED' | 'UNKNOWN';
-  constraintsRead: 'declared' | 'unreadable' | 'legacy';
+  constraintsRead: 'declared' | 'undeclared' | 'unreadable' | 'legacy';
   constraintsVersion: number | null;
   entryForbidsLandside: boolean;
+}
+
+/** The two plan-fit answers only the landside gate can give. */
+export type PlanFitGated =
+  /** The plan leaves the airport and the gate is CLOSED. */
+  | 'blocked'
+  /** The plan leaves the airport, the clock says it fits, and the gate is not open. */
+  | 'unconfirmed';
+
+/** The gate a plan fit was read under. */
+export interface PlanFitLandside {
+  status: 'open' | 'caution' | 'closed' | string;
+  closedBy: Array<LandsideClosure | string>;
+  cautions: Array<LandsideCaution | string>;
 }
 
 /** Spec §4.1 `LayoverState`. Typed as a string because the server may name one this build predates. */
 export type LayoverLifecycleState = string;
 
-export interface ConstraintQuestion {
-  field: 'baggageMode';
-  prompt: string;
-  options: Array<{ value: BaggageMode; label: string }>;
+/**
+ * The ONE question the server says is worth asking (§12.1). A discriminated
+ * union: the bag question offers modes, the two connection questions offer the
+ * two answers that resolve them. "Not sure" is never an option — it is the
+ * state the traveller is in, and the reason they are being asked.
+ */
+export type ConstraintQuestion =
+  | { field: 'baggageMode'; prompt: string; options: Array<{ value: BaggageMode; label: string }> }
+  | { field: 'airportChangeRequired' | 'recheckRequired'; prompt: string; options: Array<{ value: boolean; label: string }> };
+
+/**
+ * What `POST /airport/sessions` did with the bag and connection answers sent
+ * with it. `not_stored` is a REAL outcome and must be shown: the session
+ * exists, the cautious boolean is on it, and the four-way answer is not kept.
+ */
+export type LayoverCreationConstraints =
+  | { stored: 'versioned' | 'session_booleans_only'; version: number | null; unsaved: DeclarableConstraintField[]; sessionSynced: boolean }
+  | { stored: 'not_stored'; reason: string; message: string; retryable: boolean };
+
+/** The create response's `constraints`, or null when it is absent or not the contract. */
+export function toCreationConstraints(raw: unknown): LayoverCreationConstraints | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const c = raw as Record<string, unknown>;
+  if (c.stored === 'not_stored') {
+    return {
+      stored: 'not_stored',
+      reason: typeof c.reason === 'string' ? c.reason : 'unknown',
+      message: typeof c.message === 'string' ? c.message : 'Your bag and connection details could not be saved yet. Open your layover and set them there.',
+      retryable: c.retryable === true,
+    };
+  }
+  if (c.stored !== 'versioned' && c.stored !== 'session_booleans_only') return null;
+  return {
+    stored: c.stored,
+    version: typeof c.version === 'number' ? c.version : null,
+    unsaved: Array.isArray(c.unsaved) ? (c.unsaved as DeclarableConstraintField[]) : [],
+    sessionSynced: c.sessionSynced !== false,
+  };
 }
 
 /** The body of GET and PUT `/airport/sessions/:id/constraints`. */
@@ -2041,6 +2133,11 @@ export interface LayoverConstraintsAnswer {
   /** What the arithmetic is charging right now. */
   baggageCharged: boolean;
   landsideGate: LandsideGate;
+  /**
+   * Null when the server withheld it — `layoverStateUnavailableReason` says
+   * why: `plan_unreadable`, or `landside_unconfirmed` (the gate is cautionary
+   * and §5 has no state for that). Null is NEVER read as "landside available".
+   */
   layoverState: LayoverLifecycleState | null;
   layoverStateUnavailableReason: string | null;
   question: ConstraintQuestion | null;
@@ -2074,6 +2171,8 @@ export type LayoverConstraintsWrite =
       stored: 'versioned' | 'session_booleans_only';
       /** Fields that were sent and could NOT be kept. Must be said, not swallowed. */
       unsaved: DeclarableConstraintField[];
+      /** TRUE when the declaration matched what was already stored and nothing was appended. */
+      unchanged: boolean;
     }
   | { ok: false; reason: LayoverConstraintsFailure; message: string; retryable: boolean };
 
@@ -2182,5 +2281,15 @@ export async function updateLayoverConstraints(
     answer,
     stored: json.stored === 'versioned' ? 'versioned' : 'session_booleans_only',
     unsaved: Array.isArray(json.unsaved) ? (json.unsaved as DeclarableConstraintField[]) : [],
+    unchanged: json.unchanged === true,
   };
+}
+
+// ── PR #624 follow-ups — appended: lines above are cited by line ─────────────
+
+/** `GET /overview`'s `safeEnvelopeGate`. */
+export interface LayoverSafeEnvelopeGate {
+  status: 'open' | 'caution' | 'closed';
+  cautions: LandsideCaution[];
+  withheld: 'landside_closed' | 'no_airport_coordinate' | null;
 }

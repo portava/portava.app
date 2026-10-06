@@ -43,7 +43,7 @@
  */
 import type { LayoverFeasibilityRecord } from "./LayoverFeasibility.js";
 import type { LayoverReturnState } from "./LayoverSafetyEngine.js";
-import { planFitTotals } from "./LayoverPlanFit.js";
+import { planFitTotals } from "./LayoverPlanFit.js"; import { groupLandsideStatus, weakestLandsideStatus, type LandsideStatus } from "./LayoverConstraints.js"; // same line: this file's lines are citation-anchored
 
 /** Version of the crew constraint rules. Travels on every solution. */
 export const LAYOVER_CREW_VERSION = "2026.09.08-1";
@@ -95,7 +95,7 @@ export type CrewInfeasibilityReason =
   | "unknown_member_in_branch"
   | "empty_branch"
   | "plan_exceeds_usable_minutes"
-  | "plan_ends_after_shared_return";
+  | "plan_ends_after_shared_return" /** The branch leaves the airport and a member's certified landside gate is CLOSED — a refused border, an airport change, an unknown that decides, an unreadable declaration. The clock cannot see it: that member has hours of "usable" time and may not use them out there. */ | "landside_closed_for_member";
 
 export interface CrewMemberConstraint {
   userId: string;
@@ -121,7 +121,7 @@ export interface CrewBranchVerdict {
   /** min(usableMinutes) over this branch's members. Null when any is uncertified. */
   usableMinutes: number | null;
   feasible: boolean;
-  reasons: CrewInfeasibilityReason[];
+  reasons: CrewInfeasibilityReason[]; /** The WEAKEST landside gate among this branch's members when the branch leaves the airport (`groupLandsideStatus`): `closed` is infeasible, `caution` must not be drawn as a plain yes. */ landside: LandsideStatus | "not_applicable";
   /** Per-member slack in minutes, negative when that member cannot make it. */
   perMemberSlackMin: Array<{ userId: string; slackMin: number | null }>;
 }
@@ -141,7 +141,7 @@ export interface CrewSolution {
   feasible: boolean;
   reasons: CrewInfeasibilityReason[];
   /** True when the plan has more than one branch — the spec's explicit split. */
-  split: boolean;
+  split: boolean; /** The weakest branch `landside` in the plan; published, with no id in it. */ landside: LandsideStatus | "not_applicable";
   /** Certification identity of every member record folded into this solution. */
   certifiedOver: Array<{ userId: string; inputHash: string | null; engineVersion: string | null }>;
 }
@@ -249,7 +249,7 @@ export function certifyCrewPlan(
     if (b.memberIds.length === 0) reasons.push("empty_branch");
     if (b.memberIds.some((id) => !byId.has(id))) reasons.push("unknown_member_in_branch");
 
-    const needed = branchNeededMinutes(b.stops);
+    const needed = branchNeededMinutes(b.stops); const landside = groupLandsideStatus(b.stops, b.memberIds.map((id) => byId.get(id)?.record ?? null)); if (landside === "closed") reasons.push("landside_closed_for_member"); // certification 4 of 4: usable minutes are the same number whether or not a border lets the member through
     const uncertified = branchMembers.some((m) => !m.record) || branchMembers.length !== b.memberIds.length;
     if (branchMembers.some((m) => !m.record)) reasons.push("member_without_certified_feasibility");
 
@@ -288,7 +288,7 @@ export function certifyCrewPlan(
       neededMinutes: needed,
       usableMinutes: uncertified ? null : usable,
       feasible: reasons.length === 0 && branchMembers.length > 0,
-      reasons,
+      reasons, landside,
       perMemberSlackMin: slacks,
     };
   });
@@ -306,7 +306,7 @@ export function certifyCrewPlan(
     branches,
     feasible: allReasons.length === 0 && branches.length > 0 && branches.every((b) => b.feasible),
     reasons: allReasons,
-    split: plan.branches.length > 1,
+    split: plan.branches.length > 1, landside: weakestLandsideStatus(branches.map((b) => b.landside)),
     certifiedOver: members.map((m) => ({
       userId: m.userId,
       inputHash: m.record?.inputHash ?? null,

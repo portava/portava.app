@@ -9,6 +9,16 @@
  *   - Initial run 60 s after server start (lets Supabase client finish init)
  *   - Hourly thereafter via setInterval
  *   - Errors are swallowed — scanner must never crash the server
+ *
+ * "Hourly" is the ceiling, not the rate. This runs on Replit autoscale, which
+ * suspends the process after 15 idle minutes, so an hour (or a night, or a
+ * weekend) can pass with no tick at all and nothing is wrong. The three
+ * detectors whose windows were narrower than that gap — geotag_farming,
+ * hashtag_spam, available_now_abuse — therefore do NOT anchor on `Date.now()`
+ * alone any more; they resume from a durable per-detector watermark so a
+ * suspended hour is scanned late instead of never. The argument, the per-
+ * detector catch-up caps and what bounds a catch-up pass all live next to the
+ * detectors, in CompassAbuseDefenseEngine's NARROW_SCANS.
  */
 
 import { getServiceClient, isServiceClientReady } from "./supabase.js";
@@ -28,7 +38,17 @@ async function runGlobalScan(): Promise<void> {
   _scanCallCount++;
   const db = isServiceClientReady ? getServiceClient() : null;
   try {
-    const { flagsWritten, status, failedDetectors } = await runScan(db, null);
+    const { flagsWritten, status, failedDetectors, watermarkFailures } = await runScan(db, null);
+    // A broken watermark store does not make the scan unclean — every detector
+    // still scanned at least its own window — but it does mean the suspended
+    // hours were not recovered on this pass, which otherwise looks exactly
+    // like a healthy hourly line. Said out loud for that reason.
+    if (watermarkFailures.length > 0) {
+      logger.warn(
+        { watermarkFailures },
+        "CompassAbuseScanner: scan watermarks did not complete — missed windows were not recovered on this pass",
+      );
+    }
     if (status === "incomplete") {
       // "completed" with flagsWritten: 0 was the operator-facing half of the
       // same fabrication: an hourly line saying the abuse scan had run and

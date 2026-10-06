@@ -603,8 +603,8 @@ export function startIntelRetentionScheduler(): void {
     // Every registered pass runs each tick, each behind its own flag. allSettled
     // so one failing never blocks another or the reschedule.
     void Promise.allSettled(RETENTION_PASSES.map((pass) => pass.run()))
-      .finally(() => { _timer = setTimeout(tick, INTERVAL_MS); });
-  }, STARTUP_DELAY_MS);
+      .finally(() => { if (_timer !== null) { _timer = setTimeout(tick, INTERVAL_MS); _timer.unref?.(); } });
+  }, STARTUP_DELAY_MS); _timer.unref?.(); // never keep a process alive for a scheduler: the server does that
 }
 
 export function stopIntelRetentionScheduler(): void {

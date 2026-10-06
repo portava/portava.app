@@ -122,6 +122,36 @@ function selectColumns(select: string | null): string[] | null {
     .filter((p) => p !== "*");
 }
 
+/**
+ * PostgREST's REVERSE to-many embed through a NAMED foreign key,
+ * `rel!rel_col_fkey(a, b)` — the `rel` rows whose `col` references this row's
+ * `id`, each projected to (a, b). The one embed shape a contract here issues
+ * (the auth gate's `user_account_states!user_account_states_user_id_fkey(state,
+ * expires_at)` on profiles, lib/accountStateGate.ts); any other embed is still
+ * ignored, as before.
+ */
+function selectEmbeds(select: string | null): Array<{ rel: string; col: string; cols: string[] }> {
+  if (!select) return [];
+  const out: Array<{ rel: string; col: string; cols: string[] }> = [];
+  let depth = 0;
+  let cur = "";
+  const items: string[] = [];
+  for (const ch of select) {
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    if (ch === "," && depth === 0) { items.push(cur); cur = ""; } else cur += ch;
+  }
+  items.push(cur);
+  for (const raw of items) {
+    const m = /^([a-z_]+)!([a-z_]+)\((.*)\)$/.exec(raw.trim());
+    if (!m) continue;
+    const [, rel, hint, inner] = m;
+    if (!hint!.startsWith(`${rel}_`) || !hint!.endsWith("_fkey")) continue;
+    out.push({ rel: rel!, col: hint!.slice(rel!.length + 1, -"_fkey".length), cols: inner!.split(",").map((c) => c.trim()).filter(Boolean) });
+  }
+  return out;
+}
+
 function project(row: Row, cols: string[] | null): Row {
   if (!cols) return { ...row };
   const out: Row = {};
@@ -225,6 +255,13 @@ export function makeOracle(world: OracleWorld): OracleHandle {
     const store = (tables[table] ??= []);
     const select = u.searchParams.get("select");
     const cols = selectColumns(select);
+    const embeds = selectEmbeds(select);
+    const withEmbeds = (row: Row, shaped: Row): Row => {
+      for (const e of embeds) {
+        shaped[e.rel] = (tables[e.rel] ?? []).filter((r) => r[e.col] === row.id).map((r) => project(r, e.cols));
+      }
+      return shaped;
+    };
 
     // Filters, in the order PostgREST would apply them.
     const preds: Array<{ col: string; test: (v: unknown) => boolean }> = [];
@@ -298,12 +335,12 @@ export function makeOracle(world: OracleWorld): OracleHandle {
         if (rows.length !== 1) {
           return json(PGRST116(`Results contain ${rows.length} rows, application/vnd.pgrst.object+json requires 1 row`), 406);
         }
-        return json(project(rows[0], cols), 200);
+        return json(withEmbeds(rows[0], project(rows[0], cols)), 200);
       }
       const extra: Record<string, string> = wantCount
         ? { "content-range": `${offset}-${Math.max(offset + rows.length - 1, 0)}/${total}` }
         : {};
-      return json(rows.map((r) => project(r, cols)), 200, extra);
+      return json(rows.map((r) => withEmbeds(r, project(r, cols))), 200, extra);
     }
 
     if (writeDenied) {
