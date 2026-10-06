@@ -131,6 +131,9 @@ export const WITHHELD_PLAN_TITLE = "Private plan";
 export const WITHHELD_LOCATION_FIELDS = [
   "lat", "lng", "location_name", "address", "place_id", "google_place_id", "source_id",
   "route_stop_id", "notes", "description", "structured_location",
+  // lead ruling D-65 (2026-10-06): owner-only covers the place's location, its
+  // name and any text derived from them — the town and venue name too.
+  "city", "country", "neighborhood", "venue_name",
 ] as const;
 
 /**

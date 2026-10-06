@@ -76,7 +76,7 @@ const GEM_AUTHOR = "55555555-0000-4000-8000-000000000005"; // submitted the gem;
 const HOTEL_LAT = 38.70417;
 const DINNER_LAT = 38.71;
 /** Every value of Ana's private stay, and the gem it links. Any of them in a response is the place. */
-const SECRET = /Casa Segreta|Rua do Segredo|door code 4471|ChIJ-secret-place|38\.70417|-9\.13853|99999999-0000-4000-8000-000000000099|Segreta Gem/;
+const SECRET = /Casa Segreta|Rua do Segredo|door code 4471|ChIJ-secret-place|38\.70417|-9\.13853|99999999-0000-4000-8000-000000000099|Segreta Gem|Vila Segreta|suite over the garden/; // D-65: the town and the description too
 
 const iso = (h: number) => new Date(Date.now() + h * 3_600_000).toISOString();
 const dayOff = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString().slice(0, 10);
@@ -98,7 +98,7 @@ function seed(viewer: string, scenario: Scenario, hotelOver: Record<string, unkn
     trip_plan_items: [
       { id: HOTEL, trip_id: TRIP, creator_id: ANA, title: "Casa Segreta", category: "accommodation", status: "in_progress",
         lat: HOTEL_LAT, lng: -9.13853, location_is_private: true, location_name: "Rua do Segredo 7", notes: "door code 4471",
-        place_id: "ChIJ-secret-place", source_type: "hidden_gem", source_id: GEM, stage_id: STAGE, day_date: dayOff(0),
+        place_id: "ChIJ-secret-place", source_type: "hidden_gem", source_id: GEM, stage_id: STAGE, day_date: dayOff(0), city: "Vila Segreta", description: "suite over the garden",
         starts_at: iso(-1), ends_at: iso(2), sort_order: 1, removed_at: null, created_at: "2026-10-01T00:00:00Z", ...hotelOver },
       { id: DINNER, trip_id: TRIP, creator_id: BEN, title: "Dinner", category: "food", status: "planned", lat: DINNER_LAT, lng: -9.14,
         location_is_private: false, location_name: "Praca", notes: null, day_date: dayOff(0), starts_at: iso(3), ends_at: iso(4),
