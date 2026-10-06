@@ -796,7 +796,7 @@ describe("D-24c — the boost lift under a messaging restriction", () => {
     ({ user_id: userId, restriction_type: t, lifted_at: null, expires_at: null, ...extra });
 
   /** PostgREST-shaped: trust_restrictions answers rows (or an error); every write is recorded. */
-  function fakeDb(restrictions: Array<Record<string, unknown>>, opts: { unreadable?: boolean } = {}) {
+  function fakeDb(restrictions: Array<Record<string, unknown>>, opts: { unreadable?: boolean; absent?: boolean } = {}) {
     const writes: string[] = [];
     const db: any = {
       writes,
@@ -805,7 +805,11 @@ describe("D-24c — the boost lift under a messaging restriction", () => {
         const rows = () => (table === "trust_restrictions" ? restrictions : []).filter((r) => filters.every((f) => f(r)));
         const result = () => (table === "trust_restrictions" && opts.unreadable)
           ? { data: null, error: { message: "trust_restrictions unavailable", code: "XX000" } }
-          : { data: rows(), error: null };
+          : (table === "trust_restrictions" && opts.absent)
+            // The table is not there at all: getRestrictionState answers fail_OPEN —
+            // degraded:true with every can-flag TRUE (TrustRestrictionService).
+            ? { data: null, error: { message: 'relation "public.trust_restrictions" does not exist', code: "42P01" } }
+            : { data: rows(), error: null };
         const chain: any = {
           select: () => chain,
           eq: (c: string, v: unknown) => { filters.push((r) => r[c] === v); return chain; },
@@ -869,6 +873,13 @@ describe("D-24c — the boost lift under a messaging restriction", () => {
 
   it("an UNREADABLE restriction state applies no lift to anyone (fail-closed for reach), and refuses nothing — every post is still served", async () => {
     const rs = await rank(fakeDb([], { unreadable: true }));
+    assert.equal(liftOf(rs, "post:bob"), 0);
+    assert.equal(liftOf(rs, "post:carol"), 0);
+    assert.deepEqual(rs.map((r) => r.item.id).sort(), ["post:bob", "post:carol"]);
+  });
+
+  it("an ABSENT trust_restrictions table (fail_open: degraded, every can-flag TRUE) applies no lift either — `degraded` decides, not canMessage", async () => {
+    const rs = await rank(fakeDb([R(BOB_ID, "messaging")], { absent: true }));
     assert.equal(liftOf(rs, "post:bob"), 0);
     assert.equal(liftOf(rs, "post:carol"), 0);
     assert.deepEqual(rs.map((r) => r.item.id).sort(), ["post:bob", "post:carol"]);
