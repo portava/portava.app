@@ -220,7 +220,7 @@ import {
 import { rankCandidates } from "../lib/portavaRank.js";
 import type { RankCandidate, ViewerContext } from "../lib/portavaRank.js";
 import { logImpression } from "../lib/rankLog.js";
-import { getDisplayTrustScores, getTrustProfileResult } from "../services/trust/TrustScoreService.js";
+import { getDisplayTrustScores, getTrustProfileResult } from "../services/trust/TrustScoreService.js"; import { refuseTripActionIfRestricted } from "../lib/tripTrustGate.js";
 import {
   toPrivateEventPreview,
   toAuthorizedEventView,
@@ -6408,7 +6408,7 @@ router.post("/events/:id/add-to-trip", async (req, res) => {
     .eq("trip_id", tripId).eq("user_id", user.id).maybeSingle();
   if (!membership || !["owner", "member"].includes((membership as any).role)) {
     sendError(res, "forbidden", "You must be an accepted trip member to add events"); return;
-  }
+  } if (await refuseTripActionIfRestricted(res, sc, tripId, user.id, "change_shared_plan")) return; // census-trips §85 (lead ruling D-24/D-24a): adding to a group trip's plan is hosting it
 
   // Guard against duplicate: same source already in this trip.
   // This is the ONLY thing standing between a retry and a second itinerary

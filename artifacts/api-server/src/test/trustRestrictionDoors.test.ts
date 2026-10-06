@@ -46,6 +46,9 @@ import planRouter from "../routes/plan.js";
 import commandRouter from "../server/trips/commandRoute.js";
 import tripProjectionsRouter from "../server/trips/readRoutes/tripProjections.js";
 import tripReservationsRouter from "../routes/tripReservations.js";
+import eventsRouter from "../routes/events.js";
+import airportRouter from "../routes/airport.js";
+import telegraphChatRouter from "../routes/telegraphChat.js";
 import { RESTRICTION_SENTENCES, RESTRICTION_UNVERIFIABLE_MESSAGE } from "../lib/discoveryTrustGate.js";
 import { decideTripActionRestriction, readTripShape } from "../lib/tripTrustGate.js";
 import { TRAIL_PROPOSALS_PER_DAY } from "../services/trails/TrailService.js";
@@ -64,6 +67,10 @@ const GEM = "99999999-0000-4000-8000-000000000099";
 const PLACE = "ffffffff-0000-4000-8000-00000000000f";
 const MEETUP = "eeeeeeee-0000-4000-8000-00000000000e";
 const RESV = "cccccccc-0000-4000-8000-0000000000a1";
+const EVENT = "e0e0e0e0-0000-4000-8000-0000000000e0";
+const SESSION = "5e5e5e5e-0000-4000-8000-00000000005e";
+const THREAD = "7e7e7e7e-0000-4000-8000-00000000007e";
+const SUGGESTION = "5a5a5a5a-0000-4000-8000-00000000005a";
 const SOLO_RESV = "cccccccc-0000-4000-8000-0000000000a2";
 const day = new Date().toISOString().slice(0, 10);
 const iso = (h: number) => new Date(Date.now() + h * 3_600_000).toISOString();
@@ -73,7 +80,12 @@ type Restriction = "hosting" | "messaging" | null;
 
 function seed(restriction: Restriction, actor = ANA): Record<string, Rows> {
   return {
-    feature_flags: [{ flag: "hidden_gems_enabled", enabled: true }, { flag: "trip_operational_projections_enabled", enabled: true }, { flag: "reservation_import_enabled", enabled: true }],
+    feature_flags: [{ flag: "hidden_gems_enabled", enabled: true }, { flag: "trip_operational_projections_enabled", enabled: true }, { flag: "reservation_import_enabled", enabled: true },
+      { flag: "airport_mode_enabled", enabled: true }, { flag: "layover_plans_enabled", enabled: true }],
+    events: [{ id: EVENT, host_id: BEN, state: "published", visibility: "public", title: "Fado night", starts_at: iso(6), ends_at: iso(8) }],
+    layover_sessions: [{ id: SESSION, user_id: actor, airport_code: "LIS", status: "active", arrival_at: iso(-1), departure_at: iso(6), created_at: iso(-2) }],
+    message_thread_members: [{ thread_id: THREAD, user_id: actor, left_at: null }],
+    telegraph_chat_suggestions: [{ id: SUGGESTION, user_id: actor, thread_id: THREAD, title: "Tram 28", location_context: null, time_context: null }],
     profiles: [ORGANIZER, ANA, BEN].map((id) => ({ id, handle: id.slice(0, 4), name: id.slice(0, 4), role: "user" })),
     trust_restrictions: restriction ? [{ user_id: actor, restriction_type: restriction, lifted_at: null, expires_at: null }] : [],
     trips: [
@@ -125,6 +137,7 @@ const DOORS: Door[] = [
   { name: "trail-suggestions", mapped: ["messaging"], method: "POST", path: `/v1/discovery/trails/${TRAIL2}/suggestions`, body: { sourceType: "place", sourceId: PLACE, labels: [] } },
   { name: "gem-submit", mapped: ["messaging"], method: "POST", path: "/hidden-gems", body: { name: "Tile Alley", city: "Lisbon" } },
   { name: "gem-contribute", mapped: ["messaging"], method: "POST", path: `/hidden-gems/${GEM}/contribute`, body: { type: "tip", text: "go early" } },
+  { name: "gem-edit", mapped: ["messaging"], method: "PATCH", path: `/hidden-gems/${GEM}`, body: { safetyNotes: "go before dusk" } },
   { name: "community-submit", mapped: ["messaging"], method: "POST", path: "/discovery/community", body: { city: "Lisbon", name: "Cafe", place_type: "cafe" } },
   // Trips doors (lib/tripTrustGate.ts)
   { name: "plan-add", mapped: ["hosting"], method: "POST", path: `/trips/${TRIP}/plan/items`, body: { title: "Museum", category: "activity" },
@@ -147,6 +160,12 @@ const DOORS: Door[] = [
     solo: { path: `/hidden-gems/${GEM}/plan`, body: { tripId: SOLO } } },
   { name: "reservation-confirm-add-to-plan", mapped: ["hosting"], method: "POST", path: `/trips/${TRIP}/reservations/${RESV}/confirm`, body: { addToPlan: true },
     solo: { path: `/trips/${SOLO}/reservations/${SOLO_RESV}/confirm`, body: { addToPlan: true } } },
+  { name: "event-add-to-trip", mapped: ["hosting"], method: "POST", path: `/events/${EVENT}/add-to-trip`, body: { tripId: TRIP },
+    solo: { path: `/events/${EVENT}/add-to-trip`, body: { tripId: SOLO } } },
+  { name: "layover-plan", mapped: ["hosting"], method: "POST", path: `/airport/sessions/${SESSION}/plan`, body: { tripId: TRIP, title: "Coffee near gate" },
+    solo: { path: `/airport/sessions/${SESSION}/plan`, body: { tripId: SOLO, title: "Coffee near gate" } } },
+  { name: "telegraph-suggestion-add-to-plan", mapped: ["hosting"], method: "POST", path: `/threads/${THREAD}/telegraph/suggestions/${SUGGESTION}/add-to-plan`, body: { tripId: TRIP },
+    solo: { path: `/threads/${THREAD}/telegraph/suggestions/${SUGGESTION}/add-to-plan`, body: { tripId: SOLO } } },
   { name: "command-create-proposal", mapped: ["hosting", "messaging"], method: "POST", path: `/trips/${TRIP}/commands`,
     body: { type: "CREATE_PROPOSAL", idempotency_key: "p-1", payload: { proposal_type: "move", decision_rule: "majority", payload_json: {} } },
     solo: { path: `/trips/${SOLO}/commands`, body: { type: "CREATE_PROPOSAL", idempotency_key: "p-2", payload: { proposal_type: "move", decision_rule: "majority", payload_json: {} } } } },
@@ -157,7 +176,7 @@ const DOORS: Door[] = [
 let harness: RouterHarness;
 before(async () => {
   const all = express.Router();
-  for (const r of [trailsRouter, hiddenGemsRouter, discoveryRouter, tripsRouter, planRouter, commandRouter, tripProjectionsRouter, tripReservationsRouter]) all.use(r);
+  for (const r of [trailsRouter, hiddenGemsRouter, discoveryRouter, tripsRouter, planRouter, commandRouter, tripProjectionsRouter, tripReservationsRouter, eventsRouter, airportRouter, telegraphChatRouter]) all.use(r);
   harness = await startRouter(all);
 });
 after(async () => {

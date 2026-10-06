@@ -826,7 +826,7 @@ router.patch("/hidden-gems/:id", async (req, res) => {
   if (!parsed.success) {
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid payload");
     return;
-  }
+  } if (await refuseIfTrustRestricted(res, sc, user.id, "messaging")) return; // census-discovery (lead ruling D-24): editing a gem is submitting public content
 
   try {
     const rawPatch = Object.fromEntries(

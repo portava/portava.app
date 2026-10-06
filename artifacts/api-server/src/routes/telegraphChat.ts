@@ -35,7 +35,7 @@ import {
 
 const chatLogger = rootLogger.child({ route: "telegraphChat" });
 import { requireUser, sendError } from "../lib/http.js"; import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js";
-import { detectIntent } from "../services/telegraphIntent.js";
+import { detectIntent } from "../services/telegraphIntent.js"; import { refuseTripActionIfRestricted } from "../lib/tripTrustGate.js";
 import {
   resolvePrivacyVerdict,
   buildSuggestions,
@@ -383,7 +383,7 @@ router.post(
     if (!tripMembership) {
       sendError(res, "forbidden", "You are not an accepted member of that trip");
       return;
-    }
+    } if (await refuseTripActionIfRestricted(res, client, tripId, user.id, "change_shared_plan")) return; // census-trips §85 (lead ruling D-24/D-24a)
 
     // Load suggestion for title/context
     const { data: suggestion, error: suggestionErr } = await client
