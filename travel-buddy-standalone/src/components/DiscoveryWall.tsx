@@ -21,6 +21,7 @@ import { HighlightRing } from './HighlightRing.tsx';
 import { HighlightViewer } from './HighlightViewer.tsx';
 import { useHighlightRingState } from '../hooks/useHighlightRingState.ts';
 import { saveCommunityPlace, reportCommunityPlace, getPlaceLiveStatusCached } from '../services/discovery.ts';
+import { placeLiveAnchorOf } from '../features/discovery/placeLiveAnchor.ts';
 import { removeSaved } from '../services/discoveryBookmarks.ts';
 import type { PlaceReportReason, PlaceLiveStatus } from '../services/discovery.ts';
 import { PlaceQuickActions } from './PlaceQuickActions.tsx';
@@ -31,21 +32,24 @@ import { communityBylineText } from '../features/discovery/communityByline.ts';
  * getPlaceLiveStatusCached service (10-min cache, dedup, 3-concurrent limit)
  * so community cards add no new fetch path. The 600 ms delay skips cards the
  * user scrolls past quickly. Honest degradation: any failure returns null and
- * the caller renders nothing.
+ * the caller renders nothing. The place's own coordinates are the identity
+ * anchor (lead ruling D-67): a card without them fetches nothing, because no
+ * live record could be confirmed as that place.
  */
-function useLiveOpenNow(name: string | null | undefined, city: string | null | undefined): boolean | null {
+function useLiveOpenNow(name: string | null | undefined, lat: number | null | undefined, lng: number | null | undefined): boolean | null {
   const [liveStatus, setLiveStatus] = useState<PlaceLiveStatus | null>(null);
   useEffect(() => {
     setLiveStatus(null);
-    if (!name?.trim() || !city?.trim()) return;
+    const anchor = placeLiveAnchorOf({ lat, lng });
+    if (!name?.trim() || !anchor) return;
     let cancelled = false;
     const timer = setTimeout(() => {
-      getPlaceLiveStatusCached(name, city)
+      getPlaceLiveStatusCached(name, anchor)
         .then((ls) => { if (!cancelled) setLiveStatus(ls); })
         .catch(() => {});
     }, 600);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [name, city]);
+  }, [name, lat, lng]);
   return liveStatus?.available && typeof liveStatus.openNow === 'boolean'
     ? liveStatus.openNow
     : null;
@@ -323,7 +327,7 @@ export function HiddenGemCard({ gem, onAddToRoute }: { gem: DiscoveryItem; onAdd
   const [reported, setReported] = useState(false);
   const [displayCount, setDisplayCount] = useState(gem.savedCount ?? 0);
   const [imgFailed, setImgFailed] = useState(false);
-  const liveOpenNow = useLiveOpenNow(gem.name, gem.city ?? gem.neighborhood);
+  const liveOpenNow = useLiveOpenNow(gem.name, gem.lat, gem.lng);
 
   // Resolves: gem.imageUrl → category fallback asset. Never null.
   const resolvedImageUrl = useEntityHeaderImage({
@@ -502,7 +506,7 @@ export function TravelerPickCard({ pick, onAddToRoute }: { pick: TravelerPick; o
   const [saving, setSaving] = useState(false);
   const [reported, setReported] = useState(false);
   const [displayCount, setDisplayCount] = useState(pick.savedCount ?? 0);
-  const liveOpenNow = useLiveOpenNow(pick.place, pick.city);
+  const liveOpenNow = useLiveOpenNow(pick.place, pick.lat, pick.lng);
   // Re-sync when prefillSavedPlaceIds() fires after this card has already mounted.
   useEffect(() => subscribeToSavedIds(() => {
     if (!saved) setSaved(savedPlaceIds.has(pick.id));

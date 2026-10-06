@@ -17,7 +17,7 @@ import { reverseGeocode } from "../services/geocodingService";
 import { searchFoursquare } from "../lib/foursquarePlaces";
 import { getFoursquareApiKey } from "../lib/foursquareApiKey";
 import {
-  getLiveVenueStatus,
+  getLiveVenueStatus, liveVenueAnchorOf, type LiveVenueAnchor,
   makeConfidence,
   CANT_VERIFY_NOTE,
 } from "../lib/liveIntelligence";
@@ -1196,19 +1196,35 @@ router.get("/places/fsq-photo", async (req, res) => {
 //   { liveStatus: { available: false, openNow: null, dataNote, confidence } }
 //
 // Honest degradation: when the live source can't verify (no key, outage,
-// timeout, venue not found), available=false with an explicit dataNote —
-// a status is NEVER invented. openNow may also be null when the source
-// responded but had no hours data.
+// timeout, no record confirmed as this place), available=false with an
+// explicit dataNote — a status is NEVER invented. openNow may also be null
+// when the source responded but had no hours data.
+//
+// Identity (lead ruling D-67): `lat`/`lng` are the place's OWN coordinates,
+// and a provider record is labelled verified live only if its name matches and
+// it lies within LIVE_IDENTITY_MAX_DISTANCE_M of them. Without them nothing can
+// be confirmed as this place, so the answer is the can't-verify one and the
+// provider is not asked. Given, they must be given together and be valid.
+// `city` is accepted from older clients and no longer used.
 router.get("/places/live-status", async (req, res) => {
   const name = String(req.query.name ?? "").trim();
   if (!name || name.length > 200) {
     res.status(400).json({ error: "invalid_payload", message: "name is required (max 200 chars)" });
     return;
   }
-  const cityRaw = typeof req.query.city === "string" ? req.query.city.trim() : "";
-  const city = cityRaw && cityRaw.length <= 200 ? cityRaw : null;
+  const latGiven = req.query.lat !== undefined;
+  const lngGiven = req.query.lng !== undefined;
+  let anchor: LiveVenueAnchor | null = null;
+  if (latGiven || lngGiven) {
+    const coord = (v: unknown) => (typeof v === "string" && v.trim() !== "" ? Number(v) : NaN);
+    anchor = latGiven && lngGiven ? liveVenueAnchorOf(coord(req.query.lat), coord(req.query.lng)) : null;
+    if (!anchor) {
+      res.status(400).json({ error: "invalid_payload", message: "lat and lng must be given together as valid coordinates" });
+      return;
+    }
+  }
 
-  const live = await getLiveVenueStatus(name, city);
+  const live = await getLiveVenueStatus(name, anchor);
   const liveStatus = live
     ? {
         available:  true as const,

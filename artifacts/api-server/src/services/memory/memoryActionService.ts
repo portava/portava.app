@@ -58,7 +58,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
-import { getLiveVenueStatus, type LiveVenueStatus } from "../../lib/liveIntelligence.js";
+import { getLiveVenueStatus, liveVenueAnchorOf, type LiveVenueAnchor, type LiveVenueStatus } from "../../lib/liveIntelligence.js";
 import {
   gemCeilingForItem,
   loadRestrictiveGems,
@@ -294,13 +294,13 @@ function toCurrentPlace(r: PlaceRow): CurrentPlace {
  * ==========================================================================*/
 
 export interface MemoryActionDeps {
-  liveStatus(name: string, city: string | null): Promise<LiveVenueStatus | null>;
+  liveStatus(name: string, anchor: LiveVenueAnchor): Promise<LiveVenueStatus | null>; // lead ruling D-67: the place's own coordinates
   tripWindows(sc: SupabaseClient, tripId: string, viewerId: string, now: Date): Promise<TripWindowsRead>;
   restrictiveGemCeiling(sc: SupabaseClient, place: CurrentPlace): Promise<{ determined: true; ceiling: LocationVisibilityTier | null } | { determined: false }>;
 }
 
 const REAL_DEPS: MemoryActionDeps = {
-  liveStatus: (name, city) => getLiveVenueStatus(name, city),
+  liveStatus: (name, anchor) => getLiveVenueStatus(name, anchor),
   tripWindows: (sc, tripId, viewerId, now) => readTripWindows(sc, tripId, viewerId, { now }),
   restrictiveGemCeiling: async (sc, place) => {
     try {
@@ -446,14 +446,20 @@ function historicalOf(memory: MemoryForAction, subject: string, nowMs: number) {
 /** The current half: a live source, or an honest unknown. Never the Memory row. */
 export async function readCurrentWorld(place: CurrentPlace, nowIso: string): Promise<CurrentWorldReading> {
   let live: LiveVenueStatus | null = null;
+  // Lead ruling D-67: a live record is this place only if it sits at this place.
+  // A catalog row with no coordinates cannot be matched, so the source is not asked.
+  const anchor = liveVenueAnchorOf(place.lat, place.lng);
+  if (!anchor) {
+    return currentWorldUnknown("This place has no stored coordinates, so no live record can be confirmed as this place and nothing may be said about whether it is open now.", nowIso);
+  }
   try {
-    live = await deps.liveStatus(place.name, place.city);
+    live = await deps.liveStatus(place.name, anchor);
   } catch (err) {
     log.warn({ err, placeId: place.id }, "memory actions: live status threw — reporting unknown");
     live = null;
   }
   if (!live) {
-    return currentWorldUnknown("No live source answered for this place, so nothing may be said about whether it is open now.", nowIso);
+    return currentWorldUnknown("No live record was confirmed as this place, or no live source answered, so nothing may be said about whether it is open now.", nowIso);
   }
   if (live.openNow === null) {
     return currentWorldUnknown(`${live.venueName}: a live source answered but published no opening hours.`, nowIso);

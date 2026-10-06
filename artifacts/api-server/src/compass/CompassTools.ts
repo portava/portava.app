@@ -86,7 +86,7 @@ import { qualifyWhyThis,
 } from "./CompassRecommendationEngine.js";
 import {
   makeConfidence,
-  getLiveVenueStatus,
+  getLiveVenueStatus, liveVenueAnchorOf,
   CANT_VERIFY_NOTE,
 } from "../lib/liveIntelligence.js";
 import {
@@ -1107,16 +1107,16 @@ async function toolGetPlaceDetails(sc: SupabaseClient, args: Record<string, unkn
   if (!placeId) return { place: null, info: "placeId is required." };
   const { data, error } = await sc
     .from("discovery_places")
-    .select(PLACE_SAFE_COLUMNS + ", secondary_categories, place_type")
+    .select(PLACE_SAFE_COLUMNS + ", secondary_categories, place_type, lat, lng")
     .eq("id", placeId)
     .maybeSingle();
   if (error || !data) return { place: null, info: "Place not found." };
-  const p = data as any;
+  const { lat: anchorLat, lng: anchorLng, ...p } = data as any; // lead ruling D-67: lat/lng are read ONLY as the live lookup's identity anchor — PLACE_SAFE_COLUMNS keeps coordinates out of every tool result, so they are split off here and never reach the returned place
 
   // Phase 8 — live open-now lookup at tool time (weather-cache pattern:
-  // short TTL, strict timeout, honest degradation). A null result means the
-  // live source is unavailable — we say so explicitly and never fabricate.
-  const live = await getLiveVenueStatus(String(p.name ?? ""), (p.city as string | null) ?? null);
+  // short TTL, strict timeout, honest degradation). A null result means the live
+  // source is unavailable or no record was confirmed as this place — never fabricated.
+  const live = await getLiveVenueStatus(String(p.name ?? ""), liveVenueAnchorOf(anchorLat, anchorLng));
   const liveStatus = live
     ? {
         available: true as const,

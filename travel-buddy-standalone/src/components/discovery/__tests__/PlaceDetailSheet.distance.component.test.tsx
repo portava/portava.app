@@ -6,6 +6,9 @@
  *   2. When place.distanceKm is null but the user's location has coords and
  *      the place has lat/lng, the distance is computed and shown.
  *   3. When neither source provides distance, the distance row is absent.
+ *   4. Lead ruling D-67: the live open-now lookup carries the place's own
+ *      coordinates (the server's identity anchor), and when the server cannot
+ *      verify, listed hours are shown labelled as such — never as live.
  *
  * ## Modal strategy
  * PlaceDetailSheet IS a Modal. The Modal Proxy replaces react-native's Modal
@@ -35,6 +38,7 @@ import React from 'react';
 import { render, waitFor } from '@testing-library/react-native';
 import { PlaceDetailSheet } from '../PlaceDetailSheet.tsx';
 import type { DiscoveryPlace } from '../../../services/discovery.ts';
+import { getPlaceLiveStatus } from '../../../services/discovery.ts';
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
 
@@ -170,5 +174,27 @@ describe('PlaceDetailSheet — distance row', () => {
     await waitFor(() => {
       expect(queryByTestId('place-sheet-distance')).toBeNull();
     });
+  });
+});
+
+describe('PlaceDetailSheet — live open-now lookup anchored on the place (lead ruling D-67)', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  it('passes the place\'s own coordinates with its name', async () => {
+    await mountSheet(BASE_PLACE);
+    await waitFor(() => expect(getPlaceLiveStatus).toHaveBeenCalledWith('Test Place', { lat: 48.8566, lng: 2.3522 }));
+  });
+
+  it('labels listed hours as not verified live when the server cannot confirm the place', async () => {
+    (getPlaceLiveStatus as jest.Mock).mockResolvedValueOnce({
+      available: false,
+      openNow: null,
+      dataNote: "Live status can't be verified right now — showing the last known information instead.",
+      confidence: { sourceClass: 'historical', label: 'Historical', checkedAt: '2026-10-06T00:00:00Z' },
+    });
+    const { findByText, queryByText } = await mountSheet({ ...BASE_PLACE, openingHours: 'Mo-Su 08:00-18:00' });
+    expect(await findByText(/Last known hours — can't verify live/)).toBeTruthy();
+    expect(queryByText('Open now')).toBeNull();
+    expect(queryByText('Closed now')).toBeNull();
   });
 });

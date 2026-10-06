@@ -5,6 +5,9 @@
  *   1. Attribution text renders when place.attribution is set (FSQ CC BY 4.0)
  *   2. No attribution text appears when place.attribution is null
  *   3. No attribution text appears when place.attribution is undefined
+ *   4. Lead ruling D-67: the live open-now lookup carries the place's own
+ *      coordinates (the server's identity anchor), and a card without them
+ *      makes no lookup at all.
  *
  * Run with:  pnpm test:component
  *
@@ -15,6 +18,7 @@ import React from 'react';
 import { render, waitFor } from '@testing-library/react-native';
 import { PlaceCard } from '../PlaceCard.tsx';
 import type { DiscoveryPlace } from '../../../services/discovery.ts';
+import { getPlaceLiveStatusCached } from '../../../services/discovery.ts';
 
 // ── Module mocks ──────────────────────────────────────────────────────────────
 
@@ -148,5 +152,23 @@ describe('PlaceCard — FSQ attribution label', () => {
     const { queryByText } = await mountCard(place);
 
     await waitFor(() => expect(queryByText('Foursquare CC BY 4.0')).toBeNull());
+  });
+});
+
+describe('PlaceCard — live open-now lookup is anchored on the place (lead ruling D-67)', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  it('passes the place\'s own coordinates with its name', async () => {
+    await mountCard(BASE_PLACE);
+    await waitFor(
+      () => expect(getPlaceLiveStatusCached).toHaveBeenCalledWith('Café du Marché', { lat: 48.8566, lng: 2.3522 }),
+      { timeout: 3000 },
+    );
+  });
+
+  it('makes no lookup for a place without coordinates', async () => {
+    await mountCard({ ...BASE_PLACE, id: 'place-nocoords', lat: null, lng: null });
+    await new Promise((r) => setTimeout(r, 800)); // past the 600 ms viewport delay
+    expect(getPlaceLiveStatusCached).not.toHaveBeenCalled();
   });
 });

@@ -84,7 +84,7 @@ function parsePlaceJson(raw: string | string[] | undefined): DiscoveryPlace | nu
 
 // ── Discovery-place fallback view ─────────────────────────────────────────────
 
-function DiscoveryFallback({ place, city }: { place: DiscoveryPlace; city: string | null }) {
+function DiscoveryFallback({ place }: { place: DiscoveryPlace }) {
   const [saved, setSaved] = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [liveStatus, setLiveStatus] = useState<PlaceLiveStatus | null>(null);
@@ -98,11 +98,11 @@ function DiscoveryFallback({ place, city }: { place: DiscoveryPlace; city: strin
   useEffect(() => {
     setLiveStatus(null);
     let cancelled = false;
-    getPlaceLiveStatus(place.name, city)
+    getPlaceLiveStatus(place.name, { lat: place.lat, lng: place.lng }) // lead ruling D-67: the place's own coordinates
       .then((ls) => { if (!cancelled) setLiveStatus(ls); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [place.id, city]);
+  }, [place.id, place.lat, place.lng]);
 
   const liveOpenNow: boolean | null =
     liveStatus?.available && typeof liveStatus.openNow === 'boolean'
@@ -464,7 +464,7 @@ export default function PlaceDetailScreen() {
     return (
       <>
         <Stack.Screen options={{ title: discoveryPlace.name }} />
-        <DiscoveryFallback place={discoveryPlace} city={city} />
+        <DiscoveryFallback place={discoveryPlace} />
       </>
     );
   }

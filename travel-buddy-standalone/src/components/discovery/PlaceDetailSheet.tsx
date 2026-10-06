@@ -44,11 +44,15 @@ interface PlaceDetailSheetProps {
   visible: boolean;
   onClose: () => void;
   onAddToPlan: (place: DiscoveryPlace) => void;
-  /** City context used to disambiguate the live open-now lookup. */
+  /**
+   * @deprecated Explore's city context. It no longer disambiguates the live
+   * open-now lookup: the place's own coordinates do (lead ruling D-67).
+   * Accepted so callers need not change.
+   */
   city?: string | null;
 }
 
-export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city, rankSurface }: PlaceDetailSheetProps) {
+export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, rankSurface }: PlaceDetailSheetProps) {
   const plainInset = usePlainBottomInset();
   // Outcome reporting for the ranking loop — same rules as PlaceCard: tap for
   // Directions / opening the full place page, save for a confirmed bookmark or
@@ -153,16 +157,18 @@ export function PlaceDetailSheet({ place, visible, onClose, onAddToPlan, city, r
   }, [place?.id]);
 
   // Live open-now lookup (Phase 8) — honest degradation: any failure leaves
-  // liveStatus null and no pill is shown; a status is never invented.
+  // liveStatus null and no pill is shown; a status is never invented. The
+  // place's own coordinates go with it (lead ruling D-67); without them the
+  // server answers "can't verify" and the hours below say so.
   useEffect(() => {
     setLiveStatus(null);
     if (!place || !visible) return;
     let cancelled = false;
-    getPlaceLiveStatus(place.name, city ?? null)
+    getPlaceLiveStatus(place.name, { lat: place.lat, lng: place.lng })
       .then((ls) => { if (!cancelled) setLiveStatus(ls); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [place?.id, visible]);
+  }, [place?.id, place?.lat, place?.lng, visible]);
 
   const liveOpenNow: boolean | null =
     liveStatus?.available && typeof liveStatus.openNow === 'boolean'

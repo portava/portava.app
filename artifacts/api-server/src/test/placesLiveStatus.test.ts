@@ -10,6 +10,10 @@
  *  3. Source responded but no hours data → available:true, openNow:null
  *     (honest unknown).
  *  4. Missing name → 400 invalid_payload.
+ *  5. Lead ruling D-67 (2026-10-06): `lat`/`lng` are the place's own
+ *     coordinates and the identity anchor. Without them the answer is the
+ *     can't-verify one and Foursquare is not asked; given, they must come
+ *     together and be valid; a namesake away from them is not verified live.
  *
  * Run: node --import tsx/esm --test src/test/placesLiveStatus.test.ts
  */
@@ -30,6 +34,13 @@ import { FOURSQUARE_KEY_VARS, snapshotKeyEnv, restoreKeyEnv, clearKeyEnv, setKey
 
 const originalFetch = globalThis.fetch;
 let fsqResponder: (() => any) | null = null;
+let fsqCalls: string[] = [];
+
+// The place's own coordinates (Lisbon) and a provider record of it ~20 m away.
+const LAT = 38.7139;
+const LNG = -9.1394;
+const HERE = { latitude: 38.7141, longitude: -9.1394 };
+const AT = `lat=${LAT}&lng=${LNG}`;
 
 function stubFsq(responder: () => any) {
   fsqResponder = responder;
@@ -44,6 +55,7 @@ before(async () => {
   globalThis.fetch = (async (url: any, init?: any) => {
     const u = String(typeof url === "string" ? url : url?.href ?? url);
     if (u.includes("places-api.foursquare.com")) {
+      fsqCalls.push(u);
       const body = fsqResponder ? fsqResponder() : { results: [] };
       if (body instanceof Error) throw body;
       return { ok: true, status: 200, json: async () => body } as any;
@@ -73,6 +85,7 @@ beforeEach(() => {
   _setSimulatedOutage("places_live", false);
   setKeyEnv(FOURSQUARE_KEY_VARS, "test-key");
   fsqResponder = null;
+  fsqCalls = [];
 });
 
 afterEach(() => {
@@ -87,9 +100,9 @@ async function get(path: string) {
 describe("GET /api/places/live-status", () => {
   it("returns verified_live openNow when the source has hours data", async () => {
     stubFsq(() => ({
-      results: [{ fsq_place_id: "abc", name: "Cafe Uno", hours: { open_now: true } }],
+      results: [{ fsq_place_id: "abc", name: "Cafe Uno", ...HERE, hours: { open_now: true } }],
     }));
-    const { status, body } = await get("/places/live-status?name=Cafe%20Uno&city=Lisbon");
+    const { status, body } = await get(`/places/live-status?name=Cafe%20Uno&city=Lisbon&${AT}`);
     assert.equal(status, 200);
     const ls = body.liveStatus;
     assert.equal(ls.available, true);
@@ -101,7 +114,8 @@ describe("GET /api/places/live-status", () => {
 
   it("degrades honestly on a source outage — no invented status", async () => {
     _setSimulatedOutage("places_live", true);
-    const { status, body } = await get("/places/live-status?name=Cafe%20Uno");
+    stubFsq(() => ({ results: [{ fsq_place_id: "abc", name: "Cafe Uno", ...HERE, hours: { open_now: true } }] }));
+    const { status, body } = await get(`/places/live-status?name=Cafe%20Uno&${AT}`);
     assert.equal(status, 200);
     const ls = body.liveStatus;
     assert.equal(ls.available, false);
@@ -110,11 +124,12 @@ describe("GET /api/places/live-status", () => {
     assert.equal(ls.confidence.sourceClass, "historical");
     // No fabricated live fields
     assert.equal(ls.source, undefined);
+    assert.equal(fsqCalls.length, 0, "the outage path, not the missing-anchor path, answered");
   });
 
   it("keeps openNow null when the source responds without hours (honest unknown)", async () => {
-    stubFsq(() => ({ results: [{ fsq_place_id: "xyz", name: "Mystery Bar" }] }));
-    const { body } = await get("/places/live-status?name=Mystery%20Bar");
+    stubFsq(() => ({ results: [{ fsq_place_id: "xyz", name: "Mystery Bar", ...HERE }] }));
+    const { body } = await get(`/places/live-status?name=Mystery%20Bar&${AT}`);
     const ls = body.liveStatus;
     assert.equal(ls.available, true);
     assert.equal(ls.openNow, null);
@@ -126,4 +141,53 @@ describe("GET /api/places/live-status", () => {
     assert.equal(status, 400);
     assert.equal(body.error, "invalid_payload");
   });
+});
+
+describe("GET /api/places/live-status — lead ruling D-67 identity anchor", () => {
+  it("passes the given lat/lng to the lookup as its anchor", async () => {
+    stubFsq(() => ({ results: [{ fsq_place_id: "abc", name: "Cafe Uno", ...HERE, hours: { open_now: false } }] }));
+    const { body } = await get(`/places/live-status?name=Cafe%20Uno&${AT}`);
+    assert.equal(body.liveStatus.available, true);
+    assert.equal(body.liveStatus.openNow, false);
+    assert.equal(fsqCalls.length, 1);
+    assert.equal(new URL(fsqCalls[0]!).searchParams.get("ll"), `${LAT},${LNG}`);
+  });
+
+  it("without lat/lng answers can't-verify and asks no provider", async () => {
+    stubFsq(() => ({ results: [{ fsq_place_id: "abc", name: "Cafe Uno", ...HERE, hours: { open_now: true } }] }));
+    const { status, body } = await get("/places/live-status?name=Cafe%20Uno&city=Lisbon");
+    assert.equal(status, 200);
+    const ls = body.liveStatus;
+    assert.equal(ls.available, false);
+    assert.equal(ls.openNow, null);
+    assert.equal(ls.dataNote, CANT_VERIFY_NOTE);
+    assert.equal(ls.confidence.sourceClass, "historical");
+    assert.equal(fsqCalls.length, 0, "a name alone is never matched to a provider record");
+  });
+
+  it("a same-named record 2 km away is not verified live", async () => {
+    stubFsq(() => ({ results: [{ fsq_place_id: "far", name: "Cafe Uno", latitude: LAT + 0.018, longitude: LNG, hours: { open_now: true } }] }));
+    const { body } = await get(`/places/live-status?name=Cafe%20Uno&${AT}`);
+    assert.equal(body.liveStatus.available, false);
+    assert.equal(body.liveStatus.openNow, null);
+    assert.equal(body.liveStatus.confidence.sourceClass, "historical");
+    assert.equal(fsqCalls.length, 1);
+  });
+
+  for (const [label, qs] of [
+    ["lat without lng", `lat=${LAT}`],
+    ["lng without lat", `lng=${LNG}`],
+    ["a non-numeric lat", `lat=abc&lng=${LNG}`],
+    ["a trailing-garbage lat", `lat=${LAT}x&lng=${LNG}`],
+    ["an empty lng", `lat=${LAT}&lng=`],
+    ["an out-of-range lat", `lat=95&lng=${LNG}`],
+    ["an out-of-range lng", `lat=${LAT}&lng=-181`],
+  ] as const) {
+    it(`rejects ${label} with 400 invalid_payload`, async () => {
+      const { status, body } = await get(`/places/live-status?name=Cafe%20Uno&${qs}`);
+      assert.equal(status, 400);
+      assert.equal(body.error, "invalid_payload");
+      assert.equal(fsqCalls.length, 0);
+    });
+  }
 });

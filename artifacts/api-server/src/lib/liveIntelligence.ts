@@ -5,7 +5,9 @@
  *
  * Source classes (carried end-to-end API → UI):
  *   - verified_live       — checked against a live external source just now
- *                           (weather via Open-Meteo, open-now via Foursquare)
+ *                           (weather via Open-Meteo, open-now via Foursquare —
+ *                           the latter only for a provider record confirmed
+ *                           as the place, lead ruling D-67)
  *   - community_reported  — entered/maintained by app users (events, catalog
  *                           entries, community hours notes); current DB read
  *   - historical          — cached/catalog data that may be stale (ratings,
@@ -89,11 +91,47 @@ export function isSourceDown(source: LiveSource): boolean {
 }
 
 // ── Live venue open-now lookup (Foursquare) ───────────────────────────────────
+//
+// IDENTITY FIRST (lead ruling D-67, 2026-10-06). A provider record may carry a
+// "verified live" label for a Portava place only when it is confirmed to BE
+// that place: either a stored provider id matches, or the names match after
+// normalisation AND the provider's coordinates lie within
+// LIVE_IDENTITY_MAX_DISTANCE_M of the place's own. Neither `discovery_places`
+// nor `places` stores a Foursquare id that this lookup is handed today, so the
+// name-plus-coordinates rule is the one that applies.
+//
+// THE DEFECT THIS REPLACES. The lookup used to ask Foursquare for `limit=1` by
+// name near a city and label whatever came back "verified_live". A different
+// venue with the same or a similar name — a chain's other branch, a namesake
+// across town — had its hours shown as this place's, verified live.
 
 const FSQ_URL = "https://places-api.foursquare.com/places/search";
 const FSQ_API_VERSION = "2025-06-17";
 const LIVE_TIMEOUT_MS = 2_500;
 const LIVE_CACHE_TTL_MS = 10 * 60 * 1_000; // 10 minutes — volatile data, short TTL
+/** Enough candidates that the right venue is found when a namesake ranks first. */
+const LIVE_SEARCH_LIMIT = 5;
+/**
+ * Search radius around the anchor, in metres. It only biases which candidates
+ * the provider returns; identity is decided by LIVE_IDENTITY_MAX_DISTANCE_M.
+ */
+const LIVE_SEARCH_RADIUS_M = 1_000;
+
+/**
+ * The farthest a provider record may sit from the place's stored coordinates
+ * and still be the same place (lead ruling D-67: an engineering default that
+ * allows for geocoding drift on one street frontage). Change it HERE only.
+ */
+export const LIVE_IDENTITY_MAX_DISTANCE_M = 150;
+
+/**
+ * Where the Portava place is. REQUIRED by `getLiveVenueStatus`; `null` means
+ * the place has no usable coordinates, and then nothing can be verified.
+ */
+export interface LiveVenueAnchor {
+  lat: number;
+  lng: number;
+}
 
 export interface LiveVenueStatus {
   openNow:   boolean | null;   // null = source responded but didn't include hours
@@ -103,7 +141,7 @@ export interface LiveVenueStatus {
 }
 
 interface LiveCacheEntry {
-  status:   LiveVenueStatus | null; // null = confirmed miss (venue not found)
+  status:   LiveVenueStatus | null; // null = confirmed miss (no record confirmed as this place)
   cachedAt: number;
 }
 
@@ -114,28 +152,96 @@ export function _clearLiveCache(): void {
   liveCache.clear();
 }
 
-function liveKey(name: string, city: string | null): string {
-  return `${name.trim().toLowerCase()}|${(city ?? "").trim().toLowerCase()}`;
+/**
+ * The anchor as a usable coordinate pair, or null. A non-finite or
+ * out-of-range coordinate is not a place's location, so it anchors nothing.
+ */
+export function liveVenueAnchorOf(lat: unknown, lng: unknown): LiveVenueAnchor | null {
+  if (typeof lat !== "number" || typeof lng !== "number") return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return { lat, lng };
 }
 
 /**
- * Look up a venue's live open-now status by name (+ optional city).
+ * A venue name reduced for an identity comparison: Unicode NFKD, combining
+ * marks (diacritics) stripped, case-folded, punctuation removed, whitespace
+ * collapsed. Two names match only when these are EXACTLY equal and non-empty.
+ * `toUpperCase().toLowerCase()` is the full case fold JavaScript offers
+ * (ß → ss, final ς → σ), which a bare `toLowerCase()` is not.
+ */
+export function normaliseVenueName(name: string): string {
+  return String(name)
+    .normalize("NFKD")
+    .replace(/\p{M}+/gu, "")
+    .toUpperCase()
+    .toLowerCase()
+    .replace(/\p{P}+/gu, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+/** Great-circle distance in metres (mean Earth radius). */
+function metresBetween(a: LiveVenueAnchor, b: LiveVenueAnchor): number {
+  const toRad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * toRad;
+  const dLng = (((b.lng - a.lng + 540) % 360) - 180) * toRad;
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(a.lat * toRad) * Math.cos(b.lat * toRad) * Math.sin(dLng / 2) ** 2;
+  return 6_371_000 * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+/**
+ * D-67's identity rule for one provider record: the normalised names are
+ * equal AND the record's own coordinates are within
+ * LIVE_IDENTITY_MAX_DISTANCE_M of the anchor. A record without both
+ * coordinates cannot be placed, so it is never confirmed.
+ */
+export function isSameVenue(
+  placeName: string,
+  anchor: LiveVenueAnchor,
+  record: { name?: unknown; latitude?: unknown; longitude?: unknown },
+): boolean {
+  const want = normaliseVenueName(placeName);
+  if (!want) return false;
+  if (normaliseVenueName(String(record.name ?? "")) !== want) return false;
+  const at = liveVenueAnchorOf(record.latitude, record.longitude);
+  if (!at) return false;
+  return metresBetween(anchor, at) <= LIVE_IDENTITY_MAX_DISTANCE_M;
+}
+
+/** Same name at two different places is two entries, never one. */
+function liveKey(name: string, anchor: LiveVenueAnchor): string {
+  return `${normaliseVenueName(name)}|${anchor.lat},${anchor.lng}`;
+}
+
+/**
+ * Look up a venue's live open-now status, for ONE identified place.
+ *
+ * `anchor` is the place's own stored coordinates and is required: with a null
+ * anchor nothing can be confirmed as this place, so the provider is not asked
+ * and the answer is null — an honest "can't verify", never a guess.
  *
  * Returns:
- *   - LiveVenueStatus  → source reached; openNow may still be null when the
- *                        source has no hours data (honest unknown)
- *   - null             → source unavailable (no key, outage, timeout, error,
- *                        or venue not found) — caller MUST degrade honestly.
+ *   - LiveVenueStatus  → a provider record confirmed as this place (D-67);
+ *                        openNow may still be null when the source has no
+ *                        hours data (honest unknown)
+ *   - null             → nothing verifiable: no anchor, no key, outage,
+ *                        quota, timeout, error, or no record confirmed as
+ *                        this place — caller MUST degrade honestly.
  */
 export async function getLiveVenueStatus(
   name: string,
-  city: string | null,
+  anchor: LiveVenueAnchor | null,
 ): Promise<LiveVenueStatus | null> {
   if (!name.trim()) return null;
+  const at = anchor ? liveVenueAnchorOf(anchor.lat, anchor.lng) : null;
+  if (!at) return null; // no place to confirm a record against — never a name-only guess
   if (isSourceDown("places_live")) return null; // simulated outage
 
   const nowMs = Date.now(); // single clock read (split-clock guard)
-  const key = liveKey(name, city);
+  const key = liveKey(name, at);
   const cached = liveCache.get(key);
   if (cached && nowMs - cached.cachedAt < LIVE_CACHE_TTL_MS) return cached.status;
 
@@ -143,12 +249,15 @@ export async function getLiveVenueStatus(
   if (!apiKey) return null;
 
   try {
+    // `ll` and `near` are alternatives in the Places API; the place's own
+    // coordinates are the better centre for finding THIS venue.
     const params = new URLSearchParams({
       query: name,
-      limit: "1",
-      fields: "fsq_place_id,name,hours",
+      ll: `${at.lat},${at.lng}`,
+      radius: String(LIVE_SEARCH_RADIUS_M),
+      limit: String(LIVE_SEARCH_LIMIT),
+      fields: "fsq_place_id,name,latitude,longitude,hours",
     });
-    if (city) params.set("near", city);
 
     const res = await fetch(`${FSQ_URL}?${params}`, {
       headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json", "X-Places-Api-Version": FSQ_API_VERSION },
@@ -171,9 +280,15 @@ export async function getLiveVenueStatus(
       return null;
     }
     const body: any = await res.json();
-    const r = Array.isArray(body?.results) ? body.results[0] : null;
-    if (!r?.fsq_place_id) {
-      // Confirmed "not found" — cache the miss so we don't hammer the source.
+    const results: any[] = Array.isArray(body?.results) ? body.results : [];
+    // The FIRST record confirmed as this place; a namesake ranked above it is skipped.
+    const r = results.find((x) => x?.fsq_place_id && isSameVenue(name, at, x));
+    if (!r) {
+      // Confirmed "no record is this place" — cache the miss so we don't
+      // hammer the source. A namesake elsewhere is not a partial answer.
+      if (results.length > 0) {
+        logger.info({ name, candidates: results.length }, "live venue lookup: no record confirmed as this place — no verified-live label");
+      }
       liveCache.set(key, { status: null, cachedAt: nowMs });
       return null;
     }
