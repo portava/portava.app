@@ -22,7 +22,13 @@ must not be refused.
   - hosting: "You cannot host group trips or start or link public Trails."
   - messaging: "You cannot start new conversations, submit public content (Trail suggestions, gems, community
     places), or have your posts boosted."
-  - private-plan access and location plan: unchanged.
+  - private-plan access: unchanged, plus "You also cannot book a Buddy."; location plan: unchanged.
+  - **Amendment (2026-10-06, lane B):** the hosting sentence also ends "You also cannot be booked as a
+    Buddy." The mapping this ruling confirms already stops both bookings (decision note §D-24 table, lane B
+    rows), and the sentences first written here left them out. Under this ruling's own rule an unnamed
+    capability may not be refused, so the clauses are added rather than the refusals dropped (dropping them
+    would widen who can reach a restricted person). The canonical text is `restrictionSentence()` in
+    `services/trust/TrustPrivacyGuard.ts`.
 - **D-24a: a hosting restriction does NOT stop changes to a solo trip.** A solo trip affects nobody else. Every
   Compass and Trips door applies the same solo/group test. If whether a trip is solo cannot be read, treat it as a
   group trip and refuse with "try again", never with "restricted".
