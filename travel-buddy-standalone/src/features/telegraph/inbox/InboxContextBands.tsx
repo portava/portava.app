@@ -40,7 +40,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { space, radius, type as t } from '../../../theme/tokens.ts';
 import { useTelegraphPalette, type TelegraphPalette } from '../theme/telegraphTheme.ts';
-import { fetchInboxBands, type InboxBandsData } from './inboxBandsApi.ts';
+import { INBOX_BANDS_REFRESH_MS, deriveInboxBands, fetchInboxBandsRaw, type InboxBandsData, type InboxBandsRaw } from './inboxBandsApi.ts';
 
 export interface InboxContextBandsProps {
   /** Opens a conversation (NOW, UPCOMING). */
@@ -87,10 +87,13 @@ export function statusLine(status: InboxBandsData['status'], nowMs: number): str
 export function InboxContextBands({ onOpenThread, initialData = null, nowMs }: InboxContextBandsProps) {
   const palette = useTelegraphPalette();
   const styles = useMemo(() => makeStyles(palette), [palette]);
-  const [data, setData] = useState<InboxBandsData | null>(initialData);
+  // What the server answered, kept so every render can re-decide the bands
+  // against its own clock (re-verification R4).
+  const [raw, setRaw] = useState<InboxBandsRaw | null>(null);
   // The inbox is a tab and stays mounted: re-read the clock on every render and
-  // tick once a minute, so an expired "Free now · until …" does not stay on
-  // screen (verifier F5). The data refresh is the screen's; the clock is ours.
+  // tick once a minute, so an expired "Free now · until …", a session that is no
+  // longer NOW and a plan that has started do not stay on screen (verifier F5,
+  // re-verification R4). A tick re-derives; it does not re-ask.
   const [, setTick] = useState(0);
   useEffect(() => {
     if (nowMs !== undefined) return;
@@ -101,15 +104,19 @@ export function InboxContextBands({ onOpenThread, initialData = null, nowMs }: I
   useEffect(() => {
     if (initialData !== null) return;
     let cancelled = false;
-    void (async () => {
-      const d = await fetchInboxBands();
-      if (!cancelled) setData(d);
-    })();
-    return () => { cancelled = true; };
+    const read = async () => {
+      const r = await fetchInboxBandsRaw();
+      if (!cancelled) setRaw(r);
+    };
+    void read();
+    // Re-ask on a bounded interval, so what began after mount reaches the tab.
+    const h = setInterval(() => void read(), INBOX_BANDS_REFRESH_MS);
+    return () => { cancelled = true; clearInterval(h); };
   }, [initialData]);
 
-  if (!data) return null;
   const now = nowMs ?? Date.now();
+  const data = initialData ?? (raw ? deriveInboxBands(raw, now) : null);
+  if (!data) return null;
   const status = statusLine(data.status, now);
   const nearby = data.nearby && data.nearby.enabled && data.nearby.count > 0 ? data.nearby : null;
   const sessions = data.now ?? [];
