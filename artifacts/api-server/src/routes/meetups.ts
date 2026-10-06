@@ -20,7 +20,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, isAcceptedTripMember, sendError } from "../lib/http.js";
-import { getServiceClient } from "../lib/supabase.js";
+import { getServiceClient } from "../lib/supabase.js"; import { refuseRetainedTripWrite, retainedAccessOf } from "../lib/tripRetainedRecordGuard.js";
 import { isKillSwitchEngaged, killSwitchStateUnknown, KILL_SWITCH_UNKNOWN_MESSAGE } from '../lib/featureFlags.js';
 import { enrichSpans } from "../lib/enrichSpans.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
@@ -156,7 +156,7 @@ router.post("/meetups", async (req, res) => {
   // Gate on trip/circle membership when scope provided
   if (b.tripId) {
     const ok = await isAcceptedTripMember(client, b.tripId, user.id);
-    if (!ok) { sendError(res, "not_member", "Must be accepted trip member to create a trip meetup"); return; }
+    if (!ok) { sendError(res, "not_member", "Must be accepted trip member to create a trip meetup"); return; } if (await refuseRetainedTripWrite(res, getServiceClient() ?? client, b.tripId, user.id)) return; // census-trips §86: a retained-record-only member of the meetup's trip changes nothing
   }
   if (b.circleOwnerId) {
     const isOwner = user.id === b.circleOwnerId;
@@ -469,9 +469,9 @@ router.patch("/meetups/:meetupId", async (req, res) => {
   const { meetupId } = req.params;
   if (!UUID.test(meetupId)) { sendError(res, "invalid_payload", "Invalid meetupId"); return; }
 
-  const { data: meetup } = await client.from("meetups").select("creator_id").eq("id", meetupId).maybeSingle();
+  const { data: meetup } = await client.from("meetups").select("creator_id, trip_id").eq("id", meetupId).maybeSingle();
   if (!meetup) { sendError(res, "not_found", "Meetup not found"); return; }
-  if ((meetup as any).creator_id !== user.id) { sendError(res, "forbidden", "Only the creator can edit this meetup"); return; }
+  if ((meetup as any).creator_id !== user.id) { sendError(res, "forbidden", "Only the creator can edit this meetup"); return; } if (await refuseRetainedTripWrite(res, getServiceClient() ?? client, (meetup as any).trip_id, user.id)) return; // census-trips §86: a retained-record-only member of the meetup's trip changes nothing
 
   const parsed = UpdateMeetupSchema.safeParse(req.body);
   if (!parsed.success) { sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body"); return; }
@@ -584,7 +584,7 @@ router.post("/meetups/:meetupId/invites", async (req, res) => {
     .eq("id", meetupId)
     .maybeSingle();
   if (!meetup) { sendError(res, "not_found", "Meetup not found"); return; }
-  if ((meetup as any).creator_id !== user.id) { sendError(res, "forbidden", "Only the creator can invite users"); return; }
+  if ((meetup as any).creator_id !== user.id) { sendError(res, "forbidden", "Only the creator can invite users"); return; } if (await refuseRetainedTripWrite(res, getServiceClient() ?? client, (meetup as any).trip_id, user.id)) return; // census-trips §86: a retained-record-only member of the meetup's trip changes nothing
   if ((meetup as any).status === "cancelled") { sendError(res, "invalid_payload", "Cannot invite to a cancelled meetup"); return; }
 
   const parsed = InviteSchema.safeParse(req.body);
@@ -602,12 +602,12 @@ router.post("/meetups/:meetupId/invites", async (req, res) => {
     // Only accepted trip members may be invited to a trip-scoped meetup
     const { data: tripMembers, error: tripMembersErr } = await client
       .from("trip_members")
-      .select("user_id")
+      .select("user_id, permissions")
       .eq("trip_id", tripId)
       .in("role", ["owner", "member"])
       .in("user_id", candidateIds);
     if (tripMembersErr) { sendError(res, "degraded_unavailable", INVITE_SCOPE_UNREADABLE); return; }
-    const eligibleSet = new Set((tripMembers ?? []).map((r: any) => r.user_id as string));
+    const eligibleSet = new Set((tripMembers ?? []).filter((r: any) => retainedAccessOf(r) !== "retained_record_only").map((r: any) => r.user_id as string)); // census-trips §86: a retained-record-only member is not drawn into new trip activity
     ineligible = candidateIds.filter((id) => !eligibleSet.has(id));
     candidateIds = candidateIds.filter((id) => eligibleSet.has(id));
   } else if (circleOwnerId) {
@@ -708,7 +708,7 @@ router.post("/meetups/:meetupId/rsvp", async (req, res) => {
   const access = await canAccessMeetup(client, meetupId, user.id);
   if (!access.ok) { sendError(res, "not_found", "Meetup not found or access denied"); return; }
   const meetupRow = access.meetup as any;
-  if (meetupRow.status === "cancelled") { sendError(res, "invalid_payload", "Cannot RSVP to a cancelled meetup"); return; }
+  if (meetupRow.status === "cancelled") { sendError(res, "invalid_payload", "Cannot RSVP to a cancelled meetup"); return; } if (await refuseRetainedTripWrite(res, getServiceClient() ?? client, meetupRow.trip_id, user.id)) return; // census-trips §86: a retained-record-only member of the meetup's trip changes nothing
 
   // Age eligibility check — only enforced when the invitee is trying to RSVP going/maybe
   const parsed = RsvpSchema.safeParse(req.body);
@@ -815,9 +815,9 @@ router.post("/meetups/:meetupId/time-options", async (req, res) => {
   const { meetupId } = req.params;
   if (!UUID.test(meetupId)) { sendError(res, "invalid_payload", "Invalid meetupId"); return; }
 
-  const { data: meetup } = await client.from("meetups").select("creator_id, status").eq("id", meetupId).maybeSingle();
+  const { data: meetup } = await client.from("meetups").select("creator_id, status, trip_id").eq("id", meetupId).maybeSingle();
   if (!meetup) { sendError(res, "not_found", "Meetup not found"); return; }
-  if ((meetup as any).creator_id !== user.id) { sendError(res, "forbidden", "Only the creator can add time options"); return; }
+  if ((meetup as any).creator_id !== user.id) { sendError(res, "forbidden", "Only the creator can add time options"); return; } if (await refuseRetainedTripWrite(res, getServiceClient() ?? client, (meetup as any).trip_id, user.id)) return; // census-trips §86: a retained-record-only member of the meetup's trip changes nothing
   if ((meetup as any).status === "cancelled") { sendError(res, "invalid_payload", "Cannot add options to cancelled meetup"); return; }
 
   const parsed = TimeOptionSchema.safeParse(req.body);
@@ -875,7 +875,7 @@ router.post("/meetups/:meetupId/time-options/:optionId/vote", async (req, res) =
   if (!UUID.test(meetupId) || !UUID.test(optionId)) { sendError(res, "invalid_payload", "Invalid ID"); return; }
 
   const access = await canAccessMeetup(client, meetupId, user.id);
-  if (!access.ok) { sendError(res, "not_found", "Meetup not found or access denied"); return; }
+  if (!access.ok) { sendError(res, "not_found", "Meetup not found or access denied"); return; } if (await refuseRetainedTripWrite(res, getServiceClient() ?? client, (access.meetup as any)?.trip_id, user.id)) return; // census-trips §86: a retained-record-only member of the meetup's trip changes nothing
 
   const { data: option } = await client
     .from("meetup_time_options").select("id, meetup_id").eq("id", optionId).eq("meetup_id", meetupId).maybeSingle();
@@ -921,7 +921,7 @@ router.post("/meetups/:meetupId/confirm-time", async (req, res) => {
 
   const { data: meetup } = await client.from("meetups").select("creator_id, status, title, trip_id, circle_owner_id, location_name").eq("id", meetupId).maybeSingle();
   if (!meetup) { sendError(res, "not_found", "Meetup not found"); return; }
-  if ((meetup as any).creator_id !== user.id) { sendError(res, "forbidden", "Only the creator can confirm the time"); return; }
+  if ((meetup as any).creator_id !== user.id) { sendError(res, "forbidden", "Only the creator can confirm the time"); return; } if (await refuseRetainedTripWrite(res, getServiceClient() ?? client, (meetup as any).trip_id, user.id)) return; // census-trips §86: a retained-record-only member of the meetup's trip changes nothing
   if ((meetup as any).status === "cancelled") { sendError(res, "invalid_payload", "Meetup is cancelled"); return; }
 
   const parsed = ConfirmTimeSchema.safeParse(req.body);

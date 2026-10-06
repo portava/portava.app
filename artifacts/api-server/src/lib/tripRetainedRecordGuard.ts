@@ -29,6 +29,15 @@
  * FAIL CLOSED. The membership row that says "retained record only" could not
  * be read → 503, retryable, nothing written. A trip write must not proceed on an
  * access level nobody read.
+ *
+ * OUTSIDE THE TRIP ROUTERS (wave 5 item 5, census-trips §86). readRetainedAccess
+ * and refuseRetainedTripWrite carry the same rule to the doors that change a
+ * trip's shared life from elsewhere: every Telegraph write into the trip's own
+ * thread (lib/telegraphThreadWrite.ts; a safety send is never refused) and every
+ * write on a meetup that belongs to the trip (routes/meetups.ts; cancelling
+ * one's own meetup only reduces, so it is not refused). Live location sharing
+ * starts at POST /trips/:tripId/crew/live-share/start, which this guard already
+ * refuses (stopping a share is exempt above).
  */
 import type { NextFunction, Request, Response } from "express";
 
@@ -67,6 +76,52 @@ export function retainedAccessOf(row: { permissions?: unknown } | null): Retaine
   const p = row?.permissions;
   if (p && typeof p === "object" && (p as Record<string, unknown>).access === "retained_record_only") return "retained_record_only";
   return "other";
+}
+
+/** What a door outside the trip routers says when it cannot read the member's access: retryable, not a refusal. */
+export const RETAINED_ACCESS_UNCHECKABLE_MESSAGE =
+  "We could not check your access to this trip right now, so nothing was changed. Please try again shortly.";
+
+/**
+ * One member's access on one trip, for the doors OUTSIDE the trip routers that
+ * still change a trip's shared life — the trip's Telegraph thread, a meetup
+ * that belongs to the trip (census-trips §86, wave 5 item 5). "unread" when the
+ * row could not be read (no client, an error, a throw): the caller refuses as
+ * "try again", never as a pass. No row is "other": a person who is not on the
+ * trip is not a retained-record member of it.
+ */
+export async function readRetainedAccess(
+  sc: { from: (t: string) => any } | null | undefined,
+  tripId: string,
+  userId: string,
+): Promise<RetainedAccess> {
+  if (!sc) return "unread";
+  try {
+    const { data, error } = await sc.from("trip_members").select("permissions").eq("trip_id", tripId).eq("user_id", userId).maybeSingle();
+    if (error) return "unread";
+    return retainedAccessOf((data ?? null) as { permissions?: unknown } | null);
+  } catch {
+    return "unread";
+  }
+}
+
+/**
+ * Express form of readRetainedAccess for a write tied to a trip outside the trip
+ * routers: 403 `trip_record_read_only` for a retained-record-only member, 503
+ * when the access could not be read. No trip → nothing to check. True when it
+ * has answered.
+ */
+export async function refuseRetainedTripWrite(
+  res: Response,
+  sc: { from: (t: string) => any } | null | undefined,
+  tripId: string | null | undefined,
+  userId: string,
+): Promise<boolean> {
+  if (typeof tripId !== "string" || tripId === "") return false;
+  const access = await readRetainedAccess(sc, tripId, userId);
+  if (access === "unread") { sendError(res, "degraded_unavailable", RETAINED_ACCESS_UNCHECKABLE_MESSAGE); return true; }
+  if (access === "retained_record_only") { res.status(403).json({ error: "trip_record_read_only", message: RETAINED_RECORD_ONLY_MESSAGE }); return true; }
+  return false;
 }
 
 export function tripRetainedRecordWriteGuard() {
