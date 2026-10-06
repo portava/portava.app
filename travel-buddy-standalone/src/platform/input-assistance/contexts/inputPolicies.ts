@@ -67,6 +67,7 @@ const STANDARD_TELEMETRY_EVENTS: InputTelemetryEventName[] = [
   'disambiguation_selected',
   'action_completed',
   'downstream_task_completed',
+  'selection_reversed',
 ];
 
 /** Mirrors the server's METADATA_ONLY_TELEMETRY, member for member. */

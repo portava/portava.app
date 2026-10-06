@@ -4280,7 +4280,7 @@ OS background transfer of exactly its byte range
 (`travel-buddy-standalone/src/services/media/backgroundTransfer.ts:142#sessionType: mod.FileSystemSessionType.BACKGROUND,`),
 and the queue is resumed on every foreground
 (`travel-buddy-standalone/src/services/media/postcardUploadDevice.ts:135#export function installPostcardUploadResume`,
-mounted at `travel-buddy-standalone/app/_layout.tsx:402#<MediaUploadResumeSetup />`).
+mounted at `travel-buddy-standalone/app/_layout.tsx:409#<MediaUploadResumeSetup />`).
 The whole path is gated by a client constant that is FALSE
 (`travel-buddy-standalone/src/services/media/uploadTransportFlag.ts:19#DEFAULT_ENABLED = false`).
 With it off, the composer takes the pre-existing signed-PUT path. The only
@@ -4322,7 +4322,7 @@ Saved places and current or upcoming trips are cached BEFORE they are needed
 (`travel-buddy-standalone/src/services/media/mediaOffline.ts:269#export async function prepareOfflineMedia`,
 `travel-buddy-standalone/src/services/media/mediaOfflineDevice.ts:72#export function installMediaOfflineWarmup(`).
 That warm-up is mounted only while `MEDIA_WORLD_SHELL_ENABLED` is on
-(`travel-buddy-standalone/app/_layout.tsx:403#<MediaOfflineWarmupSetup />`).
+(`travel-buddy-standalone/app/_layout.tsx:410#<MediaOfflineWarmupSetup />`).
 
 **§40 services, under `travel-buddy-standalone/src/services/media/`.** They sit
 beside `features/media/services/`, not inside it, because the file ownership
@@ -5032,7 +5032,7 @@ the one the Map's own pipeline would publish for it:
   It is not called. Search reads `places` BY ID, and only the places a result
   already names. That is the narrower read Discovery's search takes, for the
   reason Discovery gives
-  (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:1237#WHY IT DOES NOT CALL`):
+  (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:1262#WHY IT DOES NOT CALL`):
   search is not a projection, has no viewport, and serves no MapObject. The
   guard suite still passes with no approval added.
 - **The zone model.** It is the gateway's alone

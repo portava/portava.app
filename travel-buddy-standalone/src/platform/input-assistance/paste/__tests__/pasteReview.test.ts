@@ -65,6 +65,8 @@ test('a country row cannot become a city destination; a city row carries its can
   assert.equal(destinationFromCandidate(country as any), null);
   assert.deepEqual(destinationFromCandidate(city('c1', 'Hoi An', 'Vietnam') as any, 3), {
     itemIndex: 3, city: 'Hoi An', country: 'Vietnam', lat: 16, lng: 108, placeId: 'c1',
+    // Which id-space placeId is in (§45 outcome credit must not confuse a city id with a place id).
+    entityType: 'city',
   });
 });
 

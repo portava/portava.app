@@ -36,6 +36,8 @@ import {
   parseCoordinates,
   parseMapLink,
   sanitizePastedText,
+  displaySafeUrl,
+  redactUrlsForDisplay,
   PASTE_MAX_ITEMS,
 } from "../lib/inputAssistance/pasteExtraction.js";
 
@@ -229,6 +231,162 @@ describe("classifyPaste — the shapes §24 names", () => {
 });
 
 // ═══ 2. The route, through the real gateway ══════════════════════════════════
+describe("§47 sanitize pasted URLs before rendering (G337) — what `raw` may echo back", () => {
+  it("shows ONLY the host — userinfo, path, query, fragment and port never survive", () => {
+    // RESTATED 2026-10-05 (verifier finding 2): the path was kept, and paths
+    // carry tokens too (/reset-password/<token>, ;jsessionid=…). The host is
+    // what lets a person recognise the link; everything after it is "…".
+    assert.equal(
+      displaySafeUrl("https://alice:hunter2@maps.example.com/place/Dragon-Bridge?token=s3cr3t&utm_source=mail#frag"),
+      "https://maps.example.com…",
+    );
+    assert.equal(displaySafeUrl("https://maps.app.goo.gl/AbCdEf123"), "https://maps.app.goo.gl…", "a short-link code is a token");
+    assert.equal(displaySafeUrl("http://example.com:8080/x"), "http://example.com…");
+    assert.equal(displaySafeUrl("https://example.com"), "https://example.com", "nothing after the host, nothing hidden");
+    assert.equal(displaySafeUrl("Hội An"), "…", "displaySafeUrl is only ever handed URL-like tokens");
+  });
+
+  it("an unparseable http string still never echoes a userinfo segment", () => {
+    assert.ok(!displaySafeUrl("https://bob:pw@exa mple.com").includes("pw"));
+  });
+
+  it("a URL inside a text line is redacted in place, the words around it kept", () => {
+    assert.equal(
+      redactUrlsForDisplay("Dinner here https://booking.example.com/r/123?session=abc then bar"),
+      "Dinner here https://booking.example.com… then bar",
+    );
+    assert.equal(redactUrlsForDisplay("Hội An, Vietnam"), "Hội An, Vietnam", "a line with no URL is untouched");
+  });
+
+  it("classifyPaste: an UNREADABLE link shows its display form, never its token", () => {
+    const c = classifyPaste("https://user:pw@example.com/itinerary?share_token=XYZ");
+    const item = c.items[0]!;
+    assert.equal(item.unsupported, "unsupported_link", "still reported, not dropped");
+    assert.equal(item.raw, "https://example.com…");
+    assert.ok(!/pw|XYZ|itinerary/.test(item.raw));
+  });
+
+  // ── The verifiers' inputs (41f17e7b7d #2, 62f960a7c #1–2), each through
+  //    classifyPaste — the /extract route's own path — and the route below. ──
+  const SECRET_INPUTS: Array<[string, string, RegExp]> = [
+    ["a SCHEME-LESS url (www.)", "www.booking.com/hotel?sid=SESSIONSECRET", /SESSIONSECRET|sid=|hotel/],
+    ["an UNPARSEABLE https url inside a text line", "Dinner https://exa%zzmple.com/?token=SECRET 7pm", /SECRET|token|%zz/],
+    ["a PASSWORD containing '/'", "https://user:pa/ss@host.com/x?token=SECRET", /SECRET|pa\/ss|user:|token/],
+    ["tokens in the PATH", "https://example.com/reset-password/TOKENinPATH;jsessionid=JSESSIONSECRET", /TOKENinPATH|JSESSIONSECRET|reset-password/],
+    // Re-verification of 62f960a7c (finding 1): the scheme-less class was open
+    // for a userinfo, a port and an IPv4 host — each echoed in `raw`, carried
+    // in the query and repeated in "No place matched “…”".
+    ["a SCHEME-LESS url with USERINFO", "user:pass9@host.com/path?token=SECRET9", /SECRET9|pass9|user:|token|\/path/],
+    ["a SCHEME-LESS url with a PORT", "host.com:8443/reset?token=SECRET10", /SECRET10|:8443|reset|token/],
+    ["a SCHEME-LESS url on an IPv4 host", "192.168.1.1/reset?token=SECRET11", /SECRET11|reset|token/],
+    ["USERINFO inside a text line", "Hoi An then user:pw12@booking.com/r?sid=SECRET12 at 8pm", /SECRET12|pw12|user:|sid=/],
+    ["a SCHEME-LESS password containing '/'", "user:pa/ss@host.com/x?token=SECRET17", /SECRET17|pa\/|user:|token/],
+    // (finding 2) a bare domain WITHOUT www. inside a text line — the only
+    // proof that the bare-domain alternative is load-bearing.
+    ["a bare domain without www. inside a text line", "Dinner booking.com/r?sid=SECRET16 then bar", /SECRET16|sid=|\/r\?/],
+  ];
+  for (const [label, input, secret] of SECRET_INPUTS) {
+    it(`classifyPaste: ${label} leaks nothing into raw or the query`, () => {
+      const c = classifyPaste(input);
+      for (const item of c.items) {
+        assert.ok(!secret.test(item.raw), `raw leaked: ${item.raw}`);
+        assert.ok(!secret.test(item.query ?? ""), `query leaked: ${item.query}`);
+      }
+    });
+  }
+
+  it("an UNPARSEABLE URL-only line is reported as a link it cannot read — not dropped into 'nothing was pasted'", () => {
+    const c = classifyPaste("https://user:pa/ss@host.com/x?token=SECRET");
+    assert.equal(c.shape === "empty", false);
+    assert.equal(c.items[0]!.unsupported, "unsupported_link");
+    assert.equal(c.items[0]!.raw, "https://host.com…");
+  });
+
+  it("a scheme-less URL-only line is REPORTED as a link it cannot read, not silently dropped", () => {
+    const c = classifyPaste("www.booking.com/hotel?sid=SESSIONSECRET");
+    assert.equal(c.items.length, 1);
+    assert.equal(c.items[0]!.source, "map_link");
+    assert.equal(c.items[0]!.unsupported, "unsupported_link");
+    assert.equal(c.items[0]!.raw, "www.booking.com…");
+  });
+
+  it("the words around an unparseable URL still resolve, and its time is still the time", () => {
+    const c = classifyPaste("Dinner https://exa%zzmple.com/?token=SECRET 7pm");
+    const item = c.items[0]!;
+    assert.equal(item.query, "Dinner");
+    assert.equal(item.timeHint, "7pm");
+  });
+
+  it("classifyPaste: a READABLE link still resolves from the FULL url — only the display is trimmed", () => {
+    const c = classifyPaste("https://www.google.com/maps/search/?api=1&query=Dragon+Bridge&g_ep=tracking123");
+    const item = c.items[0]!;
+    assert.equal(item.query, "Dragon Bridge", "parsing read the query string");
+    assert.ok(!item.raw.includes("tracking123"), "the display form does not repeat it");
+  });
+
+  it("through the route: none of the verifiers' inputs reaches the response in any field", async () => {
+    for (const [label, input, secret] of SECRET_INPUTS) {
+      _resetRateLimit();
+      const r = await extract({ context: "trip_destination", fieldId: "trip.destination", text: input });
+      assert.equal(r.status, 200, label);
+      const text = JSON.stringify(await r.json());
+      assert.ok(!secret.test(text), `${label}: ${text}`);
+    }
+  });
+
+  it("through the route: the response a review screen renders carries no credential or token", async () => {
+    const r = await extract({
+      context: "trip_destination",
+      fieldId: "trip.destination",
+      text: "https://alice:hunter2@maps.app.goo.gl/AbC?token=s3cr3t\nDa Nang https://t.co/x?ref=y",
+    });
+    assert.equal(r.status, 200);
+    const text = JSON.stringify(await r.json());
+    assert.ok(!/hunter2|s3cr3t|ref=y/.test(text), text);
+  });
+
+  it("a scheme-less userinfo, port or IPv4 URL-only line is REPORTED as a link it cannot read, host only", () => {
+    const cases: Array<[string, string]> = [
+      ["user:pass9@host.com/path?token=SECRET9", "host.com…"],
+      ["host.com:8443/reset?token=SECRET10", "host.com…"],
+      ["192.168.1.1/reset?token=SECRET11", "192.168.1.1…"],
+    ];
+    for (const [input, raw] of cases) {
+      const c = classifyPaste(input);
+      assert.equal(c.items.length, 1, input);
+      assert.equal(c.items[0]!.source, "map_link", input);
+      assert.equal(c.items[0]!.unsupported, "unsupported_link", input);
+      assert.equal(c.items[0]!.query, null, input);
+      assert.equal(c.items[0]!.raw, raw, input);
+    }
+  });
+
+  // ── What the scheme-less recogniser must NOT swallow: a time, a ratio, a
+  //    terminal, a price (both thousands separators), an e-mail address. ──────
+  const NOT_URLS = ["Dinner 19:30", "Hoi An 3:1", "Terminal 2/3", "1,500/night Da Nang", "2.500.000/night Da Nang", "1.500.000.000/night Da Nang", "Email anna@gmail.com about Hoi An"];
+  for (const input of NOT_URLS) {
+    it(`not a URL: ${JSON.stringify(input)} is left as text, unredacted`, () => {
+      assert.equal(redactUrlsForDisplay(input), input);
+      const c = classifyPaste(input);
+      assert.ok(c.items.length > 0, input);
+      for (const item of c.items) {
+        assert.equal(item.source, "text", `${input} became ${item.source}`);
+        assert.ok(!item.raw.includes("…"), `${input} was redacted: ${item.raw}`);
+      }
+    });
+  }
+
+  it("mailto:, data: and javascript: stay PLAIN TEXT — never a link item — and a mailto's query is still never rendered", () => {
+    for (const input of ["mailto:alice@example.com?subject=hi&body=SECRET2", "data:text/plain;base64,U0VDUkVUMw==", 'javascript:alert("x")']) {
+      const c = classifyPaste(input);
+      assert.ok(c.items.length > 0, input);
+      for (const item of c.items) assert.equal(item.source, "text", `${input} became ${item.source}`);
+    }
+    const mail = classifyPaste("mailto:alice@example.com?subject=hi&body=SECRET2").items[0]!;
+    assert.ok(!/SECRET2|subject|body=/.test(`${mail.raw} ${mail.query ?? ""}`), JSON.stringify(mail));
+  });
+});
+
 describe("POST /input-assistance/extract — resolution through the shared gateway (G154)", () => {
   it("a pasted list resolves each stop to its CANONICAL city and reports an honest no-match", async () => {
     const r = await extract({ context: "trip_destination", fieldId: "trip.destination", text: "danang\nhcmc\nAtlantis" });

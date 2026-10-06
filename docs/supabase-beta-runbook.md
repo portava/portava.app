@@ -245,11 +245,16 @@ These are separate steps, deliberately outside this workflow:
 
 In the order the workflow would meet them:
 
-- **Token scope.** The job uses the `ci-nonprod-supabase` environment's
-  `SUPABASE_PROJECT_TOKEN`, an account-level Management API token. If it is
-  project-scoped it gets 401/403 on beta's first query. That is an external
-  prerequisite (an account-level token, or a beta-scoped token in its own
-  environment), not something to work around in code.
+- **Token scope.** The beta job reads `SUPABASE_PROJECT_TOKEN`, but in that
+  job the name is mapped from the environment secret
+  `BETA_SUPABASE_PROJECT_TOKEN` — a Management API token scoped to
+  portava-beta. The CI job's `SUPABASE_PROJECT_TOKEN` is project-scoped to
+  portava-ci (docs/ci/README.md § "Setting up the non-production project"
+  prescribes that), and the first dispatch on 2026-10-06 (run 37462712102)
+  measured the consequence: the Management API answered 403 on beta's first
+  query and nothing was written. Until the beta secret exists the job fails at
+  its preflight with a message naming it; nothing in code works around a
+  missing or wrongly scoped token.
 - **Management API limits.** Baseline batches are 5–108 KB of SQL (32 KB on
   average); each call has a 10-minute client timeout. A request that does not
   complete leaves its batch's outcome unknown — re-dispatch with the reset
