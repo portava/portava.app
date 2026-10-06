@@ -3864,7 +3864,8 @@ fixed order (day, trip, user), checks all four limits and then moves all three c
 spender takes the day row first, so spenders serialise on it and there is no lock cycle; a refusal writes
 nothing. Answers `granted | quota_exhausted | budget_exhausted | trip_share_exhausted |
 user_share_exhausted | unscoped | off`. service_role only. Requires 3971; 3971's `routes_api_try_spend` is
-left in place, uncalled.
+dropped (its one caller now calls the scoped function; an unreferenced definer function is reachable for
+nothing) and the rollback re-creates it.
 
 **Nothing waits on the press, and nothing is spent without it.** `RoutesSpendGate` now calls only the
 scoped function and needs two more settings, `ROUTES_API_USER_DAILY_SHARE` and

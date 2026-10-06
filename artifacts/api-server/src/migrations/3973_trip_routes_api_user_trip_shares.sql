@@ -25,8 +25,10 @@
 -- transaction), so the next spender re-reads the incremented totals. A refusal
 -- writes no counter.
 --
--- 3971's routes_api_try_spend is left in place and unused by this tree (its
--- one caller now calls this function); dropping it is not needed to be safe.
+-- 3971's routes_api_try_spend is DROPPED here: its one caller
+-- (domain/trips/contracts/RoutesSpendGate.ts) now calls the scoped function,
+-- and an unreferenced SECURITY DEFINER function is reachable over PostgREST
+-- for nothing (check:security-definer-oracles). The rollback re-creates it.
 --
 -- DELETION. Both new tables carry a user's or a trip's id; each row dies with
 -- the account or the trip (ON DELETE CASCADE). They hold a count and nothing else.
@@ -130,6 +132,8 @@ $fn$;
 COMMENT ON FUNCTION public.routes_api_try_spend_scoped(integer, bigint, bigint, uuid, uuid, integer, integer) IS
   'census-trips §82: take one Routes API call from today''s (UTC) quota and hard budget AND from this user''s and this trip''s daily share, atomically across instances (rows locked day → trip → user), or take none. Answers granted | quota_exhausted | budget_exhausted | trip_share_exhausted | user_share_exhausted | unscoped | off. A refusal changes no counter. service_role only.';
 
+DROP FUNCTION IF EXISTS public.routes_api_try_spend(integer, bigint, bigint);
+
 REVOKE ALL ON FUNCTION public.routes_api_try_spend_scoped(integer, bigint, bigint, uuid, uuid, integer, integer) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.routes_api_try_spend_scoped(integer, bigint, bigint, uuid, uuid, integer, integer) TO service_role;
 
@@ -155,6 +159,9 @@ BEGIN
   SELECT count(*) INTO n FROM pg_constraint
    WHERE conrelid IN ('public.routes_api_daily_user_usage'::regclass, 'public.routes_api_daily_trip_usage'::regclass) AND contype = 'f' AND confdeltype = 'c';
   IF n <> 2 THEN RAISE EXCEPTION 'POSTCONDITION FAILED (3973): expected 2 ON DELETE CASCADE foreign keys, found %', n; END IF;
+  IF to_regprocedure('public.routes_api_try_spend(integer,bigint,bigint)') IS NOT NULL THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3973): the unscoped routes_api_try_spend (3971) is still present';
+  END IF;
   -- An unconfigured call spends nothing and says so; an unscoped one likewise.
   IF public.routes_api_try_spend_scoped(0, 1, 1, gen_random_uuid(), gen_random_uuid(), 1, 1) <> 'off' THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3973): an unconfigured spend was not OFF';
