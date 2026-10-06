@@ -1043,7 +1043,7 @@ router.get("/airport/sessions/:id/recommendations", async (req, res) => {
     recs = generated.recommendations;
   }
 
-  res.json({ recommendations: recs, featureEnabled: true });
+  const landside = await landsideSuppressionFor(sc, session.id, Date.now()); res.json({ recommendations: applyLandsideSuppression(recs, landside), featureEnabled: true, landsideSuppression: landsideSuppressionWire(landside) }); // census L43: after a confirmed re-entry, airport-side only
 });
 
 // ── GET /api/airport/sessions/:id/safety ─────────────────────────────────────
@@ -1223,7 +1223,7 @@ router.post("/airport/sessions/:id/compass", async (req, res) => {
     question: parsed.data.question,
     session, snapshot: await consumerLayoverSnapshot(sc, airport, session, nowMs), // census-discovery §81: null (flag off) keeps the legacy certification below
     airport, entry: compassEntry, // census-discovery §65: the answer certifies with the snapshot's entry input
-    recommendations: recsRead.ok ? (recsRead.recommendations as unknown as Array<Record<string, unknown>>) : undefined,
+    recommendations: recsRead.ok ? (applyLandsideSuppression(recsRead.recommendations, await landsideSuppressionFor(sc, session.id, nowMs)) as unknown as Array<Record<string, unknown>>) : undefined, // census L43: Compass sees the same airport-side list after re-entry
     recommendationsUnavailableReason: recsRead.ok ? null : "layover_recommendations_unreadable",
     stops: stopsRead.ok ? stopsRead.stops : undefined,
     stopsUnavailableReason: stopsRead.ok ? null : "layover_plan_stops_unreadable", crew: crewRead,
@@ -2008,7 +2008,7 @@ export interface CityPresence {
   count: number;
   travelers: Array<{ id: string; handle: string | null; name: string | null; avatarUrl: string | null }>;
   degraded: boolean;
-  degradedReasons: string[];
+  degradedReasons: string[]; /** census L129 — EVERY cleared traveller's id, for the intent counts only; never serialised (the routes pick fields). */ visibleUserIds: string[];
 }
 
 export async function cityPresence(
@@ -2016,9 +2016,9 @@ export async function cityPresence(
   userId: string,
   city: string | null,
 ): Promise<CityPresence> {
-  const empty: CityPresence = { count: 0, travelers: [], degraded: false, degradedReasons: [] };
+  const empty: CityPresence = { count: 0, travelers: [], degraded: false, degradedReasons: [], visibleUserIds: [] };
   const refuse = (reason: string): CityPresence => ({
-    count: 0, travelers: [], degraded: true, degradedReasons: [reason],
+    count: 0, travelers: [], degraded: true, degradedReasons: [reason], visibleUserIds: [],
   });
   if (!city || city === "Unknown") return empty;
   try {
@@ -2104,7 +2104,7 @@ export async function cityPresence(
     }
 
     return {
-      count: visible.length,
+      count: visible.length, visibleUserIds: visible,
       travelers,
       degraded: profileDegraded.length > 0 || publishable.degraded,
       degradedReasons: [
@@ -2286,7 +2286,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
     stops: await bandPlanStops(airport, record, stops),
     planFit,
     share: {
-      enabled: session.shareCityStatus,
+      enabled: session.shareCityStatus, intentsEnabled: await isFlagEnabled(sc, "layover_presence_intents_enabled"), // census L129: whether the L1 intents surface exists here; read as a literal for check:flag-polarity
       othersInCity: presence.count,
     },
     // The server half of §15 and §16, which had no server half at all: the
@@ -4043,7 +4043,7 @@ router.delete("/airport/sessions/:id", async (req, res) => {
     elected: electedStamp,
   });
 
-  res.json({ ok: true, session, outcome, passportStamp });
+  const outcomeRecord = await recordLayoverOutcome(sc, { sessionId: session.id, outcome, nowMs: Date.now() }); res.json({ ok: true, session, outcome, passportStamp, outcomeRecord }); // census L32: the close's answer stored as an OUTCOME, behind 2992's write gate — never fails the close
 });
 
 // ── Admin: POST /api/admin/airport/profiles ───────────────────────────────────
@@ -4547,6 +4547,212 @@ async function bandPlanStops(
   });
 }
 
+// Imported at the TAIL so no cited line above moves; ESM hoists it.
+import { recordLayoverOutcome } from "../services/layover/LayoverOutcomeStore.js";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TRAVELLER CHECKPOINTS — census-layover L30 / L173 / L43
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Registered at the TAIL of the module, after `export default router`, so that
+// no line any census cites moves. Express routes attach when this module is
+// evaluated, which is before the router is mounted anywhere, so position in the
+// file changes nothing about matching; the two paths overlap no other route.
+//
+// "I've left the airport" / "I'm back at the airport", reported by the traveller
+// — the only observer this tree has (see LayoverCheckpointStore's header). A
+// report FEEDS the outcome row and is published back as `airportPresence`; it
+// never moves the certified deadline, verdict or return state.
+
+router.get("/airport/sessions/:id/checkpoints", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+  if (!await isFlagEnabled(sc, "airport_mode_enabled")) { sendError(res, "feature_disabled"); return; }
+  const session = await ownedSessionOr(res, sc, req.params.id, auth.user.id);
+  if (!session) return;
+
+  const read = await readTravellerCheckpoints(sc, session.id, Date.now());
+  if (!read.ok && read.reason === "read_failed") {
+    sendError(res, "degraded_unavailable", "Your checkpoints could not be loaded. Please try again.");
+    return;
+  }
+  if (!read.ok) {
+    // OFF is not "none": `checkpoints` is null, never [], so a client cannot
+    // render "you have not reported anything" for a store that does not exist.
+    res.json({ ok: true, available: false, reason: read.reason, checkpoints: null, airportPresence: null });
+    return;
+  }
+  res.json({ ok: true, available: true, checkpoints: read.checkpoints, airportPresence: airportPresenceFrom(read.checkpoints) });
+});
+
+router.post("/airport/sessions/:id/checkpoints", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const type = req.body?.type;
+  const operationId = req.body?.operationId;
+  if (!isTravellerCheckpointType(type)) {
+    sendError(res, "invalid_payload", `type must be one of ${TRAVELLER_CHECKPOINT_TYPES.join(", ")}`);
+    return;
+  }
+  if (!isOperationId(operationId)) {
+    sendError(res, "invalid_payload", "operationId is required (1-120 characters) so a retried tap is the same checkpoint");
+    return;
+  }
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured"); return; }
+  if (!await isFlagEnabled(sc, "airport_mode_enabled")) { sendError(res, "feature_disabled"); return; }
+  const session = await ownedSessionOr(res, sc, req.params.id, auth.user.id);
+  if (!session) return;
+  if (!(LAYOVER_LIVE_SESSION_STATUSES as readonly string[]).includes(session.status)) {
+    sendError(res, "conflict", "This layover has ended, so there is nothing to report.");
+    return;
+  }
+
+  const nowMs = Date.now();
+  const written = await recordTravellerCheckpoint(sc, {
+    sessionId: session.id, type, operationId, nowMs, departureTime: session.departureTime,
+  });
+  if (!written.ok) {
+    if (written.reason === "persistence_disabled") {
+      sendError(res, "feature_disabled", "Checkpoints are not switched on yet.");
+    } else {
+      sendError(res, "degraded_unavailable", "Your checkpoint was not saved. Please try again.");
+    }
+    return;
+  }
+  // The presence AFTER this report. A failed re-read is reported as unknown,
+  // never derived from the one row just written as if it were the whole story.
+  const read = await readTravellerCheckpoints(sc, session.id, nowMs);
+  res.status(written.duplicate ? 200 : 201).json({
+    ok: true,
+    checkpoint: written.checkpoint,
+    duplicate: written.duplicate,
+    airportPresence: read.ok ? airportPresenceFrom(read.checkpoints) : null,
+  });
+});
+
+import {
+  TRAVELLER_CHECKPOINT_TYPES,
+  airportPresenceFrom,
+  isOperationId,
+  isTravellerCheckpointType,
+  readTravellerCheckpoints,
+  recordTravellerCheckpoint,
+  applyLandsideSuppression,
+  landsideSuppressionFor,
+  landsideSuppressionWire,
+} from "../services/layover/LayoverCheckpointStore.js";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PRESENCE INTENTS — census-layover L27 / L129 / L187 (§4 layover_presence, §14 L1)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Registered at the TAIL, like the check-in routes above, so no cited line moves.
+// The traveller's own record, and the city's COUNTS per intent among the
+// travellers `cityPresence` already cleared — never who. Behind
+// `layover_presence_intents_enabled` (seeded FALSE by 3900).
+
+/** The record the traveller may set, and whether they may set one at all right now. */
+async function presenceIntentsPreconditions(sc: any, res: any, session: LayoverSession, userId: string): Promise<boolean> {
+  if (!(LAYOVER_LIVE_SESSION_STATUSES as readonly string[]).includes(session.status)) {
+    sendError(res, "conflict", "This layover has ended.");
+    return false;
+  }
+  if (!session.shareCityStatus) {
+    sendError(res, "conflict", "Turn on sharing your city first — intents are only shown to travellers who share theirs.", { exposeDetail: true, reason: "sharing_off" });
+    return false;
+  }
+  const gate = await evaluateSharingGate(sc, { userId, tripId: session.tripId });
+  if (!gate.allowed) {
+    sendError(res, "conflict", "Your location sharing is paused or off, so nothing about you is shown.", { exposeDetail: true, reason: gate.degraded ? "sharing_settings_unreadable" : "sharing_gate_closed" });
+    return false;
+  }
+  return true;
+}
+
+router.get("/airport/sessions/:id/presence/intents", async (req, res) => {
+  const ctx = await requireOwnedSession(req, res);
+  if (!ctx) return;
+  const { sc, user, session } = ctx;
+  const nowMs = Date.now();
+
+  const own = await readOwnPresence(sc, session.id, nowMs);
+  if (!own.ok && own.reason === "intents_disabled") {
+    res.json({ ok: true, available: false, own: null, counts: null });
+    return;
+  }
+  if (!own.ok) { sendError(res, "degraded_unavailable", "Your intents could not be loaded. Please try again."); return; }
+
+  // Counts only for a traveller who is themselves sharing and whose sharing
+  // gate is open — the reciprocity rule GET /:id/presence applies.
+  const gate = await evaluateSharingGate(sc, { userId: user.id, tripId: session.tripId });
+  if (!session.shareCityStatus || !gate.allowed) {
+    res.json({ ok: true, available: true, own: own.record, counts: null, countsWithheld: session.shareCityStatus ? "sharing_gate_closed" : "sharing_off" });
+    return;
+  }
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
+  const city = airport.city !== "Unknown" ? airport.city : session.manualCity;
+  const presence = await cityPresence(sc, user.id, city ?? null);
+  if (presence.degraded && presence.visibleUserIds.length === 0) {
+    sendError(res, "degraded_unavailable", "Who else is here could not be checked. Please try again.");
+    return;
+  }
+  const counts = await intentCounts(sc, presence.visibleUserIds, nowMs);
+  if (!counts.ok) { sendError(res, "degraded_unavailable", "Intents nearby could not be loaded. Please try again."); return; }
+  res.json({ ok: true, available: true, own: own.record, counts: counts.counts, city: city ?? null });
+});
+
+router.put("/airport/sessions/:id/presence/intents", async (req, res) => {
+  const ctx = await requireOwnedSession(req, res);
+  if (!ctx) return;
+  const { sc, user, session } = ctx;
+  const nowMs = Date.now();
+  const parsed = parsePresenceInput(req.body, session, nowMs);
+  if (!parsed.ok) { sendError(res, "invalid_payload", PRESENCE_INPUT_MESSAGES[parsed.error], { exposeDetail: true, reason: parsed.error }); return; }
+  if (!(await presenceIntentsPreconditions(sc, res, session, user.id))) return;
+  const written = await setPresenceIntents(sc, { sessionId: session.id, userId: user.id, record: parsed.value, nowMs });
+  if (!written.ok) {
+    if (written.reason === "intents_disabled") sendError(res, "feature_disabled", "Intents are not switched on yet.");
+    else sendError(res, "degraded_unavailable", "Your intents were not saved. Please try again.");
+    return;
+  }
+  res.json({ ok: true, own: written.record });
+});
+
+router.delete("/airport/sessions/:id/presence/intents", async (req, res) => {
+  const ctx = await requireOwnedSession(req, res);
+  if (!ctx) return;
+  const { sc, session } = ctx;
+  const cleared = await clearPresenceIntents(sc, session.id);
+  if (!cleared.ok) {
+    if (cleared.reason === "intents_disabled") sendError(res, "feature_disabled", "Intents are not switched on yet.");
+    else sendError(res, "degraded_unavailable", "Your intents were not removed. Please try again.");
+    return;
+  }
+  res.json({ ok: true, own: null });
+});
+
+const PRESENCE_INPUT_MESSAGES: Record<PresenceInputError, string> = {
+  intents_invalid: `intents must be a list drawn from ${PRESENCE_INTENTS.join(", ")}`,
+  available_until_invalid: "availableUntil must be an ISO time",
+  available_until_past_departure: "You can't be open after your flight leaves.",
+  available_until_not_in_future: "That time has already passed.",
+  max_travel_invalid: `maxTravelMinutes must be a whole number from ${MAX_TRAVEL_MINUTES_RANGE.min} to ${MAX_TRAVEL_MINUTES_RANGE.max}`,
+};
+
+import {
+  MAX_TRAVEL_MINUTES_RANGE,
+  PRESENCE_INTENTS,
+  clearPresenceIntents,
+  intentCounts,
+  parsePresenceInput,
+  readOwnPresence,
+  setPresenceIntents,
+  type PresenceInputError,
+} from "../services/layover/LayoverPresenceStore.js";
 // ═════════════════════════════════════════════════════════════════════════════
 // LAY-FIX follow-ups (PR #624 verification, items 3 and 4). At the foot of the
 // file for the reason `bandPlanStops` gives above: lines above are cited.

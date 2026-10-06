@@ -558,7 +558,7 @@ export interface LayoverOverview {
   advice: LeaveAdvice;
   stops: PlanStop[];
   planFit: PlanFit;
-  share: { enabled: boolean; othersInCity: number };
+  share: { enabled: boolean; othersInCity: number; /** census L129 — the server says whether the intents surface exists here. Absent = off. */ intentsEnabled?: boolean };
   /**
    * §24 — what the SERVER thinks of the reminder it stored, recomputed against
    * the currently certified hard return on every overview read.
@@ -589,7 +589,7 @@ export interface LayoverOverview {
    */
   safeEnvelope: LayoverSafeEnvelope | null; /** The landside gate `safeEnvelope` was published under: WITHHELD (null, `withheld: "landside_closed"`) when closed; not to be called "safe" unless `status === "open"`. ABSENT on a server that predates it — which a client must read as not-open. */ safeEnvelopeGate?: LayoverSafeEnvelopeGate | null;
   returnReminderAt: string | null;
-  localTimes: LayoverLocalTimes;
+  localTimes: LayoverLocalTimes; /** §20 — the decision store's state. `{ state: 'not_stored', reason: 'persistence_disabled' }` means 2992's write gate is OFF (census L30's checkpoints sit behind it). Optional: an older server sends none. */ persisted?: { state: string; reason?: string; unwritten?: string[] } | null;
 }
 
 export interface PresenceTraveler {
@@ -1019,7 +1019,7 @@ export async function updateLayoverSession(
  * the SERVER's own sentence for it.
  */
 export type LayoverRecsResult =
-  | { ok: true; recommendations: LayoverRecommendation[] }
+  | { ok: true; recommendations: LayoverRecommendation[]; /** census L43 — why landside ideas were withheld (re-entry), or that the check could not be made; null when neither. */ landsideSuppression: LayoverLandsideSuppression | null }
   | { ok: false; message: string };
 
 /** What a failure says when the server said nothing at all (offline, unparseable). */
@@ -1059,7 +1059,7 @@ export async function getRecommendations(sessionId: string): Promise<LayoverRecs
     };
   }
   return {
-    ok: true,
+    ok: true, landsideSuppression: landsideSuppressionOf(json.landsideSuppression),
     recommendations: Array.isArray(json.recommendations)
       ? (json.recommendations as LayoverRecommendation[])
       : [],
@@ -2002,6 +2002,167 @@ export async function getLayoverDiscovery(
   return { ok: true, gems };
 }
 
+// ── census-layover L275 — keep a completed layover as a private Memory ────────
+//
+// Layover spec §25: "convert a COMPLETED session into an optional
+// stamp/postcard/memory". The stamp rides on the DELETE above; the Memory is
+// its own request to `POST /api/memories/from-layover/:id`, made only when the
+// traveller ticked the box on the end sheet and only after the server said the
+// layover is `completed`.
+//
+// The §19 key is DETERMINISTIC per layover, so a retry after a lost response is
+// the same command; the server also answers an existing Memory for the same
+// layover, so a second tap cannot make a second one.
+
+export type LayoverMemoryFailure = 'not_completed' | 'gone' | 'unavailable' | 'unreachable' | 'refused';
+
+export type LayoverMemoryResult =
+  | { ok: true; memoryId: string; existing: boolean }
+  | { ok: false; reason: LayoverMemoryFailure; message: string };
+
+export function layoverMemoryIdempotencyKey(sessionId: string): string {
+  return `CREATE_MEMORY_FROM_LAYOVER:${sessionId}`;
+}
+
+/**
+ * A response body as a plain record, or `null` when it is not one (no body, not
+ * JSON, an array, a primitive). The three lane-A calls below read their bodies
+ * through this and narrow each field by its runtime type, so nothing the server
+ * sends is trusted to have the shape the client hopes for.
+ */
+async function readJsonRecord(res: Response): Promise<Record<string, unknown> | null> {
+  let parsed: unknown;
+  try { parsed = await res.json(); } catch { return null; }
+  return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : null;
+}
+
+function stringField(r: Record<string, unknown> | null, key: string): string | null {
+  const v = r?.[key];
+  return typeof v === 'string' ? v : null;
+}
+
+function presenceOf(v: unknown): AirportPresence | null {
+  return typeof v === 'string' && (CHECKPOINT_PRESENCES as readonly string[]).includes(v) ? (v as AirportPresence) : null;
+}
+
+export async function createMemoryFromLayover(sessionId: string): Promise<LayoverMemoryResult> {
+  let res: Response;
+  try {
+    res = await authedFetch(`${apiBase()}/api/memories/from-layover/${encodeURIComponent(sessionId)}`, {
+      method: 'POST',
+      headers: { 'Idempotency-Key': layoverMemoryIdempotencyKey(sessionId) },
+      body: '{}',
+    });
+  } catch {
+    return { ok: false, reason: 'unreachable', message: 'Could not reach Portava to save the Memory.' };
+  }
+  const json = await readJsonRecord(res);
+  const serverMessage = stringField(json, 'message');
+  if (res.ok) {
+    const memory = json?.memory;
+    const memoryId = memory !== null && typeof memory === 'object' && !Array.isArray(memory)
+      ? stringField(memory as Record<string, unknown>, 'id')
+      : null;
+    // A 2xx without the Memory it promises is a contract mismatch, not a saved Memory.
+    if (!memoryId) return { ok: false, reason: 'refused', message: 'The Memory could not be confirmed.' };
+    return { ok: true, memoryId, existing: json?.existing === true };
+  }
+  if (res.status === 409) return { ok: false, reason: 'not_completed', message: serverMessage ?? 'Only a layover that ended with your flight can be kept as a Memory.' };
+  if (res.status === 404) return { ok: false, reason: 'gone', message: serverMessage ?? 'This layover could not be found.' };
+  if (res.status === 503) return { ok: false, reason: 'unavailable', message: serverMessage ?? 'The Memory could not be saved right now.' };
+  return { ok: false, reason: 'refused', message: serverMessage ?? 'The Memory could not be saved.' };
+}
+
+// ── census-layover L30 / L173 — the traveller's own "left / back" reports ──────
+//
+// `GET` / `POST /api/airport/sessions/:id/checkpoints`. The store is migration
+// 2992's and sits behind its write gate, so "OFF" is an answer of its own
+// (`available: false`) and never an empty list. A report is the traveller's,
+// and it never moves the certified deadline — the server says so and so must
+// every surface that renders one.
+
+export type TravellerCheckpointType = 'LANDSIDE_EXIT' | 'AIRPORT_REENTRY';
+export type AirportPresence = 'landside' | 'airside' | 'unreported';
+
+export interface LayoverCheckpointView {
+  id: string;
+  type: string;
+  observedAt: string;
+}
+
+export type LayoverCheckpointsRead =
+  | { ok: true; available: false }
+  | { ok: true; available: true; checkpoints: LayoverCheckpointView[]; airportPresence: AirportPresence }
+  | { ok: false; reason: 'unavailable' | 'unreachable' | 'refused'; message: string };
+
+const CHECKPOINT_PRESENCES: readonly AirportPresence[] = ['landside', 'airside', 'unreported'];
+const CHECKPOINTS_UNREACHABLE = 'Could not reach Portava to load your check-ins.';
+
+/** census L30 — what the store is, or why it could not be read. Never `[]` for a failure. */
+export async function getLayoverCheckpoints(sessionId: string): Promise<LayoverCheckpointsRead> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'checkpoints'));
+  } catch {
+    return { ok: false, reason: 'unreachable', message: CHECKPOINTS_UNREACHABLE };
+  }
+  const json = await readJsonRecord(res);
+  const message = stringField(json, 'message') ?? 'Your check-ins could not be loaded.';
+  if (!res.ok) return { ok: false, reason: res.status === 503 ? 'unavailable' : 'refused', message };
+  if (json?.available === false) return { ok: true, available: false };
+  // A 200 that claims the store is on must carry the list and a presence it
+  // recognises; anything else is a contract mismatch, not "nothing reported".
+  const rawList = json?.checkpoints;
+  const airportPresence = presenceOf(json?.airportPresence);
+  if (json?.available !== true || !Array.isArray(rawList) || airportPresence === null) {
+    return { ok: false, reason: 'refused', message: 'Your check-ins could not be read.' };
+  }
+  const checkpoints: LayoverCheckpointView[] = [];
+  for (const c of rawList as unknown[]) {
+    const o = c !== null && typeof c === 'object' && !Array.isArray(c) ? (c as Record<string, unknown>) : null;
+    const id = stringField(o, 'id');
+    const type = stringField(o, 'type');
+    const observedAt = stringField(o, 'observedAt');
+    if (id && type && observedAt) checkpoints.push({ id, type, observedAt });
+  }
+  return { ok: true, available: true, checkpoints, airportPresence };
+}
+
+export type LayoverCheckpointReport =
+  | { ok: true; duplicate: boolean; airportPresence: AirportPresence | null }
+  | { ok: false; reason: 'off' | 'ended' | 'unavailable' | 'unreachable' | 'refused'; message: string };
+
+/**
+ * census L173 — report one checkpoint. `operationId` is the CALLER's and must
+ * be reused on a retry of the same tap, so a lost response is one row.
+ */
+export async function reportLayoverCheckpoint(
+  sessionId: string,
+  type: TravellerCheckpointType,
+  operationId: string,
+): Promise<LayoverCheckpointReport> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'checkpoints'), {
+      method: 'POST',
+      body: JSON.stringify({ type, operationId }),
+    });
+  } catch {
+    return { ok: false, reason: 'unreachable', message: 'Could not reach Portava. Your check-in was not saved — try again.' };
+  }
+  const json = await readJsonRecord(res);
+  const message = stringField(json, 'message') ?? 'Your check-in was not saved.';
+  if (res.ok && json?.ok === true) {
+    return { ok: true, duplicate: json.duplicate === true, airportPresence: presenceOf(json.airportPresence) };
+  }
+  if (stringField(json, 'error') === 'feature_disabled') return { ok: false, reason: 'off', message };
+  if (res.status === 409) return { ok: false, reason: 'ended', message };
+  if (res.status === 503) return { ok: false, reason: 'unavailable', message };
+  return { ok: false, reason: 'refused', message };
+}
+
 // ── §4 / §6.1 the declared constraint set and the landside gate (census L22, L35, L172) ──
 
 /** Spec §4.1 `BaggageMode`. UNKNOWN is a real answer and is never read as "no bags". */
@@ -2283,6 +2444,128 @@ export async function updateLayoverConstraints(
     unsaved: Array.isArray(json.unsaved) ? (json.unsaved as DeclarableConstraintField[]) : [],
     unchanged: json.unchanged === true,
   };
+}
+
+// ── census L43 — the server's reason for withholding landside ideas ───────────
+
+export type LayoverLandsideSuppression =
+  | { reason: 'airport_reentered'; reportedAt: string }
+  | { reason: 'checkpoints_unreadable'; reportedAt: null };
+
+/** The wire field, narrowed. Anything this client was not taught is `null`, never a guess. */
+export function landsideSuppressionOf(v: unknown): LayoverLandsideSuppression | null {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return null;
+  const r = v as Record<string, unknown>;
+  if (r.reason === 'airport_reentered' && typeof r.reportedAt === 'string') return { reason: 'airport_reentered', reportedAt: r.reportedAt };
+  if (r.reason === 'checkpoints_unreadable') return { reason: 'checkpoints_unreadable', reportedAt: null };
+  return null;
+}
+
+// ── census-layover L27 / L129 / L187 — presence intents, §14's L1 rung ─────────
+//
+// `GET` / `PUT` / `DELETE /api/airport/sessions/:id/presence/intents`. Behind
+// `layover_presence_intents_enabled` (migration 3900, seeded FALSE). Others see
+// COUNTS per intent among travellers the server already cleared — never who.
+
+export const PRESENCE_INTENT_KEYS = ['food', 'nightlife', 'shopping', 'culture', 'meetups'] as const;
+export type PresenceIntentKey = (typeof PRESENCE_INTENT_KEYS)[number];
+export type PresenceIntentCounts = Record<PresenceIntentKey, number>;
+
+export interface OwnPresenceIntents {
+  intents: PresenceIntentKey[];
+  availableUntil: string;
+  maxTravelMinutes: number | null;
+}
+
+export type PresenceIntentsRead =
+  | { ok: true; available: false }
+  | { ok: true; available: true; own: OwnPresenceIntents | null; counts: PresenceIntentCounts | null; countsWithheld: string | null }
+  | { ok: false; reason: 'unavailable' | 'unreachable' | 'refused'; message: string };
+
+export type PresenceIntentsWrite =
+  | { ok: true; own: OwnPresenceIntents | null }
+  | { ok: false; reason: 'off' | 'not_sharing' | 'invalid' | 'ended' | 'unavailable' | 'unreachable' | 'refused'; message: string };
+
+function isIntentKey(v: unknown): v is PresenceIntentKey {
+  return typeof v === 'string' && (PRESENCE_INTENT_KEYS as readonly string[]).includes(v);
+}
+
+function ownIntentsOf(v: unknown): OwnPresenceIntents | null {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return null;
+  const r = v as Record<string, unknown>;
+  const until = stringField(r, 'availableUntil');
+  if (!Array.isArray(r.intents) || !until) return null;
+  return {
+    intents: (r.intents as unknown[]).filter(isIntentKey),
+    availableUntil: until,
+    maxTravelMinutes: typeof r.maxTravelMinutes === 'number' ? r.maxTravelMinutes : null,
+  };
+}
+
+/** A complete counts object or null — a partial one is a contract mismatch, not "zero". */
+function intentCountsOf(v: unknown): PresenceIntentCounts | null {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return null;
+  const r = v as Record<string, unknown>;
+  const out = {} as PresenceIntentCounts;
+  for (const k of PRESENCE_INTENT_KEYS) {
+    const n = r[k];
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) return null;
+    out[k] = n;
+  }
+  return out;
+}
+
+const INTENTS_UNREACHABLE = 'Could not reach Portava to load what people are open to.';
+
+export async function getPresenceIntents(sessionId: string): Promise<PresenceIntentsRead> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'presence', 'intents'));
+  } catch {
+    return { ok: false, reason: 'unreachable', message: INTENTS_UNREACHABLE };
+  }
+  const json = await readJsonRecord(res);
+  const message = stringField(json, 'message') ?? 'What people are open to could not be loaded.';
+  if (!res.ok) return { ok: false, reason: res.status === 503 ? 'unavailable' : 'refused', message };
+  if (json?.available === false) return { ok: true, available: false };
+  if (json?.available !== true) return { ok: false, reason: 'refused', message: 'What people are open to could not be read.' };
+  const counts = json.counts === null ? null : intentCountsOf(json.counts);
+  if (json.counts !== null && counts === null) return { ok: false, reason: 'refused', message: 'What people are open to could not be read.' };
+  return {
+    ok: true, available: true,
+    own: json.own === null ? null : ownIntentsOf(json.own),
+    counts,
+    countsWithheld: stringField(json, 'countsWithheld'),
+  };
+}
+
+async function writeIntents(sessionId: string, init: RequestInit): Promise<PresenceIntentsWrite> {
+  let res: Response;
+  try {
+    res = await authedFetch(airportUrl('sessions', sessionId, 'presence', 'intents'), init);
+  } catch {
+    return { ok: false, reason: 'unreachable', message: 'Could not reach Portava. Nothing was changed — try again.' };
+  }
+  const json = await readJsonRecord(res);
+  const message = stringField(json, 'message') ?? 'That did not save.';
+  if (res.ok && json?.ok === true) return { ok: true, own: json.own === null ? null : ownIntentsOf(json.own) };
+  if (stringField(json, 'error') === 'feature_disabled') return { ok: false, reason: 'off', message };
+  if (res.status === 409 && stringField(json, 'reason')?.startsWith('sharing')) return { ok: false, reason: 'not_sharing', message };
+  if (res.status === 409) return { ok: false, reason: 'ended', message };
+  if (res.status === 400) return { ok: false, reason: 'invalid', message };
+  if (res.status === 503) return { ok: false, reason: 'unavailable', message };
+  return { ok: false, reason: 'refused', message };
+}
+
+export function setPresenceIntents(
+  sessionId: string,
+  input: { intents: PresenceIntentKey[]; availableUntil?: string; maxTravelMinutes?: number | null },
+): Promise<PresenceIntentsWrite> {
+  return writeIntents(sessionId, { method: 'PUT', body: JSON.stringify(input) });
+}
+
+export function clearPresenceIntents(sessionId: string): Promise<PresenceIntentsWrite> {
+  return writeIntents(sessionId, { method: 'DELETE' });
 }
 
 // ── PR #624 follow-ups — appended: lines above are cited by line ─────────────
