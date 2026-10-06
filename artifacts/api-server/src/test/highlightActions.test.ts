@@ -134,9 +134,9 @@ async function start(opts: { errors?: Record<string, { message: string; code?: s
 async function menu(base: string, highlightId: string, actor: string) {
   const before = JSON.stringify(client!._store);
   const res = await fetch(`${base}/api/highlights/${highlightId}/actions`, { headers: { Authorization: `Bearer ${actor}`, connection: "close" } });
-  const body = await res.json().catch(() => null);
+  const body = (await res.json().catch(() => null)) as MenuBody;
   assert.equal(JSON.stringify(client!._store), before, "the actions route is read-only");
-  return { status: res.status, body, by: Object.fromEntries(((body?.menu?.actions ?? []) as any[]).map((a) => [a.action, a])) };
+  return { status: res.status, body, by: Object.fromEntries((body?.menu?.actions ?? []).map((a) => [a.action, a])) };
 }
 
 describe("GET /highlights/:id/actions — §12's verbs on the Memory the Highlight projects", () => {
@@ -147,7 +147,7 @@ describe("GET /highlights/:id/actions — §12's verbs on the Memory the Highlig
     for (const a of ["DO_THIS", "ADD_TO_TRIP", "VIEW_PLACE", "SAVE", "ASK"]) assert.equal(r.by[a].available, true, `${a}: ${JSON.stringify(r.by[a])}`);
     assert.deepEqual([r.by.MEET.available, r.by.MEET.reason], [false, "CONSUMER_UNAVAILABLE"]);
     assert.equal(r.body.menu.sourceMemoryId, MEM_PUBLIC);
-    assert.equal(r.body.menu.place.id, PLACE_OPEN);
+    assert.equal(r.body.menu.place?.id, PLACE_OPEN);
     assert.equal(r.body.menu.actions.length, 6, "§12's six");
   });
 
@@ -255,3 +255,7 @@ describe("GET /highlights/:id/actions — §12's verbs on the Memory the Highlig
     assert.equal((await menu(base, "ffffffff-0000-4000-8000-00000000000f", VIEWER)).status, 404);
   });
 });
+
+// The response shape these cases read (the route's own types live server-side).
+interface MenuAction { action: string; available: boolean; reason: string | null; message: string | null }
+interface MenuBody { menu: { sourceMemoryId: string | null; place: { id: string } | null; actions: MenuAction[] } }
