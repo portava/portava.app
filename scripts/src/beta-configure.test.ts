@@ -42,14 +42,15 @@ const population = seededFlagPopulation();
 const policy = loadFlagPolicy();
 const byFlag = new Map(policy.flags.map((e) => [e.flag, e]));
 
-/** Lead rulings of 2026-10-06 (repo copy: docs/ops/lead-rulings-20261006.md, added by the lead). */
-const LEAD_RULINGS = new Set(["D-24", "D-24a", "D-24b", "D-24c", "D-24d", "D-65", "D-66", "D-67", "D-103"]);
+const LEAD_RULINGS = readFileSync(join(REPO_ROOT, "docs/ops/lead-rulings-20261006.md"), "utf8");
 const OWNER_DECISIONS = readFileSync(join(REPO_ROOT, "docs/ops/owner-decisions-20261004.md"), "utf8");
 
 /** null when an evidence id resolves to a record in the repo; otherwise why not. */
 function evidenceProblem(id: string): string | null {
   if (/^OD-[A-Z]+-\d+$/.test(id)) return OWNER_DECISIONS.includes(`**${id} `) ? null : `${id} is not in docs/ops/owner-decisions-20261004.md`;
-  if (/^D-\d+[a-d]?$/.test(id)) return LEAD_RULINGS.has(id) ? null : `${id} is not a lead ruling of 2026-10-06`;
+  if (/^D-\d+[a-d]?$/.test(id)) {
+    return new RegExp(`^(## |- \\*\\*)${id}:`, "m").test(LEAD_RULINGS) ? null : `${id} is not in docs/ops/lead-rulings-20261006.md`;
+  }
   const m = /^census-([a-z-]+):([A-Za-z0-9.-]+)$/.exec(id);
   if (m) {
     const path = join(REPO_ROOT, "docs/architecture", `census-${m[1]}.md`);
