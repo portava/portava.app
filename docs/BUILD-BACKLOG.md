@@ -300,7 +300,7 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
 
   **FIXED IN THIS BRANCH 2026-10-03 — the second option this entry offered was
   taken: `replyToId` is now REFUSED BY NAME on the typed path.** It is gone from
-  `TypedMessageSchema` (`routes/telegraphKinds.ts:70-74`) and an explicitly
+  `TypedMessageSchema` (`routes/telegraphKinds.ts:69-73`) and an explicitly
   supplied non-null `replyToId` is answered `invalid_payload` with a message the
   caller can act on (`:204-215`), the reasoning written out at `:182-203`. An
   explicit `null` is the absence of a reply, not a request for one, and is not
