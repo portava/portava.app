@@ -625,7 +625,7 @@ import {
  * held 4; pinning it removes those 4 -> 157. Nothing else moved. The same
  * entry is added to check-citation-symbols.mjs, whose counts do not change
  * (the document carries no anchored citation). */
-export const MAX_DEAD_TARGETS = 157;
+export const MAX_DEAD_TARGETS = 156; // LOWERED 2026-10-06 by lane B: one dead target fewer after the a27589615f merge (the guard's own instruction)
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set([
