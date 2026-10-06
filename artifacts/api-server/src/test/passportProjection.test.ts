@@ -529,7 +529,7 @@ describe("buildAvailability/buildIntent — §8 explicit windows in the aggregat
     assert.deepEqual(p.intent?.current, ["Explore"]);
   });
 
-  it("§7: a followers-only explicit window shows to a follower but not to the public", async () => {
+  it("§7 + D-103: a followers-only explicit window shows to a MUTUAL follow — not to one-way in either direction, not to the public", async () => {
     const followerPerms = permsPublic();
     followerPerms.canSeeAvailability = true;
     const followerRes: ViewerResolution = { context: "follower", permissions: followerPerms, sharedTrip: false, sharedEvent: false, ownerIsTripHost: false, buddyRole: null };
@@ -544,12 +544,17 @@ describe("buildAvailability/buildIntent — §8 explicit windows in the aggregat
     });
 
     // Lead ruling D-103 (2026-10-06): a followers window admits a MUTUAL follow
-    // only; Passport's `follower` context is one-way (the owner follows the
-    // viewer), so it is refused. Passport has no mutual window relationship
-    // yet (toWindowViewerRelationship: lane L), so no Passport viewer is
-    // admitted to a followers window until it does — narrower, never wider.
-    const asFollower = (await buildPassportProjection(mkDb(), OWNER, "f1", { resolveViewerContext: resolver(followerRes) }))!;
-    assert.equal(asFollower.availability?.explicitWindow, null, "a one-way follower does not see a followers-only window (D-103)");
+    // only (windowRelationshipFor, lane C's hunk). One-way in either direction
+    // is refused; a mutual follow — context "following", label mutual_follow —
+    // is admitted.
+    const asFollower = (await buildPassportProjection(mkDb(), OWNER, "f1", { resolveViewerContext: resolver({ ...followerRes, permissions: { ...followerPerms, relationshipLabel: "follower" } }) }))!;
+    assert.equal(asFollower.availability?.explicitWindow, null, "the owner follows the viewer only: refused (D-103)");
+    const followingPerms = { ...permsPublic(), canSeeAvailability: true, relationshipLabel: "following" };
+    const asFollowing = (await buildPassportProjection(mkDb(), OWNER, "g1", { resolveViewerContext: resolver({ ...followerRes, context: "following", permissions: followingPerms }) }))!;
+    assert.equal(asFollowing.availability?.explicitWindow, null, "the viewer follows the owner only: refused (D-103)");
+    const mutualPerms = { ...permsPublic(), canSeeAvailability: true, relationshipLabel: "mutual_follow" };
+    const asMutual = (await buildPassportProjection(mkDb(), OWNER, "m1", { resolveViewerContext: resolver({ ...followerRes, context: "following", permissions: mutualPerms }) }))!;
+    assert.ok(asMutual.availability?.explicitWindow, "a mutual follow sees the followers-only window (D-103)");
 
     const asPublic = (await buildPassportProjection(mkDb(), OWNER, "p1", { resolveViewerContext: resolver(publicRes) }))!;
     assert.equal(asPublic.availability?.explicitWindow, null, "public does not see a followers-only window");

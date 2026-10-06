@@ -188,6 +188,11 @@ describe('AvailabilityView', () => {
     expect(screen.getByText('Live now — expires when this window ends.')).toBeTruthy();
   });
 
+  it("lead ruling D-103: a followers window's audience is named to its owner as mutual follows", async () => {
+    await render(<AvailabilityView editor={makeEditor()} />);
+    expect(screen.getByTestId('availability-audience').props.children.join('')).toBe('Who sees it: People you follow who follow you back');
+  });
+
   it('toggles Open to Plans through the editor', async () => {
     const editor = makeEditor();
     await render(<AvailabilityView editor={editor} />);
