@@ -145,3 +145,27 @@ test('a throwing sink never surfaces to the caller', () => {
     resetTelemetrySink();
   }
 });
+
+// §57 G368 — the reversal emitter's payload is bounded at the source: the
+// ingest refuses an int above 100,000, and a refused prop is a dropped datum.
+test('emitSelectionReversed: whole seconds, capped at the ingest bound, never negative, never text', async () => {
+  const { emitSelectionReversed, MAX_REVERSAL_SECONDS } = await import('../inputTelemetry.ts');
+  const seen: Array<Record<string, unknown> | undefined> = [];
+  setTelemetrySink((e) => { if (e.name === 'selection_reversed') seen.push(e.props); });
+  try {
+    const f = { fieldId: 'f', context: 'global_search' as const, requestId: 'r1' };
+    emitSelectionReversed(f, 'entity', 2_499);
+    emitSelectionReversed(f, 'entity', 10 ** 12);
+    emitSelectionReversed(f, 'entity', -5);
+    emitSelectionReversed(f, 'entity', Number.NaN);
+    assert.deepEqual(seen, [
+      { suggestionType: 'entity', secondsSinceSelect: 2 },
+      { suggestionType: 'entity', secondsSinceSelect: MAX_REVERSAL_SECONDS },
+      { suggestionType: 'entity', secondsSinceSelect: 0 },
+      { suggestionType: 'entity', secondsSinceSelect: 0 },
+    ]);
+    assert.equal(MAX_REVERSAL_SECONDS, 100_000, 'must equal the server ingest MAX_INT, or capped values are refused');
+  } finally {
+    resetTelemetrySink();
+  }
+});

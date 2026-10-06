@@ -510,7 +510,7 @@ describe("A14 — in Layover mode, ONLY the certified action universe is shown",
     assert.equal(r.body.layover?.active, true);
     assert.equal(r.body.layover?.sessionId, SESSION_ID);
     assert.match(String(r.body.layover?.snapshotId ?? ""), /.+/);
-    assert.equal(r.body.layover?.landsideOpen, true);
+    assert.equal(r.body.layover?.landsideStatus, "caution"); assert.equal(r.body.layover?.landsideOpen, false); // LAY-FIX follow-up: this world has no confirmed border. Landside cards are still ADMITTED (the list above), and the summary now says that is a caution — `landsideOpen` is true only for an OPEN gate.
   });
 
   it("names WHY each withheld place was withheld, in three distinguishable states", async () => {

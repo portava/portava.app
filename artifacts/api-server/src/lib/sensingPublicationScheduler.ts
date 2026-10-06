@@ -33,8 +33,8 @@
  *     switch, read fail-closed. It cannot substitute for (1): with the scope
  *     ungranted the flag is never read.
  *
- * Then the schema gate every sensing sweep has: the pass probes for 2315's
- * table and does nothing where it is absent (production today).
+ * Then the schema gate every sensing sweep has: the pass probes for 2315's table and does nothing where it is absent. CORRECTED 2026-10-03, on these two lines so no cited line below moves: this used to end "(production today)", and that has stopped being true — a read-only catalog query on 2026-10-03 finds public.sensing_anon_contributions PRESENT in production, RLS on, one policy, zero rows, so 2315 was applied after the parenthesis was written.
+ * The probe is no longer a brake here; the two gates above it are, and the table's emptiness is a fact about traffic rather than a gate. Named rather than quietly deleted, because it was a stated reason not to worry and it is the reason that expired, not the worry.
  *
  * ── WHAT IT NEVER DOES ───────────────────────────────────────────────────────
  * It is the only writer of `sensing_published_aggregates` besides the retention
@@ -276,9 +276,9 @@ export function startSensingPublicationScheduler(): void {
   );
   _timer = setTimeout(function tick() {
     void runSensingPublicationPass().finally(() => {
-      _timer = setTimeout(tick, SENSING_PUBLICATION_INTERVAL_MS);
+      if (_timer !== null) { _timer = setTimeout(tick, SENSING_PUBLICATION_INTERVAL_MS); _timer.unref?.(); } // a stop() during the run must not re-arm
     });
-  }, STARTUP_DELAY_MS);
+  }, STARTUP_DELAY_MS); _timer.unref?.(); // never keep a process alive for a scheduler: the server does that
 }
 
 export function stopSensingPublicationScheduler(): void {

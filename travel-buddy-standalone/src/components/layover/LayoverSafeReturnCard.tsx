@@ -40,7 +40,7 @@ import {
   summarizeCertification,
   type PostureTone,
 } from './layoverReturnFacts.ts';
-import { fmtClock, fmtDur } from './layoverFormat.ts';
+import { fmtClock, fmtDur } from './layoverFormat.ts'; import { LayoverCheckpointControl, checkpointCapability } from './LayoverCheckpointControl.tsx';
 
 interface Props {
   overview: LayoverOverview;
@@ -256,6 +256,16 @@ export function LayoverSafeReturnCard({ overview, nowMs, canAbort, abort: contro
         <Text style={styles.cert} testID="safe-return-certification">
           Computed {fmtClock(cert.computedAt, tz)} · {cert.versionLine} · {cert.qualityLine} · inputs {cert.inputHashShort}
         </Text>
+      ) : null}
+
+      {/* census L30 / L173 — the traveller's own "left / back" reports. Rendered
+          only when the overview says 2992's store is on; see LayoverCheckpointControl. */}
+      {checkpointCapability(overview) === 'on' ? (
+        <LayoverCheckpointControl
+          sessionId={overview.session.id}
+          canReport={overview.session.status === 'active' || (overview.session.status as string) === 'returning'}
+          timezone={tz ?? null}
+        />
       ) : null}
     </View>
   );

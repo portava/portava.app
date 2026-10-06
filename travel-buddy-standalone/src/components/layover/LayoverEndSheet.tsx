@@ -33,11 +33,11 @@ export interface LayoverEndSheetProps {
   stampCity: string | null;
   busy?: boolean;
   onCancel: () => void;
-  onEnd: (choice: { outcome: 'completed' | 'cancelled'; passportStamp: boolean }) => void;
+  onEnd: (choice: { outcome: 'completed' | 'cancelled'; passportStamp: boolean; keepMemory: boolean }) => void;
 }
 
 export function LayoverEndSheet({ visible, stampCity, busy = false, onCancel, onEnd }: LayoverEndSheetProps) {
-  const [keepStamp, setKeepStamp] = useState(false);
+  const [keepStamp, setKeepStamp] = useState(false); const [keepMemory, setKeepMemory] = useState(false); // census L275: a third, independent answer
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
@@ -64,9 +64,32 @@ export function LayoverEndSheet({ visible, stampCity, busy = false, onCancel, on
             </Pressable>
           )}
 
+          {/*
+            census-layover L275 — Layover spec §25: "convert a COMPLETED session
+            into an optional stamp/postcard/memory". A THIRD answer, independent
+            of the stamp: a private, unpublished Memory of the layover (city,
+            country and the window — never a coordinate). Same rules as the
+            stamp: off by default, only sent on the completed branch.
+          */}
+          <Pressable
+            style={styles.electionRow}
+            onPress={() => setKeepMemory((v) => !v)}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: keepMemory }}
+            testID="layover-end-memory-election"
+          >
+            <View style={[styles.checkbox, keepMemory && styles.checkboxOn]}>
+              {keepMemory ? <Check size={13} color={color.paper} /> : null}
+            </View>
+            <Text style={styles.electionText}>
+              Keep a private Memory of this layover{'\n'}
+              <Text style={styles.electionHint}>Only you can see it until you share it. Off by default.</Text>
+            </Text>
+          </Pressable>
+
           <Pressable
             style={[styles.btn, styles.primary, busy && styles.btnDisabled]}
-            onPress={() => onEnd({ outcome: 'completed', passportStamp: keepStamp })}
+            onPress={() => onEnd({ outcome: 'completed', passportStamp: keepStamp, keepMemory })}
             disabled={busy}
             accessibilityRole="button"
             testID="layover-end-completed"
@@ -77,7 +100,7 @@ export function LayoverEndSheet({ visible, stampCity, busy = false, onCancel, on
 
           <Pressable
             style={[styles.btn, busy && styles.btnDisabled]}
-            onPress={() => onEnd({ outcome: 'cancelled', passportStamp: false })}
+            onPress={() => onEnd({ outcome: 'cancelled', passportStamp: false, keepMemory: false })}
             disabled={busy}
             accessibilityRole="button"
             testID="layover-end-cancelled"

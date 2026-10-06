@@ -18,7 +18,7 @@
  * every declared status sits under "What people said", carries the person and
  * the time they said it, and the two are never in the same row.
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { space, radius, type as t } from '../../../theme/tokens.ts';
 import { useTelegraphPalette, type TelegraphPalette } from '../theme/telegraphTheme.ts';
@@ -33,15 +33,83 @@ import {
   type QuickState,
 } from './coordinationApi.ts';
 import { sendTypedMessage } from '../kinds/kindsApi.ts';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { openMapsNavigation } from '../../../lib/maps.ts';
+import { SafeReturnSetupSheet } from '../../../components/safeReturn/SafeReturnSetupSheet.tsx';
+import {
+  proposeSharedRide,
+  respondToAction,
+  type CloseoutView,
+  type SharedRideView,
+} from './coordinationApi.ts';
+
+/**
+ * §9's per-state cells, drawn (census T6, T106, T107, T108).
+ *
+ *   Active     NEXT STEP — one line, the server's derived reading, labelled so;
+ *              optional LOCATION SCOPE — a scoped LOCATION share, opened only
+ *              where the screen can open the location sheet.
+ *   Returning  SAFE RETURN — the existing setup sheet, offered where the crew
+ *              is heading back; SHARED TRANSPORT — a SPLIT_RIDE proposal people
+ *              join or leave.
+ *   Complete   CLOSEOUT — a short-lived card with EXPLICIT options. Showing it
+ *              creates nothing; "Done" puts it away for this plan.
+ *   §8.1       NAVIGATION — "Directions" on a meeting point hands off to the
+ *              device's maps app. It reads no position and declares no status:
+ *              starting navigation is not "on my way" (§9.1 keeps declared and
+ *              derived apart), so nothing is posted.
+ *
+ * A control appears only where its action can complete: a callback the screen
+ * did not pass draws nothing, the rule §19 set for the announcement button.
+ */
+export function closeoutDismissKey(threadId: string, planObjectId: string): string {
+  return `telegraph.closeout.dismissed.${threadId}.${planObjectId}`;
+}
+
+/** The query a maps app is handed for a meeting point: the checkpoint, then the landmark. */
+export function rendezvousDestination(payload: unknown): { name: string; city: string | null } | null {
+  const p = payload !== null && typeof payload === 'object' ? (payload as { checkpoint?: unknown; landmark?: unknown }) : null;
+  const checkpoint = typeof p?.checkpoint === 'string' ? p.checkpoint.trim() : '';
+  if (!checkpoint) return null;
+  const landmark = typeof p?.landmark === 'string' && p.landmark.trim() ? p.landmark.trim() : null;
+  return { name: checkpoint, city: landmark };
+}
 
 export interface CoordinationPanelProps {
   threadId: string;
   /** Test seam: render this instead of fetching. */
   initialResponse?: CoordinationResponse | null;
   onChanged?: () => void;
+  /** The signed-in viewer, so a shared ride can say "you're in". Absent → no join control. */
+  viewerId?: string | null;
+  /** Opens the §10.3 recap sheet. Absent → the closeout offers no recap button. */
+  onOpenRecap?: () => void;
+  /** Opens the screen's LOCATION share sheet. Absent → no location-scope control. */
+  onShareLocation?: () => void;
+  /**
+   * Changes when the conversation changes (the newest message id — the key the
+   * layers strip and the safety bar re-read on); a change re-reads the panel, so
+   * a decision posted while the conversation is open reaches it (R1).
+   */
+  refreshKey?: string | null;
+  /**
+   * Told the DECISION / COMMITMENT message ids this panel is drawing, whenever
+   * that set changes — empty while loading and when a read failed — so the
+   * layers strip draws any it took out of the stream that the panel is not.
+   */
+  onDrawnIdsChange?: (ids: ReadonlySet<string>) => void;
 }
 
-export function CoordinationPanel({ threadId, initialResponse = null, onChanged }: CoordinationPanelProps) {
+export function CoordinationPanel({
+  threadId,
+  initialResponse = null,
+  onChanged,
+  viewerId = null,
+  onOpenRecap,
+  onShareLocation,
+  refreshKey = null,
+  onDrawnIdsChange,
+}: CoordinationPanelProps) {
   const palette = useTelegraphPalette();
   const styles = useMemo(() => makeStyles(palette), [palette]);
   const [data, setData] = useState<CoordinationResponse | null>(initialResponse);
@@ -52,10 +120,20 @@ export function CoordinationPanel({ threadId, initialResponse = null, onChanged 
   const [noticeTitle, setNoticeTitle] = useState('');
   const [noticeNeedsAck, setNoticeNeedsAck] = useState(true);
   const [noticeError, setNoticeError] = useState<string | null>(null);
+  // §9 Returning / Complete.
+  const [safeReturnOpen, setSafeReturnOpen] = useState(false);
+  const [rideError, setRideError] = useState<string | null>(null);
+  const [rideBusy, setRideBusy] = useState(false);
+  // null = not yet known; a closeout is not drawn until we know it was not put away.
+  const [closeoutDismissed, setCloseoutDismissed] = useState<boolean | null>(null);
 
+  const generation = useRef(0);
   const load = useCallback(async () => {
+    const mine = ++generation.current;
     setLoading(true);
     const r = await fetchCoordination(threadId);
+    // A slower, older read must not overwrite a newer one.
+    if (mine !== generation.current) return;
     if (r.ok) {
       setData(r.data);
       setFailed(false);
@@ -68,7 +146,28 @@ export function CoordinationPanel({ threadId, initialResponse = null, onChanged 
   useEffect(() => {
     if (initialResponse !== null) return;
     void load();
-  }, [initialResponse, load]);
+  }, [initialResponse, load, refreshKey]);
+
+  // R1 — what this panel is drawing, told on CHANGE (keyed on the ids, read
+  // through a ref so an inline callback does not re-tell every render). When
+  // there is any open decision or any commitment the panel draws all of them
+  // (see `hasDecisionsOrCommitments` below); on a failed read it draws none.
+  const drawnKey =
+    failed || !data
+      ? ''
+      : [
+          ...data.coordination.decisions.filter((d) => !d.resolved).map((d) => d.decisionId),
+          ...data.coordination.commitments.map((cm) => cm.commitmentId),
+        ]
+          .sort()
+          .join(',');
+  const onDrawnRef = useRef(onDrawnIdsChange);
+  useEffect(() => {
+    onDrawnRef.current = onDrawnIdsChange;
+  });
+  useEffect(() => {
+    onDrawnRef.current?.(new Set(drawnKey ? drawnKey.split(',') : []));
+  }, [drawnKey]);
 
   const declare = useCallback(
     async (state: QuickState) => {
@@ -123,6 +222,65 @@ export function CoordinationPanel({ threadId, initialResponse = null, onChanged 
     if (initialResponse === null) void load();
   }, [threadId, noticeTitle, noticeNeedsAck, onChanged, load, initialResponse]);
 
+  const closeoutPlanId = data?.coordination.closeout?.planObjectId ?? null;
+  useEffect(() => {
+    if (!closeoutPlanId) return;
+    let cancelled = false;
+    setCloseoutDismissed(null);
+    void (async () => {
+      let dismissed = false;
+      try {
+        dismissed = (await AsyncStorage.getItem(closeoutDismissKey(threadId, closeoutPlanId))) === '1';
+      } catch {
+        // Unreadable storage: show the closeout. Showing an explicit-choice
+        // card once more is the recoverable direction; hiding it is not.
+      }
+      if (!cancelled) setCloseoutDismissed(dismissed);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [threadId, closeoutPlanId]);
+
+  const dismissCloseout = useCallback(async () => {
+    setCloseoutDismissed(true);
+    if (!closeoutPlanId) return;
+    try {
+      await AsyncStorage.setItem(closeoutDismissKey(threadId, closeoutPlanId), '1');
+    } catch {
+      // Put away for this session only.
+    }
+  }, [threadId, closeoutPlanId]);
+
+  const proposeRide = useCallback(async () => {
+    setRideBusy(true);
+    const r = await proposeSharedRide(threadId, 'Share a ride back');
+    setRideBusy(false);
+    if (!r.ok) {
+      setRideError(r.message ?? 'The ride could not be proposed.');
+      return;
+    }
+    setRideError(null);
+    onChanged?.();
+    if (initialResponse === null) void load();
+  }, [threadId, onChanged, load, initialResponse]);
+
+  const answerRide = useCallback(
+    async (ride: SharedRideView, response: 'CONFIRMED' | 'DECLINED') => {
+      setRideBusy(true);
+      const r = await respondToAction(threadId, ride.proposalId, response);
+      setRideBusy(false);
+      if (!r.ok) {
+        setRideError(r.message ?? 'Your answer was not saved.');
+        return;
+      }
+      setRideError(null);
+      onChanged?.();
+      if (initialResponse === null) void load();
+    },
+    [threadId, onChanged, load, initialResponse],
+  );
+
   if (loading && !data) {
     return (
       <View style={styles.loading} accessibilityLabel="Loading coordination">
@@ -130,22 +288,84 @@ export function CoordinationPanel({ threadId, initialResponse = null, onChanged 
       </View>
     );
   }
-  // A failed read renders nothing: an empty coordination panel would say "the
-  // plan is not happening", which is a different and wrong statement.
-  if (failed || !data) return null;
+  // A failed read draws no panel: an empty coordination panel would say "the
+  // plan is not happening", which is a different and wrong statement. It SAYS
+  // it could not load (R1) — a person who saw a vote here should not see it
+  // vanish without a word — and the decisions it is not drawing are drawn by
+  // the layers strip, which `onDrawnIdsChange` has just told so.
+  if (failed) {
+    return (
+      <View style={styles.wrap} testID="telegraph-coordination-failed">
+        <Text style={styles.meta}>Couldn't load plans and votes for this conversation.</Text>
+      </View>
+    );
+  }
+  if (!data) return null;
 
   const c = data.coordination;
   const openDecisions = c.decisions.filter((d) => !d.resolved);
   const hasDecisionsOrCommitments = openDecisions.length > 0 || c.commitments.length > 0;
 
+  // §9 Complete: the closeout. Only while the server offers one (a short
+  // window after the plan completes) and only once we know this viewer has not
+  // put it away — `closeoutDismissed === null` draws nothing yet.
+  const closeout: CloseoutView | null = c.closeout ?? null;
+  const closeoutVisible = !c.coordinating && closeout !== null && closeoutDismissed === false;
+
   // §9: only while the thread is actually coordinating — or when there is an
   // unresolved decision or commitment, which is §2.3's PLAN layer and belongs
   // above the stream whatever the clock says.
-  if (!c.coordinating && !hasDecisionsOrCommitments) return null;
+  // The closeout is drawn whenever the server offers one — also in a thread that
+  // still holds a commitment or an open decision, which are exactly the threads
+  // that coordinated (verifier F2: it used to be drawn only when there were none).
+  const closeoutCard = closeoutVisible && closeout ? (
+        <View style={styles.wrap} testID="telegraph-closeout">
+          <Text style={styles.state}>Plan complete</Text>
+          <Text style={styles.planTitle} numberOfLines={1}>
+            {closeout.title}
+          </Text>
+          {closeout.arrivedCount > 0 ? (
+            <Text style={styles.counts} testID="telegraph-closeout-arrived">
+              {closeout.arrivedCount} said they arrived
+            </Text>
+          ) : null}
+          <View style={styles.chipRow}>
+            {onOpenRecap && closeout.options.includes('CREATE_RECAP') ? (
+              <Pressable
+                testID="telegraph-closeout-recap"
+                accessibilityRole="button"
+                accessibilityLabel="Create a recap"
+                onPress={onOpenRecap}
+                style={styles.chip}
+              >
+                <Text style={styles.chipText}>Create a recap</Text>
+              </Pressable>
+            ) : null}
+            <Pressable
+              testID="telegraph-closeout-done"
+              accessibilityRole="button"
+              accessibilityLabel="Done"
+              onPress={() => void dismissCloseout()}
+              style={styles.chip}
+            >
+              <Text style={styles.chipText}>Done</Text>
+            </Pressable>
+          </View>
+          {closeout.options.includes('SAVE_TO_MEMORY') ? (
+            <Text style={styles.meta} testID="telegraph-closeout-memory-hint">
+              Nothing is saved unless you choose it. To keep a message or photo, long-press it and choose Save to Memory.
+            </Text>
+          ) : null}
+        </View>
+  ) : null;
+
+  if (!c.coordinating && !hasDecisionsOrCommitments) return closeoutCard;
 
   const affordances = c.state ? STATE_AFFORDANCES[c.state] : [];
 
   return (
+    <>
+    {closeoutCard}
     <View style={styles.wrap} testID="telegraph-coordination-panel">
       {c.coordinating ? (
         <View style={styles.headerRow}>
@@ -167,6 +387,93 @@ export function CoordinationPanel({ threadId, initialResponse = null, onChanged 
         <Text style={styles.counts} testID="telegraph-coordination-counts">
           {c.arrivedCount} arrived · {c.onMyWayCount} on the way
         </Text>
+      ) : null}
+
+      {c.coordinating && c.nextStep ? (
+        <View style={styles.headerRow} testID="telegraph-coordination-next-step">
+          <Text style={styles.declaredRow} numberOfLines={2}>
+            Next: {c.nextStep.label}
+          </Text>
+          {/* §9.1: a next step is the system's reading of the thread. It says so. */}
+          <Text style={styles.derived}>suggested</Text>
+        </View>
+      ) : null}
+
+      {c.coordinating && onShareLocation && c.state !== 'RETURNING' ? (
+        <Pressable
+          testID="telegraph-coordination-share-location"
+          accessibilityRole="button"
+          accessibilityLabel="Share a place with this conversation"
+          onPress={onShareLocation}
+          style={styles.chip}
+        >
+          <Text style={styles.chipText}>Share a place</Text>
+        </Pressable>
+      ) : null}
+
+      {c.state === 'RETURNING' ? (
+        <View testID="telegraph-coordination-returning">
+          <Text style={styles.sectionLabel}>Getting back</Text>
+          <View style={styles.chipRow}>
+            <Pressable
+              testID="telegraph-coordination-safe-return"
+              accessibilityRole="button"
+              accessibilityLabel="Set up Safe Return"
+              onPress={() => setSafeReturnOpen(true)}
+              style={styles.chip}
+            >
+              <Text style={styles.chipText}>Set up Safe Return</Text>
+            </Pressable>
+            {viewerId && (c.sharedRides ?? []).some((r) => r.riders.includes(viewerId)) ? null : (
+            <Pressable
+              testID="telegraph-coordination-propose-ride"
+              accessibilityRole="button"
+              accessibilityLabel="Propose sharing a ride back"
+              disabled={rideBusy}
+              onPress={() => void proposeRide()}
+              style={styles.chip}
+            >
+              <Text style={styles.chipText}>Share a ride back</Text>
+            </Pressable>
+            )}
+          </View>
+          {(c.sharedRides ?? []).map((ride) => {
+            const riding = viewerId ? ride.riders.includes(viewerId) : null;
+            return (
+              <View key={ride.proposalId} testID={`telegraph-shared-ride-${ride.proposalId}`}>
+                <Text style={styles.declaredRow} numberOfLines={1}>
+                  {ride.title} · {ride.riders.length} riding
+                </Text>
+                {!ride.rosterChecked ? (
+                  <Text style={styles.meta}>Who is still in this conversation could not be checked.</Text>
+                ) : null}
+                {riding !== null ? (
+                  <Pressable
+                    testID={`telegraph-shared-ride-answer-${ride.proposalId}`}
+                    accessibilityRole="button"
+                    accessibilityLabel={riding ? 'Leave this ride' : 'Join this ride'}
+                    disabled={rideBusy}
+                    onPress={() => void answerRide(ride, riding ? 'DECLINED' : 'CONFIRMED')}
+                    style={styles.chip}
+                  >
+                    <Text style={styles.chipText}>{riding ? "You're in · Leave" : 'Join'}</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            );
+          })}
+          {rideError ? (
+            <Text style={styles.meta} testID="telegraph-shared-ride-error">
+              {rideError}
+            </Text>
+          ) : null}
+          <SafeReturnSetupSheet
+            visible={safeReturnOpen}
+            onClose={() => setSafeReturnOpen(false)}
+            onStarted={() => setSafeReturnOpen(false)}
+            suggestionReason={c.plan ? `Heading back from ${c.plan.title}.` : 'Heading back.'}
+          />
+        </View>
       ) : null}
 
       {affordances.length > 0 ? (
@@ -270,6 +577,17 @@ export function CoordinationPanel({ threadId, initialResponse = null, onChanged 
               Fallback: {c.rendezvous[0]!.payload.fallbackPoint}
             </Text>
           ) : null}
+          {rendezvousDestination(c.rendezvous[0]!.payload) ? (
+            <Pressable
+              testID="telegraph-rendezvous-directions"
+              accessibilityRole="button"
+              accessibilityLabel={`Directions to ${c.rendezvous[0]!.payload.checkpoint}`}
+              onPress={() => openMapsNavigation(rendezvousDestination(c.rendezvous[0]!.payload)!)}
+              style={styles.chip}
+            >
+              <Text style={styles.chipText}>Directions</Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
 
@@ -307,6 +625,7 @@ export function CoordinationPanel({ threadId, initialResponse = null, onChanged 
         </View>
       ))}
     </View>
+    </>
   );
 }
 

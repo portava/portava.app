@@ -77,7 +77,7 @@ function openSnapshot(over: Partial<ClarificationSnapshot> = {}): ClarificationS
   return {
     verdict: "yes",
     returnState: "NORMAL",
-    landsideOpen: true,
+    landsideOpen: true, landsideStatus: "open",
     landsideClosedReason: null,
     usableMinutes: 240,
     minutesToHardReturn: 300,
@@ -139,7 +139,7 @@ describe("CL-04 — an under-determined layover request is ASKED about, not gues
 
   it("a fact whose answer could not change the advice stays uncertainty — landside closed, nothing to ask", () => {
     const closed = openSnapshot({
-      landsideOpen: false,
+      landsideOpen: false, landsideStatus: "closed",
       landsideClosedReason: "return threshold reached",
       verdict: "stay_airside",
       returnState: "RETURN_NOW",
@@ -259,5 +259,34 @@ describe("CL-04 — the tool the model calls", () => {
     const tools = strip(readFileSync(join(SRC, "compass", "CompassTools.ts"), "utf8"));
     assert.match(tools, /decideClarification/);
     assert.match(tools, /certifiedLayoverSnapshot\(sc as any, userId\)/);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// PR #624 verification, follow-up 2 — materiality reads the THREE-VALUED gate
+// ═════════════════════════════════════════════════════════════════════════════
+describe("a CAUTIONARY gate still has landside on the table — the entry question is asked, not silenced", () => {
+  /** What the snapshot now publishes for a border nobody confirmed: the strict boolean is FALSE. */
+  const cautioned = () => openSnapshot({ verdict: "entry_unverified", landsideOpen: false, landsideStatus: "caution" });
+
+  it("with the strict boolean false and the status `caution`, the decisive question is still asked", () => {
+    const v: any = decideClarification({ snapshot: cautioned(), facts: {} });
+    assert.equal(v.needed, true, JSON.stringify(v));
+    assert.equal(v.fact, "leave_or_stay");
+  });
+
+  it("…and `entry_permission` is reachable: reading the boolean would have made it immaterial for ever", () => {
+    const v: any = decideClarification({
+      snapshot: cautioned(),
+      facts: { leave_or_stay: { state: "known" }, checked_bags: { state: "known" } },
+    });
+    assert.equal(v.needed, true, JSON.stringify(v));
+    assert.equal(v.fact, "entry_permission");
+  });
+
+  it("a snapshot with NO status is not treated as having landside on the table, whatever the boolean says", () => {
+    const v: any = decideClarification({ snapshot: openSnapshot({ landsideOpen: true, landsideStatus: undefined as never }), facts: {} });
+    assert.equal(v.needed, false, JSON.stringify(v));
+    assert.equal(v.reason, "no_answer_would_change_the_advice");
   });
 });

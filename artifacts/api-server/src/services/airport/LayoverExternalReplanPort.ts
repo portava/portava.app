@@ -85,7 +85,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
 import { airportRowToProfile, lookupByIata } from "./AirportProfileService.js";
 import type { AirportProfile } from "./AirportProfileService.js";
-import type { FeasibilityAirport } from "./LayoverFeasibility.js"; import { resolveLayoverEntry, layoverAirportCountry, type EntryEligibility } from "./layoverEntryGate.js";
+import type { FeasibilityAirport } from "./LayoverFeasibility.js"; import { resolveLayoverEntry, layoverAirportCountry, type EntryEligibility } from "./layoverEntryGate.js"; import { attachConstraintContexts } from "../layover/LayoverConstraintStore.js";
 import {
   handleEvent,
   type HandleEventResult,
@@ -171,7 +171,7 @@ function sessionAirportIdentity(row: Record<string, any>): string | null {
  * `impactedSessions` compares it against the envelope's `airport` subjects. A
  * session stored under a profile id, reached by an event naming an IATA code,
  * must carry the IATA code here or the pipeline would drop it again after this
- * module went to the trouble of finding it.
+ * module went to the trouble of finding it. NO `constraints` here: this is a row, and the declared set is a second read — `attachGroupConstraints`, at the foot of this file, adds it before anything is certified.
  */
 function toReplanSession(row: Record<string, any>, airportRef: string): ReplanSession {
   return {
@@ -438,7 +438,7 @@ export async function replanExternalEvent(
   const limit = opts.sessionLimit ?? DEFAULT_REPLAN_SESSION_LIMIT;
 
   const read = await readGroups(db, event, limit);
-  if (!read.ok) return read;
+  if (!read.ok) return read; await attachGroupConstraints(db, read.groups); // LAY-FIX: every session certifies under its declared constraint set, as every session loader does
 
   const sessionIds = read.groups.flatMap((g) => g.sessions.map((s) => s.session.id));
   if (sessionIds.length === 0) {
@@ -488,4 +488,42 @@ export async function replanExternalEvent(
     "layover external event replanned",
   );
   return { ok: true, impacted, notifications };
+}
+
+/**
+ * Give every session in every group the constraint context its owner's session
+ * loader would have given it.
+ *
+ * ── WHAT WAS WRONG ───────────────────────────────────────────────────────────
+ * `toReplanSession` builds the pipeline's session from a RAW `layover_sessions`
+ * row, and a raw row has no `constraints`: that key is attached by the loaders
+ * in `LayoverSessionService`, which this module does not go through (it is
+ * handed ids and reads rows in bulk). So an external event re-certified a
+ * traveller who had declared "a different airport", or "not sure", or whose
+ * declaration could not be read, AS IF NOTHING WERE DECLARED — the legacy arm —
+ * and could publish "your window grew" for a layover whose landside gate is
+ * closed.
+ *
+ * ── HOW IT IS FIXED ──────────────────────────────────────────────────────────
+ * Through `attachConstraintContexts`, the SAME function the loaders use: two
+ * flag reads and at most one table read for the whole event, three-valued. Both
+ * flags off attaches nothing, so the legacy arm is unchanged. A failed read is
+ * NOT a refusal of the event — it attaches `unreadable`, and each certification
+ * then closes its own gate (`constraints_unreadable`). That is the same choice
+ * the loaders make: the deadline is still worth recomputing, and the one thing
+ * that must not happen is an open gate.
+ *
+ * Mutates the groups in place. At the foot of the file because the lines above
+ * are citation-anchored (`check:doc-citations`).
+ */
+async function attachGroupConstraints(db: SupabaseClient, groups: AirportGroup[]): Promise<void> {
+  const all = groups.flatMap((g) => g.sessions);
+  if (all.length === 0) return;
+  const attached = await attachConstraintContexts(db, all.map((s) => ({ id: s.session.id })));
+  const byId = new Map(attached.map((a) => [a.id, a.constraints]));
+  for (const s of all) {
+    const constraints = byId.get(s.session.id);
+    // `undefined` is both flags off: no key at all, exactly like a loaded session.
+    if (constraints !== undefined) s.session = { ...s.session, constraints };
+  }
 }

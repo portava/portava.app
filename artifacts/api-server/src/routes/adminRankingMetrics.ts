@@ -58,8 +58,18 @@
  *   ranking_version: string,
  *   experiment_enabled: boolean,
  *   spam_risk: { high_spam_count: number, high_repetition_count: number },
- *   job_health: { creator_activity_score: JobHealthEntry, content_distribution: JobHealthEntry },
+ *   job_health: {
+ *     creator_activity_score:           JobHealthEntry,
+ *     content_distribution_aggregation: JobHealthEntry,
+ *   },
  * }
+ *
+ * JobHealthEntry = { status, row_present, last_run_at, detail }, where status is
+ * "attempt_recorded" | "never_reported" | "unknown" — NEVER "healthy". Nothing
+ * in this tree writes either of those two job_health keys, so both read
+ * "never_reported" in production, and `last_run_at` records the attempt, so an
+ * attempt is never evidence of a successful run. The `buildJobHealth` block
+ * comment below has the full reasoning; read it before changing this shape.
  */
 
 import { Router } from "express";
@@ -148,6 +158,158 @@ export function computeConcentration(
   const top_10pct = shareAtPct(0.10);
 
   return { top_1pct, top_5pct, top_10pct, alert: top_10pct > alertThreshold };
+}
+
+// ── job_health disclosure ────────────────────────────────────────────────────
+//
+// WHAT `job_health` CAN AND CANNOT SAY, FOR THESE TWO KEYS IN PARTICULAR.
+//
+// 1. PRODUCTION DOES HAVE `last_success_at`, and the artifacts in this repo
+//    say it does not. Measured directly against the production project on
+//    2026-10-03: job_health is (job, last_run_at, updated_at,
+//    last_success_at). Migration 2998 adds that column and was applied to
+//    production on 2026-09-25, which is AFTER both artifacts that disagree —
+//    src/test/generated/liveColumns.json (generated 2026-08-31) and the
+//    2026-09-22 capability snapshot. Both are simply stale; neither is
+//    evidence about today's schema.
+//
+//    So the select is still `last_run_at` alone, and NOT because the column is
+//    missing. The schema-drift guard checks selects against that generated
+//    file, so adding `last_success_at` today fails the GUARD while production
+//    would have answered it. Refreshing the generated file is the prerequisite
+//    (`pnpm --filter @workspace/scripts run refresh:live-columns`, needs a
+//    Management API token), and it rewrites every table's column list, so it
+//    is a deliberate step with its own review rather than a side effect of
+//    this change. Once it is refreshed, the `attempt_recorded` arm below
+//    should split in two: an attempt whose `last_success_at` matches it, and
+//    an attempt that has never been followed by a success — which is the
+//    "ran and failed" state this panel genuinely cannot show today.
+//
+// 2. `last_run_at` records the ATTEMPT, not the outcome. Every writer in this
+//    tree stamps it before it knows whether the pass succeeded —
+//    tripCrewLiveShareScheduler.ts:195 says so in as many words, and 2998's
+//    column comment on `last_success_at` spells out the consequence: "never
+//    read last_run_at as success, it records the attempt." So the strongest
+//    TRUE statement a row supports is "an attempt was recorded at T".
+//
+// 3. NOTHING IN THIS TREE WRITES EITHER KEY. 'creator_activity_score' and
+//    'content_distribution_aggregation' appear as `job: "…"` literals in this
+//    file and in tests, and nowhere else; there is no upsert/insert/update for
+//    them. scripts/checkSchedulerCoverage.ts asserts the same thing from the
+//    other direction — it tells `job_health` readers from writers SPECIFICALLY
+//    so this reader is never counted as reporting health that does not exist.
+//    In production both keys therefore resolve to "never_reported", and that is
+//    the honest answer. It is not a hole to fill with a fabricated row.
+//
+// THE DEFECT THIS SHAPE FIXES. The previous renderer returned the single value
+// `{ last_run_at: null }` for every one of:
+//   (a) the query threw (the settled promise rejected);
+//   (b) PostgREST answered `{ error }` — a denied read, a bad column, a dropped
+//       connection. `error` was never destructured, and supabase-js sets `data`
+//       to null on error, so this landed on the same `!result.value.data` arm.
+//       See CONTRIBUTING.md: "`{ error }` is not an exception.";
+//   (c) the query succeeded and there is no row for the key;
+//   (d) a row exists but its `last_run_at` is empty.
+// An admin could not tell "this job has never reported" from "we could not find
+// out" — healthy-looking silence over an unanswered question. (a) and (b) are
+// now "unknown", (c) and (d) are "never_reported" and differ in `row_present`,
+// and NO arm ever reports "healthy".
+
+/** What `job_health` was able to tell us about one job. Never "healthy". */
+export type JobHealthStatus =
+  /** A row exists and carries a `last_run_at`. An ATTEMPT, not a success. */
+  | "attempt_recorded"
+  /** The lookup succeeded and no run has ever been recorded for this key. */
+  | "never_reported"
+  /** The lookup did not answer. Nothing is known — not even "never ran". */
+  | "unknown";
+
+export interface JobHealthEntry {
+  status: JobHealthStatus;
+  /** True only when `job_health` actually held a row for this key. */
+  row_present: boolean;
+  /** The ATTEMPT timestamp. Null unless status is "attempt_recorded". */
+  last_run_at: string | null;
+  /** Admin-facing sentence, safe to render verbatim. Never claims health. */
+  detail: string;
+}
+
+/** The subset of a supabase `maybeSingle()` result this renderer reads. */
+interface JobHealthQueryResult {
+  data?: { last_run_at?: string | null } | null;
+  error?: { code?: string | null; message?: string | null } | null;
+}
+
+/**
+ * Render one `job_health` lookup for the admin panel, keeping "we do not know"
+ * separate from "it has never run". See the block comment above for why each
+ * arm exists and why none of them says "healthy".
+ */
+export function buildJobHealth(
+  job: string,
+  result: PromiseSettledResult<JobHealthQueryResult>,
+): JobHealthEntry {
+  const cannotTell = (why: string): JobHealthEntry => ({
+    status: "unknown",
+    row_present: false,
+    last_run_at: null,
+    detail:
+      `Unknown — the job_health lookup for '${job}' did not answer (${why}), ` +
+      `so this panel cannot say whether the job has ever run. This is not a ` +
+      `healthy reading; it is an absent one.`,
+  });
+
+  // (a) The query threw.
+  if (result.status === "rejected") return cannotTell("the query threw");
+
+  const value: JobHealthQueryResult = result.value ?? {};
+
+  // (b) PostgREST resolved WITH an error. Checked before `data`, because `data`
+  //     is null on error and would otherwise read as "no row".
+  if (value.error) {
+    const detail =
+      [value.error.code, value.error.message].filter(Boolean).join(": ") ||
+      "the query returned an error with no detail";
+    return cannotTell(detail);
+  }
+
+  const row = value.data ?? null;
+
+  // (c) Answered, no row. The job has never written health for this key.
+  if (!row) {
+    return {
+      status: "never_reported",
+      row_present: false,
+      last_run_at: null,
+      detail:
+        `Never reported — job_health holds no row for '${job}'. An absent row ` +
+        `is not evidence that the job ran, and not evidence that it failed.`,
+    };
+  }
+
+  // (d) A row, but no timestamp on it.
+  const lastRunAt = row.last_run_at ?? null;
+  if (!lastRunAt) {
+    return {
+      status: "never_reported",
+      row_present: true,
+      last_run_at: null,
+      detail:
+        `Never reported — a job_health row exists for '${job}' but its ` +
+        `last_run_at is empty, so no run has ever been recorded against it.`,
+    };
+  }
+
+  // A row with a timestamp: the one arm that carries a fact, stated narrowly.
+  return {
+    status: "attempt_recorded",
+    row_present: true,
+    last_run_at: lastRunAt,
+    detail:
+      `Last attempt recorded at ${lastRunAt}. job_health records the attempt, ` +
+      `not the outcome, and the live table has no success column — this does ` +
+      `not mean the run succeeded.`,
+  };
 }
 
 /** Validate and clamp the `days` query param. */
@@ -417,19 +579,11 @@ router.get("/admin/ranking/metrics", asyncHandler(async (req, res) => {
   }
 
   // ── Process job health ───────────────────────────────────────────────────
-  const buildJobHealth = (result: PromiseSettledResult<any>) => {
-    if (result.status !== "fulfilled" || !result.value.data) {
-      return { last_run_at: null };
-    }
-    const d = result.value.data as any;
-    return {
-      last_run_at: d.last_run_at ?? null,
-    };
-  };
-
   const job_health = {
-    creator_activity_score:         buildJobHealth(jobHealthCasResult),
-    content_distribution_aggregation: buildJobHealth(jobHealthCdaResult),
+    creator_activity_score:
+      buildJobHealth("creator_activity_score", jobHealthCasResult),
+    content_distribution_aggregation:
+      buildJobHealth("content_distribution_aggregation", jobHealthCdaResult),
   };
 
   // ── Process spam risk ────────────────────────────────────────────────────

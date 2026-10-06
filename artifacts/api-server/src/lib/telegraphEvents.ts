@@ -26,6 +26,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger } from "./logger";
+import { strategyForAudience } from "../domain/telegraph/policies/transportClass.js";
 
 export type TelegraphEventType =
   | "thread.updated"
@@ -666,7 +667,11 @@ export async function publishToThread(
 
     // §30A.12 — bounded strategies, applied to the resolved audience rather
     // than to a thread type, because the audience is the thing that costs.
-    if (userIds.length > FANOUT_PRESENCE_MAX && PRESENCE_CLASS_EVENTS.has(event.type)) {
+    // The strategy is the transport class's (domain/telegraph/policies/
+    // transportClass.ts, census T415): the same table the receipt routes and
+    // the capabilities projection read, keyed on the ACTIVE roster.
+    const strategy = strategyForAudience((data ?? []).length);
+    if (strategy.presence === "shed" && PRESENCE_CLASS_EVENTS.has(event.type)) {
       stats.presenceShedLargeConversation++;
       logger.debug(
         { threadId, type: event.type, audience: userIds.length },
@@ -675,7 +680,7 @@ export async function publishToThread(
       return;
     }
 
-    if (userIds.length > FANOUT_HARD_MAX) {
+    if (strategy.messages === "poll_signal") {
       stats.fanoutDegradedLargeConversation++;
       // A poll signal, not silence. The member learns that the thread moved and
       // what kind of thing moved; the payload stays off a fan-out this wide.

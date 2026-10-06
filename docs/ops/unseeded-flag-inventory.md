@@ -77,7 +77,7 @@ that is armed and one that is not.
 | `DISCOVERY_DIVERSITY_ENABLED` | false | `api:compass/CompassFeedBuilder.ts:497` (+2) |
 | `MEDIA_HIDDEN_GEMS_CREATE_ENABLED` | **true** | `app:src/components/media/MediaQuickCreateSheet.tsx:128` |
 | `NEW_CONTRIBUTOR_BOOST_ENABLED` | false | `api:services/ranking/DiscoveryRankingService.ts:354` (+1) |
-| `RANKING_EXPERIMENT_ENABLED` | false | `api:routes/adminRankingMetrics.ts:278` (+3) |
+| `RANKING_EXPERIMENT_ENABLED` | false | `api:routes/adminRankingMetrics.ts:440` (+3) |
 | `RENT_BUDDY_ADMIN_ONLY_MODE` | false | `api:routes/rentABuddyRollout.ts:171` |
 | `RENT_BUDDY_BETA_ONLY_MODE` | false | `api:routes/rentABuddyRollout.ts:410` |
 | `RENT_BUDDY_GROUP_BOOKINGS_ENABLED` | **true** | `api:routes/rentABuddyRollout.ts:245` |

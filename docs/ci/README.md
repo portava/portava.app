@@ -893,6 +893,41 @@ is complete enough to run repeatedly have **never been verified** — they have
 only ever been run by hand, against whatever project the developer had
 configured. Expect to iterate on the first few runs.
 
+### The beta environment: `beta-db.yml`
+
+`.github/workflows/beta-db.yml` builds the **portava-beta** project
+(`emfpckykpzfturllshly`) from the 2026-08-19 baseline, a read-only reference
+snapshot of portava-ci, and the canonical chain applied by the unchanged
+`db:apply-migrations`. It is `workflow_dispatch` only, behind a typed
+`confirm=BOOTSTRAP-BETA` (and `reset=RESET-BETA` for the destructive reset).
+The full procedure, what it refuses, and what it does not configure are in
+[`docs/supabase-beta-runbook.md`](../supabase-beta-runbook.md).
+
+Three things about it differ from `live-db.yml` and are deliberate:
+
+- The beta job's `SUPABASE_URL` and `CI_SUPABASE_PROJECT_REF` are **literals**
+  naming portava-beta, so the same allowlist and in-process guard sanction beta
+  for that job alone; it references one secret, `BETA_SUPABASE_PROJECT_TOKEN`
+  (a token scoped to portava-beta, mapped into the `SUPABASE_PROJECT_TOKEN` name
+  the scripts read — the CI token is project-scoped and answered 403 on beta's
+  first query on 2026-10-06). `scripts/src/beta-bootstrap.ts` also hard-codes the
+  beta ref and refuses any other, portava-ci included.
+- It never takes `live-db.yml`'s shared-database slot: beta is a different
+  database. Its own `concurrency: beta-db` group never cancels.
+- Its two credential jobs are outside `REQUIRED_CREDENTIAL_JOBS` (that list is
+  checked against `live-db.yml` only — the same gap `clean-build-proof.yml`
+  records); they carry the unconditional allowlist step, and every entry point
+  they run imports the guard first.
+
+Two more facts about its apply step. The applier refuses two chain files by
+shape (2182 and 2190), which portava-ci never classifies because 2254's
+backfill rows cover them; the step is a bounded loop in which
+`db:beta-bootstrap --apply-refused` applies each one verbatim where the
+applier stops and records it `applied_by='manual'` — the applier's own
+documented remedy, not atomic with its ledger row, and explained in the
+runbook. And the chain apply needs PR #632 (declared apply-order overrides)
+merged first.
+
 ### Concurrency: the shared database is a queue, not a race
 
 `live-db.yml`'s jobs share one non-production Supabase project, so only one run

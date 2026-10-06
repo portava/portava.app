@@ -64,7 +64,9 @@ import {
 } from './types.ts';
 import {
   NO_TRANSCRIPTION_PROVIDER,
+  cloudAudioConsentGranted,
   isVoiceInputAvailable,
+  portSendsAudioOffDevice,
   resolveTranscriptionPort,
   type AudioCapturePort,
   type TranscriptionPort,
@@ -278,6 +280,23 @@ export async function voiceIntakeFromCapture(
 ): Promise<VoiceSubmission> {
   const port = deps.port ?? resolveTranscriptionPort();
 
+  // OD-INPUT-5, checked BEFORE the microphone opens: a cloud transcriber without
+  // the separate consent records nothing (the installed port's own guard
+  // refuses too, so a caller that skips this still sends nothing).
+  if (portSendsAudioOffDevice(port) && !cloudAudioConsentGranted()) {
+    return {
+      state: 'unavailable',
+      reason: 'cloud_consent_required',
+      error: 'This voice option would send your recording to an online service, which needs your separate permission.',
+    };
+  }
+  // OD-INPUT-5 "no raw-audio retention": a capture surface that cannot discard
+  // its clip is not used.
+  if (typeof capture.discard !== 'function') {
+    return { state: 'unavailable', reason: 'audio_retention_unsupported', error: 'This build cannot delete a recording after use, so it does not record.' };
+  }
+  const discard = capture.discard.bind(capture);
+
   if (!(await isVoiceInputAvailable(port))) {
     return {
       state: 'unavailable',
@@ -300,7 +319,19 @@ export async function voiceIntakeFromCapture(
   }
   if (!audio) return { state: 'unavailable', reason: 'capture_failed', error: 'No audio was captured.' };
 
-  const outcome = await port.transcribe({ audio, language: opts.language ?? null });
+  let outcome: TranscriptionOutcome;
+  try {
+    outcome = await port.transcribe({ audio, language: opts.language ?? null });
+  } catch {
+    outcome = { ok: false, unavailable: true, reason: 'provider_error', error: 'Speech-to-text failed.' };
+  } finally {
+    // The clip is deleted after EVERY transcription, success or failure.
+    try {
+      await discard(audio);
+    } catch {
+      // A discard failure must not surface as a transcription failure.
+    }
+  }
   if (!outcome.ok) {
     return { state: 'unavailable', reason: outcome.reason, error: outcome.error };
   }

@@ -14,6 +14,10 @@
  */
 import { addDestination as defaultAdd, type TripDestination } from '../../../services/tripDestinations.ts';
 import type { PasteDestination } from './pasteReview.ts';
+import { reportInputTaskOutcome, type OutcomeEntity, type TaskOutcomeField } from '../services/outcomeLearning.ts';
+
+/** The field the paste-to-Trip flow serves (DestinationListEditor's PasteReviewSheet). */
+export const PASTE_TRIP_FIELD: TaskOutcomeField = { fieldId: 'trip.destination', context: 'trip_destination' };
 
 export interface PersistedPaste {
   saved: Array<{ destination: PasteDestination; serverId: string | null }>;
@@ -25,6 +29,7 @@ export async function persistPastedDestinations(
   destinations: readonly PasteDestination[],
   firstPosition: number,
   add: typeof defaultAdd = defaultAdd,
+  report: typeof reportInputTaskOutcome = reportInputTaskOutcome,
 ): Promise<PersistedPaste> {
   const out: PersistedPaste = { saved: [], failed: [] };
   if (!tripId) {
@@ -52,6 +57,18 @@ export async function persistPastedDestinations(
     } else {
       out.failed.push(d);
     }
+  }
+  // §45 / OD-INPUT-1 — the downstream task this field served has now actually
+  // happened (or failed) on the server. Reported ONLY in a Trip being edited:
+  // in a Trip being created nothing was written above, and "added to a draft" is
+  // not a completed task. The reporter does nothing at all unless this account
+  // opted in to outcome learning. Credited: the canonical CITIES that were
+  // written — `trip_destination` keeps per-user memory of cities, not places.
+  const credited: OutcomeEntity[] = out.saved
+    .filter((s) => s.destination.entityType === 'city' && !!s.destination.placeId)
+    .map((s) => ({ entityType: 'city', entityId: s.destination.placeId as string }));
+  if (destinations.length > 0) {
+    report(PASTE_TRIP_FIELD, 'trip_destinations_saved', out.failed.length === 0, credited);
   }
   return out;
 }

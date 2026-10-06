@@ -83,6 +83,13 @@ import {
 import { withStoredFoldCentroids } from "../discoverySearchCanonical.js";
 import { readDiscoveryPeopleGate } from "../discoveryPeoplePrivacy.js";
 import { buddyAskFrom } from "../discoveryPeopleBuddy.js";
+import {
+  PLAN_ITEM_PRIVACY_COLUMNS,
+  ownerOnlyAccess,
+  planItemAccessFor,
+  withholdPrivatePlanItems,
+  type PlanItemAccess,
+} from "./planItemAccess.js";
 
 const logger = rootLogger.child({ route: "discoverySearch" });
 
@@ -969,7 +976,7 @@ async function searchPlans(
     const pat = sqlPattern(q); // census-discovery §81 (A10): the plan items come from Trips' projection when its flag is on
     const { data, error } = (await discoveryTripViewerProjectionsOn(sc)) ? await planItemRowsFromProjection(sc, { pattern: pat, offset, limit: fetchLimit }) : await sc
       .from("trip_plan_items")
-      .select("id, title, trip_id, creator_id, created_at")
+      .select("id, title, trip_id, created_at, creator_id, location_is_private" satisfies `${string}, ${typeof PLAN_ITEM_PRIVACY_COLUMNS}`) // a literal, so check:write-path-columns can resolve it (it follows no import); the satisfies fails typecheck if the privacy columns change
       .ilike("title", pat)
       .is("removed_at", null)
       .order("created_at", { ascending: false })
@@ -1065,8 +1072,26 @@ async function searchPlans(
         .map((t) => t.id),
     );
 
-    return items
-      .filter((p: any) => visibleTripIds.has(p.trip_id as string))
+    // OD-TRIP-3: "Private anchors: Owner-only by default ... trip membership or
+    // organizer status alone does not grant access." Admitting the TRIP is not
+    // admitting each item on it: another member's private place is withheld,
+    // and a withheld row is not a suggestion at all — its title is what matched,
+    // and the title names the place. `location_is_private` defaults to TRUE, a
+    // row that does not carry it is private (the Trips projection does not), and
+    // unreadable access withholds. Decided by the Trips rule through
+    // planItemAccess.ts, not restated here. Applied LAST, after the parent-trip
+    // read, so an unreadable `trips` table still refuses rather than answering
+    // an empty list.
+    const onAdmittedTrip = items.filter((p: any) => visibleTripIds.has(p.trip_id as string));
+    const accessByTrip = new Map<string, PlanItemAccess>();
+    for (const tripId of new Set<string>(onAdmittedTrip.map((p: any) => p.trip_id as string))) {
+      accessByTrip.set(tripId, await planItemAccessFor(sc, tripId, userId));
+    }
+    const suggestible = onAdmittedTrip.filter(
+      (p: any) => withholdPrivatePlanItems([p], accessByTrip.get(p.trip_id as string) ?? ownerOnlyAccess(userId, "unread"))[0]!.location_withheld !== true,
+    );
+
+    return suggestible
       .map((p: any): SearchResult => ({
         id: p.id,
         type: "plans",

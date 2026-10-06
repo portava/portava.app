@@ -45,7 +45,7 @@
  * flake. L254 therefore stays `W` with the tight-window arm closed.
  */
 import type { AirportProfile } from "./AirportProfileService.js";
-import type { LayoverSession } from "./LayoverSessionService.js"; import type { EntryEligibility } from "./layoverEntryGate.js";
+import type { LayoverSession } from "./LayoverSessionService.js"; import type { EntryEligibility } from "./layoverEntryGate.js"; import { landsideStatusOf, type LandsideStatus } from "./LayoverConstraints.js";
 import {
   certifySessionFeasibility,
   type LayoverFeasibilityRecord,
@@ -82,7 +82,7 @@ export interface BuddySafetyGate {
   usableMinutes: number;
   returnState: LayoverFeasibilityRecord["envelope"]["returnState"];
   /** The rules that produced the three fields above. */
-  engineVersion: string;
+  engineVersion: string; /** The record's three-valued landside gate (`landsideStatusOf`). `passed` can be true under `caution`: not forbidden is not confirmed. */ landside: LandsideStatus;
 }
 
 /** What a high-risk layover REQUIRES of a buddy profile. */
@@ -124,13 +124,13 @@ export function buddySafetyGateFor(record: LayoverFeasibilityRecord): BuddySafet
       // the border could not be checked, not that the traveller is refused, and
       // the advice they hold says so in words. A verdict added later passes by
       // default here — check this list when the union grows.
-      record.verdict !== "no" &&
+      record.verdict !== "no" && landsideStatusOf(record) !== "closed" && // the one gate read every surface shares — an unreadable or undeclared constraint closes it
       record.verdict !== "stay_airside" &&
       record.envelope.returnState === "NORMAL",
     verdict: record.verdict,
     usableMinutes: record.envelope.usableMinutes,
     returnState: record.envelope.returnState,
-    engineVersion: record.engineVersion,
+    engineVersion: record.engineVersion, landside: landsideStatusOf(record),
   };
 }
 

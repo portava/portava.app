@@ -218,6 +218,16 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   // even if the episode delete were to fail.
   "memory_episodes",
   "memory_evidence",
+  // Input-assistance opt-ins and outcome counters (migrations 3780 / 3782).
+  // Each is keyed by user_id REFERENCES auth.users(id) ON DELETE CASCADE — the
+  // wall_telemetry_events mechanism, not a profiles-keyed one — so the rows go
+  // when AccountDeletionService's final step calls auth.admin.deleteUser, even
+  // though the profiles row is kept as a tombstone. No service step names them.
+  // (input_outcome_task_daily, migration 3783, carries no user column at all:
+  // it is a day/context/task aggregate, so it is not user-keyed and not listed.)
+  "input_outcome_consent",
+  "input_outcome_counters",
+  "input_memory_context_consent",
 ];
 
 /**
@@ -925,6 +935,11 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   // Wall §32 telemetry sink, added by migration 2308 (post-baseline).
   // Classified in ERASED_BY_CASCADE above.
   "wall_telemetry_events",
+  // Input-assistance opt-ins and outcome counters, added by migrations 3780 /
+  // 3782 (post-baseline). Classified in ERASED_BY_CASCADE above.
+  "input_outcome_consent",
+  "input_outcome_counters",
+  "input_memory_context_consent",
   "journey_observations",
   "journey_revocation_jobs",
   "journey_segment_revisions",

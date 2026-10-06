@@ -56,6 +56,7 @@
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { readFileSync } from "node:fs";
 import express from "express";
 
 import { _setTestClient } from "../lib/http.js";
@@ -226,7 +227,10 @@ describe("§13.1 CREATE_COORDINATION_SESSION — the refusal names the route tha
   // recorded the consequence for T146 — "the analogue is now §8's
   // DECISION/VOTE projection on the coordination route" — and nobody came back
   // to the command vocabulary, so it still sent callers to the meetup shape.
-  for (const [command, kind] of [["CREATE_DECISION", "DECISION"], ["CAST_VOTE", "VOTE"]] as const) {
+  // CAST_VOTE still names its general home. CREATE_DECISION no longer does,
+  // because it is no longer sent away: the bus issues it through the
+  // coordination route's own writer (census T166; see telegraphEnvelopeCommands.test.ts).
+  for (const [command, kind] of [["CAST_VOTE", "VOTE"]] as const) {
     it(`4. ${command} names the general ${kind} home, and that home accepts it`, () => {
       const home = String((LEGACY_PATH_COMMANDS as Record<string, string>)[command] ?? "");
       assert.match(home, /coordination/, `${command} does not name the coordination route`);
@@ -235,12 +239,22 @@ describe("§13.1 CREATE_COORDINATION_SESSION — the refusal names the route tha
     });
   }
 
+  it("4b. CREATE_DECISION is ISSUED here, writing the general DECISION kind the coordination route accepts", () => {
+    assert.ok((ISSUABLE_COMMANDS as readonly string[]).includes("CREATE_DECISION"));
+    assert.equal((LEGACY_PATH_COMMANDS as Record<string, string>).CREATE_DECISION, undefined);
+    assert.ok((COORDINATION_KINDS as readonly string[]).includes("DECISION"));
+  });
+
   it("4c. the meetup surfaces are still named — the general home ADDS a door, it does not close one", () => {
     // T167 CAST_VOTE is C through `meetup_time_votes` and T83's meetup triple is
     // C. A pointer that dropped them would send an RSVP caller to the wrong
     // place, which is the same defect in the other direction.
-    assert.match(String(LEGACY_PATH_COMMANDS.CREATE_DECISION ?? ""), /meetup/);
     assert.match(String(LEGACY_PATH_COMMANDS.CAST_VOTE ?? ""), /meetup/);
+    // CREATE_DECISION's meetup shape is not closed by the bus issuing the general
+    // decision: its own routes are still mounted.
+    const chat = readFileSync(new URL("../routes/telegraphChat.ts", import.meta.url), "utf8");
+    assert.match(chat, /"\/threads\/:threadId\/telegraph\/suggestions\/:suggestionId\/create-meetup"/);
+    assert.match(chat, /"\/threads\/:threadId\/telegraph\/suggestions\/:suggestionId\/start-poll"/);
   });
 
   it("3. no §13.1 command is homeless, and the rule that would find one still works", () => {

@@ -93,7 +93,13 @@ describe("client-privilege boundary ratchet", () => {
   });
 
   it("FAILS on GRANT ALL to a client role", () => {
-    // This is the shape 2332's recorded rollback would execute.
+    // This is the shape 2332's recorded rollback would execute, and this case
+    // is what makes that a defect rather than a style point: the rollback
+    // could not be committed as a migration without failing the ratchet.
+    // It is NOT fixed in 2332, deliberately. 2332 is applied on portava-ci
+    // with a real sha256 ledger checksum, so a comment-only edit there fails
+    // check:migration-ledger. The faithful form is recorded in
+    // migrations/3504_client_table_privilege_boundary.sql's header instead.
     const { code, out } = run(fixture("all",
       "GRANT ALL ON TABLE public.rent_buddy_payouts TO anon, authenticated, service_role;"));
     assert.notEqual(code, 0);

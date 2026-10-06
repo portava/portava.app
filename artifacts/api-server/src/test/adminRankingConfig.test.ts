@@ -52,6 +52,7 @@ import {
   bucketScoreToTier,
   computeTierDistribution,
   computeConcentration,
+  buildJobHealth,
 } from "../routes/adminRankingMetrics.js";
 import { validateConfigValue } from "../routes/adminRankingConfig.js";
 
@@ -337,7 +338,30 @@ const PROFILE_ROWS: any[] = [
   { id: CREATOR_ID_C,      role: "member",  username: "creator_c",        display_name: "Creator C",        created_at: daysAgo(30) },
 ];
 
-function makeFakeClient(isAdmin = true) {
+/**
+ * How the fake `job_health` table should behave for one test.
+ *
+ * "rows"  — the default: both keys present, as production WOULD look if anything
+ *           wrote them. (Nothing does; see JOB_HEALTH_ROWS.)
+ * "empty" — the query succeeds and returns no row. This is what production
+ *           actually does for these two keys.
+ * "error" — PostgREST resolves with `{ data: null, error }`. It does NOT throw,
+ *           which is the whole reason this option exists.
+ */
+type JobHealthMode = "rows" | "empty" | "error";
+
+/**
+ * The two keys this endpoint reads. NOTHING in the tree writes either of them
+ * (routes/adminRankingMetrics.ts documents this, and
+ * scripts/checkSchedulerCoverage.ts asserts it), so these rows are a fixture
+ * for the "a row does exist" arm, not a description of production.
+ */
+const JOB_HEALTH_ROWS = [
+  { job: "creator_activity_score",           last_run_at: "2026-07-25T00:00:00Z", metadata: {} },
+  { job: "content_distribution_aggregation", last_run_at: "2026-07-25T00:00:00Z", metadata: {} },
+];
+
+function makeFakeClient(isAdmin = true, jobHealthMode: JobHealthMode = "rows") {
   let _configRows = [...CONFIG_ROWS];
 
   function builder(rows: any[]) {
@@ -512,10 +536,27 @@ function makeFakeClient(isAdmin = true) {
         };
       }
       if (table === "job_health") {
-        return builder([
-          { job: "creator_activity_score",           last_run_at: "2026-07-25T00:00:00Z", metadata: {} },
-          { job: "content_distribution_aggregation", last_run_at: "2026-07-25T00:00:00Z", metadata: {} },
-        ]);
+        if (jobHealthMode === "error") {
+          // PostgREST RESOLVES on an error — it does not throw — and sets
+          // `data` to null. A reader that only inspects `data` therefore sees
+          // this as "no row". The builder below reproduces that exactly.
+          const eb: any = {
+            select: (_c: string) => eb,
+            eq:     (_c: string, _v: any) => eb,
+            maybeSingle: () =>
+              Promise.resolve({
+                data: null,
+                error: { code: "42501", message: "permission denied for table job_health" },
+              }),
+            then: (resolve: (v: any) => void) =>
+              Promise.resolve({
+                data: null,
+                error: { code: "42501", message: "permission denied for table job_health" },
+              }).then(resolve),
+          };
+          return eb;
+        }
+        return builder(jobHealthMode === "empty" ? [] : JOB_HEALTH_ROWS);
       }
       // Catch-all: return empty builder
       return builder([]);
@@ -597,6 +638,171 @@ describe("GET /admin/ranking/metrics", () => {
     assert.ok(body.spam_risk != null, "spam_risk missing");
     assert.ok(typeof body.spam_risk.high_spam_count === "number");
     assert.ok(body.job_health != null, "job_health missing");
+  });
+});
+
+// ── job_health disclosure ─────────────────────────────────────────────────────
+//
+// The renderer used to return `{ last_run_at: null }` for four different facts:
+// the query threw; PostgREST resolved with `{ error }`; the lookup succeeded and
+// there was no row; and a row existed with an empty timestamp. An admin reading
+// the panel could not tell "this job has never reported" from "we could not find
+// out", and the panel never said which.
+//
+// Nothing in this tree writes either key the endpoint reads
+// ('creator_activity_score', 'content_distribution_aggregation'), so the TRUE
+// production answer is "never_reported". These tests pin that the four facts
+// stay distinguishable and that no arm ever claims health.
+
+const JOB_KEYS = ["creator_activity_score", "content_distribution_aggregation"] as const;
+
+/** A fulfilled supabase `maybeSingle()` result, as the real client shapes it. */
+function settled(value: unknown): PromiseSettledResult<any> {
+  return { status: "fulfilled", value } as PromiseSettledResult<any>;
+}
+
+describe("buildJobHealth — absence, failure and an attempt are three different answers", () => {
+  it("no row renders as never_reported, not as a null-timestamped success", () => {
+    // maybeSingle() with no match: `{ data: null, error: null }`.
+    const e = buildJobHealth("creator_activity_score", settled({ data: null, error: null }));
+    assert.equal(e.status, "never_reported");
+    assert.equal(e.row_present, false);
+    assert.equal(e.last_run_at, null);
+    assert.match(e.detail, /[Nn]ever reported/);
+    assert.match(e.detail, /job_health holds no row/);
+  });
+
+  it("a PostgREST { error } renders as unknown — it must not read as 'never ran'", () => {
+    // The defect this arm exists for: `{ error }` RESOLVES and sets data to
+    // null, so a reader that only inspects `data` reports a missing row for a
+    // denied or malformed query. CONTRIBUTING.md: "{ error } is not an
+    // exception."
+    const e = buildJobHealth(
+      "creator_activity_score",
+      settled({ data: null, error: { code: "42501", message: "permission denied" } }),
+    );
+    assert.equal(e.status, "unknown");
+    assert.notEqual(e.status, "never_reported");
+    assert.equal(e.last_run_at, null);
+    // The reason the admin needs in order to act is carried through.
+    assert.match(e.detail, /42501/);
+    assert.match(e.detail, /permission denied/);
+  });
+
+  it("a thrown query renders as unknown, distinct from an absent row", () => {
+    const thrown = buildJobHealth("creator_activity_score", {
+      status: "rejected",
+      reason: new Error("socket hang up"),
+    } as PromiseSettledResult<any>);
+    const absent = buildJobHealth("creator_activity_score", settled({ data: null, error: null }));
+    assert.equal(thrown.status, "unknown");
+    assert.equal(absent.status, "never_reported");
+    assert.notDeepEqual(
+      thrown,
+      absent,
+      "a failed lookup and an absent row must not render identically",
+    );
+  });
+
+  it("a row with a timestamp reports an ATTEMPT and never claims success", () => {
+    const e = buildJobHealth(
+      "creator_activity_score",
+      settled({ data: { last_run_at: "2026-07-25T00:00:00Z" }, error: null }),
+    );
+    assert.equal(e.status, "attempt_recorded");
+    assert.equal(e.row_present, true);
+    assert.equal(e.last_run_at, "2026-07-25T00:00:00Z");
+    // `last_run_at` is stamped on the ATTEMPT by every writer in this tree, and
+    // the live table has no success column, so the detail must say so rather
+    // than let an operator read the timestamp as a healthy pass.
+    assert.match(e.detail, /not mean the run succeeded/);
+    assert.match(e.detail, /records the attempt/);
+  });
+
+  it("a row whose last_run_at is empty is never_reported but row_present", () => {
+    // Distinguishable from the no-row case: the row exists, so something wrote
+    // it; it has simply never recorded a run.
+    const e = buildJobHealth(
+      "creator_activity_score",
+      settled({ data: { last_run_at: null }, error: null }),
+    );
+    assert.equal(e.status, "never_reported");
+    assert.equal(e.row_present, true);
+    assert.equal(e.last_run_at, null);
+    const noRow = buildJobHealth("creator_activity_score", settled({ data: null, error: null }));
+    assert.equal(noRow.row_present, false);
+    assert.notDeepEqual(e, noRow, "a row with no timestamp must not render as no row at all");
+  });
+
+  it("no arm ever reports the job as healthy or ok", () => {
+    const arms = [
+      buildJobHealth("j", settled({ data: null, error: null })),
+      buildJobHealth("j", settled({ data: null, error: { code: "x", message: "y" } })),
+      buildJobHealth("j", settled({ data: { last_run_at: null }, error: null })),
+      buildJobHealth("j", settled({ data: { last_run_at: "2026-07-25T00:00:00Z" }, error: null })),
+      buildJobHealth("j", { status: "rejected", reason: new Error("x") } as PromiseSettledResult<any>),
+    ];
+    for (const a of arms) {
+      assert.ok(
+        !["healthy", "ok", "up", "green"].includes(a.status),
+        `status '${a.status}' asserts health this table cannot support`,
+      );
+      assert.ok(
+        !/\bhealthy\b/.test(a.detail.replace(/not a\s+healthy reading/g, "")),
+        `detail claims health: ${a.detail}`,
+      );
+    }
+  });
+});
+
+describe("GET /admin/ranking/metrics — what the admin panel actually shows for job_health", () => {
+  it("renders never_reported for both keys when job_health holds no row", async () => {
+    // This is the real production state: nothing writes either key.
+    _setTestClient(makeFakeClient(true, "empty"), true);
+    const { status, body } = await makeReq("GET", "/admin/ranking/metrics");
+    assert.equal(status, 200);
+    for (const k of JOB_KEYS) {
+      const e = body.job_health[k];
+      assert.ok(e != null, `job_health.${k} missing`);
+      assert.equal(e.status, "never_reported", `job_health.${k} status`);
+      assert.equal(e.row_present, false, `job_health.${k} row_present`);
+      assert.equal(e.last_run_at, null, `job_health.${k} last_run_at`);
+    }
+  });
+
+  it("renders unknown — not never_reported — when the job_health read errors", async () => {
+    _setTestClient(makeFakeClient(true, "error"), true);
+    const { status, body } = await makeReq("GET", "/admin/ranking/metrics");
+    assert.equal(status, 200);
+    for (const k of JOB_KEYS) {
+      const e = body.job_health[k];
+      assert.equal(e.status, "unknown", `job_health.${k} status`);
+      assert.match(e.detail, /42501/, `job_health.${k} detail should carry the error code`);
+    }
+  });
+
+  it("the no-row and the errored panel are not the same response", async () => {
+    _setTestClient(makeFakeClient(true, "empty"), true);
+    const empty = (await makeReq("GET", "/admin/ranking/metrics")).body.job_health;
+    _setTestClient(makeFakeClient(true, "error"), true);
+    const errored = (await makeReq("GET", "/admin/ranking/metrics")).body.job_health;
+    assert.notDeepEqual(
+      empty,
+      errored,
+      "an admin must be able to tell an absent row from a failed lookup",
+    );
+  });
+
+  it("renders attempt_recorded with the timestamp when a row does exist", async () => {
+    _setTestClient(makeFakeClient(true, "rows"), true);
+    const { status, body } = await makeReq("GET", "/admin/ranking/metrics");
+    assert.equal(status, 200);
+    for (const k of JOB_KEYS) {
+      const e = body.job_health[k];
+      assert.equal(e.status, "attempt_recorded", `job_health.${k} status`);
+      assert.equal(e.row_present, true, `job_health.${k} row_present`);
+      assert.equal(e.last_run_at, "2026-07-25T00:00:00Z", `job_health.${k} last_run_at`);
+    }
   });
 });
 

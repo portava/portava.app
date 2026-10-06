@@ -249,3 +249,54 @@ describe('LayoverModeSheet — the bag question', () => {
     }
   });
 });
+
+/**
+ * LAY-FIX — two things the sheet owed the traveller and did not give them.
+ *
+ * (a) The four bag choices are RADIOS and exposed only `selected`. A radio's
+ *     state is `checked`; VoiceOver and TalkBack announce "checked" /
+ *     "not checked" from it, and with `selected` alone the chosen option —
+ *     "Not sure", by default — was not announced as chosen.
+ * (b) `POST /airport/sessions` answers with what it did with the bag answer,
+ *     and the client threw that away. A "not sure" the server could NOT store
+ *     opened a dashboard that gave no sign of it.
+ */
+describe('LayoverModeSheet — the bag radios and what the create said', () => {
+  const state = (mode: string) => screen.getByTestId(`layover-start-baggage-${mode}`).props.accessibilityState;
+
+  it('10. the bag radios expose `checked`, exactly one of them, and it moves with the press', async () => {
+    await mount();
+    await pickAirportAndTimes();
+    expect(state('UNKNOWN').checked).toBe(true);
+    for (const mode of ['CARRY_ON_ONLY', 'CHECKED_THROUGH', 'COLLECT_RECHECK']) expect(state(mode).checked).toBe(false);
+
+    await fireEvent.press(screen.getByTestId('layover-start-baggage-COLLECT_RECHECK'));
+    await waitFor(() => expect(state('COLLECT_RECHECK').checked).toBe(true));
+    expect(state('UNKNOWN').checked).toBe(false);
+    for (const mode of ['CARRY_ON_ONLY', 'CHECKED_THROUGH', 'COLLECT_RECHECK', 'UNKNOWN']) {
+      expect(screen.getByTestId(`layover-start-baggage-${mode}`).props.accessibilityRole).toBe('radio');
+    }
+  });
+
+  it('11. a bag answer the server could NOT store is handed to the dashboard as not stored', async () => {
+    await mount();
+    await pickAirportAndTimes();
+    mockCreate.mockResolvedValue({
+      ok: true, session: { id: 'sess-9' }, safeReturnSuggested: false, safeReturnReasons: [],
+      constraints: { stored: 'not_stored', reason: 'write_failed', message: 'Your bag and connection details could not be saved yet. Open your layover and set them there.', retryable: true },
+    });
+    await fireEvent.press(screen.getByText('Start layover'));
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/layover/sess-9?constraints=not_stored'));
+  });
+
+  it('12. CONTROL: an answer that WAS kept opens the dashboard with nothing to say', async () => {
+    await mount();
+    await pickAirportAndTimes();
+    mockCreate.mockResolvedValue({
+      ok: true, session: { id: 'sess-9' }, safeReturnSuggested: false, safeReturnReasons: [],
+      constraints: { stored: 'versioned', version: 1, unsaved: [], sessionSynced: true },
+    });
+    await fireEvent.press(screen.getByText('Start layover'));
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/layover/sess-9'));
+  });
+});
