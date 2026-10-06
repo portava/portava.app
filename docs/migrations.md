@@ -3848,3 +3848,29 @@ the person is off the trip).
 **Rollback:** `db/rollback/2026-10-05-3972-trip-private-anchor-rls-and-grant-lifecycle-rollback.sql` —
 refuses while sharing is ON; restores 2337's policy verbatim and drops the function and both triggers. It
 says in its header that it reopens the direct read.
+
+## 2026-10-05 — `3973_trip_routes_api_user_trip_shares.sql`, written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3973_trip_routes_api_user_trip_shares.sql` | **not applied** | **not applied** |
+
+**What it is.** census-trips §82 (verifier finding 7: one member could drain the shared daily Routes API
+quota). Two count tables — `routes_api_daily_user_usage` (usage_day, user_id) and
+`routes_api_daily_trip_usage` (usage_day, trip_id), each row `ON DELETE CASCADE` with its account or trip,
+RLS on, no client privilege — and `public.routes_api_try_spend_scoped(quota, budget, cost, user, trip,
+user_share, trip_share)`, which creates the three counter rows if absent, locks them `FOR UPDATE` in one
+fixed order (day, trip, user), checks all four limits and then moves all three counters or none. Every
+spender takes the day row first, so spenders serialise on it and there is no lock cycle; a refusal writes
+nothing. Answers `granted | quota_exhausted | budget_exhausted | trip_share_exhausted |
+user_share_exhausted | unscoped | off`. service_role only. Requires 3971; 3971's `routes_api_try_spend` is
+left in place, uncalled.
+
+**Nothing waits on the press, and nothing is spent without it.** `RoutesSpendGate` now calls only the
+scoped function and needs two more settings, `ROUTES_API_USER_DAILY_SHARE` and
+`ROUTES_API_TRIP_DAILY_SHARE` (positive integers no larger than the quota); any missing is OFF. Without
+3973 the RPC fails, the gate answers `unavailable`, and every estimate is the labelled straight-line bound.
+In code, each Trips read is also capped (12 gate asks, 8 s of routed waiting; `RoutesRequestBudget.ts`).
+
+**Rollback:** `db/rollback/2026-10-05-3973-trip-routes-api-user-trip-shares-rollback.sql` — refuses while
+`trip_routes_api_enabled` is TRUE; drops the function, both tables and the ledger row.

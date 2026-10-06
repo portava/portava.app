@@ -45,6 +45,12 @@ import { straightLineTravelTimeProvider, type TravelTimeProvider, type TravelTim
 import { withDepartureAssumptions } from "../domain/trips/services/TripDepartureAssumptions.js";
 import { feasibilityDisclosure, FEASIBILITY_UNVERIFIED_DISCLOSURE } from "../routes/tripFeasibility.js";
 import { pointTravelEstimate } from "../lib/travelEstimate.js";
+import { withRoutesRequestBudget, ROUTES_MAX_CALLS_PER_REQUEST } from "../domain/trips/contracts/RoutesRequestBudget.js";
+import { createGoogleRoutesTravelTimeProvider } from "../domain/trips/contracts/GoogleRoutesTravelTimeProvider.js";
+import { computeFreedomWindows, type EngineCommitment } from "../domain/trips/invariants/TripFreedomEngine.js";
+import { checkFeasibility } from "../domain/trips/invariants/TripFeasibilityEngine.js";
+import { routeChainDisclosure } from "../domain/trips/projections/TripRouteChainProjection.js";
+import { freedomReadingFor, FREEDOM_READING } from "../domain/trips/projections/TripFreedomProjection.js";
 import { TRIP_TRAVEL_TIME_PROVIDER } from "../domain/trips/contracts/tripTravelTimeProvider.js";
 
 const FULL = {
@@ -52,7 +58,15 @@ const FULL = {
   ROUTES_API_DAILY_QUOTA: "500",
   ROUTES_API_DAILY_BUDGET_USD: "10",
   ROUTES_API_COST_PER_CALL_USD: "0.005",
+  ROUTES_API_USER_DAILY_SHARE: "50",
+  ROUTES_API_TRIP_DAILY_SHARE: "100",
 };
+
+const USER = "11111111-0000-4000-8000-000000000001";
+const TRIP = "aaaaaaaa-0000-4000-8000-00000000000a";
+const SCOPE = { userId: USER, tripId: TRIP };
+/** Every estimate the seams make runs inside a read's routing budget (§82); so do these. */
+const inRead = <T>(fn: () => Promise<T>, limits?: Parameters<typeof withRoutesRequestBudget>[2]) => withRoutesRequestBudget(SCOPE, fn, limits);
 
 const Q: TravelTimeQuery = {
   from: { lat: 38.7223, lng: -9.1393 },
@@ -61,10 +75,10 @@ const Q: TravelTimeQuery = {
   mode: "drive",
 };
 
-function gateOf(...verdicts: SpendVerdict[]): RoutesSpendGate & { calls: number } {
+function gateOf(...verdicts: SpendVerdict[]): RoutesSpendGate & { calls: number; scopes: unknown[] } {
   const g = {
-    calls: 0,
-    async decide(): Promise<SpendVerdict> { g.calls += 1; return verdicts[Math.min(g.calls - 1, verdicts.length - 1)]!; },
+    calls: 0, scopes: [] as unknown[],
+    async decide(scope: unknown): Promise<SpendVerdict> { g.calls += 1; g.scopes.push(scope); return verdicts[Math.min(g.calls - 1, verdicts.length - 1)]!; },
   };
   return g;
 }
@@ -77,14 +91,22 @@ function routedOf(...answers: Array<TravelTimeResult>): TravelTimeProvider & { c
   return p;
 }
 
+/**
+ * What the REAL adapter returns for a DRIVE route (GoogleRoutesTravelTimeProvider:
+ * sourceClass LIVE, confidence MEDIUM — one number, no spread — and
+ * `assumption: null`). Wave 1 stamped this fake HIGH, which the adapter never
+ * does, and so this suite could not see that no window is ever certified
+ * (verifier finding 4; census-trips §82).
+ */
 const LIVE_14: TravelTimeResult = {
   kind: "estimate",
-  estimate: pointTravelEstimate(14, "LIVE", "HIGH", 0, ["fake:routes"]),
+  estimate: pointTravelEstimate(14, "LIVE", "MEDIUM", 0, ["fake:routes"]),
+  assumption: null,
 };
 
 describe("A. configuration: all four, valid, or OFF", () => {
   it("A1. a full configuration reads as micro-USD; nothing is defaulted", () => {
-    assert.deepEqual(readRoutesSpendConfig(FULL), { dailyQuota: 500, dailyBudgetMicros: 10_000_000, costPerCallMicros: 5_000 });
+    assert.deepEqual(readRoutesSpendConfig(FULL), { dailyQuota: 500, dailyBudgetMicros: 10_000_000, costPerCallMicros: 5_000, userDailyShare: 50, tripDailyShare: 100 });
   });
 
   it("A2. any missing, unparseable, zero or contradictory part is OFF (null)", () => {
@@ -97,6 +119,8 @@ describe("A. configuration: all four, valid, or OFF", () => {
       assert.equal(readRoutesSpendConfig({ ...FULL, [k]: v }), null, `${k}=${v}`);
     }
     assert.equal(readRoutesSpendConfig({ ...FULL, ROUTES_API_COST_PER_CALL_USD: "11" }), null, "a single call over the whole budget is OFF");
+    assert.equal(readRoutesSpendConfig({ ...FULL, ROUTES_API_USER_DAILY_SHARE: "501" }), null, "a user share above the day's quota is OFF");
+    assert.equal(readRoutesSpendConfig({ ...FULL, ROUTES_API_TRIP_DAILY_SHARE: "0" }), null, "a zero trip share is OFF");
   });
 });
 
@@ -123,26 +147,43 @@ describe("B. the gate", () => {
 
   it("B1. no configuration: OFF, and neither the flag nor the counter is touched", async () => {
     const sc = client(true, { data: "granted" });
-    assert.equal(await dbRoutesSpendGate({ client: () => sc as never, config: () => null }).decide(), "off");
+    assert.equal(await dbRoutesSpendGate({ client: () => sc as never, config: () => null }).decide(SCOPE), "off");
     assert.deepEqual(sc.calls, []);
   });
 
   it("B2. flag OFF or unreadable: OFF, and the counter is not touched", async () => {
     for (const flag of [false, "error"] as const) {
       const sc = client(flag, { data: "granted" });
-      assert.equal(await dbRoutesSpendGate({ client: () => sc as never, config: cfg }).decide(), "off");
+      assert.equal(await dbRoutesSpendGate({ client: () => sc as never, config: cfg }).decide(SCOPE), "off");
       assert.ok(!sc.calls.some((c) => c.startsWith("rpc:")), `flag ${String(flag)}`);
     }
   });
 
   it("B3. the counter's verdicts pass through; anything else is unavailable — never granted", async () => {
-    for (const v of ["granted", "quota_exhausted", "budget_exhausted", "off"] as const) {
-      assert.equal(await dbRoutesSpendGate({ client: () => client(true, { data: v }) as never, config: cfg }).decide(), v);
+    for (const v of ["granted", "quota_exhausted", "budget_exhausted", "user_share_exhausted", "trip_share_exhausted", "off"] as const) {
+      assert.equal(await dbRoutesSpendGate({ client: () => client(true, { data: v }) as never, config: cfg }).decide(SCOPE), v);
     }
-    for (const rpc of [{ data: "GRANTED" }, { data: null }, { error: { code: "42883", message: "function does not exist" } }, "throw"] as const) {
-      assert.equal(await dbRoutesSpendGate({ client: () => client(true, rpc as never) as never, config: cfg }).decide(), "unavailable", JSON.stringify(rpc));
+    for (const rpc of [{ data: "GRANTED" }, { data: null }, { data: "unscoped" }, { error: { code: "42883", message: "function does not exist" } }, "throw"] as const) {
+      assert.equal(await dbRoutesSpendGate({ client: () => client(true, rpc as never) as never, config: cfg }).decide(SCOPE), "unavailable", JSON.stringify(rpc));
     }
-    assert.equal(await dbRoutesSpendGate({ client: () => null, config: cfg }).decide(), "unavailable");
+    assert.equal(await dbRoutesSpendGate({ client: () => null, config: cfg }).decide(SCOPE), "unavailable");
+  });
+
+  it("B4. §82: no user or no trip is `unscoped` — nothing is touched, nothing is spent", async () => {
+    for (const scope of [{ userId: null, tripId: TRIP }, { userId: USER, tripId: null }] as const) {
+      const sc = client(true, { data: "granted" });
+      assert.equal(await dbRoutesSpendGate({ client: () => sc as never, config: cfg }).decide(scope), "unscoped");
+      assert.deepEqual(sc.calls, []);
+    }
+  });
+
+  it("B5. §82: the spend names the user, the trip and both shares, through 3973's function", async () => {
+    let args: any = null; let name = "";
+    const sc = { from: () => { const q: any = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: { enabled: true }, error: null }) }; return q; },
+      rpc: async (n: string, a: unknown) => { name = n; args = a; return { data: "granted", error: null }; } };
+    assert.equal(await dbRoutesSpendGate({ client: () => sc as never, config: cfg }).decide(SCOPE), "granted");
+    assert.equal(name, "routes_api_try_spend_scoped");
+    assert.deepEqual(args, { p_quota: 500, p_budget_micros: 10_000_000, p_cost_micros: 5_000, p_user_id: USER, p_trip_id: TRIP, p_user_share: 50, p_trip_share: 100 });
   });
 });
 
@@ -151,7 +192,7 @@ describe("C. the gated provider", () => {
     for (const v of ["off", "quota_exhausted", "budget_exhausted", "unavailable"] as const) {
       const routed = routedOf(LIVE_14);
       const p = createGatedRoutedTravelTimeProvider({ routed, fallback: straightLineTravelTimeProvider, gate: gateOf(v) });
-      const r = await p.estimate(Q);
+      const r = await inRead(() => p.estimate(Q));
       const bound = await straightLineTravelTimeProvider.estimate(Q);
       assert.equal(routed.calls, 0, `${v}: a routed call was made without a granted unit`);
       assert.equal(r.kind, "estimate");
@@ -167,8 +208,7 @@ describe("C. the gated provider", () => {
     const routed = routedOf(LIVE_14);
     const gate = gateOf("granted");
     const p = createGatedRoutedTravelTimeProvider({ routed, fallback: straightLineTravelTimeProvider, gate });
-    const a = await p.estimate(Q);
-    const b = await p.estimate({ ...Q, departAt: new Date(Q.departAt.getTime() + 60_000) });
+    const [a, b] = await inRead(async () => [await p.estimate(Q), await p.estimate({ ...Q, departAt: new Date(Q.departAt.getTime() + 60_000) })] as const);
     assert.equal(routed.calls, 1);
     assert.equal(gate.calls, 1, "a cache hit takes no unit");
     assert.equal(a.kind === "estimate" && a.estimate.minutes, 14);
@@ -180,9 +220,9 @@ describe("C. the gated provider", () => {
     const routed = routedOf({ kind: "unknown", reason: "PROVIDER_UNAVAILABLE", detail: "HTTP 429" }, LIVE_14);
     const gate = gateOf("granted");
     const p = createGatedRoutedTravelTimeProvider({ routed, fallback: straightLineTravelTimeProvider, gate });
-    const first = await p.estimate(Q);
+    const first = await inRead(() => p.estimate(Q));
     assert.ok(first.kind === "estimate" && first.estimate.sourceRefs.includes("routes-api-fallback:PROVIDER_UNAVAILABLE"));
-    const second = await p.estimate(Q);
+    const second = await inRead(() => p.estimate(Q));
     assert.equal(second.kind === "estimate" && second.estimate.minutes, 14, "the failure was not cached");
     assert.equal(gate.calls, 2);
   });
@@ -191,16 +231,46 @@ describe("C. the gated provider", () => {
     const gate = gateOf("granted");
     const routed = routedOf(LIVE_14);
     const p = createGatedRoutedTravelTimeProvider({ routed, fallback: straightLineTravelTimeProvider, gate });
-    assert.deepEqual(await p.estimate({ ...Q, from: null }), { kind: "unknown", reason: "NO_COORDINATES" });
+    assert.deepEqual(await inRead(() => p.estimate({ ...Q, from: null })), { kind: "unknown", reason: "NO_COORDINATES" });
     assert.equal(gate.calls, 0);
     assert.equal(routed.calls, 0);
   });
 
-  it("C7. a granted call answered by the adapter's straight-line WALK substitution is static: it keeps its band", async () => {
-    const walk: TravelTimeResult = { kind: "estimate", estimate: pointTravelEstimate(9, "STATIC_DEFAULT", "LOW", 3, ["walk"]) };
-    const p = withDepartureAssumptions(createGatedRoutedTravelTimeProvider({ routed: routedOf(walk), fallback: straightLineTravelTimeProvider, gate: gateOf("granted") }), "Europe/Lisbon");
-    const r = await p.estimate(Q);
-    assert.ok(r.kind === "estimate" && r.assumption, "a static answer is not 'answered for this departure'");
+  it("C7. §82: the REAL adapter's straight-line WALK substitution keeps its departure band — through the gated provider AND through the bare adapter", async () => {
+    // Verifier finding 5: the adapter stamped `assumption: null` on its walk
+    // substitution, the gated provider passed it through, and the wrapper then
+    // skipped the band. Wave 1's C7 passed only because its fake omitted the
+    // key. Here the answer comes from the real adapter: a 300 m hop with no
+    // mode, a slow DRIVE route (15 min), so the ~4-minute walk bound binds.
+    const adapter = createGoogleRoutesTravelTimeProvider({
+      apiKey: "k", now: () => new Date("2026-10-05T17:00:00Z"),
+      fetchImpl: (async () => new Response(JSON.stringify({ routes: [{ duration: "900s" }] }), { status: 200, headers: { "Content-Type": "application/json" } })) as typeof fetch,
+    });
+    const short: TravelTimeQuery = { from: { lat: 38.7223, lng: -9.1393 }, to: { lat: 38.7250, lng: -9.1393 }, departAt: new Date("2026-10-05T18:00:00Z") };
+    const raw = await adapter.estimate(short);
+    assert.ok(raw.kind === "estimate" && raw.estimate.sourceClass === "STATIC_DEFAULT", "vacuity guard: the walk substitution happened");
+    assert.equal(raw.kind === "estimate" && "assumption" in raw, false, "the adapter does not claim a static walk was answered for this departure");
+    for (const p of [
+      withDepartureAssumptions(createGatedRoutedTravelTimeProvider({ routed: adapter, fallback: straightLineTravelTimeProvider, gate: gateOf("granted") }), "Europe/Lisbon"),
+      withDepartureAssumptions(adapter, "Europe/Lisbon"),
+    ]) {
+      const r = await inRead(() => p.estimate(short));
+      assert.ok(r.kind === "estimate" && r.assumption, "a static answer carries the band");
+      assert.ok(r.kind === "estimate" && typeof r.expectedMinutes === "number" && r.expectedMinutes >= r.estimate.minutes);
+    }
+  });
+
+  it("C8a. §82: the gated provider REMOVES `assumption` from any answer that is not routed, whatever the routed side sent", async () => {
+    const lying: TravelTimeResult = { kind: "estimate", estimate: pointTravelEstimate(9, "STATIC_DEFAULT", "LOW", 3, ["walk"]), assumption: null };
+    const p = createGatedRoutedTravelTimeProvider({ routed: routedOf(lying), fallback: straightLineTravelTimeProvider, gate: gateOf("granted") });
+    const r = await inRead(() => p.estimate(Q));
+    assert.equal(r.kind === "estimate" && "assumption" in r, false);
+  });
+
+  it("C8b. §82: the departure wrapper skips the band only for a ROUTED source class — a static answer keyed `assumption: null` still gets it", async () => {
+    const lying: TravelTimeResult = { kind: "estimate", estimate: pointTravelEstimate(9, "STATIC_DEFAULT", "LOW", 3, ["walk"]), assumption: null };
+    const r = await withDepartureAssumptions(routedOf(lying), "Europe/Lisbon").estimate(Q);
+    assert.ok(r.kind === "estimate" && r.assumption, "the band is applied");
   });
 
   it("C5. the provider never claims routed statically; the seams bind it", async () => {
@@ -228,10 +298,10 @@ describe("C. the gated provider", () => {
 describe("D. what consumers read", () => {
   it("D1. the departure band rides a fallback answer and is NOT stacked on a routed one", async () => {
     const off = withDepartureAssumptions(createGatedRoutedTravelTimeProvider({ routed: routedOf(LIVE_14), fallback: straightLineTravelTimeProvider, gate: gateOf("off") }), "Europe/Lisbon");
-    const fallback = await off.estimate(Q);
+    const fallback = await inRead(() => off.estimate(Q));
     assert.ok(fallback.kind === "estimate" && fallback.assumption, "the fallback carries a band");
     const on = withDepartureAssumptions(createGatedRoutedTravelTimeProvider({ routed: routedOf(LIVE_14), fallback: straightLineTravelTimeProvider, gate: gateOf("granted") }), "Europe/Lisbon");
-    const routed = await on.estimate(Q);
+    const routed = await inRead(() => on.estimate(Q));
     assert.ok(routed.kind === "estimate");
     if (routed.kind !== "estimate") return;
     assert.equal(routed.assumption, null);
@@ -256,5 +326,165 @@ describe("E. 3971's SQL, statically (no Postgres here; CI executes it)", () => {
     assert.match(sql, /REVOKE ALL ON FUNCTION public\.routes_api_try_spend\(integer, bigint, bigint\) FROM PUBLIC, anon, authenticated;/);
     assert.match(sql, /REVOKE ALL ON public\.routes_api_daily_usage FROM PUBLIC, anon, authenticated;/);
     assert.match(sql, /'trip_routes_api_enabled',\s*\n\s*false,/);
+  });
+});
+
+describe("F. §82 certification: what TR341/TR412 can and cannot get from the real adapter", () => {
+  const P = { lat: 38.7223, lng: -9.1393 }; const R = { lat: 38.7369, lng: -9.1427 };
+  const T = (hh: string) => new Date(`2026-10-06T${hh}:00:00.000Z`);
+  const commitment = (id: string, o: Partial<EngineCommitment>): EngineCommitment => ({
+    id, type: "event", startsAt: null, requiredArrivalAt: null, endsAt: null, place: { placeId: `p-${id}`, point: P },
+    flexibility: "flexible", prepMinutes: 0, latenessToleranceMinutes: 0, ...o,
+  });
+  const adapter = createGoogleRoutesTravelTimeProvider({
+    apiKey: "k", now: () => new Date("2026-10-06T09:00:00Z"),
+    fetchImpl: (async () => new Response(JSON.stringify({ routes: [{ duration: "840s" }] }), { status: 200, headers: { "Content-Type": "application/json" } })) as typeof fetch,
+  });
+  const window = async (provider: TravelTimeProvider) => {
+    const A = commitment("A", { startsAt: T("10"), endsAt: T("11"), place: { placeId: "pA", point: P } });
+    const B = commitment("B", { requiredArrivalAt: T("15"), startsAt: T("15"), place: { placeId: "pB", point: R } });
+    const f = await checkFeasibility(provider, { departFrom: T("11"), fromPlace: P }, { toPlace: R, requiredArrivalAt: T("15"), startsAt: T("15"), prepMinutes: 0, latenessToleranceMinutes: 0 });
+    const w = computeFreedomWindows({ commitments: [A, B], hops: [{ travelMinutes: f.travelMinutes, confidence: f.confidence, routed: f.routed, unknownReason: f.unknownReason }], participants: ["u"], tripStart: null, tripEnd: null }).windows.find((x) => x.position === "between")!;
+    return { f, w };
+  };
+
+  it("F1. a real routed answer makes FEASIBLE reachable (TR128) — and certifies NO window (TR341/TR412): MEDIUM is not HIGH", async () => {
+    const { f, w } = await window(adapter);
+    assert.equal(f.routed, true, "vacuity guard: the hop was routed");
+    assert.equal(f.verdict, "FEASIBLE");
+    assert.equal(f.confidence, "MEDIUM");
+    assert.equal(w.confidence, "MEDIUM");
+    assert.equal(w.certified, false, "the code-level cap: certification needs HIGH, and the Routes API gives one number with no spread");
+  });
+
+  it("F2. CONTROL: the certified field is computed — the same window over a HIGH travel term IS certified", async () => {
+    const high: TravelTimeProvider = { id: "high", routed: true, async estimate() { return { kind: "estimate", estimate: pointTravelEstimate(14, "LIVE", "HIGH", 0, ["t"]), assumption: null }; } };
+    const { w } = await window(high);
+    assert.equal(w.certified, true);
+  });
+});
+
+describe("G. §82 the per-read bound: no member drains the day from one read", () => {
+  const distinct = (i: number): TravelTimeQuery => ({ ...Q, to: { lat: 38.70 + i * 0.001, lng: -9.14 } });
+
+  it("G1. outside any read nothing is spent: the gate is not asked, the answer is the bound, named `unscoped`", async () => {
+    const gate = gateOf("granted"); const routed = routedOf(LIVE_14);
+    const r = await createGatedRoutedTravelTimeProvider({ routed, fallback: straightLineTravelTimeProvider, gate }).estimate(Q);
+    assert.equal(gate.calls, 0); assert.equal(routed.calls, 0);
+    assert.ok(r.kind === "estimate" && r.estimate.sourceRefs.includes("routes-api-fallback:unscoped"));
+  });
+
+  it("G2. a read with no user (or no trip) is unscoped too", async () => {
+    const gate = gateOf("granted");
+    const p = createGatedRoutedTravelTimeProvider({ routed: routedOf(LIVE_14), fallback: straightLineTravelTimeProvider, gate });
+    const r = await withRoutesRequestBudget({ userId: null, tripId: TRIP }, () => p.estimate(Q));
+    assert.equal(gate.calls, 0);
+    assert.ok(r.kind === "estimate" && r.estimate.sourceRefs.includes("routes-api-fallback:unscoped"));
+  });
+
+  it(`G3. THE POINT, under concurrency: ${3 * ROUTES_MAX_CALLS_PER_REQUEST} hops at once in ONE read ask the gate exactly ${ROUTES_MAX_CALLS_PER_REQUEST} times; the rest are the labelled bound`, async () => {
+    const gate = gateOf("granted"); const routed = routedOf(LIVE_14);
+    const p = createGatedRoutedTravelTimeProvider({ routed, fallback: straightLineTravelTimeProvider, gate });
+    const n = 3 * ROUTES_MAX_CALLS_PER_REQUEST;
+    const rs = await inRead(() => Promise.all(Array.from({ length: n }, (_, i) => p.estimate(distinct(i)))));
+    assert.equal(gate.calls, ROUTES_MAX_CALLS_PER_REQUEST);
+    assert.equal(routed.calls, ROUTES_MAX_CALLS_PER_REQUEST);
+    assert.equal(rs.filter((r) => r.kind === "estimate" && r.estimate.sourceRefs.includes("routes-api-fallback:request_hop_cap")).length, n - ROUTES_MAX_CALLS_PER_REQUEST);
+    assert.deepEqual(new Set(gate.scopes.map((x) => JSON.stringify(x))), new Set([JSON.stringify(SCOPE)]), "every unit is charged to this user and this trip");
+  });
+
+  it("G4. nested reads share ONE budget (Today → Health → Freedom is one read, not three)", async () => {
+    const gate = gateOf("granted");
+    const p = createGatedRoutedTravelTimeProvider({ routed: routedOf(LIVE_14), fallback: straightLineTravelTimeProvider, gate });
+    await inRead(async () => {
+      for (let i = 0; i < 3; i += 1) {
+        await withRoutesRequestBudget({ userId: USER, tripId: TRIP }, () => Promise.all([0, 1, 2, 3, 4, 5].map((k) => p.estimate(distinct(i * 10 + k)))));
+      }
+    }, { maxCalls: 10 });
+    assert.equal(gate.calls, 10);
+  });
+
+  it("G5. a cached answer is free and is not counted", async () => {
+    const gate = gateOf("granted");
+    const p = createGatedRoutedTravelTimeProvider({ routed: routedOf(LIVE_14), fallback: straightLineTravelTimeProvider, gate });
+    await inRead(async () => { for (let i = 0; i < 5; i += 1) await p.estimate(Q); }, { maxCalls: 1 });
+    const again = await inRead(() => p.estimate(Q), { maxCalls: 0 });
+    assert.equal(gate.calls, 1);
+    assert.ok(again.kind === "estimate" && again.estimate.minutes === 14, "the cached routed answer, inside a read allowed no spend");
+  });
+
+  it("G6. the time bound: a routed call that would overrun the read is abandoned for the bound; no call starts after it", async () => {
+    const hanging: TravelTimeProvider & { calls: number } = { id: "slow", routed: true, calls: 0, estimate() { hanging.calls += 1; return new Promise(() => {}); } };
+    const gate = gateOf("granted");
+    const p = createGatedRoutedTravelTimeProvider({ routed: hanging, fallback: straightLineTravelTimeProvider, gate });
+    const t0 = Date.now();
+    const [a, b] = await inRead(async () => [await p.estimate(distinct(1)), await p.estimate(distinct(2))] as const, { budgetMs: 60 });
+    assert.ok(Date.now() - t0 < 2_000, "bounded by the read's budget, not the adapter's 4 s timeout");
+    assert.ok(a.kind === "estimate" && a.estimate.sourceRefs.includes("routes-api-fallback:request_time_budget"));
+    assert.ok(b.kind === "estimate" && b.estimate.sourceRefs.includes("routes-api-fallback:request_time_budget"));
+    assert.equal(hanging.calls, 1, "the second hop never started a call");
+  });
+
+  it("G7. a user's or a trip's exhausted share answers the labelled bound", async () => {
+    for (const v of ["user_share_exhausted", "trip_share_exhausted"] as const) {
+      const p = createGatedRoutedTravelTimeProvider({ routed: routedOf(LIVE_14), fallback: straightLineTravelTimeProvider, gate: gateOf(v) });
+      const r = await inRead(() => p.estimate(Q));
+      assert.ok(r.kind === "estimate" && r.estimate.sourceRefs.includes(`routes-api-fallback:${v}`), v);
+    }
+  });
+});
+
+describe("H. §82 disclosures are said from the hops returned, never as fixed text", () => {
+  const hop = (routed: boolean, boundMinutes: number | null = 10) => ({ travel: { routed, boundMinutes } });
+  it("H1. route chain: none routed / all / some", () => {
+    assert.match(routeChainDisclosure([hop(false), hop(false)]), /no hop here was answered by a routed provider/);
+    assert.doesNotMatch(routeChainDisclosure([hop(false)]), /no routed provider exists on this tree/);
+    assert.match(routeChainDisclosure([hop(true), hop(true)]), /^Every travel term is a routed estimate/);
+    assert.match(routeChainDisclosure([hop(true), hop(false), hop(false, null)]), /^1 of 2 travel terms are routed/);
+  });
+  it("H2. freedom: none routed is the old reading word for word; with routing it states the MEDIUM cap", () => {
+    assert.equal(freedomReadingFor([{ routed: false, travelMinutes: 10 }]), FREEDOM_READING);
+    assert.match(freedomReadingFor([{ routed: true, travelMinutes: 10 }]), /No window is certified: certification needs HIGH-confidence travel, and a routed answer is MEDIUM/);
+    assert.match(freedomReadingFor([{ routed: true, travelMinutes: 10 }, { routed: false, travelMinutes: 5 }]), /routed travel term on 1 of 2 hops/);
+  });
+  it("H0. each projection serves the computed sentence, and each seam opens a routing budget for its viewer", () => {
+    const chain = readFileSync(new URL("../domain/trips/projections/TripRouteChainProjection.ts", import.meta.url), "utf8");
+    const freedom = readFileSync(new URL("../domain/trips/projections/TripFreedomProjection.ts", import.meta.url), "utf8");
+    const feas = readFileSync(new URL("../routes/tripFeasibility.ts", import.meta.url), "utf8");
+    assert.match(chain, /disclosure: routeChainDisclosure\(hops\),/);
+    assert.match(freedom, /reading: freedomReadingFor\(hops\),/);
+    assert.match(chain, /return withRoutesRequestBudget\(\{ userId: opts\.viewerId \?\? null, tripId \}/);
+    assert.match(freedom, /return withRoutesRequestBudget\(\{ userId: opts\.viewerId \?\? null, tripId \}/);
+    assert.match(feas, /asyncHandler\(async \(req, res\) => withRoutesRequestBudget\(/);
+    assert.match(feas, /fillRoutesRequestScope\(\{ userId: user\.id, tripId \}\)/);
+  });
+  it("H3. the offline bundle's windows reading is computed, not the provider's static flag", () => {
+    const src = readFileSync(new URL("../routes/tripOffline.ts", import.meta.url), "utf8");
+    assert.doesNotMatch(src, /not routed: no window can be certified/);
+    assert.match(src, /certified window\(s\); \$\{f\.disclosure\}/);
+  });
+});
+
+describe("J. 3973's SQL, statically (no Postgres here; CI executes it)", () => {
+  const raw = readFileSync(new URL("../migrations/3973_trip_routes_api_user_trip_shares.sql", import.meta.url), "utf8");
+  const fn = raw.slice(raw.indexOf("CREATE OR REPLACE FUNCTION public.routes_api_try_spend_scoped"), raw.indexOf("$fn$;"));
+  it("J1. the three rows are locked in ONE order — day, trip, user — before any check", () => {
+    const day = fn.indexOf("FROM public.routes_api_daily_usage u WHERE u.usage_day = d FOR UPDATE");
+    const trip = fn.indexOf("FROM public.routes_api_daily_trip_usage t WHERE t.usage_day = d AND t.trip_id = p_trip_id FOR UPDATE");
+    const user = fn.indexOf("FROM public.routes_api_daily_user_usage s WHERE s.usage_day = d AND s.user_id = p_user_id FOR UPDATE");
+    const firstCheck = fn.indexOf("IF day_calls + 1 > p_quota");
+    assert.ok(day > 0 && trip > day && user > trip && firstCheck > user, `${day} ${trip} ${user} ${firstCheck}`);
+  });
+  it("J2. every limit is checked before ANY counter moves; a refusal returns before the first UPDATE", () => {
+    const lastCheck = fn.indexOf("RETURN 'user_share_exhausted'");
+    const firstUpdate = fn.indexOf("UPDATE public.");
+    assert.ok(lastCheck > 0 && firstUpdate > lastCheck);
+    for (const v of ["quota_exhausted", "budget_exhausted", "trip_share_exhausted", "user_share_exhausted", "unscoped", "off"]) assert.match(fn, new RegExp(`RETURN '${v}'`));
+    assert.equal((fn.match(/UPDATE public\./g) ?? []).length, 3, "all three counters move together");
+  });
+  it("J3. service_role only; each share row dies with its account or trip", () => {
+    assert.match(raw, /REVOKE ALL ON FUNCTION public\.routes_api_try_spend_scoped\(integer, bigint, bigint, uuid, uuid, integer, integer\) FROM PUBLIC, anon, authenticated;/);
+    assert.match(raw, /user_id    uuid        NOT NULL REFERENCES auth\.users\(id\) ON DELETE CASCADE/);
+    assert.match(raw, /trip_id    uuid        NOT NULL REFERENCES public\.trips\(id\) ON DELETE CASCADE/);
   });
 });

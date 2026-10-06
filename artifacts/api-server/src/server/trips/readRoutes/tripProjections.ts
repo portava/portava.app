@@ -243,7 +243,7 @@ router.get("/trips/:tripId/freedom-windows", asyncHandler(async (req, res) => {
   const membership = await requireTripMember(sc, tripId, user.id);
   if (!membership) { sendTripRefusal(res, "not_member", "TRIP_AUTH_NOT_CREW", "You must be an accepted trip member to view freedom windows"); return; }
 
-  const built = await buildTripFreedomProjection(sc, tripId);
+  const built = await buildTripFreedomProjection(sc, tripId, { viewerId: user.id });
   if (!built.ok) { refuseBuild(res, built); return; }
   res.json(built.projection);
 }));
@@ -366,7 +366,7 @@ router.get("/trips/:tripId/bored", asyncHandler(async (req, res) => {
   const atRaw = typeof req.query.at === "string" ? Date.parse(req.query.at) : NaN;
   const now = Number.isFinite(atRaw) ? new Date(atRaw) : new Date();
   const nowMs = now.getTime();
-  const freedom = await buildTripFreedomProjection(sc, tripId, { now });
+  const freedom = await buildTripFreedomProjection(sc, tripId, { now, viewerId: user.id });
   if (!freedom.ok) { refuseBuild(res, freedom); return; }
   const window = freedom.projection.windows.find((w) => Date.parse(w.beginsAt) <= nowMs && nowMs < Date.parse(w.endsAt)) ?? null;
   const next = window ? null : freedom.projection.windows.filter((w) => Date.parse(w.beginsAt) > nowMs).sort((a, b) => Date.parse(a.beginsAt) - Date.parse(b.beginsAt))[0] ?? null;
@@ -506,7 +506,7 @@ router.post("/trips/:tripId/simulate", asyncHandler(async (req, res) => {
   if (typeof change === "string") { sendError(res, "invalid_payload", change); return; }
   const loaded = await loadImpactState(ctx.sc, ctx.tripId, { viewerId: ctx.userId });
   if (!loaded.ok) { refuseBuild(res, loaded as any); return; }
-  const freedom = await buildTripFreedomProjection(ctx.sc, ctx.tripId);
+  const freedom = await buildTripFreedomProjection(ctx.sc, ctx.tripId, { viewerId: ctx.userId });
   if (!freedom.ok) { refuseBuild(res, freedom as any); return; }
   const verdict = simulateChange({ ...change, proposedBy: ctx.userId }, loaded.state, freedom.projection.windows, Date.now());
   res.json({ tripId: ctx.tripId, sourceTripVersion: loaded.sourceTripVersion, unread: loaded.unread, simulation: verdict });

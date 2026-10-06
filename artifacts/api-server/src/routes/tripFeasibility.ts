@@ -83,7 +83,7 @@ import {
   checkFeasibility, foldFeasibility,
   type FeasibilityResult,
 } from "../domain/trips/invariants/TripFeasibilityEngine.js";
-import { TRIP_TRAVEL_TIME_PROVIDER } from "../domain/trips/contracts/tripTravelTimeProvider.js"; // TR128: the gated routed provider
+import { TRIP_TRAVEL_TIME_PROVIDER } from "../domain/trips/contracts/tripTravelTimeProvider.js"; import { withRoutesRequestBudget, fillRoutesRequestScope } from "../domain/trips/contracts/RoutesRequestBudget.js"; // TR128: the gated routed provider
 import {
   type GeoPoint,
 } from "../domain/trips/contracts/TravelTimeProvider.js";
@@ -196,7 +196,7 @@ export async function resolvePlaces(
   return { coords, unresolved };
 }
 
-router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
+router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => withRoutesRequestBudget({ tripId: String(req.params.tripId ?? "") }, async () => { // §82: the whole read is one routing budget
   const auth = await requireUser(req, res);
   if (!auth) return;
   const { user } = auth;
@@ -208,7 +208,7 @@ router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
   const membership = await requireTripMember(sc, tripId, user.id);
-  if (!membership) { sendError(res, "forbidden", "Not a trip member"); return; }
+  if (!membership) { sendError(res, "forbidden", "Not a trip member"); return; } fillRoutesRequestScope({ userId: user.id, tripId }); // §82: charged to this member's share and this trip's
 
   const { data, error } = await sc
     .from("trip_commitments")
@@ -452,7 +452,7 @@ router.get("/trips/:tripId/feasibility", asyncHandler(async (req, res) => {
       findings: consistency,
     },
   });
-}));
+})));
 
 // ── PUT /trips/:tripId/transport-policy — §7.4's policy, set by the owner ───
 //

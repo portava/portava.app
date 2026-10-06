@@ -27,7 +27,7 @@ export async function computeReplan(sc: any, tripId: string, userId: string, opt
   const day = opts.day && /^\d{4}-\d{2}-\d{2}$/.test(opts.day) ? opts.day : now.toISOString().slice(0, 10);
   const loaded = await loadImpactState(sc, tripId, { now, viewerId: userId });
   if (!loaded.ok) return { ok: false, reason: loaded.reason, message: loaded.message };
-  const freedom = await buildTripFreedomProjection(sc, tripId, { now });
+  const freedom = await buildTripFreedomProjection(sc, tripId, { now, viewerId: userId });
   if (!freedom.ok) return { ok: false, reason: freedom.reason, message: freedom.message };
   const pulse = await buildTripPulseProjection(sc, tripId, userId, { now });
   const signals = pulse.ok ? pulse.projection.signals : [];

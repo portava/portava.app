@@ -14,14 +14,22 @@
  *                                  no price, because a stale one would look
  *                                  like a fact
  *   GOOGLE_MAPS_API_KEY            without a key nothing is spent
+ *   ROUTES_API_USER_DAILY_SHARE    calls one USER may take per UTC day, a
+ *                                  positive integer no larger than the quota
+ *   ROUTES_API_TRIP_DAILY_SHARE    calls one TRIP may take per UTC day, likewise
+ *                                  (census-trips §82: without these one member
+ *                                  could drain the day's quota for everyone)
  *
  * Any of them missing, unparseable or not positive is OFF: no unit is taken and
  * no call is made. So is `trip_routes_api_enabled` OFF, absent or unreadable.
  *
- * THE COUNTER IS IN THE DATABASE (migration 3971, `routes_api_try_spend`), so
+ * THE COUNTER IS IN THE DATABASE (migration 3971's day row; migration 3973's
+ * `routes_api_try_spend_scoped`, which takes the day's unit AND the user's AND
+ * the trip's under row locks in one statement sequence, or none of them), so
  * the allowance is shared by every API instance and taken atomically. An
  * unreachable or absent counter is `unavailable`, never `granted`: a gate that
- * cannot count does not spend.
+ * cannot count does not spend. A spend with no user or no trip is `unscoped`:
+ * there is no share to charge it to.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -29,13 +37,21 @@ import { isFlagEnabled } from "../../../lib/featureFlags.js";
 
 export const ROUTES_API_FLAG = "trip_routes_api_enabled";
 
-export const SPEND_VERDICTS = ["granted", "off", "quota_exhausted", "budget_exhausted", "unavailable"] as const;
+export const SPEND_VERDICTS = ["granted", "off", "quota_exhausted", "budget_exhausted", "user_share_exhausted", "trip_share_exhausted", "unscoped", "unavailable"] as const;
 export type SpendVerdict = (typeof SPEND_VERDICTS)[number];
 
 export interface RoutesSpendConfig {
   dailyQuota: number;
   dailyBudgetMicros: number;
   costPerCallMicros: number;
+  userDailyShare: number;
+  tripDailyShare: number;
+}
+
+/** Whose read a spend is for. Both are required to spend. */
+export interface SpendScope {
+  userId: string | null;
+  tripId: string | null;
 }
 
 function positiveInt(v: string | undefined): number | null {
@@ -59,14 +75,18 @@ export function readRoutesSpendConfig(env: Record<string, string | undefined> = 
   const dailyQuota = positiveInt(env["ROUTES_API_DAILY_QUOTA"]);
   const dailyBudgetMicros = usdMicros(env["ROUTES_API_DAILY_BUDGET_USD"]);
   const costPerCallMicros = usdMicros(env["ROUTES_API_COST_PER_CALL_USD"]);
+  const userDailyShare = positiveInt(env["ROUTES_API_USER_DAILY_SHARE"]);
+  const tripDailyShare = positiveInt(env["ROUTES_API_TRIP_DAILY_SHARE"]);
   if (dailyQuota === null || dailyBudgetMicros === null || costPerCallMicros === null) return null;
+  if (userDailyShare === null || tripDailyShare === null) return null;
   if (costPerCallMicros > dailyBudgetMicros) return null;
-  return { dailyQuota, dailyBudgetMicros, costPerCallMicros };
+  if (userDailyShare > dailyQuota || tripDailyShare > dailyQuota) return null;
+  return { dailyQuota, dailyBudgetMicros, costPerCallMicros, userDailyShare, tripDailyShare };
 }
 
 export interface RoutesSpendGate {
-  /** Take one call's allowance, or say why not. Never throws. */
-  decide(): Promise<SpendVerdict>;
+  /** Take one call's allowance for this user and trip, or say why not. Never throws. */
+  decide(scope: SpendScope): Promise<SpendVerdict>;
 }
 
 export function dbRoutesSpendGate(opts: {
@@ -75,20 +95,25 @@ export function dbRoutesSpendGate(opts: {
 }): RoutesSpendGate {
   const config = opts.config ?? (() => readRoutesSpendConfig());
   return {
-    async decide(): Promise<SpendVerdict> {
+    async decide(scope: SpendScope): Promise<SpendVerdict> {
       const cfg = config();
       if (!cfg) return "off";
+      if (!scope?.userId || !scope?.tripId) return "unscoped";
       const sc = opts.client();
       if (!sc) return "unavailable";
       try {
         if (!(await isFlagEnabled(sc, ROUTES_API_FLAG))) return "off";
-        const { data, error } = await sc.rpc("routes_api_try_spend", {
+        const { data, error } = await sc.rpc("routes_api_try_spend_scoped", {
           p_quota: cfg.dailyQuota,
           p_budget_micros: cfg.dailyBudgetMicros,
           p_cost_micros: cfg.costPerCallMicros,
+          p_user_id: scope.userId,
+          p_trip_id: scope.tripId,
+          p_user_share: cfg.userDailyShare,
+          p_trip_share: cfg.tripDailyShare,
         });
         if (error) return "unavailable";
-        return (SPEND_VERDICTS as readonly string[]).includes(String(data)) && data !== "unavailable"
+        return (SPEND_VERDICTS as readonly string[]).includes(String(data)) && data !== "unavailable" && data !== "unscoped"
           ? (data as SpendVerdict)
           : "unavailable";
       } catch {

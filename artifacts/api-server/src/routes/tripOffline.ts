@@ -54,7 +54,7 @@ import {
 import { buildTripRouteChainProjection } from "../domain/trips/projections/TripRouteChainProjection.js";
 import { buildTripFreedomProjection } from "../domain/trips/projections/TripFreedomProjection.js";
 import { withholdPrivatePlanItems, PLAN_ITEM_PRIVACY_COLUMNS } from "../domain/trips/policies/privateAnchorAccess.js";
-import { planItemAccessFor } from "../server/trips/privateAnchorShares.js";
+import { planItemAccessFor } from "../server/trips/privateAnchorShares.js"; import { withRoutesRequestBudget } from "../domain/trips/contracts/RoutesRequestBudget.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripOffline" });
@@ -113,7 +113,7 @@ router.get("/trips/:tripId/offline-bundle", asyncHandler(async (req, res) => {
   // TR337, TR341): §62's route chain and the §7.3 windows, both read under the
   // same gate, each as its own §21.2 decision; either failing to read is said,
   // not refused — the plan and the addresses still travel.
-  const routeAndContext = await readRouteAndContextForBundle(sc, tripId, gate.enabled, user.id);
+  const routeAndContext = await withRoutesRequestBudget({ userId: user.id, tripId }, () => readRouteAndContextForBundle(sc, tripId, gate.enabled, user.id)); // §82: the chain and the windows share one routing budget
   const bundle = buildOfflineBundle({ tripId, sourceTripVersion: version, commitments, plans, reservations, meetingPoints, ...routeAndContext }, Date.now());
   const signed = signOfflineBundle(bundle, secret);
   res.json({ ...signed, readings: { commitments: commitmentsReading, selectedRoute: bundle.notCarried.selectedRoute, certifiedContext: bundle.contents.certifiedContext.windowsReading, staleness: bundleStaleness(bundle, Date.now(), version).detail } });
@@ -143,7 +143,7 @@ async function readRouteAndContextForBundle(sc: any, tripId: string, gateEnabled
     log.warn({ tripId, reason: chain.reason }, "offline bundle: route chain unreadable — carrying none");
   }
   let freeWindows: BundleFreeWindow[] | null = null; let windowsDecisionId: string | null = null; let windowsReading = "";
-  const freedom = await buildTripFreedomProjection(sc, tripId);
+  const freedom = await buildTripFreedomProjection(sc, tripId, { viewerId });
   if (freedom.ok) {
     const f = freedom.projection;
     windowsDecisionId = f.decisionId;
@@ -152,7 +152,7 @@ async function readRouteAndContextForBundle(sc: any, tripId: string, gateEnabled
       certified: w.certified, confidence: String(w.confidence), participants: [...w.participants],
       afterCommitmentId: w.afterCommitmentId, beforeCommitmentId: w.beforeCommitmentId, reservedMinutes: w.reservedMinutes,
     }));
-    windowsReading = `${f.conflicts.length} temporal conflict(s); provider ${f.provider.id}${f.provider.routed ? " (routed)" : " (not routed: no window can be certified, TR128)"}; decision ${f.decisionId}`;
+    windowsReading = `${f.conflicts.length} temporal conflict(s); ${f.windows.filter((w) => w.certified).length} certified window(s); ${f.disclosure} decision ${f.decisionId}`; // §82: from the hops returned, not the provider's static flag
   } else {
     windowsReading = `the §7.3 windows could not be read (${freedom.reason}): ${freedom.message}`;
     log.warn({ tripId, reason: freedom.reason }, "offline bundle: freedom windows unreadable — carrying none");

@@ -29,6 +29,7 @@
  * layering a static band over a live route would double-count. The wrapper
  * passes a routed inner through with `assumption: null`.
  */
+import { isRoutedSourceClass } from "../../../lib/travelEstimate.js";
 import { localHour, localDayString, isValidTimezone } from "../../../services/airport/AirportTime.js";
 import type {
   TravelAssumption,
@@ -139,7 +140,9 @@ export function withDepartureAssumptions(inner: TravelTimeProvider, timezone: st
     async estimate(q: TravelTimeQuery): Promise<TravelTimeResult> {
       const r = await inner.estimate(q);
       if (!r || r.kind !== "estimate") return r;
-      if (inner.routed || r.assumption === null) return { ...r, assumption: null, expectedMinutes: r.estimate.minutes }; // per result: a gated routed provider (TR128) marks its routed answers assumption:null
+      // Per result, and only for a ROUTED source class (census-trips §82): a routed provider's static substitution
+      // (the walk bound) is not "answered for this departure" whatever the provider or the key says, and keeps its band.
+      if ((inner.routed || r.assumption === null) && isRoutedSourceClass(r.estimate.sourceClass)) return { ...r, assumption: null, expectedMinutes: r.estimate.minutes };
       const assumption = assumeDeparture(q.departAt, timezone, q.mode);
       return { ...r, assumption, expectedMinutes: Math.max(r.estimate.minutes, Math.ceil(r.estimate.minutes * assumption.factor)) };
     },

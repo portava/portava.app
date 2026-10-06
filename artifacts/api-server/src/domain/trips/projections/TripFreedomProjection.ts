@@ -30,7 +30,7 @@ import { incrementTripMetric } from "../services/tripMetrics.js";
 import { tripOperationalProjectionsGate, refusalForGate } from "../policies/tripOperationalProjections.js";
 import { resolvePlaces, intervalToMinutes, feasibilityDisclosure } from "../../../routes/tripFeasibility.js";
 import { evaluateFeasibility } from "../invariants/TripFeasibilityEngine.js";
-import { estimateTravel, type GeoPoint, type TravelAssumption } from "../contracts/TravelTimeProvider.js"; import { TRIP_TRAVEL_TIME_PROVIDER } from "../contracts/tripTravelTimeProvider.js";
+import { estimateTravel, type GeoPoint, type TravelAssumption } from "../contracts/TravelTimeProvider.js"; import { withRoutesRequestBudget } from "../contracts/RoutesRequestBudget.js"; import { TRIP_TRAVEL_TIME_PROVIDER } from "../contracts/tripTravelTimeProvider.js";
 import { withDepartureAssumptions } from "../services/TripDepartureAssumptions.js";
 import { liveEnvelope, type TripProjectionEnvelope } from "../contracts/TripProjectionEnvelope.js";
 import { recordTripDecision, persistTripDecision, TRIP_ENGINE_VERSIONS } from "../services/TripDecisionLedger.js";
@@ -107,6 +107,22 @@ export type ArrivalAssumption = Pick<TravelAssumption,
 export const FREEDOM_READING =
   "§7.3: gaps between commitments, each a LOWER BOUND on free time (window ends when the traveller must leave to make the next commitment against a straight-line travel term). No window is certified without a routed provider. Conflicts are returned beside the windows, never dropped; no override path exists.";
 
+/**
+ * The reading, said from the hops actually returned (census-trips §82; verifier
+ * finding 6). FREEDOM_READING above is that reading when no hop is routed, word
+ * for word. Whatever the hops, the certification cap is stated, because it holds
+ * even with routing on: a window is certified only on HIGH-confidence travel
+ * terms (TripFreedomEngine), and a Routes API answer is MEDIUM — one number, no
+ * spread (GoogleRoutesTravelTimeProvider).
+ */
+export function freedomReadingFor(hops: ReadonlyArray<{ routed: boolean; travelMinutes: number | null }>): string {
+  const known = hops.filter((h) => h.travelMinutes !== null);
+  const routed = known.filter((h) => h.routed).length;
+  if (routed === 0) return FREEDOM_READING;
+  const term = routed === known.length ? "a routed travel term (Routes API)" : `a routed travel term on ${routed} of ${known.length} hops and a straight-line one elsewhere`;
+  return `§7.3: gaps between commitments, each a LOWER BOUND on free time (window ends when the traveller must leave to make the next commitment against ${term}). No window is certified: certification needs HIGH-confidence travel, and a routed answer is MEDIUM (one number, no spread). Conflicts are returned beside the windows, never dropped; no override path exists.`;
+}
+
 export type FreedomProjectionResult =
   | { ok: true; projection: TripFreedomProjection }
   | { ok: false; reason: "TRIP_NOT_FOUND" | "TRIP_PROJECTION_UNAVAILABLE" | "FEATURE_DISABLED"; message: string };
@@ -132,8 +148,13 @@ function dayBound(iso: string | null, edge: "start" | "end"): Date | null {
 export async function buildTripFreedomProjection(
   sc: any,
   tripId: string,
-  opts: { now?: Date } = {},
+  /** `viewerId`: whose read this is — the Routes API spend is charged to their share and the trip's (§82). Absent and no enclosing read: no paid call. */
+  opts: { now?: Date; viewerId?: string | null } = {},
 ): Promise<FreedomProjectionResult> {
+  return withRoutesRequestBudget({ userId: opts.viewerId ?? null, tripId }, () => buildFreedomInBudget(sc, tripId, opts));
+}
+
+async function buildFreedomInBudget(sc: any, tripId: string, opts: { now?: Date }): Promise<FreedomProjectionResult> {
   const now = opts.now ?? new Date();
 
   // The capability gate, FIRST — see domain/trips/policies/tripOperationalProjections.ts. Every
@@ -294,7 +315,7 @@ export async function buildTripFreedomProjection(
       routine.rules.status === "ok"
         ? `${routine.occurrences.length} of the fixed points are expanded recurrence occurrences (2797), computed for this range and not stored`
         : `recurring commitments were not read (${routine.rules.reason}); any standing routine is NOT reflected in these windows`,
-      `travel term is ${provider.id}'s fastest-mode straight-line LOWER BOUND at the feasibility percentile; no window is certified`,
+      `travel term per hop from ${provider.id}: ${hops.filter((h) => h.routed).length} of ${hops.length} routed (MEDIUM), the rest its fastest-mode straight-line LOWER BOUND at the feasibility percentile; ${result.windows.filter((w) => w.certified).length} window(s) certified`,
       `expected arrival applies ${provider.assumptionsModel}'s factor over the bound (§14.2); the bound alone is what windows and conflicts are judged on`,
     ],
     constraints: [...new Set(result.windows.flatMap((w) => w.hardConstraints.map((h) => h.kind)))],
@@ -325,7 +346,7 @@ export async function buildTripFreedomProjection(
       participants: [...participants],
       provider: { id: provider.id, routed: provider.routed, assumptionsModel: provider.assumptionsModel },
       disclosure: feasibilityDisclosure(hops),
-      reading: FREEDOM_READING,
+      reading: freedomReadingFor(hops),
       arrivalEstimates,
     },
   };

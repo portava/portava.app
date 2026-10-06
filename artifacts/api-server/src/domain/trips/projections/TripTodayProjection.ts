@@ -244,7 +244,7 @@ export async function buildTripTodayProjection(
   const hd = acceptTripProjection(health, { acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, canonicalVersion, now: nowMs, metric: "TripHealthProjection" });
   if (!hd.accepted) return { ok: false, reason: hd.reason, message: `Health projection refused: ${hd.message}` };
 
-  const freedomBuilt = await buildTripFreedomProjection(sc, tripId, { now });
+  const freedomBuilt = await buildTripFreedomProjection(sc, tripId, { now, viewerId });
   if (!freedomBuilt.ok) return freedomBuilt.reason === "TRIP_PROJECTION_UNAVAILABLE" ? { ok: false, reason: "TRIP_PROJECTION_UNAVAILABLE", message: `Freedom windows: ${freedomBuilt.message}` } : freedomBuilt;
   const freedom: TripFreedomProjection = freedomBuilt.projection;
   const fd = acceptTripProjection(freedom, { acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, canonicalVersion, now: nowMs, metric: "TripFreedomProjection" });

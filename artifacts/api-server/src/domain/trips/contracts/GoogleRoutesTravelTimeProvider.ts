@@ -291,8 +291,10 @@ export function createGoogleRoutesTravelTimeProvider(
         ),
         // A routed provider answered for the departure time it was given, so
         // there is nothing to assume. The wrapper reads this as "do not stack a
-        // band on me".
-        assumption: null,
+        // band on me". NOT said of the walk substitution: that number is a
+        // great circle at walking speed, static, and needs the band (census-trips
+        // §82; verifier finding 5).
+        ...(sourceClass === "STATIC_DEFAULT" ? {} : { assumption: null }),
       };
     },
   };
