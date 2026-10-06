@@ -85,7 +85,8 @@ export interface KycGateProbes {
  * Decide whether a booking may be created right now.
  *
  * Returns `{ allowed: true }` when identity verification is operational AND the
- * booking's market is covered, or when the override flag is explicitly on.
+ * booking's market is covered. A coverage refusal is never overridable: the
+ * override flag is not consulted for it (see the coverage branch below).
  *
  * ── THE SECOND HALF OF THE OWNER'S DECISION ─────────────────────────────────
  *   "Verify market coverage; fail closed and keep bookings unavailable where
@@ -132,15 +133,13 @@ export async function checkBookingKycGate(
     const coverage = readMarket(status.provider, market);
     if (coverage.available) return { allowed: true };
 
-    const overriddenForMarket = await isFlagEnabled(sc, KYC_OVERRIDE_FLAG);
-    if (overriddenForMarket) {
-      logger.warn(
-        { provider: coverage.provider, market: coverage.market, code: coverage.code, flag: KYC_OVERRIDE_FLAG },
-        "Booking allowed in a market with NO verified identity coverage — override flag is on",
-      );
-      return { allowed: true };
-    }
-
+    // NO OVERRIDE FOR A COVERAGE REFUSAL. The owner's words are a product rule,
+    // not a readiness state: "keep bookings unavailable where suitable
+    // verification is unsupported", and (2026-10-06 authorization) "Keep
+    // unsupported countries ... safely refused", with "No tester bypass or
+    // sandbox verification key" (2026-10-04). So `KYC_OVERRIDE_FLAG` is NOT
+    // read on this branch: a market nobody can be verified in is not a pilot
+    // anyone can opt into, and a DB row must not be able to open one.
     logger.error(
       {
         provider: coverage.provider,

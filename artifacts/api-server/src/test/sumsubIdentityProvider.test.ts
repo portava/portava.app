@@ -439,12 +439,21 @@ describe("booking gate — market coverage is a second, independent refusal", ()
     }
   });
 
-  it("the coverage refusal consults the override flag, and only an explicit true opens it", async () => {
-    const off = flagClient({ enabled: false });
-    assert.equal((await checkBookingKycGate(off, "KP", probesFor(manifest(GOOD_MANIFEST)))).allowed, false);
-    assert.ok(off._seen.includes(KYC_OVERRIDE_FLAG), "must consult the override flag");
-    const on = flagClient({ enabled: true });
-    assert.equal((await checkBookingKycGate(on, "KP", probesFor(manifest(GOOD_MANIFEST)))).allowed, true);
+  // Owner, 2026-10-04: "No tester bypass or sandbox verification key"; owner,
+  // 2026-10-06: "Keep unsupported countries ... safely refused". A coverage
+  // refusal is a product rule about a market, so no flag row may open it.
+  it("a coverage refusal is NOT overridable: the override flag ON does not open an unsupported or unknown market", async () => {
+    for (const market of ["KP", "JP", undefined]) {
+      const on = flagClient({ enabled: true });
+      const gate = await checkBookingKycGate(on, market, probesFor(manifest(GOOD_MANIFEST)));
+      assert.equal(gate.allowed, false, `override flag ON must not open market ${String(market)}`);
+      assert.equal(gate.httpStatus, 503);
+      assert.ok(
+        gate.code === "verification_unsupported_market" || gate.code === "verification_market_unknown",
+        `a coverage refusal keeps its own code, got ${gate.code}`,
+      );
+      assert.ok(!on._seen.includes(KYC_OVERRIDE_FLAG), "the coverage branch must not even consult the override flag");
+    }
   });
 
   it("neither coverage message leaks the vendor, the env var or the manifest path", async () => {
