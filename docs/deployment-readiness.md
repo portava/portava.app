@@ -158,7 +158,7 @@ does any workflow. `docs/migrations.md:137#Nothing` states it outright:
 "Nothing in the merge path applies migrations". So a deploy of this HEAD ships
 code whose migrations may not be on the production database, and the repo's own
 answer to that is `pnpm run check:migration-ledger`
-(`artifacts/api-server/package.json:229#check:migration-ledger`), which needs
+(`artifacts/api-server/package.json:225#check:migration-ledger`), which needs
 database credentials this environment does not have.
 
 ### 1.5 Deployment readiness checklist
@@ -338,13 +338,13 @@ and `TrailService` reads none — that lane is ungated.
 | `airport_mode_enabled` | **`TRUE`** | `artifacts/api-server/src/migrations/0127_layover_system.sql:225#airport_mode_enabled` | Master gate; every `/api/airport/*` route checks it first. Seeded on. |
 | `layover_live_intersection_enabled` | `false` | `artifacts/api-server/src/migrations/2851_layover_live_intersection_flag.sql:42#layover_live_intersection_enabled` | Adds a Live-qualified queue wait to a card's activity time before the safety engine rates it; **drops** cards with a Live `unsafe_density` or refused walk-in; re-orders survivors. **It can remove a card a traveller would otherwise have been offered and it changes a safety rating.** |
 | `layover_safe_return_status_enabled` | `false` | `2741_layover_session_returning_status.sql` | Lets `POST /airport/sessions/:id/return-now` write the `returning` status. Gated on the flag **AND** a build constant. |
-| `layover_presence_ladder_enabled` | `false` | `2740_layover_presence_ladder_flag.sql` | Presence ladder on session overview/presence reads (`artifacts/api-server/src/routes/airport.ts:2237,3418#ladderEnabled`). |
+| `layover_presence_ladder_enabled` | `false` | `2740_layover_presence_ladder_flag.sql` | Presence ladder on session overview/presence reads (`artifacts/api-server/src/routes/airport.ts:2254,3539#ladderEnabled`). |
 | `layover_stable_recommendation_ids_enabled` | `false` | `2410_layover_recommendation_identity.sql` | Stable recommendation identity. |
 | `hidden_gems_layover_enabled` | `TRUE` (0xxx band) | `artifacts/api-server/src/migrations/0043_hidden_gems.sql:234#hidden_gems_layover_enabled` | Layover-mode gem filtering. |
 
 **`layover_safe_return_status_enabled` has a prerequisite no flag can express.**
 The route computes `statusEnabled = flagOn && LAYOVER_RETURNING_READERS_WIDENED`
-(`artifacts/api-server/src/routes/airport.ts:1380#statusEnabled = flagOn`),
+(`artifacts/api-server/src/routes/airport.ts:1397#statusEnabled = flagOn`),
 where the constant is a property of the deployed **build**
 (`artifacts/api-server/src/services/airport/LayoverSessionService.ts:69#LAYOVER_RETURNING_READERS_WIDENED`).
 It is `true` at this HEAD — **VERIFIED**. A third prerequisite is that
@@ -449,19 +449,19 @@ Base URL `https://portava.replit.app`. All unauthenticated.
 
 1. **The deploy is live and is this build.**
    `GET /api/healthz` → **200** `{"status":"ok"}`.
-   (`artifacts/api-server/src/routes/health.ts:37#healthz`.) A non-200, or an
+   (`artifacts/api-server/src/routes/health.ts:36#healthz`.) A non-200, or an
    HTML error page, means the process is not serving — most likely the
    `process.exit(1)` from §1.4.
 2. **Background jobs are not failing.**
    `GET /api/healthz/schedulers` → **200** when healthy, **503** when any job is
    failing, **503** with `"no scheduler reported"` if the report list is empty
-   (`artifacts/api-server/src/routes/health.ts:524#schedulers`). The body names
+   (`artifacts/api-server/src/routes/health.ts:523#schedulers`). The body names
    each job and its status, so this one request distinguishes "deployed but
    idle" from "deployed and working".
 3. **Cleanup and delayed-publish are alive.**
    `GET /api/healthz/cleanup` and `GET /api/healthz/delayed-publish`
-   (`artifacts/api-server/src/routes/health.ts:42#cleanup`,
-   `artifacts/api-server/src/routes/health.ts:74#delayed-publish`). These are
+   (`artifacts/api-server/src/routes/health.ts:41#cleanup`,
+   `artifacts/api-server/src/routes/health.ts:73#delayed-publish`). These are
    DB-backed, so a 200 here is also evidence the service client has real
    credentials — which `/api/healthz` alone does **not** prove.
 4. **Admin surface is closed to the public.**
@@ -497,7 +497,7 @@ emitted with `readable`, `dropped` and `frictionAdjusted`. Nothing is added to
 the HTTP response. Verifying it at runtime therefore requires **either** the
 Replit deployment logs **or** a before/after comparison of
 `GET /airport/sessions/:id/recommendations`
-(`artifacts/api-server/src/routes/airport.ts:988#recommendations`) for the same
+(`artifacts/api-server/src/routes/airport.ts:996#recommendations`) for the same
 session, looking for dropped or reordered cards — and a reorder can legitimately
 be empty when no candidate has live evidence, so an unchanged response does
 **not** falsify the flag. **This check cannot be made conclusive from outside
@@ -505,7 +505,7 @@ the process.**
 
 **`layover_safe_return_status_enabled`** — `POST /airport/sessions/:id/return-now`
 returns an `effects` object reporting every effect that ran
-(`artifacts/api-server/src/routes/airport.ts:1346#return-now`). With the flag
+(`artifacts/api-server/src/routes/airport.ts:1363#return-now`). With the flag
 off the stops are still cancelled and the ledger is still written; only the
 status write is gated. So the proof is the session's `status` becoming
 `returning`, not the 200 itself. This is destructive to a real session and
