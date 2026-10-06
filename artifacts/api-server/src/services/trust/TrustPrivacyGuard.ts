@@ -79,9 +79,9 @@ export function publicTrustLabel(level: PublicTrustLevel | null | undefined): st
 }
 
 const RESTRICTION_MESSAGES: Record<RestrictionType, string> = {
-  hosting:             "You cannot host group trips or start or link public Trails. You also cannot be booked as a Buddy.", // lead ruling D-24/D-24b (2026-10-06); the Buddy clause names lane B's confirmed booking row
-  private_plan_access: "You cannot join private plans at this time. You also cannot book a Buddy.", // D-24: unchanged sentence + the confirmed booking row it stops
-  messaging:           "You cannot start new conversations, submit public content (Trail suggestions, gems, community places), or have your posts boosted.", // D-24/D-24b/D-24c verbatim
+  hosting:             "You cannot host group trips, change a group trip's shared plan, or start or link public Trails. You also cannot be booked as a Buddy.", // lead ruling D-24 as amended by PR #636 (2026-10-06), verbatim
+  private_plan_access: "You cannot join private plans at this time. You also cannot book a Buddy.", // D-24 as amended by PR #636, verbatim
+  messaging:           "You cannot start new conversations, propose changes to a group trip, submit public content (Trail suggestions, gems, community places), or have your posts boosted.", // D-24/b/c as amended by PR #636, verbatim
   location_plan_join:  "You cannot join location-based plans at this time.",
 };
 

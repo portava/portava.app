@@ -154,3 +154,10 @@ describe("RA6 — every allow-listed entry is a real route that authenticates th
     });
   }
 });
+
+// F8 (verifier, 2026-10-06): the restriction list the Appeals screen loads is reachable by a restricted account.
+describe("F8 — GET /api/appeals/me/restrictions is on the allow-list", () => {
+  it("listed, so RA1/RA2 above prove a suspended and a banned account reach it", () => {
+    assert.ok(RESTRICTED_ACCOUNT_ROUTES.some((r) => r.method === "GET" && r.path === "/api/appeals/me/restrictions"));
+  });
+});

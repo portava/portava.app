@@ -305,7 +305,7 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
       appellant_id:    (appeal as any).appellant_id,
       target_type:     (appeal as any).target_type,
       target_id:       (appeal as any).target_id,
-      resolution_note: resolutionNote ?? null,
+      resolution_note: resolutionNote ?? null, moderator_id: adminId,
     });
 
     req.log.info({ appealId: id, reversal }, "appeal reversal");

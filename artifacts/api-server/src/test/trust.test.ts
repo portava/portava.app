@@ -1146,18 +1146,18 @@ describe("degraded state wired to the four getRestrictionState callers", () => {
 import { restrictionSentence } from "../services/trust/TrustPrivacyGuard.js";
 
 describe("D-24: each restriction's sentence names everything it stops", () => {
-  const D24_HOSTING = "You cannot host group trips or start or link public Trails.";
-  const D24_MESSAGING = "You cannot start new conversations, submit public content (Trail suggestions, gems, community places), or have your posts boosted.";
+  const D24_HOSTING = "You cannot host group trips, change a group trip's shared plan, or start or link public Trails. You also cannot be booked as a Buddy."; // PR #636
+  const D24_MESSAGING = "You cannot start new conversations, propose changes to a group trip, submit public content (Trail suggestions, gems, community places), or have your posts boosted."; // PR #636
 
   it("hosting: the ruling's sentence verbatim, plus the confirmed Buddy-booking row it stops", () => {
-    assert.ok(restrictionSentence("hosting").startsWith(D24_HOSTING), restrictionSentence("hosting"));
+    assert.equal(restrictionSentence("hosting"), D24_HOSTING);
     assert.match(restrictionSentence("hosting"), /be booked as a Buddy/);
   });
   it("messaging: the ruling's sentence verbatim (D-24b: community submissions; D-24c: no boost)", () => {
     assert.equal(restrictionSentence("messaging"), D24_MESSAGING);
   });
   it("private-plan access: unchanged sentence, plus the confirmed Buddy-booking row it stops", () => {
-    assert.ok(restrictionSentence("private_plan_access").startsWith("You cannot join private plans at this time."));
+    assert.equal(restrictionSentence("private_plan_access"), "You cannot join private plans at this time. You also cannot book a Buddy."); // PR #636
     assert.match(restrictionSentence("private_plan_access"), /book a Buddy/);
   });
   it("location plan: unchanged", () => {

@@ -65,8 +65,8 @@ jest.mock('../../src/components/ui/KeyboardSafeView', () => {
 
 import AppealsScreen from '../appeals';
 
-const HOSTING = 'You cannot host group trips or start or link public Trails. You also cannot be booked as a Buddy.';
-const MESSAGING = 'You cannot start new conversations, submit public content (Trail suggestions, gems, community places), or have your posts boosted.';
+const HOSTING = "You cannot host group trips, change a group trip's shared plan, or start or link public Trails. You also cannot be booked as a Buddy.";
+const MESSAGING = 'You cannot start new conversations, propose changes to a group trip, submit public content (Trail suggestions, gems, community places), or have your posts boosted.';
 
 type Reply = { status: number; body: unknown };
 let restrictionsReply: Reply;

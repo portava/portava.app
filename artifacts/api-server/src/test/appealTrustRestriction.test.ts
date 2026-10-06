@@ -233,15 +233,22 @@ describe("POST /appeals { targetType: trust_restriction } — only the caller's 
 });
 
 describe("approving the appeal lifts exactly that restriction", () => {
-  const appeal = (target: string, appellant = USER) => ({ id: APPEAL_ID, appellant_id: appellant, target_type: "trust_restriction", target_id: target, resolution_note: null });
+  const appeal = (target: string, appellant = USER, moderator: string | null = ADMIN) => ({ id: APPEAL_ID, appellant_id: appellant, target_type: "trust_restriction", target_id: target, resolution_note: null, moderator_id: moderator });
 
   it("resolveAppeal lifts the appealed restriction and no other", async () => {
     const r = await resolveAppeal(makeClient(), appeal(R_HOST));
     assert.deepEqual(r, { ok: true, action: "trust_restriction_lifted" });
     const byId = Object.fromEntries(world.trust_restrictions.map((x) => [x.id, x.lifted_at]));
     assert.ok(byId[R_HOST], "the appealed restriction is lifted");
+    assert.equal(world.trust_restrictions.find((x) => x.id === R_HOST)!.lifted_by, ADMIN, "F6: the lift names the approving moderator");
     assert.equal(byId[R_MSG], null, "the person's other restriction stays");
     assert.equal(byId[R_OTHER], null, "nobody else's restriction moves");
+  });
+
+  it("F6: a lift with no approving moderator is refused, nothing lifted (every lift is attributed)", async () => {
+    const r = await resolveAppeal(makeClient(), appeal(R_HOST, USER, null));
+    assert.equal(r.ok, false);
+    assert.equal(world.trust_restrictions.find((x) => x.id === R_HOST)!.lifted_at, null);
   });
 
   it("someone else's restriction id matches nothing: noop, nothing lifted", async () => {
@@ -264,6 +271,7 @@ describe("approving the appeal lifts exactly that restriction", () => {
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.reversalAction, "trust_restriction_lifted");
     assert.ok(world.trust_restrictions.find((x) => x.id === R_HOST)!.lifted_at, "lifted");
+    assert.equal(world.trust_restrictions.find((x) => x.id === R_HOST)!.lifted_by, ADMIN, "F6: lifted_by is the admin who approved");
     assert.equal(world.appeals[0].state, "approved");
   });
 });

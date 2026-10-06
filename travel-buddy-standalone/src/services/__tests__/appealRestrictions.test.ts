@@ -7,7 +7,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseMyRestrictions, restrictionUntilLabel, RestrictionsPayloadError } from '../appealRestrictions.ts';
 
-const HOSTING = 'You cannot host group trips or start or link public Trails. You also cannot be booked as a Buddy.';
+const HOSTING = "You cannot host group trips, change a group trip's shared plan, or start or link public Trails. You also cannot be booked as a Buddy.";
 
 describe('AR1 parseMyRestrictions', () => {
   it('keeps the server sentence verbatim, with its end date', () => {

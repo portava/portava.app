@@ -15,7 +15,7 @@ export interface Appeal {
   appellant_id: string;
   target_type: string;
   target_id: string;
-  resolution_note: string | null;
+  resolution_note: string | null; /** The approving moderator: recorded as the actor of a lift (trust_restrictions.lifted_by). */ moderator_id?: string | null;
 }
 
 /** The reversal ran and did what `action` says it did. */
@@ -516,10 +516,10 @@ export async function resolveAppeal(
     // that decision removed. Lift THIS restriction, only if it is the
     // appellant's own and still active, and nothing else.
 
-    case "trust_restriction": {
+    case "trust_restriction": { if (!appeal.moderator_id) return { ok: false, action: "noop", reason: "trust restriction lift needs the approving moderator (lifted_by)" }; // every lift is attributed
       const { data, error } = await sc
         .from("trust_restrictions")
-        .update({ lifted_at: new Date().toISOString() })
+        .update({ lifted_at: new Date().toISOString(), lifted_by: appeal.moderator_id })
         .eq("id", target_id)
         .eq("user_id", appellant_id)
         .is("lifted_at", null)

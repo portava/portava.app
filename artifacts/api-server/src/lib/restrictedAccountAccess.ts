@@ -56,7 +56,7 @@ export interface RestrictedAccountRoute {
 
 export const RESTRICTED_ACCOUNT_ROUTES: readonly RestrictedAccountRoute[] = Object.freeze([
   Object.freeze({ method: "POST", path: "/api/appeals", why: "OD-TRUST-5: preserve access to appeals" }),
-  Object.freeze({ method: "GET", path: "/api/appeals/me", why: "OD-TRUST-4: the person can see where their appeal stands" }),
+  Object.freeze({ method: "GET", path: "/api/appeals/me", why: "OD-TRUST-4: the person can see where their appeal stands" }), Object.freeze({ method: "GET", path: "/api/appeals/me/restrictions", why: "OD-TRUST-4: the person can see what is restricted and appeal it (reads only their own rows)" }),
   Object.freeze({ method: "GET", path: "/api/compass/me/memory/export", why: "OD-TRUST-5: preserve access to permitted data exports" }),
   Object.freeze({ method: "POST", path: "/api/me/delete-request", why: "erasure is the person's own right; a restriction does not take it away" }),
   Object.freeze({ method: "DELETE", path: "/api/me/delete-request", why: "withdrawing one's own deletion request" }),
