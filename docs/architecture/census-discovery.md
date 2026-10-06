@@ -16850,3 +16850,51 @@ If B, **how long** is the period? No spec gives a value (`04` §11), and 3512 bu
 - NOT-GRADED: travel-buddy-standalone/app/discover.tsx — §106 records Find Travelers' failed-search state and generation guard; the screen is the follows people search, and no Discovery row grades it.
 - NOT-GRADED: travel-buddy-standalone/app/close-friends.tsx — §106 cites the exact-handle match (D-TMP-4); Close Friends is not a Discovery surface.
 - NOT-GRADED: travel-buddy-standalone/app/__tests__/discover.searchFailureHonesty.component.test.tsx — §106's client evidence for a surface no Discovery row grades.
+
+## §108 (lane N7) — 2026-10-06: lead ruling D-67 reaches the `nearby_now` "open" sentences and the listed hours; A03 is re-worded and stays W
+
+Branch `claude/live-identity-d67-20261006`. Lane C may number its next section §108 too, so this one
+carries the lane name and the lead reconciles. `head_commit` is **NOT** re-declared. No row moves.
+
+### 108.1 Why
+
+D-67 (lead ruling, 2026-10-06) reserves "open right now" and every other "verified live" label for a
+place whose identity a live provider confirmed. It lets listing hours be shown only when they are
+labelled as listed hours. The `open` family of `nearby_now` fires on Compass's `open_now` factor
+(`artifacts/api-server/src/lib/discoveryReasonCodes.ts:334#open_now:          "open",`). That factor
+fires on `isOpenNow === true`
+(`artifacts/api-server/src/compass/CompassRecommendationEngine.ts:251#factors.push({ key: "open_now"`),
+and for a Discovery place `isOpenNow` is OSM listed hours read against a clock approximated from the
+place's longitude. So "Open around now." stated a listing as a fact about the present.
+
+### 108.2 A03: what each sentence claims now
+
+- The four `nearbyNowText` sentences:
+  - a location signal and `open_now`: "In this area, and open now per its listed hours (estimate)."
+    (`artifacts/api-server/src/lib/discoveryReasonCodes.ts:343#locationAndOpen: "In this area, and open now per its listed hours (estimate).",`);
+  - a location signal only: "In this area." (unchanged);
+  - `open_now` only: "Open now, per its listed hours (estimate)."
+    (`artifacts/api-server/src/lib/discoveryReasonCodes.ts:345#open:            "Open now, per its listed hours (estimate).",`);
+  - timing or capacity only: "You can still make it or join in." (unchanged).
+- Every sentence still says "open" only when `open_now` fired, so T1–T9 of
+  `artifacts/api-server/src/test/discoveryReasonTruth.test.ts:52#it("T1.` pass unchanged.
+- The new wording is pinned by
+  `artifacts/api-server/src/test/compass-recommendation-engine.test.ts:318#the Discovery reason built on open_now says listed hours and estimate`.
+  Reverting either sentence turns that test red.
+- Compass's factor label is now "Open now, per its listed hours (estimate)" as well (census-compass §39).
+- A03 stays `W` on the flags §68 and §76 name. The wording is owner-overrulable copy, as before.
+
+The two A03 anchors that quoted the old text (§68's `:251` and §76's `:343`) were shortened to text
+that is still on those lines and still carries their claims. Their prose is left as the measurement
+it was, and this section supersedes it.
+
+### 108.3 Listed hours and the live pill
+
+- PlaceCard, PlaceDetailSheet and the place screen's discovery fallback render stored hours as
+  "Listed hours: <hours>". So do the canonical place card and the living page's Official Info.
+- The live open-now pill now needs a signed-in viewer. `/api/places/live-status` requires an
+  authenticated user and rate limits anchored lookups, because each one can spend Foursquare quota.
+  Signed out, the client fetches nothing and shows no pill.
+- No row of this census grades displayed hours or the live pill, so no verdict moves.
+
+- NOT-GRADED: artifacts/api-server/src/test/compass-recommendation-engine.test.ts — §108 (lane N7) cites the D-67 sentence test as controlled evidence for A03's re-wording; it moves no verdict

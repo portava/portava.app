@@ -4441,3 +4441,74 @@ Each was mutation-proven (revert → red → restore, tree clean after).
 No row in this census cites `get_place_details`' miss branch. The fix sits under the same master
 invariant §21 and §35 enforced elsewhere: a failed read is never an absence. **0 up, 0 down.** The
 headline is §36.5's.
+
+## §39 — 2026-10-06 (mission lane N7, verifier fixes): the identity rule's edges are pinned, the ranking's "Open right now" becomes a listed-hours estimate, and the live cache is bounded — NO VERDICT MOVES
+
+Same branch as §37–§38. `head_commit` is **NOT** re-declared. The branch's independent verifier
+accepted §37–§38 with required fixes; this section records the ones in this census's files.
+
+### 39.1 The identity rule's edges (verifier F2)
+
+Three guarantees §37 stated had no test, so a mutant of each survived. Each now has one, and each
+mutant is red:
+
+- A different name at the same anchor is a different cache entry. Mutant: the key without the name.
+  Test: `artifacts/api-server/src/test/compass-live-intel.test.ts:386#the cache does not cross names`.
+- A record with no name is never confirmed. Mutant: accept a nameless record.
+  Test: `artifacts/api-server/src/test/compass-live-intel.test.ts:380#a record with no name is never confirmed`.
+- Exactly 150 m is verified and 150.01 m is not. Mutant: `<=` made `<`. The distance is now rounded to
+  the millimetre before the inclusive comparison
+  (`artifacts/api-server/src/lib/liveIntelligence.ts:236#Math.round(metresBetween(anchor, at) * 1_000) / 1_000 <= LIVE_IDENTITY_MAX_DISTANCE_M;`),
+  so "exactly 150 m" has one answer and is not decided by which side a floating-point haversine lands on.
+  Test: `artifacts/api-server/src/test/compass-live-intel.test.ts:370#exactly 150 m is verified`.
+
+The search's 1 km bias radius is also pinned now.
+
+### 39.2 The ranking's open-now factor is a listed-hours estimate (verifier F3)
+
+`isOpenNow` on a ranked item comes from the place's listed opening hours, read against a clock
+approximated from its longitude. The factor that rewards it was labelled "Open right now". That is a
+present-tense claim D-67 reserves for a provider record confirmed as the place. Changes:
+
+- The label is now `artifacts/api-server/src/compass/CompassRecommendationEngine.ts:543#export const OPEN_NOW_FACTOR_LABEL = "Open now, per its listed hours (estimate)";`.
+  The factor uses it at `:251`, which keeps its line.
+- `presentableFactors` rewords a factor stored with the old label when it is read
+  (`artifacts/api-server/src/compass/CompassRecommendationEngine.ts:470#).map(relabelEstimateFactor);`).
+  So the `/why` sentence and the factor payload agree for recommendations served before this change.
+- `qualifyWhyThis` takes `restsOnEstimate`. An explanation whose top three factors include the estimate
+  is qualified `(inferred)`, even when the candidate's own class is observed or absent. A class that is
+  already weaker keeps its own word
+  (`artifacts/api-server/src/compass/CompassRecommendationEngine.ts:506#const cls = opts?.restsOnEstimate ? estimateTruthClass(truthClass) : truthClass;`).
+  The function keeps its line, so CPV2-02's `:505` holds.
+- `whyThisRestsOnEstimate` makes the same top-three selection `buildWhyThisText` does
+  (`artifacts/api-server/src/compass/CompassRecommendationEngine.ts:567#export function whyThisRestsOnEstimate`).
+  The Compass tools' ranking passes it to `qualifyWhyThis`. Tool candidates carry no `isOpenNow` today,
+  so that call site is defensive; the unit tests pin the behaviour it calls.
+
+Tests: `artifacts/api-server/src/test/compass-recommendation-engine.test.ts:270#the factor says it is an estimate from listed hours`,
+`artifacts/api-server/src/test/compass-recommendation-engine.test.ts:280#a factor stored before D-67`,
+`artifacts/api-server/src/test/compass-recommendation-engine.test.ts:291#an explanation resting on the estimate is never presented as an observation`
+and `artifacts/api-server/src/test/compass-recommendation-engine.test.ts:304#only a sentence that includes the estimate is qualified by it`.
+Each was mutation-proved: label reverted, re-wording removed, `restsOnEstimate` ignored, and the
+top-three selection dropped.
+
+### 39.3 The live cache is bounded (verifier F5)
+
+The cache held one entry per distinct name and coordinate pair, with no bound. It is now capped at
+`artifacts/api-server/src/lib/liveIntelligence.ts:156#export const LIVE_CACHE_MAX_ENTRIES = 5_000;`
+and evicts the oldest entry first (`:161`). An expired entry is dropped when it is read.
+Test: `artifacts/api-server/src/test/compass-live-intel.test.ts:523#holds at most LIVE_CACHE_MAX_ENTRIES and evicts the oldest entry first`.
+The rest of verifier F5 is the Explore route `/places/live-status`, which no row here grades:
+
+- it now requires an authenticated user;
+- it rate limits anchored lookups per user;
+- it accepts only plain decimal coordinates (F4).
+
+### 39.4 Rows
+
+CPH-07's criteria are unchanged: explanations are still grounded in real factors, and fit and
+popularity are still separate. CPH-07 now explains the open-now factor as what it is. CPH-08 is still
+`W` on its vendor sources. CPV2-02's qualification gains a case it lacked. **0 up, 0 down.** The
+headline is §36.5's.
+
+- NOT-GRADED: artifacts/api-server/src/test/compass-recommendation-engine.test.ts — §39.2 names the engine suite's D-67 cases as controlled evidence for a section that moves no verdict
