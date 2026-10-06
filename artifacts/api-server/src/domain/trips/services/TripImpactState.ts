@@ -13,7 +13,7 @@ export type ImpactStateResult =
   | { ok: true; state: ImpactState; sourceTripVersion: number | null; unread: string[] }
   | { ok: false; reason: "TRIP_NOT_FOUND" | "TRIP_PROJECTION_UNAVAILABLE" | "FEATURE_DISABLED"; message: string };
 
-export async function loadImpactState(sc: any, tripId: string, opts: { now?: Date } = {}): Promise<ImpactStateResult> {
+export async function loadImpactState(sc: any, tripId: string, opts: { now?: Date; viewerId?: string | null } = {}): Promise<ImpactStateResult> {
   const now = opts.now ?? new Date();
   const gate = await tripOperationalProjectionsGate(sc);
   if (!gate.enabled) return refusalForGate(gate) as ImpactStateResult;

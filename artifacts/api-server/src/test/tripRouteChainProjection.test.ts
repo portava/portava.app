@@ -115,12 +115,33 @@ describe("GET /trips/:tripId/route-chain and the Compass tool", () => {
   });
   it("get_route_chain hands the conversation the hops, briefly", async () => {
     const profile = { userId: OWNER_ID, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile;
-    const r: any = await executeCompassTool(makeClient(tables()) as any, OWNER_ID, profile, "get_route_chain", { tripId: TRIP_ID });
+    // D-65 / OD-TRIP-3 (census-compass §42): a stop is the caller's to see when it is THEIRS (or public); a row
+    // that names no owner is nobody's and is withheld, so these are the owner's own private items.
+    const own = tables(); for (const i of own.trip_plan_items as any[]) { i.creator_id = OWNER_ID; i.location_is_private = true; }
+    const r: any = await executeCompassTool(makeClient(own) as any, OWNER_ID, profile, "get_route_chain", { tripId: TRIP_ID });
     assert.equal(r.chain.tripId, TRIP_ID); assert.equal(r.chain.hops.length, 1);
     assert.equal(r.chain.hops[0].from, A); assert.equal(r.chain.hops[0].to, B);
     assert.ok(r.chain.hops[0].expectedArrivalAt);
     const denied: any = await executeCompassTool(makeClient(tables()) as any, "33333333-3333-3333-3333-333333333333", profile, "get_route_chain", { tripId: TRIP_ID });
     assert.equal(denied.chain, null); assert.match(denied.info, /not a member/);
+  });
+  it("D-65 both ways: the caller's OWN private stops keep their names and times; ANOTHER member's private stop is 'Private plan' and no hop into or out of it carries a travel time", async () => {
+    const profile = { userId: OWNER_ID, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile;
+    const t = tables();
+    for (const i of t.trip_plan_items as any[]) { i.creator_id = OWNER_ID; i.location_is_private = true; i.title = `Owner stop ${String(i.id).slice(-1)}`; }
+    const mine: any = await executeCompassTool(makeClient(t) as any, OWNER_ID, profile, "get_route_chain", { tripId: TRIP_ID });
+    assert.deepEqual(mine.chain.stops.map((s: any) => String(s.title)).map((x: string) => /Owner stop/.test(x)), [true, true], JSON.stringify(mine.chain.stops));
+    assert.ok(mine.chain.hops[0].boundMinutes > 0, "the owner's own hop keeps its travel time");
+    // The same stop B, now a different member's private place.
+    const u = tables();
+    for (const i of u.trip_plan_items as any[]) { i.creator_id = OWNER_ID; i.location_is_private = true; }
+    const b = (u.trip_plan_items as any[]).find((i) => i.id === B)!; b.creator_id = MEMBER_ID; b.title = "Rehab clinic";
+    const theirs: any = await executeCompassTool(makeClient(u) as any, OWNER_ID, profile, "get_route_chain", { tripId: TRIP_ID });
+    const wire = JSON.stringify(theirs);
+    assert.doesNotMatch(wire, /Rehab clinic/, "another member's private stop was named to the caller");
+    assert.equal(theirs.chain.stops.find((s: any) => s.planItemId === B).title, "Private plan");
+    assert.equal(theirs.chain.hops[0].boundMinutes, null, "a travel time to a private place says where it is");
+    assert.equal(theirs.chain.hops[0].unknownReason, "private_location");
   });
   it("the sanitizer keeps a camelCase `…At` time: get_route_chain's expectedArrivalAt and get_commitments' requiredArrivalAt reach the conversation (they did not before §62)", async () => {
     const profile = { userId: OWNER_ID, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile;

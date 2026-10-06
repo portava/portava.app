@@ -132,7 +132,7 @@ function dayBound(iso: string | null, edge: "start" | "end"): Date | null {
 export async function buildTripFreedomProjection(
   sc: any,
   tripId: string,
-  opts: { now?: Date } = {},
+  opts: { now?: Date; viewerId?: string | null } = {},
 ): Promise<FreedomProjectionResult> {
   const now = opts.now ?? new Date();
 

@@ -108,7 +108,7 @@ const ms = (iso: string | null): number | null => { if (!iso) return null; const
 export async function buildTripRouteChainProjection(
   sc: any,
   tripId: string,
-  opts: { now?: Date } = {},
+  opts: { now?: Date; viewerId?: string | null } = {},
 ): Promise<RouteChainProjectionResult> {
   const now = opts.now ?? new Date();
   const gate = await tripOperationalProjectionsGate(sc);

@@ -232,8 +232,8 @@ describe("§8.4 on Today, §8.3 readiness grouping, and the Compass tools", () =
     assert.ok(opp.opportunities.questionsWorthAsking); assert.ok(Array.isArray(opp.opportunities.questionsWorthAsking.ask) && Array.isArray(opp.opportunities.questionsWorthAsking.representedAsUncertainty));
   });
   it("Compass simulate_plan (OD-TRIP-3, census-compass §39): another member's PRIVATE plan is 'Private plan' in the impact text; made public, its name returns", async () => {
-    const run = async (priv: boolean) => {
-      const t = fixture(); t.trip_plan_items = [plan("walk", { title: "Clinic visit", creator_id: MEMBER_ID, location_is_private: priv })];
+    const run = async (priv: boolean, creator: string = MEMBER_ID) => {
+      const t = fixture(); t.trip_plan_items = [plan("walk", { title: "Clinic visit", creator_id: creator, location_is_private: priv })];
       install(t);
       return (await toolSimulatePlan(install(t) as any, OWNER_ID, { tripId: TRIP_ID, kind: "cancel_plan", targetId: "walk" }) as any).simulation;
     };
@@ -243,6 +243,9 @@ describe("§8.4 on Today, §8.3 readiness grouping, and the Compass tools", () =
     assert.doesNotMatch(JSON.stringify(hidden.explanation), /Clinic visit/);
     const shown = await run(false);
     assert.match(String(shown.impact.summary), /Clinic visit/, "control: a public plan is named");
+    // D-65 the other way (census-compass §42): the caller's OWN private plan is theirs to see.
+    const own = await run(true, OWNER_ID);
+    assert.match(String(own.impact.summary), /Clinic visit/, "the caller's own private plan was withheld from them");
   });
 
   it("Compass: replan_day carries the same diff as the route, never writes, and names create_proposal for the shared mutations; a stranger gets info, not a diff", async () => {

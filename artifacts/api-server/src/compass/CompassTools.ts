@@ -910,7 +910,7 @@ async function projectCurrentTrip(sc: SupabaseClient, tripId: string, fallback: 
   // §19.1: the plan comes from the projection, accepted or refused by the one
   // consumer rule. A refused projection is SAID to be refused — the old read
   // handed the assistant an empty plan when the table could not be read.
-  const built = await buildTripCompassProjection(sc, tripId);
+  const built = await buildTripCompassProjection(sc, tripId, { viewerId }); // census-compass §42: the caller's OWN private items stay theirs
   if (!built.ok) {
     if (built.reason === "TRIP_NOT_FOUND") return { trip: null, info: "No such trip." };
     return { trip: fallback, planItems: [], info: `Trip context unavailable: ${built.message}` };
@@ -1268,7 +1268,7 @@ export async function toolGetFreedomWindows(sc: SupabaseClient, userId: string, 
     trip = current?.trip ?? null;
     if (!trip) return { windows: [], info: "No active or upcoming trip." };
   }
-  const built = await buildTripFreedomProjection(sc, trip.id);
+  const built = await buildTripFreedomProjection(sc, trip.id, { viewerId: userId });
   if (!built.ok) return { windows: [], info: built.reason === "FEATURE_DISABLED" ? `Freedom windows are not enabled: ${built.message}` : `Freedom windows unavailable: ${built.message}` };
   const decision = acceptTripProjection(built.projection, { acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripFreedomProjection" });
   if (!decision.accepted) return { windows: [], info: `Freedom windows rejected (${decision.reason}): ${decision.message}` };
@@ -1308,16 +1308,34 @@ export async function toolGetRouteChain(sc: SupabaseClient, userId: string, args
     id = current?.trip?.id ?? null;
     if (!id) return { chain: null, info: "No active or upcoming trip." };
   }
-  const built = await buildTripRouteChainProjection(sc, id);
+  const built = await buildTripRouteChainProjection(sc, id, { viewerId: userId });
   if (!built.ok) return { chain: null, info: built.reason === "FEATURE_DISABLED" ? `The route chain is not enabled: ${built.message}` : `Route chain unavailable (${built.reason}): ${built.message}` };
   const decision = acceptTripProjection(built.projection, { acceptedSchemaVersion: TRIP_PROJECTION_SCHEMA_VERSION, metric: "TripRouteChainProjection" });
   if (!decision.accepted) return { chain: null, info: `Route chain rejected (${decision.reason}): ${decision.message}` };
   const p = built.projection;
+  // OD-TRIP-3 / lead ruling D-65 (census-compass §42): another member's private
+  // stop is "Private plan", and a hop into or out of it carries no travel time —
+  // a time measured to a place is a fact about where the place is. The shared
+  // projection does not carry the privacy columns on this tree, so they are read
+  // by id; an unreadable read withholds every stop it cannot prove public. The
+  // caller's own private stops stay theirs.
+  const privacy = p.stops.length > 0 ? await readPlanItemPrivacy(sc, id) : new Map();
+  const access = await planItemAccessFor(sc, id, userId);
+  const withheld = new Set<string>();
+  for (const s of p.stops) {
+    const [shown] = withholdPrivatePlanItems([{ id: s.planItemId, title: s.title, ...(privacy?.get(String(s.planItemId)) ?? {}) }], access);
+    if ((shown as { location_withheld?: unknown }).location_withheld === true) withheld.add(String(s.planItemId));
+  }
+  const hidden = (planItemId: unknown) => withheld.has(String(planItemId));
   return {
     chain: {
       tripId: p.tripId, decisionId: p.decisionId, partySize: p.partySize,
-      stops: p.stops.map((s) => ({ planItemId: s.planItemId, title: s.title ? wrapUgc(String(s.title)) : null, startsAt: s.startsAt, endsAt: s.endsAt })),
-      hops: p.hops.map((h) => ({
+      stops: p.stops.map((s) => ({ planItemId: s.planItemId, title: hidden(s.planItemId) ? WITHHELD_PLAN_TITLE : s.title ? wrapUgc(String(s.title)) : null, startsAt: s.startsAt, endsAt: s.endsAt })),
+      hops: p.hops.map((h) => (hidden(h.fromPlanItemId) || hidden(h.toPlanItemId)) ? ({
+        from: h.fromPlanItemId, to: h.toPlanItemId, departAt: h.departAt,
+        boundMinutes: null, expectedMinutes: null, unknownReason: "private_location",
+        band: null, arrivalAtBound: null, expectedArrivalAt: null, partySize: h.partySize, segment: null,
+      }) : ({
         from: h.fromPlanItemId, to: h.toPlanItemId, departAt: h.departAt,
         boundMinutes: h.travel.boundMinutes, expectedMinutes: h.travel.expectedMinutes, unknownReason: h.travel.unknownReason,
         band: h.travel.assumption?.band ?? null, arrivalAtBound: h.arrivalAtBound, expectedArrivalAt: h.expectedArrivalAt,
@@ -1458,7 +1476,7 @@ export async function toolSimulatePlan(sc: SupabaseClient, userId: string, args:
   if (!(SIM_CHANGE_KINDS as readonly string[]).includes(kind) || kind === "move_commitment") return { simulation: null, info: "kind must be move_plan, cancel_plan, remove_plan or add_plan" };
   const targetId = typeof args.targetId === "string" ? args.targetId : null;
   if (kind !== "add_plan" && !targetId) return { simulation: null, info: "targetId is required for this kind" };
-  const loaded = await loadImpactState(sc, t.id);
+  const loaded = await loadImpactState(sc, t.id, { viewerId: userId });
   if (!loaded.ok) return { simulation: null, info: `Simulation unavailable (${loaded.reason}): ${loaded.message}` };
   // OD-TRIP-3: the impact state names every plan on the trip; another member's
   // private plan is "Private plan" before any conflict or explanation is
@@ -1472,7 +1490,7 @@ export async function toolSimulatePlan(sc: SupabaseClient, userId: string, args:
       return shown!.title === pl.title ? pl : { ...pl, title: shown!.title as string | null };
     });
   }
-  const freedom = await buildTripFreedomProjection(sc, t.id);
+  const freedom = await buildTripFreedomProjection(sc, t.id, { viewerId: userId });
   if (!freedom.ok) return { simulation: null, info: `Simulation unavailable (${freedom.reason}): ${freedom.message}` };
   const v = simulateChange({ kind: kind as any, targetId, startsAt: typeof args.startsAt === "string" ? args.startsAt : null, endsAt: typeof args.endsAt === "string" ? args.endsAt : null, title: typeof args.title === "string" ? args.title : null, proposedBy: userId }, loaded.state, freedom.projection.windows, Date.now());
   return {
@@ -1534,7 +1552,7 @@ export async function toolGetRescuePlan(sc: SupabaseClient, userId: string, args
   if ("info" in t) return { rescue: null, info: t.info };
   const problem = String(args.problem ?? "");
   if (!(RESCUE_PROBLEMS as readonly string[]).includes(problem)) return { rescue: null, info: `problem must be one of ${RESCUE_PROBLEMS.join(", ")}` };
-  const loaded = await loadImpactState(sc, t.id);
+  const loaded = await loadImpactState(sc, t.id, { viewerId: userId });
   const st = loaded.ok ? loaded.state : null;
   const now = Date.now();
   const next = st ? st.commitments.map((c) => ({ c, at: Date.parse(c.requiredArrivalAt ?? c.startsAt ?? "") })).filter((x) => Number.isFinite(x.at) && x.at > now).sort((a, b) => a.at - b.at)[0] ?? null : null;

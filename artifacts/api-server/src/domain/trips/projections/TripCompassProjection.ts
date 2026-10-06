@@ -142,7 +142,7 @@ const TRIP_COLUMNS = "id, title, destination_city, destination_country, start_da
 export async function buildTripCompassProjection(
   sc: any,
   tripId: string,
-  opts: { maxItems?: number; now?: Date; focusDate?: string } = {},
+  opts: { maxItems?: number; now?: Date; focusDate?: string; viewerId?: string | null } = {},
 ): Promise<CompassProjectionResult> {
   const cap = opts.maxItems ?? COMPASS_PLAN_ITEM_CAP;
 
