@@ -3619,9 +3619,11 @@ router.post("/memories/from-layover/:sessionId", async (req, res) => {
   const idempotencyKey = requireIdempotencyKey(req, res);
   if (idempotencyKey === null) return;
 
+  // A literal, so check:write-path-columns can read it. `airport_profiles(...)`
+  // is the FK embed; the airport's lat/lng are deliberately NOT selected.
   const { data: session, error: sessionErr } = await sc
     .from("layover_sessions")
-    .select(LAYOVER_MEMORY_SESSION_SELECT)
+    .select("id, user_id, status, canonical_city_id, arrival_time, departure_time, manual_city, manual_country, manual_airport_name, manual_iata, airport_profiles(city, country, name, iata_code)")
     .eq("id", sessionId)
     .maybeSingle();
   if (sessionErr) {
@@ -3644,6 +3646,24 @@ router.post("/memories/from-layover/:sessionId", async (req, res) => {
     // carrying a coordinate fails here, loudly, instead of persisting one.
     if (k in row) { sendError(res, "db_error", "Refused to persist operational location data"); return; }
   }
+  // What is written, spelled out key by key so check:write-path-columns can read
+  // every column (a row returned by an imported builder is a blind spot to it).
+  // Typed as LayoverMemoryRow, so a key missing here or extra here is a type
+  // error, and a key the builder carries that is not listed here is never written.
+  const layoverInsertRow: LayoverMemoryRow = {
+    owner_id: row.owner_id,
+    title: row.title,
+    caption: row.caption,
+    visibility: row.visibility,
+    allowed_user_ids: row.allowed_user_ids,
+    hidden_user_ids: row.hidden_user_ids,
+    canonical_location_id: row.canonical_location_id,
+    location_city: row.location_city,
+    location_country: row.location_country,
+    starts_at: row.starts_at,
+    ends_at: row.ends_at,
+    state: row.state,
+  };
 
   const { data: existingRows, error: existingErr } = await sc
     .from("memories")
@@ -3681,13 +3701,13 @@ router.post("/memories/from-layover/:sessionId", async (req, res) => {
     payload: {
       to_state: lifecycleStateOf("draft"),
       visibility: "only_me",
-      write: row,
+      write: layoverInsertRow,
       select: MEMORY_CREATE_SELECT,
     },
     legacy: async () => {
       const { data, error } = await sc
         .from("memories")
-        .insert(row)
+        .insert(layoverInsertRow)
         .select(MEMORY_CREATE_SELECT)
         .single();
       if (error) {
@@ -3704,10 +3724,10 @@ router.post("/memories/from-layover/:sessionId", async (req, res) => {
 
 // Imported at the TAIL with the route that uses them, so no line above moves.
 import {
-  LAYOVER_MEMORY_SESSION_SELECT,
   LAYOVER_MEMORY_FORBIDDEN_KEYS,
   layoverMemoryEligibility,
   layoverMemoryRow,
+  type LayoverMemoryRow,
   type LayoverSessionForMemory,
 } from "../services/memory/layoverMemory.js";
 

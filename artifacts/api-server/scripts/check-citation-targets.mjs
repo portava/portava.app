@@ -625,7 +625,16 @@ import {
  * held 4; pinning it removes those 4 -> 157. Nothing else moved. The same
  * entry is added to check-citation-symbols.mjs, whose counts do not change
  * (the document carries no anchored citation). */
-export const MAX_DEAD_TARGETS = 157;
+/* RATCHETED 2026-10-06 157 -> 156 on mission lane A's branch (PR #629). The
+ * gain is #613's, already on main and never kept there: main measures 156
+ * under this 157 ceiling from bf335b1c0 onward, and the branch's --list is
+ * identical to main's. Isolated by diffing --list across #613's merge:
+ * `cross-cutting-obligations.md:343 -> CompassAutopilotEngine.ts:598` (only
+ * ");") left the list because #613 repointed T-01 onto `:280`, the
+ * `trip_autopilot_settings` upsert its sentence names — alive onto its claim,
+ * examined, not merely counted. Its sibling at :346 moved 598 -> 697 and is
+ * still dead. Same rule as above. */
+export const MAX_DEAD_TARGETS = 156;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set([

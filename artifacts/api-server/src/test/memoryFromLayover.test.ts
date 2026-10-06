@@ -267,6 +267,42 @@ describe("a completed layover becomes ONE private Memory with no coordinate", ()
   });
 });
 
+// ── Verifier finding 2: the dedupe key is owner + title + BOTH instants ──
+//
+// Two layovers in the same city by the same traveller carry the same title
+// ("Layover in Taipei"), so the title cannot tell them apart; only the window
+// can. Each case shares ONE instant between the two layovers, so dropping the
+// OTHER instant's `.eq` from the existing-Memory read answers the second
+// layover with the first one's Memory — which is what each case refuses.
+const SESSION_2 = "dddddddd-dddd-dddd-dddd-ddddddddddd2";
+const LATER_ARRIVAL = "2026-10-01T05:00:00.000Z";
+const LATER_DEPARTURE = "2026-10-01T13:00:00.000Z";
+
+describe("two layovers in Taipei → two Memories", () => {
+  for (const [label, second, shared] of [
+    ["sharing the arrival instant, departing later", { arrival_time: ARRIVAL, departure_time: LATER_DEPARTURE }, "starts_at"],
+    ["sharing the departure instant, arriving later", { arrival_time: LATER_ARRIVAL, departure_time: DEPARTURE }, "ends_at"],
+  ] as const) {
+    it(`a second layover ${label} is its own Memory, not the first one's`, async () => {
+      app = await startApp([session(), session({ id: SESSION_2, ...second })]);
+      const first = await post(app, SESSION, OWNER);
+      assert.equal(first.status, 201, JSON.stringify(first.body));
+      const other = await post(app, SESSION_2, OWNER);
+      assert.equal(other.status, 201, `the second layover was answered with the first one's Memory: ${JSON.stringify(other.body)}`);
+      assert.equal(other.body?.existing, false);
+      assert.notEqual(other.body?.memory?.id, first.body?.memory?.id);
+      const live = app.store.memories.filter((m) => m.state !== "deleted");
+      assert.equal(live.length, 2, "two layovers, two Memories");
+      assert.deepEqual(live.map((m) => m.title), ["Layover in Taipei", "Layover in Taipei"], "the title alone cannot tell them apart");
+      assert.equal(live[0][shared], live[1][shared], `the fixture must share ${shared} for this case to test the other instant`);
+      assert.deepEqual(
+        live.map((m) => [m.starts_at, m.ends_at]),
+        [[ARRIVAL, DEPARTURE], [second.arrival_time, second.departure_time]],
+      );
+    });
+  }
+});
+
 describe("only a layover that ended with the flight", () => {
   for (const status of ["active", "cancelled", "expired"]) {
     it(`refuses a layover whose status is ${status}, by name, and writes nothing`, async () => {

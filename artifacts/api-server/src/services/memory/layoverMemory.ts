@@ -44,9 +44,10 @@
  * exactly an artifact for a layover that did not happen the way it says.
  */
 
-/** The columns the route reads. `airport_profiles(...)` is the FK embed; lat/lng are NOT selected. */
-export const LAYOVER_MEMORY_SESSION_SELECT =
-  "id, user_id, status, canonical_city_id, arrival_time, departure_time, manual_city, manual_country, manual_airport_name, manual_iata, airport_profiles(city, country, name, iata_code)";
+// The columns the route reads are a string literal at its call site
+// (routes/memories.ts, POST /memories/from-layover/:sessionId), not a constant
+// exported from here: check:write-path-columns resolves a select list only when
+// it is a literal or a same-file const, so an imported one is a blind spot.
 
 export interface LayoverSessionForMemory {
   id: string;
@@ -107,10 +108,30 @@ export function layoverMemoryTitle(session: LayoverSessionForMemory): string {
 }
 
 /**
+ * Exactly the columns the insert writes. The route spells its insert payload out
+ * key by key against this type, so a key added here and not there (or there and
+ * not here) is a type error rather than a column the write-path check cannot see.
+ */
+export interface LayoverMemoryRow {
+  owner_id: string;
+  title: string;
+  caption: null;
+  visibility: "only_me";
+  allowed_user_ids: string[];
+  hidden_user_ids: string[];
+  canonical_location_id: string | null;
+  location_city: string | null;
+  location_country: string | null;
+  starts_at: string;
+  ends_at: string;
+  state: "draft";
+}
+
+/**
  * The `memories` insert row. Every key is listed so a reader can see what is
  * NOT here: no `location_lat`, no `location_lng`, no `place_id`, no `trip_id`.
  */
-export function layoverMemoryRow(session: LayoverSessionForMemory, ownerId: string): Record<string, unknown> {
+export function layoverMemoryRow(session: LayoverSessionForMemory, ownerId: string): LayoverMemoryRow {
   const { city, country } = layoverMemoryPlace(session);
   return {
     owner_id: ownerId,

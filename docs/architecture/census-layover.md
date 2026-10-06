@@ -8862,6 +8862,68 @@ document's evidence without moving a verdict:
   `services/airport/layoverRankingFeasibility.ts` for Layover; the recommendation ordering and the safety
   engine are outside it. Extending the guard is the lead's (guard scripts).
 
+## §52 — 2026-10-06 (mission lane A, finisher): the verifier's follow-ups on PR #629, two closed and three recorded; NO ROW MOVES
+
+An independent verifier accepted PR #629 at `f41337e55` for merge with follow-ups. This section records them.
+Two are closed in this change (52.3); three are recorded and deliberately not fixed (52.1, 52.2). No row
+moves, no flag was touched, and no database was contacted.
+
+### 52.1 ACTIVATION PREREQUISITE for `layover_presence_intents_enabled`: a minimum-k rule (owner decision on k)
+
+§51.1 says the intents surface serves counts and "never an id, a name or a window on the wire". That holds for
+the intents read itself, and it is not enough. While `layover_presence_ladder_enabled` is OFF (its seed, from
+migration 2740), the presence read answers with the cleared roster: `disclosePresence` returns
+`artifacts/api-server/src/services/airport/LayoverPrivacyGuard.ts:512#level: "L2_DISCOVERY"` carrying
+`artifacts/api-server/src/services/airport/LayoverPrivacyGuard.ts:515#travelers: input.travelers` through
+`artifacts/api-server/src/routes/airport.ts:3562#router.get("/airport/sessions/:id/presence"`. A viewer who reads
+that roster and then `artifacts/api-server/src/routes/airport.ts:4675#router.get("/airport/sessions/:id/presence/intents"`
+learns, whenever the cleared crew is ONE traveller, exactly what that named person is open to — the verifier's
+probe P4 read `count: 1` with alice on the roster and `nightlife: 1` on the intents read. A small crew narrows
+the same way. The client line `travel-buddy-standalone/src/components/layover/LayoverPresenceIntents.tsx:94#never who`
+is therefore true only above a threshold, and the spec's §14 states no minimum count.
+
+- **ACTIVATION PREREQUISITE, before the flag flips — not a merge condition:** a minimum-k rule. Counts below k
+  are withheld (or a city's counts are served only while at least k travellers hold an open record). Inert on
+  this tree: 3900 is applied to no database and the flag is seeded FALSE, and while it is FALSE the intents
+  read answers `available: false` and nothing is read from or written to `layover_presence`.
+- **Owner decision needed: the value of k.** The spec gives none, and this lane does not choose one.
+- No row moves. L27 and L129 stay N and L187 stays W, on §51.1's grounds, which this does not change.
+
+### 52.2 Follow-ups recorded, not fixed
+
+- **The seam must consult `access.status` when it is rebound to lane C.**
+  `artifacts/api-server/src/services/safeReturn/safeReturnPlanItemAccess.ts:62#export function canSeePlanItemLocation(`
+  decides on the grants map alone, so `{ status: "unread" }` with a non-empty grants map returns TRUE (verifier
+  probe P8b). Nothing reaches that state on this tree: `planItemAccessFor` answers `ownerOnlyAccess` with an
+  empty map, so "unread" withholds (P8a). At the rebinding to lane C's `planItemAccessFor`, guard with
+  `access.status !== "ok"` → owner only, or assert that C's "unread" carries no grants.
+- **`fakeLayoverDb` does not model the `airport_profiles(city)` embed, so the `.neq("user_id")` line is unproven.**
+  `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:338#the traveller's own record never counts toward what THEY see`
+  stays green with `artifacts/api-server/src/routes/airport.ts:2031#.neq("user_id", userId)` deleted (verifier
+  mutant M9, 31/31): in the fake the viewer's airport-backed session resolves to city "" and is excluded by the
+  city match, never by the `.neq`. The fix is fixture-only — give the viewer's session a `manual_city` equal to
+  the city under test. The line is main's, not this lane's; no behaviour defect.
+
+### 52.3 Closed in this change
+
+- **The dedupe's two instants are proven (verifier finding 2).** The existing-Memory read in
+  `artifacts/api-server/src/routes/memories.ts` keys on owner + title + both instants, and only the title half
+  was proven: dropping either instant's `.eq` survived the suite. Two cases, "two layovers in Taipei → two
+  Memories", in `artifacts/api-server/src/test/memoryFromLayover.test.ts` — one pair shares the arrival instant,
+  the other the departure instant — now each go red when `.eq("ends_at")` or `.eq("starts_at")` is removed
+  (one red each; 21/21 green on the tree).
+- **Two sites the live-DB tier could not read.** `check:write-path-columns` reported the from-layover route's
+  `layover_sessions` select list (an imported constant) and its `memories` insert payload (a row returned by an
+  imported builder) as NEW unresolvable sites. The select list is now a literal at the call site, and the insert
+  writes a key-by-key literal typed as `LayoverMemoryRow` from
+  `artifacts/api-server/src/services/memory/layoverMemory.ts`, so every column the route touches is checked.
+  The guard's own extractor, re-run offline over its scan directories, matches `UNRESOLVED_ALLOWLIST` exactly,
+  with no entry added. That guard will still report `layover_presence` as missing from the live schema: it is
+  3900's own table, the expected red for a migration-adding PR until 3900 is applied.
+- `layover_presence` is on `check:production-drift`'s ratchet as `unapplied`, naming 3900 and the FALSE seed.
+
+`check:census-integrity` still reads **C=84 W=145 N=67 X=0**, unchanged since §50.4.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/test/docCitations.test.ts — The citation guard's own suite. §27.10 names its case 9 and §30.4 names it as npm test's one failing test; both report on the guard that measured this census. It is machinery this census reports on, not a subject it grades.
@@ -8876,3 +8938,4 @@ document's evidence without moving a verdict:
 - NOT-GRADED: travel-buddy-standalone/src/services/__tests__/adminConsole.services.component.test.ts — §47.3's service suite; no verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/routes/memories.ts — §49.1 item 3 cites the from-layover route that builds L275's memory half; the router is census-highlights-memories' subject, and L275's held W rests on the missing postcard, not on this file.
 - NOT-GRADED: artifacts/api-server/src/services/memory/layoverMemory.ts — §50.3 cites the layover Memory row builder to record the trip_id fix; the module is census-highlights-memories' (lane A2) subject, and L275's held W rests on the missing postcard, not on this file.
+- NOT-GRADED: artifacts/api-server/src/services/safeReturn/safeReturnPlanItemAccess.ts — §52.2 records a follow-up for lane C's rebinding of this Safe Return plan-item seam (the `access.status` guard); no layover row rests on it.
