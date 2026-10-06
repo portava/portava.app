@@ -10064,7 +10064,7 @@ at most 12 asks of the spend gate per read (counted before the first await, so a
 overshoot), no routed call after 8 s of the read, and nothing spent without a user and a trip. The gate
 charges a per-user and a per-trip daily share, both required configuration
 (`ROUTES_API_USER_DAILY_SHARE`, `ROUTES_API_TRIP_DAILY_SHARE`), taken with the day's unit by
-`artifacts/api-server/src/migrations/3973_trip_routes_api_user_trip_shares.sql:80#CREATE OR REPLACE FUNCTION public.routes_api_try_spend_scoped(`
+`artifacts/api-server/src/migrations/3973_trip_routes_api_user_trip_shares.sql:82#CREATE OR REPLACE FUNCTION public.routes_api_try_spend_scoped(`
 under row locks in one order (day, trip, user) — the same argument as 3971's, extended to three rows. Over
 any bound the answer is the labelled straight-line estimate.
 
