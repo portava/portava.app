@@ -22,12 +22,12 @@ Backend paths are relative to `artifacts/api-server/src/` unless prefixed
 | **Denominator (testable requirements) — v1.1** | **451** |
 | — of which shared with v1 | 378 |
 | — of which v1.1-only (§30A Addendum + §31) | 73 |
-| BUILT-AND-CORRECT | **255** — restated 2026-10-05 from the rows by lane T2 (§45; 239 at §41.8, 2026-10-03; 209 on 2026-09-12). Other lanes' unmerged sections are not in this count |
-| BUILT-BUT-WRONG | **173** (§45; 177 at §41.8; 176 on 2026-09-12) |
+| BUILT-AND-CORRECT | **250** — restated 2026-10-06 from the rows by lane T2 (§45c; 255 at §45; 239 at §41.8, 2026-10-03; 209 on 2026-09-12). Other lanes' unmerged sections are not in this count |
+| BUILT-BUT-WRONG | **178** (§45c; 173 at §45; 177 at §41.8; 176 on 2026-09-12) |
 | NOT-BUILT | **21** (§45; 33 at §41.8; 51 on 2026-09-12) |
 | CANNOT-VERIFY | **2** (§41.8; 3 on 2026-09-12) |
-| **CONSTRUCTED%** = (255+173)/451 | **94.9 %** (92.2 % at §41.8; 85.4 % on 2026-09-12) |
-| **CORRECT%** (raw) = 255/451 | **56.5 %** (53.0 % at §41.8; 46.3 % on 2026-09-12) |
+| **CONSTRUCTED%** = (250+178)/451 | **94.9 %** (unchanged by §45c; 92.2 % at §41.8; 85.4 % on 2026-09-12) |
+| **CORRECT%** (raw) = 250/451 | **55.4 %** (56.5 % at §45; 53.0 % at §41.8; 46.3 % on 2026-09-12) |
 | **CORRECT% (spec-attributable)** = 0/451 | **0.0 %** (rows citing this spec; the rest are attribution-UNKNOWN — §4) |
 | CANNOT-VERIFY share | 2 / 451 = 0.4 % |
 
@@ -893,7 +893,7 @@ Backend paths relative to `artifacts/api-server/src/`; client paths to
 | T292 | `NearbyAvailableProjection` | N | Does not exist. |
 | T293 | `CoordinationProjection` | N | Does not exist (T85). |
 | T294 | `ConversationContentIndex` — media/places/Portava/voice/GIF/links/files drawer | N | Dead-coded behind a literal `false` (T66). |
-| T295 | Mobile clients consume server-built projections instead of independently joining raw tables and reimplementing authorization | W | Mostly true and then not: `src/services/messaging.ts` goes through `fetch(apiBase()…)` for every message operation (`:240,256,274,607,628,653`). But the conversation screen makes **two direct PostgREST reads of a raw messaging table**, one of which recomputes authorization client-side: `app/messages/[id].tsx:1248-1253` (member count) and `:1263-1269` (*"Permission gate: accepted thread members only"* — a `message_thread_members` select whose result sets `isAcceptedMember`). The server does not trust it (T364), so this is a layering violation rather than a security hole. |
+| T295 | Mobile clients consume server-built projections instead of independently joining raw tables and reimplementing authorization | W | Mostly true and then not: `src/services/messaging.ts` goes through `fetch(apiBase()…)` for every message operation (`:240,256,274,607,628,653`). But the conversation screen makes **two direct PostgREST reads of a raw messaging table**, one of which recomputes authorization client-side: `app/messages/[id].tsx` — a member count, and (*"Permission gate: accepted thread members only"* — a `message_thread_members` select whose result sets `isAcceptedMember`). *[2026-10-06: both reads are gone from the screen; the line numbers this cell used to give had drifted onto unrelated code, the second onto the Block alert, and were removed rather than pointed elsewhere — see §45b.4.]* The server does not trust it (T364), so this is a layering violation rather than a security hole. |
 
 ### §25 Migration & Compatibility Strategy
 
@@ -10368,5 +10368,198 @@ and lane T1's §43 moves are not in it; the lead restates it again after the mer
 | --- | --- |
 | BUILT-AND-CORRECT | **255** |
 | BUILT-BUT-WRONG | **173** |
+| NOT-BUILT | **21** |
+| CANNOT-VERIFY | **2** |
+
+## §45b — TELEGRAPH lane T2, wave 2 (2026-10-06): a Trust restriction is a send gate (OD-TRUST-5), and the last two weak doors of this lane are closed. NO ROW MOVES
+
+Written by lane T2 on branch `claude/mission-t2-telegraph-advanced-20261005`, wave 2. Numbered
+§45b so it cannot collide with another lane's next section. **All evidence is CONTROLLED**:
+in-process route suites over the certification harness's PostgREST fake, and mutations. No
+migration, no flag, no database. `head_commit` is not re-declared.
+
+### 45b.1 What changed
+
+- **One decision.** `artifacts/api-server/src/domain/telegraph/policies/restrictionSendPolicy.ts:116#export function decideRestrictedSend(`
+  over facts read by `artifacts/api-server/src/domain/telegraph/policies/restrictionSendPolicy.ts:153#export async function readRestrictionSendFacts(`.
+  The shared send guard calls it as gate 5, before the burst limit
+  (`artifacts/api-server/src/lib/telegraphThreadWrite.ts:164#// 5. Trust restriction (OD-TRUST-5)`); the
+  two inline doors in `routes/messaging.ts` call it through
+  `artifacts/api-server/src/lib/telegraphThreadWrite.ts:301#export async function refuseRestrictedSend(`;
+  the capabilities projection's `canSendMessage` reads the same function. Before this, a Trust
+  restriction was consulted on the message REQUEST and on none of the doors that write into
+  `messages`, while the projection announced `canSendMessage: false` for every
+  messaging-restricted person in every thread — a refusal announced and never performed.
+- **Two doors closed.** `POST /highlights/:id/reply` runs the shared guard on the DM it resolves
+  and removes a thread the request itself created when the guard refuses
+  (`artifacts/api-server/src/routes/highlights.ts:2511#const guard = await guardTelegraphThreadWrite(sc, threadId, user.id);`;
+  line-neutral: lines 65, 2454, 2493 and 2511 are the only lines changed). `postPlainThreadMessage`
+  (the layover route's writer) runs it first. `KNOWN_WEAK_DOOR_CEILING` 4 → 2
+  (`artifacts/api-server/src/domain/telegraph/policies/messageDoorPolicy.ts:330#export const KNOWN_WEAK_DOOR_CEILING = 2;`);
+  lane C's branch closes `routes/telegraphChat.ts` (start-poll) and `routes/hiddenGems.ts`
+  (share-telegraph), so **the merged result must read 0**.
+- **Proof.** `artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts:369#describe("2. every door x every gate"`:
+  eight thread-addressed doors (text, media, typed, voice, share, coordination, the command door,
+  `postPlainThreadMessage`) each refused by each of the six gates with nothing written, and the
+  highlight door (§6 of the suite). The projection, the shared guard and the text door agree in
+  every one of 9 worlds x 6 thread shapes
+  (`artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts:578#it("5.1 across every restriction world x thread shape`).
+  40 mutations — every gate in the guard, every door's call to it, every inline gate on the two
+  messaging doors, every term of the decision — and all 40 were killed (lane T2 report).
+
+### 45b.2 What each restriction type stops — LANE T2's READING, FOR OWNER CONFIRMATION
+
+`artifacts/api-server/src/domain/telegraph/policies/restrictionSendPolicy.ts:78#export const RESTRICTION_SEND_SCOPE`:
+
+| Restriction | What the Trust service says it restricts | Sends refused |
+| --- | --- | --- |
+| `messaging` | "cannot initiate new conversations" | only a send that INITIATES contact: a `direct` thread with exactly one other active member who has never written in it, and that no `rent_buddy_bookings.telegraph_thread_id` owns |
+| `hosting` | cannot host group trips | none |
+| `private_plan_access` | cannot join private plans | none |
+| `location_plan_join` | cannot join location-based plans | none |
+
+Trip and circle threads never count as initiating (the source domain decided the roster).
+Opening a thread and requesting one were already refused (`resolveInteractionPermissions`).
+The broad alternative — `messaging` refuses every non-safety send — is a one-line change in that
+table's consumer and would also need the sentence the person is shown to change. An unreadable
+restriction state (`fail_closed`) or an unreadable fact the decision needs refuses with a
+RETRYABLE answer and never with the restriction's sentence; `fail_open` (table never migrated)
+admits, which is the service's own contract. A state no restriction could act on (a trip thread)
+is not read at all.
+
+### 45b.3 Never suppressible — enumerated from the code
+
+- **At the gate.** The §6.2 SAFETY kind and the §9.1 NEED_HELP quick state are marked `safety`,
+  and the gate admits them WITHOUT reading the restriction, so not even an unreadable state stops
+  them (`artifacts/api-server/src/routes/telegraphCoordination.ts:335#OD-TRUST-5: "I need help" is never refused by a Trust restriction`;
+  suite cases 4.1–4.3).
+- **Not through the gate at all.** Safe-return check-ins and alerts (`routes/safeReturn.ts`), the
+  circle need-help alert (`routes/circle.ts` POST …/need-help), blocking (`routes/blocks.ts`),
+  reporting (`routes/moderation.ts`, `POST /messages/:id/report`, `POST /threads/:id/report`) and
+  appeals (`routes/appeals.ts`). Block, the three report doors and appeals are DRIVEN under every
+  restriction type (suite 4.4); reports and appeals under an unreadable state too.
+- **No moderation or appeals THREAD exists** — `message_threads.thread_type` admits direct, trip
+  and circle — so there is no such reply to exempt.
+- **ONE MEASURED EXCEPTION, OUTSIDE THIS GATE, NOT FIXED HERE.** `POST /users/:id/block` answers
+  `500 "Permission check failed"` when the restriction state cannot be read: the permission engine
+  throws on `fail_closed`
+  (`artifacts/api-server/src/services/interactionPermissions.ts:373#throw new DegradedPermissionCheckError(`)
+  and the block route maps every throw to `db_error`
+  (`artifacts/api-server/src/routes/blocks.ts:40#Permission check failed`). Pre-existing; a block
+  is a protective action and the ruling says it must never be suppressed. **Owner/lead decision:**
+  let a block through on an unreadable restriction state (and say what the suspension gate in
+  front of it should do then).
+
+### 45b.4 Census line 896 (T295's original evidence) — the reads it cited are gone
+
+The cell cited `app/messages/[id].tsx` twice: a member-count read and the "accepted thread
+members only" gate on `message_thread_members`. Lane T2 removed both reads on 2026-10-05 (§45,
+T295). §45.3 said the citation was "left as written because no line now carries its text" — wrong:
+lane T2's own repoints had moved both numbers by line offset (`:1247-1252` → `:1248-1253`,
+`:1260-1266` → `:1263-1269`), and the second range had drifted onto the Block alert (`travel-buddy-standalone/app/messages/[id].tsx:1260#function handleBlockPress()`),
+so the row sent a reader to unrelated code. On 2026-10-06 both line numbers were REMOVED from the
+cell, which now points here. The reads do not exist and are not pointed elsewhere.
+
+### 45b.5 Behaviour that changes, said out loud
+
+- A highlight replier who had LEFT the existing DM is now refused (`403 Not a member`) instead of
+  being written back into it; a refused reply leaves no empty DM behind.
+- The layover Telegraph route's sender must be an ACTIVE member of the trip thread (the guard
+  re-checks it instead of trusting the route).
+- The kernel command door says `TELEGRAPH_SAFETY_TRUST_RESTRICTED` with the restriction's
+  sentence; only a block stays redacted as not-a-member.
+- Pre-existing, unchanged, named: the TEXT door's burst limit runs before its block, E2EE and
+  restriction checks (`artifacts/api-server/src/routes/messaging.ts:2736#const decision = await checkSendRateLimit(limiterSc, user.id);`),
+  so a send those refuse still spends allowance there; and NEED_HELP through
+  `POST /threads/:id/coordination` is counted in the ORDINARY bucket.
+
+### 45b.6 Rows examined and not moved
+
+T419 (gradual outreach: the restriction now reaches every send door, but the new-account half is
+the request step's and Nearby is dark), T418, T328, T279 (rate tiers unchanged). T207 is lane T1's.
+
+## §45c — TELEGRAPH lane T2, wave 3 (2026-10-06): the independent verification of `9920f0c83d` — three defects fixed, five rows back to W, and §45's overstatements corrected
+
+The verifier's verdict on §45 was ACCEPT WITH REQUIRED FIXES. This section is append-only: §45's
+rows stand as written, and every correction is restated here. **All evidence is CONTROLLED**
+(in-process suites over the certification harness, jest component tests, mutations). No
+migration, no flag, no database.
+
+### 45c.1 Confirmed defects, fixed
+
+| # | Defect | Fix | Test (red before the fix) |
+| --- | --- | --- | --- |
+| 1 | **Privacy leak this branch introduced.** The POST share projection's byline (`loadPost`'s `profiles.handle` read) showed a blocker's handle to the person they blocked, and named a suspended author; any thread member can request any post id through `POST /threads/:id/share-projections` on the service client. | A block EITHER WAY refuses the post — the post routes' own bidirectional rule — and an unreadable block read is `unknown` (`artifacts/api-server/src/services/telegraph/shareables.ts:280#if (!mine && typeof r.author_id === "string") {`); the byline names only an ACTIVE account. The post itself is now refused to a blocked viewer: the share door was the one place that served it. | `artifacts/api-server/src/test/telegraphPostProjectionByline.test.ts:98#describe("verifier finding 1` — 4 of 6 red on the old loader |
+| 2 | With 3761's flag ON, a failed flag read served the diagnostics with no durable audit row (`isFlagEnabled` answers false on an error; this flag's ON is the stricter path). | The flag is read in three states and `unknown` refuses 503 (`artifacts/api-server/src/routes/telegraphDiagnostics.ts:102#const auditFlag = await readFlagState(`; `artifacts/api-server/src/lib/featureFlags.ts:202#export async function readFlagState(`). | `artifacts/api-server/src/test/telegraphDiagnosticsDurableAudit.test.ts:101#describe("verifier finding 2` — both red on the old route |
+| 3 | `PATCH /threads/:id/mute` (the header icon on both conversation screens) wrote `muted_at` alone: with 3760's flag ON, MUTED in the sheet then "unmute" on the icon answered `muted:false` while `notification_level='muted'` stayed (GET said MUTED, the mention arrived 0 times), and a temporary mute was never cleared. | The toggle writes MUTED / ALL through the one choice writer and answers the read-back (`artifacts/api-server/src/routes/messaging.ts:4089#const written = await writeThreadNotificationChoice(`); line-neutral. **This had to be true before `telegraph_thread_notification_policy_enabled` can ever be turned on; it now is.** Same class as #2 in the same module: an unreadable levels flag is a failed read (GET 503, PUT/PATCH refused, dispatch withholds), not OFF. | `artifacts/api-server/src/test/telegraphThreadNotificationPolicy.test.ts:323#describe("verifier finding 3` — 3 red on the old route, 1 on the old flag reader |
+| 8 | The DM header read `profiles` directly and drew `name` whatever the person's `show_real_name` choice (pre-existing, on this lane's screen). | `GET /threads/:id/conversation-header` carries each other participant's identity as the server presents it — handle, avatar, name only under `show_real_name`, a failed privacy read hides the name (`artifacts/api-server/src/routes/telegraphSharedContext.ts:228#identity: { handle: string`) — and the screen uses it. The header's city went with the raw read: no server identity projection carries it. Neither conversation screen has a raw `.from(` left. | `artifacts/api-server/src/test/telegraphConversationHeaderIdentity.test.ts:68#describe("T295 — the DM header identity` |
+
+### 45c.2 Rows that move
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T448 | C | **W** | The row (line 1103) is "Canonical operational state always outranks historical conversation text"; §45 graded a different sentence (§30A.20). Historical card text is still served AS CURRENT by three doors: the Compass tool `getSharedPlaces` (`artifacts/api-server/src/compass/TelegraphConversationTools.ts:390#export async function telegraphGetSharedPlaces(` — titles and summaries from `discovery_card` / `hidden_gem` / `meeting_point` bodies, no re-resolution), thread search (`artifacts/api-server/src/services/telegraphSearch.ts:242#const { text, objectTitle } = indexableText(row.body, subtype);`), and `GET /threads/:id/messages` (the full snapshot body, `artifacts/api-server/src/routes/messaging.ts:2259#router.get('/threads/:threadId/messages'`). T411's booking card is a fourth: markup over a frozen payload. |
+| T366 | C | **W** | **A tripwire with stated holes**, not a proof. `conversationMemoryBoundary.ts` recognises only a literal `.rpc("…")`, and the memory kernel is called as `sc.rpc(fn, …)` (`artifacts/api-server/src/lib/memoryCommandBus.ts:649#sc.rpc(fn, { p_command })`): a handler that reads `.from("messages")` and calls `executeMemoryCommand(sc, { commandType: "CREATE_MEMORY" })` stays green, so does `const HISTORY = "messages"; sc.from(HISTORY)`, and the mobile app is not scanned at all. The behaviour (no automatic Memory from conversation history) is still true of the tree; what is not true is that the guard would catch the next writer. |
+| T408 | C | **W** | A deny-list a paraphrase gets past is not C: "Screenshots aren't allowed in this chat" and "Screen capture is disabled for this conversation" pass, and an Expo config plugin injecting `FLAG_SECURE` would sit outside the scan (`src/` and `app/` `.ts`/`.tsx` only; `plugins/`, `app.json`, `.js` and server templates are not read). Still true of the tree that no detection exists; C needs a structural proof over the native config and the screen components. |
+| T295 | C | **W** | §45's evidence was right about the six messaging tables and wrong about the screen: the DM header read `profiles` directly (`name, handle, avatar_url, city`) and skipped the server's name rule — a leak, fixed above (45c.1 #8). **Still W:** one decorative raw read remains on the conversation surface, `useReaderAvatars` (`profiles.avatar_url` for reader chips), and the ratchet counts only the six messaging tables. §45's citation for "an unknown E2EE state withholds the edit affordance" named `offersPlanControl`; the rule is `travel-buddy-standalone/src/features/telegraph/conversation/conversationProjection.ts:69#export function treatAsE2eeForEdit(`. |
+| T264 | C | **W** | Re-read: the share card (a live EVENT reference) and live status (the rail's HAPPENING NOW / STARTING SOON bands) hold. **Timing changes do not:** a moved start is detected only between two fetches while the rail stays mounted (`travel-buddy-standalone/src/features/telegraph/sharedContext/railBehavior.ts:66#export function detectCriticalChanges(`, which returns nothing on a first load), so a change made while the member was away is never shown. "Attendance" is only mutual co-attendance, and the cited test asserts a relationship label. |
+
+### 45c.3 Corrections to §45 that move no row
+
+- **F-12 back to divergent; certification `adversarialFixtures` 4 → 5, on the lead's instruction.**
+  `useShareRevocation` resolves once per mount, with no refresh and no revocation event, so a
+  source revoked WHILE the conversation is open — F-12's scenario — keeps its drawn projection and
+  actions until the card remounts. The fixture pins that outcome and goes red when a mounted card
+  can hear a revocation (`artifacts/api-server/src/test/telegraphAdversarialFixtures.test.ts:731#DIVERGENT: the resolve runs once per mount`).
+  RLS-08 (T318, `rlsMatrix` 4 → 3) is unchanged — the verifier held it. T339 stays C: it grades
+  that the fixture exists. This restores a count lane T2 had lowered on an overstatement; it is
+  not a reclassification to avoid a fix.
+- **T416's "most recent readers"** is now pinned: the sample must equal the twenty most recent
+  `last_read_at` values (`artifacts/api-server/src/test/telegraphTransportClasses.test.ts:218#the sample is not the most recent readers`);
+  `readers.slice(-20)` passed the old sort-only assertion.
+- **T416's "unchanged bounds" was wrong in one respect.** The numbers are unchanged (50 / 500), but
+  the count they are compared with is now the ACTIVE ROSTER INCLUDING THE SENDER
+  (`artifacts/api-server/src/lib/telegraphEvents.ts:673#const strategy = strategyForAudience((data ?? []).length);`),
+  where it used to be the audience after excluding the sender: a thread of 50 recipients plus the
+  sender now sheds presence where it used to fan it out. Deliberate — it is the transport class's
+  own key (SMALL_GROUP_MAX = 50 members) — and stated here instead of "unchanged".
+- **T411's legacy Save.** §45 said a pre-§5 card's Save goes "through the server's own
+  capability-checked discovery-card command". Only with `telegraph_discovery_actions_enabled` ON;
+  with it OFF (the seed) the card falls back to lane C's `toggleSave` bookmark on the card's stored
+  fields, with no server check behind it (census-discovery A21, case C1). The fallback is kept; the
+  rationale in `legacyCardView.ts` now says what it is.
+- **T413's requirement, quoted.** The row (line 1068) is "Do not permanently render Going / Joined /
+  Booked / Paid from optimistic UI alone"; §45 restated it as a share-card rule. The evidence meets
+  the real text because no state of that kind is drawn from client assumption: RSVP is server-backed
+  and re-read (`meetup_invites.status`), Save round-trips and reports what the server did, and the
+  legacy cards no longer render any state from the sender's snapshot — they draw the server's
+  current projection or the reference alone. T413 stays C on that reading.
+- **§10's failed-resolve rule is superseded on one point.** §10 says a card in the `unknown` state
+  "renders exactly as it did before §5 existed". For the two legacy cards with a resolvable source,
+  a failed resolve now draws the reference only — kind, caption, a way to open it — and never the
+  sender's snapshot, because a failed resolve is exactly when a revoked post would otherwise be
+  shown in full. Accepted by the lead on 2026-10-06. A card with no resolvable source (`legacy`
+  mode) still renders as before.
+- **§45.3's note on census line 896** is corrected in §45b.4.
+
+### 45c.4 Owner decisions to confirm (none is assumed decided)
+
+1. **OD-TRUST-5's mapping** (§45b.2): `messaging` refuses only an initiating send; the other three
+   types refuse no send.
+2. **IMPORTANT** (§30A.6) is lane T2's reading: every cause except an ordinary message — mentions,
+   plan changes, invitations, coordination, location, calls, safety
+   (`artifacts/api-server/src/domain/telegraph/policies/threadNotificationPolicy.ts:58#export const IMPORTANT_CAUSES`).
+   To be confirmed before `telegraph_thread_notification_policy_enabled` is turned on.
+3. **A block under an unreadable restriction state** (§45b.3): today it is refused (500).
+
+### 45c.5 Net effect of this section, rows only
+
+Five rows move down from C to W (T448, T366, T408, T295, T264). None moves up. §1's headline is
+restated from the rows of THIS tree; other lanes' unmerged sections are not in it.
+
+| Bucket | Count, this tree, after §45c |
+| --- | --- |
+| BUILT-AND-CORRECT | **250** |
+| BUILT-BUT-WRONG | **178** |
 | NOT-BUILT | **21** |
 | CANNOT-VERIFY | **2** |
