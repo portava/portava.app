@@ -36,6 +36,10 @@ import {
   type RelationshipLabel,
 } from "../services/interactionPermissions.js";
 import { nameVisibilitySet } from "../lib/publicIdentity.js";
+// census-compass CT-02 — "stop duplicating Trip semantics". `activeContexts`
+// used to re-derive the membership union with its own role list; it now takes
+// it from the ONE seam, where that role list is a named constant.
+import { resolveMemberTripIds, SOCIAL_CONTEXT_TRIP_ROLES } from "./CompassCurrentTrip.js";
 import { wrapUgc } from "./CompassStructuredContext.js";
 // The ONE place a date of birth becomes an age a gate may act on. This file
 // used to carry its own `ageFromDob()` and is the ninth gate that copy fed;
@@ -357,73 +361,120 @@ export interface WhosAroundEntry {
 
 interface ContextRef { type: ContextType; id: string; title: string }
 
-async function activeContexts(sc: SupabaseClient, userId: string): Promise<ContextRef[]> {
+/**
+ * The contexts the viewer is in, and — separately — the ones that could not be
+ * READ.
+ *
+ * census-compass CT-02. This function used to bind no `error` on either trip
+ * read and swallow everything in a `catch { /* non-fatal *\/ }`. An unreadable
+ * `trip_members` therefore produced zero contexts, `contextsChecked` came out
+ * 0, and `toolGetWhosAround` answered with the sentence it reserves for a
+ * traveller who is on nothing at all:
+ *
+ *     "The user has no active trips or upcoming events with a circle to check."
+ *
+ * The assistant repeats that to someone standing in Lisbon with four people on
+ * their trip. It is the same defect `CompassCurrentTrip.ts`'s header describes
+ * for the selection reads, surviving in a module that lane did not own, and the
+ * `try/catch` could never have caught it: supabase-js RESOLVES `{data, error}`
+ * on a database error, so nothing was ever thrown.
+ *
+ * `unread` names the source rather than a count, so the caller can say which
+ * half of the answer is missing instead of implying the whole of it.
+ */
+interface ActiveContexts { contexts: ContextRef[]; unread: string[] }
+
+async function activeContexts(sc: SupabaseClient, userId: string): Promise<ActiveContexts> {
   const out: ContextRef[] = [];
+  const unread: string[] = [];
   try {
-    const { data: memberRows } = await sc
-      .from("trip_members")
-      .select("trip_id, role, status")
-      .eq("user_id", userId)
-      .in("role", ["owner", "co_host", "member", "viewer"]);
-    const tripIds = ((memberRows ?? []) as any[])
-      .filter((r) => r.status == null || r.status === "accepted")
-      .map((r) => r.trip_id as string);
-    if (tripIds.length > 0) {
-      const { data: trips } = await sc
+    const membership = await resolveMemberTripIds(sc, userId, {
+      // CT-02: the membership union comes from the ONE seam, with THIS
+      // surface's wider role list named there rather than inlined here.
+      roles: SOCIAL_CONTEXT_TRIP_ROLES,
+      acceptedOnly: true,
+    });
+    if (membership.status === "unread") {
+      unread.push("trip_members");
+    } else if (membership.tripIds.length > 0) {
+      const { data: trips, error: tripsErr } = await sc
         .from("trips")
         .select("id, title, destination_city, status")
-        .in("id", tripIds)
+        .in("id", membership.tripIds)
         .in("status", ["active", "upcoming"]);
-      for (const t of ((trips ?? []) as any[]).slice(0, 3)) {
+      if (tripsErr) unread.push("trips");
+      else for (const t of ((trips ?? []) as any[]).slice(0, 3)) {
         out.push({ type: "trip", id: t.id, title: String(t.title ?? t.destination_city ?? "Trip") });
       }
     }
-  } catch { /* non-fatal */ }
+  } catch { unread.push("trip_members"); }
   try {
     const cutoff = new Date(Date.now() - 6 * 3600_000).toISOString();
-    const { data: rsvps } = await sc
+    const { data: rsvps, error: rsvpErr } = await sc
       .from("event_rsvps")
       .select("event_id, status")
       .eq("user_id", userId)
       .eq("status", "going");
-    const eventIds = ((rsvps ?? []) as any[]).map((r) => r.event_id as string);
-    if (eventIds.length > 0) {
-      const { data: events } = await sc
-        .from("events")
-        .select("id, title, starts_at")
-        .in("id", eventIds)
-        .gte("starts_at", cutoff)
-        .order("starts_at", { ascending: true })
-        .limit(3);
-      for (const e of (events ?? []) as any[]) {
-        out.push({ type: "event", id: e.id, title: String(e.title ?? "Event") });
+    if (rsvpErr) unread.push("event_rsvps");
+    else {
+      const eventIds = ((rsvps ?? []) as any[]).map((r) => r.event_id as string);
+      if (eventIds.length > 0) {
+        const { data: events, error: eventsErr } = await sc
+          .from("events")
+          .select("id, title, starts_at")
+          .in("id", eventIds)
+          .gte("starts_at", cutoff)
+          .order("starts_at", { ascending: true })
+          .limit(3);
+        if (eventsErr) unread.push("events");
+        else for (const e of (events ?? []) as any[]) {
+          out.push({ type: "event", id: e.id, title: String(e.title ?? "Event") });
+        }
       }
     }
-  } catch { /* non-fatal */ }
-  return out.slice(0, 5);
+  } catch { unread.push("event_rsvps"); }
+  return { contexts: out.slice(0, 5), unread };
 }
+
+/**
+ * The roster of a context — three-valued, because an empty roster and an
+ * unreadable one lead to opposite sentences.
+ *
+ * `collectPresence` skipped a context whose roster threw. A roster that came
+ * back `{ data: null, error }` did not throw: it became `[]`, `targets.length
+ * === 0`, and the context was skipped just the same — but it had been COUNTED
+ * in `contextsChecked`, so the answer was "nobody in your circles is sharing"
+ * rather than "we could not read who is on this trip". Narrowing a roster is
+ * safe for disclosure and wrong as an answer, and CT-02 is about the second.
+ */
+type ContextRoster = { status: "ok"; memberIds: string[] } | { status: "unread" };
 
 async function contextMemberIds(
   sc: SupabaseClient,
   ctx: ContextRef,
-): Promise<string[]> {
+): Promise<ContextRoster> {
   if (ctx.type === "trip") {
-    const { data } = await sc
+    const { data, error } = await sc
       .from("trip_members")
       .select("user_id, role, status")
       .eq("trip_id", ctx.id)
-      .in("role", ["owner", "co_host", "member", "viewer"]);
-    return ((data ?? []) as any[])
-      .filter((r) => r.status == null || r.status === "accepted")
-      .map((r) => r.user_id as string);
+      .in("role", SOCIAL_CONTEXT_TRIP_ROLES as unknown as string[]);
+    if (error) return { status: "unread" };
+    return {
+      status: "ok",
+      memberIds: ((data ?? []) as any[])
+        .filter((r) => r.status == null || r.status === "accepted")
+        .map((r) => r.user_id as string),
+    };
   }
   const [rsvpResult, attendeeResult] = await Promise.all([
     sc.from("event_rsvps").select("user_id").eq("event_id", ctx.id).eq("status", "going"),
     sc.from("event_attendees").select("user_id").eq("event_id", ctx.id),
   ]);
+  if ((rsvpResult as any).error || (attendeeResult as any).error) return { status: "unread" };
   const going = new Set(((rsvpResult.data ?? []) as any[]).map((r) => r.user_id as string));
   const att = new Set(((attendeeResult.data ?? []) as any[]).map((r) => r.user_id as string));
-  return [...going].filter((id) => att.has(id));
+  return { status: "ok", memberIds: [...going].filter((id) => att.has(id)) };
 }
 
 /**
@@ -437,9 +488,9 @@ export async function getWhosAround(
   sc: SupabaseClient,
   viewerId: string,
   hidden: Set<string>,
-): Promise<{ people: WhosAroundEntry[]; contextsChecked: number }> {
-  const { found, contextsChecked } = await collectPresence(sc, viewerId, hidden);
-  return { people: found.map((f) => f.entry).slice(0, 20), contextsChecked };
+): Promise<{ people: WhosAroundEntry[]; contextsChecked: number; unreadSources: string[] }> {
+  const { found, contextsChecked, unreadSources } = await collectPresence(sc, viewerId, hidden);
+  return { people: found.map((f) => f.entry).slice(0, 20), contextsChecked, unreadSources };
 }
 
 /**
@@ -476,17 +527,24 @@ async function collectPresence(
   sc: SupabaseClient,
   viewerId: string,
   hidden: Set<string>,
-): Promise<{ found: PresenceFinding[]; contextsChecked: number }> {
-  const contexts = await activeContexts(sc, viewerId);
+): Promise<{ found: PresenceFinding[]; contextsChecked: number; unreadSources: string[] }> {
+  const { contexts, unread } = await activeContexts(sc, viewerId);
+  const unreadSources = [...unread];
   const found: PresenceFinding[] = [];
   const seenUsers = new Set<string>();
 
   for (const ctx of contexts) {
-    let memberIds: string[] = [];
+    let roster: ContextRoster;
     try {
-      memberIds = await contextMemberIds(sc, ctx);
-    } catch { continue; }
-    const targets = memberIds
+      roster = await contextMemberIds(sc, ctx);
+    } catch { roster = { status: "unread" }; }
+    if (roster.status === "unread") {
+      // The context EXISTS and its roster does not; saying nothing about it is
+      // what made "nobody is sharing" the answer to an unreadable table.
+      if (!unreadSources.includes("trip_members")) unreadSources.push("trip_members");
+      continue;
+    }
+    const targets = roster.memberIds
       .filter((id) => id !== viewerId && !hidden.has(id) && !seenUsers.has(id))
       .slice(0, 20);
     if (targets.length === 0) continue;
@@ -552,7 +610,7 @@ async function collectPresence(
     }
   }
 
-  return { found, contextsChecked: contexts.length };
+  return { found, contextsChecked: contexts.length, unreadSources };
 }
 
 // ── CT-12: presence → a meetup OPPORTUNITY ────────────────────────────────────
@@ -687,8 +745,8 @@ export async function getMeetupOpportunities(
   viewerId: string,
   hidden: Set<string>,
   opts: { nowMs?: number } = {},
-): Promise<{ opportunities: MeetupOpportunity[]; contextsChecked: number; withheldForPrivacy: number }> {
-  const { found, contextsChecked } = await collectPresence(sc, viewerId, hidden);
+): Promise<{ opportunities: MeetupOpportunity[]; contextsChecked: number; withheldForPrivacy: number; unreadSources: string[] }> {
+  const { found, contextsChecked, unreadSources } = await collectPresence(sc, viewerId, hidden);
   const nowMs = opts.nowMs ?? Date.now();
 
   // Group by context: the reciprocity guard is per-context, and one batched
@@ -728,7 +786,7 @@ export async function getMeetupOpportunities(
     }
   }
 
-  return { opportunities: opportunities.slice(0, 20), contextsChecked, withheldForPrivacy };
+  return { opportunities: opportunities.slice(0, 20), contextsChecked, withheldForPrivacy, unreadSources };
 }
 
 // ── Relationship gate for compatibility lookups ───────────────────────────────
