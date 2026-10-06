@@ -220,6 +220,11 @@ describe("projectMeetingPoint — what never renders", () => {
     assert.equal(skipReason({ location_is_private: true }), "private_location");
   });
 
+  it("OD-TRIP-3: an item whose privacy flag is NULL or was not read is private too (the column defaults TRUE)", () => {
+    assert.equal(skipReason({ location_is_private: null }), "private_location");
+    assert.equal(skipReason({ location_is_private: undefined }), "private_location");
+  });
+
   it("removed, cancelled, uncoordinated and non-meeting items", () => {
     assert.equal(skipReason({ removed_at: iso(-1) }), "removed");
     assert.equal(skipReason({ status: "cancelled" }), "cancelled");
