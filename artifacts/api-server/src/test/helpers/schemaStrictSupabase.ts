@@ -115,8 +115,20 @@ function pgrst116(n: number) {
 /** Split a PostgREST select list into bare column names. */
 export function selectedColumns(select: string): string[] {
   if (!select || select.trim() === "*") return [];
-  return select
-    .split(",")
+  // Split on TOP-LEVEL commas only: a plain split cut `rel!fk(a, b)` in two and
+  // let `b)` through as a column of THIS table (the auth gate's embedded
+  // user_account_states read, lib/accountStateGate.ts, was the first to do it).
+  const parts: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of select) {
+    if (ch === "(") depth++;
+    if (ch === ")") depth--;
+    if (ch === "," && depth === 0) { parts.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  parts.push(cur);
+  return parts
     .map((part) => part.trim())
     // drop embedded resources — `stamp_definitions(name)` names a relation,
     // not a column of this table, and its inner names belong to that relation.

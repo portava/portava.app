@@ -119,7 +119,7 @@ function makeFakeClient(opts: {
         return b;
       },
       update:      (data: any) => { captureUpdates.push({ table, data }); _rows = _rows.map((r: any) => ({ ...r, ...data })); return b; },
-      upsert:      (data: any) => { _rows = Array.isArray(data) ? data : [data]; return b; },
+      upsert:      (data: any, opts?: any) => { captureUpdates.push({ table, data, op: "upsert", opts }); _rows = Array.isArray(data) ? data : [data]; return b; },
       delete:      () => { _rows = []; return b; },
       eq:          (_col: string, _val: any) => b,
       neq:         () => b,
@@ -171,6 +171,8 @@ function makeFakeClient(opts: {
       // mark the request completed.
       admin: {
         deleteUser: (_id: string) => Promise.resolve({ data: {}, error: null }),
+        // The ban / suspend / restore session lock (lib/accountModeration.ts).
+        updateUserById: (_id: string, _attrs: any) => Promise.resolve({ data: {}, error: null }),
       },
     },
   } as any;
@@ -278,42 +280,53 @@ describe("POST /admin/users/:userId/restrict", () => {
   });
 });
 
+// Since 2026-10-03 (owner decision) a ban / suspension is a user_account_states
+// row and NOTHING writes profiles.account_status for moderation: its CHECK admits
+// only active | deactivated | pending_deletion | deleted, so the 'suspended' /
+// 'banned' writes these tests used to expect were rejected 23514 in every real
+// database (the routes could never succeed). Restore revokes the row instead of
+// writing 'active' (which would also reactivate a deactivated account).
+// moderationAccountState.test.ts pins the full contract.
 describe("POST /admin/users/:userId/suspend", () => {
-  it("returns suspended: true and updates account_status", async () => {
+  it("returns suspended: true and writes the suspension row — not profiles.account_status", async () => {
     const updates: any[] = [];
     setClient([], updates);
     const { status, body } = await req("POST", `/admin/users/${TARGET_USER_ID}/suspend`, { reason: "tos violation", expires_at: null });
     assert.equal(status, 200);
     assert.equal(body.suspended, true);
-    const profileUpdate = updates.find((u) => u.table === "profiles");
-    assert.ok(profileUpdate, "should update profiles table");
-    assert.equal(profileUpdate.data.account_status, "suspended");
+    const row = updates.find((u) => u.table === "user_account_states" && u.op === "upsert");
+    assert.ok(row, "should write user_account_states");
+    assert.equal(row.data.state, "suspended");
+    assert.equal(row.data.expires_at, null);
+    assert.equal(updates.find((u) => u.table === "profiles" && "account_status" in (u.data ?? {})), undefined, "must not write profiles.account_status");
   });
 });
 
 describe("POST /admin/users/:userId/ban", () => {
-  it("returns banned: true and sets account_status=banned", async () => {
+  it("returns banned: true and writes the ban row — not profiles.account_status", async () => {
     const updates: any[] = [];
     setClient([], updates);
     const { status, body } = await req("POST", `/admin/users/${TARGET_USER_ID}/ban`, { reason: "egregious violation" });
     assert.equal(status, 200);
     assert.equal(body.banned, true);
-    const profileUpdate = updates.find((u) => u.table === "profiles");
-    assert.ok(profileUpdate, "should update profiles table");
-    assert.equal(profileUpdate.data.account_status, "banned");
+    const row = updates.find((u) => u.table === "user_account_states" && u.op === "upsert");
+    assert.ok(row, "should write user_account_states");
+    assert.equal(row.data.state, "banned");
+    assert.equal(updates.find((u) => u.table === "profiles" && "account_status" in (u.data ?? {})), undefined, "must not write profiles.account_status");
   });
 });
 
 describe("POST /admin/users/:userId/restore", () => {
-  it("returns restored: true and resets account_status=active", async () => {
+  it("returns restored: true and revokes the restriction rows — not a profiles.account_status write", async () => {
     const updates: any[] = [];
     setClient([], updates);
     const { status, body } = await req("POST", `/admin/users/${TARGET_USER_ID}/restore`, { reason: "appeal approved" });
     assert.equal(status, 200);
     assert.equal(body.restored, true);
-    const profileUpdate = updates.find((u) => u.table === "profiles");
-    assert.ok(profileUpdate, "should update profiles table");
-    assert.equal(profileUpdate.data.account_status, "active");
+    const revoke = updates.find((u) => u.table === "user_account_states" && u.op !== "upsert");
+    assert.ok(revoke, "should update user_account_states");
+    assert.ok(typeof revoke.data.expires_at === "string", "revocation sets expires_at to now");
+    assert.equal(updates.find((u) => u.table === "profiles" && "account_status" in (u.data ?? {})), undefined, "must not write profiles.account_status");
   });
 });
 

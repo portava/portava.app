@@ -869,11 +869,11 @@ portava-ci and never on production.
 **(a) The anonymous path — built end to end, proven on the database, reached by nothing until the owner decides.**
 `lib/sensingAuthPosture.ts:45#undecided` is the owner's switch (it read `undecided` when this was written; **it reads `anonymous_capable` since 2026-09-16 — see §17**) and
 `lib/sensingAuthPosture.ts:118#sensingEligibility(` refuses every caller while
-it reads that; `test/sensingAnonStore.test.ts:626#route` asserts no route
+it reads that; `test/sensingAnonStore.test.ts:637#route` asserts no route
 touches the store — **superseded 2026-09-25**: that assertion is now a preserved
 QUOTATION in the file's own header, and what the suite asserts in its place is the
 stronger property that EXACTLY ONE route reaches the store and it is the registered
-ingest route (`test/sensingAnonStore.test.ts:688#exactly`; §27.3 re-aimed it when the session issuer became the one other route importing a store module, for pure helpers only — the case now asserts exactly one route WRITES), which zero also fails. So: **S18** (rotating identifiers, N → W): the derivation
+ingest route (`test/sensingAnonStore.test.ts:699#exactly`; §27.3 re-aimed it when the session issuer became the one other route importing a store module, for pure helpers only — the case now asserts exactly one route WRITES), which zero also fails. So: **S18** (rotating identifiers, N → W): the derivation
 exists at two layers and is executed on the database; no writer is registered.
 **S20** (eligibility separated from ingest; opaque credential, N → W): the
 separation is code — eligibility in one module, the credential in another

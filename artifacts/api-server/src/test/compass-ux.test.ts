@@ -1458,3 +1458,507 @@ function emptyTables(
     ...overrides,
   };
 }
+
+// ── CompassAbuseDefenseEngine — catch-up after a suspended process ────────────
+//
+// The scheduler runs hourly on Replit autoscale, which suspends the container
+// after fifteen idle minutes. Three detectors scanned windows no wider than
+// that gap (geotag_farming ONE HOUR on a one-hour timer, hashtag_spam and
+// available_now_abuse 24 h), so abuse committed inside a tick that never
+// happened was outside every later window and was evaluated by NO scan, ever:
+// no flag, no reach reduction, no compass_suspension_requests row, and no
+// trace that anything had been skipped.
+//
+// These tests assert the resulting STATE of the scan — the `since` each
+// detector actually sent to the database, the flags that landed, and whether a
+// watermark was advanced — rather than that runScan resolved
+// (CONTRIBUTING.md:33-66). The window-recording fake exists for that: the
+// shared makeFakeDb above treats `.gte()` as a no-op, which cannot tell a
+// one-hour window from a 54-hour one.
+
+const WM_NOW   = new Date("2026-03-15T12:00:00.000Z");
+import { COMMIT_LAG_MS } from "../lib/schedulerWatermark.js";
+
+const WM_HOUR  = 60 * 60 * 1_000;
+const JOB_GEO   = "compass_abuse_geotag_farming";
+const JOB_HASH  = "compass_abuse_hashtag_spam";
+const JOB_AVAIL = "compass_abuse_available_now_abuse";
+
+/** An ISO timestamp this many hours before WM_NOW. */
+function wmAgo(hours: number): string {
+  return new Date(WM_NOW.getTime() - hours * WM_HOUR).toISOString();
+}
+
+interface WindowRead { table: string; since: string | null; until: string | null }
+
+/**
+ * A fake client that HONOURS `.gte()`/`.lte()` on created_at and records every
+ * window it was asked for. Without that, a detector could be handed a 54-hour
+ * window and still be tested as if it had scanned one hour.
+ */
+function makeWindowDb(opts: {
+  tables?:      Record<string, Record<string, unknown>[]>;
+  failTables?:  Set<string>;
+  failWrites?:  Set<string>;
+} = {}) {
+  const tables     = opts.tables ?? {};
+  const failTables = opts.failTables ?? new Set<string>();
+  const failWrites = opts.failWrites ?? new Set<string>();
+  const windows: WindowRead[] = [];
+
+  function builder(table: string) {
+    const eqs: Record<string, unknown>  = {};
+    const ins: Record<string, unknown[]> = {};
+    let since: string | null = null;
+    let until: string | null = null;
+
+    const b: any = {
+      select()                             { return b; },
+      eq(k: string, v: unknown)            { eqs[k] = v; return b; },
+      in(k: string, vs: unknown[])         { ins[k] = vs; return b; },
+      gte(k: string, v: string)            { if (k === "created_at") since = v; return b; },
+      lte(k: string, v: string)            { if (k === "created_at") until = v; return b; },
+      gt()                                 { return b; },
+      is()                                 { return b; },
+      or()                                 { return b; },
+      not()                                { return b; },
+      order()                              { return b; },
+      limit()                              { return b; },
+
+      async maybeSingle() {
+        const rows = (tables[table] ?? []).filter((r) =>
+          Object.entries(eqs).every(([k, v]) => r[k] === v),
+        );
+        return { data: rows[0] ?? null, error: null };
+      },
+
+      then(resolve?: (v: unknown) => unknown, reject?: (r: unknown) => unknown) {
+        windows.push({ table, since, until });
+        if (failTables.has(table)) {
+          return Promise.resolve({ data: null, error: { message: `permission denied for ${table}` } }).then(resolve, reject);
+        }
+        const rows = (tables[table] ?? []).filter((r) => {
+          for (const [k, v] of Object.entries(eqs)) if (r[k] !== v) return false;
+          for (const [k, vs] of Object.entries(ins)) if (!vs.includes(r[k])) return false;
+          // Rows with no created_at (posts, profiles) are not time-filtered —
+          // only the windowed reads carry a bound.
+          const raw = r["created_at"] as string | undefined;
+          if (raw) {
+            const ts = Date.parse(raw);
+            if (since !== null && ts < Date.parse(since)) return false;
+            if (until !== null && ts > Date.parse(until)) return false;
+          }
+          return true;
+        });
+        return Promise.resolve({ data: rows, count: rows.length, error: null }).then(resolve, reject);
+      },
+
+      async insert(row: unknown) {
+        if (failWrites.has(table)) return { data: null, error: { message: `insert denied for ${table}` } };
+        (tables[table] ??= []).push(row as Record<string, unknown>);
+        return { data: null, error: null };
+      },
+      async upsert(row: unknown) {
+        if (failWrites.has(table)) return { data: null, error: { message: `upsert denied for ${table}` } };
+        (tables[table] ??= []).push(row as Record<string, unknown>);
+        return { data: null, error: null };
+      },
+    };
+    return b;
+  }
+
+  const db = {
+    from: (table: string) => builder(table),
+    async rpc() { return { data: null, error: null }; },
+  } as any;
+
+  return { db, windows, tables };
+}
+
+/** Injected watermark store, so these tests need no scheduler_watermarks table. */
+function makeWatermarkPorts(
+  initial: Record<string, Date> = {},
+  opts: { failRead?: Set<string>; failCommit?: Set<string> } = {},
+) {
+  const store   = new Map<string, Date>(Object.entries(initial));
+  const reads: string[] = [];
+  const commits: Array<{ job: string; through: Date }> = [];
+  const ports = {
+    async read(_db: any, job: string) {
+      reads.push(job);
+      if (opts.failRead?.has(job)) return { at: null, ok: false };   // a REFUSAL, not an absence
+      return { at: store.get(job) ?? null, ok: true };
+    },
+    async commit(_db: any, job: string, through: Date) {
+      commits.push({ job, through });
+      if (opts.failCommit?.has(job)) return false;
+      store.set(job, through);
+      return true;
+    },
+  };
+  return { ports, store, reads, commits };
+}
+
+/**
+ * The distinct lookbacks a table was read with, in whole hours, measured from
+ * `anchorMs`. For the wide detectors, which were left on the real clock.
+ */
+function lookbackHours(windows: WindowRead[], table: string, anchorMs: number): number[] {
+  return [...new Set(
+    sincesFor(windows, table).map((s) => Math.round((anchorMs - Date.parse(s!)) / WM_HOUR)),
+  )].sort((a, b) => a - b);
+}
+
+/** Every `since` a table was read with, in call order. */
+function sincesFor(windows: WindowRead[], table: string): Array<string | null> {
+  return windows.filter((w) => w.table === table).map((w) => w.since);
+}
+
+/**
+ * Abuse inside a 54-hour gap, placed so that each burst is dense enough to
+ * meet its detector's threshold INSIDE that detector's calibrated window —
+ * a real burst, not a quiet trickle that only adds up across the catch-up.
+ */
+function gapAbuseFixtures(): Record<string, Record<string, unknown>[]> {
+  const stamps: Record<string, unknown>[] = [];
+  for (let i = 0; i < 16; i++) {                       // 16 > GEOTAG_FARM_MIN, all within ~15 min
+    stamps.push({ user_id: "farmer-1", created_at: wmAgo(30 - i * 0.01) });
+  }
+  const usage: Record<string, unknown>[] = [];
+  const posts: Record<string, unknown>[] = [];
+  for (let i = 0; i < 21; i++) {                       // 21 > HASHTAG_SPAM_MIN, within ~2 h
+    usage.push({ hashtag_id: "tag-spam", source_id: `spam-post-${i}`, source_type: "post", created_at: wmAgo(40 - i * 0.1) });
+    posts.push({ id: `spam-post-${i}`, author_id: "spammer-1" });
+  }
+  const toggles: Record<string, unknown>[] = [];
+  for (let i = 0; i < 21; i++) {                       // 21 > AVAILABLE_TOGGLE_MIN, within ~1 h
+    toggles.push({ user_id: "toggler-1", event_type: "availability_toggle", created_at: wmAgo(45 - i * 0.05) });
+  }
+  return emptyTables({
+    passport_stamps:            stamps,
+    hashtag_usage:              usage,
+    posts,
+    compass_active_user_events: toggles,
+  });
+}
+
+describe("CompassAbuseDefenseEngine — a suspended hour is scanned late, not never", () => {
+  it("54-hour gap: abuse inside the gap IS scanned, and all three watermarks advance to `through`", async () => {
+    const tables = gapAbuseFixtures();
+    const { db, windows } = makeWindowDb({ tables });
+    const { ports, commits, store } = makeWatermarkPorts({
+      [JOB_GEO]:   new Date(WM_NOW.getTime() - 54 * WM_HOUR),
+      [JOB_HASH]:  new Date(WM_NOW.getTime() - 54 * WM_HOUR),
+      [JOB_AVAIL]: new Date(WM_NOW.getTime() - 54 * WM_HOUR),
+    });
+
+    const result = await runScan(db, null, { now: WM_NOW, watermarks: ports });
+
+    // The windows actually sent to the database resume from the watermark.
+    assert.equal(sincesFor(windows, "passport_stamps")[0], wmAgo(54), "geotag_farming must resume from its watermark, not from now-1h");
+    assert.equal(sincesFor(windows, "hashtag_usage")[0], wmAgo(54));
+    assert.equal(sincesFor(windows, "compass_active_user_events")[0], wmAgo(54));
+
+    // And the abuse in the gap is evaluated — the state that was missing.
+    const flags = tables["compass_abuse_flags"] ?? [];
+    const kinds = flags.map((f) => f["pattern_type"]).sort();
+    assert.deepEqual(kinds, ["available_now_abuse", "geotag_farming", "hashtag_spam"], `got ${JSON.stringify(kinds)}`);
+    const geo = flags.find((f) => f["pattern_type"] === "geotag_farming")!;
+    assert.deepEqual(geo["involved_users"], ["farmer-1"]);
+    assert.equal((geo["evidence"] as any).stamp_count, 16, "the peak hour inside the gap, not the 54-hour total");
+    assert.equal((geo["evidence"] as any).catchup_scan, true);
+    assert.equal(result.status, "ok");
+    assert.equal(result.flagsWritten, 3);
+    assert.deepEqual(result.watermarkFailures, []);
+
+    // Reach reduction really happened for the gap abuse (geotag is `high`).
+    const cooldowns = (tables["compass_visibility_cooldowns"] ?? []).map((c) => c["author_id"]);
+    assert.ok(cooldowns.includes("farmer-1"), `expected a reach reduction for farmer-1; got ${JSON.stringify(cooldowns)}`);
+
+    // All three advanced, to the pass's `through` and not to a fresh clock.
+    assert.deepEqual(commits.map((c) => c.job).sort(), [JOB_AVAIL, JOB_GEO, JOB_HASH]);
+    // `through` trails the pass's clock by the shared COMMIT_LAG_MS, so a row
+    // written during the pass — or inside any skew between this container's
+    // clock and the database's — is re-read next pass rather than declared
+    // covered. What matters here is that it is the PASS's instant and not a
+    // fresh clock read taken at commit time.
+    const expectedThrough = new Date(WM_NOW.getTime() - COMMIT_LAG_MS).toISOString();
+    for (const c of commits) assert.equal(c.through.toISOString(), expectedThrough);
+    assert.equal(store.get(JOB_GEO)!.toISOString(), expectedThrough);
+  });
+
+  it("a failed watermark READ does not widen the window and commits nothing", async () => {
+    // `{ ok: false }` is a refusal, not `{ at: null, ok: true }`. Falling back
+    // to the calibrated lookback and committing nothing is what keeps a
+    // transient DB error from either resetting or advancing coverage.
+    const tables = gapAbuseFixtures();
+    const { db, windows } = makeWindowDb({ tables });
+    const { ports, commits } = makeWatermarkPorts(
+      {
+        [JOB_GEO]:   new Date(WM_NOW.getTime() - 54 * WM_HOUR),
+        [JOB_HASH]:  new Date(WM_NOW.getTime() - 54 * WM_HOUR),
+        [JOB_AVAIL]: new Date(WM_NOW.getTime() - 54 * WM_HOUR),
+      },
+      { failRead: new Set([JOB_GEO, JOB_HASH, JOB_AVAIL]) },
+    );
+
+    const result = await runScan(db, null, { now: WM_NOW, watermarks: ports });
+
+    assert.equal(sincesFor(windows, "passport_stamps")[0], wmAgo(1), "an unreadable watermark must leave the 1-hour lookback alone");
+    assert.equal(sincesFor(windows, "hashtag_usage")[0], wmAgo(24));
+    assert.equal(sincesFor(windows, "compass_active_user_events")[0], wmAgo(24));
+    assert.deepEqual(commits, [], "nothing may be advanced on a watermark this process could not read");
+    assert.deepEqual(tables["compass_abuse_flags"], [], "the gap abuse is outside the calibrated windows — unchanged old behaviour");
+    assert.equal(result.flagsWritten, 0);
+    // Said out loud: the detectors measured their own windows (status ok), but
+    // the missed time was not recovered on this pass.
+    assert.equal(result.status, "ok");
+    assert.equal(result.watermarkFailures.length, 3);
+    assert.deepEqual([...new Set(result.watermarkFailures.map((f) => f.phase))], ["read"]);
+  });
+
+  it("the catch-up cap bounds the window, and what it leaves out is left out", async () => {
+    const stamps: Record<string, unknown>[] = [];
+    for (let i = 0; i < 20; i++) stamps.push({ user_id: "old-farmer",   created_at: wmAgo(100 - i * 0.01) }); // before the 72 h cap
+    for (let i = 0; i < 20; i++) stamps.push({ user_id: "recent-farmer", created_at: wmAgo(50 - i * 0.01) }); // inside it
+    const tables = emptyTables({ passport_stamps: stamps });
+    const { db, windows } = makeWindowDb({ tables });
+    const stale = new Date(WM_NOW.getTime() - 30 * 24 * WM_HOUR); // a month-old watermark
+    const { ports } = makeWatermarkPorts({ [JOB_GEO]: stale, [JOB_HASH]: stale, [JOB_AVAIL]: stale });
+
+    await runScan(db, null, { now: WM_NOW, watermarks: ports });
+
+    assert.equal(sincesFor(windows, "passport_stamps")[0], wmAgo(72),  "geotag catch-up is capped at 72 h");
+    assert.equal(sincesFor(windows, "hashtag_usage")[0], wmAgo(168),   "hashtag_spam catch-up is capped at 7 days");
+    assert.equal(sincesFor(windows, "compass_active_user_events")[0], wmAgo(72));
+
+    const flags  = tables["compass_abuse_flags"] ?? [];
+    const farmed = flags.flatMap((f) => f["involved_users"] as string[]);
+    assert.ok(farmed.includes("recent-farmer"), "abuse inside the cap is flagged");
+    assert.ok(!farmed.includes("old-farmer"), "abuse older than the cap is NOT evaluated — the admitted cost of capping");
+    assert.equal((flags[0]!["evidence"] as any).catchup_capped, true, "a capped pass must say so in its own evidence");
+  });
+
+  it("a failed detector does not advance ITS watermark, and does not hold back the others", async () => {
+    // Why one job key per detector: the detectors run under
+    // Promise.allSettled, so a shared key would be advanced by hashtag_spam's
+    // success over the window geotag_farming could not read.
+    const tables = gapAbuseFixtures();
+    const { db } = makeWindowDb({ tables, failTables: new Set(["passport_stamps"]) });
+    const { ports, commits, store } = makeWatermarkPorts({
+      [JOB_GEO]:   new Date(WM_NOW.getTime() - 54 * WM_HOUR),
+      [JOB_HASH]:  new Date(WM_NOW.getTime() - 54 * WM_HOUR),
+      [JOB_AVAIL]: new Date(WM_NOW.getTime() - 54 * WM_HOUR),
+    });
+
+    const result = await runScan(db, null, { now: WM_NOW, watermarks: ports });
+
+    assert.equal(result.status, "incomplete");
+    assert.ok(result.failedDetectors.some((f) => f.detector === "geotag_farming"));
+    assert.ok(!commits.some((c) => c.job === JOB_GEO), "an unread window must not be marked scanned");
+    assert.equal(store.get(JOB_GEO)!.toISOString(), wmAgo(54), "the mark stays where it was, so the next pass re-covers it");
+    assert.deepEqual(commits.map((c) => c.job).sort(), [JOB_AVAIL, JOB_HASH], "the detectors that DID complete still advance");
+  });
+
+  it("a flag that could not be inserted does not advance the watermark either", async () => {
+    // Finding abuse and failing to record it is not a covered window: the
+    // abuse would be dropped permanently and invisibly on the next advance.
+    const tables = emptyTables({
+      passport_stamps: Array.from({ length: 16 }, (_, i) => ({ user_id: "farmer-2", created_at: wmAgo(30 - i * 0.01) })),
+    });
+    const { db } = makeWindowDb({ tables, failWrites: new Set(["compass_abuse_flags"]) });
+    const { ports, commits, store } = makeWatermarkPorts({
+      [JOB_GEO]:   new Date(WM_NOW.getTime() - 54 * WM_HOUR),
+      [JOB_HASH]:  new Date(WM_NOW.getTime() - 54 * WM_HOUR),
+      [JOB_AVAIL]: new Date(WM_NOW.getTime() - 54 * WM_HOUR),
+    });
+
+    const result = await runScan(db, null, { now: WM_NOW, watermarks: ports });
+
+    assert.equal(result.flagsWritten, 0, "flagsWritten counts rows that landed, not handleFlag calls");
+    assert.ok(!commits.some((c) => c.job === JOB_GEO), "the window whose flag was lost must be re-scanned");
+    assert.equal(store.get(JOB_GEO)!.toISOString(), wmAgo(54));
+    assert.deepEqual(commits.map((c) => c.job).sort(), [JOB_AVAIL, JOB_HASH], "per-job isolation again: these two found nothing and completed");
+  });
+
+  it("a watermark NEWER than a detector's lookback never narrows its window", async () => {
+    // hashtag_spam is calibrated on 24 h but runs hourly: `since = watermark`
+    // would shrink it to the last half hour and stop counting the other 23½.
+    const fresh = new Date(WM_NOW.getTime() - 0.5 * WM_HOUR);
+    const tables = emptyTables({});
+    const { db, windows } = makeWindowDb({ tables });
+    const { ports, commits } = makeWatermarkPorts({ [JOB_GEO]: fresh, [JOB_HASH]: fresh, [JOB_AVAIL]: fresh });
+
+    await runScan(db, null, { now: WM_NOW, watermarks: ports });
+
+    assert.equal(sincesFor(windows, "hashtag_usage")[0], wmAgo(24), "the window is the UNION of the lookback and the missed time");
+    assert.equal(sincesFor(windows, "compass_active_user_events")[0], wmAgo(24));
+    assert.equal(sincesFor(windows, "passport_stamps")[0], wmAgo(1), "geotag's own hour is still its floor");
+    assert.equal(commits.length, 3, "a steady-state pass still moves every mark forward");
+  });
+
+  it("the wide detectors keep their own windows and have no watermark at all", async () => {
+    const tables = emptyTables({});
+    const { db, windows } = makeWindowDb({ tables });
+    const { ports, reads, commits } = makeWatermarkPorts({
+      [JOB_GEO]:   new Date(WM_NOW.getTime() - 54 * WM_HOUR),
+      [JOB_HASH]:  new Date(WM_NOW.getTime() - 54 * WM_HOUR),
+      [JOB_AVAIL]: new Date(WM_NOW.getTime() - 54 * WM_HOUR),
+    });
+
+    await runScan(db, null, { now: WM_NOW, watermarks: ports });
+    // The five wide detectors were deliberately not touched, which includes not
+    // being handed the injected clock — they still anchor on the real one, so
+    // their windows are measured against it and rounded to whole hours.
+    const anchor = Date.now();
+
+    // mutual_review_ring 7 d, and booking_loop's 5★ read over its own 30 d.
+    assert.deepEqual(
+      lookbackHours(windows, "rent_buddy_reviews", anchor),
+      [7 * 24, 30 * 24],
+      "the 7-day ring window and the 30-day booking-loop window are untouched",
+    );
+    // booking_loop + refund_abuse, both 30 d.
+    assert.deepEqual(lookbackHours(windows, "rent_buddy_bookings", anchor), [30 * 24]);
+    // comment_pod 72 h.
+    assert.deepEqual(lookbackHours(windows, "posts_comments", anchor), [72]);
+    // Only the three narrow detectors have keys; nothing else is read or moved.
+    assert.deepEqual(reads.sort(), [JOB_AVAIL, JOB_GEO, JOB_HASH]);
+    assert.deepEqual(commits.map((c) => c.job).sort(), [JOB_AVAIL, JOB_GEO, JOB_HASH]);
+  });
+
+  it("a catch-up pass applies each threshold to its CALIBRATED window, not to the span total", async () => {
+    // The direction a wider window must NOT be allowed to go. GEOTAG_FARM_MIN
+    // is a per-HOUR rate and `severe` (>30) is a per-hour rate too, and severe
+    // means an auto-confirmed flag, a zeroed reward, a 365-day cooldown and a
+    // compass_suspension_requests row. Feeding a 54-hour total into a
+    // one-hour threshold would manufacture all of that against a merely busy
+    // traveller — a new defect pointed the other way.
+    const stamps: Record<string, unknown>[] = [];
+    for (let i = 0; i < 40; i++) stamps.push({ user_id: "steady-user", created_at: wmAgo(53 - i * 1.3) });   // 40 stamps, never >1/h
+    for (let i = 0; i < 31; i++) stamps.push({ user_id: "burst-user",  created_at: wmAgo(20 - i * 0.01) });  // 31 in ~20 min
+    const tables = emptyTables({ passport_stamps: stamps });
+    const { db } = makeWindowDb({ tables });
+    const { ports } = makeWatermarkPorts({
+      [JOB_GEO]:   new Date(WM_NOW.getTime() - 54 * WM_HOUR),
+      [JOB_HASH]:  new Date(WM_NOW.getTime() - 54 * WM_HOUR),
+      [JOB_AVAIL]: new Date(WM_NOW.getTime() - 54 * WM_HOUR),
+    });
+
+    await runScan(db, null, { now: WM_NOW, watermarks: ports });
+
+    const flags = tables["compass_abuse_flags"] ?? [];
+    const flagged = flags.flatMap((f) => f["involved_users"] as string[]);
+    assert.ok(!flagged.includes("steady-user"), `40 stamps spread over 54 h is not geotag farming; got ${JSON.stringify(flags)}`);
+    const burst = flags.find((f) => (f["involved_users"] as string[]).includes("burst-user"))!;
+    assert.ok(burst, "a real one-hour burst inside the gap is still caught");
+    assert.equal(burst["severity"], "severe", "and at the severity its own hour earned");
+    assert.equal((burst["evidence"] as any).stamp_count, 31);
+    assert.deepEqual(
+      (tables["compass_suspension_requests"] ?? []).map((r) => r["user_id"]),
+      ["burst-user"],
+      "the suspension request the old scan never raised — and only for the burst",
+    );
+  });
+
+  it("the exonerating bookings read follows the window the toggles were counted in", async () => {
+    // available_now_abuse's flag claims "no completed bookings in the 24 h they
+    // were toggling". Exonerating on a booking from a different day of the
+    // catch-up span would make this detector weaker than the timely scan it
+    // stands in for.
+    const toggles = (uid: string, at: number) =>
+      Array.from({ length: 21 }, (_, i) => ({ user_id: uid, event_type: "availability_toggle", created_at: wmAgo(at - i * 0.05) }));
+    const tables = emptyTables({
+      compass_active_user_events: [...toggles("busy-buddy", 45), ...toggles("idle-buddy", 45)],
+      rent_buddy_bookings: [
+        // Inside busy-buddy's peak 24 h → exonerated.
+        { id: "bk-in",  buddy_id: "busy-buddy", traveler_id: "t1", status: "completed", created_at: wmAgo(40) },
+        // Outside idle-buddy's peak 24 h → does not exonerate.
+        { id: "bk-out", buddy_id: "idle-buddy", traveler_id: "t2", status: "completed", created_at: wmAgo(2) },
+      ],
+    });
+    const { db } = makeWindowDb({ tables });
+    const { ports } = makeWatermarkPorts({
+      [JOB_GEO]:   new Date(WM_NOW.getTime() - 54 * WM_HOUR),
+      [JOB_HASH]:  new Date(WM_NOW.getTime() - 54 * WM_HOUR),
+      [JOB_AVAIL]: new Date(WM_NOW.getTime() - 54 * WM_HOUR),
+    });
+
+    await runScan(db, null, { now: WM_NOW, watermarks: ports });
+
+    const flagged = (tables["compass_abuse_flags"] ?? [])
+      .filter((f) => f["pattern_type"] === "available_now_abuse")
+      .flatMap((f) => f["involved_users"] as string[]);
+    assert.deepEqual(flagged, ["idle-buddy"], `expected only idle-buddy; got ${JSON.stringify(flagged)}`);
+  });
+
+  it("an on-demand scoped scan neither reads nor advances a watermark", async () => {
+    // A scoped scan looks at ONE user's rows. Committing its `through` would
+    // declare the window covered for everyone else — the same permanent skip,
+    // aimed at everyone who was not the subject of the report.
+    const tables = gapAbuseFixtures();
+    const { db, windows } = makeWindowDb({ tables });
+    const { ports, reads, commits } = makeWatermarkPorts({
+      [JOB_GEO]: new Date(WM_NOW.getTime() - 54 * WM_HOUR),
+    });
+
+    await runScan(db, "farmer-1", { now: WM_NOW, watermarks: ports });
+
+    assert.deepEqual(reads, [], "no watermark is consulted for a scoped scan");
+    assert.deepEqual(commits, [], "and none is advanced");
+    assert.equal(sincesFor(windows, "passport_stamps")[0], wmAgo(1), "a scoped scan keeps the calibrated lookback");
+  });
+  // ── Two gaps the first pass of this work left open ─────────────────────────
+  //
+  // Both are the SAME hazard: the catch-up path counting fewer rows than it
+  // actually read. A detector standing in for the timely scans that never ran
+  // may see more than they would have; it may never see less. Neither of these
+  // was caught by the tests above — a mutation run found them — so they are
+  // pinned here with the arithmetic that makes them bite.
+
+  it("a stamp whose created_at cannot be parsed is still counted on a catch-up pass", async () => {
+    // The steady-state path counts rows, not timestamps, so an unparseable
+    // created_at has always counted. The peak path can only count rows it can
+    // PLACE in time, so dropping them would make the catch-up pass quietly
+    // stricter than the pass it replaces. 12 placeable + 4 unplaceable = 16,
+    // over GEOTAG_FARM_MIN; the 12 alone are not.
+    const stamps: Record<string, unknown>[] = [];
+    for (let i = 0; i < 12; i++) stamps.push({ user_id: "farmer-2", created_at: wmAgo(30 - i * 0.01) });
+    for (let i = 0; i < 4; i++)  stamps.push({ user_id: "farmer-2", created_at: "not-a-timestamp" });
+
+    const tables = emptyTables({ passport_stamps: stamps });
+    const { db } = makeWindowDb({ tables });
+    const { ports } = makeWatermarkPorts({ [JOB_GEO]: new Date(WM_NOW.getTime() - 54 * WM_HOUR) });
+
+    await runScan(db, null, { now: WM_NOW, watermarks: ports });
+
+    const geo = (tables["compass_abuse_flags"] ?? []).find((f) => f["pattern_type"] === "geotag_farming");
+    assert.ok(geo, "16 stamps in one hour must be flagged even when 4 of them carry an unparseable created_at");
+    assert.equal((geo!["evidence"] as any).stamp_count, 16, "the 4 rows that could not be placed in time must not be dropped from the count");
+  });
+
+  it("the densest window includes a row sitting exactly on its far edge", async () => {
+    // 16 stamps spanning EXACTLY one hour, first to last. The window the
+    // threshold is calibrated on is one hour, and the read that produced these
+    // rows has an inclusive lower bound and no upper bound, so all 16 are in
+    // one window and the account is a farmer. A half-open window would see 15
+    // and let it through — one row below the line, from a boundary alone.
+    const stamps: Record<string, unknown>[] = [];
+    for (let k = 0; k < 16; k++) stamps.push({ user_id: "farmer-3", created_at: wmAgo(30 - k / 15) });
+    assert.equal(
+      Date.parse(stamps[15]!["created_at"] as string) - Date.parse(stamps[0]!["created_at"] as string),
+      WM_HOUR,
+      "fixture guard: first and last stamp must be exactly one hour apart, or this test is not about the edge",
+    );
+
+    const tables = emptyTables({ passport_stamps: stamps });
+    const { db } = makeWindowDb({ tables });
+    const { ports } = makeWatermarkPorts({ [JOB_GEO]: new Date(WM_NOW.getTime() - 54 * WM_HOUR) });
+
+    await runScan(db, null, { now: WM_NOW, watermarks: ports });
+
+    const geo = (tables["compass_abuse_flags"] ?? []).find((f) => f["pattern_type"] === "geotag_farming");
+    assert.ok(geo, "16 stamps spanning exactly one hour must be flagged");
+    assert.equal((geo!["evidence"] as any).stamp_count, 16);
+  });
+});

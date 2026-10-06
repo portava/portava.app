@@ -70,7 +70,6 @@ export const DRAWER_SCAN_LIMIT = 500;
 const TypedMessageSchema = z.object({
   kind: z.string().min(1).max(40),
   payload: z.unknown(),
-  replyToId: z.string().max(64).nullish(),
   clientId: z.string().max(64).nullish(),
 });
 
@@ -179,6 +178,42 @@ router.post(
       sendError(res, "invalid_payload", "Invalid threadId");
       return;
     }
+    /**
+     * `replyToId` is REFUSED BY NAME, not dropped. Until this check existed the
+     * field sat in the schema above, parsed cleanly, and was then written
+     * nowhere: the insert (`writeThreadEnvelope`) carries no `reply_to_id` and the 201 echoes
+     * none. That is precisely the failure the thread read's T344 note
+     * (`routes/messaging.ts:2443-2453`) exists to prevent — "a reply whose
+     * quote vanished and a message that was never a reply look identical on the
+     * wire" — except here the write side manufactured it, and told the sender
+     * 201 while doing so.
+     *
+     * Refusing rather than persisting is deliberate. A typed message's `body`
+     * is `JSON.stringify(input.envelope)` in `writeThreadEnvelope`, and the thread read's
+     * quote builder copies a replied-to body VERBATIM
+     * (`routes/messaging.ts:2504`, `body: qr.body ?? ''`). So persisting
+     * `reply_to_id` here with no other change would make a reply TO a typed
+     * message quote a raw JSON envelope string in the thread. Carrying replies
+     * on typed kinds therefore also obliges an envelope-aware quote renderer,
+     * which is a larger piece of work and a separate decision. Until that
+     * exists the honest answer is a refusal the caller can act on.
+     *
+     * An explicit `null` is the absence of a reply, not a request for one, so
+     * it is not a mistake and is not refused.
+     */
+    const replyToIdGiven = (req.body as { replyToId?: unknown } | null | undefined)?.replyToId;
+    if (replyToIdGiven !== undefined && replyToIdGiven !== null) {
+      sendError(
+        res,
+        "invalid_payload",
+        "replyToId is not supported on typed messages. A typed message's body is a JSON " +
+          "envelope and the thread read quotes a replied-to body verbatim, so a reply to one " +
+          "would render as raw JSON. Send the reply as an ordinary message, or post this kind " +
+          "without replyToId.",
+      );
+      return;
+    }
+
     const parsed = TypedMessageSchema.safeParse(req.body);
     if (!parsed.success) {
       sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");

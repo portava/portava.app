@@ -116,14 +116,14 @@ function stopRow(over: Record<string, any> = {}): Record<string, any> {
   };
 }
 
-function stage(opts: { stops?: any[]; recs?: any[] } = {}) {
+function stage(opts: { stops?: any[]; recs?: any[]; /** A curated corridor that PERMITS entry (US → TW), so the landside gate is open. */ entryPermitted?: boolean } = {}) {
   const tables: Record<string, any[]> = {
     feature_flags: [
       { flag: "airport_mode_enabled", enabled: true },
       { flag: "layover_safety_engine_enabled", enabled: true },
-      { flag: "layover_plans_enabled", enabled: true },
+      { flag: "layover_plans_enabled", enabled: true }, ...(opts.entryPermitted ? [{ flag: "passport_entry_intelligence_enabled", enabled: true }] : []),
     ],
-    airport_profiles: [airportRow()],
+    airport_profiles: [airportRow()], ...(opts.entryPermitted ? ENTRY_PERMITTED_TABLES : {}), // defined at the foot of this file: lines 172/188/272 are cited
     layover_sessions: [sessionRow({ id: SESSION, user_id: USER_ID })],
     layover_plan_stops: opts.stops ?? [],
     layover_recommendations: opts.recs ?? [],
@@ -199,7 +199,7 @@ describe("A. computePlanFit — an unstated leg can refuse a plan, never certify
   });
 
   it("A3 — a landside stop WITH a stated travel time still fits, and the ride back is charged", async () => {
-    stage({ stops: [stopRow({ title: "Din Tai Fung", duration_min: 60, travel_min: 25, inside_airport: false })] });
+    stage({ entryPermitted: true, stops: [stopRow({ title: "Din Tai Fung", duration_min: 60, travel_min: 25, inside_airport: false })] }); // LAY-FIX: a CONFIRMED border is staged, because `fits` for a plan that leaves the airport now needs the landside gate OPEN as well as every leg stated. The arithmetic this case is about is unchanged; A3b (foot of file) is the same plan with the border unchecked.
     const r = await getStops();
 
     assert.equal(r.body.planFit.fit, "fits");
@@ -384,5 +384,44 @@ describe("B. stop writes stop laundering an unstated leg into zero", () => {
     assert.equal(r.status, 200, `expected 200, got ${r.status}: ${JSON.stringify(r.body)}`);
     assert.equal(tables.layover_plan_stops[0]!.travel_min, 35);
     assert.equal(tables.layover_plan_stops[0]!.duration_min, 45);
+  });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// LAY-FIX — appended at the foot: lines 172, 188 and 272 above are cited by
+// docs/architecture/census-layover.md and may not move.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/** A curated corridor that PERMITS entry, as `stage({ entryPermitted: true })` spreads it. */
+const ENTRY_PERMITTED_TABLES: Record<string, any[]> = {
+  traveler_passports: [{ user_id: USER_ID, issuing_country: "US", is_primary: true, created_at: "2026-01-01T00:00:00.000Z" }],
+  entry_requirements: [{
+    id: "corr-visa-free", passport_country: "US", destination_country: "TW", status: "visa_free",
+    allowed_stay_days: null, passport_validity_rule: null, fee_text: null, processing_time_text: null,
+    official_source_url: null, notes: null, confidence: "high", last_verified_at: "2026-09-01T00:00:00.000Z",
+  }],
+};
+
+describe("A (continued). computePlanFit reads the landside GATE as well as the window", () => {
+  it("A3b — A3's plan with the border unchecked: the clock still says fits, and the answer is not a green `fits`", async () => {
+    stage({ stops: [stopRow({ title: "Din Tai Fung", duration_min: 60, travel_min: 25, inside_airport: false })] });
+    const r = await getStops();
+
+    assert.equal(r.body.planFit.clockFit, "fits");
+    assert.equal(r.body.planFit.fit, "unconfirmed");
+    assert.equal(r.body.planFit.fitsWindow, false);
+    assert.deepEqual(r.body.planFit.landside.cautions, ["entry_unconfirmed"]);
+    assert.equal(r.body.planFit.neededMin, 110, "the gate withholds the affirmative; it does not move a number");
+  });
+
+  it("A3c — the same plan under a REFUSED border is `blocked`, with hours of usable time", async () => {
+    const tables = stage({ entryPermitted: true, stops: [stopRow({ title: "Din Tai Fung", duration_min: 60, travel_min: 25, inside_airport: false })] });
+    tables.entry_requirements[0].status = "visa_required";
+    const r = await getStops();
+
+    assert.equal(r.body.planFit.clockFit, "fits");
+    assert.equal(r.body.planFit.fit, "blocked");
+    assert.equal(r.body.planFit.fitsWindow, false);
+    assert.deepEqual(r.body.planFit.landside.closedBy, ["entry_refused"]);
   });
 });

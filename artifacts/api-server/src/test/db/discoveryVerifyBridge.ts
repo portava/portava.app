@@ -26,6 +26,7 @@
 import { spawnSync } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
 import { LOCAL_DB_URL } from "./localDb.js";
+import { PostgrestEmbedError, selectListWithEmbeds } from "./postgrestEmbed.js";
 // ═════════════════════════════════════════════════════════════════════════════
 // The bridge: real supabase-js → PostgREST-shaped fetch → one SQL statement.
 // LOUD: a request shape it does not model THROWS inside fetch, which the client
@@ -128,12 +129,20 @@ function whereClause(params: URLSearchParams, alias: string): string {
   }
   return conds.length === 0 ? "" : ` WHERE ${conds.join(" AND ")}`;
 }
-function selectList(select: string | null, alias = ""): string {
+// `table` is passed by the GET path only (an unaliased FROM over a real table): one level of FK-hinted
+// embedding, `relation!constraint(cols)`, is translated there against the REAL foreign key
+// (./postgrestEmbed.ts) — the account-state gate's read of `profiles` on every authenticated request.
+function selectList(select: string | null, alias = "", table: string | null = null): string {
   if (!select || select.trim() === "" || select.trim() === "*") return `${alias}*`;
-  return splitTopLevel(select).map((c) => {
+  const plain = (c: string): string => {
     if (c.includes("(") || c.includes(":")) throw new Error(`bridge: embedded/aliased select ${c}`);
     return `${alias}${ident(c)}`;
-  }).join(", ");
+  };
+  if (table !== null && alias === "") {
+    const withEmbeds = selectListWithEmbeds(table, select, plain, (sql) => { const e = run(sql); return e.ok ? e.stdout.split("\n").filter((l) => l.length > 0) : null; });
+    if (withEmbeds !== null) return withEmbeds;
+  }
+  return splitTopLevel(select).map(plain).join(", ");
 }
 function orderClause(order: string | null): string {
   if (!order) return "";
@@ -239,7 +248,16 @@ export function bridge(opts: BridgeOpts): Bridge {
       const select = params.get("select");
       if (method === "GET" || method === "HEAD") {
         const limit = params.get("limit"), offset = params.get("offset");
-        const inner = `SELECT ${selectList(select)} FROM ${t}${whereClause(params, "")}${orderClause(params.get("order"))}`
+        let columns: string;
+        try {
+          columns = selectList(select, "", isFlags ? null : target);
+        } catch (err) {
+          // An embed PostgREST would refuse (no such relationship): its answer, 400 + PGRST200.
+          if (!(err instanceof PostgrestEmbedError)) throw err;
+          failed.push(`${method} ${url.pathname} :: ${err.body.code} ${err.body.message}`);
+          return respond(err.body, 400);
+        }
+        const inner = `SELECT ${columns} FROM ${t}${whereClause(params, "")}${orderClause(params.get("order"))}`
           + `${limit !== null ? ` LIMIT ${Number(limit)}` : ""}${offset !== null ? ` OFFSET ${Number(offset)}` : ""}`;
         const sql = `${isFlags ? flagsCte() : ""}SELECT COALESCE(json_agg(_q), '[]'::json)::text FROM (${inner}) _q;`;
         const e = run(sql);

@@ -1497,10 +1497,10 @@ router.get("/pulse/live", async (req, res) => {
     }
 
     const [travelerRes, buddyProfileRes] = await Promise.all([
-      sc.from("buddy_bookings")
+      sc.from("rent_buddy_bookings")
         .select("id, buddy_id, booking_date, city, status")
         .eq("traveler_id", user.id)
-        .eq("status", "requested"),
+        .eq("status", "pending"),
       // rent_buddy_profiles is the correct table; gate on admin_status = 'active'
       sc.from("rent_buddy_profiles")
         .select("id")
@@ -1541,10 +1541,10 @@ router.get("/pulse/live", async (req, res) => {
     const buddyProfileRow = buddyProfileRes.data as any;
     if (buddyProfileRow?.id) {
       const { data: incomingBookings } = await sc
-        .from("buddy_bookings")
+        .from("rent_buddy_bookings")
         .select("id, traveler_id, booking_date, city, status")
         .eq("buddy_id", buddyProfileRow.id as string)
-        .eq("status", "requested");
+        .eq("status", "pending");
 
       for (const bk of (incomingBookings as any[]) ?? []) {
         if (blockedSet.has(bk.traveler_id as string)) continue;

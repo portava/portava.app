@@ -221,7 +221,7 @@ It imports nothing, and no ledger module imports it.
 
 ### 1.7 Tests
 
-Nineteen files, **all registered in the main runner** (`artifacts/api-server/package.json:89#SUPABASE_URL=http://127.0.0.1:9`)
+Nineteen files, **all registered in the main runner** (`artifacts/api-server/package.json:93#SUPABASE_URL=http://127.0.0.1:9`)
 — so they run in CI's unstarvable static tier, not only on a developer's machine.
 
 The two that bear directly on §11: `test/paymentsLiveGuard.test.ts` (694 lines, A–H) drives the real
