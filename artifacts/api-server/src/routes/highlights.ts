@@ -2207,7 +2207,7 @@ router.get("/highlights/archived", async (req, res) => {
     return;
   }
 
-  res.status(200).json({ highlights: pinnedFirst((rows ?? []) as any[]).map((h: any) => ({ ...h, ...describeLifetimeFields(h, archivedProjection.classProjected) })) }); // pinned first (§12, census H100), archived_at order kept within each partition
+  res.status(200).json({ highlights: pinnedFirst((rows ?? []) as unknown as ReadonlyArray<Record<string, unknown> & { pinned_at?: string | null; id?: string }>).map((h: any) => ({ ...h, ...describeLifetimeFields(h, archivedProjection.classProjected) })) }); // pinned first (§12, census H100), archived_at order kept within each partition
 });
 
 /* ============================================================================

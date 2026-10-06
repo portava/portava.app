@@ -738,7 +738,7 @@ export async function confirmCandidate(
       idempotencyKey: candidateCreateKey(ep.id),
       fromCandidate: true,
       payload: { to_state: lifecycleStateOf("published"), visibility: "only_me", write, select: "id" },
-      fromKernelResult: (r: any) => ({ id: String(r?.memory_id ?? r?.id ?? "") }),
+      fromKernelResult: (r: unknown) => { const k = (r ?? {}) as { memory_id?: unknown; id?: unknown }; return { id: String(k.memory_id ?? k.id ?? "") }; },
       legacy: async () => {
         const { data, error } = await sc.from("memories").insert(write).select("id").single();
         if (!error) return { ok: true, body: { id: String((data as { id: string }).id) } };
