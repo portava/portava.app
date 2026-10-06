@@ -159,6 +159,7 @@ function makeDb(seed: Record<string, Row[]>, erroring: string[] = []) {
 const trail = (id: string, over: Row = {}): Row => ({
   id, slug: `slug-${id.slice(-4)}`, title: `Trail ${id.slice(-4)}`, description: null,
   destination: "bangkok", place_scope: null, parent_trail_id: null,
+  review_state: "approved",
   lifecycle_status: "active", created_by: USER,
   created_at: iso(86_400_000), updated_at: iso(86_400_000), ...over,
 });

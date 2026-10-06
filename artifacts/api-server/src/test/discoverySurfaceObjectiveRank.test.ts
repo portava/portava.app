@@ -99,7 +99,7 @@ beforeEach(() => { invalidateRankDesignFlagCache(); clearProtectedZoneCache(); }
 const AT = rel(3 * H);
 const trailRow: Row = {
   id: T, slug: "bangkok-after-dark", title: "Bangkok After Dark", description: null, destination: "bangkok", place_scope: null,
-  parent_trail_id: null, lifecycle_status: "active", created_by: U(1), created_at: rel(90 * D), updated_at: rel(90 * D),
+  parent_trail_id: null, review_state: "approved", lifecycle_status: "active", created_by: U(1), created_at: rel(90 * D), updated_at: rel(90 * D),
 };
 const member = (n: number, confidence: number, over: Row = {}): Row => ({
   id: M(n), trail_id: T, source_type: "place", source_id: PL(n), relationship: "supporting", signal: null, source: "user",

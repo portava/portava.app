@@ -82,7 +82,7 @@ type Restriction = "hosting" | "messaging" | null;
 function seed(restriction: Restriction, actor = ANA): Record<string, Rows> {
   return {
     feature_flags: [{ flag: "hidden_gems_enabled", enabled: true }, { flag: "trip_operational_projections_enabled", enabled: true }, { flag: "reservation_import_enabled", enabled: true },
-      { flag: "airport_mode_enabled", enabled: true }, { flag: "layover_plans_enabled", enabled: true }],
+      { flag: "airport_mode_enabled", enabled: true }, { flag: "layover_plans_enabled", enabled: true }, { flag: "trail_creation_enabled", enabled: true }],
     events: [{ id: EVENT, host_id: BEN, state: "published", visibility: "public", title: "Fado night", starts_at: iso(6), ends_at: iso(8) }],
     layover_sessions: [{ id: SESSION, user_id: actor, airport_code: "LIS", status: "active", arrival_at: iso(-1), departure_at: iso(6), created_at: iso(-2) }],
     message_thread_members: [{ thread_id: THREAD, user_id: actor, left_at: null }],
@@ -104,8 +104,8 @@ function seed(restriction: Restriction, actor = ANA): Record<string, Rows> {
       { id: SOLO_ITEM, trip_id: SOLO, creator_id: ANA, title: "Walk", category: "activity", status: "planned", location_is_private: false, lat: 38.7, lng: -9.1, day_date: day, starts_at: iso(2), ends_at: iso(3), sort_order: 0, removed_at: null },
     ],
     trails: [
-      { id: TRAIL, slug: "lisbon-tiles", title: "Lisbon Tiles", destination: "lisbon", lifecycle_status: "active", created_by: ANA, created_at: iso(-72), parent_trail_id: null },
-      { id: TRAIL2, slug: "porto-wine", title: "Porto Wine", destination: "porto", lifecycle_status: "active", created_by: BEN, created_at: iso(-72), parent_trail_id: null },
+      { id: TRAIL, slug: "lisbon-tiles", title: "Lisbon Tiles", destination: "lisbon", review_state: "approved", lifecycle_status: "active", created_by: ANA, created_at: iso(-72), parent_trail_id: null },
+      { id: TRAIL2, slug: "porto-wine", title: "Porto Wine", destination: "porto", review_state: "approved", lifecycle_status: "active", created_by: BEN, created_at: iso(-72), parent_trail_id: null },
     ],
     hidden_gems: [{ id: GEM, status: "active", title: "Gem", submitted_by: BEN, created_at: iso(-72) }],
     places: [{ id: PLACE, name: "Cafe", category: "dining", latitude: 38.7, longitude: -9.1 }],
@@ -370,7 +370,7 @@ describe("T. the Trail allowance (census-discovery §84)", () => {
     (c as any).rpc = async (name: string, args: any) => {
       if (name !== "trail_propose") return { data: null, error: { message: `rpc ${name} not modelled` } };
       const row = { id: `t-${(c._store.trails ?? []).length}`, slug: String(args.p_title).toLowerCase().replace(/[^a-z0-9]+/g, "-"), title: args.p_title,
-        description: args.p_description, destination: args.p_destination, place_scope: null, parent_trail_id: null, lifecycle_status: "proposed",
+        description: args.p_description, destination: args.p_destination, place_scope: null, parent_trail_id: null, review_state: "approved", lifecycle_status: "proposed",
         created_by: args.p_created_by, created_at: new Date().toISOString(), updated_at: new Date().toISOString() };
       c._store.trails = [...(c._store.trails ?? []), row];
       return { data: { outcome: "created", trail: row }, error: null };
@@ -393,7 +393,7 @@ describe("T. the Trail allowance (census-discovery §84)", () => {
   });
   it("T2. a Trail started more than a day ago does not count", async () => {
     const s = seed(null);
-    s.trails = [...s.trails!, ...[1, 2, 3].map((n) => ({ id: `old-${n}`, slug: `old-${n}`, title: `Old ${n}`, destination: "x", lifecycle_status: "active", created_by: ANA, created_at: iso(-25 - n), parent_trail_id: null }))];
+    s.trails = [...s.trails!, ...[1, 2, 3].map((n) => ({ id: `old-${n}`, slug: `old-${n}`, title: `Old ${n}`, destination: "x", review_state: "approved", lifecycle_status: "active", created_by: ANA, created_at: iso(-25 - n), parent_trail_id: null }))];
     withProposals(use(s));
     const r = await propose("Fresh Distinct Harbour Theme");
     assert.equal(r.status, 201, JSON.stringify(r.body).slice(0, 300));

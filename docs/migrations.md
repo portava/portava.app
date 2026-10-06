@@ -4096,6 +4096,27 @@ still verifies (the fold reads events; both paths see `"title": null`). The keys
 
 **Rollback:** `db/rollback/2026-10-06-3976-trip-events-private-place-minimised-rollback.sql` — restores
 2420's policy, grant and append-only function; it cannot un-redact.
+## 2026-10-06 — `3977_trail_review_before_visible.sql`, written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3977_trail_review_before_visible.sql` | **not applied** | **not applied** |
+
+**What it is.** census-discovery §122, lead ruling D-66: a new Trail is visible only to its creator until an admin
+approves it. `trails.review_state` (pending / approved / rejected; DEFAULT 'approved' for the server's own writers;
+a person's still-`proposed` Trail is backfilled 'pending'), `review_reason` (required by CHECK on a rejection),
+`reviewed_by`, `reviewed_at`. `trail_review_decide` (service_role only): row-locked, pending only, approve also
+activates a `proposed` lifecycle. `trail_propose` is 3975's byte for byte plus review_state ('pending' for a person,
+'approved' for a system proposal). RESTRICTIVE select policies on `trails`, `content_trails` and `trail_edges`
+(approved, or the client created the Trail) on top of 3390's untouched permissive ones; `authz.trail_review_visible`
+is their SECURITY DEFINER read. `rebuild_place_cooccurrence` (3495) reads approved Trails only (a transform, both
+joins). `trail_creation_enabled` seeded FALSE: POST /v1/discovery/trails refuses while it is off.
+
+**Needs** 2910, 3390, 3495 and 3975 (preconditions refuse otherwise). Until it is applied the API answers every
+Trail read 503 (the review column cannot be read), never "approved".
+
+**Rollback:** `db/rollback/2026-10-06-3977-trail-review-before-visible-rollback.sql` — refuses while
+`trail_creation_enabled` is TRUE; publishes every pending and rejected Trail, and says so.
 ## 2026-10-05 — `3900_layover_presence.sql`, written and NOT applied anywhere
 
 | | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |

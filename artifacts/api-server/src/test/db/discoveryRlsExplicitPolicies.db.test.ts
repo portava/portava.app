@@ -75,6 +75,12 @@ const KEPT: Array<{ t: Table; op: Op; role: Role; policy: string; qual: string |
   { t: "rank_events",             op: "SELECT", role: "authenticated", policy: "users_read_own_rank_events",   qual: "(auth.uid() = user_id)", check: null },
 ];
 const kept = (t: string, op: Op, role: Role) => KEPT.find((k) => k.t === t && k.op === op && k.role === role);
+/** 3977 (lead ruling D-66): restrictive narrowings of kept SELECT paths — a pending or rejected Trail is its creator's alone. */
+const NARROWED: Array<{ t: Table; policy: string }> = [
+  { t: "trails", policy: "trails_review_visible" },
+  { t: "content_trails", policy: "content_trails_review_visible" },
+  { t: "trail_edges", policy: "trail_edges_review_visible" },
+];
 const SERVICE_ONLY: Table[] = TABLES.filter((t) => !KEPT.some((k) => k.t === t));
 
 type Who = { role: "anon" } | { role: "authenticated"; uid: string };
@@ -194,7 +200,11 @@ describe("census-discovery DV-71 — 3390: every Discovery table defines all fou
         if (forOp.length === 0) failures.push(`${t} ${op}: no policy names this operation for a client role`);
         for (const role of ["anon", "authenticated"] as Role[]) {
           const holds = rows<{ h: boolean }>(`SELECT has_table_privilege('${role}', 'public.${t}', '${op}') AS h`)[0]!.h;
-          const deny = pol.some((p) => p.tbl === t && !p.permissive && p.cmd === cmdOf[op] && p.roles.includes(role));
+          // A DENY is 3390's restrictive `false`. 3977 (lead ruling D-66) adds restrictive NARROWINGS on three kept
+          // SELECT paths — a Trail under review is its creator's alone — which are declared below by name and predicate
+          // and are not denials.
+          const restrictive = pol.filter((p) => p.tbl === t && !p.permissive && p.cmd === cmdOf[op] && p.roles.includes(role));
+          const deny = restrictive.some((p) => (p.qual ?? "false") === "false" && (p.wcheck ?? "false") === "false");
           const k = kept(t, op, role);
           if (k) {
             const p = pol.find((x) => x.tbl === t && x.polname === k.policy);
@@ -202,6 +212,11 @@ describe("census-discovery DV-71 — 3390: every Discovery table defines all fou
             else if (p.qual !== k.qual || p.wcheck !== k.check) failures.push(`${t} ${op} ${role}: ${k.policy} predicate changed (${p.qual} / ${p.wcheck})`);
             if (!holds) failures.push(`${t} ${op} ${role}: kept path has no privilege`);
             if (deny) failures.push(`${t} ${op} ${role}: kept path is denied`);
+            for (const r of restrictive) {
+              if (!NARROWED.some((n) => n.t === t && n.policy === r.polname && op === "SELECT" && role === "authenticated")) {
+                failures.push(`${t} ${op} ${role}: undeclared restrictive policy ${r.polname} on a kept path`);
+              }
+            }
           } else {
             if (holds) failures.push(`${t} ${op} ${role}: privilege held outside the posture`);
             if (!deny) failures.push(`${t} ${op} ${role}: no explicit restrictive deny`);
