@@ -2016,7 +2016,7 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
   // and whatever this caller may change, the answer they get back is the withheld slot.
   const privateEdit = await privateItemEditRefusal(getServiceClient() ?? client, tripId, itemId, user.id, Object.keys(dbPatch));
   if (privateEdit.refusal) { sendError(res, privateEdit.refusal.code, privateEdit.refusal.message); return; }
-  const answer = (row: any) => toCamel(privateEdit.withheld ? redactWithheldPlanItem(row) : row);
+  const answer = (row: any) => toCamel(privateEdit.withheld ? redactWithheldPlanItem(row) : row); if (patch.locationIsPrivate === false) { const scGrants = getServiceClient(); if (!scGrants || !(await clearAnchorGrantsForItem(scGrants, itemId))) { sendError(res, "degraded_unavailable", "We could not stop sharing this private place right now, so it was not made public. Please try again shortly."); return; } } // §81.3: grants go BEFORE the item goes public — a grant left behind would revive if it went private again
 
   // Trip Kernel path (§3.3: a status change is a command, not a column write).
   // The command type is derived from the patch; the kernel refuses a transition
@@ -2039,7 +2039,6 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
     // §21.1 opportunity_completed_total — a §13 opportunity's plan, done.
     recordOpportunityCompletion(planCommandTypeForPatch(patch), r.result, tripId, r.duplicate);
     setTripVersionHeader(res, r.version);
-    if ((r.result as any)?.location_is_private === false) await clearGrantsOnItem(tripId, itemId, req); // §81.3
     res.json(answer(r.result));
     return;
   }
@@ -2102,7 +2101,6 @@ router.patch("/trips/:tripId/plan/items/:itemId", async (req, res) => {
     idempotency_key: suppliedKey,
   });
 
-  if ((updated as any)?.location_is_private === false) await clearGrantsOnItem(tripId, itemId, req); // §81.3: an item made public keeps no grants that would revive if it went private again
   res.json(answer(updated));
 });
 

@@ -84,3 +84,18 @@ it('census-trips §81: an own place says what the crew sees — a slot, not the 
   expect(screen.queryByText(/anyone you choose/)).toBeNull();
   expect(screen.getByTestId('private-place-h1').props.accessibilityLabel).not.toMatch(/Only you can see it/);
 });
+
+it('census-trips §81.3: an UNREADABLE sharing setting is said as unreadable, not as "off" — granting stays unavailable, revoking stays possible', async () => {
+  const loadShares = jest.fn().mockResolvedValue({ state: 'ok', data: { sharingEnabled: false, sharing: 'unread', memberIds: ['ben'] } });
+  const twoMembers = jest.fn().mockResolvedValue({ ok: true, data: { members: [
+    { id: 'ben', handle: 'ben', name: 'Ben', avatarUrl: null },
+    { id: 'cleo', handle: 'cleo', name: 'Cleo', avatarUrl: null },
+  ] } });
+  await render(<PrivatePlacesCard tripId="t1" currentUserId="me" load={proj(layer([anchor('h1', 'own')]))} loadMembers={twoMembers} loadShares={loadShares} />);
+  await waitFor(() => screen.getByTestId('private-place-h1'));
+  await fireEvent.press(screen.getByTestId('private-place-h1'));
+  await waitFor(() => screen.getByTestId('anchor-share-setting-unread'));
+  expect(screen.queryByTestId('anchor-share-off')).toBeNull();
+  expect(screen.getByTestId('anchor-share-toggle-cleo').props.disabled).toBe(true);
+  expect(screen.getByTestId('anchor-share-toggle-ben').props.disabled).not.toBe(true);
+});

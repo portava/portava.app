@@ -3831,16 +3831,19 @@ policy now also requires the row to be non-private, the viewer's own, or covered
 true: `authz.private_anchor_granted(item, creator, trip)` (SECURITY DEFINER, `search_path` pinned, reads
 `feature_flags`, `trip_private_anchor_shares`, `trip_members`, `trips` and never `trip_plan_items`, so no
 42P17; the viewer is `auth.uid()` read inside, never a parameter). Two AFTER triggers delete grant rows
-that stopped being true: on `trip_members` delete or a role/status change away from accepted (grants to
-AND by that person on that trip), and on `trip_plan_items` turning non-private or soft-removed (grants on
-that item). Requires 3970.
+that stopped being true: on `trip_members` delete, insert, or a move into or out of accepted membership
+(grants to AND by that person on that trip — a membership that begins holds none, so a left-over row cannot
+revive on rejoining or on an admin restore), and on `trip_plan_items` turning non-private or soft-removed
+(grants on that item). Requires 3970.
 
 **Nothing waits on the press.** Every API reader runs as service_role (lib/http.ts `requireUser` hands
 the route the service client) and applies the same rule in code
 (`domain/trips/policies/privateAnchorAccess.ts`, loaded by `server/trips/privateAnchorShares.ts`
 `planItemAccessFor`); the API also clears grants itself on member removal, item removal and an item made
-public. The mobile app reads no `trip_plan_items` row directly. Without 3972 the API's answers are the
-same; the direct PostgREST read stays open.
+public (the last BEFORE the change, refusing it if the clearing fails). The mobile app reads no
+`trip_plan_items` row directly. Without 3972 the API's answers are the same; the direct PostgREST read stays
+open, and a grant whose API clearing failed on member removal stays in the table (denied at read time while
+the person is off the trip).
 
 **Rollback:** `db/rollback/2026-10-05-3972-trip-private-anchor-rls-and-grant-lifecycle-rollback.sql` —
 refuses while sharing is ON; restores 2337's policy verbatim and drops the function and both triggers. It

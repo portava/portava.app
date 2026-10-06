@@ -37,6 +37,9 @@
 -- triggers, so it cannot revive later and no writer can forget it:
 --   * a member leaves, is removed, or stops being accepted → every grant TO
 --     them and every grant BY them on that trip;
+--   * a membership begins (insert, or a move INTO accepted) → the same rows,
+--     which can only be left over from an earlier membership and would
+--     otherwise revive on rejoining or on an admin restore;
 --   * an item stops being private, or is soft-removed → every grant on it.
 -- The API also clears them (routes/trips.ts, server/trips/commandRoute.ts) so a
 -- database without this file behaves the same; the read-time rule denies a
@@ -113,13 +116,31 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path TO 'public', 'pg_catalog'
 AS $fn$
+DECLARE was_accepted boolean; is_accepted boolean;
 BEGIN
-  IF TG_OP = 'DELETE'
-     OR coalesce(NEW.role, '') NOT IN ('owner', 'co_host', 'member', 'viewer')
-     OR coalesce(NEW.status, 'accepted') <> 'accepted' THEN
+  -- A membership that BEGINS holds no grant and has given none: any row that
+  -- names this person on this trip is left over from an earlier membership,
+  -- and would otherwise revive the moment they rejoin or are restored.
+  IF TG_OP = 'INSERT' THEN
     DELETE FROM public.trip_private_anchor_shares g
-     WHERE g.trip_id = OLD.trip_id
-       AND (g.member_id = OLD.user_id OR g.owner_id = OLD.user_id);
+     WHERE g.trip_id = NEW.trip_id AND (g.member_id = NEW.user_id OR g.owner_id = NEW.user_id);
+    RETURN NULL;
+  END IF;
+  -- A membership that ENDS takes every grant to and by that person with it.
+  IF TG_OP = 'DELETE' THEN
+    DELETE FROM public.trip_private_anchor_shares g
+     WHERE g.trip_id = OLD.trip_id AND (g.member_id = OLD.user_id OR g.owner_id = OLD.user_id);
+    RETURN NULL;
+  END IF;
+  -- An UPDATE that moves the person into or out of accepted membership
+  -- (requireTripMember's rule) clears the same rows; a role change between two
+  -- accepted roles clears nothing.
+  was_accepted := coalesce(OLD.role, '') IN ('owner', 'co_host', 'member', 'viewer') AND coalesce(OLD.status, 'accepted') = 'accepted';
+  is_accepted  := coalesce(NEW.role, '') IN ('owner', 'co_host', 'member', 'viewer') AND coalesce(NEW.status, 'accepted') = 'accepted';
+  IF was_accepted IS DISTINCT FROM is_accepted OR OLD.user_id IS DISTINCT FROM NEW.user_id OR OLD.trip_id IS DISTINCT FROM NEW.trip_id THEN
+    DELETE FROM public.trip_private_anchor_shares g
+     WHERE (g.trip_id = OLD.trip_id AND (g.member_id = OLD.user_id OR g.owner_id = OLD.user_id))
+        OR (g.trip_id = NEW.trip_id AND (g.member_id = NEW.user_id OR g.owner_id = NEW.user_id));
   END IF;
   RETURN NULL;
 END
@@ -127,7 +148,7 @@ $fn$;
 
 DROP TRIGGER IF EXISTS trip_members_clear_anchor_grants ON public.trip_members;
 CREATE TRIGGER trip_members_clear_anchor_grants
-  AFTER DELETE OR UPDATE OF role, status ON public.trip_members
+  AFTER INSERT OR DELETE OR UPDATE OF role, status, user_id, trip_id ON public.trip_members
   FOR EACH ROW EXECUTE FUNCTION public.trip_anchor_grants_clear_on_membership();
 
 CREATE OR REPLACE FUNCTION public.trip_anchor_grants_clear_on_item()

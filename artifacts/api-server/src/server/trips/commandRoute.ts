@@ -52,7 +52,6 @@ import { getServiceClient } from "../../lib/supabase.js";
 import { logger } from "../../lib/logger.js";
 import { asyncHandler } from "../../lib/asyncHandler.js";
 import { executeTripCommand, type TripCommandType } from "../../domain/trips/commands/tripKernel.js";
-import { privateItemEditRefusal, clearAnchorGrantsForMember, clearAnchorGrantsForItem } from "./privateAnchorShares.js";
 
 const router = Router();
 const log = logger.child({ mod: "tripCommands" });
@@ -208,18 +207,6 @@ router.post("/trips/:tripId/commands", asyncHandler(async (req, res) => {
   const membership = await requireTripMember(sc, tripId, user.id);
   if (!membership) { sendError(res, "forbidden", "Not a trip member"); return; }
 
-  // census-trips §81: the generic door holds the same line as PATCH — on another member's private item,
-  // the fields that locate, name or un-privatise it are its creator's alone.
-  const cmdPayload = ((payload as Record<string, unknown>) ?? {});
-  if (type === "UPDATE_PLAN" || type === "MOVE_PLAN") {
-    const itemId = typeof cmdPayload.item_id === "string" ? cmdPayload.item_id : "";
-    const patchKeys = Object.keys((cmdPayload.patch && typeof cmdPayload.patch === "object") ? (cmdPayload.patch as Record<string, unknown>) : {});
-    if (itemId) {
-      const pe = await privateItemEditRefusal(sc, tripId, itemId, user.id, patchKeys);
-      if (pe.refusal) { sendError(res, pe.refusal.code, pe.refusal.message); return; }
-    }
-  }
-
   const result = await executeTripCommand(sc, {
     commandId: randomUUID(),
     tripId,
@@ -234,8 +221,6 @@ router.post("/trips/:tripId/commands", asyncHandler(async (req, res) => {
   });
 
   if (result.ok) {
-    // census-trips §81.3: grants that stopped being true are cleared where the change happens.
-    if (!result.duplicate) await clearGrantsAfterCommand(sc, tripId, type, cmdPayload, (result.result ?? null) as Record<string, unknown> | null);
     res.json({
       ok: true,
       duplicate: result.duplicate,
@@ -361,13 +346,3 @@ router.get("/trips/:tripId/snapshots/:version", asyncHandler(async (req, res) =>
 }));
 
 export default router;
-
-
-/** census-trips §81.3 — after a kernel command, drop the private-anchor grants it made untrue. Logged, never fatal. */
-async function clearGrantsAfterCommand(sc: any, tripId: string, type: string, payload: Record<string, unknown>, result: Record<string, unknown> | null): Promise<void> {
-  let ok = true;
-  if (type === "REMOVE_PARTICIPANT" && typeof payload.user_id === "string") ok = await clearAnchorGrantsForMember(sc, tripId, payload.user_id);
-  else if (type === "REMOVE_PLAN" && typeof payload.item_id === "string") ok = await clearAnchorGrantsForItem(sc, payload.item_id);
-  else if ((type === "UPDATE_PLAN") && typeof payload.item_id === "string" && result && result.location_is_private === false) ok = await clearAnchorGrantsForItem(sc, payload.item_id);
-  if (!ok) log.warn({ tripId, type }, "private-anchor grants not cleared after a command; the read-time rule still denies them");
-}

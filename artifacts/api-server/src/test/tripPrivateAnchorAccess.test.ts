@@ -299,6 +299,6 @@ describe("C. the grant endpoints answer to the anchor's owner only", () => {
     use(store({ trip_private_anchor_shares: [grant(CLEO)] }));
     const r = await call(harness.base, "GET", path, ANA);
     assert.equal(r.status, 200, JSON.stringify(r.body));
-    assert.deepEqual(r.body, { ok: true, sharingEnabled: false, memberIds: [CLEO] });
+    assert.deepEqual(r.body, { ok: true, sharingEnabled: false, sharing: "off", memberIds: [CLEO] });
   });
 });

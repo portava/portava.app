@@ -198,9 +198,15 @@ function AnchorSharePicker({
   return (
     <View style={s.indent} testID={`anchor-share-picker-${place.id}`}>
       {!current.sharingEnabled ? (
-        <Text style={s.detail} testID="anchor-share-off">
-          Sharing private places isn't available yet. You can still stop sharing with anyone below.
-        </Text>
+        current.sharing === 'unread' ? (
+          <Text style={s.detail} testID="anchor-share-setting-unread">
+            We could not check whether sharing is available right now, so you can't share this place yet. You can still stop sharing with anyone below.
+          </Text>
+        ) : (
+          <Text style={s.detail} testID="anchor-share-off">
+            Sharing private places isn't available yet. You can still stop sharing with anyone below.
+          </Text>
+        )
       ) : null}
       {members.length === 0 ? <Text style={s.detail}>Nobody else is on this trip yet.</Text> : null}
       {members.map((m) => {

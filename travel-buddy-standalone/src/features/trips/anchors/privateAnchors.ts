@@ -45,12 +45,15 @@ export function privatePlacesOf(p: TripMapProjection): PrivatePlacesView {
 
 export interface AnchorShares {
   sharingEnabled: boolean;
+  /** The server's three-valued read of the setting; absent from an older server. `unread` is not "off". */
+  sharing?: 'on' | 'off' | 'unread';
   memberIds: string[];
 }
 
 function isShares(b: unknown): b is AnchorShares {
-  const v = b as { sharingEnabled?: unknown; memberIds?: unknown } | null;
+  const v = b as { sharingEnabled?: unknown; sharing?: unknown; memberIds?: unknown } | null;
   return !!v && typeof v.sharingEnabled === 'boolean' && Array.isArray(v.memberIds)
+    && (v.sharing === undefined || v.sharing === 'on' || v.sharing === 'off' || v.sharing === 'unread')
     && v.memberIds.every((m) => typeof m === 'string');
 }
 
@@ -67,7 +70,7 @@ export function fetchAnchorShares(tripId: string, itemId: string): Promise<ApiRe
  * own request succeeded.
  */
 export function sharesAfter(w: ApiWrite<unknown>): AnchorShares | null {
-  return w.state === 'done' && isShares(w.data) ? { sharingEnabled: w.data.sharingEnabled, memberIds: [...w.data.memberIds] } : null;
+  return w.state === 'done' && isShares(w.data) ? { sharingEnabled: w.data.sharingEnabled, ...(w.data.sharing ? { sharing: w.data.sharing } : {}), memberIds: [...w.data.memberIds] } : null;
 }
 
 export function grantAnchorShare(tripId: string, itemId: string, memberId: string): Promise<ApiWrite<unknown>> {

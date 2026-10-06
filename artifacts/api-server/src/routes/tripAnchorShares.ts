@@ -29,7 +29,7 @@ import { getServiceClient } from "../lib/supabase.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { isAbsentTableError } from "../lib/absentTableError.js";
 import { ownsShareableAnchor, PRIVATE_ANCHOR_SHARE_MAX } from "../domain/trips/policies/privateAnchorAccess.js";
-import { anchorSharingOn, readAnchorGrantees } from "../server/trips/privateAnchorShares.js";
+import { anchorSharingOn, readAnchorGrantees, readAnchorSharingFlag } from "../server/trips/privateAnchorShares.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -76,8 +76,10 @@ async function ownerGate(req: Request, res: Response): Promise<{ sc: Sc; userId:
 async function answerGrantees(res: Response, sc: Sc, itemId: string, status = 200): Promise<void> {
   const read = await readAnchorGrantees(sc, itemId);
   if (!read.ok) { sendError(res, "degraded_unavailable", UNREADABLE); return; }
-  const sharingEnabled = await anchorSharingOn(sc);
-  res.status(status).json({ ok: true, sharingEnabled, memberIds: read.memberIds });
+  // Three-valued (census-trips §81.3): an unreadable setting is `unread`, never a silent "off".
+  // `sharingEnabled` stays for older clients and is true only for a flag READ as on.
+  const sharing = await readAnchorSharingFlag(sc);
+  res.status(status).json({ ok: true, sharingEnabled: sharing === "on", sharing, memberIds: read.memberIds });
 }
 
 router.get("/trips/:tripId/anchors/:itemId/shares", asyncHandler(async (req, res) => {
