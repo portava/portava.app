@@ -209,6 +209,10 @@ function makeClient(state: State) {
           const col = clause.slice(0, a), op = clause.slice(a + 1, b), val = clause.slice(b + 1);
           if (op === "gte") return (r: any) => Date.parse(r[col]) >= Date.parse(val);
           if (op === "eq") return (r: any) => String(r[col]) === val;
+          // Trust's restriction read (`expires_at.is.null,expires_at.gt.<now>`), which the
+          // shared send guard now makes on a 1:1 send (OD-TRUST-5).
+          if (op === "is" && val === "null") return (r: any) => r[col] == null;
+          if (op === "gt") return (r: any) => Date.parse(r[col]) > Date.parse(val);
           throw new Error(`fake client: unmodelled or() operator "${op}"`);
         });
         filters.push((r: any) => ms.some((m) => m(r)));

@@ -280,10 +280,16 @@ describe("C. every writer into `messages` is declared, and a user door holds its
         d.file === "services/telegraph/coordinationSessions.ts" ? ["routes/telegraphCoordination.ts"]
         : d.file === "services/telegraph/threadEnvelopeWrites.ts" ? ["routes/telegraphKinds.ts", "routes/telegraphCoordination.ts"]
         : [d.file];
+      // The two doors closed in the OD-TRUST-5 wave name their clients differently; each is held
+      // to its OWN call text, and their behaviour is driven in telegraphRestrictionSendGate.test.ts.
+      const CALL_TEXT: Record<string, RegExp> = {
+        "routes/highlights.ts": /const guard = await guardTelegraphThreadWrite\(sc, threadId, user\.id\); if \(!guard\.ok\) \{/,
+        "lib/threadMessage.ts": /const guard = await guardTelegraphThreadWrite\(sc, threadId, senderId\);\n  if \(!guard\.ok\) \{/,
+      };
       for (const f of files) {
         assert.match(
           read(f),
-          /const guard = await guardTelegraphThreadWrite\(client, threadId, user\.id[,)]/,
+          CALL_TEXT[f] ?? /const guard = await guardTelegraphThreadWrite\(client, threadId, user\.id[,)]/,
           `${f} writes into messages for a person and does not pass through the shared guard`,
         );
       }
@@ -325,6 +331,7 @@ describe("C. every writer into `messages` is declared, and a user door holds its
       ["membership", /\.is\('left_at', null\)/, /\.is\('left_at', null\)/],
       ["block", /isBlockedBetween\(blockSc, user\.id, others\[0\]\)/, /isBlockedBetween\(blockSc, user\.id, others\[0\]\)/],
       ["e2ee", /is_e2ee/, /is_e2ee/],
+      ["restriction", /await refuseRestrictedSend\(req, res, getServiceClient\(\) \?\? client, threadId, user\.id\)\) return;/, /await refuseRestrictedSend\(req, res, getServiceClient\(\) \?\? client, threadId, user\.id\)\) return;/],
       ["rate", /checkSendRateLimit\(limiterSc, user\.id\)/, /await refuseSendOverRate\(/],
     ];
     assert.deepEqual(gates.map((g) => g[0]).sort(), [...DOOR_GATES].sort(), "a gate is not asserted here");
@@ -358,8 +365,10 @@ describe("C. every writer into `messages` is declared, and a user door holds its
     const membership = at(/\.is\("left_at", null\)/, "membership");
     const block = at(/isBlockedBetween\(/, "block");
     const e2ee = at(/is_e2ee/, "e2ee");
+    const restriction = at(/const restrictionVerdict = decideRestrictedSend\(/, "restriction");
     const rate = at(/const rate = await sendRateRefusal\(/, "rate");
-    assert.ok(stop < membership && membership < block && block < e2ee && e2ee < rate, "the gates are out of order");
+    assert.ok(stop < membership && membership < block && block < e2ee && e2ee < restriction && restriction < rate, "the gates are out of order");
+    assert.match(guard.slice(restriction, rate), /if \(!restrictionVerdict\.allowed\) \{/, "the restriction verdict is computed and not acted on");
     assert.match(guard.slice(rate), /if \(rate\) return rate;\s*\n\s*return \{ ok: true/, "the rate verdict is computed and not acted on");
     // A limiter that THROWS must not become a limiter that is skipped.
     const fn = src.slice(src.indexOf("export async function sendRateRefusal("));

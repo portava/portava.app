@@ -334,7 +334,7 @@ router.post(
       return;
     }
 
-    const guard = await guardTelegraphThreadWrite(client, threadId, user.id);
+    const guard = await guardTelegraphThreadWrite(client, threadId, user.id, { safety: validated.kind === "COORDINATION" && (validated.envelope as { payload?: { state?: unknown } }).payload?.state === "NEED_HELP" }); // OD-TRUST-5: "I need help" is never refused by a Trust restriction
     if (!guard.ok) {
       sendThreadWriteRefusal(res, guard);
       return;

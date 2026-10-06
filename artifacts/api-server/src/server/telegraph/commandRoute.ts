@@ -529,7 +529,8 @@ async function refuseGuardedWrite(
   const guard = await guardTelegraphThreadWrite(sc, conversationId, userId);
   if (guard.ok) return false;
   if (guard.code === "forbidden") {
-    res.status(403).json({ error: "forbidden", command: type, reason: redactForWire("TELEGRAPH_AUTH_BLOCKED") });
+    // A Trust restriction is the sender's OWN state and is said as such (OD-TRUST-5); only a block is redacted.
+    res.status(403).json({ error: "forbidden", command: type, reason: redactForWire(guard.reason ?? "TELEGRAPH_AUTH_BLOCKED"), ...(guard.reason ? { message: guard.message } : {}) });
     return true;
   }
   log.warn({ conversationId, command: type, code: guard.code }, "command refused by the thread write guard");

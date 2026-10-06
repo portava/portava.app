@@ -18,11 +18,18 @@
  * move `last_message_at`, publish to the members. That is this function, and
  * it says in its result which of those happened.
  *
+ * THE SEND GATES (OD-TRUST-5 wave, lane T2). This was one of the two user
+ * doors into `messages` declared weak in domain/telegraph/policies/
+ * messageDoorPolicy.ts: it held the E2EE refusal and nothing else — no
+ * messaging stop, no pairwise block, no burst limit and no Trust restriction —
+ * so its caller's own checks were the only gates on it. It now runs the shared
+ * guard (lib/telegraphThreadWrite.ts) BEFORE anything else, so every gate every
+ * other door holds is held here too, by the same code, for any future caller.
+ * The caller still proves its own context (the layover route checks accepted
+ * trip membership first); the guard re-checks ACTIVE thread membership itself,
+ * so a caller that forgets is refused rather than trusted.
+ *
  * WHAT IT DELIBERATELY DOES NOT DO, so no caller assumes it:
- *   - it does NOT authorize. The caller proves the sender may post to this
- *     thread (the layover route checks accepted trip membership first). A
- *     helper that both authorizes and writes invites a caller to skip the
- *     first half by forgetting to think about it.
  *   - it does NOT translate, scan for off-app solicitation, or resolve reply
  *     references. A caller that needs those wants the endpoint, not this.
  *   - it does NOT accept ciphertext. An E2EE thread is REFUSED, never
@@ -33,6 +40,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { publishToThread } from "./telegraphEvents.js";
 import { logger } from "./logger.js";
+import { guardTelegraphThreadWrite, type ThreadWriteRefusal } from "./telegraphThreadWrite.js";
 
 export type PostPlainThreadMessageResult =
   | { ok: true; messageId: string; createdAt: string }
@@ -43,7 +51,14 @@ export type PostPlainThreadMessageResult =
   /** The thread row is absent. Nothing was written. */
   | { ok: false; reason: "no_thread" }
   /** The insert itself was rejected. Nothing was written. */
-  | { ok: false; reason: "insert_failed" };
+  | { ok: false; reason: "insert_failed" }
+  /**
+   * A send gate refused (the messaging stop, membership, a block, a Trust
+   * restriction, the burst limit). Nothing was written. `degraded_unavailable`
+   * from the guard is reported as `unverifiable`, and its `e2ee_thread` as `e2ee`,
+   * so a caller already branching on those keeps its meaning.
+   */
+  | { ok: false; reason: Exclude<ThreadWriteRefusal, "degraded_unavailable" | "e2ee_thread">; message: string };
 
 /**
  * Insert a plain-text message into `threadId` as `senderId`.
@@ -61,6 +76,14 @@ export async function postPlainThreadMessage(
   params: { threadId: string; senderId: string; body: string; subtype?: string | null },
 ): Promise<PostPlainThreadMessageResult> {
   const { threadId, senderId, body } = params;
+
+  // The six send gates, before anything is read or written here.
+  const guard = await guardTelegraphThreadWrite(sc, threadId, senderId);
+  if (!guard.ok) {
+    if (guard.code === "e2ee_thread") return { ok: false, reason: "e2ee" };
+    if (guard.code === "degraded_unavailable") return { ok: false, reason: "unverifiable" };
+    return { ok: false, reason: guard.code, message: guard.message };
+  }
 
   let isE2ee: boolean;
   try {

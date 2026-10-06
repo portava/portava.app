@@ -36,6 +36,7 @@ import { CallHistoryMessage } from '../../src/components/calls/CallHistoryMessag
 import { canShowThreadCallButtons, threadCallContextType } from '../../src/components/calls/callEntryGating';
 import { getBooking } from '../../src/services/rentABuddy';
 import { useThreadMessages, useLanguageSettings, useOutgoingRequestStatus } from '../../src/hooks/useMessaging';
+import { useConversationProjection } from '../../src/features/telegraph/conversation/useConversationProjection.ts'; import { ThreadNotificationSheet } from '../../src/features/telegraph/settings/ThreadNotificationSheet.tsx'; import { offersPlanControl, treatAsE2eeForEdit, showsE2eeBadge, memberCountOf } from '../../src/features/telegraph/conversation/conversationProjection.ts'; // §24 / census T295: asked of the server, not read from raw tables
 import { useTrip } from '../../src/hooks/useBackend';
 import { useSession } from '../../src/context/SessionContext';
 import { color, space, radius, type as t, avatar, icon } from '../../src/theme/tokens';
@@ -1216,15 +1217,17 @@ export default function TelegraphThread() {
   const [addToPlanSuggestion, setAddToPlanSuggestion] = useState<TelegraphSuggestion | null>(null);
   const [meetupSheetCtx, setMeetupSheetCtx] = useState<MeetupSheetCtx | null>(null);
   const isDirect = threadType === 'direct' || threadType === 'rent_buddy_booking';
-  const [isAcceptedMember, setIsAcceptedMember] = useState(isDirect);
+  // §24 / census T295: the plan control, the E2EE badge/edit affordance and the member count come
+  // from GET /threads/:id/capabilities (server-built), not from message_thread_members / message_threads.
+  const conversationProjection = useConversationProjection(id ?? null);
+  const isAcceptedMember = offersPlanControl(conversationProjection);
+  const isE2ee = showsE2eeBadge(conversationProjection); // the lock badge: only an affirmative server answer draws it (still behind E2EE_CLAIM_UI_ENABLED)
   const [isCircleMember, setIsCircleMember] = useState<boolean | null>(null);
   const [plannedByName, setPlannedByName] = useState<string | undefined>(undefined);
   const [blockingUser, setBlockingUser] = useState(false);
   const [showSafetySheet, setShowSafetySheet] = useState(false); const [layeredIds, setLayeredIds] = useState<ReadonlySet<string>>(() => new Set()); const [panelDrawnIds, setPanelDrawnIds] = useState<ReadonlySet<string>>(() => new Set()); // §2.3: ids drawn in the PLAN/NOW strip leave the stream; the panel says which decisions it draws
   const [hideAiSuggestions, setHideAiSuggestions] = useState(false); const [safetyQuiet, setSafetyQuiet] = useState(false); // §15.2: held for the whole of a raised safety mode
-  const [threadIsMuted, setThreadIsMuted] = useState(muted === '1'); // the inbox passes the server's mutedAt; it used to start "unmuted" always
-  // E-2: whether the thread uses end-to-end encryption
-  const [isE2ee, setIsE2ee] = useState(false);
+  const [threadIsMuted, setThreadIsMuted] = useState(muted === '1'); const [showNotificationSheet, setShowNotificationSheet] = useState(false); // §30A.6: long-press the mute icon for ALL / MENTIONS / IMPORTANT / temporary mute // the inbox passes the server's mutedAt; it used to start "unmuted" always
   const [showCompassTray, setShowCompassTray] = useState(false);
   const [compassTelegraphEnabled, setCompassTelegraphEnabled] = useState<null | boolean>(null);
   const [dismissedAiMsgIds, setDismissedAiMsgIds] = useState<Set<string>>(new Set());
@@ -1241,11 +1244,11 @@ export default function TelegraphThread() {
   const { data: tripData } = useTrip(threadType === 'trip' ? contextId : undefined);
   const [showTranslationSheet, setShowTranslationSheet] = useState(false);
   // DM profile for richer header
-  const [dmProfile, setDmProfile] = useState<{ name: string | null; avatarUrl: string | null; handle: string | null; city: string | null } | null>(null);
+  const [dmProfile, setDmProfile] = useState<{ name: string | null; avatarUrl: string | null; handle: string | null } | null>(null);
   // DM receipts come from useThreadReadState (server receipts, re-read when a read lands); this
   // used to hold the other party's last_read_at, read once when the thread opened and never again.
-  // Member count for trip/circle threads
-  const [memberCount, setMemberCount] = useState<number | null>(null);
+  // Member count for trip/circle threads — measured by the server, or null (never a guess).
+  const memberCount = memberCountOf(conversationProjection);
   const listRef = useRef<FlatList>(null);
   const shouldAnimateMessage = useMessageEntranceGate();
   const mediaPicker = useMessageMediaPicker();
@@ -1375,25 +1378,10 @@ export default function TelegraphThread() {
     });
   }, []);
 
-  // Fetch DM partner's profile for the rich Direct header
-  useEffect(() => {
-    if ((threadType !== 'direct' && threadType !== 'rent_buddy_booking') || !otherUserId) return;
-    supabase
-      .from('profiles')
-      .select('name, handle, avatar_url, city')
-      .eq('id', otherUserId)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (data) {
-          setDmProfile({
-            name: (data as any).name ?? null,
-            handle: (data as any).handle ?? null,
-            avatarUrl: (data as any).avatar_url ?? null,
-            city: (data as any).city ?? null,
-          });
-        }
-      });
-  }, [threadType, otherUserId]);
+  // The DM partner's identity for the rich Direct header comes from the SERVER's projection
+  // (GET /threads/:id/conversation-header → participant.identity), set below once that hook is
+  // read. census-telegraph T295 §45c: this used to read `profiles` directly and draw `name`
+  // whatever the person's show_real_name choice was — the rule every server projection applies.
 
   // §7.2 / §7.3 / §30A.15 — SEEN is marked with the newest message actually on screen, only while
   // this screen is focused and the app is in the foreground (POST /threads/:id/seen), and receipts
@@ -1409,47 +1397,12 @@ export default function TelegraphThread() {
   );
 
 
-  // Fetch member count for trip / circle threads
-  useEffect(() => {
-    if (isDirect || !id) return;
-    supabase
-      .from('message_thread_members')
-      .select('*', { count: 'exact', head: true })
-      .eq('thread_id', id)
-      .is('left_at', null)
-      .then(({ count }) => { if (count !== null) setMemberCount(count); });
-  }, [id, threadType]);
-
-  // Permission gate: accepted thread members only (DMs always pass; trip/circle
-  // check message_thread_members — only accepted members are in the thread).
-  useEffect(() => {
-    if (isDirect) { setIsAcceptedMember(true); return; }
-    if (!id || !userId) return;
-    supabase.from('message_thread_members')
-      .select('user_id')
-      .eq('thread_id', id)
-      .eq('user_id', userId)
-      .is('left_at', null)
-      .maybeSingle()
-      .then(({ data }) => setIsAcceptedMember(Boolean(data)));
-  }, [id, threadType, userId]);
 
   // Seen is no longer stamped here on mount. A mount is not a read: the first page may not
   // have rendered, the app may be in the background, and nothing newer was ever marked after
   // it. useThreadReadState (above) marks the newest RENDERED message while the screen is
   // focused and the app is in the foreground, and again whenever a newer one appears.
   // (TELEGRAPH lane, 2026-10-03.)
-
-  // E-2: fetch is_e2ee flag once per thread open.
-  useEffect(() => {
-    if (!id) return;
-    supabase
-      .from('message_threads')
-      .select('is_e2ee')
-      .eq('id', id)
-      .maybeSingle()
-      .then(({ data }) => { if ((data as any)?.is_e2ee) setIsE2ee(true); });
-  }, [id]);
 
   // Merge: per-thread override takes precedence over global langSettings
   const autoTranslate = threadAutoTranslate ?? langSettings?.auto_translate_messages ?? true;
@@ -1581,6 +1534,12 @@ export default function TelegraphThread() {
   const threadRecap = useThreadRecap(id ?? null);
   /** §2.2's availability + safe presence axes for the header. One read. */
   const telegraphHeader = useConversationHeader(id ?? null);
+  useEffect(() => {
+    if ((threadType !== 'direct' && threadType !== 'rent_buddy_booking') || !otherUserId) { setDmProfile(null); return; }
+    const who = telegraphHeader.other && telegraphHeader.other.userId === otherUserId ? telegraphHeader.other.identity ?? null : null;
+    // A failed or absent projection discloses nothing: the header shows the thread title alone.
+    setDmProfile(who ? { name: who.name, handle: who.handle, avatarUrl: who.avatarUrl } : null);
+  }, [threadType, otherUserId, telegraphHeader.other]);
   // Telegraph §6.1: the composer's + menu, and the two typed-compose sheets.
   const [showPlusMenu, setShowPlusMenu] = useState(false);
   const [typedCompose, setTypedCompose] = useState<TypedComposeKind | null>(null); const [locationDraft, setLocationDraft] = useState<TelegraphLocationDraft | null>(null); const [showVoiceRecorder, setShowVoiceRecorder] = useState(false); // §6.2 VOICE — the sheet the + menu's Voice entry opens. Shares a line because census-telegraph cites every line below it.
@@ -1825,10 +1784,11 @@ export default function TelegraphThread() {
     // nothing anywhere measured it. §4's hard rule is that AVAILABLE, ONLINE,
     // NEARBY and SHARING LOCATION are separate states that must never be
     // collapsed — asserting one of them for free is the cheapest way to break
-    // it. The city is a real fact and stays; the presence claim is now the
-    // server's two consent-gated axes, and says nothing when they say nothing.
+    // it. The presence claim is now the server's two consent-gated axes, and says
+    // nothing when they say nothing. The city went with the raw profiles read
+    // (census-telegraph T295 §45c): no server identity projection carries it.
     const directSubtitle =
-      headerSubtitle(telegraphHeader.other, dmProfile?.city ? [dmProfile.city] : []);
+      headerSubtitle(telegraphHeader.other, []);
     const subtitle = threadType === 'trip'
       ? (memberCount !== null ? `${memberCount} members` : 'Trip Chat')
       : threadType === 'circle'
@@ -1989,6 +1949,8 @@ export default function TelegraphThread() {
               hitSlop={8}
               style={styles.headerIconBtn}
               accessibilityLabel={threadIsMuted ? 'Unmute thread' : 'Mute thread'}
+              accessibilityHint="Long press for notification options"
+              onLongPress={() => setShowNotificationSheet(true)}
               onPress={async () => {
                 const next = !threadIsMuted;
                 const r = await muteThread(id ?? '', next); // the icon shows what the server holds, not what was asked
@@ -2545,6 +2507,7 @@ export default function TelegraphThread() {
         />
       )}
 
+      <ThreadNotificationSheet visible={showNotificationSheet} threadId={id ?? null} onClose={() => setShowNotificationSheet(false)} onChanged={(p) => setThreadIsMuted(p.level === 'MUTED')} />
       {/* Thread safety / overflow controls */}
       <ThreadSafetySheet
         visible={showSafetySheet}
@@ -2599,7 +2562,7 @@ export default function TelegraphThread() {
             else Alert.alert('Error', r.message ?? 'Could not save message.');
           });
         }}
-        onUnsent={() => { void reload(); }} onEdit={(m) => setEditingMsg(m)} onHistory={(m) => setHistoryMsg(m)} canEdit={canEditMessage(actionMsg, actionMsgMine, isE2ee)} blockLabel={isDirect && otherUserId ? 'Block this person' : undefined} onBlockSender={isDirect && otherUserId ? () => { void (async () => { setBlockingUser(true); const blocked = await blockUser(otherUserId); setBlockingUser(false); if (blocked.ok) router.replace('/messages'); else Alert.alert('Could not block', blockFailedCopy(blocked.error)); })(); } : undefined}
+        onUnsent={() => { void reload(); }} onEdit={(m) => setEditingMsg(m)} onHistory={(m) => setHistoryMsg(m)} canEdit={canEditMessage(actionMsg, actionMsgMine, treatAsE2eeForEdit(conversationProjection))} blockLabel={isDirect && otherUserId ? 'Block this person' : undefined} onBlockSender={isDirect && otherUserId ? () => { void (async () => { setBlockingUser(true); const blocked = await blockUser(otherUserId); setBlockingUser(false); if (blocked.ok) router.replace('/messages'); else Alert.alert('Could not block', blockFailedCopy(blocked.error)); })(); } : undefined}
         receipt={actionMsgReceipt}
       />
 
