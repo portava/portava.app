@@ -105,6 +105,7 @@
 import { createHmac } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
+import { isFlagEnabled } from "../../lib/featureFlags.js";
 import {
   AIRPORT_FACT_TYPES,
   FACT_CLASS_TTL_MIN,
@@ -136,6 +137,54 @@ const logger = rootLogger.child({ service: "LayoverObservationService" });
  * checkable.
  */
 export const OBSERVATION_TABLE = "airport_fact_observations";
+
+/**
+ * The crowd-report channel's own capability gate. Seeded **TRUE** by migration
+ * 3513 — the one flag in this family that is, and the migration's header argues
+ * the departure.
+ *
+ * WHY IT EXISTS: until 3513 the two observation routes
+ * (`GET`/`POST /api/airport/sessions/:id/observations`) were gated only by
+ * `requireOwnedSession`'s `airport_mode_enabled`, which gates the WHOLE Layover
+ * router. So "stop traveller crowd reports" and "stop Layover" were one switch,
+ * and a brigading incident or a bad plausibility range could only be answered by
+ * taking a traveller's plan away mid-connection.
+ *
+ * WHY TRUE: the channel is already live in production under
+ * `airport_mode_enabled` (seeded TRUE by 0127), with 2860/2982/2983 applied, so
+ * seeding FALSE would have withdrawn working behaviour dressed as a safe
+ * default. This is an INCIDENT LEVER, not a launch gate.
+ *
+ * READ IT WITH `isFlagEnabled` AND NOWHERE ELSE: the name carries positive
+ * polarity, the reader is fail-closed, and a read that cannot establish its
+ * result must refuse. The enforcement sites are the two handlers in
+ * `routes/airport.ts` — deliberately NOT `requireOwnedSession`, which the whole
+ * router shares and which would turn this gate back into the thing it replaces.
+ */
+export const LAYOVER_CROWD_REPORTS_FLAG = "layover_crowd_reports_enabled";
+
+/**
+ * Is the crowd-report channel open?
+ *
+ * The read lives HERE, in the file that owns the flag name, rather than at the
+ * two route call sites, and that is not stylistic: `check:flag-polarity`
+ * resolves a flag argument only when the literal is visible in the same file as
+ * the read, so `isFlagEnabled(sc, LAYOVER_CROWD_REPORTS_FLAG)` in
+ * `routes/airport.ts` is an UNRESOLVABLE ARGUMENT there — the check cannot tell
+ * whether the gate is a stop read with the wrong reader. Keeping the read beside
+ * the literal is what `services/airport/LayoverPlaceDwell.ts` does with
+ * `LAYOVER_PLACE_DWELL_FLAG`, for the same reason.
+ *
+ * Fail-closed via `isFlagEnabled`: off, absent, and unreadable all answer false,
+ * so a caller that cannot establish the channel's state refuses.
+ */
+export async function crowdReportsEnabled(sc: any): Promise<boolean> {
+  return isFlagEnabled(sc, LAYOVER_CROWD_REPORTS_FLAG);
+}
+
+/** What a traveller is told when the crowd-report channel is closed. */
+export const CROWD_REPORTS_CLOSED_MESSAGE =
+  "Traveller reports for airports are paused right now. Your own plan is unaffected.";
 
 /**
  * The fact types a TRAVELLER may report, and the reason the set is this small.

@@ -249,6 +249,7 @@ One row per table or index that a migration in `artifacts/api-server/src/migrati
 | table | `trail_content_suggestions` | `trail_content_suggestions` | 3488 | not a hot path: one insert per stranger's suggestion; the owner's pending list | census-discovery §86 (DC-20); absent from production |
 | index | `uq_tcs_pending_label` | `trail_content_suggestions` | 3488 | not a hot path: the one-open-suggestion-per-label arbiter, probed on insert (23505 is a retry) | partial on `state = 'pending'` |
 | index | `idx_tcs_owner_pending` | `trail_content_suggestions` | 3488 | not a hot path: GET /v1/discovery/trail-suggestions/pending, one owner's open rows newest first | partial on `state = 'pending'` |
+| index | `recommendations_created_at` | `recommendations` | 3501 | not a hot path: the hourly serve-log retention purge (`purge_expired_discovery_recommendations`), `WHERE created_at < now() - keep_days ORDER BY created_at LIMIT n` plus the "more remain?" probe, at most 25 statements an hour | census-discovery §120: the owner's 30-day TESTING retention clock; one entry per row (the table's cardinality). Harness, `enable_seqscan=off`: Bitmap Index Scan on it, `Index Cond: (created_at < (now() - '30 days'))` |
 
 ## 5. What would turn this red
 

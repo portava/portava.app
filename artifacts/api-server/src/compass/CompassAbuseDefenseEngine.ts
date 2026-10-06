@@ -16,6 +16,12 @@
  *   7. available_now_abuse   — status toggled on/off >20 times in 24 h with no bookings
  *   8. refund_abuse          — >3 booking cancellations/refunds in 30 days
  *
+ * Scans 5, 6 and 7 are NARROWER than the gap this process can go without
+ * running, so they resume from a durable per-detector watermark rather than
+ * from `now - lookback`. See NARROW_SCANS below for the whole argument: which
+ * window each one scans, why the keys are separate, why the watermark only
+ * ever WIDENS a window, and what bounds a catch-up pass after an outage.
+ *
  * Severity levels:
  *   low     — flagged only; no immediate action
  *   medium  — reach reduced (compass_visibility_cooldowns extended)
@@ -29,6 +35,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../lib/logger.js";
 import { computeActiveUserScore } from "./CompassActiveUserRewardEngine.js";
+import {
+  scanWindow,
+  readWatermark,
+  commitWatermark,
+  type ScanWindow,
+} from "../lib/schedulerWatermark.js";
 
 const logger = rootLogger.child({ service: "CompassAbuseDefenseEngine" });
 
@@ -83,6 +95,45 @@ export interface ScanResult {
   status: "ok" | "incomplete";
   /** Detectors that could not complete, so the caller can say so out loud. */
   failedDetectors: Array<{ detector: AbusePatternType; error: string }>;
+  /**
+   * Watermark reads or commits that did not complete, per job key.
+   *
+   * These deliberately do NOT make the scan `incomplete`: every detector still
+   * read its own table over at least its calibrated window, which is a real
+   * measurement of that window. What they do mean is that the pass covered
+   * less TIME than it could have (read failure) or that the time it covered
+   * was not recorded as covered (commit failure) — and in both cases nothing
+   * is advanced, so the next pass re-covers it instead of skipping it. Surfaced
+   * so an operator can see a watermark store that is quietly broken, which
+   * would otherwise look like a perfectly healthy hourly scan.
+   */
+  watermarkFailures: Array<{ job: string; phase: "read" | "commit"; error: string }>;
+}
+
+/**
+ * The durable watermark store, as the two calls this engine needs. Injectable
+ * so the scan can be tested over a simulated outage without a database, and so
+ * a caller can pass `null` for "there is no store" — see RunScanOptions.
+ */
+export interface WatermarkPorts {
+  read:   (db: SupabaseClient, job: string) => Promise<{ at: Date | null; ok: boolean }>;
+  commit: (db: SupabaseClient, job: string, through: Date) => Promise<boolean>;
+}
+
+const DEFAULT_WATERMARK_PORTS: WatermarkPorts = {
+  read:   readWatermark,
+  commit: commitWatermark,
+};
+
+export interface RunScanOptions {
+  /** The instant this pass is anchored on; defaults to now. */
+  now?: Date;
+  /**
+   * The watermark store. Omitted means the real one. Explicit `null` means
+   * there is none reachable, which is treated exactly like a failed read:
+   * calibrated lookbacks only, and nothing committed.
+   */
+  watermarks?: WatermarkPorts | null;
 }
 
 function ok(detector: AbusePatternType, flags: AbuseFlag[]): DetectorOutcome {
@@ -110,6 +161,190 @@ const HASHTAG_SPAM_MIN          = 20;   // same hashtag >20 times in 24 h
 const GEOTAG_FARM_MIN           = 15;   // >15 stamps in 1 hour
 const AVAILABLE_TOGGLE_MIN      = 20;   // >20 toggles in 24 h
 const REFUND_ABUSE_MIN          = 3;    // >3 cancellations/refunds in 30 days
+
+// ── Narrow scan windows, watermarks and catch-up caps ─────────────────────────
+
+const HOUR_MS = 60 * 60 * 1_000;
+
+/**
+ * Three of the eight detectors scan a window NARROWER than the gap this
+ * process can go without ticking, so abuse committed inside a missed tick was
+ * never evaluated at all: no flag, no reach reduction, no
+ * compass_suspension_requests row, and no trace that anything was skipped.
+ * compassAbuseScanScheduler runs hourly on Replit autoscale, which suspends
+ * after 15 idle minutes — so an hour with no tick is an ordinary quiet night,
+ * not an incident. geotag_farming was the worst of the three: a ONE-HOUR
+ * window scanned on a ONE-HOUR timer, i.e. every suspended hour was a
+ * permanent blind spot with no overlap to recover it.
+ *
+ * Each of the three now resumes from its own durable watermark — the `through`
+ * of the last pass that genuinely completed — instead of from `now - lookback`.
+ *
+ * ── WHY ONE JOB KEY PER DETECTOR, NOT ONE FOR THE SCAN ──────────────────────
+ * The three have different calibrated windows and they fail INDEPENDENTLY:
+ * runScan dispatches detectors under Promise.allSettled, so one unreadable
+ * table does not stop the others. A single shared key would therefore advance
+ * on a pass in which passport_stamps was unreadable — which is this very bug
+ * relocated rather than fixed, with hashtag_spam's success burying
+ * geotag_farming's failure. Separate keys mean a detector's coverage is only
+ * ever advanced by its own completed read.
+ *
+ * ── WHY THE WATERMARK ONLY EVER WIDENS A WINDOW ─────────────────────────────
+ * The watermark is passed to scanWindow only when it is OLDER than the
+ * detector's own lookback. hashtag_spam is calibrated on 24 hours but runs
+ * hourly, so a bare `since = watermark` would shrink its window to the last
+ * hour and stop counting the other 23 — a detector that sees LESS, which is
+ * never an acceptable trade on an abuse path. Handing over the watermark only
+ * when it predates `now - lookbackMs` makes the scanned span the union of
+ * "what this detector always looks at" and "what the last pass missed", so a
+ * steady-state tick scans exactly what it scans today, and a first run (no
+ * watermark stored) is byte-identical to the old behaviour.
+ *
+ * ── WHY THE CATCH-UP IS CAPPED, AND WHAT THE CAP PROTECTS ───────────────────
+ * The hazard is not the width of the READ, it is what the scan DOES at the end
+ * of it. An uncapped catch-up after a long outage (a dead deploy, a disabled
+ * scheduler, a restored backup full of old rows) would evaluate weeks in a
+ * single pass and hand the moderation queue a burst of flags at once, every
+ * `severe` one of them carrying an auto-confirmed flag, a zeroed active-user
+ * reward, a 365-day reach cooldown and a compass_suspension_requests row.
+ * TWO things bound that burst, and both are load-bearing:
+ *
+ *   1. The per-detector cap below bounds how much TIME one pass may evaluate.
+ *   2. The detectors' own shape bounds how many FLAGS that time can produce.
+ *      All three aggregate per user (per user+hashtag for hashtag_spam) and
+ *      emit at most one flag per offender per pass, and the count that feeds
+ *      the threshold and the severity is the peak inside the detector's
+ *      CALIBRATED window (see peakInWindow), not the catch-up total. So a
+ *      wider window cannot escalate anyone's severity, and the burst is
+ *      bounded by the number of distinct offenders in the covered time — the
+ *      same bound the timely scans would have had, summed over the ticks that
+ *      never ran.
+ *
+ * Capping is a real admission, not a formality: abuse older than the cap stays
+ * unevaluated. That is deliberate. Every action the engine takes starts from
+ * `now`, so acting on a week-old one-hour geotag burst reduces present reach
+ * on stale evidence; and the wide detectors (7-day rings, 30-day booking loops
+ * and refunds) already cover that horizon with thresholds calibrated for it.
+ */
+interface NarrowScanSpec {
+  /** Durable watermark key — one per detector, see above. */
+  job:          string;
+  /** The detector's existing calibrated window; also its minimum window. */
+  lookbackMs:   number;
+  /** The most time a single catch-up pass may evaluate. */
+  maxCatchupMs: number;
+}
+
+const NARROW_SCANS: Record<
+  "hashtag_spam" | "geotag_farming" | "available_now_abuse",
+  NarrowScanSpec
+> = {
+  // 24-hour window. 7 days = 7 calibrated windows, and it matches
+  // RING_WINDOW_DAYS — the widest horizon this engine already treats as
+  // "current". The wider cap is justified here and not for the other two
+  // because spam posts stay PUBLISHED and keep earning reach for as long as
+  // they are up, so late detection still removes a live harm rather than
+  // punishing a finished one.
+  hashtag_spam:        { job: "compass_abuse_hashtag_spam",        lookbackMs: 24 * HOUR_MS, maxCatchupMs: 168 * HOUR_MS },
+  // 1-hour window on a 1-hour timer: every suspended hour was lost outright.
+  // 72 h covers the realistic worst case for an idle-suspended autoscale host
+  // — a quiet long weekend — which is 72 calibrated windows evaluated in one
+  // pass but still at most one flag per farming account. Stamps older than
+  // that are stale evidence for a `severe` action that starts now.
+  geotag_farming:      { job: "compass_abuse_geotag_farming",      lookbackMs: 1 * HOUR_MS,  maxCatchupMs: 72 * HOUR_MS },
+  // 24-hour window, capped at 72 h rather than hashtag_spam's 7 days because
+  // the harm is TRANSIENT: the misleading "available now" impressions are long
+  // gone days later, so a reach reduction applied now protects nobody. The
+  // exonerating read (completed bookings) is also only meaningful against the
+  // window the toggles actually happened in.
+  available_now_abuse: { job: "compass_abuse_available_now_abuse", lookbackMs: 24 * HOUR_MS, maxCatchupMs: 72 * HOUR_MS },
+};
+
+type NarrowScan = keyof typeof NARROW_SCANS;
+
+/**
+ * The largest number of timestamps falling inside ANY window of `widthMs` —
+ * peak density, not the total across the scanned span — plus that window's
+ * start.
+ *
+ * This exists because all three narrow thresholds are RATES wearing the
+ * clothes of counts: ">15 stamps" means ">15 stamps IN ONE HOUR", and `severe`
+ * at >30 means 30 in one hour. Feeding a 72-hour catch-up total into a
+ * threshold calibrated on one hour would flag a merely busy traveller as a
+ * severe geotag farmer and open a suspension request against them — not the
+ * bug being fixed here, but a new one pointed the other way, and the exact
+ * "burst of flags" the cap is also there to bound.
+ *
+ * Callers consult it ONLY when the scanned span is wider than the calibrated
+ * window. When the span IS the calibrated window — every steady-state tick and
+ * every first run — the peak over that span is by definition the total, so the
+ * existing count is used directly and this function is not called at all. That
+ * keeps the no-watermark path bit-for-bit what it was, including for rows with
+ * an unparseable `created_at`, which the peak path cannot place in time.
+ *
+ * The window start is returned so a caller can scope a follow-up read to the
+ * same window: available_now_abuse's exonerating bookings read has to ask
+ * about the 24 hours the toggles happened in, not about all 72.
+ *
+ * `unplaceable` is the number of rows the caller read and counted but could NOT
+ * place in time — a `created_at` that would not parse. They are ADDED to the
+ * peak rather than dropped from it. Dropping them would make the catch-up pass
+ * count fewer rows than it actually read, which is the one direction this whole
+ * change forbids: a detector may see more than the timely scan it stands in
+ * for, never less. A row whose time cannot be established is therefore treated
+ * as being inside the densest window, the same way the no-watermark path counts
+ * it (CONTRIBUTING.md:33-66 — a check that cannot establish its result must not
+ * quietly assume the convenient answer). In practice `created_at` is NOT NULL
+ * timestamptz, so this is a floor under the arithmetic, not a live case.
+ *
+ * `placed` is the peak excluding those rows, which is what tells a caller
+ * whether `startMs` means anything: with nothing placeable there is no window
+ * to scope a follow-up read to.
+ */
+function peakInWindow(
+  timestampsMs: number[],
+  widthMs: number,
+  unplaceable = 0,
+): { count: number; startMs: number; placed: number } {
+  if (timestampsMs.length === 0) return { count: unplaceable, startMs: 0, placed: 0 };
+  const t = [...timestampsMs].sort((a, b) => a - b);
+  let best = 0;
+  let bestStart = t[0]!;
+  let j = 0;
+  for (let i = 0; i < t.length; i++) {
+    if (j < i) j = i; // j never walks backwards — the sweep stays O(n)
+    // A densest window can always be slid until its left edge sits ON an
+    // event, so testing every event as the left edge is exhaustive, not a
+    // heuristic. The edges are inclusive, matching the `.gte(since)` read with
+    // no upper bound that produced these rows.
+    while (j + 1 < t.length && t[j + 1]! - t[i]! <= widthMs) j++;
+    const count = j - i + 1;
+    if (count > best) { best = count; bestStart = t[i]!; }
+  }
+  return { count: best + unplaceable, startMs: bestStart, placed: best };
+}
+
+/**
+ * The window a narrow detector actually scans: the one runScan handed it from
+ * a readable watermark, or its own calibrated lookback when there was none.
+ *
+ * A failed watermark READ is a refusal, not an absence (CONTRIBUTING.md:33-66
+ * — a check that cannot establish its result must fail rather than assume).
+ * `{ at: null, ok: true }` is "nothing stored yet"; `{ ok: false }` is "we do
+ * not know". Both land here as the calibrated lookback — never wider — and on
+ * `ok: false` runScan also commits nothing, so the uncovered time is still
+ * uncovered at the next tick and is picked up then instead of being silently
+ * declared scanned.
+ */
+function resolveWindow(win: ScanWindow | null, detector: NarrowScan): ScanWindow {
+  if (win) return win;
+  const nowMs = Date.now();
+  return {
+    since:   new Date(nowMs - NARROW_SCANS[detector].lookbackMs),
+    through: new Date(nowMs),
+    capped:  false,
+  };
+}
 
 // ── Cooldown writer ───────────────────────────────────────────────────────────
 
@@ -210,10 +445,16 @@ async function zeroActiveUserReward(
 
 // ── Flag writer ───────────────────────────────────────────────────────────────
 
+/**
+ * Returns whether the flag row was durably recorded. The insert stays
+ * non-fatal, but the answer is no longer discarded: a detector whose flag
+ * could not be written has NOT covered its window, so runScan must not advance
+ * that detector's watermark past the abuse it just failed to record.
+ */
 async function writeFlag(
   db:   SupabaseClient,
   flag: AbuseFlag,
-): Promise<void> {
+): Promise<boolean> {
   // non-fatal
   const { error } = await db.from("compass_abuse_flags").insert({
     pattern_type:   flag.patternType,
@@ -224,15 +465,17 @@ async function writeFlag(
     status:         flag.severity === "severe" ? "confirmed" : "pending",
   });
   if (error) logger.warn({ err: error, patternType: flag.patternType }, "abuse flag insert failed (non-fatal)");
+  return !error;
 }
 
 // ── Post-detection action dispatcher ─────────────────────────────────────────
 
+/** Returns whether the flag itself was durably recorded — see writeFlag. */
 async function handleFlag(
   db:   SupabaseClient,
   flag: AbuseFlag,
-): Promise<void> {
-  await writeFlag(db, flag);
+): Promise<boolean> {
+  const written = await writeFlag(db, flag);
 
   const applyReach       = flag.severity !== "low";
   const applyReward      = flag.severity === "severe";
@@ -247,6 +490,8 @@ async function handleFlag(
       return ops;
     }),
   );
+
+  return written;
 }
 
 // ── Individual pattern detectors ──────────────────────────────────────────────
@@ -526,12 +771,23 @@ async function detectCommentPods(
 async function detectHashtagSpam(
   db:     SupabaseClient,
   userId: string | null,
+  win:    ScanWindow | null = null,
 ): Promise<DetectorOutcome> {
   const flags: AbuseFlag[] = [];
   try {
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString();
+    const w       = resolveWindow(win, "hashtag_spam");
+    const widthMs = NARROW_SCANS.hashtag_spam.lookbackMs;
+    const spanMs  = w.through.getTime() - w.since.getTime();
+    // A catch-up pass covers more than one calibrated 24 h, so the count that
+    // meets HASHTAG_SPAM_MIN must be the peak 24 h, not the span total.
+    const catchingUp = spanMs > widthMs;
+    const since = w.since.toISOString();
 
-    // Get recent hashtag_usage rows; if userId scoped, filter by source posts
+    // No upper bound, deliberately: `through` is taken at the start of the
+    // pass, so rows written DURING it are counted here and again next tick
+    // (the watermark commits `through`, not the real now). Evaluating a row
+    // twice costs a duplicate flag; an upper bound could drop one between the
+    // two passes, and this scan is already overlapping today.
     const { data: usageRows, error: usageErr } = await db
       .from("hashtag_usage")
       .select("hashtag_id, source_id, source_type, created_at")
@@ -541,21 +797,47 @@ async function detectHashtagSpam(
     const rows = (usageRows as any[]) ?? [];
     if (rows.length === 0) return ok("hashtag_spam", flags);
 
+    // Attribution pre-filter. No single account can exceed HASHTAG_SPAM_MIN
+    // uses of a hashtag that was used at most HASHTAG_SPAM_MIN times IN TOTAL
+    // across all accounts, so dropping those hashtags cannot drop a flag — it
+    // is a necessary condition, not a heuristic. (It counts non-post-sourced
+    // rows too, which only over-counts, i.e. keeps MORE hashtags.) It exists
+    // because the attribution read below now has to cover a window up to 7×
+    // wider, and most hashtags in any window are used a handful of times.
+    const usageByHashtag = new Map<string, number>();
+    for (const r of rows) {
+      const h = r.hashtag_id as string;
+      usageByHashtag.set(h, (usageByHashtag.get(h) ?? 0) + 1);
+    }
+    const candidateRows = rows.filter(
+      (r: any) => (usageByHashtag.get(r.hashtag_id as string) ?? 0) > HASHTAG_SPAM_MIN,
+    );
+    if (candidateRows.length === 0) return ok("hashtag_spam", flags);
+
     // Resolve source_id → user_id via the posts table (most usage is post-sourced)
     const postSourceIds = [
       ...new Set(
-        rows
+        candidateRows
           .filter((r: any) => !r.source_type || r.source_type === "post")
           .map((r: any) => r.source_id as string),
       ),
-    ].slice(0, 200);
+    ];
 
     const postAuthorMap = new Map<string, string>(); // source_id → user_id
-    if (postSourceIds.length > 0) {
+    // Batched, and no longer truncated at 200. The old `.slice(0, 200)` was a
+    // silent ceiling on how much of the window could be attributed at all, and
+    // widening the window would have made it bite HARDER while looking
+    // unchanged: the surviving 200 ids come out of an unordered read, so a
+    // wider window could have displaced the very rows the old 24 h scan
+    // attributed — a detector seeing LESS as a side effect of seeing further.
+    // Batch size 50 is the PostgREST `.in()` list limit, as in detectReferralFarms.
+    const ATTRIBUTION_BATCH = 50;
+    for (let batchStart = 0; batchStart < postSourceIds.length; batchStart += ATTRIBUTION_BATCH) {
+      const batch = postSourceIds.slice(batchStart, batchStart + ATTRIBUTION_BATCH);
       const { data: posts, error: postsErr } = await db
         .from("posts")
         .select("id, author_id")
-        .in("id", postSourceIds);
+        .in("id", batch);
       // Every usage row is skipped as unattributable when this map is empty,
       // so a failure here is indistinguishable from "nobody spammed".
       if (postsErr) return failed("hashtag_spam", postsErr.message);
@@ -572,8 +854,9 @@ async function detectHashtagSpam(
     // rows are skipped in both modes.
     const userHashtagCount = new Map<string, number>(); // `${uid}:${hashtagId}` → count
     const userHashtagId    = new Map<string, string>();  // key → hashtagId
+    const userHashtagTimes = new Map<string, number[]>(); // key → row timestamps (ms)
 
-    for (const r of rows) {
+    for (const r of candidateRows) {
       const resolvedUid = postAuthorMap.get(r.source_id as string) ?? null;
       // Scoped scan: skip rows that don't belong to the target user
       if (userId !== null && resolvedUid !== userId) continue;
@@ -581,9 +864,22 @@ async function detectHashtagSpam(
       const key = `${resolvedUid}:${r.hashtag_id}`;
       userHashtagCount.set(key, (userHashtagCount.get(key) ?? 0) + 1);
       userHashtagId.set(key, r.hashtag_id as string);
+      const ts = Date.parse(r.created_at as string);
+      if (!Number.isNaN(ts)) {
+        if (!userHashtagTimes.has(key)) userHashtagTimes.set(key, []);
+        userHashtagTimes.get(key)!.push(ts);
+      }
     }
 
-    for (const [key, count] of userHashtagCount) {
+    for (const [key, total] of userHashtagCount) {
+      // On a catch-up pass the threshold is applied to the peak 24 h, so the
+      // same 21-uses-a-day account is caught and an ordinary account that used
+      // one hashtag 21 times over a week is not. On a normal pass the span IS
+      // 24 h and the total is used unchanged.
+      const times = userHashtagTimes.get(key) ?? [];
+      const count = catchingUp
+        ? peakInWindow(times, widthMs, total - times.length).count
+        : total;
       if (count > HASHTAG_SPAM_MIN) {
         const uid = key.split(":")[0]!;
         const hashtagId = userHashtagId.get(key)!;
@@ -591,7 +887,17 @@ async function detectHashtagSpam(
           patternType:   "hashtag_spam",
           involvedUsers: [uid],
           severity:      count > 50 ? "severe" : count > 30 ? "high" : "medium",
-          evidence:      { hashtag_id: hashtagId, usage_count: count, window_hours: 24 },
+          evidence:      {
+            hashtag_id:   hashtagId,
+            usage_count:  count,
+            window_hours: widthMs / HOUR_MS,
+            // Stated so a reviewer can tell a catch-up flag from a timely one
+            // and see exactly what span produced it.
+            scanned_from:    since,
+            scanned_through: w.through.toISOString(),
+            ...(catchingUp ? { catchup_scan: true, scanned_hours: Math.round(spanMs / HOUR_MS) } : {}),
+            ...(w.capped ? { catchup_capped: true } : {}),
+          },
         });
       }
     }
@@ -605,10 +911,18 @@ async function detectHashtagSpam(
 async function detectGeotagFarming(
   db:     SupabaseClient,
   userId: string | null,
+  win:    ScanWindow | null = null,
 ): Promise<DetectorOutcome> {
   const flags: AbuseFlag[] = [];
   try {
-    const since = new Date(Date.now() - 60 * 60 * 1_000).toISOString();
+    // The 1-hour window on a 1-hour timer: without a watermark this detector
+    // had no overlap at all, so a single suspended tick lost an hour for good.
+    const w       = resolveWindow(win, "geotag_farming");
+    const widthMs = NARROW_SCANS.geotag_farming.lookbackMs;
+    const spanMs  = w.through.getTime() - w.since.getTime();
+    const catchingUp = spanMs > widthMs;
+    const since = w.since.toISOString();
+    // Upper bound omitted on purpose — see detectHashtagSpam.
     const q = db
       .from("passport_stamps")
       .select("user_id, created_at")
@@ -620,18 +934,40 @@ async function detectGeotagFarming(
     if (error) return failed("geotag_farming", error.message);
     const rows = (data as any[]) ?? [];
 
-    const countByUser = new Map<string, number>();
+    const countByUser  = new Map<string, number>();
+    const stampsByUser = new Map<string, number[]>();
     for (const r of rows) {
       countByUser.set(r.user_id, (countByUser.get(r.user_id) ?? 0) + 1);
+      const ts = Date.parse(r.created_at as string);
+      if (!Number.isNaN(ts)) {
+        if (!stampsByUser.has(r.user_id)) stampsByUser.set(r.user_id, []);
+        stampsByUser.get(r.user_id)!.push(ts);
+      }
     }
 
-    for (const [uid, count] of countByUser) {
+    for (const [uid, total] of countByUser) {
+      // GEOTAG_FARM_MIN and the >30 severe line are per-HOUR rates. On a
+      // catch-up pass the hour with the most stamps decides, so a farming
+      // burst inside a suspended hour is still caught at the severity it
+      // earned, and 16 stamps spread over a quiet weekend is not a severe
+      // farmer. On a normal pass the span is the hour and the total is used.
+      const stampTimes = stampsByUser.get(uid) ?? [];
+      const count = catchingUp
+        ? peakInWindow(stampTimes, widthMs, total - stampTimes.length).count
+        : total;
       if (count > GEOTAG_FARM_MIN) {
         flags.push({
           patternType:   "geotag_farming",
           involvedUsers: [uid],
           severity:      count > 30 ? "severe" : "high",
-          evidence:      { stamp_count: count, window_hours: 1 },
+          evidence:      {
+            stamp_count:  count,
+            window_hours: widthMs / HOUR_MS,
+            scanned_from:    since,
+            scanned_through: w.through.toISOString(),
+            ...(catchingUp ? { catchup_scan: true, scanned_hours: Math.round(spanMs / HOUR_MS) } : {}),
+            ...(w.capped ? { catchup_capped: true } : {}),
+          },
         });
       }
     }
@@ -645,10 +981,16 @@ async function detectGeotagFarming(
 async function detectAvailableNowAbuse(
   db:     SupabaseClient,
   userId: string | null,
+  win:    ScanWindow | null = null,
 ): Promise<DetectorOutcome> {
   const flags: AbuseFlag[] = [];
   try {
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1_000).toISOString();
+    const w       = resolveWindow(win, "available_now_abuse");
+    const widthMs = NARROW_SCANS.available_now_abuse.lookbackMs;
+    const spanMs  = w.through.getTime() - w.since.getTime();
+    const catchingUp = spanMs > widthMs;
+    const since = w.since.toISOString();
+    // Upper bound omitted on purpose — see detectHashtagSpam.
     const q = db
       .from("compass_active_user_events")
       .select("user_id, event_type, created_at")
@@ -661,21 +1003,49 @@ async function detectAvailableNowAbuse(
     if (error) return failed("available_now_abuse", error.message);
     const rows = (data as any[]) ?? [];
 
-    const countByUser = new Map<string, number>();
+    const countByUser   = new Map<string, number>();
+    const togglesByUser = new Map<string, number[]>();
     for (const r of rows) {
       countByUser.set(r.user_id, (countByUser.get(r.user_id) ?? 0) + 1);
+      const ts = Date.parse(r.created_at as string);
+      if (!Number.isNaN(ts)) {
+        if (!togglesByUser.has(r.user_id)) togglesByUser.set(r.user_id, []);
+        togglesByUser.get(r.user_id)!.push(ts);
+      }
     }
 
-    for (const [uid, toggleCount] of countByUser) {
+    for (const [uid, total] of countByUser) {
+      // AVAILABLE_TOGGLE_MIN and the >40 line are per-24 h rates; on a
+      // catch-up pass the densest 24 h decides. On a normal pass the span IS
+      // 24 h, so `peak` is skipped and the total is used unchanged.
+      const toggleTimes = togglesByUser.get(uid) ?? [];
+      const peak = catchingUp
+        ? peakInWindow(toggleTimes, widthMs, total - toggleTimes.length)
+        : null;
+      const toggleCount = peak ? peak.count : total;
+      // `startMs` only means something when at least one toggle could be
+      // placed in time. With none placeable there is no densest window to
+      // scope the exonerating read to, so it keeps the whole span — wider, so
+      // more likely to find a booking, which is the direction that favours the
+      // buddy rather than the flag.
+      const window24 = peak && peak.placed > 0 ? peak : null;
       if (toggleCount <= AVAILABLE_TOGGLE_MIN) continue;
 
-      // Check if this user has any completed bookings in the same window
-      const { data: bookings, error: bookingsErr } = await db
+      // Check if this user has any completed bookings in the same window.
+      // On a catch-up pass "the same window" is the 24 h the toggles were
+      // counted in, NOT the whole catch-up span: exonerating a buddy who
+      // toggled 30 times on Friday because they completed a booking on Monday
+      // would make this detector weaker than the timely scan it is standing in
+      // for, and the claim the flag makes is specifically "no bookings in the
+      // 24 h they were toggling".
+      const bq = db
         .from("rent_buddy_bookings")
         .select("id")
         .eq("buddy_id", uid)
         .eq("status", "completed")
-        .gte("created_at", since);
+        .gte("created_at", window24 ? new Date(window24.startMs).toISOString() : since);
+      if (window24) bq.lte("created_at", new Date(window24.startMs + widthMs).toISOString());
+      const { data: bookings, error: bookingsErr } = await bq;
       // This read EXONERATES. Coalescing a failure to `[]` reads as "no
       // bookings", which is the flagging branch — so an unreadable table would
       // punish a busy buddy for toggling their availability.
@@ -687,7 +1057,15 @@ async function detectAvailableNowAbuse(
           patternType:   "available_now_abuse",
           involvedUsers: [uid],
           severity:      toggleCount > 40 ? "high" : "medium",
-          evidence:      { toggle_count: toggleCount, window_hours: 24, bookings_completed: 0 },
+          evidence:      {
+            toggle_count:       toggleCount,
+            window_hours:       widthMs / HOUR_MS,
+            bookings_completed: 0,
+            scanned_from:    since,
+            scanned_through: w.through.toISOString(),
+            ...(catchingUp ? { catchup_scan: true, scanned_hours: Math.round(spanMs / HOUR_MS) } : {}),
+            ...(w.capped ? { catchup_capped: true } : {}),
+          },
         });
       }
     }
@@ -763,6 +1141,7 @@ async function detectRefundAbuse(
 export async function runScan(
   db:     SupabaseClient | null,
   userId: string | null = null,
+  opts:   RunScanOptions = {},
 ): Promise<ScanResult> {
   // No client is not a clean scan either — nothing was looked at.
   if (!db) {
@@ -770,13 +1149,100 @@ export async function runScan(
       flagsWritten: 0,
       status: "incomplete",
       failedDetectors: [{ detector: "mutual_review_ring", error: "no service client available" }],
+      watermarkFailures: [],
     };
   }
 
+  const now   = opts.now ?? new Date();
+  const nowMs = now.getTime();
+  // `in`, not `??`: `??` does not short-circuit on an explicit null, so a
+  // caller saying "there is no watermark store" would silently get the real
+  // one. Same trap as telegraph/lifecycleScheduler.ts's client option.
+  const ports = "watermarks" in opts && opts.watermarks !== undefined
+    ? opts.watermarks
+    : DEFAULT_WATERMARK_PORTS;
+
   let flagsWritten = 0;
   const failedDetectors: Array<{ detector: AbusePatternType; error: string }> = [];
+  const watermarkFailures: Array<{ job: string; phase: "read" | "commit"; error: string }> = [];
+  /** The window handed to each narrow detector, when one could be established. */
+  const windows     = new Map<AbusePatternType, ScanWindow>();
+  /** Jobs whose watermark was READ successfully, so advancing it is meaningful. */
+  const committable = new Set<NarrowScan>();
+  /** Detectors whose flags were found but could not be durably recorded. */
+  const unrecorded  = new Set<AbusePatternType>();
+  let scanAborted = false;
 
-  const DETECTORS: Array<[AbusePatternType, (db: SupabaseClient, u: string | null) => Promise<DetectorOutcome>]> = [
+  for (const key of Object.keys(NARROW_SCANS) as NarrowScan[]) {
+    const spec = NARROW_SCANS[key];
+    // No watermark is the calibrated lookback, which is also the FLOOR: a
+    // watermark can only ever move `since` earlier than this, never later.
+    let watermark: Date | null = null;
+
+    // Watermarks are read for the SCHEDULED GLOBAL pass only. An on-demand
+    // scoped scan (userId set) reads ONE user's rows, so committing its
+    // `through` would declare that window covered for every OTHER user and
+    // recreate exactly the permanent skip this is fixing — just aimed at
+    // everyone who was not the subject of the report. Scoped scans keep their
+    // calibrated lookbacks and commit nothing.
+    if (userId === null && ports) {
+      let at: Date | null = null;
+      let readOk = false;
+      try {
+        const r = await ports.read(db, spec.job);
+        at = r.at;
+        readOk = r.ok;
+      } catch (e) {
+        watermarkFailures.push({ job: spec.job, phase: "read", error: (e as Error)?.message ?? "threw" });
+      }
+      if (readOk) {
+        // Union, never replacement: a watermark NEWER than the calibrated
+        // lookback is not used, because it would NARROW the window (see
+        // NARROW_SCANS). The job is committable either way, so the mark keeps
+        // moving forward on every clean pass.
+        watermark = at !== null && at.getTime() < nowMs - spec.lookbackMs ? at : null;
+        committable.add(key);
+      } else if (!watermarkFailures.some((f) => f.job === spec.job)) {
+        // `ok: false` is a REFUSAL, not an absence — `{ at: null, ok: true }`
+        // is the absence. Treating it as absence would quietly reset coverage
+        // to `now - lookback` on every transient DB error, which is the very
+        // "a check that cannot establish its result assumes instead of
+        // failing" shape CONTRIBUTING.md:33-66 forbids. The detector falls
+        // back to its calibrated lookback and the job stays OUT of
+        // `committable`, so nothing is advanced and the uncovered time is
+        // still there to be covered by the next tick.
+        watermarkFailures.push({ job: spec.job, phase: "read", error: "watermark read did not establish a result" });
+      }
+    }
+
+    windows.set(key, scanWindow({
+      watermark,
+      now,
+      defaultLookbackMs: spec.lookbackMs,
+      maxCatchupMs:      spec.maxCatchupMs,
+    }));
+  }
+
+  {
+    const cappedJobs = [...committable].filter((k) => windows.get(k)?.capped);
+    if (cappedJobs.length > 0) {
+      // Said out loud because it is a real gap, not a tidy success: everything
+      // older than the cap in these windows will never be evaluated by this
+      // detector. See NARROW_SCANS for why that trade is taken.
+      logger.warn(
+        {
+          cappedJobs: cappedJobs.map((k) => ({
+            job:   NARROW_SCANS[k].job,
+            since: windows.get(k)!.since.toISOString(),
+            maxCatchupHours: NARROW_SCANS[k].maxCatchupMs / HOUR_MS,
+          })),
+        },
+        "abuse scan catch-up CAPPED — abuse older than the cap in these windows was not evaluated",
+      );
+    }
+  }
+
+  const DETECTORS: Array<[AbusePatternType, (db: SupabaseClient, u: string | null, w: ScanWindow | null) => Promise<DetectorOutcome>]> = [
     ["mutual_review_ring",  detectMutualReviewRings],
     ["booking_loop",        detectBookingLoops],
     ["referral_farm",       detectReferralFarms],
@@ -789,10 +1255,12 @@ export async function runScan(
 
   try {
     const settled = await Promise.allSettled(
-      DETECTORS.map(([, fn]) => fn(db, userId)),
+      DETECTORS.map(([name, fn]) => fn(db, userId, windows.get(name) ?? null)),
     );
 
-    const allFlags: AbuseFlag[] = [];
+    // Flags carry their detector from here on: a watermark may only be
+    // advanced for a detector whose OWN flags were all recorded.
+    const allFlags: Array<{ detector: AbusePatternType; flag: AbuseFlag }> = [];
     settled.forEach((s, i) => {
       const name = DETECTORS[i]![0];
       if (s.status === "rejected") {
@@ -801,22 +1269,65 @@ export async function runScan(
         return;
       }
       const outcome = s.value;
-      allFlags.push(...outcome.flags);
+      for (const flag of outcome.flags) allFlags.push({ detector: outcome.detector, flag });
       if (outcome.failed) {
         failedDetectors.push({ detector: outcome.detector, error: outcome.error ?? "unknown read failure" });
       }
     });
 
-    await Promise.allSettled(
-      allFlags.map(async (flag) => {
-        await handleFlag(db, flag);
-        flagsWritten++;
-      }),
+    const writes = await Promise.allSettled(
+      allFlags.map(async ({ flag }) => handleFlag(db, flag)),
     );
+    writes.forEach((wr, i) => {
+      const { detector } = allFlags[i]!;
+      // `flagsWritten` now counts rows that actually landed. It used to count
+      // handleFlag CALLS, so a rejected insert still reported a flag written —
+      // the "a successful call is not evidence of the side effect" shape from
+      // CONTRIBUTING.md, in the number the scheduler logs hourly.
+      if (wr.status === "fulfilled" && wr.value) flagsWritten++;
+      else unrecorded.add(detector);
+    });
   } catch (e) {
     // The scheduler must not crash — but it must also not be told this scan
     // was clean. A blanket failure marks every detector unmeasured.
+    scanAborted = true;
     failedDetectors.push({ detector: "mutual_review_ring", error: `scan aborted: ${(e as Error).message}` });
+  }
+
+  // ── Commit, and only now ────────────────────────────────────────────────────
+  // A watermark is advanced strictly AFTER the pass, and only for a detector
+  // whose own pass actually completed: it read its table, it did not throw, and
+  // every flag it produced was durably inserted. Advancing past a window whose
+  // abuse was never read — or was read and then dropped on the floor by a
+  // failed insert — would discard it permanently and invisibly, which is the
+  // defect being fixed rather than a smaller version of it. Re-scanning a
+  // window costs at most a duplicate flag, and this scan already overlaps
+  // itself hourly today.
+  if (ports) {
+    for (const key of committable) {
+      const w    = windows.get(key)!;
+      const spec = NARROW_SCANS[key];
+      if (scanAborted) continue;
+      if (failedDetectors.some((f) => f.detector === key)) continue;
+      if (unrecorded.has(key)) continue;
+      try {
+        // `w.through`, never a fresh `now`: committing a later instant would
+        // skip the time between the start of this pass and this line.
+        const advanced = await ports.commit(db, spec.job, w.through);
+        if (!advanced) {
+          watermarkFailures.push({ job: spec.job, phase: "commit", error: "commit did not confirm the row was advanced" });
+        }
+      } catch (e) {
+        watermarkFailures.push({ job: spec.job, phase: "commit", error: (e as Error)?.message ?? "threw" });
+      }
+    }
+  }
+
+  if (watermarkFailures.length > 0) {
+    logger.warn(
+      { watermarkFailures, userId },
+      "abuse scan watermarks: a read or commit did not complete — this pass covered or recorded less time than it could have; the next pass re-covers it",
+    );
   }
 
   if (failedDetectors.length > 0) {
@@ -830,5 +1341,6 @@ export async function runScan(
     flagsWritten,
     status: failedDetectors.length > 0 ? "incomplete" : "ok",
     failedDetectors,
+    watermarkFailures,
   };
 }

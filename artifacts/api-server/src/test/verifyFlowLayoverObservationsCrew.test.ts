@@ -63,6 +63,7 @@ import { _setTestClient } from "../lib/http.js";
 import airportRouter from "../routes/airport.js";
 import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
 import {
+  LAYOVER_CROWD_REPORTS_FLAG,
   OBSERVATION_TABLE,
   TRAVELLER_SUBMITTABLE_FACT_TYPES,
   travellerObserverHandle,
@@ -131,12 +132,28 @@ function stage(opts: {
   crewMembers?: any[];
   failures?: Record<string, { message: string; code?: string }>;
   mateDepartureMs?: number;
+  /**
+   * The crowd-report channel's own flag (migration 3513, seeded TRUE).
+   * `true` (the default) is production's state; `false` is an operator having
+   * closed the channel; `"absent"` is no row at all, which `isFlagEnabled`
+   * reads as false and which is what a fresh CI project looks like.
+   */
+  crowdReports?: boolean | "absent";
+  /**
+   * Make the crowd-report flag's OWN read fail, and only that one. A blanket
+   * `failures["feature_flags:select"]` would break `airport_mode_enabled` too
+   * and the request would be refused by `requireOwnedSession` before it ever
+   * reached the gate under test — a green test proving nothing about it.
+   */
+  crowdFlagUnreadable?: boolean;
 } = {}) {
   const now = Date.now();
+  const crowd = opts.crowdReports ?? true;
   tables = {
     feature_flags: [
       { flag: "airport_mode_enabled", enabled: true },
       { flag: "layover_plans_enabled", enabled: true },
+      ...(crowd === "absent" ? [] : [{ flag: LAYOVER_CROWD_REPORTS_FLAG, enabled: crowd }]),
     ],
     airport_profiles: [airportRow()],
     layover_sessions: [
@@ -164,14 +181,64 @@ function stage(opts: {
     [CREW_TABLE]: opts.crews ?? [],
     [CREW_MEMBER_TABLE]: opts.crewMembers ?? [],
   };
+  const db = makeLayoverDb(tables, {
+    users: { [TOKEN]: USER, [MATE_TOKEN]: MATE },
+    failures: opts.failures,
+  }) as any;
   _setTestClient(
-    makeLayoverDb(tables, {
-      users: { [TOKEN]: USER, [MATE_TOKEN]: MATE },
-      failures: opts.failures,
-    }) as any,
+    opts.crowdFlagUnreadable ? withUnreadableFlag(db, LAYOVER_CROWD_REPORTS_FLAG) : db,
     true,
   );
   return tables;
+}
+
+/**
+ * Wrap the double so that a `feature_flags` read FILTERED ON ONE FLAG resolves
+ * as a PostgREST failure, while every other flag read answers normally.
+ *
+ * `fakeLayoverDb`'s own injection is table+op wide, which cannot express "this
+ * one gate could not establish its state" — the only question worth asking of a
+ * fail-closed check. The error arrives RESOLVED (`{ data: null, error }`), never
+ * thrown, because that is what supabase-js does and a thrown error would exit
+ * through `isFlagEnabled`'s catch rather than its error branch.
+ */
+function withUnreadableFlag(client: any, flag: string) {
+  return {
+    ...client,
+    from(table: string) {
+      const builder = client.from(table);
+      if (table !== "feature_flags") return builder;
+      let targeted = false;
+      const unreadable = { data: null, error: { message: `feature_flags unreadable for ${flag}` } };
+      const proxy: any = new Proxy(builder, {
+        get(target, prop: string) {
+          const value = (target as any)[prop];
+          if (prop === "eq") {
+            return (col: string, v: any) => {
+              if (col === "flag" && v === flag) targeted = true;
+              value.call(target, col, v);
+              return proxy;
+            };
+          }
+          if (prop === "maybeSingle" || prop === "single") {
+            return () => (targeted ? Promise.resolve(unreadable) : value.call(target));
+          }
+          if (prop === "then") {
+            return (onF: any, onR: any) =>
+              targeted ? Promise.resolve(unreadable).then(onF, onR) : value.call(target, onF, onR);
+          }
+          if (typeof value === "function") {
+            return (...args: any[]) => {
+              const out = value.apply(target, args);
+              return out === builder ? proxy : out;
+            };
+          }
+          return value;
+        },
+      });
+      return proxy;
+    },
+  };
 }
 
 /** A stored, already-screened observation from somebody who is not the viewer. */
@@ -552,8 +619,114 @@ describe("FLOW 4b — a crew is formed, joined, certified and read back", () => 
   });
 });
 
+// ── FLOW 4c: the crowd-report channel's OWN kill switch (migration 3513) ──────
+
 /**
- * MUTATIONS RUN, WITH THE COUNTS THEY PRODUCED. Baseline 21/21. Every mutant
+ * `layover_crowd_reports_enabled`, seeded TRUE by 3513, enforced in BOTH
+ * observation handlers and NOT in `requireOwnedSession`.
+ *
+ * WHAT IS BEING PINNED, AND WHY EACH CASE IS A STATE ASSERTION
+ * ===========================================================
+ * The channel was already live when the flag was introduced, gated only by
+ * `airport_mode_enabled` — which gates the whole Layover router. So the property
+ * under test is not "a flag is read". It is:
+ *
+ *   • ON  → byte-identical behaviour to before the flag existed, writes included;
+ *   • OFF → both handlers refuse AND THE STORE IS UNTOUCHED. A refusal that
+ *           still wrote the row would be the worst of both: a traveller told the
+ *           channel is closed while their reading enters the corpus and moves
+ *           somebody else's safety buffer. Every OFF case reads the table back.
+ *   • UNREADABLE → refuses. A gate that cannot establish its state must not pass.
+ *   • OFF → the REST OF LAYOVER STILL SERVES. This is the entire point of 3513
+ *           and it is the one assertion that fails if the gate is ever "tidied
+ *           up" into `requireOwnedSession`.
+ */
+describe("FLOW 4c — crowd reports have their own switch, and it closes only them", () => {
+  it("flag TRUE: the channel behaves exactly as it did before the flag existed", async () => {
+    stage({ crowdReports: true });
+    const post = await request("POST", OBS, TOKEN, report({ value: 19 }));
+    assert.equal(post.status, 200, post.raw);
+    assert.equal(tables[OBSERVATION_TABLE].length, 1, "the report did not reach the store with the channel open");
+    assert.equal(tables[OBSERVATION_TABLE][0].value, 19);
+
+    const get = await request("GET", OBS, TOKEN);
+    assert.equal(get.status, 200, get.raw);
+    assert.ok(factOf(get.body, "queue_report_minutes"), "the reading is not served with the channel open");
+  });
+
+  it("flag FALSE: POST refuses AND NOTHING is written", async () => {
+    stage({ crowdReports: false });
+    const r = await request("POST", OBS, TOKEN, report());
+    assert.equal(r.status, 503, r.raw);
+    assert.equal(r.body.error, "degraded_unavailable");
+    assert.deepEqual(
+      tables[OBSERVATION_TABLE], [],
+      "the channel was closed and the report was stored anyway — it will corroborate a reading nobody can see",
+    );
+    assert.deepEqual(
+      tables.layover_events, [],
+      "a closed channel emitted an audit event for a report it did not accept",
+    );
+  });
+
+  it("flag FALSE: GET refuses rather than serving an empty reading", async () => {
+    // An empty answer here is the §21.4 defect in a new costume: "nobody has
+    // reported anything" is a claim about the airport, and a closed channel has
+    // no standing to make it.
+    stage({ crowdReports: false, observations: [storedObservation(), storedObservation()] });
+    const r = await request("GET", OBS, TOKEN);
+    assert.equal(r.status, 503, r.raw);
+    assert.equal(r.body.error, "degraded_unavailable");
+    assert.equal(r.body.facts, undefined, "a closed channel published a facts list");
+  });
+
+  it("the flag row ABSENT reads as closed, not as open", async () => {
+    // A fresh CI project has no row. `isFlagEnabled` answers false for it, and
+    // the handlers must refuse — a gate that defaulted open on a missing row
+    // would be unenforceable everywhere the migration has not landed.
+    stage({ crowdReports: "absent" });
+    const post = await request("POST", OBS, TOKEN, report());
+    assert.equal(post.status, 503, post.raw);
+    assert.deepEqual(tables[OBSERVATION_TABLE], [], "a missing flag row let a write through");
+    const get = await request("GET", OBS, TOKEN);
+    assert.equal(get.status, 503, get.raw);
+  });
+
+  it("an UNREADABLE flag refuses — the check that cannot establish its result does not pass", async () => {
+    // Only THIS flag's read fails; `airport_mode_enabled` still answers true, so
+    // the request genuinely reaches the gate under test rather than being turned
+    // away by the shared guard.
+    stage({ crowdFlagUnreadable: true });
+    const post = await request("POST", OBS, TOKEN, report());
+    assert.equal(post.status, 503, post.raw);
+    assert.equal(post.body.error, "degraded_unavailable");
+    assert.deepEqual(
+      tables[OBSERVATION_TABLE], [],
+      "an unreadable gate was treated as an open one and a write went through",
+    );
+    const get = await request("GET", OBS, TOKEN);
+    assert.equal(get.status, 503, get.raw);
+    assert.equal(get.body.error, "degraded_unavailable");
+  });
+
+  it("closing crowd reports does NOT close the rest of Layover", async () => {
+    // 3513's whole reason for existing. If this case ever fails, the gate has
+    // been moved into `requireOwnedSession` and the switch is back to being
+    // "turn off Layover".
+    stage({ crowdReports: false });
+    const crew = await request("GET", CREW, TOKEN);
+    assert.equal(crew.status, 200, crew.raw);
+    assert.equal(crew.body.ok, true);
+
+    const created = await request("POST", CREW, TOKEN, { title: "Ramen run" });
+    assert.equal(created.status, 200, created.raw);
+    assert.equal(tables[CREW_TABLE].length, 1, "a crew could not be formed while only crowd reports were closed");
+  });
+});
+
+/**
+ * MUTATIONS RUN, WITH THE COUNTS THEY PRODUCED. Baseline 21/21 before FLOW 4c,
+ * 27/27 with it. Every mutant
  * was applied to the tree, the suite re-run, and the file restored from a
  * byte-for-byte copy; `git status` was clean of source changes at the end.
  *
@@ -586,6 +759,32 @@ describe("FLOW 4b — a crew is formed, joined, certified and read back", () => 
  *   • `LayoverCrewStore.ts` — the owner-leaves branch returning
  *     `disbanded: false` without disbanding → 20/1. An ownerless crew stays
  *     advertised as open and its members keep waiting for it.
+ *
+ * FLOW 4c's MUTATIONS (migration 3513's gate). Baseline 27/27; each mutant was
+ * applied alone, the suite re-run, and `routes/airport.ts` restored from a
+ * byte-for-byte copy verified with `diff` afterwards (27/27 again):
+ *
+ *   • `routes/airport.ts` — the gate removed from the POST handler → 24/3: the
+ *     FALSE, ABSENT and UNREADABLE cases. All three fail on the STORE, not on
+ *     the status code: the report lands in `airport_fact_observations` while the
+ *     channel is closed, which is the write a closed channel must not make.
+ *   • `routes/airport.ts` — the gate removed from the GET handler → 24/3: the
+ *     FALSE-GET, ABSENT and UNREADABLE cases. A closed channel publishing a
+ *     facts list is a reading served on an airport's behalf with no standing.
+ *   • `LayoverObservationService.ts` — `crowdReportsEnabled` reading the row
+ *     itself and treating an ERROR OR A MISSING ROW as OPEN (`return true`)
+ *     instead of going through fail-closed `isFlagEnabled`
+ *     → 25/2: the ABSENT and UNREADABLE cases,
+ *     and ONLY those. This is the fail-open mutant that a status-code-only test
+ *     would miss entirely, because the FALSE case stays green: the gate still
+ *     works wherever the row exists and silently stops working wherever it does
+ *     not — every environment the migration has not reached, and every minute
+ *     `feature_flags` is unreadable.
+ *   • `routes/airport.ts` — the gate MOVED INTO `requireOwnedSession` and taken
+ *     out of both handlers → 26/1: "closing crowd reports does NOT close the
+ *     rest of Layover". This is the tidy-up that looks like deduplication and
+ *     undoes 3513's entire purpose — the crew route refuses with the
+ *     crowd-report message while every observation case stays green.
  *
  * NOT MUTATED, and named rather than implied: the ownership gate
  * (`requireOwnedSession`) is covered by two cases here but was not separately
