@@ -41,7 +41,7 @@ import {
 import {
   projectPublicWindows,
   type ViewerRelationship,
-} from "../services/passport/OpenToPlansService.js";
+} from "../services/passport/OpenToPlansService.js"; import { canMessage } from "../lib/messagingPermissions.js"; // the header's window relationship (§45f)
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { canViewCirclePresenceBatch } from "../lib/circleAccessGuard.js"; import { nameVisibilitySet, presentedName, resolveHandle } from "../lib/publicIdentity.js"; // census-telegraph T295 §45c: the header identity
 
@@ -249,23 +249,53 @@ router.get(
     const ctx = loaded.ctx;
     const others = ctx.participantIds.filter((p) => p !== user.id);
 
+    // ── the block, EITHER way: read first, because it governs every axis ──────
+    // (re-verification 4, §45d.3; verification of a58aa01d3f, finding 1, §45f.)
+    // A blocked person cannot read the blocker's profile at all
+    // (`profiles_select`), so NOTHING about the other person crosses a block on
+    // this header: not who they are, and not whether they are free. `null` = a
+    // block read failed, and every per-person axis then withholds for every
+    // participant — "could not check" is not "no block".
+    let blocked: ReadonlySet<string> | null = new Set<string>();
+    let profileRows: Array<Record<string, unknown>> | null = [];
+    if (others.length > 0) {
+      const [profilesRes, iBlockedRes, blockedMeRes] = await Promise.all([
+        client.from("profiles").select("id, handle, username, name, display_name, full_name, avatar_url, is_private").in("id", others),
+        client.from("blocks").select("blocked_id").eq("blocker_id", user.id).in("blocked_id", others),
+        client.from("blocks").select("blocker_id").eq("blocked_id", user.id).in("blocker_id", others),
+      ]);
+      if (iBlockedRes.error || blockedMeRes.error) {
+        log.warn({ threadId, message: (iBlockedRes.error ?? blockedMeRes.error)?.message }, "block state unreadable; the header shows no identity and no availability");
+        blocked = null;
+      } else {
+        blocked = new Set<string>([
+          ...((iBlockedRes.data ?? []) as Array<{ blocked_id?: unknown }>).map((r) => String(r.blocked_id)),
+          ...((blockedMeRes.data ?? []) as Array<{ blocker_id?: unknown }>).map((r) => String(r.blocker_id)),
+        ]);
+      }
+      if (profilesRes.error) {
+        log.warn({ threadId, message: profilesRes.error.message }, "header identities unreadable; header shows the thread title alone");
+        profileRows = null;
+      } else {
+        profileRows = (profilesRes.data ?? []) as Array<Record<string, unknown>>;
+      }
+    }
+
     // ── availability (§4, the AVAILABLE axis) ──────────────────────────────────
     const windowsEnabled = await isFlagEnabled(client, OPEN_TO_PLANS_FLAG);
-    const relationship: ViewerRelationship =
-      ctx.threadType === "trip" || ctx.threadType === "circle"
-        ? "crew"
-        : "follower";
 
     const participants: HeaderParticipant[] = [];
     for (const other of others) {
       let state: string | null = null;
       let intents: string[] = [];
       let expiresAt: string | null = null;
-      if (windowsEnabled) {
+      // Never across a block, either way, and never while the block state is unknown.
+      if (windowsEnabled && blocked !== null && !blocked.has(other)) {
         // §4.3 "Availability expires automatically and revokes across Telegraph,
         // Discovery and Compass" — expiry is re-evaluated HERE, on the read, by
         // the same predicate Passport uses. A stalled sweep cannot leave a stale
         // window rendering as current on this surface.
+        const relationship = await windowRelationshipFor(client, ctx.threadType, user.id, other);
         const windows = await projectPublicWindows(client, other, relationship);
         const active = windows[0] ?? null;
         if (active) {
@@ -293,46 +323,34 @@ router.get(
     // unreadable block read withholds every identity, an unreadable friendship
     // read withholds the private ones. Names follow show_real_name; a failed
     // privacy read hides every name (nameVisibilitySet fails closed).
-    if (others.length > 0) {
-      const [{ data: profileRows, error: profileErr }, { data: iBlocked, error: iBlockedErr }, { data: blockedMe, error: blockedMeErr }] = await Promise.all([
-        client.from("profiles").select("id, handle, username, name, display_name, full_name, avatar_url, is_private").in("id", others),
-        client.from("blocks").select("blocked_id").eq("blocker_id", user.id).in("blocked_id", others),
-        client.from("blocks").select("blocker_id").eq("blocked_id", user.id).in("blocker_id", others),
-      ]);
-      if (profileErr || iBlockedErr || blockedMeErr) {
-        log.warn({ threadId, message: (profileErr ?? iBlockedErr ?? blockedMeErr)?.message }, "header identities or block state unreadable; header shows the thread title alone");
-      } else {
-        const blocked = new Set<string>([
-          ...((iBlocked ?? []) as Array<{ blocked_id?: unknown }>).map((r) => String(r.blocked_id)),
-          ...((blockedMe ?? []) as Array<{ blocker_id?: unknown }>).map((r) => String(r.blocker_id)),
+    if (others.length > 0 && blocked !== null && profileRows !== null) {
+      const blockedIds = blocked;
+      const privateIds = profileRows
+        .filter((r) => r.is_private === true && !blockedIds.has(String(r.id)))
+        .map((r) => String(r.id));
+      let friends: Set<string> | null = new Set();
+      if (privateIds.length > 0) {
+        const [{ data: asA, error: asAErr }, { data: asB, error: asBErr }] = await Promise.all([
+          client.from("user_friendships").select("user_b").eq("user_a", user.id).in("user_b", privateIds),
+          client.from("user_friendships").select("user_a").eq("user_b", user.id).in("user_a", privateIds),
         ]);
-        const privateIds = ((profileRows ?? []) as Array<Record<string, unknown>>)
-          .filter((r) => r.is_private === true && !blocked.has(String(r.id)))
-          .map((r) => String(r.id));
-        let friends: Set<string> | null = new Set();
-        if (privateIds.length > 0) {
-          const [{ data: asA, error: asAErr }, { data: asB, error: asBErr }] = await Promise.all([
-            client.from("user_friendships").select("user_b").eq("user_a", user.id).in("user_b", privateIds),
-            client.from("user_friendships").select("user_a").eq("user_b", user.id).in("user_a", privateIds),
-          ]);
-          friends = asAErr || asBErr ? null : new Set<string>([
-            ...((asA ?? []) as Array<{ user_b?: unknown }>).map((r) => String(r.user_b)),
-            ...((asB ?? []) as Array<{ user_a?: unknown }>).map((r) => String(r.user_a)),
-          ]);
-        }
-        const nameAllowed = await nameVisibilitySet(client, others);
-        const byId = new Map<string, Record<string, unknown>>();
-        for (const row of (profileRows ?? []) as Array<Record<string, unknown>>) byId.set(String(row.id), row);
-        for (const p of participants) {
-          const row = byId.get(p.userId);
-          if (!row || blocked.has(p.userId)) continue;
-          if (row.is_private === true && !(friends?.has(p.userId) ?? false)) continue;
-          p.identity = {
-            handle: resolveHandle(row),
-            name: presentedName(row, nameAllowed.has(p.userId)),
-            avatarUrl: typeof row.avatar_url === "string" ? row.avatar_url : null,
-          };
-        }
+        friends = asAErr || asBErr ? null : new Set<string>([
+          ...((asA ?? []) as Array<{ user_b?: unknown }>).map((r) => String(r.user_b)),
+          ...((asB ?? []) as Array<{ user_a?: unknown }>).map((r) => String(r.user_a)),
+        ]);
+      }
+      const nameAllowed = await nameVisibilitySet(client, others);
+      const byId = new Map<string, Record<string, unknown>>();
+      for (const row of profileRows) byId.set(String(row.id), row);
+      for (const p of participants) {
+        const row = byId.get(p.userId);
+        if (!row || blockedIds.has(p.userId)) continue;
+        if (row.is_private === true && !(friends?.has(p.userId) ?? false)) continue;
+        p.identity = {
+          handle: resolveHandle(row),
+          name: presentedName(row, nameAllowed.has(p.userId)),
+          avatarUrl: typeof row.avatar_url === "string" ? row.avatar_url : null,
+        };
       }
     }
 
@@ -390,6 +408,40 @@ router.get(
     });
   }),
 );
+
+/**
+ * The §7 relationship an availability window's audience policy is tested
+ * against, for ONE other participant of this thread (verification of
+ * a58aa01d3f, finding 1). It used to be `follower` for every direct-thread
+ * counterpart, so a followers-only window reached someone who does not follow
+ * its owner.
+ *
+ *   trip / circle  `crew` — the roster is the source domain's decision.
+ *   direct         `follower` only when the viewer FOLLOWS the window's owner:
+ *                  the edge `canMessage` reads for a recipient's own "followers"
+ *                  setting (`senderFollowsRecipient` — "a follower of the
+ *                  recipient is someone whose following_id = recipient.id",
+ *                  lib/messagingPermissions.ts). Otherwise `public`, which
+ *                  admits public windows only.
+ *
+ * FAIL-CLOSED: `canMessage` observes each read's error, and an unreadable
+ * follow edge — or a block or settings read, which empty the whole context —
+ * reads as "not a follower". That under-reads someone else's availability
+ * rather than over-reading it. Logged; the header has no degraded field.
+ */
+async function windowRelationshipFor(
+  client: SupabaseClient,
+  threadType: string,
+  viewerId: string,
+  ownerId: string,
+): Promise<ViewerRelationship> {
+  if (threadType === "trip" || threadType === "circle") return "crew";
+  const verdict = await canMessage(client, viewerId, ownerId);
+  if (verdict.degraded === true || verdict.reason === "unavailable") {
+    log.warn({ ownerId, reason: verdict.reason ?? null }, "follow edge not established; availability read as public only");
+  }
+  return verdict.relationship_context.senderFollowsRecipient ? "follower" : "public";
+}
 
 // ── GET /api/threads/:threadId/discover-together ────────────────────
 

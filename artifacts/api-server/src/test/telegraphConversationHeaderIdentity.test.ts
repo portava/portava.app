@@ -125,6 +125,16 @@ describe("re-verification 4 — the header identity follows the profile read rul
     assert.equal(identityOf(b), null);
   });
 
+  it("only the SECOND block read ('has the other person blocked me?') is unreadable: the identity is still withheld", async () => {
+    // Verification of a58aa01d3f, finding 6 (adopted from its probe
+    // `__verifier_headerPartialBlockRead`): the case above fails BOTH reads, so a
+    // decision that dropped one half of the block state stayed green. afterOps 1
+    // lets the first `blocks` read succeed and fails the second.
+    const b = await header(withRows({ blocks: [{ blocker_id: BOB, blocked_id: ALICE }] }),
+      { errors: { blocks: { message: "blocks: second read timeout", ops: ["select"], afterOps: 1 } } });
+    assert.equal(identityOf(b), null, `identity shown while the blocked-me read failed: ${JSON.stringify(identityOf(b))}`);
+  });
+
   it("a PRIVATE profile is withheld from a non-friend", async () => {
     const b = await header(withRows({ blocks: [], profiles: [
       { id: ALICE, handle: "alice", name: "Alice Real", avatar_url: null, is_private: false },
@@ -164,6 +174,41 @@ describe("T295 — the two conversation screens read no table directly", () => {
       const src = readFileSync(resolve(REPO, rel), "utf8");
       const hits = src.split("\n").map((l, i) => [i + 1, l] as const).filter(([, l]) => /\.from\(\s*['"`]/.test(l) && !/^\s*(\/\/|\*)/.test(l));
       assert.deepEqual(hits, [], `raw table reads on a conversation screen: ${JSON.stringify(hits)}`);
+    });
+  }
+});
+
+describe("T372 / T305 — the Shared Context Rail is mounted on both conversation screens, gated by nothing but the thread id", () => {
+  // Verification of a58aa01d3f, finding 4 (census-telegraph §45.1, §45f). The
+  // rail's behaviour is proven where it lives (T13–T21; SharedContextRail's own
+  // component suite) and its route is not flag-gated; what no test pinned was
+  // that the two screens MOUNT it. This pins the mount and its only condition:
+  //   - the screen imports the rail from the Telegraph feature;
+  //   - exactly one live (non-comment) JSX line mounts it, and that line's
+  //     condition is the thread id and nothing else — no flag, no state;
+  //   - that line sits at the same JSX depth as the screen's message list, i.e.
+  //     it is a sibling of the conversation itself, not nested in a branch.
+  // DOES NOT COVER: a wrapper opened on an EARLIER line at a different depth that
+  // re-indents nothing, or a condition computed elsewhere and hidden in `id`.
+  const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
+  const SCREENS: Array<[string, RegExp]> = [
+    ["travel-buddy-standalone/app/messages/[id].tsx", /^(\s*)\{id \? <SharedContextRail threadId=\{id\}[ />]/],
+    ["travel-buddy-standalone/src/components/GroupChatScreen.tsx", /^(\s*)\{thread\?\.id \? <SharedContextRail threadId=\{thread\.id\}[ />]/],
+  ];
+  for (const [rel, mount] of SCREENS) {
+    it(`${rel} mounts <SharedContextRail> beside the message list, conditional only on the thread id`, () => {
+      const lines = readFileSync(resolve(REPO, rel), "utf8").split("\n");
+      const live = lines.map((l, i) => [i + 1, l] as const).filter(([, l]) => !/^\s*(\/\/|\*|\{\/\*)/.test(l));
+      assert.ok(live.some(([, l]) => /^import \{[^}]*\bSharedContextRail\b[^}]*\} from '[^']*features\/telegraph\/index\.ts';/.test(l)),
+        "the rail is not imported from the Telegraph feature");
+      const mounts = live.filter(([, l]) => l.includes("<SharedContextRail"));
+      assert.equal(mounts.length, 1, `expected exactly one mount: ${JSON.stringify(mounts)}`);
+      const [lineNo, text] = mounts[0]!;
+      const m = mount.exec(text);
+      assert.ok(m, `line ${lineNo}: the mount's condition is not the thread id alone: ${text.trim()}`);
+      const list = live.find(([n, l]) => n > lineNo && /^\s*<FlatList\b/.test(l));
+      assert.ok(list, "no message list after the rail");
+      assert.equal(/^(\s*)/.exec(list[1])![1], m[1], `line ${lineNo}: the rail is not at the message list's depth (line ${list[0]})`);
     });
   }
 });
