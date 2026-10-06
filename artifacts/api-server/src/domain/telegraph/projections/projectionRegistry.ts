@@ -143,16 +143,26 @@ export const TELEGRAPH_PROJECTIONS: readonly TelegraphProjection[] = [
     id: "PRJ-06",
     name: "ConversationContentIndex",
     censusRow: "T294",
-    status: "built",
+    status: "partial",
     builtBy: "src/routes/telegraphKinds.ts",
     servedAt: "src/routes/telegraphKinds.ts GET /threads/:threadId/drawer",
     note:
-      "The content drawer: the seven tabs with counts (MEDIA / PLACES / PORTAVA / VOICE " +
-      "/ GIFS / LINKS / FILES), windowed to the caller's §14.3 bound, rendered by the " +
-      "client's ContentDrawerSheet from a real header control (census T66). " +
-      "RE-GRADED 2026-10-05 (lane T2): this entry still said 'dead-coded behind a " +
-      "literal false' after the control was made real — docs/BUILD-BACKLOG.md recorded " +
-      "the staleness and left the flip to the lane holding the ratchet.",
+      "The content drawer. CORRECTED 2026-10-03: the earlier note said \"dead-coded " +
+      "behind a literal false (T66)\" and that is no longer true. `GET /threads/:threadId/" +
+      "drawer` serves it (`routes/telegraphKinds.ts:376`), membership-gated before any read " +
+      "(`:393`), and the client mounts the entry point in the thread header " +
+      "(`travel-buddy-standalone/app/messages/[id].tsx:1918`, testID " +
+      "`telegraph-open-content-drawer`) with the sheet rendered at `:2376`. NOT " +
+      "unconditional, and not a flag either: the mount sits inside the `{!compact && …}` " +
+      "header-actions block (`[id].tsx:1892`), a layout variant, so the compact header " +
+      "offers no way in. THE GAP THAT KEEPS THIS `partial` RATHER THAN `built`: §24 asks " +
+      "for a server-BUILT projection, and this is an on-demand route that classifies the " +
+      "thread's rows per request and stores nothing — there is no materialised " +
+      "ConversationContentIndex, so nothing can be read without re-deriving it, and nothing " +
+      "outside a live request can consume it. The census verdict row (T294) still carries " +
+      "the old wording; re-grading it is the lead's call, not this registry's. " +
+      "RE-GRADED 2026-10-06 on the lead's ruling: T294 is W (census-telegraph §45e). " +
+      "Lane T2 had moved this entry to `built` on 2026-10-05; main's `partial` stands.",
   },
 ];
 

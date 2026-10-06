@@ -482,6 +482,17 @@ const PERMITTED_MENTIONS = new Map<string, string>([
       "the document was already stale when committed because this exact store landed two minutes " +
       "earlier, so it is the one path whose omission would have hidden the defect.",
   ],
+  [
+    join("scripts", "checkSchedulerRelativeWindows.ts"),
+    "its ALLOWLIST ledgers the publication pass's time_bucket lower bound as a LOSES-DATA defect, and " +
+      "the reason cites lib/sensingAnonStore.ts for sensingTimeBucket, because the claim being made is " +
+      "that the function only floors and adds no slack — a claim a reader must be able to check at the " +
+      "line rather than take on trust. That citation is what this tripwire saw. The script imports " +
+      "nothing, reads no table and calls no function in the store: it parses the tree as text. Keeping " +
+      "the citation and declaring the mention is the right way round, because deleting the file:line to " +
+      "stay off this list would trade a verifiable claim for an unverifiable one, and the reason it " +
+      "carries is the measured width of a privacy window.",
+  ],
 ]);
 
 describe("the store is reachable only from the callers the ruling names", () => {

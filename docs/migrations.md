@@ -3736,6 +3736,159 @@ So every migration changed here is unapplied everywhere.
     grep -c 'DO \$pre\$' src/migrations/336[2-5]_*.sql src/migrations/342[12]_*.sql   # 1 each
     grep -c 'schema_migration_ledger' ../../db/rollback/2026-09-2?-33[3-5][0-9]-*-rollback.sql   # >= 2 each
 
+## 2026-10-04 — Correction: `2160_portava_featured_write_boundary.sql` is SUPERSEDED by 2332 (recorded here, not in the file)
+
+**Do not apply 2160, and never after `2332_money_grant_boundary.sql`.** 2160 ends with `anon` and
+`authenticated` holding SELECT on `public.portava_featured`. 2332 ends with them holding nothing. Applied
+in prefix order the result is 2332's. Applied the other way round, which only a hand-apply can do, 2160
+re-grants the SELECT 2332 revoked, and 2160's own postcondition still reports PASSED, because
+`anon=SELECT` is the state it was written to demand.
+
+This warning was first written into 2160's header by PR #566 (`1a87c51d0`). The integration of #566
+restored 2160 to its previous bytes (sha256 `4b14124d77ed…`) and moved the warning here and into
+`3504_client_table_privilege_boundary.sql`'s header, for the reason "An applied migration file is a
+historical artifact: do not annotate it" gives above: once a file has been applied anywhere its bytes are
+frozen, and a correction is written in this document, keyed by filename.
+
+What #566 measured, read-only, on 2026-10-03, and what follows from it:
+
+- Both databases carry a ledger row for 2160 with `applied_by='backfill'` and the literal `backfill` in
+  place of a checksum. The applier therefore never runs the file on either database, and no checksum
+  pins its bytes today. That is why #566's edit did not turn `db:apply-migrations:dry-run` red.
+- It is still an applied file. 3504's header records that on `portava-ci` `portava_featured` had
+  already been reduced to SELECT by 2160 before 2332 took the rest. A `backfill` row can also be upgraded
+  to a real checksum later (`--apply-unproven`), and from that moment an annotated file and the bytes
+  that ran would differ.
+- On the testing database (`ajrurzioarfkagpuxfnb`) the object state says neither 2160 nor 2332 has run
+  (`anon=arwd`). The remedy there is 2332 alone.
+
+### Re-establish independently
+
+    sha256sum artifacts/api-server/src/migrations/2160_portava_featured_write_boundary.sql   # 4b14124d77ed…
+    git diff --stat f71cfb85f -- artifacts/api-server/src/migrations/2160_portava_featured_write_boundary.sql   # empty
+
+## 2026-10-04 — the seven of the migration integration (3501, 3504, 3505, 3513, 3520, 3560, 3561): REHEARSED on a local PostgreSQL 16; applied NOWHERE
+
+Six pull requests that each added migrations (#549, #566, #561, #565, #577, #571) were integrated on
+`claude/integration-migrations-20261004` in prefix order. **Nothing in this entry was applied to `portava-ci`
+or to the testing database.** The set, in the order the applier plans it over a ledger that holds every file
+`main` carries at `f71cfb85f`:
+
+| # | file | sha256 (first 12) | shape | changes vs its PR head |
+|---|---|---|---|---|
+| 1 | `3501_discovery_recommendations_retention.sql` | `587b5668bf60` | unwrapped +postconditions | none |
+| 2 | `3504_client_table_privilege_boundary.sql` | `065abcb32a7f` | unwrapped | header wording; `$pre$` tag; `$post$` block re-runnable after COMMIT |
+| 3 | `3505_scheduler_watermarks.sql` | `0c7fc3f6d074` | bare | REVOKE/GRANT and a `$post$` block added |
+| 4 | `3513_layover_crowd_reports_flag.sql` | `323e900c3661` | unwrapped | none |
+| 5 | `3520_user_stamps_client_column_grants.sql` | `812b65e3fe67` | unwrapped +postconditions | none |
+| 6 | `3560_creator_fatigue_increment_rpc.sql` | `d99a6ada4e93` | unwrapped | none |
+| 7 | `3561_compass_search_signal_log.sql` | `bfb1d54b7eba` | unwrapped | none |
+
+**3504 and 3505 are not the bytes on #566 and #561.** If either PR-head file was ever hand-applied to a
+database, that database's ledger checksum will not match this tree and `db:apply-migrations:dry-run` will say
+so (exit 1, "the ledger records these files as applied, but their contents on disk no longer match"). Both
+PRs state that nothing was applied by hand.
+
+### Why a PR that adds one of these is red on `schema drift`, and what it will read
+
+`live-db.yml` applies only on `refs/heads/main`; on a pull request it plans, applies nothing, and then
+`audit:schema` reads `portava-ci`. So the objects these files create are reported missing until the branch
+merges or the files are applied under decision A (the 2991 and 3350 entries above record both routes). Run
+against a local database carrying `main`'s chain and not the seven, `audit:schema` names exactly these, and
+no other object the set is responsible for:
+
+    ✖ 3501_discovery_recommendations_retention.sql
+        missing function discovery_recommendations_retention_cutoff
+        missing function purge_expired_discovery_recommendations
+        missing index recommendations_created_at
+    ✖ 3505_scheduler_watermarks.sql
+        missing table scheduler_watermarks
+    ✖ 3560_creator_fatigue_increment_rpc.sql
+        missing function increment_creator_fatigue_batch
+    ✖ 3561_compass_search_signal_log.sql
+        missing table compass_search_signal_log
+        missing function upsert_compass_search_signal
+        missing function purge_compass_search_signal_log
+        missing index compass_search_signal_log_last_nudge_at_idx
+        missing policy "cssl_deny_client_roles" on compass_search_signal_log
+
+Ten objects in four files. 3504, 3513 and 3520 create no object the auditor models (a REVOKE, a flag row,
+a column-level GRANT), which is why #566 and #565 were green on this job before the merge.
+
+### Two certification failures found before the merge, and fixed in the files
+
+`certify:migrations` runs only on `main`, after the apply, so neither of these could be seen on any PR. Both
+were found by running the repository's own `certify:migrations --files <the seven>` against the local
+database after applying the set there (the method of `docs/ops/discovery-portava-ci-apply-plan.md` §7.3).
+
+- **3505, stage 3.** The file created `public.scheduler_watermarks`, enabled RLS and named no role, so the
+  default ACL left `anon` and `authenticated` every privilege on it: *"role 'anon' holds INSERT on
+  public.scheduler_watermarks, and no migration in scope grants it"*, eight lines of it. The file now revokes
+  PUBLIC, `anon` and `authenticated` by name, grants `service_role` SELECT, INSERT, UPDATE and DELETE, and
+  asserts that in a `$post$` block. It also gained the rollback file it did not have.
+- **3504, stage 4.** Its precondition and postcondition both read `_p3504_targets`, a temp table that is
+  `ON COMMIT DROP`, and neither was tagged `$pre$`, so both re-runs failed with *"relation "_p3504_targets"
+  does not exist"*. This is F4 of the apply plan's §5.3 (3390). The precondition is now `$pre$`; the
+  postcondition is `$post$`, carries the 53 names as a literal for the re-run, and in the applying
+  transaction raises if that literal and the temp table name different tables.
+
+After both: stages 1–4 pass (8 assertion blocks re-run after commit, 5 `$pre$` blocks held back). Stage 5's
+`audit:schema` reports 37 objects in 11 files on the local database, all of them present in the reading
+taken before the apply and all from files that database cannot replay (the entries of
+`scripts/local-db/KNOWN_UNREPLAYABLE.json`, and three policies the baseline structure lacks). None is in the
+set, and the set adds none: no earlier file claims a grant that 3504 or 3520 takes back, so the `ALLOWLIST`
+needs no entry for them. `check:missing-live-columns`, `check:write-path-columns` and
+`check:authorization-contract` print the same findings before and after the apply.
+
+### The rest of the rehearsal
+
+- **Apply.** 7 applied in the order above, each in one transaction with its ledger row; 3501's and 3520's
+  post-`COMMIT` tails verified.
+- **Idempotence.** The applier's second run: *"NOTHING TO DO — 308 proven row(s), 0 pending"*. Each file run
+  a second time as plain SQL: six re-ran and left the catalogue and the flags unchanged. **3520 refuses a
+  second run** by its own `$pre$` (*"anon and authenticated do not both hold a plain table-level SELECT"*),
+  as 3362 and 3363 do; the ledger is what keeps the applier from sending it twice.
+- **Flags.** Two rows added, both seeded **TRUE**: `discovery_serve_log_retention_enabled`
+  (`metadata.keep_days = 30`, `retention_scope = testing`; 3501) and `layover_crowd_reports_enabled` (3513).
+  Every pre-existing row is unchanged.
+- **Rollbacks, newest first.** 3561, 3560 and 3520 ran and removed their ledger rows. 3513's refuses while
+  the flag reads TRUE, as it is written to, and ran once the flag was turned off; **it leaves 3513's ledger
+  row**, so the applier will not re-seed the flag until that row is deleted by hand. 3505's ran, printed the
+  mark count and removed its row. 3504 has no rollback by design. 3501's ran (it refuses while
+  `discovery_serve_log_enabled` is ON; that flag is absent on the local database). Afterwards the flags are
+  identical to the starting state and the catalogue differs from it only in the 53 ACLs 3504 narrowed.
+- **Re-apply.** The six pending again applied, and the catalogue is identical to the first apply's.
+- **The whole chain in byte order**, which is what the `kernel SQL executed on a throwaway database` job
+  does: 398 files applied in order, 12 known-unreplayable, 2 applied on retry, none unexpected.
+
+The local database is PostgreSQL 16.15 with no PostGIS package. `geography` and `geometry` were text
+domains and the four `ST_*` functions the baseline names were stubs, in scratch copies of the shim and the
+baseline; nothing geospatial is exercised by these seven files. It is a rehearsal, not `portava-ci`.
+
+### What the hosted application needs before each file reaches the testing database
+
+The hosted API runs a build older than these changes. "Before" and "after" below are relative to deploying
+a build that contains this branch.
+
+| file | apply it | why |
+|---|---|---|
+| 3513 | **before** the deploy | The new observation handlers read `layover_crowd_reports_enabled` fail-closed. With the build live and the row absent, both crowd-report routes refuse. The old build does not read the flag, so the row is inert until the deploy. |
+| 3501 | before the deploy; after 3376 and 3491 | Its precondition requires 3376's table. Until it is applied, the new build's `discoveryServeLogRetention` job reports failing and `GET /healthz/schedulers` answers 503. Once both are live the hourly purge deletes `recommendations` rows older than 30 days. |
+| 3504 | either side; after 2810 | No client path reaches the 53 tables on either build. A table absent when it runs is not reached, so it must follow 2810 (`telegraph_outbox`). |
+| 3505 | either side | The watermark reader answers a refusal for an absent table and every caller keeps its old lookback. |
+| 3520 | either side | No client-token read of `user_stamps` exists in either build; the API reads it as `service_role`. |
+| 3560 | either side | Called only under `CREATOR_FATIGUE_ENABLED`, which is FALSE. |
+| 3561 | either side | Records nothing until `SEARCH_SIGNAL_DECAY_DAYS` is ON. Before it is applied each search nudge logs a 42883 warning, as today. |
+
+### Re-establish independently
+
+    cd artifacts/api-server
+    sha256sum src/migrations/350[145]_*.sql src/migrations/3513_*.sql src/migrations/3520_*.sql src/migrations/356[01]_*.sql
+    grep -c 'DO \$pre\$' src/migrations/3504_client_table_privilege_boundary.sql     # 1
+    grep -c 'DO \$post\$' src/migrations/350[45]_*.sql                               # 1 each
+    grep -c 'REVOKE ALL ON TABLE public.scheduler_watermarks' src/migrations/3505_scheduler_watermarks.sql   # 2
+    LOCAL_DB_URL=… node --import tsx/esm --test src/test/db/schedulerWatermarksBoundary.db.test.ts src/test/db/clientTablePrivileges.db.test.ts   # 6 + 13
+
 ## 2026-10-04 — `3530_rb_earnings_summary_nothing_collected.sql`, written and NOT applied anywhere
 
 | | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |

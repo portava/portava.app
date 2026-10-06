@@ -114,6 +114,22 @@ const LEGACY_SIDE = new Set([
   // rows so the account-deletion case starts from a known state.
   // PROJECTION-side; names memory_domain_events nowhere.
   "test/db/sessionMemoryLineage.db.test.ts",
+  // ADDED 2026-10-03 by the 2490/3503 client-privilege lane, for 3504.
+  // 3504 revokes the anon/authenticated table grants on 53 service-role-only
+  // tables and names public.memory_events in exactly one place: the header
+  // section listing the ten tables it deliberately does NOT touch. The four
+  // memory_* tables are held out because lane 2333 already revokes the client
+  // roles there AND narrows service_role on purpose with exact-match
+  // postconditions, so re-deriving it in 3504 would make whichever migration
+  // ran last the winner. The reference is therefore a statement that 3504
+  // leaves the projection family's log alone, and its database test asserts
+  // exactly that: CT9 compares the ACL of each excluded table before and after
+  // the body and requires byte equality. PROJECTION-side; neither file names
+  // memory_domain_events, and neither reads, writes or alters either table.
+  "migrations/3504_client_table_privilege_boundary.sql",
+  // 3504's behavioural proof. It names public.memory_events only in the
+  // EXCLUDED array it feeds to CT9, for the reason above.
+  "test/db/clientTablePrivileges.db.test.ts",
   "lib/deletionDispositions.ts",
   "lib/memoryProjectionScheduler.ts",
   "services/accountDeletion/AccountDeletionService.ts",
