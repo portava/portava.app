@@ -1210,8 +1210,10 @@
       "flag": "intel_contribution_retention_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
-      "reason": "OFF: a retention purge whose period is not legally decided (owner-decisions Part 3); the beta holds test data only.",
-      "evidence": []
+      "reason": "OFF — PROMOTION CANDIDATE: the period IS decided (180 days maximum, OD-MAP-7), but no census C evidence that this purge enforces it is recorded here; the beta holds test data only.",
+      "evidence": [
+        "OD-MAP-7"
+      ]
     },
     {
       "flag": "intel_coverage",
@@ -1604,7 +1606,7 @@
       "flag": "media_pending_upload_sweep_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
-      "reason": "OFF: a retention purge whose period is not legally decided (owner-decisions Part 3); the beta holds test data only.",
+      "reason": "OFF: a hygiene sweep for abandoned pending uploads, not a legal retention period; not grounded in census evidence here, and the beta holds test data only.",
       "evidence": []
     },
     {
@@ -1824,7 +1826,7 @@
       "flag": "presence_cleanup_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
-      "reason": "OFF: a retention purge whose period is not legally decided (owner-decisions Part 3); the beta holds test data only.",
+      "reason": "OFF: a presence-row cleanup sweep, not a legal retention period; not grounded in census evidence here, and the beta holds test data only.",
       "evidence": []
     },
     {
