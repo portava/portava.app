@@ -1031,7 +1031,8 @@ router.get("/airport/sessions/:id/recommendations", async (req, res) => {
     recs = generated.recommendations;
   }
 
-  res.json({ recommendations: recs, featureEnabled: true });
+  const landside = await landsideSuppressionFor(sc, session.id, Date.now()); // census L43: after a confirmed re-entry, airport-side only
+  res.json({ recommendations: applyLandsideSuppression(recs, landside), featureEnabled: true, landsideSuppression: landsideSuppressionWire(landside) });
 });
 
 // ── GET /api/airport/sessions/:id/safety ─────────────────────────────────────
@@ -1202,7 +1203,7 @@ router.post("/airport/sessions/:id/compass", async (req, res) => {
     question: parsed.data.question,
     session, snapshot: await consumerLayoverSnapshot(sc, airport, session, nowMs), // census-discovery §81: null (flag off) keeps the legacy certification below
     airport, entry: await sessionEntry(sc, airport, session), // census-discovery §65: the answer certifies with the snapshot's entry input
-    recommendations: recsRead.ok ? (recsRead.recommendations as unknown as Array<Record<string, unknown>>) : undefined,
+    recommendations: recsRead.ok ? (applyLandsideSuppression(recsRead.recommendations, await landsideSuppressionFor(sc, session.id, nowMs)) as unknown as Array<Record<string, unknown>>) : undefined, // census L43: Compass sees the same airport-side list after re-entry
     recommendationsUnavailableReason: recsRead.ok ? null : "layover_recommendations_unreadable",
     stops: stopsRead.ok ? stopsRead.stops : undefined,
     stopsUnavailableReason: stopsRead.ok ? null : "layover_plan_stops_unreadable", crew: crewRead,
@@ -1987,7 +1988,7 @@ export interface CityPresence {
   count: number;
   travelers: Array<{ id: string; handle: string | null; name: string | null; avatarUrl: string | null }>;
   degraded: boolean;
-  degradedReasons: string[];
+  degradedReasons: string[]; /** census L129 — EVERY cleared traveller's id, for the intent counts only; never serialised (the routes pick fields). */ visibleUserIds: string[];
 }
 
 export async function cityPresence(
@@ -1995,9 +1996,9 @@ export async function cityPresence(
   userId: string,
   city: string | null,
 ): Promise<CityPresence> {
-  const empty: CityPresence = { count: 0, travelers: [], degraded: false, degradedReasons: [] };
+  const empty: CityPresence = { count: 0, travelers: [], degraded: false, degradedReasons: [], visibleUserIds: [] };
   const refuse = (reason: string): CityPresence => ({
-    count: 0, travelers: [], degraded: true, degradedReasons: [reason],
+    count: 0, travelers: [], degraded: true, degradedReasons: [reason], visibleUserIds: [],
   });
   if (!city || city === "Unknown") return empty;
   try {
@@ -2083,7 +2084,7 @@ export async function cityPresence(
     }
 
     return {
-      count: visible.length,
+      count: visible.length, visibleUserIds: visible,
       travelers,
       degraded: profileDegraded.length > 0 || publishable.degraded,
       degradedReasons: [
@@ -2265,7 +2266,7 @@ router.get("/airport/sessions/:id/overview", async (req, res) => {
     stops: await bandPlanStops(airport, record, stops),
     planFit,
     share: {
-      enabled: session.shareCityStatus,
+      enabled: session.shareCityStatus, intentsEnabled: await isFlagEnabled(sc, "layover_presence_intents_enabled"), // census L129: whether the L1 intents surface exists here; read as a literal for check:flag-polarity
       othersInCity: presence.count,
     },
     // The server half of §15 and §16, which had no server half at all: the
@@ -4445,4 +4446,116 @@ import {
   isTravellerCheckpointType,
   readTravellerCheckpoints,
   recordTravellerCheckpoint,
+  applyLandsideSuppression,
+  landsideSuppressionFor,
+  landsideSuppressionWire,
 } from "../services/layover/LayoverCheckpointStore.js";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PRESENCE INTENTS — census-layover L27 / L129 / L187 (§4 layover_presence, §14 L1)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Registered at the TAIL, like the check-in routes above, so no cited line moves.
+// The traveller's own record, and the city's COUNTS per intent among the
+// travellers `cityPresence` already cleared — never who. Behind
+// `layover_presence_intents_enabled` (seeded FALSE by 3900).
+
+/** The record the traveller may set, and whether they may set one at all right now. */
+async function presenceIntentsPreconditions(sc: any, res: any, session: LayoverSession, userId: string): Promise<boolean> {
+  if (!(LAYOVER_LIVE_SESSION_STATUSES as readonly string[]).includes(session.status)) {
+    sendError(res, "conflict", "This layover has ended.");
+    return false;
+  }
+  if (!session.shareCityStatus) {
+    sendError(res, "conflict", "Turn on sharing your city first — intents are only shown to travellers who share theirs.", { exposeDetail: true, reason: "sharing_off" });
+    return false;
+  }
+  const gate = await evaluateSharingGate(sc, { userId, tripId: session.tripId });
+  if (!gate.allowed) {
+    sendError(res, "conflict", "Your location sharing is paused or off, so nothing about you is shown.", { exposeDetail: true, reason: gate.degraded ? "sharing_settings_unreadable" : "sharing_gate_closed" });
+    return false;
+  }
+  return true;
+}
+
+router.get("/airport/sessions/:id/presence/intents", async (req, res) => {
+  const ctx = await requireOwnedSession(req, res);
+  if (!ctx) return;
+  const { sc, user, session } = ctx;
+  const nowMs = Date.now();
+
+  const own = await readOwnPresence(sc, session.id, nowMs);
+  if (!own.ok && own.reason === "intents_disabled") {
+    res.json({ ok: true, available: false, own: null, counts: null });
+    return;
+  }
+  if (!own.ok) { sendError(res, "degraded_unavailable", "Your intents could not be loaded. Please try again."); return; }
+
+  // Counts only for a traveller who is themselves sharing and whose sharing
+  // gate is open — the reciprocity rule GET /:id/presence applies.
+  const gate = await evaluateSharingGate(sc, { userId: user.id, tripId: session.tripId });
+  if (!session.shareCityStatus || !gate.allowed) {
+    res.json({ ok: true, available: true, own: own.record, counts: null, countsWithheld: session.shareCityStatus ? "sharing_gate_closed" : "sharing_off" });
+    return;
+  }
+  const airport = await airportOr503(sc, res, session);
+  if (!airport) return;
+  const city = airport.city !== "Unknown" ? airport.city : session.manualCity;
+  const presence = await cityPresence(sc, user.id, city ?? null);
+  if (presence.degraded && presence.visibleUserIds.length === 0) {
+    sendError(res, "degraded_unavailable", "Who else is here could not be checked. Please try again.");
+    return;
+  }
+  const counts = await intentCounts(sc, presence.visibleUserIds, nowMs);
+  if (!counts.ok) { sendError(res, "degraded_unavailable", "Intents nearby could not be loaded. Please try again."); return; }
+  res.json({ ok: true, available: true, own: own.record, counts: counts.counts, city: city ?? null });
+});
+
+router.put("/airport/sessions/:id/presence/intents", async (req, res) => {
+  const ctx = await requireOwnedSession(req, res);
+  if (!ctx) return;
+  const { sc, user, session } = ctx;
+  const nowMs = Date.now();
+  const parsed = parsePresenceInput(req.body, session, nowMs);
+  if (!parsed.ok) { sendError(res, "invalid_payload", PRESENCE_INPUT_MESSAGES[parsed.error], { exposeDetail: true, reason: parsed.error }); return; }
+  if (!(await presenceIntentsPreconditions(sc, res, session, user.id))) return;
+  const written = await setPresenceIntents(sc, { sessionId: session.id, userId: user.id, record: parsed.value, nowMs });
+  if (!written.ok) {
+    if (written.reason === "intents_disabled") sendError(res, "feature_disabled", "Intents are not switched on yet.");
+    else sendError(res, "degraded_unavailable", "Your intents were not saved. Please try again.");
+    return;
+  }
+  res.json({ ok: true, own: written.record });
+});
+
+router.delete("/airport/sessions/:id/presence/intents", async (req, res) => {
+  const ctx = await requireOwnedSession(req, res);
+  if (!ctx) return;
+  const { sc, session } = ctx;
+  const cleared = await clearPresenceIntents(sc, session.id);
+  if (!cleared.ok) {
+    if (cleared.reason === "intents_disabled") sendError(res, "feature_disabled", "Intents are not switched on yet.");
+    else sendError(res, "degraded_unavailable", "Your intents were not removed. Please try again.");
+    return;
+  }
+  res.json({ ok: true, own: null });
+});
+
+const PRESENCE_INPUT_MESSAGES: Record<PresenceInputError, string> = {
+  intents_invalid: `intents must be a list drawn from ${PRESENCE_INTENTS.join(", ")}`,
+  available_until_invalid: "availableUntil must be an ISO time",
+  available_until_past_departure: "You can't be open after your flight leaves.",
+  available_until_not_in_future: "That time has already passed.",
+  max_travel_invalid: `maxTravelMinutes must be a whole number from ${MAX_TRAVEL_MINUTES_RANGE.min} to ${MAX_TRAVEL_MINUTES_RANGE.max}`,
+};
+
+import {
+  MAX_TRAVEL_MINUTES_RANGE,
+  PRESENCE_INTENTS,
+  clearPresenceIntents,
+  intentCounts,
+  parsePresenceInput,
+  readOwnPresence,
+  setPresenceIntents,
+  type PresenceInputError,
+} from "../services/layover/LayoverPresenceStore.js";

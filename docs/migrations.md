@@ -3771,3 +3771,27 @@ the function. `rent_buddy_enabled` is FALSE in production and this file does not
 
 **Rollback:** re-apply `2330`'s definition of the function. There is no dependent object, so the revert
 is one statement and loses nothing.
+
+## 2026-10-05 — `3900_layover_presence.sql`, written and NOT applied anywhere
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3900_layover_presence.sql` | **not applied** | **not applied** |
+
+**What it is.** Layover spec §4 `layover_presence` and §14's L1 rung ("5 open to food"), census-layover
+L27 / L129 / L187. One row per layover session: a closed intent vocabulary (`food`, `nightlife`,
+`shopping`, `culture`, `meetups`, CHECKed), an availability window bounded by the writer to the
+session's departure, an optional `max_travel_minutes` (5–240), `visibility_scope`
+(`aggregate` | `intent`), `precise_location_enabled` CHECKed FALSE until §14 L4 exists, and
+`expires_at` as a read filter (not a retention promise). Plus the flag
+`layover_presence_intents_enabled`, seeded FALSE.
+
+**Posture.** RLS on with NO policies and every privilege revoked from `anon` / `authenticated`:
+service-role writes only, through `services/layover/LayoverPresenceStore.ts`. No coordinate column,
+asserted by the postcondition. Others are only ever shown COUNTS per intent among travellers
+`cityPresence` already cleared (same city, opted in, not blocked, sharing not paused).
+
+**Depends on** `0127` (`layover_sessions`) and `profiles`; independent of 2700 / 2992.
+**Pre/postconditions** in the file. **Rollback:** `db/rollback/2026-10-05-3900-layover-presence-rollback.sql`
+(refuses while the flag is TRUE; drops the table — its rows are short-lived by design).
+**Activation** is an owner decision: apply 3900, then flip the flag.
