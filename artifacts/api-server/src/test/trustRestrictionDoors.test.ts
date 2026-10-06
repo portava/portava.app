@@ -69,6 +69,8 @@ const PLACE = "ffffffff-0000-4000-8000-00000000000f";
 const MEETUP = "eeeeeeee-0000-4000-8000-00000000000e";
 const RESV = "cccccccc-0000-4000-8000-0000000000a1";
 const EVENT = "e0e0e0e0-0000-4000-8000-0000000000e0";
+const NEWU = "44444444-0000-4000-8000-000000000004"; // someone joining the group trip (R2)
+const JOIN_REQ = "4a4a4a4a-0000-4000-8000-00000000004a";
 const SESSION = "5e5e5e5e-0000-4000-8000-00000000005e";
 const THREAD = "7e7e7e7e-0000-4000-8000-00000000007e";
 const SUGGESTION = "5a5a5a5a-0000-4000-8000-00000000005a";
@@ -86,8 +88,10 @@ function seed(restriction: Restriction, actor = ANA): Record<string, Rows> {
     events: [{ id: EVENT, host_id: BEN, state: "published", visibility: "public", title: "Fado night", starts_at: iso(6), ends_at: iso(8) }],
     layover_sessions: [{ id: SESSION, user_id: actor, airport_code: "LIS", status: "active", arrival_at: iso(-1), departure_at: iso(6), created_at: iso(-2) }],
     message_thread_members: [{ thread_id: THREAD, user_id: actor, left_at: null }],
+    trip_join_requests: [{ id: JOIN_REQ, trip_id: TRIP, user_id: NEWU, status: "pending", created_at: iso(-3) }],
+    trip_invite_links: [{ id: "4b4b4b4b-0000-4000-8000-00000000004b", trip_id: TRIP, token: "link-token-r2", created_by: ORGANIZER, max_uses: null, use_count: 0, expires_at: null, revoked_at: null }],
     telegraph_chat_suggestions: [{ id: SUGGESTION, user_id: actor, thread_id: THREAD, title: "Tram 28", location_context: null, time_context: null }],
-    profiles: [ORGANIZER, ANA, BEN].map((id) => ({ id, handle: id.slice(0, 4), name: id.slice(0, 4), role: "user" })),
+    profiles: [ORGANIZER, ANA, BEN, NEWU].map((id) => ({ id, handle: id.slice(0, 4), name: id.slice(0, 4), role: "user" })),
     trust_restrictions: restriction ? [{ user_id: actor, restriction_type: restriction, lifted_at: null, expires_at: null }] : [],
     trips: [
       { id: TRIP, owner_id: ORGANIZER, version: 3, status: "active", plan_edit_permission: "all_members", start_date: day, end_date: day, title: "Group" },
@@ -169,6 +173,9 @@ const DOORS: Door[] = [
     solo: { path: `/threads/${THREAD}/telegraph/suggestions/${SUGGESTION}/add-to-plan`, body: { tripId: SOLO } } },
   { name: "trip-invite", mapped: ["hosting"], method: "POST", path: `/trips/${TRIP}/invite`, body: { userId: BEN }, as: ORGANIZER },
   { name: "trip-invite-link", mapped: ["hosting"], method: "POST", path: `/trips/${TRIP}/invite-link`, body: {}, as: ORGANIZER },
+  // verifier R2 (1867c97df): the two other doors that turn a trip into a group trip — gated whether it is solo or not.
+  { name: "trip-members-add", mapped: ["hosting"], method: "POST", path: `/trips/${TRIP}/members`, body: { userId: NEWU }, as: ORGANIZER },
+  { name: "join-request-approve", mapped: ["hosting"], method: "POST", path: `/trips/${TRIP}/join-requests/${JOIN_REQ}/approve`, body: {}, as: ORGANIZER },
   { name: "command-create-proposal", mapped: ["hosting", "messaging"], method: "POST", path: `/trips/${TRIP}/commands`,
     body: { type: "CREATE_PROPOSAL", idempotency_key: "p-1", payload: { proposal_type: "move", decision_rule: "majority", payload_json: {} } },
     solo: { path: `/trips/${SOLO}/commands`, body: { type: "CREATE_PROPOSAL", idempotency_key: "p-2", payload: { proposal_type: "move", decision_rule: "majority", payload_json: {} } } } },
@@ -297,6 +304,56 @@ describe("R5 (census-trips §85). A membership restored to an ENDED trip's retai
     const r = await call(harness.base, "POST", `/trips/${TRIP}/commands`, ANA, { type: "DECLARE_DISRUPTION", idempotency_key: "r5-d", payload: { kind: "lodging", severity: "major" } });
     assert.notEqual(r.body?.error, "trip_record_read_only", JSON.stringify(r.body).slice(0, 300));
   });
+  // census-trips §85.2 (verifier R3 on 1867c97df): ONE guard before every trip router refuses every member-level write.
+  const WRITES: Array<["POST" | "PATCH" | "DELETE", string, unknown]> = [
+    ["POST", `/trips/${TRIP}/notes`, { title: "n", body: "b" }],
+    ["POST", `/trips/${TRIP}/documents`, { title: "d", url: "https://x.test/d.pdf" }],
+    ["POST", `/trips/${TRIP}/checklists`, { title: "c" }],
+    ["POST", `/trips/${TRIP}/reminders`, { title: "r", remindAt: iso(5) }],
+    ["POST", `/trips/${TRIP}/saved-places`, { placeId: PLACE }],
+    ["POST", `/trips/${TRIP}/reservations`, { title: "Hotel", reservationType: "lodging" }],
+    ["POST", `/trips/${TRIP}/operations`, { kind: "x" }],
+    ["POST", `/trips/${TRIP}/closeout/answers`, { answers: [] }],
+    ["POST", `/trips/${TRIP}/opportunities/${PLACE}/accept`, {}],
+    ["POST", `/trips/${TRIP}/meeting-point`, {}],
+    ["POST", `/trips/${TRIP}/notifications/acted`, {}],
+    ["PATCH", `/trips/${TRIP}/plan/items/${ITEM}`, { startsAt: iso(5) }],
+    ["DELETE", `/trips/${TRIP}/notes/${ITEM}`, undefined],
+  ];
+  for (const [m, p, b] of WRITES) {
+    it(`R5 guard ${m} ${p.replace(TRIP, ":tripId")}: 403 trip_record_read_only, nothing written`, async () => {
+      const c = use(retained("retained_record_only"));
+      const r = await call(harness.base, m, p, ANA, b);
+      assert.equal(r.status, 403, JSON.stringify(r.body).slice(0, 300));
+      assert.equal(r.body.error, "trip_record_read_only");
+      assert.doesNotMatch(String(r.body.message), /restrict/i);
+      assert.equal(writes(c), 0);
+    });
+  }
+  it("R5 guard CONTROL: a full member's note is not refused by it", async () => {
+    use(retained("membership"));
+    const r = await call(harness.base, "POST", `/trips/${TRIP}/notes`, ANA, { title: "n", body: "b" });
+    assert.notEqual(r.body?.error, "trip_record_read_only", JSON.stringify(r.body).slice(0, 300));
+  });
+  it("R5 guard: rescue, stopping a live share, and leaving the trip are never refused by it", async () => {
+    use(retained("retained_record_only"));
+    for (const [m, p] of [["POST", `/trips/${TRIP}/rescue`], ["POST", `/trips/${TRIP}/crew/live-share/stop`], ["DELETE", `/trips/${TRIP}/members/${ANA}`]] as const) {
+      const r = await call(harness.base, m, p, ANA, {});
+      assert.notEqual(r.body?.error, "trip_record_read_only", `${m} ${p}: ${JSON.stringify(r.body).slice(0, 200)}`);
+    }
+  });
+  it("R5 guard: the access row unreadable → 503, retryable, nothing written", async () => {
+    const c = use(retained("retained_record_only"), { errors: { trip_members: { message: "members down", code: "57P01", ops: ["select"] } } });
+    const r = await call(harness.base, "POST", `/trips/${TRIP}/notes`, ANA, { title: "n", body: "b" });
+    assert.equal(r.status, 503, JSON.stringify(r.body).slice(0, 300));
+    assert.equal(writes(c), 0);
+  });
+  it("R5 guard: routes/index.ts mounts the trips router (which carries the guard) before every other trip router", () => {
+    const idx = readFileSync(new URL("../routes/index.ts", import.meta.url), "utf8");
+    const uses = [...idx.matchAll(/router\.use\((\w+)\)/g)].map((x) => x[1]);
+    assert.deepEqual(uses.slice(0, 3), ["healthRouter", "authRouter", "tripsRouter"]);
+    assert.match(readFileSync(new URL("../routes/trips.ts", import.meta.url), "utf8"), /const router = Router\(\); router\.use\(tripRetainedRecordWriteGuard\(\)\);/);
+  });
   it("R5 the shared helper says so to Compass too (decideTripActionRestriction)", async () => {
     const c = use(retained("retained_record_only"));
     const v = await decideTripActionRestriction(c as never, TRIP, ANA, "change_shared_plan");
@@ -347,6 +404,39 @@ describe("D-24a. ONE solo/group test (readTripShape), the one lane L's Compass g
     const v = await decideTripActionRestriction(c as never, SOLO, ANA, "change_shared_plan");
     assert.deepEqual(v, { allowed: true, shape: "solo" });
   });
+});
+
+describe("R2 lead ruling: while the INVITER is hosting-restricted, their outstanding invites and links cannot be redeemed", () => {
+  // The redeemer sees "This invite isn't available right now" — no reason, nothing about the inviter's restriction.
+  const invited = (restriction: Restriction): Record<string, Rows> => {
+    const s = seed(restriction, ORGANIZER);
+    s.trip_members = [...s.trip_members!, { trip_id: TRIP, user_id: NEWU, role: "invited", status: "invited" }];
+    return s;
+  };
+  const doors: Array<[string, string]> = [["accept-invite", `/trips/${TRIP}/accept-invite`], ["invite-link", "/trips/invite-link/link-token-r2/accept"]];
+  for (const [name, path] of doors) {
+    it(`R2-${name}. THE POINT: the inviter restricted from hosting → 403 invite_unavailable, no reason, nothing written`, async () => {
+      const c = use(invited("hosting"));
+      const r = await call(harness.base, "POST", path, NEWU, {});
+      assert.equal(r.status, 403, JSON.stringify(r.body).slice(0, 300));
+      assert.deepEqual(r.body, { error: "invite_unavailable", message: "This invite isn't available right now." });
+      assert.equal(writes(c), 0);
+    });
+    it(`R2-${name}. the inviter's restriction state unreadable → 503 in the same neutral words, nothing written`, async () => {
+      const c = use(invited(null), UNREADABLE);
+      const r = await call(harness.base, "POST", path, NEWU, {});
+      assert.equal(r.status, 503, JSON.stringify(r.body).slice(0, 300));
+      assert.doesNotMatch(JSON.stringify(r.body), /restrict|host/i);
+      assert.equal(writes(c), 0);
+    });
+    it(`R2-${name}. CONTROL: an unrestricted inviter's invite is not refused by this rule; a messaging restriction does not refuse it either`, async () => {
+      for (const t of [null, "messaging"] as const) {
+        use(invited(t));
+        const r = await call(harness.base, "POST", path, NEWU, {});
+        assert.notEqual(r.body?.error, "invite_unavailable", `${t}: ${JSON.stringify(r.body).slice(0, 200)}`);
+      }
+    });
+  }
 });
 
 describe("S. safety paths are not gated", () => {

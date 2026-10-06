@@ -203,3 +203,36 @@ export async function refuseIfRetainedRecordOnly(
   if (shape.actorAccess === "retained_record_only") { res.status(403).json({ error: "trip_record_read_only", message: RETAINED_RECORD_ONLY_MESSAGE }); return true; }
   return false;
 }
+
+/** What a person redeeming an invite is told when it cannot be used now. Says nothing about why (the inviter's restriction is theirs). */
+export const INVITE_UNAVAILABLE_MESSAGE = "This invite isn't available right now.";
+/** The inviter's state could not be read: retryable, and still says nothing about a restriction. */
+export const INVITE_UNCHECKABLE_MESSAGE = "We couldn't check this invite right now. Please try again shortly.";
+
+/**
+ * Lead ruling (2026-10-06, on verifier R2 of 1867c97df): while an inviter is
+ * restricted from hosting, their outstanding invites and invite links cannot be
+ * redeemed — otherwise a restricted host's trip keeps growing on invites made
+ * before the restriction. The REDEEMER sees "This invite isn't available right
+ * now", with no reason and nothing that reveals the inviter's restriction. An
+ * unreadable restriction state is a retryable 503 in the same neutral words.
+ * True when it has refused.
+ */
+export async function refuseIfInviterCannotHost(
+  res: Response,
+  sc: SupabaseClient | null | undefined,
+  inviterId: string | null,
+): Promise<boolean> {
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return true; }
+  if (!inviterId) { res.status(403).json({ error: "invite_unavailable", message: INVITE_UNAVAILABLE_MESSAGE }); return true; }
+  let verdict: ReturnType<typeof decideTrustAction>;
+  try {
+    verdict = decideTrustAction(await getRestrictionState(sc as Parameters<typeof getRestrictionState>[0], inviterId), ["hosting"]);
+  } catch {
+    verdict = { allowed: false, kind: "unverifiable" };
+  }
+  if (verdict.allowed) return false;
+  if (verdict.kind === "unverifiable") { sendError(res, "degraded_unavailable", INVITE_UNCHECKABLE_MESSAGE); return true; }
+  res.status(403).json({ error: "invite_unavailable", message: INVITE_UNAVAILABLE_MESSAGE });
+  return true;
+}

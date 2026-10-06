@@ -59,7 +59,7 @@ import {
   isActive as isWindowActive,
   effectiveExpiry as windowEffectiveExpiry,
   type AvailabilityWindow,
-  type ViewerRelationship as WindowViewerRelationship, isMutualFollow,
+  type ViewerRelationship as WindowViewerRelationship, windowRelationshipFromEdges,
 } from "./OpenToPlansService.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { LOCATE_FRIENDS_CREW_PRESENCE } from "../../lib/capability/registry.js";
@@ -1024,7 +1024,7 @@ async function loadActiveExplicitWindow(
   try {
     if (!(await isFlagEnabled(sc, OPEN_TO_PLANS_WINDOWS_FLAG))) return null;
     const nowMs = Date.now();
-    const relationship = windowRelationshipFor(context, relationshipLabel); // D-103: a mutual follow is `mutual`
+    const relationship = windowRelationshipFor(context, relationshipLabel); // D-103 + L3: from the follow edges
     let candidates: AvailabilityWindow[];
     if (relationship === "self") {
       // The owner sees their own active windows regardless of visibility, but
@@ -2512,21 +2512,21 @@ export function passportTrustConfidence(
 }
 
 /**
- * Lead ruling D-103 (2026-10-06; lane C's hunk): the relationship an
+ * Lead rulings D-103 and L3 (2026-10-06; lane C's hunk): the relationship an
  * availability window's audience is tested against, from TABLE 5's context AND
  * the follow edges the relationship label carries (interactionPermissions:
  * `following` = viewer follows owner, `follower` = owner follows viewer,
- * `mutual_follow` = both). A follow relationship that is mutual is `mutual` —
- * the only one a `followers` window admits (isMutualFollow); every other
- * context maps as toWindowViewerRelationship always has.
+ * `mutual_follow` = both) — through windowRelationshipFromEdges, the rule every
+ * surface uses: mutual admits a `followers` window, owner-follows-viewer a
+ * `following` one, viewer-follows-owner alone nothing beyond public. Every
+ * other context maps as toWindowViewerRelationship always has.
  */
 export function windowRelationshipFor(context: PassportViewerContext, relationshipLabel: string | null | undefined): WindowViewerRelationship {
-  if ((context === "following" || context === "follower")
-      && isMutualFollow({
-        viewerFollowsOwner: relationshipLabel === "following" || relationshipLabel === "mutual_follow",
-        ownerFollowsViewer: relationshipLabel === "follower" || relationshipLabel === "mutual_follow",
-      })) {
-    return "mutual";
+  if (context === "following" || context === "follower") {
+    return windowRelationshipFromEdges({
+      viewerFollowsOwner: relationshipLabel === "following" || relationshipLabel === "mutual_follow",
+      ownerFollowsViewer: relationshipLabel === "follower" || relationshipLabel === "mutual_follow",
+    });
   }
   return toWindowViewerRelationship(context);
 }

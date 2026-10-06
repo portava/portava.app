@@ -470,7 +470,7 @@ router.get("/hidden-gems", async (req, res) => {
       // that join table first, then fetch the gems themselves.
       const { data: planItems, error: planItemsErr } = await sc
         .from("trip_plan_items")
-        .select(`source_id, removed_at, ${PLAN_ITEM_PRIVACY_COLUMNS}`) // census-trips §81: another member's PRIVATE plan item names its place by source_id — the gem IS the location
+        .select(`id, source_id, removed_at, ${PLAN_ITEM_PRIVACY_COLUMNS}`) // census-trips §81: another member's PRIVATE plan item names its place by source_id — the gem IS the location
         .eq("trip_id", callerTripId)
         .eq("source_type", "hidden_gem"); if (planItemsErr) return sendError(res, "degraded_unavailable", "We could not read this trip's plan right now. Please try again shortly."); const planAccess = await planItemAccessFor(sc, callerTripId, user.id);
       const gemIdsForTrip = [...new Set(((planItems as any[]) ?? []).filter((p: any) => canSeePlanItemLocation(planAccess, p)).map((p: any) => p.source_id as string))];

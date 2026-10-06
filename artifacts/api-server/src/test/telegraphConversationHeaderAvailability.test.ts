@@ -145,6 +145,16 @@ describe("finding 1 — the window's audience is tested against the viewer's REA
     assert.deepEqual(body.participants[0]!.availability, WITHHELD);
   });
 
+  it("L3: a FOLLOWING window — BOB (its owner) follows ALICE: shown", async () => {
+    const { body } = await header(seed({ visibility: "following", follows: [{ follower_id: BOB, following_id: ALICE }] }));
+    assert.equal(body.participants[0]!.availability.state, "open");
+  });
+
+  it("L3: a FOLLOWING window — only ALICE follows BOB: not shown (following him is not his choice)", async () => {
+    const { body } = await header(seed({ visibility: "following", follows: [{ follower_id: ALICE, following_id: BOB }] }));
+    assert.deepEqual(body.participants[0]!.availability, WITHHELD);
+  });
+
   it("ALICE and BOB follow each other but the follow edges cannot be read — not mutual (fails closed)", async () => {
     const { body } = await header(
       seed({ visibility: "followers", follows: [{ follower_id: ALICE, following_id: BOB }, { follower_id: BOB, following_id: ALICE }] }),

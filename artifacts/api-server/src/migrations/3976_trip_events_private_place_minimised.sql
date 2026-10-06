@@ -69,6 +69,12 @@ BEGIN
   IF to_regclass('public.trip_snapshots') IS NULL THEN
     RAISE EXCEPTION '3976: trip_snapshots is required (2763)';
   END IF;
+  IF to_regprocedure('public.trip_snapshot_fold(jsonb,jsonb)') IS NULL THEN
+    RAISE EXCEPTION '3976: the snapshot fold is required (2773)';
+  END IF;
+  IF to_regprocedure('authz.private_anchor_granted(uuid,uuid,uuid)') IS NULL THEN
+    RAISE EXCEPTION '3976: requires 3972 (the owner-only plan-item policy and its grant function)';
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns
                   WHERE table_schema = 'public' AND table_name = 'trip_plan_items' AND column_name = 'location_is_private') THEN
     RAISE EXCEPTION '3976: trip_plan_items.location_is_private is required';

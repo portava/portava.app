@@ -64,7 +64,7 @@ import {
   visibleFromOf,
   withinWindow,
 } from "../services/groupChatHistoryBound.js";
-import { projectPublicWindows, isMutualFollow, type ViewerRelationship } from "../services/passport/OpenToPlansService.js"; import { canMessage } from "../lib/messagingPermissions.js";
+import { projectPublicWindows, windowRelationshipFromEdges, type ViewerRelationship } from "../services/passport/OpenToPlansService.js"; import { canMessage } from "../lib/messagingPermissions.js";
 
 const log = rootLogger.child({ mod: "telegraphCompassTools" });
 
@@ -759,7 +759,7 @@ async function mutualOrPublic(sc: SupabaseClient, viewerId: string, ownerId: str
   try {
     const verdict = await canMessage(sc, viewerId, ownerId);
     const ctx = verdict.relationship_context;
-    return isMutualFollow({ viewerFollowsOwner: ctx.senderFollowsRecipient, ownerFollowsViewer: ctx.recipientFollowsSender }) ? "mutual" : "public";
+    return windowRelationshipFromEdges({ viewerFollowsOwner: ctx.senderFollowsRecipient, ownerFollowsViewer: ctx.recipientFollowsSender }); // D-103 + L3
   } catch {
     return "public";
   }

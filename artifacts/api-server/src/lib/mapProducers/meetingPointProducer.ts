@@ -151,7 +151,7 @@ export function projectMeetingPoint(
   if (!item || item.category !== "meeting_point") return { skipped: "not_meeting_point" };
   if (item.removed_at != null) return { skipped: "removed" };
   if (item.status === "cancelled") return { skipped: "cancelled" };
-  if (item.location_is_private === true) return { skipped: "private_location" };
+  if (item.location_is_private !== false) return { skipped: "private_location" }; // D-65: only an item KNOWN public (verifier L2: null was read as public)
   const lat = item.lat;
   const lng = item.lng;
   if (

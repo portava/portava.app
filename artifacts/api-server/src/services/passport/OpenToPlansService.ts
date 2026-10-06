@@ -47,7 +47,7 @@ export const SOCIAL_AVAILABILITY = ["open", "maybe", "crew_only", "following_onl
 export type SocialAvailability = (typeof SOCIAL_AVAILABILITY)[number];
 
 /** Viewer relationship used when projecting another traveler's windows. */
-export type ViewerRelationship = "self" | "public" | "follower" | "following" | "mutual" | "crew";
+export type ViewerRelationship = "self" | "public" | "follower" | "following" | "mutual" | "followed_by_owner" | "crew";
 
 /**
  * Lead ruling D-103 (2026-10-06): THE rule for a `followers` availability
@@ -64,6 +64,26 @@ export function isMutualFollow(edges: { viewerFollowsOwner: boolean | null | und
 
 /** What the editor shows for the `followers` option (D-103). */
 export const FOLLOWERS_WINDOW_LABEL = "People you follow who follow you back";
+
+/**
+ * Lead ruling on verifier L3 (2026-10-06): a `following` window admits exactly
+ * the people the OWNER follows (owner follows viewer), on every surface — never
+ * the viewer following the owner, which anyone can do with one tap.
+ */
+export const FOLLOWING_WINDOW_LABEL = "People you follow";
+
+/**
+ * THE window relationship from the two follow edges, for every surface that
+ * reads them (Telegraph header, Compass, Nearby, Passport): `mutual` when both
+ * hold (D-103), `followed_by_owner` when only the owner follows the viewer (L3),
+ * and `public` otherwise — a viewer who merely follows the owner gains nothing a
+ * stranger does not. An unread edge is no edge.
+ */
+export function windowRelationshipFromEdges(edges: { viewerFollowsOwner: boolean | null | undefined; ownerFollowsViewer: boolean | null | undefined }): ViewerRelationship {
+  if (isMutualFollow(edges)) return "mutual";
+  if (edges.ownerFollowsViewer === true) return "followed_by_owner";
+  return "public";
+}
 
 // ── Model (TABLE 8) ────────────────────────────────────────────────────────────
 
@@ -168,7 +188,7 @@ export function visibilityAdmits(visibility: VisibilityPolicy, viewer: ViewerRel
   switch (visibility) {
     case "public": return true;
     case "followers": return viewer === "mutual"; // D-103: one-way in either direction is refused
-    case "following": return viewer === "following";
+    case "following": return viewer === "followed_by_owner" || viewer === "mutual"; // L3: the people the OWNER follows
     case "crew": return viewer === "crew";
     case "private": return false;
     default: return false;

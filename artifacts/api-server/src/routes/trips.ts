@@ -25,7 +25,7 @@ import {
 } from "../domain/trips/policies/tripPlanPrivacy.js";
 import { isMissingColumnError } from "../lib/capability/schemaCapability.js";
 import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
-import { toCamel, readPlanItemsInOrder } from "./plan.js"; import { withholdPrivatePlanItems, redactWithheldPlanItem } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, privateItemEditRefusal, clearAnchorGrantsForItem, clearAnchorGrantsForMember } from "../server/trips/privateAnchorShares.js"; import { refuseTripActionIfRestricted } from "../lib/tripTrustGate.js";
+import { toCamel, readPlanItemsInOrder } from "./plan.js"; import { withholdPrivatePlanItems, redactWithheldPlanItem } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, privateItemEditRefusal, clearAnchorGrantsForItem, clearAnchorGrantsForMember } from "../server/trips/privateAnchorShares.js"; import { refuseTripActionIfRestricted, refuseIfInviterCannotHost, INVITE_UNCHECKABLE_MESSAGE } from "../lib/tripTrustGate.js"; import { tripRetainedRecordWriteGuard } from "../lib/tripRetainedRecordGuard.js";
 import { logTripActivity, findTripActivityByKey } from "../domain/trips/events/tripActivityLog.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js"; import { refuseIfTrustRestricted } from "../lib/discoveryTrustGate.js";
@@ -37,7 +37,7 @@ import { nameVisibilitySet, sanitizeIdentity, nameVisibleFor } from "../lib/publ
 import { truncateDisplayName } from "../lib/displayName.js";
 import { readBlockExclusions, isExcluded, sendExclusionsUnavailable } from "../lib/exclusionSet.js";
 
-const router = Router();
+const router = Router(); router.use(tripRetainedRecordWriteGuard()); // census-trips §85.2 (verifier R3): routes/index.ts mounts this router FIRST among the trip routers, so this guard refuses a retained-record-only member's write on every /trips/:tripId router after it
 
 /**
  * Trip Kernel gate (Trips spec §4; domain/trips/commands/tripKernel.ts; migration 2420).
@@ -1309,7 +1309,7 @@ router.post("/trips/:tripId/accept-invite", async (req, res) => {
   const { data: membership, error: membershipErr } = await client.from("trip_members").select("role").eq("trip_id", tripId).eq("user_id", user.id).maybeSingle();
   if (membershipErr) { req.log.error({ err: membershipErr }, "accept invite: invitation unreadable"); sendError(res, "degraded_unavailable", "We could not read your invitation right now. Please try again shortly."); return; }
   if (!membership) { res.status(404).json({ error: "not_found", message: "No invitation found for this trip" }); return; }
-  if ((membership as any).role !== "invited") { res.status(400).json({ error: "invalid_payload", message: `Already a ${(membership as any).role}` }); return; }
+  if ((membership as any).role !== "invited") { res.status(400).json({ error: "invalid_payload", message: `Already a ${(membership as any).role}` }); return; } { const { data: inv, error: invErr } = await client.from("trips").select("owner_id").eq("id", tripId).maybeSingle(); if (invErr) { sendError(res, "degraded_unavailable", INVITE_UNCHECKABLE_MESSAGE); return; } if (await refuseIfInviterCannotHost(res, getServiceClient() ?? client, (inv as { owner_id?: string } | null)?.owner_id ?? null)) return; } // lead ruling on verifier R2: only the owner invites, so the owner is the inviter; a hosting-restricted inviter's invites are not redeemable
 
   // ── Trust: private_plan_access, the restriction nothing enforced ───────────
   //
@@ -2247,7 +2247,7 @@ router.post("/trips/:tripId/members", async (req, res) => {
   if (!trip) { res.status(404).json({ error: "not_found", message: "Trip not found" }); return; }
   // §6.1 canInviteParticipant: adding a member IS inviting them. Owner only.
   const add = await canInviteParticipant(client, { userId: user.id }, tripId, { trip: { id: tripId, owner_id: (trip as any).owner_id } });
-  if (!add.allowed) { sendTripRefusal(res, "forbidden", add.reason, "Only the trip owner can add members"); return; }
+  if (!add.allowed) { sendTripRefusal(res, "forbidden", add.reason, "Only the trip owner can add members"); return; } if (await refuseIfTrustRestricted(res, getServiceClient() ?? client, user.id, "hosting")) return; // verifier R2 (1867c97df): adding a member makes it a group trip — hosting, solo or not
 
   // `existing` picks the WRITE, not just the response: SET_PARTICIPANT_ROLE vs
   // ADD_PARTICIPANT for the kernel, UPDATE vs INSERT on the legacy path. An
