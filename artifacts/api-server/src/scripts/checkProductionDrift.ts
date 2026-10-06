@@ -224,7 +224,7 @@ export const KNOWN_PRODUCTION_GAPS: Record<string, Gap> = {
   layover_return_plans:  { classification: "unapplied", note: "2992, same chain and same 2700 prerequisite as layover_constraints." },
   layover_checkpoints:   { classification: "unapplied", note: "2992, same chain and same 2700 prerequisite as layover_constraints." },
   layover_outcomes:      { classification: "unapplied", note: "2992, same chain and same 2700 prerequisite as layover_constraints." },
-
+  layover_presence:      { classification: "unapplied", note: "Migration 3900 (Layover §4 / §14 L1 opt-in presence intents) is in the tree but not yet applied to production, and its only reader and writer sit behind layover_presence_intents_enabled, which 3900 seeds FALSE." }, // one line, in place of the blank one, so every line cited below holds
   memory_relations: {
     classification: "unapplied",
     note:

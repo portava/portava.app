@@ -147,7 +147,7 @@ describe("safeReturn: an unreadable geo_zones must not report 'no caution'", () 
     trip_plan_items: {
       id: ITEM_ID, category: "dining", starts_at: "2026-09-06T13:00:00Z",
       day_date: "2026-09-06", location_name: "Somewhere", lat: 13.75, lng: 100.5,
-      trip_id: TRIP_ID,
+      trip_id: TRIP_ID, creator_id: USER_ID, location_is_private: false, // the production row's shape: without these two columns OD-TRIP-3 withholds the place (fail closed) and no caution is looked up at all
     },
     trip_members:          { user_id: USER_ID, role: "member", status: "accepted" },
     profiles:              { home_city: "Bangkok" },
