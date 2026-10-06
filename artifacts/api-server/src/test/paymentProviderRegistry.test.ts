@@ -147,12 +147,13 @@ describe("PR1 — payment key classification", () => {
     assert.equal(fakePaymentProviderPermitted(env({ NODE_ENV: "production" })), false);
     assert.equal(fakePaymentProviderPermitted(env({ NODE_ENV: "development", REPLIT_DEPLOYMENT: "1" })), false);
     assert.equal(fakePaymentProviderPermitted({}), false, "a bare start with no NODE_ENV is what the deployment runs");
-    assert.equal(fakePaymentProviderPermitted(env({ NODE_ENV: "development" })), true);
+    assert.equal(fakePaymentProviderPermitted(env({ NODE_ENV: "development" })), false, "N-2: a dev host is not the test runner");
+    assert.equal(fakePaymentProviderPermitted(env({ NODE_TEST_CONTEXT: "child-v8" })), true);
   });
 
   it("REPLIT_DEPLOYMENT counts when it is PRESENT, even empty — for the mock identity provider and the fake alike", () => {
     // Replit sets it to "1" in a published app and leaves it unset otherwise; an empty value is a blanked marker, not a local run.
-    for (const local of [{ NODE_ENV: "development" }, { NODE_ENV: "test" }, { NODE_TEST_CONTEXT: "child-v8" }]) {
+    for (const local of [{ NODE_TEST_CONTEXT: "child-v8" }, { NODE_TEST_CONTEXT: "child-v8", NODE_ENV: "development" }]) {
       assert.equal(mockIdentityPermitted(env(local)), true, JSON.stringify(local));
       for (const marker of ["1", "0", "", " ", "false"]) {
         const e = env({ ...local, REPLIT_DEPLOYMENT: marker });
@@ -210,7 +211,7 @@ describe("PR2 — the registry resolves only `none` and `fake`", () => {
 
   it("a fake handed out in a local run stops answering if the same env becomes a deployment — even with an EMPTY marker", async () => {
     for (const marker of ["1", ""]) {
-      const e = env({ NODE_ENV: "development", PAYMENT_PROVIDER: "fake" });
+      const e = env({ NODE_TEST_CONTEXT: "child-v8", PAYMENT_PROVIDER: "fake" });
       const provider = getPaymentProvider(e);
       assert.deepEqual(tag(await provider.validateRecipient("fake_acct_does_not_exist")), ["failed", "not_found"], "permitted: the fake itself answers");
       e["REPLIT_DEPLOYMENT"] = marker;

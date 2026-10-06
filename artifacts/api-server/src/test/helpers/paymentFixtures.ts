@@ -31,8 +31,8 @@ import {
 } from "../../services/payments/PaymentProvider.js";
 import { createFakeTaxProvider, type TaxComputation, type TaxProductKind, type TaxProvider } from "../../services/payments/TaxProvider.js";
 
-/** An env with positive evidence of a local run — what the fake needs. */
-export const LOCAL_ENV = Object.freeze({ NODE_ENV: "test" }) as unknown as NodeJS.ProcessEnv;
+/** An env with positive evidence of the TEST RUNNER — what the fake needs (N-2: a dev host is not enough). */
+export const LOCAL_ENV = Object.freeze({ NODE_TEST_CONTEXT: "child-v8" }) as unknown as NodeJS.ProcessEnv;
 
 /** Envs in which the fake must be refused, with why. */
 export const REFUSED_ENVS: ReadonlyArray<readonly [string, NodeJS.ProcessEnv]> = [
@@ -41,6 +41,8 @@ export const REFUSED_ENVS: ReadonlyArray<readonly [string, NodeJS.ProcessEnv]> =
   ["REPLIT_DEPLOYMENT set under node --test", { NODE_TEST_CONTEXT: "child-v8", REPLIT_DEPLOYMENT: "1" } as unknown as NodeJS.ProcessEnv],
   ["REPLIT_DEPLOYMENT defined but EMPTY under NODE_ENV=development", { NODE_ENV: "development", REPLIT_DEPLOYMENT: "" } as unknown as NodeJS.ProcessEnv],
   ["a bare start with no NODE_ENV", {} as NodeJS.ProcessEnv],
+  ["a dev host (`pnpm dev`, NODE_ENV=development) — it points at the production database (N-2)", { NODE_ENV: "development" } as unknown as NodeJS.ProcessEnv],
+  ["NODE_ENV=test alone, outside the test runner (N-2)", { NODE_ENV: "test" } as unknown as NodeJS.ProcessEnv],
 ];
 
 export interface ChargeSpec {

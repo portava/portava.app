@@ -11,8 +11,8 @@
  * users' rows land in, and that same dev process would count them for
  * bookings.
  *
- * `mockIdentityPermitted` is unchanged: it still decides whether the mock may
- * run at all. Only the booking-grade answer narrows.
+ * Wave 3 (N-2) then narrowed `mockIdentityPermitted` itself: a dev process may
+ * not even RUN the mock now, so it can no longer write a self-approved row.
  *
  * Run: node --import tsx/esm --test src/test/mockIdentityBookingGrade.test.ts
  */
@@ -28,13 +28,14 @@ const NODE_ENV_TEST = env({ NODE_ENV: "test", IDENTITY_PROVIDER: "mock" });
 const UNDER_NODE_TEST = env({ NODE_TEST_CONTEXT: "child-v8", IDENTITY_PROVIDER: "mock" });
 
 describe("the mock identity provider is booking-grade only under node --test", () => {
-  it("pnpm dev (NODE_ENV=development) may RUN the mock, but its approvals are not booking-grade", () => {
-    assert.equal(mockIdentityPermitted(DEV), true, "unchanged: the mock may still run in a dev process");
+  it("pnpm dev (NODE_ENV=development) may not RUN the mock (N-2), and its approvals are not booking-grade", () => {
+    assert.equal(mockIdentityPermitted(DEV), false, "N-2: a dev host is not the test runner");
     assert.equal(verificationIsBookingGrade(DEV), false);
     assert.equal(providerModeCounts("local_mock", DEV), false);
   });
 
   it("NODE_ENV=test alone is not enough either", () => {
+    assert.equal(mockIdentityPermitted(NODE_ENV_TEST), false);
     assert.equal(verificationIsBookingGrade(NODE_ENV_TEST), false);
     assert.equal(providerModeCounts("local_mock", NODE_ENV_TEST), false);
   });

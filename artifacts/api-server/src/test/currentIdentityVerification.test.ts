@@ -48,7 +48,7 @@ function db(seed: { identity_verifications?: Row[]; profiles?: Row[] }, fail: { 
   };
 }
 
-const LOCAL = { NODE_ENV: "test" } as unknown as NodeJS.ProcessEnv;
+const LOCAL = { NODE_ENV: "test" } as unknown as NodeJS.ProcessEnv; const DEV_HOST = { NODE_ENV: "development" } as unknown as NodeJS.ProcessEnv; // neither is the test runner (N-2)
 const HOSTED = { NODE_ENV: "production", REPLIT_DEPLOYMENT: "1" } as unknown as NodeJS.ProcessEnv; const UNDER_NODE_TEST = { NODE_TEST_CONTEXT: "child-v8" } as unknown as NodeJS.ProcessEnv; // Step 5(d): only this makes a mock approval count
 
 const U = "11111111-1111-4111-8111-111111111111";
@@ -96,6 +96,7 @@ describe("readCurrentIdentityVerification — every way it is NOT verified", () 
     const seed = { identity_verifications: [attempt({ provider: "mock", provider_mode: "local_mock" })], profiles: [profile("id_verified")] };
     assert.equal((await readCurrentIdentityVerification(db(seed), U, UNDER_NODE_TEST)).state, "verified"); assert.deepEqual(await readCurrentIdentityVerification(db(seed), U, LOCAL), { state: "not_verified", reason: "mock_verification" });
     assert.deepEqual(await readCurrentIdentityVerification(db(seed), U, HOSTED), { state: "not_verified", reason: "mock_verification" });
+    assert.deepEqual(await readCurrentIdentityVerification(db(seed), U, DEV_HOST), { state: "not_verified", reason: "mock_verification" }, "N-2: a stored local_mock row satisfies nothing on a dev host");
   });
 
   it("a platform-standing label (buddy_verified, basic_verified …) is NOT an identity check", async () => {
@@ -162,8 +163,10 @@ describe("sessionProviderMode — what a session created now is recorded as", ()
     assert.equal(sessionProviderMode("persona", { IDENTITY_PROVIDER: "stripe", STRIPE_IDENTITY_SECRET_KEY: "sk_live_x", PAYMENTS_ALLOW_LIVE: "true" } as any), null, "the key belongs to another provider");
   });
 
-  it("the mock is local_mock in a local run and nothing on a hosted deployment", () => {
-    assert.equal(sessionProviderMode("mock", LOCAL), "local_mock");
+  it("the mock is local_mock under the test runner and nothing on a hosted deployment or a dev host (N-2)", () => {
+    assert.equal(sessionProviderMode("mock", UNDER_NODE_TEST), "local_mock");
+    assert.equal(sessionProviderMode("mock", DEV_HOST), null, "N-2: a dev host records no mock session at all");
+    assert.equal(sessionProviderMode("mock", LOCAL), null, "N-2: NODE_ENV=test alone is not the test runner");
     assert.equal(sessionProviderMode("mock", HOSTED), null);
   });
 

@@ -35,7 +35,7 @@ import { startRecipientOnboarding } from "../services/payments/bookingPayments/r
 import { createMemoryStore, createMemoryLedger, partyIdFor, type MemoryStore, type MemoryLedger } from "./helpers/memoryBookingPayments.js";
 import type { BookingForPayment } from "../services/payments/bookingPayments/model.js";
 
-const LOCAL = { NODE_ENV: "test" } as unknown as NodeJS.ProcessEnv;
+const LOCAL = { NODE_TEST_CONTEXT: "child-v8" } as unknown as NodeJS.ProcessEnv; // the test runner: a dev host no longer counts (N-2)
 const TRAVELER = "traveler-1";
 const BUDDY = "buddy-user-1";
 const ADMIN = "admin-1";

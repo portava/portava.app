@@ -23,7 +23,7 @@ import { createFakeTaxProvider } from "../services/payments/TaxProvider.js";
 import type { PaymentSliceDeps } from "../services/payments/bookingPayments/deps.js";
 import { createMemoryLedger, createMemoryStore, partyIdFor, type MemoryLedger, type MemoryStore } from "./helpers/memoryBookingPayments.js";
 
-const LOCAL = { NODE_ENV: "test" } as unknown as NodeJS.ProcessEnv;
+const LOCAL = { NODE_TEST_CONTEXT: "child-v8" } as unknown as NodeJS.ProcessEnv; // the test runner: a dev host no longer counts (N-2)
 const TOKENS: Record<string, string> = { "t-traveler": "traveler-1", "t-buddy": "buddy-user-1", "t-admin": "admin-1" };
 const ROLES: Record<string, string> = { "traveler-1": "user", "buddy-user-1": "user", "admin-1": "admin" };
 

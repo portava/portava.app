@@ -192,7 +192,7 @@ prefix outright, throws before any `fetch`
 (`artifacts/api-server/src/lib/paymentsMode.ts:138#assertProviderKeyAllowed(`), refuses a
 signature-verified webhook claiming `livemode`
 (`artifacts/api-server/src/lib/paymentsMode.ts:153#assertWebhookLivemodeAllowed(`), and refuses the
-unsigned mock outside a positively-evidenced local run
+unsigned mock (and the fake payment and tax providers) outside the test runner, a dev host included (N-2, 2026-10-06)
 (`artifacts/api-server/src/lib/paymentsMode.ts:224#mockIdentityPermitted(env:`).
 
 `services/creators/PayoutProvider.ts` is `09` §9's interface verbatim — six operations

@@ -36,8 +36,8 @@ function flagClient(opts: { enabled?: boolean; error?: string; throws?: boolean 
 // ── identityProviderStatus ───────────────────────────────────────────────────
 
 describe("identityProviderStatus", () => {
-  it("mock is operational in a LOCAL run only — not production, not a bare start with no NODE_ENV (lib/paymentsMode.ts)", () => {
-    assert.equal(identityProviderStatus({ IDENTITY_PROVIDER: "mock", NODE_ENV: "development" } as any).operational, true); assert.equal(identityProviderStatus({ IDENTITY_PROVIDER: "mock" } as any).operational, false, "a bare `start` (no NODE_ENV) is what the hosted deployment runs");
+  it("mock is operational under the TEST RUNNER only — not a dev host, not production, not a bare start (lib/paymentsMode.ts, N-2)", () => {
+    assert.equal(identityProviderStatus({ IDENTITY_PROVIDER: "mock", NODE_TEST_CONTEXT: "child-v8" } as any).operational, true); assert.equal(identityProviderStatus({ IDENTITY_PROVIDER: "mock", NODE_ENV: "development" } as any).operational, false, "N-2: a dev host reports identity unavailable"); assert.equal(identityProviderStatus({ IDENTITY_PROVIDER: "mock" } as any).operational, false, "a bare `start` (no NODE_ENV) is what the hosted deployment runs");
     assert.equal(
       identityProviderStatus({ IDENTITY_PROVIDER: "mock", NODE_ENV: "production" } as any).operational,
       false,

@@ -17,7 +17,7 @@ import { payoutPolicyFromEnv, periodBounds, netForRecipientMinor } from "../serv
 import { createFakeTaxProvider, NONE_TAX_PROVIDER } from "../services/payments/TaxProvider.js";
 import type { BookingPaymentRecord } from "../services/payments/bookingPayments/model.js";
 
-const LOCAL = { NODE_ENV: "test" } as unknown as NodeJS.ProcessEnv;
+const LOCAL = { NODE_TEST_CONTEXT: "child-v8" } as unknown as NodeJS.ProcessEnv; // the test runner: a dev host no longer counts (N-2)
 
 describe("commission policy", () => {
   it("the owner's default is 1000 bps (10%) with a version and a stated source", () => {
