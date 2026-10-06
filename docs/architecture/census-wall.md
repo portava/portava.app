@@ -1509,7 +1509,7 @@ The row is *"voice input and typo normalization use the same global engine"*. Th
 proven end to end since §11. The voice half had **no producer anywhere in the repository**, which is
 why the row was unverifiable rather than merely incomplete.
 
-That has changed. `travel-buddy-standalone/src/platform/input-assistance/voice/voiceIntake.ts:192#export function voiceIntakeRequest` turns a
+That has changed. `travel-buddy-standalone/src/platform/input-assistance/voice/voiceIntake.ts:194#export function voiceIntakeRequest` turns a
 transcript into **exactly the request the typed path produces**, by calling the typed path's own
 normalizer and body builder rather than re-implementing either — the test asserts equality against
 the typed path's own output, and a source scan pins that this directory defines no second
@@ -2228,7 +2228,7 @@ answer to this row:
 - The platform recognizer seam names this census as its reason:
   `travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:14#THE RULING THIS FOLLOWS. census-wall §13.2/§14.2`.
 - A transcript enters the typed path's own request builder, not a parallel one:
-  `travel-buddy-standalone/src/platform/input-assistance/voice/voiceIntake.ts:352#return voiceIntakeRequest(outcome.result, opts);`.
+  `travel-buddy-standalone/src/platform/input-assistance/voice/voiceIntake.ts:383#return voiceIntakeRequest(outcome.result, opts);`.
 - There is a mounted surface that produces one:
   `travel-buddy-standalone/src/platform/input-assistance/voice/VoiceDictationButton.tsx:25#export function VoiceDictationButton({`.
 - `census-input-intelligence.md` grades the identical fact and grades it **`W`**, having moved G163

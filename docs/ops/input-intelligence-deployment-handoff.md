@@ -120,7 +120,7 @@ Each step says what to run, what a PASS looks like, and what a FAIL means.
 ### 3.2 Policy handshake (G340's whole point)
 
 `GET /input-assistance/policies`, authenticated. **VERIFIED from the route
-source** (`routes/inputAssistance.ts:155`): auth required, rate limit 30 per
+source** (`routes/inputAssistance.ts:156`): auth required, rate limit 30 per
 60 s per user, handler touches no database, `telemetryPolicy` deliberately not
 served.
 
