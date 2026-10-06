@@ -15,7 +15,9 @@
 #   PORTAVA_DEPLOYMENT_ENV=beta       → EXPO_PUBLIC_SUPABASE_URL AND SUPABASE_URL must be
 #                                       exactly https://emfpckykpzfturllshly.supabase.co
 #                                       (optional trailing slash), and no variable may
-#                                       carry production's ref (named, never printed).
+#                                       name production — its ref or its API host
+#                                       portava.replit.app, case-insensitively (named,
+#                                       never printed).
 #   anything else                     → refused (a typo must not switch the guard off).
 #
 # Exit 0 = build may proceed; exit 1 = refused (one line naming the variable).
@@ -63,13 +65,16 @@ if [ "$LABEL" = "beta" ]; then
   while IFS= read -r name; do
     [ -n "$name" ] || continue
     value="$(printenv "$name" 2>/dev/null)" || continue
-    case "$value" in
-      *"$PROD_REF"*) NAMING="${NAMING:+$NAMING, }$name" ;;
-    esac
+    # Case-insensitive, like the API rule (namesProduction): production's ref
+    # anywhere, or production's API host as a host (portava-beta.replit.app is
+    # not it). grep -E, so the boundary is the same expression in both places.
+    if printf '%s' "$value" | tr 'A-Z' 'a-z' | grep -qE "$PROD_REF|(^|[^a-z0-9-])portava\.replit\.app([^a-z0-9-]|\$)"; then
+      NAMING="${NAMING:+$NAMING, }$name"
+    fi
   done <<EOF
 $(env | sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' | sort -u)
 EOF
-  [ -z "$NAMING" ] || refuse "$VAR=beta but these variables carry production's project ref: $NAMING. Replace each with its portava-beta value (values are not printed)."
+  [ -z "$NAMING" ] || refuse "$VAR=beta but these variables name production (its project ref or portava.replit.app): $NAMING. Replace each with its portava-beta value (values are not printed)."
   echo "[deployment-env-guard] $VAR=beta: SUPABASE_URL and EXPO_PUBLIC_SUPABASE_URL name portava-beta; no variable names production."
   exit 0
 fi

@@ -73,6 +73,32 @@ describe("deploymentEnvironmentRefusal — the rule", () => {
     assert.ok(!r.includes("hunter2") && !r.includes("pooler.example"), "values are never printed");
   });
 
+  it("REFUSED (verifier M3): beta whose API / web origin or CORS list still names production's API host", () => {
+    const base = { [DEPLOYMENT_ENV_VAR]: "beta", SUPABASE_URL: BETA_SUPABASE_URL, EXPO_PUBLIC_SUPABASE_URL: BETA_SUPABASE_URL };
+    for (const [name, value] of [
+      ["EXPO_PUBLIC_API_BASE_URL", "https://portava.replit.app"],
+      ["EXPO_PUBLIC_WEB_ORIGIN", "https://PORTAVA.Replit.App"],
+      ["ALLOWED_ORIGINS", "https://portava-beta.replit.app,https://portava.replit.app"],
+      ["API_BASE_URL", "https://api.portava.replit.app/v1"],
+    ] as const) {
+      const r = deploymentEnvironmentRefusal({ ...base, [name]: value });
+      assert.ok(r && r.includes(name) && r.includes("portava.replit.app"), `${name}=${value} → ${r}`);
+    }
+    // the beta origin itself is not production's
+    assert.equal(
+      deploymentEnvironmentRefusal({ ...base, EXPO_PUBLIC_API_BASE_URL: "https://portava-beta.replit.app", ALLOWED_ORIGINS: "https://portava-beta.replit.app" }),
+      null,
+    );
+  });
+
+  it("REFUSED (verifier M1/M2): production's ref in UPPER case is still production", () => {
+    const base = { [DEPLOYMENT_ENV_VAR]: "beta", SUPABASE_URL: BETA_SUPABASE_URL };
+    const m1 = deploymentEnvironmentRefusal({ ...base, DATABASE_URL: `postgresql://postgres.${PRODUCTION_SUPABASE_REF.toUpperCase()}:pw@pooler.example:6543/postgres` });
+    assert.ok(m1 && m1.includes("DATABASE_URL"), String(m1));
+    const m2 = deploymentEnvironmentRefusal({ ...base, SUPABASE_PUBLIC_URL: `https://${PRODUCTION_SUPABASE_REF.toUpperCase()}.supabase.co` });
+    assert.ok(m2 && m2.includes("SUPABASE_PUBLIC_URL"), String(m2));
+  });
+
   it("REFUSED: an unrecognised label, so a typo cannot switch the guard off", () => {
     for (const v of ["Beta", "beta ", "BETA", "staging", "prod"]) {
       const r = deploymentEnvironmentRefusal({ [DEPLOYMENT_ENV_VAR]: v, SUPABASE_URL: PROD_URL });

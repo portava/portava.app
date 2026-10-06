@@ -28,8 +28,11 @@
  *                    is what keeps the guard armed on the beta host.
  *   "production"   → allowed with any SUPABASE_URL but the beta project's.
  *   "beta"         → SUPABASE_URL must be exactly the beta project's URL, and
- *                    no environment variable may carry production's project ref
- *                    (a pooler/DB URL, a second Supabase URL, an EXPO_PUBLIC_*).
+ *                    no environment variable may name production: its project
+ *                    ref (a pooler/DB URL, a second Supabase URL, an
+ *                    EXPO_PUBLIC_*) or its API origin portava.replit.app
+ *                    (EXPO_PUBLIC_API_BASE_URL, EXPO_PUBLIC_WEB_ORIGIN,
+ *                    ALLOWED_ORIGINS, …), case-insensitively.
  *                    Variables are NAMED in the refusal; values never printed.
  *   anything else  → refused, naming the accepted values.
  *
@@ -66,10 +69,25 @@ export function supabaseRefOf(url: string | undefined): string | null {
   return m ? m[1] : null;
 }
 
-/** The names (never the values) of environment variables whose value contains production's ref. */
+/** Production's API / web origin host. A beta process must not carry it anywhere in its environment either. */
+export const PRODUCTION_API_HOST = "portava.replit.app";
+
+/**
+ * Does `value` name production — its Supabase project ref anywhere in the text, or its API origin's host as a host
+ * (preceded by start, `/`, `.`, `@` or any other non-hostname character, so `portava-beta.replit.app` does not
+ * match)? Case-insensitive: hostnames and refs are case-insensitive in practice, and an upper-cased copy reaches the
+ * same project.
+ */
+export function namesProduction(value: string): boolean {
+  const v = value.toLowerCase();
+  if (v.includes(PRODUCTION_SUPABASE_REF)) return true;
+  return new RegExp(`(^|[^a-z0-9-])${PRODUCTION_API_HOST.replace(/\./g, "\\.")}(?![a-z0-9-])`).test(v);
+}
+
+/** The names (never the values) of environment variables whose value names production (see namesProduction). */
 export function variablesNamingProduction(env: NodeJS.ProcessEnv): string[] {
   return Object.keys(env)
-    .filter((k) => typeof env[k] === "string" && (env[k] as string).includes(PRODUCTION_SUPABASE_REF))
+    .filter((k) => typeof env[k] === "string" && namesProduction(env[k] as string))
     .sort();
 }
 
@@ -102,7 +120,7 @@ export function deploymentEnvironmentRefusal(env: NodeJS.ProcessEnv = process.en
     const naming = variablesNamingProduction(env);
     if (naming.length > 0) {
       return (
-        `${DEPLOYMENT_ENV_VAR}=beta but these variables carry production's project ref: ${naming.join(", ")}. ` +
+        `${DEPLOYMENT_ENV_VAR}=beta but these variables name production (its project ref or ${PRODUCTION_API_HOST}): ${naming.join(", ")}. ` +
         "Replace each with its portava-beta value (values are not printed)."
       );
     }
