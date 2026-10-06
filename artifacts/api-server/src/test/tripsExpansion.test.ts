@@ -1023,6 +1023,7 @@ describe("trips-expansion routes", () => {
             insert(_data: any) { return obj; },
             eq() { return obj; },
             or() { return obj; },
+            is() { return obj; }, // the inviter's restriction read (lead ruling on verifier R2) chains .is("lifted_at", null)
             limit() { return obj; }, // isBlockedBetween chains .or().limit(1)
             maybeSingle() {
               if (tableName === "trip_invite_links") {
