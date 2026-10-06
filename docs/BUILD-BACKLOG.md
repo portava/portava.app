@@ -143,7 +143,7 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
 
 ## integrating lane — 2026-09-16
 
-- [integration] `artifacts/api-server/src/routes/telegraphKinds.ts:72` — the
+- [integration] `artifacts/api-server/src/routes/telegraphKinds.ts:71` — the
   typed-message route ACCEPTS `replyToId` in its request schema and never writes
   it. A client that sends a typed kind as a reply gets a 201 and a message that
   is not a reply; the quote it drew in the composer is simply gone on reload.
