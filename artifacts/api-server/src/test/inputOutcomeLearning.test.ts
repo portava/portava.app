@@ -705,3 +705,43 @@ describe("the client's disclosure version and task list are the server's (a gran
     assert.deepEqual(client, [...INPUT_OUTCOME_TASKS]);
   });
 });
+
+describe("every table this lane's migrations create has a stated deletion fate (verifier fix 8)", () => {
+  // check:deletion-coverage reads the 2026-08-19 baseline, so a post-baseline
+  // table that is absent from BOTH deletionDispositions lists is invisible to
+  // it (checkDeletionCoverage.ts header, "post-baseline tables"). This closes
+  // that blind spot for the 3780-3799 band: each table is read from the SQL.
+  const MIGRATIONS = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "migrations");
+  const band = fs.readdirSync(MIGRATIONS).filter((f) => /^37[89]\d_.*\.sql$/.test(f)).sort();
+  const tables = band.flatMap((f) => {
+    const sql = fs.readFileSync(path.join(MIGRATIONS, f), "utf8");
+    return [...sql.matchAll(/CREATE TABLE IF NOT EXISTS public\.(\w+)\s*\(([\s\S]*?)\n\);/g)].map((m) => ({
+      file: f,
+      table: m[1]!,
+      userKeyed: /^\s*user_id\s+uuid\b[^\n]*REFERENCES auth\.users \(id\) ON DELETE CASCADE/m.test(m[2]!),
+      anyUserColumn: /^\s*(?:user_id|actor_id|session_id|viewer_id|profile_id)\b/m.test(m[2]!),
+    }));
+  });
+
+  it("finds the band's four tables (the scan is not vacuous)", () => {
+    assert.deepEqual(
+      tables.map((t) => t.table).sort(),
+      ["input_memory_context_consent", "input_outcome_consent", "input_outcome_counters", "input_outcome_task_daily"],
+    );
+  });
+
+  it("each user-keyed table cascades from auth.users and is registered as ERASED_BY_CASCADE and POST_BASELINE", async () => {
+    const { ERASED_BY_CASCADE, POST_BASELINE_TABLES } = await import("../lib/deletionDispositions.js");
+    for (const t of tables.filter((x) => x.anyUserColumn)) {
+      assert.ok(t.userKeyed, `${t.file}: ${t.table} must be user_id REFERENCES auth.users (id) ON DELETE CASCADE`);
+      assert.ok(ERASED_BY_CASCADE.includes(t.table), `${t.table} has no stated deletion fate`);
+      assert.ok(POST_BASELINE_TABLES.includes(t.table), `${t.table} is post-baseline and must be listed so the gate keeps it`);
+    }
+    assert.equal(tables.filter((x) => x.anyUserColumn).length, 3);
+  });
+
+  it("the task aggregate carries no user column at all, so it owes no deletion fate", () => {
+    const agg = tables.find((t) => t.table === "input_outcome_task_daily");
+    assert.ok(agg && !agg.anyUserColumn);
+  });
+});
