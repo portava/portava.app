@@ -220,15 +220,23 @@ describe('T107 — Returning: Safe Return and shared transport', () => {
     expect(mockedRespond).toHaveBeenCalledWith('t1', 'p1', 'DECLINED');
   });
 
-  it('the proposer gets no join/leave control on their own ride, and an unknown viewer gets none at all', async () => {
+  it('VERIFIER F6: the proposer can LEAVE their own ride; an unknown viewer gets no control at all', async () => {
     const { rerender } = await render(
       <CoordinationPanel threadId="t1" viewerId={FRIEND} initialResponse={response({ state: 'RETURNING', sharedRides: [ride()] })} />,
     );
-    expect(screen.queryByTestId('telegraph-shared-ride-answer-p1')).toBeNull();
+    await fireEvent.press(screen.getByTestId('telegraph-shared-ride-answer-p1'));
+    expect(mockedRespond).toHaveBeenCalledWith('t1', 'p1', 'DECLINED');
     await rerender(
       <CoordinationPanel threadId="t1" initialResponse={response({ state: 'RETURNING', sharedRides: [ride()] })} />,
     );
     expect(screen.queryByTestId('telegraph-shared-ride-answer-p1')).toBeNull();
+  });
+
+  it('VERIFIER F6: someone already on a ride is not offered a second one (each tap was a new ride)', async () => {
+    await render(
+      <CoordinationPanel threadId="t1" viewerId={ME} initialResponse={response({ state: 'RETURNING', sharedRides: [ride({ riders: [FRIEND, ME] })] })} />,
+    );
+    expect(screen.queryByTestId('telegraph-coordination-propose-ride')).toBeNull();
   });
 
   it('a ride whose riders could not be re-checked against the roster says so', async () => {

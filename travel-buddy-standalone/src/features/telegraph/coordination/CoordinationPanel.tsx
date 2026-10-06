@@ -375,6 +375,7 @@ export function CoordinationPanel({
             >
               <Text style={styles.chipText}>Set up Safe Return</Text>
             </Pressable>
+            {viewerId && (c.sharedRides ?? []).some((r) => r.riders.includes(viewerId)) ? null : (
             <Pressable
               testID="telegraph-coordination-propose-ride"
               accessibilityRole="button"
@@ -385,6 +386,7 @@ export function CoordinationPanel({
             >
               <Text style={styles.chipText}>Share a ride back</Text>
             </Pressable>
+            )}
           </View>
           {(c.sharedRides ?? []).map((ride) => {
             const riding = viewerId ? ride.riders.includes(viewerId) : null;
@@ -396,7 +398,7 @@ export function CoordinationPanel({
                 {!ride.rosterChecked ? (
                   <Text style={styles.meta}>Who is still in this conversation could not be checked.</Text>
                 ) : null}
-                {riding !== null && viewerId !== ride.proposedBy ? (
+                {riding !== null ? (
                   <Pressable
                     testID={`telegraph-shared-ride-answer-${ride.proposalId}`}
                     accessibilityRole="button"

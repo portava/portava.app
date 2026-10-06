@@ -142,6 +142,25 @@ describe("§9 Returning — projectSharedRides", () => {
     assert.equal(rides[0]!.rosterChecked, true);
   });
 
+  it("VERIFIER F6: the proposer can WITHDRAW — A proposes, A declines, B confirms → riders [B]", () => {
+    const rides = projectSharedRides(
+      [proposal("p1", ALICE)],
+      [answer(ALICE, "p1", "DECLINED", -15), answer(BOB, "p1", "CONFIRMED", -10)],
+      roster,
+    );
+    assert.deepEqual(rides[0]!.riders, [BOB]);
+    assert.deepEqual(rides[0]!.declined, [ALICE]);
+  });
+
+  it("…and can come back: the proposer's latest answer counts like anyone's", () => {
+    const rides = projectSharedRides(
+      [proposal("p1", ALICE)],
+      [answer(ALICE, "p1", "DECLINED", -15), answer(ALICE, "p1", "CONFIRMED", -5)],
+      roster,
+    );
+    assert.deepEqual(rides[0]!.riders, [ALICE]);
+  });
+
   it("a person's LATEST answer counts — joining then dropping out is dropping out", () => {
     const rides = projectSharedRides(
       [proposal("p1", ALICE)],

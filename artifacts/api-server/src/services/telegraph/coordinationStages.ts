@@ -252,8 +252,11 @@ export function projectSharedRides(
       const prev = latest.get(r.sender_id);
       if (!prev || at >= prev.at) latest.set(r.sender_id, { at, response });
     }
-    const riders = [p.sender_id];
-    const declined: string[] = [];
+    // The proposer rides by proposing — and can WITHDRAW like anyone else: their
+    // own latest DECLINED takes them off the ride (verifier F6).
+    const proposerWithdrew = latest.get(p.sender_id)?.response === "DECLINED";
+    const riders = proposerWithdrew ? [] : [p.sender_id];
+    const declined: string[] = proposerWithdrew ? [p.sender_id] : [];
     for (const [userId, v] of latest) {
       if (userId === p.sender_id || !inRoster(userId)) continue;
       if (v.response === "CONFIRMED") riders.push(userId);
