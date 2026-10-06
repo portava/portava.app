@@ -18,7 +18,7 @@
  * every declared status sits under "What people said", carries the person and
  * the time they said it, and the two are never in the same row.
  */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { space, radius, type as t } from '../../../theme/tokens.ts';
 import { useTelegraphPalette, type TelegraphPalette } from '../theme/telegraphTheme.ts';
@@ -86,6 +86,18 @@ export interface CoordinationPanelProps {
   onOpenRecap?: () => void;
   /** Opens the screen's LOCATION share sheet. Absent → no location-scope control. */
   onShareLocation?: () => void;
+  /**
+   * Changes when the conversation changes (the newest message id — the key the
+   * layers strip and the safety bar re-read on); a change re-reads the panel, so
+   * a decision posted while the conversation is open reaches it (R1).
+   */
+  refreshKey?: string | null;
+  /**
+   * Told the DECISION / COMMITMENT message ids this panel is drawing, whenever
+   * that set changes — empty while loading and when a read failed — so the
+   * layers strip draws any it took out of the stream that the panel is not.
+   */
+  onDrawnIdsChange?: (ids: ReadonlySet<string>) => void;
 }
 
 export function CoordinationPanel({
@@ -95,6 +107,8 @@ export function CoordinationPanel({
   viewerId = null,
   onOpenRecap,
   onShareLocation,
+  refreshKey = null,
+  onDrawnIdsChange,
 }: CoordinationPanelProps) {
   const palette = useTelegraphPalette();
   const styles = useMemo(() => makeStyles(palette), [palette]);
@@ -113,9 +127,13 @@ export function CoordinationPanel({
   // null = not yet known; a closeout is not drawn until we know it was not put away.
   const [closeoutDismissed, setCloseoutDismissed] = useState<boolean | null>(null);
 
+  const generation = useRef(0);
   const load = useCallback(async () => {
+    const mine = ++generation.current;
     setLoading(true);
     const r = await fetchCoordination(threadId);
+    // A slower, older read must not overwrite a newer one.
+    if (mine !== generation.current) return;
     if (r.ok) {
       setData(r.data);
       setFailed(false);
@@ -128,7 +146,28 @@ export function CoordinationPanel({
   useEffect(() => {
     if (initialResponse !== null) return;
     void load();
-  }, [initialResponse, load]);
+  }, [initialResponse, load, refreshKey]);
+
+  // R1 — what this panel is drawing, told on CHANGE (keyed on the ids, read
+  // through a ref so an inline callback does not re-tell every render). When
+  // there is any open decision or any commitment the panel draws all of them
+  // (see `hasDecisionsOrCommitments` below); on a failed read it draws none.
+  const drawnKey =
+    failed || !data
+      ? ''
+      : [
+          ...data.coordination.decisions.filter((d) => !d.resolved).map((d) => d.decisionId),
+          ...data.coordination.commitments.map((cm) => cm.commitmentId),
+        ]
+          .sort()
+          .join(',');
+  const onDrawnRef = useRef(onDrawnIdsChange);
+  useEffect(() => {
+    onDrawnRef.current = onDrawnIdsChange;
+  });
+  useEffect(() => {
+    onDrawnRef.current?.(new Set(drawnKey ? drawnKey.split(',') : []));
+  }, [drawnKey]);
 
   const declare = useCallback(
     async (state: QuickState) => {
@@ -249,9 +288,19 @@ export function CoordinationPanel({
       </View>
     );
   }
-  // A failed read renders nothing: an empty coordination panel would say "the
-  // plan is not happening", which is a different and wrong statement.
-  if (failed || !data) return null;
+  // A failed read draws no panel: an empty coordination panel would say "the
+  // plan is not happening", which is a different and wrong statement. It SAYS
+  // it could not load (R1) — a person who saw a vote here should not see it
+  // vanish without a word — and the decisions it is not drawing are drawn by
+  // the layers strip, which `onDrawnIdsChange` has just told so.
+  if (failed) {
+    return (
+      <View style={styles.wrap} testID="telegraph-coordination-failed">
+        <Text style={styles.meta}>Couldn't load plans and votes for this conversation.</Text>
+      </View>
+    );
+  }
+  if (!data) return null;
 
   const c = data.coordination;
   const openDecisions = c.decisions.filter((d) => !d.resolved);

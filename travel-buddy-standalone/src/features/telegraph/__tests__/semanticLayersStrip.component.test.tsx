@@ -6,8 +6,9 @@
  * PLAN); a §6.2 typed message is drawn by the same renderer the stream uses and
  * its controls WORK here (ACTION Confirm/Decline answer it, ANNOUNCEMENT "Got it"
  * acknowledges it); a coordination proposal gets Confirm/Decline; the panel's
- * kinds (DECISION, COMMITMENT) are not drawn twice; the screen is told exactly
- * the loaded ids it drew; a failed read draws nothing and hides nothing.
+ * kinds (DECISION, COMMITMENT) are not drawn twice — and, since R1, one the
+ * panel is not drawing is drawn here; the screen is told exactly the loaded ids
+ * it drew; a failed read draws nothing and hides nothing.
  */
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react-native';
@@ -100,8 +101,18 @@ describe('the layers are drawn, and what they draw leaves the stream', () => {
   });
 
   it('a DECISION is not drawn twice — the coordination panel draws it with its vote chips', async () => {
-    await render(<SemanticLayersStrip threadId="t1" viewerId={ME} messages={messages} initialResponse={layers()} />);
+    // R1 (2026-10-06): "the panel draws it" is now something the panel SAYS.
+    await render(<SemanticLayersStrip threadId="t1" viewerId={ME} messages={messages} initialResponse={layers()} panelDrawnIds={new Set(['dec-1'])} />);
     expect(screen.queryByTestId('telegraph-layer-item-dec-1')).toBeNull();
+  });
+
+  it('R1: a DECISION the panel is NOT drawing is drawn here — what leaves the stream is drawn somewhere', async () => {
+    const onIds = jest.fn();
+    await render(<SemanticLayersStrip threadId="t1" viewerId={ME} messages={messages} initialResponse={layers()} panelDrawnIds={new Set()} onLayeredIdsChange={onIds} />);
+    expect(screen.getByTestId('telegraph-layer-item-dec-1')).toBeTruthy();
+    expect(screen.getByText('Which bar?')).toBeTruthy();
+    expect(screen.getByText('Undecided')).toBeTruthy();
+    expect([...(onIds.mock.calls.at(-1)![0] as Set<string>)]).toContain('dec-1');
   });
 });
 

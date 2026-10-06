@@ -52,6 +52,13 @@ export interface SafetyModeBarProps {
   onLocationScope?: () => void;
   /** Told whenever the measured mode changes, so the screen can put entertainment away. */
   onModeChange?: (state: { raised: boolean; deprioritizeEntertainment: boolean }) => void;
+  /**
+   * Who `raisedBy` is, as the conversation stream shows that person ("You" for
+   * the viewer). Null or absent → "Someone": the bar invents no name and looks
+   * nothing up (re-verification R2 — in a group, "Someone asked for help" left
+   * everybody asking who).
+   */
+  senderLabel?: (userId: string) => string | null;
 }
 
 export function SafetyModeBar({
@@ -62,6 +69,7 @@ export function SafetyModeBar({
   onBlockOrReport,
   onLocationScope,
   onModeChange,
+  senderLabel,
 }: SafetyModeBarProps) {
   const palette = useTelegraphPalette();
   const styles = useMemo(() => makeStyles(palette), [palette]);
@@ -153,9 +161,17 @@ export function SafetyModeBar({
     }
   }
 
+  const who = data.raisedBy ? senderLabel?.(data.raisedBy) ?? null : null;
+  const title =
+    data.mode === 'SAFETY_EVENT'
+      ? `${who ?? 'Someone'} asked for help`
+      : who
+        ? `Safety heads-up from ${who === 'You' ? 'you' : who}`
+        : 'Safety heads-up';
+
   return (
     <View style={styles.wrap} testID="telegraph-safety-mode-bar" accessibilityRole="summary">
-      <Text style={styles.title}>{data.mode === 'SAFETY_EVENT' ? 'Someone asked for help' : 'Safety heads-up'}</Text>
+      <Text style={styles.title}>{title}</Text>
       <Text style={styles.reason}>{data.reason}</Text>
       <View style={styles.row}>{controls}</View>
       {statusError ? (

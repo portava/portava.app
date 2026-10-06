@@ -58,7 +58,7 @@ import { TypedMessageRenderer, rendersTypedKind } from '../../src/features/teleg
 import { rendersKnownMessageType, safeUnknownBody } from '../../src/features/telegraph/kinds/unsupportedPayload.ts';
 import { parseKindEnvelope as parseTelegraphKindEnvelope } from '../../src/features/telegraph/kinds/kindsApi.ts';
 import { useAnnouncementAcknowledgement } from '../../src/features/telegraph/kinds/useAnnouncementAcknowledgement.ts';
-import { CoordinationPanel } from '../../src/features/telegraph/coordination/CoordinationPanel.tsx'; import { SafetyModeBar } from '../../src/features/telegraph/safety/SafetyModeBar.tsx'; import { SemanticLayersStrip } from '../../src/features/telegraph/layers/SemanticLayersStrip.tsx'; // §15.2, §2.3 — share a line: nothing below this import moves
+import { CoordinationPanel } from '../../src/features/telegraph/coordination/CoordinationPanel.tsx'; import { SafetyModeBar } from '../../src/features/telegraph/safety/SafetyModeBar.tsx'; import { SemanticLayersStrip, senderLabelFor } from '../../src/features/telegraph/layers/SemanticLayersStrip.tsx'; // §15.2, §2.3 — share a line: nothing below this import moves
 import { ContentDrawerSheet } from '../../src/features/telegraph/drawer/ContentDrawerSheet.tsx';
 import { RecapSheet } from '../../src/features/telegraph/memory/RecapSheet.tsx';
 import { useThreadRecap } from '../../src/features/telegraph/memory/useThreadRecap.ts';
@@ -1220,7 +1220,7 @@ export default function TelegraphThread() {
   const [isCircleMember, setIsCircleMember] = useState<boolean | null>(null);
   const [plannedByName, setPlannedByName] = useState<string | undefined>(undefined);
   const [blockingUser, setBlockingUser] = useState(false);
-  const [showSafetySheet, setShowSafetySheet] = useState(false); const [layeredIds, setLayeredIds] = useState<ReadonlySet<string>>(() => new Set()); // §2.3: ids drawn in the PLAN/NOW strip leave the stream
+  const [showSafetySheet, setShowSafetySheet] = useState(false); const [layeredIds, setLayeredIds] = useState<ReadonlySet<string>>(() => new Set()); const [panelDrawnIds, setPanelDrawnIds] = useState<ReadonlySet<string>>(() => new Set()); // §2.3: ids drawn in the PLAN/NOW strip leave the stream; the panel says which decisions it draws
   const [hideAiSuggestions, setHideAiSuggestions] = useState(false); const [safetyQuiet, setSafetyQuiet] = useState(false); // §15.2: held for the whole of a raised safety mode
   const [threadIsMuted, setThreadIsMuted] = useState(muted === '1'); // the inbox passes the server's mutedAt; it used to start "unmuted" always
   // E-2: whether the thread uses end-to-end encryption
@@ -2086,12 +2086,12 @@ export default function TelegraphThread() {
       {/* Telegraph §2.2 / §3: the Shared Context Rail sits between the header
           and the message stream. It renders nothing when there is no mutual
           canonical state, and nothing when the read failed. */}
-      {id ? <SafetyModeBar threadId={id} refreshKey={messages[messages.length - 1]?.id ?? null} onCall={canShowCallButtons ? () => { void startThreadCall('voice'); } : undefined} onBlockOrReport={() => setShowSafetySheet(true)} onLocationScope={() => setTypedCompose('LOCATION')} onModeChange={(s) => setSafetyQuiet(s.deprioritizeEntertainment)} /> : null}{id ? <SharedContextRail threadId={id} scrolled={railCollapsed} /> : null}<TelegraphConnectionBanner />{/* §30A.15: says when messages cannot arrive; nothing while fine */}
+      {id ? <SafetyModeBar threadId={id} refreshKey={messages[messages.length - 1]?.id ?? null} onCall={canShowCallButtons ? () => { void startThreadCall('voice'); } : undefined} onBlockOrReport={() => setShowSafetySheet(true)} onLocationScope={() => setTypedCompose('LOCATION')} onModeChange={(s) => setSafetyQuiet(s.deprioritizeEntertainment)} senderLabel={(uid) => senderLabelFor(messages, uid, userId ?? null)} /> : null}{id ? <SharedContextRail threadId={id} scrolled={railCollapsed} /> : null}<TelegraphConnectionBanner />{/* §30A.15: says when messages cannot arrive; nothing while fine */}
 
       {/* Telegraph §2.2's optional coordination panel / §9's coordination
           mode. Renders only while the thread is actually coordinating, or
           while a decision or commitment is unresolved. */}
-      {id ? <CoordinationPanel threadId={id} viewerId={userId ?? null} onOpenRecap={threadRecap.available ? () => setShowRecap(true) : undefined} onShareLocation={() => setTypedCompose('LOCATION')} /> : null}{id ? <SemanticLayersStrip threadId={id} viewerId={userId ?? null} messages={messages} refreshKey={messages[messages.length - 1]?.id ?? null} dataSaver={!dataSaver.mayLoad('mediaPreview')} onLayeredIdsChange={setLayeredIds} /> : null}
+      {id ? <CoordinationPanel threadId={id} viewerId={userId ?? null} onOpenRecap={threadRecap.available ? () => setShowRecap(true) : undefined} onShareLocation={() => setTypedCompose('LOCATION')} refreshKey={messages[messages.length - 1]?.id ?? null} onDrawnIdsChange={setPanelDrawnIds} /> : null}{id ? <SemanticLayersStrip threadId={id} viewerId={userId ?? null} messages={messages} refreshKey={messages[messages.length - 1]?.id ?? null} dataSaver={!dataSaver.mayLoad('mediaPreview')} onLayeredIdsChange={setLayeredIds} panelDrawnIds={panelDrawnIds} /> : null}
 
       <FlatList
         windowSize={9}

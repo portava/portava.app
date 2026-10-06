@@ -213,11 +213,48 @@ describe('§9.1 — declared and derived never share a row', () => {
 });
 
 describe('the panel and the network', () => {
-  it('a failed read renders NOTHING — an empty panel would say the plan is off', async () => {
+  it('a failed read draws NO panel — an empty panel would say the plan is off — and says it could not load (R1)', async () => {
     mockedFetch.mockResolvedValue({ ok: false, error: 'db_error' } as any);
-    await render(<CoordinationPanel threadId="t1" />);
+    const onDrawn = jest.fn();
+    await render(<CoordinationPanel threadId="t1" onDrawnIdsChange={onDrawn} />);
     expect(mockedFetch).toHaveBeenCalledWith('t1');
     expect(screen.queryByTestId('telegraph-coordination-panel')).toBeNull();
+    expect(await screen.findByTestId('telegraph-coordination-failed')).toBeTruthy();
+    expect(screen.queryByText(/not happening|no plan/i)).toBeNull();
+    expect((onDrawn.mock.calls.at(-1)![0] as Set<string>).size).toBe(0);
+  });
+
+  it('R1: the panel tells the screen exactly the open decisions and commitments it draws', async () => {
+    const onDrawn = jest.fn();
+    const decision = (id: string, resolved: boolean) => ({
+      decisionId: id, askedBy: 'u2', question: id, options: [{ id: 'a', label: 'A' }], resolutionRule: 'majority',
+      deadlineAt: null, votes: [], tally: {}, resolved, result: null, reason: '',
+    });
+    await render(
+      <CoordinationPanel
+        threadId="t1"
+        onDrawnIdsChange={onDrawn}
+        initialResponse={response({
+          decisions: [decision('d-open', false), decision('d-done', true)],
+          commitments: [{ commitmentId: 'c1', askedBy: 'u2', what: 'Bring the tickets', byWhen: null, agreedBy: [], declinedBy: [], completedBy: null, completedAt: null, overdue: false }],
+        })}
+      />,
+    );
+    expect(screen.getByTestId('telegraph-decision-d-open')).toBeTruthy();
+    expect([...(onDrawn.mock.calls.at(-1)![0] as Set<string>)].sort()).toEqual(['c1', 'd-open']);
+  });
+
+  it('R1: a changed refresh key re-reads — a decision posted while the conversation is open arrives', async () => {
+    mockedFetch.mockResolvedValueOnce({ ok: true, data: response() });
+    const { rerender } = await render(<CoordinationPanel threadId="t1" refreshKey="m1" />);
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(1));
+    mockedFetch.mockResolvedValueOnce({
+      ok: true,
+      data: response({ decisions: [{ decisionId: 'd9', askedBy: 'u2', question: 'Which bar?', options: [{ id: 'a', label: 'A' }], resolutionRule: 'majority', deadlineAt: null, votes: [], tally: {}, resolved: false, result: null, reason: '' }] }),
+    });
+    await rerender(<CoordinationPanel threadId="t1" refreshKey="m2" />);
+    await waitFor(() => expect(mockedFetch).toHaveBeenCalledTimes(2));
+    expect(await screen.findByTestId('telegraph-decision-d9')).toBeTruthy();
   });
 
   it('voting posts the option', async () => {

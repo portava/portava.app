@@ -51,7 +51,7 @@ export async function fetchLayers(threadId: string): Promise<LayersResult> {
   }
 }
 
-/** The coordination kinds the coordination panel always draws when open; the strip does not draw them twice. */
+/** The coordination kinds the coordination panel draws with its vote chips; the strip draws one only when the panel says it is not (R1). */
 export const PANEL_DRAWN_KINDS: readonly string[] = ['DECISION', 'COMMITMENT'];
 
 /**
