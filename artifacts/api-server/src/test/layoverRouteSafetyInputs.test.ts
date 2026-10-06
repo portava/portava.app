@@ -155,15 +155,56 @@ describe("census L256 — no merchant input can reach a layover safety constrain
     );
   });
 
-  it("the safety gate is decided from the airport and the session, and from nothing else", () => {
-    const call = ROUTE_SRC.match(/layoverBuddyDecision\(((?:[^()]|\((?:[^()]|\([^()]*\))*\))*)\)/); // balanced to two levels: an argument may itself be a call
-    assert.ok(call, "the buddy route must still consult the layover safety gate");
-    const args = call![1].split(/,(?![^(]*\))/).map((a) => a.trim()).filter(Boolean);
-    assert.deepEqual( // census-discovery §65 adds the clock and the TRAVELLER'S OWN border corridor (§6.1's named entry input); §81 adds the certified snapshot's record of THIS session — none is a marketplace value
-      args, ["airport", "session", "Date.now()", "buddySnapRecord ? null : await sessionEntry(sc, airport, session)", "buddySnapRecord"],
-      "the safety gate took an argument that is not the airport or the traveller's own session — " +
-        "a marketplace value reaching this call is exactly what L256 forbids",
-    ); assert.match(ROUTE_SRC, /const buddySnapRecord = await consumerLayoverRecord\(sc, airport, session, Date\.now\(\)\);/, "census-discovery §81: the record handed to the gate must be the snapshot of THIS airport and session, and nothing else");
+  it("the safety gate is decided from the airport and the session, and from nothing else — at EVERY call site", () => {
+    /**
+     * EVERY site, not the first one. This read `ROUTE_SRC.match(...)` without
+     * the `g` flag, which checks the first `layoverBuddyDecision(` in the file
+     * and says nothing about any other. That was exact while the buddy route
+     * was the only caller; census-layover §14.1 / L138 made the crew meet gate
+     * a second one, and a ratchet that inspects one of two call sites is a
+     * ratchet a marketplace value walks past. Every site's argument list must
+     * now be one of the NAMED shapes below.
+     */
+    const re = /layoverBuddyDecision\(((?:[^()]|\((?:[^()]|\([^()]*\))*\))*)\)/g; // balanced to two levels: an argument may itself be a call
+    const sites = [...ROUTE_SRC.matchAll(re)].map((m) =>
+      m[1].split(/,(?![^(]*\))/).map((a) => a.trim()).filter(Boolean),
+    );
+    assert.ok(sites.length > 0, "the buddy route must still consult the layover safety gate");
+
+    // census-discovery §65 adds the clock and the TRAVELLER'S OWN border
+    // corridor (§6.1's named entry input); §81 adds the certified snapshot's
+    // record of THIS session. census-layover L138 adds the crew meet gate,
+    // whose four arguments are `crewMeetGateFor`'s own parameters — asserted
+    // below so nothing can be smuggled in through them. None is a marketplace
+    // value.
+    const BUDDY_SITE = ["airport", "session", "Date.now()", "buddySnapRecord ? null : await sessionEntry(sc, airport, session)", "buddySnapRecord"];
+    const CREW_MEET_SITE = ["airport", "session", "nowMs", "entry"];
+    const ALLOWED = [BUDDY_SITE, CREW_MEET_SITE];
+
+    for (const args of sites) {
+      assert.ok(
+        ALLOWED.some((a) => a.length === args.length && a.every((x, i) => x === args[i])),
+        `the safety gate took an argument list that is not a named one — a marketplace value reaching ` +
+          `this call is exactly what L256 forbids. Got: ${JSON.stringify(args)}`,
+      );
+    }
+    // Non-vacuity: the two named shapes must each actually be present, or this
+    // loop asserts an allowlist against nothing.
+    for (const want of ALLOWED) {
+      assert.ok(
+        sites.some((args) => args.length === want.length && want.every((x, i) => x === args[i])),
+        `no call site matches the named shape ${JSON.stringify(want)} — update this list deliberately`,
+      );
+    }
+    assert.match(ROUTE_SRC, /const buddySnapRecord = await consumerLayoverRecord\(sc, airport, session, Date\.now\(\)\);/, "census-discovery §81: the record handed to the gate must be the snapshot of THIS airport and session, and nothing else");
+    // The crew site's four names are parameters, so their MEANING is the
+    // signature's. Pinned here for the same reason the buddy site's record is.
+    assert.match(
+      ROUTE_SRC,
+      /function crewMeetGateFor\(\s*sc: any,\s*viewerId: string,\s*airport: AirportProfile,\s*session: LayoverSession,\s*nowMs: number,\s*entry: EntryEligibility \| null,\s*\)/,
+      "census-layover L138: the crew meet gate's inputs must stay the airport, the traveller's own session, " +
+        "a clock and that traveller's own corridor — nothing from a marketplace",
+    );
   });
 
   it("the gate runs BEFORE the marketplace is read — §9.1 is an order, not only a rule", () => {

@@ -72,5 +72,5 @@ export function globalErrorHandler(
 
   const retryable = isRetryableErrorCode(code) ? { retryable: true } : {};
 
-  res.status(status).json({ error: code, message: clientMessage, ...retryable });
+  res.status(status).json({ error: code, message: clientMessage, ...retryable, ...(status < 500 && typeof err?.reason === "string" ? { reason: err.reason } : {}), ...(status === 403 && err?.restriction && typeof err.restriction === "object" ? { restriction: err.restriction } : {}) }); // `reason` / `restriction`: e.g. AccountRestrictedError's account_banned and { kind, until } — the body requireUser writes for the same refusal (lib/accountStateGate.ts)
 }
