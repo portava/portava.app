@@ -103,35 +103,37 @@ const run = (a: AirportProfile, s: LayoverSession, entry?: EntryEligibility) => 
 
 describe("§21.1 L219 — 2h domestic layover", () => {
   /**
-   * THE SPEC EXPECTS `airport-only`. THE ENGINE ANSWERS `too_short`, and this
-   * case exists to say so rather than to bless it.
+   * THE SPEC EXPECTS `airport-only`, AND SINCE THE LEAD'S 2026-10-06 RULING THE
+   * ENGINE ANSWERS IT (census-layover L219).
    *
    * 120 minutes nose to nose: 15 min to get off and out, an 86-minute return
    * buffer (60 domestic + 20 traffic + 0 time-of-day at midday + 6 for the
    * return-transport forecast, census L72 — 12:00 Sunday is the weekend
    * SHOULDER band and its factor is ×1.3 over the airport's 20) leaves 19
-   * usable minutes, and `computeWindow`'s ladder puts anything under 45 in
-   * `too_short`. The two tiers are not the same claim — `airport_only` says
-   * "enough time to enjoy the terminal, not enough to leave safely" and
-   * `too_short` says "stay near your gate" — so the divergence is a real
-   * difference in what a traveller is told, not a naming choice.
+   * usable minutes. `computeWindow`'s ladder used to put anything under 45 in
+   * `too_short` ("stay near your gate"); it now keeps `too_short` for a window
+   * with no spare minute at all (the checked-bags case below), so this one is
+   * `airport_only` — "enough time to enjoy the terminal, not enough to leave
+   * safely". The verdict still refuses a city.
    */
-  it("is refused a city, at the STRICTER tier than the spec names", () => {
+  it("is refused a city, and told AIRPORT-ONLY, as §21.1 names it", () => {
     const { window, advice } = run(curatedAirport(), layover(2));
     assert.equal(window.usableMinutes, 19);
     assert.equal(window.breakdown.totalBuffer, 86);
     assert.equal(window.breakdown.returnTransportExtra, 6);
     assert.equal(window.exitDelayMin, 15);
     assert.equal(advice.verdict, "no");
-    // The measured answer. `airport_only` is what §21.1 asks for.
-    assert.equal(window.tier, "too_short");
-    assert.notEqual(window.tier, "airport_only");
+    // §21.1's answer, by the lead's ruling.
+    assert.equal(window.tier, "airport_only");
+    assert.notEqual(window.tier, "too_short");
   });
 
   it("with checked bags the same layover has NO window at all, and says by how much", () => {
     const { window } = run(curatedAirport(), layover(2, { checkedBags: true }));
     assert.equal(window.usableMinutes, 0);
     assert.equal(window.freedomWindow, null);
+    // The one rung below airport-only: no certified spare minute at all.
+    assert.equal(window.tier, "too_short");
     // 35 min to get out (15 + 20 for bags) against a 19-minute gap between the
     // deadline and the door: 16 minutes short, and the traveller is told so.
     assert.equal(window.shortfallMinutes, 16);
@@ -184,7 +186,10 @@ describe("§21.1 L220 — 4h international, landside 'depending on airport model
     const generic = run(genericAirport(), layover(5, intl));
     assert.equal(curated.window.tier, "airport_only");
     assert.equal(curated.advice.verdict, "tight");
-    assert.equal(generic.window.tier, "too_short");
+    // Since the L219 ruling a window with spare minutes but no landside answer
+    // is `airport_only`; the VERDICTS are what differ between the two models.
+    assert.equal(generic.window.tier, "airport_only");
+    assert.ok(generic.window.usableMinutes > 0);
     assert.equal(generic.advice.verdict, "no");
     assert.notEqual(curated.advice.verdict, generic.advice.verdict);
   });
