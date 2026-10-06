@@ -107,12 +107,55 @@ Then, in the fork's `.replit`, delete or replace the production entries in
 or the API refuses and names the variable.
 
 Provider keys: use test or sandbox mode only (payment test keys; a Google
-Routes key only with the quotas and hard budget of OD-TRUST-6). **Do not add an identity-provider key for
-bookings.** The owner's instruction of 2026-10-05 is "No tester bypass or
-sandbox verification key" for Rent-a-Buddy. The policy keeps every booking
-stop engaged. A test-mode verification never satisfies a booking. Leave
-`IDENTITY_PROVIDER` unset: in a deployment the mock provider is refused, so
+Routes key only with the quotas and hard budget of OD-TRUST-6).
+
+#### Identity verification: a SANDBOX key on beta, never a live one
+
+Two owner instructions govern identity on beta, and both hold:
+
+- The 2026-10-06 authorization covers "test-mode payment and identity
+  integrations" and asks for identity-provider sandbox setup. **So a sandbox
+  identity key may be configured on beta**, and testers can exercise the
+  verification flow.
+- The 2026-10-05 instruction ("No tester bypass or sandbox verification key")
+  is about Rent-a-Buddy **bookings**. **So a test-mode verification never
+  satisfies a booking.** Three things enforce that:
+  - lane B's `3930_identity_verifications_provider_mode.sql` rule (on lane B's
+    branch, not yet on `main`);
+  - every Rent-a-Buddy stop the flag policy engages;
+  - the readiness gate described below.
+
+**Today there is nothing to configure.** `main`'s `IMPLEMENTED_PROVIDERS`
+(`services/identityVerification/readiness.ts`) holds only `mock`, and the mock
+provider is refused in any Replit deployment. Leave `IDENTITY_PROVIDER` unset;
 readiness reports identity as not operational.
+
+**After PR #612 lands** (Sumsub behind the provider interface; lane P is
+reconciling it), add the Sumsub SANDBOX credentials to the beta Secrets. The
+names below were read from `origin/claude/sumsub-identity-provider-20261004`
+at `9d1e0fb88`; re-read them on the merged commit.
+
+| Key | Value |
+| --- | --- |
+| `IDENTITY_PROVIDER` | `sumsub` |
+| `SUMSUB_APP_TOKEN` | the Sumsub **sandbox** app token. It starts with `sbx:`. A `prd:` token is classified live and refused (`lib/paymentsMode.ts` on #612). |
+| `SUMSUB_SECRET_KEY` | the sandbox app's secret key |
+| `SUMSUB_LEVEL_NAME_ID`, `SUMSUB_LEVEL_NAME_ID_SELFIE` | the sandbox verification-level names configured in the Sumsub dashboard |
+| `IDENTITY_WEBHOOK_SECRET` | the sandbox webhook secret, which the Sumsub adapter uses to verify webhook digests |
+
+Expected outcome. This is read from #612's code; I have not run it.
+
+- The `startup: payments/identity provider mode` line reports
+  `identityProvider: "sumsub"`, `keyMode: "test"`, `keyRefused: false`.
+- A tester should be able to open a Sumsub sandbox session
+  (`POST /api/verification/session`). On #612, `getIdentityProvider()` returns
+  the Sumsub adapter.
+- Readiness (`identityProviderStatus()`) still reports **not operational**:
+  "IDENTITY_PROVIDER=sumsub but that adapter has not been certified against the
+  vendor…". #612 deliberately leaves `sumsub` out of `IMPLEMENTED_PROVIDERS`;
+  adding it is a separate change, made after a sandbox transcript.
+- So the Rent-a-Buddy booking gate stays closed on readiness alone, as well as
+  by the engaged stops and 3930.
 
 ### 6. Deploy — *Replit account*
 
@@ -139,7 +182,9 @@ for them:
 
 - **Identity readiness.** In the deployment logs, the
   `startup: payments/identity provider mode` line must not report identity as
-  operational.
+  operational. That is true today (mock refused), and it stays true after #612
+  with a sandbox key (Sumsub is uncertified). It must never show
+  `keyMode: "live"`.
 - **`NODE_ENV=production`.** Confirm it in the Secrets.
 
 ### 8. Create tester accounts — *beta Supabase project dashboard*
@@ -187,8 +232,21 @@ Change all three in one PR, then re-run steps 3 and 9.
   before visible") is not enforceable by the flag policy until its build lands.
   When that build seeds its flag, the policy test turns red until the flag is
   listed OFF.
-- **No tester-facing feature is turned ON yet.** OD-PAY-11 approves tester
-  features only after migrations and deployment are verified. The policy
-  marks the flags production runs ON as `PROMOTION CANDIDATE`. Promoting one
-  is a reviewed change to `scripts/src/beta-flag-policy.json`, followed by
-  re-dispatching step 3.
+- **Flag policy (lead decision 2026-10-06).**
+  - **ON (37):**
+    - the safety controls;
+    - one protection;
+    - the 12 flags production is measured to run ON;
+    - the flags migrations seed TRUE, as production's default.
+  - **OFF, against the lead's list:** `COMPASS_FALLBACK_MODE_ENABLED`.
+    Production reads it FALSE (2026-09-22 snapshot and census-compass §4),
+    so mirroring production keeps it off. This is flagged back to the lead.
+  - **OFF until Expo push credentials exist for the beta build:**
+    `push_notifications_enabled`.
+  - **Other production-ON flags.** The 2026-09-22 production snapshot shows
+    more flags TRUE in production that stay OFF on beta (lead: everything
+    else stays OFF). The rationale lists them, so beta still differs from
+    production there.
+  - Changing any value is a reviewed edit to `scripts/src/beta-flag-policy.json`,
+    followed by re-dispatching step 3.
+- **Identity.** No real provider exists on `main` until #612. See step 5.

@@ -26,9 +26,12 @@
     {
       "flag": "COMPASS_ENABLED",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-compass §4 (production 2026-09-07: true since 2026-07-17)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's measured state (TRUE in the 2026-09-22 production snapshot; census-compass §4, 2026-09-07); lead decision 2026-10-06.",
+      "evidence": [
+        "census-compass:§4",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "COMPASS_FAIR_EXPOSURE_ENABLED",
@@ -41,15 +44,21 @@
       "flag": "COMPASS_FALLBACK_MODE_ENABLED",
       "kind": "CAPABILITY",
       "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0051_compass_foundation.sql, so production likely runs it ON; not grounded in census evidence here.",
-      "evidence": []
+      "reason": "OFF: production reads FALSE (2026-09-22 production snapshot; census-compass §4), so mirroring production keeps it off although 0051 seeds it TRUE; the lead's promotion list named it ON, flagged back for decision.",
+      "evidence": [
+        "census-compass:§4",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "COMPASS_FEED_ENABLED",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-compass §4 (production 2026-09-07: true since 2026-07-17)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's measured state (TRUE in the 2026-09-22 production snapshot; census-compass §4, 2026-09-07); lead decision 2026-10-06.",
+      "evidence": [
+        "census-compass:§4",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "COMPASS_TELEGRAPH",
@@ -61,9 +70,12 @@
     {
       "flag": "COMPASS_V1_RULE_BASED_ENABLED",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-compass §4 (production 2026-09-07: true since 2026-07-17)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's measured state (TRUE in the 2026-09-22 production snapshot; census-compass §4, 2026-09-07); lead decision 2026-10-06.",
+      "evidence": [
+        "census-compass:§4",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "CREATOR_FATIGUE_ENABLED",
@@ -194,9 +206,12 @@
     {
       "flag": "MEDIA_HIDDEN_GEMS_CREATE_ENABLED",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 2084_codify_live_read_flags.sql, so production likely runs it ON; not grounded in census evidence here.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's default (seeded TRUE by 2084_codify_live_read_flags.sql); lead decision 2026-10-06. TRUE in the 2026-09-22 production snapshot.",
+      "evidence": [
+        "migration:2084_codify_live_read_flags.sql",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "MEDIA_HIDDEN_GEMS_NEARBY_ENABLED",
@@ -299,23 +314,32 @@
     {
       "flag": "MEDIA_VIEW_MODE_FULLSCREEN_ENABLED",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 2037_media_tab_flags.sql, so production likely runs it ON; not grounded in census evidence here.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's default (seeded TRUE by 2037_media_tab_flags.sql); lead decision 2026-10-06. TRUE in the 2026-09-22 production snapshot.",
+      "evidence": [
+        "migration:2037_media_tab_flags.sql",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "MEDIA_VIEW_MODE_GRID_ENABLED",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 2037_media_tab_flags.sql, so production likely runs it ON; not grounded in census evidence here.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's default (seeded TRUE by 2037_media_tab_flags.sql); lead decision 2026-10-06. TRUE in the 2026-09-22 production snapshot.",
+      "evidence": [
+        "migration:2037_media_tab_flags.sql",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "MEDIA_VIEW_MODE_HIDDEN_GEMS_ENABLED",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 2037_media_tab_flags.sql, so production likely runs it ON; not grounded in census evidence here.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's default (seeded TRUE by 2037_media_tab_flags.sql); lead decision 2026-10-06. TRUE in the 2026-09-22 production snapshot.",
+      "evidence": [
+        "migration:2037_media_tab_flags.sql",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "MEDIA_WATCH_CONTEXT_OVERLAY_ENABLED",
@@ -520,16 +544,22 @@
     {
       "flag": "airport_mode_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0127_layover_system.sql, so production likely runs it ON; not grounded in census evidence here.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's default (seeded TRUE by 0127_layover_system.sql); lead decision 2026-10-06. TRUE in the 2026-09-22 production snapshot.",
+      "evidence": [
+        "migration:0127_layover_system.sql",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "airport_pulse_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0127_layover_system.sql, so production likely runs it ON; not grounded in census evidence here.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's default (seeded TRUE by 0127_layover_system.sql); lead decision 2026-10-06. TRUE in the 2026-09-22 production snapshot.",
+      "evidence": [
+        "migration:0127_layover_system.sql",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "budget_fx_conversion_enabled",
@@ -583,9 +613,12 @@
     {
       "flag": "compass_location_context_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-compass §4 (production 2026-09-07: true)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's measured state (TRUE in the 2026-09-22 production snapshot; census-compass §4, 2026-09-07); lead decision 2026-10-06.",
+      "evidence": [
+        "census-compass:§4",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "country_essentials_enabled",
@@ -1118,44 +1151,62 @@
     {
       "flag": "hidden_gem_verification_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0043_hidden_gems.sql, so production likely runs it ON; not grounded in census evidence here.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's default (seeded TRUE by 0043_hidden_gems.sql); lead decision 2026-10-06. TRUE in the 2026-09-22 production snapshot.",
+      "evidence": [
+        "migration:0043_hidden_gems.sql",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "hidden_gems_compass_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-compass §4 (production 2026-09-07: true)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's measured state (TRUE in the 2026-09-22 production snapshot; census-compass §4, 2026-09-07); lead decision 2026-10-06.",
+      "evidence": [
+        "census-compass:§4",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "hidden_gems_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0037_feature_flags.sql, so production likely runs it ON; not grounded in census evidence here.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's default (seeded TRUE by 0037_feature_flags.sql); lead decision 2026-10-06. TRUE in the 2026-09-22 production snapshot.",
+      "evidence": [
+        "migration:0037_feature_flags.sql",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "hidden_gems_layover_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0043_hidden_gems.sql, so production likely runs it ON; not grounded in census evidence here.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's default (seeded TRUE by 0043_hidden_gems.sql); lead decision 2026-10-06. TRUE in the 2026-09-22 production snapshot.",
+      "evidence": [
+        "migration:0043_hidden_gems.sql",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "hidden_gems_passport_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0043_hidden_gems.sql, so production likely runs it ON; not grounded in census evidence here.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's default (seeded TRUE by 0043_hidden_gems.sql); lead decision 2026-10-06. TRUE in the 2026-09-22 production snapshot.",
+      "evidence": [
+        "migration:0043_hidden_gems.sql",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "hidden_gems_pulse_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0043_hidden_gems.sql, so production likely runs it ON; not grounded in census evidence here.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's default (seeded TRUE by 0043_hidden_gems.sql); lead decision 2026-10-06. TRUE in the 2026-09-22 production snapshot.",
+      "evidence": [
+        "migration:0043_hidden_gems.sql",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "highlights_feed_bounded_enabled",
@@ -1318,9 +1369,12 @@
     {
       "flag": "layover_compass_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-compass §4 (production 2026-09-07: true)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's measured state (TRUE in the 2026-09-22 production snapshot; census-compass §4, 2026-09-07); lead decision 2026-10-06.",
+      "evidence": [
+        "census-compass:§4",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "layover_constraints_enabled",
@@ -1332,9 +1386,11 @@
     {
       "flag": "layover_crowd_reports_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 3513_layover_crowd_reports_flag.sql, so production likely runs it ON; not grounded in census evidence here.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's default (seeded TRUE by 3513_layover_crowd_reports_flag.sql); lead decision 2026-10-06. Not in the 2026-09-22 production snapshot (the migration is newer), so production's own state is unmeasured.",
+      "evidence": [
+        "migration:3513_layover_crowd_reports_flag.sql"
+      ]
     },
     {
       "flag": "layover_decision_persistence_enabled",
@@ -1388,9 +1444,12 @@
     {
       "flag": "layover_plans_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0127_layover_system.sql, so production likely runs it ON; not grounded in census evidence here.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's default (seeded TRUE by 0127_layover_system.sql); lead decision 2026-10-06. TRUE in the 2026-09-22 production snapshot.",
+      "evidence": [
+        "migration:0127_layover_system.sql",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "layover_presence_intents_enabled",
@@ -1416,9 +1475,12 @@
     {
       "flag": "layover_safety_engine_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0127_layover_system.sql, so production likely runs it ON; not grounded in census evidence here.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's default (seeded TRUE by 0127_layover_system.sql); lead decision 2026-10-06. TRUE in the 2026-09-22 production snapshot.",
+      "evidence": [
+        "migration:0127_layover_system.sql",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "layover_snapshot_consumers_enabled",
@@ -1444,9 +1506,13 @@
     {
       "flag": "local_guides_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0043_hidden_gems.sql, so production likely runs it ON; not grounded in census evidence here.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's default (seeded TRUE by 0043_hidden_gems.sql); lead decision 2026-10-06. The guide self-promotion write boundary is enforced on main: live-DB run 37504282290 on main 432f5e6b5, test:local-guide-self-promotion 17 run, 17 pass, 0 skipped.",
+      "evidence": [
+        "migration:0043_hidden_gems.sql",
+        "snapshot:20260922-production-schema.json",
+        "test:artifacts/api-server/src/test/localGuideSelfPromotion.test.ts"
+      ]
     },
     {
       "flag": "locate_friends_enabled",
@@ -1465,9 +1531,12 @@
     {
       "flag": "map_compass_commands_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-compass §4 (production 2026-09-07: true)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's measured state (TRUE in the 2026-09-22 production snapshot; census-compass §4, 2026-09-07); lead decision 2026-10-06.",
+      "evidence": [
+        "census-compass:§4",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "map_contributions_enabled",
@@ -1741,9 +1810,12 @@
     {
       "flag": "passport_contribution_events_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 2084_codify_live_read_flags.sql, so production likely runs it ON; not grounded in census evidence here.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's default (seeded TRUE by 2084_codify_live_read_flags.sql); lead decision 2026-10-06. TRUE in the 2026-09-22 production snapshot.",
+      "evidence": [
+        "migration:2084_codify_live_read_flags.sql",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "passport_entry_intelligence_enabled",
@@ -1833,7 +1905,7 @@
       "flag": "push_notifications_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0062_notifications_schema.sql, so production likely runs it ON; not grounded in census evidence here.",
+      "reason": "OFF: until Expo push credentials are configured for the beta build; lead decision 2026-10-06. Production runs it ON (2026-09-22 snapshot).",
       "evidence": []
     },
     {
@@ -1866,9 +1938,12 @@
     {
       "flag": "safe_return_admin_logs_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0166_feature_flags_reconcile.sql, so production likely runs it ON; not grounded in census evidence here.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's default (seeded TRUE by 0166_feature_flags_reconcile.sql); lead decision 2026-10-06. TRUE in the 2026-09-22 production snapshot.",
+      "evidence": [
+        "migration:0166_feature_flags_reconcile.sql",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "safe_return_enabled",
@@ -1880,9 +1955,12 @@
     {
       "flag": "safe_return_live_share_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: seeded TRUE by 0117_beta_feature_flags.sql, so production likely runs it ON; not grounded in census evidence here.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's default (seeded TRUE by 0117_beta_feature_flags.sql); lead decision 2026-10-06. TRUE in the 2026-09-22 production snapshot.",
+      "evidence": [
+        "migration:0117_beta_feature_flags.sql",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "safe_return_trusted_circle_alerts_enabled",
@@ -1908,30 +1986,42 @@
     {
       "flag": "shared_moments_chat_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-highlights-memories §AB (hosted read 2026-10-03: shared_moments_* true)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's measured state (TRUE in the 2026-09-22 production snapshot; census-highlights-memories §AB, 2026-10-03); lead decision 2026-10-06.",
+      "evidence": [
+        "census-highlights-memories:§AB",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "shared_moments_clustering_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-highlights-memories §AB (hosted read 2026-10-03: shared_moments_* true)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's measured state (TRUE in the 2026-09-22 production snapshot; census-highlights-memories §AB, 2026-10-03); lead decision 2026-10-06.",
+      "evidence": [
+        "census-highlights-memories:§AB",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "shared_moments_compass_suggestions_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-compass §4 (production 2026-09-07: true)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's measured state (TRUE in the 2026-09-22 production snapshot; census-compass §4, 2026-09-07); lead decision 2026-10-06.",
+      "evidence": [
+        "census-compass:§4",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "shared_moments_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-highlights-memories §AB (hosted read 2026-10-03: shared_moments_* true)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's measured state (TRUE in the 2026-09-22 production snapshot; census-highlights-memories §AB, 2026-10-03); lead decision 2026-10-06.",
+      "evidence": [
+        "census-highlights-memories:§AB",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "stamp_admin_award_enabled",
@@ -1992,9 +2082,12 @@
     {
       "flag": "stories_enabled",
       "kind": "CAPABILITY",
-      "enabled": false,
-      "reason": "OFF — PROMOTION CANDIDATE: production runs it ON (census-highlights-memories §AB (hosted read 2026-10-03: true)); not promoted until its census rows are re-read as C or W-for-flag-off only.",
-      "evidence": []
+      "enabled": true,
+      "reason": "ON: mirrors production's measured state (TRUE in the 2026-09-22 production snapshot; census-highlights-memories §AB, 2026-10-03); lead decision 2026-10-06.",
+      "evidence": [
+        "census-highlights-memories:§AB",
+        "snapshot:20260922-production-schema.json"
+      ]
     },
     {
       "flag": "tag_permission_approval_required_enabled",

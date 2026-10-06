@@ -45,11 +45,49 @@ const byFlag = new Map(policy.flags.map((e) => [e.flag, e]));
 const LEAD_RULINGS = readFileSync(join(REPO_ROOT, "docs/ops/lead-rulings-20261006.md"), "utf8");
 const OWNER_DECISIONS = readFileSync(join(REPO_ROOT, "docs/ops/owner-decisions-20261004.md"), "utf8");
 
-/** null when an evidence id resolves to a record in the repo; otherwise why not. */
-function evidenceProblem(id: string): string | null {
+const SNAPSHOT_DIR = join(REPO_ROOT, "artifacts/api-server/src/lib/capability/snapshots");
+const MIGRATIONS = join(REPO_ROOT, "artifacts/api-server/src/migrations");
+
+/** The text of a census section: from its heading (`## §AB …` or `## 4. …`) to the next heading of that level or higher. */
+function censusSection(text: string, section: string): string | null {
+  const lines = text.split("\n");
+  const esc = section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const start = lines.findIndex((l) => new RegExp(`^(#{1,6}) (§${esc}\\b|${esc}\\. )`).test(l));
+  if (start < 0) return null;
+  const level = /^#+/.exec(lines[start])![0].length;
+  let end = lines.findIndex((l, i) => i > start && /^#+ /.test(l) && /^#+/.exec(l)![0].length <= level);
+  if (end < 0) end = lines.length;
+  return lines.slice(start, end).join("\n");
+}
+
+/** Does `text` name `flag`, literally or through a `prefix_*` wildcard such as `shared_moments_*`? */
+function names(text: string, flag: string): boolean {
+  if (text.includes(flag)) return true;
+  return [...text.matchAll(/`([A-Za-z0-9_]+_)\*`/g)].some((m) => flag.startsWith(m[1]));
+}
+
+/**
+ * null when an evidence id resolves to a record in the repo FOR THIS ENTRY; otherwise why not.
+ *   OD-*                     a heading in docs/ops/owner-decisions-20261004.md
+ *   D-nn[a-d]                a ruling in docs/ops/lead-rulings-20261006.md
+ *   census-<name>:<ROW>      a table row `| ROW |` in that census
+ *   census-<name>:§<S>       a section of that census that NAMES the flag
+ *   migration:<file>         a canonical migration that SEEDS the flag TRUE (the policy's own seed matcher)
+ *   snapshot:<file>          a production snapshot recording the flag with the entry's own value
+ *   test:<repo path>         a test file that exists
+ */
+function evidenceProblem(id: string, entry: { flag: string; enabled: boolean } = { flag: "", enabled: true }): string | null {
   if (/^OD-[A-Z]+-\d+$/.test(id)) return OWNER_DECISIONS.includes(`**${id} `) ? null : `${id} is not in docs/ops/owner-decisions-20261004.md`;
   if (/^D-\d+[a-d]?$/.test(id)) {
     return new RegExp(`^(## |- \\*\\*)${id}:`, "m").test(LEAD_RULINGS) ? null : `${id} is not in docs/ops/lead-rulings-20261006.md`;
+  }
+  const sec = /^census-([a-z-]+):§([A-Za-z0-9.-]+)$/.exec(id);
+  if (sec) {
+    const path = join(REPO_ROOT, "docs/architecture", `census-${sec[1]}.md`);
+    if (!existsSync(path)) return `${id}: no such census`;
+    const body = censusSection(readFileSync(path, "utf8"), sec[2]);
+    if (body === null) return `${id}: no such section`;
+    return names(body, entry.flag) ? null : `${id}: the section does not name ${entry.flag}`;
   }
   const m = /^census-([a-z-]+):([A-Za-z0-9.-]+)$/.exec(id);
   if (m) {
@@ -57,7 +95,25 @@ function evidenceProblem(id: string): string | null {
     if (!existsSync(path)) return `${id}: no such census`;
     return new RegExp(`^\\| ${m[2].replace(/[.]/g, "\\.")} \\|`, "m").test(readFileSync(path, "utf8")) ? null : `${id}: no such row`;
   }
-  return `${id} is not an evidence id (census-<name>:<ROW>, OD-*, D-nn)`;
+  const mig = /^migration:([A-Za-z0-9_.-]+\.sql)$/.exec(id);
+  if (mig) {
+    const path = join(MIGRATIONS, mig[1]);
+    if (!existsSync(path)) return `${id}: no such canonical migration`;
+    const seeded = seededFlagPopulation([mig[1]], () => readFileSync(path, "utf8")).get(entry.flag);
+    return seeded?.seededValue === true ? null : `${id} does not seed ${entry.flag} TRUE`;
+  }
+  const snap = /^snapshot:([A-Za-z0-9_.-]+\.json)$/.exec(id);
+  if (snap) {
+    const path = join(SNAPSHOT_DIR, snap[1]);
+    if (!existsSync(path)) return `${id}: no such snapshot`;
+    const json = JSON.parse(readFileSync(path, "utf8")) as { projectRef?: string; flags?: Record<string, unknown> };
+    if (json.projectRef !== PRODUCTION_PROJECT_REF) return `${id} is not a production snapshot`;
+    if (!json.flags || !(entry.flag in json.flags)) return `${id} does not record ${entry.flag}`;
+    return json.flags[entry.flag] === entry.enabled ? null : `${id} records ${entry.flag}=${String(json.flags[entry.flag])}, the policy says ${entry.enabled}`;
+  }
+  const t = /^test:([A-Za-z0-9_./-]+\.test\.tsx?)$/.exec(id);
+  if (t) return existsSync(join(REPO_ROOT, t[1])) ? null : `${id}: no such test file`;
+  return `${id} is not an evidence id (census-<name>:<ROW>|§<S>, OD-*, D-nn, migration:, snapshot:, test:)`;
 }
 
 describe("beta-flag-policy.json — every flag the beta database will hold, decided once", () => {
@@ -78,12 +134,12 @@ describe("beta-flag-policy.json — every flag the beta database will hold, deci
     for (const e of policy.flags.filter((x) => x.enabled)) {
       assert.ok(e.reason.trim() && !e.reason.includes("\n"), e.flag);
       assert.ok(e.evidence.length > 0, `${e.flag}: ON without evidence`);
-      for (const id of e.evidence) assert.equal(evidenceProblem(id), null, `${e.flag}: ${id}`);
+      for (const id of e.evidence) assert.equal(evidenceProblem(id, e), null, `${e.flag}: ${id}`);
     }
   });
 
   it("every evidence id anywhere in the policy resolves", () => {
-    for (const e of policy.flags) for (const id of e.evidence) assert.equal(evidenceProblem(id), null, `${e.flag}: ${id}`);
+    for (const e of policy.flags) for (const id of e.evidence) assert.equal(evidenceProblem(id, e), null, `${e.flag}: ${id}`);
   });
 
   it("closes sign-up: invite_only_beta ON and the disable_signups stop ENGAGED", () => {
@@ -118,17 +174,26 @@ describe("beta-flag-policy.json — every flag the beta database will hold, deci
     }
   });
 
-  it("no flag is ON for a reason the policy cannot name: every ON flag is a safety control, a protection, or evidenced", () => {
+  it("the ON set is exactly the reviewed one: safety controls, one protection, and the lead's 2026-10-06 promotions", () => {
     const on = policy.flags.filter((e) => e.enabled).map((e) => e.flag).sort();
     assert.deepEqual(on, [
-      "RENT_BUDDY_ADMIN_ONLY_MODE",
-      "disable_intel_live_labels",
-      "disable_rab_bookings",
-      "disable_rent_buddy_booking",
-      "disable_signups",
-      "invite_only_beta",
-      "media_private_buckets_enabled",
-    ], "the ON set changed: re-read docs in the PR and the lead's review of the rationale before updating this list");
+      // safety controls and the one protection (rationale: lane-beta flag-policy-rationale.md)
+      "RENT_BUDDY_ADMIN_ONLY_MODE", "disable_intel_live_labels", "disable_rab_bookings", "disable_rent_buddy_booking",
+      "disable_signups", "invite_only_beta", "media_private_buckets_enabled",
+      // lead decision 2026-10-06 (a): production measured ON
+      "COMPASS_ENABLED", "COMPASS_FEED_ENABLED", "COMPASS_V1_RULE_BASED_ENABLED", "compass_location_context_enabled",
+      "hidden_gems_compass_enabled", "layover_compass_enabled", "map_compass_commands_enabled",
+      "shared_moments_chat_enabled", "shared_moments_clustering_enabled", "shared_moments_compass_suggestions_enabled",
+      "shared_moments_enabled", "stories_enabled",
+      // lead decision 2026-10-06 (b): seeded TRUE, production's default (COMPASS_FALLBACK_MODE_ENABLED excluded:
+      // production reads FALSE); local_guides_enabled on the live-DB proof of the guide write boundary
+      "MEDIA_HIDDEN_GEMS_CREATE_ENABLED", "MEDIA_VIEW_MODE_FULLSCREEN_ENABLED", "MEDIA_VIEW_MODE_GRID_ENABLED",
+      "MEDIA_VIEW_MODE_HIDDEN_GEMS_ENABLED", "airport_mode_enabled", "airport_pulse_enabled",
+      "hidden_gem_verification_enabled", "hidden_gems_enabled", "hidden_gems_layover_enabled",
+      "hidden_gems_passport_enabled", "hidden_gems_pulse_enabled", "layover_crowd_reports_enabled",
+      "layover_plans_enabled", "layover_safety_engine_enabled", "local_guides_enabled",
+      "passport_contribution_events_enabled", "safe_return_admin_logs_enabled", "safe_return_live_share_enabled",
+    ].sort(), "the ON set changed: re-read docs in the PR and the lead's review of the rationale before updating this list");
   });
 
   it("population scan: a DELETE retires, a later re-seed brings back", () => {
