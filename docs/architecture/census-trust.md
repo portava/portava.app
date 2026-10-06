@@ -3644,3 +3644,60 @@ Unchanged, and recounted rather than carried forward from §31:
   deciding clause falls and the row is a `W` candidate without any owner decision at all.
 - 2870 applied: TV-1c is decidable, and §31 names the DB assertion that will fail there first.
 
+
+## §33 — 2026-10-06 (lane L, evidence for lane B to carry): TV-4a — three of five criteria built; the row's cell is stale in three places. NO VERDICT MOVES HERE
+
+*Measured on branch `claude/mission-l-lead-residual-20261005` after merging `origin/main`
+(`824633ce45`). This section records evidence only; lane B owns the row and its move.*
+
+### 33.1 What the TV-4a cell says that is no longer true
+
+The cell (§17.5 and its restatement) says the route has **no category filter**, that a reported post,
+comment, message, event, review or listing **arrives as a bare UUID**, and that **no route acts on a
+`moderation_reports` row**. On this branch:
+
+- **Filter** — `category` is a filter, and an unknown category or status is refused by name rather than
+  answered with an empty page (`artifacts/api-server/src/routes/admin.ts:2138#if (category !== "all") query = query.eq("category", category);`).
+- **Subject snapshot** — every row carries a `subject_snapshot` for nine subject types, read in one
+  error-checked query per type: `ok`, `not_found`, `unavailable` (a failed read — never shown as missing
+  content) or `unsupported` (`artifacts/api-server/src/lib/moderationReportSnapshots.ts:138#export async function loadModerationSubjectSnapshots(`,
+  `artifacts/api-server/src/routes/admin.ts:2151#subject_snapshot: snap,`).
+- **Act** — `POST /admin/moderation/reports/:id/review` moves a report open → reviewing → actioned |
+  dismissed (`artifacts/api-server/src/routes/admin.ts:3647#router.post("/admin/moderation/reports/:id/review", async (req, res) => {`).
+  For a closing decision the accountable user is resolved before any write (a lookup that cannot run
+  is a 503, `artifacts/api-server/src/routes/admin.ts:3691#if (resolution.outcome === "lookup_failed") {`),
+  the report is claimed by an update that must affect exactly one row
+  (`artifacts/api-server/src/routes/admin.ts:3714#if (rows.length !== 1) {`), and only then is the
+  `moderation_actions` row written — a failed audit reverses the claim. The moderator's id and note go
+  only into `moderation_actions` (service-role only), never onto the report row the reporter can read.
+- **Correction to the cell:** its *"with a client at `travel-buddy-standalone/app/admin/content-reports.tsx`"*
+  is false. That screen calls the LEGACY `GET /api/admin/reports` (the `reports` table), through
+  `travel-buddy-standalone/src/services/reportsAdmin.ts:46#export async function fetchAdminReports(opts: {`.
+  **No admin screen reads `/admin/moderation/reports` or calls the new review route yet.**
+
+Proof: `adminModerationReportReview.test.ts`, 17 / 17, over a fake whose writes persist
+(`artifacts/api-server/src/test/adminModerationReportReview.test.ts:269#it("a CONCURRENT close (the claim matches no row) is a 409 and writes NO audit row"`,
+`artifacts/api-server/src/test/adminModerationReportReview.test.ts:243#it("actioned: the audit row names the accountable author, the moderator and the note; the report row carries neither"`).
+Mutations, each red then restored: category filter dropped; failed snapshot read as empty; deleted
+message text shown; one-row claim check dropped; owner-lookup failure ignored; no compensation;
+moderator id/note on the report row; unowned subject closed unattributed.
+
+### 33.2 What still keeps TV-4a at W
+
+1. **Act (warn / remove / suspend with expiry / ban)** linked to the report, and **every action writing
+   `moderation_actions` with its report**: `moderation_actions` has no `report_id` or `expires_at` column
+   (D-MODACTION-SHAPE). The owner decided the substance — OD-TRUST-4 requires the duration be shown,
+   OD-TRUST-5 limits a restriction to the duration needed — so what remains is an engineering shape and
+   a migration in lane B's area, after PR #580.
+2. **A client**: no admin screen consumes the new endpoints.
+3. **A product choice recorded for the owner**: the snapshot is a LIVE read, so a reported person who
+   deletes the post, comment or message before review removes its text from the moderator's view (the
+   report keeps the reporter's own words). Capturing the text at report time would preserve it, at the
+   cost of retaining content its author deleted. Lane L recommends capture at report time, restricted
+   to moderators and deleted with the report.
+
+### 33.3 Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: artifacts/api-server/src/test/adminModerationReportReview.test.ts — §33's evidence for TV-4a, recorded by lane L for lane B; no verdict moves here, and whoever moves TV-4a on it must add it to this census's watched scope in the same change.
+- NOT-GRADED: artifacts/api-server/src/lib/moderationReportSnapshots.ts — §33.1's snapshot reader, recorded as evidence only; the same rule applies when TV-4a moves on it.
+- NOT-GRADED: travel-buddy-standalone/src/services/reportsAdmin.ts — §33.1 cites it only to correct the TV-4a cell: the content-reports screen calls the legacy reports endpoint, so no client reads the moderation_reports queue.

@@ -3069,3 +3069,24 @@ applied migration, a flag, a native build or a device.**
 | --- | --- | --- | --- |
 | M256 | ? | **?** | §48.1. The server harness exists and passes; the row's own measurement still needs its live arm and a device. Blocker corrected. |
 | M65 | W | **W** | §48.2. Four observed families unfed, not five; `event_context` is fed as a cause; the "all seven" criterion is unsatisfiable by design. Blocker corrected to an owner decision. |
+
+## §49 — 2026-10-06 (lane L): §48.1 corrected — M256's harness gates on V1–V4, and its timing assertion cannot catch a slowdown. NO VERDICT MOVES
+
+Independent verification of §48.1 found two things. **The timing number §48.1 quoted is load noise**:
+the verifier's run of the same in-process arm measured p95 ≈ 2.3 ms; §48.1's 54.7 ms was taken while
+nine other lanes were running suites on the same machine. Neither figure is evidence of anything but
+the machine's load. **And the 800 ms budget cannot catch a regression**: a 120 ms delay added to every
+request still passes 9 / 9, because the budget is the criterion's production ceiling applied to an
+in-process double that runs two orders of magnitude faster.
+
+So what `mapProjectionPerf.test.ts` actually GATES is V1–V4 — every measured response serves, carries
+the whole seeded set, ran the §24 protection gate over it, and read the projection's own tables. The
+p50/p95 it prints are informational. Tightening the budget to a value a regression would trip was
+considered and not done: on a shared machine the in-process arm's tail already swings by an order of
+magnitude with load, so a tight budget would fail on noise and train people to ignore it. The honest
+statement is this paragraph. M256 stays `?` on §48.1's reasons: its live arm (a disposable PostgreSQL)
+and its device half are unmeasured.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| M256 | ? | **?** | §49. The harness's correctness guards gate; its timing is informational; the row's measurement is still the live arm and a device. |
