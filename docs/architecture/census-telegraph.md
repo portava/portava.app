@@ -10447,3 +10447,121 @@ on §41.8:
 451 rows. CONSTRUCTED (C + W) is 417 of 451 = 92.5 %; CORRECT is 246 of 451 = 54.5 %. Every move
 rests on controlled evidence; none was observed in production, and T8's nearby band and T31's
 whole surface are dark behind `nearby_reachable_enabled`.
+
+## §45 — TELEGRAPH lane T1, wave 2–3 (2026-10-05): the verifier's corrections to §44, and the rows its fixes and wave 2 now carry
+
+Written 2026-10-05 by mission lane T1 after an independent verification of `9df97fd9e2` (§44's
+head) returned ACCEPT WITH REQUIRED FIXES. This section is APPEND-ONLY over §44: where it disagrees
+with §44, this section is the later statement. `head_commit` is NOT re-declared. **All evidence is
+CONTROLLED**; nothing was observed in production, no flag was touched, no migration was added.
+
+### 45.1 Corrections to §44 (verifier findings F1–F9)
+
+- **F1, HIGH — §44's privacy-zone change disclosed a protected zone to the viewer.** It asked the
+  §24 policy about every candidate's RAW position before consent or freshness, named the refusal
+  `protected_zone`, and `GET /nearby/reachable` served per-reason counts: a crewmate with location
+  sharing OFF inside a medical-facility zone came back as `{protected_zone: 1}`. Fixed: a zone is
+  asked only about a position that would otherwise be published
+  (`artifacts/api-server/src/services/telegraph/reachablePeopleQuery.ts:579#personPoint !== null &&`),
+  and the viewer is sent ONE undifferentiated count
+  (`artifacts/api-server/src/routes/nearbyReachable.ts:150#notShown: viewerFacingNotShown(result.telemetry),`);
+  the reasons stay in server telemetry. The test that pinned the leak now pins the opposite.
+- **F2 — T108's closeout was never drawn in a thread that coordinated** (any commitment or open
+  decision). Fixed: `travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:272#const closeoutCard = closeoutVisible && closeout ? (`
+  is drawn whenever the server offers it.
+- **F3 — T218's "entertainment" was the shared-context rail, collapsed once and re-expanded by
+  scrolling.** The rail is coordination. Now the screen holds a flag for the whole raised mode and
+  hides only the unsolicited AI suggestion tray; the rail is untouched. The Ask Compass tray, the GIF
+  entry and reactions are not demoted.
+- **F4 — T239's ladder fed only previews and the AI tray, and its row claimed "your connection is
+  slow"** from a signal that includes server time. Typing indicators and typing notifications now
+  follow the ladder; the row says "Portava has been slow to respond". No reaction UI is live (2811).
+- **F5 — T8's UPCOMING showed declined plans, NOW showed any session up to 14 days old, and the clock
+  froze at mount.** Fixed: `travel-buddy-standalone/src/features/telegraph/inbox/inboxBandsApi.ts:101#m.myRsvp === 'declined'`,
+  `travel-buddy-standalone/src/features/telegraph/inbox/inboxBandsApi.ts:71#export function openSessions(`
+  (the same 60-minute bound as §2.3's NOW layer), and a clock read on every render with a minute tick.
+- **F6 — T107's proposer could not withdraw; proposing was not idempotent.** Fixed:
+  `artifacts/api-server/src/services/telegraph/coordinationStages.ts:257#const proposerWithdrew`, and a
+  rider is not offered a second ride (a client guard; `ACTION_PROPOSAL` has no idempotency key). NOT
+  fixed: a join is not checked for a block between joiner and proposer in a group thread, nor for a
+  Trust restriction — that check belongs in the shared write guard, which lane T2 is changing.
+- **F7 — "Share your location … for a limited time" opened a sheet that sends a place** with no
+  expiry and no position. The control (and the safety bar's entry) now says "Share a place".
+- **F8 — T1's guard is a vocabulary list.** It filtered templates by prefix only, missed
+  `minutesInThreadToday` / `consecutiveDaysChatting` / `messages_per_active_user` / "Keep chatting to
+  beat your record!", and flagged a legitimate `sessionLengthMinutes`. Widened and corrected; it is
+  still a word list, which is what §44 should have said instead of "guarded".
+- **F9 — three surviving mutants** (one zone only; the plan without its leave-by; `=== 'exact'`) are
+  now killed. And T6's gap: an ENDED exact share no longer hands its coordinates to the maps app
+  (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:277#const ended = Number.isFinite(endsMs) && endsMs <= nowMs;`).
+- **T153 — §44 cited §32 for a move §32.3 forbids** ("No verdict moves on this section … settle
+  this with a submitted report"). §32 is a lead reconciliation, not an owner decision. Back to W.
+
+### 45.2 What wave 2 built
+
+- **§2.3's layers, drawn.** NOW is bounded in time on the server — a NOW-class message is NOW only
+  while current (`artifacts/api-server/src/services/telegraph/layers.ts:227#export function nowItemIsCurrent(`,
+  `NOW_LAYER_WINDOW_MINUTES` = 60, a product choice listed for the owner), so an old SAFETY message
+  is never taken out of the stream. The client draws PLAN and NOW above the conversation
+  (`travel-buddy-standalone/src/features/telegraph/layers/SemanticLayersStrip.tsx:79#export function SemanticLayersStrip(`)
+  and the screen builds its list from the stream minus what was drawn
+  (`travel-buddy-standalone/app/messages/[id].tsx:1548#const stream = layeredIds.size > 0`). An
+  unanswered §6.2 ACTION's Confirm now works from the layer
+  (`travel-buddy-standalone/src/features/telegraph/layers/SemanticLayersStrip.tsx:154#onPressAction={item.openReason === 'action_unanswered'`).
+- **§13.1 on the bus, two doors and one writer.** `CREATE_DECISION`, `SET_COORDINATION_STATUS` and
+  `SHARE_LOCATION` are issued by `POST /telegraph/commands`
+  (`artifacts/api-server/src/server/telegraph/commandRoute.ts:258#if (envelopePlan && envelopePlan.ok) {`),
+  validated by the route doors' own validators
+  (`artifacts/api-server/src/services/telegraph/threadEnvelopeWrites.ts:206#export function planEnvelopeCommand(`)
+  and written by the writer both routes now use
+  (`artifacts/api-server/src/services/telegraph/threadEnvelopeWrites.ts:120#export async function writeThreadEnvelope(`).
+- **A translated inbox preview** says it is one and keeps its original when the server cannot call
+  it certain (T242's inbox half — T242 is outside this lane's range and is not moved here).
+- **`routes/availability.ts`** answers a failed read with a retryable 503 on every unchecked read in
+  the file, and its background nudge sender no longer nudges everyone when it cannot read who
+  already answered. No Telegraph row grades that file's correctness; recorded, not moved.
+
+### 45.3 Row moves
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T107 | C | **W** | §44 overstated it (verifier F6). The proposer's withdrawal and the double proposal are fixed (`artifacts/api-server/src/services/telegraph/coordinationStages.ts:257#const proposerWithdrew`); a join is still not refused for a block between joiner and proposer in a group thread, nor for a Trust restriction. |
+| T218 | C | **W** | §44 demoted coordination (the rail), and only once (verifier F3). Now only the AI suggestion tray is held away, for the whole raised mode; the Ask Compass tray, the GIF entry and reactions are not demoted. |
+| T239 | C | **W** | Typing now follows the ladder and the row's words are true (verifier F4); reactions have no live UI to shed, and the signal cannot separate a slow network from a slow server. |
+| T153 | C | **W** | §32.3 forbids the move §44 made on its authority. The evidence (`artifacts/api-server/src/routes/messaging.ts:4138#.from('reports')`) stands; the grade waits for a submitted report, as §32.3 says. |
+| T108 | C | **C** | Restated after F2: the closeout is drawn whenever the server offers it, including in a thread with commitments or an open decision (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:272#const closeoutCard = closeoutVisible && closeout ? (`), with the verifier's two cases in the panel suite. |
+| T8 | C | **C** | Restated after F5: declined plans excluded (`travel-buddy-standalone/src/features/telegraph/inbox/inboxBandsApi.ts:101#m.myRsvp === 'declined'`), NOW bounded, a moving clock. AVAILABLE NEARBY is still dark behind `nearby_reachable_enabled`. |
+| T6 | C | **C** | Restated: an ended exact share hands on only its label (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:277#const ended = Number.isFinite(endsMs) && endsMs <= nowMs;`). |
+| T11 | W | **C** | **Semantic layer PLAN.** The remainder was that nothing drew the partition and the ACTION Confirm refused. The strip draws unresolved PLAN items above the conversation, the stream omits them until they resolve, and an unanswered ACTION is answered from the layer (`travel-buddy-standalone/src/features/telegraph/layers/SemanticLayersStrip.tsx:154#onPressAction={item.openReason === 'action_unanswered'`). Proven by `travel-buddy-standalone/src/features/telegraph/__tests__/semanticLayersStrip.component.test.tsx`. |
+| T12 | W | **C** | **Semantic layer NOW.** NOW is bounded to what is current (`artifacts/api-server/src/services/telegraph/layers.ts:227#export function nowItemIsCurrent(`) and drawn above the stream, which is shorter for it while it lasts (`travel-buddy-standalone/app/messages/[id].tsx:1548#const stream = layeredIds.size > 0`). |
+| T166 | W | **C** | **§13.1 `CREATE_DECISION`.** Issued by the bus through the coordination route's own validator and writer (`artifacts/api-server/src/server/telegraph/commandRoute.ts:258#if (envelopePlan && envelopePlan.ok) {`); the bus row is field-for-field the route row, and a blocked, E2EE or non-member caller writes nothing. |
+| T169 | W | **C** | **§13.1 `SET_COORDINATION_STATUS`.** As T166, writing the §9.1 COORDINATION kind (`artifacts/api-server/src/services/telegraph/threadEnvelopeWrites.ts:206#export function planEnvelopeCommand(`). |
+| T170 | W | **C** | **§13.1 `SHARE_LOCATION`.** As T166, writing a scoped §6.2 LOCATION share with the typed-message route's expiry rule, and §13.2 `location.started` from the one writer (`artifacts/api-server/src/services/telegraph/threadEnvelopeWrites.ts:120#export async function writeThreadEnvelope(`); a pin (no expiry) is refused on the bus. |
+| T1 | W | W | Same verdict. §44's word "guarded" overstated a vocabulary guard (verifier F8); it is widened and corrected, and is still a word list. |
+| T106 | W | W | "Minimal conversation" now exists (T12). Still W: the location-scope entry opens a place-share sheet, not a scoped location share (verifier F7). |
+
+### 45.4 Tests and mutations
+
+Each mutation applied alone to the committed file, the suite run, the file restored by `git
+checkout` and checked clean. F1: 4/4 (incl. the reason put back on the wire and the zone test moved
+ahead of consent). NOW bound 5/5. Layers strip 9/9 after one survivor (a failed refresh keeping the
+stale partition) was closed with a case. Bus commands 10/10 after one survivor (an expiry refusal
+answering 400 for the wrong reason) was closed. Inbox translated preview 8 of 9 (the survivor is
+equivalent: the helper already refuses the sender's own message). Availability 11 of 12 (the survivor
+is equivalent: an unreadable recipient list already sends nothing). F2, F4, F5, F6, F7, F8, F9 and
+T6's gap each killed by the case added for it.
+
+
+### 45.5 The headline, restated from the rows
+
+Counted with `check:census-integrity` on this branch:
+
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **247** |
+| BUILT-BUT-WRONG | **170** |
+| NOT-BUILT | **32** |
+| CANNOT-VERIFY | **2** |
+
+451 rows. Four §44 moves are withdrawn (T107, T218, T239, T153); five rows move on wave-2 evidence
+(T11, T12, T166, T169, T170).
