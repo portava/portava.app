@@ -154,6 +154,48 @@ it('an uncheckable place is said with Try again', async () => {
   expect(screen.getByTestId('memory-actions-retry')).toBeTruthy();
 });
 
+it('FINDING 4: a privacy check that could not be read is said with Try again — never an empty bar — and the retry re-reads', async () => {
+  const msg = 'Whether this place can be shown could not be checked right now. Please try again.';
+  mockGetMenu.mockResolvedValueOnce(menu({
+    place: null,
+    actions: ['DO_AGAIN', 'TAKE_ME_BACK', 'ADD_TO_TRIP', 'VIEW_PLACE'].map((a) => d(a, false, 'PRIVACY_UNREADABLE', msg)),
+  }));
+  await render(<MemoryActionBar memoryId={MEM} />);
+  expect(await screen.findByText(msg)).toBeTruthy();
+  mockGetMenu.mockResolvedValueOnce(menu());
+  await press('memory-actions-retry');
+  expect(await screen.findByTestId('memory-action-DO_AGAIN')).toBeTruthy();
+  expect(mockGetMenu).toHaveBeenCalledTimes(2);
+});
+
+it('FINDING 4: each withheld reason is SAID (owner\'s precision, protected, ambiguous) — refusals, so no Try again', async () => {
+  for (const [reason, msg] of [
+    ['PLACE_WITHHELD_BY_OWNER', 'The owner shares this Memory\'s location at a coarser level than the place itself.'],
+    ['PLACE_PROTECTED', 'This place is protected, so Portava does not name it here.'],
+    ['PLACE_AMBIGUOUS', 'More than one place in Portava\'s catalog matches this Memory\'s location, so Portava cannot say which one it was.'],
+  ] as const) {
+    mockGetMenu.mockResolvedValueOnce(menu({
+      place: null,
+      actions: ['DO_AGAIN', 'TAKE_ME_BACK', 'ADD_TO_TRIP', 'VIEW_PLACE'].map((a) => d(a, false, reason, msg)),
+    }));
+    const r = await render(<MemoryActionBar memoryId={MEM} />);
+    expect(await screen.findByText(msg)).toBeTruthy();
+    expect(screen.queryByTestId('memory-actions-retry')).toBeNull();
+    await r.unmount();
+  }
+});
+
+it('FINDING 4: when one verb is a could-not-check and another a refusal, the could-not-check (with Try again) is what is said', async () => {
+  mockGetMenu.mockResolvedValueOnce(menu({
+    place: null,
+    actions: [d('DO_AGAIN', false, 'PLACE_CLOSED', 'This place has closed.'), d('TAKE_ME_BACK', false, 'PRIVACY_UNREADABLE', 'could not check'),
+      d('ADD_TO_TRIP', false, 'PLACE_CLOSED', 'This place has closed.'), d('VIEW_PLACE', false, 'PLACE_CLOSED', 'This place has closed.')],
+  }));
+  await render(<MemoryActionBar memoryId={MEM} />);
+  expect(await screen.findByText('could not check')).toBeTruthy();
+  expect(screen.getByTestId('memory-actions-retry')).toBeTruthy();
+});
+
 it('Add to trip opens the trip picker with the COMPILED current place', async () => {
   mockGetMenu.mockResolvedValueOnce(menu());
   mockAddToTrip.mockResolvedValueOnce({ ok: true, addToTrip: payload, caution: null });

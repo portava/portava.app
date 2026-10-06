@@ -5,7 +5,8 @@
  * WHAT THIS SUITE PINS
  *   - Only what the server offers is shown; a Highlight with nothing to act on
  *     (sourceless, or a Memory not shared with the viewer) shows nothing.
- *   - A failed read is said, with Try again — not an empty row.
+ *   - A failed read is said, with Try again — not an empty row. That includes a
+ *     menu whose venue verbs were refused as could-not-check (verifier finding 4).
  *   - Do this / Add to trip close the viewer and open the SOURCE Memory with the
  *     action to start there; View place opens the CURRENT catalog place; Save
  *     saves the source Memory and says when it could not.
@@ -76,6 +77,42 @@ it('a failed read is said, with Try again', async () => {
   mockGet.mockResolvedValueOnce(offeredMenu);
   await press('highlight-actions-retry');
   expect(await screen.findByTestId('highlight-action-DO_THIS')).toBeTruthy();
+});
+
+it('FINDING 4: a menu whose venue verbs could not be CHECKED is said with Try again — never drawn as nothing', async () => {
+  for (const reason of ['SOURCE_UNREADABLE', 'SOURCE_STORE_UNAVAILABLE', 'PLACE_UNREADABLE', 'PRIVACY_UNREADABLE']) {
+    mockGet.mockResolvedValueOnce({
+      ok: true,
+      menu: { highlightId: HL, sourceMemoryId: null, place: null, actions: ['DO_THIS', 'SAVE', 'ADD_TO_TRIP', 'VIEW_PLACE'].map((a) => d(a, false, reason)).concat([d('ASK', true)]) },
+    });
+    const r = await render(<HighlightActionChips highlightId={HL} onClose={onClose} />);
+    expect(await screen.findByTestId('highlight-actions-error')).toBeTruthy();
+    mockGet.mockResolvedValueOnce(offeredMenu);
+    await press('highlight-actions-retry');
+    expect(await screen.findByTestId('highlight-action-DO_THIS')).toBeTruthy();
+    await r.unmount();
+  }
+});
+
+it('FINDING 4: an offered verb next to a could-not-check one shows both the chip and the Try again line', async () => {
+  mockGet.mockResolvedValueOnce({
+    ok: true,
+    menu: { highlightId: HL, sourceMemoryId: MEM, place: null, actions: [d('SAVE', true), d('DO_THIS', false, 'PRIVACY_UNREADABLE'), d('ADD_TO_TRIP', false, 'PRIVACY_UNREADABLE'), d('VIEW_PLACE', false, 'PRIVACY_UNREADABLE')] },
+  });
+  await render(<HighlightActionChips highlightId={HL} onClose={onClose} />);
+  expect(await screen.findByTestId('highlight-action-SAVE')).toBeTruthy();
+  expect(screen.getByTestId('highlight-actions-unchecked')).toBeTruthy();
+});
+
+it('a refusal that is a NO (no shared source) still shows nothing', async () => {
+  mockGet.mockResolvedValueOnce({
+    ok: true,
+    menu: { highlightId: HL, sourceMemoryId: null, place: null, actions: ['DO_THIS', 'SAVE', 'ADD_TO_TRIP', 'VIEW_PLACE'].map((a) => d(a, false, 'NO_SHARED_SOURCE')).concat([d('ASK', true)]) },
+  });
+  await render(<HighlightActionChips highlightId={HL} onClose={onClose} />);
+  await act(async () => {});
+  expect(screen.queryByTestId('highlight-actions')).toBeNull();
+  expect(screen.queryByTestId('highlight-actions-error')).toBeNull();
 });
 
 it('Do this and Add to trip close the viewer and open the SOURCE Memory with the action to start', async () => {

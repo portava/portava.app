@@ -40,8 +40,17 @@ type MenuState =
   | { state: 'ok'; menu: ActionMenu };
 
 const VENUE_ACTIONS: readonly MemoryActionName[] = ['DO_AGAIN', 'ADD_TO_TRIP', 'TAKE_ME_BACK', 'VIEW_PLACE'];
-/** Refusals worth a sentence: they are facts about the place, not about the app. */
-const SAID_REFUSALS = new Set(['PLACE_CLOSED', 'PLACE_UNREADABLE']);
+/**
+ * Refusals worth a sentence: facts about the place, or a could-not-check.
+ * Every one of the withheld reasons is said (verifier finding 4/5) — a viewer
+ * whose venue verbs were all refused must not be shown a bar with nothing in it.
+ */
+const SAID_REFUSALS = new Set([
+  'PLACE_CLOSED', 'PLACE_UNREADABLE', 'PRIVACY_UNREADABLE',
+  'PLACE_WITHHELD_BY_OWNER', 'PLACE_PROTECTED', 'PLACE_AMBIGUOUS',
+]);
+/** Could-not-check: said WITH Try again, and preferred over any other note. */
+const RETRYABLE_REFUSALS = new Set(['PLACE_UNREADABLE', 'PRIVACY_UNREADABLE']);
 
 const LABEL: Partial<Record<MemoryActionName, string>> = {
   DO_AGAIN: 'Do this again',
@@ -157,7 +166,8 @@ export function MemoryActionBar({ memoryId, autoAction = null }: { memoryId: str
   const m = menu.menu;
   const by = new Map(m.actions.map((a) => [a.action, a] as const));
   const offeredActions = SHOWN.map((a) => by.get(a)).filter((a): a is ActionDescriptor => Boolean(a?.available));
-  const saidRefusal = VENUE_ACTIONS.map((a) => by.get(a)).find((a) => a && !a.available && a.reason && SAID_REFUSALS.has(a.reason));
+  const said = VENUE_ACTIONS.map((a) => by.get(a)).filter((a): a is ActionDescriptor => Boolean(a && !a.available && a.reason && SAID_REFUSALS.has(a.reason)));
+  const saidRefusal = said.find((a) => RETRYABLE_REFUSALS.has(String(a.reason))) ?? said[0];
   const caution = by.get('DO_AGAIN')?.caution ?? null;
 
   return (
@@ -187,7 +197,7 @@ export function MemoryActionBar({ memoryId, autoAction = null }: { memoryId: str
       {saidRefusal ? (
         <View testID="memory-actions-note">
           <Text style={s.note}>{saidRefusal.message}</Text>
-          {saidRefusal.reason === 'PLACE_UNREADABLE' ? (
+          {RETRYABLE_REFUSALS.has(String(saidRefusal.reason)) ? (
             <Pressable onPress={load} testID="memory-actions-retry" accessibilityRole="button" accessibilityLabel="Try again">
               <Text style={s.link}>Try again</Text>
             </Pressable>

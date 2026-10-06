@@ -13,8 +13,12 @@
  *   Save                    save that Memory (the existing save route)
  *
  * HONEST STATES. A failed read shows a one-line "could not check" with Try
- * again, never nothing; a Highlight with nothing to do shows nothing, because
- * that IS the answer (a sourceless Highlight has no place to act on).
+ * again, never nothing — and that includes a menu that ARRIVED but whose venue
+ * verbs were refused because something behind them could not be read (the
+ * source link, the Memory, the place, or its privacy): those are
+ * could-not-check, not "nothing to do" (verifier finding 4). A Highlight with
+ * nothing to do shows nothing, because that IS the answer (a sourceless
+ * Highlight has no place to act on).
  */
 import React, { useCallback, useEffect, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from 'react-native';
@@ -27,6 +31,10 @@ type State = { s: 'loading' } | { s: 'error'; message: string } | { s: 'ok'; men
 
 const SHOWN: readonly HighlightActionName[] = ['DO_THIS', 'ADD_TO_TRIP', 'VIEW_PLACE', 'SAVE'];
 const LABEL: Record<string, string> = { DO_THIS: 'Do this', ADD_TO_TRIP: 'Add to trip', VIEW_PLACE: 'View place', SAVE: 'Save' };
+/** Refusals that mean "could not check", not "no": each is said, with Try again. */
+export const UNCHECKED_REASONS: ReadonlySet<string> = new Set([
+  'SOURCE_UNREADABLE', 'SOURCE_STORE_UNAVAILABLE', 'PLACE_UNREADABLE', 'PRIVACY_UNREADABLE',
+]);
 const ICON: Record<string, React.ComponentType<{ size?: number; color?: string }>> = {
   DO_THIS: Repeat, ADD_TO_TRIP: ListPlus, VIEW_PLACE: MapPin, SAVE: Bookmark,
 };
@@ -47,6 +55,14 @@ export function HighlightActionChips({ highlightId, onClose }: { highlightId: st
   useEffect(() => { void load(); }, [load]);
 
   if (state.s === 'loading') return null;
+  const retryRow = (testID: string) => (
+    <View style={s.row} testID={testID}>
+      <Text style={s.note}>Could not check what you can do with this.</Text>
+      <Pressable onPress={load} testID="highlight-actions-retry" accessibilityRole="button" accessibilityLabel="Try again">
+        <Text style={s.link}>Try again</Text>
+      </Pressable>
+    </View>
+  );
   if (state.s === 'error') {
     return (
       <View style={s.row} testID="highlight-actions-error">
@@ -60,7 +76,8 @@ export function HighlightActionChips({ highlightId, onClose }: { highlightId: st
 
   const { menu } = state;
   const offered = SHOWN.filter((a) => menu.actions.some((d) => d.action === a && d.available));
-  if (offered.length === 0) return null;
+  const unchecked = SHOWN.some((a) => menu.actions.some((d) => d.action === a && !d.available && d.reason != null && UNCHECKED_REASONS.has(d.reason)));
+  if (offered.length === 0) return unchecked ? retryRow('highlight-actions-error') : null;
 
   const run = async (a: HighlightActionName) => {
     const memoryId = menu.sourceMemoryId;
@@ -96,6 +113,7 @@ export function HighlightActionChips({ highlightId, onClose }: { highlightId: st
         );
       })}
       {saved === 'failed' ? <Text style={s.note} testID="highlight-save-failed">Could not save. Try again.</Text> : null}
+      {unchecked ? retryRow('highlight-actions-unchecked') : null}
     </View>
   );
 }
