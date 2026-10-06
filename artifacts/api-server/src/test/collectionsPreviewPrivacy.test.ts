@@ -22,8 +22,9 @@ import { createServer } from "node:http";
 import app from "../app.js";
 import { _setTestClient } from "../lib/http.js";
 
-type Row = Record<string, any>;
+type Row = Record<string, unknown>;
 interface FakeTable { rows: Row[]; failSelect?: boolean }
+interface Result { data: unknown; error: unknown }
 
 const SAVER = "11111111-1111-1111-1111-111111111111";
 const OWNER = "22222222-2222-2222-2222-222222222222";
@@ -34,39 +35,59 @@ const H_ID = "b0000000-0000-0000-0000-000000000001";
 const FUTURE = new Date(Date.now() + 6 * 3600_000).toISOString();
 const PAST = new Date(Date.now() - 3600_000).toISOString();
 
+/**
+ * The query surface the routes under test call, and nothing more: equality,
+ * membership and null filters, ordering and limits (no-ops here), and the two
+ * terminal forms. A builder method the route starts calling that this fake does
+ * not implement throws, which is louder than a fake that silently ignores it.
+ */
+interface Builder extends PromiseLike<Result> {
+  select(cols?: string): Builder;
+  eq(c: string, v: unknown): Builder;
+  neq(c: string, v: unknown): Builder;
+  in(c: string, vs: readonly unknown[]): Builder;
+  is(c: string, v: unknown): Builder;
+  not(c: string, op: string, v: unknown): Builder;
+  order(c?: string, o?: unknown): Builder;
+  limit(n: number): Builder;
+  maybeSingle(): Promise<Result>;
+  single(): Promise<Result>;
+}
+
 function makeClient(tables: Record<string, FakeTable>) {
   const db: Record<string, FakeTable> = { ...tables };
-  function chain(name: string) {
+  function chain(name: string): Builder {
     const filters: Array<(r: Row) => boolean> = [];
     let limitN: number | null = null;
-    let one = false;
-    const obj: any = {
-      select() { return obj; },
-      eq(c: string, v: any) { filters.push((r) => r[c] === v); return obj; },
-      neq(c: string, v: any) { filters.push((r) => r[c] !== v); return obj; },
-      in(c: string, vs: any[]) { filters.push((r) => vs.includes(r[c])); return obj; },
-      lt(c: string, v: any) { filters.push((r) => r[c] < v); return obj; },
-      gte(c: string, v: any) { filters.push((r) => r[c] >= v); return obj; },
-      is(c: string, v: any) { filters.push((r) => (r[c] ?? null) === v); return obj; },
-      not(c: string, op: string, v: any) { if (op === "is") filters.push((r) => (r[c] ?? null) !== v); return obj; },
-      order() { return obj; },
-      limit(n: number) { limitN = n; return obj; },
-      maybeSingle() { one = true; return run(); },
-      single() { one = true; return run(); },
-      then(f: any, r: any) { return run().then(f, r); },
-    };
-    async function run(): Promise<{ data: any; error: any }> {
+    async function run(one: boolean): Promise<Result> {
       const t = db[name] ?? { rows: [] };
       if (t.failSelect) return { data: null, error: { message: `${name} unreadable`, code: "XX000" } };
       let rows = t.rows.filter((r) => filters.every((f) => f(r)));
       if (limitN !== null) rows = rows.slice(0, limitN);
       return { data: one ? (rows[0] ?? null) : rows, error: null };
     }
-    return obj;
+    const b: Builder = {
+      select() { return b; },
+      eq(c, v) { filters.push((r) => r[c] === v); return b; },
+      neq(c, v) { filters.push((r) => r[c] !== v); return b; },
+      in(c, vs) { filters.push((r) => vs.includes(r[c])); return b; },
+      is(c, v) { filters.push((r) => (r[c] ?? null) === v); return b; },
+      not(c, op, v) {
+        if (op !== "is") throw new Error(`fake: not(${op}) is not implemented`);
+        filters.push((r) => (r[c] ?? null) !== v);
+        return b;
+      },
+      order() { return b; },
+      limit(n) { limitN = n; return b; },
+      maybeSingle() { return run(true); },
+      single() { return run(true); },
+      then(onF, onR) { return run(false).then(onF, onR); },
+    };
+    return b;
   }
   return {
     from: (t: string) => chain(t),
-    rpc: async () => ({ data: null, error: null }),
+    rpc: async (): Promise<Result> => ({ data: null, error: null }),
     auth: {
       getUser: async (token: string) =>
         token === "saver-token"
@@ -109,7 +130,9 @@ function highlightRow(over: Row = {}): Row {
 let close: () => Promise<void> = async () => {};
 afterEach(async () => { await close(); });
 
-async function previews(tables: Record<string, FakeTable>, token: string): Promise<any[]> {
+interface PreviewItem { id: string; entityType: string; entityId: string; title: string | null; coverUrl: string | null }
+
+async function previews(tables: Record<string, FakeTable>, token: string): Promise<PreviewItem[]> {
   _setTestClient(makeClient(tables), true);
   const srv = createServer(app);
   await new Promise<void>((r) => srv.listen(0, "127.0.0.1", () => r()));
@@ -120,7 +143,7 @@ async function previews(tables: Record<string, FakeTable>, token: string): Promi
     headers: { Authorization: `Bearer ${token}` },
   });
   assert.equal(res.status, 200, "the collection itself is the viewer's own and must still load");
-  const body = await res.json() as { items: any[] };
+  const body = await res.json() as { items: PreviewItem[] };
   return body.items;
 }
 

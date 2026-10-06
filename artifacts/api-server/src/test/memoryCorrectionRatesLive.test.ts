@@ -26,8 +26,9 @@
  * Emitted, not aggregated: the counters are per-process (that module's header),
  * which is census §K.2's `W`, not `C`.
  *
- * Harness: the fake client of memoryPatchConcurrency.test.ts, copied with a
- * `memory_tags` table and two more tokens.
+ * Harness: adapted from memoryPatchConcurrency.test.ts's fake client — typed
+ * without `any`, with a `memory_tags` table, two more tokens, and no
+ * interleaving machinery (nothing here races).
  */
 import { describe, it, beforeEach } from "node:test";
 import assert from "node:assert/strict";
@@ -43,7 +44,7 @@ const STRANGER = "cccccccc-cccc-cccc-cccc-cccccccccccc";
 const OWNER = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const M = "11111111-1111-1111-1111-111111111111";
 
-interface Row { [k: string]: any }
+type Row = Record<string, unknown>;
 
 function memory(over: Row = {}): Row {
   return {
@@ -58,19 +59,13 @@ function memory(over: Row = {}): Row {
   };
 }
 
+/** The tables the two routes read and write. Absent tables read as empty. */
 interface State {
   memories: Row[];
   memory_tags: Row[];
   blocks: Row[];
   feature_flags: Row[];
   profiles: Row[];
-  /**
-   * Applied to the stored `memories` row immediately AFTER the handler's first
-   * SELECT resolves — the interleaving write, made deterministic. Nothing else
-   * about the fake is special; this is the whole mechanism.
-   */
-  interleave?: Row | null;
-  selectCount: number;
   errorTables: Set<string>;
 }
 
@@ -81,82 +76,93 @@ function baseState(over: Partial<State> = {}): State {
     blocks: [],
     feature_flags: [],
     profiles: [{ id: OWNER, account_status: "active", name: "Owner", handle: "owner", avatar_url: null }],
-    interleave: null,
-    selectCount: 0,
     errorTables: new Set<string>(),
     ...over,
   };
 }
 
+const TABLES = ["memories", "memory_tags", "blocks", "feature_flags", "profiles"] as const;
+type TableName = (typeof TABLES)[number];
+const isTable = (t: string): t is TableName => (TABLES as readonly string[]).includes(t);
+/** Read through the property every time, so a test may swap a table between two reads. */
+const rowsOf = (state: State, table: string): Row[] => (isTable(table) ? state[table] : []);
+
+interface Result { data: unknown; error: unknown; count: number | null }
+
+/** The builder surface the two routes call. An unimplemented method is a missing method, not a silent no-op. */
+interface Builder extends PromiseLike<Result> {
+  select(cols?: string): Builder;
+  update(patch: Row): Builder;
+  insert(rows: unknown): Builder;
+  upsert(rows: unknown, opts?: unknown): Builder;
+  delete(): Builder;
+  eq(c: string, v: unknown): Builder;
+  neq(c: string, v: unknown): Builder;
+  in(c: string, vs: readonly unknown[]): Builder;
+  is(c: string, v: unknown): Builder;
+  not(c: string, op: string, v: unknown): Builder;
+  order(c?: string, o?: unknown): Builder;
+  limit(n: number): Builder;
+  maybeSingle(): Promise<Result>;
+  single(): Promise<Result>;
+}
+
 function makeClient(state: State) {
-  function from(table: string) {
+  function from(table: string): Builder {
     const filters: Array<(r: Row) => boolean> = [];
-    let pendingUpdate: any = null;
-    let isSelectAfterWrite = false;
+    let pendingUpdate: Row | null = null;
     let limitN: number | null = null;
 
-    const builder: any = {
-      select() { if (pendingUpdate) isSelectAfterWrite = true; return builder; },
-      update(p: any) { pendingUpdate = p; return builder; },
+    async function resolve(mode: "single" | "maybeSingle" | "many"): Promise<Result> {
+      if (state.errorTables.has(table)) {
+        return { data: null, error: { message: `${table} lookup failed` }, count: null };
+      }
+      const matched = rowsOf(state, table).filter((r) => filters.every((f) => f(r)));
+      if (pendingUpdate) {
+        const patch = pendingUpdate;
+        matched.forEach((r) => Object.assign(r, patch));
+        // supabase-js: `.single()` over zero rows is PGRST116, an ERROR, not null.
+        if (mode === "single" && matched.length === 0) {
+          return { data: null, error: { code: "PGRST116", message: "JSON object requested, multiple (or no) rows returned" }, count: 0 };
+        }
+        const copies = matched.map((r) => ({ ...r }));
+        return { data: mode === "many" ? copies : (copies[0] ?? null), error: null, count: copies.length };
+      }
+      const rows = limitN != null ? matched.slice(0, limitN) : matched;
+      // A read hands back a SNAPSHOT, as a real round trip does.
+      const copies = rows.map((r) => ({ ...r }));
+      return mode === "many"
+        ? { data: copies, error: null, count: copies.length }
+        : { data: copies[0] ?? null, error: null, count: copies.length };
+    }
+
+    const builder: Builder = {
+      select() { return builder; },
+      update(p) { pendingUpdate = p; return builder; },
       insert() { return builder; },
       upsert() { return builder; },
       delete() { return builder; },
-      eq(c: string, v: any) { filters.push((r) => r[c] === v); return builder; },
-      neq(c: string, v: any) { filters.push((r) => r[c] !== v); return builder; },
-      in(c: string, v: any[]) { filters.push((r) => v.includes(r[c])); return builder; },
-      lt(c: string, v: any) { filters.push((r) => r[c] < v); return builder; },
-      gt(c: string, v: any) { filters.push((r) => r[c] > v); return builder; },
-      is(c: string, v: any) { filters.push((r) => (v === null ? r[c] == null : r[c] === v)); return builder; },
-      not(c: string, op: string, v: any) {
+      eq(c, v) { filters.push((r) => r[c] === v); return builder; },
+      neq(c, v) { filters.push((r) => r[c] !== v); return builder; },
+      in(c, vs) { filters.push((r) => vs.includes(r[c])); return builder; },
+      is(c, v) { filters.push((r) => (v === null ? r[c] == null : r[c] === v)); return builder; },
+      not(c, op, v) {
         if (op === "is" && v === null) filters.push((r) => r[c] != null);
         else filters.push((r) => r[c] !== v);
         return builder;
       },
       order() { return builder; },
-      limit(n: number) { limitN = n; return builder; },
+      limit(n) { limitN = n; return builder; },
       maybeSingle() { return resolve("maybeSingle"); },
       single() { return resolve("single"); },
-      then(onF: any, onR: any) { return resolve("many").then(onF, onR); },
+      then(onF, onR) { return resolve("many").then(onF, onR); },
     };
-
-    async function resolve(mode: "single" | "maybeSingle" | "many") {
-      if (state.errorTables.has(table)) {
-        return { data: null, error: { message: `${table} lookup failed` }, count: null };
-      }
-      if (pendingUpdate) {
-        const rows = (state as any)[table].filter((r: Row) => filters.every((f) => f(r)));
-        rows.forEach((r: Row) => Object.assign(r, pendingUpdate));
-        // supabase-js: `.single()` over zero rows is PGRST116, an ERROR, not null.
-        if (mode === "single" && rows.length === 0) {
-          return { data: null, error: { code: "PGRST116", message: "JSON object requested, multiple (or no) rows returned" }, count: 0 };
-        }
-        const copies = rows.map((r: Row) => ({ ...r }));
-        return { data: mode === "many" ? copies : (copies[0] ?? null), error: null, count: copies.length };
-      }
-      let rows = ((state as any)[table] ?? []).filter((r: Row) => filters.every((f) => f(r)));
-      if (limitN != null) rows = rows.slice(0, limitN);
-      // A read hands back a SNAPSHOT, as a real round trip does. The handler
-      // then holds a value the database is free to move underneath it.
-      const copies = rows.map((r: Row) => ({ ...r }));
-      const out = mode === "many"
-        ? { data: copies, error: null, count: copies.length }
-        : { data: copies[0] ?? null, error: null, count: copies.length };
-      if (table === "memories") {
-        state.selectCount += 1;
-        if (state.selectCount === 1 && state.interleave) {
-          for (const r of state.memories) if (r.id === M) Object.assign(r, state.interleave);
-        }
-      }
-      return out;
-    }
-
-    void isSelectAfterWrite;
     return builder;
   }
 
   return {
     from,
-    async rpc(fn: string) { return { data: null, error: { message: `unknown rpc ${fn}` } }; },
+    async rpc(fn: string): Promise<Result> { return { data: null, error: { message: `unknown rpc ${fn}` }, count: null }; },
     auth: {
       getUser: async (tok: string) =>
         tok === "owner-tok"
@@ -170,11 +176,13 @@ function makeClient(state: State) {
   };
 }
 
+type LoggedRequest = express.Request & { log?: { error: () => void; info: () => void; warn: () => void } };
+
 async function startApp(state: State) {
-  _setTestClient(makeClient(state) as any, true);
+  _setTestClient(makeClient(state), true);
   const app = express();
   app.use(express.json());
-  app.use((req: any, _res: any, next: any) => {
+  app.use((req: LoggedRequest, _res: express.Response, next: express.NextFunction) => {
     req.log = { error: () => {}, info: () => {}, warn: () => {} };
     next();
   });
@@ -232,7 +240,7 @@ describe("§24 correction rates are counted by the live routes (kernel flag OFF)
     try {
       const { status } = await patchReq(app.baseUrl, `/api/memories/${M}`, { locationCity: "Lisbon" });
       assert.equal(status, 200);
-      assert.equal(state.memories[0]!.location_city, "Lisbon", "control: the edit was applied");
+      assert.equal(state.memories[0]!["location_city"], "Lisbon", "control: the edit was applied");
       assert.equal(counts().commandsAccepted, 1);
       assert.equal(counts().placeCorrections, 1);
       assert.equal(readMemoryKernelMetrics().place_correction_rate, 1);

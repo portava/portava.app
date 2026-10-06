@@ -28,8 +28,9 @@ import {
   _resetResurfacingSuppressionAudit,
   RESURFACING_SUPPRESSION_VIOLATIONS,
 } from "../services/highlights/resurfacingSuppressionAudit.js";
-import { suppressions } from "../services/highlights/highlightResurfacing.js";
+import { suppressions, type ResurfacingControl, type ResurfacingSuppressions } from "../services/highlights/highlightResurfacing.js";
 import type { ProjectionInputs } from "../services/highlights/highlightPublicProjection.js";
+import type { ProjectionPolicyRead } from "../services/highlights/highlightProjectionPolicy.js";
 import { MEMORY_METRICS_NOT_MEASURABLE } from "../services/memory/memoryKernelMetrics.js";
 import {
   startApp, call, fixtureTables, listIds, feedIds,
@@ -40,17 +41,20 @@ const ROW_A = { id: "50000000-0000-4000-8000-00000000000a", owner_id: OWNER };
 const ROW_B = { id: "50000000-0000-4000-8000-00000000000b", owner_id: OWNER };
 const MINE = { id: "50000000-0000-4000-8000-00000000000c", owner_id: VIEWER };
 
-function inputsWith(controls: Array<{ control: any; subjectId: string }>): ProjectionInputs {
+const NO_POLICIES: ProjectionPolicyRead = { state: "absent", reason: "test: no §10 policy table" };
+const ABSENT_CONTROLS: ResurfacingSuppressions = { state: "absent", reason: "2720 not deployed" };
+
+function inputsWith(controls: Array<{ control: ResurfacingControl; subjectId: string }>): ProjectionInputs {
   return {
     controls: suppressions(controls),
     viewerControls: suppressions([]),
-    policies: { state: "absent", reason: "test: no §10 policy table" } as any,
+    policies: NO_POLICIES,
   };
 }
 
 function recordingLog() {
-  const lines: Array<{ obj: any; msg: string }> = [];
-  return { lines, log: { error: (obj: unknown, msg: string) => { lines.push({ obj, msg }); } } };
+  const lines: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+  return { lines, log: { error: (obj: unknown, msg: string) => { lines.push({ obj: obj as Record<string, unknown>, msg }); } } };
 }
 
 describe("the detector: a suppressed row at the serving step is counted AND dropped", () => {
@@ -105,7 +109,7 @@ describe("the detector: a suppressed row at the serving step is counted AND drop
     const { log } = recordingLog();
     const out = auditServedResurfacing(
       [ROW_A], VIEWER,
-      { controls: { state: "absent", reason: "2720 not deployed" } as any, viewerControls: { state: "absent", reason: "x" } as any, policies: { state: "absent", reason: "x" } as any },
+      { controls: ABSENT_CONTROLS, viewerControls: ABSENT_CONTROLS, policies: NO_POLICIES },
       log, "unit",
     );
     assert.deepEqual(out.map((r) => r.id), [ROW_A.id]);
@@ -117,7 +121,7 @@ describe("the detector: a suppressed row at the serving step is counted AND drop
     const { lines, log } = recordingLog();
     const out = auditServedResurfacing(
       [ROW_A], VIEWER,
-      { controls: suppressions([]), viewerControls: suppressions([]), policies: { state: "unreadable", reason: "test: policy read failed" } as any },
+      { controls: suppressions([]), viewerControls: suppressions([]), policies: { state: "unreadable", reason: "test: policy read failed" } },
       log, "unit",
     );
     assert.deepEqual(out, [], "an unreadable §10 policy withholds at the last step too");
@@ -131,7 +135,7 @@ describe("the detector: a suppressed row at the serving step is counted AND drop
   });
 });
 
-function tablesWith(rows: any[]) {
+function tablesWith(rows: Array<Record<string, unknown>>) {
   const t = fixtureTables();
   t.highlight_resurfacing_preferences = rows;
   return t;

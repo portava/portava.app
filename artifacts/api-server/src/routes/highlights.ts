@@ -1339,12 +1339,12 @@ router.get("/highlights/active", async (req, res) => {
   const ownerIds = [...new Set(consented.map((h: any) => h.owner_id as string))];
 
   // §10 — clamp each location to the owner's selected precision.
+  const disclosed = applyLocationPrecision(consented as any[], policies, req.log, "GET /highlights/active");
   // §24 `resurfacing_suppression_violations` — the serving step re-asks the
   // §11 question of every row it is about to hand over, counts any that should
   // not be here (must be zero) and drops them (census H221).
-  const disclosed = auditServedResurfacing(
-    applyLocationPrecision(consented as any[], policies, req.log, "GET /highlights/active"),
-    user.id, { controls: suppressed, viewerControls: viewerSuppressed, policies }, req.log, "GET /highlights/active",
+  const served = auditServedResurfacing(
+    disclosed, user.id, { controls: suppressed, viewerControls: viewerSuppressed, policies }, req.log, "GET /highlights/active",
   );
 
   // Batch metrics + author profiles
@@ -1369,7 +1369,7 @@ router.get("/highlights/active", async (req, res) => {
     profileMap[(p as any).id] = { id: (p as any).id, handle: (p as any).handle, name: presentedName(p as any, (p as any).id === user.id || allowedNames.has((p as any).id)), avatarUrl: (p as any).avatar_url ?? null };
   }
 
-  const result = disclosed.map((h: any) => ({
+  const result = served.map((h) => ({
     ...h,
     author: profileMap[h.owner_id] ?? null,
     viewCount: viewCountMap[h.id] ?? 0,
@@ -2861,10 +2861,10 @@ router.get("/highlights/following-feed", async (req, res) => {
   const ownerIds = [...new Set(visible.map((h: any) => h.owner_id as string))];
 
   // §10 — clamp each location to the owner's selected precision.
+  const disclosed = applyLocationPrecision(visible as any[], policies, req.log, "GET /highlights/following-feed");
   // §24 `resurfacing_suppression_violations` — see GET /highlights/active.
-  const disclosed = auditServedResurfacing(
-    applyLocationPrecision(visible as any[], policies, req.log, "GET /highlights/following-feed"),
-    user.id, { controls: suppressed, viewerControls: viewerSuppressed, policies }, req.log, "GET /highlights/following-feed",
+  const served = auditServedResurfacing(
+    disclosed, user.id, { controls: suppressed, viewerControls: viewerSuppressed, policies }, req.log, "GET /highlights/following-feed",
   );
 
   const [viewRows2, likeRows2, viewedRows2, likedRows2, profileRows] = await Promise.all([
@@ -2895,7 +2895,7 @@ router.get("/highlights/following-feed", async (req, res) => {
 
   // 7. Group by owner, preserving the order highlights came back
   const grouped = new Map<string, { profile: any; highlights: any[] }>();
-  for (const h of disclosed) {
+  for (const h of served) {
     const ownerId = h.owner_id as string;
     if (!grouped.has(ownerId)) {
       grouped.set(ownerId, { profile: profileMap[ownerId] ?? null, highlights: [] });
