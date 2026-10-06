@@ -101,7 +101,16 @@ import {
 // OFFERED, whether they may JOIN one, and which crewmates the solver may NAME —
 // one module, shared with the Compass crew tool so the two cannot disagree.
 // `readBlockExclusions` scopes the member-card block read to the crew itself.
-import { blockAdmission, compassCrewCandidates, openCrewsVisibleTo, publishedCrewSolution } from "../services/layover/LayoverCrewVisibility.js";
+import {
+  blockAdmission,
+  compassCrewCandidates,
+  crewMeetDecision,
+  crewMeetingPointFor,
+  openCrewsVisibleTo,
+  publishedCrewSolution,
+  type CompassCrewMeetGate,
+  type CrewMeetFacts,
+} from "../services/layover/LayoverCrewVisibility.js";
 import { readBlockExclusions } from "../lib/exclusionSet.js";
 import { safetyLabel, type TravelTimeSource } from "../services/airport/LayoverSafetyEngine.js";
 // §10 the traveller observation channel (census L82). The DECISION rules live
@@ -206,6 +215,7 @@ import {
   recoveryPosture,
 } from "../services/airport/layoverSafeReturnDisruption.js";
 import {
+  buddySafetyGateFor,
   layoverBuddyDecision,
   filterLayoverCompatible,
   applyBuddyTrustRequirement,
@@ -1197,11 +1207,20 @@ router.post("/airport/sessions/:id/compass", async (req, res) => {
   // nothing to do here" and "your plan fits" out of a connection reset
   // (census L294, census L47).
   const recsRead = await getRecommendations(sc, session.id);
-  const stopsRead = await loadStops(sc, session.id); const nowMs = Date.now(); const crewRead = await compassCrewCandidates(sc, user.id, crewCityFor(airport, session), new Date(nowMs).toISOString()); // §48 L110: block-cleared, as GET /:id/crew; a failed read travels as a reason
+  const stopsRead = await loadStops(sc, session.id); const nowMs = Date.now();
+  // ONE corridor read for this handler, shared by the answer's certification
+  // and by the §14.1 meet gate below — two reads are how two facts in one
+  // response stop agreeing (the reason `liveConditions` is read once).
+  const compassEntry = await sessionEntry(sc, airport, session); // census-discovery §65
+  // §48 L110: block-cleared, as GET /:id/crew; a failed read travels as a reason.
+  // §14.1 L138: and the meeting point goes through the SAME gate the crew card
+  // applies — whatever is handed to the model can end up in its sentence, so a
+  // guard on one door is not a guard.
+  const crewRead = await compassCrewCandidates(sc, user.id, crewCityFor(airport, session), new Date(nowMs).toISOString(), crewMeetGateFor(sc, user.id, airport, session, nowMs, compassEntry));
   const answer = await answerLayoverQuestion(sc, {
     question: parsed.data.question,
     session, snapshot: await consumerLayoverSnapshot(sc, airport, session, nowMs), // census-discovery §81: null (flag off) keeps the legacy certification below
-    airport, entry: await sessionEntry(sc, airport, session), // census-discovery §65: the answer certifies with the snapshot's entry input
+    airport, entry: compassEntry, // census-discovery §65: the answer certifies with the snapshot's entry input
     recommendations: recsRead.ok ? (recsRead.recommendations as unknown as Array<Record<string, unknown>>) : undefined,
     recommendationsUnavailableReason: recsRead.ok ? null : "layover_recommendations_unreadable",
     stops: stopsRead.ok ? stopsRead.stops : undefined,
@@ -3053,6 +3072,16 @@ async function crewPayload(
   const otherIds = members.map((m) => m.userId).filter((id) => id !== viewerId);
   const cards = await crewMemberCards(sc, viewerId, otherIds);
 
+  // §14.1 / census-layover L138 — the "meet here" gate, on the crew card as
+  // well as on the Compass answer. `meetActionAvailability` decides; this route
+  // only supplies inputs it has READ. A withheld label is `null` plus named
+  // reasons; the crew's own facts below (deadline, feasibility, size) are
+  // untouched, because those bind every member whether the meet is on or not.
+  const meetingPoint = crewMeetingPointFor(
+    crew.meetingPointLabel,
+    crewMeetFactsFrom(viewerId, crew.id, members, solver.members, cards.blockedRelation),
+  );
+
   return {
     ok: true,
     body: {
@@ -3060,7 +3089,8 @@ async function crewPayload(
         id: crew.id,
         title: crew.title,
         city: crew.city,
-        meetingPointLabel: crew.meetingPointLabel,
+        meetingPointLabel: meetingPoint.label,
+        meetingPointWithheld: meetingPoint.withheld,
         status: crew.status,
         maxMembers: crew.maxMembers,
         expiresAt: crew.expiresAt,
@@ -3101,8 +3131,8 @@ async function crewMemberCards(
   sc: any,
   viewerId: string,
   otherIds: string[],
-): Promise<{ cards: Array<Record<string, unknown>>; visibleIds: string[]; degraded: boolean; degradedReasons: string[] }> {
-  if (otherIds.length === 0) return { cards: [], visibleIds: [], degraded: false, degradedReasons: [] };
+): Promise<{ cards: Array<Record<string, unknown>>; visibleIds: string[]; degraded: boolean; degradedReasons: string[]; /** §14.1 / L138: a block relation with a crewmate, OR a block list that could not be read. Both withhold the meeting point. */ blockedRelation: boolean }> {
+  if (otherIds.length === 0) return { cards: [], visibleIds: [], degraded: false, degradedReasons: [], blockedRelation: false };
   const reasons: string[] = [];
   try {
     // Scoped to the crew (`among`): two `.in()` reads that can only return a
@@ -3113,8 +3143,12 @@ async function crewMemberCards(
       // precisely the defect census §23.1 found on /buddies. `visibleIds: []`
       // is the same rule for the solver: no card, no identity (census §48).
       logger.warn({ reason: blocked.reason }, "layover crew: blocks unreadable — no member cards published");
-      return { cards: [], visibleIds: [], degraded: true, degradedReasons: ["blocks_unreadable"] };
+      // `blockedRelation: true` for the SAME reason the cards are dropped: an
+      // unreadable block list is "we could not check", and §14.1's meet gate
+      // must read that as a block, never as "there is nothing to stop us".
+      return { cards: [], visibleIds: [], degraded: true, degradedReasons: ["blocks_unreadable"], blockedRelation: true };
     }
+    const blockedRelation = otherIds.some((id) => blocked.ids.has(id));
     // `visibleIds` is what `publishedCrewSolution` scopes the solver's
     // per-member identities to: no block relation, sharing allowed, AND every
     // read that establishes a card succeeded. A branch that cannot stand
@@ -3124,7 +3158,7 @@ async function crewMemberCards(
     const publishable = await publishableUserIds(sc, notBlocked);
     if (publishable.degraded) reasons.push("sharing_preferences_unreadable");
     const visible = publishable.allowed;
-    if (visible.length === 0) return { cards: [], visibleIds: [], degraded: reasons.length > 0, degradedReasons: reasons };
+    if (visible.length === 0) return { cards: [], visibleIds: [], degraded: reasons.length > 0, degradedReasons: reasons, blockedRelation };
 
     const { data: profiles, error: profErr } = await sc
       .from("profiles")
@@ -3132,7 +3166,7 @@ async function crewMemberCards(
       .in("id", visible);
     if (profErr) {
       logger.warn({ err: profErr }, "layover crew: profiles unreadable — crew served without member cards");
-      return { cards: [], visibleIds: [], degraded: true, degradedReasons: [...reasons, "member_cards_unreadable"] };
+      return { cards: [], visibleIds: [], degraded: true, degradedReasons: [...reasons, "member_cards_unreadable"], blockedRelation };
     }
     const allowedNames = await nameVisibilitySet(sc, visible);
     return {
@@ -3144,11 +3178,109 @@ async function crewMemberCards(
       })),
       visibleIds: visible, degraded: reasons.length > 0,
       degradedReasons: reasons,
+      blockedRelation,
     };
   } catch (err) {
     logger.warn({ err, viewerId }, "layover crew member cards threw — crew served without them");
-    return { cards: [], visibleIds: [], degraded: true, degradedReasons: ["member_cards_unreadable"] };
+    return { cards: [], visibleIds: [], degraded: true, degradedReasons: ["member_cards_unreadable"], blockedRelation: true };
   }
+}
+
+/**
+ * §15's escalation ladder, least to most escalated. Here only so that taking a
+ * crew's WORST member state does not require a comparison written inline — and
+ * so that `crewMeetFactsFrom` below contains no return-state LITERAL at all,
+ * which is the property `layoverCrewMeetGate.test.ts` pins: both return states
+ * it reports must be READ off a certified record, never asserted. That pin is
+ * not decoration. `safetyGateCleared` requires NORMAL and so masks the viewer
+ * half of the guard's own escalation clause on every output this surface can
+ * produce, which means an output test cannot see the difference between
+ * reading the viewer's state and hardcoding it.
+ */
+const CREW_RETURN_STATE_ORDER = ["NORMAL", "RETURN_SOON", "RETURN_NOW", "CONNECTION_AT_RISK"] as const;
+
+/**
+ * §14.1 / census-layover L138 — the facts `meetActionAvailability` needs about
+ * ONE viewer and ONE crew, derived from reads this request already made.
+ *
+ * `solved` is `crewSolverMembers`'s output, or NULL when the member sessions
+ * could not be read. Null is not "a crew with no deadlines": it leaves the
+ * viewer uncertified and the crew's state unknown, and the guard reads both as
+ * reasons to withhold. That is the same direction `crewSolverMembers` itself
+ * takes with `sharedReturnBy`.
+ */
+function crewMeetFactsFrom(
+  viewerId: string,
+  crewId: string,
+  members: Array<{ userId: string }>,
+  solved: CrewMember[] | null,
+  blockedRelation: boolean,
+): CrewMeetFacts {
+  const mine = solved?.find((m) => m.userId === viewerId)?.record ?? null;
+  // The crew's MOST ESCALATED member state, over EVERY member.
+  //
+  // One member we cannot place on the ladder leaves the whole crew's state
+  // unknown (`null`), which the guard reads as escalated. A worst taken over
+  // the subset we happened to certify is a CALMER state than the truth, and
+  // that is the one direction a safety maximum must never move — the same rule
+  // `crewSolverMembers` applies to `sharedReturnBy`. An ended, expired or
+  // deleted session arrives here as a real `record: null` and lands in exactly
+  // that case.
+  const states = (solved ?? []).map((m) => m.record?.envelope.returnState ?? null);
+  const crewReturnState: CrewMeetFacts["crewReturnState"] =
+    states.length === 0 || states.some((s) => s === null)
+      ? null
+      : states.reduce((worst, s) =>
+          CREW_RETURN_STATE_ORDER.indexOf(s!) > CREW_RETURN_STATE_ORDER.indexOf(worst!) ? s : worst,
+        );
+  return {
+    blocked: blockedRelation,
+    // Membership is read, not assumed: a payload assembled for somebody who is
+    // not in the member rows is not a member's payload.
+    sameCrewId: members.some((m) => m.userId === viewerId) ? crewId : null,
+    safetyGateCleared: mine ? buddySafetyGateFor(mine).passed : false,
+    viewerReturnState: mine?.envelope.returnState ?? null,
+    crewReturnState,
+  };
+}
+
+/**
+ * The §14.1 gate for the Compass door, built from the SAME helpers the crew
+ * card uses — `crewSolverMembers` (the feature's single certification site) and
+ * a block read scoped to the crew. `compassCrewCandidates` takes this rather
+ * than deriving it, so the two doors cannot answer differently.
+ */
+function crewMeetGateFor(
+  sc: any,
+  viewerId: string,
+  airport: AirportProfile,
+  session: LayoverSession,
+  nowMs: number,
+  entry: EntryEligibility | null,
+): CompassCrewMeetGate {
+  const { safetyGate } = layoverBuddyDecision(airport, session, nowMs, entry);
+  return {
+    offer: crewMeetDecision(
+      {
+        // The OFFER surface enforces the block list upstream, in
+        // `openCrewsVisibleTo`, which REFUSES when it cannot read it (503 /
+        // `layover_crew_unreadable`) rather than offering an unchecked roster.
+        // So a crew that reaches this decision is already block-cleared.
+        blocked: false,
+        sameCrewId: null,
+        safetyGateCleared: safetyGate.passed,
+        viewerReturnState: safetyGate.returnState,
+        crewReturnState: null,
+      },
+      "offer",
+    ),
+    memberFacts: async (crew, members) => {
+      const solver = await crewSolverMembers(sc, members, nowMs);
+      const otherIds = members.map((m) => m.userId).filter((id) => id !== viewerId);
+      const cards = await crewMemberCards(sc, viewerId, otherIds);
+      return crewMeetFactsFrom(viewerId, crew.id, members, solver.ok ? solver.members : null, cards.blockedRelation);
+    },
+  };
 }
 
 /** The city a crew at this session is scoped to, or null when unknown. */
@@ -3185,6 +3317,32 @@ router.get("/airport/sessions/:id/crew", async (req, res) => {
   if (!city) {
     // Not an error: a crew is a CITY-level thing and we do not know the city.
     res.json({ ok: true, inCrew: false, city: null, crews: [], reason: "city_unknown" });
+    return;
+  }
+
+  // §14.1 / census-layover L138 — THE SAFETY GATE, before the roster is read.
+  //
+  // This surface offers a traveller landside crews to go and physically meet,
+  // and it asked the block list and nothing else. The sibling people-discovery
+  // surface 200 lines below (`GET /:id/buddies`) refuses with
+  // `safety_gate_not_passed` when the certified record says this traveller must
+  // not be offered a landside meeting (census L273) — and this one did not ask.
+  // A traveller whose verdict is `no` or `stay_airside`, or who is on the
+  // escalation ladder, was handed crews to join by the same server that had
+  // already computed that verdict for this session.
+  //
+  // The gate's answer is `meetActionAvailability`'s, not a second predicate:
+  // see `crewMeetDecision` and `CREW_MEET_DENIALS_NOT_ENFORCED` for which of
+  // its six clauses this scope can stand behind and why.
+  const offerGate = crewMeetGateFor(sc, user.id, airport, session, nowMs, await sessionEntry(sc, airport, session));
+  if (!offerGate.offer.allowed) {
+    res.json({
+      ok: true, inCrew: false, city, crews: [],
+      reason: "safety_gate_not_passed",
+      // Published so the card can EXPLAIN the closure rather than draw an empty
+      // city, which is what a bare `crews: []` would have said.
+      meetWithheld: offerGate.offer.withheld,
+    });
     return;
   }
 

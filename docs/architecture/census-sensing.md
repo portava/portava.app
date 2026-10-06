@@ -5079,9 +5079,9 @@ The row was scored W because `CompassTripContext` was *"trip grounding only:
 no world state, no opportunities, no disruptions, no sessions"*. Re-derived:
 
 * The five parts are a closed list the module exports and the test pins by
-  value: `` `artifacts/api-server/src/compass/CompassTripContext.ts:286#export const TRIP_WORLD_PARTS = ["world_state", "opportunities", "disruptions", "sessions", "crew"] as const;` ``.
+  value: `` `artifacts/api-server/src/compass/CompassTripContext.ts:307#export const TRIP_WORLD_PARTS = ["world_state", "opportunities", "disruptions", "sessions", "crew"] as const;` ``.
 * The projection is built from their EXISTING owners and computes nothing of
-  its own: `` `artifacts/api-server/src/compass/CompassTripContext.ts:382#export async function buildTripWorldContext(` ``
+  its own: `` `artifacts/api-server/src/compass/CompassTripContext.ts:403#export async function buildTripWorldContext(` ``
   takes the kernel this turn already assembled and the opportunity projection
   the ranker was handed, and reads disruptions, the viewer's open
   `ExperienceSession` and the crew on the trip itself.

@@ -10,7 +10,6 @@
   "artifacts/api-server/src/compass/CompassItemHydrator.ts::S4": 1,
   "artifacts/api-server/src/compass/CompassLiveEngine.ts::S2": 1,
   "artifacts/api-server/src/compass/CompassRecommendationEngine.ts::S2": 2,
-  "artifacts/api-server/src/compass/CompassSocialEngine.ts::S2": 2,
   "artifacts/api-server/src/compass/CompassStructuredContext.ts::S2": 3,
   "artifacts/api-server/src/compass/CompassUiBlocks.ts::S2": 2,
   "artifacts/api-server/src/lib/calls/callSignaling.ts::S2": 2,

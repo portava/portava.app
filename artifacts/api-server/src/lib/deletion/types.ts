@@ -161,6 +161,13 @@ export type StatedFate =
   | "ANONYMISED_FK_NULLED"
   | "DELETION_FLOW"
   | "RETAINED_WITH_REASON"
+  /**
+   * The fate is a NAMED open owner decision and the schema refuses the DELETE
+   * meanwhile. Deliberately NOT folded into UNCLASSIFIED_BACKLOG: that fate
+   * means "nobody has ruled and the rows survive by default", and here both
+   * answers are written and a trigger stops either being taken by default.
+   */
+  | "AWAITING_OWNER_DECISION"
   | "UNCLASSIFIED_BACKLOG"
   | "NOT_IN_MANIFEST";
 

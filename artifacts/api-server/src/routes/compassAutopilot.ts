@@ -69,8 +69,16 @@ router.get("/trips/:tripId/autopilot/settings", asyncHandler(async (req, res) =>
   if (!sc) return;
   if (!(await requireMember(sc, res, req.params.tripId, auth.user.id))) return;
 
-  const settings = await getAutopilotSettings(sc, req.params.tripId, auth.user.id);
-  res.json({ compassEnabled: true, settings });
+  const read = await getAutopilotSettings(sc, req.params.tripId, auth.user.id);
+  // census-compass CT-02 / the master read rule: the client may not be handed
+  // permissive defaults it would render as the user's own settings.
+  if (read.status === "unread") {
+    // `degraded_unavailable` is this repository's code for "the check could
+    // not be PERFORMED", 503 and retryable — not "it was performed and failed".
+    sendError(res, "degraded_unavailable", "Your autopilot settings could not be read right now — this is temporary. They have not changed.");
+    return;
+  }
+  res.json({ compassEnabled: true, settings: read.settings, configured: read.configured });
 }));
 
 const PutSettingsSchema = z.object({
@@ -92,8 +100,14 @@ router.put("/trips/:tripId/autopilot/settings", asyncHandler(async (req, res) =>
     sendError(res, "invalid_payload", parsed.error.issues[0]?.message ?? "Invalid body");
     return;
   }
-  const settings = await upsertAutopilotSettings(sc, req.params.tripId, auth.user.id, parsed.data);
-  res.json({ compassEnabled: true, settings });
+  const saved = await upsertAutopilotSettings(sc, req.params.tripId, auth.user.id, parsed.data);
+  // A refused read or a refused write must not come back 200 with the settings
+  // the caller asked for: the client renders that as saved.
+  if (saved.status === "unread") {
+    sendError(res, "degraded_unavailable", "Your autopilot settings could not be saved — nothing was changed. Please try again.");
+    return;
+  }
+  res.json({ compassEnabled: true, settings: saved.settings });
 }));
 
 // ── Check (monitors + partial re-planner; propose only) ───────────────────────
@@ -133,6 +147,8 @@ router.post("/trips/:tripId/autopilot/check", asyncHandler(async (req, res) => {
     issues: result.issues,
     proposalsCreated: result.proposalsCreated,
     proposalsSkipped: result.proposalsSkipped,
+    // Named, so a client cannot read an incomplete check as a clean one.
+    unreadSources: result.unreadSources,
   });
 }));
 
