@@ -28,7 +28,8 @@
  *               would otherwise still be shown in full.
  *   legacy    — no resolve is possible (no thread id, or a source type with no
  *               §5 family — `for_you`, `traveler_pick`). The pre-§5 card, with
- *               View and the server-authorized Save (see offeredCardActions);
+ *               View and Save (server-authorized only with the discovery-actions
+ *               flag ON; see offeredCardActions);
  *               there is no capability to derive any other action from.
  */
 import type { TelegraphAction } from '../sharedContext/types.ts';
@@ -74,12 +75,19 @@ export function offeredCardActions(mode: LegacyCardMode, actions: readonly Teleg
     case 'reference':
       return { ...NONE, view: true };
     case 'legacy':
-      // Save stays on the pre-§5 card because its press is NOT a client-side
-      // authorization: it goes through the server's discovery-card command,
-      // which proposes the save only when the server's own authorize says yes
-      // (census-discovery §95 / A21, services/discoveryCardSave.ts). Add to Plan
-      // has no such server-side capability step behind it here, so it is not
-      // offered on a card nothing could resolve.
+      // Save stays on the pre-§5 card. It is server-authorized ONLY while
+      // telegraph_discovery_actions_enabled is ON: the press then goes through
+      // the server's discovery-card command, which proposes the save only when
+      // its own authorize says yes (census-discovery §95 / A21,
+      // services/discoveryCardSave.ts). With that flag OFF — the seed — the
+      // command answers feature_disabled and the card falls back to the
+      // pre-existing `toggleSave`, the viewer's OWN bookmark, keyed on the
+      // card's stored sourceId with the stored name, category and city: no
+      // server check stands behind it. That fallback is lane C's (A21, C1) and
+      // is kept; this comment used to claim more than it does (census-telegraph
+      // §45c, verifier finding 11). Add to Plan has no server-side capability
+      // step behind it here at all, so it is not offered on a card nothing
+      // could resolve.
       return { ...NONE, view: true, save: true };
     default:
       return NONE;

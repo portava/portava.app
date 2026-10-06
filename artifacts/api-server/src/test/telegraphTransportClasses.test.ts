@@ -209,6 +209,13 @@ describe("§30A.12 — per-recipient Seen is bounded on both receipt routes", ()
     assert.equal(r.body.receipts.length, LARGE_GROUP_SEEN_SAMPLE);
     const times = r.body.receipts.map((x: { lastReadAt: string }) => Date.parse(x.lastReadAt));
     assert.deepEqual(times, [...times].sort((a: number, b: number) => b - a), "most recent readers first");
+    // §45c (verifier): sorted is not enough — `readers.slice(-20)` (the OLDEST twenty, still in
+    // descending order) passed the line above. The sample must be THE most recent readers.
+    const everyReader = (seed().message_thread_members as Array<{ thread_id: string; last_read_at: string | null; left_at: unknown }>)
+      .filter((m) => m.thread_id === BIG && m.left_at == null && m.last_read_at !== null)
+      .map((m) => Date.parse(m.last_read_at as string))
+      .sort((a, b) => b - a);
+    assert.deepEqual(times, everyReader.slice(0, LARGE_GROUP_SEEN_SAMPLE), "the sample is not the most recent readers");
   });
 
   it("GET /read-receipts in a SMALL_GROUP returns every member, as before", async () => {
