@@ -267,11 +267,15 @@ export function TypedMessageRenderer({
  * as a place-name search. Nothing finer is invented, and nothing is posted —
  * starting navigation declares no status (§9.1).
  */
-export function locationDestination(p: unknown): MapsPlace | null {
+export function locationDestination(p: unknown, nowMs: number = Date.now()): MapsPlace | null {
   const o = p !== null && typeof p === 'object' ? (p as Record<string, unknown>) : null;
   const label = typeof o?.label === 'string' ? o.label.trim() : '';
   if (!label) return null;
-  const exact = o?.precision === 'exact' && typeof o.lat === 'number' && typeof o.lng === 'number'
+  // A scoped share that has ENDED is not sharing its coordinates any more: only
+  // the label is handed on (verifier, T6's gap).
+  const endsMs = typeof o?.expiresAt === 'string' ? Date.parse(o.expiresAt) : NaN;
+  const ended = Number.isFinite(endsMs) && endsMs <= nowMs;
+  const exact = !ended && o?.precision === 'exact' && typeof o.lat === 'number' && typeof o.lng === 'number'
     && Number.isFinite(o.lat) && Number.isFinite(o.lng);
   const area = typeof o?.approximateLabel === 'string' && o.approximateLabel.trim() ? o.approximateLabel.trim() : null;
   return exact

@@ -137,6 +137,11 @@ describe('T106 — Active: next step and optional location scope', () => {
     );
     await fireEvent.press(screen.getByTestId('telegraph-coordination-share-location'));
     expect(onShareLocation).toHaveBeenCalledTimes(1);
+    // Verifier F7: the sheet it opens sends a place (label, precision) with no
+    // expiry and no position, so the control must not promise a live,
+    // time-limited location share.
+    expect(screen.getByText('Share a place')).toBeTruthy();
+    expect(screen.queryByLabelText(/limited time/i)).toBeNull();
 
     await rerender(<CoordinationPanel threadId="t1" initialResponse={response()} />);
     expect(screen.queryByTestId('telegraph-coordination-share-location')).toBeNull();

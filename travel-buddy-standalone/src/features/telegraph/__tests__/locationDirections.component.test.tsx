@@ -45,6 +45,18 @@ describe('a LOCATION message becomes navigation', () => {
     expect(locationDestination({ label: 'Pier 2', precision: 'area', lat: 16.06, lng: 108.24 })).toEqual({ name: 'Pier 2', city: null });
   });
 
+  it('T6 gap (verifier): an EXACT share that has ENDED hands on its label, not its coordinates', () => {
+    const now = Date.parse('2026-10-05T20:00:00.000Z');
+    expect(locationDestination({ label: 'Pier 2', precision: 'exact', lat: 16.06, lng: 108.24, expiresAt: '2026-10-05T19:00:00.000Z' }, now))
+      .toEqual({ name: 'Pier 2', city: null });
+    expect(locationDestination({ label: 'Pier 2', precision: 'exact', lat: 16.06, lng: 108.24, expiresAt: '2026-10-05T21:00:00.000Z' }, now))
+      .toEqual({ name: 'Pier 2', lat: 16.06, lng: 108.24 });
+  });
+
+  it('F9: only EXACT is exact — a VENUE share with coordinates hands on its label', () => {
+    expect(locationDestination({ label: 'Cafe', precision: 'venue', lat: 1, lng: 2 })).toEqual({ name: 'Cafe', city: null });
+  });
+
   it('no usable label, no Directions', async () => {
     expect(locationDestination({ label: '  ' })).toBeNull();
     expect(locationDestination(null)).toBeNull();
