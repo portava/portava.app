@@ -8,7 +8,11 @@
  *     under the MEMORY's read gate for this viewer. Seeing the Highlight is not
  *     the owner sharing where it was: a Memory the viewer may not read yields
  *     no venue and no Memory id.
- *   - A sourceless Highlight says so; an unreadable source link, or an
+ *   - To a NON-OWNER, "sourceless", "its Memory is not shared with you" and
+ *     "its Memory was deleted" are ONE answer (NO_SHARED_SOURCE): a person the
+ *     owner hid from a Memory must not learn that it exists (verifier finding
+ *     3). The owner is told which it is (NO_SOURCE_MEMORY / SOURCE_DELETED).
+ *   - A sourceless Highlight says so to its owner; an unreadable source link, or an
  *     undeployed one, or an unreadable Memory, are each their own reason —
  *     never "no source".
  *   - ASK follows the recipient's messaging rules, the same verdict the reply
@@ -151,7 +155,7 @@ describe("GET /highlights/:id/actions — §12's verbs on the Memory the Highlig
     const base = await start();
     const r = await menu(base, H_PRIVATE_SOURCE, VIEWER);
     assert.equal(r.status, 200);
-    for (const a of ["DO_THIS", "ADD_TO_TRIP", "VIEW_PLACE", "SAVE"]) assert.equal(r.by[a].reason, "SOURCE_NOT_SHARED", a);
+    for (const a of ["DO_THIS", "ADD_TO_TRIP", "VIEW_PLACE", "SAVE"]) assert.equal(r.by[a].reason, "NO_SHARED_SOURCE", a);
     assert.equal(r.body.menu.sourceMemoryId, null);
     assert.equal(r.body.menu.place, null);
     assert.ok(!JSON.stringify(r.body).includes(PLACE_OPEN), "the place id must not appear anywhere in the response");
@@ -166,12 +170,41 @@ describe("GET /highlights/:id/actions — §12's verbs on the Memory the Highlig
     assert.equal(r.body.menu.sourceMemoryId, MEM_ONLY_ME);
   });
 
-  it("a sourceless Highlight says so — Portava does not guess a place from its location text", async () => {
+  it("a sourceless Highlight says so to its owner — Portava does not guess a place from its location text", async () => {
     const base = await start();
+    const own = await menu(base, H_SOURCELESS, OWNER);
+    for (const a of ["DO_THIS", "ADD_TO_TRIP", "VIEW_PLACE", "SAVE"]) assert.equal(own.by[a].reason, "NO_SOURCE_MEMORY", a);
     const r = await menu(base, H_SOURCELESS, VIEWER);
-    for (const a of ["DO_THIS", "ADD_TO_TRIP", "VIEW_PLACE", "SAVE"]) assert.equal(r.by[a].reason, "NO_SOURCE_MEMORY", a);
+    for (const a of ["DO_THIS", "ADD_TO_TRIP", "VIEW_PLACE", "SAVE"]) assert.equal(r.by[a].reason, "NO_SHARED_SOURCE", a);
     assert.equal(r.by.ASK.available, true, "ASK does not depend on a source");
     assert.equal(r.body.menu.place, null);
+  });
+
+  it("FINDING 3: a viewer the owner HID from the Memory gets exactly the sourceless answer — the hidden Memory's existence does not leak", async () => {
+    const venueOf = (r: Awaited<ReturnType<typeof menu>>) =>
+      JSON.stringify(["DO_THIS", "ADD_TO_TRIP", "VIEW_PLACE", "SAVE"].map((a) => [r.by[a].available, r.by[a].reason, r.by[a].message]))
+      + JSON.stringify([r.body.menu.sourceMemoryId, r.body.menu.place]);
+    const base = await start({ mutate: (s) => { s.memories.find((m) => m.id === MEM_PUBLIC).hidden_user_ids = [VIEWER]; } });
+    const hidden = await menu(base, H_SOURCED, VIEWER);
+    const sourceless = await menu(base, H_SOURCELESS, VIEWER);
+    const notShared = await menu(base, H_PRIVATE_SOURCE, VIEWER);
+    assert.equal(hidden.status, 200);
+    assert.equal(venueOf(hidden), venueOf(sourceless), "hidden-from must read as sourceless");
+    assert.equal(venueOf(notShared), venueOf(sourceless), "not-shared must read as sourceless");
+    assert.ok(!JSON.stringify(hidden.body).includes(MEM_PUBLIC));
+  });
+
+  it("FINDING 3: a DELETED source tells its owner it was deleted — never 'not shared' — and tells everyone else the sourceless answer", async () => {
+    const base = await start({ mutate: (s) => { s.memories.find((m) => m.id === MEM_PUBLIC).state = "deleted"; } });
+    const own = await menu(base, H_SOURCED, OWNER);
+    for (const a of ["DO_THIS", "ADD_TO_TRIP", "VIEW_PLACE", "SAVE"]) assert.equal(own.by[a].reason, "SOURCE_DELETED", a);
+    assert.equal(own.body.menu.place, null, "a deleted Memory's place is not offered to act on");
+    const other = await menu(base, H_SOURCED, VIEWER);
+    const sourceless = await menu(base, H_SOURCELESS, VIEWER);
+    for (const a of ["DO_THIS", "ADD_TO_TRIP", "VIEW_PLACE", "SAVE"]) {
+      assert.equal(other.by[a].reason, "NO_SHARED_SOURCE", a);
+      assert.equal(other.by[a].message, sourceless.by[a].message, a);
+    }
   });
 
   it("a closed place carries the Memory's own refusal", async () => {

@@ -74,7 +74,8 @@ import {
   type FusedAnswer,
 } from "./historicalTruth.js";
 import { readTripWindows, type TripWindowsRead } from "../../domain/trips/services/TripFreedomConsumers.js";
-import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { readMemoryPrecisionGate, precisionColumnSelectable, type MemoryPrecisionGate } from "../../lib/memoryPrecisionGate.js";
+import { resolveMemoryPlaceRef } from "../../lib/placeIdBridge.js";
 import { canReadMemory, isBlocked } from "./memoryReadPolicy.js";
 
 const log = rootLogger.child({ mod: "memoryActionService" });
@@ -112,7 +113,10 @@ export const ACTION_UNAVAILABLE_REASONS = [
   "PLACE_NOT_IN_CATALOG",
   "PLACE_CLOSED",
   "PLACE_UNREADABLE",
-  "PLACE_WITHHELD",
+  "PLACE_AMBIGUOUS",
+  "PLACE_WITHHELD_BY_OWNER",
+  "PLACE_PROTECTED",
+  "PRIVACY_UNREADABLE",
   "NO_COORDINATES",
   "OWNER_ONLY",
   "OWN_MEMORY",
@@ -127,7 +131,13 @@ export const ACTION_UNAVAILABLE_MESSAGE: Readonly<Record<ActionUnavailableReason
   PLACE_NOT_IN_CATALOG: "This Memory's place is not in Portava's place catalog, so its current state cannot be checked.",
   PLACE_CLOSED: "This place has closed.",
   PLACE_UNREADABLE: "This place's current state could not be checked right now. Please try again.",
-  PLACE_WITHHELD: "The owner shares this Memory's location at a coarser level than the place itself.",
+  PLACE_AMBIGUOUS: "More than one place in Portava's catalog matches this Memory's location, so Portava cannot say which one it was.",
+  // Three different facts, three sentences (verifier finding 5). The first is a
+  // statement about the OWNER and is only ever said when it is the owner's rung.
+  PLACE_WITHHELD_BY_OWNER: "The owner shares this Memory's location at a coarser level than the place itself.",
+  PLACE_PROTECTED: "This place is protected, so Portava does not name it here.",
+  // Not a refusal: nobody decided anything. The client shows it as could-not-check with Try again.
+  PRIVACY_UNREADABLE: "Whether this place can be shown could not be checked right now. Please try again.",
   NO_COORDINATES: "There is no location to navigate to.",
   OWNER_ONLY: "Only the person who made this Memory can do this.",
   OWN_MEMORY: "This is your own Memory.",
@@ -181,31 +191,35 @@ export interface MemoryForAction {
  * Memory that could not be READ is `unreadable`, not `not_found`.
  */
 export type ViewerMemory =
-  | { state: "ok"; memory: MemoryForAction; precisionGateOn: boolean }
+  | { state: "ok"; memory: MemoryForAction; precisionGate: MemoryPrecisionGate }
   | { state: "not_found" }
+  /** Only ever returned to the Memory's OWNER: theirs, and deleted. Anyone else gets `not_found`. */
+  | { state: "deleted_own" }
   | { state: "unreadable" };
 
-export const MEMORY_LOCATION_PRECISION_FLAG = "memory_location_precision_enabled";
-
 export async function loadMemoryForViewer(sc: SupabaseClient, memoryId: string, viewerId: string): Promise<ViewerMemory> {
-  const precisionGateOn = await isFlagEnabled(sc, MEMORY_LOCATION_PRECISION_FLAG);
+  // §10 gate, three states: an unreadable gate selects no rung and CLAMPS
+  // (lib/memoryPrecisionGate.ts) — it never reads as "off" (verifier finding 7).
+  const precisionGate = await readMemoryPrecisionGate(sc);
   const { data, error } = await sc
     .from("memories")
-    .select(precisionGateOn ? MEMORY_ACTION_COLUMNS_WITH_PRECISION : MEMORY_ACTION_COLUMNS)
+    .select(precisionColumnSelectable(precisionGate) ? MEMORY_ACTION_COLUMNS_WITH_PRECISION : MEMORY_ACTION_COLUMNS)
     .eq("id", memoryId)
-    .neq("state", "deleted")
     .maybeSingle();
   if (error) {
     log.error({ err: error, memoryId }, "memory actions: memory read failed — unreadable, not absent");
     return { state: "unreadable" };
   }
-  const memory = data as MemoryForAction | null;
+  const read = data as MemoryForAction | null;
+  // A deleted Memory is gone for everyone; only its owner is TOLD it was deleted.
+  if (read && read.state === "deleted") return read.owner_id === viewerId ? { state: "deleted_own" } : { state: "not_found" };
+  const memory = read;
   if (!memory) return { state: "not_found" };
   if (memory.owner_id !== viewerId) {
     if (await isBlocked(sc, viewerId, memory.owner_id)) return { state: "not_found" };
     if (!(await canReadMemory(sc, memory, viewerId, "single"))) return { state: "not_found" };
   }
-  return { state: "ok", memory, precisionGateOn };
+  return { state: "ok", memory, precisionGate };
 }
 
 /** `places` as an action reads it. Every field is a CURRENT catalog fact. */
@@ -250,7 +264,7 @@ export type PlaceResolution =
       caution: CatalogCaution | null;
     }
   | { state: "closed"; place: CurrentPlace; followedMerges: string[] }
-  | { state: "unresolved"; reason: "NO_PLACE_REFERENCE" | "PLACE_NOT_IN_CATALOG" }
+  | { state: "unresolved"; reason: "NO_PLACE_REFERENCE" | "PLACE_NOT_IN_CATALOG" | "PLACE_AMBIGUOUS" | "PLACE_UNREADABLE" }
   | { state: "unreadable"; table: string };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -307,6 +321,32 @@ export function _setMemoryActionDeps(d: Partial<MemoryActionDeps> | null): void 
  * ==========================================================================*/
 
 /**
+ * Follow `merged_into_place_id` to the row that exists now — bounded and
+ * cycle-safe. ONE implementation, used by Do Again's resolver AND by Bring
+ * Forward (which ignored merges until verifier finding 8). A successor that
+ * cannot be read is unknown, not "no successor".
+ */
+export async function followMergeChain(sc: SupabaseClient, start: PlaceRow): Promise<{ ok: true; row: PlaceRow; followed: string[] } | { ok: false }> {
+  let row = start;
+  const followed: string[] = [];
+  const seen = new Set<string>([String(row.id)]);
+  while (row.merged_into_place_id && followed.length < MAX_MERGE_HOPS) {
+    const next = String(row.merged_into_place_id);
+    if (seen.has(next)) break;
+    const { data, error } = await sc.from("places").select(PLACE_ACTION_COLUMNS).eq("id", next).maybeSingle();
+    if (error) {
+      log.error({ err: error, from: row.id, to: next }, "memory actions: merged-place successor read failed");
+      return { ok: false };
+    }
+    if (!data) break;
+    followed.push(String(row.id));
+    seen.add(next);
+    row = data as PlaceRow;
+  }
+  return { ok: true, row, followed };
+}
+
+/**
  * Resolve a Memory's place against the catalog AS IT IS NOW.
  *
  * `place_id` is the reference the client chose at capture; when it is a catalog
@@ -319,54 +359,22 @@ export async function resolveCurrentPlace(
   sc: SupabaseClient,
   ref: { place_id: string | null; canonical_location_id: string | null },
 ): Promise<PlaceResolution> {
-  let row: PlaceRow | null = null;
-
-  if (ref.place_id && UUID_RE.test(ref.place_id)) {
-    const { data, error } = await sc.from("places").select(PLACE_ACTION_COLUMNS).eq("id", ref.place_id).maybeSingle();
-    if (error) {
-      log.error({ err: error, placeId: ref.place_id }, "memory actions: places read failed — the current place is unknown, not absent");
-      return { state: "unreadable", table: "places" };
-    }
-    row = (data as PlaceRow | null) ?? null;
+  // The id-space crossing is the sanctioned bridge's, not this module's
+  // (lib/placeIdBridge.ts resolveMemoryPlaceRef): the Memory's own catalog
+  // row when it named one, else the ONE row sharing its canonical location —
+  // and, when several do, a stated refusal instead of a guess (finding 6).
+  const ref1 = await resolveMemoryPlaceRef<PlaceRow>(sc, ref);
+  if (ref1.state === "unreadable") {
+    log.error({ placeId: ref.place_id, canonicalLocationId: ref.canonical_location_id }, "memory actions: places read failed — the current place is unknown, not absent");
+    return { state: "unreadable", table: "places" };
   }
-
-  if (!row && ref.canonical_location_id && UUID_RE.test(ref.canonical_location_id)) {
-    const { data, error } = await sc
-      .from("places")
-      .select(PLACE_ACTION_COLUMNS)
-      .eq("canonical_location_id", ref.canonical_location_id)
-      .limit(5);
-    if (error) {
-      log.error({ err: error, canonicalLocationId: ref.canonical_location_id }, "memory actions: places read by canonical location failed");
-      return { state: "unreadable", table: "places" };
-    }
-    const rows = ((data as PlaceRow[] | null) ?? []);
-    // Prefer a row the catalog still serves; a deterministic id order otherwise.
-    const order = (s: string) => (s === "active" ? 0 : s === "unverified" ? 1 : s === "temporarily_closed" ? 2 : s === "moved" ? 3 : 4);
-    row = [...rows].sort((a, b) => order(a.status) - order(b.status) || String(a.id).localeCompare(String(b.id)))[0] ?? null;
-  }
-
-  if (!row) {
-    const named = Boolean(ref.place_id) || Boolean(ref.canonical_location_id);
-    return { state: "unresolved", reason: named ? "PLACE_NOT_IN_CATALOG" : "NO_PLACE_REFERENCE" };
-  }
-
-  const followed: string[] = [];
-  const seen = new Set<string>([String(row.id)]);
-  while (row.merged_into_place_id && followed.length < MAX_MERGE_HOPS) {
-    const next = String(row.merged_into_place_id);
-    if (seen.has(next)) break;
-    const { data, error } = await sc.from("places").select(PLACE_ACTION_COLUMNS).eq("id", next).maybeSingle();
-    if (error) {
-      log.error({ err: error, from: row.id, to: next }, "memory actions: merged-place successor read failed");
-      return { state: "unreadable", table: "places" };
-    }
-    if (!data) break;
-    followed.push(String(row.id));
-    seen.add(next);
-    row = data as PlaceRow;
-  }
-
+  if (ref1.state === "ambiguous") return { state: "unresolved", reason: "PLACE_AMBIGUOUS" };
+  if (ref1.state === "none") return { state: "unresolved", reason: ref1.named ? "PLACE_NOT_IN_CATALOG" : "NO_PLACE_REFERENCE" };
+  let row: PlaceRow = ref1.row;
+  const chain = await followMergeChain(sc, row);
+  if (!chain.ok) return { state: "unresolved", reason: "PLACE_UNREADABLE" };
+  row = chain.row;
+  const followed = chain.followed;
   const place = toCurrentPlace(row);
   if (place.status === "closed") return { state: "closed", place, followedMerges: followed };
   // A duplicate the catalog never pointed at a successor is not a place to go.
@@ -393,19 +401,27 @@ export async function resolveCurrentPlace(
  * applies — because naming a protected venue is the disclosure the gem exists
  * to prevent, and an action button is a disclosure.
  */
+export type VenueDisclosure =
+  | { ok: true }
+  | { ok: false; reason: "PLACE_WITHHELD_BY_OWNER" | "PLACE_PROTECTED" | "PRIVACY_UNREADABLE" };
+
 export async function mayDiscloseVenue(
   sc: SupabaseClient,
   memory: MemoryForAction,
   viewerId: string,
   place: CurrentPlace,
-  precisionGateOn: boolean,
-): Promise<boolean> {
-  if (viewerId === memory.owner_id) return true;
-  const rung = publicationPrecision(memory, precisionGateOn);
-  if (rung !== "exact" && rung !== "venue") return false;
+  precisionGate: MemoryPrecisionGate,
+): Promise<VenueDisclosure> {
+  if (viewerId === memory.owner_id) return { ok: true };
+  // An unreadable gate is not "the owner chose a coarse rung": nobody knows.
+  // It is a could-not-check, never presented as a refusal (finding 5).
+  if (precisionGate === "unreadable") return { ok: false, reason: "PRIVACY_UNREADABLE" };
+  const rung = publicationPrecision(memory, precisionGate === "on");
+  if (rung !== "exact" && rung !== "venue") return { ok: false, reason: "PLACE_WITHHELD_BY_OWNER" };
   const gem = await deps.restrictiveGemCeiling(sc, place);
-  if (!gem.determined) return false;
-  return gem.ceiling == null || gem.ceiling === "place" || gem.ceiling === "precise_private";
+  if (!gem.determined) return { ok: false, reason: "PRIVACY_UNREADABLE" };
+  const venueLevel = gem.ceiling == null || gem.ceiling === "place" || gem.ceiling === "precise_private";
+  return venueLevel ? { ok: true } : { ok: false, reason: "PLACE_PROTECTED" };
 }
 
 /* ============================================================================
@@ -521,7 +537,10 @@ export async function readCurrentTrips(sc: SupabaseClient, viewerId: string, tod
       (a.status === "active" ? 0 : 1) - (b.status === "active" ? 0 : 1)
       || String(a.startDate ?? "9999").localeCompare(String(b.startDate ?? "9999"))
       || a.id.localeCompare(b.id))
-    .slice(0, MAX_TRIPS);
+    ;
+  // ALL current trips are kept for deciding (a requested or matching trip past
+  // the 20th is still the viewer's — finding 8); only the list a person picks
+  // from is bounded, in compileDoAgain.
   return { state: "ok", trips };
 }
 
@@ -604,7 +623,7 @@ export async function viewerPlaceFor(
   sc: SupabaseClient,
   memory: MemoryForAction,
   viewerId: string,
-  precisionGateOn: boolean,
+  precisionGate: MemoryPrecisionGate,
   resolution: PlaceResolution,
 ): Promise<ViewerPlace> {
   if (resolution.state === "unreadable") return { state: "refused", reason: "PLACE_UNREADABLE" };
@@ -612,9 +631,8 @@ export async function viewerPlaceFor(
   // A closed place is still the place this Memory was at; whether it may be
   // NAMED to this viewer is decided before whether it may be ACTED on, so a
   // non-owner never learns "closed" about a venue they may not be told.
-  if (!(await mayDiscloseVenue(sc, memory, viewerId, resolution.place, precisionGateOn))) {
-    return { state: "refused", reason: "PLACE_WITHHELD" };
-  }
+  const disclosure = await mayDiscloseVenue(sc, memory, viewerId, resolution.place, precisionGate);
+  if (!disclosure.ok) return { state: "refused", reason: disclosure.reason };
   if (resolution.state === "closed") return { state: "refused", reason: "PLACE_CLOSED" };
   return { state: "ok", place: resolution.place, caution: resolution.caution, followedMerges: resolution.followedMerges };
 }
@@ -757,14 +775,14 @@ export async function compileDoAgain(
   } else if (input.requestedTripId) {
     const t = input.trips.trips.find((x) => x.id === input.requestedTripId);
     if (!t) return { refused: "trip_not_eligible" };
-    tripChoice = { state: "chosen", trip: t, candidates: input.trips.trips };
+    tripChoice = { state: "chosen", trip: t, candidates: input.trips.trips.slice(0, MAX_TRIPS) };
   } else {
     // Only a trip that is going THERE is chosen for the traveller. A trip to
     // somewhere else is a candidate they can pick, never a silent default.
     const match = input.trips.trips.find((x) => sameCity(x.destinationCity, place.city));
     tripChoice = match
-      ? { state: "chosen", trip: match, candidates: input.trips.trips }
-      : { state: "none_matching", candidates: input.trips.trips };
+      ? { state: "chosen", trip: match, candidates: input.trips.trips.slice(0, MAX_TRIPS) }
+      : { state: "none_matching", candidates: input.trips.trips.slice(0, MAX_TRIPS) };
   }
 
   let freedom: FreedomLeg;
@@ -823,8 +841,9 @@ export function compileAddToTrip(place: CurrentPlace, caution: CatalogCaution | 
 /**
  * §27 `buildNavigationTarget(memoryId)`.
  *
- * A catalog place is navigated to where the catalog says it is NOW (a moved
- * place's new address, a merged place's successor). Only the owner, and only
+ * A catalog place is navigated to the catalog's current row for it (a merged
+ * place's successor, with the coordinates that row carries). Nothing in the tree
+ * records a new location for a place marked `moved`, so none is claimed. Only the owner, and only
  * when the catalog knows no place, is taken to the coordinate THEY recorded —
  * and the target says it is historical.
  */
@@ -915,12 +934,19 @@ export async function compileBringForward(
   const leftBehind: LeftBehind[] = [];
   for (const r of rows) {
     const id = r.place_id && UUID_RE.test(r.place_id) ? r.place_id : null;
-    const row = id ? places.get(id) : undefined;
-    if (!id || !row || row.status === "duplicate") {
+    const saved = id ? places.get(id) : undefined;
+    if (!id || !saved) {
       leftBehind.push({ placeName: r.place_name, reason: "PLACE_NOT_IN_CATALOG" });
       continue;
     }
     if (experienced.has(id)) { leftBehind.push({ placeName: r.place_name, reason: "ALREADY_EXPERIENCED" }); continue; }
+    // The SAME merge rule Do Again uses (finding 8): a saved row the catalog
+    // merged away is brought forward as its successor, judged as the successor.
+    const chain = await followMergeChain(sc, saved);
+    if (!chain.ok) return { ok: false, table: "places" };
+    const row = chain.row;
+    if (experienced.has(String(row.id))) { leftBehind.push({ placeName: r.place_name, reason: "ALREADY_EXPERIENCED" }); continue; }
+    if (row.status === "duplicate") { leftBehind.push({ placeName: r.place_name, reason: "PLACE_NOT_IN_CATALOG" }); continue; }
     if (row.status === "closed") { leftBehind.push({ placeName: r.place_name, reason: "PLACE_CLOSED" }); continue; }
     const place = toCurrentPlace(row);
     const caution: CatalogCaution | null = place.status === "temporarily_closed" ? "TEMPORARILY_CLOSED"

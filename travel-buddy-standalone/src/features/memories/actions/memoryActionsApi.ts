@@ -214,6 +214,7 @@ export function directionsUrl(t: NavigationTarget): string {
 
 export const CAUTION_TEXT: Record<CatalogCaution, string> = {
   TEMPORARILY_CLOSED: 'Temporarily closed, according to Portava\'s place information.',
-  MOVED: 'This place has moved — directions go to where it is now.',
+  // Nothing in the tree records where a moved place went, so this does not say.
+  MOVED: 'Portava\'s place information marks this place as moved. Check its address before you go.',
   UNVERIFIED: 'Portava has not verified this place\'s details.',
 };

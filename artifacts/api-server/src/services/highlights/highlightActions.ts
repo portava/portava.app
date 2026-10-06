@@ -57,7 +57,8 @@ export type HighlightAction = (typeof HIGHLIGHT_ACTIONS)[number];
 
 export const HIGHLIGHT_ONLY_REASONS = [
   "NO_SOURCE_MEMORY",
-  "SOURCE_NOT_SHARED",
+  "NO_SHARED_SOURCE",
+  "SOURCE_DELETED",
   "SOURCE_UNREADABLE",
   "SOURCE_STORE_UNAVAILABLE",
   "OWN_HIGHLIGHT",
@@ -70,8 +71,15 @@ export type HighlightOnlyReason = (typeof HIGHLIGHT_ONLY_REASONS)[number];
 export type HighlightActionReason = ActionUnavailableReason | HighlightOnlyReason;
 
 const HIGHLIGHT_REASON_MESSAGE: Readonly<Record<HighlightOnlyReason, string>> = Object.freeze({
+  // The OWNER's sentence about their own sourceless Highlight.
   NO_SOURCE_MEMORY: "This Highlight is not linked to a Memory, so Portava does not know its place.",
-  SOURCE_NOT_SHARED: "The Memory behind this Highlight is not shared with you.",
+  // A NON-OWNER's one sentence for "sourceless" AND "its Memory is not shared
+  // with you" AND "its Memory was deleted": three facts a viewer must not be
+  // able to tell apart, or a person the owner hid from a Memory learns that the
+  // hidden Memory exists (verifier finding 3). True of all three.
+  NO_SHARED_SOURCE: "Portava has no place for this Highlight that it can share with you.",
+  // The OWNER's sentence when their source Memory is gone.
+  SOURCE_DELETED: "The Memory behind this Highlight was deleted.",
   SOURCE_UNREADABLE: "The Memory behind this Highlight could not be checked right now. Please try again.",
   SOURCE_STORE_UNAVAILABLE: "This Highlight's link to its Memory could not be read right now. Please try again.",
   OWN_HIGHLIGHT: "This is your own Highlight.",
@@ -150,6 +158,7 @@ export async function buildHighlightActionMenu(
     actions: [...venue, ask, meet],
   });
   const allVenue = (reason: HighlightOnlyReason) => withVenue(VENUE_SIDE.map((a) => refusedH(a, reason)), null, null);
+  const isOwner = viewerId === highlight.owner_id;
 
   const sources = await readHighlightSources(sc, highlight.id);
   if (!sources.ok) {
@@ -157,14 +166,19 @@ export async function buildHighlightActionMenu(
     return allVenue(sources.reason === "not_deployed" ? "SOURCE_STORE_UNAVAILABLE" : "SOURCE_UNREADABLE");
   }
   const source = sources.value.find((s) => s.sourceType === "MEMORY");
-  if (!source) return allVenue("NO_SOURCE_MEMORY");
+  if (!source) return allVenue(isOwner ? "NO_SOURCE_MEMORY" : "NO_SHARED_SOURCE");
 
   const loaded = await loadMemoryForViewer(sc, source.sourceId, viewerId);
+  // A read that FAILED is said as one, to everyone — a failure is never drawn
+  // as an absence. (It tells a non-owner only that there was something to
+  // check, and only while the database is failing.)
   if (loaded.state === "unreadable") return allVenue("SOURCE_UNREADABLE");
-  if (loaded.state === "not_found") return allVenue("SOURCE_NOT_SHARED");
+  if (loaded.state === "deleted_own") return allVenue("SOURCE_DELETED");
+  // Not shared with this viewer, or gone: indistinguishable from sourceless.
+  if (loaded.state === "not_found") return allVenue(isOwner ? "SOURCE_DELETED" : "NO_SHARED_SOURCE");
 
   const resolution = await resolveCurrentPlace(sc, loaded.memory);
-  const viewerPlace = await viewerPlaceFor(sc, loaded.memory, viewerId, loaded.precisionGateOn, resolution);
+  const viewerPlace = await viewerPlaceFor(sc, loaded.memory, viewerId, loaded.precisionGate, resolution);
   const memoryMenu = buildActionMenu({ memory: loaded.memory, viewerId, viewerPlace, savedByMe: null });
   const by = new Map(memoryMenu.actions.map((d) => [d.action, d] as const));
   const venue = VENUE_SIDE.map((a) => fromMemoryDescriptor(a, by.get(FROM_MEMORY[a]!)));

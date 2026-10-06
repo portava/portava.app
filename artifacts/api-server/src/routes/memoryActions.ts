@@ -42,12 +42,13 @@ import {
   type ActionUnavailableReason,
   type MemoryForAction,
 } from "../services/memory/memoryActionService.js";
+import type { MemoryPrecisionGate } from "../lib/memoryPrecisionGate.js";
 
 const router = Router();
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type Loaded =
-  | { ok: true; memory: MemoryForAction; precisionGateOn: boolean }
+  | { ok: true; memory: MemoryForAction; precisionGate: MemoryPrecisionGate }
   | { ok: false };
 
 /**
@@ -63,8 +64,9 @@ async function loadReadableMemory(req: Request, res: Response, sc: SupabaseClien
     sendError(res, "degraded_unavailable", "Could not read this Memory. Please try again.");
     return { ok: false };
   }
-  if (loaded.state === "not_found") { sendError(res, "not_found", "Memory not found"); return { ok: false }; }
-  return { ok: true, memory: loaded.memory, precisionGateOn: loaded.precisionGateOn };
+  // A deleted Memory has no actions, for its owner too: the Memory screen is gone.
+  if (loaded.state === "not_found" || loaded.state === "deleted_own") { sendError(res, "not_found", "Memory not found"); return { ok: false }; }
+  return { ok: true, memory: loaded.memory, precisionGate: loaded.precisionGate };
 }
 
 function refuse(res: Response, reason: ActionUnavailableReason | "trip_not_eligible") {
@@ -72,7 +74,8 @@ function refuse(res: Response, reason: ActionUnavailableReason | "trip_not_eligi
     sendError(res, "conflict", "That trip is not one of your current trips.", { exposeDetail: true, reason });
     return;
   }
-  if (reason === "PLACE_UNREADABLE") {
+  if (reason === "PLACE_UNREADABLE" || reason === "PRIVACY_UNREADABLE") {
+    // Could not check — retryable, never a refusal.
     sendError(res, "degraded_unavailable", ACTION_UNAVAILABLE_MESSAGE[reason], { reason });
     return;
   }
@@ -99,10 +102,10 @@ router.get("/memories/:id/actions", asyncHandler(async (req: Request, res: Respo
 
   const loaded = await loadReadableMemory(req, res, sc, id, user.id);
   if (!loaded.ok) return;
-  const { memory, precisionGateOn } = loaded;
+  const { memory, precisionGate } = loaded;
 
   const resolution = await resolveCurrentPlace(sc, memory);
-  const viewerPlace = await viewerPlaceFor(sc, memory, user.id, precisionGateOn, resolution);
+  const viewerPlace = await viewerPlaceFor(sc, memory, user.id, precisionGate, resolution);
 
   let savedByMe: boolean | null = null;
   if (memory.owner_id !== user.id) {
@@ -136,7 +139,7 @@ router.get("/memories/:id/actions/:action", asyncHandler(async (req: Request, re
 
   const loaded = await loadReadableMemory(req, res, sc, id, user.id);
   if (!loaded.ok) return;
-  const { memory, precisionGateOn } = loaded;
+  const { memory, precisionGate } = loaded;
 
   if (!isCompilableAction(action)) {
     // Declared by §14, refused by name — the same reason the menu gives.
@@ -161,7 +164,7 @@ router.get("/memories/:id/actions/:action", asyncHandler(async (req: Request, re
   }
 
   const resolution = await resolveCurrentPlace(sc, memory);
-  const viewerPlace = await viewerPlaceFor(sc, memory, user.id, precisionGateOn, resolution);
+  const viewerPlace = await viewerPlaceFor(sc, memory, user.id, precisionGate, resolution);
 
   if (action === "TAKE_ME_BACK") {
     const out = compileTakeMeBack(memory, user.id, viewerPlace);

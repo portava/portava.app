@@ -343,17 +343,32 @@ describe("GET /memories/:id/actions — the menu, judged against the world now",
     const stranger = await get(app, `/api/memories/${MEM_GEM}/actions`, FRIEND);
     const m = byAction(stranger.body.menu);
     for (const a of ["DO_AGAIN", "TAKE_ME_BACK", "ADD_TO_TRIP", "VIEW_PLACE"]) {
-      assert.equal(m[a].reason, "PLACE_WITHHELD", a);
+      assert.equal(m[a].reason, "PLACE_PROTECTED", a);
     }
+    assert.notEqual(m.DO_AGAIN.message, "The owner shares this Memory's location at a coarser level than the place itself.",
+      "a protected place is not a statement about the owner's choice (finding 5)");
     assert.equal(stranger.body.menu.place, null, "the menu must not name the protected place either");
     const own = await get(app, `/api/memories/${MEM_GEM}/actions`, OWNER);
     assert.equal(byAction(own.body.menu).DO_AGAIN.available, true);
   });
 
-  it("an unreadable hidden_gems table withholds the venue from a non-owner (fail closed)", async () => {
+  it("an unreadable hidden_gems table is a COULD-NOT-CHECK for a non-owner — withheld, retryable, never a refusal; the compile is 503", async () => {
     app = await startApp({ failReads: ["hidden_gems"] });
     const r = await get(app, `/api/memories/${MEM_CATALOG}/actions`, FRIEND);
-    assert.equal(byAction(r.body.menu).DO_AGAIN.reason, "PLACE_WITHHELD");
+    assert.equal(byAction(r.body.menu).DO_AGAIN.reason, "PRIVACY_UNREADABLE");
+    assert.equal(r.body.menu.place, null);
+    const c = await get(app, `/api/memories/${MEM_CATALOG}/actions/DO_AGAIN`, FRIEND);
+    assert.deepEqual([c.status, c.body.reason], [503, "PRIVACY_UNREADABLE"]);
+  });
+
+  it("an UNREADABLE precision gate is a could-not-check for a non-owner (never 'exact'); the owner is unaffected", async () => {
+    app = await startApp({ failReads: ["feature_flags"] });
+    const friend = await get(app, `/api/memories/${MEM_CATALOG}/actions`, FRIEND);
+    assert.equal(friend.status, 200);
+    assert.equal(byAction(friend.body.menu).ADD_TO_TRIP.reason, "PRIVACY_UNREADABLE");
+    assert.equal(friend.body.menu.place, null, "a gate nobody could read must not publish the venue");
+    const own = await get(app, `/api/memories/${MEM_CATALOG}/actions`, OWNER);
+    assert.equal(byAction(own.body.menu).ADD_TO_TRIP.available, true);
   });
 
   it("withholds the venue from a non-owner when the owner's precision is coarser than the venue", async () => {
@@ -364,7 +379,7 @@ describe("GET /memories/:id/actions — the menu, judged against the world now",
       },
     });
     const friend = await get(app, `/api/memories/${MEM_CATALOG}/actions`, FRIEND);
-    assert.equal(byAction(friend.body.menu).ADD_TO_TRIP.reason, "PLACE_WITHHELD");
+    assert.equal(byAction(friend.body.menu).ADD_TO_TRIP.reason, "PLACE_WITHHELD_BY_OWNER");
     const own = await get(app, `/api/memories/${MEM_CATALOG}/actions`, OWNER);
     assert.equal(byAction(own.body.menu).ADD_TO_TRIP.available, true, "the owner's own precision never withholds from the owner");
   });
@@ -588,5 +603,113 @@ describe("declared and refused by name", () => {
     assert.deepEqual([crew.status, crew.body.reason], [409, "CONSUMER_UNAVAILABLE"]);
     const unknown = await get(app, `/api/memories/${MEM_CATALOG}/actions/FLY_ME_THERE`, OWNER);
     assert.equal(unknown.status, 400);
+  });
+});
+
+describe("verifier wave 2 — the boundaries, the bridge, and the smaller ones", () => {
+  it("BOUNDARY: a 'neighborhood' rung withholds the venue — only 'exact' and 'venue' let it through", async () => {
+    app = await startApp({
+      mutate: (s) => {
+        s.feature_flags.push({ flag: "memory_location_precision_enabled", enabled: true });
+        s.memories.find((m) => m.id === MEM_CATALOG).location_precision = "neighborhood";
+      },
+    });
+    const friend = await get(app, `/api/memories/${MEM_CATALOG}/actions`, FRIEND);
+    assert.equal(byAction(friend.body.menu).DO_AGAIN.reason, "PLACE_WITHHELD_BY_OWNER");
+  });
+
+  it("BOUNDARY: an APPROXIMATE gem (a neighborhood ceiling) protects the venue — only place-level ceilings let it through", async () => {
+    app = await startApp({
+      mutate: (s) => {
+        s.hidden_gems.push({ canonical_place_id: PLACE_OPEN, sensitivity_level: "approximate", status: "active", city: "Tokyo",
+          latitude: null, longitude: null, approx_latitude: 35.6612, approx_longitude: 139.7012 });
+      },
+    });
+    const friend = await get(app, `/api/memories/${MEM_CATALOG}/actions`, FRIEND);
+    assert.equal(byAction(friend.body.menu).DO_AGAIN.reason, "PLACE_PROTECTED");
+  });
+
+  it("BOUNDARY: a deleted Memory has no actions — 404 for its owner and for everyone else", async () => {
+    app = await startApp({ mutate: (s) => { s.memories.find((m) => m.id === MEM_CATALOG).state = "deleted"; } });
+    assert.equal((await get(app, `/api/memories/${MEM_CATALOG}/actions`, OWNER)).status, 404);
+    assert.equal((await get(app, `/api/memories/${MEM_CATALOG}/actions`, FRIEND)).status, 404);
+    assert.equal((await get(app, `/api/memories/${MEM_CATALOG}/actions/DO_AGAIN`, OWNER)).status, 404);
+  });
+
+  it("BOUNDARY: a closed place a non-owner may not be TOLD about is withheld, not 'closed' — withheld is decided first", async () => {
+    app = await startApp({
+      mutate: (s) => {
+        s.feature_flags.push({ flag: "memory_location_precision_enabled", enabled: true });
+        s.memories.find((m) => m.id === MEM_CLOSED).location_precision = "city";
+      },
+    });
+    const friend = await get(app, `/api/memories/${MEM_CLOSED}/actions`, FRIEND);
+    assert.equal(byAction(friend.body.menu).DO_AGAIN.reason, "PLACE_WITHHELD_BY_OWNER",
+      "telling a non-owner the venue CLOSED tells them which venue it was");
+  });
+
+  it("BOUNDARY: a trip whose end date has passed is not a current plan, whatever its status says", async () => {
+    app = await startApp({
+      mutate: (s) => {
+        s.trips.push({ id: "40000000-0000-4000-8000-0000000000aa", owner_id: OWNER, title: "Stale", destination_city: "Tokyo",
+          destination_country: "Japan", start_date: "2026-01-10", end_date: "2026-01-12", status: "active" });
+      },
+    });
+    const r = await get(app, `/api/memories/${MEM_CATALOG}/actions/DO_AGAIN?tripId=40000000-0000-4000-8000-0000000000aa`, OWNER);
+    assert.equal(r.status, 409);
+    const d = await get(app, `/api/memories/${MEM_CATALOG}/actions/DO_AGAIN`, OWNER);
+    assert.ok(!d.body.compiled.tripChoice.candidates.some((t: any) => t.title === "Stale"));
+  });
+
+  it("BRIDGE: two catalog rows sharing the Memory's canonical location is a stated ambiguity, never a guess", async () => {
+    app = await startApp({
+      mutate: (s) => { s.places.push(place("20000000-0000-4000-8000-0000000000bb", { name: "Other Sushi", canonical_location_id: CANON_LOC })); },
+    });
+    const r = await get(app, `/api/memories/${MEM_CANONICAL}/actions`, OWNER);
+    assert.equal(byAction(r.body.menu).DO_AGAIN.reason, "PLACE_AMBIGUOUS");
+    assert.equal(r.body.menu.place, null);
+  });
+
+  it("BRIDGE: the Memory's OWN catalog row wins over a sibling sharing its canonical location", async () => {
+    app = await startApp({
+      mutate: (s) => {
+        s.memories.find((m) => m.id === MEM_CATALOG).canonical_location_id = CANON_LOC;
+        s.places.find((p) => p.id === PLACE_OPEN).canonical_location_id = CANON_LOC;
+      },
+    });
+    const r = await get(app, `/api/memories/${MEM_CATALOG}/actions`, OWNER);
+    assert.equal(r.body.menu.place.id, PLACE_OPEN, "the row the person picked, not PLACE_CANON");
+  });
+
+  it("the 21st current trip is still the viewer's own — a requested trip is not refused for being past the list's cap", async () => {
+    app = await startApp({
+      mutate: (s) => {
+        for (let i = 0; i < 21; i++) {
+          s.trips.push({ id: `41000000-0000-4000-8000-${String(i).padStart(12, "0")}`, owner_id: OWNER, title: `T${i}`,
+            destination_city: "Osaka", destination_country: "Japan", start_date: `2027-01-${String(i + 1).padStart(2, "0")}`, end_date: "2027-12-31", status: "planning" });
+          // Sorted by start date, the requested trip (the 21st, i = 20) is the LAST one: past any cap of 20.
+        }
+      },
+    });
+    const last = "41000000-0000-4000-8000-000000000020";
+    const r = await get(app, `/api/memories/${MEM_CATALOG}/actions/DO_AGAIN?tripId=${last}`, OWNER);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.compiled.tripChoice.trip.id, last);
+    assert.ok(r.body.compiled.tripChoice.candidates.length <= 20, "the list a person picks from is still bounded");
+  });
+
+  it("Bring Forward follows a merge to the successor, the same rule Do Again uses", async () => {
+    app = await startApp({
+      mutate: (s) => {
+        s.places.push(place("20000000-0000-4000-8000-0000000000c1", { name: "Old Stall", status: "duplicate", merged_into_place_id: "20000000-0000-4000-8000-0000000000c2" }));
+        s.places.push(place("20000000-0000-4000-8000-0000000000c2", { name: "New Stall" }));
+        s.trip_saved_places.push({ trip_id: OLD_TRIP, user_id: OWNER, place_id: "20000000-0000-4000-8000-0000000000c1", place_name: "Old Stall", saved_at: "2026-02-25T00:00:00.000Z" });
+      },
+    });
+    const r = await get(app, `/api/memories/${MEM_CATALOG}/actions/BRING_FORWARD_SAVED`, OWNER);
+    assert.equal(r.status, 200);
+    const ids = r.body.compiled.items.map((i: any) => i.addToTrip.id);
+    assert.ok(ids.includes("20000000-0000-4000-8000-0000000000c2"), JSON.stringify(ids));
+    assert.ok(!ids.includes("20000000-0000-4000-8000-0000000000c1"));
   });
 });
