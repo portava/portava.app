@@ -1,5 +1,6 @@
 import { Router } from "express";
 import type { Response } from "express";
+import { auditServedResurfacing } from "../services/highlights/resurfacingSuppressionAudit.js";
 import { requireUser, sendError } from "../lib/http";
 import { getServiceClient } from "../lib/supabase";
 import { invalidate as invalidateCompassCache } from "../compass/CompassCacheEngine.js";
@@ -1338,7 +1339,13 @@ router.get("/highlights/active", async (req, res) => {
   const ownerIds = [...new Set(consented.map((h: any) => h.owner_id as string))];
 
   // §10 — clamp each location to the owner's selected precision.
-  const disclosed = applyLocationPrecision(consented as any[], policies, req.log, "GET /highlights/active");
+  // §24 `resurfacing_suppression_violations` — the serving step re-asks the
+  // §11 question of every row it is about to hand over, counts any that should
+  // not be here (must be zero) and drops them (census H221).
+  const disclosed = auditServedResurfacing(
+    applyLocationPrecision(consented as any[], policies, req.log, "GET /highlights/active"),
+    user.id, { controls: suppressed, viewerControls: viewerSuppressed, policies }, req.log, "GET /highlights/active",
+  );
 
   // Batch metrics + author profiles
   const [viewRows, likeRows, viewedRows, likedRows, profileRows] = await Promise.all([
@@ -2854,7 +2861,11 @@ router.get("/highlights/following-feed", async (req, res) => {
   const ownerIds = [...new Set(visible.map((h: any) => h.owner_id as string))];
 
   // §10 — clamp each location to the owner's selected precision.
-  const disclosed = applyLocationPrecision(visible as any[], policies, req.log, "GET /highlights/following-feed");
+  // §24 `resurfacing_suppression_violations` — see GET /highlights/active.
+  const disclosed = auditServedResurfacing(
+    applyLocationPrecision(visible as any[], policies, req.log, "GET /highlights/following-feed"),
+    user.id, { controls: suppressed, viewerControls: viewerSuppressed, policies }, req.log, "GET /highlights/following-feed",
+  );
 
   const [viewRows2, likeRows2, viewedRows2, likedRows2, profileRows] = await Promise.all([
     sc.from("highlight_views").select("highlight_id").in("highlight_id", highlightIds),
