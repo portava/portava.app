@@ -5503,7 +5503,7 @@ the mechanism; the offline path is what asks them the §18.3 questions.
   plan and reservations (no `raw_text`), and its commitments under the
   operational gate, and refuses (503) rather than issue an unsigned bundle
   when no secret is configured. `test/tripOfflineBundle.test.ts:153#version_behind`
-  and `test/tripOfflineRoute.test.ts:188#unsigned` pin the contents, the
+  and `test/tripOfflineRoute.test.ts:190#unsigned` pin the contents, the
   round trip, the tamper case and the refusal. Mutation: any signature
   verifies (2 red).
 - **§18.1 stale is visible (TR342)** — `domain/trips/services/TripOfflineBundle.ts:151#bundleStaleness(`:
@@ -5532,7 +5532,7 @@ the mechanism; the offline path is what asks them the §18.3 questions.
   when the kernel flag is off, and answers the whole queue — counts of
   replayed, duplicates, conflicts, revalidate, rejected, refused — so one
   refusal hides nothing. `test/tripOfflineQueue.test.ts:101#horizon` pins the
-  rule; `test/tripOfflineRoute.test.ts:211#TRIP_OFFLINE_REVALIDATION_REQUIRED`
+  rule; `test/tripOfflineRoute.test.ts:213#TRIP_OFFLINE_REVALIDATION_REQUIRED`
   drives the app: the order, the duplicate's receipt, the held sensitive
   operation that never reaches the kernel, the conflict that overwrites
   nothing, the rejected types, the flag off, the bundle current / behind /
@@ -5620,7 +5620,7 @@ under a mutation before its commit.
   `removed` / `already_absent` and moving no aggregate version, because a
   bookmark is not trip state (`routes/tripOffline.ts:244#applySetOperation(`).
   A concurrent add of the same element is the same element: the unique key
-  refuses it and the answer is `already_present`. `test/tripOfflineRoute.test.ts:246#already_present`
+  refuses it and the answer is `already_present`. `test/tripOfflineRoute.test.ts:248#already_present`
   replays save, save, unsave, unsave and reads the set empty with the
   kernel untouched; `test/tripOfflineQueue.test.ts:116#UNSAVE_IDEA` pins the
   classification and the malformed case. Mutation: an add that never
@@ -7033,7 +7033,7 @@ one at a time.
   with the gate on the route is the trip's own plan with a decision id and the
   windows are read with "not routed" stated; a queued completion reaches the
   kernel as issued and is held, not dropped, while the flag is off
-  (`test/tripOfflineRoute.test.ts:164#a queued COMPLETE_ACTIVITY reaches the kernel`).
+  (`test/tripOfflineRoute.test.ts:166#a queued COMPLETE_ACTIVITY reaches the kernel`).
   The queue's own rules: replay via kernel, no revalidation wait, and five
   malformed payloads rejected
   (`test/tripOfflineQueue.test.ts:71#describe("TR346 — complete activity is replayable from the queue"`).
@@ -9974,7 +9974,7 @@ a locating or naming field:
 Two defects found on the way and fixed: a **cached daily brief** (both caches are keyed per user per day)
 was served after the grant that built it was revoked, sharing turned off, or the grant list became
 unreadable — the brief now carries a digest of the viewer's private-place access and is rebuilt when it
-differs (`artifacts/api-server/src/routes/dailyBrief.ts:61#async function privatePlanAccessKey(`); and the
+differs (`artifacts/api-server/src/routes/dailyBrief.ts:62#async function privatePlanAccessKey(`); and the
 trip's **Hidden Gems** list and a gem's **exact-coordinates reveal** treated a gem linked by another
 member's private plan item as linked for everyone — the gem is the place.
 
