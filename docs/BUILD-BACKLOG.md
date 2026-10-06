@@ -59,7 +59,7 @@ Format: `- [lane] file:line — what is wrong, and what the user sees.`
   TODAY: nobody is being misled, because nobody can turn it on from the app.
   Whoever builds the trip-scoped control must build the warning WITH it, because
   the warning it would need is the one currently filtered out of the sheet.
-- [hm] `artifacts/api-server/src/services/memory/memorySearchService.ts:110` —
+- [hm] `artifacts/api-server/src/services/memory/memorySearchService.ts:154#export const UNREACHABLE_NAMESPACES` —
   SHARED_CREW is unreachable from `POST /memories/search`. `TripMemoryProjection`
   and `PeopleMemoryProjection` are derived per OWNER, so a crew-wide search must
   union one derivative per member and decide what a revoked or departed member's
