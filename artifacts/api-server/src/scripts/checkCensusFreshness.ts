@@ -2438,6 +2438,9 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts",
     "artifacts/api-server/src/test/telegraphPostProjectionByline.test.ts",
     "artifacts/api-server/src/test/telegraphConversationHeaderIdentity.test.ts",
+    // WIDENED 2026-10-06 by lane T2 (§45f): the proving suite of §45d.3's correction (the header's
+    // availability across a block and the window relationship; verification of a58aa01d3f, finding 1).
+    "artifacts/api-server/src/test/telegraphConversationHeaderAvailability.test.ts",
     // T366's W (§45c.2) rests on the kernel's call shape here: a change to it can move that row.
     "artifacts/api-server/src/lib/memoryCommandBus.ts",
   ],

@@ -10843,6 +10843,10 @@ reverted. No migration, no flag, no database.
   `followers`, so the answer reaches every window that has been made.
 - The other surfaces that show identity across a block are listed in §45d.3.
 
-### 45f.3 Net effect
+### 45f.3 Cited, not graded
+
+- NOT-GRADED: artifacts/api-server/src/routes/compass.ts — cited in §45f.2 only to show which way Compass reads a window's `followers` audience; no Telegraph verdict rests on it.
+
+### 45f.4 Net effect
 
 No row moves. §1's headline is unchanged (249 / 179 / 21 / 2).
