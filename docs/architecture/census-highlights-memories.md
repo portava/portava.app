@@ -64,10 +64,10 @@ leading blank line and a trailing newline, so the two agree and either may be re
 > ### The false green: H84
 >
 > H84 ("Blocking and account deletion suppress future social resurfacing and
-> unlink identity") was **BAC**, citing `lib/deletionDispositions.ts:152, 192,
+> unlink identity") was **BAC**, citing `lib/deletionDispositions.ts:156, 196,
 > 352` as proof that deletion "reaches … every highlight table". Line 152 is
 > genuine — `memories`, `memory_likes` and `memory_saves` are in
-> **`ERASED_BY_CASCADE`** (`src/lib/deletionDispositions.ts:46`). Line 352 is not.
+> **`ERASED_BY_CASCADE`** (`src/lib/deletionDispositions.ts:50`). Line 352 is not.
 > `highlights`, `highlight_likes`, `highlight_reports` and `highlight_views` are
 > in **`UNCLASSIFIED_BACKLOG`** (`:270`, entries `:366-369`) and `highlight_replies`
 > is in `DENOMINATOR_CORRECTION_BACKLOG` (`:544`, entry `:569`). That file's own
@@ -281,7 +281,7 @@ own count of §3.6, table by table.
     Memory survives (`routes/memories.ts:593-621`), a genuine private-by-default suggestion
     pipeline (`services/passport/PassportMemoryService.ts:73`, accepted at `:150`), and an
     account-deletion sweep that reaches every memory and highlight table
-    (`lib/deletionDispositions.ts:152,192,352`). Calling that 1.1% undersells the repository.
+    (`lib/deletionDispositions.ts:156,196,466`). Calling that 1.1% undersells the repository.
   - **Spec-attributable CORRECT is lower than claimed: 0.0%, not 1.1%.** Every one of those 17 is
     pre-existing work for another spec. If the 1.1% was meant as "built for this spec", it should
     be zero.
@@ -432,7 +432,7 @@ column but ships no detector.
 | H81 | Publishing location must never exceed the owner's selected precision | NB | There is no owner-selected precision on a Memory; the only clamp is the gem ceiling | |
 | H82 | Temporary operational location must not leak into durable public Highlights | NB | `routes/highlights.ts:153-160` persists `location_name`/`city`/`country` verbatim with no precision control and no TTL distinct from the media's | |
 | H83 | Being tagged or referenced does not make another user a co-owner | **BAC** | `routes/memories.ts:669-711` — a tagged user may only approve/remove **their own** tag (`userId !== user.id → 403`); no edit, no visibility, no delete rights accrue. Owner-only checks at `:606-608`, `:669-674` | pre |
-| H84 | Blocking and account deletion suppress future social resurfacing and unlink identity | **BAC** | Memories feed fails **closed** on a block-lookup error rather than serving an unfiltered feed (`routes/memories.ts:267-283`); highlights filter both directions (`routes/highlights.ts:788-797`, `:38-53`); deletion reaches `memories`/`memory_likes`/`memory_saves` (`lib/deletionDispositions.ts:152`), the derived family (`:200`) and every highlight table (`:360`), executed at `services/accountDeletion/AccountDeletionService.ts:964-975` | pre |
+| H84 | Blocking and account deletion suppress future social resurfacing and unlink identity | **BAC** | Memories feed fails **closed** on a block-lookup error rather than serving an unfiltered feed (`routes/memories.ts:267-283`); highlights filter both directions (`routes/highlights.ts:788-797`, `:38-53`); deletion reaches `memories`/`memory_likes`/`memory_saves` (`lib/deletionDispositions.ts:156`), the derived family (`:200`) and every highlight table (`:360`), executed at `services/accountDeletion/AccountDeletionService.ts:964-975` | pre |
 | H85 | Public sharing assumes copyability; screenshot prevention is not a privacy boundary | **BAC** | No screenshot-prevention code exists anywhere in `travel-buddy-standalone/src` or `app/` — no `ScreenCapture`, no `FLAG_SECURE`. The stance is respected by construction | — |
 
 ### §11 Sensitive context and resurfacing controls (7)
@@ -791,7 +791,7 @@ has yet been protected.
 
 | id | Was | Now | Evidence at `cdfff599` | Attr |
 |---|---|---|---|---|
-| H84 | BAC | **BBW** | **A false green, corrected.** Blocking half stands (`routes/memories.ts:267-283`, `routes/highlights.ts:788-797`). Deletion half is false: `highlights`, `highlight_likes`, `highlight_reports`, `highlight_views` are in `UNCLASSIFIED_BACKLOG` (`lib/deletionDispositions.ts:374-377#highlight_likes`), `highlight_replies` in `DENOMINATOR_CORRECTION_BACKLOG` (`:585`); `AccountDeletionService.ts:100-104` confirms. `memories` / `memory_likes` / `memory_saves` remain genuinely cascaded (`services/accountDeletion/AccountDeletionService.ts:162#/** Per-step outcome. Steps are independent so one failure cannot hide another. */`). | pre |
+| H84 | BAC | **BBW** | **A false green, corrected.** Blocking half stands (`routes/memories.ts:267-283`, `routes/highlights.ts:788-797`). Deletion half is false: `highlights`, `highlight_likes`, `highlight_reports`, `highlight_views` are in `UNCLASSIFIED_BACKLOG` (`lib/deletionDispositions.ts:488-491#highlight_likes`), `highlight_replies` in `DENOMINATOR_CORRECTION_BACKLOG` (`:585`); `AccountDeletionService.ts:100-104` confirms. `memories` / `memory_likes` / `memory_saves` remain genuinely cascaded (`services/accountDeletion/AccountDeletionService.ts:162#/** Per-step outcome. Steps are independent so one failure cannot hide another. */`). | pre |
 | H7 | NB | **BBW** | MemoryEvidenceService: `services/memoryProjections/evidence.ts` — normalization (`:246`), dedup (`:332`), precedence merge (`:364`), eligibility (`:435`), versioned (`:34`, `:36`). No route imports it; `memory_evidence` does not exist. | spec |
 | H8 | NB | **BBW** | EpisodeDetectionService: `episodeDetection.ts:244` `detectEpisodes`, deterministic (sorted output, digest ids), `EPISODE_DETECTOR_VERSION` (`:32`). No inputs exist — `memory_evidence` and `memory_episodes` are still absent. | spec |
 | H9 | NB | **BBW** | MemoryEligibilityService: `evidence.ts:435` `evaluateEligibility` with a closed rejection-reason set (`:391`). Test-only. | spec |
