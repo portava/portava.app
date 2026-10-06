@@ -42,6 +42,8 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { mayDiscloseGemIdentity } from "../hiddenGems/HiddenGemPrivacyGuard.js";
+import { canReadMemory } from "../memory/memoryReadPolicy.js";
+import { decideHighlightViewAccess } from "../../routes/highlights.js";
 import {
   readProjectionInputs,
   publicProjectionVerdict,
@@ -529,29 +531,32 @@ const loadMemory: Loader = async (client, id, viewerId) => {
   const mine = r.owner_id === viewerId;
   const visible = mine || r.visibility === "public" || allowed.includes(viewerId);
   if (!visible) return { state: UNAVAILABLE("private"), projection: null };
-  // A BLOCK OUTRANKS "public", and this loader used to be the one place on the
-  // Memory surface where it did not. §23's predicate
-  // (`services/memory/memoryReadPolicy.ts`) checks blocks in both directions,
-  // and `loadProfile` below has checked them since it was written — so a
-  // traveller who blocked somebody had that person refused their PROFILE card
-  // and served the title and city of their public MEMORY in the same chat.
-  // Highlights/Memories §10: blocking "unlinks profile identity"; §5.3's word
-  // for the outcome is `unauthorized`, the same one `loadProfile` uses.
-  //
-  // One direction only, deliberately, and it is the same direction
-  // `loadProfile` takes: the OWNER blocking the VIEWER. Adding the reverse arm
-  // would be a wider rule than this file's neighbour applies, and widening a
-  // share rule is a product decision rather than a repair of a divergence.
-  // Fail-closed: an unreadable `blocks` degrades to "unknown" rather than to
-  // "not blocked", which is what every other read in this file already does.
+  // A BLOCK OUTRANKS "public", in BOTH directions (lead ruling on lane R's
+  // wave-1 verification, F1, 2026-10-06). This used to read the owner->viewer
+  // direction only, matching `loadProfile`; §23's predicate
+  // (`services/memory/memoryReadPolicy.ts` isBlocked) and the Memory routes
+  // refuse either direction, and a share card is a read of the Memory, so it
+  // takes the stricter rule. Narrowing a share is not the product decision the
+  // old comment declined to make — widening one would be. Fail-closed: an
+  // unreadable `blocks` is "unknown", never "not blocked".
   if (!mine) {
-    const { data: blocks, error: bErr } = await client
-      .from("blocks")
-      .select("blocker_id, blocked_id")
-      .eq("blocker_id", r.owner_id as string)
-      .eq("blocked_id", viewerId);
-    if (bErr) return { state: UNAVAILABLE("unknown"), projection: null };
-    if ((blocks ?? []).length > 0) return { state: UNAVAILABLE("unauthorized"), projection: null };
+    const [byOwner, byViewer] = await Promise.all([
+      client.from("blocks").select("blocker_id, blocked_id").eq("blocker_id", r.owner_id as string).eq("blocked_id", viewerId),
+      client.from("blocks").select("blocker_id, blocked_id").eq("blocker_id", viewerId).eq("blocked_id", r.owner_id as string),
+    ]);
+    if (byOwner.error || byViewer.error) return { state: UNAVAILABLE("unknown"), projection: null };
+    if ((byOwner.data ?? []).length > 0 || (byViewer.data ?? []).length > 0) {
+      return { state: UNAVAILABLE("unauthorized"), projection: null };
+    }
+    // AND the §23 ladder itself. The grant above is this file's conservative
+    // reading (public, an explicit allow-list entry, or ownership); it read
+    // `allowed_user_ids` under ANY visibility, so an `only_me` Memory with a
+    // stale allow-list entry served its title and city here while
+    // `canReadMemory` refused it. Both must now say yes — never wider than
+    // either.
+    if (!(await canReadMemory(client, r, viewerId, "single"))) {
+      return { state: UNAVAILABLE("private"), projection: null };
+    }
   }
   return {
     state: AVAILABLE(String(r.state)),
@@ -661,6 +666,29 @@ const loadHighlight: Loader = async (client, id, viewerId) => {
   if (expiresAt <= Date.now()) return { state: UNAVAILABLE("deleted"), projection: null };
   const mine = r.owner_id === viewerId;
   if (!mine && r.visibility !== "public") return { state: UNAVAILABLE("private"), projection: null };
+  // THE SAME GATE AS THE SINGLE-HIGHLIGHT ROUTES (lane R wave-1 verification,
+  // F1). This card is a read of the Highlight on a sibling door — any active
+  // thread member may ask for any id — and it never read `blocks` at all, while
+  // `publicProjectionVerdict` below states that its caller "has ALREADY applied
+  // blocks". A viewer the owner blocked, or who blocked the owner, resolved the
+  // caption and media URL into a chat card by id. `decideHighlightViewAccess`
+  // is the verdict `resolveViewAccess` gives; its `reason` keeps this file's
+  // §5.3 states honest: a block is `unauthorized`, a read we could not make is
+  // `unknown`, never a share.
+  // A `withheld` refusal (a §10/§11 owner decision) is left to the verdict
+  // just below, which already tells an unreadable control table (`unknown`)
+  // from a real refusal (`private`); every other rung answers here.
+  if (!mine) {
+    const access = await decideHighlightViewAccess(client, viewerId, id);
+    if (!access.ok && access.reason !== "withheld") {
+      const state =
+        access.reason === "unreadable" || access.reason === "blocks_unreadable" ? "unknown"
+        : access.reason === "blocked" ? "unauthorized"
+        : access.reason === "missing" ? "not_found"
+        : "private";
+      return { state: UNAVAILABLE(state), projection: null };
+    }
+  }
   // §10/§11 — dropping a Highlight into a thread is `public_projection`, the
   // destination KEEP_PRIVATE_FOREVER and a refused SHARE consent are declared
   // to reach. A control we cannot read is `unknown`, not a share: the owner's

@@ -20,7 +20,6 @@
   "artifacts/api-server/src/lib/stamps/composition/identities.ts::S2": 1,
   "artifacts/api-server/src/routes/adminCompass.ts::S2": 2,
   "artifacts/api-server/src/routes/calls.ts::S2": 1,
-  "artifacts/api-server/src/routes/collections.ts::S2": 1,
   "artifacts/api-server/src/routes/compass.ts::S2": 2,
   "artifacts/api-server/src/routes/compass.ts::S4": 5,
   "artifacts/api-server/src/routes/countryEssentials.ts::S2": 1,
