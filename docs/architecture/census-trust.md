@@ -3938,7 +3938,7 @@ read or written; migration 3932 is written and applied nowhere. Lead rulings are
 ### 36.1 What was built or re-proven
 
 1. **D-24 / D-24b / D-24c: the sentence is the contract.** The person-facing sentence per restriction type
-   (`artifacts/api-server/src/services/trust/TrustPrivacyGuard.ts:82#hosting:             "You cannot host group trips or start or link public Trails.`)
+   (`artifacts/api-server/src/services/trust/TrustPrivacyGuard.ts:82#hosting:             "You cannot host group trips, change a group trip's shared plan, or start or link public Trails.`)
    now names every capability the restriction stops. `hosting` and `messaging` carry the ruling's sentences
    verbatim. `hosting` and `private_plan_access` each add one clause for the booking rows of the mapping
    the ruling CONFIRMS: "being booked as a buddy (B)" and "booking a buddy as a traveller (B)". The
@@ -3965,7 +3965,7 @@ read or written; migration 3932 is written and applied nowhere. Lead rulings are
    deletes its row. All five creation doors refuse with 503 `verification_unavailable` while verification
    is not operational, with the old row seeded TRUE. This holds on a production host, a dev host, a hosted
    deployment and a sandbox identity key
-   (`artifacts/api-server/src/test/rentABuddyGateConsolidation.test.ts:860#N-1: every booking door refuses while identity verification is not operational`;
+   (`artifacts/api-server/src/test/rentABuddyGateConsolidation.test.ts:861#N-1: every booking door refuses while identity verification is not operational`;
    the spec door is in `rentABuddySpecBookingBypass.test.ts`). The mock identity provider now runs under
    the test runner only, never on a dev host (N-2, lane B's `lib/paymentsMode.ts`, NOT-GRADED below).
 5. **A restricted person sees what is restricted, until when, and appeals THAT restriction** (OD-TRUST-4,

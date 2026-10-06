@@ -659,20 +659,20 @@ async function resolveDisplayNames(
 // operator from toggling a switch that does nothing during an incident and
 // mistaking silence for the feature being stopped.
 // See scripts/check-flag-polarity.mjs INERT_SEEDED_FLAGS for the recorded intent.
-const HIDDEN_INERT_FLAGS = new Set([
+import { HIDDEN_INERT_FLAGS } from "../lib/hiddenInertFlags.js"; // verifier F9: the ONE list and guard every admin flag writer applies; entries moved there verbatim, these notes stay as the record
   // Retired 2026-09-16 by 2962_retire_unread_sensing_flags.sql. Seeded FALSE by
   // 2956 and read by nothing: their readers on the source branch both depended on
   // a credential module the port rejected, and lib/sensingAuthPosture.ts forbids
   // any runtime flag from flipping the sensing posture at all. Hidden here as well
   // as deleted, so the surface behaves identically on a database where 2962 has
   // not been applied yet -- the pairing 0209/4d5cc1f4e used for the freeze flags.
-  "intel_sensing_credentials_enabled",
-  "intel_sensing_device_enrollment_enabled",
+  //   intel_sensing_credentials_enabled
+  //   intel_sensing_device_enrollment_enabled
 
-  "freeze_city",
-  "freeze_event",
-  "freeze_circle",
-  "freeze_booking",
+  //   freeze_city
+  //   freeze_event
+  //   freeze_circle
+  //   freeze_booking
 
   // Retired 2026-08-12 by 2080_retire_inert_seeded_flags.sql. Every one of the
   // ten was seeded by an `INSERT INTO public.feature_flags`, which the seed
@@ -694,17 +694,17 @@ const HIDDEN_INERT_FLAGS = new Set([
   // through to generic not-found handling, reading as "wrong URL" rather than
   // "this control does not exist", and these guards keep behaviour identical on
   // a database where the migration has not been applied yet.
-  "COMPASS_FRONTLOAD_ENABLED",
-  "COMPASS_ACTIVE_REWARD_ENABLED",
-  "COMPASS_EXPLAIN_WHY_ENABLED",
-  "COMPASS_ADMIN_CONTROLS_ENABLED",
-  "COMPASS_ABUSE_DEFENSE_ENABLED",
-  "COMPASS_NOTIFICATION_INTELLIGENCE_ENABLED",
-  "notifications_enabled",
-  "notification_digests_enabled",
-  "realtime_activity_enabled",
-  "safety_notifications_enabled", "rent_buddy_allow_bookings_without_kyc", // retired 2026-10-06 by 3932 (N-1, owner: "No tester bypass"); read by nothing, so never offered as a lever
-]);
+  //   COMPASS_FRONTLOAD_ENABLED
+  //   COMPASS_ACTIVE_REWARD_ENABLED
+  //   COMPASS_EXPLAIN_WHY_ENABLED
+  //   COMPASS_ADMIN_CONTROLS_ENABLED
+  //   COMPASS_ABUSE_DEFENSE_ENABLED
+  //   COMPASS_NOTIFICATION_INTELLIGENCE_ENABLED
+  //   notifications_enabled
+  //   notification_digests_enabled
+  //   realtime_activity_enabled
+  //   safety_notifications_enabled, rent_buddy_allow_bookings_without_kyc — retired 2026-10-06 by 3932 (N-1, owner: "No tester bypass"); read by nothing, so never offered as a lever
+// (end of the list moved to lib/hiddenInertFlags.ts)
 
 /**
  * GET /admin/feature-flags
