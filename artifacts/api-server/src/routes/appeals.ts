@@ -494,7 +494,7 @@ const RESTRICTION_TYPES = new Set<string>(["hosting", "private_plan_access", "me
 type ActiveRestrictionRow = { id: string; restriction_type: string; created_at: string | null; expires_at: string | null };
 
 /** The caller's ACTIVE restrictions: not lifted, not expired. A failed read is `null`, never an empty list. */
-async function readOwnActiveRestrictions(sc: any, userId: string): Promise<ActiveRestrictionRow[] | null> {
+async function readOwnActiveRestrictions(sc: SupabaseClient, userId: string): Promise<ActiveRestrictionRow[] | null> {
   const now = new Date().toISOString();
   const { data, error } = await sc
     .from("trust_restrictions")
@@ -513,10 +513,10 @@ async function readOwnActiveRestrictions(sc: any, userId: string): Promise<Activ
  * appellant's OWN restriction and still active. Writes the refusal and answers
  * false otherwise. An unreadable table is a 503, not a "not found".
  */
-async function requireOwnActiveRestriction(sc: any, userId: string, restrictionId: string, req: any, res: any): Promise<boolean> {
+async function requireOwnActiveRestriction(sc: SupabaseClient, userId: string, restrictionId: string, req: Request, res: Response): Promise<boolean> {
   const rows = await readOwnActiveRestrictions(sc, userId);
   if (rows === null) {
-    req.log?.error?.({ userId }, "appeal: trust_restrictions unreadable");
+    req.log.error({ userId }, "appeal: trust_restrictions unreadable");
     sendError(res, "degraded_unavailable", "We couldn't check that restriction right now. Please try again shortly.");
     return false;
   }
@@ -561,5 +561,7 @@ router.get("/appeals/me/restrictions", asyncHandler(async (req, res) => {
 
 import { restrictionSentence } from "../services/trust/TrustPrivacyGuard.js";
 import type { RestrictionType } from "../services/trust/TrustRestrictionService.js";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Request, Response } from "express";
 
 export default router;

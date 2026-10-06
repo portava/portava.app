@@ -35,10 +35,11 @@ const isStrOrNull = (v: unknown): v is string | null => v === null || typeof v =
  * that says so.
  */
 export function parseMyRestrictions(json: unknown): MyRestriction[] {
-  if (json === null || typeof json !== 'object' || !Array.isArray((json as any).restrictions)) {
+  const list = json !== null && typeof json === 'object' ? (json as { restrictions?: unknown }).restrictions : undefined;
+  if (!Array.isArray(list)) {
     throw new RestrictionsPayloadError('no restrictions array');
   }
-  return ((json as any).restrictions as unknown[]).map((r, i) => {
+  return (list as unknown[]).map((r, i) => {
     const o = r as Record<string, unknown>;
     if (!o || !isStr(o.id) || !isStr(o.type) || !isStr(o.summary) || !isStrOrNull(o.since ?? null) || !isStrOrNull(o.until ?? null)) {
       throw new RestrictionsPayloadError(`entry ${i}`);

@@ -90,8 +90,8 @@ export type { MyRestriction } from './appealRestrictions.ts';
 export async function getMyRestrictions(): Promise<MyRestriction[]> {
   const res = await fetch(api('appeals/me/restrictions'), { headers: await authHeaders() });
   if (!res.ok) {
-    const json = await res.json().catch(() => ({}));
-    throw Object.assign(new Error((json as any).message ?? 'Failed to load restrictions'), { code: (json as any).error });
+    const json = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
+    throw Object.assign(new Error(json.message ?? 'Failed to load restrictions'), { code: json.error });
   }
   return parseMyRestrictions(await res.json());
 }
