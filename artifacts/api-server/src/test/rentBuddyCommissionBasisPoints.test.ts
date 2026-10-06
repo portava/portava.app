@@ -410,10 +410,13 @@ describe("an unreadable fee rule refuses — never 0 %, never the flat rate", ()
     );
     assert.deepEqual(folded.unpriceableBookingIds, ["bad"]);
     assert.equal(folded.totalPlatformFeesUsd, 10, "only the priceable booking contributes a fee");
+    // Since main's M5 (#610) the deposit sum is SCHEDULED, not collected:
+    // totalInAppUsd is the collected zero and the sum lives beside it.
     assert.equal(
-      folded.totalInAppUsd, 100,
+      folded.totalInAppScheduledUsd, 100,
       "and the unpriceable one contributes NOTHING, rather than a zero that reads as a fact",
     );
+    assert.equal(folded.totalInAppUsd, 0, "nothing was collected in app (M5)");
   });
 
   it("a view of a pre-3601 ledger row publishes its rate, and never invents one", () => {

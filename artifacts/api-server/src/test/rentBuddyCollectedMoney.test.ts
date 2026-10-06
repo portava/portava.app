@@ -168,8 +168,14 @@ function userClient(role: string | null = null): any {
   };
 }
 
+// The rate is read in BASIS POINTS since migration 3601 (PR #616), and a rate
+// other than the flat 1000 is usable only with a recorded approval. This suite
+// is about what was COLLECTED, not about the rate, so it keeps its 20 %
+// arithmetic by carrying an approval on the fixture row; every expected number
+// below is unchanged.
 const FEE_ROW = {
-  buddy_level: "new", platform_fee_percent: 20,
+  buddy_level: "new", platform_fee_percent: 20, platform_fee_basis_points: 2000,
+  commission_override_approval: "test fixture: an approved 20 % override, so this suite's arithmetic is unchanged",
   traveler_service_fee_usd: 0, traveler_service_fee_pct: 0,
 };
 
@@ -375,7 +381,7 @@ describe("S2a — foldEarningsRows (the pagination path)", () => {
   ];
 
   it("totalInAppUsd is 0 while the scheduled total and the net are untouched", () => {
-    const summary = foldEarningsRows(ROWS, 0.2, new Date("2026-06-01T00:00:00Z"));
+    const summary = foldEarningsRows(ROWS, 2000, new Date("2026-06-01T00:00:00Z"));
 
     assert.equal(summary.totalInAppUsd, 0);
     assert.notEqual(
@@ -394,7 +400,7 @@ describe("S2a — foldEarningsRows (the pagination path)", () => {
   });
 
   it("every month reports 0 collected and the month's own scheduled amount", () => {
-    const summary = foldEarningsRows(ROWS, 0.2, new Date("2026-06-01T00:00:00Z"));
+    const summary = foldEarningsRows(ROWS, 2000, new Date("2026-06-01T00:00:00Z"));
     assert.equal(summary.monthlyBreakdown.length, 1, "all three bookings are in 2026-03");
 
     const [march] = summary.monthlyBreakdown;
@@ -411,7 +417,7 @@ describe("S2a — foldEarningsRows (the pagination path)", () => {
     // booking is full-in-app, so cash is 0: a net of `collected + cash - fees`
     // would be -120 and the buddy would be told they OWE Portava money.
     const summary = foldEarningsRows(
-      [fullInAppBooking("only", 600)], 0.2, new Date("2026-06-01T00:00:00Z"),
+      [fullInAppBooking("only", 600)], 2000, new Date("2026-06-01T00:00:00Z"),
     );
     assert.equal(summary.totalCashConfirmedUsd, 0);
     assert.equal(summary.totalNetUsd, 480);
