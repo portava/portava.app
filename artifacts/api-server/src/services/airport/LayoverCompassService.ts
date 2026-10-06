@@ -67,7 +67,7 @@ import {
   type FeasibilitySession,
   type LayoverFeasibilityRecord,
 } from "./LayoverFeasibility.js";
-import { planFitTotals, planFitVerdict, type PlanFitStop } from "./LayoverPlanFit.js";
+import { type PlanFitStop } from "./LayoverPlanFit.js"; import { certifiedPlanFit } from "./LayoverConstraints.js";
 import { formatLocalTime } from "./AirportTime.js";
 import { sanitizeCompassAnswer } from "./LayoverPrivacyGuard.js";
 
@@ -934,21 +934,21 @@ export function runLayoverTool(
       const candidate: PlanFitStop[] = modelSuppliedSet
         ? (args.candidateSet as PlanFitStop[])
         : (ctx.stops ?? []);
-      // The same arithmetic and the same refusal as `computePlanFit` — through
-      // the same module, so this tool cannot answer a question about a plan
-      // differently from the screen the traveller is looking at (census L47).
-      // A leg nobody stated is not a zero-minute leg, so `neededMin` is a lower
-      // bound and `fitsWindow` is false unless every leg is stated.
-      const totals = planFitTotals(candidate);
-      const fit = planFitVerdict(totals, r.envelope.usableMinutes);
+      // The same arithmetic, the same refusal AND THE SAME GATE as the plan
+      // routes — `certifiedPlanFit`, the one function all three plan surfaces
+      // call (census L47; the gate half is LAY-FIX). The clock half used to be
+      // the whole answer, so a plan through the city "fit" under a refused
+      // border. A stop with no `insideAirport: true` is a landside stop: a
+      // model-supplied candidate that omits the field is not read as airside.
+      const f = certifiedPlanFit(r, candidate);
       return ok({
-        neededMin: totals.neededMin,
-        usableMinutes: r.envelope.usableMinutes,
-        fitsWindow: fit === "fits",
-        fit,
-        unstatedTravelStops: totals.unstatedTravelStops,
-        neededMinIsLowerBound: totals.neededMinIsLowerBound,
-        overflowMin: Math.max(0, totals.neededMin - r.envelope.usableMinutes),
+        neededMin: f.neededMin, usableMinutes: f.usableMinutes,
+        fitsWindow: f.fitsWindow,
+        fit: f.fit, clockFit: f.clockFit,
+        landsideStatus: f.landside.status, landsideClosedBy: f.landside.closedBy, landsideCautions: f.landside.cautions,
+        unstatedTravelStops: f.unstatedTravelStops,
+        neededMinIsLowerBound: f.neededMinIsLowerBound,
+        overflowMin: f.overflowMin,
         backByTime: r.deadline.hardReturnTime.toISOString(),
       });
     }
