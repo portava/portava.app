@@ -190,17 +190,20 @@ export function createWebSpeechRecognizer(scope: unknown = globalThis): SpeechRe
         let rec: WebSpeechRecognition;
         try {
           rec = new Ctor();
-          rec.processLocally = true;
         } catch {
           resolve({ ok: false, unavailable: true, reason: 'provider_error', error: ERROR_COPY.provider_error });
           return;
         }
-        // Belt and braces: an engine that silently ignores the assignment has
-        // not accepted the requirement, and is not used.
-        if (rec.processLocally !== true) {
+        // An engine that does not HAVE the attribute cannot be told to process
+        // locally — assigning it would only create a plain property the engine
+        // never reads. (The earlier "read it back" check could not fail: a plain
+        // assignment always reads back; verifier finding 7.) Such an engine is
+        // not used.
+        if (!('processLocally' in rec)) {
           resolve(ON_DEVICE_UNAVAILABLE);
           return;
         }
+        rec.processLocally = true;
         let final: TranscriptionResult | null = null;
         let failure: string | undefined;
         let settled = false;

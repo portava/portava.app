@@ -75,7 +75,14 @@ export type VoiceUnavailableReason =
   // OD-INPUT-5: the platform cannot recognise speech ON THE DEVICE here, and
   // sending audio to an online service needs a separate consent this build
   // does not ask for — so nothing is sent and nothing is recorded.
-  | 'on_device_unavailable';
+  | 'on_device_unavailable'
+  // OD-INPUT-5: this transcriber sends audio off the device, and the separate,
+  // explicit consent that requires has not been given (no such consent exists
+  // in this build) — so nothing is recorded.
+  | 'cloud_consent_required'
+  // OD-INPUT-5 "no raw-audio retention": the capture surface cannot discard the
+  // clip it records, so it is not used.
+  | 'audio_retention_unsupported';
 
 /**
  * Why a transcript was REFUSED rather than passed to the shared engine.

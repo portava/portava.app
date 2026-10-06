@@ -40,6 +40,7 @@ function fakeWebScope(
   script: Script,
   log: string[] = [],
   onDevice: 'available' | 'downloadable' | 'unavailable' | null = 'available',
+  hasProcessLocally = onDevice !== null,
 ) {
   class FakeRecognition {
     static available = onDevice === null
@@ -48,7 +49,6 @@ function fakeWebScope(
           log.push(`available langs=${o.langs.join(',')} local=${o.processLocally === true}`);
           return o.processLocally === true ? onDevice : 'available';
         };
-    processLocally: boolean | undefined = onDevice === null ? undefined : false;
     lang = '';
     interimResults = false;
     continuous = true;
@@ -71,6 +71,9 @@ function fakeWebScope(
     stop() { log.push('stop'); }
     abort() { log.push('abort'); }
   }
+  // The spec attribute lives on engines that implement it; one that predates it
+  // simply does not have the property.
+  if (hasProcessLocally) Object.defineProperty(FakeRecognition.prototype, 'processLocally', { value: false, writable: true, configurable: true });
   return { webkitSpeechRecognition: FakeRecognition };
 }
 
@@ -238,4 +241,14 @@ test('OD-INPUT-5 native: only an explicit cloud consent lets recognition leave t
   const out = await createNativeSpeechRecognizer(mod, { cloudConsentGranted: true }).recognizeOnce({});
   assert.equal(out.ok, true, 'the consented path exists — and is the ONLY way to it');
   assert.equal(seen.started[0].requiresOnDeviceRecognition, false);
+});
+
+test('OD-INPUT-5 web: an engine that answers available() but has NO processLocally attribute is not used', async () => {
+  // Assigning an attribute an engine does not implement only creates a plain
+  // property it never reads; that engine is not on-device by our say-so.
+  const log: string[] = [];
+  const rec = createWebSpeechRecognizer(fakeWebScope({ results: [{ text: 'Hoi An', confidence: 0.9, isFinal: true }] }, log, 'available', false))!;
+  const out = await rec.recognizeOnce({ language: 'en-US' });
+  assert.deepEqual([out.ok, !out.ok && out.reason], [false, 'on_device_unavailable']);
+  assert.ok(!log.some((l) => l.startsWith('start')), 'never started');
 });
