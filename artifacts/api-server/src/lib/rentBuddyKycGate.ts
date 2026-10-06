@@ -30,7 +30,6 @@
 import { isFlagEnabled } from "./featureFlags.js";
 import { identityProviderStatus } from "../services/identityVerification/readiness.js";
 import { logger as rootLogger } from "./logger.js";
-import { identityMarketAvailability, type MarketAvailability } from "../services/identityVerification/marketCoverage.js";
 
 const logger = rootLogger.child({ gate: "RentBuddyKycGate" });
 
@@ -47,6 +46,53 @@ export interface KycGateResult {
   httpStatus?: number;
   code?: string;
   message?: string;
+}
+
+/**
+ * Decide whether a booking may be created right now.
+ *
+ * Returns `{ allowed: true }` when identity verification is operational, or
+ * when the override flag is explicitly on.
+ */
+export async function checkBookingKycGate(sc: any, market?: string | null, probes: KycGateProbes = {}): Promise<KycGateResult> {
+  const status = probes.status ? probes.status() : identityProviderStatus();
+  if (status.operational) return marketCoverageGate(status.provider, market, probes); // second refusal: market coverage (foot of file)
+
+  // Not operational — only an explicit override may let this through.
+  const overridden = await isFlagEnabled(sc, KYC_OVERRIDE_FLAG);
+  if (overridden) {
+    logger.warn(
+      { provider: status.provider, reason: status.reason, flag: KYC_OVERRIDE_FLAG },
+      "Booking allowed WITHOUT working identity verification — override flag is on",
+    );
+    return { allowed: true };
+  }
+
+  logger.error(
+    { provider: status.provider, reason: status.reason },
+    "Booking creation blocked: identity verification is not operational",
+  );
+
+  return {
+    allowed: false,
+    httpStatus: 503,
+    code: "verification_unavailable",
+    // Deliberately does not leak provider/env detail to the caller.
+    message:
+      "Bookings are temporarily unavailable while identity verification is being set up. " +
+      "We can't safely confirm identities right now, so new bookings are paused.",
+  };
+}
+
+/**
+ * Express helper: returns true when the request may proceed, otherwise writes
+ * the error response and returns false.
+ */
+export async function requireBookingKyc(sc: any, res: any, market?: string | null): Promise<boolean> {
+  const gate = await checkBookingKycGate(sc, market);
+  if (gate.allowed) return true;
+  res.status(gate.httpStatus).json({ error: gate.code, message: gate.message });
+  return false;
 }
 
 // ── THE SECOND REFUSAL: is this MARKET covered? (owner's Sumsub decision) ────
@@ -78,8 +124,9 @@ export interface KycGateResult {
 // `KYC_OVERRIDE_FLAG` is never consulted for a coverage refusal: a market
 // nobody can be verified in is not a pilot a database row can open.
 //
-// Placed here, above the gate, so the gate itself changes by three lines and
-// composes with lane B's rewrite of its not-operational branch.
+// Appended at the foot (with its import) so every cited line above keeps its
+// number; the gate itself changes by three lines and composes with lane B's
+// rewrite of its not-operational branch.
 
 /** Probes the gate composes, injectable ONLY by tests (the same device providerErasure.ts uses). */
 export interface KycGateProbes {
@@ -131,49 +178,4 @@ export function marketCoverageGate(provider: string, market: unknown, probes: Ky
       };
 }
 
-/**
- * Decide whether a booking may be created right now.
- *
- * Returns `{ allowed: true }` when identity verification is operational, or
- * when the override flag is explicitly on.
- */
-export async function checkBookingKycGate(sc: any, market?: string | null, probes: KycGateProbes = {}): Promise<KycGateResult> {
-  const status = (probes.status ?? identityProviderStatus)();
-  if (status.operational) return marketCoverageGate(status.provider, market, probes); // second refusal: market coverage (above)
-
-  // Not operational — only an explicit override may let this through.
-  const overridden = await isFlagEnabled(sc, KYC_OVERRIDE_FLAG);
-  if (overridden) {
-    logger.warn(
-      { provider: status.provider, reason: status.reason, flag: KYC_OVERRIDE_FLAG },
-      "Booking allowed WITHOUT working identity verification — override flag is on",
-    );
-    return { allowed: true };
-  }
-
-  logger.error(
-    { provider: status.provider, reason: status.reason },
-    "Booking creation blocked: identity verification is not operational",
-  );
-
-  return {
-    allowed: false,
-    httpStatus: 503,
-    code: "verification_unavailable",
-    // Deliberately does not leak provider/env detail to the caller.
-    message:
-      "Bookings are temporarily unavailable while identity verification is being set up. " +
-      "We can't safely confirm identities right now, so new bookings are paused.",
-  };
-}
-
-/**
- * Express helper: returns true when the request may proceed, otherwise writes
- * the error response and returns false.
- */
-export async function requireBookingKyc(sc: any, res: any, market?: string | null): Promise<boolean> {
-  const gate = await checkBookingKycGate(sc, market);
-  if (gate.allowed) return true;
-  res.status(gate.httpStatus).json({ error: gate.code, message: gate.message });
-  return false;
-}
+import { identityMarketAvailability, type MarketAvailability } from "../services/identityVerification/marketCoverage.js";
