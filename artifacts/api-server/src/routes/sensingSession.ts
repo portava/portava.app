@@ -24,11 +24,12 @@
  *   eligibility      sensingEligibility → `authenticated_profile` today
  *                    (attestation does not exist yet; unattested is refused)
  *   abuse budget     one limiter keyed on the profile, in memory / Redis only
- *   CONSENT          the person's recorded disclosure version decides which
- *                    scopes they agreed to (lib/sensingConsentScopes), and the
- *                    session carries the intersection with the policy in force.
- *                    The v1 disclosure describes Quick Signals only, so it
- *                    covers NO passive-sensing scope and is refused here.
+ *   CONSENT          OD-MAP-6's three SEPARATE grants (lib/sensingConsentGrants,
+ *                    migration 3703) behind sensing_consent_split_enabled
+ *                    (seeded FALSE): capture AND upload are needed for any
+ *                    session; `surface` only with its own grant; the session
+ *                    carries the intersection with the policy in force. The
+ *                    general intel consent (Quick Signals) grants nothing here.
  *   requested ⊆ consented   a device may ask for fewer scopes, never more
  *   write            the session row: the credential's HMAC, the scopes, the
  *                    budget, the window — no identity column exists to write
@@ -42,13 +43,13 @@ import { requireUser, sendError } from "../lib/http.js";
 import { logger } from "../lib/logger.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { checkRateLimit } from "../lib/rateLimit.js";
-import { getIntelConsentState } from "../lib/intelConsent.js";
+import { readFlagState } from "../lib/capability/schemaCapability.js";
 import { SENSING_AUTH_POSTURE, sensingEligibility } from "../lib/sensingAuthPosture.js";
 import { SENSING_PEPPER_ENV, sensingPepperPosture } from "../lib/sensingAnonService.js";
 import { rotationEpochFor } from "../lib/sensingAnonStore.js";
 import { SENSING_ANON_POLICY_V1 } from "../lib/sensingContributionPolicy.js";
 import { buildSensingSessionRow, generateSensingCredential, SENSING_SESSIONS_TABLE } from "../lib/sensingContributionSession.js";
-import { sensingScopesForConsent } from "../lib/sensingConsentScopes.js";
+import { readSensingConsent, sessionScopesForGrants } from "../lib/sensingConsentGrants.js";
 
 const router = Router();
 
@@ -92,10 +93,18 @@ router.post(
     const db = getServiceClient();
     if (!db) return sendError(res, "server_not_configured", "service client unavailable");
 
-    // 6. CONSENT — what this person agreed to, not what the policy permits.
-    const consent = await getIntelConsentState(db, profileId);
+    // 6. CONSENT (OD-MAP-6) — the person's SEPARATE capture / upload / surface
+    // grants (lib/sensingConsentGrants; 3703), behind their own flag. A session
+    // is permission to upload, so it needs capture AND upload; `surface` rides
+    // only on its own grant, and everything is intersected with the policy in
+    // force. The bundled intel-consent v2 path is gone: OD-MAP-6 forbids one
+    // grant covering all three.
+    const split = await readFlagState(db, "sensing_consent_split_enabled");
+    if (split === "unreadable") return sendError(res, "degraded_unavailable", "sensing consent could not be checked; try again");
+    if (split !== "on") return sendError(res, "feature_disabled", "sensing contribution is not available");
+    const consent = await readSensingConsent(db, profileId);
     if (!consent.ok) return sendError(res, "db_error", "consent could not be read");
-    const covered = sensingScopesForConsent(consent.state, SENSING_ANON_POLICY_V1);
+    const covered = sessionScopesForGrants(consent.grants, SENSING_ANON_POLICY_V1);
     if (!covered.covered) return sendError(res, "forbidden", covered.reason);
     const requested = parsed.data.purposeScopes ?? covered.scopes;
     for (const s of requested) {

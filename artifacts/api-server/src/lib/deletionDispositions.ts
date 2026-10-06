@@ -228,6 +228,10 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   "input_outcome_consent",
   "input_outcome_counters",
   "input_memory_context_consent",
+  // OD-MAP-6 sensing consents (migration 3703): user_id REFERENCES
+  // auth.users(id) ON DELETE CASCADE, the same mechanism as the three above, so
+  // the rows go with AccountDeletionService's final auth.admin.deleteUser.
+  "sensing_consent_grants",
 ];
 
 /**
@@ -869,6 +873,9 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "input_outcome_consent",
   "input_outcome_counters",
   "input_memory_context_consent",
+  // OD-MAP-6 sensing consents, added by migration 3703 (post-baseline).
+  // Classified in ERASED_BY_CASCADE above.
+  "sensing_consent_grants",
   "journey_observations",
   "journey_revocation_jobs",
   "journey_segment_revisions",

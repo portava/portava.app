@@ -422,6 +422,8 @@ router.use(sensingIngestRouter);
 // covers (lib/sensingConsentScopes). Tail-registered for the same reason.
 import sensingSessionRouter from "./sensingSession.js";
 router.use(sensingSessionRouter);
+import sensingConsentRouter from "./sensingConsent.js"; // OD-MAP-6: the three separate sensing consents (3703)
+router.use(sensingConsentRouter);
 
 // ── Media §37: the video poster and the resumable byte path for a postcard ───
 // slot. Its own file; routes/postcards.ts keeps the reservation and /complete,

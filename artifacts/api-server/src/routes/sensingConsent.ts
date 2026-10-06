@@ -30,7 +30,6 @@ import { readFlagState } from "../lib/capability/schemaCapability.js";
 import {
   SENSING_CONSENT_DISCLOSURE_VERSIONS,
   SENSING_CONSENT_SCOPES,
-  SENSING_CONSENT_SPLIT_FLAG,
   effectiveSensingConsent,
   isSensingConsentScope,
   readSensingConsent,
@@ -64,7 +63,7 @@ router.get(
     if (!auth) return;
     const db = getServiceClient();
     if (!db) return sendError(res, "server_not_configured", "service client unavailable");
-    const flag = await readFlagState(db, SENSING_CONSENT_SPLIT_FLAG);
+    const flag = await readFlagState(db, "sensing_consent_split_enabled");
     if (flag === "unreadable") return sendError(res, "degraded_unavailable", "Sensing consent could not be read right now. Please try again.");
     const read = await readSensingConsent(db, auth.user.id);
     if (!read.ok) return sendError(res, "degraded_unavailable", "Sensing consent could not be read right now. Please try again.");
@@ -88,7 +87,7 @@ router.put(
     const db = getServiceClient();
     if (!db) return sendError(res, "server_not_configured", "service client unavailable");
 
-    const flag = await readFlagState(db, SENSING_CONSENT_SPLIT_FLAG);
+    const flag = await readFlagState(db, "sensing_consent_split_enabled");
     if (parsed.data.granted) {
       if (flag === "unreadable") return sendError(res, "degraded_unavailable", "Nothing was changed: sensing consent could not be checked right now. Please try again.");
       if (flag !== "on") return sendError(res, "feature_disabled", "Sensing contributions are not available yet, so this consent cannot be turned on.");
