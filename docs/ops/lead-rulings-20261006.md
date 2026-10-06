@@ -29,6 +29,10 @@ must not be refused.
     capability may not be refused, so the clauses are added rather than the refusals dropped (dropping them
     would widen who can reach a restricted person). The canonical text is `restrictionSentence()` in
     `services/trust/TrustPrivacyGuard.ts`.
+  - **Amendment (2026-10-06, lane L):** the confirmed mapping refuses a trip proposal made through commands or
+    re-plan under hosting *or* messaging, so the messaging sentence also names it: "You cannot start new
+    conversations, propose changes to a group trip, submit public content (Trail suggestions, gems, community
+    places), or have your posts boosted."
 - **D-24a: a hosting restriction does NOT stop changes to a solo trip.** A solo trip affects nobody else. Every
   Compass and Trips door applies the same solo/group test. If whether a trip is solo cannot be read, treat it as a
   group trip and refuse with "try again", never with "restricted".
