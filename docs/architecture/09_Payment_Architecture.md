@@ -63,16 +63,16 @@ design.
 ### 1.1 Rent-A-Buddy: priced, never charged
 
 Rent-A-Buddy is the only surface in the tree that computes a price a human owes another human.
-Price is **server-computed**, never client-supplied: `routes/rentABuddy.ts:1583-1586` derives
+Price is **server-computed**, never client-supplied: `routes/rentABuddy.ts:1590-1593` derives
 `total_usd` from the buddy profile's `hourly_rate_usd × duration_h`, then splits it into
 `deposit_usd` / `cash_balance_usd` according to `payment_mode`.
 
 The two routes that would take the money are **honest stubs**. `POST
 /rent-a-buddy/bookings/:id/pay-deposit` and `.../pay-full` return **503** with
-`payment_stub: true` and no side effects (`routes/rentABuddy.ts:1692-1710`). The comment above
+`payment_stub: true` and no side effects (`routes/rentABuddy.ts:1699-1717`). The comment above
 them states the reason exactly: *"Return 503 so no booking is ever marked 'paid' and no false
 milestone notification is sent."* `GET /rent-a-buddy/bookings/:id/refund-eligibility` is a **501**
-with no body logic at all (`routes/rentABuddy.ts:3204-3209`).
+with no body logic at all (`routes/rentABuddy.ts:3218-3223`).
 
 **No payment processor is installed.** No `package.json` in the tree depends on Stripe or any
 other processor. The only Stripe reference in `artifacts/api-server/src` is **Stripe *Identity***
@@ -114,21 +114,21 @@ and nothing writes it.** A repo-wide grep finds it only in the generated types
 
 It is one **mutable summary row per booking**, enforced by `UNIQUE (booking_id)`
 (`baseline:14263-14264`) and written by a single upsert on that conflict target
-(`lib/rentBuddyEarningsLedger.ts:73-91`). Its own header says so: *"THIS IS NOT PAYMENT … The row
+(`lib/rentBuddyEarningsLedger.ts:82-100`). Its own header says so: *"THIS IS NOT PAYMENT … The row
 is an ESTIMATE"* (`lib/rentBuddyEarningsLedger.ts:24-28`). Four consequences follow from the
 shape, and each one is a reason section 5 chooses double-entry instead:
 
 1. **It records money as collected that was never collected.** The upsert set
    `in_app_amount_collected: Number(booking.deposit_usd ?? 0)`. For
    `payment_mode = 'full_in_app'`, `deposit_usd` **is** the whole total
-   (`routes/rentABuddy.ts:1585`). So a full-in-app booking booked its entire value as in-app
+   (`routes/rentABuddy.ts:1592`). So a full-in-app booking booked its entire value as in-app
    collected at the moment of booking, while `pay-full` returns 503 and no money exists.
    **CLOSED, 2026-10-04 — in FIVE places, not one.** The writer was repaired first and the
    aggregates over the same table were not, so for a while the ledger row said 0 while every
    dashboard built from `rent_buddy_bookings` still said a deposit had been taken. All five now
    answer through one producer,
    `artifacts/api-server/src/lib/rentBuddyCollectedMoney.ts:71#export function collectedInAppUsd(`:
-   - the writer — `artifacts/api-server/src/lib/rentBuddyEarningsLedger.ts:203#    in_app_amount_collected: fromMinor(0),`,
+   - the writer — `artifacts/api-server/src/lib/rentBuddyEarningsLedger.ts:233#    in_app_amount_collected: fromMinor(0),`,
      derived from entries `2901` CHECK-constrains to record no settlement;
    - `GET /rent-a-buddy/me/earnings/summary` — `completed.depositCollected` and
      `completed.inAppAmountCollected`, which answered **900** over two full-in-app bookings;
@@ -151,26 +151,26 @@ shape, and each one is a reason section 5 chooses double-entry instead:
    a repair. 11 of the 19 cases in
    `artifacts/api-server/src/test/rentBuddyCollectedMoney.test.ts:1#/**` fail against `f71cfb85f`.
 2. **It never settles.** `is_estimated: true` and `cash_balance_confirmed: false` are written at
-   creation (`lib/rentBuddyEarningsLedger.ts:89-90`) and no writer ever changes them —
+   creation (`lib/rentBuddyEarningsLedger.ts:98-99`) and no writer ever changes them —
    `createEarningsLedgerEntry` is the only writer in the tree; every other reference is a SELECT
-   (`routes/rentABuddyMarketplace.ts:1905`, `:2156`, `:2301`). The `is_estimated` flag the read
-   path branches on (`routes/rentABuddyMarketplace.ts:2280`) can therefore never be false.
+   (`routes/rentABuddyMarketplace.ts:1892`, `:2143`, `:2302`). The `is_estimated` flag the read
+   path branches on (`routes/rentABuddyMarketplace.ts:2281`) can therefore never be false.
 3. **Three call sites compute net earnings three different ways, from two different fee
-   constants.** `lib/rentBuddyEarningsLedger.ts:37,66` reads `rent_buddy_fee_rules` with a default
-   of **22 %**; `routes/rentABuddyMarketplace.ts:2191-2195` takes `ledger[0].platform_fee_percent`
+   constants.** `lib/rentBuddyEarningsLedger.ts:37,67` reads `rent_buddy_fee_rules` with a default
+   of **22 %**; `routes/rentABuddyMarketplace.ts:2178-2182` takes `ledger[0].platform_fee_percent`
    — an arbitrary row's rate — and applies it to *every* completed booking, defaulting to 22 %;
    the earnings summary hard-coded **0.15**. The last of these is exactly the defect
    `docs/rent-buddy-audit.md:401-405` filed against "Task #1701 / #1703". **CLOSED, verified 2026-09-22:**
    all three literals are gone and one resolver reads `rent_buddy_fee_rules`
-   (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:294#export async function resolveFeeSchedule(`),
+   (`artifacts/api-server/src/lib/rentBuddyFeeSchedule.ts:305#export async function resolveFeeSchedule(`),
    with no numeric fallback arm. See `08` §2.3's 2026-09-22 correction for the measurement.
 4. **Aggregates are computed in the API process over an unbounded select.**
-   `routes/rentABuddy.ts:6235-6274` and `routes/rentABuddyMarketplace.ts:2149-2196` pull booking
+   `routes/rentABuddy.ts:6249-6288` and `routes/rentABuddyMarketplace.ts:2136-2183` pull booking
    rows and sum them in JavaScript with no pagination — PostgREST's default row cap silently
    truncates the sum for any buddy past it. That is the read-side twin of the counter problem in
    `.agents/memory/counter-update-atomicity.md`.
 
-The tip path shows the same shape at write time: `routes/rentABuddyMarketplace.ts:1891-1912`
+The tip path shows the same shape at write time: `routes/rentABuddyMarketplace.ts:1878-1899`
 performs **three unrelated writes** — an upsert into `rent_buddy_tips` keyed on `booking_id`, an
 UPDATE of the ledger's `tip_usd`, and an UPDATE of the booking's `tip_usd` — with no transaction
 and with the last two explicitly best-effort. The upsert also **replaces** rather than accumulates,
@@ -393,7 +393,7 @@ Three constraints on attribution, each grounded:
    `06_Recommendation_Engine.md`). A payment design that depends on it is blocked on a decision
    that is not a payments decision. Payment attribution therefore resolves creators through the
    **causing entity** (booking → buddy profile → `user_id`, as
-   `lib/rentBuddyEarningsLedger.ts:53-58` already does), not through ranking metadata.
+   `lib/rentBuddyEarningsLedger.ts:54-59` already does), not through ranking metadata.
 
 **Where this touches a standing ruling:** durable, reconstructable attribution of a *discovery*
 event to a payment would want **Event Truth**, the append-only decision store — which is
@@ -520,7 +520,7 @@ values become derived reads over the entries, not a column someone remembers to 
 
 Cash bookings sit outside all of this, and the design must not pretend otherwise. `payment_mode =
 'deposit_plus_cash'` leaves `cash_balance_usd` to be settled hand-to-hand, confirmed only by two
-booleans on the booking (`routes/rentABuddy.ts:2602-2611`). `docs/rent-buddy-audit.md:397` names the
+booleans on the booking (`routes/rentABuddy.ts:2616-2625`). `docs/rent-buddy-audit.md:397` names the
 consequence: *"A buddy could confirm an inflated cash amount."* The confirm-cash route also reads
 the booking and then writes it in a separate statement (`:2584-2600`), so two simultaneous
 confirmations race. **Cash is not booked to the ledger as platform money.** At most it is recorded
@@ -582,14 +582,14 @@ this document may make. It is recorded here so it cannot be inherited as silence
 - **Everything in sections 3–10.** No migration, no table, no route, no flag. This document is
   design; the repo state is section 1.
 - **A payment processor.** Not chosen, not installed, not stubbed beyond the two 503s
-  (`routes/rentABuddy.ts:1692-1710`). Choosing one is an owner decision with KYC, tax and fraud
+  (`routes/rentABuddy.ts:1699-1717`). Choosing one is an owner decision with KYC, tax and fraud
   consequences, exactly as `2170:12-15` states.
 - **Payout creation.** The table and the two admin transitions exist; **nothing inserts a row**
   (§1.4). The lifecycle in §9.1 has no entry point until a funding source exists.
 - **`payment_status` transitions.** The enum exists live; no reader, no writer (§1.2).
-- **Refund eligibility.** 501 (`routes/rentABuddy.ts:3204-3209`).
+- **Refund eligibility.** 501 (`routes/rentABuddy.ts:3218-3223`).
 - **Tax documents.** The earnings route says so to the user's face: *"Tax documents are not
-  available yet"* (`routes/rentABuddy.ts:6295`). `tax_withheld` in §5.2 is a reserved account type
+  available yet"* (`routes/rentABuddy.ts:6309`). `tax_withheld` in §5.2 is a reserved account type
   with no writer.
 - **Cash-flow settlement of the cash half.** Deliberately out of ledger scope (§9.2).
 - **Any cash path for contributor rewards.** `intel_qiu_cash_pool` is a declared flag with a
@@ -623,7 +623,7 @@ Recorded because both read as current otherwise.
 - **`docs/rent-buddy-audit.md:380-389`** describes `pay-deposit`/`pay-full` as returning a fake
   `paymentIntent` with *"Complete payment via the Stripe payment sheet"* and emitting a milestone
   notification. **That is no longer true**: both routes now return 503 with no side effects
-  (`routes/rentABuddy.ts:1692-1710`), which is strictly more honest. The audit's §4.1 is stale in
+  (`routes/rentABuddy.ts:1699-1717`), which is strictly more honest. The audit's §4.1 is stale in
   the safe direction.
 - **`docs/rent-buddy-audit.md:393`** recommends *adding* a `payment_status` column. It already
   exists live as a seven-value enum (`baseline:635-643`) — and has neither reader nor writer, which
@@ -638,11 +638,11 @@ Recorded because both read as current otherwise.
   Two trees share migration numbers. Read `docs/migrations.md:12-22` before citing a number, and
   cite the baseline dump for what is actually live.
 - **`migrations/2074_rent_buddy_kyc_gate_flag.sql:32-33`** says payments are *"two 501 responses"*;
-  they are 503 (`routes/rentABuddy.ts:1695`, `:1705`). Harmless drift, corrected here.
+  they are 503 (`routes/rentABuddy.ts:1702`, `:1712`). Harmless drift, corrected here.
 - **`migrations/0047_rent_buddy.sql`** (root, archived) grants the traveller `FOR ALL USING
   (auth.uid() = traveler_id)` on bookings — which would let a client edit `total_price`. The
   **live** schema does not: `rb_booking_parties` is SELECT-only and `rb_booking_traveler_ins` is
   INSERT-only (`baseline:30737-30753`). The archived file is not what production runs. A traveller
   can still INSERT a booking row directly with a client key under that policy, which is why the
   rule that prices are server-computed must eventually be a database CHECK or a
-  `SECURITY DEFINER` entry point, not only a convention in `routes/rentABuddy.ts:1583-1586`.
+  `SECURITY DEFINER` entry point, not only a convention in `routes/rentABuddy.ts:1590-1593`.

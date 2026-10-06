@@ -6651,10 +6651,10 @@ rows stay W with the reason narrowed to the gate alone.
   turns a booking's date and start time into an instant in the trip's own
   zone (UTC, and said so, when the trip declares none). The Buddy booking
   route consults it when a `tripId` rides on the request
-  (`routes/rentABuddy.ts:2186#tripFit = await readSlotFit(serviceClient, {`) and
+  (`routes/rentABuddy.ts:2200#tripFit = await readSlotFit(serviceClient, {`) and
   refuses a CONFLICT with `409 trip_time_conflict`, reason
   `TRIP_TEMPORAL_CONFLICT`, the commitments named
-  (`routes/rentABuddy.ts:2193#error: "trip_time_conflict"`); every other verdict
+  (`routes/rentABuddy.ts:2207#error: "trip_time_conflict"`); every other verdict
   rides on the 201. Discovery search takes `tripId`
   (`routes/discoverySearch.ts:192#tripId: ctxTripId,`), reads the windows once
   (`lib/inputAssistance/searchCandidates.ts:799#const read = await readTripWindows(sc, ctx.tripId, userId);`),
