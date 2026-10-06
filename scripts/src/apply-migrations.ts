@@ -57,10 +57,12 @@
  *      before a file that sorts ahead of it, so that a clean replay in byte
  *      order refuses at a precondition the real history satisfied — are
  *      DECLARED in ORDER_OVERRIDES.json, each with the ledger provenance that
- *      establishes it. They are applied after the sort, in list order, and
- *      move exactly the file they name (applyOrderOverrides() below). An
- *      override naming a file that is not on disk is a hard refusal, never a
- *      silent no-op. The local replay harness (artifacts/api-server/scripts/
+ *      establishes it. They are applied after the sort, in list order: a MOVE
+ *      places exactly the file it names next to its anchor; a SKIP leaves a
+ *      file out of the chain altogether — never applied, recorded only as a
+ *      backfill row — because the files it names reach the state it was meant
+ *      to (applyOrderOverrides() below). An override naming a file that is not
+ *      on disk is a hard refusal, never a silent no-op. The local replay harness (artifacts/api-server/scripts/
  *      local-db/up.sh, via resolve-order.mjs) honours the same list, so the
  *      applier and the harness replay one chain.
  *
@@ -218,10 +220,10 @@ export function compareMigrationFilenames(a: string, b: string): number {
 }
 
 /**
- * One declared departure from byte-wise order (header, point 5). Exactly one of
- * `before` / `after` names the file `move` is placed next to.
+ * A declared MOVE (header, point 5): exactly one of `before` / `after` names the
+ * file `move` is placed next to.
  */
-export interface OrderOverride {
+export interface MoveOverride {
   /** The file that moves. Nothing else moves. */
   move: string;
   /** Re-insert `move` immediately BEFORE this file. */
@@ -234,13 +236,41 @@ export interface OrderOverride {
   evidence: string;
 }
 
+/**
+ * A declared SKIP: a file that is never applied, because what the reference
+ * database actually holds is reached by `superseded_by` instead. It is left out
+ * of the chain entirely (the local harness never runs it) and out of the pending
+ * set; on a real apply, a skipped file with no ledger row is RECORDED with 2254's
+ * backfill semantics — a row asserting the filename exists, never an apply (see
+ * buildSkipRecordStatement()).
+ */
+export interface SkipOverride {
+  /** The file that is never applied. */
+  skip: string;
+  /** The files that, together, reach the state `skip` was meant to reach. Each must be on disk. */
+  superseded_by: string[];
+  /** The measured defect: why no position of `skip` replays. */
+  why: string;
+  /** Where the measurement can be re-read: ledger rows, PR, CI run. */
+  evidence: string;
+}
+
+/** One declared departure from byte-wise order. */
+export type OrderOverride = MoveOverride | SkipOverride;
+
+export function isSkipOverride(o: OrderOverride): o is SkipOverride {
+  return "skip" in o;
+}
+
 /** The declared overrides live beside the files they reorder. Not a migration: every reader filters on `.sql`. */
 export const ORDER_OVERRIDES_FILE = "ORDER_OVERRIDES.json";
 
 /**
  * Validate the parsed ORDER_OVERRIDES.json. Pure; throws naming the first
  * problem. The file is an object whose `_`-prefixed keys are prose and whose
- * `overrides` is the list; anything else is refused rather than guessed at.
+ * `overrides` is the list; anything else is refused rather than guessed at. A
+ * file may be named by at most one entry as the thing moved or skipped, and a
+ * skipped file may not be anyone's anchor or successor.
  */
 export function parseOrderOverrides(raw: unknown): OrderOverride[] {
   const isObject = (v: unknown): v is Record<string, unknown> =>
@@ -258,29 +288,56 @@ export function parseOrderOverrides(raw: unknown): OrderOverride[] {
   if (!Array.isArray(list)) throw new Error(`${ORDER_OVERRIDES_FILE}: "overrides" must be an array`);
 
   const out: OrderOverride[] = [];
-  const moved = new Set<string>();
+  const subjects = new Set<string>();
   list.forEach((entry, idx) => {
     const at = `${ORDER_OVERRIDES_FILE}: overrides[${idx}]`;
     if (!isObject(entry)) throw new Error(`${at} must be an object`);
+    const { why, evidence } = entry;
+    const isSkip = "skip" in entry;
+    const allowed = isSkip ? ["skip", "superseded_by", "why", "evidence"] : ["move", "before", "after", "why", "evidence"];
     for (const key of Object.keys(entry)) {
-      if (!["move", "before", "after", "why", "evidence"].includes(key)) {
-        throw new Error(`${at}: unknown key "${key}"`);
+      if (!allowed.includes(key)) throw new Error(`${at}: unknown key "${key}"`);
+    }
+    let subject: string;
+    let parsed: OrderOverride;
+    if (isSkip) {
+      const { skip, superseded_by } = entry;
+      if (!isName(skip)) throw new Error(`${at}: "skip" must be a migration filename (*.sql)`);
+      if (!Array.isArray(superseded_by) || superseded_by.length === 0 || !superseded_by.every(isName)) {
+        throw new Error(`${at}: "superseded_by" must be a non-empty array of migration filenames (*.sql)`);
       }
+      if (superseded_by.includes(skip)) throw new Error(`${at}: ${skip} cannot supersede itself`);
+      if (!isText(why)) throw new Error(`${at}: "why" must state the measured defect`);
+      if (!isText(evidence)) throw new Error(`${at}: "evidence" must state where the measurement can be re-read`);
+      subject = skip;
+      parsed = { skip, superseded_by: [...superseded_by], why, evidence };
+    } else {
+      const { move, before, after } = entry;
+      if (!isName(move)) throw new Error(`${at}: "move" must be a migration filename (*.sql)`);
+      if ((before === undefined) === (after === undefined)) {
+        throw new Error(`${at}: exactly one of "before" / "after" is required`);
+      }
+      const anchor = before ?? after;
+      if (!isName(anchor)) throw new Error(`${at}: "${before !== undefined ? "before" : "after"}" must be a migration filename (*.sql)`);
+      if (anchor === move) throw new Error(`${at}: ${move} cannot be placed next to itself`);
+      if (!isText(why)) throw new Error(`${at}: "why" must state the measured defect`);
+      if (!isText(evidence)) throw new Error(`${at}: "evidence" must state where the measurement can be re-read`);
+      subject = move;
+      parsed = before !== undefined ? { move, before: anchor, why, evidence } : { move, after: anchor, why, evidence };
     }
-    const { move, before, after, why, evidence } = entry;
-    if (!isName(move)) throw new Error(`${at}: "move" must be a migration filename (*.sql)`);
-    if ((before === undefined) === (after === undefined)) {
-      throw new Error(`${at}: exactly one of "before" / "after" is required`);
-    }
-    const anchor = before ?? after;
-    if (!isName(anchor)) throw new Error(`${at}: "${before !== undefined ? "before" : "after"}" must be a migration filename (*.sql)`);
-    if (anchor === move) throw new Error(`${at}: ${move} cannot be placed next to itself`);
-    if (!isText(why)) throw new Error(`${at}: "why" must state the measured defect`);
-    if (!isText(evidence)) throw new Error(`${at}: "evidence" must state where the measurement can be re-read`);
-    if (moved.has(move)) throw new Error(`${at}: ${move} is moved by an earlier entry too; one entry per file`);
-    moved.add(move);
-    out.push(before !== undefined ? { move, before: anchor, why, evidence } : { move, after: anchor, why, evidence });
+    if (subjects.has(subject)) throw new Error(`${at}: ${subject} is named by an earlier entry too; one entry per file`);
+    subjects.add(subject);
+    out.push(parsed);
   });
+
+  const skipped = new Set(out.filter(isSkipOverride).map((o) => o.skip));
+  for (const o of out) {
+    const refs = isSkipOverride(o) ? o.superseded_by : [(o.before ?? o.after) as string];
+    const bad = refs.filter((f) => skipped.has(f));
+    if (bad.length > 0) {
+      throw new Error(`${ORDER_OVERRIDES_FILE}: ${bad.join(", ")} is skipped, so it cannot anchor or supersede anything`);
+    }
+  }
   return out;
 }
 
@@ -291,32 +348,42 @@ export function readOrderOverrides(dir: string = MIGRATIONS_DIR): OrderOverride[
 
 /**
  * Apply the declared overrides to an already-ordered list. Pure; the input is
- * not mutated.
+ * not mutated. The result is the CHAIN — what is applied, in order.
  *
- * In list order, each entry removes `move` and re-inserts it immediately before
- * `before` (or immediately after `after`). Every other file keeps its relative
- * position. An entry naming a file that is not in `ordered` THROWS: a stale
- * override must never be silently ignored, because a chain that quietly went
- * back to byte order is the defect this exists to close.
+ * In list order: a MOVE removes `move` and re-inserts it immediately before
+ * `before` (or immediately after `after`); a SKIP removes `skip` from the chain
+ * altogether. Every other file keeps its relative position. An entry naming a
+ * file that is not in `ordered` — the moved or skipped file, an anchor, or any
+ * `superseded_by` file — THROWS: a stale override must never be silently
+ * ignored, because a chain that quietly went back to byte order is the defect
+ * this exists to close.
  */
 export function applyOrderOverrides(
   ordered: readonly string[],
   overrides: readonly OrderOverride[],
 ): string[] {
   const out = [...ordered];
+  const refuseMissing = (label: string, names: readonly string[]) => {
+    const missing = names.filter((f) => !out.includes(f));
+    if (missing.length > 0) {
+      throw new Error(
+        `order override "${label}" names ${missing.join(" and ")}, which ` +
+          `${missing.length > 1 ? "are" : "is"} not in the migration list. A stale override is ` +
+          `refused, never skipped: remove or correct the entry in ${ORDER_OVERRIDES_FILE}.`,
+      );
+    }
+  };
   for (const o of overrides) {
+    if (isSkipOverride(o)) {
+      refuseMissing(`skip ${o.skip} (superseded by ${o.superseded_by.join(", ")})`, [o.skip, ...o.superseded_by]);
+      out.splice(out.indexOf(o.skip), 1);
+      continue;
+    }
     if ((o.before === undefined) === (o.after === undefined)) {
       throw new Error(`order override for ${o.move}: exactly one of "before" / "after" is required`);
     }
     const anchor = (o.before ?? o.after) as string;
-    const missing = [o.move, anchor].filter((f) => !out.includes(f));
-    if (missing.length > 0) {
-      throw new Error(
-        `order override "${o.move} ${o.before !== undefined ? "before" : "after"} ${anchor}" names ` +
-          `${missing.join(" and ")}, which ${missing.length > 1 ? "are" : "is"} not in the migration list. ` +
-          `A stale override is refused, never skipped: remove or correct the entry in ${ORDER_OVERRIDES_FILE}.`,
-      );
-    }
+    refuseMissing(`${o.move} ${o.before !== undefined ? "before" : "after"} ${anchor}`, [o.move, anchor]);
     if (anchor === o.move) throw new Error(`order override for ${o.move}: cannot be placed next to itself`);
     out.splice(out.indexOf(o.move), 1);
     const at = out.indexOf(anchor);
@@ -326,9 +393,9 @@ export function applyOrderOverrides(
 }
 
 /**
- * The canonical chain, in apply order: byte-wise, then the declared overrides.
- * `overrides` defaults to none so the base order stays directly testable; the
- * applier passes readOrderOverrides().
+ * The canonical chain, in apply order: byte-wise, then the declared overrides
+ * (skipped files are not in it). `overrides` defaults to none so the base order
+ * stays directly testable; the applier passes readOrderOverrides().
  */
 export function orderMigrations(
   filenames: readonly string[],
@@ -338,15 +405,24 @@ export function orderMigrations(
 }
 
 /**
- * One line per applied override, naming the neighbours it landed between in
- * `order` and whether the moved file and its anchor are pending. Pure.
+ * One line per declared override. A move names the neighbours it landed between
+ * in `order` and whether the moved file and its anchor are pending; a skip names
+ * what supersedes it and whether a backfill row will be recorded for it (it is in
+ * `unrecorded`: no ledger row yet). Pure.
  */
 export function describeOrderOverrides(
   order: readonly string[],
   overrides: readonly OrderOverride[],
   pending: ReadonlySet<string> = new Set(),
+  unrecorded: ReadonlySet<string> = new Set(),
 ): string[] {
   return overrides.map((o) => {
+    if (isSkipOverride(o)) {
+      return (
+        `${o.skip} SKIPPED — never applied; superseded by ${o.superseded_by.join(", ")}` +
+        ` [${unrecorded.has(o.skip) ? "no ledger row: one is recorded with applied_by='backfill'" : "ledger row present: left untouched"}]`
+      );
+    }
     const idx = order.indexOf(o.move);
     const prev = idx > 0 ? order[idx - 1] : "(start of chain)";
     const next = idx >= 0 && idx < order.length - 1 ? order[idx + 1] : "(end of chain)";
@@ -357,6 +433,25 @@ export function describeOrderOverrides(
       ` [${o.move}: ${state(o.move)}; ${anchor}: ${state(anchor)}]`
     );
   });
+}
+
+/**
+ * The ledger row for a SKIPPED file that has none: 2254's backfill semantics —
+ * `applied_by='backfill'`, `checksum='backfill'` — so the row asserts that the
+ * filename exists and NEVER that it was applied (isProofOfApply() is false for
+ * it). ON CONFLICT DO NOTHING: an existing row, whatever it says, is left exactly
+ * as it is. Pure.
+ */
+export function buildSkipRecordStatement(o: SkipOverride): string {
+  const q = (s: string) => `'${s.replace(/'/g, "''")}'`;
+  const notes =
+    `${ORDER_OVERRIDES_FILE} skip: never applied; superseded by ${o.superseded_by.join(", ")}. ` +
+    "A backfill row asserts the filename exists, not that it ran.";
+  return [
+    `INSERT INTO ${LEDGER_TABLE} (filename, checksum, applied_by, notes)`,
+    `VALUES (${q(o.skip)}, 'backfill', 'backfill', ${q(notes)})`,
+    "ON CONFLICT (filename) DO NOTHING;",
+  ].join("\n");
 }
 
 /** Every `.sql` file in the canonical tree, in BASE (byte-wise) order — the order every auditor reads. */
@@ -1054,6 +1149,13 @@ export interface ApplyPlan {
   drifted: Array<{ filename: string; ledger: string; disk: string }>;
   /** Ledger rows naming files that no longer exist on disk. */
   orphaned: string[];
+  /**
+   * Files a SKIP override excludes from the chain (byte order). Never pending,
+   * whatever their ledger row says, and never applied.
+   */
+  superseded: string[];
+  /** The subset of `superseded` with no ledger row: a real apply records each with buildSkipRecordStatement(). */
+  supersededUnrecorded: string[];
 }
 
 /**
@@ -1076,7 +1178,7 @@ export function planApply(
    * The declared apply-order overrides (readOrderOverrides()). Applied to the
    * WHOLE on-disk list, not the pending subset, so an override whose files are
    * both already applied — the state on portava-ci — changes nothing, and one
-   * naming a file that is not on disk throws.
+   * naming a file that is not on disk throws. A skipped file is never pending.
    */
   overrides: readonly OrderOverride[] = [],
 ): ApplyPlan {
@@ -1114,7 +1216,11 @@ export function planApply(
     .filter((f) => !diskNames.has(f))
     .sort(compareMigrationFilenames);
 
-  return { pending, skipped, unproven, drifted, orphaned };
+  const skipNames = new Set(overrides.filter(isSkipOverride).map((o) => o.skip));
+  const superseded = [...diskNames].filter((f) => skipNames.has(f)).sort(compareMigrationFilenames);
+  const supersededUnrecorded = superseded.filter((f) => !byName.has(f));
+
+  return { pending, skipped, unproven, drifted, orphaned, superseded, supersededUnrecorded };
 }
 
 /**
@@ -1273,6 +1379,13 @@ export function formatDryRun(plan: ApplyPlan, classify: (f: string) => Classific
   if (plan.orphaned.length > 0) {
     lines.push(
       `Ledger rows with no file on disk: ${plan.orphaned.length} (${plan.orphaned.join(", ")})`,
+    );
+  }
+  if (plan.superseded.length > 0) {
+    lines.push(
+      `SKIPPED by ${ORDER_OVERRIDES_FILE} (never applied): ${plan.superseded.length} ` +
+        `(${plan.superseded.join(", ")}). Without a ledger row, so a real run records one with ` +
+        `applied_by='backfill': ${plan.supersededUnrecorded.length > 0 ? plan.supersededUnrecorded.join(", ") : "none"}.`,
     );
   }
   lines.push("");
@@ -1511,6 +1624,17 @@ async function main(): Promise<never> {
 
   const plan = planApply(onDisk, ledger, applyUnproven, overrides);
 
+  const forcedSkipped = applyUnproven.filter((f) => plan.superseded.includes(f));
+  if (forcedSkipped.length > 0) {
+    console.error(
+      `::error::apply-migrations: --apply-unproven names ${forcedSkipped.join(", ")}, which ` +
+        `${ORDER_OVERRIDES_FILE} declares SKIPPED: never applied, because the files that ` +
+        "supersede it reach the state it was meant to. Remove the skip entry deliberately " +
+        "(with a measurement) before asking for this.",
+    );
+    process.exit(2);
+  }
+
   const unknownForced = applyUnproven.filter((f) => !plan.pending.includes(f));
   if (unknownForced.length > 0) {
     console.error(
@@ -1559,7 +1683,12 @@ async function main(): Promise<never> {
     `\nApply-order overrides (${ORDER_OVERRIDES_FILE}): ${overrides.length} declared, each ` +
       `applied to the whole ${files.length}-file chain before the pending set was taken:`,
   );
-  for (const line of describeOrderOverrides(orderMigrations(files, overrides), overrides, new Set(plan.pending))) {
+  for (const line of describeOrderOverrides(
+    orderMigrations(files, overrides),
+    overrides,
+    new Set(plan.pending),
+    new Set(plan.supersededUnrecorded),
+  )) {
     console.log(`  ↪ ${line}`);
   }
 
@@ -1595,6 +1724,24 @@ async function main(): Promise<never> {
         "objects are actually present; apply a specific one with " +
         "--apply-unproven <file>.",
     );
+  }
+
+  // A SKIPPED file with no ledger row gets 2254's backfill row — the filename
+  // exists, nothing ran — so the ledger accounts for every file on disk. Each
+  // is its own statement with ON CONFLICT DO NOTHING, so an existing row (on
+  // portava-ci, 2137's own backfill row) is never touched.
+  for (const o of overrides.filter(isSkipOverride)) {
+    if (!plan.supersededUnrecorded.includes(o.skip)) continue;
+    try {
+      await query(buildSkipRecordStatement(o));
+    } catch (err) {
+      console.error(
+        `::error::apply-migrations: could not record the skipped ${o.skip} in ${LEDGER_TABLE}: ` +
+          `${(err as Error).message}. Nothing else was attempted.`,
+      );
+      process.exit(1);
+    }
+    console.log(`  → ${o.skip}: SKIPPED (${ORDER_OVERRIDES_FILE}); recorded applied_by='backfill' — never applied`);
   }
 
   if (plan.pending.length === 0) {
