@@ -179,12 +179,12 @@ export const LAYOVER_SCENARIOS: readonly LayoverScenario[] = [
   { id: "s24-3h-domestic-at-touchdown", source: "exit delay charged in full — domestic, clock at arrival",
     airport: GENERIC_TPE, session: session(0, 180, { flightType: "domestic", immigrationRequired: false }), nowMs: CORPUS_EPOCH_MS, entry: PERMITTED },
   // ── §4 / §6.1 rows that became representable with PR #588 (LAY-01) ──
-  { id: "s25-unknown-baggage", source: "§21.1 Unknown baggage → fail closed if critical (Appendix B.2: 4h45m, baggage mode UNKNOWN)",
+  { id: "s25-unknown-baggage", source: "§21.1 Unknown baggage → fail closed if critical (Appendix B.2: 4h45m, baggage mode UNKNOWN — one ticket, same airport, so the bag is B.2's ONE unknown)",
     airport: GENERIC_TPE, session: session(0, 285), nowMs: NOW, entry: PERMITTED,
-    constraints: declared({ baggageMode: "UNKNOWN" }) },
+    constraints: declared({ baggageMode: "UNKNOWN", recheckRequired: false, airportChangeRequired: false }) },
   { id: "s26-checked-through", source: "Appendix B.2 step 5 — the same session once the bag is confirmed CHECKED_THROUGH",
     airport: GENERIC_TPE, session: session(0, 285), nowMs: NOW, entry: PERMITTED,
-    constraints: declared({ baggageMode: "CHECKED_THROUGH" }) },
+    constraints: declared({ baggageMode: "CHECKED_THROUGH", recheckRequired: false, airportChangeRequired: false }) },
   { id: "s27-airport-change", source: "§21.1 Airport change → exploration subordinate to transfer (census L224)",
     airport: GENERIC_TPE, session: session(0, 360), nowMs: NOW, entry: PERMITTED,
     constraints: declared({ baggageMode: "CARRY_ON_ONLY", airportChangeRequired: true }) },
@@ -197,6 +197,10 @@ export const LAYOVER_SCENARIOS: readonly LayoverScenario[] = [
   { id: "s30-constraints-unreadable", source: "an unreadable constraint store charges the bag as UNKNOWN, never 'no bags' (census L35)",
     airport: GENERIC_TPE, session: session(0, 360), nowMs: NOW, entry: PERMITTED,
     constraints: { read: "unreadable", set: null, entryForbidsLandside: false } },
+  // #624: "not sure" is not "no". s26's bag answer with the ticketing and the airport change left UNSTATED.
+  { id: "s31-checked-through-tickets-unstated", source: "§21.1 5h self-transfer → recheck friction included, separate tickets NOT stated: charged, and decisive (App C1; #624)",
+    airport: GENERIC_TPE, session: session(0, 285), nowMs: NOW, entry: PERMITTED,
+    constraints: declared({ baggageMode: "CHECKED_THROUGH" }) },
   { id: "s22-hnd-6h", source: "Appendix B.1 — normal 6-hour international layover at HND",
     airport: GENERIC_HND, session: session(0, 360), nowMs: NOW, entry: { ...PERMITTED, corridor: { passportCountry: "US", destinationCountry: "JP" } } },
 ];

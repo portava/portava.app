@@ -113,6 +113,14 @@ describe("the corpus pairs hold §21.1's stated invariants", () => {
     assert.ok(!through.rulesApplied.some((r) => r.startsWith("gate.")));
     assert.notEqual(through.result.verdict, "no");
   });
+  it("separate tickets left unstated are charged, and close landside once the bag is through (#624)", () => {
+    const through = decide("s26-checked-through");
+    const unstated = decide("s31-checked-through-tickets-unstated");
+    assert.ok(unstated.rulesApplied.includes("buffer.bags"), JSON.stringify(unstated.rulesApplied));
+    assert.ok(unstated.rulesApplied.includes("gate.recheck_unknown"), JSON.stringify(unstated.rulesApplied));
+    assert.equal(unstated.result.verdict, "no");
+    assert.ok(Date.parse(unstated.result.hardReturnTime!) < Date.parse(through.result.hardReturnTime!), "the re-check is charged: the deadline is earlier than the declared single ticket's");
+  });
   it("an airport change and an unresolved entry under the owner's policy each close landside", () => {
     assert.ok(decide("s27-airport-change").rulesApplied.includes("gate.airport_change"));
     assert.equal(decide("s27-airport-change").result.verdict, "no");

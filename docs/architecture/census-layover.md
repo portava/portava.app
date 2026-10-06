@@ -8617,7 +8617,7 @@ touched, no migration was added or applied, and nothing was written to or read f
    nothing to run over. `artifacts/api-server/src/services/layover/replay/layoverScenarioCorpus.ts:125#export const LAYOVER_SCENARIOS`
    is 24 deterministic scenarios — every §21.1 row the engine can represent, the L220 generic/curated
    pair and the full return ladder on one session — and
-   `artifacts/api-server/src/services/layover/replay/layoverScenarioCorpus.ts:208#export const UNREPRESENTED_SCENARIOS`
+   `artifacts/api-server/src/services/layover/replay/layoverScenarioCorpus.ts:212#export const UNREPRESENTED_SCENARIOS`
    names the five §21.1 rows it cannot represent rather than faking them. `check:layover-decision-diff`
    compares the tree with a recorded golden
    (`artifacts/api-server/src/scripts/checkLayoverDecisionDiff.ts:64#const report = compareToGolden(`) and is
@@ -8760,7 +8760,7 @@ and `feasibilityInputHash` hashes; `snapshotId` derives from the hash. Same deci
 version is the correct answer (L5: versioned, replayable).
 
 #588 also made two of the rows §49 listed as unrepresentable representable, so six scenarios were added
-(`artifacts/api-server/src/services/layover/replay/layoverScenarioCorpus.ts:208#export const UNREPRESENTED_SCENARIOS`
+(`artifacts/api-server/src/services/layover/replay/layoverScenarioCorpus.ts:212#export const UNREPRESENTED_SCENARIOS`
 now names three; §49.1's "24" and "five" are superseded by 30 and three):
 
 | case | decision | the spec | correct |
@@ -8923,6 +8923,21 @@ is therefore true only above a threshold, and the spec's §14 states no minimum 
 - `layover_presence` is on `check:production-drift`'s ratchet as `unapplied`, naming 3900 and the FALSE seed.
 
 `check:census-integrity` still reads **C=84 W=145 N=67 X=0**, unchanged since §50.4.
+
+### 52.4 After merging main `02acdb0f0` (#624, the fail-closed landside gate): the decision golden, regenerated
+
+#624 made unknown, unreadable and undeclared constraint inputs closures, and charges separate tickets that are not
+stated. On the merged tree `check:layover-decision-diff` went red on all 30 scenarios, and
+`artifacts/api-server/src/test/layoverDecisionDiffCheck.test.ts`'s Appendix B.2 case failed: s25/s26 left tickets and
+the airport change unstated, which #624 made decisive unknowns of their own, so the pair no longer had B.2's ONE
+unknown. Both now state one ticket and the same airport, and their decisions are byte-identical to the previous
+golden's. s26's former inputs are kept as `s31-checked-through-tickets-unstated` (no, deadline 15 min earlier,
+`gate.recheck_unknown`), with a case that goes red if an unstated ticket stops being charged. s27 and s29 moved 15
+min earlier, and s30 flipped `yes → no` (`gate.constraints_unreadable`). Each change is justified against its spec
+clause and #624's rule in the golden's own note
+(`artifacts/api-server/src/services/layover/replay/layoverDecisionGolden.json`). The 25 identity-only changes are the
+`LAYOVER_FEASIBILITY_VERSION` bump, proven by reverting it on a scratch run. **L241 stays W** (§49.2's grounds,
+unchanged); no row moves.
 
 ## Cited, not graded (check:census-scope-coverage)
 
