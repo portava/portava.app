@@ -467,6 +467,27 @@ describe("G. §82 the per-read bound: no member drains the day from one read", (
   });
 });
 
+describe("I. D-7: every Google Routes call in the product goes through the spend gate", () => {
+  it("I1. two files name the Routes endpoint; the Trips adapter is built only inside the gated provider, and the Layover corridor asks the gate itself", async () => {
+    const { readdirSync, statSync } = await import("node:fs");
+    const { join, relative } = await import("node:path");
+    const root = new URL("../", import.meta.url).pathname;
+    const files: string[] = [];
+    const walk = (d: string) => { for (const f of readdirSync(d)) { const p = join(d, f); if (statSync(p).isDirectory()) { if (!/(^|\/)(test|node_modules)$/.test(p)) walk(p); } else if (p.endsWith(".ts")) files.push(p); } };
+    walk(root);
+    const rel = (p: string) => relative(root, p);
+    const naming = files.filter((f) => readFileSync(f, "utf8").includes("routes.googleapis.com")).map(rel).sort();
+    assert.deepEqual(naming, ["domain/trips/contracts/GoogleRoutesTravelTimeProvider.ts", "lib/providers/googleRoutesCorridorProvider.ts"]);
+    const builders = files.filter((f) => !f.endsWith("GoogleRoutesTravelTimeProvider.ts") && /createGoogleRoutesTravelTimeProvider\(/.test(readFileSync(f, "utf8"))).map(rel);
+    assert.deepEqual(builders, ["domain/trips/contracts/tripTravelTimeProvider.ts"]);
+    assert.match(readFileSync(join(root, "domain/trips/contracts/tripTravelTimeProvider.ts"), "utf8"), /createGatedRoutedTravelTimeProvider\(\{\s*routed: createGoogleRoutesTravelTimeProvider\(\)/);
+    const singletonUsers = files.filter((f) => !f.endsWith("GoogleRoutesTravelTimeProvider.ts") && /\bgoogleRoutesTravelTimeProvider\b/.test(readFileSync(f, "utf8"))).map(rel);
+    assert.deepEqual(singletonUsers, [], "the raw Trips adapter singleton is imported by nothing");
+    const corridor = readFileSync(join(root, "lib/providers/googleRoutesCorridorProvider.ts"), "utf8");
+    assert.ok(corridor.indexOf(".decide({ userId: scope.userId, tripId: scope.tripId })") > 0 && corridor.indexOf(".decide({ userId: scope.userId, tripId: scope.tripId })") < corridor.indexOf("res = await doFetch(ENDPOINT"), "the corridor asks the gate before it fetches");
+  });
+});
+
 describe("H. §82 disclosures are said from the hops returned, never as fixed text", () => {
   const hop = (routed: boolean, boundMinutes: number | null = 10) => ({ travel: { routed, boundMinutes } });
   it("H1. route chain: none routed / all / some", () => {
