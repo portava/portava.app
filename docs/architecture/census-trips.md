@@ -6670,7 +6670,7 @@ rows stay W with the reason narrowed to the gate alone.
   the Discovery route with a trip whose windows are readable — the clashing
   event comes first on the search's own order and second with the trip in
   context, every row NOT_CONSULTED with the gate closed, a malformed
-  `tripId` ignored (`test/discoverySearch.test.ts:1688#events carry tripFit when a trip is in context`);
+  `tripId` ignored (`test/discoverySearch.test.ts:1691#events carry tripFit when a trip is in context`);
   the booking route's wiring on its own harness, where the trip tables are
   not modelled and the response says NOT_CONSULTED rather than guessing
   (`test/rentABuddy.test.ts:5103#a booking on a trip consults the freedom windows`).
