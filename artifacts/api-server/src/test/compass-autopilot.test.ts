@@ -262,6 +262,9 @@ interface SeedItemOpts {
   lng?: number | null;
   sourceType?: string;
   sourceId?: string | null;
+  /** OD-TRIP-3: who added it (default: the viewer) and whether it is private (default TRUE, the column default). */
+  creatorId?: string;
+  locationIsPrivate?: boolean | null;
 }
 
 function seedItem(
@@ -287,6 +290,8 @@ function seedItem(
     source_id: o.sourceId ?? null,
     sort_order: 0,
     removed_at: null,
+    creator_id: o.creatorId ?? USER_ID,
+    location_is_private: o.locationIsPrivate === undefined ? true : o.locationIsPrivate,
   });
 }
 
@@ -328,6 +333,29 @@ describe("Trip Autopilot", () => {
       const r = await api(method, path, method === "POST" ? {} : undefined, "other-token");
       assert.equal(r.status, 403, `${method} ${path}`);
     }
+  });
+
+  it("OD-TRIP-3: another member's PRIVATE item gives Autopilot no name and no place — no conflict reason, no travel time from it", async () => {
+    const { fakeClient, store } = makeFakeClient({ feature_flags: [enabledFlag()] });
+    seedTrip(store);
+    const OTHER = "00000000-0000-0000-0000-0000000000aa";
+    // The same geometry as the conflict case below — but the tour is ANOTHER
+    // member's private item, so neither its title nor its coordinates may reach
+    // this viewer, and no walk time can be computed from where it is.
+    seedItem(store, I1, "Clinic appointment", at(16), { endsAt: at(17, 30), lockType: "fixed", lat: 10.0, lng: 123.0, creatorId: OTHER });
+    seedItem(store, I2, "Dinner at Luz", at(18), { endsAt: at(19, 30), lockType: "flexible", lat: 10.027, lng: 123.0 });
+    _setTestClient(fakeClient, true);
+
+    const r = await api("POST", `/trips/${TRIP_ID}/autopilot/check`, {});
+    assert.equal(r.status, 200);
+    assert.doesNotMatch(JSON.stringify(r.json), /Clinic appointment/, "another member's private title reached the viewer");
+    assert.equal(r.json.issues.some((i: any) => i.type === "timing_conflict"), false, "a travel-time conflict was derived from a withheld place");
+
+    // The same item, made PUBLIC by its owner, is ordinary plan content again.
+    const pub = store.trip_plan_items!.find((i) => i.id === I1)!;
+    pub.location_is_private = false;
+    const r2 = await api("POST", `/trips/${TRIP_ID}/autopilot/check`, {});
+    assert.ok(r2.json.issues.some((i: any) => i.type === "timing_conflict"), "control: the public item does conflict");
   });
 
   it("catches a timing conflict with a concrete reason and proposes moving only the affected flexible item", async () => {
