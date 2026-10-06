@@ -18,6 +18,7 @@ import {
   ANONYMISED_FK_NULLED,
   DELETION_FLOW_TABLES,
   RETAINED_WITH_REASON,
+  AWAITING_OWNER_DECISION,
   UNCLASSIFIED_BACKLOG,
   DENOMINATOR_CORRECTION_BACKLOG,
   USER_IDENTIFYING_COLUMNS,
@@ -64,6 +65,12 @@ function statedFate(table: string): StatedFate {
   if (ANONYMISED_FK_NULLED.includes(table)) return "ANONYMISED_FK_NULLED";
   if (DELETION_FLOW_TABLES.includes(table)) return "DELETION_FLOW";
   if (RETAINED_WITH_REASON.some((r) => r.table === table)) return "RETAINED_WITH_REASON";
+  // Reported as itself, not as UNCLASSIFIED_BACKLOG. The two differ in the one
+  // way a reader of this graph cares about: an UNCLASSIFIED_BACKLOG row survives
+  // deletion because nobody ruled, while one of these survives because a trigger
+  // refuses to delete it until somebody does. Collapsing them would make the
+  // refusal look like neglect and hide that the answers are already written.
+  if (AWAITING_OWNER_DECISION.some((r) => r.table === table)) return "AWAITING_OWNER_DECISION";
   if (UNCLASSIFIED_BACKLOG.includes(table)) return "UNCLASSIFIED_BACKLOG";
   // The denominator-correction backlog is UNCLASSIFIED in every sense that
   // matters downstream: the rows survive deletion and nobody has ruled on them.

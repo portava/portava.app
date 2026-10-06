@@ -735,6 +735,8 @@ export async function evaluateNotification(
       trustLevel:             null,
       activeUserScore:        null,
       hasActiveTrip:          false,
+      tripStateUnread:        false, // synthesised, not read
+
       hasActiveBooking:       false,
       upcomingTripWithin48h:  false,
       hasFutureTripScheduled: false,
