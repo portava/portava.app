@@ -1774,7 +1774,7 @@ easy to get wrong become testable without a database.
   (`services/telegraph/coordination.ts:143#threadIsCoordinating`) excludes
   PREPARING for exactly that reason, and the client panel renders nothing while
   the state is PREPARING (`test/telegraphCoordination.test.ts:294`,
-  `travel-buddy-standalone/src/features/telegraph/__tests__/coordinationPanel.component.test.tsx:88`).
+  `travel-buddy-standalone/src/features/telegraph/__tests__/coordinationPanel.component.test.tsx:101#a PREPARING plan renders NOTHING`).
 - **§9.1's closing rule is enforced in the type and in the layout.** A quick
   state carries `provenance: z.literal("USER_DECLARED")`
   (`services/telegraph/coordination.ts:149#QuickStatePayload`), so a
@@ -1822,7 +1822,7 @@ easy to get wrong become testable without a database.
 - **The client panel** is §2.2's "OPTIONAL COORDINATION PANEL", between the
   rail and the stream
   (`travel-buddy-standalone/app/messages/[id].tsx:2094#CoordinationPanel`,
-  `travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:91#CoordinationPanel`).
+  `travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:103#CoordinationPanel`).
   §9's per-state affordances are data
   (`travel-buddy-standalone/src/features/telegraph/coordination/coordinationApi.ts:250#STATE_AFFORDANCES`)
   so the Assembling row offers on-my-way / running-late / arrived /
@@ -1833,7 +1833,7 @@ easy to get wrong become testable without a database.
 | id | was | now | why |
 | --- | --- | --- | --- |
 | T102 | N | **C** | **State machine PREPARING → ASSEMBLING → ACTIVE → RETURNING → COMPLETE ↘ DISRUPTED/CANCELLED** — the machine exists, its arrows are §9's arrows, its terminal states are terminal, and its current value is derived from the plan's own timeline (`services/telegraph/coordination.ts:69#legalNextStates`, `:111#derivedCoordinationState`). Served per thread at `routes/telegraphCoordination.ts:213`. |
-| T103 | N | **C** | **Thread temporarily transforms into a coordination surface near the leave-by/start window** — leave-by exists (`services/telegraph/coordination.ts:130#leaveByFor`), the transformation is bounded to ASSEMBLING/ACTIVE/RETURNING/DISRUPTED (`:143#threadIsCoordinating`), and the panel renders only then (`travel-buddy-standalone/src/features/telegraph/__tests__/coordinationPanel.component.test.tsx:88`). A plan three days out leaves the conversation alone. |
+| T103 | N | **C** | **Thread temporarily transforms into a coordination surface near the leave-by/start window** — leave-by exists (`services/telegraph/coordination.ts:130#leaveByFor`), the transformation is bounded to ASSEMBLING/ACTIVE/RETURNING/DISRUPTED (`:143#threadIsCoordinating`), and the panel renders only then (`travel-buddy-standalone/src/features/telegraph/__tests__/coordinationPanel.component.test.tsx:101#a PREPARING plan renders NOTHING`). A plan three days out leaves the conversation alone. |
 | T109 | N | **C** | **Quick state ON_MY_WAY** — a validated §9.1 state whose name lands in the row subtype and which the Assembling affordance row offers (`test/telegraphCoordination.test.ts:322`). |
 | T111 | N | **C** | **Quick state RUNNING_LATE** — same path. |
 | T113 | N | **C** | **Quick state START_WITHOUT_ME** — same path; offered while assembling. |
@@ -4303,7 +4303,7 @@ exists. §8's commitments and decisions are already carried this way.
 | The client hook, one fetch per thread | `travel-buddy-standalone/src/features/telegraph/kinds/useAnnouncementAcknowledgement.ts:70#export function useAnnouncementAcknowledgement` |
 | The API call | `travel-buddy-standalone/src/features/telegraph/coordination/coordinationApi.ts:235#export async function acknowledgeAnnouncement` |
 | The mount that was missing | `travel-buddy-standalone/app/messages/[id].tsx:794#useAnnouncementAcknowledgement({` |
-| The producer — an announcement composer on the coordination panel | `travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:508#telegraph-announcement-open` |
+| The producer — an announcement composer on the coordination panel | `travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:557#telegraph-announcement-open` |
 | The renderer refusing to draw a button it cannot honour | `travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:164#telegraph-kind-announcement-ack-unavailable` |
 | The same, for ACTION's Confirm | `travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:129#telegraph-kind-action-unconfirmable` |
 | `SET_COORDINATION_STATUS` pointed at the route that implements it | the `LEGACY_PATH_COMMANDS` entry in `domain/telegraph/commands/telegraphCommands.ts` — restated as prose: since §45 the bus ISSUES this command through the route's own writer, so no line in that file says this any more |
@@ -6199,7 +6199,7 @@ could have caught it at any point, and nothing was reading it.
    in a file this lane may not edit. **This is an owner decision between two rules the tree
    currently holds at once**, and it is surfaced rather than taken. Measured, so the decision is
    cheap: the only client consumer already reads `res.data.newHighlights ?? 0`
-   (`travel-buddy-standalone/src/hooks/useMessaging.ts:638#setNewHighlights(res.data.newHighlights ?? 0);`),
+   (`travel-buddy-standalone/src/hooks/useMessaging.ts:651#setNewHighlights(res.data.newHighlights ?? 0);`),
    so omission would change the wire and not the badge.
    **HALF-CLOSED 2026-09-15, on the half that was never the owner decision.** The `0` on
    the wire is untouched and the test that pins it is untouched: this lane did not take the
@@ -9772,7 +9772,7 @@ against stubbed services, and mutations. None of it is production evidence.
 | Flow | Built | Where |
 | --- | --- | --- |
 | TEL-F03 cancel a request | A Cancel control on the sender's "Waiting for reply" banner. It asks once, calls the existing compare-and-swap cancel route (`artifacts/api-server/src/routes/messaging.ts:1250#router.post('/message-requests/:requestId/cancel'`), and on success or on "no longer pending" RE-READS the status, so the banner goes because the server says nothing is pending. `useOutgoingRequestStatus` now carries the request id the server already returned. | `travel-buddy-standalone/src/features/telegraph/requests/CancelRequestButton.tsx:26#export function CancelRequestButton(`, `travel-buddy-standalone/app/messages/[id].tsx:2279#<CancelRequestButton requestId={outgoingRequestId}`, `travel-buddy-standalone/src/hooks/useMessaging.ts:98#const [requestId, setRequestId]` |
-| TEL-F07 edit + history | Edit on your own delivered plain-text message, never on an E2EE thread (`travel-buddy-standalone/src/features/telegraph/messageActions/messageActionRules.ts:22#export function canEditMessage(`), through the canonical route only (`travel-buddy-standalone/src/services/messaging.ts:928#export async function editThreadMessage(`). An Edit history sheet over `artifacts/api-server/src/routes/messaging.ts:3800#router.get('/threads/:threadId/messages/:messageId/edits'` keeps a 503 apart from "no earlier version". Recipients now SEE an edit: `message.updated` reached the hook before, but the merge only accepted new ids, so the edited body stayed stale (`travel-buddy-standalone/src/hooks/useMessaging.ts:351#const edited = incomingById.get(m.id);`). In both the thread screen and trip/circle chats. | `travel-buddy-standalone/src/features/telegraph/messageActions/EditHistorySheet.tsx:48#export function EditHistorySheet(`, `travel-buddy-standalone/src/features/telegraph/messageActions/ThreadActionSheets.tsx:54#const r = await editThreadMessage(threadId, editing.id, body);`, `travel-buddy-standalone/src/hooks/useGroupChat.ts:325#const res = await editThreadMessage(tid, messageId, body);` |
+| TEL-F07 edit + history | Edit on your own delivered plain-text message, never on an E2EE thread (`travel-buddy-standalone/src/features/telegraph/messageActions/messageActionRules.ts:22#export function canEditMessage(`), through the canonical route only (`travel-buddy-standalone/src/services/messaging.ts:928#export async function editThreadMessage(`). An Edit history sheet over `artifacts/api-server/src/routes/messaging.ts:3800#router.get('/threads/:threadId/messages/:messageId/edits'` keeps a 503 apart from "no earlier version". Recipients now SEE an edit: `message.updated` reached the hook before, but the merge only accepted new ids, so the edited body stayed stale (`travel-buddy-standalone/src/hooks/useMessaging.ts:354#const edited = incomingById.get(m.id);`). In both the thread screen and trip/circle chats. | `travel-buddy-standalone/src/features/telegraph/messageActions/EditHistorySheet.tsx:48#export function EditHistorySheet(`, `travel-buddy-standalone/src/features/telegraph/messageActions/ThreadActionSheets.tsx:54#const r = await editThreadMessage(threadId, editing.id, body);`, `travel-buddy-standalone/src/hooks/useGroupChat.ts:325#const res = await editThreadMessage(tid, messageId, body);` |
 | TEL-F08 Saved messages | `/messages/saved` over `artifacts/api-server/src/routes/messaging.ts:4222#router.get('/me/saved-messages'` (re-authorized per read) with loading, error + Try again, empty and list states, and Remove over the idempotent DELETE (`artifacts/api-server/src/routes/savedMessages.ts:44#/me/saved-messages/:messageId`). Entered from the inbox header and from the "Saved" confirmation. A save the server answered HTTP 200 `{ok:false}` is no longer reported as "Saved" (`travel-buddy-standalone/src/services/messaging.ts:969#function saveOutcome(`); the group chat's silent save failure now says so. | `travel-buddy-standalone/src/features/telegraph/savedMessages/SavedMessagesScreen.tsx:61#export function SavedMessagesScreen(`, `travel-buddy-standalone/src/components/TelegraphInboxScreen.tsx:465#router.push('/messages/saved' as any)` |
 | TEL-F09 report one message | Both chat screens file a message report through the Telegraph route, which snapshots §22 evidence before answering (`artifacts/api-server/src/routes/messaging.ts:4412#await captureMessageEvidence(sc, {`). The route now takes a `reason_code` from the shared vocabulary, computes severity from it, and refuses an unknown code (`artifacts/api-server/src/routes/messaging.ts:4388#const reasonCode = messageReportReasonCode(req.body?.reason_code);`, `artifacts/api-server/src/routes/messaging.ts:4398#severity: reportSeverityFor(reasonCode),`). | `travel-buddy-standalone/src/features/telegraph/messageActions/MessageReportSheet.tsx:65#const r = await reportMessage(`, `travel-buddy-standalone/app/messages/[id].tsx:323#<MessageReportSheet`, `travel-buddy-standalone/src/components/GroupChatScreen.tsx:133#const sent = await reportMessage(message.id, reasonText` |
 | TEL-F10 sync on reconnect | A trip/circle chat re-reads its thread when the realtime stream re-opens after a drop, or when the app returns to the foreground; the DM thread polls at once on foreground return. A catch-up refused as `forbidden` moves the chat to no-access, and a failed FIRST page is the error state, not an empty chat. | `travel-buddy-standalone/src/features/telegraph/hooks/useReconnectCatchUp.ts:56#export function useReconnectCatchUp(`, `travel-buddy-standalone/src/hooks/useGroupChat.ts:193#useReconnectCatchUp(() => { void silentRefresh(); }, !!id);`, `travel-buddy-standalone/src/hooks/useGroupChat.ts:137#if (!msgRes.ok` |
@@ -10032,7 +10032,7 @@ look like an empty, quiet or finished state.
   catch-up refuses rather than showing a thread empty or read. The roster is paged to its end.
   `GET /me/unread-counts` names, in `degraded`, every bucket it could not count, and the client
   badge keeps the last measured number for those buckets
-  (`travel-buddy-standalone/src/hooks/useMessaging.ts:634#const unknown = new Set(res.data.degraded`).
+  (`travel-buddy-standalone/src/hooks/useMessaging.ts:647#const unknown = new Set(res.data.degraded`).
 - **Seen while you look.** `travel-buddy-standalone/src/features/telegraph/lifecycle/useThreadReadState.ts:93#export function useThreadReadState(`
   marks the newest RENDERED server message through the message-anchored
   `POST /threads/:id/seen`, only while the screen is focused and the app is in the foreground,
@@ -10326,20 +10326,20 @@ section; this one moves only rows in T1–T239. Numbered §44 because lane C's b
   carried on `GET /threads/:id/coordination` (`artifacts/api-server/src/routes/telegraphCoordination.ts:847#coordination: { ...view, ...stages },`).
   No table, column or message kind was added.
 - **§9's state cells, drawn.** The coordination panel shows "Next: …" marked *suggested*
-  (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:344#telegraph-coordination-next-step`),
-  a scoped location-share entry while coordinating (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:355#telegraph-coordination-share-location`),
+  (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:393#telegraph-coordination-next-step`),
+  a scoped location-share entry while coordinating (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:404#telegraph-coordination-share-location`),
   in RETURNING "Set up Safe Return" (the existing setup sheet,
-  `travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:370#telegraph-coordination-safe-return`)
-  and "Share a ride back" with Join/Leave (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:380#telegraph-coordination-propose-ride`),
+  `travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:419#telegraph-coordination-safe-return`)
+  and "Share a ride back" with Join/Leave (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:429#telegraph-coordination-propose-ride`),
   and at COMPLETE a closeout card with Create a recap / Done and the per-item Save-to-Memory hint
-  (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:273#telegraph-closeout`).
+  (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:322#telegraph-closeout`).
   The conversation screen passes the viewer, the recap opener and the location sheet
   (`travel-buddy-standalone/app/messages/[id].tsx:2094#CoordinationPanel`).
-- **Navigation.** "Directions" on a meeting point (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:533#telegraph-rendezvous-directions`)
+- **Navigation.** "Directions" on a meeting point (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:582#telegraph-rendezvous-directions`)
   and on a LOCATION message (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:270#export function locationDestination(`)
   hand off to the device's maps app at the sender's precision — coordinates only for an EXACT
   share — and post nothing (starting navigation is not "on my way", §9.1).
-- **Safety mode, on screen.** `travel-buddy-standalone/src/features/telegraph/safety/SafetyModeBar.tsx:122#for (const id of data.affordances.promoted) {`
+- **Safety mode, on screen.** `travel-buddy-standalone/src/features/telegraph/safety/SafetyModeBar.tsx:130#for (const id of data.affordances.promoted) {`
   draws §15.2's affordances in the SERVED order while the mode is raised (trusted contacts, I'm OK /
   I need help, emergency help, Safe Return, call, block or report, share location), skips an id it
   does not know, draws nothing it cannot perform, says when a status post fails, keeps a raised bar
@@ -10366,10 +10366,10 @@ section; this one moves only rows in T1–T239. Numbered §44 because lane C's b
 
 | id | Was | Now | Why |
 | --- | --- | --- | --- |
-| T6 | W | **C** | **Pillar Act — messages/shared objects become plans, votes, meetups, navigation, coordination sessions.** The row's one remainder was "Navigation handoff still does not exist"; coordination sessions became entities under T168 (C). A meeting point and a LOCATION message now hand off to navigation (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:270#export function locationDestination(`, `travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:533#telegraph-rendezvous-directions`), proven by `travel-buddy-standalone/src/features/telegraph/__tests__/locationDirections.component.test.tsx` and `travel-buddy-standalone/src/features/telegraph/__tests__/coordinationStages.component.test.tsx`. |
-| T107 | W | **C** | **Returning UI: heading back, Safe Return, shared transport, return checkpoint.** Heading back (§9.1) and the return checkpoint (RENDEZVOUS) already were; in RETURNING the panel now offers Safe Return setup and a shared ride people join or leave, served by `artifacts/api-server/src/services/telegraph/coordinationStages.ts:236#export function projectSharedRides(` and drawn at `travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:380#telegraph-coordination-propose-ride`. Stated rather than smoothed: a Safe Return SESSION is still Safe Return's subsystem — the conversation offers it, it does not become one — and a shared ride is a §8.1 proposal people answer, not a booking. |
-| T108 | W | **C** | **Complete UI: closeout, media grouping, explicit Memory/recap options.** The remainder was "no closeout surface". `artifacts/api-server/src/services/telegraph/coordinationStages.ts:315#export function projectCloseout(` offers one for a bounded window and the panel draws it (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:273#telegraph-closeout`); media grouping (MEDIA_ALBUM) and the recap/Memory options were already C-grade evidence (T119, T121). |
-| T218 | W | **C** | **Safety mode promotes trusted contact, status, help, route/return, call, block/report; de-prioritizes entertainment.** The remainder was "nothing reorders". `travel-buddy-standalone/src/features/telegraph/safety/SafetyModeBar.tsx:122#for (const id of data.affordances.promoted) {` renders the served list top to bottom (a reversed list renders reversed in the test), each entry wired to a working action. One judgement the lead should check: "entertainment" is applied as collapsing the shared-context rail, the only non-safety content above the stream; GIFs have no provider (T64) and so nothing else was there to demote. |
+| T6 | W | **C** | **Pillar Act — messages/shared objects become plans, votes, meetups, navigation, coordination sessions.** The row's one remainder was "Navigation handoff still does not exist"; coordination sessions became entities under T168 (C). A meeting point and a LOCATION message now hand off to navigation (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:270#export function locationDestination(`, `travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:582#telegraph-rendezvous-directions`), proven by `travel-buddy-standalone/src/features/telegraph/__tests__/locationDirections.component.test.tsx` and `travel-buddy-standalone/src/features/telegraph/__tests__/coordinationStages.component.test.tsx`. |
+| T107 | W | **C** | **Returning UI: heading back, Safe Return, shared transport, return checkpoint.** Heading back (§9.1) and the return checkpoint (RENDEZVOUS) already were; in RETURNING the panel now offers Safe Return setup and a shared ride people join or leave, served by `artifacts/api-server/src/services/telegraph/coordinationStages.ts:236#export function projectSharedRides(` and drawn at `travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:429#telegraph-coordination-propose-ride`. Stated rather than smoothed: a Safe Return SESSION is still Safe Return's subsystem — the conversation offers it, it does not become one — and a shared ride is a §8.1 proposal people answer, not a booking. |
+| T108 | W | **C** | **Complete UI: closeout, media grouping, explicit Memory/recap options.** The remainder was "no closeout surface". `artifacts/api-server/src/services/telegraph/coordinationStages.ts:315#export function projectCloseout(` offers one for a bounded window and the panel draws it (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:322#telegraph-closeout`); media grouping (MEDIA_ALBUM) and the recap/Memory options were already C-grade evidence (T119, T121). |
+| T218 | W | **C** | **Safety mode promotes trusted contact, status, help, route/return, call, block/report; de-prioritizes entertainment.** The remainder was "nothing reorders". `travel-buddy-standalone/src/features/telegraph/safety/SafetyModeBar.tsx:130#for (const id of data.affordances.promoted) {` renders the served list top to bottom (a reversed list renders reversed in the test), each entry wired to a working action. One judgement the lead should check: "entertainment" is applied as collapsing the shared-context rail, the only non-safety content above the stream; GIFs have no provider (T64) and so nothing else was there to demote. |
 | T8 | W | **C** | **Inbox is not a generic notification feed.** §2.1's bands exist above the conversations (`travel-buddy-standalone/src/features/telegraph/inbox/InboxContextBands.tsx:87#export function InboxContextBands(`), proven by `travel-buddy-standalone/src/features/telegraph/__tests__/inboxContextBands.component.test.tsx`. Stated rather than smoothed: AVAILABLE NEARBY is absent on every deployment today because `nearby_reachable_enabled` is off (T5), and YOUR STATUS speaks only for a set status because `GET /me/quick-availability` does not check its own read's error (recorded for its owner). |
 | T239 | W | **C** | **§17.4 low-bandwidth degradation.** The remainder was "no bandwidth SIGNAL … nothing degrades automatically when the network gets bad". `travel-buddy-standalone/src/features/telegraph/connection/bandwidthSignal.ts:53#export function deriveBandwidthSignal(` is now that signal and `travel-buddy-standalone/src/features/telegraph/hooks/useDataSaver.ts:113#export function effectiveDataSaverLevel(` applies it, end to end from the transport's timing (`travel-buddy-standalone/src/features/telegraph/__tests__/bandwidthSignal.component.test.tsx`). The signal is what the app observed its own API answers doing (latency and reliability), not a link-speed reading; the app has no device network API. |
 | T153 | W | **C** | **`conversation_reports` / `blocks`.** §32's lead ruling: "THE REQUIREMENT IS SATISFIED BY THE UNIFIED STORAGE", with no row moved then. Both Telegraph report doors write the unified table (`artifacts/api-server/src/routes/messaging.ts:4138#.from('reports')`, `artifacts/api-server/src/routes/messaging.ts:4391#.from('reports')`) and `blocks` is the cascading store T174 grades C. Proven by §39's reporter suite (named in §44.4), whose two filing cases go red when either door writes `thread_reports` / `message_reports` instead. |
@@ -10467,7 +10467,7 @@ CONTROLLED**; nothing was observed in production, no flag was touched, no migrat
   (`artifacts/api-server/src/routes/nearbyReachable.ts:150#notShown: viewerFacingNotShown(result.telemetry),`);
   the reasons stay in server telemetry. The test that pinned the leak now pins the opposite.
 - **F2 — T108's closeout was never drawn in a thread that coordinated** (any commitment or open
-  decision). Fixed: `travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:272#const closeoutCard = closeoutVisible && closeout ? (`
+  decision). Fixed: `travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:321#const closeoutCard = closeoutVisible && closeout ? (`
   is drawn whenever the server offers it.
 - **F3 — T218's "entertainment" was the shared-context rail, collapsed once and re-expanded by
   scrolling.** The rail is coordination. Now the screen holds a flag for the whole raised mode and
@@ -10480,11 +10480,15 @@ CONTROLLED**; nothing was observed in production, no flag was touched, no migrat
   froze at mount.** Fixed: `travel-buddy-standalone/src/features/telegraph/inbox/inboxBandsApi.ts:101#m.myRsvp === 'declined'`,
   `travel-buddy-standalone/src/features/telegraph/inbox/inboxBandsApi.ts:71#export function openSessions(`
   (the same 60-minute bound as §2.3's NOW layer), and a clock read on every render with a minute tick.
-- **F6 — T107's proposer could not withdraw; proposing was not idempotent.** Fixed:
-  `artifacts/api-server/src/services/telegraph/coordinationStages.ts:257#const proposerWithdrew`, and a
-  rider is not offered a second ride (a client guard; `ACTION_PROPOSAL` has no idempotency key). NOT
-  fixed: a join is not checked for a block between joiner and proposer in a group thread, nor for a
-  Trust restriction — that check belongs in the shared write guard, which lane T2 is changing.
+- **F6 — T107's proposer could not withdraw; proposing was not idempotent.** Fixed: the proposer
+  can withdraw (`artifacts/api-server/src/services/telegraph/coordinationStages.ts:257#const proposerWithdrew`).
+  NOT fixed (wording restated 2026-10-06, §46.3): proposing is still not idempotent — a replayed
+  propose creates a second identical ride (`ACTION_PROPOSAL` has no idempotency key) — and the
+  server lets one person ride several rides at once. The only guard is in the client, and it is
+  narrow: someone already riding is not shown "Share a ride back"; Join is still offered on every
+  other ride. Also NOT fixed: a join is not checked for a block between joiner and proposer in a
+  group thread, nor for a Trust restriction — that check belongs in the shared write guard, which
+  lane T2 is changing.
 - **F7 — "Share your location … for a limited time" opened a sheet that sends a place** with no
   expiry and no position. The control (and the safety bar's entry) now says "Share a place".
 - **F8 — T1's guard is a vocabulary list.** It filtered templates by prefix only, missed
@@ -10503,11 +10507,11 @@ CONTROLLED**; nothing was observed in production, no flag was touched, no migrat
   while current (`artifacts/api-server/src/services/telegraph/layers.ts:227#export function nowItemIsCurrent(`,
   `NOW_LAYER_WINDOW_MINUTES` = 60, a product choice listed for the owner), so an old SAFETY message
   is never taken out of the stream. The client draws PLAN and NOW above the conversation
-  (`travel-buddy-standalone/src/features/telegraph/layers/SemanticLayersStrip.tsx:79#export function SemanticLayersStrip(`)
+  (`travel-buddy-standalone/src/features/telegraph/layers/SemanticLayersStrip.tsx:117#export function SemanticLayersStrip(`)
   and the screen builds its list from the stream minus what was drawn
   (`travel-buddy-standalone/app/messages/[id].tsx:1548#const stream = layeredIds.size > 0`). An
   unanswered §6.2 ACTION's Confirm now works from the layer
-  (`travel-buddy-standalone/src/features/telegraph/layers/SemanticLayersStrip.tsx:154#onPressAction={item.openReason === 'action_unanswered'`).
+  (`travel-buddy-standalone/src/features/telegraph/layers/SemanticLayersStrip.tsx:201#onPressAction={item.openReason === 'action_unanswered'`).
 - **§13.1 on the bus, two doors and one writer.** `CREATE_DECISION`, `SET_COORDINATION_STATUS` and
   `SHARE_LOCATION` are issued by `POST /telegraph/commands`
   (`artifacts/api-server/src/server/telegraph/commandRoute.ts:258#if (envelopePlan && envelopePlan.ok) {`),
@@ -10525,14 +10529,14 @@ CONTROLLED**; nothing was observed in production, no flag was touched, no migrat
 
 | id | Was | Now | Why |
 | --- | --- | --- | --- |
-| T107 | C | **W** | §44 overstated it (verifier F6). The proposer's withdrawal and the double proposal are fixed (`artifacts/api-server/src/services/telegraph/coordinationStages.ts:257#const proposerWithdrew`); a join is still not refused for a block between joiner and proposer in a group thread, nor for a Trust restriction. |
+| T107 | C | **W** | §44 overstated it (verifier F6). The proposer's withdrawal is fixed (`artifacts/api-server/src/services/telegraph/coordinationStages.ts:257#const proposerWithdrew`); the double proposal is NOT — a replayed propose is a second identical ride, one person may ride several, and the client only hides "Share a ride back" from a rider (wording restated 2026-10-06, §46.3). A join is still not refused for a block between joiner and proposer in a group thread, nor for a Trust restriction. |
 | T218 | C | **W** | §44 demoted coordination (the rail), and only once (verifier F3). Now only the AI suggestion tray is held away, for the whole raised mode; the Ask Compass tray, the GIF entry and reactions are not demoted. |
 | T239 | C | **W** | Typing now follows the ladder and the row's words are true (verifier F4); reactions have no live UI to shed, and the signal cannot separate a slow network from a slow server. |
 | T153 | C | **W** | §32.3 forbids the move §44 made on its authority. The evidence (`artifacts/api-server/src/routes/messaging.ts:4138#.from('reports')`) stands; the grade waits for a submitted report, as §32.3 says. |
-| T108 | C | **C** | Restated after F2: the closeout is drawn whenever the server offers it, including in a thread with commitments or an open decision (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:272#const closeoutCard = closeoutVisible && closeout ? (`), with the verifier's two cases in the panel suite. |
+| T108 | C | **C** | Restated after F2: the closeout is drawn whenever the server offers it, including in a thread with commitments or an open decision (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:321#const closeoutCard = closeoutVisible && closeout ? (`), with the verifier's two cases in the panel suite. |
 | T8 | C | **C** | Restated after F5: declined plans excluded (`travel-buddy-standalone/src/features/telegraph/inbox/inboxBandsApi.ts:101#m.myRsvp === 'declined'`), NOW bounded, a moving clock. AVAILABLE NEARBY is still dark behind `nearby_reachable_enabled`. |
 | T6 | C | **C** | Restated: an ended exact share hands on only its label (`travel-buddy-standalone/src/features/telegraph/kinds/TypedMessageRenderer.tsx:277#const ended = Number.isFinite(endsMs) && endsMs <= nowMs;`). |
-| T11 | W | **C** | **Semantic layer PLAN.** The remainder was that nothing drew the partition and the ACTION Confirm refused. The strip draws unresolved PLAN items above the conversation, the stream omits them until they resolve, and an unanswered ACTION is answered from the layer (`travel-buddy-standalone/src/features/telegraph/layers/SemanticLayersStrip.tsx:154#onPressAction={item.openReason === 'action_unanswered'`). Proven by `travel-buddy-standalone/src/features/telegraph/__tests__/semanticLayersStrip.component.test.tsx`. |
+| T11 | W | **C** | **Semantic layer PLAN.** The remainder was that nothing drew the partition and the ACTION Confirm refused. The strip draws unresolved PLAN items above the conversation, the stream omits them until they resolve, and an unanswered ACTION is answered from the layer (`travel-buddy-standalone/src/features/telegraph/layers/SemanticLayersStrip.tsx:201#onPressAction={item.openReason === 'action_unanswered'`). Proven by `travel-buddy-standalone/src/features/telegraph/__tests__/semanticLayersStrip.component.test.tsx`. |
 | T12 | W | **C** | **Semantic layer NOW.** NOW is bounded to what is current (`artifacts/api-server/src/services/telegraph/layers.ts:227#export function nowItemIsCurrent(`) and drawn above the stream, which is shorter for it while it lasts (`travel-buddy-standalone/app/messages/[id].tsx:1548#const stream = layeredIds.size > 0`). |
 | T166 | W | **C** | **§13.1 `CREATE_DECISION`.** Issued by the bus through the coordination route's own validator and writer (`artifacts/api-server/src/server/telegraph/commandRoute.ts:258#if (envelopePlan && envelopePlan.ok) {`); the bus row is field-for-field the route row, and a blocked, E2EE or non-member caller writes nothing. |
 | T169 | W | **C** | **§13.1 `SET_COORDINATION_STATUS`.** As T166, writing the §9.1 COORDINATION kind (`artifacts/api-server/src/services/telegraph/threadEnvelopeWrites.ts:206#export function planEnvelopeCommand(`). |
@@ -10565,3 +10569,101 @@ Counted with `check:census-integrity` on this branch:
 
 451 rows. Four §44 moves are withdrawn (T107, T218, T239, T153); five rows move on wave-2 evidence
 (T11, T12, T166, T169, T170).
+
+## §46 — TELEGRAPH lane T1 (2026-10-06): the re-verification of `b3d14e8494` — R1–R4 fixed, F6's wording and F1's test gap corrected. NO ROW CHANGES BUCKET
+
+Written 2026-10-06 by the lane-T1 finisher after an independent re-verification of `b3d14e8494`
+(`4fda4a58ba` minus a Telegraph-free `main` merge) returned ACCEPT WITH REQUIRED FIXES: T11, T12
+and T8 to W unless R1, R2 and R4 were fixed. `main` was merged at `02acdb0f08` first. This section
+is APPEND-ONLY over §44 and §45, except that §45's F6 wording was restated in place (§46.3 says
+what changed). `head_commit` is NOT re-declared. **All evidence is CONTROLLED** — jest component
+tests against stubbed services, in-process route tests over fake clients, source-level wiring
+assertions and mutations. No flag was touched, no migration was added, nothing was written to any
+database, and nothing below was observed in production.
+
+### 46.1 The four required fixes
+
+Each was verified against the merged tree before it was changed; the new test for it failed there first (§46.4).
+
+- **R1 (T11).** WAS: The strip took EVERY loaded PLAN item out of the stream but left DECISION / COMMITMENT to the coordination panel, which read once at open and drew nothing on a failed read: a decision posted while the conversation was open was drawn nowhere until re-entry, and a failed panel read hid every open decision silently. NOW: The panel re-reads on the key the strip and the safety bar already re-read on — the newest message id, so no new realtime channel (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:149#}, [initialResponse, load, refreshKey]);`) — and tells the screen which decisions / commitments it is drawing (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:155#const drawnKey =`). The strip leaves to the panel only what the panel says it is drawing and draws any other PLAN item it hides as one line (`travel-buddy-standalone/src/features/telegraph/layers/SemanticLayersStrip.tsx:179#panelDrawnIds?.has(i.messageId) === true`): never nowhere, never twice, including in the moment between the two reads. A failed panel read still draws no panel and now SAYS it could not load (`travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:298#telegraph-coordination-failed`). Wired at `travel-buddy-standalone/app/messages/[id].tsx:2094#onDrawnIdsChange={setPanelDrawnIds}`.
+- **R2 (T12).** WAS: A current SAFETY message left the stream — where a group conversation says who sent it — for a strip item that carried no sender, under a bar titled "Someone asked for help". NOW: The strip names a safety item's sender with what the stream carries for that sender: name and @handle, "You" for the viewer, "Someone" when no loaded message names them — nothing is looked up and no id is shown (`travel-buddy-standalone/src/features/telegraph/layers/SemanticLayersStrip.tsx:70#export function senderLabelFor(`). The bar names `raisedBy` the same way, "Nina @nina asked for help" (`travel-buddy-standalone/src/features/telegraph/safety/SafetyModeBar.tsx:164#const who = data.raisedBy`), resolved by the screen against the loaded messages (`travel-buddy-standalone/app/messages/[id].tsx:2089#senderLabel={(uid) => senderLabelFor(messages, uid, userId ?? null)}`).
+- **R3 (T239, verifier F4).** WAS: Under a constrained connection the screen calls `notifyTyping(false)` on every keystroke, and each was a `POST /threads/:id/typing` saying what the last one said; only "is typing" was throttled. NOW: "Stopped" is sent only when "typing" was the last thing this device said (`travel-buddy-standalone/src/hooks/useMessaging.ts:543#if (!typingToldRef.current) return;`), and a stop no longer resets the 2 s "typing" throttle, so neither edge exceeds one request per window.
+- **R4 (T8, verifier F5).** WAS: The inbox bands were fetched once at mount and NOW / UPCOMING decided against the clock of that moment; the minute tick re-checked only the status line, so a mounted tab showed a finished session as NOW and a started plan as UPCOMING for hours. NOW: The bands keep the server's answers and are derived on every render (`travel-buddy-standalone/src/features/telegraph/inbox/InboxContextBands.tsx:118#deriveInboxBands(raw, now)`, `travel-buddy-standalone/src/features/telegraph/inbox/inboxBandsApi.ts:136#export function deriveInboxBands(`): the tick re-decides, it does not re-ask. A mounted inbox re-asks every ten minutes (`travel-buddy-standalone/src/features/telegraph/inbox/inboxBandsApi.ts:151#export const INBOX_BANDS_REFRESH_MS`), so a session or plan that began after mount reaches it.
+
+### 46.2 Rows restated — no row changes bucket
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T11 | C | **C** | **Semantic layer PLAN.** Held on R1, not on §45's evidence alone: an unresolved item that leaves the stream is now drawn somewhere for as long as it is hidden — by the panel with its vote chips once the panel's read has it, by the strip as one line before that or when the panel's read fails — and a failed panel read says so. Proven by `travel-buddy-standalone/src/features/telegraph/__tests__/layersLiveDecision.component.test.tsx` (the screen's composition, 0 of 8 on the merged tree before the fix, 8 of 8 after, including the verifier's probe as written) with the strip and panel suites; each of eight mutants that removes a part of it fails them (§46.4). |
+| T12 | C | **C** | **Semantic layer NOW.** Held on R2: what the NOW strip takes out of the stream for a safety message now carries who sent it, as the stream showed it (`travel-buddy-standalone/src/features/telegraph/layers/SemanticLayersStrip.tsx:187#const sender = item.nowReason === 'safety'`). Proven by `travel-buddy-standalone/src/features/telegraph/__tests__/safetySender.component.test.tsx` (1 of 9 before, 9 of 9 after). Stated rather than smoothed: a safety item whose sender no loaded message names reads "Someone" — the screen holds the newest page of messages, and the strip does not fetch a profile to fill the gap. |
+| T8 | C | **C** | **Inbox is not a generic notification feed.** Held on R4: NOW and UPCOMING are re-decided against the clock on every render and re-asked on a ten-minute bound while the tab stays mounted (`travel-buddy-standalone/src/features/telegraph/__tests__/inboxBandsMounted.component.test.tsx`, 1 of 4 before, 4 of 4 after; the verifier's probe passes as written — four requests, both bands gone three hours later). Stated rather than smoothed: a band can lag a new session or plan by up to the ten-minute bound, and AVAILABLE NEARBY is still dark behind `nearby_reachable_enabled`. |
+| T107 | W | **W** | **Returning UI.** Same verdict, wording corrected (verifier, lower F6): §46.3. |
+
+T239 and T218 stay W for the reasons §45.3 gives; R3 removes the per-keystroke "stopped" request and
+R2 names who raised the safety mode, and neither is the reason either row is W.
+
+### 46.3 Corrections that move no row
+
+- **F6 — §45 overstated T107.** §45.1 and the T107 row said the double proposal was fixed. What the
+  tests prove is narrower, and §45's two sentences now say exactly that: the proposer can withdraw;
+  someone already riding is not shown "Share a ride back" (a client guard); Join is still offered on
+  every other ride; the server lets one person ride several rides; and a replayed propose creates a
+  second identical ride, because `ACTION_PROPOSAL` has no idempotency key. T107 stays W.
+- **F1 — a test gap, not a defect.** Every privacy-zone case in the F1 suite had the crewmate
+  publishing no availability, so a zone always ended in "not shown", and the mutant "keep freshness
+  live in a zone" (`artifacts/api-server/src/services/telegraph/reachablePeople.ts:441#const freshness = proximityPublished`)
+  survived the 45 Nearby tests. With availability published the person IS shown, and the card must
+  not tell a zone from sharing-off: `artifacts/api-server/src/test/reachablePeopleZoneNoLeak.test.ts:153#inside a zone: the same card as an available crewmate sharing no location`
+  compares the two byte for byte (fresh and 10-day-old positions), with a control showing the
+  comparison is not vacuous. The mutant now fails it. The verifier's own probe passes 8 of 8. T31
+  is unchanged (W).
+
+### 46.4 Tests and mutations
+
+Each new test was run on the merged tree BEFORE its fix and failed for the reason named in §46.1;
+each mutation was applied alone to the COMMITTED fix, the named suites run, and the file restored by
+`git checkout` and checked clean.
+
+- R1: `layersLiveDecision` 0/8 → 8/8; `semanticLayersStrip` 13/13 (the "not drawn twice" case is
+  restated with the panel's ids, and a panel-not-drawing case added); `coordinationPanel` 19/19 (the
+  failed-read case now also asserts the notice; three R1 cases added). Mutants 8/8 killed: no
+  re-read on the refresh key; failure notice removed; panel reports nothing drawn; panel reports
+  ids while failed; strip ignores the panel's ids; strip draws twice; the generation guard removed;
+  the screen's `onDrawnIdsChange` wiring removed.
+- R2: `safetySender` 1/9 → 9/9. Mutants 6/6 killed: no sender line; no "You"; no @handle; bar
+  ignores `raisedBy`; heads-up ignores it; the screen's `senderLabel` wiring removed.
+- R3: `useThreadMessages.typingEdges` 0/4 → 4/4 (twenty keystrokes were twenty requests). Mutants
+  3/3 killed: stop always sent; stop resets the throttle; "typing" not recorded as said.
+- R4: `inboxBandsMounted` 1/4 → 4/4. Mutants 3/3 killed: bands derived against a frozen clock;
+  no re-ask; re-ask every tick.
+- F1: `reachablePeopleZoneNoLeak` 8/8; the freshness mutant fails it.
+- The verifier's probes, run unedited: `zzVerifyLayersDecision` 2/2, `zzVerifyInboxMounted` 1/1,
+  `t31NoChannel` 8/8. `zzVerifySafetyInStrip` fails as written, and that is the intended behaviour:
+  its message carries no sender name, and the strip will not show a raw user id in its place; with
+  the name the stream carries for that sender, its assertion holds (adopted as the first case of
+  `safetySender`).
+
+- NOT-GRADED: artifacts/api-server/src/test/reachablePeopleZoneNoLeak.test.ts — §46.3's evidence for F1's test gap; T31's verdict rests on the cited source lines.
+
+### 46.5 What would turn this red
+
+A PLAN item taken out of the stream and drawn neither by the panel nor by the strip; a decision or
+commitment drawn twice; a failed panel read that hides an open decision without saying so; a NOW
+safety item, or the safety bar, that cannot say who asked for help when the stream could; a
+"stopped typing" request sent when "typing" was not the last thing said; an inbox band that keeps a
+finished session as NOW or a started plan as UPCOMING because the tab stayed mounted, or that asks
+the server on every tick.
+
+### 46.6 The headline, restated from the rows
+
+Counted with `check:census-integrity` on this branch:
+
+| bucket | count |
+| --- | --- |
+| BUILT-AND-CORRECT | **247** |
+| BUILT-BUT-WRONG | **170** |
+| NOT-BUILT | **32** |
+| CANNOT-VERIFY | **2** |
+
+451 rows, the same as §45.5 — four rows restated (T11, T12, T8 C → C; T107 W → W), none moved.
+CONSTRUCTED (C + W) is 417 of 451 = 92.5 %; CORRECT is 247 of 451 = 54.8 %.
