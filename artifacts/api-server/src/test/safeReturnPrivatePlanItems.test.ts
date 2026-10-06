@@ -143,7 +143,7 @@ function suggestClient(item: Row) {
 describe("GET /me/safe-return/suggest/:planItemId — a crewmate's private place", () => {
   it("is not looked up in geo_zones, and no caution derived from it reaches the viewer", async () => {
     const c = suggestClient(planItem());
-    _setTestClient(c, true); _setTestServiceClient(c);
+    _setTestClient(c, true); _setTestServiceClient(c as never);
     const r = await get(`/me/safe-return/suggest/${ITEM}`);
     assert.equal(r.status, 200, r.raw);
     assert.ok(!c.read.includes("geo_zones"), `the private place's coordinates were used for a caution lookup: ${c.read.join(",")}`);
@@ -153,7 +153,7 @@ describe("GET /me/safe-return/suggest/:planItemId — a crewmate's private place
 
   it("the viewer's OWN private place is still assessed (creator sees own)", async () => {
     const c = suggestClient(planItem({ creator_id: VIEWER }));
-    _setTestClient(c, true); _setTestServiceClient(c);
+    _setTestClient(c, true); _setTestServiceClient(c as never);
     const r = await get(`/me/safe-return/suggest/${ITEM}`);
     assert.equal(r.status, 200, r.raw);
     assert.ok(c.read.includes("geo_zones"));
@@ -162,7 +162,7 @@ describe("GET /me/safe-return/suggest/:planItemId — a crewmate's private place
 
   it("a crewmate's place that is NOT private is assessed like any trip place", async () => {
     const c = suggestClient(planItem({ location_is_private: false }));
-    _setTestClient(c, true); _setTestServiceClient(c);
+    _setTestClient(c, true); _setTestServiceClient(c as never);
     const r = await get(`/me/safe-return/suggest/${ITEM}`);
     assert.ok((r.body.reasons as string[]).includes("location_caution_flag"), r.raw);
   });
@@ -170,7 +170,7 @@ describe("GET /me/safe-return/suggest/:planItemId — a crewmate's private place
   it("a row that does not say it is not private is withheld (fail closed)", async () => {
     const { creator_id: _c, location_is_private: _p, ...bare } = planItem({ creator_id: VIEWER });
     const c = suggestClient(bare);
-    _setTestClient(c, true); _setTestServiceClient(c);
+    _setTestClient(c, true); _setTestServiceClient(c as never);
     const r = await get(`/me/safe-return/suggest/${ITEM}`);
     assert.equal(r.status, 200, r.raw);
     assert.ok(!c.read.includes("geo_zones"), c.read.join(","));
