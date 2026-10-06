@@ -266,9 +266,10 @@ export function CoordinationPanel({
   // §9: only while the thread is actually coordinating — or when there is an
   // unresolved decision or commitment, which is §2.3's PLAN layer and belongs
   // above the stream whatever the clock says.
-  if (!c.coordinating && !hasDecisionsOrCommitments) {
-    if (closeoutVisible && closeout) {
-      return (
+  // The closeout is drawn whenever the server offers one — also in a thread that
+  // still holds a commitment or an open decision, which are exactly the threads
+  // that coordinated (verifier F2: it used to be drawn only when there were none).
+  const closeoutCard = closeoutVisible && closeout ? (
         <View style={styles.wrap} testID="telegraph-closeout">
           <Text style={styles.state}>Plan complete</Text>
           <Text style={styles.planTitle} numberOfLines={1}>
@@ -307,14 +308,15 @@ export function CoordinationPanel({
             </Text>
           ) : null}
         </View>
-      );
-    }
-    return null;
-  }
+  ) : null;
+
+  if (!c.coordinating && !hasDecisionsOrCommitments) return closeoutCard;
 
   const affordances = c.state ? STATE_AFFORDANCES[c.state] : [];
 
   return (
+    <>
+    {closeoutCard}
     <View style={styles.wrap} testID="telegraph-coordination-panel">
       {c.coordinating ? (
         <View style={styles.headerRow}>
@@ -572,6 +574,7 @@ export function CoordinationPanel({
         </View>
       ))}
     </View>
+    </>
   );
 }
 

@@ -289,6 +289,23 @@ describe('T108 — Complete: the closeout', () => {
     expect(screen.queryByTestId('telegraph-closeout')).toBeNull();
   });
 
+  // Verifier F2 (2026-10-05): the closeout was drawn only when the thread held
+  // no commitment and no open decision — never in the threads that coordinated.
+  it('VERIFIER F2: a COMPLETE plan with a COMPLETED commitment still shows the closeout', async () => {
+    await render(<CoordinationPanel threadId="t1" initialResponse={complete({
+      commitments: [{ commitmentId: 'c1', askedBy: FRIEND, what: 'Book the table', byWhen: null, agreedBy: [], declinedBy: [], completedBy: FRIEND, completedAt: 'x', overdue: false }],
+    })} />);
+    expect(await screen.findByTestId('telegraph-closeout')).toBeTruthy();
+  });
+
+  it('VERIFIER F2: a COMPLETE plan with an unresolved decision shows the closeout AND the decision', async () => {
+    await render(<CoordinationPanel threadId="t1" initialResponse={complete({
+      decisions: [{ decisionId: 'd1', askedBy: FRIEND, question: 'Same place next week?', options: [{ id: 'y', label: 'Yes' }, { id: 'n', label: 'No' }], resolutionRule: 'PLURALITY', deadlineAt: null, votes: [], tally: {}, resolved: false, result: null, reason: '' }],
+    })} />);
+    expect(await screen.findByTestId('telegraph-closeout')).toBeTruthy();
+    expect(screen.getByTestId('telegraph-decision-d1')).toBeTruthy();
+  });
+
   it('a COMPLETE plan the server offers no closeout for draws nothing', async () => {
     await render(<CoordinationPanel threadId="t1" initialResponse={complete({ closeout: null })} />);
     await screen.findByText(/./, {}, { timeout: 50 }).catch(() => null);
