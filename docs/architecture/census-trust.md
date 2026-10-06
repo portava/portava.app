@@ -3927,3 +3927,63 @@ approving `owner` or a policy-default source (4 red each), restoring full member
 - A Compass or Discovery action refusing a restricted user, with a test: TRV2-08 is a C candidate.
 - `provider_mode` defaulted, backfilled or written as `live` for an attempt made with a test key: every
   sandbox approval becomes a booking-grade identity, which is the bypass OD-PAY-10 forbids.
+
+## §36 (lane B, wave 3) — 2026-10-06 · Lead ruling D-24 lands in the restriction sentences; no identity bypass on any booking door; the mock identity provider is test-runner only. **NO ROW MOVES.**
+
+Lane B, same branch, merged with `main` at `ca49bbd286`. `head_commit` is **not** re-declared: this section
+records four builds against rows §35 already graded, and re-proves two on the merged tree. No database was
+read or written; migration 3932 is written and applied nowhere. Lead rulings are cited as "lead ruling D-nn
+(2026-10-06)" (`docs/ops/lead-rulings-20261006.md` once the lead records it).
+
+### 36.1 What was built or re-proven
+
+1. **D-24 / D-24b / D-24c: the sentence is the contract.** The person-facing sentence per restriction type
+   (`artifacts/api-server/src/services/trust/TrustPrivacyGuard.ts:82#hosting:             "You cannot host group trips or start or link public Trails.`)
+   now names every capability the restriction stops. `hosting` and `messaging` carry the ruling's sentences
+   verbatim. `hosting` and `private_plan_access` each add one clause for the booking rows of the mapping
+   the ruling CONFIRMS: "being booked as a buddy (B)" and "booking a buddy as a traveller (B)". The
+   ruling's own sentences omit them, and its rule ("Anything not named in that sentence must not be
+   refused") would otherwise forbid refusals the same ruling confirms. **The lead should confirm this
+   reconciliation.** `restrictionSentence` (`artifacts/api-server/src/services/trust/TrustPrivacyGuard.ts:209#export function restrictionSentence(type: RestrictionType): string {`)
+   is the one source. The booking refusal for a restricted traveller now shows that sentence
+   (`artifacts/api-server/src/lib/rentBuddyIdentityEligibility.ts:158#restrictionSentence("private_plan_access") + " " +`).
+   Its previous text pointed at "Safety history", which lists Safe Return sessions, not restrictions.
+   **Stated, not hidden:** `getSafeTrustSummary` is the only producer of these sentences. Its one consumer,
+   the Passport projection, does not forward `restrictions`, so no screen shows a person their Trust
+   restrictions today. The refusal at a door is where the text reaches them.
+2. **D-24d re-proven on the merged tree.** Block, mute, restrict and report succeed when the restriction
+   state cannot be read (`artifacts/api-server/src/test/protectiveActionsUnreadableRestriction.test.ts:121#PA4 — the four safety routes succeed under an unreadable restriction state`).
+   Mutations: dropping `{ protective: true }` from any one of the four routes turns PA4 red; an engine
+   that ignores `protective` turns 5 of 7 red.
+3. **TV-4b re-proven on the merged tree.** The allow-list
+   (`artifacts/api-server/src/lib/restrictedAccountAccess.ts:57#export const RESTRICTED_ACCOUNT_ROUTES`)
+   passes 31/31. Mutations, all killed:
+   - `requireUser` ignoring the list: 13 red.
+   - the appeal entry removed: 1 red.
+   - the 403 without its guidance: 10 red.
+4. **N-1: no identity-verification bypass on any booking door.** The KYC gate module no longer names the
+   retired override flag. `routes/admin.ts` HIDDEN_INERT_FLAGS hides it and refuses PATCH. Migration 3932
+   deletes its row. All five creation doors refuse with 503 `verification_unavailable` while verification
+   is not operational, with the old row seeded TRUE. This holds on a production host, a dev host, a hosted
+   deployment and a sandbox identity key
+   (`artifacts/api-server/src/test/rentABuddyGateConsolidation.test.ts:860#N-1: every booking door refuses while identity verification is not operational`;
+   the spec door is in `rentABuddySpecBookingBypass.test.ts`). The mock identity provider now runs under
+   the test runner only, never on a dev host (N-2, lane B's `lib/paymentsMode.ts`, NOT-GRADED below).
+
+Mutations for items 1 and 4 are in the lane report: old messaging sentence; hosting without the Buddy
+clause; the booking refusal's old copy; the gate honouring a TRUE override row (23 red); package-book
+without the KYC gate; admin.ts forgetting the flag.
+
+- NOT-GRADED: artifacts/api-server/src/lib/paymentsMode.ts — the deployment-mode rule N-2 narrows; it decides whether the mock identity provider may run, and no census-trust verdict rests on it beyond TV-P4, which stays C.
+
+### 36.2 Rows
+
+| id | was | now | the evidence |
+|---|---|---|---|
+| TRV2-08 | W | **W** | The OWNER half is closed: lead ruling D-24 (2026-10-06) confirms the mapping that §35 recorded as lane B's reading, and the sentences now name what each restriction stops (36.1 item 1). The row stays W for the doors other lanes own: Trips (lane C; `routes/trips.ts` still refuses ALL trip creation under `hosting`, which D-24a rules out for a solo trip) and Compass (lane L / the lead). It also stays W because no surface shows a restricted person the summary (Passport, lead). |
+| TV-4b | W | **W** | Re-proven on the merged tree (36.1 item 3). §35's three reasons stand: the GoTrue session lock, no appeal target for a ban or suspension, and the client screen. |
+
+### 36.3 Headline
+
+Unchanged from §35.3: BUILT-AND-CORRECT **89** · BUILT-BUT-WRONG **13** · NOT-BUILT **4** · CANNOT-VERIFY **2**
+(108). No row moved.
