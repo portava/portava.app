@@ -529,6 +529,38 @@ async function resolveViewAccess(
   res: Response,
   log?: { error: (obj: unknown, msg: string) => void },
 ): Promise<{ h: HighlightRecord } | null> {
+  const verdict = await decideHighlightViewAccess(sc, viewerId, highlightId, log);
+  if (verdict.ok) return { h: verdict.h };
+  sendError(res, verdict.code, verdict.message);
+  return null;
+}
+
+/**
+ * The verdict behind `resolveViewAccess`, with no response attached.
+ *
+ * WHY IT IS SEPARATE. `routes/collections.ts` previews a SAVED Highlight — a
+ * caption and a media URL — for whatever id sits in a collection, and it did so
+ * through the service client with no gate at all: an id saved while the
+ * Highlight was visible kept serving its caption after the owner made it
+ * private, deleted it, let it expire, set KEEP_PRIVATE_FOREVER or blocked the
+ * saver (census-highlights-memories H81/H91/H189). A preview is a read of the
+ * Highlight, so it must take THIS answer rather than a second copy of it; the
+ * response-sending wrapper above could not be called from a list.
+ *
+ * Every refusal below is the one `resolveViewAccess` always gave. Nothing in
+ * the ladder changed by the split.
+ */
+export type HighlightViewVerdict =
+  | { ok: true; h: HighlightRecord }
+  | { ok: false; code: "db_error" | "not_found"; message: string };
+
+export async function decideHighlightViewAccess(
+  sc: SupabaseClient,
+  viewerId: string,
+  highlightId: string,
+  log?: { error: (obj: unknown, msg: string) => void },
+): Promise<HighlightViewVerdict> {
+  const notFound: HighlightViewVerdict = { ok: false, code: "not_found", message: "Highlight not found" };
   // An unreadable `highlights` table is NOT a missing highlight. supabase-js
   // RESOLVES on a DB error, so `const { data: h }` bound null and this helper —
   // the gate in front of view, like, unlike, reply and report — answered a table
@@ -543,13 +575,9 @@ async function resolveViewAccess(
 
   if (hErr) {
     log?.error({ err: hErr, highlightId }, "highlights: highlight read failed — cannot resolve access");
-    sendError(res, "db_error", hErr.message);
-    return null;
+    return { ok: false, code: "db_error", message: hErr.message };
   }
-  if (!h) {
-    sendError(res, "not_found", "Highlight not found");
-    return null;
-  }
+  if (!h) return notFound;
 
   const record = h as HighlightRecord;
   const ownerId = record.owner_id;
@@ -571,10 +599,7 @@ async function resolveViewAccess(
       sc.from("blocks").select("blocked_id").eq("blocker_id", viewerId).eq("blocked_id", ownerId).maybeSingle(),
       sc.from("blocks").select("blocker_id").eq("blocker_id", ownerId).eq("blocked_id", viewerId).maybeSingle(),
     ]);
-    if (blockedByMe.error || blockingMe.error || blockedByMe.data || blockingMe.data) {
-      sendError(res, "not_found", "Highlight not found");
-      return null;
-    }
+    if (blockedByMe.error || blockingMe.error || blockedByMe.data || blockingMe.data) return notFound;
   }
 
   // Resolve circle/trip membership when needed
@@ -607,10 +632,7 @@ async function resolveViewAccess(
     }
   }
 
-  if (!canViewHighlight(viewerId, record, { viewerFollowsOwner, sharesTrip })) {
-    sendError(res, "not_found", "Highlight not found");
-    return null;
-  }
+  if (!canViewHighlight(viewerId, record, { viewerFollowsOwner, sharesTrip })) return notFound;
 
   // §10/§11 — the owner's stored decisions about OTHER people. Every route
   // behind this gate (view, like, unlike, reply, report) is `public_projection`:
@@ -624,13 +646,10 @@ async function resolveViewAccess(
   if (viewerId !== ownerId) {
     const inputs = await readProjectionInputs(sc, [ownerId], [highlightId]);
     const projectable = filterProjectable([record], viewerId, "public_projection", inputs, log, "resolveViewAccess");
-    if (projectable.length === 0) {
-      sendError(res, "not_found", "Highlight not found");
-      return null;
-    }
+    if (projectable.length === 0) return notFound;
   }
 
-  return { h: record };
+  return { ok: true, h: record };
 }
 
 /**

@@ -22,6 +22,8 @@ import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { isUuid } from "../lib/followDecisions.js";
 import { nameVisibilitySet, presentedName } from "../lib/publicIdentity.js";
+import { canReadMemory, isBlocked } from "../services/memory/memoryReadPolicy.js";
+import { decideHighlightViewAccess } from "./highlights.js";
 
 const router = Router();
 
@@ -499,11 +501,27 @@ router.get("/users/me/collections/:id/items", async (req, res) => {
             previewMap[r.id] = { title: r.title ?? "Event", coverUrl: r.cover_url ?? null };
           }
         } else if (type === "memory") {
-          const { data } = await sc
+          // A SAVED ID IS NOT A READ GRANT (census-highlights-memories H189).
+          // POST /saves accepts any UUID, and this preview used to answer every
+          // one with the Memory's title through the service client: a Memory
+          // saved while it was shared kept showing its title after the owner
+          // narrowed it, deleted it or blocked the saver, and an id learned
+          // anywhere else read a private Memory's title outright. The preview
+          // now takes GET /memories/:id's own answer — the §23 ladder on the
+          // addressed "single" surface plus the two-way block check, both fail
+          // closed — and a withheld row keeps its entity id and shows no title,
+          // exactly like an entity that no longer exists.
+          const { data, error } = await sc
             .from("memories")
-            .select("id, title")
-            .in("id", ids);
+            .select("id, title, owner_id, visibility, state, trip_id, allowed_user_ids, hidden_user_ids")
+            .in("id", ids)
+            .neq("state", "deleted");
+          if (error) throw error;
           for (const r of (data ?? []) as any[]) {
+            if (r.owner_id !== user.id) {
+              if (await isBlocked(sc, user.id, r.owner_id)) continue;
+              if (!(await canReadMemory(sc, r, user.id, "single"))) continue;
+            }
             previewMap[r.id] = { title: r.title ?? "Memory", coverUrl: null };
           }
         } else if (type === "hashtag") {
@@ -523,11 +541,19 @@ router.get("/users/me/collections/:id/items", async (req, res) => {
             previewMap[r.id] = { title: r.name ?? "Place", coverUrl: r.image_url ?? null };
           }
         } else if (type === "highlight") {
-          const { data } = await sc
+          // Same defect, louder payload: a caption AND a media URL, for any
+          // saved id, with no visibility, expiry, deletion, block or §11
+          // KEEP_PRIVATE_FOREVER check (census-highlights-memories H81, H91).
+          // Each row now passes the gate in front of GET /highlights/:id
+          // (`decideHighlightViewAccess`) or shows nothing.
+          const { data, error } = await sc
             .from("highlights")
             .select("id, caption, media_url")
             .in("id", ids);
+          if (error) throw error;
           for (const r of (data ?? []) as any[]) {
+            const access = await decideHighlightViewAccess(sc, user.id, r.id as string, req.log);
+            if (!access.ok) continue;
             previewMap[r.id] = {
               title: (r.caption as string | null) ?? "Highlight",
               coverUrl: (r.media_url as string | null) ?? null,
