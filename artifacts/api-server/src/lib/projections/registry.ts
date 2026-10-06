@@ -190,6 +190,44 @@ export const PROJECTIONS: readonly ProjectionEntry[] = [
     producers: ["services/memoryProjections/derivativeRegistry.ts"],
     consumers: ["services/memoryProjections/derivativeRegistryRead.ts"],
   },
+  {
+    // REGISTERED 2026-10-03 because rule 6 caught a new writer: the stamp
+    // generation worker began persisting `stamp_health_monitor`, and
+    // `generationWorker.ts` matches PROJECTION_SHAPED where the four older
+    // writers' basenames do not. So the table had been written by five files
+    // and registered by none, and only a basename decided whether anyone was
+    // told. That is worth stating rather than fixing quietly: rule 6 is a
+    // NAME-shaped heuristic, so a table can sit unregistered for as long as
+    // every one of its writers happens to be called something else.
+    key: "JOB_HEALTH",
+    kind: "projection",
+    storage: ["job_health"],
+    producers: [
+      "lib/dailyBriefCleanup.ts",
+      "lib/delayedPostPublisher.ts",
+      "lib/stamps/generationWorker.ts",
+      "lib/storyRetentionScheduler.ts",
+      "server/trips/projectionWorkers/tripCrewLiveShareScheduler.ts",
+    ],
+    consumers: [
+      "lib/dailyBriefCleanup.ts",
+      "lib/delayedPostPublisher.ts",
+      "lib/storyRetentionScheduler.ts",
+      "routes/adminRankingMetrics.ts",
+    ],
+    reason:
+      "Not required for kind \"projection\", written because the consumer list is weaker than it looks and a " +
+      "reader of this entry should not have to discover that. Three of the four consumers are also producers: " +
+      "each reads back only ITS OWN row, to decide whether to run or to count consecutive failures, which is " +
+      "real work but is self-consumption. The single consumer outside the producer set, " +
+      "routes/adminRankingMetrics.ts, reads exactly two keys — creator_activity_score and " +
+      "content_distribution_aggregation — and NOTHING in this tree writes either, so that panel shows a \"last " +
+      "run\" that can never be populated. The entry therefore satisfies rule 3 honestly (it does read " +
+      "job_health) while the spirit of rule 3 is only half met, and saying so here is cheaper than letting the " +
+      "next reader infer a wired chain from a non-empty consumers array. Also note what this table is NOT: it " +
+      "covers 5 of the 58 schedulers this server starts, so a job absent from it is unobservable rather than " +
+      "healthy — see lib/schedulerCoverage.ts for the denominator.",
+  },
 ];
 
 export function projectionFor(table: string): ProjectionEntry | null {

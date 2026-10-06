@@ -13,7 +13,7 @@
  * error must not read as "no history" (§20 schema failure ≠ no activity).
  * The client is injected; this module names no credential.
  */
-import type { PreviousReading } from "./wallMoments.js";
+import type { PreviousReading } from "./wallMoments.js"; import { isTableAbsentError } from "./tableAbsence.js"; // one line: census-sensing cites this file by line
 
 export const SNAPSHOT_VERSIONS_TABLE = "intel_state_snapshot_versions";
 /** Versions read per claim type — enough history to find the last differing value. */
@@ -24,12 +24,12 @@ export type PreviousReadResult =
   | { ok: false; reason: "no_client" | "versions_unavailable" | "error" };
 
 function isMissingRelation(err: unknown): boolean {
-  if (!err || typeof err !== "object") return false;
-  const e = err as { code?: unknown; message?: unknown };
-  const code = typeof e.code === "string" ? e.code : "";
-  if (code === "42P01" || code === "PGRST205") return true;
-  const msg = typeof e.message === "string" ? e.message.toLowerCase() : "";
-  return msg.includes("does not exist") || msg.includes("could not find the table");
+  // lib/tableAbsence: the TABLE is absent, nothing wider. "does not exist" also
+  // matched 42703 (column) and 42883 (operator/function), labelling a drift or
+  // an outage `versions_unavailable` ("apply 2273") instead of `error`.
+  // A code, when present, decides; see that module for the rule.
+  // Same line count as before: census-sensing cites this file by line.
+  return isTableAbsentError(err);
 }
 
 export async function readPreviousReadings(

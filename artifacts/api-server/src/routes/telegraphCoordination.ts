@@ -34,6 +34,8 @@ import { logger as rootLogger } from "../lib/logger.js";
 import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js";
 import { emitCoordinationCompleted, publishToThread } from "../lib/telegraphEvents.js";
 import { createCoordinationSession } from "../services/telegraph/coordinationSessions.js";
+import { writeThreadEnvelope } from "../services/telegraph/threadEnvelopeWrites.js";
+import { projectCloseout, projectNextStep, projectSharedRides } from "../services/telegraph/coordinationStages.js";
 import {
   COORDINATION_ACTIONS,
   COORDINATION_KINDS,
@@ -332,7 +334,7 @@ router.post(
       return;
     }
 
-    const guard = await guardTelegraphThreadWrite(client, threadId, user.id);
+    const guard = await guardTelegraphThreadWrite(client, threadId, user.id, { safety: validated.kind === "COORDINATION" && (validated.envelope as { payload?: { state?: unknown } }).payload?.state === "NEED_HELP" }); // OD-TRUST-5: "I need help" is never refused by a Trust restriction
     if (!guard.ok) {
       sendThreadWriteRefusal(res, guard);
       return;
@@ -564,35 +566,24 @@ router.post(
       }
     }
 
-    const now = new Date().toISOString();
-    const { data: msg, error: msgErr } = await client
-      .from("messages")
-      .insert({
-        thread_id: threadId,
-        sender_id: user.id,
-        body: JSON.stringify(validated.envelope),
-        created_at: now,
-        msg_type: validated.msgType,
-        subtype: validated.subtype,
-      })
-      .select("id, thread_id, sender_id, created_at, msg_type, subtype")
-      .single();
-
-    if (msgErr || !msg) {
-      log.error({ err: msgErr, threadId, kind: parsed.data.kind }, "coordination insert failed");
-      sendError(res, "db_error", msgErr?.message ?? "Failed to post");
+    // §13.1 — the ONE writer this route and the command bus share
+    // (services/telegraph/threadEnvelopeWrites.ts): insert, thread bump and
+    // `message.created`, identically from either door.
+    const written = await writeThreadEnvelope(client, {
+      threadId,
+      senderId: user.id,
+      envelope: validated.envelope,
+      msgType: validated.msgType,
+      subtype: validated.subtype,
+      nowMs: Date.now(),
+    }, log);
+    if (!written.ok) {
+      log.error({ threadId, kind: parsed.data.kind, message: written.message }, "coordination insert failed");
+      sendError(res, "db_error", written.message);
       return;
     }
 
-    const { error: bumpErr } = await client
-      .from("message_threads")
-      .update({ last_message_at: now, updated_at: now })
-      .eq("id", threadId);
-    if (bumpErr) {
-      log.warn({ err: bumpErr, threadId }, "thread bump after coordination post failed (message was written)");
-    }
-
-    const m = msg as any;
+    const m = written.row;
     res.status(201).json({
       id: m.id,
       threadId: m.thread_id,
@@ -601,17 +592,6 @@ router.post(
       msgType: m.msg_type,
       subtype: m.subtype,
       kind: validated.kind,
-    });
-
-    void publishToThread(client, threadId, {
-      type: "message.created",
-      payload: {
-        messageId: m.id,
-        senderId: m.sender_id,
-        msgType: m.msg_type,
-        subtype: m.subtype,
-        createdAt: m.created_at,
-      },
     });
 
     // §13.2 `coordination.completed`. Emitted from the ARROW that was just
@@ -850,8 +830,21 @@ router.get(
       })),
     };
 
+    // §9's per-state cells nothing else produced: Active's NEXT STEP,
+    // Returning's SHARED TRANSPORT and Complete's CLOSEOUT. Pure projections
+    // over the rows already read above — see services/telegraph/coordinationStages.ts.
+    const stages = {
+      nextStep: projectNextStep({ state, plan: view.plan, decisions, commitments, rendezvous: view.rendezvous, nowMs }),
+      sharedRides: projectSharedRides(
+        parsedRows.filter((r) => r.kind === "ACTION_PROPOSAL"),
+        parsedRows.filter((r) => r.kind === "ACTION_RESPONSE"),
+        activeMemberIds,
+      ),
+      closeout: projectCloseout({ state, plan, arrivedCount: view.arrivedCount, nowMs }),
+    };
+
     res.status(200).json({
-      coordination: view,
+      coordination: { ...view, ...stages },
       /**
        * §9.1, stated in the response rather than only in a comment: every
        * entry in `quickStates` is what a person SAID. `state` is DERIVED from

@@ -34,7 +34,7 @@ authoritative enumeration:
 | #1 | `POST /api/tags` unauthorized — anyone authenticated could attach unlimited tags to a stranger's post; the route used the service client so `tags_insert`'s `WITH CHECK (tagger_id = auth.uid())` did not backstop it | `2221db3f4` (2026-08-10) | `services/tagging/tagPolicy.ts:67` `assertMayTagSource`; test `tagging.test.ts:628`, `coreActions.test.ts:869` |
 | #2 | Pending tags rendered to everyone — `enrichSpans` filtered `suppressed` but never `status`, so a tag awaiting approval was shown the moment it was written | `d2dc936a1` (2026-08-10) | `lib/enrichSpans.ts:186` `.eq('status','approved')`; test `tagging.test.ts:718` |
 | #3 | `disable_tagging` failed **open** — read through `isFlagEnabled`, which returns false on error, so the emergency stop disengaged exactly when it was needed | `d2dc936a1` | `lib/featureFlags.ts:37` `isKillSwitchEngaged`; tests `tagging.test.ts:802`, `emergencyFlags.test.ts:213` (previously asserted fail-open, inverted) |
-| #4 | PostgREST filter injection in `/api/tags/suggestions` | `2221db3f4` | test `tagging.test.ts:674`; `adminPhase12.test.ts:730` and `emergencyFlags.test.ts:259` both inverted from fail-open |
+| #4 | PostgREST filter injection in `/api/tags/suggestions` | `2221db3f4` | test `tagging.test.ts:674`; `adminPhase12.test.ts:733` and `emergencyFlags.test.ts:259` both inverted from fail-open |
 | #5 | — | **no trace** | — |
 | #6 | — | **no trace** | — |
 | #7 | — | **no trace** | — |

@@ -71,6 +71,7 @@ import {
   installedTranscriptionPort,
   isVoiceInputAvailable,
   resolveTranscriptionPort,
+  setCloudAudioConsentSource,
   type AudioCapturePort,
   type CapturedAudio,
   type TranscriptionPort,
@@ -130,19 +131,28 @@ function recorder() {
   return { calls, submit };
 }
 
-function fakePort(result: TranscriptionResult): TranscriptionPort {
-  return {
+/**
+ * An ON-DEVICE transcriber (OD-INPUT-5: a port must declare where audio goes;
+ * an undeclared port is treated as cloud and needs a consent nothing grants).
+ */
+function fakePort(result: TranscriptionResult, processing: 'on_device' | 'cloud' | 'undeclared' = 'on_device'): TranscriptionPort & { calls: number } {
+  const p = {
     providerId: 'fake',
+    ...(processing === 'undeclared' ? {} : { processing }),
+    calls: 0,
     isAvailable: async () => true,
-    transcribe: async () => ({ ok: true, result }),
+    transcribe: async () => { p.calls += 1; return { ok: true as const, result }; },
   };
+  return p;
 }
 
-function fakeCapture(): AudioCapturePort & { started: number; stopped: number } {
+/** A capture surface that can DISCARD its clip (OD-INPUT-5: no raw-audio retention). */
+function fakeCapture(withDiscard = true): AudioCapturePort & { started: number; stopped: number; discarded: CapturedAudio[] } {
   const audio: CapturedAudio = { uri: 'file:///tmp/clip.m4a', mimeType: 'audio/m4a', durationMs: 1200 };
-  const cap = {
+  const cap: any = {
     started: 0,
     stopped: 0,
+    discarded: [] as CapturedAudio[],
     async start() {
       cap.started += 1;
     },
@@ -152,6 +162,7 @@ function fakeCapture(): AudioCapturePort & { started: number; stopped: number } 
     },
     async cancel() {},
   };
+  if (withDiscard) cap.discard = async (clip: CapturedAudio) => { cap.discarded.push(clip); };
   return cap;
 }
 
@@ -395,5 +406,84 @@ test('this directory contains NO second normalizer — it imports the shared one
   for (const { name, src } of sources) {
     assert.equal(/expo-av|expo-speech|react-native-voice|googleapis|deepgram/i.test(src.replace(/\/\*[\s\S]*?\*\//g, '')), false,
       `${name} must not bind a provider or a capture library`);
+  }
+});
+
+// ── OD-INPUT-5 — the cloud clip path: separate consent, and no audio kept ─────
+
+test('OD-INPUT-5: a CLOUD transcriber (or one that does not say) records NOTHING without the separate consent', async () => {
+  for (const processing of ['cloud', 'undeclared'] as const) {
+    const port = fakePort(transcript(), processing);
+    installTranscriptionPort(port);
+    try {
+      const capture = fakeCapture();
+      const out = await voiceIntakeFromCapture(capture, opts(), { submit: recorder().submit });
+      assert.deepEqual([out.state, out.state === 'unavailable' && out.reason], ['unavailable', 'cloud_consent_required']);
+      assert.equal(capture.started, 0, 'the microphone never opened');
+      assert.equal(port.calls, 0, 'nothing was sent');
+    } finally {
+      clearTranscriptionPort();
+    }
+  }
+});
+
+test('OD-INPUT-5: installing a transcriber cannot bypass the consent — the INSTALLED port refuses a direct call', async () => {
+  const port = fakePort(transcript(), 'cloud');
+  const installed = installTranscriptionPort(port);
+  try {
+    const out = await resolveTranscriptionPort().transcribe({ audio: { uri: 'file:///tmp/x.m4a' } });
+    assert.deepEqual([out.ok, !out.ok && out.reason], [false, 'cloud_consent_required']);
+    assert.equal(port.calls, 0, 'the underlying cloud port was never reached');
+    assert.notEqual(installed, port, 'there is no unguarded handle');
+  } finally {
+    clearTranscriptionPort();
+  }
+});
+
+test('OD-INPUT-5: WITH the separate consent the cloud path works — consent is the only way to it', async () => {
+  const port = fakePort(transcript(), 'cloud');
+  installTranscriptionPort(port);
+  setCloudAudioConsentSource(() => true);
+  try {
+    const capture = fakeCapture();
+    const out = await voiceIntakeFromCapture(capture, opts(), { submit: recorder().submit });
+    assert.equal(out.state, 'accepted');
+    assert.equal(port.calls, 1);
+  } finally {
+    setCloudAudioConsentSource(null);
+    clearTranscriptionPort();
+  }
+});
+
+test('OD-INPUT-5: the clip is DISCARDED after transcription — on success and on failure', async () => {
+  installTranscriptionPort(fakePort(transcript()));
+  try {
+    const ok = fakeCapture();
+    await voiceIntakeFromCapture(ok, opts(), { submit: recorder().submit });
+    assert.equal(ok.discarded.length, 1);
+  } finally {
+    clearTranscriptionPort();
+  }
+  const failing: TranscriptionPort = { providerId: 'f', processing: 'on_device', isAvailable: async () => true, transcribe: async () => { throw new Error('boom'); } };
+  installTranscriptionPort(failing);
+  try {
+    const bad = fakeCapture();
+    const out = await voiceIntakeFromCapture(bad, opts(), { submit: recorder().submit });
+    assert.equal(out.state, 'unavailable');
+    assert.equal(bad.discarded.length, 1, 'a failed transcription still deletes the recording');
+  } finally {
+    clearTranscriptionPort();
+  }
+});
+
+test('OD-INPUT-5: a capture surface that cannot discard is not used — nothing is recorded', async () => {
+  installTranscriptionPort(fakePort(transcript()));
+  try {
+    const capture = fakeCapture(false);
+    const out = await voiceIntakeFromCapture(capture, opts(), { submit: recorder().submit });
+    assert.deepEqual([out.state, out.state === 'unavailable' && out.reason], ['unavailable', 'audio_retention_unsupported']);
+    assert.equal(capture.started, 0);
+  } finally {
+    clearTranscriptionPort();
   }
 });

@@ -457,11 +457,21 @@ describe("the five sites this session fixed — against the real files", () => {
     }
   });
 
-  it("routes/discovery.ts viewer resolution is an auth.getUser call — outside this guard's class, and said so", () => {
+  // REVISITED 2026-10-04, as this test's own message asked. It used to assert that routes/discovery.ts
+  // calls `auth.getUser` itself. It no longer does: a bare auth lookup skipped the account-state gate and
+  // served a banned token (PR #580), so the three viewer lookups go through `getGatedUser`
+  // (lib/accountStateGate.ts), and handRolledAuthAccountState.test.ts pins that no route verifies a token
+  // by hand. The non-coverage note is unchanged in substance — an Auth chain is outside this guard's
+  // class — and now names the file the chain actually lives in.
+  it("routes/discovery.ts viewer resolution goes through the account-state gate, whose auth.getUser call is outside this guard's class, and said so", () => {
     const rel = "routes/discovery.ts";
     const src = real(rel);
-    assert.match(src, /auth\.getUser\(/, "discovery.ts viewer resolution no longer calls auth.getUser — revisit the non-coverage note");
-    const authReads = reads(src, rel).filter((r) => r.excerpt.includes("auth.getUser"));
+    assert.doesNotMatch(src, /auth\.getUser\(/, "discovery.ts verifies a bearer token by hand again — it must go through the account-state gate");
+    assert.equal((src.match(/\bgetGatedUser\(/g) ?? []).length, 3, "the three viewer lookups: GET /discovery, /discovery/feed, /discovery/community");
+    const gate = "lib/accountStateGate.ts";
+    const gateSrc = real(gate);
+    assert.match(gateSrc, /auth\.getUser\(/, "the gate no longer calls auth.getUser — revisit the non-coverage note");
+    const authReads = reads(gateSrc, gate).filter((r) => r.excerpt.includes("auth.getUser"));
     assert.deepEqual(authReads, [], "auth chains are never judged (see header: deliberately out of scope)");
   });
 });

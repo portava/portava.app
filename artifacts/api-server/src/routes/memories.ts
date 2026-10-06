@@ -29,9 +29,10 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { getServiceClient } from "../lib/supabase.js";
-import { isFlagEnabled } from "../lib/featureFlags.js";
+import { isFlagEnabled } from "../lib/featureFlags.js"; import { readMemoryPrecisionGate, precisionColumnSelectable, precisionClampApplies, PRECISION_GATE_UNREADABLE_MESSAGE } from "../lib/memoryPrecisionGate.js"; // §10: an unreadable precision gate clamps, never widens (verifier finding 7)
 import {
   runMemorySearch,
+  runCrewMemorySearch,
   searchCapabilities,
 } from "../services/memory/memorySearchService.js";
 import { sendPushWithRetry } from "../lib/pushWithRetry.js";
@@ -470,7 +471,7 @@ router.post("/memories", async (req, res) => {
     return;
   }
 
-  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+  const precisionGate = await readMemoryPrecisionGate(sc); const precisionEnabled = precisionColumnSelectable(precisionGate); const precisionClamp = precisionClampApplies(precisionGate);
 
   // A client may not name a column this database does not have: PostgREST fails
   // the WHOLE insert on an unknown key (PGRST204), so an accepted-but-unwritable
@@ -489,7 +490,7 @@ router.post("/memories", async (req, res) => {
   // Write-side normalization: only an exact ladder value is ever named; anything
   // else leaves the column to its DEFAULT (whose value is the owner's pending
   // decision, not this route's).
-  const precisionValue = precisionEnabled ? normalizeMemoryPrecisionForWrite(d.locationPrecision) : undefined;
+  if (precisionGate === "unreadable" && d.locationPrecision !== undefined) { sendError(res, "degraded_unavailable", PRECISION_GATE_UNREADABLE_MESSAGE); return; } const precisionValue = precisionEnabled ? normalizeMemoryPrecisionForWrite(d.locationPrecision) : undefined;
 
   const insertRow = {
     location_precision: precisionValue,
@@ -596,7 +597,7 @@ router.get("/memories", async (req, res) => {
   const limit = Math.min(Number(req.query.limit ?? 30), 100);
   const cursor = typeof req.query.cursor === "string" ? req.query.cursor : null;
 
-  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+  const precisionGate = await readMemoryPrecisionGate(sc); const precisionEnabled = precisionColumnSelectable(precisionGate); const precisionClamp = precisionClampApplies(precisionGate);
 
   // ── Two defects lived in the shape this route used to have ─────────────────
   //
@@ -712,7 +713,7 @@ router.get("/memories", async (req, res) => {
   // flag off would serve rows that carry an owner's narrowed rung while ignoring
   // it — a privacy regression produced by a configuration nobody intended.
   // Neither flag may widen disclosure; only narrow it.
-  const clampPrecision = precisionEnabled || useProjection;
+  const clampPrecision = precisionClamp || useProjection;
   // Kept as an alias rather than folded away: `visible` is read below for the
   // saved-collection lookup and the cursor, and both read only `id` and
   // `created_at`, which no coarsening touches. The coarsened rows are the ones
@@ -868,6 +869,103 @@ function chunkIds<T>(ids: readonly T[], size = IN_LIST_CHUNK): T[][] {
 const GRAPH_MEMORY_LIMIT = 2000;
 
 /* ============================================================================
+ * The SHARED_CREW half of POST /memories/search.
+ *
+ * WHY IT IS A SEPARATE RESPONSE SHAPE. A crew search can succeed PARTIALLY, and
+ * the single-target shape has nowhere to say so: it carries hits, a count and a
+ * projection id, and every one of those reads as complete. So the union adds
+ * `members`, `withheldMembers` and `unionComplete`, and the whole point of this
+ * change is that a client cannot render the hits without being handed the gap
+ * beside them. The idiom is `unenforceableOnFeed` on
+ * GET /highlights/resurfacing-controls.
+ *
+ * WHY A WITHHELD MEMBER IS NOT A 410. For one target, a revoked derivative IS
+ * the answer and 410 `gone` is right. For a union it would let any single
+ * member's privacy decision blank the crew's shared memory for everyone (a
+ * denial-of-service shape) and would announce, by the refusal alone, that
+ * somebody revoked something (a privacy leak by inference). See
+ * `CREW_UNION_PARTIAL_POLICY` in services/memory/memorySearchService.ts, which
+ * also records what the owner has still not decided.
+ *
+ * WHY A NON-MEMBER GETS 404 AND NOT 403. The same answer
+ * GET /trips/:tripId/memories/recap gives one screen over: a 403 would confirm
+ * the trip exists and that this person is not on it.
+ * ============================================================================ */
+async function serveCrewSearch(
+  req: any,
+  res: any,
+  sc: any,
+  viewerId: string,
+  body: { intent: { tripId?: string }; query?: string | null; people?: string[]; place?: string | null; trip?: string | null; event?: string | null; dateRange?: any; memoryType?: string | null; limit?: number },
+): Promise<void> {
+  const result = await runCrewMemorySearch(sc, viewerId, {
+    intent: { kind: "crew_trip", tripId: body.intent.tripId as string },
+    query: body.query ?? null,
+    people: body.people,
+    place: body.place ?? null,
+    trip: body.trip ?? null,
+    event: body.event ?? null,
+    dateRange: body.dateRange ?? null,
+    memoryType: body.memoryType ?? null,
+    limit: body.limit,
+  });
+
+  if (!result.ok) {
+    switch (result.reason) {
+      case "invalid_intent":
+      case "filter_unsupported":
+        sendError(res, "invalid_payload", result.detail);
+        return;
+      case "not_permitted":
+        sendError(res, "not_found", "No crew memories for this trip");
+        return;
+      case "audience_unavailable":
+        // A permission check that cannot establish its result must fail. An
+        // unreadable gate served as a narrow union would be a total, silent,
+        // plausible denial — and served as a WIDE one would be a disclosure.
+        req.log.error({ detail: result.detail, viewerId }, "memories: crew search could not run the §23 audience ladder — refusing");
+        sendError(res, "degraded_unavailable", "We could not search the crew's memories right now. Please try again.");
+        return;
+      default:
+        req.log.error({ detail: result.detail, viewerId, reason: result.reason }, "memories: crew search could not establish the trip's crew — refusing rather than searching an empty crew");
+        sendError(res, "degraded_unavailable", "We could not search the crew's memories right now. Please try again.");
+        return;
+    }
+  }
+
+  const v = result.value;
+  if (!v.union_complete) {
+    // Logged as well as returned: a union that is quietly partial for every
+    // reader, every time, is an outage nobody is paged for.
+    req.log.warn?.({
+      viewerId, tripId: v.trip_id,
+      withheld: v.withheld_members.map((m) => ({ memberId: m.memberId, reason: m.reason })),
+      audienceWithheldCount: v.audience_withheld_count,
+    }, "memories: crew search served a PARTIAL union");
+  }
+
+  res.status(200).json({
+    hits: v.hits.map((h) => ({ memoryId: h.memory_id, score: h.score, dimensions: h.dimensions, row: h.row })),
+    deterministicMatchCount: v.deterministic_match_count,
+    semanticRerankApplied: v.semantic_rerank_applied,
+    namespace: v.namespace,
+    projectionId: v.projection_id,
+    engineVersion: v.engine_version,
+    tripId: v.trip_id,
+    // Every member, served or not, each with `matchCount: null` rather than 0
+    // when withheld — "we did not look" is not "this member has no memories".
+    members: v.members,
+    withheldMembers: v.withheld_members,
+    unionComplete: v.union_complete,
+    crewSize: v.crew_size,
+    audienceWithheldCount: v.audience_withheld_count,
+    memberBound: v.member_bound,
+    partialPolicy: v.partial_policy,
+    capabilities: searchCapabilities(),
+  });
+}
+
+/* ============================================================================
  * POST /memories/search — §15 Memory Retrieval and Search.
  *
  * Highlights/Memories Development Architecture Spec v1 §15, §18, §28.6.
@@ -905,9 +1003,10 @@ router.post("/memories/search", async (req, res) => {
   const parsed = z
     .object({
       intent: z.object({
-        kind: z.enum(["mine", "mine_place", "public"]),
+        kind: z.enum(["mine", "mine_place", "public", "crew_trip"]),
         placeId: z.string().optional(),
         ownerId: z.string().optional(),
+        tripId: z.string().optional(),
       }),
       query: z.string().max(400).nullable().optional(),
       people: z.array(z.string()).max(50).optional(),
@@ -921,6 +1020,15 @@ router.post("/memories/search", async (req, res) => {
     .safeParse(req.body ?? {});
   if (!parsed.success) { sendError(res, "invalid_payload", "Invalid search request"); return; }
   const body = parsed.data;
+
+  if (body.intent.kind === "crew_trip") {
+    if (!body.intent.tripId || !isUuid(body.intent.tripId)) {
+      sendError(res, "invalid_payload", "tripId must be a UUID");
+      return;
+    }
+    await serveCrewSearch(req, res, sc, user.id, body);
+    return;
+  }
 
   if (body.intent.kind === "public") {
     if (!body.intent.ownerId || !isUuid(body.intent.ownerId)) {
@@ -1469,7 +1577,7 @@ router.get("/memories/:id", async (req, res) => {
   const sc = getServiceClient();
   if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
 
-  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+  const precisionGate = await readMemoryPrecisionGate(sc); const precisionEnabled = precisionColumnSelectable(precisionGate); const precisionClamp = precisionClampApplies(precisionGate);
 
   const { data: memoryRow, error } = await sc
     .from("memories")
@@ -1547,7 +1655,7 @@ router.get("/memories/:id", async (req, res) => {
   // Location protection (fail-closed) — the stricter of the Hidden-Gem ceiling
   // and the owner's §10 precision rung, for non-owner reads.
   const singleMemoryGemCtx = await loadMemoryGemContext(sc, [memory]);
-  const safeMemory = protectMemoryRow(memory, singleMemoryGemCtx, user.id, precisionEnabled);
+  const safeMemory = protectMemoryRow(memory, singleMemoryGemCtx, user.id, precisionClamp);
 
   // §10's person visibility ladder, and §23's `canSeeParticipant`. Before this,
   // EVERY memory_tags row went out with its `tagged_user_id` to every viewer
@@ -1622,7 +1730,7 @@ router.patch("/memories/:id", async (req, res) => {
   const idempotencyKey = requireIdempotencyKey(req, res);
   if (idempotencyKey === null) return;
 
-  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+  const precisionGate = await readMemoryPrecisionGate(sc); const precisionEnabled = precisionColumnSelectable(precisionGate); const precisionClamp = precisionClampApplies(precisionGate);
 
   const loaded = await loadMemoryForCommand(sc, id);
   if (!loaded.ok) { sendCommandFailure(req, res, loaded); return; }
@@ -1684,7 +1792,7 @@ router.patch("/memories/:id", async (req, res) => {
   if (d.canonicalLocationId !== undefined) patch.canonical_location_id = d.canonicalLocationId;
   // Same schema-presence rule as create: never name the column unless the
   // database has it. See MEMORY_SELECT_WITH_PRECISION.
-  if (precisionEnabled && d.locationPrecision !== undefined) {
+  if (precisionGate === "unreadable" && d.locationPrecision !== undefined) { sendError(res, "degraded_unavailable", PRECISION_GATE_UNREADABLE_MESSAGE); return; } if (precisionEnabled && d.locationPrecision !== undefined) {
     const rung = normalizeMemoryPrecisionForWrite(d.locationPrecision);
     if (rung !== undefined) patch.location_precision = rung;
   }
@@ -2703,7 +2811,7 @@ router.get("/trips/:tripId/memory", async (req, res) => {
 
   const tripOwnerId = (trip as any).owner_id as string;
 
-  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+  const precisionGate = await readMemoryPrecisionGate(sc); const precisionEnabled = precisionColumnSelectable(precisionGate); const precisionClamp = precisionClampApplies(precisionGate);
 
   const { data: memory, error } = await sc
     .from("memories")
@@ -2763,7 +2871,7 @@ router.get("/trips/:tripId/memory", async (req, res) => {
   // Location protection (fail-closed) — the stricter of the Hidden-Gem ceiling
   // and the owner's §10 precision rung, for non-owner reads.
   const tripMemoryGemCtx = await loadMemoryGemContext(sc, [memory]);
-  const safeTripMemory = protectMemoryRow(memory, tripMemoryGemCtx, user.id, precisionEnabled);
+  const safeTripMemory = protectMemoryRow(memory, tripMemoryGemCtx, user.id, precisionClamp);
 
   res.json({
     memory: {
@@ -2981,7 +3089,7 @@ router.get("/users/:userId/memories", async (req, res) => {
   const limit = Math.min(Number(req.query.limit ?? 30), 100);
   const cursor = typeof req.query.cursor === "string" ? req.query.cursor : null;
 
-  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+  const precisionGate = await readMemoryPrecisionGate(sc); const precisionEnabled = precisionColumnSelectable(precisionGate); const precisionClamp = precisionClampApplies(precisionGate);
 
   let q = sc
     .from("memories")
@@ -3017,7 +3125,7 @@ router.get("/users/:userId/memories", async (req, res) => {
   // `GET /memories` and EXACT from here — the same row, the same viewer, two
   // disclosures decided by which handler was reached. The fix is where it is so
   // that a fifth list read cannot repeat it by omission.
-  const enriched = await enrichMemories(sc, visible, user.id, precisionEnabled, req.log);
+  const enriched = await enrichMemories(sc, visible, user.id, precisionClamp, req.log);
   if (!enriched.ok) {
     // §28.11 — see the same branch on GET /memories.
     sendError(res, "degraded_unavailable", "Could not load memories. Please try again.");
@@ -3286,9 +3394,9 @@ router.get("/users/:userId/memories/highlights", async (req, res) => {
   );
   const readable = owned.filter((_m, i) => verdicts[i]);
 
-  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+  const precisionGate = await readMemoryPrecisionGate(sc); const precisionEnabled = precisionColumnSelectable(precisionGate); const precisionClamp = precisionClampApplies(precisionGate);
   const gemCtx = await loadMemoryGemContext(sc, readable);
-  const safeRows = readable.map((m) => protectMemoryRow(m, gemCtx, user.id, precisionEnabled));
+  const safeRows = readable.map((m) => protectMemoryRow(m, gemCtx, user.id, precisionClamp));
 
   const itemRes = await readMemoryItems(sc, safeRows.map((m) => m.id as string));
   if (!itemRes.ok) {
@@ -3360,7 +3468,7 @@ router.get("/me/saved-memories", asyncHandler(async (req: any, res: any) => {
   const order = ((saves ?? []) as any[]).map((r) => r.memory_id as string);
   if (order.length === 0) { res.json({ memories: [], truncated: false }); return; }
 
-  const precisionEnabled = await isFlagEnabled(sc, "memory_location_precision_enabled");
+  const precisionGate = await readMemoryPrecisionGate(sc); const precisionEnabled = precisionColumnSelectable(precisionGate); const precisionClamp = precisionClampApplies(precisionGate);
   const rows: any[] = [];
   for (const batch of chunkIds(order)) {
     const { data, error } = await (precisionEnabled // two literal selects, not a ternary inside one, so check:write-path-columns can verify both column lists
@@ -3388,7 +3496,7 @@ router.get("/me/saved-memories", asyncHandler(async (req: any, res: any) => {
   const byId = new Map(rows.filter((_, i) => readable[i]).map((m) => [m.id as string, m]));
   const visible = order.map((id) => byId.get(id)).filter((m): m is any => Boolean(m));
 
-  const enriched = await enrichMemories(sc, visible, user.id, precisionEnabled, req.log);
+  const enriched = await enrichMemories(sc, visible, user.id, precisionClamp, req.log);
   if (!enriched.ok) {
     sendError(res, "degraded_unavailable", "We could not load your saved memories. Please try again.");
     return;
@@ -3483,5 +3591,144 @@ async function answerExistingTripMemory(req: any, res: any, sc: any, tripId: str
 
 // Imported at the TAIL so no line above moves; ESM hoists it.
 import { asyncHandler } from "../lib/asyncHandler.js";
+
+// ── POST /memories/from-layover/:sessionId — census-layover L275 ─────────────
+//
+// Layover spec §25: "convert a COMPLETED session into an optional
+// stamp/postcard/memory". The stamp half is the elected Passport seam on
+// `DELETE /airport/sessions/:id`; this is the memory half, asked for by the
+// traveller from the end-of-layover sheet and never written on their behalf.
+// What the row may and may not carry is services/memory/layoverMemory.ts's
+// header: a city, a country and the layover's window — never a coordinate.
+//
+// Shaped exactly like `POST /trips/:tripId/memory`, the path it mirrors: every
+// read binds `.error` (an unreadable table is 503, never "not found" and never
+// a write), the create crosses the §17 boundary with the §19 key, and one live
+// Memory per layover — a retry or a second tap answers the existing one.
+router.post("/memories/from-layover/:sessionId", async (req, res) => {
+  const auth = await requireUser(req, res);
+  if (!auth) return;
+  const { user } = auth;
+
+  const { sessionId } = req.params;
+  if (!isUuid(sessionId)) { sendError(res, "invalid_payload", "Invalid layover id"); return; }
+
+  const sc = getServiceClient();
+  if (!sc) { sendError(res, "server_not_configured", "Service client not ready"); return; }
+
+  const idempotencyKey = requireIdempotencyKey(req, res);
+  if (idempotencyKey === null) return;
+
+  // A literal, so check:write-path-columns can read it. `airport_profiles(...)`
+  // is the FK embed; the airport's lat/lng are deliberately NOT selected.
+  const { data: session, error: sessionErr } = await sc
+    .from("layover_sessions")
+    .select("id, user_id, status, canonical_city_id, arrival_time, departure_time, manual_city, manual_country, manual_airport_name, manual_iata, airport_profiles(city, country, name, iata_code)")
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (sessionErr) {
+    req.log.error({ err: sessionErr, sessionId }, "memory-from-layover: layover_sessions read failed — refusing rather than answering not_found");
+    sendError(res, "degraded_unavailable", "Could not read the layover. Please try again.");
+    return;
+  }
+  const eligible = layoverMemoryEligibility(session as unknown as LayoverSessionForMemory | null, user.id);
+  if (!eligible.ok) {
+    if (eligible.code === "not_found") { sendError(res, "not_found", "Layover not found"); return; }
+    sendError(res, "conflict", "Only a layover that ended with your flight can be kept as a Memory.", {
+      exposeDetail: true, reason: "layover_not_completed",
+    });
+    return;
+  }
+
+  const row = layoverMemoryRow(session as unknown as LayoverSessionForMemory, user.id);
+  for (const k of LAYOVER_MEMORY_FORBIDDEN_KEYS) {
+    // Belt and braces for §3 L19: a future edit to the builder that starts
+    // carrying a coordinate fails here, loudly, instead of persisting one.
+    if (k in row) { sendError(res, "db_error", "Refused to persist operational location data"); return; }
+  }
+  // What is written, spelled out key by key so check:write-path-columns can read
+  // every column (a row returned by an imported builder is a blind spot to it).
+  // Typed as LayoverMemoryRow, so a key missing here or extra here is a type
+  // error, and a key the builder carries that is not listed here is never written.
+  const layoverInsertRow: LayoverMemoryRow = {
+    owner_id: row.owner_id,
+    title: row.title,
+    caption: row.caption,
+    visibility: row.visibility,
+    allowed_user_ids: row.allowed_user_ids,
+    hidden_user_ids: row.hidden_user_ids,
+    canonical_location_id: row.canonical_location_id,
+    location_city: row.location_city,
+    location_country: row.location_country,
+    starts_at: row.starts_at,
+    ends_at: row.ends_at,
+    state: row.state,
+  };
+
+  const { data: existingRows, error: existingErr } = await sc
+    .from("memories")
+    .select(MEMORY_CREATE_SELECT)
+    .eq("owner_id", user.id)
+    .eq("starts_at", row.starts_at)
+    .eq("ends_at", row.ends_at)
+    // The TITLE too: owner + the two instants alone could answer an unrelated
+    // Memory that happens to share them (a manual one, or a trip Memory whose
+    // dates fall on the same midnights) as "this layover's Memory". The builder
+    // derives the title deterministically from the session, so a retry still
+    // matches; only a rename between a lost response and its retry does not,
+    // and that costs a second private draft, never a wrong answer.
+    .eq("title", row.title as string)
+    .neq("state", "deleted")
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (existingErr) {
+    req.log.error({ err: existingErr, sessionId }, "memory-from-layover: existing Memory unreadable — refusing BEFORE the write");
+    sendError(res, "degraded_unavailable", "Could not check for this layover's Memory. Please try again.");
+    return;
+  }
+  const existing = ((existingRows ?? []) as any[])[0];
+  if (existing) {
+    res.status(200).json({ memory: mapMemory(existing, user.id), existing: true });
+    return;
+  }
+
+  const created = await dispatchMemoryCommand<any>({
+    sc,
+    commandType: "CREATE_MEMORY",
+    memoryId: null,
+    actorUserId: user.id,
+    idempotencyKey,
+    payload: {
+      to_state: lifecycleStateOf("draft"),
+      visibility: "only_me",
+      write: layoverInsertRow,
+      select: MEMORY_CREATE_SELECT,
+    },
+    legacy: async () => {
+      const { data, error } = await sc
+        .from("memories")
+        .insert(layoverInsertRow)
+        .select(MEMORY_CREATE_SELECT)
+        .single();
+      if (error) {
+        req.log.error({ err: error, sessionId }, "memory-from-layover: insert failed");
+        return { ok: false, http: { code: "db_error", message: error.message } };
+      }
+      return { ok: true, body: data };
+    },
+  });
+  if (!created.ok) { sendCommandFailure(req, res, created); return; }
+
+  res.status(201).json({ memory: mapMemory(created.body, user.id), existing: false });
+});
+
+// Imported at the TAIL with the route that uses them, so no line above moves.
+import {
+  LAYOVER_MEMORY_FORBIDDEN_KEYS,
+  layoverMemoryEligibility,
+  layoverMemoryRow,
+  type LayoverMemoryRow,
+  type LayoverSessionForMemory,
+} from "../services/memory/layoverMemory.js";
 
 export default router;

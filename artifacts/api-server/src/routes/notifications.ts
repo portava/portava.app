@@ -29,7 +29,7 @@
  */
 import { Router } from "express";
 import { z } from "zod";
-import { requireUser, sendError, safeSecretEquals } from "../lib/http.js";
+import { requireUser, sendError, safeSecretEquals } from "../lib/http.js"; import { watchAccountRestriction } from "../lib/accountStateGate.js"; // same line: cited by line
 import { getServiceClient } from "../lib/supabase.js";
 import { NotificationService } from "../services/notifications/NotificationService.js";
 import { NotificationPreferenceService, isValidTimezone } from "../services/notifications/NotificationPreferenceService.js";
@@ -395,10 +395,10 @@ router.get('/me/notifications/stream', async (req, res) => {
   const cleanup = realtimeSvc.registerSSEStream(user.id, (data) => {
     res.write(data);
   });
-
+  const stopWatch = watchAccountRestriction(client, user.id, (end) => { try { res.write(`event: access.revoked\ndata: ${JSON.stringify({ type: "access.revoked", status: end.status, error: end.code, reason: end.reason ?? null, message: end.message })}\n\n`); } catch { /* socket gone */ } res.end(); }, { log: (req as any).log }); // requireUser admitted this stream at connect; a ban / suspension landing later ends it (lib/accountStateGate.ts)
   req.on('close', () => {
     clearInterval(heartbeat);
-    cleanup();
+    cleanup(); stopWatch();
   });
 });
 

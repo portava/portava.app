@@ -22,15 +22,35 @@ import {
   createWebSpeechRecognizer,
   installSpeechRecognizer,
   resolveSpeechRecognizer,
+  declaresOnDeviceOnly,
   type NativeSpeechModuleLike,
+  type SpeechRecognizerPort,
 } from '../speechRecognizer.ts';
 import { assistanceRequestFor, dictateIntoField } from '../voiceIntake.ts';
 
 type Script = { results?: Array<{ text: string; confidence: number; isFinal: boolean }>; error?: string };
 
-/** A stand-in for the browser's SpeechRecognition that plays a script. */
-function fakeWebScope(script: Script, log: string[] = []) {
+/**
+ * A stand-in for the browser's SpeechRecognition that plays a script.
+ *
+ * `onDevice` models the spec's on-device controls (OD-INPUT-5): the static
+ * `available({ langs, processLocally })` answer, or `null` for an engine that
+ * predates them (no `available`, no `processLocally`). The default is an engine
+ * that CAN recognise on the device — the only kind this layer may use.
+ */
+function fakeWebScope(
+  script: Script,
+  log: string[] = [],
+  onDevice: 'available' | 'downloadable' | 'unavailable' | null = 'available',
+  hasProcessLocally = onDevice !== null,
+) {
   class FakeRecognition {
+    static available = onDevice === null
+      ? undefined
+      : async (o: { langs: string[]; processLocally?: boolean }) => {
+          log.push(`available langs=${o.langs.join(',')} local=${o.processLocally === true}`);
+          return o.processLocally === true ? onDevice : 'available';
+        };
     lang = '';
     interimResults = false;
     continuous = true;
@@ -39,7 +59,9 @@ function fakeWebScope(script: Script, log: string[] = []) {
     onerror: ((e: any) => void) | null = null;
     onend: (() => void) | null = null;
     start() {
-      log.push(`start lang=${this.lang} interim=${this.interimResults}`);
+      // `processLocally` is defined on the prototype below only for an engine that
+      // implements the spec attribute, so it is read reflectively here.
+      log.push(`start lang=${this.lang} interim=${this.interimResults} local=${Reflect.get(this, 'processLocally') === true}`);
       queueMicrotask(() => {
         (script.results ?? []).forEach((r, i) => {
           const results: any = { length: i + 1 };
@@ -53,6 +75,9 @@ function fakeWebScope(script: Script, log: string[] = []) {
     stop() { log.push('stop'); }
     abort() { log.push('abort'); }
   }
+  // The spec attribute lives on engines that implement it; one that predates it
+  // simply does not have the property.
+  if (hasProcessLocally) Object.defineProperty(FakeRecognition.prototype, 'processLocally', { value: false, writable: true, configurable: true });
   return { webkitSpeechRecognition: FakeRecognition };
 }
 
@@ -61,7 +86,7 @@ const FIELD = { fieldId: 'trip.destination', context: 'trip_destination' as cons
 test('no platform recognizer → unavailable/no_provider, before the microphone is asked for', async () => {
   clearSpeechRecognizer();
   assert.equal(createWebSpeechRecognizer({}), null, 'absent is null, not a silent recognizer');
-  assert.equal(resolveSpeechRecognizer({}), NO_SPEECH_RECOGNIZER);
+  assert.equal(resolveSpeechRecognizer(), NO_SPEECH_RECOGNIZER);
   let asked = false;
   const spy = { ...NO_SPEECH_RECOGNIZER, recognizeOnce: async () => { asked = true; return NO_SPEECH_RECOGNIZER.recognizeOnce(); } };
   const out = await dictateIntoField(FIELD, { recognizer: spy });
@@ -87,7 +112,11 @@ test('the web platform recognizer feeds the SAME intake the typed path uses; par
   assert.deepEqual(out.request, assistanceRequestFor('  Hoi   An ', FIELD), 'dictated text becomes exactly the typed request');
   assert.equal(out.request.text, 'Hoi An');
   assert.deepEqual(partials, ['hoi']);
-  assert.deepEqual(log, ['start lang=en-US interim=true']);
+  assert.deepEqual(log, [
+    'available langs=en-US local=true',
+    'available langs=en-US local=true',
+    'start lang=en-US interim=true local=true',
+  ]);
 });
 
 test('permission refused, silence and a mumble are three different honest outcomes', async () => {
@@ -101,12 +130,84 @@ test('permission refused, silence and a mumble are three different honest outcom
   assert.deepEqual([mumble.state, mumble.state === 'refused' && mumble.reason], ['refused', 'low_confidence']);
 });
 
-test('an installed recognizer wins over the platform default', () => {
-  const mine = { ...NO_SPEECH_RECOGNIZER, providerId: 'installed' };
-  installSpeechRecognizer(mine);
-  assert.equal(resolveSpeechRecognizer(fakeWebScope({})), mine);
+// ── OD-INPUT-5 IN THE RESOLVER — every dictating surface inherits it ─────────
+
+/** A native module that recognises on the device and hears "Da Nang". */
+function onDeviceModule(): NativeSpeechModuleLike {
+  const listeners: Record<string, (e: any) => void> = {};
+  return {
+    requestPermissionsAsync: async () => ({ granted: true }),
+    isRecognitionAvailable: () => true,
+    supportsOnDeviceRecognition: () => true,
+    start() {
+      queueMicrotask(() => {
+        listeners.result?.({ isFinal: true, results: [{ transcript: 'Da Nang', confidence: 0.9 }] });
+        listeners.end?.({});
+      });
+    },
+    stop() {},
+    addListener(event, cb) { listeners[event] = cb; return { remove() { delete listeners[event]; } }; },
+  };
+}
+
+test('OD-INPUT-5 resolver: a browser engine on the global is NEVER used — the destination field constructs and starts nothing', async () => {
+  // The most permissive engine there is: it has the on-device controls and
+  // says "available". The old resolver fell back to it on every web build.
+  const log: string[] = [];
+  const Base = fakeWebScope({ results: [{ text: 'Hoi An', confidence: 0.9, isFinal: true }] }, log).webkitSpeechRecognition;
+  let constructed = 0;
+  class Counting extends Base { constructor() { super(); constructed += 1; } }
+  const g = globalThis as Record<string, unknown>;
+  const before = g.webkitSpeechRecognition;
+  g.webkitSpeechRecognition = Counting;
+  try {
+    clearSpeechRecognizer();
+    assert.equal(resolveSpeechRecognizer(), NO_SPEECH_RECOGNIZER, 'no fallback to web-speech');
+    // The trip-destination button's path: no recognizer passed, so the resolver decides.
+    const out = await dictateIntoField({ ...FIELD, language: 'en-US' });
+    assert.deepEqual([out.state, out.state === 'unavailable' && out.reason], ['unavailable', 'no_provider']);
+    assert.equal(constructed, 0, 'no SpeechRecognition was constructed');
+    assert.deepEqual(log, [], 'the engine was not even asked whether it is available, and never started');
+  } finally {
+    if (before === undefined) delete g.webkitSpeechRecognition; else g.webkitSpeechRecognition = before;
+  }
+});
+
+test('OD-INPUT-5 resolver: an installed recognizer is returned ONLY when it declares onDeviceOnly: true', () => {
+  const onDevice = createNativeSpeechRecognizer(onDeviceModule());
+  assert.equal(declaresOnDeviceOnly(onDevice), true, 'the on-device native adapter makes the guarantee');
+  installSpeechRecognizer(onDevice);
+  assert.equal(resolveSpeechRecognizer(), onDevice);
+
+  const undeclared = { ...NO_SPEECH_RECOGNIZER, providerId: 'installed', isAvailable: async () => true };
+  installSpeechRecognizer(undeclared);
+  assert.equal(resolveSpeechRecognizer(), NO_SPEECH_RECOGNIZER, 'declaring nothing means "may go to a server"');
+
+  const web = createWebSpeechRecognizer(fakeWebScope({}))!;
+  assert.equal(declaresOnDeviceOnly(web), false);
+  installSpeechRecognizer(web);
+  assert.equal(resolveSpeechRecognizer(), NO_SPEECH_RECOGNIZER, 'web-speech is not returned even when installed by hand');
+
+  const cloud = createNativeSpeechRecognizer(onDeviceModule(), { cloudConsentGranted: true });
+  assert.equal(declaresOnDeviceOnly(cloud), false, 'with cloud consent the native adapter makes no on-device guarantee');
+  installSpeechRecognizer(cloud);
+  assert.equal(resolveSpeechRecognizer(), NO_SPEECH_RECOGNIZER, 'there is no cloud path through the resolver');
+
+  const truthy = { ...onDevice, onDeviceOnly: 'yes' } as unknown as SpeechRecognizerPort;
+  installSpeechRecognizer(truthy);
+  assert.equal(resolveSpeechRecognizer(), NO_SPEECH_RECOGNIZER, 'only the literal true counts');
   clearSpeechRecognizer();
-  assert.equal(resolveSpeechRecognizer(fakeWebScope({})).providerId, 'web-speech');
+});
+
+test('OD-INPUT-5 resolver: an installed on-device recognizer serves the destination field end to end', async () => {
+  installSpeechRecognizer(createNativeSpeechRecognizer(onDeviceModule()));
+  try {
+    const out = await dictateIntoField(FIELD);
+    assert.equal(out.state, 'accepted');
+    assert.equal(out.state === 'accepted' && out.request.text, 'Da Nang');
+  } finally {
+    clearSpeechRecognizer();
+  }
 });
 
 test('the native-module adapter keeps audio on the device and maps events the same way', async () => {
@@ -115,6 +216,7 @@ test('the native-module adapter keeps audio on the device and maps events the sa
   const mod: NativeSpeechModuleLike = {
     requestPermissionsAsync: async () => ({ granted: true }),
     isRecognitionAvailable: () => true,
+    supportsOnDeviceRecognition: () => true,
     start(options) {
       started = options;
       queueMicrotask(() => {
@@ -132,4 +234,97 @@ test('the native-module adapter keeps audio on the device and maps events the sa
     recognizer: createNativeSpeechRecognizer({ ...mod, requestPermissionsAsync: async () => ({ granted: false }) }),
   });
   assert.deepEqual([refused.state, refused.state === 'unavailable' && refused.reason], ['unavailable', 'permission_denied']);
+});
+
+// ── OD-INPUT-5 — on the device first; the cloud only with consent; no audio kept ──
+
+test('OD-INPUT-5 web: an engine WITHOUT on-device controls is not used — audio would be free to leave the device', async () => {
+  const log: string[] = [];
+  const rec = createWebSpeechRecognizer(fakeWebScope({ results: [{ text: 'Hoi An', confidence: 0.9, isFinal: true }] }, log, null))!;
+  assert.equal(await rec.isAvailable(), false);
+  const out = await rec.recognizeOnce({ language: 'en-US' });
+  assert.deepEqual([out.ok, !out.ok && out.reason], [false, 'on_device_unavailable']);
+  assert.ok(!log.some((l) => l.startsWith('start')), 'the microphone was never started');
+});
+
+test('OD-INPUT-5 web: an on-device model that is only DOWNLOADABLE is not used (no silent remote fallback)', async () => {
+  const log: string[] = [];
+  const rec = createWebSpeechRecognizer(fakeWebScope({ results: [{ text: 'Hoi An', confidence: 0.9, isFinal: true }] }, log, 'downloadable'))!;
+  assert.equal(await rec.isAvailable(), false);
+  const out = await dictateIntoField({ ...FIELD, language: 'vi-VN' }, { recognizer: rec });
+  assert.equal(out.state, 'unavailable');
+  assert.ok(!log.some((l) => l.startsWith('start')));
+});
+
+test('OD-INPUT-5 web: when used, recognition is REQUIRED to be local (processLocally = true)', async () => {
+  const log: string[] = [];
+  const rec = createWebSpeechRecognizer(fakeWebScope({ results: [{ text: 'Hoi An', confidence: 0.9, isFinal: true }] }, log))!;
+  const out = await rec.recognizeOnce({ language: 'en-US' });
+  assert.equal(out.ok, true);
+  assert.ok(log.includes('start lang=en-US interim=false local=true'), log.join(' | '));
+});
+
+function nativeMod(over: Partial<NativeSpeechModuleLike> = {}, seen: { started: any[]; asked: number } = { started: [], asked: 0 }) {
+  const listeners: Record<string, (e: any) => void> = {};
+  const mod: NativeSpeechModuleLike = {
+    requestPermissionsAsync: async () => { seen.asked += 1; return { granted: true }; },
+    isRecognitionAvailable: () => true,
+    supportsOnDeviceRecognition: () => true,
+    start(options) {
+      seen.started.push(options);
+      queueMicrotask(() => {
+        listeners.result?.({ isFinal: true, results: [{ transcript: 'Da Nang', confidence: 0.9 }] });
+        listeners.end?.({});
+      });
+    },
+    stop() {},
+    addListener(event, cb) { listeners[event] = cb; return { remove() { delete listeners[event]; } }; },
+    ...over,
+  };
+  return { mod, seen };
+}
+
+test('OD-INPUT-5 native: a device WITHOUT on-device support is refused before the microphone is asked for', async () => {
+  // The module documents its on-device flag as "only enabled if the device
+  // supports it" — so on such a device the flag alone would not keep the audio
+  // home. The adapter refuses instead of trusting it.
+  const { mod, seen } = nativeMod({ supportsOnDeviceRecognition: () => false });
+  const rec = createNativeSpeechRecognizer(mod);
+  assert.equal(await rec.isAvailable(), false);
+  const out = await rec.recognizeOnce({});
+  assert.deepEqual([out.ok, !out.ok && out.reason], [false, 'on_device_unavailable']);
+  assert.equal(seen.asked, 0, 'no permission prompt');
+  assert.equal(seen.started.length, 0, 'never started');
+});
+
+test('OD-INPUT-5 native: a module that cannot SAY whether it is on-device is refused (fail closed)', async () => {
+  const { mod, seen } = nativeMod({ supportsOnDeviceRecognition: undefined });
+  const out = await createNativeSpeechRecognizer(mod).recognizeOnce({});
+  assert.deepEqual([out.ok, !out.ok && out.reason], [false, 'on_device_unavailable']);
+  assert.equal(seen.started.length, 0);
+});
+
+test('OD-INPUT-5 native: audio is never persisted — start() carries no recording options at all', async () => {
+  const { mod, seen } = nativeMod();
+  const out = await createNativeSpeechRecognizer(mod).recognizeOnce({ language: 'vi-VN' });
+  assert.equal(out.ok, true);
+  assert.deepEqual(Object.keys(seen.started[0]).sort(), ['continuous', 'interimResults', 'lang', 'requiresOnDeviceRecognition']);
+  assert.equal(seen.started[0].requiresOnDeviceRecognition, true);
+});
+
+test('OD-INPUT-5 native: only an explicit cloud consent lets recognition leave the device', async () => {
+  const { mod, seen } = nativeMod({ supportsOnDeviceRecognition: () => false });
+  const out = await createNativeSpeechRecognizer(mod, { cloudConsentGranted: true }).recognizeOnce({});
+  assert.equal(out.ok, true, 'the consented path exists — and is the ONLY way to it');
+  assert.equal(seen.started[0].requiresOnDeviceRecognition, false);
+});
+
+test('OD-INPUT-5 web: an engine that answers available() but has NO processLocally attribute is not used', async () => {
+  // Assigning an attribute an engine does not implement only creates a plain
+  // property it never reads; that engine is not on-device by our say-so.
+  const log: string[] = [];
+  const rec = createWebSpeechRecognizer(fakeWebScope({ results: [{ text: 'Hoi An', confidence: 0.9, isFinal: true }] }, log, 'available', false))!;
+  const out = await rec.recognizeOnce({ language: 'en-US' });
+  assert.deepEqual([out.ok, !out.ok && out.reason], [false, 'on_device_unavailable']);
+  assert.ok(!log.some((l) => l.startsWith('start')), 'never started');
 });

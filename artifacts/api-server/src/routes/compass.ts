@@ -52,7 +52,7 @@ import {
 } from "../compass/CompassPlatformContext.js";
 import { buildOpportunities, opportunityWorldValueKeys, projectForSurface, type SurfaceProjection } from "../lib/opportunityEngine.js";
 import { parseIntentMode } from "../lib/intentModes.js";
-import { certifiedLayoverSnapshot, isDegradedRefusal } from "../services/airport/LayoverSnapshot.js";
+import { certifiedLayoverSnapshot, isDegradedRefusal, landsideContextPhrase } from "../services/airport/LayoverSnapshot.js";
 import {
   ALGORITHM_VERSION_KEY,
   COMPASS_RANKING_ALGORITHM_VERSION,
@@ -1732,7 +1732,7 @@ router.post("/compass/ask", async (req, res) => {
       ctxLines.push(
         "[Layover \u2014 certified snapshot]",
         `Verdict ${s.verdict}; return state ${s.returnState}; tier ${s.tier}; usable ${s.usableMinutes} min; ` +
-          `hard return-by ${s.hardReturnBy} (${s.minutesToHardReturn} min from now); landside ${s.landsideOpen ? "open" : `closed (${s.landsideClosedReason ?? "unstated"})`}` +
+          `hard return-by ${s.hardReturnBy} (${s.minutesToHardReturn} min from now); landside ${landsideContextPhrase(s)}` +
           (s.unknowns.length ? `; unknowns: ${s.unknowns.join(", ")}` : ""),
       );
     } else if (isDegradedRefusal(snap.reason)) {

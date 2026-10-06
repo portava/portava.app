@@ -4,8 +4,8 @@
  * The REVERSE of audit:schema. audit:schema asks "does every object the
  * migrations CLAIM exist live?"; this asks the other direction — "does every
  * object that exists LIVE have a canonical explanation?" — and errors on any
- * live object the MODEL (committed baseline + canonical migrations sorting
- * >= "2100" + the EXPLAINED ledger) cannot account for. It is READ-ONLY: every
+ * live object the MODEL (committed baseline + every canonical migration
+ * + the EXPLAINED ledger) cannot account for. It is READ-ONLY: every
  * statement it sends is a SELECT.
  *
  * Usage (from artifacts/api-server):
@@ -384,12 +384,34 @@ async function main(): Promise<void> {
   const baselineSql = readFileSync(BASELINE_PATH, "utf8");
   const baselineTables = parseBaselineTables(baselineSql);
 
-  // Canonical band: only migrations authored after the baseline (4-digit prefix
-  // sorting >= "2100"). Empty today (highest is 2095); the model rests on the
-  // baseline + ledger, which is correct and intended.
+  // THE CANONICAL SET IS EVERY MIGRATION FILE, and the prefix band that used to
+  // select it is gone.
+  //
+  // It read `f.slice(0, 4) >= "2100"`, on the premise in this file's own comment
+  // that nothing below 2100 post-dates the baseline ("Empty today; highest is
+  // 2095"). That premise is false, and `2095_discovery_place_photos.sql` is the
+  // counter-example: baseline/20260819_baseline_structure.sql contains no
+  // `CREATE TABLE public.discovery_place_photos`, so 2095 post-dates the
+  // capture, sits below the band, and its table, its primary key and its two
+  // CHECK constraints were therefore unexplainable BY CONSTRUCTION. No prefix
+  // encodes a date, so there is no boundary to move it to — only a next
+  // off-by-one to find. The band is removed rather than renumbered.
+  //
+  // Reading a migration the baseline already contains costs a parse and changes
+  // no answer: the model is a UNION of sets, so a second identical declaration
+  // adds nothing. What it buys is that "canonical" means the migration set
+  // rather than a numeric guess about it.
+  //
+  // THE ONE THING THIS LOSES, STATED. parseMigration reads declarations, not
+  // drops: an object a migration created and a LATER migration dropped is still
+  // in the model, so a live object sharing its name would read as explained.
+  // That direction — declared, not live — is `audit:schema`'s question and it
+  // asks it over this same file set; this auditor asks the other one. A dropped
+  // object that is somehow live again is the single case neither sees, and it is
+  // narrower than three findings this check cannot ever clear.
   const canonicalDir = resolve(__dir, "../migrations");
   const canonicalSqls = readdirSync(canonicalDir)
-    .filter((f) => f.endsWith(".sql") && f.slice(0, 4) >= "2100")
+    .filter((f) => f.endsWith(".sql"))
     .sort()
     .map((f) => readFileSync(join(canonicalDir, f), "utf8"));
 

@@ -780,7 +780,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/layoverEnvelope.test.ts",
     "artifacts/api-server/src/test/layoverScenarioMatrix.test.ts",
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14): L169 and L267 cite `app/trip/[id].tsx`, which the guard resolves to the legacy repo-root mock (113 lines); the trip screen whose lines they cite is travel-buddy-standalone's, so both are watched rather than one chosen.
-    "travel-buddy-standalone/app/trip/[id].tsx",
+    "travel-buddy-standalone/app/trip/[id].tsx", /* WIDENED 2026-10-05 by lane A, line-neutral (this file is cited by line): census-layover §49 rests L241 on the first suite and records L275 / L32 on the other two */ "artifacts/api-server/src/test/layoverDecisionDiffCheck.test.ts", "artifacts/api-server/src/test/memoryFromLayover.test.ts", "artifacts/api-server/src/test/layoverOutcomeStore.test.ts", "artifacts/api-server/src/test/layoverCheckpoints.test.ts", "artifacts/api-server/src/test/layoverPresenceIntents.test.ts", "artifacts/api-server/src/migrations/3900_layover_presence.sql",
     "app/trip/[id].tsx", "travel-buddy-standalone/src/lib/__tests__/layoverPlanCache.component.test.ts", // WIDENED 2026-10-03 by the LAYOVER lane, line-neutral (this file is cited by line): census-layover §48.2 moves L154 N -> W on this suite
   ],
   "census-highlights-memories.md": [
@@ -1232,7 +1232,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/routes/engagement.ts",
     "artifacts/api-server/src/routes/collections.ts",
     // WIDENED 2026-09-27 by the coverage-guard fix (census-media §32.14), at integration: §N.1 grades the presence join in distinctStampField; counted once the checker resolved `lib/stamps/criteria/metrics.ts:96#…` by its anchor.
-    "artifacts/api-server/src/lib/stamps/criteria/metrics.ts",
+    "artifacts/api-server/src/lib/stamps/criteria/metrics.ts", "artifacts/api-server/src/routes/memoryActions.ts", "artifacts/api-server/src/routes/memoryCandidates.ts", "artifacts/api-server/src/test/memoryActions.test.ts", "artifacts/api-server/src/test/highlightActions.test.ts", "artifacts/api-server/src/test/highlightPinnedEverySurface.test.ts", "artifacts/api-server/src/test/memoryCandidates.test.ts", "artifacts/api-server/src/lib/memoryPrecisionGate.ts", "artifacts/api-server/src/lib/placeIdBridge.ts", "artifacts/api-server/src/test/memoryLocationPrecision.test.ts", /* WIDENED 2026-10-05 by §AC (mission lane A2): the routes and suites §AC.2's moves rest on, and by §AD the precision gate and place bridge §AD.2 items 6-7 rest on — on this line so no cited line in this file moves */
 ],
   // Trust has NO SPEC — its 52 requirements are 20 inbound obligations from
   // other surfaces' specs plus 32 contracts its own code asserts. That makes the
@@ -2424,6 +2424,25 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/hooks/useGroupChat.ts",
     "artifacts/api-server/src/test/telegraphEditE2eeRefusal.test.ts",
     "artifacts/api-server/src/test/telegraphMessageReportReason.test.ts",
+    // WIDENED 2026-10-05 by lane T2 (census-telegraph §45): the rows §45 moves cite these suites as
+    // their proving tests (T291/T294/T295, T366, T367, T408, T415/T416, T398, T435).
+    "artifacts/api-server/src/test/telegraphProjectionRegistryHonesty.test.ts",
+    "artifacts/api-server/src/test/telegraphConversationMemoryBoundary.test.ts",
+    "artifacts/api-server/src/test/telegraphNearbyNotFromGps.test.ts",
+    "artifacts/api-server/src/test/telegraphScreenshotInformational.test.ts",
+    "artifacts/api-server/src/test/telegraphTransportClasses.test.ts",
+    "artifacts/api-server/src/test/telegraphThreadNotificationPolicy.test.ts",
+    "artifacts/api-server/src/test/telegraphDiagnosticsDurableAudit.test.ts",
+    // WIDENED 2026-10-06 by lane T2 (§45b, §45c): the proving suites of the OD-TRUST-5 send gate and of
+    // verifier findings 1 and 8 (a post across a block; the DM header's identity).
+    "artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts",
+    "artifacts/api-server/src/test/telegraphPostProjectionByline.test.ts",
+    "artifacts/api-server/src/test/telegraphConversationHeaderIdentity.test.ts",
+    // WIDENED 2026-10-06 by lane T2 (§45f): the proving suite of §45d.3's correction (the header's
+    // availability across a block and the window relationship; verification of a58aa01d3f, finding 1).
+    "artifacts/api-server/src/test/telegraphConversationHeaderAvailability.test.ts",
+    // T366's W (§45c.2) rests on the kernel's call shape here: a change to it can move that row.
+    "artifacts/api-server/src/lib/memoryCommandBus.ts",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as
@@ -3085,6 +3104,19 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // paths resolve) and the most client-weighted: its subject is the typing
   // surface, so the hooks ARE the measurement, not evidence about it.
   "census-input-intelligence.md": [
+    // ── ADDED 2026-10-05 by lane D (§37) ────────────────────────────────────
+    // The proving tests §37's moves rest on: G320/G370 and the outcome term
+    // (OD-INPUT-1/2), G25 (OD-INPUT-3), and G368's vocabulary pin. Cited as
+    // evidence for verdicts, so watched rather than declared NOT-GRADED.
+    "artifacts/api-server/src/test/inputOutcomeLearning.test.ts",
+    "artifacts/api-server/src/test/inputMemoryContext.test.ts",
+    "artifacts/api-server/src/test/inputTelemetryVocabularyParity.test.ts",
+    // ── ADDED 2026-10-06 by lane D (§38) ────────────────────────────────────
+    // 3780 is cited as evidence for the flag check inside both outcome RPCs
+    // and the 30-day window the reader applies (OD-INPUT-1/2, finding 1).
+    "artifacts/api-server/src/migrations/3780_input_outcome_learning.sql",
+    // §38.7: the proving test for OD-TRIP-3 in plan-item candidates.
+    "artifacts/api-server/src/test/inputPlanItemPrivacy.test.ts",
     // ── ADDED 2026-09-29 by §34 (testing-mode lane tm-ii, WP-19) ─────────────
     // §34 moves G154–G157, G160–G163, G133 and G362 on these files' evidence:
     // the two server suites that prove paste and "meet at" through the real
@@ -4473,6 +4505,12 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/discoveryFeedNoServiceClient.test.ts",
     "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryEventPostsRail.refresh.component.test.tsx",
     "travel-buddy-standalone/src/components/discovery/__tests__/ForYouTab.pullToRefresh.component.test.tsx",
+    // census-discovery §120 (the owner's 30-day testing retention for public.recommendations): the files its record cites.
+    "artifacts/api-server/src/migrations/3501_discovery_recommendations_retention.sql",
+    "db/rollback/2026-09-30-3501-discovery-recommendations-retention-rollback.sql",
+    "artifacts/api-server/src/lib/discoveryServeLogRetentionScheduler.ts",
+    "artifacts/api-server/src/test/discoveryServeLogRetention.test.ts",
+    "artifacts/api-server/src/test/db/discoveryServeLogRetention.db.test.ts",
   ],
   // ── ADDED 2026-09-15: census-passport joins the CHECKABLE set ──────────────
   //

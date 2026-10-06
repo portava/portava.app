@@ -18,22 +18,30 @@
  * nothing here should be read as claiming otherwise.
  *
  * ══════════════════════════════════════════════════════════════════════════════
- * THREE OF THE NINE ARE REFUSED, NOT ESTIMATED
+ * A METRIC WITH NO PRODUCER IS REFUSED, NOT ESTIMATED (three were; one still is)
  * ══════════════════════════════════════════════════════════════════════════════
  * The temptation in a metrics module is to produce a plausible number for every
  * line of the spec, because a dashboard with a hole in it looks unfinished. That
  * is how a metric that measures nothing ends up being trusted. Three of §57's
- * nine have NO PRODUCER in the taxonomy, and each is returned as an explicit
- * refusal naming what is missing rather than as a rate over an empty numerator:
+ * nine HAD NO PRODUCER in the taxonomy and were returned as explicit refusals
+ * naming what was missing, rather than as a rate over an empty numerator. Two
+ * now have producers; the refusal that remains is the one that must:
  *
- *   - wrong-selection reversal (G368): no event records that a resolved field
- *     was later un-resolved. Adding one means a new name in
- *     INPUT_TELEMETRY_EVENT_NAMES *and* in migration 2950's
- *     `iate_event_name_known` CHECK, i.e. a follow-on migration.
- *   - downstream task completion (G370): `downstream_task_completed` has an
- *     exported emitter and no caller. The screens that complete a task —
- *     app/trip/new.tsx, app/events/create/index.tsx, app/telegraph/new.tsx —
- *     are the only places that can know, and none of them calls it.
+ *   - wrong-selection reversal (G368) WAS refused here: no event recorded that
+ *     a resolved field was later un-resolved. It is now computed below, over
+ *     `selection_reversed` (the fifteenth §44 name; migration 3781 widens 2950's
+ *     `iate_event_name_known` CHECK to admit it). Until 3781 is applied to a
+ *     database, an insert carrying that name fails there — the number is
+ *     computable from the tree and measurable nowhere yet.
+ *   - downstream task completion (G370) WAS refused: `downstream_task_completed`
+ *     had an emitter and no caller. It now has one (the §24 paste-to-Trip
+ *     write) and a consent gate (OD-INPUT-1): the ingest admits the event only
+ *     for a caller who opted in to outcome learning. So it is computed below,
+ *     and its POPULATION IS CONSENTING USERS ONLY — a rate over the people who
+ *     opted in, which is the honest scope of an opt-in measurement and must be
+ *     reported as such, never as "all users". The screens that complete most
+ *     tasks (app/trip/new.tsx, app/events/create, the Telegraph composer) still
+ *     do not call it; they are other lanes' files.
  *   - privacy incident count (G371): this table is deliberately incapable of
  *     recording one. It stores no account id, so "an incident happened to
  *     someone" is not a fact it could hold. That metric is a production
@@ -44,8 +52,9 @@
  * that were served degraded, and a degraded row is kept out of G372's latency
  * — a round trip that never reached the network is not a serve's latency.)
  *
- * A rate of 0/0 reported as 0 would be a lie in all three cases, and a rate over
- * an event that no code emits is the worst kind: it looks green forever.
+ * A rate of 0/0 reported as 0 would be a lie in every case, and a rate over an
+ * event that no code emits is the worst kind: it looks green forever. So an
+ * empty denominator is `value: null, n: 0` — no blocker, and no zero.
  *
  * ══════════════════════════════════════════════════════════════════════════════
  * THE EPISODE — why the three funnel rates share one construction
@@ -105,11 +114,11 @@ export interface InputSuccessMetrics {
   validEntityResolutionRate: Metric;
   /** G367 — episodes that ended in the user's own text, over episodes that resolved either way. */
   manualFallbackRate: Metric;
-  /** G368 — no producer. */
+  /** G368 — entity-resolving selections later edited away from, over entity-resolving selections. */
   wrongSelectionReversalRate: Metric;
   /** G369 — `disambiguation_selected` rows that resolved to an EXISTING entity. */
   duplicateCreationPrevented: Metric;
-  /** G370 — no producer. */
+  /** G370 — successful downstream tasks over reported downstream tasks (consenting users only). */
   downstreamTaskCompletionRate: Metric;
   /** G371 — not answerable from this table by construction. */
   privacyIncidents: Metric;
@@ -138,14 +147,6 @@ const ENTITY_RESOLVING: ReadonlySet<string> = new Set([
   'disambiguation',
 ]);
 
-const BLOCKED_REVERSAL =
-  'no event records that a resolved field was later un-resolved; a reversal signal ' +
-  'needs a new name in INPUT_TELEMETRY_EVENT_NAMES and in migration 2950\'s ' +
-  'iate_event_name_known CHECK (census G368)';
-const BLOCKED_DOWNSTREAM =
-  'downstream_task_completed has an exported emitter and no caller; only the screens ' +
-  'that complete a task (app/trip/new.tsx, app/events/create/index.tsx, ' +
-  'app/telegraph/new.tsx) can emit it (census G320/G370)';
 const BLOCKED_PRIVACY =
   'this table stores no account id by construction (migration 2950), so it cannot hold ' +
   'the fact that an incident happened to anyone; the answer lives in production ' +
@@ -236,9 +237,18 @@ function has(ep: Episode, name: string): boolean {
  * fallback rate over "every field in the product" averages a recipient picker
  * with a trip title, and §57's numbers are only meaningful per surface.
  */
+/** One cell of input_outcome_task_daily (3783): consented outcomes, aggregated at ingest. */
+export interface TaskOutcomeCell {
+  day: string;
+  context: string;
+  task: string;
+  ok: boolean;
+  count: number;
+}
+
 export function computeInputSuccessMetrics(
   rows: readonly MetricRow[],
-  opts: { contexts?: readonly string[] } = {},
+  opts: { contexts?: readonly string[]; taskOutcomes?: readonly TaskOutcomeCell[] } = {},
 ): InputSuccessMetrics {
   const allowed = opts.contexts ? new Set(opts.contexts) : null;
   const scoped = allowed ? rows.filter((r) => allowed.has(r.context)) : rows;
@@ -293,6 +303,39 @@ export function computeInputSuccessMetrics(
     else if (manual) manualEpisodes += 1;
   }
 
+  // ── G368 wrong-selection reversal rate ──────────────────────────────────────
+  // PER SELECTION, over each (session, field) stream — NOT per episode. A user
+  // who picks "Paris", leaves the field, comes back and edits it has started a
+  // new episode (a new `input_opened`), and an episode-scoped count would file
+  // that reversal under an episode with no selection in it and lose it. So each
+  // entity-resolving `suggestion_selected` opens a pending resolution; the next
+  // `selection_reversed` on the same stream reverses it; the next
+  // `suggestion_selected` closes it as kept. A reversal with nothing pending —
+  // the selection fell outside the window, or was not entity-resolving — is
+  // counted nowhere: it cannot be attributed to a selection in this sample.
+  let resolvingSelections = 0;
+  let reversedSelections = 0;
+  const streams = new Map<string, MetricRow[]>();
+  for (const ep of episodes) {
+    const key = `${ep.sessionId}\u0000${ep.fieldId}`;
+    const list = streams.get(key);
+    if (list) list.push(...ep.events);
+    else streams.set(key, [...ep.events]);
+  }
+  for (const stream of streams.values()) {
+    let pending = false;
+    for (const e of stream) {
+      if (e.event_name === 'suggestion_selected') {
+        const t = e.props.suggestionType;
+        pending = typeof t === 'string' && ENTITY_RESOLVING.has(t);
+        if (pending) resolvingSelections += 1;
+      } else if (e.event_name === 'selection_reversed' && pending) {
+        reversedSelections += 1;
+        pending = false;
+      }
+    }
+  }
+
   // ── G369 duplicate creation prevented ───────────────────────────────────────
   const duplicatesPrevented = scoped.filter(
     (r) => r.event_name === 'disambiguation_selected' && r.props.resolvedExisting === true,
@@ -316,6 +359,25 @@ export function computeInputSuccessMetrics(
     if (ep.events.slice(firstDegraded + 1).some((e) => e.event_name === 'suggestion_selected')) completedDegraded += 1;
   }
 
+  // ── G370 downstream task completion ─────────────────────────────────────────
+  // Of the tasks a suggestion-served field reported, how many SUCCEEDED. Read
+  // from the AGGREGATE (3783), not from §44 rows: a consented outcome is counted
+  // per (day, context, task, ok) at ingest and never stored as an event row
+  // (OD-INPUT-2's "irreversibly aggregate"). The population is consenting users
+  // only — an opt-in rate, to be reported as one.
+  let tasksReported = 0;
+  let tasksSucceeded = 0;
+  for (const c of opts.taskOutcomes ?? []) {
+    if (allowed && !allowed.has(c.context)) continue;
+    const n = Number.isFinite(c.count) && c.count > 0 ? Math.floor(c.count) : 0;
+    if (c.ok === true) {
+      tasksReported += n;
+      tasksSucceeded += n;
+    } else if (c.ok === false) {
+      tasksReported += n;
+    }
+  }
+
   // ── G372 suggest latency ────────────────────────────────────────────────────
   const serverMs: number[] = [];
   const clientMs: number[] = [];
@@ -333,11 +395,11 @@ export function computeInputSuccessMetrics(
     timeToValidSelectionMs: latency(ttvs),
     validEntityResolutionRate: rate(entityResolutions, impressions),
     manualFallbackRate: rate(manualEpisodes, manualEpisodes + resolvedEpisodes),
-    wrongSelectionReversalRate: { value: null, n: 0, blocked: BLOCKED_REVERSAL },
+    wrongSelectionReversalRate: rate(reversedSelections, resolvingSelections),
     // A COUNT, not a rate: §57 asks "duplicate creation prevented", and there is
     // no honest denominator (the duplicates the user never saw are unobservable).
     duplicateCreationPrevented: { value: duplicatesPrevented, n: duplicatesPrevented },
-    downstreamTaskCompletionRate: { value: null, n: 0, blocked: BLOCKED_DOWNSTREAM },
+    downstreamTaskCompletionRate: rate(tasksSucceeded, tasksReported),
     privacyIncidents: { value: null, n: 0, blocked: BLOCKED_PRIVACY },
     suggestLatencyServerMs: latency(serverMs),
     suggestLatencyClientMs: latency(clientMs),

@@ -181,7 +181,8 @@ describe("A1 — requireUser refuses to serve a request whose ban check did not 
   it("CONTROL — a banned account is still refused with 403", async () => {
     const client = makeClient({
       user: USER,
-      tables: { profiles: { rows: [{ id: USER.id, account_status: "banned" }] } },
+      // A banned is a user_account_states row (embedded on the gate's profiles read): account_status cannot hold it.
+      tables: { profiles: { rows: [{ id: USER.id, account_status: "active", user_account_states: [{ state: "banned", expires_at: null }] }] } },
     });
     _setTestClient(client, true);
     const { res, sink } = makeRes();
@@ -194,7 +195,8 @@ describe("A1 — requireUser refuses to serve a request whose ban check did not 
   it("CONTROL — a suspended account is still refused with 403", async () => {
     const client = makeClient({
       user: USER,
-      tables: { profiles: { rows: [{ id: USER.id, account_status: "suspended" }] } },
+      // A suspended is a user_account_states row (embedded on the gate's profiles read): account_status cannot hold it.
+      tables: { profiles: { rows: [{ id: USER.id, account_status: "active", user_account_states: [{ state: "suspended", expires_at: null }] }] } },
     });
     _setTestClient(client, true);
     const { res, sink } = makeRes();

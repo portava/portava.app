@@ -41,7 +41,7 @@ import {
   scopeKeyOf,
   sourceVersionOf,
 } from "./projectionRegistry.js";
-import type { SignificanceExplanation } from "./significance.js";
+import type { SignificanceExplanation } from "./significance.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; // one line: cited by line
 
 export const DERIVATIVE_REGISTRY_TABLE = "memory_derivative_registry";
 
@@ -73,12 +73,12 @@ interface MinimalPostgrestError {
   details?: string;
 }
 
-/** A relation or column that is not there. A retry will not conjure it. */
+/** The TABLE is not there (lib/tableAbsence) — `retryable: false` is documented as "a missing table". */
 function isSchemaAbsent(err: MinimalPostgrestError | null | undefined): boolean {
-  if (!err) return false;
-  const code = String(err.code ?? "");
-  if (code === "42P01" || code === "42703" || code === "PGRST205" || code === "PGRST204") return true;
-  return /does not exist|could not find the table|schema cache/i.test(String(err.message ?? ""));
+  // Not a column / function / operator: memoryDeletionLifecycle reads a
+  // non-retryable revocation as `not_applicable`, so counting those here made a
+  // FAILED derivative revocation read as "no derivatives to purge". A code decides.
+  return isTableAbsentError(err);
 }
 
 /**

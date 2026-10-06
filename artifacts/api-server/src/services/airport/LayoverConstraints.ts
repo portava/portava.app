@@ -45,16 +45,38 @@
  * handed: it either returns it untouched or replaces it with `no`. Swept in
  * `src/test/layoverConstraintGate.test.ts`.
  *
- * THE LEGACY ARM IS BYTE-IDENTICAL
- * ================================
- * A session with no declared set and no policy contributes NO key to
- * `FeasibilityInputs`, so its input hash, deadline, verdict, reasons and codes
- * are what they were before this module existed. `LAYOVER_FEASIBILITY_VERSION`
- * moved to 2026.10.04-1 because the record gained `landsideGate`; its history
- * entry lives here rather than in LayoverFeasibility.ts, whose lines are
+ * THE GATE FAILS CLOSED (2026-10-06, after PR #588's verification returned FAIL)
+ * ============================================================================
+ * `open` used to mean "nothing closed it", which made every state the engine
+ * could not vouch for an open gate: an unconfirmed border, a tight window, a
+ * constraint store that could not be read, a traveller who answered "not
+ * sure". It now means ONE thing — the verdict is `yes` (entry CONFIRMED_ALLOWED,
+ * the window not tight, no critical unknown) — and the gate is three-valued:
+ *
+ *   open     verdict `yes`. The only status a surface may draw as an affirmative.
+ *   caution  nothing FORBIDS landside, and nothing confirms it either
+ *            (`cautions`: an unconfirmed border under the owner's policy OFF, a
+ *            tight window). Never LANDSIDE_AVAILABLE, never a green "fits".
+ *   closed   `closedBy` is non-empty and the verdict is `no` / `stay_airside`.
+ *
+ * Unknown, unreadable and undeclared inputs are closures, each with its own
+ * name: `constraints_unreadable`, `airport_change_unknown`, `recheck_unknown`,
+ * `baggage_unknown`. `src/test/layoverGateFailClosed.test.ts` holds the sweep.
+ *
+ * THE LEGACY ARM KEEPS ITS VERDICT, DEADLINE, REASONS AND CODES
+ * =============================================================
+ * A session with no constraint context (both flags off) contributes NO key to
+ * `FeasibilityInputs`, so its deadline, verdict, reasons and codes are what
+ * they were before this module existed. Its `inputHash` is NOT what it was:
+ * `feasibilityVersion` is a member of the hashed inputs and has moved twice.
+ * History, kept here rather than in LayoverFeasibility.ts, whose lines are
  * citation-anchored:
  *   2026.10.04-1  §4/§6.1: `constraints` and `policy` become optional named
  *                 inputs; the record publishes `landsideGate`.
+ *   2026.10.06-1  the gate gains `status` / `cautions` and `open` narrows to
+ *                 the verdict `yes`; `constraints.read` may be `undeclared`;
+ *                 separate tickets (`recheckRequired` true or not stated) are
+ *                 charged the collect-and-re-check bag terms.
  */
 import type { EntryEligibility } from "./layoverEntryGate.js";
 import {
@@ -66,6 +88,7 @@ import {
   type LeaveAdvice,
 } from "./LayoverSafetyEngine.js";
 import type { FeasibilityInputs } from "./LayoverFeasibility.js";
+import { planFitTotals, planFitVerdict, type PlanFitStop, type PlanFitVerdict } from "./LayoverPlanFit.js";
 
 // ── vocabularies (the CHECKs in migration 2992, spelled once) ─────────────────
 
@@ -131,10 +154,13 @@ export interface LayoverConstraintSet {
  * How the declared set was read for a session.
  *
  *   declared     a row exists; `set` is it.
- *   undeclared   the store was read and holds nothing for this session.
- *   unreadable   the store could not be read. NOT "undeclared": the traveller
- *                may have said UNKNOWN and we cannot see it, so the engine
- *                takes the cautious case.
+ *   undeclared   the store was read and holds nothing for this session. NOT a
+ *                legacy pass: declarations are being kept, this traveller has
+ *                made none, so whether they change airports is UNKNOWN.
+ *   unreadable   the store — or either flag that governs it — could not be
+ *                read. NOT "undeclared": the traveller may have said UNKNOWN,
+ *                or "yes, a different airport", and we cannot see it. The gate
+ *                closes (`constraints_unreadable`).
  *   storage_off  `layover_constraints_enabled` is off; nothing was read.
  */
 export type ConstraintReadState = "declared" | "undeclared" | "unreadable" | "storage_off";
@@ -156,10 +182,15 @@ export interface SessionConstraintContext {
 
 /** The constraint facts the arithmetic reads. Part of `inputHash`. */
 export interface ConstraintInput {
-  read: "declared" | "unreadable";
-  /** `null` when unreadable — there is no version to name. */
+  read: "declared" | "undeclared" | "unreadable";
+  /** `null` when undeclared or unreadable — there is no version to name. */
   version: number | null;
-  baggageMode: BaggageMode;
+  /**
+   * `null` ONLY when `read === "undeclared"`: nothing four-way was declared, so
+   * the session's own `checkedBags` boolean stands. An unreadable store is
+   * UNKNOWN, never null — an answer may exist that we cannot see.
+   */
+  baggageMode: BaggageMode | null;
   recheckRequired: boolean | null;
   airportChangeRequired: boolean | null;
 }
@@ -172,14 +203,37 @@ export interface LandsidePolicyInput {
 /**
  * Project a session's context onto the named inputs.
  *
- * Returns ONLY the keys that carry something. `undeclared`, `storage_off` and
- * an absent context contribute nothing, which is what keeps the legacy arm's
- * input hash unchanged.
+ * Returns ONLY the keys that carry something. `storage_off` and an absent
+ * context contribute nothing: with storage off there is nowhere a declaration
+ * could have been kept, so the session's booleans are all there is.
+ *
+ * `undeclared` DOES contribute (it did not before 2026-10-06). The store is on
+ * and was read, and this traveller has declared nothing — which is the same
+ * unknown as a declared "not sure", and was being certified as a declared
+ * "no". It carries no baggage mode, so the bag term stays the session's own.
+ *
+ * ── A CONTEXT THAT IS NOT ONE OF THE FOUR KNOWN SHAPES IS UNREADABLE ─────────
+ * `{ read: "declared", set: null }` used to match no arm below and fall out as
+ * "no constraint input" — the LEGACY arm, which can open. A context this build
+ * cannot recognise is not evidence that nothing was declared: it is something
+ * we were handed and could not read, so it certifies exactly as an unreadable
+ * store does (`constraints_unreadable`), with the entry policy taken as ON
+ * unless the context states a boolean. ABSENT (`null`/`undefined`) is still the
+ * legacy arm: it is the known shape of a session no loader has touched, and
+ * with both flags off it is the same computation as `storage_off`.
  */
 export function namedConstraintInputs(
   ctx: SessionConstraintContext | null | undefined,
 ): { constraints?: ConstraintInput; policy?: LandsidePolicyInput } {
-  if (!ctx) return {};
+  if (ctx === null || ctx === undefined) return {};
+  if (!wellFormedContext(ctx)) {
+    const policyStated = typeof (ctx as { entryForbidsLandside?: unknown }).entryForbidsLandside === "boolean";
+    const policyOn = policyStated ? (ctx as SessionConstraintContext).entryForbidsLandside === true : true;
+    return {
+      constraints: { read: "unreadable", version: null, baggageMode: "UNKNOWN", recheckRequired: null, airportChangeRequired: null },
+      ...(policyOn ? { policy: { entryForbidsLandside: true as const } } : {}),
+    };
+  }
   const out: { constraints?: ConstraintInput; policy?: LandsidePolicyInput } = {};
   if (ctx.read === "declared" && ctx.set) {
     out.constraints = {
@@ -197,14 +251,82 @@ export function namedConstraintInputs(
       recheckRequired: null,
       airportChangeRequired: null,
     };
+  } else if (ctx.read === "undeclared") {
+    out.constraints = {
+      read: "undeclared",
+      version: null,
+      baggageMode: null,
+      recheckRequired: null,
+      airportChangeRequired: null,
+    };
   }
   if (ctx.entryForbidsLandside === true) out.policy = { entryForbidsLandside: true };
   return out;
 }
 
+/** `true | false | null` and nothing else — `undefined`, `"yes"` and `0` are not answers. */
+function isTriState(v: unknown): v is boolean | null {
+  return v === true || v === false || v === null;
+}
+
+/** A declared set every member of which is in this build's vocabulary. */
+function wellFormedSet(set: unknown): set is LayoverConstraintSet {
+  if (set === null || typeof set !== "object") return false;
+  const s = set as Record<string, unknown>;
+  return (
+    typeof s.version === "number" && Number.isInteger(s.version) && s.version >= 1 &&
+    isBaggageMode(s.baggageMode) && isTriState(s.recheckRequired) && isTriState(s.airportChangeRequired)
+  );
+}
+
+/**
+ * One of the four shapes a loader produces, exactly:
+ *   declared     with a well-formed set;
+ *   undeclared / unreadable / storage_off   with NO set.
+ * and a boolean entry policy. Anything else is not a context this build wrote.
+ */
+function wellFormedContext(ctx: unknown): ctx is SessionConstraintContext {
+  if (ctx === null || typeof ctx !== "object") return false;
+  const c = ctx as Record<string, unknown>;
+  if (typeof c.entryForbidsLandside !== "boolean") return false;
+  if (c.read === "declared") return wellFormedSet(c.set);
+  if (c.read === "undeclared" || c.read === "unreadable" || c.read === "storage_off") return c.set === null || c.set === undefined;
+  return false;
+}
+
+/**
+ * Does the ticketing answer cost the re-check time?
+ *
+ *   true   separate tickets: the traveller checks in again.
+ *   false  one ticket. Nothing extra.
+ *   null   not stated. Charged, like UNKNOWN baggage: an unknown is never read
+ *          in the traveller's favour (§2.1, App C1).
+ */
+export function recheckChargesBags(recheckRequired: boolean | null): boolean {
+  return recheckRequired !== false;
+}
+
+/**
+ * Are the engine's two bag terms charged for this constraint input?
+ *
+ * §21.1 "5h self-transfer → recheck friction included" names no number, and the
+ * engine has exactly two bag terms keyed on one boolean — the claim minutes in
+ * `estimateExitDelay` and the airport's `checkedBagsExtraMin` in the return
+ * buffer. A self-transfer is charged THOSE: the same constants collect-and-
+ * re-check already uses, and no new figure. (Whether a dedicated check-in-
+ * cutoff term should replace them is an owner question; this is the
+ * conservative reading until there is one.)
+ *
+ * `baggageMode === null` (undeclared) leaves the bag half to `sessionBoolean`.
+ */
+export function constraintsChargeBags(c: ConstraintInput, sessionBoolean: boolean): boolean {
+  const bags = c.baggageMode === null ? sessionBoolean : baggageChargesBags(c.baggageMode);
+  return bags || recheckChargesBags(c.recheckRequired);
+}
+
 /**
  * The session the ENGINE computes with: the stored booleans, with the bag term
- * replaced by the declared mode when there is one.
+ * replaced by what the constraint input charges when there is one.
  *
  * With no constraint input this is the session itself, untouched.
  */
@@ -213,7 +335,7 @@ export function engineSession<S extends { checkedBags: boolean }>(
   constraints: ConstraintInput | undefined,
 ): S {
   if (!constraints) return session;
-  const checkedBags = baggageChargesBags(constraints.baggageMode);
+  const checkedBags = constraintsChargeBags(constraints, session.checkedBags);
   return session.checkedBags === checkedBags ? session : { ...session, checkedBags };
 }
 
@@ -231,25 +353,57 @@ export const LANDSIDE_CLOSURES = [
   "entry_unconfirmed",
   "baggage_unknown",
   "airport_change",
+  // 2026-10-06 — the three ways an input can be UNKNOWN rather than refused.
+  /** The declared set, or a flag that governs it, could not be read. */
+  "constraints_unreadable",
+  /** Whether the next flight leaves from another airport is not stated. */
+  "airport_change_unknown",
+  /** Whether the flights are on separate tickets is not stated, and it decides. */
+  "recheck_unknown",
 ] as const;
 export type LandsideClosure = (typeof LANDSIDE_CLOSURES)[number];
 
+/**
+ * Why a gate that nothing CLOSED is still not open.
+ *
+ *   entry_unconfirmed  the border could not be confirmed and the owner's
+ *                      forbid-landside policy is OFF. (With it ON this is a
+ *                      closure of the same name.)
+ *   tight_window       45–89 usable minutes: `adviseLeaving`'s `tight`.
+ */
+export const LANDSIDE_CAUTIONS = ["entry_unconfirmed", "tight_window"] as const;
+export type LandsideCaution = (typeof LANDSIDE_CAUTIONS)[number];
+
+/** The gate, as the one word every surface branches on. */
+export type LandsideStatus = "open" | "caution" | "closed";
+
+/** The declarable field a question may be asked about. */
+export type ConstraintQuestionField = "airportChangeRequired" | "baggageMode" | "recheckRequired";
+
 /** §5's guard, evaluated. Published on every certified record. */
 export interface LandsideGate {
-  /** May this traveller be offered anything outside the airport? */
+  /**
+   * May this traveller be TOLD they can leave the airport? TRUE exactly when
+   * the verdict is `yes` — `status === "open"`. It is NOT "nothing closed it":
+   * a gate with an empty `closedBy` and a caution is not open.
+   */
   open: boolean;
-  /** Every reason it is closed. Empty exactly when `open`. */
+  /** `open` | `caution` | `closed`. The field to branch on. */
+  status: LandsideStatus;
+  /** Every reason it is closed. Non-empty exactly when `status === "closed"`. */
   closedBy: LandsideClosure[];
+  /** Why it is not open although nothing closed it. Empty unless `caution`. */
+  cautions: LandsideCaution[];
   /**
    * §12.1: the ONE field whose answer could change this verdict, or null. Null
    * when nothing is unknown, and null when the unknown cannot matter.
    */
-  needsInfo: "baggageMode" | null;
+  needsInfo: ConstraintQuestionField | null;
   /** §4 `critical_unknowns`: the safety-critical facts that are unknown. */
   criticalUnknowns: string[];
   entryPermissionState: EntryPermissionState;
   /** How the constraint set reached this computation. `legacy` = none did. */
-  constraintsRead: "declared" | "unreadable" | "legacy";
+  constraintsRead: "declared" | "undeclared" | "unreadable" | "legacy";
   constraintsVersion: number | null;
   /** The policy this gate was evaluated under. */
   entryForbidsLandside: boolean;
@@ -267,9 +421,25 @@ export const BAGGAGE_UNKNOWN_UNKNOWN =
 export const CONSTRAINTS_UNREADABLE_UNKNOWN =
   "Your bag and connection details could not be read just now, so the cautious case is assumed";
 
-/** Said when the store is unreadable AND the unread answer would decide the verdict. */
+/** Said when the store is unreadable and leaving was otherwise on the table. */
 export const CONSTRAINTS_UNREADABLE_REASON =
-  "We couldn't read your bag details just now, and they change this answer. Try again shortly before deciding to leave.";
+  "We couldn't read your bag and connection details just now, and they change this answer. Try again shortly before deciding to leave.";
+
+/** The `unknowns` line when the airport change is not stated. */
+export const AIRPORT_CHANGE_UNKNOWN_UNKNOWN =
+  "Whether your next flight leaves from this airport or a different one";
+
+/** Said when "not sure" about an airport change is what closes landside. */
+export const AIRPORT_CHANGE_UNKNOWN_REASON =
+  "If your next flight leaves from a different airport, getting there comes first — so we won't say it's safe to leave until you confirm which airport you fly out of.";
+
+/** The `unknowns` line when separate tickets are not stated. */
+export const RECHECK_UNKNOWN_UNKNOWN =
+  "Whether your flights are on separate tickets — we have counted the time to check in again";
+
+/** Said when "not sure" about separate tickets decides the verdict. */
+export const RECHECK_DECISIVE_REASON =
+  "Whether your flights are on separate tickets changes this answer — you would have to check in again — so we won't say it's safe to leave until you tell us.";
 
 export const AIRPORT_CHANGE_REASON =
   "Your next flight leaves from a different airport. Getting there comes first, so we won't suggest side trips for this layover.";
@@ -281,7 +451,7 @@ export const COLLECT_RECHECK_REASON =
   "You collect and re-check your bags, so claim and bag-drop time are counted.";
 
 export const SELF_TRANSFER_REASON =
-  "Separate tickets: you check in again, and the airline will not hold or rebook a missed connection.";
+  "Separate tickets: you check in again, so that time is counted — and the airline will not hold or rebook a missed connection.";
 
 export const SELF_TRANSFER_UNKNOWN =
   "The check-in cutoff for your onward flight — we do not hold it";
@@ -306,10 +476,25 @@ function withLine(lines: string[], line: string): string[] {
  * Apply the declared constraints and the entry policy to the clock's advice.
  *
  * `base` is `adviseLeaving`'s answer for the ENGINE session (so its minutes
- * already charge bags for COLLECT_RECHECK and UNKNOWN). This function never
- * recomputes a deadline; the one extra computation it makes is §12.1's
- * value-of-information probe — the verdict the traveller would get if the
- * unknown bag turned out not to need collecting.
+ * already charge bags for COLLECT_RECHECK, UNKNOWN and separate tickets). This
+ * function never recomputes a deadline; the one extra computation it makes is
+ * §12.1's value-of-information probe — the verdict the traveller would get if
+ * every unknown that was charged turned out to cost nothing.
+ *
+ * ── WHAT CLOSES, AND WHEN ────────────────────────────────────────────────────
+ *   constraints_unreadable   ALWAYS, when the store or a flag could not be
+ *                            read. Named even beside the clock's own refusal.
+ *   airport_change           the traveller said yes.
+ *   airport_change_unknown   not stated, and the verdict was otherwise not a
+ *                            refusal — the answer "yes" would close landside,
+ *                            so the unknown decides. ASKED.
+ *   baggage_unknown /        not stated, charged as the cautious case, and the
+ *   recheck_unknown          probe shows the charge flips the verdict. ASKED.
+ *   entry_unconfirmed        the owner's policy is ON and the border is unknown.
+ *
+ * An unknown that CANNOT change the verdict (the traveller is staying, the
+ * border refused, the clock already refused) is disclosed in `unknowns` and
+ * asked about by nobody — §12.1.
  */
 export function gateLandside(
   inputs: FeasibilityInputs,
@@ -324,8 +509,11 @@ export function gateLandside(
   let reasons = base.reasons;
   let unknowns = base.unknowns;
   let reasonCodes = base.reasonCodes;
-  let needsInfo: LandsideGate["needsInfo"] = null;
   const criticalUnknowns: string[] = [];
+  /** Every field whose answer would lift a closure, in no particular order. */
+  const askable = new Set<ConstraintQuestionField>();
+  /** The sentence that explains the closure the traveller can lift — placed LAST. */
+  let decisiveReason: string | null = null;
 
   // ── what the clock and the border already said ────────────────────────────
   if (base.verdict === "stay_airside") closedBy.push("traveller_staying_airside");
@@ -333,10 +521,26 @@ export function gateLandside(
     closedBy.push(inputs.entry?.state === "refused" ? "entry_refused" : "insufficient_time");
   }
   const staying = base.verdict === "stay_airside";
+  /**
+   * Could an answer still change this verdict? Not when the traveller is
+   * staying (their own answer) and not when the clock or the border has
+   * already refused: "yes, a different airport" on top of a `no` is still `no`.
+   */
+  const answerable = base.verdict !== "stay_airside" && base.verdict !== "no";
 
   // ── the declared set ───────────────────────────────────────────────────────
   if (c) {
-    if (c.read === "unreadable") unknowns = withLine(unknowns, CONSTRAINTS_UNREADABLE_UNKNOWN);
+    const unreadable = c.read === "unreadable";
+    if (unreadable) {
+      unknowns = withLine(unknowns, CONSTRAINTS_UNREADABLE_UNKNOWN);
+      // NAMED WHENEVER IT IS TRUE. The unread set may hold "yes, a different
+      // airport", so on any verdict that was not already a refusal it decides.
+      closedBy.push("constraints_unreadable");
+      if (answerable) {
+        criticalUnknowns.push("constraints");
+        decisiveReason = CONSTRAINTS_UNREADABLE_REASON;
+      }
+    }
 
     if (c.baggageMode === "COLLECT_RECHECK") {
       reasons = reasons.filter((r) => !r.startsWith(LEGACY_CHECKED_BAGS_REASON_PREFIX));
@@ -356,6 +560,15 @@ export function gateLandside(
         closedBy.push("airport_change");
         reasons = withLine(reasons, AIRPORT_CHANGE_REASON);
       }
+    } else if (c.airportChangeRequired === null && !unreadable) {
+      // "NOT SURE" IS NOT "NO". It used to be: this branch did not exist, and
+      // the `=== true` test above read every unknown as the favourable answer.
+      unknowns = withLine(unknowns, AIRPORT_CHANGE_UNKNOWN_UNKNOWN);
+      if (answerable) {
+        closedBy.push("airport_change_unknown");
+        criticalUnknowns.push("airport_change_required");
+        askable.add("airportChangeRequired");
+      }
     }
   }
 
@@ -366,38 +579,76 @@ export function gateLandside(
   }
 
   // ── §6.1 invariant 2 / §12.1 / App B.2: an unknown that decides ───────────
-  if (c && c.baggageMode === "UNKNOWN") {
-    if (c.read === "declared") unknowns = withLine(unknowns, BAGGAGE_UNKNOWN_UNKNOWN);
-    // The verdict if the bag needed nothing from the traveller. Same airport,
-    // same instant, same live conditions, same border — one fact different.
-    const best = { ...inputs.session, checkedBags: false };
-    const bestWindow = computeWindow(inputs.airport, best, inputs.nowMs, inputs.liveConditions);
-    const bestVerdict = adviseLeaving(inputs.airport, best, bestWindow, {
-      travelTimeSource: inputs.landsideProbe?.travelTimeSource,
-      liveConditions: inputs.liveConditions,
-      entry: inputs.entry,
-    }).verdict;
-    if (bestVerdict !== base.verdict) {
-      criticalUnknowns.push("baggage_mode");
-      reasonCodes = withCode(reasonCodes, "BAGGAGE_STATUS_CRITICAL_UNKNOWN");
-      closedBy.push("baggage_unknown");
-      // A QUESTION ONLY WHEN THE TRAVELLER HAS NOT ANSWERED. An unreadable store
-      // may be holding their answer already; asking again would be asking them
-      // to repair our outage, and the honest instruction is to retry.
-      const sentence = c.read === "declared" ? BAGGAGE_DECISIVE_REASON : CONSTRAINTS_UNREADABLE_REASON;
-      if (c.read === "declared") needsInfo = "baggageMode";
-      // LAST, deliberately: `certifyFeasibility` takes the final reason as the
-      // sentence that explains a capped rating, and this is the one closure the
-      // traveller can lift with a single answer.
-      reasons = [...reasons.filter((r) => r !== sentence), sentence];
+  if (c) {
+    const unreadable = c.read === "unreadable";
+    const bagsUnknown = c.baggageMode === "UNKNOWN";
+    const recheckUnknown = c.recheckRequired === null;
+    if (bagsUnknown && c.read === "declared") unknowns = withLine(unknowns, BAGGAGE_UNKNOWN_UNKNOWN);
+    if (recheckUnknown && !unreadable) unknowns = withLine(unknowns, RECHECK_UNKNOWN_UNKNOWN);
+    // Charged by a FACT the traveller stated? Then no unknown is behind the
+    // bag terms and there is nothing to probe.
+    const chargedByFact =
+      c.baggageMode === "COLLECT_RECHECK" ||
+      c.recheckRequired === true ||
+      (c.baggageMode === null && inputs.session.checkedBags === true);
+    if (!chargedByFact && (bagsUnknown || recheckUnknown)) {
+      // The verdict if every charged unknown cost nothing. Same airport, same
+      // instant, same live conditions, same border — one fact different.
+      const best = { ...inputs.session, checkedBags: false };
+      const bestWindow = computeWindow(inputs.airport, best, inputs.nowMs, inputs.liveConditions);
+      const bestVerdict = adviseLeaving(inputs.airport, best, bestWindow, {
+        travelTimeSource: inputs.landsideProbe?.travelTimeSource,
+        liveConditions: inputs.liveConditions,
+        entry: inputs.entry,
+      }).verdict;
+      if (bestVerdict !== base.verdict) {
+        if (bagsUnknown) {
+          criticalUnknowns.push("baggage_mode");
+          reasonCodes = withCode(reasonCodes, "BAGGAGE_STATUS_CRITICAL_UNKNOWN");
+          closedBy.push("baggage_unknown");
+          // A QUESTION ONLY WHEN THE TRAVELLER HAS NOT ANSWERED. An unreadable
+          // store may be holding their answer already; asking again would be
+          // asking them to repair our outage, and the honest instruction is to
+          // retry.
+          if (!unreadable) askable.add("baggageMode");
+        }
+        if (recheckUnknown && !unreadable) {
+          criticalUnknowns.push("recheck_required");
+          closedBy.push("recheck_unknown");
+          askable.add("recheckRequired");
+        }
+        if (unreadable) decisiveReason = CONSTRAINTS_UNREADABLE_REASON;
+      }
     }
   }
 
-  const constraintClosed = closedBy.some(
-    (x) => x === "airport_change" || x === "entry_unconfirmed" || x === "baggage_unknown",
-  );
-  const gate: LandsideGate = {
-    open: closedBy.length === 0,
+  // ── §12.1: ONE question — the one whose answer decides the most ───────────
+  // An airport change closes landside outright whatever the bags do, so it is
+  // asked first; the bag mode moves both bag terms; the ticketing answer last.
+  const needsInfo: LandsideGate["needsInfo"] =
+    askable.has("airportChangeRequired") ? "airportChangeRequired"
+    : askable.has("baggageMode") ? "baggageMode"
+    : askable.has("recheckRequired") ? "recheckRequired"
+    : null;
+  if (needsInfo === "airportChangeRequired") decisiveReason = AIRPORT_CHANGE_UNKNOWN_REASON;
+  else if (needsInfo === "baggageMode") decisiveReason = BAGGAGE_DECISIVE_REASON;
+  else if (needsInfo === "recheckRequired") decisiveReason = RECHECK_DECISIVE_REASON;
+  if (decisiveReason !== null) {
+    // LAST, deliberately: `certifyFeasibility` takes the final reason as the
+    // sentence that explains a capped rating, and this is the closure the
+    // traveller (or a retry) can lift.
+    const sentence = decisiveReason;
+    reasons = [...reasons.filter((r) => r !== sentence), sentence];
+  }
+
+  const constraintClosed = closedBy.some((x) => CONSTRAINT_CLOSURES.has(x));
+  // ONLY EVER A WITHDRAWAL: `no` stays `no`, everything else becomes `no`.
+  // `stay_airside` is the traveller's own answer and is never rewritten, even
+  // when a closure (an unreadable store) is named beside it.
+  const verdict: LeaveAdvice["verdict"] = staying ? base.verdict : constraintClosed ? "no" : base.verdict;
+
+  const gate = gateFor({
+    verdict,
     closedBy,
     needsInfo,
     criticalUnknowns,
@@ -405,45 +656,255 @@ export function gateLandside(
     constraintsRead: c ? c.read : "legacy",
     constraintsVersion: c ? c.version : null,
     entryForbidsLandside,
-  };
+  });
   void envelope; // the window is the caller's; nothing here re-derives from it
 
   const untouched = reasons === base.reasons && unknowns === base.unknowns && reasonCodes === base.reasonCodes;
-  if (!constraintClosed && untouched) return { advice: base, gate, insufficient: false };
+  if (verdict === base.verdict && untouched) return { advice: base, gate, insufficient: criticalUnknowns.length > 0 };
   return {
-    advice: {
-      ...base,
-      // ONLY EVER A WITHDRAWAL: `no` stays `no`, everything else becomes `no`.
-      // `stay_airside` — the traveller's own answer — never reaches this arm:
-      // each of the three constraint closures is pushed under `!staying` (or,
-      // for the bag question, cannot be decisive when the answer is "staying"
-      // either way), so there is no second `!staying` here to keep in step.
-      verdict: constraintClosed ? "no" : base.verdict,
-      reasons,
-      unknowns,
-      reasonCodes,
-    },
+    advice: { ...base, verdict, reasons, unknowns, reasonCodes },
     gate,
     insufficient: criticalUnknowns.length > 0,
   };
 }
 
-/** The question §12.1 allows, for the field the gate names. */
-export function constraintQuestion(gate: LandsideGate): {
-  field: "baggageMode";
-  prompt: string;
-  options: Array<{ value: BaggageMode; label: string }>;
-} | null {
-  if (gate.needsInfo !== "baggageMode") return null;
+/** The closures THIS module adds; the other three are the clock's, the border's and the traveller's. */
+const CONSTRAINT_CLOSURES: ReadonlySet<LandsideClosure> = new Set<LandsideClosure>([
+  "entry_unconfirmed", "baggage_unknown", "airport_change",
+  "constraints_unreadable", "airport_change_unknown", "recheck_unknown",
+]);
+
+/**
+ * Assemble the gate from the verdict and the closures. THE ONE PLACE `open`,
+ * `status` and `cautions` are decided, so the three cannot disagree.
+ *
+ * `open` is the verdict `yes` with nothing closed and nothing cautioned. It is
+ * computed from all three on purpose: a `yes` beside an unconfirmed border
+ * cannot be produced by `adviseLeaving` today, and if it ever is, this reads it
+ * as a caution rather than as permission.
+ */
+function gateFor(args: Omit<LandsideGate, "open" | "status" | "cautions"> & { verdict: LeaveAdvice["verdict"] }): LandsideGate {
+  const { verdict, ...rest } = args;
+  const refused = verdict === "no" || verdict === "stay_airside";
+  const cautions: LandsideCaution[] = [];
+  if (!refused && rest.closedBy.length === 0) {
+    if (rest.entryPermissionState !== "CONFIRMED_ALLOWED") cautions.push("entry_unconfirmed");
+    if (verdict === "tight") cautions.push("tight_window");
+  }
+  const status: LandsideStatus =
+    refused || rest.closedBy.length > 0 ? "closed"
+    : cautions.length > 0 || verdict !== "yes" ? "caution"
+    : "open";
+  return { open: status === "open", status, ...rest, cautions };
+}
+
+/**
+ * Re-read a gate after something DOWNSTREAM of it withdrew the verdict.
+ *
+ * `certifyFeasibilityWithReturnCorridor` may take `yes` to `tight` after this
+ * gate was evaluated. A record whose verdict says "tight" beside a gate that
+ * still says "open" is two answers in one payload, so the gate follows. It can
+ * only ever lose its `open`: a verdict that became more permissive is ignored.
+ */
+export function gateForVerdict(gate: LandsideGate, verdict: LeaveAdvice["verdict"]): LandsideGate {
+  if (verdict === "yes" || gate.status !== "open") return gate;
+  if (verdict === "tight") return { ...gate, open: false, status: "caution", cautions: [...gate.cautions, "tight_window"] };
+  if (verdict === "entry_unverified") return { ...gate, open: false, status: "caution", cautions: [...gate.cautions, "entry_unconfirmed"] };
+  return { ...gate, open: false, status: "closed", closedBy: [...gate.closedBy, verdict === "stay_airside" ? "traveller_staying_airside" : "insufficient_time"] };
+}
+
+/**
+ * THE ONE GATE READ. Every surface that tells a traveller they can leave the
+ * airport — the lifecycle state, the plan fit, Compass `simulatePlan`, the crew
+ * solver, the recommendation generator — asks THIS, of the certified record it
+ * already holds, and nothing else.
+ *
+ * Derived defensively rather than read off `gate.status` alone: a record
+ * certified by a build that predates `status` (a stored snapshot replayed
+ * later) has none, and must not read as open.
+ */
+export function landsideStatusOf(record: { landsideGate: LandsideGate; verdict?: LeaveAdvice["verdict"] }): LandsideStatus {
+  const g = record.landsideGate;
+  if (g.closedBy.length > 0 || g.status === "closed") return "closed";
+  if (record.verdict === "no" || record.verdict === "stay_airside") return "closed";
+  if (g.open === true && g.status === "open" && (record.verdict === undefined || record.verdict === "yes")) return "open";
+  return "caution";
+}
+
+/**
+ * The landside gate of a GROUP plan — §14.1 "Crew plan must be certified
+ * against every member branch", for the half the clock cannot see.
+ *
+ *   not_applicable  no stop is outside the airport; or nobody's gate closed it
+ *                   and a member is uncertified (`null`), whose gate was never
+ *                   read — the branch is infeasible for that reason already,
+ *                   and "open" would be a claim about nobody.
+ *   closed          ANY member's gate is closed. One traveller who may not
+ *                   leave the terminal closes the trip for the branch.
+ *   caution         nobody is forbidden and somebody is not confirmed.
+ *   open            every member's gate is open.
+ *
+ * A stop with no `insideAirport: true` is a landside stop.
+ */
+export function groupLandsideStatus(
+  stops: readonly PlanFitStop[],
+  records: ReadonlyArray<{ landsideGate: LandsideGate; verdict?: LeaveAdvice["verdict"] } | null>,
+): LandsideStatus | "not_applicable" {
+  if (!stops.some((s) => s.insideAirport !== true)) return "not_applicable";
+  let worst: LandsideStatus = "open";
+  let unread = records.length === 0;
+  for (const r of records) {
+    if (!r) { unread = true; continue; }
+    const s = landsideStatusOf(r);
+    if (s === "closed") return "closed";
+    if (s === "caution") worst = "caution";
+  }
+  return unread ? "not_applicable" : worst;
+}
+
+/** `closed` beats `caution` beats `open`; `not_applicable` when nothing applies. */
+export function weakestLandsideStatus(
+  statuses: ReadonlyArray<LandsideStatus | "not_applicable">,
+): LandsideStatus | "not_applicable" {
+  if (statuses.includes("closed")) return "closed";
+  if (statuses.includes("caution")) return "caution";
+  return statuses.includes("open") ? "open" : "not_applicable";
+}
+
+/** `fits` | `over` | `unknown` from the clock, plus the two answers only the gate can give. */
+export type GatedPlanFitVerdict = PlanFitVerdict | "blocked" | "unconfirmed";
+
+/** A plan's fit, as every plan surface publishes it. */
+export interface CertifiedPlanFit {
+  totalPlannedMin: number;
+  returnTravelMin: number;
+  neededMin: number;
+  usableMinutes: number;
+  /** TRUE only when `fit === "fits"`. */
+  fitsWindow: boolean;
+  /**
+   *   fits         every leg is stated, the total is inside the window, and —
+   *                if any stop is outside the airport — the gate is OPEN.
+   *   over         the lower bound already exceeds the window. Certain.
+   *   unknown      a leg is unstated; nobody has measured the plan.
+   *   blocked      the plan leaves the airport and the gate is CLOSED.
+   *   unconfirmed  the plan leaves the airport, the clock says it fits, and the
+   *                gate is not open (an unconfirmed border, a tight window).
+   */
+  fit: GatedPlanFitVerdict;
+  /** What the clock alone says — `planFitVerdict`, before the gate. */
+  clockFit: PlanFitVerdict;
+  /** A stop outside the airport is on the plan. */
+  hasLandsideStop: boolean;
+  /** The gate this fit was read under, so a surface can say WHY. */
+  landside: { status: LandsideStatus; closedBy: LandsideClosure[]; cautions: LandsideCaution[] };
+  unstatedTravelStops: number;
+  unstatedDurationStops: number;
+  neededMinIsLowerBound: boolean;
+  overflowMin: number;
+  backByTime: string;
+}
+
+/**
+ * Does the plan fit — the clock AND the gate.
+ *
+ * `planFitVerdict` reads `usableMinutes` and nothing else, and the usable
+ * window is the same number whether or not the traveller may leave the
+ * airport: a refused border, an airport change and an unreadable store all
+ * certify with hours of "usable" time. So a plan with a stop in the city came
+ * back `fits` under a closed gate, on the routes, in Compass and in the crew
+ * solver alike. This is the one function those three now call.
+ *
+ * The gate only ever WITHDRAWS a `fits` (or, when closed, an `unknown`). `over`
+ * is arithmetic, certain, and already a refusal; an airside-only plan is not
+ * the landside gate's business at all.
+ */
+export function certifiedPlanFit(
+  record: {
+    landsideGate: LandsideGate;
+    verdict?: LeaveAdvice["verdict"];
+    envelope: Pick<LayoverWindow, "usableMinutes" | "hardReturnTime">;
+  },
+  stops: readonly PlanFitStop[],
+): CertifiedPlanFit {
+  const usableMinutes = record.envelope.usableMinutes;
+  const totals = planFitTotals(stops);
+  const clockFit = planFitVerdict(totals, usableMinutes);
+  const hasLandsideStop = stops.some((s) => s.insideAirport !== true);
+  const status = landsideStatusOf(record);
+  const fit: GatedPlanFitVerdict =
+    clockFit === "over" || !hasLandsideStop ? clockFit
+    : status === "closed" ? "blocked"
+    : status === "caution" && clockFit === "fits" ? "unconfirmed"
+    : clockFit;
   return {
-    field: "baggageMode",
-    prompt: "Is your checked bag tagged through to your final destination?",
-    options: [
-      { value: "CHECKED_THROUGH", label: "Yes — tagged through" },
-      { value: "COLLECT_RECHECK", label: "No — I collect and re-check it" },
-      { value: "CARRY_ON_ONLY", label: "I only have carry-on" },
-    ],
+    totalPlannedMin: totals.totalPlannedMin,
+    returnTravelMin: totals.returnTravelMin,
+    neededMin: totals.neededMin,
+    usableMinutes,
+    fitsWindow: fit === "fits",
+    fit,
+    clockFit,
+    hasLandsideStop,
+    landside: { status, closedBy: [...record.landsideGate.closedBy], cautions: [...(record.landsideGate.cautions ?? [])] },
+    unstatedTravelStops: totals.unstatedTravelStops,
+    unstatedDurationStops: totals.unstatedDurationStops,
+    neededMinIsLowerBound: totals.neededMinIsLowerBound,
+    overflowMin: Math.max(0, totals.neededMin - usableMinutes),
+    backByTime: record.envelope.hardReturnTime.toISOString(),
   };
+}
+
+/** A question §12.1 allows: one field, the answers that resolve it, nothing else. */
+export type ConstraintQuestion =
+  | { field: "baggageMode"; prompt: string; options: Array<{ value: BaggageMode; label: string }> }
+  | { field: "airportChangeRequired" | "recheckRequired"; prompt: string; options: Array<{ value: boolean; label: string }> };
+
+/**
+ * The question §12.1 allows, for the field the gate names.
+ *
+ * "Not sure" is never offered as an answer here: it is the state the traveller
+ * is already in, and it is the reason the question is being asked.
+ */
+export function constraintQuestion(gate: LandsideGate): ConstraintQuestion | null {
+  switch (gate.needsInfo) {
+    case "baggageMode":
+      return {
+        field: "baggageMode",
+        prompt: "Is your checked bag tagged through to your final destination?",
+        options: [
+          { value: "CHECKED_THROUGH", label: "Yes — tagged through" },
+          { value: "COLLECT_RECHECK", label: "No — I collect and re-check it" },
+          { value: "CARRY_ON_ONLY", label: "I only have carry-on" },
+        ],
+      };
+    case "airportChangeRequired":
+      return {
+        field: "airportChangeRequired",
+        prompt: "Does your next flight leave from this airport, or a different airport?",
+        options: [
+          { value: false, label: "This airport" },
+          { value: true, label: "A different airport" },
+        ],
+      };
+    case "recheckRequired":
+      return {
+        field: "recheckRequired",
+        prompt: "Are your flights on one ticket, or booked separately?",
+        options: [
+          { value: false, label: "One ticket" },
+          { value: true, label: "Separate tickets — I check in again" },
+        ],
+      };
+    case null:
+      return null;
+    default: {
+      // A field added to the union and not taught here is not asked about
+      // rather than asked about wrongly.
+      const _exhaustive: never = gate.needsInfo;
+      return null;
+    }
+  }
 }
 
 // ── §4.1 / §5 LayoverState ────────────────────────────────────────────────────
@@ -467,8 +928,8 @@ export const LAYOVER_STATE_SOURCES: Record<LayoverState, { derivable: boolean; f
   NEEDS_INFO:         { derivable: true,  from: "landsideGate.needsInfo" },
   EVALUATING:         { derivable: false, from: "transient: it is the certification itself and is never observed at rest" },
   AIRPORT_ONLY:       { derivable: true,  from: "landsideGate closed" },
-  LANDSIDE_AVAILABLE: { derivable: true,  from: "landsideGate open, no landside stop planned" },
-  PLAN_SELECTED:      { derivable: true,  from: "landsideGate open and a landside stop is planned" },
+  LANDSIDE_AVAILABLE: { derivable: true,  from: "landsideGate OPEN (the verdict is `yes`), no landside stop planned" },
+  PLAN_SELECTED:      { derivable: true,  from: "landsideGate OPEN (the verdict is `yes`) and a landside stop is planned" },
   EXECUTING:          { derivable: false, from: "needs an airport-exit checkpoint (layover_checkpoints has no writer)" },
   RETURN_SOON:        { derivable: true,  from: "certified returnState" },
   RETURN_NOW:         { derivable: true,  from: "certified returnState (RETURN_NOW or CONNECTION_AT_RISK)" },
@@ -483,15 +944,37 @@ export const LAYOVER_STATE_SOURCES: Record<LayoverState, { derivable: boolean; f
 };
 
 /**
- * Project the stored status and the certified record onto §4.1's state.
+ * Closures that are NOT evidence the traveller stayed in the terminal: the
+ * clock, and an outage. Everything else in `closedBy` is either the traveller's
+ * own answer or a closure they were shown before they could have left.
+ */
+const CLOSURES_THAT_DO_NOT_PLACE_THE_TRAVELLER: ReadonlySet<LandsideClosure> = new Set<LandsideClosure>([
+  "insufficient_time", "constraints_unreadable",
+]);
+
+/**
+ * Project the stored status and the certified record onto §4.1's state, or
+ * `null` when §5 has no state for it.
  *
  * A PROJECTION, NOT A STORE: nothing here records a transition. It exists so
  * the guard `EVALUATING → LANDSIDE_AVAILABLE` has one implementation that every
  * surface reads, and so NEEDS_INFO is a state rather than a sentence.
+ *
+ * ── `null` IS THE CAUTIONARY GATE, AND IT IS DELIBERATE ─────────────────────
+ * §5 gives EVALUATING two exits: AIRPORT_ONLY ("landside forbidden /
+ * insufficient time") and LANDSIDE_AVAILABLE, whose guard is "entry allowed;
+ * critical unknowns empty; usable time ≥ configured floor". A cautionary gate
+ * satisfies NEITHER — nothing forbids landside, and the guard is unmet — so
+ * there is no state to report and none is approximated. This used to return
+ * LANDSIDE_AVAILABLE for it, which a client drew as a green "You can go out"
+ * beneath a verdict that said entry was unconfirmed. The caller publishes the
+ * reason (`landside_unconfirmed`) and the gate's own `cautions` say which.
  */
 export function deriveLayoverState(args: {
   status: "active" | "returning" | "completed" | "cancelled" | "expired";
   gate: LandsideGate;
+  /** The certified verdict the gate was evaluated beside. */
+  verdict?: LeaveAdvice["verdict"];
   returnState: LayoverReturnState;
   /** A stop outside the airport is on the plan. */
   hasLandsidePlan: boolean;
@@ -501,7 +984,7 @@ export function deriveLayoverState(args: {
    * (§7.2's temporal conflict) cannot have a traveller out in the city.
    */
   hadLandsideWindow: boolean;
-}): LayoverState {
+}): LayoverState | null {
   switch (args.status) {
     case "completed": return "COMPLETED";
     case "cancelled": return "CANCELLED";
@@ -521,25 +1004,34 @@ export function deriveLayoverState(args: {
   // something other than the clock says they are not out: they said they are
   // staying, a constraint closed landside, or there was never a window to be
   // out in (a too-short layover is already past its "deadline" on arrival).
+  // An UNREADABLE store says nothing about where the traveller is — they may
+  // have been told "yes" while it was readable — so it does not withhold it.
   const escalated = args.returnState !== "NORMAL";
-  const clockOnly = args.gate.closedBy.every((x) => x === "insufficient_time");
+  const clockOnly = args.gate.closedBy.every((x) => CLOSURES_THAT_DO_NOT_PLACE_THE_TRAVELLER.has(x));
   if (escalated && (args.hasLandsidePlan || (clockOnly && args.hadLandsideWindow))) {
     return args.returnState === "RETURN_SOON" ? "RETURN_SOON" : "RETURN_NOW";
   }
   if (args.gate.needsInfo) return "NEEDS_INFO";
-  if (!args.gate.open) return "AIRPORT_ONLY";
+  const status = landsideStatusOf({ landsideGate: args.gate, verdict: args.verdict });
+  if (status === "closed") return "AIRPORT_ONLY";
+  if (status !== "open") return null;
   return args.hasLandsidePlan ? "PLAN_SELECTED" : "LANDSIDE_AVAILABLE";
 }
 
 /** `deriveLayoverState`, read off a certified record. The form every route uses. */
 export function layoverStateOf(
-  record: { landsideGate: LandsideGate; envelope: Pick<LayoverWindow, "returnState" | "freedomWindow"> },
+  record: {
+    landsideGate: LandsideGate;
+    verdict?: LeaveAdvice["verdict"];
+    envelope: Pick<LayoverWindow, "returnState" | "freedomWindow">;
+  },
   status: "active" | "returning" | "completed" | "cancelled" | "expired",
   hasLandsidePlan: boolean,
-): LayoverState {
+): LayoverState | null {
   return deriveLayoverState({
     status,
     gate: record.landsideGate,
+    verdict: record.verdict,
     returnState: record.envelope.returnState,
     hasLandsidePlan,
     hadLandsideWindow: record.envelope.freedomWindow !== null,

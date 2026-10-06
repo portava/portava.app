@@ -188,9 +188,9 @@ export function startSensingRetentionScheduler(): void {
   );
   _timer = setTimeout(function tick() {
     void runSensingRetentionSweep().finally(() => {
-      _timer = setTimeout(tick, SENSING_RETENTION_INTERVAL_MS);
+      if (_timer !== null) { _timer = setTimeout(tick, SENSING_RETENTION_INTERVAL_MS); _timer.unref?.(); } // a stop() during the run must not re-arm
     });
-  }, STARTUP_DELAY_MS);
+  }, STARTUP_DELAY_MS); _timer.unref?.(); // never keep a process alive for a scheduler: the server does that
 }
 
 export function stopSensingRetentionScheduler(): void {
