@@ -116,6 +116,80 @@ export interface CompassLayoverAnswer {
    * the sentence above rests on.
    */
   toolsConsulted: LayoverToolName[];
+  /**
+   * What became of the model's prose (lead ruling 2026-10-06, census L3/L101):
+   *   "certified_only"    — the session's certified verdict is not `yes`, so no
+   *                         model text is shown; the answer is the server's;
+   *   "confined"          — the certified text leads, and only model sentences
+   *                         that name none of the five safety topics follow it;
+   *   "model_non_safety"  — the question was not about leaving and the model's
+   *                         answer named no safety topic: shown as written.
+   * `droppedSentences` counts model sentences withheld for naming a topic.
+   */
+  modelProse: { mode: "certified_only" | "confined" | "model_non_safety"; droppedSentences: number };
+}
+
+/**
+ * THE FIVE SAFETY TOPICS — lead ruling 2026-10-06 on census-layover L3/L101:
+ * "for the five safety topics, Compass layover answers use deterministic,
+ * certified server text. Model text that touches those topics is replaced by
+ * that text, never shown. AI is not a safety dependency."
+ *
+ * The topics are L101's nouns — the envelope / time, the return deadline,
+ * visa / entry status, operational state, and the risk band (leaving, safety).
+ * A sentence is withheld when it NAMES any of them at all, which is §50.1's own
+ * test for `C`; it is not asked whether the sentence is cautious, hedged or
+ * correct. That is the difference from the deny-list in
+ * `enforceCompassEnvelope`, which stays and still reports what the model
+ * attempted, but no longer decides what is shown.
+ *
+ * Over-withholding is the designed failure: "the food hall past security" is
+ * withheld because "security" is an operational noun, and the traveller reads
+ * the certified sentence instead.
+ */
+const SAFETY_TOPIC_PATTERNS: readonly RegExp[] = [
+  // envelope / time / return deadline
+  /\b(?:time|minutes?|mins?|hours?|hrs?|window|plenty|loads|lots|rush|rushing|hurry|quick(?:ly)?|late|later|earlier|early|longer|soon|deadline|return(?:ing)?|back|in\s+time|make\s+it|countdown|buffer)\b/i,
+  // visa / entry
+  /\b(?:visas?|visa-free|entry|enter|permits?|passports?|immigration|customs|border|transit)\b/i,
+  // operational state
+  /\b(?:queues?|lines?|wait(?:s|ing)?|security|delay(?:s|ed)?|on\s+time|gates?|boarding|board|flights?|planes?|depart(?:s|ure|ing)?|takeoff|traffic|crowd(?:s|ed)?|busy|closed|open)\b/i,
+  // risk band / leaving
+  /\b(?:safe(?:ly)?|unsafe|risk(?:y)?|danger(?:ous)?|recommend(?:ed)?|leave|leaving|landside|outside|city|town|downtown|explore|exploring|head\s+(?:out|into)|go\s+out)\b/i,
+];
+
+export function namesSafetyTopic(sentence: string): boolean {
+  return SAFETY_TOPIC_PATTERNS.some((p) => p.test(sentence));
+}
+
+/** Sentences, kept with their own punctuation. A fragment with no terminator is one sentence. */
+export function splitSentences(text: string): string[] {
+  return (text.match(/[^.!?]+[.!?]*/g) ?? []).map((x) => x.trim()).filter((x) => x.length > 0);
+}
+
+/**
+ * Compose what the traveller reads. `certified` is the server's deterministic
+ * answer; nothing in it came from the model.
+ */
+export function confineModelProse(input: {
+  modelText: string;
+  certified: string;
+  verdict: string;
+  involvesLeaving: boolean;
+}): { answer: string; modelProse: CompassLayoverAnswer["modelProse"] } {
+  const sentences = splitSentences(input.modelText);
+  if (input.verdict !== "yes") {
+    // A refused, tight or unconfirmed session: any landside suggestion the
+    // model wrote — named or implied — would widen the band. None is shown.
+    return { answer: input.certified, modelProse: { mode: "certified_only", droppedSentences: sentences.length } };
+  }
+  const kept = sentences.filter((x) => !namesSafetyTopic(x));
+  const dropped = sentences.length - kept.length;
+  if (dropped === 0 && !input.involvesLeaving && kept.length > 0) {
+    return { answer: kept.join(" "), modelProse: { mode: "model_non_safety", droppedSentences: 0 } };
+  }
+  const answer = kept.length > 0 ? `${input.certified} ${kept.join(" ")}` : input.certified;
+  return { answer, modelProse: { mode: "confined", droppedSentences: dropped } };
 }
 
 const LEAVING_PATTERNS = [
@@ -235,12 +309,18 @@ Answer (max ${maxLength} characters):`;
     verdict: record.verdict,
   });
   const boundaryViolations = bounded.violations;
-  const boundedText = bounded.ok
-    ? bounded.text
-    : deterministicAnswer({ involvesLeaving, usableMin, availMin, bufferMin, hardReturnLocal, refused: record.verdict === "no" });
+  // The deny-list above still REPORTS what the model attempted; what is SHOWN
+  // is decided here, by topic, not by phrasing (lead ruling, census L3/L101).
+  const certifiedText = deterministicAnswer({ involvesLeaving, usableMin, availMin, bufferMin, hardReturnLocal, refused: record.verdict === "no" });
+  const confined = confineModelProse({
+    modelText: bounded.ok ? bounded.text : "",
+    certified: certifiedText,
+    verdict: record.verdict,
+    involvesLeaving,
+  });
 
   // Strip any coordinates that might have slipped through
-  const safeAnswer = sanitizeCompassAnswer(boundedText);
+  const safeAnswer = sanitizeCompassAnswer(confined.answer);
 
   let safetyNote: string | null = null;
   if (involvesLeaving) {
@@ -265,6 +345,7 @@ Answer (max ${maxLength} characters):`;
     boundaryViolations,
     certification: certificationHeader(record),
     toolsConsulted,
+    modelProse: confined.modelProse,
   };
 }
 

@@ -171,7 +171,14 @@ describe("answerLayoverQuestion refuses an invented operational state on a real 
     }
   });
 
-  it("positive control: advice about the queue is published unchanged", async () => {
+  // REWRITTEN 2026-10-06 under the lead's ruling on census L3/L101: "for the
+  // five safety topics, Compass layover answers use deterministic, certified
+  // server text. Model text that touches those topics is replaced by that text,
+  // never shown." This case used to assert that cautious advice about the
+  // queue was PUBLISHED, which was the deny-list design's positive control. The
+  // deny-list still finds nothing wrong with the sentence (asserted), and the
+  // sentence is still not shown: it names the security queue and boarding.
+  it("cautious advice about the queue is not a violation, and is still replaced by the certified text", async () => {
     const { _setTestOpenAI } = await import("../../../lib/openai.js");
     const { answerLayoverQuestion } = await import("../LayoverCompassService.js");
     _setTestOpenAI(mockModel("Stay airside this time and allow time for the security queue before boarding."));
@@ -179,8 +186,10 @@ describe("answerLayoverQuestion refuses an invented operational state on a real 
       const a = await answerLayoverQuestion({} as never, {
         question: "Should I leave?", session: session(), airport: AP,
       });
-      assert.deepEqual(a.boundaryViolations, []);
-      assert.match(a.answer, /security queue/);
+      assert.deepEqual(a.boundaryViolations, [], "the deny-list still reports nothing attempted");
+      assert.ok(!/security queue/.test(a.answer), "the model's sentence is not shown");
+      assert.ok(a.answer.length > 0, "the traveller reads the certified text instead");
+      assert.ok(a.modelProse.droppedSentences >= 1);
     } finally {
       _setTestOpenAI(null);
     }

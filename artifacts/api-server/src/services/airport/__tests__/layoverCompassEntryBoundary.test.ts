@@ -205,7 +205,11 @@ describe("answerLayoverQuestion enforces the boundary on a real model answer", (
     }
   });
 
-  it("positive control: an answer inside the envelope is published unchanged", async () => {
+  // REWRITTEN 2026-10-06 under the lead's ruling on census L3/L101 (see the
+  // operational suite's twin). This session's certified verdict is `no`, so no
+  // model text is shown at all — a cautious sentence included — and the
+  // traveller reads the certified refusal. The deny-list still reports nothing.
+  it("on a session certified `no`, even an answer inside the envelope is replaced by the certified text", async () => {
     const { _setTestOpenAI } = await import("../../../lib/openai.js");
     const { answerLayoverQuestion } = await import("../LayoverCompassService.js");
     _setTestOpenAI(mockModel("Stay inside the terminal on this one — there is a good food hall past security."));
@@ -213,8 +217,10 @@ describe("answerLayoverQuestion enforces the boundary on a real model answer", (
       const a = await answerLayoverQuestion({} as never, {
         question: "Can I leave the airport?", session: shutSession(), airport: AP,
       });
-      assert.deepEqual(a.boundaryViolations, []);
-      assert.match(a.answer, /food hall/);
+      assert.deepEqual(a.boundaryViolations, [], "the deny-list still reports nothing attempted");
+      assert.ok(!/food hall/.test(a.answer), "the model's sentence is not shown");
+      assert.equal(a.modelProse.mode, "certified_only");
+      assert.match(a.answer, /not recommended|staying inside the airport/);
     } finally {
       _setTestOpenAI(null);
     }
