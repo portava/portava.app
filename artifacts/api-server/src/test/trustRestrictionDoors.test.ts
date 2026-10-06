@@ -45,6 +45,7 @@ import tripsRouter from "../routes/trips.js";
 import planRouter from "../routes/plan.js";
 import commandRouter from "../server/trips/commandRoute.js";
 import tripProjectionsRouter from "../server/trips/readRoutes/tripProjections.js";
+import tripReservationsRouter from "../routes/tripReservations.js";
 import { RESTRICTION_SENTENCES, RESTRICTION_UNVERIFIABLE_MESSAGE } from "../lib/discoveryTrustGate.js";
 import { TRAIL_PROPOSALS_PER_DAY } from "../services/trails/TrailService.js";
 import { makeFakeClient, startRouter, call, type FakeClient, type FakeDbOptions, type RouterHarness } from "./telegraphCertificationHarness.js";
@@ -61,6 +62,8 @@ const TRAIL2 = "dddddddd-0000-4000-8000-00000000000e";
 const GEM = "99999999-0000-4000-8000-000000000099";
 const PLACE = "ffffffff-0000-4000-8000-00000000000f";
 const MEETUP = "eeeeeeee-0000-4000-8000-00000000000e";
+const RESV = "cccccccc-0000-4000-8000-0000000000a1";
+const SOLO_RESV = "cccccccc-0000-4000-8000-0000000000a2";
 const day = new Date().toISOString().slice(0, 10);
 const iso = (h: number) => new Date(Date.now() + h * 3_600_000).toISOString();
 
@@ -69,7 +72,7 @@ type Restriction = "hosting" | "messaging" | null;
 
 function seed(restriction: Restriction, actor = ANA): Record<string, Rows> {
   return {
-    feature_flags: [{ flag: "hidden_gems_enabled", enabled: true }, { flag: "trip_operational_projections_enabled", enabled: true }],
+    feature_flags: [{ flag: "hidden_gems_enabled", enabled: true }, { flag: "trip_operational_projections_enabled", enabled: true }, { flag: "reservation_import_enabled", enabled: true }],
     profiles: [ORGANIZER, ANA, BEN].map((id) => ({ id, handle: id.slice(0, 4), name: id.slice(0, 4), role: "user" })),
     trust_restrictions: restriction ? [{ user_id: actor, restriction_type: restriction, lifted_at: null, expires_at: null }] : [],
     trips: [
@@ -93,6 +96,10 @@ function seed(restriction: Restriction, actor = ANA): Record<string, Rows> {
     hidden_gems: [{ id: GEM, status: "active", title: "Gem", submitted_by: BEN, created_at: iso(-72) }],
     places: [{ id: PLACE, name: "Cafe", category: "dining", latitude: 38.7, longitude: -9.1 }],
     meetups: [{ id: MEETUP, title: "Meetup", starts_at: iso(4), trip_id: null }],
+    trip_reservations: [
+      { id: RESV, trip_id: TRIP, user_id: ANA, status: "pending", reservation_type: "lodging", title: "Hotel", starts_at: iso(5), ends_at: iso(30) },
+      { id: SOLO_RESV, trip_id: SOLO, user_id: ANA, status: "pending", reservation_type: "lodging", title: "Hotel", starts_at: iso(5), ends_at: iso(30) },
+    ],
   };
 }
 
@@ -135,6 +142,8 @@ const DOORS: Door[] = [
     solo: { path: `/meetups/${MEETUP}/add-to-trip-plan`, body: { tripId: SOLO } } },
   { name: "gem-add-to-plan", mapped: ["hosting"], method: "POST", path: `/hidden-gems/${GEM}/plan`, body: { tripId: TRIP },
     solo: { path: `/hidden-gems/${GEM}/plan`, body: { tripId: SOLO } } },
+  { name: "reservation-confirm-add-to-plan", mapped: ["hosting"], method: "POST", path: `/trips/${TRIP}/reservations/${RESV}/confirm`, body: { addToPlan: true },
+    solo: { path: `/trips/${SOLO}/reservations/${SOLO_RESV}/confirm`, body: { addToPlan: true } } },
   { name: "command-create-proposal", mapped: ["hosting", "messaging"], method: "POST", path: `/trips/${TRIP}/commands`,
     body: { type: "CREATE_PROPOSAL", idempotency_key: "p-1", payload: { proposal_type: "move", decision_rule: "majority", payload_json: {} } },
     solo: { path: `/trips/${SOLO}/commands`, body: { type: "CREATE_PROPOSAL", idempotency_key: "p-2", payload: { proposal_type: "move", decision_rule: "majority", payload_json: {} } } } },
@@ -145,7 +154,7 @@ const DOORS: Door[] = [
 let harness: RouterHarness;
 before(async () => {
   const all = express.Router();
-  for (const r of [trailsRouter, hiddenGemsRouter, discoveryRouter, tripsRouter, planRouter, commandRouter, tripProjectionsRouter]) all.use(r);
+  for (const r of [trailsRouter, hiddenGemsRouter, discoveryRouter, tripsRouter, planRouter, commandRouter, tripProjectionsRouter, tripReservationsRouter]) all.use(r);
   harness = await startRouter(all);
 });
 after(async () => {

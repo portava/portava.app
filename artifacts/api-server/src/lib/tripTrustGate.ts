@@ -18,7 +18,11 @@
  *                       /remove, /reorder (routes/trips.ts); POST
  *                       /places/:id/add-to-trip-plan and
  *                       /meetups/:id/add-to-trip-plan (routes/plan.ts); POST
- *                       /hidden-gems/:id/plan (routes/hiddenGems.ts).
+ *                       /hidden-gems/:id/plan (routes/hiddenGems.ts); POST
+ *                       /trips/:id/reservations/:id/confirm with addToPlan
+ *                       (routes/tripReservations.ts — refused before the
+ *                       confirm, so a restricted person can still confirm
+ *                       without adding).
  *   create_proposal     hosting OR messaging — it organises a change every
  *                       member must act on, and it puts its rationale text on
  *                       every member's screen in this person's name. Doors:

@@ -10105,13 +10105,14 @@ Not executed (no Postgres here); proven against the corpus it transforms by
 
 None of these read `getRestrictionState`. Gated by `artifacts/api-server/src/lib/tripTrustGate.ts:60#export async function refuseTripActionIfRestricted(`:
 adding, editing, removing or reordering a GROUP trip's plan items (`routes/trips.ts`, `routes/plan.ts`'s
-two add-to-trip-plan doors, `POST /hidden-gems/:id/plan`) is **hosting**; a proposal through `/commands`
+two add-to-trip-plan doors, `POST /hidden-gems/:id/plan`, and a reservation confirmed with `addToPlan`, refused
+before the confirm) is **hosting**; a proposal through `/commands`
 `CREATE_PROPOSAL` or `/replan` with `createProposals` is **hosting or messaging** (lane L's Compass reading,
 so the two doors agree). **LANE C'S READING, for the owner to confirm**, by the restrictions' own words —
 the refusal says the restriction's sentence and nothing more. A solo trip is not gated ("cannot host group
 trips"); lane L's Compass gate does not make that distinction and the lead should pick one. Voting,
 accepting, attendance, presence and every safety path stay ungated. Any unreadable restriction state is a
-retryable 503 that never says "restricted". Ten doors, each mutation-proven by
+retryable 503 that never says "restricted". Eleven doors, each mutation-proven by
 `artifacts/api-server/src/test/trustRestrictionDoors.test.ts`.
 
 - NOT-GRADED: artifacts/api-server/src/test/trustRestrictionDoors.test.ts — §84's door suite (Trips and Discovery); the gates rest on the two lib files cited.
