@@ -4,7 +4,7 @@
  * Run: LOCAL_DB_URL=postgresql://… node --import tsx/esm --test src/test/db/wallTelemetryRetention30Days.db.test.ts
  *      Skips without a database, like every src/test/db suite.
  *
- * Q11(a): raw behavioural rows are kept 30 days, then deleted. 2308 stamped
+ * OD-INPUT-2 (Q11(a) the analogue): per-user behavioural rows are kept 30 days, then deleted. 2308 stamped
  * wall_telemetry_events with a 90-day expiry that nothing enforced; 3702 makes
  * the default 30 days and shortens rows stamped later; the delete is
  * lib/wallTelemetryRetention.ts (unit-tested in intelRetentionScheduler.test.ts).

@@ -4095,7 +4095,7 @@ the Wall: `wall_telemetry_events` (2308) also defaults to 90 days and no sweep d
 |---|---|---|
 | `3702_wall_telemetry_retention_30_days.sql` | **not applied** | **not applied** |
 
-**What it is.** The owner's Q11(a) ruling (raw behavioural rows kept 30 days, then deleted) for
+**What it is.** OD-INPUT-2's 30 days for per-user behavioural data (Q11(a) agrees; only the analogue) for
 `wall_telemetry_events` (2308: per-viewer, `expires_at` DEFAULT 90 days, and nothing ever deleted a row).
 3702 sets the default to `now() + 30 days` and shortens any row stamped later to `occurred_at + 30 days`
 (never lengthens one). The delete is code, not SQL: `lib/wallTelemetryRetention.ts`

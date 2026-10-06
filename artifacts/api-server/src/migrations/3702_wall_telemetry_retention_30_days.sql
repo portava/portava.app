@@ -1,6 +1,9 @@
 -- 3702_wall_telemetry_retention_30_days.sql
--- Wall telemetry is kept 30 days, not 90 (owner ruling Q11(a), 2026-10-04), and
--- this time something deletes it.
+-- Wall telemetry is kept 30 days, not 90, and this time something deletes it.
+-- Basis: owner decision OD-INPUT-2 (per-user behavioural data, 30 days); the
+-- Discovery ruling Q11(a) agrees and is only the analogue (a proposed default
+-- pending legal review). OD-MAP-7 (contributions, 180 days) and
+-- docs/ops/retention-policy.md (the orphan-quarantine window) do not govern it.
 --
 -- POST-CUTOVER CANONICAL FORWARD MIGRATION (lane L band 3700-3719). APPLIED TO
 -- NO DATABASE by the lane that wrote it. Sequenced by the integration owner.
@@ -15,13 +18,10 @@
 --
 -- so each row is a raw behavioural event tied to a person, kept 90 days on
 -- paper — and NOTHING deletes a row past expires_at: no purge function, no
--- sweep, no pg_cron (census-wall §23.3, census-map §51.2). The owner's ruling
--- (docs/ops/owner-decisions-20261004.md):
---
---   "Set Q11(a) raw behavioural-row retention to 30 days, then delete the
---    identifiable raw rows; retain only irreversibly aggregated data where
---    needed. Treat 30 days as the proposed product default pending the
---    required legal review."
+-- sweep, no pg_cron (census-wall §23.3, census-map §51.2). No owner decision
+-- names Wall telemetry; the closest is OD-INPUT-2
+-- (docs/ops/owner-decisions-20261004.md): "Retain for 30 days, then delete or
+-- irreversibly aggregate." It only tightens privacy and contradicts no ruling.
 --
 -- This file sets the DEFAULT to 30 days and shortens any row already stamped
 -- later (never lengthens one) — the same shape as 3701 for Map telemetry. The
@@ -65,7 +65,7 @@ UPDATE public.wall_telemetry_events SET expires_at = occurred_at + interval '30 
  WHERE expires_at > occurred_at + interval '30 days';
 
 COMMENT ON COLUMN public.wall_telemetry_events.expires_at IS
-  'Deleted by lib/wallTelemetryRetention.ts once passed. 30 days after the event (owner ruling Q11(a); migration 3702).';
+  'Deleted by lib/wallTelemetryRetention.ts once passed. 30 days after the event (OD-INPUT-2 basis, Q11(a) analogue; migration 3702).';
 
 COMMIT;
 

@@ -5,7 +5,7 @@
 -- Restores 2308's 90-day DEFAULT on wall_telemetry_events. It does NOT lengthen
 -- any row's expires_at, and it does not stop the sweep (lib/wallTelemetryRetention.ts
 -- deletes on expires_at, whatever the default). ⚠ Rows written after it runs are
--- again kept 90 days, against the owner's Q11(a) ruling.
+-- again kept 90 days, against OD-INPUT-2's 30 days (Q11(a) the analogue).
 
 BEGIN;
 ALTER TABLE public.wall_telemetry_events ALTER COLUMN expires_at SET DEFAULT (now() + interval '90 days');

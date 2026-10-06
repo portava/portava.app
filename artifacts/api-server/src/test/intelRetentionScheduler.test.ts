@@ -48,7 +48,7 @@ test("every retention pass is registered on the scheduler's timer", () => {
     // above — the feature flag decides whether counters are written, never
     // whether expired ones are deleted.
     input_outcome_retention: runInputOutcomeRetentionSweep,
-    // ADDED 2026-10-06 (lane L, wave 6) with migration 3702. Q11(a): Wall
+    // ADDED 2026-10-06 (lane L, wave 6) with migration 3702. OD-INPUT-2 (Q11(a) the analogue): Wall
     // telemetry rows are deleted 30 days after the event; before this nothing
     // deleted a wall_telemetry_events row at all. FLAGLESS, as above.
     wall_telemetry_retention: runWallTelemetryRetentionSweep,
@@ -261,7 +261,7 @@ test("the location-purpose registry's presence note matches what is actually reg
   assert.equal(RETENTION_PASSES.find((p) => p.run === runPresenceCleanup)!.flag, "presence_cleanup_enabled");
 });
 
-// ── wall telemetry retention (Q11(a), migration 3702) ────────────────────────
+// ── wall telemetry retention (OD-INPUT-2, migration 3702) ────────────────────────
 
 /** Records the delete the sweep issues and answers it. */
 function wallDeleteClient(opts: { count?: number | string | null; error?: unknown; throws?: boolean } = {}) {

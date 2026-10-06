@@ -5,8 +5,8 @@
  * WHY. 2308_wall_telemetry_events.sql stamps every row with a viewer id and an
  * `expires_at` (90 days), and until this sweep nothing ever deleted a row past
  * it: the column was a promise with nothing keeping it — the same defect 2960
- * fixed for Map telemetry. The owner's Q11(a) ruling keeps raw behavioural rows
- * 30 days and then deletes them; migration 3702 moves the default to 30 days and
+ * fixed for Map telemetry. OD-INPUT-2 keeps per-user behavioural data 30 days and
+ * then deletes it (Q11(a) agrees, as the analogue); migration 3702 moves the default to 30 days and
  * shortens rows already stamped later, and this is the delete.
  *
  * FLAGLESS, as runInputOutcomeRetentionSweep is: a retention control shipped
