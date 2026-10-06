@@ -3157,3 +3157,48 @@ Mutations, each red then restored byte-identical (`cmp`):
 | id | was | now | why |
 | --- | --- | --- | --- |
 | M179 | W | **W** | §50. A wire leak in this row's own subject is closed and pinned; the row still waits on `protected_zones` existing in production (§43.1). |
+
+## §51 — 2026-10-06 (lane L, wave 5): M256's harness now fails a 120 ms regression (§49 reversed on one point); per-user map telemetry is kept 30 days (3701, unapplied). NO VERDICT MOVES
+
+*Measured on branch `claude/mission-l-lead-residual-20261005` after merging `origin/main`
+(`ca49bbd286`). `head_commit` is not re-declared. No flag, migration, deployment or database was
+touched.*
+
+### 51.1 M256: a budget a regression trips, that load does not
+
+§49 declined to tighten the budget because the in-process arm's TAIL swings with machine load. That
+reason holds for p95 and not for the median: a few slow samples cannot move p50, and a per-request
+regression moves every sample. So the 800 ms p95 product budget stays, and p50 is now gated at 100 ms
+on both arms (`artifacts/api-server/src/test/mapProjectionPerf.test.ts:148#const P50_REGRESSION_BUDGET_MS = 100;`,
+`artifacts/api-server/src/test/mapProjectionPerf.test.ts:400#result.p50 <= P50_REGRESSION_BUDGET_MS,`).
+Measured here: p50 1.7 ms / p95 3.3 ms; the busiest full-suite run on record read p50 4.2 ms. A 120 ms
+delay inserted at the top of the projection handler read p50 124.6 ms and turned the timing test red
+(8 / 9), restored 9 / 9 — verifier finding 9. M256 stays `?`: its live arm and its device half are
+unmeasured.
+
+### 51.2 Map telemetry retention: 90 days → 30 days (owner ruling Q11(a))
+
+`map_telemetry_events` and `map_telemetry_drops` are per-viewer rows stamped
+`expires_at DEFAULT (now() + interval '90 days')`
+(`artifacts/api-server/src/migrations/2202_map_telemetry.sql:58#expires_at           timestamptz NOT NULL DEFAULT (now() + interval '90 days')`).
+The owner's Q11(a) ruling keeps raw behavioural rows 30 days. Migration 3701 sets both defaults to
+30 days and shortens any row stamped later
+(`artifacts/api-server/src/migrations/3701_map_telemetry_retention_30_days.sql:60#ALTER TABLE public.map_telemetry_events ALTER COLUMN expires_at SET DEFAULT (now() + interval '30 days');`);
+2960's sweep already deletes on `expires_at`. Its proof is a live-DB suite
+(`src/test/db/mapTelemetryRetention30Days.db.test.ts`), not run here (no local PostgreSQL). 3701 is
+applied NOWHERE. This closes the code half lane L's triage named for M259–M275; every one of those rows
+stays `W` on `map_telemetry_enabled` FALSE and 3701 unapplied.
+
+Recorded for the Wall (census-wall §23): `wall_telemetry_events` (2308) also defaults to 90 days, and
+no sweep deletes it at all.
+
+### 51.3 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| M256 | ? | **?** | §51.1. The timing assertion now catches a per-request regression; the row's own measurement (live arm, device) is still missing. |
+
+### 51.4 Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: artifacts/api-server/src/migrations/3701_map_telemetry_retention_30_days.sql — §51.2's retention change; unapplied, and no Map verdict moves on it until it is applied and collection is on.
+- NOT-GRADED: artifacts/api-server/src/test/db/mapTelemetryRetention30Days.db.test.ts — §51.2's live-DB proof for 3701; not run locally.

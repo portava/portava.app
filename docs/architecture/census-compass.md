@@ -4524,3 +4524,89 @@ agree; the owner confirms both (lane L's Q-L21).
 
 - NOT-GRADED: artifacts/api-server/src/lib/mapProducers/meetingPointProducer.ts — §39.2 records its privacy-flag fix for completeness; the producer is the Map's, graded in census-map, and no Compass row rests on it.
 - NOT-GRADED: artifacts/api-server/src/services/wall/LiveForYouService.ts — §39.2 records its privacy-flag fix for completeness; the live strip is the Wall's, graded in census-wall, and no Compass row rests on it.
+
+## §40 — 2026-10-06 (lane L, wave 5): the restriction gate asks the Trips doors' own decision (lead rulings D-24, D-24a); a messaging restriction withholds the boost lift (D-24c). NO VERDICT MOVES
+
+*Measured on branch `claude/mission-l-lead-residual-20261005` after merging `origin/main`
+(`ca49bbd286`). `head_commit` is not re-declared. No flag, migration, deployment or database was
+touched. Supersedes §38.1 and §39.3's reading of the mapping; §38.3's four Trips doors are lane C's
+and are gated on its branch with the same function.*
+
+### 40.1 One decision for every door to the same act (verifier findings 2 and 4)
+
+The lead's rulings (2026-10-06) confirmed the lanes' D-24 table and settled D-24a: a hosting
+restriction stops changing a GROUP trip's shared plan — proposals and confirming Compass plan or
+Autopilot changes among them — and never a SOLO trip; a trip proposal counts as hosting OR
+messaging; an unreadable solo/group answer is "try again", never "restricted". §38's gate decided this
+itself (host-only, hosting-only), so Compass and the Trips doors answered the same act differently.
+It now asks lane C's decision, the one every Trips door calls
+(`artifacts/api-server/src/compass/CompassRestrictionGate.ts:112#const v = await decideTripActionRestriction(sc, tripId, userId, COMPASS_TRIP_ACTION[action]);`),
+through one mapping (`artifacts/api-server/src/compass/CompassRestrictionGate.ts:71#export const COMPASS_TRIP_ACTION`):
+
+| Compass door | shared decision | stopped by |
+| --- | --- | --- |
+| `create_proposal` (tool) | `create_proposal` | hosting or messaging (`artifacts/api-server/src/lib/tripTrustGate.ts:62#create_proposal: Object.freeze(["hosting", "messaging"])`) |
+| `add_to_trip` (tool, newly gated) | `change_shared_plan` | hosting (`artifacts/api-server/src/compass/CompassTools.ts:1702#const restriction = await checkCompassActionRestriction(sc, userId, tripId, "add_to_trip");`) |
+| `POST /compass/proposals/:id/confirm` | `change_shared_plan` | hosting |
+| `POST /autopilot/proposals/:id/confirm` | `change_shared_plan` | hosting |
+
+The group test is lane C's `readTripShape`
+(`artifacts/api-server/src/lib/tripTrustGate.ts:90#export async function readTripShape(`): any other
+accepted member makes it a group trip, whoever owns it; an invited-only person does not. A solo trip
+is allowed before the restriction state is read
+(`artifacts/api-server/src/lib/tripTrustGate.ts:135#if (shape.kind === "solo") return { allowed: true, shape: "solo" };`);
+an unreadable shape refuses as unverifiable
+(`artifacts/api-server/src/lib/tripTrustGate.ts:134#if (shape.kind === "unreadable") return`). A refusal
+carries the restriction's own sentence. `lib/tripTrustGate.ts` and `lib/discoveryTrustGate.ts` are
+byte-identical copies of lane C's files at `4de2cc5f5`, so the two branches merge them cleanly.
+
+`replan_day` writes nothing and is not gated, but its reply no longer points the model at
+`create_proposal` when the same decision would refuse it
+(`artifacts/api-server/src/compass/CompassTools.ts:1557#const gate = await checkCompassActionRestriction(sc, userId, t.id, "create_proposal");`).
+
+**What this changes for a person, plainly:** a restricted MEMBER (not only the host) of a group trip
+can no longer confirm a Compass plan change into it, and a person under a messaging restriction can no
+longer put a Compass proposal to a crew. Both follow the confirmed D-24 table. The messaging sentence
+the person is shown (lane B's `TrustPrivacyGuard`, which D-24 rewrote) must name proposals for the
+second to meet D-24's own transparency rule; that sentence is lane B's to change.
+
+### 40.2 A messaging restriction withholds the boost lift (lead ruling D-24c; verifier finding 3)
+
+Both feed boost sites now apply the "boost my visibility" lift through one function that withholds it
+from any author under an active messaging restriction, in either degraded shape, on a throw, or with no
+client (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:143#export async function loadBoostLiftWithheld(`,
+`artifacts/api-server/src/compass/CompassFeedBuilder.ts:153#if (state.degraded || !state.canMessage) withheld.add(id);`;
+`buildFeed` at `artifacts/api-server/src/compass/CompassFeedBuilder.ts:427#const boosted: PipelineResult[] = await applyAuthorBoosts(`,
+discovery ranking at `artifacts/api-server/src/compass/CompassFeedBuilder.ts:655#const boosted: PipelineResult[] = await applyAuthorBoosts(`).
+Read-time only: `boost_visibility_enabled` is never written, so the lift returns when the restriction
+ends. Nothing the person does is refused and every post is still served. §38.2's header complaint is
+closed with it: the gate's header no longer describes the boost at all.
+
+### 40.3 Proof
+
+- `artifacts/api-server/src/test/compassRestrictionGate.test.ts:158#it("Compass and the Trips doors decide IDENTICALLY` — Compass and lane C's decision agree over a 6 × 4 case matrix.
+- `artifacts/api-server/src/test/compassRestrictionGate.test.ts:177#it("a SOLO trip under hosting AND messaging is allowed at every door, and the restriction state is not even read"`.
+- `artifacts/api-server/src/test/compassRestrictionGate.test.ts:143#it("messaging refuses create_proposal only` and `artifacts/api-server/src/test/compassRestrictionGate.test.ts:280#it("add_to_trip: hosting on a GROUP trip returns no proposal`.
+- `artifacts/api-server/src/test/compass-tools.test.ts:953#it("a hosting restriction stops a MEMBER of a group trip too` — through the real confirm route, no plan write.
+- `artifacts/api-server/src/test/tripReplanRoutes.test.ts:269#it("Compass: replan_day under a hosting restriction on this GROUP trip` — the reply, restricted and unreadable.
+- `artifacts/api-server/src/test/compass-feed.test.ts:845#it("an active MESSAGING restriction withholds that author's lift` and `artifacts/api-server/src/test/compass-feed.test.ts:870#it("an UNREADABLE restriction state applies no lift to anyone`.
+
+Counts: compassRestrictionGate 22/22, compass-tools 34/34, tripReplanRoutes 27/27,
+compassAutopilotKernelPath 16/16, compass-ask 13/13, compass-feed 45/45. Mutations, each red then
+restored: `add_to_trip` ungated (2 red); `create_proposal` mapped to `change_shared_plan` (3); the
+replan reply always pointing (1); the confirm route's gate skipped (3); messaging ignored by the boost
+rule (1); degraded not withheld (1); each boost site bypassed (1, 2). The gate's own `catch` was
+unreachable (verifier finding 10) and is gone: the shared helper catches its reads.
+
+### 40.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| CT-09 | W | **W** | §40. Unchanged: held by `trip_kernel_enabled`; who may make a proposal is graded under census-trust TRV2-08, not here. |
+
+### 40.5 Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: artifacts/api-server/src/lib/tripTrustGate.ts — §40.1 cites lane C's shared decision that the Compass gate calls; it is graded in census-trips and census-trust TRV2-08.
+- NOT-GRADED: artifacts/api-server/src/test/tripReplanRoutes.test.ts — §40.3 cites one replan_day case it holds; the suite is census-trips'.
+- NOT-GRADED: artifacts/api-server/src/lib/discoveryTrustGate.ts — §40.1 names lane C's restriction sentences file only as the source of the refusal wording; it is graded in census-discovery and census-trust.
+- NOT-GRADED: artifacts/api-server/src/test/compass-feed.test.ts — §40.2/§40.3's D-24c evidence; no Compass verdict moves on it, and whoever moves a row on it must add it to this census's watched scope in the same change.

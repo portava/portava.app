@@ -2447,3 +2447,45 @@ working one that might leave the device.
 | --- | --- | --- | --- |
 | W71 | W | **W** | §22. The on-device half of §21 was false on web and is now enforced by the control itself; the row waits on a native on-device recognizer, an EAS build and a device run. |
 
+
+## §23 — 2026-10-06 (lane L, wave 5): W71 re-read after #630 — the Wall uses the shared on-device-only resolver, and its own check IS the resolver's. NO ROW MOVES
+
+*Measured on branch `claude/mission-l-lead-residual-20261005` after merging `origin/main`
+(`ca49bbd286`, which carries #630). `head_commit` is not re-declared.*
+
+### 23.1 What #630 changed under the Wall
+
+#630 made the shared resolver return only an INSTALLED recognizer that declares on-device processing,
+and otherwise the honest none — never the browser's Web Speech API
+(`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:113#return installed && declaresOnDeviceOnly(installed) ? installed : NO_SPEECH_RECOGNIZER;`).
+§22's premise ("the shared resolver falls back to Web Speech on the web build") is no longer true; the
+Wall's header said it was and now does not. The Wall still takes its recognizer from that resolver
+(`travel-buddy-standalone/src/features/wall/components/WallPushToTalk.tsx:116#const port = React.useMemo(() => pushToTalkPort(recognizer ?? resolveSpeechRecognizer()), [recognizer]);`),
+and its own on-device check now IS the resolver's
+(`travel-buddy-standalone/src/features/wall/components/WallPushToTalk.tsx:98#return declaresOnDeviceOnly(port);`),
+so the two cannot drift. Verifier finding 1's three conditions hold on the merged tree: no web-speech
+fallback without consent (none exists), the "recognised on this device" hint only once availability is
+confirmed, and no control without `wall_enabled`.
+
+### 23.2 Proof
+
+Two new cases drive the DEFAULT path (nothing injected) through the shared resolver
+(`travel-buddy-standalone/src/features/wall/components/__tests__/WallPushToTalk.component.test.tsx:248#it('with nothing injected it uses the SHARED resolver: an installed recognizer that does not declare on-device processing never starts'`,
+`travel-buddy-standalone/src/features/wall/components/__tests__/WallPushToTalk.component.test.tsx:266#it('with nothing injected it uses the SHARED resolver: an installed on-device recognizer is the one that listens'`).
+13 / 13. Mutations, each red then restored: the check forced true (1 red); the resolver replaced by a
+none-port (1 red).
+
+### 23.3 Still open, recorded
+
+- §21.4's adapter window (the native adapter awaits the permission prompt before it attaches its abort
+  listener, so an already-aborted signal can start capture) is unchanged by #630; it is in the shared
+  speech module, now the lead's file. The Wall closes the larger window itself.
+- `wall_telemetry_events` (2308) defaults to `expires_at` 90 days and no sweep deletes it — the owner's
+  Q11(a) ruling is 30 days for raw behavioural rows (census-map §51.2 records the Map half, fixed by
+  3701). Wall telemetry needs the same default change plus a sweep; not built here.
+
+### 23.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| W71 | W | **W** | §23. Unchanged: the row waits on a native on-device recognizer, an EAS build and a device run. |

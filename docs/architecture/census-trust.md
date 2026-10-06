@@ -3902,3 +3902,30 @@ moderator id/note on the report row; unowned subject closed unattributed.
 - NOT-GRADED: artifacts/api-server/src/test/adminModerationReportReview.test.ts — §35's evidence for TV-4a, recorded by lane L for lane B; no verdict moves here, and whoever moves TV-4a on it must add it to this census's watched scope in the same change.
 - NOT-GRADED: artifacts/api-server/src/lib/moderationReportSnapshots.ts — §35.1's snapshot reader, recorded as evidence only; the same rule applies when TV-4a moves on it.
 - NOT-GRADED: travel-buddy-standalone/src/services/reportsAdmin.ts — §35.1 cites it only to correct the TV-4a cell: the content-reports screen calls the legacy reports endpoint, so no client reads the moderation_reports queue.
+
+### 35.4 Later the same day (lane L, wave 5): a client for the queue, and the reporter's read closed in the database
+
+- **A client.** §35.1's correction ("no admin screen reads `/admin/moderation/reports`") is no longer
+  true. `travel-buddy-standalone/src/services/reportsAdmin.ts:158#export async function fetchModerationReports(opts: {`
+  and `travel-buddy-standalone/src/services/reportsAdmin.ts:187#export async function reviewModerationReport(`
+  call the two routes, and the new "User Reports" screen
+  (`travel-buddy-standalone/app/admin/moderation-reports.tsx:68#export default function ModerationReportsScreen() {`,
+  linked from Content Reports) lists the queue with each subject snapshot and acts through the review
+  route: a refusal changes nothing and says why
+  (`travel-buddy-standalone/app/admin/__tests__/ModerationReports.component.test.tsx:140#it('a refusal (409, closed by someone else first) leaves the row unchanged and says why'`),
+  8 / 8, four mutations red. So §35.2's item 2 is closed on this branch.
+- **The reporter's read of `resolver_id` / `resolver_note`, closed at the database** (verifier finding
+  6). Migration 3700 replaces the client roles' table-level SELECT with SELECT on the twelve other
+  columns (`artifacts/api-server/src/migrations/3700_moderation_reports_resolver_columns_withheld.sql:116#REVOKE SELECT ON TABLE public.moderation_reports FROM anon, authenticated;`);
+  service_role (the admin API) still reads both. Proof is live-DB only
+  (`artifacts/api-server/src/test/db/moderationReportsResolverColumns.db.test.ts:126#it("MR-1`), not run
+  here. 3700 is applied NOWHERE; until it is, the review route writing neither column is what keeps
+  them from the reporter.
+- **TV-4a stays W**: §35.2's item 1 (D-MODACTION-SHAPE: `report_id` / `expires_at` on
+  `moderation_actions`) is unchanged, and item 3 (capture-at-report-time) is still the owner's
+  (Q-L23 / D-38a).
+
+- NOT-GRADED: travel-buddy-standalone/app/admin/moderation-reports.tsx — §35.4's new admin client for the moderation queue; recorded as evidence for lane B, no verdict moves here.
+- NOT-GRADED: travel-buddy-standalone/app/admin/__tests__/ModerationReports.component.test.tsx — §35.4's proof for that client.
+- NOT-GRADED: artifacts/api-server/src/migrations/3700_moderation_reports_resolver_columns_withheld.sql — §35.4's column-grant migration; unapplied.
+- NOT-GRADED: artifacts/api-server/src/test/db/moderationReportsResolverColumns.db.test.ts — §35.4's live-DB proof for 3700; not run locally.
