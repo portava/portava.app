@@ -3877,8 +3877,8 @@ comment, message, event, review or listing **arrives as a bare UUID**, and that 
   **No admin screen reads `/admin/moderation/reports` or calls the new review route yet.**
 
 Proof: `adminModerationReportReview.test.ts`, 17 / 17, over a fake whose writes persist
-(`artifacts/api-server/src/test/adminModerationReportReview.test.ts:269#it("a CONCURRENT close (the claim matches no row) is a 409 and writes NO audit row"`,
-`artifacts/api-server/src/test/adminModerationReportReview.test.ts:243#it("actioned: the audit row names the accountable author, the moderator and the note; the report row carries neither"`).
+(`artifacts/api-server/src/test/adminModerationReportReview.test.ts:273#it("a CONCURRENT close (the claim matches no row) is a 409 and writes NO audit row"`,
+`artifacts/api-server/src/test/adminModerationReportReview.test.ts:247#it("actioned: the audit row names the accountable author, the moderator and the note; the report row carries neither"`).
 Mutations, each red then restored: category filter dropped; failed snapshot read as empty; deleted
 message text shown; one-row claim check dropped; owner-lookup failure ignored; no compensation;
 moderator id/note on the report row; unowned subject closed unattributed.
@@ -3909,11 +3909,18 @@ moderator id/note on the report row; unowned subject closed unattributed.
   true. `travel-buddy-standalone/src/services/reportsAdmin.ts:158#export async function fetchModerationReports(opts: {`
   and `travel-buddy-standalone/src/services/reportsAdmin.ts:187#export async function reviewModerationReport(`
   call the two routes, and the new "User Reports" screen
-  (`travel-buddy-standalone/app/admin/moderation-reports.tsx:68#export default function ModerationReportsScreen() {`,
+  (`travel-buddy-standalone/app/admin/moderation-reports.tsx:108#export default function ModerationReportsScreen() {`,
   linked from Content Reports) lists the queue with each subject snapshot and acts through the review
   route: a refusal changes nothing and says why
-  (`travel-buddy-standalone/app/admin/__tests__/ModerationReports.component.test.tsx:140#it('a refusal (409, closed by someone else first) leaves the row unchanged and says why'`),
-  8 / 8, four mutations red. So §35.2's item 2 is closed on this branch.
+  (`travel-buddy-standalone/app/admin/__tests__/ModerationReports.component.test.tsx:147#it('a refusal (409, closed by someone else first) leaves the row unchanged and says why'`),
+  8 / 8, four mutations red. *(Corrected the same day after independent verification: as first
+  written the screen read preview keys the server never sends — `text`/`body` instead of the
+  server's `excerpt` (post, comment, message, review) and `displayName` (buddy listing) — and its
+  fixture was invented to match, so a moderator saw "no text to preview" on exactly the reports
+  that carry text. The preview now reads each subject type's server keys, and its fixture is
+  GENERATED from `loadModerationSubjectSnapshots` and pinned on the server side by
+  `adminModerationReportReview.test.ts`, so the two cannot drift silently again. With that fix §35.2's
+  item 2 — a client that reads the queue and acts on it — is met on this branch; before it, it was not.)*
 - **The reporter's read of `resolver_id` / `resolver_note`, closed at the database** (verifier finding
   6). Migration 3700 replaces the client roles' table-level SELECT with SELECT on the twelve other
   columns (`artifacts/api-server/src/migrations/3700_moderation_reports_resolver_columns_withheld.sql:116#REVOKE SELECT ON TABLE public.moderation_reports FROM anon, authenticated;`);

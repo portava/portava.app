@@ -35,10 +35,12 @@ import {
   COMPASS_TRIP_ACTION,
   checkCompassActionRestriction,
   compassRestrictionToolInfo,
+  sendCompassRestrictionRefusal,
   type CompassRestrictedAction,
 } from "../compass/CompassRestrictionGate.js";
 import { executeCompassTool, toolCreateProposal } from "../compass/CompassTools.js";
-import { decideTripActionRestriction, TRIP_ACTION_RESTRICTIONS } from "../lib/tripTrustGate.js";
+import { decideTripActionRestriction, RETAINED_RECORD_ONLY_MESSAGE, TRIP_ACTION_RESTRICTIONS } from "../lib/tripTrustGate.js";
+import { getSafeTrustSummary } from "../services/trust/TrustPrivacyGuard.js";
 import { RESTRICTION_SENTENCES } from "../lib/discoveryTrustGate.js";
 import { readTripProposal } from "../domain/trips/contracts/TripProposalContract.js";
 
@@ -95,8 +97,12 @@ function makeClient(tables: Record<string, Row[]>, errorOn: string[] = []) {
 }
 
 /** A group trip hosted by USER, with OTHER as an accepted member. */
-function world(restrictions: Row[] = [], opts: { solo?: boolean; ownerIsOther?: boolean } = {}): Record<string, Row[]> {
-  const members: Row[] = [{ trip_id: TRIP, user_id: USER, role: opts.ownerIsOther ? "member" : "owner", status: "accepted" }];
+function world(restrictions: Row[] = [], opts: { solo?: boolean; ownerIsOther?: boolean; readOnly?: boolean } = {}): Record<string, Row[]> {
+  const members: Row[] = [{
+    trip_id: TRIP, user_id: USER, role: opts.ownerIsOther ? "member" : "owner", status: "accepted",
+    // Lane C's R5: membership restored by an upheld appeal after the trip ended (3974).
+    ...(opts.readOnly ? { permissions: { access: "retained_record_only" } } : {}),
+  }];
   if (!opts.solo) members.push({ trip_id: TRIP, user_id: OTHER, role: opts.ownerIsOther ? "owner" : "member", status: "accepted" });
   return {
     trips: [{ id: TRIP, owner_id: opts.ownerIsOther ? OTHER : USER, status: "active", title: "Cebu trip", plan_edit_permission: "all_members" }],
@@ -314,3 +320,51 @@ describe("TRV2-08 §3 — create_proposal and add_to_trip, through the real tool
     assert.equal(cmd.payload.payload_json.source, "compass");
   });
 });
+
+// ── 4. A retained-record-only member (lane C's read_only verdict) ────────────
+
+describe("TRV2-08 §4 — a member restored to an ended trip's record only may read it, not change it, and is never called restricted", () => {
+  it("every Compass door refuses read_only — solo or group, with NO restriction on the person", async () => {
+    for (const solo of [false, true]) {
+      for (const a of ACTIONS) {
+        const v = await checkCompassActionRestriction(makeClient(world([], { solo, readOnly: true })), USER, TRIP, a);
+        assert.deepEqual(v, { allowed: false, kind: "read_only", message: RETAINED_RECORD_ONLY_MESSAGE }, `${a} solo=${solo}`);
+      }
+    }
+  });
+
+  it("the tool says the trip can be viewed, not changed — never a restriction — and issues no kernel command", async () => {
+    const c = makeClient(world([], { readOnly: true }));
+    const r: any = await toolCreateProposal(c, USER, PROPOSE);
+    assert.equal(r.proposal, null);
+    assert.ok(String(r.info).startsWith(RETAINED_RECORD_ONLY_MESSAGE), r.info);
+    assert.doesNotMatch(String(r.info), /restrict/i);
+    assert.equal(kernelCalls(c), 0);
+    const added: any = await executeCompassTool(makeClient(world([], { readOnly: true })), USER, null, "add_to_trip", { tripId: TRIP, placeId: PLACE });
+    assert.ok(!added.proposal);
+    assert.doesNotMatch(String(added.error), /restrict/i);
+  });
+
+  it("the route body is the Trips doors' own: 403 trip_record_read_only, no restrictionTypes", () => {
+    let status = 0; let body: any = null;
+    const res: any = { status(n: number) { status = n; return res; }, json(b: unknown) { body = b; return res; } };
+    sendCompassRestrictionRefusal(res, { allowed: false, kind: "read_only", message: RETAINED_RECORD_ONLY_MESSAGE });
+    assert.equal(status, 403);
+    assert.deepEqual(body, { error: "trip_record_read_only", message: RETAINED_RECORD_ONLY_MESSAGE });
+  });
+});
+
+// ── 5. The refusal's words are the person's own restriction summary ──────────
+
+describe("TRV2-08 §5 — a Compass refusal says exactly the sentence the person's restriction summary shows (D-24)", () => {
+  it("RESTRICTION_SENTENCES (lane C's copy the gate refuses with) equals TrustPrivacyGuard's summary sentence for hosting and messaging", async () => {
+    // Read through the REAL summary builder, so when lane B rewrites the
+    // sentences (lead ruling D-24, PR #636) this goes red until the gate's
+    // words come from TrustPrivacyGuard too.
+    const summary = await getSafeTrustSummary(makeClient(world([R("hosting"), R("messaging")])) as any, USER);
+    assert.equal(summary.restrictionsDegraded, undefined, "the fake must read the restrictions, or this proves nothing");
+    assert.ok(summary.restrictions.includes(RESTRICTION_SENTENCES.hosting), JSON.stringify(summary.restrictions));
+    assert.ok(summary.restrictions.includes(RESTRICTION_SENTENCES.messaging), JSON.stringify(summary.restrictions));
+  });
+});
+

@@ -4335,7 +4335,7 @@ were already carried, and the proposal is a kernel `trip_proposals` row other me
 What was genuinely missing was a TEST: no suite asserted that the Compass tool path carries the
 three fields, so the closure could have regressed silently. It is pinned now, reading the recorded
 kernel command back through the contract's own reader rather than checking keys this test chose:
-`artifacts/api-server/src/test/compassRestrictionGate.test.ts:296#it("CT-09: a proposal that IS made carries affectedObjects`.
+`artifacts/api-server/src/test/compassRestrictionGate.test.ts:302#it("CT-09: a proposal that IS made carries affectedObjects`.
 Mutation: `affectedObjects: []` in the tool → that case red; restored byte-identical (`cmp`).
 
 **CT-09 stays `W` on ONE reason, not two:** `create_proposal` refuses while `trip_kernel_enabled` is
@@ -4540,8 +4540,8 @@ Autopilot changes among them — and never a SOLO trip; a trip proposal counts a
 messaging; an unreadable solo/group answer is "try again", never "restricted". §38's gate decided this
 itself (host-only, hosting-only), so Compass and the Trips doors answered the same act differently.
 It now asks lane C's decision, the one every Trips door calls
-(`artifacts/api-server/src/compass/CompassRestrictionGate.ts:112#const v = await decideTripActionRestriction(sc, tripId, userId, COMPASS_TRIP_ACTION[action]);`),
-through one mapping (`artifacts/api-server/src/compass/CompassRestrictionGate.ts:71#export const COMPASS_TRIP_ACTION`):
+(`artifacts/api-server/src/compass/CompassRestrictionGate.ts:129#const v = await decideTripActionRestriction(sc, tripId, userId, COMPASS_TRIP_ACTION[action]);`),
+through one mapping (`artifacts/api-server/src/compass/CompassRestrictionGate.ts:78#export const COMPASS_TRIP_ACTION`):
 
 | Compass door | shared decision | stopped by |
 | --- | --- | --- |
@@ -4551,12 +4551,12 @@ through one mapping (`artifacts/api-server/src/compass/CompassRestrictionGate.ts
 | `POST /autopilot/proposals/:id/confirm` | `change_shared_plan` | hosting |
 
 The group test is lane C's `readTripShape`
-(`artifacts/api-server/src/lib/tripTrustGate.ts:90#export async function readTripShape(`): any other
+(`artifacts/api-server/src/lib/tripTrustGate.ts:103#export async function readTripShape(`): any other
 accepted member makes it a group trip, whoever owns it; an invited-only person does not. A solo trip
 is allowed before the restriction state is read
-(`artifacts/api-server/src/lib/tripTrustGate.ts:135#if (shape.kind === "solo") return { allowed: true, shape: "solo" };`);
+(`artifacts/api-server/src/lib/tripTrustGate.ts:155#if (shape.kind === "solo") return { allowed: true, shape: "solo" };`);
 an unreadable shape refuses as unverifiable
-(`artifacts/api-server/src/lib/tripTrustGate.ts:134#if (shape.kind === "unreadable") return`). A refusal
+(`artifacts/api-server/src/lib/tripTrustGate.ts:153#if (shape.kind === "unreadable") return`). A refusal
 carries the restriction's own sentence. `lib/tripTrustGate.ts` and `lib/discoveryTrustGate.ts` are
 byte-identical copies of lane C's files at `4de2cc5f5`, so the two branches merge them cleanly.
 
@@ -4584,12 +4584,12 @@ closed with it: the gate's header no longer describes the boost at all.
 
 ### 40.3 Proof
 
-- `artifacts/api-server/src/test/compassRestrictionGate.test.ts:158#it("Compass and the Trips doors decide IDENTICALLY` — Compass and lane C's decision agree over a 6 × 4 case matrix.
-- `artifacts/api-server/src/test/compassRestrictionGate.test.ts:177#it("a SOLO trip under hosting AND messaging is allowed at every door, and the restriction state is not even read"`.
-- `artifacts/api-server/src/test/compassRestrictionGate.test.ts:143#it("messaging refuses create_proposal only` and `artifacts/api-server/src/test/compassRestrictionGate.test.ts:280#it("add_to_trip: hosting on a GROUP trip returns no proposal`.
+- `artifacts/api-server/src/test/compassRestrictionGate.test.ts:164#it("Compass and the Trips doors decide IDENTICALLY` — Compass and lane C's decision agree over a 6 × 4 case matrix.
+- `artifacts/api-server/src/test/compassRestrictionGate.test.ts:183#it("a SOLO trip under hosting AND messaging is allowed at every door, and the restriction state is not even read"`.
+- `artifacts/api-server/src/test/compassRestrictionGate.test.ts:149#it("messaging refuses create_proposal only` and `artifacts/api-server/src/test/compassRestrictionGate.test.ts:286#it("add_to_trip: hosting on a GROUP trip returns no proposal`.
 - `artifacts/api-server/src/test/compass-tools.test.ts:953#it("a hosting restriction stops a MEMBER of a group trip too` — through the real confirm route, no plan write.
 - `artifacts/api-server/src/test/tripReplanRoutes.test.ts:269#it("Compass: replan_day under a hosting restriction on this GROUP trip` — the reply, restricted and unreadable.
-- `artifacts/api-server/src/test/compass-feed.test.ts:845#it("an active MESSAGING restriction withholds that author's lift` and `artifacts/api-server/src/test/compass-feed.test.ts:870#it("an UNREADABLE restriction state applies no lift to anyone`.
+- `artifacts/api-server/src/test/compass-feed.test.ts:849#it("an active MESSAGING restriction withholds that author's lift` and `artifacts/api-server/src/test/compass-feed.test.ts:874#it("an UNREADABLE restriction state applies no lift to anyone`.
 
 Counts: compassRestrictionGate 22/22, compass-tools 34/34, tripReplanRoutes 27/27,
 compassAutopilotKernelPath 16/16, compass-ask 13/13, compass-feed 45/45. Mutations, each red then
@@ -4610,3 +4610,49 @@ unreachable (verifier finding 10) and is gone: the shared helper catches its rea
 - NOT-GRADED: artifacts/api-server/src/test/tripReplanRoutes.test.ts — §40.3 cites one replan_day case it holds; the suite is census-trips'.
 - NOT-GRADED: artifacts/api-server/src/lib/discoveryTrustGate.ts — §40.1 names lane C's restriction sentences file only as the source of the refusal wording; it is graded in census-discovery and census-trust.
 - NOT-GRADED: artifacts/api-server/src/test/compass-feed.test.ts — §40.2/§40.3's D-24c evidence; no Compass verdict moves on it, and whoever moves a row on it must add it to this census's watched scope in the same change.
+
+## §41 — 2026-10-06 (lane L): §40 after independent verification — a read_only verdict, the fail-open boost case, and what "the restriction's own sentence" means today. NO VERDICT MOVES
+
+*Measured on branch `claude/mission-l-lead-residual-20261005`. `head_commit` is not re-declared.*
+
+### 41.1 Lane C's decision has a third refusal; Compass now answers it (finding 2)
+
+§40.1 said the two vendored files were "byte-identical copies of lane C's files at `4de2cc5f5`". True of
+that commit only: C's head moved on. `lib/tripTrustGate.ts` is now byte-identical to C's head `4c5cd26665`,
+which answers `read_only` for a member restored to an ENDED trip's record only after an upheld appeal
+(`artifacts/api-server/src/lib/tripTrustGate.ts:154#if (shape.actorAccess === "retained_record_only") return { allowed: false, kind: "read_only"`);
+`lib/discoveryTrustGate.ts` is unchanged at that head. The Compass gate carries the verdict through
+(`artifacts/api-server/src/compass/CompassRestrictionGate.ts:132#if (v.kind === "read_only") return { allowed: false, kind: "read_only", message: v.message };`)
+and a route answers it as the Trips doors do
+(`artifacts/api-server/src/compass/CompassRestrictionGate.ts:151#res.status(403).json({ error: "trip_record_read_only", message: verdict.message });`);
+the tool says the record can be viewed and not changed, and never uses the word restriction. Before this,
+a `read_only` verdict would have fallen into the restricted arm with no restriction types. Proof:
+`artifacts/api-server/src/test/compassRestrictionGate.test.ts:327#it("every Compass door refuses read_only — solo or group, with NO restriction on the person"`,
+`artifacts/api-server/src/test/compass-tools.test.ts:963#it("a member restored to an ENDED trip's record only (lane C's R5): 403 trip_record_read_only, no plan write, and no word about a restriction"`.
+
+### 41.2 The fail-open shape withholds the boost too (finding 3)
+
+§40.3's "degraded not withheld (1 red)" came from a different mutant; the one that matters — dropping
+`state.degraded ||` — survived, because every unreadable case answered a code that reads as fail_closed.
+An absent `trust_restrictions` table answers fail_open (degraded, every can-flag TRUE); it now has a case
+and no author gets the lift
+(`artifacts/api-server/src/test/compass-feed.test.ts:881#it("an ABSENT trust_restrictions table (fail_open: degraded, every can-flag TRUE) applies no lift either`).
+The mutant now dies.
+
+### 41.3 "The restriction's own sentence" — true today, and pinned so it stays true (finding 4)
+
+A Compass refusal says lane C's `RESTRICTION_SENTENCES` text. Today that equals the sentence the
+person's own restriction summary shows, and a test proves it through the real summary builder
+(`artifacts/api-server/src/test/compassRestrictionGate.test.ts:360#it("RESTRICTION_SENTENCES (lane C's copy the gate refuses with) equals TrustPrivacyGuard's summary sentence for hosting and messaging"`).
+When lane B lands the amended D-24 sentences (PR #636: messaging names "propose changes to a group trip",
+hosting names "change a group trip's shared plan"), that test goes red until the refusal reads
+`restrictionSentence()` from TrustPrivacyGuard. That import cannot compile before B lands; the exact
+change is recorded for the lead to sequence. Until then, the person's summary and the Compass refusal
+agree, and neither yet names proposals or plan changes — the D-24 transparency rule is met only when
+B's text lands.
+
+### 41.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| CT-09 | W | **W** | §41. Unchanged; who may propose is graded under census-trust TRV2-08. |

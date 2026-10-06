@@ -3176,14 +3176,18 @@ delay inserted at the top of the projection handler read p50 124.6 ms and turned
 (8 / 9), restored 9 / 9 — verifier finding 9. M256 stays `?`: its live arm and its device half are
 unmeasured.
 
-### 51.2 Map telemetry retention: 90 days → 30 days (owner ruling Q11(a))
+### 51.2 Map telemetry retention: 90 days → 30 days (basis OD-INPUT-2; Q11(a) the analogue)
 
 `map_telemetry_events` and `map_telemetry_drops` are per-viewer rows stamped
 `expires_at DEFAULT (now() + interval '90 days')`
 (`artifacts/api-server/src/migrations/2202_map_telemetry.sql:58#expires_at           timestamptz NOT NULL DEFAULT (now() + interval '90 days')`).
-The owner's Q11(a) ruling keeps raw behavioural rows 30 days. Migration 3701 sets both defaults to
+No owner decision names Map telemetry. The basis is OD-INPUT-2 (per-user behavioural counters: "Retain
+for 30 days, then delete or irreversibly aggregate"); the Discovery ruling Q11(a) — 30 days for raw
+behavioural rows, a proposed default pending legal review — agrees and is cited only as the analogue
+*(as first written this section named Q11(a) as the ruling; corrected after independent verification)*.
+The change only tightens privacy and contradicts no ruling. Migration 3701 sets both defaults to
 30 days and shortens any row stamped later
-(`artifacts/api-server/src/migrations/3701_map_telemetry_retention_30_days.sql:60#ALTER TABLE public.map_telemetry_events ALTER COLUMN expires_at SET DEFAULT (now() + interval '30 days');`);
+(`artifacts/api-server/src/migrations/3701_map_telemetry_retention_30_days.sql:64#ALTER TABLE public.map_telemetry_events ALTER COLUMN expires_at SET DEFAULT (now() + interval '30 days');`);
 2960's sweep already deletes on `expires_at`. Its proof is a live-DB suite
 (`src/test/db/mapTelemetryRetention30Days.db.test.ts`), not run here (no local PostgreSQL). 3701 is
 applied NOWHERE. This closes the code half lane L's triage named for M259–M275; every one of those rows

@@ -7,8 +7,8 @@
 -- 30-day expiry, because extending retention of identifiable rows after the
 -- fact is not something a rollback should do silently.
 --
--- ⚠ Re-opens the gap against the owner's Q11(a) ruling (30 days for raw
--- behavioural rows) for every row written after it runs.
+-- ⚠ Re-opens the gap against OD-INPUT-2's 30 days for per-user behavioural
+-- data (Q11(a) the analogue) for every row written after it runs.
 
 BEGIN;
 ALTER TABLE public.map_telemetry_events ALTER COLUMN expires_at SET DEFAULT (now() + interval '90 days');

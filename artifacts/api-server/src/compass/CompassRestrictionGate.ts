@@ -45,6 +45,13 @@
  * retryable 503 `degraded_unavailable`, worded as a check that could not be
  * done, never as a restriction.
  *
+ * ── A RETAINED-RECORD-ONLY MEMBER IS NOT RESTRICTED ────────────────────────
+ * Lane C's decision also answers `read_only` for a member whose access was
+ * restored to an ENDED trip's record only (an upheld appeal; census-trips §85
+ * R5). Compass refuses the change the same way the Trips doors do — 403
+ * `trip_record_read_only` — and the words say the trip can be viewed, not
+ * changed; they never call it a restriction.
+ *
  * ── THE WORDS ───────────────────────────────────────────────────────────────
  * A refusal says the restriction's own sentence (the helper's message,
  * `RESTRICTION_SENTENCES` in lib/discoveryTrustGate.ts), so nobody is refused
@@ -94,6 +101,16 @@ export type CompassRestrictionVerdict =
       /** Why the check could not be completed, as the shared helper reports it. */
       reason: string;
       message: string;
+    }
+  | {
+      allowed: false;
+      /**
+       * The person's membership was restored by an upheld appeal AFTER the trip
+       * ended, to its retained record only (lane C's R5): they may read the trip,
+       * not change it. NOT a Trust restriction, and never worded as one.
+       */
+      kind: "read_only";
+      message: string;
     };
 
 /**
@@ -112,6 +129,7 @@ export async function checkCompassActionRestriction(
   const v = await decideTripActionRestriction(sc, tripId, userId, COMPASS_TRIP_ACTION[action]);
   if (v.allowed) return { allowed: true, shape: v.shape };
   if (v.kind === "unverifiable") return { allowed: false, kind: "unverifiable", reason: v.reason, message: v.message };
+  if (v.kind === "read_only") return { allowed: false, kind: "read_only", message: v.message };
   return { allowed: false, kind: "restricted", restrictionTypes: v.restrictionTypes, message: v.message };
 }
 
@@ -126,6 +144,11 @@ export function sendCompassRestrictionRefusal(
 ): void {
   if (verdict.kind === "unverifiable") {
     sendError(res, "degraded_unavailable", verdict.message);
+    return;
+  }
+  if (verdict.kind === "read_only") {
+    // The Trips doors' own body for the same verdict (lib/tripTrustGate.ts).
+    res.status(403).json({ error: "trip_record_read_only", message: verdict.message });
     return;
   }
   res.status(403).json({
@@ -148,6 +171,11 @@ export function compassRestrictionToolInfo(
       "This person's permissions could not be verified right now — that is temporary and is NOT a " +
       "restriction on them. Nothing was proposed or changed; tell them to try again shortly."
     );
+  }
+  if (verdict.kind === "read_only") {
+    // Nothing about the person's account is limited: the trip has ended and they
+    // can see its record. Say exactly that, and nothing that sounds like a penalty.
+    return `${verdict.message} Nothing was proposed or changed. Tell them this trip's record can be viewed but no longer changed.`;
   }
   return (
     `${verdict.message} Because of that, Compass cannot do this on a group trip for them; nothing was ` +

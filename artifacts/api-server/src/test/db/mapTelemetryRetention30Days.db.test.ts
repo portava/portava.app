@@ -4,9 +4,10 @@
  * Run: LOCAL_DB_URL=postgresql://… node --import tsx/esm --test src/test/db/mapTelemetryRetention30Days.db.test.ts
  *      Skips without a database, like every src/test/db suite.
  *
- * The owner's Q11(a) ruling (docs/ops/owner-decisions-20261004.md): raw
- * behavioural rows are kept 30 days, then deleted. 2202 stamped per-user map
- * telemetry with a 90-day expiry; 3701 makes it 30, shortens any row already
+ * Basis: owner decision OD-INPUT-2 (docs/ops/owner-decisions-20261004.md) —
+ * per-user behavioural data kept 30 days, then deleted (Q11(a) agrees; it is
+ * the analogue, a proposed default pending legal review). 2202 stamped per-user
+ * map telemetry with a 90-day expiry; 3701 makes it 30, shortens any row already
  * stamped later, and leaves the existing 2960 sweep to delete on expires_at.
  *
  *   MT-1  a row written with the default expires 30 days after receipt (not 90),

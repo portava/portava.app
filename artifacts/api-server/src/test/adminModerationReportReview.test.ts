@@ -31,6 +31,10 @@ import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import adminRouter from "../routes/admin.js";
 import { SNAPSHOT_EXCERPT_CHARS } from "../lib/moderationReportSnapshots.js";
+import { readFileSync as __readContract } from "node:fs";
+import { fileURLToPath as __contractUrl } from "node:url";
+import { dirname as __contractDir, resolve as __contractResolve } from "node:path";
+import { buildSnapshotContract, contractFileText, CONTRACT_FIXTURE_PATH } from "./helpers/moderationSnapshotContract.js";
 
 const ADMIN = "bbbbbbbb-0000-4000-8000-000000000002";
 const AUTHOR = "aaaaaaaa-0000-4000-8000-000000000001";
@@ -351,5 +355,26 @@ describe("TV-4a §3 — a route that ACTS on a moderation_reports row", () => {
     assert.equal(r.status, 403);
     assert.equal(row(f, R(1)).status, "open");
     assert.equal(f.inserts.length, 0);
+  });
+});
+
+// ── The snapshot contract the mobile admin screen reads (verifier finding 1, 2026-10-06) ──
+// The "User Reports" screen once read `text`/`body` keys the server never sends,
+// and its test passed on a hand-written fixture. The fixture both sides use is
+// now GENERATED from loadModerationSubjectSnapshots and committed; this test
+// fails the moment the server's output and the committed file disagree, and the
+// mobile test renders every entry of the same file.
+
+describe("the moderation snapshot contract shared with the mobile admin screen", () => {
+  it("the committed fixture IS what loadModerationSubjectSnapshots emits, for every subject type it reads", async () => {
+    const repoRoot = __contractResolve(__contractDir(__contractUrl(import.meta.url)), "../../../..");
+    const committed = __readContract(__contractResolve(repoRoot, CONTRACT_FIXTURE_PATH), "utf8");
+    const built = await buildSnapshotContract();
+    assert.equal(committed, contractFileText(built), `regenerate ${CONTRACT_FIXTURE_PATH} from buildSnapshotContract() and re-run the mobile ModerationReports test`);
+    // Not vacuous: the text-bearing types really carry their text under the server's own keys.
+    assert.equal((built.post.subject_snapshot as any).excerpt, "the reported post text");
+    assert.equal((built.review.subject_snapshot as any).excerpt, "the reported review text");
+    assert.equal((built.buddy_listing.subject_snapshot as any).displayName, "Nadia");
+    assert.equal(built.unavailable.subject_snapshot.state, "unavailable");
   });
 });
