@@ -93,12 +93,23 @@ export function auditServedResurfacing<T extends { id: string; owner_id: string 
     if (h.owner_id === viewerId) { served.push(h); continue; }
     counters.rowsChecked += 1;
     const verdict = publicProjectionVerdict(h, viewerId, "proactive_resurfacing", inputs);
-    if (!verdict.allow && verdict.kind === "suppressed") {
-      counters.violations += 1;
-      log?.error(
-        { metric: RESURFACING_SUPPRESSION_VIOLATIONS, where, highlightId: h.id, reason: verdict.reason },
-        "highlights: a suppressed Highlight reached the serving step of a proactive feed — dropped; §24 says this count must be zero",
-      );
+    if (!verdict.allow) {
+      // EVERY refusal is dropped; only a §11 SUPPRESSION is this metric. A §10
+      // consent withholding or an unreadable policy at this step is the other
+      // gate's leak, logged as such and not folded into a §11 count it would
+      // make meaningless.
+      if (verdict.kind === "suppressed") {
+        counters.violations += 1;
+        log?.error(
+          { metric: RESURFACING_SUPPRESSION_VIOLATIONS, where, highlightId: h.id, reason: verdict.reason },
+          "highlights: a suppressed Highlight reached the serving step of a proactive feed — dropped; §24 says this count must be zero",
+        );
+      } else {
+        log?.error(
+          { where, highlightId: h.id, kind: verdict.kind, reason: verdict.reason },
+          "highlights: a §10-refused Highlight reached the serving step of a proactive feed — dropped",
+        );
+      }
       continue;
     }
     served.push(h);

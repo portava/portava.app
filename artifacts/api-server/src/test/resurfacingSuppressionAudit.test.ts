@@ -113,6 +113,19 @@ describe("the detector: a suppressed row at the serving step is counted AND drop
     assert.equal(readResurfacingSuppressionAudit().rowsChecked, 1);
   });
 
+  it("a §10 refusal at the serving step is DROPPED but is not a §11 violation", () => {
+    const { lines, log } = recordingLog();
+    const out = auditServedResurfacing(
+      [ROW_A], VIEWER,
+      { controls: suppressions([]), viewerControls: suppressions([]), policies: { state: "unreadable", reason: "test: policy read failed" } as any },
+      log, "unit",
+    );
+    assert.deepEqual(out, [], "an unreadable §10 policy withholds at the last step too");
+    assert.equal(readResurfacingSuppressionAudit().violations, 0, "not a §11 suppression");
+    assert.equal(lines.length, 1);
+    assert.equal(lines[0]!.obj.metric, undefined, "the §11 metric name is not used for a §10 refusal");
+  });
+
   it("the memory metrics module no longer lists the name as unmeasurable", () => {
     assert.ok(!(RESURFACING_SUPPRESSION_VIOLATIONS in MEMORY_METRICS_NOT_MEASURABLE));
   });
