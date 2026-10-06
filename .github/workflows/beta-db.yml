@@ -58,7 +58,8 @@
 #   * beta-bootstrap.ts additionally HARD-CODES the beta ref and exits 2 for
 #     any other — including portava-ci — because it restores a baseline over
 #     whatever it finds.
-# The job therefore references exactly ONE secret: SUPABASE_PROJECT_TOKEN. It
+# The job therefore references exactly ONE secret: BETA_SUPABASE_PROJECT_TOKEN
+# (mapped into SUPABASE_PROJECT_TOKEN, the name every script reads). It
 # does not read secrets.SUPABASE_URL (that is portava-ci's URL), nor the
 # service-role or anon keys, which belong to portava-ci and mean nothing to
 # beta.
@@ -274,7 +275,14 @@ jobs:
     env:
       SUPABASE_URL: 'https://emfpckykpzfturllshly.supabase.co'
       CI_SUPABASE_PROJECT_REF: 'emfpckykpzfturllshly'
-      SUPABASE_PROJECT_TOKEN: ${{ secrets.SUPABASE_PROJECT_TOKEN }}
+      # The BETA token, mapped into the one name the scripts read. It is a
+      # SEPARATE secret from the CI job's: SUPABASE_PROJECT_TOKEN is project-scoped
+      # to portava-ci (docs/ci/README.md § "Setting up the non-production
+      # project" prescribes that), and the first dispatch on 2026-10-06 measured
+      # the consequence — the Management API answered 403 on beta's first query
+      # and nothing was written. The beta project gets its own token, scoped to
+      # it, so the CI token is never widened.
+      SUPABASE_PROJECT_TOKEN: ${{ secrets.BETA_SUPABASE_PROJECT_TOKEN }}
     steps:
       - name: Preflight — required secrets must be non-empty
         shell: bash
@@ -283,7 +291,7 @@ jobs:
           MISSING=0
           for NAME in SUPABASE_URL SUPABASE_PROJECT_TOKEN; do
             if [ -z "${!NAME:-}" ]; then
-              echo "::error::Required secret $NAME is empty or not configured. This job fails rather than skips. See docs/ci/README.md."
+              echo "::error::Required value $NAME is empty or not configured. In this job SUPABASE_PROJECT_TOKEN is mapped from the environment secret BETA_SUPABASE_PROJECT_TOKEN — a Management API token scoped to portava-beta (emfpckykpzfturllshly); create it in the Supabase dashboard and add it to the ci-nonprod-supabase environment. This job fails rather than skips. See docs/ci/README.md."
               MISSING=1
             else
               echo "OK: $NAME is set (value not printed)."

@@ -907,8 +907,10 @@ Three things about it differ from `live-db.yml` and are deliberate:
 
 - The beta job's `SUPABASE_URL` and `CI_SUPABASE_PROJECT_REF` are **literals**
   naming portava-beta, so the same allowlist and in-process guard sanction beta
-  for that job alone; it references one secret, the account-level
-  `SUPABASE_PROJECT_TOKEN`. `scripts/src/beta-bootstrap.ts` also hard-codes the
+  for that job alone; it references one secret, `BETA_SUPABASE_PROJECT_TOKEN`
+  (a token scoped to portava-beta, mapped into the `SUPABASE_PROJECT_TOKEN` name
+  the scripts read — the CI token is project-scoped and answered 403 on beta's
+  first query on 2026-10-06). `scripts/src/beta-bootstrap.ts` also hard-codes the
   beta ref and refuses any other, portava-ci included.
 - It never takes `live-db.yml`'s shared-database slot: beta is a different
   database. Its own `concurrency: beta-db` group never cancels.
