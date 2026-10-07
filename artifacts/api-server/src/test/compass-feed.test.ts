@@ -913,3 +913,111 @@ describe("D-24c — the boost lift under a messaging restriction", () => {
     assert.equal((lifted(unread, "post:carol").item ?? lifted(unread, "post:carol")).activeVisibilityBoost ?? 0, 0);
   });
 });
+
+// ── D-24c on the rest of the Compass boost path (lane L wave 6, 2026-10-07) ──
+//
+// The active-user lift above was the only boost the ruling reached. Two more
+// Compass paths lift a person's reach with no restriction read:
+//   - fair exposure (CompassFairExposureEngine) puts a new author's item in slot
+//     2 and its "Why this?" calls that a boost;
+//   - the fallback feed's `basic_discovery` surfaces people BECAUSE their boost
+//     is on (`boost_eligible` needs the boost preference).
+// Both now withhold the lift for a messaging-restricted or unreadable author.
+describe("D-24c — fair exposure and the fallback's boost-selected suggestions withhold the lift too", () => {
+  const NEW_ID = BOB_ID;    // joined 5 days ago, verified: fair-exposure eligible
+  const OLD_ID = CAROL_ID;  // joined long ago: never eligible
+  const daysAgo = (d: number) => new Date(Date.now() - d * 86_400_000).toISOString();
+  const pool = (): CompassItem[] => [
+    { id: "post:old", type: "suggestion", authorId: OLD_ID, authorJoinedAt: daysAgo(400), isVerified: true },
+    { id: "post:new", type: "suggestion", authorId: NEW_ID, authorJoinedAt: daysAgo(5), isVerified: true },
+  ];
+  const R = (userId: string, t: string) => ({ user_id: userId, restriction_type: t, lifted_at: null, expires_at: null });
+  const ERR = { message: "canceling statement due to statement timeout", code: "57014" };
+  /** A table-backed fake that also counts the restriction reads. */
+  async function client(seed: Record<string, any[]>, errors: Record<string, { message: string; code?: string }> = {}) {
+    const { makeClient } = await import("./highlightRouteHarness.js");
+    const c: any = makeClient({ compass_visibility_boosts: [], compass_visibility_cooldowns: [], feature_flags: [], ...seed }, { errors });
+    const inner = c.from;
+    c.restrictionReads = 0;
+    c.from = (t: string) => { if (t === "trust_restrictions") c.restrictionReads++; return inner(t); };
+    return c;
+  }
+  const overrides = {
+    safetyFilter: () => ({ allowed: true }),
+    eligibilityCheck: () => ({ eligible: true }),
+    scoreItem: (item: CompassItem) => ({ finalScore: item.id === "post:old" ? 60 : 50, components: {} as any }),
+    skipActiveRewards: true,
+    authorScores: new Map<string, ActiveUserScoreResult>(),
+  } as any;
+  const fair = (rs: PipelineResult[]) => rs.filter((r) => r.item.isFairExposureBoosted).map((r) => r.item.id);
+
+  it("control: with no restriction the new author's item is lifted by fair exposure, and only that author's state is read", async () => {
+    const c = await client({ trust_restrictions: [] });
+    const rs = await rankItemsForDiscovery(pool(), baseProfile(), baseContext(), c, overrides);
+    assert.deepEqual(fair(rs), ["post:new"]);
+    assert.equal(rs[0].item.id, "post:new");
+    assert.equal(c.restrictionReads, 1, "the long-standing author can get no fair-exposure lift, so nobody reads their restriction");
+  });
+
+  it("an active MESSAGING restriction withholds the fair-exposure lift; the item keeps its organic place", async () => {
+    const c = await client({ trust_restrictions: [R(NEW_ID, "messaging")] });
+    const rs = await rankItemsForDiscovery(pool(), baseProfile(), baseContext(), c, overrides);
+    assert.deepEqual(fair(rs), []);
+    assert.deepEqual(rs.map((r) => r.item.id), ["post:old", "post:new"]);
+  });
+
+  it("a HOSTING restriction does not touch it (D-24c names messaging)", async () => {
+    const c = await client({ trust_restrictions: [R(NEW_ID, "hosting")] });
+    const rs = await rankItemsForDiscovery(pool(), baseProfile(), baseContext(), c, overrides);
+    assert.deepEqual(fair(rs), ["post:new"]);
+  });
+
+  it("an UNREADABLE restriction state lifts nobody and still serves every item", async () => {
+    const c = await client({ trust_restrictions: [] }, { trust_restrictions: ERR });
+    const rs = await rankItemsForDiscovery(pool(), baseProfile(), baseContext(), c, overrides);
+    assert.deepEqual(fair(rs), []);
+    assert.deepEqual(rs.map((r) => r.item.id).sort(), ["post:new", "post:old"]);
+  });
+
+  it("buildFeed's own fair-exposure site applies the same rule", async () => {
+    const ids = async (seed: any[]) => {
+      const c = await client({ trust_restrictions: seed });
+      const page = await buildFeed(pool(), baseProfile(), baseContext(), c, null, overrides);
+      return page.sections.flatMap((s) => s.items).filter((i: any) => (i.item ?? i).isFairExposureBoosted).map((i: any) => (i.item ?? i).id);
+    };
+    assert.ok((await ids([])).includes("post:new"), "control: the new author is lifted on the feed");
+    assert.deepEqual(await ids([R(NEW_ID, "messaging")]), []);
+  });
+
+  describe("the fallback feed's basic_discovery (people surfaced because their boost is on)", () => {
+    const seed = (restrictions: any[]) => ({
+      blocks: [], user_mutes: [], trips: [], trip_members: [], rent_buddy_bookings: [],
+      compass_active_user_scores: [
+        { user_id: NEW_ID, active_user_score: 90, boost_eligible: true },
+        { user_id: OLD_ID, active_user_score: 80, boost_eligible: true },
+      ],
+      trust_restrictions: restrictions,
+    });
+    const suggested = async (c: any) => {
+      const { buildFallbackFeed } = await import("../compass/CompassFallbackFeedBuilder.js");
+      const out = await buildFallbackFeed(c, ALICE_ID, baseProfile({ currentCity: "Lisbon" }), "feed_builder_threw");
+      return out.safeItems.filter((i) => i.category === "basic_discovery").map((i) => i.authorId).sort();
+    };
+
+    it("control: both boost-eligible people are suggested", async () => {
+      assert.deepEqual(await suggested(await client(seed([]))), [NEW_ID, OLD_ID].sort());
+    });
+
+    it("a messaging-restricted person is not surfaced by their boost; the other still is", async () => {
+      assert.deepEqual(await suggested(await client(seed([R(NEW_ID, "messaging")]))), [OLD_ID]);
+    });
+
+    it("an unreadable restriction state surfaces nobody by boost — and the fallback feed still answers", async () => {
+      const c = await client(seed([]), { trust_restrictions: ERR });
+      assert.deepEqual(await suggested(c), []);
+      const { buildFallbackFeed } = await import("../compass/CompassFallbackFeedBuilder.js");
+      const out = await buildFallbackFeed(c, ALICE_ID, baseProfile({ currentCity: "Lisbon" }), "feed_builder_threw");
+      assert.ok(out.safeItems.some((i) => i.category === "safety_tool"), "the rest of the fallback is untouched");
+    });
+  });
+});
