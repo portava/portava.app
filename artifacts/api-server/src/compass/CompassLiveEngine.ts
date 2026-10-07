@@ -42,6 +42,7 @@ import { NotificationRouter } from "../services/notifications/NotificationRouter
 import { RealtimeActivityService } from "../services/notifications/RealtimeActivityService.js";
 import { fetchUserTimezone, localHourFor, nowUtcInstant } from "../lib/localTime.js";
 import { resolveCurrentTrip } from "./CompassCurrentTrip.js";
+import { PLAN_ITEM_PRIVACY_COLUMNS, planItemAccessFor, withholdPrivatePlanItems } from "./planItemAccess.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -263,20 +264,24 @@ async function fetchTodayPlan(
   sc: SupabaseClient,
   tripId: string,
   today: string,
+  viewerId: string,
 ): Promise<TodayPlanRead> {
   try {
     const { data, error } = await sc
       .from("trip_plan_items")
-      .select("id, title, starts_at, status, day_date, removed_at")
+      .select(`id, title, starts_at, status, day_date, removed_at, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
       .eq("trip_id", tripId)
       .eq("day_date", today);
     // `const { data }` with no `error` bound, and a `catch` that could never
     // fire because supabase-js RESOLVES on a database error. An unreadable plan
     // was an empty day.
     if (error) return { status: "unread" };
+    // OD-TRIP-3 (compass/planItemAccess.ts): another member's private item is
+    // "Private plan" here — the live context still knows the slot is taken.
+    const access = await planItemAccessFor(sc, tripId, viewerId);
     return {
       status: "ok",
-      items: ((data ?? []) as any[])
+      items: withholdPrivatePlanItems((data ?? []) as any[], access)
         .filter((i) => i.status !== "cancelled" && i.removed_at == null)
         .map((i) => ({
           id: String(i.id),
@@ -321,7 +326,7 @@ export async function buildLiveRollingContext(
   let planUnread = false;
   if (trip) {
     const today = new Date(nowMs).toISOString().slice(0, 10);
-    const read = await fetchTodayPlan(sc, trip.id, today);
+    const read = await fetchTodayPlan(sc, trip.id, today, userId);
     if (read.status === "unread") {
       // CARRY FORWARD, DO NOT OVERWRITE. This context is written back to the
       // session row; replacing a real stop with null because a query failed

@@ -151,7 +151,9 @@ export function projectMeetingPoint(
   if (!item || item.category !== "meeting_point") return { skipped: "not_meeting_point" };
   if (item.removed_at != null) return { skipped: "removed" };
   if (item.status === "cancelled") return { skipped: "cancelled" };
-  if (item.location_is_private === true) return { skipped: "private_location" };
+  // OD-TRIP-3: only an item that SAYS it is public is drawn. `=== true` let an
+  // unread or null flag through (2026-10-06); the column defaults TRUE.
+  if (item.location_is_private !== false) return { skipped: "private_location" };
   const lat = item.lat;
   const lng = item.lng;
   if (
