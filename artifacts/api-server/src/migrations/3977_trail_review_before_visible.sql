@@ -29,7 +29,13 @@
 --      and trail_edges: a client sees a Trail, its members and its edges only
 --      when the Trail is approved or the client created it. 3390's permissive
 --      policies are untouched (3391 measures them by name and predicate; it
---      flags extra PERMISSIVE policies only).
+--      flags extra PERMISSIVE policies only). The three apply to EVERY role
+--      (no TO clause), not to `authenticated` alone: 3390's postcondition reads
+--      any restrictive policy that NAMES a client role on a kept path as a deny,
+--      so a role-named narrowing made 3390 impossible to re-apply after its own
+--      rollback (CI's local-db job, DV-71 R7). A role-wide filter is also the
+--      ruling's own reach: under review, a Trail is its creator's alone, for
+--      anyone. service_role bypasses RLS and is unaffected.
 --   4. trail_propose: 3975's function, byte for byte, plus review_state in its
 --      INSERT and in its answer (the test compares the two bodies).
 --   5. rebuild_place_cooccurrence (3495): a pending or rejected Trail's places
@@ -156,15 +162,15 @@ GRANT EXECUTE ON FUNCTION authz.trail_review_visible(uuid) TO anon, authenticate
 
 DROP POLICY IF EXISTS trails_review_visible ON public.trails;
 CREATE POLICY trails_review_visible ON public.trails AS RESTRICTIVE
-  FOR SELECT TO authenticated
+  FOR SELECT
   USING (trails.review_state = 'approved' OR (auth.uid() IS NOT NULL AND trails.created_by = auth.uid()));
 DROP POLICY IF EXISTS content_trails_review_visible ON public.content_trails;
 CREATE POLICY content_trails_review_visible ON public.content_trails AS RESTRICTIVE
-  FOR SELECT TO authenticated
+  FOR SELECT
   USING (authz.trail_review_visible(content_trails.trail_id));
 DROP POLICY IF EXISTS trail_edges_review_visible ON public.trail_edges;
 CREATE POLICY trail_edges_review_visible ON public.trail_edges AS RESTRICTIVE
-  FOR SELECT TO authenticated
+  FOR SELECT
   USING (authz.trail_review_visible(trail_edges.from_trail_id) AND authz.trail_review_visible(trail_edges.to_trail_id));
 
 -- ── 4. trail_propose: 3975's, plus the review state ────────────────────────
@@ -292,6 +298,10 @@ BEGIN
   SELECT count(*) INTO n FROM pg_policy
    WHERE polname IN ('trails_review_visible', 'content_trails_review_visible', 'trail_edges_review_visible') AND NOT polpermissive;
   IF n <> 3 THEN RAISE EXCEPTION 'POSTCONDITION FAILED (3977): expected 3 restrictive review policies, found %', n; END IF;
+  SELECT count(*) INTO n FROM pg_policy
+   WHERE polname IN ('trails_review_visible', 'content_trails_review_visible', 'trail_edges_review_visible')
+     AND NOT polpermissive AND polcmd = 'r' AND polroles = ARRAY[0::oid];
+  IF n <> 3 THEN RAISE EXCEPTION 'POSTCONDITION FAILED (3977): the review policies must be SELECT-only and apply to every role (PUBLIC); % do', n; END IF;
   d := pg_get_functiondef('public.trail_propose(text,text,text,uuid,uuid)'::regprocedure);
   IF position('review_state' IN d) = 0 OR position('trail_propose:proposer:' IN d) = 0 OR position('trail_propose:token:' IN d) = 0 THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3977): trail_propose lost the review state, the allowance or the token lock';

@@ -75,7 +75,11 @@ const KEPT: Array<{ t: Table; op: Op; role: Role; policy: string; qual: string |
   { t: "rank_events",             op: "SELECT", role: "authenticated", policy: "users_read_own_rank_events",   qual: "(auth.uid() = user_id)", check: null },
 ];
 const kept = (t: string, op: Op, role: Role) => KEPT.find((k) => k.t === t && k.op === op && k.role === role);
-/** 3977 (lead ruling D-66): restrictive narrowings of kept SELECT paths — a pending or rejected Trail is its creator's alone. */
+/**
+ * 3977 (lead ruling D-66): restrictive narrowings of kept SELECT paths — a pending or rejected Trail is its creator's
+ * alone. They name NO role (PUBLIC): a narrowing that named `authenticated` is what 3390's postcondition reads as a
+ * deny on a kept path, which made R7's re-application of 3390 fail in CI's local-db job.
+ */
 const NARROWED: Array<{ t: Table; policy: string }> = [
   { t: "trails", policy: "trails_review_visible" },
   { t: "content_trails", policy: "content_trails_review_visible" },
@@ -203,7 +207,7 @@ describe("census-discovery DV-71 — 3390: every Discovery table defines all fou
           // A DENY is 3390's restrictive `false`. 3977 (lead ruling D-66) adds restrictive NARROWINGS on three kept
           // SELECT paths — a Trail under review is its creator's alone — which are declared below by name and predicate
           // and are not denials.
-          const restrictive = pol.filter((p) => p.tbl === t && !p.permissive && p.cmd === cmdOf[op] && p.roles.includes(role));
+          const restrictive = pol.filter((p) => p.tbl === t && !p.permissive && p.cmd === cmdOf[op] && (p.roles.includes(role) || p.roles.includes("PUBLIC")));
           const deny = restrictive.some((p) => (p.qual ?? "false") === "false" && (p.wcheck ?? "false") === "false");
           const k = kept(t, op, role);
           if (k) {
@@ -213,7 +217,7 @@ describe("census-discovery DV-71 — 3390: every Discovery table defines all fou
             if (!holds) failures.push(`${t} ${op} ${role}: kept path has no privilege`);
             if (deny) failures.push(`${t} ${op} ${role}: kept path is denied`);
             for (const r of restrictive) {
-              if (!NARROWED.some((n) => n.t === t && n.policy === r.polname && op === "SELECT" && role === "authenticated")) {
+              if (!NARROWED.some((n) => n.t === t && n.policy === r.polname && op === "SELECT" && r.roles.length === 1 && r.roles[0] === "PUBLIC")) {
                 failures.push(`${t} ${op} ${role}: undeclared restrictive policy ${r.polname} on a kept path`);
               }
             }
@@ -232,6 +236,13 @@ describe("census-discovery DV-71 — 3390: every Discovery table defines all fou
     const fnExec = rows<{ a: boolean; u: boolean }>(`SELECT has_function_privilege('anon', 'public.rebuild_place_momentum(timestamptz)', 'EXECUTE') AS a,
                                                             has_function_privilege('authenticated', 'public.rebuild_place_momentum(timestamptz)', 'EXECUTE') AS u`)[0]!;
     if (fnExec.a || fnExec.u) failures.push("rebuild_place_momentum is client-executable");
+    // The three declared narrowings exist as declared: restrictive, SELECT, every role, and they read the review state.
+    for (const n of NARROWED) {
+      const p = pol.find((x) => x.tbl === n.t && x.polname === n.policy);
+      if (!p) { failures.push(`${n.t}: narrowing ${n.policy} missing`); continue; }
+      if (p.permissive || p.cmd !== "r" || p.roles.join(",") !== "PUBLIC") failures.push(`${n.t}: ${n.policy} is not a restrictive SELECT for every role (${p.permissive} ${p.cmd} ${p.roles})`);
+      if (!/review_state = 'approved'|trail_review_visible/.test(p.qual ?? "")) failures.push(`${n.t}: ${n.policy} does not read the review state (${p.qual})`);
+    }
     assert.deepEqual(failures, [], failures.join("\n"));
   });
 

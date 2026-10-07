@@ -26,6 +26,8 @@ const SKIP = HAVE_DB ? false : "LOCAL_DB_URL not set — scripts/local-db/up.sh 
 
 describe("3977: review before a Trail is visible", { skip: SKIP }, () => {
   let creator = "";
+  /** A second person who starts Trails: 3975 allows one person three a day, and D1–D3 use `creator`'s three. */
+  let creator2 = "";
   let other = "";
   let admin = "";
   const tag = `d66${randomUUID().slice(0, 8)}`;
@@ -53,12 +55,13 @@ describe("3977: review before a Trail is visible", { skip: SKIP }, () => {
 
   before(() => {
     creator = seedUser("d66_creator");
+    creator2 = seedUser("d66_creator2");
     other = seedUser("d66_other");
     admin = seedUser("d66_admin");
   });
   after(() => {
     if (made.length) exec(`DELETE FROM public.trails WHERE id IN (${made.map((x) => `'${x}'`).join(",")});`);
-    for (const u of [creator, other, admin]) if (u) deleteUser(u);
+    for (const u of [creator, creator2, other, admin]) if (u) deleteUser(u);
   });
 
   it("D1. a person's Trail is pending; a system proposal is approved", () => {
@@ -85,19 +88,19 @@ describe("3977: review before a Trail is visible", { skip: SKIP }, () => {
   });
 
   it("D4. approval publishes it and activates the proposed lifecycle", () => {
-    const id = propose(`${tag} Pastel Bakery Crawl`, creator);
+    const id = propose(`${tag} Pastel Bakery Crawl`, creator2);
     assert.equal(decide(id, "approve", null).outcome, "decided");
     assert.equal(state(id), "approved|active|");
     assert.equal(sees(other, id), 1);
   });
 
   it("D5. no client role can call trail_review_decide", () => {
-    const id = propose(`${tag} Alfama Stairs Climb`, creator);
+    const id = propose(`${tag} Alfama Stairs Climb`, creator2);
     const r = psql(
       [
-        `SELECT set_config('request.jwt.claim.sub', '${creator}', true);`,
+        `SELECT set_config('request.jwt.claim.sub', '${creator2}', true);`,
         `SET LOCAL ROLE authenticated;`,
-        `SELECT public.trail_review_decide('${id}', '${creator}', 'approve', NULL);`,
+        `SELECT public.trail_review_decide('${id}', '${creator2}', 'approve', NULL);`,
       ].join("\n"),
       { single: true },
     );

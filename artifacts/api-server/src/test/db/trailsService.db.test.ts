@@ -219,6 +219,21 @@ describe("H3 — DV-23: near-duplicates of one place are clustered and stay reac
 });
 
 describe("H4 — DC-03: the four checks run over the right catalogue, and hostile input cannot rewrite it", { skip: !HAVE_DB }, () => {
+  // 3977 (lead ruling D-66) seeds trail_creation_enabled FALSE, and POST /v1/discovery/trails refuses while it is
+  // off. These cases exercise the door with the flag ON, as an operator would turn it on; the seeded value is restored.
+  let creationWas: string | null = null;
+  before(() => {
+    creationWas = scalar("SELECT enabled::text FROM public.feature_flags WHERE flag = 'trail_creation_enabled';");
+    assert.equal(creationWas, "false", "3977 seeds the creation flag FALSE");
+    exec("UPDATE public.feature_flags SET enabled = TRUE WHERE flag = 'trail_creation_enabled';");
+  });
+  after(() => {
+    exec(`UPDATE public.feature_flags SET enabled = ${creationWas === "true" ? "TRUE" : "FALSE"} WHERE flag = 'trail_creation_enabled';`);
+  });
+  /** D-66: a person's new Trail is pending until an admin decides; approve it as the admin route would. */
+  const approve = (trailId: string, admin: string) =>
+    exec(`SET LOCAL ROLE service_role;\nSELECT public.trail_review_decide('${trailId}', '${admin}', 'approve', NULL)::text;`, { single: true });
+
   test("a re-ordered title filed under ANOTHER destination is still a duplicate (CHECK 1 is destination-independent)", async () => {
     const u = user("h4a");
     const first = await proposeTrail(sc(), { title: `${TAG} After Dark Nights`, destination: `${TAG}-bangkok` }, u);
@@ -242,6 +257,11 @@ describe("H4 — DC-03: the four checks run over the right catalogue, and hostil
       title: `${TAG} Thonglor Lanes`, destination: `${TAG}-thonglor`, parentTrailId: parent.trail!.id,
     });
     assert.equal(kid.status, 201, JSON.stringify(kid.body));
+    // D-66: neither is navigable until approved — the related read is 404 for the pending sub-Trail, its creator included.
+    assert.equal((await call("GET", `/v1/discovery/trails/${kid.body.trail.id}/related`, u)).status, 404);
+    const admin = user("h4cadmin");
+    approve(parent.trail!.id, admin);
+    approve(kid.body.trail.id, admin);
     const up = await call("GET", `/v1/discovery/trails/${kid.body.trail.id}/related`, u);
     assert.deepEqual(up.body.related.map((e: any) => [e.trail.id, e.edgeType, e.direction]), [[parent.trail!.id, "child", "in"]]);
   });

@@ -289,8 +289,10 @@ describe("M — 3977's SQL, statically", () => {
   });
   it("M2. the client door: three RESTRICTIVE select policies (trails, members, edges); 3390's permissive ones untouched", () => {
     for (const p of ["trails_review_visible ON public.trails AS RESTRICTIVE", "content_trails_review_visible ON public.content_trails AS RESTRICTIVE", "trail_edges_review_visible ON public.trail_edges AS RESTRICTIVE"]) {
-      assert.ok(m.includes(`CREATE POLICY ${p}`), p);
+      assert.ok(m.includes(`CREATE POLICY ${p}\n  FOR SELECT\n  USING (`), `${p}: SELECT, naming no role (3390's postcondition reads a role-named restrictive policy on a kept path as a deny)`);
     }
+    assert.doesNotMatch(m, /_review_visible ON public\.[a-z_]+ AS RESTRICTIVE\s+FOR SELECT TO /, "no review policy names a role");
+    assert.match(m, /polroles = ARRAY\[0::oid\]/, "the postcondition checks they apply to every role");
     assert.doesNotMatch(m, /DROP POLICY IF EXISTS (trails|content_trails|trail_edges)_public_select/);
   });
   it("M3. the decision: pending only, a rejection needs a reason, client roles cannot call it; the flag is seeded FALSE", () => {
