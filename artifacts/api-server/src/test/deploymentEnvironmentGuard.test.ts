@@ -25,6 +25,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  BETA_SENTRY_DSNS,
   BETA_SUPABASE_URL,
   DEPLOYMENT_ENV_VAR,
   PRODUCTION_PUBLISHABLE_KEY,
@@ -203,6 +204,25 @@ describe("deploymentEnvironmentRefusal — an unlabelled Replit deployment witho
     assert.equal(deploymentEnvironmentRefusal({ SUPABASE_URL: PROD_URL, REPLIT_DEPLOYMENT: "1", REPLIT_DOMAINS: "portava.replit.app" }), null);
     assert.equal(deploymentEnvironmentRefusal({ [DEPLOYMENT_ENV_VAR]: "beta", NODE_ENV: "production", SUPABASE_URL: BETA_SUPABASE_URL, REPLIT_DEPLOYMENT: "1" }), null);
     assert.equal(deploymentEnvironmentRefusal({ SUPABASE_URL: PROD_URL }), null);
+  });
+});
+
+describe("deploymentEnvironmentRefusal — beta never reports to a Sentry project that is not the beta's (lead, 2026-10-07)", () => {
+  const BETA_OK = { [DEPLOYMENT_ENV_VAR]: "beta", NODE_ENV: "production", SUPABASE_URL: BETA_SUPABASE_URL };
+  const DSN = "https://0123456789abcdef0123456789abcdef@o4500000000000000.ingest.us.sentry.io/4500000000000001";
+
+  it("REFUSED: an inherited SENTRY_DSN or EXPO_PUBLIC_SENTRY_DSN — named, value not printed", () => {
+    for (const name of ["SENTRY_DSN", "EXPO_PUBLIC_SENTRY_DSN"]) {
+      const r = deploymentEnvironmentRefusal({ ...BETA_OK, [name]: DSN });
+      assert.ok(r && r.includes(name) && r.includes("Sentry"), `${name} → ${r}`);
+      assert.ok(!r.includes("ingest.us.sentry.io"), "the DSN is not printed");
+    }
+  });
+
+  it("starts with no DSN (or blank), and production keeps its DSN (unchanged)", () => {
+    assert.equal(deploymentEnvironmentRefusal({ ...BETA_OK, SENTRY_DSN: "", EXPO_PUBLIC_SENTRY_DSN: "  " }), null);
+    assert.equal(deploymentEnvironmentRefusal({ SUPABASE_URL: PROD_URL, SENTRY_DSN: DSN }), null);
+    assert.deepEqual(BETA_SENTRY_DSNS, [], "the allowlist is empty until the owner creates the beta Sentry project");
   });
 });
 

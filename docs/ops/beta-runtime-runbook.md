@@ -52,7 +52,15 @@ Replit deployment. Production is never reached by anything below.
     `PAYMENTS_ALLOW_LIVE` set to anything but empty/`false` is refused;
   - a beta API refuses to start unless `NODE_ENV=production`: development and
     test modes admit the unsigned mock identity provider and the fake payment
-    provider.
+    provider;
+  - **beta never reports to production's Sentry project** (lead, 2026-10-07):
+    `SENTRY_DSN` and `EXPO_PUBLIC_SENTRY_DSN` must be unset or a DSN on the
+    beta allowlist (`BETA_SENTRY_DSNS`, empty until a beta Sentry project
+    exists), or the API refuses to start and the web build refuses to build.
+    The app does the same at runtime: a beta build initialises Sentry only with
+    an allowlisted DSN, and both beta EAS profiles pin
+    `EXPO_PUBLIC_SENTRY_DSN` to empty. Production's DSN is a Secret and is not
+    in this repository, which is why the rule is an allowlist.
 
   `scripts/src/beta-deployment-guard.test.ts` parses the real `.replit` and
   proves every production value in it is refused by both rules.
@@ -184,6 +192,7 @@ values the pull restores.
 | `INTERNAL_API_SECRET` | **freshly generated** for beta. Never production's. |
 | `ALLOWED_ORIGINS` | `https://portava-beta.replit.app` |
 | `SENSING_CONTRIBUTOR_PEPPER`, `INTEL_EVIDENCE_REFERENCE_KEY` | freshly generated if set; the features they serve are OFF in the policy |
+| `SENTRY_DSN`, `EXPO_PUBLIC_SENTRY_DSN` | **unset** (delete any inherited value). Beta has no Sentry project yet; a DSN not on `BETA_SENTRY_DSNS` is refused. To get beta crash reports: create a separate Sentry project for beta (owner), then one reviewed PR adds its DSN to the three `BETA_SENTRY_DSNS` lists (`artifacts/api-server/src/lib/deploymentEnvironment.ts`, `scripts/deployment-env-guard.sh`, `travel-buddy-standalone/src/lib/deploymentConsistency.ts`) and to both beta profiles in `eas.json` |
 
 Then, in the fork's `.replit`, delete or replace the production entries in
 `[userenv.shared]`: `SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_URL`, and

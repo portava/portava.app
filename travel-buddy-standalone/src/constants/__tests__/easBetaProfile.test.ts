@@ -80,6 +80,15 @@ describe('eas.json beta profile', () => {
       assert.equal(store.environment, beta.environment);
     });
 
+    it("both beta profiles pin an empty Sentry DSN (or an allowlisted beta one), so no EAS environment's DSN is inlined", async () => {
+      const { BETA_SENTRY_DSNS } = await import('../../lib/deploymentConsistency.ts');
+      for (const p of [beta, store]) {
+        const dsn = p.env?.EXPO_PUBLIC_SENTRY_DSN;
+        assert.ok(dsn !== undefined, 'EXPO_PUBLIC_SENTRY_DSN must be named in the profile');
+        assert.ok(dsn === '' || BETA_SENTRY_DSNS.includes(dsn), `not an allowlisted beta DSN: ${dsn}`);
+      }
+    });
+
     it('is a store build, versioned like production', () => {
       assert.equal(store.distribution, 'store');
       assert.equal(store.autoIncrement, true);

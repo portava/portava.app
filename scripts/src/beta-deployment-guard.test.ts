@@ -37,6 +37,8 @@ const PROD = "https://ajrurzioarfkagpuxfnb.supabase.co";
 const OTHER = "https://zzzzzzzzzzzzzzzzzzzz.supabase.co";
 /** Production's publishable key as .replit [userenv.shared] commits it (asserted against the file below). */
 const PROD_PUBLISHABLE_KEY = "sb_publishable_xp3JiB50mBYHn1S_XjzOAg_rIoEqZKS";
+/** A Sentry DSN that is not on the beta allowlist (the shape of production's; the real one is a Secret). */
+const SOME_DSN = "https://0123456789abcdef0123456789abcdef@o4500000000000000.ingest.us.sentry.io/4500000000000001";
 /** A beta environment both rules accept for the BUILD (the API additionally needs NODE_ENV=production). */
 const BETA_OK_BUILD: Record<string, string> = { PORTAVA_DEPLOYMENT_ENV: "beta", SUPABASE_URL: BETA, EXPO_PUBLIC_SUPABASE_URL: BETA };
 /** A beta environment both rules accept. */
@@ -109,6 +111,12 @@ const CASES: Case[] = [
   { name: "production deployment declared PORTAVA_DEPLOYMENT_ENV=production, REPLIT_DOMAINS absent", vars: { REPLIT_DEPLOYMENT: "1", PORTAVA_DEPLOYMENT_ENV: "production", SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD }, api: true, build: true },
   { name: "the labelled beta deployment, REPLIT_DOMAINS absent", vars: { ...BETA_OK, REPLIT_DEPLOYMENT: "1" }, api: true, build: true },
   { name: "local / CI run (no REPLIT_DEPLOYMENT), no REPLIT_DOMAINS (unchanged)", vars: { SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD }, api: true, build: true },
+  // Sentry (lead, 2026-10-07): beta reports only to an allowlisted beta project — production's DSN (a Secret, not in
+  // this repo) is refused because it is not on the list.
+  { name: "beta with an inherited server SENTRY_DSN", vars: { ...BETA_OK, SENTRY_DSN: SOME_DSN }, api: false, build: false },
+  { name: "beta with an inherited web-bundle EXPO_PUBLIC_SENTRY_DSN", vars: { ...BETA_OK, EXPO_PUBLIC_SENTRY_DSN: SOME_DSN }, api: false, build: false },
+  { name: "beta with both DSNs empty", vars: { ...BETA_OK, SENTRY_DSN: "", EXPO_PUBLIC_SENTRY_DSN: " " }, api: true, build: true },
+  { name: "production with its DSN (unchanged)", vars: { SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD, SENTRY_DSN: SOME_DSN, EXPO_PUBLIC_SENTRY_DSN: SOME_DSN }, api: true, build: true },
 ];
 
 function runGuard(vars: Record<string, string>) {
@@ -143,6 +151,22 @@ describe("the API rule agrees with the table", () => {
       assert.equal(refusal(c.vars) === null, c.api, String(refusal(c.vars)));
     });
   }
+
+  it("the beta Sentry allowlist is ONE list: API rule, build guard and the app agree (empty until the owner creates the beta project)", () => {
+    const ts = readFileSync(API_RULE, "utf8");
+    const sh = readFileSync(GUARD, "utf8");
+    const app = readFileSync(join(REPO_ROOT, "travel-buddy-standalone", "src", "lib", "deploymentConsistency.ts"), "utf8");
+    const listOf = (src: string) => {
+      const m = /BETA_SENTRY_DSNS: readonly string\[\] = \[([^\]]*)\]/.exec(src);
+      assert.ok(m, "BETA_SENTRY_DSNS not found");
+      return [...m[1].matchAll(/["']([^"']+)["']/g)].map((x) => x[1]).sort();
+    };
+    const shm = /^BETA_SENTRY_DSNS="([^"]*)"$/m.exec(sh);
+    assert.ok(shm, "BETA_SENTRY_DSNS not found in the shell guard");
+    const shellList = shm[1].split(/\s+/).filter(Boolean).sort();
+    assert.deepEqual(listOf(ts), listOf(app));
+    assert.deepEqual(listOf(ts), shellList);
+  });
 
   it("both implementations carry the same two refs", () => {
     const sh = readFileSync(GUARD, "utf8");

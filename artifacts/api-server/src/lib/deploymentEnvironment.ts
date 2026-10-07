@@ -40,6 +40,11 @@
  *                    persona_production_, a Sumsub prd: app token) and
  *                    PAYMENTS_ALLOW_LIVE must be unset, empty or "false": the
  *                    beta uses test/sandbox keys only.
+ *                    SENTRY_DSN / EXPO_PUBLIC_SENTRY_DSN must be unset or an
+ *                    allowlisted BETA DSN (BETA_SENTRY_DSNS): beta never
+ *                    reports to production's Sentry project. (lib/sentry.ts
+ *                    initialises before this guard runs; a refused process
+ *                    exits before it serves a request.)
  *                    NODE_ENV must be "production": development and test modes
  *                    admit the unsigned mock identity provider and the fake
  *                    payment provider (lib/paymentsMode.ts mockIdentityPermitted),
@@ -137,6 +142,26 @@ export function variablesPermittingLiveMode(env: NodeJS.ProcessEnv): string[] {
   return names.sort();
 }
 
+/**
+ * Sentry DSNs a BETA process may report to (lead ruling, 2026-10-07). EMPTY until the owner creates the beta Sentry
+ * project; until then a beta process reports to no Sentry project at all. Production's DSN is a Secret and is not in
+ * this repository, so this is an ALLOWLIST: whatever DSN a fork's Secrets or an EAS environment carries is refused
+ * unless it is listed here. Kept identical to scripts/deployment-env-guard.sh BETA_SENTRY_DSNS and
+ * travel-buddy-standalone/src/lib/deploymentConsistency.ts BETA_SENTRY_DSNS (scripts/src/beta-deployment-guard.test.ts).
+ */
+export const BETA_SENTRY_DSNS: readonly string[] = [];
+
+/** The variables that carry a Sentry DSN: the API's own, and the one the web bundle inlines. */
+export const SENTRY_DSN_VARIABLES = ["SENTRY_DSN", "EXPO_PUBLIC_SENTRY_DSN"] as const;
+
+/** Names (never values) of DSN variables that are set and are not an allowlisted beta DSN. */
+export function variablesWithForeignSentryDsn(env: NodeJS.ProcessEnv): string[] {
+  return SENTRY_DSN_VARIABLES.filter((k) => {
+    const v = (env[k] ?? "").trim();
+    return v !== "" && !BETA_SENTRY_DSNS.includes(v);
+  });
+}
+
 /** Does REPLIT_DOMAINS (comma-separated, set by Replit) name the beta origin's host? */
 export function replitDomainsNameBeta(env: NodeJS.ProcessEnv): boolean {
   const v = (env["REPLIT_DOMAINS"] ?? "").toLowerCase();
@@ -202,6 +227,14 @@ export function deploymentEnvironmentRefusal(env: NodeJS.ProcessEnv = process.en
         `${DEPLOYMENT_ENV_VAR}=beta but these variables hold a LIVE-mode provider credential or permit live mode: ${live.join(", ")}. ` +
         "The beta uses provider test/sandbox keys only (Stripe sk_test_/rk_test_/pk_test_, Persona persona_sandbox_, " +
         "Sumsub sbx:) and never sets PAYMENTS_ALLOW_LIVE (values are not printed)."
+      );
+    }
+    const sentry = variablesWithForeignSentryDsn(env);
+    if (sentry.length > 0) {
+      return (
+        `${DEPLOYMENT_ENV_VAR}=beta but these variables carry a Sentry DSN that is not the beta project's: ${sentry.join(", ")}. ` +
+        "A beta process reports only to an allowlisted beta Sentry project (BETA_SENTRY_DSNS; empty until the owner " +
+        "creates one), never to production's. Unset them, or add the beta project's DSN to the allowlist in a reviewed PR."
       );
     }
     if (env["NODE_ENV"] !== "production") {

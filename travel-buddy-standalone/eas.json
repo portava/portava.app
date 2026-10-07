@@ -29,6 +29,7 @@
       "environment": "preview",
       "env": {
         "EXPO_PUBLIC_DEPLOYMENT_ENV": "beta",
+        "EXPO_PUBLIC_SENTRY_DSN": "",
         "EXPO_PUBLIC_SUPABASE_URL": "https://emfpckykpzfturllshly.supabase.co",
         "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_7yEaIX8v9uM34PbbPOHM6Q_YeoIBLZC",
         "EXPO_PUBLIC_API_BASE_URL": "https://portava-beta.replit.app",
@@ -44,6 +45,7 @@
       "autoIncrement": true,
       "env": {
         "EXPO_PUBLIC_DEPLOYMENT_ENV": "beta",
+        "EXPO_PUBLIC_SENTRY_DSN": "",
         "EXPO_PUBLIC_SUPABASE_URL": "https://emfpckykpzfturllshly.supabase.co",
         "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_7yEaIX8v9uM34PbbPOHM6Q_YeoIBLZC",
         "EXPO_PUBLIC_API_BASE_URL": "https://portava-beta.replit.app",

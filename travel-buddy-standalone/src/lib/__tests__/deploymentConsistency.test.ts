@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve as pathResolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { KNOWN_DEPLOYMENTS, deploymentConsistencyProblem as problem } from '../deploymentConsistency.ts';
+import { BETA_SENTRY_DSNS, KNOWN_DEPLOYMENTS, deploymentConsistencyProblem as problem, sentryDsnFor } from '../deploymentConsistency.ts';
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 
@@ -123,6 +123,30 @@ describe('the publishable key agrees with the deployment (lane BETA2, 2026-10-07
   it('the sentence names the deployment, never the key', () => {
     const r = String(problem({ supabaseUrl: BETA_DB, apiBaseUrl: BETA_API, deploymentEnv: 'beta', publishableKey: PROD_KEY }));
     assert.doesNotMatch(r, /sb_publishable_/);
+  });
+});
+
+describe('Sentry: a beta build reports only to an allowlisted beta DSN (lead, 2026-10-07)', () => {
+  const DSN = 'https://0123456789abcdef0123456789abcdef@o4500000000000000.ingest.us.sentry.io/4500000000000001';
+
+  it('unlabelled and production builds keep their DSN (unchanged)', () => {
+    assert.equal(sentryDsnFor(undefined, DSN), DSN);
+    assert.equal(sentryDsnFor('', DSN), DSN);
+    assert.equal(sentryDsnFor('production', DSN), DSN);
+    assert.equal(sentryDsnFor(undefined, undefined), undefined);
+  });
+
+  it("REFUSED: a beta build with any DSN not on the allowlist (production's included) initialises Sentry with none", () => {
+    assert.equal(sentryDsnFor('beta', DSN), undefined);
+    assert.equal(sentryDsnFor('staging', DSN), undefined);
+    assert.deepEqual(BETA_SENTRY_DSNS, [], 'empty until the owner creates the beta Sentry project');
+  });
+
+  it("app/_layout.tsx initialises Sentry through the rule, with the literal inlined reads", () => {
+    const layout = readFileSync(pathResolve(__dir, '../../../app/_layout.tsx'), 'utf8');
+    const init = layout.slice(layout.indexOf('Sentry.init({'), layout.indexOf('Sentry.init({') + 300);
+    assert.match(init, /dsn: sentryDsnFor\(process\.env\.EXPO_PUBLIC_DEPLOYMENT_ENV, process\.env\.EXPO_PUBLIC_SENTRY_DSN\),/);
+    assert.equal((layout.match(/Sentry\.init\(/g) ?? []).length, 1, 'one init, and it goes through the rule');
   });
 });
 

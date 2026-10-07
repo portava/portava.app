@@ -22,7 +22,9 @@
 #                                       sk_live_/rk_live_/pk_live_, Persona
 #                                       persona_production_, a Sumsub prd: app token);
 #                                       PAYMENTS_ALLOW_LIVE must be unset, empty or
-#                                       "false" (named, never printed).
+#                                       "false"; SENTRY_DSN / EXPO_PUBLIC_SENTRY_DSN
+#                                       unset or an allowlisted beta DSN (named,
+#                                       never printed).
 #   anything else                     → refused (a typo must not switch the guard off).
 #   any label but beta, with REPLIT_DOMAINS naming portava-beta.replit.app → refused:
 #                                       the beta fork must be labelled, or it builds
@@ -42,6 +44,9 @@ BETA_REF="emfpckykpzfturllshly"
 PROD_REF="ajrurzioarfkagpuxfnb"
 # Production's publishable key (public; committed in .replit [userenv.shared], so a fork inherits it).
 PROD_PUBLISHABLE_KEY="sb_publishable_xp3JiB50mBYHn1S_XjzOAg_rIoEqZKS"
+# Sentry DSNs a beta build may inline (space-separated). EMPTY until the owner creates the beta Sentry project;
+# kept identical to deploymentEnvironment.ts / deploymentConsistency.ts BETA_SENTRY_DSNS by beta-deployment-guard.test.ts.
+BETA_SENTRY_DSNS=""
 VAR="PORTAVA_DEPLOYMENT_ENV"
 
 refuse() {
@@ -106,6 +111,15 @@ EOF
     *) case ", $LIVE," in *", PAYMENTS_ALLOW_LIVE,"*) ;; *) LIVE="${LIVE:+$LIVE, }PAYMENTS_ALLOW_LIVE" ;; esac ;;
   esac
   [ -z "$LIVE" ] || refuse "$VAR=beta but these variables hold a LIVE-mode provider credential or permit live mode: $LIVE. The beta uses provider test/sandbox keys only and never sets PAYMENTS_ALLOW_LIVE (values are not printed)."
+  FOREIGN_DSN=""
+  for name in SENTRY_DSN EXPO_PUBLIC_SENTRY_DSN; do
+    value="$(printenv "$name" 2>/dev/null | tr -d '[:space:]')" || value=""
+    [ -n "$value" ] || continue
+    allowed=0
+    for d in $BETA_SENTRY_DSNS; do [ "$value" = "$d" ] && allowed=1; done
+    [ "$allowed" -eq 1 ] || FOREIGN_DSN="${FOREIGN_DSN:+$FOREIGN_DSN, }$name"
+  done
+  [ -z "$FOREIGN_DSN" ] || refuse "$VAR=beta but these variables carry a Sentry DSN that is not the beta project's: $FOREIGN_DSN. A beta build reports only to an allowlisted beta Sentry project (BETA_SENTRY_DSNS; empty until the owner creates one), never to production's."
   echo "[deployment-env-guard] $VAR=beta: SUPABASE_URL and EXPO_PUBLIC_SUPABASE_URL name portava-beta; no variable names production."
   exit 0
 fi

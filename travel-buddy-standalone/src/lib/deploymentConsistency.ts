@@ -105,3 +105,25 @@ export function deploymentConsistencyProblem(a: DeploymentAddresses): string | n
   }
   return null;
 }
+
+/**
+ * Sentry DSNs a BETA build may report to (lead ruling, 2026-10-07). EMPTY until the owner creates the beta Sentry
+ * project. Production's DSN lives in the EAS environment, not in this repo, and a beta build loads the `preview`
+ * environment, so this is an ALLOWLIST: a beta build initialises Sentry only with a DSN listed here. Kept identical to
+ * artifacts/api-server/src/lib/deploymentEnvironment.ts BETA_SENTRY_DSNS (scripts/src/beta-deployment-guard.test.ts).
+ */
+export const BETA_SENTRY_DSNS: readonly string[] = [];
+
+/**
+ * The DSN this build may initialise Sentry with. Unlabelled and production builds: the inlined DSN, unchanged. A
+ * beta build: only an allowlisted beta DSN — production's (or any other) is refused, and Sentry stays a no-op. Any
+ * other declared deployment: none (the deployment gate refuses to start it anyway).
+ */
+export function sentryDsnFor(deploymentEnv: string | undefined, dsn: string | undefined): string | undefined {
+  const label = (deploymentEnv ?? '').trim();
+  const value = (dsn ?? '').trim();
+  if (!value) return undefined;
+  if (!label || label === 'production') return dsn;
+  if (label === 'beta' && BETA_SENTRY_DSNS.includes(value)) return value;
+  return undefined;
+}
