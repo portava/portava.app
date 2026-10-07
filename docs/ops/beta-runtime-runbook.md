@@ -29,13 +29,17 @@ Replit deployment. Production is never reached by anything below.
   `beta `, `staging`) is refused, not ignored. The beta project's URL without
   the beta label is refused too. With the variable unset — production today —
   nothing changes.
-- **Sign-up is closed three ways, on the app's own path.**
-  - Supabase Auth `disable_signup` is set by the configuration step.
-  - The `disable_signups` stop and `invite_only_beta` are enforced by
-    `POST /api/auth/signup`. That route answers `403 invite_required` and
-    creates nobody. The app's `signUp` now creates accounts only through this
-    route, then signs in.
-  - The sign-up screen says the beta is invite-only before anyone types.
+- **How sign-up is closed.**
+  - **The app's own path.** The app signs up through Supabase Auth (`supabase.auth.signUp`). There, Auth's
+    `disable_signup` refuses every new account. The configuration step sets it (step 3), so it is the setting that
+    closes the beta. Apple and Google sign-in for a new user are refused the same way.
+  - **The advisory message.** The sign-up screen reads `GET /api/auth/signup-status` and says the beta is
+    invite-only before anyone types. This read is advisory and fails open. It now also runs on phones: it used
+    `AbortSignal.timeout`, which React Native lacks, so it had silently never run there.
+  - **Direct API callers only.** `POST /api/auth/signup` answers `403 invite_required` (or `feature_disabled`) and
+    creates nobody while `invite_only_beta` (or `disable_signups`) is on. The app does not use this route. It
+    creates accounts with the service role, which bypasses Auth's `disable_signup`, so the flags are its only
+    guard.
 - **A build whose database and API disagree does not start.** The app compares
   the Supabase ref with the API host (beta↔beta, production↔production). A beta
   build (`EXPO_PUBLIC_DEPLOYMENT_ENV=beta`) must point every address at beta.

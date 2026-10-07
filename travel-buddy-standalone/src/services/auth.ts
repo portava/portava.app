@@ -5,6 +5,7 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 import { getSentry } from '../lib/sentry.ts';
+import { timeoutSignal } from '../lib/timeoutSignal.ts';
 
 /**
  * Report a silent ensureProfile failure to Sentry. Observability only — never
@@ -55,9 +56,10 @@ function networkMessage(e: unknown): string {
 /**
  * Ask the API whether new signups are currently allowed.
  *
- * The `disable_signups` / `invite_only_beta` feature flags are ENFORCED by
- * POST /api/auth/signup, which signUp below now uses. This read only lets the
- * app say so before anyone types (the sign-up screen) and before a request.
+ * The `disable_signups` / `invite_only_beta` feature flags are enforced by the
+ * server (GET /api/auth/signup-status), but the app creates accounts through
+ * supabase.auth.signUp, which never consults them — so without this check the
+ * kill switches do nothing for the mobile client.
  *
  * FAIL-OPEN by design, matching the server handler: an unreachable API or an
  * unset API base URL must not lock legitimate users out of registration. The
@@ -70,8 +72,10 @@ export interface SignupStatus { signupsEnabled: boolean; inviteOnly: boolean }
  * The sign-up screen reads this BEFORE showing the form, so an invite-only
  * beta says so up front instead of after the person has typed a password.
  * Same contract as fetchSignupStatus below (it IS that function): never
- * rejects, fail-open on an unreachable API — the server and Supabase Auth's
- * own disable_signup are what actually refuse.
+ * rejects, fail-open on an unreachable API. It is ADVISORY: on the app's own
+ * path (supabase.auth.signUp) what actually refuses is Supabase Auth's
+ * disable_signup, which the beta's configuration step sets; the server route's
+ * invite_required refusal covers direct API callers only.
  */
 export function getSignupStatus(): Promise<SignupStatus> {
   return fetchSignupStatus();
@@ -85,7 +89,7 @@ async function fetchSignupStatus(): Promise<SignupStatus> {
   try {
     const res = await fetch(`${apiBase}/api/auth/signup-status`, {
       headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(5000),
+      signal: timeoutSignal(5000), // not AbortSignal.timeout: absent in React Native (src/lib/timeoutSignal.ts)
     });
     if (!res.ok) return allowed;
     const body = await res.json();
@@ -98,47 +102,11 @@ async function fetchSignupStatus(): Promise<SignupStatus> {
   }
 }
 
-/** The person-facing sentence for a refusal from POST /api/auth/signup. */
-export function signupRefusalMessage(status: number, body: any): string {
-  const code = typeof body?.error === 'string' ? body.error : '';
-  const message = typeof body?.message === 'string' && body.message ? body.message : null;
-  if (status === 403 && code === 'invite_required') {
-    return 'Portava is invite-only right now. You need an invite to create an account.';
-  }
-  if (status === 403) return 'New sign-ups are temporarily closed. Please check back soon.';
-  if (status === 409) return message ?? 'An account with this email already exists. Try signing in.';
-  if (status === 400 || status === 429) return message ?? 'Please check your details and try again.';
-  return 'Sign-up is unavailable right now. Please try again.';
-}
-
-/**
- * Create an account THROUGH THE SERVER, then sign in.
- *
- * POST /api/auth/signup is the only door that enforces the `disable_signups`
- * stop and `invite_only_beta` (routes/auth.ts, whose docblock says the app MUST
- * route registrations through it). This used to call supabase.auth.signUp
- * directly, so both rules were advisory for the app: the status read below is
- * fail-open and only shapes the message. Now the server decides, and the
- * documented second step — signInWithPassword — gets the session.
- *
- * What a person sees is unchanged for every case the old path handled:
- *   - open sign-up, email confirmation off  → account + session → onboarding;
- *   - email confirmation on                → the sign-in answers "Email not
- *     confirmed"; the app asks Supabase Auth to send the confirmation email
- *     (auth.resend, type 'signup' — the service-role creation sends none) and
- *     returns the new user id without a session, exactly as signUp did;
- *   - closed / invite-only                 → the same two sentences as before.
- * What changes is only what the server already declares: its 5-per-hour
- * per-IP limit, 409 for an existing email (Supabase's own message), and a
- * refusal when this build has no API address.
- */
 export async function signUp(email: string, password: string, meta?: { name?: string; handle?: string }): Promise<AuthResult> {
   if (!isSupabaseConfigured) return { userId: null, error: 'Supabase not configured' };
   if (__DEV__) console.log('[Auth] signUp');
-  const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
-  if (!apiBase) return { userId: null, error: 'Sign-up is unavailable: this build has no API address configured.' };
 
-  // Advisory read, for the message only: the server below is what decides.
+  // Kill switch: check before creating the account, not after.
   const status = await fetchSignupStatus();
   if (!status.signupsEnabled) {
     return { userId: null, error: 'New sign-ups are temporarily closed. Please check back soon.' };
@@ -147,59 +115,26 @@ export async function signUp(email: string, password: string, meta?: { name?: st
     return { userId: null, error: 'Portava is invite-only right now. You need an invite to create an account.' };
   }
 
-  const normalisedEmail = email.toLowerCase().trim();
-  let res: Response;
+  let data: any, error: any;
   try {
-    res = await fetch(`${apiBase}/api/auth/signup`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json' },
-      body: JSON.stringify({
-        email: normalisedEmail,
-        password,
-        ...(meta?.name ? { name: meta.name } : {}),
-        ...(meta?.handle ? { handle: meta.handle } : {}),
-      }),
-      signal: AbortSignal.timeout(15000),
-    });
+    ({ data, error } = await supabase.auth.signUp({ email, password, options: { data: meta } }));
   } catch (e) {
     return { userId: null, error: networkMessage(e) };
   }
-  let body: any = null;
-  try { body = await res.json(); } catch { body = null; }
-  if (res.status !== 201) return { userId: null, error: signupRefusalMessage(res.status, body) };
-  const userId: string | null = typeof body?.user?.id === 'string' ? body.user.id : null;
-
-  let data: any, error: any;
-  try {
-    ({ data, error } = await supabase.auth.signInWithPassword({ email: normalisedEmail, password }));
-  } catch (e) {
-    return { userId: null, error: `Your account was created, but signing in failed: ${networkMessage(e)} Please sign in.` };
-  }
-  if (error) {
-    const unconfirmed = error.code === 'email_not_confirmed' || /email not confirmed/i.test(error.message ?? '');
-    if (unconfirmed) {
-      try {
-        await supabase.auth.resend({ type: 'signup', email: normalisedEmail });
-      } catch {
-        // The account exists either way; the person can ask for the email again from sign-in.
-      }
-      return { userId, error: null };
-    }
-    return { userId: null, error: `Your account was created, but signing in failed: ${error.message} Please sign in.` };
-  }
-  const sessionUserId = data?.user?.id ?? userId;
-  if (sessionUserId && data?.session) {
+  if (error) return { userId: null, error: error.message };
+  const userId = data.user?.id ?? null;
+  if (userId && data.session) {
     try {
-      await ensureProfile(sessionUserId, email, meta);
+      await ensureProfile(userId, email, meta);
     } catch (e) {
       // Non-fatal: profile row creation failed (e.g. network hiccup or API
       // not configured yet). The onboarding screen calls getMyProfile on
       // mount and SessionContext has a recovery path, so we don't block sign-up.
       if (__DEV__) console.warn('[Auth] ensureProfile failed during signUp (non-fatal):', e);
-      reportEnsureProfileFailure('signUp', sessionUserId, e);
+      reportEnsureProfileFailure('signUp', userId, e);
     }
   }
-  return { userId: sessionUserId, error: null };
+  return { userId, error: null };
 }
 
 /**

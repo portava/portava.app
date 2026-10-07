@@ -168,7 +168,7 @@ router.get("/auth/signup-status", asyncHandler(async (_req, res) => {
 
 /**
  * POST /api/auth/signup
- * Body: { email: string, password: string, name?: string, handle?: string }
+ * Body: { email: string, password: string }
  *
  * Server-side signup guard.  The mobile app MUST route new registrations
  * through this endpoint instead of calling Supabase Auth directly so that
@@ -185,7 +185,7 @@ router.get("/auth/signup-status", asyncHandler(async (_req, res) => {
  * breaks PostgREST RLS does not affect account creation.
  */
 router.post("/auth/signup", signupLimiter, asyncHandler(async (req, res) => {
-  const { email, password, name, handle } = req.body ?? {};
+  const { email, password } = req.body ?? {};
 
   if (!email || typeof email !== "string" || !email.includes("@")) {
     res.status(400).json({ error: "invalid_payload", message: "A valid email address is required." });
@@ -220,9 +220,12 @@ router.post("/auth/signup", signupLimiter, asyncHandler(async (req, res) => {
   // The flag keeps its recorded CAPABILITY classification (check-flag-polarity.mjs:
   // false on an unreadable row). That does not open this door on a database
   // failure: the same unreadable feature_flags engages disable_signups above,
-  // which is a STOP. The private beta closes signup with BOTH flags plus Supabase
-  // Auth `disable_signup` (scripts/src/beta-configure.ts), so no single read
-  // decides it.
+  // which is a STOP.
+  //
+  // WHO THIS DOOR COVERS: direct API callers only. The mobile app does not use
+  // this route; it signs up through Supabase Auth (supabase.auth.signUp), where
+  // the beta is closed by Auth's own `disable_signup` (set by
+  // scripts/src/beta-configure.ts) and the sign-up screen's advisory message.
   const inviteOnly = await isFlagEnabled(client, "invite_only_beta");
   if (inviteOnly) {
     res.status(403).json({ error: "invite_required", message: "Portava is invite-only right now. You need an invite to create an account." });
@@ -230,18 +233,9 @@ router.post("/auth/signup", signupLimiter, asyncHandler(async (req, res) => {
   }
 
   try {
-    // `name` / `handle` become the auth user's metadata, exactly what the app
-    // used to send as supabase.auth.signUp({ options: { data } }) before it
-    // moved onto this route — public.handle_new_user() reads them from
-    // raw_user_meta_data when it creates the profile row. Anything else in the
-    // body is ignored; a non-string or an over-long value is dropped, not stored.
-    const meta: Record<string, string> = {};
-    if (typeof name === "string" && name.trim() && name.length <= 100) meta.name = name.trim();
-    if (typeof handle === "string" && handle.trim() && handle.length <= 50) meta.handle = handle.trim();
     const { data, error } = await (client as any).auth.admin.createUser({
       email: email.toLowerCase().trim(),
       password,
-      ...(Object.keys(meta).length > 0 ? { user_metadata: meta } : {}),
     });
 
     if (error) {

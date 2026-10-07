@@ -1,7 +1,8 @@
 /**
  * POST /api/auth/signup ENFORCES invite_only_beta — it used to only be REPORTED
  * by GET /auth/signup-status while this route, which creates accounts with the
- * service role, ignored it.
+ * service role, ignored it. This door covers DIRECT API callers: the mobile app
+ * signs up through Supabase Auth, where Auth's own disable_signup closes the beta.
  *
  * State asserted: whether `auth.admin.createUser` was called (an account exists
  * or it does not), plus the status and error code the app reads.
@@ -29,14 +30,12 @@ import authRouter, { _resetAuthRateLimits } from "../routes/auth.js";
 const READ_ERROR = { message: "server closed the connection unexpectedly", code: "08006" };
 
 let created: Array<{ email: string }> = [];
-let createdArgs: Array<Record<string, unknown>> = [];
 
 function install(spec: FakeClientSpec) {
   const client = makeFailClosedClient(spec);
   client.auth.admin = {
     createUser: async (args: { email: string; password: string }) => {
       created.push({ email: args.email });
-      createdArgs.push(args as unknown as Record<string, unknown>);
       return { data: { user: { id: "00000000-0000-0000-0000-0000000000aa", email: args.email } }, error: null };
     },
   };
@@ -64,15 +63,14 @@ after(() => { server.close(); });
 
 beforeEach(() => {
   created = [];
-  createdArgs = [];
   _resetAuthRateLimits();
 });
 
-async function signup(email: string, extra: Record<string, unknown> = {}) {
+async function signup(email: string) {
   const res = await fetch(`${base}/auth/signup`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ email, password: "correct-horse-battery", ...extra }),
+    body: JSON.stringify({ email, password: "correct-horse-battery" }),
   });
   return { status: res.status, body: (await res.json()) as any };
 }
@@ -97,20 +95,6 @@ describe("POST /api/auth/signup — invite_only_beta", () => {
     const r = await signup("Open@Example.com");
     assert.equal(r.status, 201, JSON.stringify(r.body));
     assert.deepEqual(created, [{ email: "open@example.com" }]);
-  });
-
-  it("OFF: the app's name / handle reach the auth user's metadata (what handle_new_user reads); junk is dropped", async () => {
-    install({ rows: { feature_flags: [
-      { flag: "disable_signups", enabled: false },
-      { flag: "invite_only_beta", enabled: false },
-    ] } });
-    const r = await signup("meta@example.com", { name: "  Ada  ", handle: "ada_l", role: "admin", is_official: true });
-    assert.equal(r.status, 201);
-    assert.deepEqual(createdArgs[0].user_metadata, { name: "Ada", handle: "ada_l" });
-    assert.ok(!("app_metadata" in createdArgs[0]), "nothing from the body may reach app_metadata");
-    const r2 = await signup("plain@example.com", { name: 42, handle: "x".repeat(51) });
-    assert.equal(r2.status, 201);
-    assert.ok(!("user_metadata" in createdArgs[1]), "non-string or over-long values are not stored");
   });
 
   it("UNREADABLE feature_flags: refused by the disable_signups STOP — no account, whatever invite_only_beta's polarity", async () => {
