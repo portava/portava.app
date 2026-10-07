@@ -98,3 +98,17 @@ export async function withholdInvisibleAvailability<T extends { userId: string; 
   if (withheld === null) return { entries: entries.map((e) => ({ ...e, windows: [] })), withheldForUnknown: true };
   return { entries: entries.map((e) => (withheld.has(e.userId) ? { ...e, windows: [] } : e)), withheldForUnknown: false };
 }
+
+/**
+ * Lead ruling P-T1 (2026-10-07) for a surface about ONE owner: is that owner's
+ * availability withheld from other viewers? An unreadable consent read answers
+ * true — withheld — never "visible". Used by Passport, its consumer variants and
+ * the shared-context facts (independent verification of lane T, finding F2).
+ */
+export async function ownerAvailabilityWithheld(
+  ownerId: string,
+  serviceClient?: SupabaseClient | null,
+): Promise<boolean> {
+  const withheld = await availabilityWithheldOwners([ownerId], serviceClient);
+  return withheld === null || withheld.has(ownerId);
+}

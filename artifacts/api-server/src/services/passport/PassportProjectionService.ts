@@ -64,7 +64,7 @@ import {
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { LOCATE_FRIENDS_CREW_PRESENCE } from "../../lib/capability/registry.js";
 import { resolveCapability } from "../../lib/capability/schemaCapability.js";
-import { logger as rootLogger } from "../../lib/logger.js";
+import { logger as rootLogger } from "../../lib/logger.js"; import { ownerAvailabilityWithheld } from "../telegraph/availabilityInvisibility.js"; // lead ruling P-T1
 import { THREAD_ALLOWED_STATUSES, isOneOf } from "../../lib/rentBuddyBookingStatus.js";
 
 // The TABLE 24 owner field opt-outs now live in PassportPrivacyGuard so the
@@ -2212,11 +2212,11 @@ export async function buildPassportProjection(
       viewerMaySeePresence,
     }),
   ]);
-  const travelerState = buildTravelerState(profile, quick, activeTripCity, activity, permissions, ownerVisibility);
+  const ownerWithheld = !isSelf && (await ownerAvailabilityWithheld(userId, sc)); const travelerState = buildTravelerState(ownerWithheld ? { ...profile, open_to_meet: false } : profile, ownerWithheld ? null : quick, activeTripCity, activity, permissions, ownerVisibility); // lead ruling P-T1: an invisible owner's quick status and open-to-meet do not set another viewer's traveller state
 
   let availability: AvailabilityProjection | undefined;
   let intent: IntentProjection | undefined;
-  if (isSelf || permissions.canSeeAvailability) {
+  if (isSelf || (permissions.canSeeAvailability && !ownerWithheld)) { // lead ruling P-T1: an invisible owner's availability reaches no other viewer; unreadable consent withholds
     // §8: an explicit availability window (visible to this viewer under §7) is
     // projected into the aggregate alongside the legacy quick-status/grid.
     const explicitWindow = await loadActiveExplicitWindow(sc, userId, context);
