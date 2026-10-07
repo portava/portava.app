@@ -11,6 +11,13 @@
  *     zero fabricated fields (openNow stays null, no invented source/time).
  *  D. Confidence + openNow survive sanitizeToolResult and are carried into
  *     the UI blocks (API → UI).
+ *  E. Lead ruling D-67 (2026-10-06): a provider record is labelled verified
+ *     live only when it is confirmed to BE the place — names equal after
+ *     normalisation AND its coordinates within LIVE_IDENTITY_MAX_DISTANCE_M
+ *     (150 m) of the place's own. A namesake elsewhere, a different venue at
+ *     the same spot, a record with no coordinates and a place with no
+ *     coordinates all get NO verified-live label, and no cache entry crosses
+ *     from one place to another place with the same name.
  *
  * Runtime: node:test. Run: node --import tsx/esm --test src/test/compass-live-intel.test.ts
  */
@@ -24,6 +31,12 @@ import {
   _clearLiveCache,
   CANT_VERIFY_NOTE,
   CONFIDENCE_LABELS,
+  LIVE_IDENTITY_MAX_DISTANCE_M,
+  LIVE_CACHE_MAX_ENTRIES,
+  metresBetween,
+  normaliseVenueName,
+  _liveCacheSize,
+  type LiveVenueAnchor,
 } from "../lib/liveIntelligence.js";
 import { executeCompassTool, sanitizeToolResult } from "../compass/CompassTools.js";
 import { collectToolCandidates } from "../compass/CompassUiBlocks.js";
@@ -36,12 +49,16 @@ const originalFetch = globalThis.fetch;
 let fetchCalls: string[] = [];
 let fetchResponder: (() => any) | null = null;
 
+/** A responder may return `{ __status: n }` to answer with that HTTP status and no body. */
 function stubFetch(responder: () => any) {
   fetchResponder = responder;
   globalThis.fetch = (async (url: any) => {
     fetchCalls.push(String(url));
     const body = fetchResponder!();
     if (body instanceof Error) throw body;
+    if (body && typeof body.__status === "number") {
+      return { ok: body.__status < 400, status: body.__status, json: async () => ({}) } as any;
+    }
     return { ok: true, status: 200, json: async () => body } as any;
   }) as any;
 }
@@ -63,8 +80,10 @@ afterEach(() => {
 
 // ── Minimal fake supabase client ──────────────────────────────────────────────
 
-function makeClient(db: Record<string, any[]>) {
-  function builder(rows: any[]) {
+/** `failReads` names tables whose reads resolve the way supabase-js reports a failure: `{ data: null, error }`. */
+function makeClient(db: Record<string, any[]>, failReads: string[] = []) {
+  function builder(rows: any[], table: string) {
+    const failed = failReads.includes(table) ? { message: `${table} read blew up`, code: "57014" } : null;
     let filtered = [...rows];
     const b: any = {
       select: () => b,
@@ -94,18 +113,21 @@ function makeClient(db: Record<string, any[]>) {
       is: () => b,
       order: () => b,
       limit: (n: number) => { filtered = filtered.slice(0, n); return b; },
-      maybeSingle: () => Promise.resolve({ data: filtered[0] ?? null, error: null }),
-      then: (resolve: any) => resolve({ data: filtered, error: null }),
+      maybeSingle: () => Promise.resolve(failed ? { data: null, error: failed } : { data: filtered[0] ?? null, error: null }),
+      then: (resolve: any) => resolve(failed ? { data: null, error: failed } : { data: filtered, error: null }),
     };
     return b;
   }
-  return { from: (table: string) => builder(db[table] ?? []) } as any;
+  return { from: (table: string) => builder(db[table] ?? [], table) } as any;
 }
 
+// The place's own stored coordinates — the live lookup's identity anchor (D-67).
+const CEBU: LiveVenueAnchor = { lat: 10.3157, lng: 123.8854 };
 const PLACE = {
   id: "place-1", name: "Cafe Uno", category: "food", primary_category: "cafe",
   city: "Cebu", neighborhood: null, rating: 4.5, saved_count: 3, verified: true,
   blurb: "Great beans", secondary_categories: null, place_type: "cafe",
+  lat: CEBU.lat, lng: CEBU.lng,
 };
 const EVENT = {
   id: "event-1", title: "Beach Meetup", description: "Fun", city: "Cebu",
@@ -113,14 +135,15 @@ const EVENT = {
   host_id: "host-1", state: "open", visibility: "public",
 };
 
-const FSQ_OPEN = { results: [{ fsq_place_id: "fsq-1", name: "Cafe Uno", hours: { open_now: true } }] };
+// The provider's record of THIS Cafe Uno: same name, ~15 m from the place's coordinates.
+const FSQ_OPEN = { results: [{ fsq_place_id: "fsq-1", name: "Cafe Uno", latitude: 10.3158, longitude: 123.8855, hours: { open_now: true } }] };
 
 // ── A. Live fetch on demand + short-lived cache ───────────────────────────────
 
 describe("Phase 8 — live fetch layer", () => {
   it("fetches live open-now status on demand from the live source", async () => {
     stubFetch(() => FSQ_OPEN);
-    const status = await getLiveVenueStatus("Cafe Uno", "Cebu");
+    const status = await getLiveVenueStatus("Cafe Uno", CEBU);
     assert.equal(fetchCalls.length, 1);
     assert.ok(fetchCalls[0].includes("foursquare"));
     assert.equal(status?.openNow, true);
@@ -130,24 +153,37 @@ describe("Phase 8 — live fetch layer", () => {
 
   it("caches live status — second lookup within TTL does not re-hit the source", async () => {
     stubFetch(() => FSQ_OPEN);
-    await getLiveVenueStatus("Cafe Uno", "Cebu");
-    const again = await getLiveVenueStatus("Cafe Uno", "Cebu");
+    await getLiveVenueStatus("Cafe Uno", CEBU);
+    const again = await getLiveVenueStatus("Cafe Uno", CEBU);
     assert.equal(fetchCalls.length, 1);
     assert.equal(again?.openNow, true);
   });
 
   it("returns null (never a fabricated value) on source error", async () => {
     stubFetch(() => new Error("boom"));
-    const status = await getLiveVenueStatus("Cafe Uno", "Cebu");
+    const status = await getLiveVenueStatus("Cafe Uno", CEBU);
     assert.equal(status, null);
   });
 
   it("returns null when no API key is configured", async () => {
     clearKeyEnv(FOURSQUARE_KEY_VARS);
     stubFetch(() => FSQ_OPEN);
-    const status = await getLiveVenueStatus("Cafe Uno", "Cebu");
+    const status = await getLiveVenueStatus("Cafe Uno", CEBU);
     assert.equal(status, null);
     assert.equal(fetchCalls.length, 0);
+  });
+
+  it("returns null when the account has no credits left (429)", async () => {
+    stubFetch(() => ({ __status: 429 }));
+    const status = await getLiveVenueStatus("Cafe Uno", CEBU);
+    assert.equal(status, null);
+    assert.equal(fetchCalls.length, 1);
+  });
+
+  it("returns null when the source times out", async () => {
+    stubFetch(() => Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" }));
+    const status = await getLiveVenueStatus("Cafe Uno", CEBU);
+    assert.equal(status, null);
   });
 });
 
@@ -208,7 +244,7 @@ describe("Phase 8 — honest degradation on outage", () => {
     _setSimulatedOutage("places_live", true);
     stubFetch(() => FSQ_OPEN); // would succeed — must not even be attempted
 
-    const status = await getLiveVenueStatus("Cafe Uno", "Cebu");
+    const status = await getLiveVenueStatus("Cafe Uno", CEBU);
     assert.equal(status, null);
     assert.equal(fetchCalls.length, 0, "no fetch attempted during simulated outage");
 
@@ -288,5 +324,225 @@ describe("Phase 8 — confidence carried into UI blocks", () => {
     }];
     const p = collectToolCandidates(toolLog).places.get("place-x")!;
     assert.equal(p.confidence, null);
+  });
+});
+
+// ── E. Lead ruling D-67 — only a place whose identity is confirmed is verified live ──
+
+/** `metres` north of an anchor (1° of latitude ≈ 111,195 m on the mean sphere). */
+function north(a: LiveVenueAnchor, metres: number): { latitude: number; longitude: number } {
+  return { latitude: a.lat + metres / 111_195, longitude: a.lng };
+}
+function record(id: string, name: string, at: { latitude: number; longitude: number } | null, openNow: boolean | null) {
+  return { fsq_place_id: id, name, ...(at ?? {}), ...(openNow === null ? {} : { hours: { open_now: openNow } }) };
+}
+/** Another Cafe Uno 2 km north — a namesake, not this place. */
+const FAR = north(CEBU, 2_000);
+
+describe("D-67 — the identity rule", () => {
+  it("is one exported constant, the ruling's 150 m", () => {
+    assert.equal(LIVE_IDENTITY_MAX_DISTANCE_M, 150);
+  });
+
+  it("same name within 150 m → verified live", async () => {
+    stubFetch(() => ({ results: [record("fsq-near", "Cafe Uno", north(CEBU, 139), true)] }));
+    const status = await getLiveVenueStatus("Cafe Uno", CEBU);
+    assert.ok(status, "a same-named record 139 m away is this place");
+    assert.equal(status.openNow, true);
+    assert.equal(status.venueName, "Cafe Uno");
+  });
+
+  it("same name just past 150 m → not verified", async () => {
+    stubFetch(() => ({ results: [record("fsq-edge", "Cafe Uno", north(CEBU, 161), true)] }));
+    assert.equal(await getLiveVenueStatus("Cafe Uno", CEBU), null);
+    assert.equal(fetchCalls.length, 1, "the source was asked; its answer was not this place");
+  });
+
+  it("same name 2 km away → not verified (the defect: a namesake's hours shown as this place's)", async () => {
+    stubFetch(() => ({ results: [record("fsq-far", "Cafe Uno", FAR, true)] }));
+    assert.equal(await getLiveVenueStatus("Cafe Uno", CEBU), null);
+  });
+
+  it("different name at the same coordinates → not verified", async () => {
+    stubFetch(() => ({ results: [record("fsq-other", "Cafe Dos", { latitude: CEBU.lat, longitude: CEBU.lng }, true)] }));
+    assert.equal(await getLiveVenueStatus("Cafe Uno", CEBU), null);
+  });
+
+  it("exactly 150 m is verified (the ruling's bound is inclusive); 150.0004 m and 150.01 m are not", async () => {
+    // Offsets on the code's own sphere (R = 6 371 000 m), so the distance it computes is the one named.
+    const metres = (m: number) => ({ latitude: CEBU.lat + (m * 180) / (Math.PI * 6_371_000), longitude: CEBU.lng });
+    stubFetch(() => ({ results: [record("fsq-150", "Cafe Uno", metres(150), true)] }));
+    assert.equal((await getLiveVenueStatus("Cafe Uno", CEBU))?.openNow, true, "a record exactly 150 m away is this place");
+    for (const past of [150.0004, 150.01]) {
+      _clearLiveCache();
+      stubFetch(() => ({ results: [record(`fsq-${past}`, "Cafe Uno", metres(past), true)] }));
+      assert.equal(await getLiveVenueStatus("Cafe Uno", CEBU), null, `${past} m is past the bound — no rounding widens it`);
+    }
+  });
+
+  it("a record the code's own metric puts at exactly 150 m is verified — the bound is inclusive", async () => {
+    // At the equator adjacent doubles are fine enough that one latitude lands on 150.000000000000 m
+    // exactly; the fixture asserts that, so a change to the metric fails here rather than passing vacuously.
+    const EQ: LiveVenueAnchor = { lat: 0, lng: 103.8 };
+    const at150 = { latitude: 0.0013489824088780957, longitude: 103.8 };
+    assert.equal(metresBetween(EQ, { lat: at150.latitude, lng: at150.longitude }), 150, "fixture: exactly 150 m");
+    stubFetch(() => ({ results: [record("fsq-eq150", "Cafe Uno", at150, true)] }));
+    assert.equal((await getLiveVenueStatus("Cafe Uno", EQ))?.openNow, true);
+  });
+
+  it("a record with no name is never confirmed, however close", async () => {
+    stubFetch(() => ({ results: [{ fsq_place_id: "fsq-nameless", latitude: CEBU.lat, longitude: CEBU.lng, hours: { open_now: true } }] }));
+    assert.equal(await getLiveVenueStatus("Cafe Uno", CEBU), null);
+    assert.equal(fetchCalls.length, 1);
+  });
+
+  it("the cache does not cross names — a different venue at the same anchor is looked up, not served the first one's status", async () => {
+    stubFetch(() => FSQ_OPEN); // a Cafe Uno record at CEBU
+    assert.equal((await getLiveVenueStatus("Cafe Uno", CEBU))?.venueName, "Cafe Uno");
+    const other = await getLiveVenueStatus("Cafe Dos", CEBU);
+    assert.equal(other, null, "Cafe Dos is not served Cafe Uno's cached, verified status");
+    assert.equal(fetchCalls.length, 2, "a different name at the same coordinates is a different entry");
+  });
+
+  it("a record with no coordinates cannot be placed, so it is never verified", async () => {
+    stubFetch(() => ({ results: [record("fsq-nowhere", "Cafe Uno", null, true)] }));
+    assert.equal(await getLiveVenueStatus("Cafe Uno", CEBU), null);
+  });
+
+  it("the second result is used when the first is a namesake elsewhere", async () => {
+    stubFetch(() => ({ results: [
+      record("fsq-far", "Cafe Uno", FAR, false),
+      record("fsq-here", "Cafe Uno", north(CEBU, 20), true),
+    ] }));
+    const status = await getLiveVenueStatus("Cafe Uno", CEBU);
+    assert.ok(status, "the matching second record is found");
+    assert.equal(status.openNow, true, "the namesake's closed hours are not this place's");
+  });
+
+  it("names match after NFKD, diacritics, case fold, punctuation and whitespace — and only then", async () => {
+    assert.equal(normaliseVenueName("  Café   UNO! "), normaliseVenueName("cafe uno"));
+    assert.equal(normaliseVenueName("Joe's Bar & Grill"), normaliseVenueName("JOES BAR  GRILL"));
+    assert.equal(normaliseVenueName("Straße 1"), normaliseVenueName("STRASSE 1"));
+    assert.equal(normaliseVenueName("ＣＡＦＥ"), normaliseVenueName("cafe"), "NFKD folds full-width letters");
+    assert.notEqual(normaliseVenueName("Cafe Uno 2"), normaliseVenueName("Cafe Uno"));
+    assert.notEqual(normaliseVenueName("Cafe Uno Lisboa"), normaliseVenueName("Cafe Uno"));
+    stubFetch(() => ({ results: [record("fsq-accent", "CAFÉ  UNO.", north(CEBU, 30), false)] }));
+    const status = await getLiveVenueStatus("Cafe Uno", CEBU);
+    assert.ok(status, "a record whose name differs only by accent, case, punctuation and spacing is this place");
+    assert.equal(status.openNow, false);
+  });
+
+  it("a punctuation-only or empty name matches nothing", async () => {
+    stubFetch(() => ({ results: [record("fsq-dash", "—", { latitude: CEBU.lat, longitude: CEBU.lng }, true)] }));
+    assert.equal(await getLiveVenueStatus("—", CEBU), null);
+  });
+
+  it("null anchor → the provider is not asked and the answer is null", async () => {
+    stubFetch(() => FSQ_OPEN);
+    assert.equal(await getLiveVenueStatus("Cafe Uno", null), null);
+    assert.equal(await getLiveVenueStatus("Cafe Uno", { lat: Number.NaN, lng: CEBU.lng }), null);
+    assert.equal(await getLiveVenueStatus("Cafe Uno", { lat: 95, lng: CEBU.lng }), null);
+    assert.equal(fetchCalls.length, 0, "no fetch without a usable anchor");
+  });
+
+  it("asks around the anchor, for enough candidates, with their coordinates", async () => {
+    stubFetch(() => FSQ_OPEN);
+    await getLiveVenueStatus("Cafe Uno", CEBU);
+    const u = new URL(fetchCalls[0]!);
+    assert.equal(u.searchParams.get("ll"), `${CEBU.lat},${CEBU.lng}`);
+    assert.equal(u.searchParams.get("near"), null, "ll and near are alternatives; the anchor is the centre");
+    assert.equal(u.searchParams.get("limit"), "5");
+    assert.equal(u.searchParams.get("radius"), "1000", "the bias radius is 1 km; identity is still decided at 150 m");
+    const fields = (u.searchParams.get("fields") ?? "").split(",");
+    for (const f of ["fsq_place_id", "name", "latitude", "longitude", "hours"]) assert.ok(fields.includes(f), `fields carries ${f}`);
+  });
+
+  it("the cache does not cross anchors — a verified place does not lend its status to a namesake", async () => {
+    stubFetch(() => FSQ_OPEN); // the record sits at CEBU
+    const here = await getLiveVenueStatus("Cafe Uno", CEBU);
+    assert.equal(here?.openNow, true);
+    const there = await getLiveVenueStatus("Cafe Uno", { lat: FAR.latitude, lng: FAR.longitude });
+    assert.equal(there, null, "the namesake 2 km away is not served the cached verified status");
+    assert.equal(fetchCalls.length, 2, "a different anchor is a different entry");
+  });
+
+  it("the cache does not cross anchors — a namesake's cached miss does not blank the real place", async () => {
+    stubFetch(() => FSQ_OPEN);
+    assert.equal(await getLiveVenueStatus("Cafe Uno", { lat: FAR.latitude, lng: FAR.longitude }), null);
+    const here = await getLiveVenueStatus("Cafe Uno", CEBU);
+    assert.equal(here?.openNow, true);
+    assert.equal(fetchCalls.length, 2);
+  });
+});
+
+describe("D-67 — get_place_details anchors the lookup on the place row", () => {
+  it("passes the row's own coordinates and never returns them on the place", async () => {
+    stubFetch(() => FSQ_OPEN);
+    const sc = makeClient({ discovery_places: [PLACE] });
+    const res: any = await executeCompassTool(sc, "user-1", null, "get_place_details", { placeId: "place-1" });
+    assert.equal(res.place.liveStatus.available, true);
+    assert.equal(new URL(fetchCalls[0]!).searchParams.get("ll"), `${PLACE.lat},${PLACE.lng}`);
+    // The fake ignores the select list, so the row carries lat/lng: only the
+    // tool itself can be keeping them off the result.
+    assert.equal("lat" in res.place, false, "coordinates stay out of the tool result (PLACE_SAFE_COLUMNS)");
+    assert.equal("lng" in res.place, false);
+  });
+
+  it("a namesake 2 km away gives no verified-live label", async () => {
+    stubFetch(() => ({ results: [record("fsq-far", "Cafe Uno", FAR, true)] }));
+    const sc = makeClient({ discovery_places: [PLACE] });
+    const res: any = await executeCompassTool(sc, "user-1", null, "get_place_details", { placeId: "place-1" });
+    const ls = res.place.liveStatus;
+    assert.equal(ls.available, false);
+    assert.equal(ls.openNow, null);
+    assert.equal(ls.dataNote, CANT_VERIFY_NOTE);
+    assert.equal(ls.confidence.sourceClass, "historical");
+  });
+
+  it("a place with no coordinates asks no provider and says it can't verify", async () => {
+    stubFetch(() => FSQ_OPEN);
+    const sc = makeClient({ discovery_places: [{ ...PLACE, lat: null, lng: null }] });
+    const res: any = await executeCompassTool(sc, "user-1", null, "get_place_details", { placeId: "place-1" });
+    assert.equal(fetchCalls.length, 0);
+    assert.equal(res.place.liveStatus.available, false);
+    assert.equal(res.place.liveStatus.confidence.sourceClass, "historical");
+  });
+});
+
+describe("get_place_details — a failed catalog read is unreadable, never 'Place not found'", () => {
+  it("a failed discovery_places read says unreadable and asks no live source", async () => {
+    stubFetch(() => FSQ_OPEN);
+    const sc = makeClient({ discovery_places: [PLACE] }, ["discovery_places"]);
+    const res: any = await executeCompassTool(sc, "user-1", null, "get_place_details", { placeId: "place-1" });
+    assert.equal(res.place, null);
+    assert.equal(res.unreadable, true);
+    assert.match(res.info, /unreadable right now/);
+    assert.doesNotMatch(res.info, /not found/i, "an outage is not a finding about the place");
+    assert.equal(fetchCalls.length, 0);
+  });
+
+  it("a real miss (no error, no row) is still 'Place not found.' and is not flagged unreadable", async () => {
+    stubFetch(() => FSQ_OPEN);
+    const sc = makeClient({ discovery_places: [PLACE] });
+    const res: any = await executeCompassTool(sc, "user-1", null, "get_place_details", { placeId: "no-such-place" });
+    assert.equal(res.place, null);
+    assert.equal(res.info, "Place not found.");
+    assert.equal("unreadable" in res, false);
+    assert.equal(fetchCalls.length, 0);
+  });
+});
+
+describe("live cache bound (lead follow-up F5)", () => {
+  it("holds at most LIVE_CACHE_MAX_ENTRIES and evicts the oldest entry first", async () => {
+    stubFetch(() => ({ results: [] })); // every lookup is a cached miss
+    const at = (i: number): LiveVenueAnchor => ({ lat: 10 + i * 1e-5, lng: CEBU.lng });
+    for (let i = 0; i <= LIVE_CACHE_MAX_ENTRIES; i++) await getLiveVenueStatus("Cafe Uno", at(i));
+    assert.equal(fetchCalls.length, LIVE_CACHE_MAX_ENTRIES + 1);
+    assert.equal(_liveCacheSize(), LIVE_CACHE_MAX_ENTRIES, "one entry past the cap evicts one");
+    await getLiveVenueStatus("Cafe Uno", at(LIVE_CACHE_MAX_ENTRIES)); // newest: still cached
+    assert.equal(fetchCalls.length, LIVE_CACHE_MAX_ENTRIES + 1);
+    await getLiveVenueStatus("Cafe Uno", at(0)); // oldest: evicted, so asked again
+    assert.equal(fetchCalls.length, LIVE_CACHE_MAX_ENTRIES + 2);
+    assert.equal(_liveCacheSize(), LIVE_CACHE_MAX_ENTRIES);
   });
 });
