@@ -68,7 +68,7 @@ import { asyncHandler } from "../lib/asyncHandler.js";
 import { stampEntity, unstampEntity } from "../services/stamps/ContentStampService.js";
 import { linkOutcomeSignal } from "../compass/CompassOutcomeEngine.js";
 import {
-  rankMediaFeed,
+  rankMediaFeed, loadMediaBoostLiftWithheld, mediaBoostLiftAuthors, // D-24c: no boost lift under a messaging restriction
   loadMediaRankingFlags,
   loadMediaSignals,
   loadCreatorSignals,
@@ -1564,7 +1564,7 @@ router.get("/media/feed", asyncHandler(async (req, res) => {
     mode:         feedType === "for_you" ? "for_you" : "following",
     sessionState: mediaSession,
     flags:        mediaFlags,
-    bucketCounts: bucketCountsMap,
+    bucketCounts: bucketCountsMap, boostWithheldAuthors: await loadMediaBoostLiftWithheld(sc, mediaBoostLiftAuthors(rankCandidates, mediaFlags, undefined, nowMs)), // lead ruling D-24c: a messaging-restricted author (or one whose state cannot be read) gets no boost lift
   });
 
   // Map ranked IDs back to candidate rows
