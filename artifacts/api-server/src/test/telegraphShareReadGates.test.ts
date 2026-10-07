@@ -27,7 +27,7 @@
  *   - POST skipped `post_status` (a draft resolved);
  *   - ROUTE took a `route_plan_members` row without the trip membership
  *     `GET /route-plans/:id` requires;
- *   - RESERVATION and LAYOVER_PLAN grant trip crew, and a block outranks crew.
+ *   - RESERVATION grants crew (a block outranks it); LAYOVER_PLAN, per D-LAYOVER-SHARE-CREW, a share.
  *
  * Every case drives `resolveShareProjections`, the function the route calls,
  * and asserts the card the viewer would get — available with its title, or
