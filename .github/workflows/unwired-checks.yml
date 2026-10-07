@@ -374,6 +374,13 @@ jobs:
         shell: bash
         run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:beta-smoke
 
+      # The owner's beta:status (read-only) and beta:provision (dispatch) commands
+      # against a fake gh and a stubbed fetch. No credentials, nothing dispatched.
+      - name: 'scripts: test:beta-owner'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:beta-owner
+
   standalone:
     name: unwired · travel-buddy-standalone guards
     runs-on: ubuntu-latest
