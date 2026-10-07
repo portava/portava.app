@@ -16340,7 +16340,7 @@ Each of these is no longer blocked on an owner decision. What still blocks it is
 | MD162 | **N** | **N** | D-26d: yes, narrowly — names and public place ids only, and only on flows that clear the floors. NOT BUILT: the payload is in `routes/mapProjection.ts`, which lane L is changing, and the row also needs production flows. |
 | MD175 | **N** | **N** | D-26h: Remix is a Compass variation, propose-only. NOT BUILT: it is a Compass action, and Compass is lane L's this mission. |
 | MD385 | **W** | **W** | D-26j: a Memory may be made from one's own media only. NOT BUILT: it needs `memory_items.source_post_id` (a migration in the Memory surfaces, now the lead's) and the action. |
-| MD269 | **W** | **W** | **(a) is BUILT on this branch.** D-82: while the stage holds any of a post's media, `POST /posts` and `PATCH /posts/:id` refuse it and write nothing (`artifacts/api-server/src/lib/media/postMediaModerationHold.ts:124#export async function postMediaModerationHold(`). **TESTED:** `artifacts/api-server/src/test/mediaPostMediaHoldD82.test.ts` (12; five mutations each red). The row stays W only because no classifier vendor or staffed review exists. That is D-27d, a vendor choice the rulings file leaves NOT RULED. |
+| MD269 | **W** | **W** | **(a) is BUILT on this branch.** D-82: while the stage holds any of a post's media, `POST /posts` and `PATCH /posts/:id` refuse it and write nothing (`artifacts/api-server/src/lib/media/postMediaModerationHold.ts:123#export async function postMediaModerationHold(`). **TESTED:** `artifacts/api-server/src/test/mediaPostMediaHoldD82.test.ts` (12; five mutations each red). The row stays W only because no classifier vendor or staffed review exists. That is D-27d, a vendor choice the rulings file leaves NOT RULED. |
 | MD63 | **N** | **N** | D-27a NOT RULED (vendor). Unchanged. |
 | MD277 | **N** | **N** | D-27b NOT RULED (vendor). Unchanged. |
 | MD280 | **N** | **N** | D-28, the Media half, NOT RULED (vendor). Unchanged. |
@@ -16474,7 +16474,7 @@ that goes red without it.
   `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:83#describe("F6. the release instant is the author's alone"`.
 - **F2 — the D-82 hold failed open on an unreadable stage flag.** The hold now reads the flag itself and
   tells a failed read apart from FALSE
-  (`artifacts/api-server/src/lib/media/postMediaModerationHold.ts:109#async function readStage(`).
+  (`artifacts/api-server/src/lib/media/postMediaModerationHold.ts:108#async function readStage(`).
   An unreadable flag gets "try again".
 - **F3 — another spelling of a held object dodged the hold.** The four dodges were a double slash, a query
   string, percent-encoding and a relay path. References are now canonicalised the way the relay resolves
