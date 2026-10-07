@@ -919,7 +919,7 @@ narrow resolver extension rather than a new architecture).
 | G302 | `add_to_trip` | C | `semanticIntent.ts:290`; the only client-dispatchable action (`search/smartActions.ts:41-43`). |
 | G303 | `share_entity` | N | Unchanged: declared at `types.ts:223` and client `types/suggestionAction.ts:24`, and a repo-wide search at this commit still finds **no producer**. §21's Telegraph action row depends on it, as does G133 and §54's worked example (G362). **Deliberately not built this pass, and the reason is the rule about no-ops rather than effort.** A producer is small — the §21 trigger, the eligibility read and the row are perhaps an hour — but the row would reach nothing: `telegraph_message` has a policy (`policyRegistry.ts:300-307`) and **no registered field**, and no Telegraph composer imports the platform (`app/telegraph/new.tsx` is the RECIPIENT picker only; the message composer is a different screen and consumes none of this). Producing a `share_entity` row into a context nothing mounts would add a second unreachable artifact beside `open_compass`'s old one, not a capability. WHAT WOULD TURN THIS RED, in order: a registered `telegraph_message` field on the composer screen (G362's half), then a producer that resolves the shared entity from rows the privacy gate ALREADY returned — never a fresh read — and restricts the shared classes to ones the recipient's own access can be decided for, then a test that a non-shareable entity class is refused. |
 | G304 | `drop_pin` | C | `validationSuite.ts:310`. |
-| G305 | `open_compass` | C | The action the server emits now reaches a screen. It was produced (`semanticIntent.ts:259`) and discarded by every client surface: the grouped-row bridge cannot render it (no entity id, no route, not a submit) and `search/smartActions.ts` excluded it from `DISPATCHABLE_ACTION_TYPES`, so every one of them was dropped silently. The pair moved in lock-step, which is what that module's header requires of any addition: `travel-buddy-standalone/src/platform/input-assistance/search/smartActions.ts:54#'open_compass',` lifts the row into the action-chip lane (and the bridge therefore skips it, so it lands in exactly one lane), `travel-buddy-standalone/src/platform/input-assistance/search/smartActions.ts:139#export function getOpenCompassTarget` resolves it to a prompt, and `travel-buddy-standalone/app/search.tsx:497#const compass = getOpenCompassTarget(suggestion);` dispatches it through `prefillMessage` — the handoff the Compass screen ALREADY accepts from Layover's "Ask locals", reused rather than a second mechanism invented beside it. The prompt handed over is `replacementText`, the user's OWN words, not the structured restatement in the row's label: handing Compass the restatement would be the layer putting words in the user's mouth. Proven end-to-end with only the network stubbed at `travel-buddy-standalone/app/__tests__/search.openCompassDispatch.component.test.tsx:291#lifts the row into the action lane and dispatches it to Compass`, plus the lift itself at `travel-buddy-standalone/src/platform/input-assistance/search/__tests__/smartActions.test.ts:138#an open_compass row is lifted into the dispatchable action lane`; mutation-proven three ways (remove the set member; delete the dispatcher branch; hand over the label). `share_entity` and `drop_pin` are still refused by that set, asserted, so this did not widen it into a bucket. |
+| G305 | `open_compass` | C | The action the server emits now reaches a screen. It was produced (`semanticIntent.ts:259`) and discarded by every client surface: the grouped-row bridge cannot render it (no entity id, no route, not a submit) and `search/smartActions.ts` excluded it from `DISPATCHABLE_ACTION_TYPES`, so every one of them was dropped silently. The pair moved in lock-step, which is what that module's header requires of any addition: `travel-buddy-standalone/src/platform/input-assistance/search/smartActions.ts:54#'open_compass',` lifts the row into the action-chip lane (and the bridge therefore skips it, so it lands in exactly one lane), `travel-buddy-standalone/src/platform/input-assistance/search/smartActions.ts:145#export function getOpenCompassTarget` resolves it to a prompt, and `travel-buddy-standalone/app/search.tsx:497#const compass = getOpenCompassTarget(suggestion);` dispatches it through `prefillMessage` — the handoff the Compass screen ALREADY accepts from Layover's "Ask locals", reused rather than a second mechanism invented beside it. The prompt handed over is `replacementText`, the user's OWN words, not the structured restatement in the row's label: handing Compass the restatement would be the layer putting words in the user's mouth. Proven end-to-end with only the network stubbed at `travel-buddy-standalone/app/__tests__/search.openCompassDispatch.component.test.tsx:291#lifts the row into the action lane and dispatches it to Compass`, plus the lift itself at `travel-buddy-standalone/src/platform/input-assistance/search/__tests__/smartActions.test.ts:138#an open_compass row is lifted into the dispatchable action lane`; mutation-proven three ways (remove the set member; delete the dispatcher branch; hand over the label). `share_entity` and `drop_pin` are still refused by that set, asserted, so this did not widen it into a bucket. |
 
 ### §44 Telemetry and Observability
 
@@ -3116,7 +3116,7 @@ down rather than papered over.
 evidence change.** Editing `SmartInput.tsx`, `smartActions.ts`,
 `creation.ts` and `app/search.tsx` moved lines underneath pointers held by
 rows in §44, §46, §9.3, §11 and §12 — and by one row in `census-discovery.md`
-(`app/search.tsx:677` → `:688`, `#Some of this search could not run.`). Each
+(`app/search.tsx:679` → `:690`, `#Some of this search could not run.`). Each
 was repointed by mapping the OLD line through this branch's own diff and then
 confirming the anchor text is on the NEW line; the anchor text itself is
 untouched in every case, which is what makes these repairs rather than
@@ -6758,3 +6758,37 @@ the band is NEW wire information on that route. It is measured internally from t
 - for places, their public position;
 - for events, only when `searchEvents`' `showVenue` lets this viewer see the venue;
 - never for a coarsened or withheld position.
+
+### 42.19 G134 on lead ruling PR-D2-6: Open Map built on an existing type; Save and Start directions left unproduced — the row stays `W`
+
+**The ruling (lead, 2026-10-07).** Do NOT extend §43's eight action types in this release. Map a search action onto
+an existing type where one carries the same meaning, with dispatchers in `app/search.tsx`. Where no existing type
+fits, leave the action unproduced and keep the row `W` with the reason.
+
+**The five actions:**
+- **Add to Trip** and **Ask Compass**: already produced (`add_to_trip`, `open_compass`) and dispatched by
+  `app/search.tsx`.
+- **Open Map**: now built.
+  - It is the existing `open_entity` ("open this entity") on an action row whose destination is the app's own map,
+    focused on the entity (`artifacts/api-server/src/lib/inputAssistance/searchActions.ts:47#export function buildOpenOnMapRow(`).
+  - At most one row per `global_search` serve, for the first place or event this viewer may place exactly
+    (`artifacts/api-server/src/lib/inputAssistance/searchActions.ts:36#const MAPPABLE_RESULT_TYPES`).
+  - Never offered for a gem, a person, a coarsened or withheld position, or an event whose venue is withheld.
+  - The route names the entity, its title and `entry=search`, and never a coordinate (G187/G129 are structural).
+  - The client lifts only an ACTION row of this shape. Entity rows also carry `open_entity` and stay in the grouped
+    lane (`travel-buddy-standalone/src/platform/input-assistance/search/smartActions.ts:167#export function getOpenOnMapTarget(`).
+  - `app/search.tsx` routes it (`travel-buddy-standalone/app/search.tsx:503#const onMap = getOpenOnMapTarget(suggestion);`).
+  - Proof, end to end on both sides:
+    `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1415#global_search offers ONE 'Open on map'`,
+    `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1456#never a gem, person or protected position`,
+    and through the real hook, bridge, lift and dispatcher,
+    `travel-buddy-standalone/app/__tests__/search.openOnMapDispatch.component.test.tsx:284#lifts the row into the action lane and opens the map`.
+  - Ten mutants are killed across both sides.
+  - Limitation, stated: the map frames the entity when it is among the objects the map loads. An entity far from the
+    map's opening view opens the map on its default framing. The row carries no position, by rule, to do better.
+- **Save**: no existing type carries "save". `set_structured_value` mutates the field and `share_entity` shares.
+  Not produced.
+- **Start directions**: no existing type hands off to navigation. Not produced.
+
+**G134 stays `W`.** Four of five actions are now dispatchable end to end. Save and Start directions are unproduced
+by lead ruling PR-D2-6, and need either a §43 contract change or an owner ruling that allows one.
