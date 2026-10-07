@@ -33,7 +33,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import { loadBoostLiftWithheld, BOOST_LIFT_READ_CAP } from "../services/ranking/boostLiftWithheld.js";
-import { rankItems, type RankingInput, type RankingViewerContext } from "../services/ranking/DiscoveryRankingService.js";
+import { rankItems, type RankingInput, type RankingOutput, type RankingViewerContext } from "../services/ranking/DiscoveryRankingService.js";
 import { allocateFeedSlots, loadSlotLiftWithheld } from "../services/ranking/FeedSlotAllocator.js";
 import type { PipelineResult } from "../compass/CompassPipeline.js";
 import type { FeedShares } from "../services/ranking/rankingConfig.js";
@@ -128,7 +128,7 @@ const baseOverrides = (flags = ACTIVE_FLAGS) => ({
   fatiguedCreators: new Set<string>(),
 });
 const LIFTS = ["activityBoost", "newContributorBoost", "returningUserBoost", "underexposureBoost"] as const;
-const lifts = (o: { components: Record<string, number> }) => LIFTS.map((k) => o.components[k]);
+const lifts = (o: RankingOutput) => LIFTS.map((k) => o.components[k]);
 const byId = <T extends { itemId: string }>(xs: T[], id: string) => xs.find((x) => x.itemId === id)!;
 const OPTS = { emitPerCandidateAnalytics: false, nowMs: NOW };
 
@@ -139,7 +139,7 @@ describe("R — rankItems withholds the four boosts (D-24c)", () => {
     const r = byId(held, "p-restricted"), r0 = byId(none, "p-restricted");
     assert.ok(lifts(r0).every((x) => x > 0), `vacuity guard: unwithheld, all four lift: ${lifts(r0)}`);
     assert.deepEqual(lifts(r), [0, 0, 0, 0]);
-    for (const [k, v] of Object.entries(r.components)) if (!(LIFTS as readonly string[]).includes(k)) assert.equal(v, (r0.components as any)[k], k);
+    for (const [k, v] of Object.entries(r.components)) if (!(LIFTS as readonly string[]).includes(k)) assert.equal(v, r0.components[k as keyof RankingOutput["components"]], k);
     assert.ok(r.finalScore <= r0.finalScore); // finalScore is clamped to 100, so the drop can be hidden by the clamp; the components above are the claim
     assert.deepEqual(lifts(byId(held, "p-free")), lifts(byId(none, "p-free")));
     assert.ok(lifts(byId(held, "p-free")).every((x) => x > 0));
