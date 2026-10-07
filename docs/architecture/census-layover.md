@@ -8999,7 +8999,7 @@ Neither moves a row: L27, L129 and L187 stay where §51.1 put them.
 ### 53.5 L220 stays `W`: the 4h pair is pinned against §21.1's sentence, and no production session can reach it
 
 §51.3 corrected L220's stated reason and held the row at `W` "until a test pins the 4h pair against §21.1's sentence".
-`artifacts/api-server/src/test/layoverScenarioL220.test.ts:50#§21.1 L220 — 4h international, visa allowed → potential landside depending on airport model`
+`artifacts/api-server/src/test/layoverScenarioL220.test.ts:52#§21.1 L220 — 4h international, visa allowed → potential landside depending on airport model`
 is that test. It runs the corpus through `decideScenario`, the decision-diff CI's own entry point, and asserts each
 clause:
 - **4h international.** The two corpus scenarios are the same 240-minute international session at the same clock with
