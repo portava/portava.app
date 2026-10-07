@@ -195,10 +195,20 @@ export async function buildNearbyPlaceSuggestions(
  * inside a `suppress` zone is not offered. Flag off, absent or unreadable:
  * nothing is read and the rows pass, exactly as search.
  *
- * ONE DELIBERATE DIFFERENCE. When the flag is on and the zone policy cannot be
- * read, search keeps the row and withholds its position. A "nearby" row's
- * whole claim IS its position — it is offered because it is close — so
- * withholding the position cannot help, and the row is dropped instead.
+ * TWO DELIBERATE DIFFERENCES, one argument. A "nearby" row's whole claim IS
+ * its position — it is offered because it is close, and it is ranked by how
+ * close. So:
+ *   - flag on and the zone policy UNREADABLE: search keeps the row and
+ *     withholds its position; withholding cannot help here, so the row is
+ *     dropped;
+ *   - a COARSEN zone (wave-2 second verification F4): search snaps the row to
+ *     the zone's anchor and marks it `approximate`. Offering it here would
+ *     still decide inclusion inside the radius and its rank from the TRUE
+ *     point, which a viewer who moves and re-asks can trilaterate — the very
+ *     point the Map and search only ever show at the anchor. So it is dropped
+ *     too.
+ * Only a row the pass returned UNTOUCHED (allowed, or carrying no position) is
+ * offered.
  */
 async function nearbyAfterProtection<R extends { p: PlaceRow }>(db: SupabaseClient, ranked: R[]): Promise<R[]> {
   if (ranked.length === 0 || !(await searchProtectionEnabled(db))) return ranked;
@@ -206,7 +216,7 @@ async function nearbyAfterProtection<R extends { p: PlaceRow }>(db: SupabaseClie
   try { zones = await loadActiveProtectedZones(db); } catch { zones = null; }
   const probes = ranked.map((r) => ({ id: r.p.id, type: 'places', title: String(r.p.name ?? r.p.id), metadata: { lat: r.p.lat, lng: r.p.lng } as Record<string, unknown> }));
   const { results } = applySearchProtection(probes, zones);
-  const served = new Set(results.filter((x) => x.metadata?.coordsPrecision !== 'hidden').map((x) => x.id));
+  const served = new Set(results.filter((x) => x.metadata?.coordsPrecision !== 'hidden' && x.metadata?.coordsPrecision !== 'approximate').map((x) => x.id));
   return ranked.filter((r) => served.has(r.p.id));
 }
 
