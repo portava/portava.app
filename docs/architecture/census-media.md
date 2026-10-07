@@ -1237,7 +1237,7 @@ and `artifacts/api-server/src/lib/inputAssistance/duplicateDetection.ts:241#expo
 consumed by
 `artifacts/api-server/src/services/hiddenGems/HiddenGemModerationService.ts:288#export async function getDuplicateCandidates`
 and served at
-`artifacts/api-server/src/routes/hiddenGems.ts:1500#router.get("/admin/hidden-gems/duplicate-candidates"`.
+`artifacts/api-server/src/routes/hiddenGems.ts:1495#router.get("/admin/hidden-gems/duplicate-candidates"`.
 
 What is missing is only the placement §16.1 asks for: the submission handler
 `artifacts/api-server/src/routes/hiddenGems.ts:267#router.post("/hidden-gems"` does not call
@@ -3867,7 +3867,7 @@ deliberately NOT forwardable by the client batch `artifacts/api-server/src/lib/m
 submitted at the gem submission and observation routes `artifacts/api-server/src/routes/hiddenGems.ts:401#recordGemContributionSignal(sc` (and at
 `routes/hiddenGems.ts` line 1144), attributed Media → Contribution only when the
 media is AT the gem's place `artifacts/api-server/src/lib/mediaAnalytics.ts:316#export function recordGemContributionSignal(`; Contribution accepted, credited to the
-SUBMITTER `artifacts/api-server/src/lib/mediaAnalytics.ts:344#export function recordGemAcceptedSignal(`, at `artifacts/api-server/src/routes/hiddenGems.ts:1548#recordGemAcceptedSignal(sc`; Invite sent, only for a media item that is
+SUBMITTER `artifacts/api-server/src/lib/mediaAnalytics.ts:344#export function recordGemAcceptedSignal(`, at `artifacts/api-server/src/routes/hiddenGems.ts:1543#recordGemAcceptedSignal(sc`; Invite sent, only for a media item that is
 an approved contribution to that very Moment `artifacts/api-server/src/lib/mediaAnalytics.ts:370#export function recordMediaInviteIfAttributable(`, at `artifacts/api-server/src/routes/sharedMoments.ts:135#recordMediaInviteIfAttributable(`;
 Postcard created `artifacts/api-server/src/lib/mediaAnalytics.ts:396#export function recordPostcardCreatedSignal(`, at the Postcard write `artifacts/api-server/src/routes/postcards.ts:1131#recordPostcardCreatedSignal(sc, { userId: user.id, postId });`; Experience
 completed for a route saved from media `artifacts/api-server/src/lib/mediaAnalytics.ts:404#export function recordExperienceCompletionIfAttributable(`, at `artifacts/api-server/src/routes/routePlan.ts:571#recordExperienceCompletionIfAttributable(`. Arrival
@@ -15726,8 +15726,8 @@ and a refused write both answered the admin `{ ok: true }`. They now read their 
 (`artifacts/api-server/src/services/hiddenGems/HiddenGemModerationService.ts:184#.eq("id", gemId).select("id").maybeSingle(); if (error) throw error;`,
 `artifacts/api-server/src/services/hiddenGems/HiddenGemModerationService.ts:208#if (error) throw error; return merged`);
 the routes answer 404 for a missing gem or canonical gem, db_error for a refused write, and 400 for
-a self-merge (`artifacts/api-server/src/routes/hiddenGems.ts:1603#const gemFound = await markSensitive`,
-`artifacts/api-server/src/routes/hiddenGems.ts:1626#const merge = await mergeDuplicate`) — the
+a self-merge (`artifacts/api-server/src/routes/hiddenGems.ts:1598#const gemFound = await markSensitive`,
+`artifacts/api-server/src/routes/hiddenGems.ts:1621#const merge = await mergeDuplicate`) — the
 pattern the fixed `recordAdminVerification` follows. Line-neutral in both files.
 
 ### 46.4 Tests (seen RED first) and mutations
@@ -16023,12 +16023,12 @@ happened, which a screen would have repeated to the admin.
   `recordAdminVerification` now checks its status UPDATE and says whether a gem was found
   (`artifacts/api-server/src/services/hiddenGems/HiddenGemVerificationService.ts:364#if (updErr) throw updErr;`);
   the route answers 404 for a gem id that matches nothing and `db_error` for a refused write
-  (`artifacts/api-server/src/routes/hiddenGems.ts:1539#const gemFound = await recordAdminVerification(`).
+  (`artifacts/api-server/src/routes/hiddenGems.ts:1534#const gemFound = await recordAdminVerification(`).
   `setGuideStatus` returns the updated row or null and throws on a refused write
   (`artifacts/api-server/src/services/hiddenGems/LocalGuideService.ts:263#if (error) throw error;`);
   the route answers 404 for a user with no guide profile and writes an audit log line with the
   admin id, the guide and the new status, as the live-scope admin routes do
-  (`artifacts/api-server/src/routes/hiddenGems.ts:1688#local guide status set via admin surface`).
+  (`artifacts/api-server/src/routes/hiddenGems.ts:1683#local guide status set via admin surface`).
   The gem decision's own audit row (`hidden_gem_verifications`, `method: "admin"`) was already written.
 - **Screens.** `travel-buddy-standalone/app/admin/hidden-gems.tsx:46#export default function AdminHiddenGemsScreen(`
   (Pending: approve / reject with an optional note; Reported: uphold / dismiss) and
