@@ -17,12 +17,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runLayoverAuditRetentionSweep, runLayoverAuditRetentionTick } from "../lib/layoverAuditRetentionScheduler.js";
+import { runLayoverAuditRetentionSweep, runLayoverAuditRetentionTick, getLayoverAuditRetentionStatus, _resetLayoverAuditRetentionStatus } from "../lib/layoverAuditRetentionScheduler.js";
 
 type Row = Record<string, any>;
 const NOW = new Date("2027-10-08T00:00:00.000Z");
 
-function fakeDb(rows: Row[], opts: { schema?: boolean; failRead?: boolean; failDelete?: boolean } = {}) {
+function fakeDb(rows: Row[], opts: { schema?: boolean; failProbe?: boolean; failRead?: boolean; failDelete?: boolean } = {}) {
   const deleted: string[] = [];
   function from(table: string) {
     const filters: Array<(r: Row) => boolean> = [];
@@ -33,6 +33,7 @@ function fakeDb(rows: Row[], opts: { schema?: boolean; failRead?: boolean; failD
     const run = async () => {
       if (table !== "layover_events") throw new Error(`unexpected table ${table}`);
       if (opts.schema === false && cols.includes("retain_until") && head) return { data: null, error: { code: "42703", message: "column retain_until does not exist" } };
+      if (opts.failProbe && cols.includes("retain_until") && head) return { data: null, error: { code: "08006", message: "connection failure" } };
       if (op === "select" && head) return { data: null, error: null };
       if (op === "select" && opts.failRead) return { data: null, error: { code: "57014", message: "timeout" } };
       if (op === "delete" && opts.failDelete) return { data: null, error: { code: "42501", message: "denied" } };
@@ -94,6 +95,14 @@ describe("layover audit retention sweep (OD-MAP-4: then delete it)", () => {
     assert.deepEqual(db.deleted, []);
   });
 
+  it("a probe that fails for any reason but a MISSING COLUMN is FAILED (probe_failed), not 'schema absent'", async () => {
+    const db = fakeDb([pseudo("p", "2020-01-01T00:00:00.000Z")], { failProbe: true });
+    assert.deepEqual(await runLayoverAuditRetentionSweep({ client: db, now: NOW }), { outcome: "failed", reason: "probe_failed", deleted: 0, complete: false });
+    assert.deepEqual(db.deleted, []);
+    const throwing = { from() { throw new Error("socket"); } };
+    assert.equal((await runLayoverAuditRetentionSweep({ client: throwing, now: NOW })).reason, "probe_failed");
+  });
+
   it("a failed read is FAILED, never 'nothing due'; a failed delete is FAILED", async () => {
     assert.equal((await runLayoverAuditRetentionSweep({ client: fakeDb([], { failRead: true }), now: NOW })).reason, "read_failed");
     const r = await runLayoverAuditRetentionSweep({ client: fakeDb([pseudo("p", "2020-01-01T00:00:00.000Z")], { failDelete: true }), now: NOW });
@@ -104,7 +113,39 @@ describe("layover audit retention sweep (OD-MAP-4: then delete it)", () => {
     assert.equal((await runLayoverAuditRetentionSweep({ client: null, now: NOW })).reason, "no_client");
     const throwing = { from() { throw new Error("socket"); } };
     const r = await runLayoverAuditRetentionTick({ client: throwing, now: NOW });
-    assert.equal(r.outcome, "refused");
+    assert.equal(r.outcome, "failed", "a throw is a failure, not a refusal that names a cause it did not have");
+  });
+});
+
+describe("what GET /healthz/schedulers reads for this job (job 'layoverAuditRetention')", () => {
+  it("a swept or idle tick is a SUCCESS and clears the failure count", async () => {
+    _resetLayoverAuditRetentionStatus();
+    await runLayoverAuditRetentionTick({ client: fakeDb([], { failRead: true }), now: NOW });
+    assert.equal(getLayoverAuditRetentionStatus().consecutiveFailures, 1);
+    await runLayoverAuditRetentionTick({ client: fakeDb([pseudo("p", "2020-01-01T00:00:00.000Z")]), now: NOW });
+    const s = getLayoverAuditRetentionStatus();
+    assert.deepEqual([s.lastOutcome, s.lastDeleted, s.consecutiveFailures, s.lastSuccessAt, s.lastAttemptAt], ["swept", 1, 0, NOW.toISOString(), NOW.toISOString()]);
+  });
+
+  it("a failed read, a failed delete, no client, a throw and a failed probe each COUNT, and none is a success", async () => {
+    _resetLayoverAuditRetentionStatus();
+    await runLayoverAuditRetentionTick({ client: fakeDb([], { failRead: true }), now: NOW });
+    await runLayoverAuditRetentionTick({ client: fakeDb([pseudo("p", "2020-01-01T00:00:00.000Z")], { failDelete: true }), now: NOW });
+    await runLayoverAuditRetentionTick({ client: null, now: NOW });
+    await runLayoverAuditRetentionTick({ client: { from() { throw new Error("socket"); } }, now: NOW });
+    await runLayoverAuditRetentionTick({ client: fakeDb([], { failProbe: true }), now: NOW });
+    const s = getLayoverAuditRetentionStatus();
+    assert.equal(s.consecutiveFailures, 5);
+    assert.equal(s.lastSuccessAt, null);
+    assert.equal(s.lastAttemptAt, NOW.toISOString(), "the attempt is recorded even when the pass fails");
+  });
+
+  it("without 3621 a tick is neither a success nor a failure: the attempt shows, the reason says why", async () => {
+    _resetLayoverAuditRetentionStatus();
+    await runLayoverAuditRetentionTick({ client: fakeDb([], { schema: false }), now: NOW });
+    const s = getLayoverAuditRetentionStatus();
+    assert.deepEqual([s.lastOutcome, s.lastReason, s.consecutiveFailures, s.lastSuccessAt], ["refused", "schema_absent", 0, null]);
+    assert.equal(s.lastAttemptAt, NOW.toISOString());
   });
 });
 

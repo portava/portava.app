@@ -33,18 +33,26 @@ const STARTUP_DELAY_MS = 90_000;
 export type LayoverAuditRetentionOutcome = "swept" | "idle" | "refused" | "failed";
 export interface LayoverAuditRetentionResult {
   outcome: LayoverAuditRetentionOutcome;
-  reason: "no_client" | "schema_absent" | "read_failed" | "delete_failed" | null;
+  reason: "no_client" | "schema_absent" | "probe_failed" | "read_failed" | "delete_failed" | null;
   deleted: number;
   complete: boolean;
 }
 
-/** 3621 applied here? A probe that fails for any reason answers "absent". */
-async function auditColumnsPresent(db: any): Promise<boolean> {
+/**
+ * 3621 applied here? Only the database saying the COLUMN is missing (42703 from
+ * Postgres, PGRST204 from PostgREST's schema cache) is "absent". Any other
+ * error, or a throw, is "error": a probe that could not reach the table has not
+ * learned that the schema is old, and reading it as absent would report a
+ * broken connection as a sweep with nothing to do.
+ */
+async function auditColumnsProbe(db: any): Promise<"present" | "absent" | "error"> {
   try {
     const { error } = await db.from("layover_events").select("retain_until", { head: true }).limit(1);
-    return !error;
+    if (!error) return "present";
+    const code = String((error as { code?: unknown }).code ?? "");
+    return code === "42703" || code === "PGRST204" ? "absent" : "error";
   } catch {
-    return false;
+    return "error";
   }
 }
 
@@ -54,7 +62,9 @@ export async function runLayoverAuditRetentionSweep(
 ): Promise<LayoverAuditRetentionResult> {
   const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
   if (!db) return { outcome: "refused", reason: "no_client", deleted: 0, complete: false };
-  if (!(await auditColumnsPresent(db))) return { outcome: "refused", reason: "schema_absent", deleted: 0, complete: false };
+  const probe = await auditColumnsProbe(db);
+  if (probe === "absent") return { outcome: "refused", reason: "schema_absent", deleted: 0, complete: false };
+  if (probe === "error") return { outcome: "failed", reason: "probe_failed", deleted: 0, complete: false };
 
   const limit = opts.batchSize ?? LAYOVER_AUDIT_RETENTION_BATCH_SIZE;
   const read = await db
@@ -85,26 +95,69 @@ export async function runLayoverAuditRetentionSweep(
   return { outcome: "swept", reason: null, deleted: confirmed, complete: ids.length < limit };
 }
 
-let _consecutiveFailures = 0;
+/**
+ * What GET /healthz/schedulers reads (job "layoverAuditRetention"). A retention
+ * job that silently stopped would keep pseudonymised rows past OD-MAP-4's 12
+ * months with nothing to say so, so this sweep is one of the REPORTED jobs, not
+ * one of the invisible ones (lib/schedulerCoverage.ts).
+ *   lastAttemptAt        a tick began — never evidence that it worked;
+ *   lastSuccessAt        a tick swept or found nothing due;
+ *   consecutiveFailures  no client, a failed read or delete, or a throw;
+ *   lastOutcome/Reason   the four-way result. `refused`/`schema_absent` (3621
+ *                        not applied) is neither a success nor a failure:
+ *                        without 3621 deletion erases the events outright, so
+ *                        there is nothing for this sweep to keep honest.
+ */
+export interface LayoverAuditRetentionStatus {
+  lastAttemptAt: string | null;
+  lastSuccessAt: string | null;
+  consecutiveFailures: number;
+  lastOutcome: LayoverAuditRetentionOutcome | null;
+  lastReason: LayoverAuditRetentionResult["reason"];
+  lastDeleted: number;
+}
+
+const _status: LayoverAuditRetentionStatus = {
+  lastAttemptAt: null, lastSuccessAt: null, consecutiveFailures: 0, lastOutcome: null, lastReason: null, lastDeleted: 0,
+};
+
+/** Snapshot for /healthz/schedulers. */
+export function getLayoverAuditRetentionStatus(): Readonly<LayoverAuditRetentionStatus> {
+  return { ..._status };
+}
+
+/** Test seam: reset module state between cases. */
+export function _resetLayoverAuditRetentionStatus(): void {
+  Object.assign(_status, { lastAttemptAt: null, lastSuccessAt: null, consecutiveFailures: 0, lastOutcome: null, lastReason: null, lastDeleted: 0 });
+}
 
 /** One tick: reads the clock once, never rejects, keeps a failure count. */
 export async function runLayoverAuditRetentionTick(
   opts: { client?: any; now?: Date; batchSize?: number } = {},
 ): Promise<LayoverAuditRetentionResult> {
+  const now = opts.now ?? new Date();
+  _status.lastAttemptAt = now.toISOString();
   let result: LayoverAuditRetentionResult;
   try {
-    result = await runLayoverAuditRetentionSweep({ ...opts, now: opts.now ?? new Date() });
+    result = await runLayoverAuditRetentionSweep({ ...opts, now });
   } catch (err) {
-    _consecutiveFailures += 1;
-    logger.warn({ err, consecutiveFailures: _consecutiveFailures }, "layover audit retention tick threw");
-    return { outcome: "refused", reason: "no_client", deleted: 0, complete: false };
+    _status.consecutiveFailures += 1;
+    _status.lastOutcome = "failed";
+    _status.lastReason = null;
+    _status.lastDeleted = 0;
+    logger.warn({ err, consecutiveFailures: _status.consecutiveFailures }, "layover audit retention tick threw");
+    return { outcome: "failed", reason: null, deleted: 0, complete: false };
   }
+  _status.lastOutcome = result.outcome;
+  _status.lastReason = result.reason;
+  _status.lastDeleted = result.deleted;
   if (result.outcome === "failed" || result.reason === "no_client") {
-    _consecutiveFailures += 1;
-    const log = _consecutiveFailures >= 3 ? logger.error.bind(logger) : logger.warn.bind(logger);
-    log({ consecutiveFailures: _consecutiveFailures, reason: result.reason }, "layover audit retention sweep failed");
+    _status.consecutiveFailures += 1;
+    const log = _status.consecutiveFailures >= 3 ? logger.error.bind(logger) : logger.warn.bind(logger);
+    log({ consecutiveFailures: _status.consecutiveFailures, reason: result.reason }, "layover audit retention sweep failed");
   } else if (result.outcome === "swept" || result.outcome === "idle") {
-    _consecutiveFailures = 0;
+    _status.consecutiveFailures = 0;
+    _status.lastSuccessAt = now.toISOString();
   }
   return result;
 }
