@@ -19,6 +19,7 @@
  *      node --import tsx/esm --test src/test/mediaProcessingWorker.test.ts
  */
 import { describe, it, before, after, afterEach, mock } from "node:test";
+import { awaitLoggerTransportReady } from "./helpers/loggerTransportReady.js";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -212,6 +213,14 @@ const obj = (n: number, ext = "jpg") => `${BUCKET}/${OWNER}/${n}.${ext}`;
 // ═════════════════════════════════════════════════════════════════════════════
 // 1. The retry refuses what is not retryable (service)
 // ═════════════════════════════════════════════════════════════════════════════
+
+// The logger's pino transport becomes READY through a poll on the GLOBAL
+// setTimeout; with setTimeout mocked below, a slow (loaded) worker would never
+// report ready and this file's process would never exit after its tests pass.
+// Made ready in real time first — helpers/loggerTransportReady.ts has the why.
+before(async () => {
+  await awaitLoggerTransportReady();
+});
 
 describe("census-media §30 (MD338) — retryMediaProcessing re-queues only a FAILED run", () => {
   it("refuses a READY asset and writes nothing, with the worker ON", async () => {
