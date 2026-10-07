@@ -2619,3 +2619,15 @@ Proven in `AvailabilityScreen.component.test.tsx` (the two ruling cases; the L3 
 wording). The Passport projection's own mapping is census-telegraph §49's.
 
 - NOT-GRADED: travel-buddy-standalone/src/features/passport/__tests__/AvailabilityScreen.component.test.tsx — §27's audience-label cases; no Passport row's verdict rests on them.
+
+## §30 — Lane C (2026-10-07, mission 4): lead ruling D-103 on the consumer projection (verifier F2 on `dc0107eda5`). NO PASSPORT ROW MOVES
+
+The discovery card and the explicit-intent read evaluated availability windows with the legacy `follower` /
+`following` labels, which no visibility admits since D-103, so they admitted nobody to a `followers` or `following`
+window — a mutual follow included. They now use the Passport rule
+(`artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:474#export function viewerContextToWindowRelationship(context: PassportViewerContext, relationshipLabel?: string | null): ViewerRelationship {`),
+with the relationship label captured from the resolver the projection already runs
+(`artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:905#const resolver = opts.resolveViewerContext ?? resolvePassportViewerContext;`).
+Proven by `artifacts/api-server/src/test/passportConsumerProjections.test.ts:439#describe("discovery_card / readVisibleExplicitIntent — a followers window reaches a MUTUAL follow only (lead ruling D-103)"`.
+
+- NOT-GRADED: artifacts/api-server/src/test/passportConsumerProjections.test.ts — §30's suite (the consumer projection's D-103 cases); no Passport row's verdict rests on it.

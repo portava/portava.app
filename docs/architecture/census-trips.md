@@ -10320,3 +10320,15 @@ count public rows only; each door back on its raw read) each turn the named case
 - NOT-GRADED: artifacts/api-server/src/routes/events.ts — §87.3 cites the event add-to-trip duplicate guard; the events surface is graded elsewhere.
 - NOT-GRADED: artifacts/api-server/src/test/planDuplicatePrivateItem.test.ts — §87.3's suite; no row's verdict rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/tripKernelFamilyContract.test.ts — §87.2 names it as the CI red that 3974's count form answers; it is the kernel transforms' shared contract, and no row's verdict rests on it.
+
+## §88 Lane C, mission 4 (2026-10-07): the verifier's findings on `dc0107eda5` that land in Trips — NO ROW MOVES
+
+- **F1.** Adding a member and approving a join request make a solo trip a group trip, so they hold the hosting
+  gate on a SOLO trip too; now pinned
+  (`artifacts/api-server/src/test/trustRestrictionDoors.test.ts:263#R-solo. THE POINT: restricted from hosting, on the person's SOLO trip`);
+  swapping either gate for the solo-exempt one turns it red.
+- **F4.** The owner-only rule reads an unset privacy as private in all three copies (Trips, Input, safe return)
+  (`artifacts/api-server/src/test/tripPrivateAnchorAccess.test.ts:168#it("A6 (verifier F4 on dc0107eda5).`).
+- **F5.** The retained-record guard's only PUT door (`/transport-policy`) and the join-request answers are pinned.
+- **F6.** An Auth transport throw while the guard resolves the caller is 503, never a pass-through
+  (`artifacts/api-server/src/test/trustRestrictionDoors.test.ts:389#R5 guard (verifier F6 on dc0107eda5)`).

@@ -17101,3 +17101,13 @@ No row moves: the behaviour is behind flags that are off.
 
 - NOT-GRADED: artifacts/api-server/src/services/ranking/boostLiftWithheld.ts — §123's D-24c read; the ranking verdicts rest on the flags, which are off.
 - NOT-GRADED: artifacts/api-server/src/test/discoveryBoostLiftWithheld.test.ts — §123's suite; no row's verdict rests on it.
+
+## §124 — Lane C, mission 4 (2026-10-07): the verifier's D-66 findings on `dc0107eda5`; no row changes bucket
+
+- **F3.** The canonicalisation 409 masks another person's pending or rejected Trail id; now pinned through the route
+  and the masking read
+  (`artifacts/api-server/src/test/discoveryTrailReview.test.ts:194#describe("O6 (verifier F3 on dc0107eda5)`).
+- **L2.** A followed Trail under review no longer feeds the viewer's Trail affinity
+  (`artifacts/api-server/src/test/discoveryTrailReview.test.ts:240#describe("O7 (verifier on dc0107eda5, L2)`).
+- **L3.** 3977's `trail_propose` refuses a parent that is not approved at the decision itself (database suite D6, CI's
+  local-db job); 3977 is applied nowhere and was corrected in place.
