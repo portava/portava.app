@@ -6936,3 +6936,44 @@ now also not produced. H16 stays `W` on §AD.1's two remaining reasons. The head
   `provider = 'fsq'` rows from the OS Places backfill, and nothing passes them here): D-67's stored-id
   branch would then have a carrier, and building it is the next step, not a reason to relax the
   coordinate branch.
+
+## §AF — 2026-10-07 (mission 4, lane H): two deletion defects on paths that already ran, fixed — and NO VERDICT MOVES
+
+Branch `claude/mission4-h-highlights-memories-20261007`, cut from `main` at `116ca4541f`. `head_commit` is **NOT** re-declared. Controlled evidence only: node:test suites over table-backed fakes, through the real routers. No database was read or written, no flag was read live, and no migration was applied.
+
+### §AF.1 What was wrong, and what was built
+
+1. **§21 RAW_EVIDENCE_PURGED purged by a column 2320 does not have.**
+   - The defect: step 4 deleted `memory_evidence WHERE memory_id = <id>`. Migration 2320's `memory_evidence` has no `memory_id` column. Evidence hangs off an EPISODE, and a kept candidate names its Memory with one explicit link row (`source_table = 'memories'`). Wherever 2320 is applied, every Memory deletion answered 42703, was retried three times and was dead-lettered. The captures and the link survived the deletion. Before 2320 the same query read as "table absent", so the suite next door stayed green: its fake answers an unknown column with zero rows.
+   - The fix: the step now follows the owner's link row to the episode (`artifacts/api-server/src/services/memory/memoryEvidenceErasure.ts:112#export async function eraseEvidenceForMemory`). It retires the episode FIRST — state `deleted`, with summary, place, city, country and significance cleared — and then purges every evidence row of it (`artifacts/api-server/src/services/memory/memoryEvidenceErasure.ts:74#export async function retireEpisodesAndPurgeEvidence`). The lifecycle calls it at `artifacts/api-server/src/services/memory/memoryDeletionLifecycle.ts:244#const erased = await eraseEvidenceForMemory(`. Retiring first means that a purge which fails is retried with the link still present, and that Keep again can never rebuild the deleted Memory. The retired episode keeps its window and replay key, so `storeCandidate` never proposes those photos again (proposed ruling H-1 in the lane report).
+   - A second path to the same harm is closed. A Keep cut off before its link, then a delete of that Memory, then Keep again used to reach the soft-deleted row through the derived-id primary-key refusal, and then linked photos to it. It is now refused, and the episode is retired (`artifacts/api-server/src/services/memory/episodeCandidates.ts:778#if (!keptRow || (keptRow as { state: string }).state === "deleted") {`).
+   - The tests run over a fake that answers a column 2320 does not create with 42703 / PGRST204: `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:261#retires the episode it was kept from and purges every evidence row`, `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:289#the deleted Memory's photos are never proposed again`, `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:308#another person's evidence naming the same Memory id`, `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:362#the retire fails: NOTHING is purged` and `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:381#an interrupted Keep, then the Memory deleted, then Keep again: refused`. That is 8 cases; 6 of 6 mutants were killed.
+2. **§21 DERIVATIVES_PURGED read one capped page of the whole registry.**
+   - The defect: `revokeDerivativesForMemory` selected every non-purged registration of every user and filtered for the Memory in JavaScript. PostgREST caps a response at its max-rows (1000 on Supabase). Once `memory_derivative_registry` (2730, applied) outgrows one page, a deleted Memory's derivative past the cap is never revoked, and the step still reports `done`.
+   - The fix: the read now filters in the database, on 2730's GIN index (`artifacts/api-server/src/services/memoryProjections/derivativeRegistry.ts:478#.contains("source_memory_ids", [memoryId])`).
+   - The test: `artifacts/api-server/src/test/memoryProjectionRegistry.test.ts:415#a derivative past PostgREST's max-rows page is still revoked`. Its mutant was killed.
+
+### §AF.2 Rows read, reason restated, NOT moved
+
+This table RESTATES no verdict. The `standing` column is spelled out, which is §V's convention.
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H52 | BUILT-BUT-WRONG | "Two of the five stores do not exist" is stale. `memory_derivative_registry` (2730) is applied, and its purge is now correct at any registry size. `memory_evidence` is migration 2320, and step 4 now targets the shape that 2320 creates. The two blockers left: 2320 is unapplied, so on production step 4 is `not_applicable`; and `deadLetterDurable` is still a hard `false` (`artifacts/api-server/src/services/memory/memoryDeletionLifecycle.ts:299#deadLetterDurable: false,`) |
+| H190 | BUILT-BUT-WRONG | The evidence half now holds on 2320's real shape (§AF.1 item 1), and the derivative half holds past one page (§AF.1 item 2). "The media bytes stay publicly served" is stale. The bytes are RETAINED by the soft delete, by design, but they are not public. `post-media` is private, `artifacts/api-server/src/lib/mediaAccess.ts:368#if (bucket !== "post-media") return false;` is the only bucket the relay serves, and the relay admits no non-owner to a `memories/` object (`artifacts/api-server/src/lib/mediaAccess.ts:14#sharing), non-owners are denied rather than guessed at.`). The one blocker left is 2320, which is unapplied |
+| H193 | BUILT-BUT-WRONG | Unchanged in substance. The two steps that could never complete wherever 2320 is applied (step 4) or past one registry page (step 3) are fixed, so a dead letter now means a real downstream failure. It is still not durable |
+| H114 | BUILT-BUT-WRONG | "The registry table is 2730, unapplied" is stale: 2730 is in `production-applied-migrations.json`. Revocation is now filtered in the database (§AF.1 item 2). It is still called only on DELETE. A privacy change does not call it, and no embedding exists anywhere to revoke |
+| H174 | BUILT-BUT-WRONG | "The table is 2730, unapplied" is stale: 2730 is applied. W stands on H34's reason: the read paths build per request and register nothing |
+
+### §AF.3 Headline
+
+**0 up, 0 down.** The headline is §AD.4's: 266 = 69 C / 152 W / 43 N / 2 X.
+
+### §AF.4 What would turn this red
+
+- A purge of `memory_evidence` by any column 2320 does not create.
+- Evidence purged before the episode is retired.
+- A Keep that finishes onto a deleted Memory.
+- A registry revocation that reads unfiltered rows and filters them after the read.
+
+The suites in §AF.1 assert each of these.
