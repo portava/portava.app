@@ -100,3 +100,15 @@ export async function postMediaModerationHold(
   }
   return held > 0 ? { state: "held", heldCount: held } : { state: "clear" };
 }
+
+/**
+ * The refusal a route sends for a hold, or null when the post may be written.
+ * held ⇒ 409 `conflict` (the media is in review or cannot be shared);
+ * unknown ⇒ 503 `degraded_unavailable` (retry; never told it was rejected).
+ */
+export function postMediaHoldRefusal(hold: PostMediaHold): { code: "conflict" | "degraded_unavailable"; message: string } | null {
+  if (hold.state === "clear") return null;
+  return hold.state === "held"
+    ? { code: "conflict", message: POST_MEDIA_HELD_MESSAGE }
+    : { code: "degraded_unavailable", message: POST_MEDIA_UNREADABLE_MESSAGE };
+}
