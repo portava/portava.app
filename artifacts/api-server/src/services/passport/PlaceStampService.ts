@@ -4,7 +4,7 @@
  *
  *   "A verified check-in (QR or geofence) at a canonical place earns a Place
  *    stamp. The stamp carries place_id; PassportPrivacyGuard.guardStamp keeps it
- *    from anyone but the owner. One Place stamp per person per place. No Place
+ *    from anyone but the owner [its Place-stamp clause, added after verifier N1]. One Place stamp per person per place. No Place
  *    stamp for a check-in inside the person's protected zones. It is earned,
  *    factual and shows why and when (OD-TRUST-7). It is written only after
  *    migration 2880 and a place-keyed uniqueness rule are applied."

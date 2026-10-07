@@ -732,3 +732,47 @@ describe("D. postPlaceWithheld ≡ mapPublicPost, over every mode × post_status
     assert.equal(w(UNKNOWN_MODE), true, "unknown ⇒ withheld (fail closed)");
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// N2 (delta verification of ad89e2a766): `updated_at` is the release instant.
+// trg_posts_updated sets it on the delayed-publish worker's release UPDATE, so
+// on a "Publish after I leave" post it dates the author's exit exactly as
+// `published_at` does. Pulse served it to everyone as `updatedAt`.
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("N2. GET /api/pulse — a non-author never gets the release instant as updatedAt", () => {
+  let url: string;
+  let close: () => Promise<void>;
+  before(async () => {
+    invalidateFlagsCache();
+    const app = express();
+    app.use(express.json());
+    app.use((req: any, _res: any, next: any) => { req.log = { error() {}, info() {}, warn() {} }; next(); });
+    const { default: pulseRouter } = await import("../routes/pulse.js");
+    app.use("/api", pulseRouter);
+    ({ url, close } = await startServer(app));
+  });
+  after(async () => { await close(); _setTestClient(null as any, false); });
+
+  async function served(token: string, rows: any[]) {
+    _setTestClient(pulseClient(rows).client, true);
+    const r = await fetch(`${url}/api/pulse`, { headers: { Authorization: `Bearer ${token}`, connection: "close" } });
+    assert.equal(r.status, 200);
+    return new Map<string, any>(((await r.json()) as any).posts.map((p: any) => [p.id, p]));
+  }
+
+  const CREATED = "2026-10-05T09:00:00.000Z";
+  const RELEASED = new Date(Date.now() - 3_600_000).toISOString();
+
+  it("a released 'Publish after I leave' post: a stranger gets the creation instant, the author the real updated_at", async () => {
+    const row = pulseRow("u1", "delayed_until_exit", { created_at: CREATED, updated_at: RELEASED, published_at: RELEASED });
+    assert.equal((await served("viewer-token", [row])).get("u1").updatedAt, CREATED);
+    assert.equal((await served("author-token", [row])).get("u1").updatedAt, RELEASED);
+  });
+
+  it("an ordinary post keeps its edit time for everyone", async () => {
+    const row = pulseRow("u2", "none", { created_at: CREATED, updated_at: RELEASED });
+    assert.equal((await served("viewer-token", [row])).get("u2").updatedAt, RELEASED);
+  });
+});
+

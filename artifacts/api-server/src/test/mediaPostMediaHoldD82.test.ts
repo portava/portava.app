@@ -160,6 +160,55 @@ describe("A. the hold decision", () => {
     const sc = withStage({ from() { throw new Error("x"); } }, true);
     assert.deepEqual(await postMediaModerationHold(sc, ["/api/media/file/post-media/author-1/held.jpg"]), { state: "held", heldCount: 1 });
   });
+
+  it("verifier N3: a signed, authenticated or render URL to the held object is the held object — the uploader cannot sign their way past the hold", async () => {
+    const host = "https://abcdefghijklmnop.supabase.co";
+    for (const spelling of [
+      `${host}/storage/v1/object/sign/post-media/author-1/held.jpg?token=eyJhbGciOi.x.y`,
+      `${host}/storage/v1/object/authenticated/post-media/author-1/held.jpg`,
+      `${host}/storage/v1/render/image/sign/post-media/author-1/held.jpg?token=t&width=400`,
+      `${host}/storage/v1/render/image/authenticated/post-media/author-1/held.jpg`,
+      `${host}/storage/v1/object/public/post-media/author-1/held.jpg`,
+      `${host}/storage/v1/object/sign/post%2Dmedia/author-1/held.jpg?token=t`,
+    ]) {
+      assert.deepEqual(postMediaStorageRef(spelling), { kind: "object", bucket: "post-media", path: "author-1/held.jpg" }, spelling);
+      const sc = withStage({ from() { throw new Error("x"); } }, true);
+      assert.deepEqual(await postMediaModerationHold(sc, [spelling]), { state: "held", heldCount: 1 }, spelling);
+    }
+    assert.deepEqual(
+      postMediaStorageRef(`${host}/storage/v1/object/sign/post-media/author-1/held.jpg?token=t`),
+      { kind: "object", bucket: "post-media", path: "author-1/held.jpg" },
+      "it resolves to the held row itself, not merely to 'no row'",
+    );
+    // A storage path that still names our bucket in a shape no form above has is held outright.
+    // So is our storage path behind another host (a proxy serving our project is still our storage).
+    for (const odd of [
+      `${host}/storage/v1/object/upload/sign/post-media/author-1/held.jpg`,
+      `${host}/storage/v1/s3/post-media/author-1/held.jpg`,
+      `https://cdn.example.net/proxy/storage/v1/object/sign/post-media/author-1/held.jpg?token=t`,
+    ]) {
+      assert.deepEqual(postMediaStorageRef(odd), { kind: "unclean" }, odd);
+      const sc = withStage({ from() { throw new Error("x"); } }, true);
+      assert.deepEqual(await postMediaModerationHold(sc, [odd]), { state: "held", heldCount: 1 }, odd);
+    }
+    // The cleared object, signed, still clears: the rule is the hold, not a ban on signed links.
+    const sc = withStage({ from() { throw new Error("x"); } }, true);
+    assert.deepEqual(await postMediaModerationHold(sc, [`${host}/storage/v1/object/sign/post-media/author-1/cleared.jpg?token=t`]), { state: "clear" });
+  });
+
+  it("verifier N4: the relay path in any letter case is the relay path — Express routes /API/media/file and /api/MEDIA/FILE to it", async () => {
+    for (const spelling of [
+      "https://api.example.com/API/media/file/post-media/author-1/held.jpg",
+      "https://api.example.com/api/MEDIA/FILE/post-media/author-1/held.jpg",
+      "/API/media/file/post-media/author-1/held.jpg",
+      "/Api/Media/File/post-media/author-1/held.jpg",
+    ]) {
+      assert.deepEqual(postMediaStorageRef(spelling), { kind: "object", bucket: "post-media", path: "author-1/held.jpg" }, spelling);
+      const sc = withStage({ from() { throw new Error("x"); } }, true);
+      assert.deepEqual(await postMediaModerationHold(sc, [spelling]), { state: "held", heldCount: 1 }, spelling);
+    }
+    assert.deepEqual(postMediaStorageRef("/api/media/file/POST-MEDIA/author-1/held.jpg"), { kind: "unclean" }, "a bucket in another case is no clean object — held");
+  });
 });
 
 // ── B/C. the routes ──────────────────────────────────────────────────────────

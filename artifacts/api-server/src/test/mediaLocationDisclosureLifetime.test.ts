@@ -17,9 +17,9 @@
  *      the World views, action rail and Compass): the same end, the same tier,
  *      and no canonical place id after it; never for the owner;
  *   D. the two paths agree at every instant;
- *   E. the readers that carry the window SELECT published_at — and the instant is
- *      never served (it would date the author's exit; 3362 withholds published_at
- *      from every client role for that reason).
+ *   E. the readers that carry the window SELECT published_at — and the release instant (published_at, the
+ *      other release-timing fields, and updated_at, which the release UPDATE sets) goes to the author alone
+ *      (verifiers F6, N2): told to anyone else it dates the author's exit; 3362 withholds it from client roles.
  *
  * Run: node --import tsx/esm --test src/test/mediaLocationDisclosureLifetime.test.ts
  */
@@ -176,7 +176,7 @@ describe("D. the two paths agree at every instant", () => {
   });
 });
 
-describe("E. who reads the window, and that nobody is served it", () => {
+describe("E. who reads the window, and that only the author is served the release instant", () => {
   it("the media projection, the Watch feed and the grid SELECT published_at", () => {
     assert.match(MEDIA_PROJECTION_POST_COLUMNS, /\bpublished_at\b/);
     const feed = readFileSync(join(SRC, "routes", "mediaFeed.ts"), "utf8");
@@ -200,6 +200,10 @@ describe("E. who reads the window, and that nobody is served it", () => {
     assert.equal((posts.match(/withholdReleaseTiming\(/g) ?? []).length, 4, "global, following, trip and single-post doors");
     const wall = readFileSync(join(SRC, "routes", "wall.ts"), "utf8");
     assert.match(wall, /publishedAt: wallPublishedAtForViewer\(r, opts\.viewerId\)/, "the Wall shows others a creation instant");
+    // Verifier N2: updated_at is the release instant too. withholdReleaseTiming covers it on the four post
+    // doors (postReleaseTimingAndAuthor.test.ts); Pulse serves updatedAt through the same rule.
+    const pulse = readFileSync(join(SRC, "routes", "pulse.ts"), "utf8");
+    assert.match(pulse, /updatedAt: {3}updatedAtForViewer\(row, user\.id\)/);
   });
 
   it("the §11 instant is handed only to the choke point — never to the temporal-state member a client receives", () => {

@@ -348,7 +348,7 @@ router.get("/pulse", async (req, res) => {
       mediaUrls:   mediaByPost.get(row.id) ?? row.media_urls ?? [],
       visibility:  row.visibility,
       createdAt:   row.created_at,
-      updatedAt:   row.updated_at ?? undefined,
+      updatedAt:   updatedAtForViewer(row, user.id) ?? undefined, // verifier N2: never the release instant of a "Publish after I leave" post to a non-author
       // location labels — safe, no coords
       locationName:    row.location_name ?? null,
       locationCity:    geoTag?.city ?? row.location_city ?? null,
@@ -2030,3 +2030,7 @@ export function pulsePostsForViewer<T extends { id?: unknown }>(rows: readonly a
 
 // census-discovery §78 H3 (DV-09), integrated by lane W10-I (§91): Pulse ranks on its own `01` §9 objective when the flag is on.
 import { surfaceObjectiveOptions } from "../lib/discoveryRankDesigns.js";
+
+// census-media §50.14 (verifier N2). Declared at the tail so no cited line moves.
+import { updatedAtForViewer } from "../lib/postLocationDisclosureLifetime.js";
+

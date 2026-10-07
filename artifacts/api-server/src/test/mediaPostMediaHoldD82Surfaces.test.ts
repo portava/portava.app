@@ -203,4 +203,24 @@ describe("B. /admin/portava/posts", () => {
     assert.notEqual(r.status, 503);
     assert.equal(c.writes.some((w: any) => w.table === "posts" && Array.isArray(w.row.media_urls)), true, "the cleared media was written");
   });
+
+  it("verifier N3: admin media refs are validated like every post's (appMediaRef) — an arbitrary string is a 400 and nothing is written", async () => {
+    for (const bad of ["not-a-url", "javascript-ish text", "event-media/x.jpg"]) {
+      let c = fakeClient({ stageOn: false });
+      let r = await create(c, [bad]);
+      assert.equal(r.status, 400, `POST ${bad}: ${JSON.stringify(r.body)}`);
+      assert.equal(wrote(c, "posts"), 0);
+      c = fakeClient({ stageOn: false });
+      r = await edit(c, [bad]);
+      assert.equal(r.status, 400, `PATCH ${bad}: ${JSON.stringify(r.body)}`);
+      assert.equal(wrote(c, "posts"), 0);
+    }
+  });
+
+  it("verifier N3: a signed URL to the held object is held on the admin door too", async () => {
+    const c = fakeClient({ stageOn: true });
+    const r = await create(c, [`${SUPABASE}/storage/v1/object/sign/post-media/${HELD_PATH}?token=t`]);
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(wrote(c, "posts"), 0);
+  });
 });

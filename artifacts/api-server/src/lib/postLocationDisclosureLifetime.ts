@@ -120,7 +120,7 @@ export function withholdReleaseTiming<T>(row: T, viewerId: string | null | undef
   let out: Record<string, unknown> | null = null;
   for (const k of RELEASE_TIMING_FIELDS) {
     if (k in r && r[k] != null) { out ??= { ...r }; out[k] = null; }
-  }
+  } if ("updated_at" in r && r.updated_at != null && updatedAtForViewer(r, viewerId) !== r.updated_at) { out ??= { ...r }; out.updated_at = updatedAtForViewer(r, viewerId); } // verifier N2
   return (out ?? row) as T;
 }
 
@@ -141,3 +141,28 @@ export function wallPublishedAtForViewer(
   }
   return String(row.published_at ?? row.created_at);
 }
+
+// ── `updated_at` (verifier N2, 2026-10-07) ───────────────────────────────────
+// Appended at the tail so no cited line above moves.
+//
+// `posts.updated_at` is set by trg_posts_updated on EVERY update. For a "Publish
+// after I leave" post the delayed-publish worker's release UPDATE sets it to the
+// release instant, and the geofence-exit UPDATE before that sets it to the exit
+// instant. Either one dates the author's departure as well as `published_at`
+// does. So a non-author gets the post's creation instant in its place: for a
+// delayed_until_exit row, and for a row whose mode was not read (an unread mode
+// is not a known-safe mode). Every other post's `updated_at` is an edit time
+// and is served as it is.
+
+/** The `updated_at` a viewer may be told for a post row. */
+export function updatedAtForViewer(
+  row: { author_id?: unknown; location_privacy_mode?: unknown; updated_at?: unknown; created_at?: unknown },
+  viewerId: string | null | undefined,
+): unknown {
+  const isAuthor = typeof viewerId === "string" && viewerId.length > 0 && row.author_id != null && String(row.author_id) === viewerId;
+  if (isAuthor) return row.updated_at ?? null;
+  const modeUnread = !("location_privacy_mode" in row);
+  if (modeUnread || row.location_privacy_mode === "delayed_until_exit") return row.created_at ?? null;
+  return row.updated_at ?? null;
+}
+

@@ -16421,7 +16421,7 @@ window.
 
 - The lead declines a ruling. Its row returns to its §48 verdict.
 - A door serves `published_at`, `publish_eligible_at` or `publish_after_exit` to anyone but the author,
-  or `locationDisclosureExpiresAt` reaches the §11 member a client receives. Each one dates the author's exit.
+  or `locationDisclosureExpiresAt` reaches the §11 member a client receives. Each one dates the author's exit. *(Corrected again, §50.14: so does `updated_at` on a "Publish after I leave" post, which the release UPDATE sets; it is now on this list.)*
   *(Corrected after verification, §50.9: as first written this line described a state the tree did not
   have — `routes/posts.ts` served those three fields to every viewer.)*
 - `toMediaAsset` serving any `"live"`, a social lifetime added by age, a writer with no stated source,
@@ -16497,7 +16497,7 @@ that goes red without it.
     (`artifacts/api-server/src/lib/postLocationDisclosureLifetime.ts:133#export function wallPublishedAtForViewer(`).
     That function is used by the post spine, the postcard loader and revalidation.
 
-  §50.6's red line is corrected to match. Test:
+  §50.6's red line is corrected to match. *(Incomplete as first written: `updated_at` is the release instant too, and it was still served — corrected in §50.14, verifier N2.)* Test:
   `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:83#describe("F6. the release instant is the author's alone"`.
 - **F2 — the D-82 hold failed open on an unreadable stage flag.** The hold now reads the flag itself and
   tells a failed read apart from FALSE
@@ -16626,4 +16626,48 @@ and it leaves `:878` and `:1018` for after lane C's #650.
 
 **What would turn MD175 red:** Remix offered without a chain or with Compass off; the ask carrying a
 client-supplied place list; or the chain context gaining a capture time, a media id or an author.
+
+### 50.14 Corrections required by the delta verification of `ad89e2a766` (N2, N3, N4, N6). No row moves
+
+The verifier accepted the delta with required fixes. Each fix below is on this branch and proven by a test
+that goes red without it. N1 and N5 are Passport's (census-passport §31).
+
+- **N2 — `updated_at` was the release instant, served to every viewer.** `trg_posts_updated` sets
+  `updated_at` on every update. On a "Publish after I leave" post, the delayed-publish worker's release
+  UPDATE sets it to the release instant, and the geofence-exit UPDATE before it sets it to the exit instant.
+  F6 withheld `published_at` and left this. A non-author now gets the creation instant in its place, for a
+  delayed_until_exit row and for a row whose mode was not read
+  (`artifacts/api-server/src/lib/postLocationDisclosureLifetime.ts:158#export function updatedAtForViewer(`).
+  It is applied on the four post doors through `withholdReleaseTiming`, and on Pulse's `updatedAt`.
+  Tests:
+  - `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:109#updatedAtForViewer (verifier N2)`, plus the F6 route cases, now with a realistic `updated_at`;
+  - `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:743#describe("N2. GET /api/pulse`.
+
+  Test E in `mediaLocationDisclosureLifetime` is retitled: the release instant goes to the author alone,
+  not "nobody is served it". §50.6 and §50.9 are corrected in place.
+- **N3 — a signed or authenticated Storage URL to a held object cleared the hold.** The hold knew only
+  the public URL form. The uploader can mint a signed URL to their own object, valid for an hour and
+  renewable. Every Storage API form now resolves to the object it names:
+  `/storage/v1/(object|render/image)/(public|sign|authenticated)/<bucket>/<path>` on the configured origin,
+  or behind any host. Any other storage path that names one of our buckets is held outright
+  (`artifacts/api-server/src/lib/media/postMediaModerationHold.ts:188#function storageApiRef(`).
+  The official account's post door now validates `mediaUrls` with `appMediaRef`, like every other post door.
+  Tests:
+  - `artifacts/api-server/src/test/mediaPostMediaHoldD82.test.ts:164#verifier N3: a signed, authenticated or render URL`;
+  - `artifacts/api-server/src/test/mediaPostMediaHoldD82Surfaces.test.ts:207#verifier N3: admin media refs are validated`.
+- **N4 — an upper-case relay path cleared the hold.** Express routes case-insensitively, so
+  `/API/media/file/…` and `/api/MEDIA/FILE/…` reach the relay. The relay prefix is now matched without case,
+  relative and absolute. A bucket in another case is no clean object, so it is held. Test:
+  `artifacts/api-server/src/test/mediaPostMediaHoldD82.test.ts:199#verifier N4: the relay path in any letter case`.
+- **N6 — an activation ordering, recorded.** With the moderation stage on, the hold refuses any app-storage
+  object that has no canonical row, and only `media_canonical_enabled` writes those rows. So the stage
+  requires `media_canonical_enabled` ON. This is now in the flag policy's rationale for
+  `media_moderation_classifier_enabled` (`scripts/src/beta-flag-policy.json`) and in
+  `docs/ops/beta-runtime-runbook.md`.
+
+Eight mutants were run, one per fix, and each turned its test red. No verdict moves: MD79 stays `C` (§50.9),
+and MD269 stays `W` on D-27d. The headline in §50.13 stands.
+
+Cited, not graded (check:census-scope-coverage):
+- NOT-GRADED: scripts/src/beta-flag-policy.json — §50.14 cites where N6's activation ordering is recorded; the beta flag policy is configuration, and no Media row is graded on it.
 

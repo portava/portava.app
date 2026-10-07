@@ -67,12 +67,12 @@ export function postMediaStorageRef(ref: string):
   | { kind: "object"; bucket: string; path: string }
   | { kind: "unclean" }
   | { kind: "foreign" } {
-  const s = typeof ref === "string" ? ref.trim() : "";
+  const s = typeof ref === "string" ? ref.trim() : ""; const api = storageApiRef(s); if (api) return api; // verifier N3: a signed / authenticated / render URL to our storage is ours
   // The relay path, relative or absolute: /api/media/file/<bucket>/<path>.
   let pathname: string | null = null;
-  if (s.startsWith(RELAY_PREFIX)) pathname = s;
+  if (s.toLowerCase().startsWith(RELAY_PREFIX)) pathname = s; // verifier N4: Express routes case-insensitively
   else if (/^[a-z]+:\/\//i.test(s)) { try { pathname = new URL(s).pathname; } catch { pathname = null; } }
-  if (pathname && pathname.startsWith(RELAY_PREFIX)) {
+  if (pathname && pathname.toLowerCase().startsWith(RELAY_PREFIX)) {
     const rest = pathname.slice(RELAY_PREFIX.length);
     const slash = rest.indexOf("/");
     if (slash <= 0) return { kind: "unclean" };
@@ -165,3 +165,45 @@ export function postMediaHoldRefusal(hold: PostMediaHold): { code: "conflict" | 
     ? { code: "conflict", message: POST_MEDIA_HELD_MESSAGE }
     : { code: "degraded_unavailable", message: POST_MEDIA_UNREADABLE_MESSAGE };
 }
+
+// ── Every Storage API form of our objects (verifier N3, 2026-10-07) ──────────
+// Appended at the tail so no cited line above moves; function declarations hoist.
+//
+// appStorageUrlInfo knows only the PUBLIC form (/storage/v1/object/public/...).
+// The uploader can also mint a signed URL to their own object (/object/sign/...,
+// valid an hour, renewable) or use the authenticated or image-render forms. Each
+// names the same object, so each must meet the same hold: a held file must not
+// reach a post because it was spelled as a self-authenticating link.
+//
+// A URL is a Storage API reference when its path contains /storage/v1/ anywhere
+// — on our project's origin or behind any other host (a proxy serving our
+// project is still our storage). Then:
+//   /storage/v1/(object|render/image)/(public|sign|authenticated)/<bucket>/<path>
+//   in one of our buckets ⇒ that object, canonicalised like every other form;
+//   any other path that still names one of our buckets ⇒ unclean (held);
+//   anything else ⇒ not decided here (null), and the rules above run.
+
+const STORAGE_API_OBJECT = /^\/storage\/v1\/(?:object|render\/image)\/(?:public|sign|authenticated)\/([^/]+)\/(.+)$/i;
+
+function storageApiRef(s: string): { kind: "object"; bucket: string; path: string } | { kind: "unclean" } | null {
+  if (!/^[a-z]+:\/\//i.test(s)) return null;
+  let u: URL;
+  try { u = new URL(s); } catch { return null; }
+  let decoded: string;
+  try { decoded = decodeURIComponent(u.pathname); } catch { decoded = u.pathname; }
+  const storagePath = u.pathname.toLowerCase().includes("/storage/v1/") || decoded.toLowerCase().includes("/storage/v1/");
+  if (!storagePath) return null;
+  const m = STORAGE_API_OBJECT.exec(u.pathname);
+  if (m) {
+    let bucket: string;
+    try { bucket = decodeURIComponent(m[1]!); } catch { return { kind: "unclean" }; }
+    if (APP_BUCKETS.has(bucket)) {
+      const o = canonicalObject(bucket, m[2]!);
+      return o ? { kind: "object", ...o } : { kind: "unclean" };
+    }
+  }
+  const lower = decoded.toLowerCase();
+  for (const b of APP_BUCKETS) if (lower.includes(`/${b}/`)) return { kind: "unclean" };
+  return null;
+}
+

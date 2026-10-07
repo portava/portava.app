@@ -350,7 +350,9 @@ rule.
 ### D-84 (Q-L19, P61): what act earns a Place stamp?
 - **Ruling: a verified check-in (QR or geofence) at a canonical place.**
   - The stamp carries `place_id`. `PassportPrivacyGuard.guardStamp` keeps it from anyone but the owner, so
-    others see no more than the city.
+    others see no more than the city. *(Corrected 2026-10-07 after verification N1: as first written this
+    described the guard as it already was, and it did not withhold a Place stamp's `place_id`. It does now,
+    for public, circle and trip-crew callers.)*
   - There is one Place stamp per person per place.
   - No Place stamp is awarded for a check-in inside the person's protected zones (OD-MAP-3).
   - It is earned, factual and shows why and when (OD-TRUST-7).

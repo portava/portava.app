@@ -160,8 +160,80 @@ describe("E. the act that earns it, and the uniqueness rule under it", () => {
 
   it("3800 makes the dedup place-keyed: the city index excludes 'place', a (user_id, place_id) index covers it", () => {
     const sql = readFileSync(join(SRC, "migrations", "3800_passport_place_stamps.sql"), "utf8");
-    assert.match(sql, /CREATE UNIQUE INDEX passport_stamps_dedup_idx\s+ON public\.passport_stamps USING btree \(user_id, stamp_type, country, city\)\s+WHERE \(stamp_type <> 'place'::text\);/);
+    // Verifier N5: the city index is rebuilt with the column list it HAD (plain
+    // or COALESCE, both read by exact pg_get_indexdef), plus the predicate.
+    assert.match(sql, /EXECUTE 'CREATE UNIQUE INDEX passport_stamps_dedup_idx ON public\.passport_stamps USING btree '\s+\|\| cols \|\| ' WHERE \(stamp_type <> ''place''::text\)';/);
     assert.match(sql, /CREATE UNIQUE INDEX IF NOT EXISTS passport_stamps_place_dedup_idx\s+ON public\.passport_stamps USING btree \(user_id, place_id\)\s+WHERE \(stamp_type = 'place'::text\);/);
     assert.match(sql, /CHECK \(stamp_type <> 'place'::text OR place_id IS NOT NULL\)/);
   });
 });
+
+describe("F. verifier N5 — 3800 never changes how a NULL-city stamp deduplicates", () => {
+  const sql = readFileSync(join(SRC, "migrations", "3800_passport_place_stamps.sql"), "utf8");
+  const rollback = readFileSync(join(SRC, "..", "..", "..", "db", "rollback", "2026-10-07-3800-passport-place-stamps-rollback.sql"), "utf8");
+  const PLAIN = "CREATE UNIQUE INDEX passport_stamps_dedup_idx ON public.passport_stamps USING btree (user_id, stamp_type, country, city)";
+  const COAL = "CREATE UNIQUE INDEX passport_stamps_dedup_idx ON public.passport_stamps USING btree (user_id, stamp_type, COALESCE(country, ''''::text), COALESCE(city, ''''::text))";
+  const PRED = " WHERE (stamp_type <> ''place''::text)";
+  const pre = sql.slice(sql.indexOf("DO $pre$"), sql.indexOf("END $pre$"));
+  const post = sql.slice(sql.indexOf("DO $post$"));
+  const rebuild = sql.slice(sql.indexOf("DO $rebuild$"), sql.indexOf("END $rebuild$"));
+
+  it("the precondition accepts exactly the plain and COALESCE forms (and their partial replays), and refuses anything else", () => {
+    for (const form of [PLAIN, PLAIN + PRED, COAL, COAL + PRED]) assert.ok(pre.includes(`'${form}'`), form);
+    assert.match(pre, /IF def NOT IN \(/);
+    assert.match(pre, /RAISE EXCEPTION 'PRECONDITION FAILED \(3800\): passport_stamps_dedup_idx is "%", which is neither/);
+  });
+
+  it("the rebuild carries the column list over: COALESCE stays COALESCE, plain stays plain", () => {
+    assert.match(rebuild, /IF position\('COALESCE\(country' IN def\) > 0 THEN\s+cols := '\(user_id, stamp_type, COALESCE\(country, ''''::text\), COALESCE\(city, ''''::text\)\)';\s+ELSE\s+cols := '\(user_id, stamp_type, country, city\)';/);
+    assert.ok(!/^\s*CREATE UNIQUE INDEX passport_stamps_dedup_idx/m.test(sql), "no hard-coded rebuild statement remains: the only CREATE is the EXECUTE that carries the columns");
+  });
+
+  it("the postcondition and the rollback know the same two partial forms", () => {
+    for (const form of [PLAIN + PRED, COAL + PRED]) {
+      assert.ok(post.includes(`'${form}'`), `postcondition: ${form}`);
+      assert.ok(rollback.includes(`'${form}'`), `rollback: ${form}`);
+    }
+    assert.match(rollback, /RAISE EXCEPTION 'ROLLBACK REFUSED \(3800\): passport_stamps_dedup_idx is "%", not a form 3800 writes/);
+  });
+});
+
+import { guardStamp, type StampRow } from "../services/passport/PassportPrivacyGuard.js";
+
+describe("G. verifier N1 — guardStamp keeps a Place stamp's venue from everyone but the owner", () => {
+  const PLACE = "11111111-2222-4333-8444-555555555555";
+  const stamp = (o: Partial<StampRow> = {}): StampRow =>
+    ({
+      id: "s-1", user_id: "owner-1", stamp_type: "place", country: "VN", city: "Da Nang", neighborhood: "An Thuong",
+      place_id: PLACE, source_type: "checkin", verification_level: "verified", visibility: "public",
+      earned_at: "2026-10-07T00:00:00.000Z", created_at: "2026-10-07T00:00:00.000Z", ...o,
+    }) as StampRow;
+
+  it("the owner keeps place_id", () => {
+    assert.equal(guardStamp(stamp(), "owner")?.place_id, PLACE);
+  });
+
+  for (const ctx of ["public", "circle", "trip_crew"] as const) {
+    it(`a ${ctx} caller gets the stamp, without its place_id`, () => {
+      const out = guardStamp(stamp(), ctx);
+      assert.ok(out, "a public Place stamp is still shown");
+      assert.equal(out!.place_id, null);
+      assert.equal(out!.city, "Da Nang", "only the venue is withheld");
+    });
+  }
+
+  it("a circle-only Place stamp, seen by its circle, still has no place_id", () => {
+    assert.equal(guardStamp(stamp({ visibility: "circle_only" as any }), "circle")?.place_id, null);
+  });
+
+  it("the hotel blur still applies to a Place stamp (the new rule does not short-circuit it)", () => {
+    const out = guardStamp(stamp({ source_type: "hotel" }), "circle", { hotelBlurEnabled: true });
+    assert.equal(out?.place_id, null);
+    assert.equal(out?.neighborhood, null);
+  });
+
+  it("other stamp types are unchanged: a destination stamp keeps place_id for a circle caller", () => {
+    assert.equal(guardStamp(stamp({ stamp_type: "destination" }), "circle")?.place_id, PLACE);
+  });
+});
+

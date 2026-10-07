@@ -4232,3 +4232,11 @@ stamp_type = 'place'` and the CHECK `passport_stamps_place_has_place_id`, and se
 `passport_place_stamps_enabled` FALSE. **It requires 2880** (the `'place'` label) and refuses to run without
 it. Rollback: `db/rollback/2026-10-07-3800-passport-place-stamps-rollback.sql`, which refuses while the flag
 is on or any Place stamp exists.
+
+**Before the press, read the live index.** `SELECT pg_get_indexdef('public.passport_stamps_dedup_idx'::regclass);`
+Two forms exist in this repository's history: the baseline's plain `(user_id, stamp_type, country, city)`, and
+0042's `COALESCE(country, '')`/`COALESCE(city, '')` form. 3800 accepts exactly those two, or the partial form of
+either on a replay. It rebuilds the same column list with the `'place'` predicate, so how a NULL-city stamp
+deduplicates never changes. It refuses any other definition, and the rollback restores the form it found.
+**Turning the flag on** also needs `hidden_gems_passport_enabled` ON: the one writer is the hidden-gem
+verify-visit.

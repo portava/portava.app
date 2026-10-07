@@ -2636,7 +2636,7 @@ name the 2026-09-14 palette decision, which ruled the colour; D-32 extends it to
 
 | ID | Was | Now | Why |
 | --- | --- | --- | --- |
-| P61 | **W** | **W** | **D-84 sets the rule:** a verified check-in (QR or geofence) at a canonical place earns a Place stamp. There is one per person per place, and none inside the person's protected zones. `PassportPrivacyGuard.guardStamp` keeps `place_id` from everyone but the owner. **NOT BUILT here.** 2880 (the `'place'` label) is staged and unapplied. The live unique index does not include `place_id`, so a place-keyed index migration is needed too. 2880's own ordering — pinned by `passportStampPlaceVocabulary.test.ts` — forbids the producer until the label is applied. Remaining: the index migration (lane M's band 3800–3819), then the producer behind a flag seeded FALSE. |
+| P61 | **W** | **W** | **D-84 sets the rule:** a verified check-in (QR or geofence) at a canonical place earns a Place stamp. There is one per person per place, and none inside the person's protected zones. `PassportPrivacyGuard.guardStamp` keeps `place_id` from everyone but the owner *(corrected after verification, §31: as first written this described a rule the guard did not have; it does now)*. **NOT BUILT here.** 2880 (the `'place'` label) is staged and unapplied. The live unique index does not include `place_id`, so a place-keyed index migration is needed too. 2880's own ordering — pinned by `passportStampPlaceVocabulary.test.ts` — forbids the producer until the label is applied. Remaining: the index migration (lane M's band 3800–3819), then the producer behind a flag seeded FALSE. |
 
 ### 29.3 Headline, restated from the rows
 
@@ -2668,7 +2668,8 @@ longer wait on that acceptance. `head_commit` is NOT re-declared.*
   - the traveller's stamp-visibility preference cannot be read.
 
   A stamp it does write carries `place_id`, `checkin`, its source (why) and `awarded_at` (when), as D-84
-  and OD-TRUST-7 ask. `guardStamp` already keeps `place_id` from anyone but the owner.
+  and OD-TRUST-7 ask. `guardStamp` keeps `place_id` from anyone but the owner. *(Corrected after verification, §31: as
+  first written this said "already", and the guard did not do it. It does now.)*
 - **One per person per place:** `createStamp` dedups a Place stamp on `place_id` alone and refuses one
   with no place. Migration `3800_passport_place_stamps.sql` (applied nowhere, requires 2880):
   - rebuilds `passport_stamps_dedup_idx` as a partial index that excludes `'place'`;
@@ -2697,3 +2698,34 @@ longer wait on that acceptance. `head_commit` is NOT re-declared.*
 | BUILT-BUT-WRONG | 3 |
 | NOT-BUILT | 0 |
 | CANNOT-VERIFY | 1 |
+
+## §31 — 2026-10-07 (lane M): corrections required by the delta verification of `ad89e2a766` (N1, N5). No row moves
+
+*Same branch. `head_commit` is NOT re-declared.*
+
+- **N1 — the guard did not do what §29.2, §30.1, D-84 and 3800's flag text said.** `guardStamp` nulled
+  `place_id` only for `safe_return`, `hidden_gem` (to the public) and hotel-blurred sources, so a Place
+  stamp kept its venue for public, circle and trip-crew callers. No door served it today: the one
+  non-owner stamp door projects no `place_id`, and `buildMapPayload` has only the owner caller. It was a
+  false clause and an activation prerequisite. The guard now withholds it from every caller but the owner
+  (`artifacts/api-server/src/services/passport/PassportPrivacyGuard.ts:163#if (stamp.stamp_type === "place" && callerCtx !== "owner") {`).
+  One case per context, plus the hotel-blur and other-type cases:
+  `artifacts/api-server/src/test/passportPlaceStamp.test.ts:203#describe("G. verifier N1`.
+  Removing the clause turns three cases red. §29.2, §30.1, D-84, the `PlaceStampService` header and 3800's
+  flag description are corrected.
+- **N5 — 3800 could have changed how a NULL-city stamp deduplicates.** Two definitions of
+  `passport_stamps_dedup_idx` exist in this repository's history: the baseline's plain form and 0042's
+  `COALESCE` form, which 2880 names as live. 3800 recreated the plain form unconditionally. It now reads
+  `pg_get_indexdef` and accepts exactly those two forms, or the partial form of either on a replay. It
+  rebuilds the same column list with the `'place'` predicate, and refuses anything else. The postcondition
+  and the rollback know the same two partial forms. Test:
+  `artifacts/api-server/src/test/passportPlaceStamp.test.ts:171#describe("F. verifier N5`.
+- **Activation prerequisites, completed.** P61's activation list (§30.2) gains one item. The one writer runs
+  from the hidden-gem verify-visit, which returns before it unless `hidden_gems_passport_enabled` is on.
+  So activation needs 2880 and 3800 applied, and both `hidden_gems_passport_enabled` and
+  `passport_place_stamps_enabled` ON.
+
+| ID | Was | Now | Why |
+|---|---|---|---|
+| P61 | **W** | **W** | §30.2, with N1 fixed and the activation list completed. The headline in §30.3 stands. |
+
