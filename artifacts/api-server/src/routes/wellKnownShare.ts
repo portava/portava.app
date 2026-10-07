@@ -53,7 +53,7 @@ import { Router } from "express";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { getServiceClient } from "../lib/supabase.js";
 import { resolveProfileVisibility } from "../lib/profileVisibility.js";
-import { nameVisibleFor } from "../lib/publicIdentity.js";
+import { nameVisibleFor } from "../lib/publicIdentity.js"; import { readMemoryPrecisionGate, precisionColumnSelectable, precisionClampApplies } from "../lib/memoryPrecisionGate.js"; import { memoryPlaceLabelsForNonOwner } from "../lib/memoryLocationPrecision.js"; // §10 on the Memory preview (lane R, 2026-10-07)
 
 const router = Router();
 
@@ -526,15 +526,20 @@ const ENTITY_SPECS: EntitySpec[] = [
     appSegment: "memory",
     kicker: `${APP_NAME.toUpperCase()} · MEMORY`,
     async resolve(sc, id) {
-      const { data } = await sc
-        .from("memories")
-        .select("title, caption, visibility, state, location_city, location_country")
-        .eq("id", id)
-        .maybeSingle();
-      if (!data) return null;
+      // §10: an anonymous preview publishes the Memory's place words to anyone,
+      // so they take the owner's rung through the routes' three-state gate —
+      // the column named only when the gate is definitely on, and an UNREADABLE
+      // gate clamping (no city, no country), never read as "off". A failed row
+      // read is the generic card, as an absent one is.
+      const precisionGate = await readMemoryPrecisionGate(sc);
+      const { data, error } = precisionColumnSelectable(precisionGate)
+        ? await sc.from("memories").select("title, caption, visibility, state, location_city, location_country, location_precision").eq("id", id).maybeSingle()
+        : await sc.from("memories").select("title, caption, visibility, state, location_city, location_country").eq("id", id).maybeSingle();
+      if (error || !data) return null;
       if (data.state !== "published") return null;
       if (data.visibility !== "public") return null;
-      const where = joinPlace(data.location_city, data.location_country);
+      const place = memoryPlaceLabelsForNonOwner(data, precisionClampApplies(precisionGate));
+      const where = joinPlace(place.city, place.country);
       const name = clamp(data.title, 60) || clamp(data.caption, 60);
       return {
         title: `${name || "Memory"} · ${APP_NAME}`,

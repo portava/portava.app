@@ -197,6 +197,9 @@ function orFilter(expr: string): (r: Row) => boolean {
  * the two `blocks` reads (verifier minor 5). `order` is honoured (verifier minor
  * 8): rows without the column sort last, and `limit` applies after it.
  */
+/** Every select list the loaders send, as `table: columns` (the §10 cases read it). */
+const selectLog: string[] = [];
+
 function makeClient(db: Record<string, Row[]>, failing: ReadonlySet<string> = new Set()) {
   function from(table: string): Builder {
     const filters: Array<(r: Row) => boolean> = [];
@@ -222,7 +225,7 @@ function makeClient(db: Record<string, Row[]>, failing: ReadonlySet<string> = ne
       return { data: one ? (rows[0] ?? null) : rows, error: null };
     };
     const b: Builder = {
-      select() { return b; },
+      select(cols) { selectLog.push(`${table}: ${cols ?? ""}`); return b; },
       eq(c, v) { eqs.push(`${c}=${String(v)}`); filters.push((r) => r[c] === v); return b; },
       neq(c, v) { filters.push((r) => r[c] !== v); return b; },
       in(c, vs) { filters.push((r) => vs.includes(r[c])); return b; },
@@ -783,5 +786,72 @@ describe("Telegraph share card — one-sided block reads and the share lookup's 
     const r = await card("LAYOVER_PLAN", LAY, db);
     assert.equal(r.available, true, "the newest share is among the 20 read");
     assert.equal(r.projection?.objectId, LAY);
+  });
+});
+
+// ── §10 on the Memory card (lane R recheck, 2026-10-07) ──────────────────────
+
+/** The precision gate in a state, and M_PUBLIC carrying `label` (or no key at all). */
+function precisionWorld(gate: boolean | null, label?: unknown): Record<string, Row[]> {
+  const db = tables();
+  db.feature_flags = gate === null ? [] : [{ flag: "memory_location_precision_enabled", enabled: gate }];
+  if (label !== undefined) {
+    db.memories = db.memories!.map((m) => (m.id === M_PUBLIC ? { ...m, location_precision: label } : m));
+  }
+  return db;
+}
+
+const memorySelects = () => selectLog.filter((s) => s.startsWith("memories:"));
+
+describe("Telegraph share card — a Memory's city takes the §10 precision gate, and an unreadable gate clamps", () => {
+  it("gate ON, owner chose 'city': the card keeps its city and the read names the rung (intended case)", async () => {
+    selectLog.length = 0;
+    const r = await card("MEMORY", M_PUBLIC, precisionWorld(true, "city"));
+    assert.equal(r.available, true);
+    assert.equal(r.projection?.subtitle, "Hue");
+    assert.ok(memorySelects().every((s) => s.includes("location_precision")), memorySelects().join(" | "));
+  });
+
+  it("gate ON, owner chose 'country': the card resolves with NO city", async () => {
+    const r = await card("MEMORY", M_PUBLIC, precisionWorld(true, "country"));
+    assert.equal(r.available, true);
+    assert.equal(r.projection?.title, "The old harbour");
+    assert.equal(r.projection?.subtitle, null);
+  });
+
+  it("gate ON, owner chose 'hidden': no city", async () => {
+    const r = await card("MEMORY", M_PUBLIC, precisionWorld(true, "hidden"));
+    assert.equal(r.projection?.subtitle, null);
+  });
+
+  it("gate ON, an unreadable LABEL (null, or off the ladder) clamps: no city", async () => {
+    for (const label of [null, "EXACT", ""]) {
+      const r = await card("MEMORY", M_PUBLIC, precisionWorld(true, label));
+      assert.equal(r.available, true);
+      assert.equal(r.projection?.subtitle, null, `label ${JSON.stringify(label)}`);
+    }
+  });
+
+  it("gate UNREADABLE: the card still resolves, with NO city, and the read never names the column", async () => {
+    selectLog.length = 0;
+    const r = await card("MEMORY", M_PUBLIC, precisionWorld(true), new Set(["feature_flags"]));
+    assert.equal(r.available, true, "the gate is about where, not whether");
+    assert.equal(r.projection?.subtitle, null);
+    assert.ok(memorySelects().length > 0 && memorySelects().every((s) => !s.includes("location_precision")), memorySelects().join(" | "));
+  });
+
+  it("gate OFF (row false, or no row): the city is served as before 2338", async () => {
+    for (const gate of [false, null]) {
+      selectLog.length = 0;
+      const r = await card("MEMORY", M_PUBLIC, precisionWorld(gate));
+      assert.equal(r.projection?.subtitle, "Hue", `gate ${String(gate)}`);
+      assert.ok(memorySelects().every((s) => !s.includes("location_precision")));
+    }
+  });
+
+  it("the OWNER's own card keeps the city whatever the rung", async () => {
+    const r = await card("MEMORY", M_PUBLIC, precisionWorld(true, "hidden"), new Set(), BOB);
+    assert.equal(r.available, true);
+    assert.equal(r.projection?.subtitle, "Hue");
   });
 });

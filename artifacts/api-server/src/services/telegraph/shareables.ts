@@ -42,7 +42,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { mayDiscloseGemIdentity } from "../hiddenGems/HiddenGemPrivacyGuard.js";
-import { canReadMemory } from "../memory/memoryReadPolicy.js";
+import { canReadMemory } from "../memory/memoryReadPolicy.js"; import { readMemoryPrecisionGate, precisionColumnSelectable, precisionClampApplies } from "../../lib/memoryPrecisionGate.js"; import { memoryPlaceLabelsForNonOwner } from "../../lib/memoryLocationPrecision.js"; // §10 on the Memory card (lane R, 2026-10-07); on this line so no cited line moves
 import { applyHistoryWindow, historyBoundEnabled, visibleFromOf } from "../groupChatHistoryBound.js";
 import { decideHighlightViewAccess } from "../../routes/highlights.js";
 import { canViewEvent, checkEventEligibility } from "../../routes/events.js";
@@ -636,12 +636,22 @@ const loadHiddenGem: Loader = async (client, id) => {
  * by the Memories surface, and guessing at it here is exactly the backdoor
  * §5.3 forbids — so they degrade to `private` rather than being approximated.
  */
+const MEMORY_CARD_COLUMNS =
+  "id, owner_id, title, caption, visibility, allowed_user_ids, hidden_user_ids, state, location_city, updated_at";
+// A plain literal, not a template over the list above: check:write-path-columns
+// resolves only literals and same-file string consts.
+const MEMORY_CARD_COLUMNS_WITH_PRECISION =
+  "id, owner_id, title, caption, visibility, allowed_user_ids, hidden_user_ids, state, location_city, location_precision, updated_at";
+
 const loadMemory: Loader = async (client, id, viewerId) => {
-  const { data, error } = await client
-    .from("memories")
-    .select("id, owner_id, title, caption, visibility, allowed_user_ids, hidden_user_ids, state, location_city, updated_at")
-    .eq("id", id)
-    .maybeSingle();
+  // §10: the card's city is a publication of the Memory's location, so it takes
+  // the owner's rung through the routes' three-state gate. The column is named
+  // only when the gate is definitely on (it exists only where 2338 is applied);
+  // an unreadable gate is not "off" — it clamps (lib/memoryPrecisionGate.ts).
+  const precisionGate = await readMemoryPrecisionGate(client);
+  const { data, error } = precisionColumnSelectable(precisionGate)
+    ? await client.from("memories").select(MEMORY_CARD_COLUMNS_WITH_PRECISION).eq("id", id).maybeSingle()
+    : await client.from("memories").select(MEMORY_CARD_COLUMNS).eq("id", id).maybeSingle();
   if (error) return { state: UNAVAILABLE("unknown"), projection: null };
   if (!data) return { state: UNAVAILABLE("not_found"), projection: null };
   const r = data as Row;
@@ -676,13 +686,19 @@ const loadMemory: Loader = async (client, id, viewerId) => {
       return { state: UNAVAILABLE("private"), projection: null };
     }
   }
+  // The owner sees their own city; anyone else the city GET /memories/:id would
+  // serve them — none at the owner's 'country' or 'hidden' rung, none when the
+  // gate or the row's label cannot be read (lib/memoryLocationPrecision.ts).
+  const city = mine
+    ? ((r.location_city as string) ?? null)
+    : memoryPlaceLabelsForNonOwner(r, precisionClampApplies(precisionGate)).city;
   return {
     state: AVAILABLE(String(r.state)),
     projection: proj(
       "MEMORY",
       id,
       (r.title as string) ?? (r.caption as string) ?? "Memory",
-      (r.location_city as string) ?? null,
+      city,
       null,
       (r.updated_at as string) ?? null,
     ),

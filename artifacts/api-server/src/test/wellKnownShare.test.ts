@@ -760,3 +760,48 @@ describe("G: plan share pages", () => {
     assertGenericCard(status, text);
   });
 });
+
+// ── §10 on the Memory link preview (lane R recheck, 2026-10-07) ──────────────
+
+describe("E: the Memory preview's place words take the §10 precision gate", () => {
+  const MID = "11111111-2222-4333-8444-555555555555";
+  const mem = (over: Record<string, any> = {}) =>
+    ({ id: MID, title: "First night out", caption: null, visibility: "public", state: "published", location_city: "Lisbon", location_country: "PT", ...over });
+  const gate = (enabled: boolean) => [{ flag: "memory_location_precision_enabled", enabled }];
+
+  it("gate OFF: 'A memory from Lisbon, PT.' as before 2338 (intended case)", async () => {
+    _setTestServiceClient(makeEntitySc({ memories: [mem()], feature_flags: gate(false) }) as any);
+    const r = await getReq(`/memory/${MID}`);
+    assert.match(r.text, /og:description" content="A memory from Lisbon, PT\."/);
+  });
+
+  it("gate ON, owner chose 'city': both words stay", async () => {
+    _setTestServiceClient(makeEntitySc({ memories: [mem({ location_precision: "city" })], feature_flags: gate(true) }) as any);
+    const r = await getReq(`/memory/${MID}`);
+    assert.match(r.text, /og:description" content="A memory from Lisbon, PT\."/);
+  });
+
+  it("gate ON, owner chose 'country': the country only, never the city", async () => {
+    _setTestServiceClient(makeEntitySc({ memories: [mem({ location_precision: "country" })], feature_flags: gate(true) }) as any);
+    const r = await getReq(`/memory/${MID}`);
+    assert.match(r.text, /og:description" content="A memory from PT\."/);
+    assert.doesNotMatch(r.text, /Lisbon/);
+  });
+
+  it("gate ON, owner chose 'hidden', or the label is unreadable: no place at all", async () => {
+    for (const label of ["hidden", null, "EXACT"]) {
+      _setTestServiceClient(makeEntitySc({ memories: [mem({ location_precision: label })], feature_flags: gate(true) }) as any);
+      const r = await getReq(`/memory/${MID}`);
+      assert.match(r.text, /og:title" content="First night out · Portava"/);
+      assert.doesNotMatch(r.text, /Lisbon|PT\./, `label ${JSON.stringify(label)}`);
+    }
+  });
+
+  it("gate UNREADABLE (the flag read throws): no place at all — never read as 'off'", async () => {
+    _setTestServiceClient(makeEntitySc({ memories: [mem()] }, "feature_flags") as any);
+    const r = await getReq(`/memory/${MID}`);
+    assert.match(r.text, /og:title" content="First night out · Portava"/);
+    assert.match(r.text, /og:description" content="A memory on Portava\."/);
+    assert.doesNotMatch(r.text, /Lisbon/);
+  });
+});
