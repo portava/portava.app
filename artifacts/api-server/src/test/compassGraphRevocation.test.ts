@@ -63,7 +63,9 @@ class Q implements PromiseLike<Result> {
 
   constructor(private readonly store: Store, private readonly table: string, private readonly opts: FakeOpts, private readonly log: string[]) {}
 
-  select(_cols?: string, _o?: unknown): Q { return this; }
+  /** The select list, honoured for `memories` only: §47's rung exists in a row only when the read NAMES it, as in PostgREST. */
+  private cols: string[] | null = null;
+  select(cols?: string, _o?: unknown): Q { if (this.table === "memories" && typeof cols === "string") this.cols = cols.split(",").map((c) => c.trim()); return this; }
   eq(k: string, v: unknown): Q { this.filters.push((r) => r[k] === v); return this; }
   neq(k: string, v: unknown): Q { this.filters.push((r) => r[k] !== v); return this; }
   in(k: string, vs: readonly unknown[]): Q { this.filters.push((r) => vs.includes(r[k])); return this; }
@@ -119,6 +121,7 @@ class Q implements PromiseLike<Result> {
     if (this.rng && !this.opts.ignoreRange?.has(t)) out = out.slice(this.rng[0], this.rng[1] + 1);
     if (this.lim !== null) out = out.slice(0, this.lim);
     out = out.map((r) => ({ ...r }));
+    if (this.cols) { const cols = this.cols; out = out.map((r) => Object.fromEntries(cols.filter((c) => c in r).map((c) => [c, r[c]]))); }
     if (this.one) return { data: out[0] ?? null, error: null };
     return { data: out, error: null };
   }
@@ -201,7 +204,8 @@ function hasEdge(store: Store, pred: (e: Row) => boolean): boolean {
 /** A graph built FROM SCRATCH over the given sources — the oracle. */
 async function scratch(src: Store): Promise<Store> {
   const fresh: Store = {};
-  for (const t of SOURCE_TABLES) fresh[t] = (src[t] ?? []).map((r) => ({ ...r }));
+  // feature_flags too: §10's precision gate decides what a Memory contributes (census-compass §47).
+  for (const t of [...SOURCE_TABLES, "feature_flags"]) fresh[t] = (src[t] ?? []).map((r) => ({ ...r }));
   await engine.rebuildIntelligenceGraph(makeDb(fresh).db);
   return fresh;
 }
@@ -482,5 +486,102 @@ describe("DV-51 guards — bounded, positive, fail-visible, weight-neutral, idem
     assert.equal(supportReport(r).retired, 0);
     assert.equal(supportReport(r).unresolved, false);
     assert.ok(supportReport(r).examined > 0);
+  });
+});
+
+/* ── §47: the owner's §10 location-precision rung on the graph's Memory reads ── */
+//
+// Every node and edge the build writes is read by every user, so each Memory is
+// published there to non-owners: its city/country only as far as its owner's
+// rung allows, a place or event (a venue) only at `exact`/`venue`, coordinates
+// never in a node. An unreadable gate or label contributes no place at all — and
+// in the reconcile it decides nothing, rather than retiring every Memory edge.
+describe("§47 — a Memory reaches the world graph only as far as its owner's location-precision rung allows", () => {
+  const GATE = "memory_location_precision_enabled";
+  const world = (rung: string | null, gate: boolean | null = true): Store => {
+    const s = sources();
+    if (gate !== null) s.feature_flags = [{ flag: GATE, enabled: gate }];
+    const m1 = s.memories!.find((r) => r.id === "m-1")!;
+    m1.location_lat = 9.8481; m1.location_lng = 126.0458; m1.trip_id = "t-3";
+    if (rung !== null) m1.location_precision = rung;
+    for (const r of s.memories!) if (r.id !== "m-1") r.location_precision = "exact";
+    return s;
+  };
+  const m1Edges = (st: Store) => (st.compass_graph_edges ?? [])
+    .filter((e) => (e.src_type === "experience" && e.src_key === "m-1") || (e.src_key === C && e.edge_type === "active_in"))
+    .map((e) => `${e.dst_type}:${e.edge_type}`).sort();
+  const m1Node = (st: Store) => (st.compass_graph_nodes ?? []).find((n) => n.node_type === "experience" && n.node_key === "m-1");
+
+  it("control: gate OFF — m-1 keeps its place, trip, city and slice edges", async () => {
+    const st = await scratch(world("hidden", false));
+    assert.deepEqual(m1Edges(st), ["city:in_city", "place:at_place", "time_slice:active_in", "trip:during_trip"]);
+  });
+
+  it("gate ON, rung `hidden`: no place, trip, city or slice — the person may still have the public Memory, with no country", async () => {
+    const st = await scratch(world("hidden"));
+    assert.deepEqual(m1Edges(st), []);
+    assert.equal((m1Node(st)?.attrs as Row).country, null);
+    assert.equal((m1Node(st)?.attrs as Row).has_place, false);
+    assert.ok(hasEdge(st, (e) => e.src_key === C && e.edge_type === "experienced" && e.dst_key === "m-1"));
+    // The control Memory at `exact` is untouched.
+    assert.ok(hasEdge(st, (e) => e.src_key === "m-2" && e.edge_type === "at_place"));
+    assert.ok(hasEdge(st, (e) => e.src_key === "m-2" && e.edge_type === "in_city"));
+  });
+
+  it("rung `country`: the country only", async () => {
+    const st = await scratch(world("country"));
+    assert.deepEqual(m1Edges(st), []);
+    assert.equal((m1Node(st)?.attrs as Row).country, "PH");
+  });
+
+  it("rung `city`: the city, its slice and the trip — but no venue", async () => {
+    const st = await scratch(world("city"));
+    assert.deepEqual(m1Edges(st), ["city:in_city", "time_slice:active_in", "trip:during_trip"]);
+  });
+
+  it("rung `venue`: the place too", async () => {
+    const st = await scratch(world("venue"));
+    assert.deepEqual(m1Edges(st), ["city:in_city", "place:at_place", "time_slice:active_in", "trip:during_trip"]);
+  });
+
+  it("REFUSAL: a null or off-ladder label, or no label at all with the gate on, is `hidden`", async () => {
+    for (const rung of [null, "EXACT"]) {
+      const w = world(rung);
+      if (rung === null) delete w.memories!.find((r) => r.id === "m-1")!.location_precision;
+      assert.deepEqual(m1Edges(await scratch(w)), [], String(rung));
+    }
+  });
+
+  it("no node carries a Memory's coordinates, at any rung", async () => {
+    for (const rung of ["exact", "city", "hidden"]) {
+      const st = await scratch(world(rung));
+      const nodes = JSON.stringify(st.compass_graph_nodes ?? []);
+      assert.doesNotMatch(nodes, /9\.848|126\.04/, rung);
+    }
+  });
+
+  it("REFUSAL: an UNREADABLE gate writes no Memory's place — and the reconcile decides nothing about Memory edges rather than retiring them", async () => {
+    const built = sources();
+    await engine.rebuildIntelligenceGraph(makeDb(built).db); // gate absent (off): the place edges exist
+    assert.ok(hasEdge(built, (e) => e.src_key === "m-1" && e.edge_type === "in_city"), "fixture");
+    const report = await engine.rebuildIntelligenceGraph(makeDb(built, { failSelect: new Set(["feature_flags"]) }).db);
+    assert.ok(hasEdge(built, (e) => e.src_key === "m-1" && e.edge_type === "in_city"), "a failed flag read retired a Memory edge");
+    assert.ok(supportReport(report).undecidedFamilies.includes("experience"), JSON.stringify(supportReport(report)));
+    // A scratch build under an unreadable gate writes none.
+    const fresh = sources();
+    await engine.rebuildIntelligenceGraph(makeDb(fresh, { failSelect: new Set(["feature_flags"]) }).db);
+    assert.ok(!hasEdge(fresh, (e) => e.src_type === "experience" && ["in_city", "at_place", "during_trip", "at_event"].includes(String(e.edge_type))));
+  });
+
+  it("REVOCATION: an owner who moves to `hidden` has the Memory's place, city and slice edges retired on the next rebuild; the other Memory's stay", async () => {
+    const store = world("exact");
+    await engine.rebuildIntelligenceGraph(makeDb(store).db);
+    assert.deepEqual(m1Edges(store), ["city:in_city", "place:at_place", "time_slice:active_in", "trip:during_trip"], "fixture");
+    store.memories!.find((r) => r.id === "m-1")!.location_precision = "hidden";
+    const report = await engine.rebuildIntelligenceGraph(makeDb(store).db);
+    assert.deepEqual(m1Edges(store), [], "the hidden Memory's place survived the rebuild");
+    assert.ok(hasEdge(store, (e) => e.src_key === "m-2" && e.edge_type === "at_place"), "the control Memory's place was retired");
+    assert.ok(supportReport(report).retired > 0);
+    await assertEqualsScratch(store);
   });
 });

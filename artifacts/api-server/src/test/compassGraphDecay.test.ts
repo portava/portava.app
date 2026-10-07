@@ -43,6 +43,8 @@ interface FakeOpts {
   failDelete?: Set<string>;
   /** Tables whose backend IGNORES `.range()` — every page is the whole result. */
   ignoreRange?: Set<string>;
+  /** feature_flags rows whose READ fails, by flag name (census-compass §47: the table now holds a second flag the rebuild reads). */
+  failFlags?: Set<string>;
 }
 
 interface Result { data: Row[] | Row | null; error: { message: string } | null }
@@ -64,7 +66,8 @@ class Q implements PromiseLike<Result> {
   constructor(private readonly store: Store, private readonly table: string, private readonly opts: FakeOpts, private readonly log: string[]) {}
 
   select(_cols?: string, _o?: unknown): Q { return this; }
-  eq(k: string, v: unknown): Q { this.filters.push((r) => r[k] === v); return this; }
+  eq(k: string, v: unknown): Q { if (this.table === "feature_flags" && k === "flag" && this.opts.failFlags?.has(String(v))) this.flagFails = true; this.filters.push((r) => r[k] === v); return this; }
+  private flagFails = false;
   neq(k: string, v: unknown): Q { this.filters.push((r) => r[k] !== v); return this; }
   in(k: string, vs: readonly unknown[]): Q { this.filters.push((r) => vs.includes(r[k])); return this; }
   like(k: string, pattern: string): Q {
@@ -116,7 +119,7 @@ class Q implements PromiseLike<Result> {
       return { data: null, error: null };
     }
     this.log.push(`select:${t}`);
-    if (this.opts.failSelect?.has(t)) return { data: null, error: { message: `${t} unreadable` } };
+    if (this.opts.failSelect?.has(t) || this.flagFails) return { data: null, error: { message: `${t} unreadable` } };
     let out = this.rows().filter((r) => this.filters.every((f) => f(r)));
     if (this.orderKey) {
       const k = this.orderKey;
@@ -219,13 +222,31 @@ describe("D0 — flag OFF / absent / unreadable are byte-identical, and carry no
     const unreadable = sources();
     const ra = await rebuild(absent);
     const ro = await rebuild(off);
-    const ru = await rebuild(unreadable, { failSelect: new Set(["feature_flags"]) });
+    // The DECAY flag's read fails. (Failing the whole feature_flags table now also
+    // makes §10's precision gate unreadable, which withholds Memory place edges by
+    // design — census-compass §47; that case is the next test.)
+    const ru = await rebuild(unreadable, { failFlags: new Set([engine.GRAPH_DECAY_FLAG]) });
     assert.equal(snapshot(off), snapshot(absent));
     assert.equal(snapshot(unreadable), snapshot(absent));
     assert.equal(JSON.stringify(ro), JSON.stringify(ra));
     assert.equal(JSON.stringify(ru), JSON.stringify(ra));
     assert.equal(ra.edgeSupport?.decayRetired, undefined);
     for (const e of absent.compass_graph_edges ?? []) assert.equal(e.weight, e.observed_count, "flag off: weight is the count");
+  });
+});
+
+describe("D0b — the whole feature_flags table unreadable (census-compass §47)", () => {
+  it("still no decay; and §10's gate is unreadable too, so no Memory place edge is written", async () => {
+    at("2026-09-28T00:00:00Z");
+    const absent = sources();
+    await rebuild(absent);
+    const all = sources();
+    const r = await rebuild(all, { failSelect: new Set(["feature_flags"]) });
+    assert.equal(r.edgeSupport?.decayRetired, undefined);
+    for (const e of all.compass_graph_edges ?? []) assert.equal(e.weight, e.observed_count, "no decay");
+    const place = (s: Store) => (s.compass_graph_edges ?? []).filter((e) => e.src_type === "experience" && ["in_city", "at_place"].includes(String(e.edge_type)));
+    assert.ok(place(absent).length > 0, "control: with the gate absent (off) the Memories' place edges are written");
+    assert.deepEqual(place(all), [], "an unreadable gate wrote a Memory's place into the graph");
   });
 });
 

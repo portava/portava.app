@@ -40,7 +40,8 @@ import type { RankingFactor } from "./CompassRecommendationEngine.js";
 import { canonicalCityKey } from "../lib/canonicalLocations.js";
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { mayPublishRhythm } from "../lib/compassRhythmGate.js";
-import { logger as rootLogger } from "../lib/logger.js"; import { cityConfidenceWindowedCorpus } from "./cityConfidenceWindowedReads.js";  // census-discovery §85 H-P21-4
+import { logger as rootLogger } from "../lib/logger.js"; import { cityConfidenceWindowedCorpus } from "./cityConfidenceWindowedReads.js";
+import { readMemoryPrecisionGate, precisionColumnSelectable, precisionClampApplies, type MemoryPrecisionGate } from "../lib/memoryPrecisionGate.js"; import { publicationPrecision } from "../lib/memoryLocationPrecision.js"; import { memoryPlaceLabelsForNonOwner } from "./memoryPlaceLabels.js"; // §10 on the graph's Memory reads (census-compass §47)  // census-discovery §85 H-P21-4
 
 const logger = rootLogger.child({ service: "CompassGraphEngine" });
 
@@ -670,7 +671,7 @@ const BUILD_LIMIT = 5000;
  * Returns the numbers of nodes/edges upserted.
  */
 export async function buildGraphFromSources(
-  db: SupabaseClient, opts: { strength?: (e: GraphEdgeObservation) => number; retireBelow?: number } = {}, // §81 (DV-51): the decay rule, when the rebuild runs under it
+  db: SupabaseClient, opts: { strength?: (e: GraphEdgeObservation) => number; retireBelow?: number; memoryPrecision?: MemoryPrecisionGate } = {}, // §81 (DV-51): the decay rule, when the rebuild runs under it; §47: the §10 gate, passed by the replay (which serves source tables only)
 ): Promise<{ nodesUpserted: number; edgesUpserted: number; nodesFailed: number; edgesFailed: number }> {
   const batch = new GraphBatch();
 
@@ -894,46 +895,75 @@ export async function buildGraphFromSources(
   // cannot add one. A city whose depth came from private memories gets a lower,
   // truer confidence score — census-compass grades that score's honesty, and a
   // score standing partly on data its owners never published was not honest.
+  //
+  // §10 — THE OWNER'S LOCATION-PRECISION RUNG (census-compass §47; lane R's
+  // verifier, 2026-10-07). Everything this section writes is read by every user,
+  // so every Memory is published here to NON-OWNERS, and its place goes in only
+  // as far as its owner's rung allows (lib/memoryPrecisionGate.ts three-state gate):
+  //   - city / country words: memoryPlaceLabelsForNonOwner — at `country` the
+  //     country only; at `hidden`, and when the gate or the row's label cannot be
+  //     read, neither. Every city edge, time slice and person→slice edge needs
+  //     the city word, and so does `during_trip` (a trip names its destination);
+  //   - a place or an event names a VENUE: `at_place` / `at_event` only at the
+  //     `exact` or `venue` rung;
+  //   - coordinates are never written to a node; they only ever choose a city's
+  //     timezone, and only at the `exact` rung.
+  // Gate definitely OFF: 'exact' for every row, byte-for-byte the pre-2338 build.
+  // The column is named only when the gate is definitely on (two literal selects,
+  // repeated in the same order in `supportReads` — compassGraphRevocation P).
+  const memoryGate: MemoryPrecisionGate = opts.memoryPrecision ?? await readMemoryPrecisionGate(db);
+  const memoryClamp = precisionClampApplies(memoryGate);
   try {
-    const { data } = await db
-      .from("memories")
-      .select("id, owner_id, place_id, trip_id, event_id, location_city, location_country, location_lat, location_lng, starts_at, created_at, state, visibility")
-      .eq("state", "published")
-      .eq("visibility", "public")
-      .limit(BUILD_LIMIT);
+    const { data } = await (precisionColumnSelectable(memoryGate)
+      ? db
+        .from("memories")
+        .select("id, owner_id, place_id, trip_id, event_id, location_city, location_country, location_lat, location_lng, starts_at, created_at, state, visibility, location_precision")
+        .eq("state", "published")
+        .eq("visibility", "public")
+      : db
+        .from("memories")
+        .select("id, owner_id, place_id, trip_id, event_id, location_city, location_country, location_lat, location_lng, starts_at, created_at, state, visibility")
+        .eq("state", "published")
+        .eq("visibility", "public")
+    ).limit(BUILD_LIMIT);
     for (const r of (data as any[]) ?? []) {
       if (!r.id || !r.owner_id) continue;
       // Belt and braces over the filter: a client that ignores a predicate, or
       // a fake that implements `eq` loosely, must not be the only thing standing
       // between a friends_only Memory and the world model.
       if (!isPublicWorldMemory(r)) continue;
-      const city = normCity(r.location_city);
+      const rung = publicationPrecision(r, memoryClamp);
+      const words = memoryPlaceLabelsForNonOwner(r, memoryClamp);
+      const city = normCity(words.city);
+      const country = words.country ?? null;
+      const venue = rung === "exact" || rung === "venue";
+      const coords = rung === "exact" ? { lat: r.location_lat, lng: r.location_lng } : null;
       const at = r.starts_at ? String(r.starts_at) : r.created_at ? String(r.created_at) : null;
       const key = String(r.id);
-      registerCityCoordinates(city, r.location_lat, r.location_lng);
+      if (coords) registerCityCoordinates(city, coords.lat, coords.lng);
       batch.node("person", String(r.owner_id));
       batch.node("experience", key, city, {
-        has_place: Boolean(r.place_id), has_trip: Boolean(r.trip_id), has_event: Boolean(r.event_id),
-        country: r.location_country ?? null,
+        has_place: venue && Boolean(r.place_id), has_trip: Boolean(city) && Boolean(r.trip_id), has_event: venue && Boolean(r.event_id),
+        country,
       });
       batch.edge({ src_type: "person", src_key: String(r.owner_id), dst_type: "experience", dst_key: key, edge_type: "experienced", at });
-      if (r.place_id) {
+      if (venue && r.place_id) {
         batch.edge({ src_type: "experience", src_key: key, dst_type: "place", dst_key: String(r.place_id), edge_type: "at_place", at });
       }
-      if (r.trip_id) {
+      if (city && r.trip_id) {
         batch.edge({ src_type: "experience", src_key: key, dst_type: "trip", dst_key: String(r.trip_id), edge_type: "during_trip", at });
       }
-      if (r.event_id) {
+      if (venue && r.event_id) {
         batch.edge({ src_type: "experience", src_key: key, dst_type: "event", dst_key: String(r.event_id), edge_type: "at_event", at });
       }
       if (city) {
-        batch.node("city", city, city, { country: r.location_country ?? null });
+        batch.node("city", city, city, { country });
         batch.edge({ src_type: "experience", src_key: key, dst_type: "city", dst_key: city, edge_type: "in_city", at });
         if (at) {
-          const slice = timeSliceKey(new Date(at), city, { lat: r.location_lat, lng: r.location_lng });
+          const slice = timeSliceKey(new Date(at), city, coords);
           batch.node("time_slice", `${city}|${slice}`, city, { slice });
           batch.edge({ src_type: "city", src_key: city, dst_type: "time_slice", dst_key: `${city}|${slice}`, edge_type: "active_during:experience", at });
-          monthEdge(batch, city, new Date(at), { lat: r.location_lat, lng: r.location_lng }, "experience", at);
+          monthEdge(batch, city, new Date(at), coords, "experience", at);
           batch.edge({ src_type: "person", src_key: String(r.owner_id), dst_type: "time_slice", dst_key: `${city}|${slice}`, edge_type: "active_in", at });
         }
       }
@@ -2343,11 +2373,18 @@ const supportReads = {
     .select("user_id, item_id, item_kind, outcome, served_at")
     .neq("outcome", "impression"),
   circles: (db: SupabaseClient) => circleSourceRows(db),
-  memories: (db: SupabaseClient) => db
-    .from("memories")
-    .select("id, owner_id, place_id, trip_id, event_id, location_city, location_country, location_lat, location_lng, starts_at, created_at, state, visibility")
-    .eq("state", "published")
-    .eq("visibility", "public"),
+  // §47: the same two literal reads as the build, in the same order, chosen by the same gate.
+  memories: (db: SupabaseClient, gate: MemoryPrecisionGate) => (precisionColumnSelectable(gate)
+    ? db
+      .from("memories")
+      .select("id, owner_id, place_id, trip_id, event_id, location_city, location_country, location_lat, location_lng, starts_at, created_at, state, visibility, location_precision")
+      .eq("state", "published")
+      .eq("visibility", "public")
+    : db
+      .from("memories")
+      .select("id, owner_id, place_id, trip_id, event_id, location_city, location_country, location_lat, location_lng, starts_at, created_at, state, visibility")
+      .eq("state", "published")
+      .eq("visibility", "public")),
 };
 type GraphSourceTable = keyof typeof supportReads;
 
@@ -2390,7 +2427,7 @@ interface Replay {
  * revocation must not inherit — and applies `.eq()` / `.neq()`, so the build's
  * own predicates narrow what the reconcile read.
  */
-async function replayBuild(rows: Partial<Record<GraphSourceTable, SupportRow[]>>, strength?: (e: GraphEdgeObservation) => number): Promise<Replay> {
+async function replayBuild(rows: Partial<Record<GraphSourceTable, SupportRow[]>>, strength: ((e: GraphEdgeObservation) => number) | undefined, memoryPrecision: MemoryPrecisionGate): Promise<Replay> {
   const replay: Replay = { edges: new Set(), nodes: new Set(), sound: true, weights: new Map() };
   const read = new Set<string>();
   const finished = new Set<string>();
@@ -2437,7 +2474,7 @@ async function replayBuild(rows: Partial<Record<GraphSourceTable, SupportRow[]>>
   };
 
   try {
-    await buildGraphFromSources({ from } as unknown as SupabaseClient, strength ? { strength } : {});
+    await buildGraphFromSources({ from } as unknown as SupabaseClient, { ...(strength ? { strength } : {}), memoryPrecision });
   } catch {
     replay.sound = false;
   }
@@ -2479,7 +2516,7 @@ interface StoredEdge { id: string; key: string; family: GraphEdgeFamily; src_typ
  * `deleteFailed`. Idempotent: a second pass over the same sources retires
  * nothing.
  */
-export async function reconcileEdgeSupport(db: SupabaseClient, opts: { decay?: GraphDecayPolicy | null } = {}): Promise<EdgeSupportReport> { const decay = opts.decay !== undefined ? opts.decay : await readGraphDecayPolicy(db); const reweigh = new Map<string, number>(); let decayRetired = 0;
+export async function reconcileEdgeSupport(db: SupabaseClient, opts: { decay?: GraphDecayPolicy | null } = {}): Promise<EdgeSupportReport> { const decay = opts.decay !== undefined ? opts.decay : await readGraphDecayPolicy(db); const memoryGate = await readMemoryPrecisionGate(db); /* §47 */ const reweigh = new Map<string, number>(); let decayRetired = 0;
   const report: EdgeSupportReport = {
     examined: 0, unclassified: 0, retired: 0, retiredByFamily: {}, nodesExamined: 0, nodesRetired: 0,
     undecided: 0, undecidedFamilies: [], deleteFailed: 0, truncated: false, unresolved: false,
@@ -2533,7 +2570,11 @@ export async function reconcileEdgeSupport(db: SupabaseClient, opts: { decay?: G
       if (!r?.complete) return null;
       rows[t] = r.rows;
     }
-    return replayBuild(rows, decay?.strength);
+    // §47: with the §10 gate unreadable nobody can say which Memory edges are
+    // supported, so a replay that reads Memories decides nothing (undecided),
+    // never "retire them all" — a failed flag read must not become a delete.
+    if ("memories" in reads && memoryGate === "unreadable") return null;
+    return replayBuild(rows, decay?.strength, memoryGate);
   };
 
   // ── Source-anchored nodes (trip, event, circle) ────────────────────────────
@@ -2567,7 +2608,7 @@ export async function reconcileEdgeSupport(db: SupabaseClient, opts: { decay?: G
       const a = activity.filter((e) => mine(e.src_key));
       const t = returns.filter((e) => mine(e.src_key));
       const stamps = v.length || a.length ? await readAllPages(() => supportReads.user_stamps(db).in("user_id", chunk), SUPPORT_ANCHOR_PAGES) : null;
-      const mems = a.length ? await readAllPages(() => supportReads.memories(db).in("owner_id", chunk), SUPPORT_ANCHOR_PAGES) : null;
+      const mems = a.length ? await readAllPages(() => supportReads.memories(db, memoryGate).in("owner_id", chunk), SUPPORT_ANCHOR_PAGES) : null;
       const trips = t.length ? await readAllPages(() => supportReads.trips(db).in("owner_id", chunk), SUPPORT_ANCHOR_PAGES) : null;
       if (v.length) judge(v, await replayIf({ user_stamps: stamps }));
       if (a.length) judge(a, await replayIf({ user_stamps: stamps, memories: mems }));
@@ -2624,7 +2665,7 @@ export async function reconcileEdgeSupport(db: SupabaseClient, opts: { decay?: G
     const memoryOf = (e: StoredEdge) => (e.src_type === "person" ? e.dst_key : e.src_key);
     for (const chunk of chunked([...new Set(exp.map(memoryOf))], SUPPORT_ANCHOR_CHUNK)) {
       const mine = within(chunk);
-      const memories = await readAllPages(() => supportReads.memories(db).in("id", chunk), SUPPORT_ANCHOR_PAGES);
+      const memories = await readAllPages(() => supportReads.memories(db, memoryGate).in("id", chunk), SUPPORT_ANCHOR_PAGES);
       judge(exp.filter((e) => mine(memoryOf(e))), await replayIf({ memories }));
     }
   }
@@ -2646,7 +2687,7 @@ export async function reconcileEdgeSupport(db: SupabaseClient, opts: { decay?: G
   if (rhythm.length) {
     const stamps = await readAllPages(() => supportReads.user_stamps(db), SUPPORT_FULL_PAGES);
     const events = stamps.complete ? await readAllPages(() => supportReads.events(db), SUPPORT_FULL_PAGES) : null;
-    const memories = events?.complete ? await readAllPages(() => supportReads.memories(db), SUPPORT_FULL_PAGES) : null;
+    const memories = events?.complete ? await readAllPages(() => supportReads.memories(db, memoryGate), SUPPORT_FULL_PAGES) : null;
     judge(rhythm, await replayIf({ user_stamps: stamps, events, memories }));
   }
 
