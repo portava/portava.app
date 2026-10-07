@@ -95,11 +95,17 @@ describe("deletion coverage — the guard bites", () => {
     // The ledger tables that cite those rules are NOT here — their fate is the
     // open C-11 decision, asserted separately below. Any further entry must come
     // with the same kind of written reason.
-    assert.equal(RETAINED_WITH_REASON.length, 2,
+    // Updated deliberately a THIRD time, and this one is different in kind: a
+    // person's row, kept by an OWNER DECISION. layover_events (census-layover
+    // L163, lead ruling 2026-10-07) is retained under OD-MAP-4 only as a
+    // pseudonymised record (no user, no session, a per-deletion pseudonym) and
+    // only until retain_until, at most 12 months — migration 3621's CHECK and
+    // lib/layoverAuditRetentionScheduler.ts are what keep that true.
+    assert.equal(RETAINED_WITH_REASON.length, 3,
       "once retentions are decided, update this expectation deliberately");
     assert.deepEqual(
       RETAINED_WITH_REASON.map((r) => r.table).sort(),
-      ["creator_rule_versions", "intel_state_snapshot_versions"],
+      ["creator_rule_versions", "intel_state_snapshot_versions", "layover_events"],
     );
     // Asserted for EVERY entry, not just the first: indexing by [0] let a second
     // entry arrive with no reason at all and still pass.
@@ -109,6 +115,9 @@ describe("deletion coverage — the guard bites", () => {
     const byTable = new Map(RETAINED_WITH_REASON.map((r) => [r.table, r.reason]));
     assert.match(byTable.get("intel_state_snapshot_versions")!, /no actor column/);
     assert.match(byTable.get("creator_rule_versions")!, /No beneficiary, no actor and no personal data/);
+    assert.match(byTable.get("layover_events")!, /OD-MAP-4/);
+    assert.match(byTable.get("layover_events")!, /pseudonymised/);
+    assert.match(byTable.get("layover_events")!, /at most 12 months/);
   });
 });
 

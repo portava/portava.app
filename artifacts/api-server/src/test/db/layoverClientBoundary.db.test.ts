@@ -22,7 +22,10 @@
  *   B5  3900's `layover_presence`: no coordinate column, no client privilege,
  *       `precise_location_enabled` refused at TRUE even for the service role,
  *       and the row leaves with its session.
- *   B6  the 0127 cascades: closing a session takes its stops and events with it.
+ *   B6  the cascades: closing a session takes its stops and presence with it.
+ *   B7  3621 (census-layover L163, OD-MAP-4): a pseudonymised event OUTLIVES its
+ *       session with no user and no session; the CHECK refuses a pseudonym
+ *       beside a user id and a retention past 12 months.
  *
  * Skips when LOCAL_DB_URL is unset; `scripts/local-db/run-tests.sh` (CI's
  * kernel-SQL job) is the run that refuses skipped > 0. NOT RUN ON THE AUTHORING
@@ -83,7 +86,8 @@ describe("census-layover L236/L295 — the layover client boundary on a real dat
 
   after(() => {
     if (!HAVE_DB) return;
-    exec(`DELETE FROM public.layover_sessions WHERE id IN ('${SA}', '${SB}');
+    exec(`DELETE FROM public.layover_events WHERE session_id IN ('${SA}', '${SB}') OR user_id IN ('${A}', '${B}');
+          DELETE FROM public.layover_sessions WHERE id IN ('${SA}', '${SB}');
           DELETE FROM public.airport_profiles WHERE id = '${AIR}';`);
     deleteUser(A);
     deleteUser(B);
@@ -173,18 +177,48 @@ describe("census-layover L236/L295 — the layover client boundary on a real dat
     assert.equal(scalar(`SELECT count(*) FROM public.layover_presence WHERE session_id = '${SB}';`), "1");
   });
 
-  it("B6. closing a session takes its stops, events and presence with it (0127 / 3900 ON DELETE CASCADE)", () => {
+  it("B6. closing a session takes its stops and presence with it (0127 / 3900 ON DELETE CASCADE)", () => {
     const S = randomUUID();
     exec(`
       INSERT INTO public.layover_sessions (id, user_id, arrival_time, departure_time) VALUES ('${S}', '${B}', now(), now() + interval '6 hours');
       INSERT INTO public.layover_plan_stops (session_id, title) VALUES ('${S}', 'gone');
-      INSERT INTO public.layover_events (session_id, user_id, event_type) VALUES ('${S}', '${B}', 'session_created');
       INSERT INTO public.layover_presence (session_id, user_id, intents, available_until, expires_at)
         VALUES ('${S}', '${B}', ARRAY['culture'], now() + interval '2 hours', now() + interval '2 hours');
       DELETE FROM public.layover_sessions WHERE id = '${S}';
     `);
-    for (const t of ["layover_plan_stops", "layover_events", "layover_presence"]) {
+    for (const t of ["layover_plan_stops", "layover_presence"]) {
       assert.equal(scalar(`SELECT count(*) FROM public.${t} WHERE session_id = '${S}';`), "0", t);
     }
+  });
+
+  it("B7. 3621: a pseudonymised event outlives its session, unnamed; a pseudonym beside a user, or past 12 months, is refused", () => {
+    const S = randomUUID();
+    const E = randomUUID();
+    const P = randomUUID();
+    exec(`
+      INSERT INTO public.layover_sessions (id, user_id, arrival_time, departure_time) VALUES ('${S}', '${B}', now(), now() + interval '6 hours');
+      INSERT INTO public.layover_events (id, session_id, user_id, event_type, metadata) VALUES ('${E}', '${S}', '${B}', 'session_created', '{"city":"x"}');
+    `);
+    assert.throws(
+      () => exec(`UPDATE public.layover_events SET erasure_pseudonym = '${P}', pseudonymised_at = now(), retain_until = now() + interval '30 days' WHERE id = '${E}';`),
+      /layover_events_identity_or_pseudonym/,
+      "a pseudonym next to a user id",
+    );
+    assert.throws(
+      () => exec(`UPDATE public.layover_events SET user_id = NULL, session_id = NULL, erasure_pseudonym = '${P}', pseudonymised_at = now(), retain_until = now() + interval '13 months' WHERE id = '${E}';`),
+      /layover_events_identity_or_pseudonym/,
+      "kept past 12 months",
+    );
+    exec(`
+      UPDATE public.layover_events SET user_id = NULL, session_id = NULL, erasure_pseudonym = '${P}', pseudonymised_at = now(),
+             retain_until = now() + interval '365 days', metadata = '{}'::jsonb WHERE id = '${E}';
+      DELETE FROM public.layover_sessions WHERE id = '${S}';
+    `);
+    assert.deepEqual(
+      rows(`SELECT user_id, session_id, erasure_pseudonym FROM public.layover_events WHERE id = '${E}'`),
+      [{ user_id: null, session_id: null, erasure_pseudonym: P }],
+    );
+    assert.equal(scalar(`SELECT confdeltype FROM pg_constraint WHERE conname = 'layover_events_session_id_fkey';`), "n");
+    exec(`DELETE FROM public.layover_events WHERE id = '${E}';`);
   });
 });

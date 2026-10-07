@@ -41,7 +41,7 @@ import {
   NAME_HEURISTIC_FLOOR,
   GOVERNED_FLOOR,
 } from "../scripts/checkDeletionCoverage.js";
-import { USER_IDENTIFYING_COLUMNS, DENOMINATOR_CORRECTION_BACKLOG } from "../lib/deletionDispositions.js";
+import { USER_IDENTIFYING_COLUMNS, DENOMINATOR_CORRECTION_BACKLOG, ERASED_BY_CASCADE, RETAINED_WITH_REASON } from "../lib/deletionDispositions.js";
 
 // ── Fixture schema construction ────────────────────────────────────────────
 // Deliberately hand-built pg_dump-shaped text, so a mutation is one edited
@@ -449,7 +449,18 @@ describe("the corrected denominator over the committed baseline", () => {
     for (const t of DENOMINATOR_CORRECTION_BACKLOG) {
       assert.ok(links.get(t)?.governed, `${t} is on the correction backlog but not in the denominator`);
     }
-    assert.ok(DENOMINATOR_CORRECTION_BACKLOG.length >= 90, "the correction backlog collapsed");
+    // The floor counts the backlog PLUS every table classified OUT of it by a
+    // decision, each of which must now be in a decided bucket — so the list can
+    // shrink only by a ruling, never by an entry quietly disappearing.
+    // census-layover L163 (lead ruling 2026-10-07) classified two: both are
+    // erased with the traveller's sessions.
+    const CLASSIFIED_OUT_BY_RULING = ["layover_plan_stops", "layover_recommendations"];
+    const decided = new Set([...ERASED_BY_CASCADE, ...RETAINED_WITH_REASON.map((r) => r.table)]);
+    for (const t of CLASSIFIED_OUT_BY_RULING) {
+      assert.ok(decided.has(t), `${t} left the correction backlog without a decided fate`);
+      assert.ok(!DENOMINATOR_CORRECTION_BACKLOG.includes(t), `${t} is in two buckets`);
+    }
+    assert.ok(DENOMINATOR_CORRECTION_BACKLOG.length + CLASSIFIED_OUT_BY_RULING.length >= 90, "the correction backlog collapsed");
   });
 
   it("the coverage gate is clean against the corrected denominator", () => {

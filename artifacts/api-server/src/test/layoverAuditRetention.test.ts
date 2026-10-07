@@ -1,0 +1,139 @@
+/**
+ * The layover audit retention sweep and migration 3621 — census-layover L163,
+ * OD-MAP-4's "then delete it", and the schema that keeps a departed traveller's
+ * layover_events pseudonymised and bounded.
+ *
+ * Sweep (lib/layoverAuditRetentionScheduler.ts): deletes pseudonymised rows
+ * whose retain_until has passed, never a named row and never one still inside
+ * its window; a missing 3621 is inert, a failed read is a failure, not "0 due".
+ * Migration (3621): the session FK becomes SET NULL, user and session become
+ * nullable, and the identity-or-pseudonym CHECK refuses a half-identified row
+ * and a retention past 12 months; the postconditions are the last statement.
+ *
+ * Run: node --import tsx/esm --test src/test/layoverAuditRetention.test.ts
+ */
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { runLayoverAuditRetentionSweep, runLayoverAuditRetentionTick } from "../lib/layoverAuditRetentionScheduler.js";
+
+type Row = Record<string, any>;
+const NOW = new Date("2027-10-08T00:00:00.000Z");
+
+function fakeDb(rows: Row[], opts: { schema?: boolean; failRead?: boolean; failDelete?: boolean } = {}) {
+  const deleted: string[] = [];
+  function from(table: string) {
+    const filters: Array<(r: Row) => boolean> = [];
+    let op: "select" | "delete" = "select";
+    let head = false;
+    let limitN: number | null = null;
+    let cols = "";
+    const run = async () => {
+      if (table !== "layover_events") throw new Error(`unexpected table ${table}`);
+      if (opts.schema === false && cols.includes("retain_until") && head) return { data: null, error: { code: "42703", message: "column retain_until does not exist" } };
+      if (op === "select" && head) return { data: null, error: null };
+      if (op === "select" && opts.failRead) return { data: null, error: { code: "57014", message: "timeout" } };
+      if (op === "delete" && opts.failDelete) return { data: null, error: { code: "42501", message: "denied" } };
+      let hit = rows.filter((r) => filters.every((f) => f(r)));
+      if (op === "select") {
+        hit = [...hit].sort((a, b) => String(a.retain_until).localeCompare(String(b.retain_until)));
+        if (limitN !== null) hit = hit.slice(0, limitN);
+        return { data: hit.map((r) => ({ id: r.id })), error: null };
+      }
+      for (const r of hit) { deleted.push(r.id); rows.splice(rows.indexOf(r), 1); }
+      return { data: hit.map((r) => ({ id: r.id })), error: null };
+    };
+    const b: any = {
+      select(c: string, o?: { head?: boolean }) { cols = c; head = o?.head === true; return b; },
+      delete() { op = "delete"; return b; },
+      not(c: string, o: string, v: unknown) { assert.equal(o, "is"); filters.push((r) => (r[c] ?? null) !== v); return b; },
+      lt(c: string, v: string) { filters.push((r) => r[c] != null && String(r[c]) < v); return b; },
+      in(c: string, vs: string[]) { filters.push((r) => vs.includes(r[c])); return b; },
+      order() { return b; },
+      limit(n: number) { limitN = n; return b; },
+      then(f: any, r: any) { return run().then(f, r); },
+    };
+    return b;
+  }
+  return { from, deleted };
+}
+
+const named = (id: string): Row => ({ id, user_id: "u", session_id: "s", pseudonymised_at: null, retain_until: null });
+const pseudo = (id: string, retainUntil: string): Row => ({ id, user_id: null, session_id: null, pseudonymised_at: "2026-10-07T00:00:00.000Z", retain_until: retainUntil });
+
+describe("layover audit retention sweep (OD-MAP-4: then delete it)", () => {
+  it("deletes pseudonymised rows past retain_until, and only those", async () => {
+    const rows = [named("n1"), pseudo("p-due", "2027-10-07T00:00:00.000Z"), pseudo("p-later", "2027-10-09T00:00:00.000Z")];
+    const db = fakeDb(rows);
+    const r = await runLayoverAuditRetentionSweep({ client: db, now: NOW });
+    assert.deepEqual(r, { outcome: "swept", reason: null, deleted: 1, complete: true });
+    assert.deepEqual(db.deleted, ["p-due"]);
+    assert.deepEqual(rows.map((x) => x.id).sort(), ["n1", "p-later"]);
+  });
+
+  it("a named row whose retain_until were somehow past is never deleted", async () => {
+    const rows = [{ ...named("n-odd"), retain_until: "2020-01-01T00:00:00.000Z" }];
+    const db = fakeDb(rows);
+    const r = await runLayoverAuditRetentionSweep({ client: db, now: NOW });
+    assert.equal(r.outcome, "idle");
+    assert.deepEqual(db.deleted, []);
+  });
+
+  it("nothing due is IDLE; a full batch is not complete", async () => {
+    assert.equal((await runLayoverAuditRetentionSweep({ client: fakeDb([named("n")]), now: NOW })).outcome, "idle");
+    const rows = [pseudo("a", "2027-01-01T00:00:00.000Z"), pseudo("b", "2027-02-01T00:00:00.000Z"), pseudo("c", "2027-03-01T00:00:00.000Z")];
+    const r = await runLayoverAuditRetentionSweep({ client: fakeDb(rows), now: NOW, batchSize: 2 });
+    assert.deepEqual(r, { outcome: "swept", reason: null, deleted: 2, complete: false });
+  });
+
+  it("without 3621 the sweep is inert (refused, schema_absent) and deletes nothing", async () => {
+    const db = fakeDb([pseudo("p", "2020-01-01T00:00:00.000Z")], { schema: false });
+    assert.deepEqual(await runLayoverAuditRetentionSweep({ client: db, now: NOW }), { outcome: "refused", reason: "schema_absent", deleted: 0, complete: false });
+    assert.deepEqual(db.deleted, []);
+  });
+
+  it("a failed read is FAILED, never 'nothing due'; a failed delete is FAILED", async () => {
+    assert.equal((await runLayoverAuditRetentionSweep({ client: fakeDb([], { failRead: true }), now: NOW })).reason, "read_failed");
+    const r = await runLayoverAuditRetentionSweep({ client: fakeDb([pseudo("p", "2020-01-01T00:00:00.000Z")], { failDelete: true }), now: NOW });
+    assert.deepEqual(r, { outcome: "failed", reason: "delete_failed", deleted: 0, complete: false });
+  });
+
+  it("no client is refused, and the tick never rejects", async () => {
+    assert.equal((await runLayoverAuditRetentionSweep({ client: null, now: NOW })).reason, "no_client");
+    const throwing = { from() { throw new Error("socket"); } };
+    const r = await runLayoverAuditRetentionTick({ client: throwing, now: NOW });
+    assert.equal(r.outcome, "refused");
+  });
+});
+
+const MIGRATION = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../migrations/3621_layover_erasure_audit_pseudonym.sql"), "utf8");
+const code = MIGRATION.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+
+describe("migration 3621 — the shape that keeps the audit record pseudonymised and bounded", () => {
+  it("is one transaction whose postconditions are the LAST statement", () => {
+    const begin = code.indexOf("BEGIN;");
+    const end = code.indexOf("END $post$;");
+    const commit = code.lastIndexOf("COMMIT;");
+    assert.ok(begin >= 0 && end > begin && commit > end);
+    assert.equal(code.slice(end + "END $post$;".length, commit).trim(), "");
+  });
+  it("the session FK becomes ON DELETE SET NULL and user/session become nullable", () => {
+    assert.match(code, /DROP CONSTRAINT layover_events_session_id_fkey;/);
+    assert.match(code, /FOREIGN KEY \(session_id\) REFERENCES public\.layover_sessions\(id\) ON DELETE SET NULL;/);
+    assert.match(code, /ALTER COLUMN user_id\s+DROP NOT NULL/);
+    assert.match(code, /ALTER COLUMN session_id DROP NOT NULL/);
+  });
+  it("the CHECK allows only a named row or a fully pseudonymised one, kept at most 12 months", () => {
+    const check = code.slice(code.indexOf("layover_events_identity_or_pseudonym CHECK"), code.indexOf("CREATE INDEX"));
+    assert.match(check, /pseudonymised_at IS NULL\s+AND user_id IS NOT NULL\s+AND erasure_pseudonym IS NULL AND retain_until IS NULL/);
+    assert.match(check, /pseudonymised_at IS NOT NULL\s+AND user_id IS NULL AND session_id IS NULL\s+AND erasure_pseudonym IS NOT NULL\s+AND retain_until IS NOT NULL\s+AND retain_until <= pseudonymised_at \+ INTERVAL '12 months'/);
+  });
+  it("grants nothing, and its postconditions refuse a client that could write or read the record anonymously", () => {
+    assert.doesNotMatch(code, /\bGRANT\b/);
+    assert.match(code, /has_table_privilege\('authenticated', 'public\.layover_events', 'UPDATE'\)/);
+    assert.match(code, /has_table_privilege\('anon', 'public\.layover_events', 'SELECT'\)/);
+    assert.match(code, /confdeltype/);
+  });
+});

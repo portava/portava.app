@@ -68,6 +68,26 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   // profiles, which on production has no FK to auth.users, so the stamp itself
   // survives while its coordinates do not. That stays with D6.
   "passport_stamps_gps",
+  // Layover (census-layover L163; lead ruling 2026-10-07). AccountDeletionService's
+  // FATAL layover block deletes the traveller's crew memberships
+  // (`delete_layover_crew_memberships`) and sessions (`delete_layover_sessions`);
+  // every table below hangs off layover_sessions ON DELETE CASCADE (0127, 2700,
+  // 2984, 2992, 3900), so the session delete takes them in the same statement.
+  // layover_events is NOT here: OD-MAP-4 keeps it pseudonymised for at most 12
+  // months (RETAINED_WITH_REASON below). The post-baseline ones are named in
+  // POST_BASELINE_TABLES.
+  "layover_sessions",
+  "layover_plan_stops",
+  "layover_recommendations",
+  "layover_presence",
+  "layover_crews",
+  "layover_crew_members",
+  "layover_constraints",
+  "layover_time_budgets",
+  "layover_return_plans",
+  "layover_checkpoints",
+  "layover_outcomes",
+  "layover_certified_computations",
   // IG-02 intel tables. Registered here in the SAME change that creates them:
   // a new user-keyed table gets a deletion fate on day one, which is the whole
   // point of this manifest. Their append-only triggers permit DELETE only inside
@@ -264,6 +284,19 @@ export const DELETION_FLOW_TABLES: readonly string[] = [
  * Empty until D6 is answered — deliberately, so the backlog count stays honest.
  */
 export const RETAINED_WITH_REASON: ReadonlyArray<{ table: string; reason: string }> = [
+  // The layover decision ledger (census-layover L163; lead ruling 2026-10-07
+  // adopting OD-MAP-4). AccountDeletionService's `pseudonymise_layover_events`
+  // removes the user and the session, sets one random pseudonym per deletion,
+  // empties the metadata and stamps retain_until 365 days out; migration 3621's
+  // CHECK refuses a row that is half-identified or kept past 12 months, and
+  // lib/layoverAuditRetentionScheduler.ts deletes it at retain_until. Without
+  // 3621 the rows are erased with their sessions instead (0127's cascade).
+  {
+    table: "layover_events",
+    reason:
+      "OD-MAP-4 (docs/ops/owner-decisions-20261004.md): a pseudonymised, access-restricted audit record kept for at most 12 months, then deleted. " +
+      "On account deletion the row loses its user and session, carries a random per-deletion pseudonym and no metadata, and is deleted at retain_until (365 days) by the layover audit retention sweep.",
+  },
   // I1 (migration 2273). NOT user-keyed: it carries no actor column and no
   // personal data — subject_id is a place, distinct_actors is a count, and the
   // replay record is a set of weighted model inputs. It is an append-only log of
@@ -499,8 +532,6 @@ export const UNCLASSIFIED_BACKLOG: readonly string[] = [
   "highlight_reports",
   "highlight_views",
   "highlights",
-  "layover_events",
-  "layover_sessions",
   "live_place_recaps",
   "local_guide_profiles",
   "location_preferences",
@@ -700,8 +731,6 @@ export const DENOMINATOR_CORRECTION_BACKLOG: readonly string[] = [
   "generated_visuals",
   "highlight_replies",
   "key_packages",
-  "layover_plan_stops",
-  "layover_recommendations",
   "live_place_recap_chapters",
   "live_place_recap_snapshots",
   "live_place_recap_sources",
@@ -886,6 +915,19 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   "creator_attributions",
   "creator_earning_entries",
   "creator_ledger_audit_events",
+  // Layover tables created after the 2026-08-19 baseline (2700, 2984, 2992,
+  // 3900), registered with their fate on the day it was decided (census-layover
+  // L163): every one is erased through the session delete's cascade, so all are
+  // in ERASED_BY_CASCADE above.
+  "layover_presence",
+  "layover_crews",
+  "layover_crew_members",
+  "layover_constraints",
+  "layover_time_budgets",
+  "layover_return_plans",
+  "layover_checkpoints",
+  "layover_outcomes",
+  "layover_certified_computations",
 ];
 
 /** Columns that make a table user-keyed for the purposes of this manifest. */
