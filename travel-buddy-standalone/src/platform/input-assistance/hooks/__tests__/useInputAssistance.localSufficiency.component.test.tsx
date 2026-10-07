@@ -4,7 +4,10 @@
  *
  * G224 asked for "a stated sufficiency rule the server can sanction … plus a test
  * that such a field issues zero requests on a local hit and that a viewer-scoped
- * field still issues one". G212's own red-criterion is the same build: "a
+ * field still issues one". Lead ruling PR-D2-5 admits exactly two viewer-scoped
+ * fields (language, interest) whose ANSWER is a fixed list; every other field —
+ * viewer-scoped or not — still issues its request (test 4, and the pure suite).
+ * G212's own red-criterion is the same build: "a
  * server-sanctioned statement that a named field may answer from a static
  * dictionary WITHOUT a round trip". These assertions are that test, over the
  * real `useInputAssistance`, a seeded authority table (passed through the real
@@ -13,14 +16,14 @@
  * MUTATION LOG (each applied, watched go red, reverted, `git diff` clean):
  *   - useInputAssistance.ts: drop the sufficiency branch → test 1 goes red (a
  *     request is made, the answer is the server's).
- *   - localDictionary.ts: `localAnswerSuffices` without the `privacyClass ===
- *     'public'` check, and `sufficientLocalRows` without the entity-hit check:
- *     BOTH SURVIVE HERE, measured — the dictionary itself refuses a non-public
- *     field, and these fields allow no `completion`, so the whole path is
- *     defended twice. Each is killed in services/__tests__/localSufficiency.test.ts.
- *   - policyFallback.ts: `localSufficient: true` for every served policy instead
- *     of `boolOrFalse(r.localSufficient)` → test 4 goes red (country_picker,
- *     which the authority does not sanction, stops asking).
+ *   - localDictionary.ts: drop the context allowlist → SURVIVES HERE, measured:
+ *     the answerer has a source only for the two contexts, so country_picker
+ *     still asks. The allowlist is the gate's own guarantee and is killed in
+ *     services/__tests__/localSufficiency.test.ts; test 4 is the whole-path
+ *     statement that nothing else skips the request.
+ *   - policyFallback.ts: `localSufficient: false` for every served policy instead
+ *     of `boolOrFalse(r.localSufficient)` → tests 1 and 3 go red (the grant never
+ *     reaches the hook).
  */
 
 import React from 'react';
@@ -42,33 +45,26 @@ import { clearLocalZeroState } from '../../services/localZeroState.ts';
 import { INPUT_CONTEXTS as _SEED_CONTEXTS } from '../../types/inputContext.ts';
 import { _seedPolicyForTests as _seedPolicy } from '../../services/policyStore.ts';
 
-// A context the authority WOULD sanction (`policyRegistry.ts#sanctionLocalSufficiency`):
-// static_dictionary, public, nothing viewer-scoped, `localSufficient: true`.
-// HYPOTHETICAL ON PURPOSE: the real registry sanctions NO context today
-// (`language`/`interest` are raised to viewer_scoped; `country_picker`'s answer
-// is viewer-dependent and id-bearing), so `language` is seeded public here to
-// prove the client honours a grant. `interest` is seeded CLAIMING sufficiency
-// while viewer-scoped — a misbehaving or newer server — which the client must
-// refuse. `country_picker` is static_dictionary and NOT sanctioned.
+// The REAL registry's shape for the two sanctioned contexts after lead ruling
+// PR-D2-5 (`lib/inputAssistance/policyRegistry.ts`): static_dictionary,
+// viewer_scoped (the parity raise), nothing personalised, `localSufficient: true`.
+// `country_picker` is seeded CLAIMING sufficiency, as a misbehaving or newer
+// server might: it is not one of the two, so the client must still ask.
 const SANCTIONED = {
   offlinePolicy: 'static_dictionary',
-  privacyClass: 'public',
+  privacyClass: 'viewer_scoped',
   allowPersonalization: false,
   allowLiveContext: false,
   allowMemoryContext: false,
   allowAI: false,
   minChars: 1,
+  maxSuggestions: 8,
+  localSufficient: true,
 };
 _seedPolicy(_SEED_CONTEXTS, {
-  language: { ...SANCTIONED, entityTypes: ['language'], allowedSuggestionTypes: ['entity'], localSufficient: true },
-  interest: {
-    ...SANCTIONED,
-    privacyClass: 'viewer_scoped',
-    entityTypes: ['interest'],
-    allowedSuggestionTypes: ['entity'],
-    localSufficient: true,
-  },
-  country_picker: { ...SANCTIONED, entityTypes: ['country'], allowedSuggestionTypes: ['entity', 'recent'] },
+  language: { ...SANCTIONED, entityTypes: ['language'], allowedSuggestionTypes: ['entity'] },
+  interest: { ...SANCTIONED, entityTypes: ['interest'], allowedSuggestionTypes: ['entity'] },
+  country_picker: { ...SANCTIONED, privacyClass: 'public', entityTypes: ['country'], allowedSuggestionTypes: ['entity', 'recent'] },
 });
 
 const mockRequest = requestSuggestions as jest.MockedFunction<typeof requestSuggestions>;
@@ -127,12 +123,14 @@ test('G224: the same field with NO dictionary hit still asks the server', async 
   await waitFor(() => expect(screen.getByTestId('labels').props.children).toBe('From the server'));
 });
 
-test('G224: a VIEWER-SCOPED field still issues its request, even when the server claims sufficiency', async () => {
+test('G224: interest, the other sanctioned field, answers its hit locally too', async () => {
   render(<Probe fieldId={INTEREST_FIELD} text="hik" />);
-  await waitFor(() => expect(mockRequest).toHaveBeenCalledTimes(1));
+  await waitFor(() => expect(screen.getByTestId('labels').props.children).toBe('Hiking'));
+  await new Promise((r) => setTimeout(r, 30));
+  expect(mockRequest).toHaveBeenCalledTimes(0);
 });
 
-test('G212: a static_dictionary field the authority did NOT sanction keeps asking (the dictionary stays a fallback)', async () => {
+test('G212: any OTHER field claiming sufficiency still asks (the client admits exactly the two)', async () => {
   render(<Probe fieldId={COUNTRY_FIELD} text="thai" />);
   await waitFor(() => expect(mockRequest).toHaveBeenCalledTimes(1));
 });

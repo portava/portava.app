@@ -364,7 +364,7 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
     allowedSuggestionTypes: ['entity'],
     entityTypes: ['language'],
     minChars: 1,
-    offlinePolicy: 'static_dictionary',
+    offlinePolicy: 'static_dictionary', localSufficient: true, // PR-D2-5 (lead 2026-10-07): the answer is searchStatic's fixed list
   }),
   interest: policy('interest', {
     zeroStateAssistance: true,
@@ -372,7 +372,7 @@ const REGISTRY: Record<InputContext, InputFieldPolicy> = {
     allowedSuggestionTypes: ['entity'],
     entityTypes: ['interest'],
     minChars: 1,
-    offlinePolicy: 'static_dictionary',
+    offlinePolicy: 'static_dictionary', localSufficient: true, // PR-D2-5 (lead 2026-10-07): the answer is searchStatic's fixed list
   }),
 
   // Addresses — provider path is dormant (external_places_enabled OFF); Phase 1
@@ -465,7 +465,8 @@ for (const [context, privacyClass] of Object.entries(PRIVACY_CLASS_PARITY_RAISES
 //
 // The authority grants it only where the local answer IS the server's answer:
 //   - `offlinePolicy: 'static_dictionary'` — the field has a shipped list;
-//   - `privacyClass: 'public'` — the answer is the same for every viewer;
+//   - one of the two allowlisted contexts below, whose class is public or
+//     viewer_scoped (never owner_only, sensitive_location or private_message);
 //   - no personalization, live context, memory or AI — nothing viewer-scoped or
 //     time-varying could make the server's ranking differ.
 // Anything else is refused here, whatever the seed says, so a mis-declared
@@ -474,14 +475,21 @@ for (const [context, privacyClass] of Object.entries(PRIVACY_CLASS_PARITY_RAISES
 // can be raised to viewer_scoped by that table, and a grant judged on the seed
 // would then survive the raise.
 //
-// TODAY NO CONTEXT QUALIFIES, and none declares it. The registry's only
-// `static_dictionary` contexts are `language` and `interest` (raised to
-// viewer_scoped by the parity table above; their server answer is
-// `searchStatic`'s fixed list) and `country_picker` (public, but its server
-// answer reads traveller presence and carries canonical ids the shipped list
-// does not). Whether a viewer_scoped field whose ANSWER is a fixed list may be
-// sanctioned is an open ruling (lane D2, PR-D2-5), not this module's call.
+// WHICH CONTEXTS — lead ruling PR-D2-5 (2026-10-07), adopted with conditions:
+// `language` and `interest` may answer from the shipped list with no request
+// ONLY while that list is byte-for-byte what this server returns, for every
+// viewer. Their answer is `searchStatic`'s fixed list, but the parity table
+// above raised their class to `viewer_scoped` (the VALUE a person enters is
+// theirs), so the grant is an explicit two-context allowlist, not a class rule:
+// nothing else may be sanctioned, whatever its seed says. The conditions are
+// enforced by `src/test/inputLocalSufficiencyParity.test.ts`, which fails when
+// the shipped list and this server's answer diverge for any query it sweeps,
+// or when this server's answer varies by viewer. `country_picker` stays out:
+// its answer reads traveller presence and carries canonical ids.
+export const LOCALLY_SUFFICIENT_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>(['language', 'interest']);
+
 export function sanctionLocalSufficiency(seed: {
+  context?: InputContext;
   localSufficient?: boolean;
   offlinePolicy?: OfflineInputPolicy;
   privacyClass?: PrivacyClass;
@@ -490,10 +498,12 @@ export function sanctionLocalSufficiency(seed: {
   allowMemoryContext?: boolean;
   allowAI?: boolean;
 }): boolean {
+  const cls = seed.privacyClass ?? 'public';
   return (
     seed.localSufficient === true &&
+    seed.context !== undefined && LOCALLY_SUFFICIENT_CONTEXTS.has(seed.context) &&
     seed.offlinePolicy === 'static_dictionary' &&
-    (seed.privacyClass ?? 'public') === 'public' &&
+    (cls === 'public' || cls === 'viewer_scoped') &&
     seed.allowPersonalization !== true &&
     seed.allowLiveContext !== true &&
     seed.allowMemoryContext !== true &&

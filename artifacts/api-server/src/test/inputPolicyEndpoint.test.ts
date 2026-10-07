@@ -146,43 +146,46 @@ describe("§48/G340 — GET /input-assistance/policies", () => {
 //
 // MUTATION LOG (each applied, watched go red, reverted, `git diff` clean):
 //   - routes/inputAssistance.ts: drop `localSufficient` from the served object →
-//     "served on every context, false today" red.
-//   - sanctionLocalSufficiency: drop each condition → the matching refusal red;
-//     the privacy-class condition is also what keeps the RAISED language policy
-//     out ("judged on the FINAL policy").
-//   - SURVIVES, by construction today: deleting the foot loop that re-judges
-//     every entry. No seed declares `localSufficient`, so `policy()`'s raw copy
-//     is already false everywhere; the loop only bites once a context is
-//     declared (PR-D2-5), and the "FINAL policy" case pins the rule it applies.
+//     "served on every context" red.
+//   - policyRegistry.ts: drop `localSufficient: true` from language → the same red.
+//   - sanctionLocalSufficiency: drop each condition → the matching refusal red.
+//   - the foot loop that re-judges every entry removed → "served on every
+//     context" red is NOT expected (policy()'s raw copy is already the grant);
+//     the loop's job is to REFUSE a mis-declared context, pinned by the
+//     allowlist cases above and by the parity suite's sanction case.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe("§34 local sufficiency (G224/G212) — served by the authority, granted only where local IS the answer", () => {
-  it("is served on every context, as a boolean, and is false today on all of them", async () => {
+describe("§34 local sufficiency (G224/G212, lead ruling PR-D2-5) — served by the authority, for exactly two contexts", () => {
+  it("is served on every context as a boolean: true for language and interest, false everywhere else", async () => {
     const body = (await (await get()).json()) as { contexts: Record<string, any> };
     for (const ctx of KNOWN_CONTEXTS) {
-      assert.equal(body.contexts[ctx].localSufficient, false, `${ctx} must not be sanctioned today`);
+      assert.equal(body.contexts[ctx].localSufficient, ctx === "language" || ctx === "interest", ctx);
     }
   });
 
-  it("is judged on the FINAL policy: the raised (viewer_scoped) language policy is refused even if declared", () => {
+  it("is judged on the FINAL policy: the raised (viewer_scoped) language policy is admitted by the allowlist, not by its class", () => {
     const raised = resolvePolicy("language")!;
     assert.equal(raised.privacyClass, "viewer_scoped", "premise: the parity raise applied");
-    assert.equal(sanctionLocalSufficiency({ ...raised, localSufficient: true }), false);
-    // The same policy, were it public, would qualify — so it is the class that refuses it.
-    assert.equal(sanctionLocalSufficiency({ ...raised, privacyClass: "public", localSufficient: true }), true);
+    assert.equal(sanctionLocalSufficiency({ ...raised, localSufficient: true }), true);
+    // A context outside the allowlist is refused even when it is public and otherwise identical.
+    assert.equal(sanctionLocalSufficiency({ ...raised, context: "country_picker", privacyClass: "public", localSufficient: true }), false);
   });
 
   it("a mis-declared seed is refused, condition by condition (fail-closed)", () => {
-    const ok = { localSufficient: true, offlinePolicy: "static_dictionary" as const, privacyClass: "public" as const };
+    const ok = { context: "language" as const, localSufficient: true, offlinePolicy: "static_dictionary" as const, privacyClass: "viewer_scoped" as const };
     assert.equal(sanctionLocalSufficiency(ok), true);
+    assert.equal(sanctionLocalSufficiency({ ...ok, context: "interest" }), true);
+    assert.equal(sanctionLocalSufficiency({ ...ok, privacyClass: "public" }), true);
+    assert.equal(sanctionLocalSufficiency({ ...ok, context: undefined }), false);
+    assert.equal(sanctionLocalSufficiency({ ...ok, context: "country_picker" }), false);
     assert.equal(sanctionLocalSufficiency({ ...ok, localSufficient: false }), false);
     assert.equal(sanctionLocalSufficiency({ ...ok, offlinePolicy: "cached_local" }), false);
-    assert.equal(sanctionLocalSufficiency({ ...ok, privacyClass: "viewer_scoped" }), false);
+    for (const privacyClass of ["owner_only", "sensitive_location", "private_message"] as const) {
+      assert.equal(sanctionLocalSufficiency({ ...ok, privacyClass }), false, privacyClass);
+    }
     assert.equal(sanctionLocalSufficiency({ ...ok, allowPersonalization: true }), false);
     assert.equal(sanctionLocalSufficiency({ ...ok, allowLiveContext: true }), false);
     assert.equal(sanctionLocalSufficiency({ ...ok, allowMemoryContext: true }), false);
     assert.equal(sanctionLocalSufficiency({ ...ok, allowAI: true }), false);
-    // An absent privacy class defaults to public in the registry's own helper.
-    assert.equal(sanctionLocalSufficiency({ localSufficient: true, offlinePolicy: "static_dictionary" }), true);
   });
 });
