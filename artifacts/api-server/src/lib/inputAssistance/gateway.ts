@@ -64,7 +64,7 @@ import {
   EMPTY_TASK_CONSTRAINT,
   type TaskConstraint,
 } from './taskContext';
-import { applyDiversity, applyImpersonationRisk } from './rankingSignals'; import { buildOpenOnMapRow } from './searchActions';
+import { applyDiversity, applyImpersonationRisk } from './rankingSignals'; import { buildOpenOnMapRow } from './searchActions'; import { resolveNeighborhoodRows } from './neighborhoods';
 import { extractTemporal } from './semanticParser';
 import type { TemporalWindow } from './rankingSignals';
 import { buildAiAssistedWriting, isAiTextContext } from './aiWriting';
@@ -575,7 +575,7 @@ export async function generateSuggestions(
       }
       // Non-city entity types the picker allows (place / hidden_gem / country)
       // still flow through the existing per-type search behind the privacy gate.
-      const otherTypes = dispatchTypes.filter((t) => t !== 'cities');
+      const otherTypes = dispatchTypes.filter((t) => t !== 'cities'); if (policyEntityTypes.includes('neighborhood')) { const hood = await resolveNeighborhoodRows(sc, q, context, POLICY_VERSION, policy.maxSuggestions); if (hood.unreadable) noteTypeUnreadable(coverage, 'neighborhoods'); suggestions.push(...hood.rows); } // §11/§12 G66 — system neighbourhood zones
       if (otherTypes.length > 0) {
         let other = await dispatchAndProject(sc, otherTypes, {
           q, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint, coverage, distanceOrigin,

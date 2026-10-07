@@ -632,3 +632,74 @@ describe("POST /suggest — an emoji hashtag answers instead of going silent (§
     assert.ok(body.suggestions.some((s: any) => s.entityType === "hashtag"));
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §11/§12 neighbourhoods as their own id-space (census G66; lead ruling PR-D2-7
+// proposed: system zones only)
+//
+// MUTATION LOG (each applied, watched go red, reverted, `git diff` clean):
+//   N1 gateway.ts: drop the resolveNeighborhoodRows call → "neighborhood_picker
+//      returns the NEIGHBOURHOOD, bound to its own id" red.
+//   N2 neighborhoods.ts: drop `.eq('is_system', true)` → "a zone a person created
+//      is never offered" red.
+//   N3 neighborhoods.ts: drop `.eq('zone_type', 'neighborhood')` → "a venue or
+//      hotel zone is not a neighbourhood" red.
+//   N4 neighborhoods.ts: an unreadable read answers `unreadable: false` → "an
+//      unreadable geo_zones is a refusal, not an empty answer" red.
+//   N5 gateway.ts: drop the `policyEntityTypes.includes('neighborhood')` gate →
+//      "a city picker is not a neighbourhood field" red.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const OLD_QUARTER = { id: "zone-old-quarter", name: "Old Quarter", zone_type: "neighborhood", is_system: true,
+  city: "Hanoi", country_code: "VN", center_lat: 21.0341, center_lng: 105.8508, created_by: null };
+const MY_STREET = { id: "zone-my-street", name: "Old Quarter Corner", zone_type: "neighborhood", is_system: false,
+  city: "Hanoi", country_code: "VN", center_lat: 21.03, center_lng: 105.85, created_by: "someone" };
+const OLD_HOTEL = { id: "zone-hotel", name: "Old Quarter Hotel", zone_type: "hotel", is_system: true,
+  city: "Hanoi", country_code: "VN", center_lat: 21.03, center_lng: 105.85, created_by: null };
+
+describe("§11/§12 neighbourhoods (G66) — the neighbourhood picker binds a neighbourhood", () => {
+  it("neighborhood_picker returns the NEIGHBOURHOOD, bound to its own id", async () => {
+    setup({ ...GEO_STATE, geo_zones: [OLD_QUARTER] });
+    const r = await post({ context: "neighborhood_picker", text: "old quarter" });
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const hood = body.suggestions.find((s: any) => s.entityType === "neighborhood");
+    assert.ok(hood, "a neighbourhood row is served");
+    assert.equal(hood.entityId, "zone-old-quarter");
+    assert.equal(hood.label, "Old Quarter");
+    assert.equal(hood.action.type, "set_structured_value");
+    assert.deepEqual(hood.structuredValue, {
+      entityType: "neighborhood", neighborhoodId: "zone-old-quarter", name: "Old Quarter",
+      city: "Hanoi", countryCode: "VN", lat: 21.0341, lng: 105.8508,
+    });
+    assert.ok(!JSON.stringify(hood).includes("created_by"), "no owner on the wire");
+  });
+
+  it("a zone a person created is never offered", async () => {
+    setup({ ...GEO_STATE, geo_zones: [MY_STREET] });
+    const body = await (await post({ context: "neighborhood_picker", text: "old quarter" })).json() as any;
+    assert.equal(body.suggestions.filter((s: any) => s.entityType === "neighborhood").length, 0);
+  });
+
+  it("a venue or hotel zone is not a neighbourhood", async () => {
+    setup({ ...GEO_STATE, geo_zones: [OLD_HOTEL] });
+    const body = await (await post({ context: "neighborhood_picker", text: "old quarter" })).json() as any;
+    assert.equal(body.suggestions.filter((s: any) => s.entityType === "neighborhood").length, 0);
+  });
+
+  it("an unreadable geo_zones is a refusal, not an empty answer", async () => {
+    const { resolveNeighborhoodRows } = await import("../lib/inputAssistance/neighborhoods.js");
+    const broken = makeFakeClient({ ...GEO_STATE, geo_zones: [OLD_QUARTER] }, new Set(["geo_zones"]));
+    const out = await resolveNeighborhoodRows(broken, "old quarter", "neighborhood_picker", "v", 8);
+    assert.deepEqual(out, { rows: [], unreadable: true });
+    const ok = await resolveNeighborhoodRows(makeFakeClient({ geo_zones: [OLD_QUARTER] }), "old quarter", "neighborhood_picker", "v", 8);
+    assert.equal(ok.unreadable, false);
+    assert.equal(ok.rows.length, 1);
+  });
+
+  it("a city picker is not a neighbourhood field", async () => {
+    setup({ ...GEO_STATE, geo_zones: [OLD_QUARTER] });
+    const body = await (await post({ context: "city_picker", text: "old quarter" })).json() as any;
+    assert.equal(body.suggestions.filter((s: any) => s.entityType === "neighborhood").length, 0);
+  });
+});
