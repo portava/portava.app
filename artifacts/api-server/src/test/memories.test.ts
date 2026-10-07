@@ -119,7 +119,7 @@ function makeClient(state: FakeState) {
       upsert(row: any) { pendingUpsert = row; return builder; },
       delete() { pendingDelete = true; return builder; },
       eq(col: string, val: any)  { filters.push((r) => r[col] === val); return builder; },
-      neq(col: string, val: any) { filters.push((r) => r[col] !== val); return builder; },
+      neq(col: string, val: any) { filters.push((r) => r[col] !== val); return builder; }, contains(col: string, vals: any[]) { filters.push((r) => Array.isArray(r[col]) && vals.every((v) => r[col].includes(v))); return builder; },
       in(col: string, vals: any[]) { filters.push((r) => vals.includes(r[col])); return builder; },
       lt(col: string, val: any)  { filters.push((r) => r[col] < val); return builder; },
       gt(col: string, val: any)  { filters.push((r) => r[col] > val); return builder; },

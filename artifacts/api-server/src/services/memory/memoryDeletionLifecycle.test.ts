@@ -70,6 +70,7 @@ function makeClient(state: FakeState, failures: Record<string, any> = {}, counte
       delete() { pendingDelete = true; return builder; },
       eq(c: string, v: any) { filters.push((r) => r[c] === v); return builder; },
       neq(c: string, v: any) { filters.push((r) => r[c] !== v); return builder; },
+      contains(c: string, vs: any[]) { filters.push((r) => Array.isArray(r[c]) && vs.every((v) => r[c].includes(v))); return builder; },
       in(c: string, vs: any[]) { filters.push((r) => vs.includes(r[c])); return builder; },
       is(c: string, v: any) { filters.push((r) => (r[c] ?? null) === v); return builder; },
       gt() { return builder; }, lt() { return builder; },

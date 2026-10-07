@@ -90,7 +90,7 @@ export interface QueryLike {
   select: (columns?: string, options?: { head?: boolean; count?: string }) => QueryLike;
   eq: (column: string, value: unknown) => QueryLike;
   in: (column: string, values: readonly unknown[]) => QueryLike;
-  neq: (column: string, value: unknown) => QueryLike;
+  neq: (column: string, value: unknown) => QueryLike; contains: (column: string, values: readonly unknown[]) => QueryLike; // one line: lines below are cited
   upsert: (values: unknown, options?: { onConflict?: string }) => QueryLike;
   update: (values: unknown) => QueryLike;
   then: <R1, R2>(
@@ -467,9 +467,15 @@ export async function revokeDerivativesForMemory(
   reason: string,
   now: Date,
 ): Promise<ProjectionResult<{ revoked: number; scope_keys: string[] }>> {
+  // FILTERED IN THE DATABASE, on 2730's GIN index over source_memory_ids. This
+  // read used to fetch every non-purged registration of EVERY user and filter
+  // here — and PostgREST caps a response at its max-rows (1000 on Supabase), so
+  // once the registry outgrew one page a deleted Memory's derivative past the
+  // cap was never seen, never revoked, and the step still reported `done`.
   const found = await client
     .from(DERIVATIVE_REGISTRY_TABLE)
     .select("id, scope_key, source_memory_ids, revocation_state")
+    .contains("source_memory_ids", [memoryId])
     .neq("revocation_state", "PURGED");
   if (found.error) {
     return {
