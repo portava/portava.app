@@ -47,7 +47,7 @@ jest.mock('../../../src/components/layover/LayoverHero', () => {
   return { LayoverHero: () => <View testID="layover-hero-stub" /> };
 });
 // NOTE: intentional stub — see above.
-jest.mock('../../../src/components/layover/CanILeaveCard', () => ({ CanILeaveCard: () => null })); jest.mock('../../../src/components/layover/LayoverConstraintsCard', () => ({ LayoverConstraintsCard: () => null })); // NOTE: intentional stub — the card has its own suite (LayoverConstraintsCard.component.test.tsx)
+jest.mock('../../../src/components/layover/CanILeaveCard', () => ({ CanILeaveCard: () => null })); jest.mock('../../../src/components/layover/LayoverConstraintsCard', () => ({ LayoverConstraintsCard: (p: { onChanged?: () => void }) => { (global as any).__reloadDashboard = p.onChanged; return null; } })); // NOTE: intentional stub — the card has its own suite (LayoverConstraintsCard.component.test.tsx); it hands back the screen's `onChanged` (`load(true)`) so a case can re-read the overview
 // NOTE: intentional stub — see above.
 jest.mock('../../../src/components/layover/AirportEssentialsCard', () => ({ AirportEssentialsCard: () => null }));
 // NOTE: intentional stub — see above.
@@ -223,6 +223,45 @@ describe('return alerts on the dashboard', () => {
       const ids = notifications.cancelScheduledNotification.mock.calls.map((c: [string | null]) => c[0]);
       expect(ids).toEqual(expect.arrayContaining(['notif-1', 'notif-2']));
     });
+  });
+
+  it("a RETURNING layover keeps its alerts: both instants are scheduled (wave-2 second verification F5, mutant N14)", async () => {
+    // Tapping "Return to airport now" flips the session to `returning` and
+    // reloads the overview. That is the moment the traveller most needs
+    // RETURN_NOW, so `returning` is a live status for the alerts.
+    notifications.getPermissionsAsync.mockResolvedValue({ granted: true, status: 'granted' });
+    notifications.scheduleLocalNotificationAt.mockClear();
+    notifications.scheduleLocalNotificationAt.mockImplementation(async () => `notif-${notifications.scheduleLocalNotificationAt.mock.calls.length}`);
+    notifications.cancelScheduledNotification.mockClear();
+    await AsyncStorage.clear();
+    (global as any).__bundle = bundle();
+    const body = overviewBody(undefined);
+    (global as any).__overview = { ...body, session: { ...body.session, status: 'returning' } };
+    await render(<LayoverDashboardScreen />);
+    await waitFor(() => expect(notifications.scheduleLocalNotificationAt).toHaveBeenCalledTimes(2));
+    const at = notifications.scheduleLocalNotificationAt.mock.calls.map((c: [Date]) => c[0].toISOString());
+    expect(at).toEqual([new Date(Date.parse(HARD_RETURN) - 30 * 60_000).toISOString(), HARD_RETURN]);
+    await waitFor(() => expect(screen.getByTestId('layover-return-alerts-text')).toBeTruthy());
+    expect(String((screen.getByTestId('layover-return-alerts-text').props as { children: unknown }).children)).toMatch(/^Return alerts on: /);
+    expect(notifications.cancelScheduledNotification.mock.calls.map((c: [string | null]) => c[0])).not.toEqual(expect.arrayContaining(['notif-1']));
+    expect(await AsyncStorage.getItem(returnAlertsKey('sess-1'))).not.toBeNull();
+  });
+
+  it("an ACTIVE layover that the server then reports ENDED cancels its alerts AND clears the sentence (wave-2 second verification F5, mutant N12)", async () => {
+    await mountWith({ granted: true, status: 'granted' });
+    await waitFor(() => expect(notifications.scheduleLocalNotificationAt).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByTestId('layover-return-alerts-text')).toBeTruthy());
+    notifications.cancelScheduledNotification.mockClear();
+    const body = overviewBody(undefined);
+    (global as any).__overview = { ...body, session: { ...body.session, status: 'completed' } };
+    expect(typeof (global as any).__reloadDashboard).toBe('function');
+    await act(async () => { await (global as any).__reloadDashboard(); });
+    await waitFor(() => {
+      const ids = notifications.cancelScheduledNotification.mock.calls.map((c: [string | null]) => c[0]);
+      expect(ids).toEqual(expect.arrayContaining(['notif-1', 'notif-2']));
+    });
+    await waitFor(() => expect(screen.queryByTestId('layover-return-alerts-text')).toBeNull());
+    expect(notifications.scheduleLocalNotificationAt).toHaveBeenCalledTimes(2);
   });
 
   for (const ended of ['completed', 'cancelled', 'expired']) {
