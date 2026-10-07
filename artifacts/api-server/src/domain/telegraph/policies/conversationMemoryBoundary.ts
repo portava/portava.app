@@ -40,10 +40,10 @@
  *
  * ── WHAT THIS DOES NOT CLAIM ────────────────────────────────────────────────
  * It is a STATIC guard over the shipped tree: top-level units split at column
- * 0, one level of call into the same file or an imported module, string-level
- * table names, comments stripped. A path built from a computed table name, or
- * reached through two levels of indirection, is not seen. It never claimed to
- * be a proof; it is the tripwire §29 asked for where there was none.
+ * 0, comments stripped. Since 2026-10-07 (foot of file) calls are followed to a
+ * FIXPOINT across files, table and RPC names through the file's constants, an
+ * unresolvable RPC fails closed, and the mobile tree is scanned. Still not seen:
+ * a table name passed as an ARGUMENT, a call made only through JSX or a value.
  */
 
 /** What people said to one another. Reading any of these is reading history. */
@@ -257,3 +257,276 @@ export function crossingsInFile(code: string, importedCreatorNames: ReadonlySet<
   }
   return out;
 }
+
+// ── Hardening (lane T, mission 4, 2026-10-07): the three holes §45c named ───
+//
+// census-telegraph §45c moved T366 back to W as "a tripwire with stated holes":
+//   1. only a LITERAL `.rpc("…")` was recognised, and the memory kernel is
+//      called as `sc.rpc(fn, …)` (lib/memoryCommandBus.ts), so a handler that
+//      read `messages` and called `executeMemoryCommand(…CREATE_MEMORY…)` stayed
+//      green;
+//   2. `const HISTORY = "messages"; sc.from(HISTORY)` stayed green;
+//   3. the mobile app was not scanned at all.
+// And the header above stated a fourth: two levels of indirection were not
+// seen. What follows closes all four:
+//   1. an `.rpc(` whose name is not a literal is resolved through the file's
+//      string constants, and an unresolved one COUNTS as a creation (fail
+//      closed): the scan cannot prove it is not the memory kernel;
+//   2. `.from(NAME)` is resolved through the file's string constants, and an
+//      unresolved database `.from(expr)` counts as a possible history read AND,
+//      chained to an insert or upsert, a possible memory creation;
+//   3. the mobile tree is scanned (clientMemoryBoundary below and its suite);
+//   4. reads and creations are carried through calls to a FIXPOINT across
+//      files (`reachingNames`), not one level.
+
+/** `const NAME = "literal"` declarations in one comment-stripped file (string literals of identifier characters only). */
+export function stringConstsIn(code: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const re = /(?:^|[\s;{])(?:export\s+)?const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^=\n]+)?=\s*(["'`])([A-Za-z0-9_]+)\2/g;
+  for (const m of code.matchAll(re)) out.set(m[1]!, m[3]!);
+  return out;
+}
+
+/**
+ * `const NAME = <expression>` whose expression names string constants or
+ * literals — `const fn = highlight ? HIGHLIGHT_KERNEL_FN : MEMORY_KERNEL_FN` —
+ * mapped to every value it can take. Plain-literal constants are included.
+ */
+export function constCandidatesIn(code: string, consts: ReadonlyMap<string, string> = stringConstsIn(code)): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const [k, v] of consts) out.set(k, new Set([v]));
+  for (const m of code.matchAll(/(?:^|[\s;{(])(?:export\s+)?const\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^=\n]+)?=\s*([^;\n]+)/g)) {
+    if (out.has(m[1]!)) continue;
+    const vals = new Set<string>();
+    for (const lit of m[2]!.matchAll(/(["'`])([A-Za-z0-9_]+)\1/g)) vals.add(lit[2]!);
+    for (const id of m[2]!.matchAll(/[A-Za-z_$][A-Za-z0-9_$]*/g)) { const v = consts.get(id[0]); if (v) vals.add(v); }
+    if (vals.size > 0) out.set(m[1]!, vals);
+  }
+  return out;
+}
+
+/** `.from(` receivers that are not a database client. */
+const NON_DB_FROM_RECEIVER = /^(Array|Buffer|Object|Set|Map|String|Iterator|[A-Z][A-Za-z0-9]*Array)$/;
+
+/** One `.from(...)` call: the table when it is known, or the unresolved expression. */
+export interface FromSite {
+  readonly table: string | null;
+  readonly expr: string | null;
+  /** Offset just past the call's opening argument, for statement scanning. */
+  readonly end: number;
+}
+
+/** Every database `.from(` in a file, literal or not, with the table resolved where the file says what it is. */
+export function fromSites(code: string, consts: ReadonlyMap<string, string> = stringConstsIn(code)): FromSite[] {
+  const out: FromSite[] = [];
+  const re = /([A-Za-z0-9_$\])!]*)\.from\(\s*(?:(["'`])([A-Za-z0-9_]+)\2|([A-Za-z_$][A-Za-z0-9_$.]*))/g;
+  for (const m of code.matchAll(re)) {
+    const receiver = (m[1] ?? "").replace(/.*\./, "");
+    if (NON_DB_FROM_RECEIVER.test(receiver)) continue;
+    const end = (m.index ?? 0) + m[0].length;
+    if (m[3]) { out.push({ table: m[3], expr: null, end }); continue; }
+    const ident = m[4]!;
+    const resolved = consts.get(ident) ?? null;
+    out.push({ table: resolved, expr: resolved ? null : ident, end });
+  }
+  return out;
+}
+
+/** The chained statement after a call: up to the next `;` or the next `.from(`. */
+function statementAfter(code: string, end: number): string {
+  const rest = code.slice(end);
+  const stops = [rest.indexOf(";"), rest.search(/\.from\(/)].filter((i) => i >= 0);
+  return stops.length > 0 ? rest.slice(0, Math.min(...stops)) : rest;
+}
+
+/**
+ * Conversation-history READS in one unit, the table named by a literal or a
+ * constant. A statement that inserts, upserts, updates or deletes is a write,
+ * not a read of what people said (posting a booking card INTO a thread reads
+ * nothing). An unresolved `.from(expr)` is reported as `?expr`; the suite
+ * decides what to do with it.
+ */
+export function conversationReadsResolved(code: string, consts: ReadonlyMap<string, string>): string[] {
+  const history = new Set<string>(CONVERSATION_HISTORY_TABLES);
+  const out = new Set<string>();
+  for (const s of fromSites(code, consts)) {
+    if (s.table === null) { out.add(`?${s.expr}`); continue; }
+    if (!history.has(s.table)) continue;
+    if (/\.(insert|upsert|update|delete)\(/.test(statementAfter(code, s.end))) continue;
+    out.add(s.table);
+  }
+  return [...out];
+}
+
+/**
+ * The names an `.rpc(<expr>)` can call, from what the FILE says: a constant or
+ * a constant expression; `obj.prop` → every `prop: "literal"` in the file (the
+ * probe-table shape); a parameter of a NON-exported function → the argument
+ * every same-file call passes in that position. `null` = cannot be resolved.
+ */
+export function rpcNameCandidates(expr: string, unitCode: string, fileCode: string, consts: ReadonlyMap<string, string>): Set<string> | null {
+  const direct = constCandidatesIn(unitCode, consts).get(expr) ?? constCandidatesIn(fileCode, consts).get(expr);
+  if (direct) return direct;
+  const member = /^[A-Za-z_$][A-Za-z0-9_$]*\.([A-Za-z_$][A-Za-z0-9_$]*)$/.exec(expr);
+  if (member) {
+    const vals = new Set<string>();
+    for (const m of fileCode.matchAll(new RegExp(`\\b${member[1]}\\s*:\\s*(["'\`])([A-Za-z0-9_]+)\\1`, "g"))) vals.add(m[2]!);
+    return vals.size > 0 ? vals : null;
+  }
+  const fn = /^(?:async\s+)?function\s+([A-Za-z0-9_$]+)\s*\(([^)]*)\)/.exec(unitCode.trim());
+  if (!fn) return null;
+  const params = fn[2]!.split(",").map((p) => p.trim().replace(/[:=?].*$/, "").trim());
+  const idx = params.indexOf(expr);
+  if (idx < 0) return null;
+  const vals = new Set<string>();
+  let calls = 0;
+  for (const call of fileCode.matchAll(new RegExp(`(?<![A-Za-z0-9_$.])${fn[1]}\\s*\\(`, "g"))) {
+    const start = (call.index ?? 0) + call[0].length;
+    if (/\bfunction\s*$/.test(fileCode.slice(Math.max(0, (call.index ?? 0) - 24), call.index))) continue; // the declaration itself
+    const arg = splitTopLevelArgs(fileCode, start)[idx];
+    if (arg === undefined) return null;
+    const lit = /^(["'`])([A-Za-z0-9_]+)\1$/.exec(arg.trim());
+    const resolved = lit ? new Set([lit[2]!]) : (constCandidatesIn(fileCode, consts).get(arg.trim()) ?? null);
+    if (resolved === null) return null;
+    for (const v of resolved) vals.add(v);
+    calls += 1;
+  }
+  return calls > 0 ? vals : null;
+}
+
+/** The top-level comma-separated arguments of a call whose `(` ends at `start`. */
+function splitTopLevelArgs(code: string, start: number): string[] {
+  const args: string[] = [];
+  let depth = 0;
+  let cur = "";
+  let quote: string | null = null;
+  for (let i = start; i < code.length; i++) {
+    const ch = code[i]!;
+    if (quote) { cur += ch; if (ch === quote && code[i - 1] !== "\\") quote = null; continue; }
+    if (ch === "'" || ch === '"' || ch === "`") { quote = ch; cur += ch; continue; }
+    if (ch === "(" || ch === "{" || ch === "[") depth += 1;
+    if (ch === ")" || ch === "}" || ch === "]") {
+      if (depth === 0) { args.push(cur); return args; }
+      depth -= 1;
+    }
+    if (ch === "," && depth === 0) { args.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  return args;
+}
+
+/** Memory creations in one unit: literal and constant tables, RPC names as far as the file resolves them, and — fail closed — the unresolved. */
+export function memoryCreationsResolved(code: string, consts: ReadonlyMap<string, string>, fileCode: string = code): string[] {
+  const memory = new Set<string>(MEMORY_CREATION_TABLES);
+  const found: string[] = [];
+  for (const s of fromSites(code, consts)) {
+    if (s.table !== null && !memory.has(s.table)) continue;
+    const rest = code.slice(s.end);
+    const stops = [rest.indexOf(";"), rest.search(/\.from\(/)].filter((i) => i >= 0);
+    const stmt = stops.length > 0 ? rest.slice(0, Math.min(...stops)) : rest;
+    if (/\.(insert|upsert)\(/.test(stmt)) found.push(s.table ?? `?${s.expr}`);
+  }
+  const rpcs = new Set<string>(MEMORY_CREATION_RPCS);
+  for (const m of code.matchAll(/\.rpc\(\s*(?:(["'`])([A-Za-z0-9_]+)\1|([A-Za-z_$][A-Za-z0-9_$.]*))/g)) {
+    const names = m[2] ? new Set([m[2]]) : rpcNameCandidates(m[3]!, code, fileCode, consts);
+    if (names === null) found.push(`rpc:?${m[3]}`);
+    else for (const n of names) if (rpcs.has(n)) found.push(`rpc:${n}`);
+  }
+  return found;
+}
+
+/**
+ * The FIXPOINT. For every file, the top-level names whose unit reaches `seed` —
+ * itself, through a same-file name, or through a name imported from a file
+ * whose same-named export reaches it — iterated until nothing changes, so any
+ * depth of indirection is followed. `importsOf(file)` gives each import's
+ * resolved target file (or null for a package) and the local names it binds.
+ */
+export function reachingNames(
+  units: ReadonlyMap<string, readonly CodeUnit[]>,
+  importsOf: (file: string) => ReadonlyArray<{ target: string | null; names: readonly string[]; defaultName?: string | null; namespace?: string | null }>,
+  seed: (file: string, unitCode: string) => boolean,
+): Map<string, Set<string>> {
+  const reach = new Map<string, Set<string>>();
+  for (const f of units.keys()) reach.set(f, new Set());
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [f, us] of units) {
+      const mine = reach.get(f)!;
+      const imported = new Set<string>();
+      for (const imp of importsOf(f)) {
+        if (!imp.target) continue;
+        const theirs = reach.get(imp.target);
+        if (!theirs) continue;
+        for (const n of imp.names) if (theirs.has(n)) imported.add(n);
+        if (imp.defaultName && theirs.has("default")) imported.add(imp.defaultName);
+        if (imp.namespace && theirs.size > 0) imported.add(imp.namespace);
+      }
+      for (const u of us) {
+        if (u.declares.every((d) => mine.has(d)) && u.declares.length > 0) continue;
+        const hit = seed(f, u.code) ||
+          [...mine].some((n) => !u.declares.includes(n) && mentions(u.code, n)) ||
+          [...imported].some((n) => mentions(u.code, n));
+        if (!hit) continue;
+        for (const d of u.declares) if (!mine.has(d)) { mine.add(d); changed = true; }
+        if (u.declares.length === 0 && /^export\s+default\s/.test(u.code) && !mine.has("default")) { mine.add("default"); changed = true; }
+      }
+    }
+  }
+  return reach;
+}
+
+/**
+ * Units of one file that READ conversation history and CREATE a memory, each
+ * possibly at any depth: `readers` / `creators` are the fixpoint's names for
+ * this file and its imports. A unit names what it reached.
+ */
+export function crossingsTransitive(
+  units: readonly CodeUnit[],
+  reads: (unitCode: string) => readonly string[],
+  creates: (unitCode: string) => readonly string[],
+  readerNames: ReadonlySet<string>,
+  creatorNames: ReadonlySet<string>,
+): BoundaryCrossing[] {
+  const out: BoundaryCrossing[] = [];
+  for (const u of units) {
+    const r = [...reads(u.code)];
+    for (const n of readerNames) if (!u.declares.includes(n) && mentions(u.code, n)) r.push(`call:${n}`);
+    if (r.length === 0) continue;
+    const c = [...creates(u.code)];
+    for (const n of creatorNames) if (!u.declares.includes(n) && mentions(u.code, n)) c.push(`call:${n}`);
+    if (c.length > 0) out.push({ unit: u.code.split("\n")[0]!.slice(0, 120), reads: r, creates: c });
+  }
+  return out;
+}
+
+/**
+ * Call trees that reach a conversation read AND a memory creation in DIFFERENT
+ * branches, reviewed and found to carry no conversation content into the
+ * memory. The fixpoint cannot tell "reaches both" from "flows one into the
+ * other" — that is the price of following calls to any depth — so each entry
+ * names the unit, the argument, and the pin that keeps the argument true. A
+ * listed unit that stops crossing must be removed (the suite says so).
+ */
+export interface ReviewedNonFlow {
+  readonly file: string;
+  /** The unit's first line starts with this. */
+  readonly unit: string;
+  readonly why: string;
+  /** The suite whose assertion keeps `why` true. */
+  readonly pinnedBy: string;
+}
+
+export const REVIEWED_CALL_TREE_NON_FLOWS: readonly ReviewedNonFlow[] = [
+  {
+    file: "src/routes/compass.ts",
+    unit: 'router.post("/compass/ask"',
+    why:
+      "The tool loop can read a Telegraph conversation (telegraph_search_conversation and friends) and hands " +
+      "the result to the model; compressConversationIfDue later extracts preferences from the COMPASS " +
+      "conversation's USER turns only (compass_conversation_messages, role = 'user'), never from tool results " +
+      "or assistant turns, so nothing a Telegraph read returned reaches compass_memories.",
+    pinnedBy: "src/test/telegraphConversationMemoryBoundary.test.ts",
+  },
+];
