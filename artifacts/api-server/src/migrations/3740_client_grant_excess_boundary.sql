@@ -410,12 +410,16 @@ BEGIN
 
   -- 4. profiles: each client role's column SELECT and UPDATE sets are the
   --    baseline's, exactly — no more (a leak) and no fewer (a broken reader).
+  --    DISTINCT: one column can carry the same privilege from two grantors (a
+  --    REVOKE removes only the grants its own role made), and the set, not the
+  --    grantor, is what a client sees.
   FOREACH v_role IN ARRAY ARRAY['anon', 'authenticated'] LOOP
-    SELECT coalesce(array_agg(a.attname::text ORDER BY a.attname::text COLLATE "C"), ARRAY[]::text[])
+    SELECT coalesce(array_agg(s.n ORDER BY s.n COLLATE "C"), ARRAY[]::text[])
       INTO v_got
-      FROM pg_attribute a CROSS JOIN LATERAL aclexplode(a.attacl) x
-     WHERE a.attrelid = 'public.profiles'::regclass AND a.attnum > 0 AND NOT a.attisdropped
-       AND x.grantee = v_role::regrole AND x.privilege_type = 'SELECT';
+      FROM (SELECT DISTINCT a.attname::text AS n
+              FROM pg_attribute a CROSS JOIN LATERAL aclexplode(a.attacl) x
+             WHERE a.attrelid = 'public.profiles'::regclass AND a.attnum > 0 AND NOT a.attisdropped
+               AND x.grantee = v_role::regrole AND x.privilege_type = 'SELECT') s;
     SELECT array_agg(c ORDER BY c COLLATE "C") INTO v_want FROM unnest(v_select) AS c;
     IF v_got IS DISTINCT FROM v_want THEN
       RAISE EXCEPTION '3740 POSTCONDITION FAILED: % column SELECT on public.profiles is not the baseline''s. Extra: %. Missing: %.',
@@ -424,11 +428,12 @@ BEGIN
         (SELECT string_agg(w, ', ') FROM unnest(v_want) w WHERE w <> ALL (v_got));
     END IF;
 
-    SELECT coalesce(array_agg(a.attname::text ORDER BY a.attname::text COLLATE "C"), ARRAY[]::text[])
+    SELECT coalesce(array_agg(s.n ORDER BY s.n COLLATE "C"), ARRAY[]::text[])
       INTO v_got
-      FROM pg_attribute a CROSS JOIN LATERAL aclexplode(a.attacl) x
-     WHERE a.attrelid = 'public.profiles'::regclass AND a.attnum > 0 AND NOT a.attisdropped
-       AND x.grantee = v_role::regrole AND x.privilege_type = 'UPDATE';
+      FROM (SELECT DISTINCT a.attname::text AS n
+              FROM pg_attribute a CROSS JOIN LATERAL aclexplode(a.attacl) x
+             WHERE a.attrelid = 'public.profiles'::regclass AND a.attnum > 0 AND NOT a.attisdropped
+               AND x.grantee = v_role::regrole AND x.privilege_type = 'UPDATE') s;
     SELECT array_agg(c ORDER BY c COLLATE "C") INTO v_want FROM unnest(v_update) AS c;
     IF v_got IS DISTINCT FROM v_want THEN
       RAISE EXCEPTION '3740 POSTCONDITION FAILED: % column UPDATE on public.profiles is not the baseline''s. Extra: %. Missing: %.',
