@@ -13190,14 +13190,14 @@ The first row passing on both sides is the proof that nothing else changed.
 - `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:223#describe("A. GET /api/pulse — the owner's location mode"`
   drives the real route over a fake client. Its A7 case turns the ranking pass
   on, with a place-affinity fixture that is shown to move the ranking
-  (`artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:295#it("A7. with the ranking pass ON`).
-- `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:425#describe("B. eventPostsDiscovery`
+  (`artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:305#it("A7. with the ranking pass ON`).
+- `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:435#describe("B. eventPostsDiscovery`
   includes the shared-cache case (owner first, then non-owner, and the reverse)
   and the cap case
-  (`artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:522#it("B7. the page a non-owner gets is the page as scored and capped`).
-- `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:604#describe("C. GET /api/trips/:tripId/posts`
+  (`artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:565#it("B7. the page a non-owner gets is the page as scored and capped`).
+- `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:647#describe("C. GET /api/trips/:tripId/posts`
   uses the shared posts-route harness.
-- `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:654#describe("D. postPlaceWithheld ≡ mapPublicPost`.
+- `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:697#describe("D. postPlaceWithheld ≡ mapPublicPost`.
 
 For each reader, the suite checks:
 - a withholding mode reaches a non-owner without the venue;
@@ -15168,9 +15168,9 @@ kept everywhere, as mapPublicPost keeps them.
   before (B1, B3, B4: same ids, same order, old objects minus the fields).
 - **The two "people you follow were here" counters** list posts AT a place, so
   they are the §42.6 (3) class. They now skip a withheld post
-  (`artifacts/api-server/src/services/wall/ContextThreadService.ts:496#.select("author_id, created_at, location_privacy_mode, post_status")`,
+  (`artifacts/api-server/src/services/wall/ContextThreadService.ts:496#.select("author_id, created_at, location_privacy_mode, post_status, published_at")`,
   `artifacts/api-server/src/services/wall/ContextThreadService.ts:514#if (!a || a === viewer.viewerId || postPlaceWithheld(row)) continue;`,
-  `artifacts/api-server/src/services/wall/LiveForYouService.ts:449#.select("author_id, canonical_place_id, created_at, location_privacy_mode, post_status")`,
+  `artifacts/api-server/src/services/wall/LiveForYouService.ts:449#.select("author_id, canonical_place_id, created_at, location_privacy_mode, post_status, published_at")`,
   `artifacts/api-server/src/services/wall/LiveForYouService.ts:464#|| !byPlace.has(placeId) || postPlaceWithheld(row)) continue;`).
   The viewer's own posts were never counted, so no owner bypass applies.
 
@@ -15207,7 +15207,7 @@ kept everywhere, as mapPublicPost keeps them.
   is unchanged; the filter is at
   `artifacts/api-server/src/routes/placeLiving.ts:635#const formattedPosts = posts.filter((p: any) => !postPlaceWithheldFrom(p, timelineViewer?.user.id))`).
 - **The Place Day feed** SELECTs the mode
-  (`artifacts/api-server/src/routes/placeDays.ts:102#publish_at, location_privacy_mode, profiles(id, is_private)")`)
+  (`artifacts/api-server/src/routes/placeDays.ts:102#publish_at, location_privacy_mode, published_at, profiles(id, is_private)")`)
   and skips another author's withheld post before paging
   (`artifacts/api-server/src/routes/placeDays.ts:114#let visible = chunk.filter((p) => !blocked.has(p.author_id) && isEligiblePlaceDayPost(p)); visible = visible.filter`).
   The sequence a viewer can page through is the old sequence minus those posts,
@@ -15359,16 +15359,16 @@ file's tail kept so the suite imports. Every file was restored byte-identical
 40 tests, registered in the api-server `test` script.
 
 - The blocks:
-  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:308#describe("A. Compass feed page`
+  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:309#describe("A. Compass feed page`
     drives the real hydrator and builder with a frozen clock;
-  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:514#describe("B. The Wall`
+  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:515#describe("B. The Wall`
     drives GET /wall and GET /wall/live over the real router, plus the two
     counters directly;
-  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:843#describe("C. Place pages`
+  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:869#describe("C. Place pages`
     drives the living page, the timeline, the Place Day feed and recaps over
     their routers, the rails predicate, and the collections worker's tick;
-  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:1117#describe("D. The public postcard wall`;
-  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:429#describe("E. lib/postPlaceDisclosure`
+  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:1188#describe("D. The public postcard wall`;
+  - `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:430#describe("E. lib/postPlaceDisclosure`
     checks the helpers against mapPublicPost over every mode × status.
 - For every reader it checks:
   - a withholding mode reaches a non-owner without the place;
@@ -16398,3 +16398,53 @@ window.
 - `toMediaAsset` serving any `"live"`, a social lifetime added by age, a writer with no stated source,
   another account's reputation served, or an unknown audience admitted to the following feed. Each is
   pinned by the test named in its row.
+
+### 50.7 Follow-through, later on 2026-10-07 (lane M, after the lead accepted the rulings file): §50.3's readers get the window where they can, and the D-82 hold reaches every post writer
+
+**The rulings file is accepted.** The lead read and accepted `docs/ops/lead-rulings-20261007-media.md`
+as written on 2026-10-07, so §50.1's moves no longer depend on a pending acceptance. No row moves in
+this subsection; MD79 and MD269 keep the verdicts §50 gave them.
+
+**MD79, the readers §50.3 listed.** A reader that answers per request now SELECTs `published_at` and so
+shows a released "Publish after I leave" post's place for the 24-hour window. A missing or unparseable
+release time still counts as ended:
+- Pulse;
+- event-posts discovery;
+- the public postcard wall;
+- the Place Day feed;
+- the per-request living timeline;
+- the Wall's context thread and Live strip.
+
+Event-posts discovery caches its decision for 5 minutes and is shared across viewers. It therefore now
+caches the window END with the decision and checks it at serve time
+(`artifacts/api-server/src/lib/eventPostsDiscovery.ts:590#function eventPostForViewer(post: RawPost, viewerId: string | null, nowMs: number = Date.now()): RawPost | null {`,
+`artifacts/api-server/src/lib/postLocationDisclosureLifetime.ts:92#export function locationDisclosureEndPassed(`),
+so a window that ends while the entry is cached is honoured.
+
+Four readers are **deliberately left closed**, because their decision outlives the request:
+- the `place_living_cache` payload, which is shared for up to 24 hours, and its persisted AI summary;
+- the persisted public rails (`placeCollections`);
+- Place Day recaps, which are a persisted copy;
+- Compass's hydrator, whose feed is cached per viewer for 5 minutes.
+
+Tests:
+- `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:487#it("B1c.` (the cache case, on a
+  mocked clock), plus A2b and B1b;
+- `artifacts/api-server/src/test/postLocationModeRemainingReaders.test.ts:1148#it("C10.` (the closed four
+  are pinned), plus B9, C9 and D5.
+
+Nine mutations were run, and each one turned a test red.
+
+**MD269 (a), the other post writers.** The same hold now gates two more writers:
+- `POST /events/:id/posts`
+  (`artifacts/api-server/src/routes/events.ts:5849#postMediaHoldRefusal(await postMediaModerationHold(sc, parsed.data.mediaUrls))`);
+- `POST` and `PATCH /admin/portava/posts`
+  (`artifacts/api-server/src/routes/adminPortavaPosts.ts:116#postMediaHoldRefusal(await postMediaModerationHold(sc, p.mediaUrls ?? []))`).
+
+The test is `artifacts/api-server/src/test/mediaPostMediaHoldD82Surfaces.test.ts` (7); three mutations,
+each red. MD269 stays **W** only on D-27d, the classifier vendor, which is not ruled.
+
+### 50.8 Cited, not graded (check:census-scope-coverage)
+
+- NOT-GRADED: artifacts/api-server/src/routes/events.ts — §50.7 cites only the D-82 gate on `POST /events/:id/posts`; no Media row is graded on this file, and MD269's verdict rests on `lib/media/postMediaModerationHold.ts`.
+- NOT-GRADED: artifacts/api-server/src/routes/adminPortavaPosts.ts — as above, for the official account's posts.

@@ -2035,6 +2035,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/mediaNoSocialExpiry.test.ts",
     "artifacts/api-server/src/test/mediaPostMediaHoldD82.test.ts",
     "artifacts/api-server/src/test/mediaBoostRestrictionD24c.test.ts",
+    "artifacts/api-server/src/test/mediaPostMediaHoldD82Surfaces.test.ts", // census-media §50.7
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a
@@ -4722,6 +4723,11 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/passportYearbookRoute.test.ts",
     "artifacts/api-server/src/test/passportTravelIdentity.test.ts",
     "artifacts/api-server/src/test/passportStampPlaceVocabulary.test.ts",
+    // WIDENED 2026-10-07 by lane M (census-passport §30): P61's writer, its migration, its beta flag decision and its suite.
+    "artifacts/api-server/src/services/passport/PlaceStampService.ts",
+    "artifacts/api-server/src/migrations/3800_passport_place_stamps.sql",
+    "scripts/src/beta-flag-policy.json",
+    "artifacts/api-server/src/test/passportPlaceStamp.test.ts",
   ],
 };
 

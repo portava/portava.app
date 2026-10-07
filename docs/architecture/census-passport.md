@@ -2518,3 +2518,35 @@ name the 2026-09-14 palette decision, which ruled the colour; D-32 extends it to
 Counted on this branch, from `main`'s 158 / 9 / 1 / 1. Lane L's §27–§28 (P50 and P154, on its own
 unmerged branch) are not in it. Merged together, the rows count 165 / 3 / 0 / 1, and the integrator
 restates the headline once.
+
+## §30 — 2026-10-07 (lane M, later the same day): P61's Place stamp is built behind a flag seeded OFF. P61 stays `W`, now on activation alone
+
+*The lead accepted `docs/ops/lead-rulings-20261007-media.md` as written on 2026-10-07, so §29's moves no
+longer wait on that acceptance. `head_commit` is NOT re-declared.*
+
+### 30.1 What was built
+
+- **The writer:** `artifacts/api-server/src/services/passport/PlaceStampService.ts:71#export async function awardPlaceStampForCheckin(`.
+  It is the only one, as `passportStampPlaceVocabulary.test.ts` case 7 now pins. It writes nothing when:
+  - `passport_place_stamps_enabled` is off, absent or unreadable;
+  - the check-in point is inside an active protected zone, or the zone policy cannot be read;
+  - the traveller's stamp-visibility preference cannot be read.
+
+  A stamp it does write carries `place_id`, `checkin`, its source (why) and `awarded_at` (when), as D-84
+  and OD-TRUST-7 ask. `guardStamp` already keeps `place_id` from anyone but the owner.
+- **One per person per place:** `createStamp` dedups a Place stamp on `place_id` alone and refuses one
+  with no place. Migration `3800_passport_place_stamps.sql` (applied nowhere, requires 2880):
+  - rebuilds `passport_stamps_dedup_idx` as a partial index that excludes `'place'`;
+  - adds `passport_stamps_place_dedup_idx (user_id, place_id)`;
+  - seeds the flag FALSE. `scripts/src/beta-flag-policy.json` keeps it OFF.
+- **The act:** a GPS-verified, non-suspicious hidden-gem visit, at the gem's `canonical_place_id`.
+  Plan geofence check-ins carry no canonical place, and there is no QR check-in at a place in this tree,
+  so neither earns one yet.
+- **Tests:** `artifacts/api-server/src/test/passportPlaceStamp.test.ts:111#describe("B. one Place stamp per person per place"`
+  (8 tests). Eight mutations were run, and each one turned a test red.
+
+### 30.2 Restated, not moved
+
+| ID | Was | Now | Why |
+|---|---|---|---|
+| P61 | **W** | **W** | Every part of the eleventh type is built: the label (2880), the rule (D-84), the writer, the dedup (3800) and the flag. It stays `W` on **activation**: 2880 and 3800 must be applied and `passport_place_stamps_enabled` turned on, in the isolated beta environment first. A flag that is off is not `C`. **Not built:** a per-traveller protected-place store. OD-MAP-3's "places users designate" has no table in this tree, so only the platform protected zones apply today. |
