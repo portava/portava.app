@@ -10,7 +10,8 @@
  * an unreadable media state ⇒ 503 and nothing written; cleared media is written;
  * with the stage off nothing is read and the write goes through as before.
  *
- * Run: node --import tsx/esm --test src/test/mediaPostMediaHoldD82Surfaces.test.ts
+ * Run (the package test line sets the storage origin): pnpm test, or
+ *   SUPABASE_URL=http://127.0.0.1:9 SUPABASE_SERVICE_ROLE_KEY=dummy node --import tsx/esm --test src/test/mediaPostMediaHoldD82Surfaces.test.ts
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
@@ -22,8 +23,8 @@ import { _setTestClient } from "../lib/http.js";
 import eventsRouter from "../routes/events.js";
 import adminPortavaPostsRouter from "../routes/adminPortavaPosts.js";
 
-process.env.SUPABASE_URL ??= "http://127.0.0.1:9"; // appStorageUrlInfo reads it at call time (the package test line sets the same value)
-const SUPABASE = process.env.SUPABASE_URL;
+/** The storage origin the package test line configures (appStorageUrlInfo accepts public URLs on that origin only). */
+const SUPABASE = "http://127.0.0.1:9";
 const HOST = "a0000000-0000-4000-8000-0000000000a1";
 const ADMIN = "a0000000-0000-4000-8000-0000000000ad";
 const PORTAVA = "a0000000-0000-4000-8000-0000000000f0";
