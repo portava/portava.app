@@ -25,7 +25,7 @@ import {
 } from 'react-native';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, Bell, BellRing, Plane, Power, Send } from 'lucide-react-native';
+import { ArrowLeft, Bell, BellRing, Navigation, Plane, Power, Send } from 'lucide-react-native'; import { openDirectionsTo } from '../../src/lib/maps'; // census-layover L120 — directions by the OS maps app
 import { color, space, radius, type as t, avatar } from '../../src/theme/tokens';
 import { ConfirmSheet } from '../../src/components/ui/ConfirmSheet';
 import {
@@ -752,6 +752,7 @@ export default function LayoverDashboardScreen() {
   // sends `safeReturn`, and getLayoverOverview warns loudly when it does not —
   // but a missing field must degrade the LAYOUT, not blank the whole dashboard.
   const returnCardFirst = overview.safeReturn?.returnRoutePrimary === true;
+  const airportPoint = Number.isFinite(overview.airport?.lat) && Number.isFinite(overview.airport?.lng) && !(overview.airport.lat === 0 && overview.airport.lng === 0) ? { lat: overview.airport.lat as number, lng: overview.airport.lng as number } : null; // L120: never a 0,0 default
   // §13 L120 / L141 — the OTHER half of the same certified posture. The server
   // derives `explorationCollapsed` from the certified return state
   // (`safeReturnPosture`, RETURN_NOW or CONNECTION_AT_RISK) and has published
@@ -1053,10 +1054,30 @@ export default function LayoverDashboardScreen() {
               </Text>
             </Pressable>
           )}
-          <Pressable style={styles.footerBtn} onPress={handleTelegraph}>
-            <Send size={17} color={color.ink} />
-            <Text style={styles.footerBtnText}>Ask locals</Text>
-          </Pressable>
+          {/* census-layover L120: "at RETURN_NOW … suppress exploration-first
+              affordances and prioritise airport route". In the return posture
+              the exploration offer (asking locals) gives its slot to directions
+              to THIS airport, routed by the phone's own maps app from where the
+              traveller is — the app reads no location to do it. Keyed on the
+              same certified `returnRoutePrimary` as the switch beside it; an
+              airport with no coordinate keeps the old slot rather than guess. */}
+          {returnCardFirst && airportPoint ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Directions to ${overview.airport.iataCode ?? 'the airport'}`}
+              style={styles.footerBtn}
+              onPress={() => openDirectionsTo(airportPoint.lat, airportPoint.lng)}
+              testID="layover-footer-directions"
+            >
+              <Navigation size={17} color={color.signal} />
+              <Text style={[styles.footerBtnText, { color: color.signal }]}>Directions</Text>
+            </Pressable>
+          ) : (
+            <Pressable style={styles.footerBtn} onPress={handleTelegraph} testID="layover-footer-ask-locals">
+              <Send size={17} color={color.ink} />
+              <Text style={styles.footerBtnText}>Ask locals</Text>
+            </Pressable>
+          )}
           <Pressable
             style={[styles.footerBtn, styles.footerEnd, endBusy && styles.footerBtnDim]}
             onPress={confirmEnd}
