@@ -422,6 +422,29 @@ describe("D. the Watch feed routes read the owner's mode and honour it", () => {
     } finally { s.close(); }
   });
 
+  it("GET /media/:id and the grid — a released 'Publish after I leave' post shows its venue for 24 h, then the city (census-media MD79, lead ruling D-26f)", async () => {
+    // The fake projects the route's own SELECT list, so this also proves the feed reads published_at.
+    const released = (hoursAgo: number) => feedPost("delayed_until_exit", { post_status: "published", published_at: new Date(Date.now() - hoursAgo * 3_600_000).toISOString() });
+    const s = await serve(mediaFeedRouter);
+    try {
+      _setTestClient(feedClient([released(1)], []), true);
+      const inside = await getJson(s.base, `/media/${POST_ID}`);
+      assert.equal(inside.status, 200);
+      assert.equal(inside.body.item.location?.name, VENUE, "inside the window: the venue");
+      _setTestClient(feedClient([released(25)], []), true);
+      const after = await getJson(s.base, `/media/${POST_ID}`);
+      assert.equal(after.status, 200);
+      assert.equal(after.body.item.location?.name ?? null, null, "after it: no venue");
+      assert.equal(after.body.item.location?.city, CITY, "after it: the city");
+      assert.equal(JSON.stringify(after.body).includes(VENUE), false);
+      assert.equal(JSON.stringify(after.body).includes("published_at"), false, "the release time is never served");
+      _setTestClient(feedClient([released(1)], ["MEDIA_VIEW_MODE_GRID_ENABLED"]), true);
+      assert.equal(JSON.stringify((await getJson(s.base, `/media/feed?mode=grid`)).body).includes(VENUE), true, "grid, inside the window");
+      _setTestClient(feedClient([released(25)], ["MEDIA_VIEW_MODE_GRID_ENABLED"]), true);
+      assert.equal(JSON.stringify((await getJson(s.base, `/media/feed?mode=grid`)).body).includes(VENUE), false, "grid, after it");
+    } finally { s.close(); }
+  });
+
   it("GET /media/feed?mode=grid — the grid label is the city for a withholding mode", async () => {
     const s = await serve(mediaFeedRouter);
     try {
