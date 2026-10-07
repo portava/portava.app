@@ -36,7 +36,7 @@ import { requestSuggestions } from '../services/inputAssistance.ts';
 import { sharedSuggestionCache, SuggestionCache, isCacheablePrivacyClass } from '../services/suggestionCache.ts';
 import { createSequenceGuard } from '../services/raceGuard.ts';
 import { finalizeSuggestions, narrowToQuery } from '../services/suggestionRanking.ts';
-import { localZeroState } from '../services/localZeroState.ts';
+import { localZeroState, offlineZeroStateRows, retainZeroStateRows } from '../services/localZeroState.ts'; // §32 G200/G201 — saved/Trip zero-state rows (lead ruling 2026-10-07)
 import { offlineLocalRows, sufficientLocalRows } from '../services/localDictionary.ts';
 import { outcomeLearningConsented } from '../services/outcomeLearning.ts';
 import { emitInputEvent } from '../services/inputTelemetry.ts';
@@ -284,7 +284,7 @@ export function useInputAssistance(
     const local = localTier
       ?? (zeroStateTier || (trimmed.length === 0 && policy.minChars === 0)
         ? (() => {
-            const rows = finalizeSuggestions(localZeroState(policy), policy.maxSuggestions);
+            const rows = finalizeSuggestions([...localZeroState(policy), ...(trimmed.length === 0 ? offlineZeroStateRows(policy) : [])], policy.maxSuggestions); // G200/G201: offline-allowed fields only (gated inside)
             return rows.length > 0 ? rows : null;
           })()
         : null);
@@ -333,7 +333,7 @@ export function useInputAssistance(
           setSuggestions(finalized); setRefusal(res.refusal ?? null); setAnsweredText(trimmed);
           setUnavailable(false);
           setLoading(false);
-          setRequestId(res.requestId || null);
+          setRequestId(res.requestId || null); if (trimmed.length === 0 && !res.refusal) retainZeroStateRows(policy, res.suggestions); // §32 G200/G201: an EMPTY field's full answer replaces the retained copy
           // §57 P95 suggestion latency. `clientMs` is the round trip this
           // device saw; `serverMs` is what the serve itself cost. Both, because
           // the difference between them is the network, and neither side can

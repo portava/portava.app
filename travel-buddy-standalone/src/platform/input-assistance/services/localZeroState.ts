@@ -63,13 +63,20 @@
 import type { InputSuggestion } from '../types/inputSuggestion.ts';
 import type { InputContext, PrivacyClass } from '../types/inputContext.ts';
 import { isCacheablePrivacyClass } from './suggestionCache.ts';
+import type { OfflineInputPolicy } from '../types/inputContext.ts';
+import { offlineSurfaceAllowed } from '../contexts/policyFallback.ts';
 import {
   LOCAL_RECENTS_STORAGE_KEY,
   decodeLocalRecents,
   decodeLocalRecentsOwner,
   encodeLocalRecents,
   stripPositionalClaims,
+  decodeLocalZeroState,
+  isRetainableZeroStateRow,
+  isZeroStateFresh,
+  stripRetainedPosition,
   type LocalRecentsStorage,
+  type RetainedZeroState,
 } from './localRecentsStore.ts';
 
 /**
@@ -88,6 +95,12 @@ import {
  */
 const rowStore = new Map<InputContext, InputSuggestion[]>();
 const MAX_PER_CONTEXT = 10;
+/**
+ * census G200/G201 (lead ruling 2026-10-07): the server's own saved-place and
+ * Trip-destination zero-state rows, per context, as last served — kept in the
+ * SAME account-tagged store as the accepts and erased with them.
+ */
+const zeroStateStore = new Map<InputContext, RetainedZeroState>();
 
 /** Identity for dedupe: the canonical entity when there is one, else the row. */
 function rowKey(s: InputSuggestion): string {
@@ -97,9 +110,12 @@ function rowKey(s: InputSuggestion): string {
 
 /** Drop every retained row. Tests + privacy controls. */
 export function clearLocalZeroState(context?: InputContext): void {
-  if (context) rowStore.delete(context);
-  else {
+  if (context) {
+    rowStore.delete(context);
+    zeroStateStore.delete(context);
+  } else {
     rowStore.clear();
+    zeroStateStore.clear();
     hydratedUnconfirmed = false; // nothing restored is held any more
   }
 }
@@ -172,6 +188,11 @@ export async function attachLocalRecents(next: LocalRecentsStorage): Promise<voi
     rowStore.set(context, rows.slice(0, MAX_PER_CONTEXT));
     if (boundAccount === undefined) hydratedUnconfirmed = true;
   }
+  for (const [context, held] of decodeLocalZeroState(raw, Date.now())) {
+    if (zeroStateStore.has(context)) continue;
+    zeroStateStore.set(context, { at: held.at, rows: held.rows.slice(0, MAX_PER_CONTEXT) });
+    if (boundAccount === undefined) hydratedUnconfirmed = true;
+  }
 }
 
 /** Unbind the backend WITHOUT touching what is on the device. Tests, and the
@@ -192,6 +213,7 @@ export function detachLocalRecents(): void {
  */
 export function clearLocalRecents(): void {
   rowStore.clear();
+  zeroStateStore.clear();
   hydratedUnconfirmed = false;
   const backend = storage;
   if (!backend) return;
@@ -209,6 +231,7 @@ export function clearLocalRecents(): void {
  */
 export function forgetLocalRecents(context: InputContext): void {
   rowStore.delete(context);
+  zeroStateStore.delete(context);
   schedulePersist();
 }
 
@@ -242,6 +265,7 @@ export function bindLocalRecentsAccount(userId: string | null): void {
     // not theirs). Erasing now would delete this person's own recents mid-read.
     // Rows already in memory have no known owner, so they go (memory only).
     rowStore.clear();
+    zeroStateStore.clear();
     boundAccount = userId;
     rowsOwner = userId;
     return;
@@ -276,7 +300,7 @@ function schedulePersist(): void {
   pendingWrite = pendingWrite
     .then(() => backend.setItem(
       LOCAL_RECENTS_STORAGE_KEY,
-      encodeLocalRecents(rowStore, Date.now(), rowsOwner),
+      encodeLocalRecents(rowStore, Date.now(), rowsOwner, zeroStateStore),
     ))
     .catch(() => {});
 }
@@ -372,4 +396,68 @@ export function localZeroState(
     if (out.length >= max) break;
   }
   return out;
+}
+
+// ── §32 G200/G201: saved and Trip zero-state rows (lead ruling 2026-10-07) ──
+//
+// THE RULING. Keep the server's saved-place and Trip-destination zero-state rows
+// in the existing account-tagged device store, erased on account change, used
+// only by offline-allowed fields, with no position stored.
+//
+//   - WHICH ROWS: `isRetainableZeroStateRow` — a saved place, or the viewer's
+//     current/upcoming Trip destination. Never the current location, nearby
+//     places or anything else the server answers an empty field with.
+//   - WHICH FIELDS: a field whose policy may retain locally (`mayRetainLocally`,
+//     the same privacy-class gate as the accepts) AND whose offline policy opens
+//     an offline surface (`offlineSurfaceAllowed`) — on both write and read.
+//   - WHOSE: only while an account is bound and the store is that account's.
+//     The rows ride the accepts' blob, owner and erase, so an account change or
+//     a sign-out removes them from memory and from the device.
+//   - NO POSITION: `stripRetainedPosition` drops every coordinate key from the
+//     binding and the action before the row is held, and again on decode.
+//   - AS SERVED: each zero-state answer REPLACES the context's list, so a place
+//     the person unsaved, or a Trip that ended, is gone from the next copy; and
+//     a copy is offered for 7 days from when it was served
+//     (`LOCAL_ZERO_STATE_MAX_AGE_MS`), on its own clock rather than the blob's.
+
+function zeroStateAllowed(policy: (LocalZeroStatePolicy & { offlinePolicy?: OfflineInputPolicy | null }) | null | undefined): boolean {
+  if (!policy || !mayRetainLocally(policy)) return false;
+  return offlineSurfaceAllowed(policy.offlinePolicy ?? null);
+}
+
+/**
+ * Retain the saved-place and Trip-destination rows of a ZERO-STATE answer the
+ * server just served this field. A no-op for any other field, any other row, and
+ * whenever no account is bound.
+ */
+export function retainZeroStateRows(
+  policy: (LocalZeroStatePolicy & { offlinePolicy?: OfflineInputPolicy | null }) | null | undefined,
+  served: readonly InputSuggestion[],
+): void {
+  if (!zeroStateAllowed(policy)) return;
+  if (boundAccount === undefined || boundAccount === null || rowsOwner !== boundAccount) return;
+  const context = (policy as LocalZeroStatePolicy).context;
+  const keep = served
+    .filter((s) => s && s.context === context && isRetainableZeroStateRow(s))
+    .map((s) => stripRetainedPosition(s))
+    .slice(0, MAX_PER_CONTEXT);
+  if (keep.length > 0) zeroStateStore.set(context, { at: Date.now(), rows: keep });
+  else zeroStateStore.delete(context);
+  schedulePersist();
+}
+
+/** The retained saved/Trip rows for an EMPTY offline-allowed field, or []. */
+export function offlineZeroStateRows(
+  policy: (LocalZeroStatePolicy & { offlinePolicy?: OfflineInputPolicy | null }) | null | undefined,
+): InputSuggestion[] {
+  if (!zeroStateAllowed(policy)) return [];
+  if (hydratedUnconfirmed) return [];
+  // Stricter than the accepts' read: these rows are only ever someone's, so with
+  // no account bound there is nobody to serve them to.
+  if (typeof boundAccount !== 'string' || rowsOwner !== boundAccount) return [];
+  const p = policy as LocalZeroStatePolicy;
+  const max = Math.max(0, p.maxSuggestions);
+  const held = zeroStateStore.get(p.context);
+  if (!held || !isZeroStateFresh(held.at, Date.now())) return [];
+  return held.rows.slice(0, max).map((s) => stripRetainedPosition(s));
 }
