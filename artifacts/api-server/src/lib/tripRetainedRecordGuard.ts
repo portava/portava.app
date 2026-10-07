@@ -21,10 +21,14 @@
  * write); and /commands, which applies the same rule per command type with its
  * own safety list (server/trips/commandRoute.ts).
  *
- * WHO. The bearer token is resolved through the auth service. A request this
- * guard cannot attribute (no token, a token the auth service rejects) passes
- * through untouched: the handler's own requireUser answers it. The guard only
- * ever REFUSES, so it cannot widen anything.
+ * WHO. The bearer token is resolved through the account gate
+ * (optionalUserFromToken — never a hand-rolled `auth.getUser`, which
+ * handRolledAuthAccountState.test.ts forbids). A request this guard cannot
+ * attribute (no token, a token the auth service rejects, an Auth transport
+ * failure) passes through untouched: the handler's own requireUser answers it.
+ * A banned or suspended account, or an unreadable account state, is the gate's
+ * own 403 / 503, handed to the global error handler exactly as requireUser's
+ * is. The guard only ever REFUSES, so it cannot widen anything.
  *
  * FAIL CLOSED. The membership row that says "retained record only" could not
  * be read → 503, retryable, nothing written. A trip write must not proceed on an
@@ -32,7 +36,7 @@
  */
 import type { NextFunction, Request, Response } from "express";
 
-import { getServiceClient } from "./supabase.js";
+import { getServiceClient } from "./supabase.js"; import { optionalUserFromToken, isAccountGateRefusal } from "./accountStateGate.js";
 import { sendError } from "./http.js";
 import { RETAINED_RECORD_ONLY_MESSAGE } from "./tripTrustGate.js";
 
@@ -82,11 +86,7 @@ export function tripRetainedRecordWriteGuard() {
       if (!token) return next();
       const sc = getServiceClient();
       if (!sc) return next();
-      let userId: string | null = null;
-      try {
-        const { data, error } = await sc.auth.getUser(token);
-        userId = !error && data?.user?.id ? data.user.id : null;
-      } catch { userId = null; }
+      const userId = (await optionalUserFromToken(sc, token, { log: (req as { log?: unknown }).log, authThrowIsAnonymous: true }))?.id ?? null;
       if (!userId) return next();
       if (exempt(req.method, rest, userId)) return next();
       const { data: row, error } = await sc.from("trip_members").select("permissions").eq("trip_id", tripId).eq("user_id", userId).maybeSingle();
@@ -100,7 +100,11 @@ export function tripRetainedRecordWriteGuard() {
       }
       return next();
     } catch (e) {
-      return next(e);
+      // The account gate's own refusal (a ban or suspension → 403, an unreadable
+      // account state → 503) reaches the global error handler, as requireUser's does.
+      if (isAccountGateRefusal(e)) return next(e);
+      // Anything else: this guard could not decide, so nothing is written — try again.
+      sendError(res, "degraded_unavailable", "We could not check your access to this trip right now, so nothing was changed. Please try again shortly.");
     }
   };
 }

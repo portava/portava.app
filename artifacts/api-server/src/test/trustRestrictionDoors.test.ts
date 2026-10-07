@@ -51,7 +51,7 @@ import airportRouter from "../routes/airport.js";
 import telegraphChatRouter from "../routes/telegraphChat.js";
 import tripsExpansionRouter from "../routes/trips-expansion.js";
 import { RESTRICTION_SENTENCES, RESTRICTION_UNVERIFIABLE_MESSAGE } from "../lib/discoveryTrustGate.js";
-import { decideTripActionRestriction, readTripShape } from "../lib/tripTrustGate.js";
+import { decideTripActionRestriction, readTripShape } from "../lib/tripTrustGate.js"; import { tripRetainedRecordWriteGuard } from "../lib/tripRetainedRecordGuard.js"; import { globalErrorHandler } from "../lib/errorEnvelope.js";
 import { TRAIL_PROPOSALS_PER_DAY } from "../services/trails/TrailService.js";
 import { makeFakeClient, startRouter, call, type FakeClient, type FakeDbOptions, type RouterHarness } from "./telegraphCertificationHarness.js";
 
@@ -347,6 +347,44 @@ describe("R5 (census-trips §85). A membership restored to an ENDED trip's retai
     const r = await call(harness.base, "POST", `/trips/${TRIP}/notes`, ANA, { title: "n", body: "b" });
     assert.equal(r.status, 503, JSON.stringify(r.body).slice(0, 300));
     assert.equal(writes(c), 0);
+  });
+  it("R5 guard: a read that THROWS (not a resolved error) → 503 'try again', nothing written, never a 500 or a pass", async () => {
+    const c = use(retained("retained_record_only"));
+    _setTestServiceClient({ ...c, from: (t: string) => { if (t === "trip_members") throw new Error("socket hang up"); return c.from(t); } } as never);
+    const r = await call(harness.base, "POST", `/trips/${TRIP}/notes`, ANA, { title: "n", body: "b" });
+    assert.equal(r.status, 503, JSON.stringify(r.body).slice(0, 300));
+    assert.equal(r.body.error, "degraded_unavailable");
+    assert.equal(writes(c), 0);
+  });
+  it("R5 guard: the caller is resolved through the account gate — a banned account's write is the gate's 403, never served, nothing written", async () => {
+    const s = retained("membership");
+    s.profiles = s.profiles!.map((p) => (p.id === ANA ? { ...p, account_status: "active", user_account_states: [{ state: "banned", expires_at: null }] } : p));
+    const c = use(s);
+    const r = await call(harness.base, "POST", `/trips/${TRIP}/notes`, ANA, { title: "n", body: "b" });
+    assert.equal(r.status, 403, JSON.stringify(r.body).slice(0, 300));
+    assert.notEqual(r.body?.error, "trip_record_read_only");
+    assert.equal(writes(c), 0);
+  });
+  it("R5 guard, alone: a banned account's write is refused BY THE GUARD (the gate's 403 through the global handler), so a handler behind it never runs", async () => {
+    const s = retained("membership");
+    s.profiles = s.profiles!.map((p) => (p.id === ANA ? { ...p, account_status: "active", user_account_states: [{ state: "banned", expires_at: null }] } : p));
+    use(s);
+    let ran = 0;
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => { (req as any).log = { info() {}, warn() {}, error() {}, debug() {} }; next(); });
+    app.use(tripRetainedRecordWriteGuard());
+    app.post("/trips/:tripId/notes", (_req, res) => { ran += 1; res.status(201).json({ ok: true }); }); // no auth of its own: only the guard stands in front of it
+    app.use(globalErrorHandler);
+    const server = await new Promise<import("node:http").Server>((ok) => { const sv = app.listen(0, "127.0.0.1", () => ok(sv)); });
+    try {
+      const port = (server.address() as { port: number }).port;
+      const r = await fetch(`http://127.0.0.1:${port}/trips/${TRIP}/notes`, { method: "POST", headers: { authorization: `Bearer ${ANA}`, "content-type": "application/json" }, body: "{}" });
+      assert.equal(r.status, 403, await r.text());
+      assert.equal(ran, 0, "the handler behind the guard ran for a banned account");
+    } finally {
+      await new Promise((ok) => server.close(ok));
+    }
   });
   it("R5 guard: routes/index.ts mounts the trips router (which carries the guard) before every other trip router", () => {
     const idx = readFileSync(new URL("../routes/index.ts", import.meta.url), "utf8");

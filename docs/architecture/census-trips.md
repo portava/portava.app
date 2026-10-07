@@ -10190,7 +10190,7 @@ trip into a group trip. Each is now closed:
   redeemer is told "This invite isn't available right now." and nothing else
   (`artifacts/api-server/src/lib/tripTrustGate.ts:221#export async function refuseIfInviterCannotHost(`).
 - **R3.** One guard before every trip router refuses every member-level write by a retained-record-only member
-  (`artifacts/api-server/src/lib/tripRetainedRecordGuard.ts:72#export function tripRetainedRecordWriteGuard()`),
+  (`artifacts/api-server/src/lib/tripRetainedRecordGuard.ts:76#export function tripRetainedRecordWriteGuard()`),
   mounted on the router `routes/index.ts` registers first
   (`artifacts/api-server/src/routes/trips.ts:40#const router = Router(); router.use(tripRetainedRecordWriteGuard());`).
   Not refused: reads, compute-only POSTs, safety, leaving, revoking a share, invite answers, /commands (its own
