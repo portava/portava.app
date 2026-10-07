@@ -6458,7 +6458,7 @@ applied, flipped or deployed: 3703 is applied nowhere and `sensing_consent_split
   (`artifacts/api-server/src/lib/sensingConsentGrants.ts:178#if (granted && displayedVersion !== version) return`).
 - **Revocable.** Granting needs the flag ON; withdrawing never does
   (`artifacts/api-server/src/routes/sensingConsent.ts:91#if (parsed.data.granted) {`;
-  `artifacts/api-server/src/test/sensingConsentGrants.test.ts:248#it("PUT WITHDRAW is always accepted`).
+  `artifacts/api-server/src/test/sensingConsentGrants.test.ts:265#it("PUT WITHDRAW is always accepted`).
 - **The issuer obeys it, and nothing else.** No session without the flag
   (`artifacts/api-server/src/routes/sensingSession.ts:102#const split = await readFlagState(db, "sensing_consent_split_enabled");`)
   or without capture AND upload; `surface` only on its own grant AND the policy in force
@@ -6494,3 +6494,24 @@ not an approval the team can give.
 - NOT-GRADED: artifacts/api-server/src/routes/sensingConsent.ts — §33.1's consent routes; graded when the rows above move.
 - NOT-GRADED: artifacts/api-server/src/test/sensingConsentGrants.test.ts — §33.1 cites it as the evidence for the split consent; no verdict moves on it.
 - NOT-GRADED: travel-buddy-standalone/src/components/intel/SensingConsentSection.tsx — §33.1's Settings switches.
+
+## §34 — 2026-10-07 (lane L, wave 6): §33.1's "the device obeys it" stated at the strength of its evidence; a repeated withdrawal keeps its first stamp. MOVES NOTHING
+
+*Last statement wins over §33.1 where they differ.*
+
+- **"The device obeys it" (§33.1) is proven statically, not by behaviour.** The evidence is of two kinds:
+  - the pure decision (`travel-buddy-standalone/src/lib/sensing/consentSplit.ts:86#export function sensingCaptureDecision(`), tested
+    over every consent state;
+  - source tripwires that read `installSensingCapture.ts` for the send guard and the Settings re-check.
+
+  No test drives `installSensingCapture` with a fake transport to show that a submit is dropped. Read
+  §33.1's bullet as "the device code is written to obey it, and the decision it uses is tested". A
+  behavioural test of the installer is owed.
+- **A repeated withdrawal does not rewrite when the person withdrew.** The guard was already in the code,
+  and a test now covers it
+  (`artifacts/api-server/src/test/sensingConsentGrants.test.ts:178#it("withdrawing twice keeps the FIRST withdrawal's stamp`).
+  Withdrawing twice keeps the first `withdrawn_at`, and the second write does nothing. Withdrawing a consent
+  that was never granted writes nothing either. With the guard removed, that test is red.
+
+No row moves. S18, S24, S32 and S39 stay `W` for §33.3's reasons.
+
