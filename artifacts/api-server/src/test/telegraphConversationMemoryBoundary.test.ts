@@ -806,3 +806,41 @@ describe("T366 — the mobile app (§45c: 'the mobile app is not scanned at all'
     assert.ok(c[0]!.reads.includes("call:getThreadMessages") && c[0]!.creates.includes("call:createMemory"), JSON.stringify(c));
   });
 });
+
+describe("T366 hardening, round 2 — the other two dynamic-import shapes", () => {
+  const caughtIn = (name: string, src: string) => {
+    const file = join(SRC, `routes/__t366_probe_${name}.ts`);
+    return serverAnalysis(new Map<string, string>([[file, stripComments(src)]])).crossings(file);
+  };
+  const lines = (call: string[]) => [
+    `router.post("/bx", async (req, res) => {`,
+    '  const { data } = await sc.from("messages").select("body");',
+    ...call,
+    "});",
+  ].join("\n");
+
+  it("B2: a NAMESPACE dynamic import (`const bus = await import(…); await bus.executeMemoryCommand(…)`)", () => {
+    const src = lines([
+      '  const bus = await import("../lib/memoryCommandBus.js");',
+      '  await bus.executeMemoryCommand(sc, { commandType: "CREATE_MEMORY", payload: data });',
+    ]);
+    assert.equal(caughtIn("b2", src).length, 1);
+  });
+
+  it("B3: an INLINE dynamic import (`(await import(…)).executeMemoryCommand(…)`)", () => {
+    const src = lines([
+      '  await (await import("../lib/memoryCommandBus.js")).executeMemoryCommand(sc, { commandType: "CREATE_MEMORY", payload: data });',
+    ]);
+    assert.equal(caughtIn("b3", src).length, 1);
+  });
+
+  it("CONTROL: the same three shapes importing a module that creates nothing are not crossings", () => {
+    for (const [n, call] of [
+      ["c1", ['  const { logger } = await import("../lib/logger.js");', "  logger.info(data);"]],
+      ["c2", ['  const log = await import("../lib/logger.js");', "  log.logger.info(data);"]],
+      ["c3", ['  (await import("../lib/logger.js")).logger.info(data);']],
+    ] as const) {
+      assert.equal(caughtIn(n, lines([...call])).length, 0, n);
+    }
+  });
+});

@@ -43,7 +43,7 @@
  * 0, comments stripped. Since 2026-10-07 (foot of file) calls are followed to a
  * FIXPOINT across files, table and RPC names through the file's constants, an
  * unresolvable RPC fails closed, and the mobile tree is scanned. Still not seen:
- * a table name passed as an ARGUMENT, a call made only through JSX or a value.
+ * a component reached only through JSX (round 2, foot of file: arguments, values, dynamic imports, barrels, triggers).
  */
 
 /** What people said to one another. Reading any of these is reading history. */
@@ -616,9 +616,9 @@ export function moduleLinks(
   return { imports, reexports };
 }
 
-/** Blank import and export-from statements (keeping line count), so a unit never "references" a name by importing it. */
+/** Blank import and export-from statements (keeping line count), so a unit never "references" a name by importing it; an inline `(await import(x)).name` becomes the local `__inline_name` that moduleLinks binds. */
 export function withoutModuleStatements(code: string): string {
-  return code.replace(/(?:import|export)\s+(?:type\s+)?[^;]*?\s+from\s+["'][^"']+["'];?/g, (s) => s.replace(/[^\n]/g, " "));
+  return code.replace(/(?:import|export)\s+(?:type\s+)?[^;]*?\s+from\s+["'][^"']+["'];?/g, (s) => s.replace(/[^\n]/g, " ")).replace(/\(\s*await\s+import\(\s*["'`][^"'`]+["'`]\s*\)\s*\)\s*\.\s*([A-Za-z_$][A-Za-z0-9_$]*)/g, "__inline_$1");
 }
 
 /**

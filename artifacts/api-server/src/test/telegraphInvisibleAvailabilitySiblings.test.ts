@@ -218,3 +218,20 @@ describe("P-T1 / P-T6 — the trip's best days", () => {
     assert.equal(day?.count, 3, JSON.stringify(body.bestDays));
   });
 });
+
+describe("P-T1 — the trip's best days do not read an invisible member's GENERAL grid", () => {
+  it("with no trip grid, a visible member counts by their weekly grid and an invisible one does not", async () => {
+    const everyDay = Object.fromEntries(["sun", "mon", "tue", "wed", "thu", "fri", "sat"].map((d) => [d, ["evening"]]));
+    const world = crewWorld();
+    // Only ALICE entered trip days; BOB (invisible), CARL (blocked ALICE) and DANA (CONTROL)
+    // fall back to their general weekly grid, which says every evening.
+    world.trip_availability = [{ trip_id: TRIP, user_id: ALICE, open_days: { [DAY]: ["evening"] } }];
+    world.user_availability = [ALICE, BOB, CARL, DANA].map((u) => ({ user_id: u, weekly_days: everyDay, open_to_meet: true }));
+    _setTestClient(makeFakeClient(world), true);
+    const r = await call(h.base, "GET", `/trips/${TRIP}/availability`, ALICE);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const day = ((r.body as { bestDays?: Array<{ date: string; count: number }> }).bestDays ?? []).find((d) => d.date === DAY);
+    // ALICE by her trip grid, DANA by her weekly grid — not BOB's withheld grid, not CARL.
+    assert.equal(day?.count, 2, JSON.stringify((r.body as { bestDays?: unknown }).bestDays));
+  });
+});

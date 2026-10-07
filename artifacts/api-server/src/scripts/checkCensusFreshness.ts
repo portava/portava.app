@@ -2445,6 +2445,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/lib/memoryCommandBus.ts",
     // WIDENED 2026-10-07 by lane T (§51): T295's C rests on the receipt's faces (routes/telegraphLifecycle.ts, already watched above) and their suite.
     "artifacts/api-server/src/test/telegraphReaderFaces.test.ts",
+    // WIDENED 2026-10-07 by lane T (§52, the verification of 54ddc1de45): T219's W cites 3650's blocks term,
+    // and the unsend model's pinning suite proves it; T29/T421 cite the P-T1 sibling suite and the
+    // Passport consumer variants it now withholds through.
+    "artifacts/api-server/src/migrations/3650_telegraph_unsend_blocked_reader_excluded.sql",
+    "artifacts/api-server/src/test/telegraphUnsendFunctionFake.test.ts",
+    "artifacts/api-server/src/test/telegraphInvisibleAvailabilitySiblings.test.ts",
+    "artifacts/api-server/src/services/passport/PassportConsumerProjections.ts",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as
