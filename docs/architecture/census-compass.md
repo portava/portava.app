@@ -4953,3 +4953,44 @@ None. No census-compass row grades restriction-dependent reach. For a person wit
 readable state, every graded path is unchanged.
 
 - NOT-GRADED: artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts — §43.2 names its creator boosts as a D-24c gap outside this census; the media feed is census-media's.
+
+## §44 — 2026-10-07 (lane L, wave 6): lead ruling D-65 re-checked on every Compass plan reader; the confirm route's duplicate guard was an oracle for another member's private item and is closed. NO VERDICT MOVES
+
+*Measured on branch `claude/mission-l-wave6-20261006`. `head_commit` is not re-declared.*
+
+### 44.1 The readers
+
+D-65 makes a private item's name, notes, description, and place and source ids owner-only, along with
+any text derived from them. Every Compass reader that §39 and §42 list already goes through
+`compass/planItemAccess.ts`. Its redaction nulls exactly those fields and renames the item
+"Private plan". Re-read for D-65:
+
+- The Sense engine's plan read selects only ids and times (`fetchTodayPlanItems`). Its two nudges name
+  no item.
+- The Wall strip's trip signal admits only items that say they are public.
+- Sensing's presence check reads only the actor's own items.
+- The daily brief (`routes/dailyBrief.ts`, cited by this census) still selects other members' titles and
+  `location_name` on main. Lane C's wave-5 branch already applies the owner-only rule there and rebuilds
+  cached briefs (commits 9eaaff842 and 765dc2c39). It is not duplicated here.
+
+### 44.2 The one open door: "This place is already in your trip plan"
+
+`POST /compass/proposals/:id/confirm` refused with a 409 whenever any live item on the trip had the
+same place. That included another member's private item, so the refusal told the caller where that
+member privately plans to be. Now only an item the caller may see counts as a duplicate
+(`artifacts/api-server/src/routes/compass.ts:2223#const existing = ((existingRows ?? []) as Array<Record<string, unknown>>).some((r) => canSeePlanItemLocation(planAccess, r));`).
+If the item is another member's private one, the caller's own item is added. An unreadable read
+still refuses with a 503.
+
+Tests: `artifacts/api-server/src/test/compass-tools.test.ts:999#describe("D-65 — the confirm route's duplicate guard is not an oracle`
+(3 cases, compass-tools 38/38). Mutations, each restored afterwards: counting every row as a duplicate
+turns 2 tests red; counting no row as a duplicate turns 1 red.
+
+Lane C's `routes/plan.ts` has the same guard in its place-add and meetup-add routes, on main and on
+lane C's wave-5 branch. That file is not this lane's, so it is reported to the lead, not changed here.
+
+### 44.3 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| CT-02 | W | **W** | §44. D-65 holds at every Compass plan reader and at the confirm guard. The row asks for typed projections. |
