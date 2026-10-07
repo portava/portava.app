@@ -7800,7 +7800,7 @@ TR437 · TR440 · TR144 · TR128 · TR267 · TR341 · TR412 · TR427
   is the port's honest stub: `routed: true`, and an `estimate()` that returns
   `NO_ROUTED_PROVIDER` every time. There is no second implementation. Holds, and
   NEITHER is the right class — a routed provider is an external service, not a
-  file. **Corrected 2026-09-27, verdicts unmoved; true when written on 2026-09-15:** the port now has two more routed implementations. `artifacts/api-server/src/domain/trips/contracts/GoogleRoutesTravelTimeProvider.ts:151#export function createGoogleRoutesTravelTimeProvider(` (6c785f074, 2026-09-17) is PREPARED, NOT WIRED: nothing but its own suite imports it. The corridor adapter (74890f906, 2026-09-22) is wired into the Layover seam only, and it refuses unless both of its switches are set. Every Trips seam still binds the straight-line provider, e.g. `artifacts/api-server/src/routes/tripFeasibility.ts:111` (it read "const PROVIDER = straightLineTravelTimeProvider;" when written; anchor retired in place 2026-10-05 by §80, which wired the gated routed provider there), so no Trips window can yet be certified and the four rows stay `W`. What no longer holds is the NEITHER reason as written: the provider is a file now, and what remains is wiring it plus an owner's spend decision. Whether that moves the four rows out of NEITHER is a reclassification this correction does not make (census-media §38.8). *(Made on 2026-09-27 in §76: the four are BOTH.)*
+  file. **Corrected 2026-09-27, verdicts unmoved; true when written on 2026-09-15:** the port now has two more routed implementations. `artifacts/api-server/src/domain/trips/contracts/GoogleRoutesTravelTimeProvider.ts:151#export function createGoogleRoutesTravelTimeProvider(` (6c785f074, 2026-09-17) is PREPARED, NOT WIRED: nothing but its own suite imports it. The corridor adapter (74890f906, 2026-09-22) is wired into the Layover seam only, and it refuses unless both of its switches are set. Every Trips seam still binds the straight-line provider, e.g. `artifacts/api-server/src/routes/tripFeasibility.ts:113#const PROVIDER =` (at line 111 it read "const PROVIDER = straightLineTravelTimeProvider;" when written; §80 (2026-10-05) wired the gated routed provider into that binding, and the anchor now pins the binding alone), so no Trips window can yet be certified and the four rows stay `W`. What no longer holds is the NEITHER reason as written: the provider is a file now, and what remains is wiring it plus an owner's spend decision. Whether that moves the four rows out of NEITHER is a reclassification this correction does not make (census-media §38.8). *(Made on 2026-09-27 in §76: the four are BOTH.)*
 - **TR256** — *"§14.1's `anchor` is not a thing"*. 2610 adds a *map* anchor (the
   trip's destination coordinate for the `trip_stop` layer), which is a different
   object from §14.1's private anchor; §31.3.1 already states the condition
@@ -9251,7 +9251,7 @@ subsystem has since been written:
   able to answer transit, and it has its own suite.
 - It is **PREPARED, NOT WIRED**: nothing but that suite imports it.
 - Every Trips seam still binds the straight-line provider:
-  `artifacts/api-server/src/routes/tripFeasibility.ts:111` (it read "const PROVIDER = straightLineTravelTimeProvider;" when written; anchor retired in place 2026-10-05 by §80, which wired the gated routed provider there),
+  `artifacts/api-server/src/routes/tripFeasibility.ts:113#const PROVIDER =` (at line 111 it read "const PROVIDER = straightLineTravelTimeProvider;" when written; §80 (2026-10-05) wired the gated routed provider into that binding, and the anchor now pins the binding alone),
   TripFreedomProjection.ts line 45 and TripRouteChainProjection.ts line 42.
 - Each seam is a module constant by design, "so that turning a routed provider
   on is a reviewed code change".
@@ -10083,7 +10083,7 @@ three walk layers, the request budget's four bounds, the gate's scope and shares
 
 ## §83 Lane C wave 2 (2026-10-05): the Trip Kernel can restore an appealed removal — ADMIN_RESTORE_PARTICIPANT written (3974), NO ROW MOVES BUCKET
 
-Lane B's appeal executor refused, naming this command. `artifacts/api-server/src/migrations/3974_trip_kernel_admin_restore_participant.sql:119#      WHEN 'ADMIN_RESTORE_PARTICIPANT' THEN`
+Lane B's appeal executor refused, naming this command. `artifacts/api-server/src/migrations/3974_trip_kernel_admin_restore_participant.sql:119#WHEN 'ADMIN_RESTORE_PARTICIPANT' THEN`
 adds it by transform (2764/2798's method): the admin family; the removal event re-read from the kernel's
 own ledger (this trip, this person, this role, the latest removal); `access` re-decided from the trip as it
 is (retained record only for an ended trip, the membership for a live one); the row inserted in the role at
