@@ -144,7 +144,7 @@ function toEligibility(v: unknown): IntelligenceEligibility | null {
   const out: IntelligenceEligibility = {
     eligible: o.eligible,
     reasons: Array.isArray(o.reasons) ? o.reasons.filter((r): r is string => typeof r === "string") : [],
-    freshnessClass: fc === "live" || fc === "fresh" || fc === "recent" ? fc : "historical",
+    freshnessClass: fc === "fresh" || fc === "recent" ? fc : fc === "live" ? "fresh" : "historical", // census-media MD71 (lead ruling D-26b): a photo is never labelled "live" — a stored "live" is served at the cap, "fresh"
     captureConfidence: num(o.captureConfidence) ?? 0,
     locationConfidence: num(o.locationConfidence) ?? 0,
     provenanceConfidence: num(o.provenanceConfidence) ?? 0,
