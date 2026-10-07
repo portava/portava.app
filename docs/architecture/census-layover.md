@@ -1344,7 +1344,7 @@ the end of this section.
 | `safeReturn` posture on `/safety` and `/overview` | **Published** (`:835`, `:1547`) | **Not read** (same type) |
 | `offlineBundle` on `/overview` | **Published** (`:1548`) | **Not read**; no `AsyncStorage` write exists anywhere under `travel-buddy-standalone/src/services/layover.ts`, `src/context/LayoverSessionContext.tsx` or `app/layover/` |
 | `POST /:id/return-now` | **Wired** (`:1002`) | **No client function.** `travel-buddy-standalone/src/services/layover.ts` exports 22 layover calls (`:275-502`); none targets `return-now` |
-| `runLayoverTool` (12 §12 tools) | **Callable** (`LayoverCompassService.ts:663`); schemas declared but **deliberately not passed to the model** (`:823-829`) | Unreachable. `POST /:id/compass` remains dark — `askCompass` (`layover.ts:339`) still has no importer |
+| `runLayoverTool` (12 §12 tools) | **Callable** (`LayoverCompassService.ts:706`); schemas declared but **deliberately not passed to the model** (`:866-872`) | Unreachable. `POST /:id/compass` remains dark — `askCompass` (`layover.ts:339`) still has no importer |
 | `LayoverCrewService` (all 12 exports) | **No caller** outside `test/layoverCrewConstraints.test.ts` | — |
 | `localReplan`, `sensingPolicy`, `bundleFreshness` | **No caller** outside `test/layoverDegradedOffline.test.ts` | — |
 | `nextDisruptionState`, `recomputeForDisruption` | **No caller** outside `test/layoverSafeReturnAbort.test.ts` | — |
@@ -1363,7 +1363,7 @@ the end of this section.
 | L52 | C | C | **Loses its `⌀`.** A certified envelope now exists and the property is swept over it: `test/layoverFeasibilityInvariants.test.ts:180` — "a longer travel leg never expands the safe envelope", over activity times and both `verified` values. |
 | L54 | N | W | `Estimate` carries every field §6.2 names (`LayoverFeasibility.ts:125-138`) for seven terms, published as `estimates` on `/safety` and `/overview` (`routes/airport.ts:849, 1541`). It **describes** the buffer rather than computing it — the file says so at `:207-212` — so the number a traveller acts on is still a bare scalar out of `computeBuffer`. |
 | L55 | N | W | `SAFETY_CRITICAL_PERCENTILE = "p90"` (`:151`), overridable per call (`FeasibilityInputs.bufferPercentile`), applied by `conservativeBufferMinutes` (`:222`) and published as `bufferMinutesAtPercentile` (`:494`). A no-op on the numbers today by the file's own admission — every distribution is degenerate (`:112-121`). |
-| L102 | N | W | `runLayoverTool("getLayoverContext")` (`LayoverCompassService.ts:663`), swept by `test/layoverPrivacyCompassContract.test.ts:197-223`. **SUPERSEDED at §22**: the schemas are now passed (`LayoverCompassService.ts:415#tools: LAYOVER_TOOL_SCHEMAS`) and what the model chooses is executed (`LayoverCompassService.ts:427#const result = runNamedLayoverTool(c?.function?.name, ctx, c?.function?.arguments);`), reached from `POST /api/airport/sessions/:id/compass`. The anchor this cell used to carry — the comment reading "DECLARED, NOT YET PASSED TO THE MODEL" — was DELETED by that change, so this is a rewrite and not a repoint. |
+| L102 | N | W | `runLayoverTool("getLayoverContext")` (`LayoverCompassService.ts:706`), swept by `test/layoverPrivacyCompassContract.test.ts:197-223`. **SUPERSEDED at §22**: the schemas are now passed (`LayoverCompassService.ts:458#tools: LAYOVER_TOOL_SCHEMAS`) and what the model chooses is executed (`LayoverCompassService.ts:470#const result = runNamedLayoverTool(c?.function?.name, ctx, c?.function?.arguments);`), reached from `POST /api/airport/sessions/:id/compass`. The anchor this cell used to carry — the comment reading "DECLARED, NOT YET PASSED TO THE MODEL" — was DELETED by that change, so this is a rewrite and not a repoint. |
 | L103 | N | W | `getConnectionState` — same file, same limits; `test/layoverPrivacyCompassContract.test.ts:287` asserts it does not assert a disruption state nothing measured. |
 | L104 | N | W | `getTimeWallet` — same. |
 | L105 | N | W | `getSafeEnvelope` — same; `:223` proves no tool can widen the certified envelope. |
@@ -1375,7 +1375,7 @@ the end of this section.
 | L111 | N | W | `requestConstraintClarification` — same file; `:375` refuses a field that would not move the outcome. |
 | L112 | N | W | `replay` exists and returns `unavailable` — no event-driven replanner (§11). |
 | L113 | N | W | `explainDecision` — same file; `:269` "hands back the replayable identity, not a story". |
-| L114 | N | W | §12.1 is a computation, not a prompt instruction: `valueOfInformation` (`LayoverCompassService.ts:546`) re-certifies with each candidate answer flipped and compares verdict, rating and usable minutes; `nextClarifyingQuestion` (`:579`) asks only the highest-value one, and `answerLayoverQuestion` carries at most one (`test/layoverPrivacyCompassContract.test.ts:426`). The endpoint it lives on is still dark from the app. |
+| L114 | N | W | §12.1 is a computation, not a prompt instruction: `valueOfInformation` (`LayoverCompassService.ts:589`) re-certifies with each candidate answer flipped and compares verdict, rating and usable minutes; `nextClarifyingQuestion` (`:622`) asks only the highest-value one, and `answerLayoverQuestion` carries at most one (`test/layoverPrivacyCompassContract.test.ts:426`). The endpoint it lives on is still dark from the app. |
 | L120 | N | W | `primaryAction` and `explorationCollapsed` are derived from the certified return state and published (`LayoverSafeReturnService.ts:107-118`; `routes/airport.ts:851, 1547`). The dashboard still renders the same sections; the client type has no `safeReturn` field. |
 | L133 | N | W | `sharedReturnBy` takes the minimum and names the binding members (`LayoverCrewService.ts:169`), and **refuses rather than taking a minimum over a readable subset** (`test/layoverCrewConstraints.test.ts:102`). No crew storage (L28/L29), no route. |
 | L134 | N | W | Explicit split plans: `CrewBranch` (`LayoverCrewService.ts:79`), asserted at `test/layoverCrewConstraints.test.ts:217`. Same reachability limit. |
@@ -1398,7 +1398,7 @@ the end of this section.
 | L231 | N | W | `test/layoverSafeReturnAbort.test.ts:329` walks the cancellation chain and never re-enters the delay chain. Same limit — no flight feed. |
 | L232 | N | W | `test/layoverCrewConstraints.test.ts:88, 217` cover both arms — earliest shared deadline and an explicit split. Same limit — no session can form a crew. |
 | L234 | W | **C** | All three gaps the body named are closed: monotonicity is swept (`test/layoverFeasibilityInvariants.test.ts:115, 180, 225`), the uncertainty rules exist and are exercised (`worstConfidence`, `LayoverFeasibility.ts:183`), and the reason codes are emitted and asserted (§7). Spec-attributable — the test file cites §6.1 by name. |
-| L237 | N | **C** | `test/layoverPrivacyCompassContract.test.ts` is exactly the named artifact: `:223` "NO TOOL CAN WIDEN THE ENVELOPE — every deadline and window it emits is the certified one", plus `:113-189` proving `enforceCompassEnvelope` (`LayoverCompassService.ts:400`) refuses a model answer stating a later deadline or more usable time, with positive controls on both. Spec-attributable. |
+| L237 | N | **C** | `test/layoverPrivacyCompassContract.test.ts` is exactly the named artifact: `:223` "NO TOOL CAN WIDEN THE ENVELOPE — every deadline and window it emits is the certified one", plus `:113-189` proving `enforceCompassEnvelope` (`LayoverCompassService.ts:443`) refuses a model answer stating a later deadline or more usable time, with positive controls on both. Spec-attributable. |
 | L240 | N | W | A deterministic replay test exists (`test/layoverFeasibilityRecord.test.ts`) but over synthesised inputs. No session is recorded, so there is nothing to replay *from* (2700 unapplied). |
 | L262 | W | **C** | Both halves now exist. The ladder is explicit and a **failed read is now distinguished from a missing row and refuses** rather than silently substituting generic buffers (`routes/airport.ts:146-171` — `error` is bound, logged, and returns `ok:false`). Confidence is reduced on the fallback: a fallback profile is `STATIC_DEFAULT` at fallback level 3, a real row is `AIRPORT_PROFILE` at level 2, and an unverified airport is `LOW` (`LayoverFeasibility.ts:414-421`) — which, at 0 verified production airports, is every session. |
 | L293 | N | W | The three substitutions are all still there — `estimateTravelTime` 15/25 (`LayoverRecommendationService.ts:212-216`), `estimateActivityTime` 30/60/90, and the fictitious `travelTimeMin: 20 / activityTimeMin: 30` probe on `GET /:id/safety` (`routes/airport.ts:803-808`). What changed is that they no longer *pretend*: the probe is a named input of the certified record and covered by its `inputHash`, and its provenance is published (`travelTimeSource`, `routes/airport.ts:1119#travelTimeSource: "unmeasured" as TravelTimeSource,` — was line 807, which is now a bare `}`; note the published value is `"unmeasured"`, not `"category_default"`) and classified `STATIC_DEFAULT` / `LOW` / fallback level 3 (`LayoverFeasibility.ts:399-412`). Substitution disclosed, not removed. |
@@ -1578,7 +1578,7 @@ cannot supply.
 | `offlineBundle` | Published, **not read** | **Read and displayed; still not cached** | `LayoverOverview.offlineBundle` (`layover.ts:353`), `bundleFreshness`/`describeDeadline` (`layoverReturnFacts.ts:54, 92`). **`AsyncStorage` appears nowhere** under `app/layover/`, `src/components/layover/`, `src/services/layover.ts` or `src/context/LayoverSessionContext.tsx` — grep, not recollection |
 | `POST /:id/return-now` | Wired, **no client function** | **Reachable by gesture** | `returnToAirportNow` (`layover.ts:1124#returnToAirportNow`) → `LayoverSafeReturnCard.tsx:96`, mounted at `app/layover/[id].tsx:732#<LayoverSafeReturnCard` |
 | `POST /:id/compass` | **Dark** — `askCompass` had no importer | **Reachable by gesture** | `LayoverCompassCard.tsx:24, 48`, mounted at `app/layover/[id].tsx:346` |
-| `runLayoverTool` (12 §12 tools) | Callable, **not passed to the model** | **Unchanged** | `LayoverCompassService.ts:829-829` still says DECLARED, NOT YET PASSED TO THE MODEL. A reachable endpoint is not a reachable tool |
+| `runLayoverTool` (12 §12 tools) | Callable, **not passed to the model** | **Unchanged** | `LayoverCompassService.ts:872-872` still says DECLARED, NOT YET PASSED TO THE MODEL. A reachable endpoint is not a reachable tool |
 | `GET /:id/safety` | Dark — `LayoverRecommendationScreen.tsx` imported by nothing | **Still dark** | `grep -rn LayoverRecommendationScreen app/ src/` outside its own file: no hits. `getSessionSafety` still has that one importer and it is unmounted |
 | `LayoverCrewService` (12 exports), `localReplan`, `sensingPolicy`, `nextDisruptionState`, `recomputeForDisruption` | No caller outside tests | **Unchanged** | No client can reach what no route exposes |
 
@@ -1588,7 +1588,7 @@ cannot supply.
 | --- | --- | --- | --- |
 | L2 | W | **C** | Both halves that kept it `W` are closed. The header is consumed — `summarizeCertification` (`layoverReturnFacts.ts:159#summarizeCertification`) renders the server's own `engineVersion`/`confidence`/`bufferPercentile` rather than a client restatement of them — and the client's DUPLICATE thresholds are gone with the file that held them: `LayoverReturnPanel.tsx` no longer exists (`git rm`, commit `a718beb5`). Grepped for surviving threshold constants in the replacement: none. |
 | L146 | W | **C** | §9 said "Reachability is the missing half" in those words. It is closed: `returnToAirportNow` (`layover.ts:1124#returnToAirportNow`) calls `POST /:id/return-now`, `LayoverSafeReturnCard.tsx:96` calls it on a **RETURN TO AIRPORT** press, and the card is mounted (`app/layover/[id].tsx:732#<LayoverSafeReturnCard`). A double press is refused by a ref written synchronously (`:77, 92-93`) — state alone loses two presses in one frame. The abort's own `statusCapability` is reported to the traveller rather than swallowed (`:240-241`, `statusCapabilityNote`), so `flag_off` reads as "your layover stays open so you keep the countdown", not as a failure. |
-| L114 | W | **C** | §9 ended "The endpoint it lives on is still dark from the app." It is not: `askCompass` (`layover.ts:1076#askCompass`) has an importer (`LayoverCompassCard.tsx:24, 48`), the card is mounted (`app/layover/[id].tsx:346`), and the single highest-value clarifying question is the thing actually rendered (`LayoverCompassCard.tsx:83-86`). The computation (`valueOfInformation`, `LayoverCompassService.ts:546`) was already built and pinned; a traveller can now be asked. |
+| L114 | W | **C** | §9 ended "The endpoint it lives on is still dark from the app." It is not: `askCompass` (`layover.ts:1076#askCompass`) has an importer (`LayoverCompassCard.tsx:24, 48`), the card is mounted (`app/layover/[id].tsx:346`), and the single highest-value clarifying question is the thing actually rendered (`LayoverCompassCard.tsx:83-86`). The computation (`valueOfInformation`, `LayoverCompassService.ts:589`) was already built and pinned; a traveller can now be asked. |
 
 ### Rows I looked at and deliberately did NOT move
 
@@ -1596,7 +1596,7 @@ cannot supply.
 | --- | --- | --- |
 | L150 | W | The client half is **displayed, not cached**. `describeDeadline` (`layoverReturnFacts.ts:108#describeDeadline`) renders "Last certified N min ago" from `offlineBundle.certifiedAt`/`staleAfter`, which is honest labelling of an answer's age — but §16's claim is that a client can *serve* a stale answer offline, and nothing writes the bundle to storage. `AsyncStorage` does not appear anywhere under the layover client. A label about staleness on a screen that cannot open offline is half of L150, and half is `W`. |
 | L141 | W | `explorationCollapsed` is derived and published, and after this pass it is still read by nothing: grep across `app/layover/` and `src/components/layover/` finds `returnRoutePrimary` (`[id].tsx:284`) and no `explorationCollapsed`. The card is HOISTED; exploration is not COLLAPSED. Those are different claims and only one is built. |
-| L102–L113 | W | Twelve §12 tools, reachable from a route that a traveller can now reach — and still not passed to the model (`LayoverCompassService.ts:829-829`). The endpoint becoming live does not make the tools live; wiring the model to choose among them is a change made behind a flag, which the service file itself says. |
+| L102–L113 | W | Twelve §12 tools, reachable from a route that a traveller can now reach — and still not passed to the model (`LayoverCompassService.ts:872-872`). The endpoint becoming live does not make the tools live; wiring the model to choose among them is a change made behind a flag, which the service file itself says. |
 | L142 | N | `returnRoutePrimary` is now consumed by the client, which is exactly why this row does **not** move: it is a boolean asking for a ROUTE to be made primary, and there is still no route (`ReturnContract.route` is `null` with `routeUnavailableReason: "no_routing_provider"`). What the client hoists is the return CARD. Rendering a flag about an absent thing is not the thing. |
 | L33, L147 | W | `layover_safe_return_status_enabled` is still FALSE and 2741's widened domain is still unused in production (0 rows in `returning`, measured 2026-09-08). The client now *reports* that state instead of hiding it, which is why L146 moves and these do not: the capability is honest, and off. |
 | L293 | W | Nothing in this pass touched the three substitutions. A client that renders `travelTimeSource` does not remove a fabricated 20/30 probe. |
@@ -3109,7 +3109,7 @@ traveller experiences, on a path the app mounts.
 
 | id | the sentence that is false | what is true at this commit |
 | --- | --- | --- |
-| L100 | *"It asks no clarifying question, compares no plans, and invokes no tool."* | **The first of the three is false.** `nextClarifyingQuestion` is computed, published on the answer and rendered by the mounted card (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:356#clarifyingQuestion`, `travel-buddy-standalone/src/components/layover/LayoverCompassCard.tsx:118#answer.clarifyingQuestion`) — census-compass scored the same code `C` as CL-06 and this census did not notice. The verdict does not move: it still compares no plans and still invokes no tool, and the tool half is the flag decision behind L102–L113. |
+| L100 | *"It asks no clarifying question, compares no plans, and invokes no tool."* | **The first of the three is false.** `nextClarifyingQuestion` is computed, published on the answer and rendered by the mounted card (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:399#clarifyingQuestion`, `travel-buddy-standalone/src/components/layover/LayoverCompassCard.tsx:118#answer.clarifyingQuestion`) — census-compass scored the same code `C` as CL-06 and this census did not notice. The verdict does not move: it still compares no plans and still invokes no tool, and the tool half is the flag decision behind L102–L113. |
 | L123 | — | **A test asserted the defect and passed.** `LayoverMapCard.placeTap.component.test.tsx` carried a case titled *"passes the airport pin place to PlaceDetailSheet when the airport is tapped"* — the requirement's own words for what an airport element must NOT do. It is rewritten rather than deleted, and the file's header now records that it used to pass. The first half of L123 had no test at all: an entire class of airports rendered no card and nothing noticed. |
 
 ### 15.7 The ceiling
@@ -4861,7 +4861,7 @@ contradicted the server's own certified unknown, on the one question whose wrong
 answer ends with a traveller refused at a border.
 
 Two checks were added to the same guard
-(`artifacts/api-server/src/services/airport/LayoverCompassService.ts:523#COMPASS_BOUNDARY_KINDS`):
+(`artifacts/api-server/src/services/airport/LayoverCompassService.ts:566#COMPASS_BOUNDARY_KINDS`):
 
 - `entry_status_asserted` — an entry/visa/permit sentence trips unless it is
   hedged by an admission of not knowing or an instruction to verify. `may`,
@@ -5536,8 +5536,8 @@ from the lane's report.
 
 | **ID** | **was** | **now** | why |
 |---|---|---|---|
-| **L100** | **W** | **C** | all four clauses hold: a clarifying question (§13.5), *compares certified plans* (`simulatePlan` is invoked), personalised wording, and *invokes deterministic tools* — `LayoverCompassService.ts:415#tools: LAYOVER_TOOL_SCHEMAS` |
-| **L102** | **W** | **C** | `getLayoverContext` — declared, offered with `tool_choice: "auto"`, and what the model chooses is executed at `LayoverCompassService.ts:427#const result = runNamedLayoverTool(c?.function?.name, ctx, c?.function?.arguments);` |
+| **L100** | **W** | **C** | all four clauses hold: a clarifying question (§13.5), *compares certified plans* (`simulatePlan` is invoked), personalised wording, and *invokes deterministic tools* — `LayoverCompassService.ts:458#tools: LAYOVER_TOOL_SCHEMAS` |
+| **L102** | **W** | **C** | `getLayoverContext` — declared, offered with `tool_choice: "auto"`, and what the model chooses is executed at `LayoverCompassService.ts:470#const result = runNamedLayoverTool(c?.function?.name, ctx, c?.function?.arguments);` |
 | **L103** | **W** | **C** | `getConnectionState` — same loop, same route |
 | **L104** | **W** | **C** | `getTimeWallet` — asserted end to end, and the loop is asserted bounded |
 | **L105** | **W** | **C** | `getSafeEnvelope` — same loop |
@@ -8485,7 +8485,7 @@ was written to any hosted database. Paths are repository-relative, as in §41.
    `artifacts/api-server/src/services/layover/LayoverCrewVisibility.ts:397#export async function compassCrewCandidates(`,
    read by the route at
    `artifacts/api-server/src/routes/airport.ts:1221#const crewRead = await compassCrewCandidates(` and
-   handed to `artifacts/api-server/src/services/airport/LayoverCompassService.ts:1079#case "getCrewCandidates":`
+   handed to `artifacts/api-server/src/services/airport/LayoverCompassService.ts:1122#case "getCrewCandidates":`
    as a read outcome. A failed read is a refusal, never `[]`, and no user id or session id reaches the
    model.
 7. **The crew meeting point was never cached** (L154). The bundle builder now reads the traveller's OWN
@@ -8601,11 +8601,11 @@ touched, no migration was added or applied, and nothing was written to or read f
 1. **Operational state — L101's fifth noun** (L101, L3). §19.5 left exactly one noun open: *"a model
    that asserts the security queue is short, or that a terminal transfer is running, is still
    unconstrained"*. `operational_state_asserted` joins the vocabulary
-   (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:527#"risk_band_widened", "operational_state_asserted",`),
+   (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:570#"risk_band_widened", "operational_state_asserted",`),
    runs on every model answer
-   (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:694#violations.push(...operationalStateViolations(answer))`)
+   (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:737#violations.push(...operationalStateViolations(answer))`)
    and is defined at
-   `artifacts/api-server/src/services/airport/LayoverCompassService.ts:1206#export function operationalStateViolations(`.
+   `artifacts/api-server/src/services/airport/LayoverCompassService.ts:1249#export function operationalStateViolations(`.
    There is no certified operational state on this tree (`getAirportState` publishes
    `liveOperationalState: null`; there is no flight feed), so any unhedged present-state claim about a
    queue, a checkpoint, a flight, a gate, boarding, a transfer train or crowding is refused and the
@@ -8641,7 +8641,7 @@ touched, no migration was added or applied, and nothing was written to or read f
 | id | was | now | why |
 | --- | --- | --- | --- |
 | L101 | W | C | §19.5 wrote the condition for this move in its own words: *"Four of L101's five nouns are enforced. The fifth, operational state, is not."* The fifth is enforced now (49.1 item 1), on the production path: `artifacts/api-server/src/services/airport/__tests__/layoverCompassOperationalBoundary.test.ts:155#a 'your flight is delayed' answer is not published` drives `answerLayoverQuestion` with an injected model answer and asserts the refused sentence is not what is published. 31 cases; 10/10 mutants killed. §19.7 had already falsified the row's "unreachable from the app" clause. **Caveat, stated rather than buried:** all five checks are sentence-scoped PATTERNS. A paraphrase outside them — "you have loads of time" is not in `SAFE_TO_LEAVE` — still passes. The same caveat applied to the four nouns §19.5 counted as enforced; this pass applies that standard, it does not raise it. Verified against a model double, not a live provider (§22.4's caveat). |
-| L3 | W | C | The row's evidence — *"Nothing checks the prose against the deterministic verdict"* — has been false since §19.5 added `risk_band_widened`, and was never re-graded. The prose is now checked against the certified record on all five axes the structured answer carries (deadline, usable window, entry, risk band, operational state), and a violating answer is replaced by the deterministic one (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:694#violations.push(...operationalStateViolations(answer))`). Same caveat as L101 — a pattern filter, not a proof — and the most contestable move in this section. |
+| L3 | W | C | The row's evidence — *"Nothing checks the prose against the deterministic verdict"* — has been false since §19.5 added `risk_band_widened`, and was never re-graded. The prose is now checked against the certified record on all five axes the structured answer carries (deadline, usable window, entry, risk band, operational state), and a violating answer is replaced by the deterministic one (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:737#violations.push(...operationalStateViolations(answer))`). Same caveat as L101 — a pattern filter, not a proof — and the most contestable move in this section. |
 | L241 | N | W | *"Decision-diff CI comparing old/new engine behaviour over historical/synthetic corpora."* The SYNTHETIC half is built and runs in `check:all` (49.1 item 2). `artifacts/api-server/src/test/layoverDecisionDiffCheck.test.ts` (its block "the comparison goes red on every change a reviewer must see") proves red on a later deadline, an earlier one, a verdict flip, a scenario added or removed and a vacuous comparison; 19 cases; 4 engine mutants (RETURN_SOON_LEAD_MIN, SAFETY_CRITICAL_PERCENTILE, both exit-delay terms) and 8 differ mutants, 12/12 killed, and the script itself exits 1 under the RETURN_SOON mutant. **W, not C**: the HISTORICAL half needs stored decisions (`layover_certified_computations`, 2700, unapplied). §27.7 filed this row under (b) for the whole sentence; only the historical half belongs there. |
 | L156 | W | C | **Stale since 2026-09-22.** The row reads *"Not wired into any route or client"* and §29.1 named exactly what would close it: *"(b) have the client implement the same rule and pin it to this one with a shared fixture"*. Commit `5dbd364bf` did (b) the same day and nobody re-graded the row: `travel-buddy-standalone/app/layover/[id].tsx:675#localReplan(cachedDeadlineAsBundle(cached), {` asks the pinned mirror when the overview cannot be loaded, and `travel-buddy-standalone/src/components/layover/LayoverOfflinePlanCard.tsx:160#layover-cached-plan-replan` shows the conservative figure when the inputs suffice and the refusal plus the last certified deadline when they do not — §16's "otherwise show unavailable/stale". Tests: `travel-buddy-standalone/app/layover/__tests__/layoverDashboard.cachedPlan.component.test.tsx:330#layover-cached-plan-replan` (both arms) and `travel-buddy-standalone/src/components/layover/__tests__/layoverLocalReplan.test.ts`, whose fixture was generated by executing the server's `localReplan`. Re-proved here: removing the call kills 2 cases, forcing `allowed = true` kills 1. |
 | L73 | N | W | **Stale.** The row reads *"Nothing is cached (§16)."* The certified deadline and the certified plan/area are cached on every successful overview read (`travel-buddy-standalone/app/layover/[id].tsx:294#void cacheCertifiedDeadline(id, ovRead.overview.offlineBundle);`, `travel-buddy-standalone/src/lib/layoverPlanCache.ts:205#export async function cacheCertifiedPlan(`), i.e. before the traveller leaves. **W**: the ROUTE half cannot be cached because there is no routing provider (L152), and the app caches rather than REQUIRING the cache before a landside departure. |
@@ -8720,11 +8720,11 @@ The requirements, verbatim from §2.1 and §12:
 - **L101** — *"Compass **cannot invent or widen** the certified safe envelope, return deadline, visa/entry status, operational state or risk band"*
 
 Both are statements about what the model CANNOT do. §49 graded them C on a guard that is a DENY-LIST of
-phrasings — `artifacts/api-server/src/services/airport/LayoverCompassService.ts:719#const SAFE_TO_LEAVE =`
-and `artifacts/api-server/src/services/airport/LayoverCompassService.ts:1206#export function operationalStateViolations(`.
+phrasings — `artifacts/api-server/src/services/airport/LayoverCompassService.ts:762#const SAFE_TO_LEAVE =`
+and `artifacts/api-server/src/services/airport/LayoverCompassService.ts:1249#export function operationalStateViolations(`.
 A deny-list shows that the phrasings it lists are refused. It cannot show that the model cannot widen,
 because the published answer is still the model's own free prose whenever no listed phrase matched
-(`artifacts/api-server/src/services/airport/LayoverCompassService.ts:328#modelText: bounded.ok ? bounded.text : ""`).
+(`artifacts/api-server/src/services/airport/LayoverCompassService.ts:371#modelText: bounded.ok ? bounded.text : ""`).
 Measured on this tree, on a session whose CERTIFIED verdict is `no`, each of these returns NO violation and
 would be published:
 
@@ -9077,7 +9077,7 @@ Held by `travel-buddy-standalone/src/components/layover/__tests__/layoverReturnA
 
 ### §54.4 L200 and L199 — the client write boundary, as migration 3620 (owner decision L199-b)
 
-`artifacts/api-server/src/migrations/3620_layover_client_write_boundary.sql:1#3620_layover_client_write_boundary.sql` leaves `authenticated` with SELECT only on `layover_sessions`, `layover_plan_stops`, `layover_events` and `airport_profiles`, and `anon` with nothing. `service_role` is unchanged, and column-level grants are revoked too. Postconditions inside its transaction assert every verb, for both client roles and the service role. The four `authorization-contract.json` entries shrink to that state in the same PR, as the contract's own note asks. Static suite: `artifacts/api-server/src/test/layoverClientWriteBoundary.test.ts:62#anon loses everything, authenticated loses every write verb and keeps SELECT`. Mutants W1–W4 are killed. **L200 and L199 stay `W`:** applying 3620 IS owner decision L199-b, and it is applied nowhere. A database it has not reached reads as wider than the contract.
+`artifacts/api-server/src/migrations/3620_layover_client_write_boundary.sql:1#3620_layover_client_write_boundary.sql` leaves `authenticated` with SELECT only on `layover_sessions`, `layover_plan_stops`, `layover_events` and `airport_profiles`, and `anon` with nothing. `service_role` is unchanged, and column-level grants are revoked too. Postconditions inside its transaction assert every verb, for both client roles and the service role. The four `authorization-contract.json` entries shrink to that state in the same PR, as the contract's own note asks. Static suite: `artifacts/api-server/src/test/layoverClientWriteBoundary.test.ts:65#anon loses everything, authenticated loses every write verb and keeps SELECT`. Mutants W1–W4 are killed. **L200 and L199 stay `W`:** applying 3620 IS owner decision L199-b, and it is applied nowhere. A database it has not reached reads as wider than the contract.
 
 ### §54.5 Recorded, not built
 
@@ -9112,14 +9112,14 @@ The verifier accepted the wave with required fixes. Each fix below is on the wav
 
 - **F1: an ended layover re-armed its return alerts.** The verifier confirmed it with a jest probe. The overview serves the bundle's deadline for any owned session. Opening a completed layover from history scheduled "Head back to TPE now" for a flight that had gone. Now:
   - the dashboard cancels and clears the alerts for any status outside the server's live set (`travel-buddy-standalone/app/layover/[id].tsx:475#if (!RETURN_ALERT_LIVE_STATUSES.has(String(overview.session.status))) {`, `travel-buddy-standalone/src/components/layover/layoverReturnAlerts.ts:154#export const RETURN_ALERT_LIVE_STATUSES`);
-  - three dashboard cases cover completed, cancelled and expired (`travel-buddy-standalone/app/layover/__tests__/layoverDashboard.returnAlerts.component.test.tsx:229#an ENDED layover`);
+  - three dashboard cases cover completed, cancelled and expired (`travel-buddy-standalone/app/layover/__tests__/layoverDashboard.returnAlerts.component.test.tsx:268#an ENDED layover`);
   - minor 10 is closed too: alerts the device cannot record are undone, so a later mount cannot stack a second pair.
 - **F2: L3 and L101 were graded C on a vocabulary.** Five of the verifier's eight paraphrases walked past the five-topic list on a YES session. Two examples: "ample margin to venture beyond the terminal" and "the cathedral is a short cab away".
   - By the lead's ruling, a question about LEAVING now shows the certified server text only (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:189#if (input.involvesLeaving) {`). That rests on the question, never on the model's words, and the verifier's eight sentences are cases.
   - A NON-leaving question still has its model prose filtered by the vocabulary. The suite records that a paraphrase it does not know is shown there (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:135#RECORDED LIMIT, not a pass`).
   - Whether a question is about leaving is itself a pattern match on the question.
   - So "model text that touches the five topics is never shown" holds structurally for a non-`yes` verdict and for a recognised leaving question, and only by vocabulary elsewhere. **Both rows move back to `W`.**
-- **F4: 3620's static suite now holds the file's own tail.** Nothing but `COMMIT` may follow the postconditions, and no write GRANT may appear anywhere in the file (`artifacts/api-server/src/test/layoverClientWriteBoundary.test.ts:85#the postconditions are the LAST statement`). The verifier's M13 is killed.
+- **F4: 3620's static suite now holds the file's own tail.** Nothing but `COMMIT` may follow the postconditions, and no write GRANT may appear anywhere in the file (`artifacts/api-server/src/test/layoverClientWriteBoundary.test.ts:88#the postconditions are the LAST statement`). The verifier's M13 is killed.
 - **Minor 7, a report correction.** The L219 change moved the golden tier on EIGHT scenarios (s01, s02, s07, s09, s17, s25, s28 and s31), not one. Verdicts, deadlines and usable minutes are unchanged, and the golden's own note said eight.
 - **Recorded, not changed:**
   - **Minor 8:** an unreadable history-bound flag turns the share door's bound off, the same polarity as the thread read.
@@ -9143,6 +9143,64 @@ Two rows move back down.
 | total | 296 | 296 |
 
 `check:census-integrity` reads **C=85 W=144 N=67 X=0** over 296.
+
+### §54.10 The second verification of this wave (`517e2f3e98`): lead ruling L3-FC, three test gaps closed, two counts corrected; L3 and L101 stay `W`
+
+**F1 — the leaving detector failed OPEN, and §54.8 overstated what it held.** §54.8 said the certified-only rule for leaving questions "rests on the question, never on the model's words". It rested on a pattern match on the question, and the verifier probed it: 14 of 16 leaving phrasings ("Is it safe to leave?", "Can we leave?", "Should I head downtown?") were not leaving questions to it, so each showed the model's prose alone. That sentence of §54.8 is withdrawn.
+
+The lead's ruling **L3-FC** turns the test round. On a layover session every question is a leaving question, which gets the certified text only, unless an AIRSIDE allowlist positively recognises it (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:277#const involvesLeaving = treatAsLeavingQuestion(question);`).
+- The allowlist (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:230#const AIRSIDE_PATTERNS = [`) covers eat, drink, lounge, wifi, shower, charging, shop, gate, restroom, sleep, prayer and smoking, plus a pharmacy only when the question places it in the terminal.
+- A question that also carries a leaving word is never airside (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:251#export function isAirsideQuestion`). The leaving words were widened to include leave, landside, downtown, town, city, outside, pop out, head out, reachable, make it to, explore, visit and sightsee.
+- The cases (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:217#L3-FC — every question is a leaving question unless positively airside`):
+  - the verifier's 16 phrasings are each `certified_only` on a YES session;
+  - unknown phrasings fall to certified text;
+  - each allowlisted subject is recognised;
+  - each widened leaving word, paired with an airside subject, is still a leaving question.
+- Mutants killed (21 of 21):
+  - the call site back on the old detector;
+  - the default flipped;
+  - the leaving check dropped from `isAirsideQuestion`;
+  - each of the 13 widened leaving patterns removed one at a time;
+  - the pharmacy allowlisted anywhere;
+  - the allowlist emptied.
+
+**Does a fail-closed allowlist meet L3 and L101? No; both stay `W`.** The requirement is that model text touching the five safety topics is replaced by the certified text and never shown. L3-FC closes the QUESTION side completely. A model answer is now shown only when three things all hold:
+1. the verdict is `yes`;
+2. the question names an allowlisted terminal subject and no leaving word;
+3. the prose passes the five-topic vocabulary.
+
+On that path the composer shows the model's prose alone (`artifacts/api-server/src/services/airport/LayoverCompassService.ts:200#if (dropped === 0 && !input.involvesLeaving && kept.length > 0) {`). Whether the prose touches a safety topic is still decided by a vocabulary. The suite records the gap: "Where can I eat?" answered with "The cathedral is a short cab away." is shown (`artifacts/api-server/src/services/airport/__tests__/layoverCompassCertifiedText.test.ts:272#RECORDED LIMIT, not a pass: on a POSITIVELY airside question`).
+
+The allowlist narrows where the vocabulary decides, from "every unrecognised question" to "a recognised question about something inside the terminal". It does not remove the vocabulary. **`C` needs one of two things:**
+- no model prose at all on a layover session; or
+- a ruling that, on a positively airside question, model prose shown after the certified text is non-safety content by construction.
+
+Either is the lead's call. The grade does not move on this argument.
+
+**F3 — 3620's static suite was blind to a definer writer.** The verifier planted mutant N1: a `SECURITY DEFINER` function that updates `layover_sessions`, with `GRANT EXECUTE … TO authenticated`. It passed 16/16, because the suite only read table-grant vocabulary. Two scans now cover 3620 and every later migration (`artifacts/api-server/src/test/layoverClientWriteBoundary.test.ts:228#no SECURITY DEFINER function or procedure that writes the four tables is callable`):
+- **Definer writers.** Every `SECURITY DEFINER` function or procedure that writes one of the four tables, literally or through dynamic `EXECUTE`, must have EXECUTE revoked from PUBLIC, `anon` AND `authenticated`, and must never be granted back. That holds per function or schema-wide, in any later file. PostgreSQL gives PUBLIC EXECUTE on every new function, and this project's default privileges hand functions in `public` to the client roles.
+- **Dynamic grants.** No dynamic `GRANT` may name one of the four tables. No dynamic `GRANT` may name a client role in a file that names them (the verifier's N3).
+
+There are planted-violation cases for both scans (`artifacts/api-server/src/test/layoverClientWriteBoundary.test.ts:240#N1 verbatim: a definer UPDATE granted to authenticated`). Ten mutants are killed:
+- N1 placed before `$post$` in 3620, with and without a GRANT;
+- N1 and N3 placed in a later migration;
+- six weakenings of the detector itself.
+
+**L200 and L199 stay `W`**, for §54.4's reason: 3620 is applied nowhere.
+
+**F5 — two test gaps on §54.8's F1, closed:**
+- N14: a `returning` session keeps both alerts (`travel-buddy-standalone/app/layover/__tests__/layoverDashboard.returnAlerts.component.test.tsx:228#a RETURNING layover keeps its alerts`).
+- N12: an active session that a re-read reports ended cancels its alerts AND clears the "Return alerts on" sentence (`travel-buddy-standalone/app/layover/__tests__/layoverDashboard.returnAlerts.component.test.tsx:250#an ACTIVE layover that the server then reports ENDED`).
+
+Both mutants are killed. The client's status type now includes `returning` (`travel-buddy-standalone/src/services/layover.ts:75#'returning' (migration 2741)`). L41, L18, L99 and L272 keep their grades.
+
+**F4** is census-input-intelligence §41.y. **F2**, the streamed `/compass/ask` path, is lane L's.
+
+**Count corrections.**
+- **Mobile tests.** The wave-2 report's "Mobile: jest layover 344 / 344" is not reproducible as stated. The verifier measured **358 / 358 over 45 suites** with the project's own pattern (`layover.*\.component\.test\.`), plus the 7 layover `node:test` files.
+- **The wave-2 report's F2 row.** It said "`involvesLeaving` produces certified text ONLY" as if the ruling were implemented. It held only for a *recognised* leaving question, which was 2 of the verifier's 16 phrasings. Under L3-FC the statement now holds for every question the allowlist does not recognise.
+
+No row moves. The headline stays §54.9's: **C=85 W=144 N=67 X=0** over 296.
 
 ## Cited, not graded (check:census-scope-coverage)
 
