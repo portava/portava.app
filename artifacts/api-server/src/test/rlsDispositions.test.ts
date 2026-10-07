@@ -204,6 +204,9 @@ import { readFileSync as pbRead, readdirSync as pbReaddir } from "node:fs";
 import { dirname as pbDirname, join as pbJoin } from "node:path";
 import { fileURLToPath as pbFileUrl } from "node:url";
 import { POST_BASELINE_RLS_DISPOSITIONS, auditedRlsDispositions } from "../scripts/rlsDispositions.js";
+import { CHAIN_RLS_DISPOSITIONS } from "../scripts/rlsDispositionsChain.js";
+import { chainRlsFacts, renderChainRlsDispositions } from "../scripts/lib/chainRlsFacts.js";
+import { writeFileSync as pbWrite } from "node:fs";
 
 describe("rlsDispositions — the post-baseline list reaches the inverse auditor", () => {
   const MIG = pbJoin(pbDirname(pbFileUrl(import.meta.url)), "..", "migrations");
@@ -215,9 +218,13 @@ describe("rlsDispositions — the post-baseline list reaches the inverse auditor
       assert.ok(t in audited, `post-baseline ${t} missing: the auditor would report it DISPOSITION_MISSING`);
       assert.equal(audited[t]!.class, POST_BASELINE_RLS_DISPOSITIONS[t]!.class);
     }
+    for (const t of Object.keys(CHAIN_RLS_DISPOSITIONS)) assert.ok(t in audited, `chain-derived ${t} missing`);
     assert.equal(
       Object.keys(audited).length,
-      Object.keys(RLS_DISPOSITIONS).length + Object.keys(POST_BASELINE_RLS_DISPOSITIONS).length,
+      Object.keys(RLS_DISPOSITIONS).length +
+        Object.keys(POST_BASELINE_RLS_DISPOSITIONS).length +
+        Object.keys(CHAIN_RLS_DISPOSITIONS).length,
+      "the three maps overlap",
     );
   });
 
@@ -230,5 +237,61 @@ describe("rlsDispositions — the post-baseline list reaches the inverse auditor
       assert.match(pbRead(pbJoin(MIG, d.migration), "utf8"), new RegExp(`create\\s+table\\s+(if\\s+not\\s+exists\\s+)?(public\\.)?${t}\\b`, "i"));
       if (d.class === "DENY_ALL_BY_DESIGN" || d.class === "REVIEWED_EXEMPT") assert.ok(d.reason?.trim(), `${t}: no reason`);
     }
+  });
+});
+
+describe("rlsDispositions — every post-baseline table's disposition is the chain's (lane G wave 2)", () => {
+  const MIG = pbJoin(pbDirname(pbFileUrl(import.meta.url)), "..", "migrations");
+  const OUT = pbJoin(pbDirname(pbFileUrl(import.meta.url)), "..", "scripts", "rlsDispositionsChain.ts");
+  const files = pbReaddir(MIG).filter((f) => f.endsWith(".sql")).map((name) => ({ name, sql: pbRead(pbJoin(MIG, name), "utf8") }));
+  const baselineSet = new Set([...loadBaselineTables().keys()]);
+  const facts = chainRlsFacts(files, baselineSet);
+
+  it("the committed rlsDispositionsChain.ts is exactly what the chain generates", () => {
+    const want = renderChainRlsDispositions(facts, new Set(Object.keys(POST_BASELINE_RLS_DISPOSITIONS)));
+    if (process.env.WRITE_CHAIN_RLS_DISPOSITIONS) pbWrite(OUT, want);
+    assert.equal(pbRead(OUT, "utf8"), want, "rlsDispositionsChain.ts disagrees with the migrations; regenerate (see its header) and review the diff");
+  });
+
+  it("every table the post-baseline chain creates has exactly one disposition, and none names anything else", () => {
+    assert.ok(facts.size >= 100, `only ${facts.size} post-baseline tables derived: the chain read nothing`);
+    const recorded = new Set([...Object.keys(CHAIN_RLS_DISPOSITIONS), ...Object.keys(POST_BASELINE_RLS_DISPOSITIONS)]);
+    assert.deepEqual([...facts.keys()].filter((t) => !recorded.has(t)).sort(), [], "a post-baseline table has no disposition");
+    assert.deepEqual([...recorded].filter((t) => !facts.has(t)).sort(), [], "a disposition names no table the chain creates");
+    for (const t of Object.keys(POST_BASELINE_RLS_DISPOSITIONS)) assert.ok(!(t in CHAIN_RLS_DISPOSITIONS), `${t} recorded twice`);
+  });
+
+  it("each entry's class, policy count, policies and creating file match the chain's facts", () => {
+    for (const [t, d] of Object.entries(CHAIN_RLS_DISPOSITIONS)) {
+      const f = facts.get(t)!;
+      const want = !f.rlsEnabled ? "NEEDS_REVIEW" : f.policies.size ? "RLS_REQUIRED" : "DENY_ALL_BY_DESIGN";
+      assert.equal(d.class, want, t);
+      assert.equal(d.policyCount, f.policies.size, t);
+      assert.deepEqual([...d.policies].sort(), [...f.policies].sort(), t);
+      assert.equal(d.migration, f.createdBy, t);
+      if (d.class !== "RLS_REQUIRED") assert.ok(d.reason?.trim(), `${t}: no reason`);
+    }
+    // The hand-written post-baseline entries are held to the same facts.
+    for (const [t, d] of Object.entries(POST_BASELINE_RLS_DISPOSITIONS)) {
+      const f = facts.get(t)!;
+      assert.equal(d.migration, f.createdBy, t);
+      assert.equal(d.policyCount, f.policies.size, t);
+      assert.equal(d.class, f.policies.size ? "RLS_REQUIRED" : "DENY_ALL_BY_DESIGN", t);
+    }
+  });
+
+  it("the facts read real chain shapes: a loop-enabled RLS, a dropped-then-replaced policy, a keep-list deny set", () => {
+    // 2762 enables RLS and creates trip_goals_select_crew inside a FOREACH loop; 2783 drops it and adds _select_scoped.
+    const goals = facts.get("trip_goals")!;
+    assert.equal(goals.rlsEnabled, true);
+    assert.ok(!goals.policies.has("trip_goals_select_crew"), "2783's DROP POLICY was not applied");
+    assert.ok(goals.policies.has("trip_goals_select_scoped"));
+    // 3476 creates four RESTRICTIVE deny policies through format() in a loop.
+    assert.deepEqual([...facts.get("area_momentum")!.policies].sort(), [
+      "area_momentum_deny_delete_clients", "area_momentum_deny_insert_clients",
+      "area_momentum_deny_select_clients", "area_momentum_deny_update_clients",
+    ]);
+    // 2273 (hand-written entry): RLS on, zero policies.
+    assert.equal(facts.get("intel_state_snapshot_versions")!.policies.size, 0);
   });
 });

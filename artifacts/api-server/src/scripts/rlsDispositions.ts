@@ -1022,6 +1022,8 @@ export function evaluatePolicySnapshot(
   };
 }
 
+import { CHAIN_RLS_DISPOSITIONS } from "./rlsDispositionsChain.js";
+
 /**
  * The disposition manifest the inverse auditor (`audit:live-unexplained`)
  * checks the live database against: RLS_DISPOSITIONS (the baseline's tables)
@@ -1034,6 +1036,10 @@ export function evaluatePolicySnapshot(
  */
 export function auditedRlsDispositions(): Record<string, RlsDisposition> {
   const out: Record<string, RlsDisposition> = {};
+  // The generated chain-derived entries (rlsDispositionsChain.ts) first, then
+  // the hand-written post-baseline ones, then the baseline's: the test keeps
+  // the three disjoint, so the order only matters if that test is broken.
+  for (const [t, d] of Object.entries(CHAIN_RLS_DISPOSITIONS)) out[t] = d;
   for (const [t, d] of Object.entries(POST_BASELINE_RLS_DISPOSITIONS)) out[t] = d;
   return { ...out, ...RLS_DISPOSITIONS };
 }
