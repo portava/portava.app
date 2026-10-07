@@ -4284,3 +4284,26 @@ switch (`PUT /memories/:id/items/:itemId/visibility`) answers 404 `feature_disab
 
 **Rollback:** `db/rollback/2026-10-07-3672-memory-item-visibility-rollback.sql` refuses while any photo is `only_me`
 (rolling back would expose it). Otherwise it restores the 0067 policy verbatim and drops the column and its CHECK.
+
+## 2026-10-07 — `3673_memory_corrections.sql`, written and NOT applied anywhere (lane H)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3673_memory_corrections.sql` | **not applied** | **not applied** |
+
+**What it adds (spec §3 `memory_corrections`, §4 truth precedence; census H28, H48, H49, H73, H242).**
+`memory_corrections` (`id`, `memory_id`, `owner_id`, `field`, `kind`, `place_id`, `canonical_location_id`, `source`,
+`created_at`): the owner's statements about a Memory's place. `assert` states the place reference (the latest wins);
+`reject` names exactly one value as a durable negative constraint. `field` is CHECKed to `'place'`, the only fact built.
+Append-only: `public.intel_append_only()` (2130) refuses UPDATE, and `service_role` holds SELECT and INSERT only. RLS is
+on with no policy, and `PUBLIC`, `anon` and `authenticated` are revoked in the same file. `memory_id` cascades from
+`memories` and `owner_id` from `auth.users`. The postconditions check RLS, the grants, the trigger and both cascades.
+
+**Safe to leave unapplied.** `services/memory/memoryCorrections.ts` treats 42P01 / PGRST205 as "no correction", which is
+true, so place resolution behaves as before. Any other failure, or a full 1000-row page, makes the place unreadable.
+PATCH /memories/:id goes ahead without recording when the table is absent. `GET|POST /memories/:id/corrections` answers
+404 `feature_disabled` until 3673 is applied.
+
+**Rollback:** `db/rollback/2026-10-07-3673-memory-corrections-rollback.sql` refuses while any correction exists (dropping
+one would put an owner back at a place they rejected). Otherwise it drops the table, which drops its trigger; the shared
+`intel_append_only()` is untouched.

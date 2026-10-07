@@ -97,7 +97,7 @@ import {
   mergedAudience,
   revokeMemoryAudienceCaches,
 } from "../services/memory/memoryAudienceRevocation.js";
-import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; import { refuseWideningKeptPrivate, readRecapControls } from "../services/memory/memoryResurfacingControls.js"; import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; // one line: this file is cited by line
+import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; import { refuseWideningKeptPrivate, readRecapControls } from "../services/memory/memoryResurfacingControls.js"; import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; import { clearsCanonicalOnPatch, placeCorrectionsForPatch, recordPlaceCorrections } from "../services/memory/memoryCorrections.js"; // one line: this file is cited by line
 import {
   classifyMemoryMediaUrl,
   FOREIGN_MEDIA_REFUSAL,
@@ -1784,7 +1784,7 @@ router.patch("/memories/:id", async (req, res) => {
   if (d.visibility !== undefined) patch.visibility = d.visibility;
   if (d.allowedUserIds !== undefined) patch.allowed_user_ids = d.allowedUserIds;
   if (d.hiddenUserIds !== undefined) patch.hidden_user_ids = d.hiddenUserIds;
-  if (d.placeId !== undefined) patch.place_id = d.placeId;
+  if (d.placeId !== undefined) patch.place_id = d.placeId; if (clearsCanonicalOnPatch(existing, d)) patch.canonical_location_id = null; // H49 (§AO): a new place named without a canonical location drops the OLD place's one, which would otherwise resolve the Memory back to the old place
   if (d.locationCity !== undefined) patch.location_city = d.locationCity;
   if (d.locationCountry !== undefined) patch.location_country = d.locationCountry;
   if (d.locationLat !== undefined) patch.location_lat = d.locationLat;
@@ -1812,7 +1812,7 @@ router.patch("/memories/:id", async (req, res) => {
   // change, a place correction, or a plain field edit. The name reaches the
   // audit row and the domain event's payload, which is what makes §24's
   // place_correction_rate countable at all.
-  const commandType = commandTypeForPatch(d);
+  const commandType = commandTypeForPatch(d); const placeCorrections = placeCorrectionsForPatch(existing, d); if (placeCorrections.length > 0) { const recorded = await recordPlaceCorrections(sc, { memoryId: id, ownerId: user.id, source: "memory_edit", rows: placeCorrections }); if (!recorded.ok && recorded.reason !== "not_deployed") { req.log.error({ memoryId: id, detail: recorded.detail }, "memories: the place correction could not be recorded — the edit is refused"); sendError(res, "degraded_unavailable", "Your change of place could not be recorded, so this Memory was not changed. Please try again."); return; } } // §AO (3673): a change of place is recorded as the owner's correction BEFORE the Memory is written; 3673 unapplied ⇒ the edit goes ahead as before (one line: cited by line)
 
   const outcome = await dispatchMemoryCommand<any>({
     sc,
