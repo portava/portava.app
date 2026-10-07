@@ -2443,6 +2443,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/telegraphConversationHeaderAvailability.test.ts",
     // T366's W (§45c.2) rests on the kernel's call shape here: a change to it can move that row.
     "artifacts/api-server/src/lib/memoryCommandBus.ts",
+    // WIDENED 2026-10-07 by lane T (§51): T295's C rests on the receipt's faces (routes/telegraphLifecycle.ts, already watched above) and their suite.
+    "artifacts/api-server/src/test/telegraphReaderFaces.test.ts",
   ],
   // census-map.md, census-sensing.md, census-compass.md and
   // census-input-intelligence.md — declared 2026-09-11 on the same basis as

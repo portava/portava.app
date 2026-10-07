@@ -11265,7 +11265,7 @@ T262–T451 there), so this is lane T1's §45.5 (247 / 170 / 32 / 2) and lane T2
 451 rows. This section restates four rows (T11, T12, T8 C → C; T107 W → W) and moves none.
 CONSTRUCTED (C + W) is 429 of 451 = 95.1 %; CORRECT is 257 of 451 = 57.0 %.
 
-## §51 — TELEGRAPH lane T (mission 4, 2026-10-07): two presence/identity leaks closed, lead ruling D-24 applied to Telegraph's other capabilities, and T366 / T408 made structural. TWO ROWS MOVE (T366 W → C, T408 W → C)
+## §51 — TELEGRAPH lane T (mission 4, 2026-10-07): two presence/identity leaks closed, lead ruling D-24 applied to Telegraph's other capabilities, T366 / T408 made structural, and the last raw read on the conversation surface removed. THREE ROWS MOVE (T366, T408, T295 W → C)
 
 Written 2026-10-07 by lane T, which holds Telegraph's open rows from this date (lanes T1/T2 closed;
 lane C's unmerged Telegraph sections §43, §44, §47–§50 and the rows they restate — T242, T418,
@@ -11334,6 +11334,7 @@ no flag, no database, nothing observed in production.
   (the permission engine and the block / mute / restrict / report routes); it is not touched here.
 - **T366's stated holes (§45c).** See 51.2.
 - **T408's stated holes (§45c).** See 51.2.
+- **T295's last raw read (§45c).** See 51.2.
 
 ### 51.2 Rows
 
@@ -11341,6 +11342,7 @@ no flag, no database, nothing observed in production.
 | --- | --- | --- | --- |
 | T366 | W | **C** | §29 **no automatic Memory creation from private conversation history.** §45c's three holes and the guard's own fourth are closed, each shown on a synthetic source that the OLD detector misses (`artifacts/api-server/src/test/telegraphConversationMemoryBoundary.test.ts:368#describe("T366 hardening`). (1) A dynamic `.rpc(fn)` resolves through the file's constants and constant expressions — `const fn = highlight ? HIGHLIGHT_KERNEL_FN : MEMORY_KERNEL_FN` is the memory kernel — and through a non-exported wrapper's same-file call sites; an unresolvable one COUNTS as a creation (`artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:367#export function rpcNameCandidates(`). (2) `.from(NAME)` resolves through string constants, and a write into a thread table is not a read (`artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:349#export function conversationReadsResolved(`). (4) Reads and creations are carried through same-file and imported calls to a FIXPOINT across files (`artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:445#export function reachingNames(`); the verifier's own counterexample — a handler reading `messages` and calling `executeMemoryCommand(…CREATE_MEMORY…)` — injected into the REAL server tree is caught (`artifacts/api-server/src/test/telegraphConversationMemoryBoundary.test.ts:436#the verifier's own counterexample`). (3) The mobile app is scanned: history and memory endpoints DERIVED from the server analysis, app imports (relative, `@/`, `src/`) followed to a fixpoint, no crossing, and a synthetic screen that loads a thread and creates a memory from it caught (`artifacts/api-server/src/test/telegraphConversationMemoryBoundary.test.ts:587#a synthetic screen that loads a thread`). Followed to any depth, the server tree has ONE call tree that reaches both in different branches — `POST /compass/ask` (its tool loop can read a Telegraph thread; compression extracts from the Compass conversation's USER turns only) — reviewed onto `artifacts/api-server/src/domain/telegraph/policies/conversationMemoryBoundary.ts:521#export const REVIEWED_CALL_TREE_NON_FLOWS` with the argument pinned by an assertion on the compression's user-turn filter. Still not seen, stated: a table name passed as a function ARGUMENT, and a call made only through JSX or as a value. |
 | T408 | W | **C** | §30A.9 **screenshot detection is informational only.** §45c: "a deny-list a paraphrase gets past is not C … an Expo config plugin injecting FLAG_SECURE would sit outside the scan." Both are now structural. COPY: every string in either tree that MENTIONS screen capture at all, in any words (`artifacts/api-server/src/domain/telegraph/policies/screenshotSignal.ts:110#export const SCREEN_CAPTURE_MENTION =`), must be on a closed, reviewed list (`artifacts/api-server/src/domain/telegraph/policies/screenshotSignal.ts:128#export const SCREEN_CAPTURE_MENTIONS`: the ticket-scam advice, the `screenshot` media provenance and its reasons, four certification fixtures), exact, non-stale and guarantee-free (`artifacts/api-server/src/test/telegraphScreenshotInformational.test.ts:252#every string in either tree that mentions screen capture`); §45c's two paraphrases, and the same as JSX text, are caught. NATIVE AND CONFIG: the capture-API scan reads every shippable text file of the mobile package — app.json, config plugins, `components/`, `hooks/`, `constants/`, server templates, vendored native code, `.js/.json/.kt/.mm/…` — and the server's non-TypeScript files, and app.json's plugin list is read (`artifacts/api-server/src/test/telegraphScreenshotInformational.test.ts:233#no file of the mobile package, nor any non-TypeScript server file`). A FLAG_SECURE config plugin is red under the new scan and green under the old one alone (51.4). |
+| T295 | W | **C** | §24's closing rule, **mobile clients consume server-built projections**. §45c's remainder was "one decorative raw read … `useReaderAvatars` (`profiles.avatar_url` for reader chips), and the ratchet counts only the six messaging tables". Both are gone. The receipt answers its readers' faces (`artifacts/api-server/src/routes/telegraphLifecycle.ts:211#const faces = await readerFacesFor(`), under the rule the app's own read got from `profiles_select`, applied by the server — none across a block either way, a private profile's only to a friend, every failure withholding and saying degraded (`artifacts/api-server/src/services/telegraph/identityAcrossBlocks.ts:89#export async function readerFacesFor(`; `artifacts/api-server/src/test/telegraphReaderFaces.test.ts:73#describe("T295`). The app publishes each answer and the chips look it up, with no `supabase` in the hook (`travel-buddy-standalone/src/features/telegraph/lifecycle/useThreadReadState.ts:184#publishReaderFaces(r.data.readerFaces)`; `travel-buddy-standalone/src/features/telegraph/lifecycle/useReaderAvatars.ts:19#export function useReaderAvatars(`; `travel-buddy-standalone/src/features/telegraph/__tests__/useThreadReadState.component.test.ts:443#T295 — reader faces`). The ratchet now also counts a raw `profiles` read on the conversation surface (`artifacts/api-server/src/scripts/checkTelegraphSlos.ts:226#const CONVERSATION_SURFACE = [`; baseline still 0), re-derived independently (`artifacts/api-server/src/test/telegraphProjectionRegistryHonesty.test.ts:145#no conversation-surface client file reads`). |
 | T29 | W | **W** | **Invisible mode suppresses Nearby / Bump / public availability.** Same verdict, one fewer gap: public availability is now suppressed on the conversation header and in Compass as well as Nearby (51.1). Still W for §8261's two reasons: no user-facing "invisible mode" control, and the Discovery map enforces the same columns through its own code. |
 | T421 | W | **W** | **Unavailable/Invisible promptly revokes Nearby, Discovery and Compass availability projections.** Narrower: Compass's participant-availability projection and the Telegraph header now revoke on Invisible, read on every request (51.1); Discovery's people search already did (lib/discoveryPeoplePrivacy.ts, outside this census's scope). Still W: Nearby, where the block override and the invisible suppression both live, is dark behind `nearby_reachable_enabled`. |
 | T219 | W | **W** | **Block cascade across delivery, location, presence, Nearby, Bump, shared-memory, Crew suggestions and Compass.** Narrower: a blocked person's identity no longer reaches the other on the inbox or in the thread's rows and quotes (51.1). Still W: Nearby is dark, and Bump and Crew suggestions have no referent. |
@@ -11367,6 +11369,9 @@ caller asymmetry is a hosting restriction on a GROUP trip again), and `callSyste
   request in, or booked); a crew or event room is never refused by a restriction.
 - **P-T4 — Withheld identity keeps the id.** Across a block the inbox keeps the member's id and the
   thread keeps `senderId`; only the handle, name and avatar are withheld.
+- **P-T5 — Reader faces follow profiles_select.** A receipt chip's face is withheld across a block
+  and from a non-friend for a private profile — the rule the app's own read had — and every read
+  failure withholds (decorative; the receipt's count and ids are never affected).
 
 ### 51.4 Tests and mutations
 
@@ -11389,6 +11394,12 @@ and checked clean.
 - T366: `telegraphConversationMemoryBoundary` 27/27. Mutants: dynamic RPCs ignored (4 red),
   constant table names unresolved (1), imports not followed (2), the client scan blind (2), client
   memory endpoints ignored (2), the reviewed list emptied (1), compression keeping assistant turns (1).
+- T295: `artifacts/api-server/src/test/telegraphReaderFaces.test.ts:73#describe("T295` 5/5 (the real lifecycle
+  router); `useThreadReadState.component.test.ts` 30/30 (+3, jest); registry honesty 17/17;
+  `telegraphLifecycle` 46/46; the mobile typecheck is green. Mutants: faces not published (2 red),
+  a withheld face not overwriting (1), the raw read put back in the hook (honesty 1, and
+  `check:telegraph-slos` RATCHET VIOLATED), faces ignoring blocks (3), the private rule dropped (2),
+  an unreadable profile read not degraded (1).
 - T408: `telegraphScreenshotInformational` 13/13. Mutants: a paraphrase in a client string (1 red),
   the same as JSX text (1), FLAG_SECURE in plugins/withPortavaNSE.js (1 red; the pre-existing
   scan alone stays green on it), a capture plugin in app.json (2).
@@ -11405,7 +11416,8 @@ on the inbox, a message row or a quote; a plan refused under `hosting` outside a
 refused under messaging in a thread where a message would not be, or seen state refused by any
 restriction; a conversation→Memory path at any depth (server or app) outside the two closed lists;
 a string that mentions screen capture without being on the closed list, or a capture API anywhere in
-the mobile package.
+the mobile package; a raw `profiles` (or messaging-table) read on the conversation surface, or a
+receipt chip's face shown across a block or to a non-friend of a private profile.
 
 ### 51.6 The headline, restated from the rows
 
@@ -11413,10 +11425,10 @@ Counted with `check:census-integrity` on this branch (lane C's unmerged sections
 
 | bucket | count |
 | --- | --- |
-| BUILT-AND-CORRECT | **259** |
-| BUILT-BUT-WRONG | **170** |
+| BUILT-AND-CORRECT | **260** |
+| BUILT-BUT-WRONG | **169** |
 | NOT-BUILT | **20** |
 | CANNOT-VERIFY | **2** |
 
-451 rows. Two move (T366 and T408, W → C); five are restated without changing bucket. CONSTRUCTED
-(C + W) is 429 of 451 = 95.1 %; CORRECT is 259 of 451 = 57.4 %.
+451 rows. Three move (T366, T408 and T295, W → C); five are restated without changing bucket.
+CONSTRUCTED (C + W) is 429 of 451 = 95.1 %; CORRECT is 260 of 451 = 57.6 %.
