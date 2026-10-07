@@ -38,7 +38,7 @@ import {
   type MigrationText,
 } from "../scripts/lib/clientTableAclDecisions.js";
 import { expandForeachLiteralLoops, extractGrants } from "../scripts/lib/liveVsCanonicalCore.js";
-import { findClientDefinerViews, VIEW_INVOKER_EXEMPT } from "../scripts/lib/clientTableAclDecisions.js";
+import { findClientDefinerViews } from "../scripts/lib/clientTableAclDecisions.js";
 import {
   isAssertionOnlyDoBlock,
   isPreconditionDoBlock,
@@ -401,9 +401,15 @@ describe("rule 4 — the bypasses the verifier planted (F3 a–d) now fail", () 
     for (const lit of [
       "DO $$ BEGIN RAISE NOTICE 'REVOKE ALL ON public.zz_t FROM anon, authenticated'; END $$;",
       "COMMENT ON TABLE zz_t IS 'REVOKE ALL ON public.zz_t FROM anon, authenticated';",
+      // Dollar-quoted the same text is still only a message (verifier G2-2):
+      // a `$tag$` leads a statement only when EXECUTE, AS or DO opens it.
+      "COMMENT ON TABLE zz_t IS $$REVOKE ALL ON public.zz_t FROM anon, authenticated$$;",
+      "DO $$ BEGIN RAISE NOTICE $m$REVOKE ALL ON public.zz_t FROM anon, authenticated$m$; END $$;",
+      "DO $$ BEGIN RAISE NOTICE $m$REVOKE ALL ON public.zz_t FROM anon, authenticated $m$; END $$;",
     ]) {
       const r = findUndecidedTables([f("9001_x.sql", `CREATE TABLE zz_t (id int);\n${lit}`)], BASELINE_TABLES);
       assert.equal(r.length, 1, lit);
+      assert.deepEqual(r[0]!.missing, ["anon", "authenticated"], lit);
     }
     const exec = findUndecidedTables(
       [f("9001_x.sql", "CREATE TABLE zz_t (id int);\nDO $$ BEGIN EXECUTE 'REVOKE ALL ON public.zz_t FROM anon, authenticated'; END $$;")],
@@ -467,8 +473,20 @@ describe("rule 5 — no client-readable view without security_invoker (verifier 
     assert.deepEqual(run("CREATE VIEW public.zz_v WITH (security_invoker = true) AS SELECT 1;", "ALTER VIEW public.zz_v RESET (security_invoker);"), ["zz_v:anon,authenticated"]);
   });
 
-  it("the exemption list is exactly PostGIS's two metadata views", () => {
-    assert.deepEqual([...VIEW_INVOKER_EXEMPT.keys()].sort(), ["geography_columns", "geometry_columns"]);
-    assert.deepEqual(findClientDefinerViews([f("9001_x.sql", "CREATE VIEW public.geometry_columns AS SELECT 1;")], ""), []);
+  it("no name is exempt: a chain view called geometry_columns is judged like any other (verifier G2-3)", () => {
+    // PostGIS's metadata views are extension members: pg_dump leaves them out
+    // of the baseline and no migration creates them, so the replay never meets
+    // the real ones. An allowlist of their names exempted nothing on this tree
+    // and let a definer view squat on the name.
+    assert.doesNotMatch(baseline, /\b(geometry_columns|geography_columns)\b/, "the baseline now defines a PostGIS metadata view; decide how rule 5 treats it");
+    const squat = findClientDefinerViews([f("9001_x.sql", "CREATE VIEW public.geometry_columns AS SELECT * FROM public.profiles;")], "");
+    assert.deepEqual(squat.map((v) => `${v.view}:${v.roles.join(",")}`), ["geometry_columns:anon,authenticated"]);
+  });
+
+  it("ALTER TABLE … SET / RESET (security_invoker) on a view is read like ALTER VIEW (verifier G2-4)", () => {
+    const run = (...sqls: string[]) => findClientDefinerViews(sqls.map((s, i) => f(`900${i}_x.sql`, s)), "").map((v) => v.view);
+    assert.deepEqual(run("CREATE VIEW public.zz_v WITH (security_invoker = true) AS SELECT 1;", "ALTER TABLE public.zz_v RESET (security_invoker);"), ["zz_v"]);
+    assert.deepEqual(run("CREATE VIEW public.zz_v AS SELECT 1;", "ALTER TABLE IF EXISTS public.zz_v SET (security_invoker = true);"), []);
+    assert.deepEqual(run("CREATE VIEW public.zz_v WITH (security_invoker = true) AS SELECT 1;", "ALTER TABLE ONLY public.zz_v SET (security_invoker = false);"), ["zz_v"]);
   });
 });

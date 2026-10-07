@@ -45,9 +45,11 @@
  *
  * WHAT IS NOT A REVOKE: a column-level REVOKE (`REVOKE UPDATE (role) …`) is not
  * a decision about the table's default ACL; a string literal that merely starts
- * with REVOKE (a RAISE message, a COMMENT) is not a statement — a literal is
- * read as SQL only when it is the operand of EXECUTE; a quoted identifier keeps
- * its case (`"Zz_T"` and `zz_t` are different relations).
+ * with REVOKE (a RAISE message, a COMMENT) is not a statement — a literal,
+ * single- or dollar-quoted, is read as SQL only when it is a body the server
+ * executes: EXECUTE's operand, or a dollar quote opened by EXECUTE, AS or DO
+ * (verifier G2-2); a quoted identifier keeps its case (`"Zz_T"` and `zz_t` are
+ * different relations).
  *
  * KNOWN LIMITS, stated (verifier F3e): the rule proves that a REVOKE STATEMENT
  * exists after the CREATE, not that the resulting ACL is right — `REVOKE ALL …;
@@ -68,11 +70,32 @@
  * ALTER VIEW … SET / RESET, and CREATE OR REPLACE, which replaces the options)
  * and its client access (the baseline's GRANTs; the default ACL at a chain
  * CREATE; GRANT / REVOKE of SELECT or ALL after it), and fails on every view
- * that ends client-readable without security_invoker. The only exceptions are
- * VIEW_INVOKER_EXEMPT: PostGIS's own metadata views.
+ * that ends client-readable without security_invoker. There are NO exceptions:
+ * PostGIS's geometry_columns / geography_columns are extension members, which
+ * pg_dump leaves out of the baseline and no migration creates, so the replay
+ * never sees them; an allowlist of their names exempted nothing and only let a
+ * chain view squat on one of them (verifier G2-3; it was removed).
+ *
+ * KNOWN LIMITS of rules 4 and 5, stated so they are not mistaken for coverage
+ * (verifier G2-5, G2-7, G2-8; none has an instance in the chain today):
+ *   * Rule 5 credits 3820's catalog loop for every name in its literal
+ *     `relname IN (…)` list when the body EXECUTEs `ALTER VIEW %I.%I SET
+ *     (security_invoker = true)` on the loop record; it does not evaluate the
+ *     rest of the loop's WHERE, so a predicate that neuters the loop at run
+ *     time (`AND false`, another schema) would still be credited.
+ *   * Rule 4 does not see a table created by a bare `EXECUTE format('CREATE
+ *     TABLE …', 'lit')` outside a loop, by `SELECT … INTO public.t`, by a
+ *     FOREACH over a DECLAREd array variable, or by an EXECUTE whose operand is
+ *     built with `||`. Such a table is never examined.
+ *   * Rule 4 takes a table's LAST CREATE: a later `CREATE TABLE IF NOT EXISTS`
+ *     re-statement of a table the chain already created and decided makes it
+ *     undecided again (fail-closed noise; the author repeats the REVOKE).
+ *   * Rule 5 reads schema `public` only, views named through literal text or a
+ *     FOREACH literal, and GRANT/REVOKE statements that name the view; it does
+ *     not model `GRANT … ON ALL TABLES IN SCHEMA`.
  */
 
-import { blankSqlComments, CHAIN_START_PREFIX, expandForeachLiteralLoops } from "./liveVsCanonicalCore.js";
+import { blankSqlComments, CHAIN_START_PREFIX, expandForeachLiteralLoops, SQL_STATEMENT_LEAD } from "./liveVsCanonicalCore.js";
 
 export interface MigrationText {
   /** Bare filename, e.g. `2720_highlight_resurfacing_preferences.sql`. */
@@ -137,12 +160,14 @@ function statementFrom(src: string, from: number): string {
 }
 
 /**
- * Where a statement can begin: start of text, after `;`, a dollar quote,
- * BEGIN/THEN/ELSE/LOOP/DO — or inside a string literal ONLY when that literal
- * is EXECUTE's operand. A RAISE message or a COMMENT that happens to start with
- * REVOKE / GRANT / CREATE is not a statement (verifier F3b / F4).
+ * Where a statement can begin — liveVsCanonicalCore.SQL_STATEMENT_LEAD: start
+ * of text, after `;`, BEGIN/THEN/ELSE/LOOP/DO, or inside a literal only when it
+ * is a body the server executes (EXECUTE's operand; a dollar quote opened by
+ * EXECUTE, AS or DO). A RAISE message or a COMMENT that happens to start with
+ * REVOKE / GRANT / CREATE is not a statement, single- or dollar-quoted
+ * (verifier F3b / F4 / G2-2).
  */
-export const STATEMENT_LEAD = /(?:^|[;$]|\bexecute\s*'|\b(?:begin|then|else|loop|do)\b)\s*$/i;
+export const STATEMENT_LEAD = SQL_STATEMENT_LEAD;
 const leads = (src: string, at: number) => STATEMENT_LEAD.test(src.slice(Math.max(0, at - 32), at));
 
 type TableEvent =
@@ -347,16 +372,6 @@ export function findUndecidedTables(
 // Rule 5: client-readable views must be security_invoker
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * The ONLY views allowed to be client-readable without security_invoker:
- * PostGIS's metadata views, which the extension owns, which read the catalog
- * rather than application rows, and which no migration creates.
- */
-export const VIEW_INVOKER_EXEMPT: ReadonlyMap<string, string> = new Map([
-  ["geometry_columns", "PostGIS extension metadata view (extension-owned; reads pg_catalog, no application rows)"],
-  ["geography_columns", "PostGIS extension metadata view (extension-owned; reads pg_catalog, no application rows)"],
-]);
-
 export interface ClientDefinerView {
   view: string;
   /** The file (or 'baseline') whose CREATE last defined it. */
@@ -387,7 +402,9 @@ function viewEvents(src: string, base: number): ViewEvent[] {
     const inv = /security_invoker\s*=\s*('?[\w]+'?)/i.exec(opts);
     out.push({ k: "create", v, pos: base + m.index!, invoker: !m[2] && !!inv && truthy(inv[1]!), replace: !!m[1] });
   }
-  for (const m of src.matchAll(new RegExp(String.raw`\balter\s+view\s+(?:if\s+exists\s+)?((?:${IDENT}\.)?${IDENT})\s+(set|reset)\s*\(([^)]*)\)`, "gi"))) {
+  // ALTER TABLE accepts a view for SET / RESET (reloption) too (verifier G2-4),
+  // so a file written that way is read the same.
+  for (const m of src.matchAll(new RegExp(String.raw`\balter\s+(?:view|table)\s+(?:if\s+exists\s+)?(?:only\s+)?((?:${IDENT}\.)?${IDENT})\s+(set|reset)\s*\(([^)]*)\)`, "gi"))) {
     if (!leads(src, m.index!)) continue;
     const v = tableName(m[1]!);
     if (!v) continue;
@@ -503,7 +520,7 @@ export function findClientDefinerViews(files: readonly MigrationText[], baseline
   }
   const out: ClientDefinerView[] = [];
   for (const [v, st] of [...state].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
-    if (!st.isView || st.invoker || !st.roles.size || VIEW_INVOKER_EXEMPT.has(v)) continue;
+    if (!st.isView || st.invoker || !st.roles.size) continue;
     out.push({ view: v, definedIn: st.definedIn, roles: [...st.roles].sort() });
   }
   return out;

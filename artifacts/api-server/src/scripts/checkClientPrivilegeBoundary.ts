@@ -49,8 +49,8 @@
  *      the default ACL a chain CREATE VIEW takes) without security_invoker =
  *      true: a definer view reads its tables with the owner's rights, past
  *      their RLS. 2776's trip_presence_current did, in production; 3741 fixes
- *      it. Exempt: exactly VIEW_INVOKER_EXEMPT (PostGIS's geometry_columns and
- *      geography_columns).
+ *      it. No exemptions: PostGIS's own metadata views are extension members
+ *      the baseline and the chain never define (verifier G2-3).
  *
  * ── ONE RULE DELIBERATELY NOT IMPLEMENTED ────────────────────────────────────
  * "A GRANT to a client role must be preceded by REVOKE ALL in the same file"
@@ -76,7 +76,6 @@ import {
   createdTables,
   findClientDefinerViews,
   findUndecidedTables,
-  VIEW_INVOKER_EXEMPT,
 } from "./lib/clientTableAclDecisions.js";
 import { BASELINE_PATH, parseBaselineTables } from "./parseBaselineSchema.js";
 
@@ -291,7 +290,7 @@ function main(): void {
   console.log("✅ no migration grants a client role a privilege RLS cannot police.");
   console.log(`✅ every one of the ${tablesExamined} post-baseline table(s) carries a client-privilege decision (rule 4).`);
   console.log(
-    `✅ no client-readable view lacks security_invoker (rule 5; ${viewsExamined} view(s) checked, ${VIEW_INVOKER_EXEMPT.size} PostGIS metadata views exempt).`,
+    `✅ no client-readable view lacks security_invoker (rule 5; ${viewsExamined} view(s) checked, none exempt).`,
   );
 }
 

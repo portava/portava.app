@@ -992,6 +992,10 @@ describe("extractGrants — GRANT-shaped text that is not a statement is not a g
       "DO $$ BEGIN RAISE NOTICE 'GRANT SELECT ON public.secret TO anon'; END $$;",
       "COMMENT ON TABLE public.x IS 'GRANT SELECT ON public.secret TO anon, authenticated was never issued';",
       "-- GRANT SELECT ON public.secret TO anon;\n/* GRANT SELECT ON public.secret TO authenticated; */",
+      // Dollar-quoted messages too (verifier G2-2).
+      "DO $$ BEGIN RAISE NOTICE $m$GRANT SELECT ON public.secret TO anon, authenticated$m$; END $$;",
+      "DO $$ BEGIN RAISE NOTICE $m$GRANT SELECT ON public.secret TO anon, authenticated $m$; END $$;",
+      "COMMENT ON TABLE public.x IS $c$GRANT SELECT ON public.secret TO anon$c$;",
     ]) {
       const g = extractGrants(sql);
       assert.equal(g.tableGrants.size + g.columnGrants.size, 0, sql);

@@ -888,13 +888,19 @@ const NON_TABLE_GRANT_TARGET =
   /^(?:function|procedure|routine|sequence|schema|database|domain|type|language|large\s+object|foreign|tablespace|parameter|all\s+(?:tables|sequences|functions|procedures|routines)\b)/i;
 
 /**
- * Where a GRANT can begin a statement: start of text, after `;`, a dollar
- * quote, BEGIN/THEN/ELSE/LOOP/DO — or inside a string literal ONLY when that
- * literal is EXECUTE's operand. A RAISE message or COMMENT text that happens
- * to begin with GRANT is not a grant (verifier F4): crediting it would let a
- * sentence explain away a real EXCESS_PRIVILEGE.
+ * Where a statement can begin: start of text, after `;`, BEGIN/THEN/ELSE/LOOP/DO
+ * — or inside a quoted literal ONLY when that literal is a body the server
+ * executes: EXECUTE's single-quoted operand, or a dollar quote opened by
+ * EXECUTE, AS (a function body) or DO. A RAISE message or COMMENT text that
+ * happens to begin with GRANT / REVOKE / CREATE is not a statement, whichever
+ * quote it is written in (verifier F3b / F4, and G2-2 for `$tag$` quotes):
+ * crediting it would let a sentence explain away a real EXCESS_PRIVILEGE, or
+ * stand in for a REVOKE that never runs. One expression for both readers
+ * (extractGrants here, rule 4 / rule 5 in clientTableAclDecisions.ts).
  */
-const GRANT_STATEMENT_LEAD = /(?:^|[;$]|\bexecute\s*'|\b(?:begin|then|else|loop|do)\b)\s*$/i;
+export const SQL_STATEMENT_LEAD =
+  /(?:^|;|\bexecute\s*'|\b(?:execute|as|do)\s*\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$|\b(?:begin|then|else|loop|do)\b)\s*$/i;
+const GRANT_STATEMENT_LEAD = SQL_STATEMENT_LEAD;
 
 /**
  * Split on commas at paren depth 0. Unlike splitTopLevel it is used on GRANT

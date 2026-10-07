@@ -4141,8 +4141,8 @@ ones included. Confirmed on production by a read-only catalog query (owner `post
 rows on 2026-10-07). Postcondition asserts the option, anon's lack of SELECT and RLS on `trip_presence`.
 **Rollback:** `db/rollback/2026-10-07-3741-trip-presence-current-security-invoker-rollback.sql` (re-opens the
 read; recovery only). **Guard:** `checkClientPrivilegeBoundary.ts` rule 5 fails CI on any view the chain
-leaves readable by `anon`/`authenticated` without `security_invoker`, PostGIS's `geometry_columns` /
-`geography_columns` the only exemptions.
+leaves readable by `anon`/`authenticated` without `security_invoker` (`ALTER VIEW` or `ALTER TABLE` forms),
+with no exemptions: PostGIS's own metadata views are extension members the baseline and the chain never define.
 
 ### Correction: 2776_trip_presence_freshness_and_ordering.sql
 

@@ -22,7 +22,11 @@
 -- chain explains. Replayed offline against the model, 106 of them were the
 -- model failing to read grants the chain really makes (several targets in one
 -- GRANT, and GRANTs issued from a FOREACH loop — fixed in the audit model in
--- the same change, not here). The other 442 are real, and are these ten tables.
+-- the same change, not here). The other 442 are real: 388 on nine
+-- post-baseline tables and 54 on profiles. This file clears 410 of them, on
+-- the seven tables of Part 1 (356) and on profiles (54). The 32 SELECT grants
+-- on the two media lifecycle tables stay: 2955 keeps them on purpose and its
+-- own postcondition pins them (verifier F1).
 --
 -- ══════════════════════════════════════════════════════════════════════════════
 -- PART 1 — SEVEN TABLES THAT INHERITED SUPABASE'S DEFAULT ACL AND KEPT IT
