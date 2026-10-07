@@ -103,6 +103,16 @@ describe("A. 3974 transforms the kernel it says it transforms", () => {
     assert.ok(rb.includes("'  v_rst_event  uuid;'") && m3974.includes("'  v_rst_event  uuid;'"));
     assert.match(rb, /IF n <> branches_before - 1 THEN/);
   });
+  it("A9. the +2 family-assignment check counts what the branch actually writes: whitespace-insensitive, and the branch carries exactly two (CI's replay refused 3974 when it counted one spacing: 0 → 1)", () => {
+    // The SAME pattern the migration's three counts use, as a JS regex.
+    const sqlPattern = "v_family\\s+:= ''participant'';";
+    assert.equal(count(m3974, `regexp_matches(d, '${sqlPattern}', 'g')`), 3, "before, after EXECUTE, and the postcondition all count the same way");
+    assert.equal(count(m3974, "replace(d, E'v_family     := ''participant'';'"), 0, "no count depends on one alignment of `:=`");
+    const js = /v_family\s+:= 'participant';/g;
+    assert.equal((branch.match(js) ?? []).length, 2, "the branch sets the family at entry and again before its event");
+    assert.ok((kbody.match(js) ?? []).length > 0, "the kernel in front already carries participant assignments the count must see, in its own spacing");
+    assert.match(m3974, /IF n <> family_before \+ 2 THEN/);
+  });
 });
 
 describe("B. the one call lane B makes", () => {

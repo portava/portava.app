@@ -93,8 +93,8 @@ BEGIN
   before_len := length(d);
   branches_before := (length(d) - length(replace(d, E'\n      WHEN ''', ''))) / length(E'\n      WHEN ''');
   admin_before := (length(d) - length(replace(d, $a$THEN 'admin'$a$, ''))) / length($a$THEN 'admin'$a$);
-  -- family assignments, counted FROM THE KERNEL IN FRONT OF US (2798's reason)
-  family_before := (length(d) - length(replace(d, E'v_family     := ''participant'';', ''))) / length(E'v_family     := ''participant'';');
+  -- family assignments, counted FROM THE KERNEL IN FRONT OF US (2798's reason), whatever the alignment of `:=` (the kernel's own branches use 1 to 5 spaces; counting one spacing measured 0 → 1 and refused the replay)
+  family_before := (SELECT count(*)::int FROM regexp_matches(d, 'v_family\s+:= ''participant'';', 'g'));
   CREATE TEMP TABLE _k3974_before (what text PRIMARY KEY, n int) ON COMMIT DROP;
   INSERT INTO _k3974_before VALUES ('participant_family', family_before), ('branches', branches_before);
 
@@ -220,7 +220,7 @@ $branches$);
 
   EXECUTE d;
   -- family assignments must grow by exactly two (entry + before the event); checked again after COMMIT
-  n := (length(d) - length(replace(d, E'v_family     := ''participant'';', ''))) / length(E'v_family     := ''participant'';');
+  n := (SELECT count(*)::int FROM regexp_matches(d, 'v_family\s+:= ''participant'';', 'g'));
   IF n <> family_before + 2 THEN
     RAISE EXCEPTION '3974: participant family assignments went from % to %, expected +2', family_before, n;
   END IF;
@@ -252,7 +252,7 @@ BEGIN
   -- Ledger attribution: the branch sets v_family twice (at entry, and again
   -- immediately before its event), so the participant family assignments in the
   -- installed definition must have grown by exactly two.
-  n := (length(d) - length(replace(d, E'v_family     := ''participant'';', ''))) / length(E'v_family     := ''participant'';');
+  n := (SELECT count(*)::int FROM regexp_matches(d, 'v_family\s+:= ''participant'';', 'g'));
   IF n <> (SELECT b.n FROM pg_temp._k3974_after b WHERE b.what = 'participant_family') THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3974): participant family assignments are %, expected % — a dropped one would file events under the wrong family', n, (SELECT b.n FROM pg_temp._k3974_after b WHERE b.what = 'participant_family');
   END IF;
