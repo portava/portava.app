@@ -688,7 +688,7 @@ IS NOT MERGED. MERGED IS NOT DEPLOYED. DEPLOYED IS NOT FLAG ENABLED.*
 | CX-04 | W | **C** | **Built.** *"Nothing reads the model's prose back against the confidence band of its inputs"* is no longer true. `artifacts/api-server/src/compass/CompassGroundingEnvelope.ts:210#export function readGroundingEvidence` walks the turn's OWN tool results for a `verified_live` source class, a wait datum and a crowd datum; `artifacts/api-server/src/compass/CompassGroundingEnvelope.ts:499#export function enforceCompassGroundingEnvelope` reads the answer back against them and refuses to publish an UNHEDGED current-conditions claim the turn cannot support. Wired on both branches of `/compass/ask` from the same tool log — `artifacts/api-server/src/routes/compass.ts:1404#function groundCompassAnswer` at `artifacts/api-server/src/routes/compass.ts:1957#const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);` (streamed) and `artifacts/api-server/src/routes/compass.ts:2029#const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);` (not) — and the violations travel on the response instead of being swallowed. **Ungated**: no flag, no migration, runs on every deployment. Pinned by `artifacts/api-server/src/test/compassCensusCorrectness.test.ts:1#/**` block A, ten cases, three mutations. |
 | CH-03 | W | **C** | **Built.** *"A graph node built from a memory persists after that memory is deleted … no deletion hook, no per-memory prune"* is closed for the node. **RESTATED AT INTEGRATION — the function this row first named is not the one on the branch.** Two lanes fixed CH-03 independently and in the same file: this lane wrote `pruneOrphanedExperienceNodes`, the Highlights & Memories lane wrote `reconcileExperienceNodes`, and the merge had to keep ONE. The surviving sweep is `artifacts/api-server/src/compass/CompassGraphEngine.ts:2082#export async function reconcileExperienceNodes`, and this lane's screening predicate is the reason it is the one that survived: `pruneOrphanedExperienceNodes` decided eligibility with `state = 'published' AND visibility <> 'only_me'`, while `buildGraphFromSources` now writes only `published` AND `public` rows, so that sweep would have kept every NAMED audience (`friends_only`, `trip_crew`, `circle_only`, `custom`) in the public world model for good — the leak this row exists to close, wearing the fix's name. The survivor decides through `isPublicWorldMemory`, the same predicate the builder gates its write on. This lane's own contributions were kept: the pure `deadExperienceKeys` helper (delete only on a positive answer), the per-batch `undecided` count, and blocks B1–B6 rewritten against the surviving function, with B2 widened to the four named-audience rungs and mutation-proved red under the discarded predicate. It removes an `experience` node and every edge touching it once the source Memory is deleted, unpublished or no longer `public`, and runs inside the daily rebuild BEFORE the world models and the confidence index derive anything from it (`artifacts/api-server/src/compass/CompassGraphEngine.ts:2178#const experienceRevocations = await reconcileExperienceNodes(db);`). The scheduler that calls it is registered unconditionally, so this is ungated. **It is still not a HOOK**, and the row's `C` is for the sweep, not the window: a node survives until the next daily rebuild. Pinned by block B, six cases, three mutations. |
 | CTR-01 | W | **C** | **Not built — MEASURED. The row's evidence expired.** It read *"After this pass three remain"* and named three line ranges in `CompassProfileService.ts`, `CompassTools.ts` and `CompassActiveUserRewardEngine.ts`. All three now go through the service seam the requirement names: `artifacts/api-server/src/compass/CompassProfileService.ts:88#getTrustProfileResult(db, userId),`, `artifacts/api-server/src/compass/CompassTools.ts:127#import { getTrustProfileResult } from "../services/trust/TrustScoreService.js";` and `artifacts/api-server/src/compass/CompassActiveUserRewardEngine.ts:207#const read = await getActiveCapsResult(db, userId);`. Executed, not read: `pnpm -s check:trust-table-ownership` → *"891 source file(s) scanned; 21 read(s) inside services/trust; 3 file(s) owned elsewhere with a written reason; 0 violation(s)"*. census-trust A17 closed this from the other side and this census never noticed. |
-| CH-02 | N | **C** | **Not built — MEASURED, and it is the CTG-05 move again.** *"0 of 8 in `CompassTools.ts`, lines 65-220"* is false: all eight §16 Memory accessors are declared in a sibling module and spread into the definition list, and the mapping to the spec's names is WRITTEN DOWN rather than inferred — `artifacts/api-server/src/compass/MemoryCompassTools.ts:105#export const MEMORY_TOOL_SPEC_NAMES` maps `getMemory(memoryId)` … `suggestMemoryCorrection(memoryId, patch)` one-to-one onto `memory_get` … `memory_suggest_correction`, declared at `artifacts/api-server/src/compass/MemoryCompassTools.ts:861#export const MEMORY_COMPASS_TOOL_DEFINITIONS` and spread at `artifacts/api-server/src/compass/CompassTools.ts:628#...MEMORY_COMPASS_TOOL_DEFINITIONS,`. No flag. **CH-01 is unaffected and stays `C`**: not one of the eight issues an INSERT, UPDATE or DELETE — the two write-shaped ones return a proposal the user confirms through the existing authenticated routes. |
+| CH-02 | N | **C** | **Not built — MEASURED, and it is the CTG-05 move again.** *"0 of 8 in `CompassTools.ts`, lines 65-220"* is false: all eight §16 Memory accessors are declared in a sibling module and spread into the definition list, and the mapping to the spec's names is WRITTEN DOWN rather than inferred — `artifacts/api-server/src/compass/MemoryCompassTools.ts:105#export const MEMORY_TOOL_SPEC_NAMES` maps `getMemory(memoryId)` … `suggestMemoryCorrection(memoryId, patch)` one-to-one onto `memory_get` … `memory_suggest_correction`, declared at `artifacts/api-server/src/compass/MemoryCompassTools.ts:866#export const MEMORY_COMPASS_TOOL_DEFINITIONS` and spread at `artifacts/api-server/src/compass/CompassTools.ts:628#...MEMORY_COMPASS_TOOL_DEFINITIONS,`. No flag. **CH-01 is unaffected and stays `C`**: not one of the eight issues an INSERT, UPDATE or DELETE — the two write-shaped ones return a proposal the user confirms through the existing authenticated routes. |
 
 ### 11.3 Reasons that are now wrong on rows that did NOT move
 
@@ -4357,7 +4357,7 @@ returned (`artifacts/api-server/src/compass/CompassTools.ts:1133#const { lat: an
 line and its anchor (`artifacts/api-server/src/compass/CompassTools.ts:1138#getLiveVenueStatus(String(p.name`),
 as do CR-05's `:1138-1139` and CPH-08's `:1126`, `:1129-1133` and `:1132`: the edit was made
 line-neutral. The Memory place-history tool in this tree passes its place's anchor the same way
-(`artifacts/api-server/src/compass/MemoryCompassTools.ts:551#liveVenueAnchorOf((place as any).lat, (place as any).lng)`);
+(`artifacts/api-server/src/compass/MemoryCompassTools.ts:556#liveVenueAnchorOf((place as any).lat, (place as any).lng)`);
 census-highlights-memories §AE grades that half.
 
 ### 37.3 The tests, and what turns them red
@@ -5015,10 +5015,10 @@ Every row a tool matches, scores or returns now goes through
 - The words come from the same rule as `protectMemoryRow` and lane R's `memoryPlaceLabelsForNonOwner`.
   That helper is copied here from main's parts until R's lands.
 - It runs before the city filters and the token scorer
-  (`artifacts/api-server/src/compass/MemoryCompassTools.ts:372#return { ok: true, rows: await withPlaceLabelsForViewer(sc, authorized, viewerId) };`),
+  (`artifacts/api-server/src/compass/MemoryCompassTools.ts:377#return { ok: true, rows: await withPlaceLabelsForViewer(sc, authorized, viewerId) };`),
   so a city argument cannot test where a hidden Memory is.
 - A withheld place is described as withheld, not as absent
-  (`artifacts/api-server/src/compass/MemoryCompassTools.ts:262#const unplaced = row?.place_withheld === true`).
+  (`artifacts/api-server/src/compass/MemoryCompassTools.ts:267#const unplaced = row?.place_withheld === true`).
 
 Tests: `artifacts/api-server/src/test/memoryCompassTools.test.ts:775#describe("§10 — the owner's location-precision rung reaches the Compass Memory tools"`
 (10 cases, 52/52). Six mutations, each red, then restored:
@@ -5083,7 +5083,7 @@ unchanged.
   that held only for `enable(...)` arguments without nested parentheses (F1). It now reads the argument with
   balanced parentheses and counts an unreadable argument as all timers. It also checks that the await comes
   before the first mocking call
-  (`artifacts/api-server/src/test/testTimerLoggerReady.test.ts:102#export function timerMockViolation(`).
+  (`artifacts/api-server/src/test/testTimerLoggerReady.test.ts:180#export function timerMockViolation(`).
 
 ### 46.3 Routed
 
@@ -5183,3 +5183,34 @@ Lane H is applying the same rule in `routes/memories.ts`.
 ### 48.1 Row moves
 
 None.
+
+## §49 — 2026-10-07 (lane L, wave 6): the second wave-6 verifier's findings (L6b), fixed, and §45 corrected. NO VERDICT MOVES
+
+*Measured on branch `claude/mission-l-wave6-20261006`. `head_commit` is not re-declared. Last statement wins over §45 and §46 where they differ.*
+
+- **§45 is corrected.** §45's "a city argument cannot test where a hidden Memory is" was true, but on its
+  own it overstated what was closed. At §45's head, `memory_get_place_history` still matched `place_id` and
+  `canonical_location_id` on a `hidden` Memory and then named the place. `memory_get` also still returned
+  `place_id`, `event_id` and `trip_id`. §48 closed the place and event ids and the placeId and
+  canonical-id oracles. The trip id now follows the city rule, because a trip names its destination — the
+  same rule as the graph's `during_trip` edge
+  (`artifacts/api-server/src/compass/MemoryCompassTools.ts:197#const cityAllowed = rung !== "country" && rung !== "hidden";`).
+  It is kept down to the `city` rung, and withheld at `country`, at `hidden` and whenever the gate is
+  unreadable
+  (`artifacts/api-server/src/test/memoryCompassTools.test.ts:903#it("the trip id is a CITY fact`).
+- **The timer guard reads what it can, and counts everything else as mocking all timers** (F2).
+  Comments are stripped first. An `apis` value that is not a list of string or template literals, or an
+  object containing a spread, counts as "all". `.enable` is found after a newline, through bracket access
+  and through an alias, and a destructured `enable` also counts as "all"
+  (`artifacts/api-server/src/test/testTimerLoggerReady.test.ts:224#it("probe fixtures (wave-6 verifier L6b F2)`).
+  §46.2's "fixed" wording is superseded by this.
+- **The graph's event rule now has a test** (F3). An `at_event` edge exists only at `exact` or `venue`.
+- **A whole-table flag outage is pinned to whole-graph identity** (F5). It builds exactly the graph of
+  every flag off and every Memory at `hidden`
+  (`artifacts/api-server/src/test/compassGraphDecay.test.ts:252#it("whole-graph identity (L6b F5)`).
+
+### 49.1 Row moves
+
+None.
+
+- NOT-GRADED: artifacts/api-server/src/test/compassGraphDecay.test.ts — §49 cites its whole-graph identity case; the graph decay suite grades no Compass row.
