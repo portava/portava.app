@@ -1177,7 +1177,13 @@ describe("§15 Staleness end-to-end (G104) — through POST /input-assistance/su
 describe("§15 PrivacyRisk/Staleness (G103/G104) — tier-preserving against every boost ceiling", () => {
   it("the demotion is smaller than the headroom the real ceilings leave under the exact band", async () => {
     const { BOOST_CEILING: PERSONALIZATION_CEILING } = await import("../lib/inputAssistance/personalization.js");
-    const { BOOST_CEILING: LIVE_CEILING } = await import("../lib/inputAssistance/liveSuggestions.js");
+    // liveSuggestions.ts keeps its ceiling module-private, and it is a counted file
+    // of three censuses, so it is read from the source rather than exported.
+    const { readFileSync } = await import("node:fs");
+    const liveSrc = readFileSync(new URL("../lib/inputAssistance/liveSuggestions.ts", import.meta.url), "utf8");
+    const liveMatch = liveSrc.match(/const BOOST_CEILING = ([0-9.]+);/);
+    assert.ok(liveMatch, "liveSuggestions.ts must still declare its BOOST_CEILING");
+    const LIVE_CEILING = Number(liveMatch![1]);
     const exactBand = projectSearchResult(result({ id: "x", type: "cities", title: "Rosa" }), "global_search", POLICY_VERSION, "Rosa").confidence!;
     const highestNonExact = Math.max(SIGNAL_CEILING, PERSONALIZATION_CEILING, LIVE_CEILING);
     assert.ok(exactBand - PRIVACY_RISK_DEMOTION > highestNonExact,

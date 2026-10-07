@@ -83,7 +83,7 @@ const FRESHNESS_BOOST: Record<'fresh' | 'recently_confirmed', number> = {
  * a weak match up to or past a strong canonical exact match (§9). Mirrors the
  * personalization boost ceiling.
  */
-export const BOOST_CEILING = 0.985;
+const BOOST_CEILING = 0.985;
 
 // ── Value → label formatters (§31) ────────────────────────────────────────────
 // Deterministic maps from a REAL claim value to a human label. They are pure and
