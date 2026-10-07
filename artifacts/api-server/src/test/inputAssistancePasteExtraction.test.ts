@@ -32,7 +32,7 @@ import { _resetRateLimit } from "../lib/rateLimit.js";
 import inputAssistanceRouter from "../routes/inputAssistance.js";
 import { searchKey, normalizeLocationName } from "../lib/canonicalLocations.js";
 import {
-  classifyPaste,
+  classifyPaste, classifyTravelBooking,
   parseCoordinates,
   parseMapLink,
   sanitizePastedText,
@@ -473,5 +473,126 @@ describe("POST /input-assistance/extract — resolution through the shared gatew
     const body = (await (await extract({ context: "trip_destination", text })).json()) as any;
     assert.equal(body.items.length, PASTE_MAX_ITEMS);
     assert.equal(body.truncated, true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §24 flight / hotel text (census G159; lead ruling PR-D2-7)
+//
+// MUTATION LOG (each applied, watched go red, reverted, `git diff` clean):
+//   H1 classifyPaste: drop the classifyTravelBooking short-circuit → "a hotel
+//      confirmation yields EXACTLY ONE item" red (every line becomes an item).
+//   H2 classifyTravelBooking: put the whole LINE in `raw` instead of the value →
+//      "never echoed" red (the label survives; with the guest line variant, red too).
+//   H3 classifyTravelBooking: drop the flight branch → "flight text yields ONE
+//      unsupported item" red.
+//   H4 classifyTravelBooking: one signal is enough → "a single line naming a hotel
+//      is a place, not a booking" red.
+//   H5 classifyTravelBooking: no name/address → guess the first line → "fail closed" red.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const GUEST = "Nguyen Van Secretname";
+const CONF = "8823991744";
+const CARD = "4111 1111 1111 4242";
+const HOTEL_PASTE = [
+  "Booking confirmation",
+  `Confirmation number: ${CONF}`,
+  `Guest name: ${GUEST}`,
+  "Hotel: Sala Danang Beach Hotel",
+  "Address: 36-38 Lam Hoanh, Da Nang",
+  "Check-in: Fri 10 Oct 2026",
+  "Check-out: Sun 12 Oct 2026",
+  `Paid with card ending ${CARD.slice(-4)} (${CARD})`,
+].join("\n");
+const FLIGHT_PASTE = [
+  "Your e-ticket",
+  `Passenger: ${GUEST}`,
+  "Booking reference: QX7Z2P",
+  "Flight VN 123  SGN → DAD",
+  "Departure 07:45  Gate 12",
+].join("\n");
+
+function leaks(v: unknown): string[] {
+  const s = JSON.stringify(v);
+  return [GUEST, CONF, CARD, CARD.slice(-4), "QX7Z2P", "VN 123", "Lam Hoanh"].filter((x) => s.includes(x));
+}
+
+describe("§24 flight / hotel text (G159, lead ruling PR-D2-7)", () => {
+  it("a hotel confirmation yields EXACTLY ONE item — the property name — and no other line is ever echoed", () => {
+    const c = classifyPaste(HOTEL_PASTE);
+    assert.equal(c.shape, "single", "an existing shape value");
+    assert.equal(c.items.length, 1);
+    assert.equal(c.items[0]!.query, "Sala Danang Beach Hotel");
+    assert.equal(c.items[0]!.raw, "Sala Danang Beach Hotel", "the value only, not its line");
+    assert.deepEqual(leaks(c), [], "guest, confirmation number, card digits and the address are dropped");
+  });
+
+  it("with no property name, the LABELLED ADDRESS is the one item", () => {
+    const c = classifyPaste(HOTEL_PASTE.split("\n").filter((l) => !l.startsWith("Hotel:")).join("\n"));
+    assert.equal(c.items.length, 1);
+    assert.equal(c.items[0]!.query, "36-38 Lam Hoanh, Da Nang");
+    assert.ok(!JSON.stringify(c).includes(GUEST) && !JSON.stringify(c).includes(CONF));
+  });
+
+  it("fail closed: a booking with neither a name nor an address is one unsupported item, never a guess", () => {
+    const c = classifyPaste([`Reservation number: ${CONF}`, `Guest name: ${GUEST}`, "Check-in: Fri", "Check-out: Sun"].join("\n"));
+    assert.equal(c.items.length, 1);
+    assert.equal(c.items[0]!.query, null);
+    assert.equal(c.items[0]!.unsupported, "booking_text");
+    assert.equal(c.items[0]!.raw, "Hotel booking", "fixed copy");
+    assert.deepEqual(leaks(c), []);
+  });
+
+  it("flight text yields ONE unsupported item with fixed copy and no query", () => {
+    const c = classifyPaste(FLIGHT_PASTE);
+    assert.equal(c.shape, "single");
+    assert.equal(c.items.length, 1);
+    assert.equal(c.items[0]!.query, null);
+    assert.equal(c.items[0]!.unsupported, "flight_text");
+    assert.equal(c.items[0]!.raw, "Flight details");
+    assert.deepEqual(leaks(c), []);
+  });
+
+  it("a single line naming a hotel is a place, not a booking; an ordinary list is unchanged", () => {
+    assert.equal(classifyTravelBooking(["Hotel Majestic Saigon"]), null);
+    const c = classifyPaste("Hotel Majestic Saigon\nBen Thanh Market");
+    assert.equal(c.shape, "list");
+    assert.deepEqual(c.items.map((i) => i.query), ["Hotel Majestic Saigon", "Ben Thanh Market"]);
+    // One signal alone ("Check-in at 3") inside an itinerary is not a booking either.
+    assert.equal(classifyTravelBooking(["Friday:", "Check-in at 3", "Dinner at 7"]), null);
+  });
+
+  it("through the route: only the property name is looked up; nothing else reaches the gateway, the geocoder or the response", async () => {
+    // Record every value any read is filtered by, so "nothing else was looked up" is measured.
+    const asked: string[] = [];
+    const inner = makeFakeClient(STATE) as any;
+    _setTestClient({
+      ...inner,
+      from: (table: string) => {
+        const b = inner.from(table);
+        const wrap = (name: string) => {
+          const orig = b[name];
+          if (typeof orig !== "function") return;
+          b[name] = (...args: unknown[]) => { asked.push(args.map((x) => JSON.stringify(x)).join(" ")); return orig.apply(b, args); };
+        };
+        for (const m of ["eq", "ilike", "or", "in", "textSearch"]) wrap(m);
+        return b;
+      },
+    } as any, true);
+    const r = await extract({ context: "trip_destination", fieldId: "trip.destination", text: HOTEL_PASTE });
+    assert.equal(r.status, 200);
+    const body = (await r.json()) as any;
+    assert.equal(body.items.length, 1);
+    assert.equal(body.items[0].query, "Sala Danang Beach Hotel");
+    assert.deepEqual(leaks(body), []);
+    assert.equal(geocodeCalls.length, 0);
+    assert.ok(asked.some((x) => /sala danang/i.test(x)), "premise: the property name WAS looked up");
+    assert.deepEqual(leaks(asked), [], "no other line of the booking reached a read");
+
+    const f = (await (await extract({ context: "trip_destination", fieldId: "trip.destination", text: FLIGHT_PASTE })).json()) as any;
+    assert.equal(f.items.length, 1);
+    assert.equal(f.items[0].status, "unsupported");
+    assert.match(f.items[0].reason, /Flight details can’t be added/);
+    assert.deepEqual(leaks(f), []);
   });
 });

@@ -55,7 +55,7 @@ export const PASTE_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>([
 export type PasteShape = 'coordinates' | 'map_link' | 'list' | 'itinerary' | 'single' | 'empty';
 export type PasteSource = 'coordinates' | 'map_link' | 'text';
 export type MapLinkProvider = 'google' | 'apple' | 'osm' | 'geo_uri';
-export type UnsupportedLink = 'short_link' | 'unsupported_link';
+export type UnsupportedLink = 'short_link' | 'unsupported_link' | 'flight_text' | 'booking_text';
 
 export interface PasteItem {
   index: number;
@@ -469,6 +469,11 @@ export function classifyPaste(rawText: unknown): PasteClassification {
   const lines = text.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
   if (lines.length === 0) return { shape: 'empty', items: [], truncated };
 
+  // census G159 / lead ruling PR-D2-7: a flight or hotel booking is read BEFORE
+  // the line splitter, so no other line of it can become an item.
+  const booking = classifyTravelBooking(lines);
+  if (booking) return { shape: 'single', items: [{ ...booking, index: 0 }], truncated };
+
   const collected: Array<Omit<PasteItem, 'index'>> = [];
   let dayLabel: string | null = null;
   let sawItinerarySignal = false;
@@ -537,6 +542,9 @@ export interface PasteResolveDeps {
 const UNSUPPORTED_COPY: Record<UnsupportedLink, string> = {
   short_link: 'Shortened map links can’t be read. Open the link and copy the full address from the browser.',
   unsupported_link: 'This link isn’t from a map we can read (Google Maps, Apple Maps, OpenStreetMap).',
+  // census G159, lead ruling PR-D2-7: fixed copy, nothing from the paste echoed.
+  flight_text: 'Flight details can’t be added as a place. Add the destination city instead.',
+  booking_text: 'We couldn’t find the property’s name or address in this booking.',
 };
 
 type GatewayOutcome =
@@ -668,4 +676,84 @@ export async function resolvePaste(
     out.push(await resolveOne(sc, params, item, full));
   }
   return out;
+}
+
+// ── §24 flight / hotel text (census G159; lead ruling PR-D2-7) ────────────────
+//
+// THE RULING. A hotel confirmation yields EXACTLY ONE item: the property's name,
+// or, failing that, its labelled address. Every other line — guest names,
+// confirmation and booking numbers, card digits, dates, prices — is dropped
+// before any lookup and never echoed, not even in `raw`. Flight text yields ONE
+// unsupported item with fixed copy and no query: nothing from it is searched.
+// Fail closed: a booking with neither a name nor an address is one unsupported
+// item, never a guess at which line is the hotel.
+//
+// WHAT COUNTS AS ONE. A paste is a booking only on TWO independent signals —
+// one line that names "Hotel Majestic" is a place, not a confirmation. Flight
+// signals win over hotel signals: an itinerary that mentions both is refused
+// rather than half-read.
+
+const FLIGHT_SIGNALS: readonly RegExp[] = [
+  /\b(?:flight|boarding|departure|departs|arrival|arrives|gate|e-?ticket|ticket number|itinerary receipt|baggage|seat)\b/i,
+  /\b(?:pnr|booking reference|record locator)\b/i,
+  /\b[A-Z][A-Z0-9]\s?\d{2,4}\b/, // a flight number: "VN 123", "QR1083"
+  /\b[A-Z]{3}\s*(?:→|->|–|—|-|to)\s*[A-Z]{3}\b/, // an airport pair: "SGN → HAN"
+];
+
+const HOTEL_SIGNALS: readonly RegExp[] = [
+  /\b(?:booking|reservation)\s+(?:confirm(?:ed|ation)|number|no\.?|id|reference)\b/i,
+  /\bconfirmation\s+(?:number|no\.?|code|#)\b/i,
+  /\bcheck[\s-]?in\b/i,
+  /\bcheck[\s-]?out\b/i,
+  /\b(?:guest(?:s| name)?|room type|nights?)\b/i,
+];
+
+const PROPERTY_LABEL = /^(?:hotel(?:\s+name)?|property(?:\s+name)?|accommodation|hostel|resort|stay(?:ing)? at)\s*[:\-–]\s*(.+)$/i;
+const ADDRESS_LABEL = /^(?:(?:hotel|property)\s+)?address\s*[:\-–]\s*(.+)$/i;
+
+/** How many DISTINCT signal patterns appear anywhere in the paste. */
+function signalCount(lines: readonly string[], signals: readonly RegExp[]): number {
+  let n = 0;
+  for (const re of signals) if (lines.some((l) => re.test(l))) n++;
+  return n;
+}
+
+function bookingItem(
+  query: string | null,
+  unsupported: UnsupportedLink | null,
+): Omit<PasteItem, 'index'> {
+  const clean = query ? stripUrls(query).trim().slice(0, MAX_QUERY_CHARS) : null;
+  return {
+    // `raw` is the extracted value only — never the line it came from, never
+    // another line. An unsupported booking echoes nothing from the paste: its
+    // label is fixed copy.
+    raw: clean ? displayRaw(clean) : unsupported === 'flight_text' ? 'Flight details' : 'Hotel booking',
+    source: 'text',
+    provider: null,
+    query: clean && clean.length > 0 ? clean : null,
+    lat: null,
+    lng: null,
+    timeHint: null,
+    dayLabel: null,
+    unsupported: clean && clean.length > 0 ? null : unsupported,
+  };
+}
+
+/**
+ * The single item a flight or hotel booking yields, or null when the paste is
+ * not a booking (the ordinary splitter then reads it). Pure.
+ */
+export function classifyTravelBooking(lines: readonly string[]): Omit<PasteItem, 'index'> | null {
+  if (lines.length < 2) return null;
+  if (signalCount(lines, FLIGHT_SIGNALS) >= 2) return bookingItem(null, 'flight_text');
+  if (signalCount(lines, HOTEL_SIGNALS) < 2) return null;
+  for (const line of lines) {
+    const m = line.replace(BULLET, '').trim().match(PROPERTY_LABEL);
+    if (m && m[1]!.trim()) return bookingItem(m[1]!.trim(), 'booking_text');
+  }
+  for (const line of lines) {
+    const m = line.replace(BULLET, '').trim().match(ADDRESS_LABEL);
+    if (m && m[1]!.trim()) return bookingItem(m[1]!.trim(), 'booking_text');
+  }
+  return bookingItem(null, 'booking_text');
 }
