@@ -192,12 +192,17 @@ async function withPlaceLabelsForViewer(sc: SupabaseClient, rows: any[], viewerI
     const venue = rung === "exact" || rung === "venue";
     const had = (v: unknown) => (typeof v === "string" && v.trim().length > 0) || (typeof v === "number");
     const venueIdsWithheld = !venue && (had(base.place_id) || had(base.canonical_location_id) || had(base.event_id));
-    const withheld = (had(base.location_city) && !city) || (had(base.location_country) && !country) || venueIdsWithheld;
+    // A trip names its destination: a CITY fact (the graph's during_trip rule,
+    // census-compass §47), so its id goes only where the city word may.
+    const cityAllowed = rung !== "country" && rung !== "hidden";
+    const tripWithheld = !cityAllowed && had(base.trip_id);
+    const withheld = (had(base.location_city) && !city) || (had(base.location_country) && !country) || venueIdsWithheld || tripWithheld;
     return {
       ...base,
       location_city: city,
       location_country: country,
       ...(venue ? {} : { place_id: null, canonical_location_id: null, event_id: null }),
+      ...(cityAllowed ? {} : { trip_id: null }),
       ...(withheld ? { place_withheld: true } : {}),
     };
   });

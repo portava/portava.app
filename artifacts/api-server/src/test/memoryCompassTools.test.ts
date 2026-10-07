@@ -900,6 +900,17 @@ describe("§10 — the owner's location-precision rung reaches the Compass Memor
       assert.deepEqual(byCanon.visits, [], "the canonical location id is a venue id too");
     });
 
+    it("the trip id is a CITY fact (wave-6 verifier L6b F1): kept at `city`, withheld at `country` / `hidden` / unreadable", async () => {
+      const TRIP = "66666666-0000-4000-8000-000000000001";
+      const withTrip = { ...VENUE_PATCH, [M_BOB_TAGGED]: { ...VENUE_PATCH[M_BOB_TAGGED], trip_id: TRIP } };
+      const tripOf = async (state: State) => (await executeMemoryCompassTool(makeClient({ patch: withTrip, ...state }).client, ALICE, "memory_get", { memoryId: M_BOB_TAGGED }) as any).memory.trip_id;
+      assert.equal(await tripOf({ precisionGate: "on", rungs: { [M_BOB_TAGGED]: "city" } }), TRIP);
+      assert.equal(await tripOf({ precisionGate: "on", rungs: { [M_BOB_TAGGED]: "neighborhood" } }), TRIP);
+      for (const rung of ["country", "hidden"]) assert.equal(await tripOf({ precisionGate: "on", rungs: { [M_BOB_TAGGED]: rung } }), null, rung);
+      assert.equal(await tripOf({ precisionGate: "unreadable" }), null, "an unreadable gate withholds the trip id");
+      assert.equal(await tripOf({ precisionGate: "off", rungs: { [M_BOB_TAGGED]: "hidden" } }), TRIP, "control: gate off");
+    });
+
     it("the owner's own Memory keeps its ids at their own `hidden` rung", async () => {
       const own: any = await executeMemoryCompassTool(makeClient({ precisionGate: "on", rungs: { [M_OWN_PUBLIC]: "hidden" } }).client, ALICE, "memory_get", { memoryId: M_OWN_PUBLIC });
       assert.equal(own.memory.place_id, PLACE_ID);
