@@ -287,3 +287,28 @@ this file.
   and the live census filters no `contype`. Nothing in any migration text
   corresponds to them. That is a server-version fact to handle when the upgrade
   happens; `deriveImplicitConstraints` deliberately does not guess the names now.
+
+## Run 37608414616 (2026-10-07, main 116ca4541f): 1,001 findings, classified
+
+Every finding was replayed offline against the model built from the committed baseline and
+migrations (no database contacted). Classes: **(a)** real excess the chain itself creates,
+**(b)** portava-ci drift no committed file explains, **(c)** the model misreading the chain,
+**(d)** a database built from the baseline differing from production by construction.
+
+| code | n | class and cause | state after this change |
+|---|---:|---|---|
+| EXCESS_PRIVILEGE | 388 | (a) nine post-baseline tables kept Supabase's default client DML (2720-2722, 2811; SELECT on 2951/2952) | `3740` revokes; `checkClientPrivilegeBoundary` rule 4 stops the next one |
+| EXCESS_PRIVILEGE | 54 | (d) `profiles` table-level SELECT/UPDATE for anon/authenticated: the baseline replayed over Supabase's default ACL | `3740` restores the baseline's column ACL |
+| EXCESS_PRIVILEGE | 106 | (c) GRANTs with several targets (2780, 2794) or issued from a FOREACH loop (2762, 2763) | model fixed: `extractGrants`, `expandForeachLiteralLoops` |
+| POLICY_PREDICATE_DRIFT | 113 | (c) pre-baseline files (0026, 0080, 2033 …) read AFTER the baseline overwrote its production-captured predicates in the last-wins policy map (introduced when #564 removed the band) | model fixed: history is read before the baseline |
+| POLICY_PREDICATE_DRIFT | 58 | (c) hand-written predicate text vs `pg_get_expr` rendering (redundant parens, `::text` on literals, `IN` vs `= ANY (ARRAY…)`, implicit column qualification, `!=`) | OPEN: needs a predicate canonicaliser that compares structure, not text |
+| POLICY_PREDICATE_DRIFT | 2 | (c) `highlights_select` / `highlights_select_active` are rewritten by `3502` through `EXECUTE format()` with computed predicates | OPEN: unparseable by design; ledger or a static rewrite |
+| UNEXPLAINED_LIVE | 17 | (c) 11 intel triggers (2130/3002/2276) and 6 trip policies (2762/2763) created in FOREACH / DECLARE loops | model fixed: `expandForeachLiteralLoops` |
+| UNEXPLAINED_LIVE | 95 | (c) RESTRICTIVE `*_deny_*` policies created by temp-table-driven loops (3390 family) | OPEN: the EXPLAINED ledger is their home (as recorded above) |
+| UNEXPLAINED_LIVE | 24 | (b) `sensing_anon_publications` / `sensing_anon_projection` (2 tables, 8 columns, 5 constraints, 2 indexes), 3 sensing functions, `sensing_contribution_sessions.contributor_token` / `.group_seed` (columns 2480's postcondition says must NOT exist), `highlights_expiry_is_permanent_or_dated` + `highlights_owner_archive_idx` (unmerged branch `claude/highlights-truncation-20260906`'s 2313) | OPEN: CI cleanup is the lead's decision; no committed file defines them |
+| DISPOSITION_MISSING | 142 | (c) 140 post-baseline tables have no RLS disposition (the auditor reads only `RLS_DISPOSITIONS`, which its test restricts to baseline tables, and ignores `POST_BASELINE_RLS_DISPOSITIONS`); 2 are the (b) sensing tables | OPEN |
+| DISPOSITION_STALE | 1 | (b) `post_media_moderation_ledger` is in the baseline and production but absent on portava-ci | OPEN |
+| STALE_LEDGER_ENTRY | 1 | (b) `extension:unaccent` is installed on production, not on portava-ci | OPEN |
+
+Replayed against the model on this branch: 236 findings are explained (106 + 113 + 17); the 442 (a)/(d)
+grant findings clear when `3740` is applied to portava-ci.

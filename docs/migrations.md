@@ -4051,6 +4051,38 @@ cannot be written.
 `telegraph_diagnostics` rows (they would violate the five-value CHECK — export them first; they are an
 audit trail), restores the five-value CHECK, deletes the flag row only if it carries this file's seed
 description, and deletes the ledger row. Turning the flag off keeps the trail and is usually what is wanted.
+## 2026-10-07 — `3740_client_grant_excess_boundary.sql`, written and NOT applied anywhere (lane G)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3740_client_grant_excess_boundary.sql` | **not applied** | **not applied** |
+
+**Why.** The scheduled inverse audit (`audit:live-unexplained`, run 37608414616 on main 116ca4541f) found
+442 client-role privileges on `portava-ci` that no migration grants. Privilege-only; no row, policy, flag
+or `service_role` privilege changes.
+
+**Part 1.** `REVOKE ALL … FROM PUBLIC, anon, authenticated` on nine post-baseline tables whose creating
+migrations never revoked Supabase's default client DML: `highlight_resurfacing_preferences` (2720),
+`highlight_projection_policies` (2721), `highlight_sources` (2722), `message_edits`, `message_reactions`,
+`message_attachments`, `conversation_action_refs` (2811), and the SELECT 2955 had left on
+`media_processing_attempts` (2951) and `media_asset_lifecycle_events` (2952). No client tree reaches any of
+them (`src/test/clientGrantExcessBoundary.test.ts` P-1 enforces that premise). Production receives this
+part by construction: the same files under the same default ACL.
+
+**Part 2.** `profiles`: revoke TABLE-level SELECT/UPDATE from `anon`/`authenticated` and re-grant the
+baseline's exact column lists (61 SELECT, 80 UPDATE). Any database built by replaying the baseline over
+Supabase's default ACL — `portava-ci` (measured), the beta bootstrap (`scripts/src/beta-db-core.ts`) and
+the local harness (`scripts/local-db/shim.sql`) — gives both roles table-level SELECT and UPDATE on
+`profiles`, which overrides the column grants: the anon key reads `date_of_birth`, `phone_e164`,
+`expo_push_token` and `full_name` of every non-private profile. Production is the dump's source and keeps
+the column ACL; there the part re-issues identical grants (the postcondition proves the end state either way).
+
+**Depends on** 2720, 2721, 2722, 2811, 2951, 2952, 2954 (the precondition refuses otherwise).
+**Rollback:** `db/rollback/2026-10-07-3740-client-grant-excess-boundary-rollback.sql` restores Part 1's
+pre-3740 grants (re-opening them) and deliberately does not restore Part 2's table-level grants, which no
+migration ever made. **Guard:** `checkClientPrivilegeBoundary.ts` rule 4 now fails CI on a post-baseline
+`CREATE TABLE` that no migration follows with a client-role REVOKE.
+
 ## Apply-order overrides
 
 **What.** `artifacts/api-server/src/migrations/ORDER_OVERRIDES.json` is the single declared list of
