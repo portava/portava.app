@@ -4315,7 +4315,7 @@ async function isTripEventMember(sc: any, tripId: string, userId: string): Promi
   return true;
 }
 
-async function canViewEvent(sc: any, ev: any, userId: string): Promise<boolean> {
+export async function canViewEvent(sc: any, ev: any, userId: string): Promise<boolean> {
   if (ev.host_id === userId) return true;
 
   // Staff (cohost/moderator) always have access

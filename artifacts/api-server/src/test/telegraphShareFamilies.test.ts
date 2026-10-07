@@ -52,6 +52,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildPortavaObjectBody,
   deepLinkFor,
   isShareable,
   resolveShareProjections,
@@ -94,6 +95,7 @@ const LAY_TRIP = "ff660000-0000-4000-8000-000000000002";
 const LAY_SOLO = "ff660000-0000-4000-8000-000000000003";
 const LAY_EXPIRED = "ff660000-0000-4000-8000-000000000004";
 const LAY_CANCELLED = "ff660000-0000-4000-8000-000000000005";
+const LAY_TRIP_UNSHARED = "ff660000-0000-4000-8000-000000000006";
 
 const MEDIA_PUBLIC = "99770000-0000-4000-8000-000000000001";
 const MEDIA_INHERIT = "99770000-0000-4000-8000-000000000002";
@@ -141,8 +143,8 @@ function fixture(): Record<string, any[]> {
     ],
     route_plans: [
       { id: ROUTE_DRAFT, owner_user_id: BOB, title: "Unfinished", route_style: "custom", status: "draft", is_approximated: true, updated_at: "2026-05-01T00:00:00.000Z" },
-      { id: ROUTE_SHARED, owner_user_id: BOB, title: "Riverside walk", route_style: "walking", status: "active", is_approximated: true, updated_at: "2026-05-02T00:00:00.000Z" },
-      { id: ROUTE_STRANGER, owner_user_id: BOB, title: "Not yours", route_style: "walking", status: "active", is_approximated: false, updated_at: "2026-05-03T00:00:00.000Z" },
+      { id: ROUTE_SHARED, owner_user_id: BOB, trip_id: TRIP_SHARED, title: "Riverside walk", route_style: "walking", status: "active", is_approximated: true, updated_at: "2026-05-02T00:00:00.000Z" },
+      { id: ROUTE_STRANGER, owner_user_id: BOB, trip_id: TRIP_SHARED, title: "Not yours", route_style: "walking", status: "active", is_approximated: false, updated_at: "2026-05-03T00:00:00.000Z" },
       { id: ROUTE_CANCELLED, owner_user_id: BOB, title: "Called off", route_style: "walking", status: "cancelled", is_approximated: false, updated_at: "2026-05-04T00:00:00.000Z" },
     ],
     route_plan_members: [
@@ -160,6 +162,7 @@ function fixture(): Record<string, any[]> {
       { id: LAY_TRIP, user_id: BOB, trip_id: TRIP_SHARED, manual_airport_name: "Changi", manual_city: "Singapore", manual_iata: "SIN", arrival_time: "2026-06-01T02:00:00.000Z", departure_time: "2026-06-01T11:00:00.000Z", status: "active", updated_at: "2026-05-02T00:00:00.000Z" },
       { id: LAY_SOLO, user_id: BOB, trip_id: null, manual_airport_name: "Changi", manual_city: "Singapore", manual_iata: "SIN", arrival_time: "2026-06-01T02:00:00.000Z", departure_time: "2026-06-01T11:00:00.000Z", status: "active", updated_at: "2026-05-03T00:00:00.000Z" },
       { id: LAY_EXPIRED, user_id: BOB, trip_id: TRIP_SHARED, manual_airport_name: "Changi", manual_city: "Singapore", manual_iata: "SIN", arrival_time: "2026-01-01T02:00:00.000Z", departure_time: "2026-01-01T11:00:00.000Z", status: "expired", updated_at: "2026-05-04T00:00:00.000Z" },
+      { id: LAY_TRIP_UNSHARED, user_id: BOB, trip_id: TRIP_SHARED, manual_airport_name: "Changi", manual_city: "Singapore", manual_iata: "SIN", arrival_time: "2026-06-01T02:00:00.000Z", departure_time: "2026-06-01T11:00:00.000Z", status: "active", updated_at: "2026-05-06T00:00:00.000Z" },
       { id: LAY_CANCELLED, user_id: ALICE, trip_id: null, manual_airport_name: "Changi", manual_city: "Singapore", manual_iata: "SIN", arrival_time: "2026-06-01T02:00:00.000Z", departure_time: "2026-06-01T11:00:00.000Z", status: "cancelled", updated_at: "2026-05-05T00:00:00.000Z" },
     ],
     media_assets: [
@@ -177,6 +180,11 @@ function fixture(): Record<string, any[]> {
       { id: SVC_PAUSED, buddy_id: BOB, category: "food", title: "Paused listing", description: null, hourly_rate_usd: 18, is_active: false, approved: true, updated_at: "2026-05-03T00:00:00.000Z" },
     ],
     rent_buddy_bookings: [],
+    // BOB shared LAY_TRIP (and only LAY_TRIP) into THREAD — lead ruling
+    // D-LAYOVER-SHARE-CREW: that share, not the trip, is what opens it.
+    messages: [
+      { id: "m-share-1", thread_id: THREAD, sender_id: BOB, msg_type: "portava_object", subtype: "layover_plan", deleted_at: null, body: JSON.stringify(buildPortavaObjectBody("LAYOVER_PLAN", LAY_TRIP, null)) },
+    ],
     trip_members: [
       { trip_id: TRIP_SHARED, user_id: ALICE, status: "accepted" },
       { trip_id: TRIP_SHARED, user_id: BOB, status: "accepted" },
@@ -528,9 +536,18 @@ describe("§5 layover plan", () => {
     assert.equal(r.available === true && r.projection.title, "Layover in Singapore");
   });
 
-  it("a trip-mate's layover resolves through the trip", async () => {
+  // Lead ruling D-LAYOVER-SHARE-CREW (2026-10-07) restates this case: a
+  // layover resolves for someone other than its traveller only where the
+  // traveller shared it into the thread; trip crew alone never grants it.
+  it("a trip-mate's layover resolves where its traveller shared it into this thread", async () => {
     const r = await resolveOne({}, "LAYOVER_PLAN", LAY_TRIP, ALICE);
     assert.equal(r.available, true);
+  });
+
+  it("a trip-mate's layover its traveller has NOT shared here is private — the trip alone does not open it", async () => {
+    const r = await resolveOne({}, "LAYOVER_PLAN", LAY_TRIP_UNSHARED, ALICE);
+    assert.equal(r.available, false);
+    assert.equal(r.available === false && r.reason, "private");
   });
 
   it("a layover with NO trip is private to its traveller", async () => {
