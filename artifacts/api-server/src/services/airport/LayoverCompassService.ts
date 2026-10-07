@@ -208,10 +208,53 @@ const LEAVING_PATTERNS = [
   /leave\s+the\s+airport/i, /go\s+outside/i, /exit\s+the\s+terminal/i,
   /get\s+out/i, /city\s+(tour|trip|visit)/i, /explore\s+(the\s+city|outside)/i,
   /can\s+i\s+(leave|go|exit)/i,
+  // Widened with the lead's ruling L3-FC (2026-10-07). A question that names
+  // leaving in ANY of these words is a leaving question even when it also
+  // names something airside ("eat downtown before my flight").
+  /\bleav(e|es|ing)\b/i, /\blandside\b/i, /\bdown\s*town\b/i, /\btown\b/i, /\bcity\b/i,
+  /\boutside\b/i, /\bpop\s+out\b/i, /\bhead\s+(out|into)\b/i, /\breachable\b/i,
+  /\bmake\s+it\s+to\b/i, /\bexplor(e|ing)\b/i, /\bvisit(ing)?\b/i, /\bsightsee/i,
+];
+
+/**
+ * LEAD RULING L3-FC (2026-10-07, on the second verification of wave 2): on a
+ * layover session EVERY question is a leaving question — certified server text
+ * only — unless this AIRSIDE allowlist positively recognises it. The leaving
+ * detector alone failed OPEN: 14 of the verifier's 16 leaving phrasings ("Is it
+ * safe to leave?", "Can we leave?", "Should I head downtown?") were not leaving
+ * questions to it, and each published the model's prose with no certified text.
+ * An allowlist fails CLOSED: a phrasing nobody listed gets the certified answer.
+ * The list names things that exist inside a terminal; a pharmacy only when the
+ * question puts it in the terminal.
+ */
+const AIRSIDE_PATTERNS = [
+  /\b(eat|eating|food|foods|meal|meals|breakfast|lunch|dinner|snacks?|restaurants?|food\s*court|dining)\b/i,
+  /\b(drinks?|drinking|coffee|tea|bars?|water)\b/i,
+  /\blounges?\b/i,
+  /\bwi-?fi\b|\binternet\b/i,
+  /\bshowers?\b/i,
+  /\bcharg(e|er|ers|ing)\b|\b(power\s+)?(outlets?|sockets?)\b/i,
+  /\b(shop|shops|shopping|duty[-\s]?free|souvenirs?)\b/i,
+  /\bgates?\b/i,
+  /\b(restrooms?|toilets?|bathrooms?|washrooms?)\b/i,
+  /\b(sleep|sleeping|nap|naps|sleep\s*pods?|quiet\s+(area|zone|room))\b/i,
+  /\bpharmac(y|ies)\b[^?]*\b(terminal|airside)\b|\b(terminal|airside)\b[^?]*\bpharmac(y|ies)\b/i,
+  /\b(pray|prayer\s+rooms?|chapel)\b/i,
+  /\bsmok(e|ing)\b/i,
 ];
 
 function detectLeavingIntent(question: string): boolean {
   return LEAVING_PATTERNS.some((p) => p.test(question));
+}
+
+/** Positively an airside question: an allowlisted subject, and no leaving word. */
+export function isAirsideQuestion(question: string): boolean {
+  return !detectLeavingIntent(question) && AIRSIDE_PATTERNS.some((p) => p.test(question));
+}
+
+/** L3-FC: everything that is not positively airside is treated as a leaving question. */
+export function treatAsLeavingQuestion(question: string): boolean {
+  return !isAirsideQuestion(question);
 }
 
 export async function answerLayoverQuestion(
@@ -231,7 +274,7 @@ export async function answerLayoverQuestion(
   const bufferMin = breakdown.totalBuffer;
   const usableMin = input.snapshot ? input.snapshot.usableMinutes : Math.max(0, availMin - bufferMin);
 
-  const involvesLeaving = detectLeavingIntent(question);
+  const involvesLeaving = treatAsLeavingQuestion(question); // lead ruling L3-FC: fail closed — only a positively airside question escapes certified-only
   // ONE airport-local rendering of the deadline, used by both fallback paths
   // and by the boundary comparison. It was two, and only one of them was fixed
   // first — which is why the hand-revert of the other stayed green.

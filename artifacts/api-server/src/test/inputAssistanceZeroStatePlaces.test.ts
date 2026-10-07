@@ -348,6 +348,14 @@ describe("F3 (wave-2 verification) — nearby rows take the §24 protected-zone 
     assert.deepEqual(ids(rows, "Nearby"), [NEAR2]);
   });
 
+  it("a place inside a COARSEN zone is not offered as nearby — its rank and inclusion would still come from the true point (wave-2 second verification F4)", async () => {
+    // medical_facility defaults to COARSEN (lib/protectedLocations.ts). The
+    // circle covers NEAR (HERE + 0.002, + 0.001) and not NEAR2.
+    const clinicAt = { ...shelterAt(HERE.lat + 0.002, HERE.lng + 0.001), id: "z-clinic", category: "medical_facility" };
+    const rows = await zeroState("place_picker", protectedWorld([clinicAt]));
+    assert.deepEqual(ids(rows, "Nearby"), [NEAR2]);
+  });
+
   it("flag on and the zone policy UNREADABLE: no nearby row at all — a nearby row's whole claim is its position", async () => {
     const rows = await zeroState("place_picker", protectedWorld([]), { lat: HERE.lat, lng: HERE.lng }, new Set(["protected_zones"]));
     assert.deepEqual(ids(rows, "Nearby"), []);

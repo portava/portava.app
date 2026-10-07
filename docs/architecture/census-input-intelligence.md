@@ -6189,9 +6189,9 @@ Branch `claude/residual-wave2-20261006`. `head_commit` is **NOT** re-declared. N
 
 `artifacts/api-server/src/lib/inputAssistance/zeroStatePlaces.ts:144#export async function buildNearbyPlaceSuggestions(` and its siblings add four zero-character sources:
 - **nearby** canonical places, around the position the request carries;
-- the viewer's **recent** places (`artifacts/api-server/src/lib/inputAssistance/zeroStatePlaces.ts:219#export async function buildRecentPlaceSuggestions(`);
-- the places on the viewer's live **Trips** (`artifacts/api-server/src/lib/inputAssistance/zeroStatePlaces.ts:302#export async function buildTripPlaceSuggestions(`);
-- the **current Trip** itself (`artifacts/api-server/src/lib/inputAssistance/zeroStatePlaces.ts:358#export async function buildCurrentTripSuggestion(`).
+- the viewer's **recent** places (`artifacts/api-server/src/lib/inputAssistance/zeroStatePlaces.ts:229#export async function buildRecentPlaceSuggestions(`);
+- the places on the viewer's live **Trips** (`artifacts/api-server/src/lib/inputAssistance/zeroStatePlaces.ts:312#export async function buildTripPlaceSuggestions(`);
+- the **current Trip** itself (`artifacts/api-server/src/lib/inputAssistance/zeroStatePlaces.ts:368#export async function buildCurrentTripSuggestion(`).
 
 The geo branch calls the first three (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:381#for (const build of [buildRecentPlaceSuggestions, buildTripPlaceSuggestions] as const) {`). The non-geo branch calls the current Trip and nearby (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:432#const currentTrip = await buildCurrentTripSuggestion(sc, {`).
 
@@ -6243,3 +6243,7 @@ Of 373 rows: **299 BUILT-AND-CORRECT, 50 BUILT-BUT-WRONG, 20 NOT-BUILT, 4 CANNOT
 One difference is deliberate. With the flag on and the policy unreadable, search keeps a row and withholds its position. A nearby row's whole claim is its position, so it is dropped instead (`artifacts/api-server/src/test/inputAssistanceZeroStatePlaces.test.ts:329#F3 (wave-2 verification)`).
 
 This was latent: the flag is FALSE and production has no zones. G86, G89 and G90 keep their verdicts.
+
+### §41.y The second verification of this section (`517e2f3e98`), F4: a coarsened row is not "nearby" either
+
+§41.x let a row the pass COARSENED through, ranked by its true distance. Search snaps such a row to the zone's anchor, but the nearby list still decided inclusion inside the radius, and the order, from the true point; a viewer who moves and asks again could trilaterate a place the Map and search only ever show at the anchor. Only a row the pass returned untouched is offered now (`artifacts/api-server/src/lib/inputAssistance/zeroStatePlaces.ts:219#x.metadata?.coordsPrecision !== 'approximate'`): a `medical_facility` circle (default COARSEN) over the near place leaves only the other one (`artifacts/api-server/src/test/inputAssistanceZeroStatePlaces.test.ts:351#a place inside a COARSEN zone is not offered as nearby`). Mutants (approximate kept; the pass bypassed) are killed. Still latent: the flag is FALSE and production has no zones. G86, G89 and G90 keep their verdicts.

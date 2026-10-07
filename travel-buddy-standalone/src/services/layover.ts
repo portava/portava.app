@@ -72,7 +72,7 @@ export interface LayoverSession {
   canonicalCityId: string | null;
   shareCityStatus: boolean;
   returnReminderAt: string | null;
-  status: 'active' | 'completed' | 'cancelled' | 'expired';
+  status: 'active' | 'returning' | 'completed' | 'cancelled' | 'expired'; // 'returning' (migration 2741): the server's second live status — wave-2 second verification F5
   createdAt: string;
 }
 

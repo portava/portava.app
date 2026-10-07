@@ -31,7 +31,7 @@ import { _setTestOpenAI } from "../../../lib/openai.js";
 import {
   answerLayoverQuestion,
   confineModelProse,
-  namesSafetyTopic,
+  namesSafetyTopic, isAirsideQuestion, treatAsLeavingQuestion,
   splitSentences,
 } from "../LayoverCompassService.js";
 import { certifySessionFeasibility } from "../LayoverFeasibility.js";
@@ -197,3 +197,81 @@ describe("the topic test and the composer, directly", () => {
     }
   });
 });
+
+// ── Lead ruling L3-FC (2026-10-07): fail closed on the QUESTION ──────────────
+// The second verification of wave 2 found the leaving detector reached 2 of 16
+// leaving phrasings; on each miss the model's prose was published ALONE. The
+// ruling: every layover question is a leaving question (certified text only)
+// unless an AIRSIDE allowlist positively recognises it.
+
+/** The verifier's sixteen phrasings, verbatim. */
+const VERIFIER_LEAVING_QUESTIONS = [
+  "Can I leave the airport?", "May I leave the airport?", "Is it safe to leave?", "Can we leave?",
+  "Leaving the airport — good idea?", "Is there time to see the city?", "Should I head downtown?",
+  "Is a quick trip to the old town doable?", "Can I make it to the harbour and back?", "Worth going into town?",
+  "Do I have enough time for the night market?", "Could I pop out for a bit?", "Any chance of seeing the cathedral?",
+  "Is Hollywood reachable from here?", "Should I stay airside?", "Is landside worth it?",
+];
+const WIDENING_PROSE = "You've got ample margin to venture beyond the terminal. The cathedral is a short cab away.";
+
+describe("L3-FC — every question is a leaving question unless positively airside", () => {
+  for (const q of VERIFIER_LEAVING_QUESTIONS) {
+    it(`"${q}" gets the certified text ONLY on a YES session`, async () => {
+      _setTestOpenAI(model(WIDENING_PROSE));
+      const a = await answerLayoverQuestion({} as never, { question: q, session: YES_SESSION(), airport: AP, entry: PERMITTED });
+      assert.equal(a.modelProse.mode, "certified_only", a.answer);
+      assert.ok(!/ample margin|cathedral is a short cab/.test(a.answer), a.answer);
+      assert.match(a.answer, /^You have about \d+ minutes of usable time\. You can leave the airport/);
+    });
+  }
+
+  it("an UNKNOWN phrasing falls to certified text too (the allowlist fails closed)", async () => {
+    for (const q of ["Thoughts?", "What would you do?", "Anything good around?", "Is the weather nice?"]) {
+      _setTestOpenAI(model(WIDENING_PROSE));
+      const a = await answerLayoverQuestion({} as never, { question: q, session: YES_SESSION(), airport: AP, entry: PERMITTED });
+      assert.equal(a.modelProse.mode, "certified_only", q);
+      assert.equal(treatAsLeavingQuestion(q), true, q);
+    }
+  });
+
+  it("the airside allowlist: each listed subject is recognised, and its clean answer is shown as written", async () => {
+    const airside = [
+      "Where can I eat?", "Any good coffee here?", "Where is the lounge?", "Is there free wifi?", "Can I take a shower?",
+      "Where can I charge my phone?", "What shops are there?", "How far is my gate?", "Where are the restrooms?",
+      "Where can I sleep for a few hours?", "Is there a pharmacy in the terminal?", "Is there a prayer room?", "Where can I smoke?",
+    ];
+    for (const q of airside) assert.equal(isAirsideQuestion(q), true, q);
+    _setTestOpenAI(model("Try the beef noodle soup at the food court."));
+    const a = await answerLayoverQuestion({} as never, { question: "Where can I eat?", session: YES_SESSION(), airport: AP, entry: PERMITTED });
+    assert.equal(a.modelProse.mode, "model_non_safety");
+  });
+
+  it("a leaving word beats an airside word: 'eat downtown', 'a bar in town', 'shop outside' are leaving questions", () => {
+    for (const q of ["Can I eat downtown before my flight?", "Is there a bar in town?", "Should I shop outside the airport?", "Is there a pharmacy?"]) {
+      assert.equal(isAirsideQuestion(q), false, q);
+      assert.equal(treatAsLeavingQuestion(q), true, q);
+    }
+  });
+
+  it("every widened leaving word, paired with an airside subject, still makes a leaving question", () => {
+    // One phrasing per widened LEAVING pattern; each also names an allowlisted
+    // subject, so only the leaving word keeps it out of the airside branch.
+    const paired = [
+      "Is it worth leaving for dinner?", "Is the food better landside?", "Is there a bar in town?",
+      "Best coffee in the city?", "Should I shop outside the airport?", "Can I pop out for coffee?",
+      "Should I head out for lunch?", "Is a restaurant reachable?", "Can I make it to a restaurant and back?",
+      "Can I explore for food?", "Should I visit a bar nearby?", "Sightseeing then lunch?",
+      "Can I eat downtown before my flight?",
+    ];
+    for (const q of paired) {
+      assert.equal(isAirsideQuestion(q), false, q);
+      assert.equal(treatAsLeavingQuestion(q), true, q);
+    }
+  });
+
+  it("RECORDED LIMIT, not a pass: on a POSITIVELY airside question the model's prose is still filtered by the topic vocabulary", () => {
+    const r = confineModelProse({ modelText: "The cathedral is a short cab away.", certified: "CERTIFIED.", verdict: "yes", involvesLeaving: treatAsLeavingQuestion("Where can I eat?") });
+    assert.equal(r.modelProse.mode, "model_non_safety", "an airside question's answer can still carry a landside suggestion the vocabulary does not name");
+  });
+});
+
