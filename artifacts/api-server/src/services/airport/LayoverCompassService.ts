@@ -118,10 +118,13 @@ export interface CompassLayoverAnswer {
   toolsConsulted: LayoverToolName[];
   /**
    * What became of the model's prose (lead ruling 2026-10-06, census L3/L101):
-   *   "certified_only"    — the session's certified verdict is not `yes`, so no
-   *                         model text is shown; the answer is the server's;
-   *   "confined"          — the certified text leads, and only model sentences
-   *                         that name none of the five safety topics follow it;
+   *   "certified_only"    — the session's certified verdict is not `yes`, OR the
+   *                         question is about leaving (lead ruling on the wave-2
+   *                         verification, F2): no model text is shown; the
+   *                         answer is the server's;
+   *   "confined"          — a non-leaving question whose model answer named a
+   *                         safety topic: the certified text leads, and only
+   *                         the model sentences that name none follow it;
    *   "model_non_safety"  — the question was not about leaving and the model's
    *                         answer named no safety topic: shown as written.
    * `droppedSentences` counts model sentences withheld for naming a topic.
@@ -181,6 +184,15 @@ export function confineModelProse(input: {
   if (input.verdict !== "yes") {
     // A refused, tight or unconfirmed session: any landside suggestion the
     // model wrote — named or implied — would widen the band. None is shown.
+    return { answer: input.certified, modelProse: { mode: "certified_only", droppedSentences: sentences.length } };
+  }
+  if (input.involvesLeaving) {
+    // A question about LEAVING (lead ruling on the wave-2 verification, F2):
+    // every sentence the model writes in answer is a safety sentence, whatever
+    // words it uses. The topic list below is a vocabulary, and "ample margin to
+    // venture beyond the terminal" names none of it. So on a leaving question
+    // the certified text is the whole answer — decided by the question, never
+    // by the model's phrasing.
     return { answer: input.certified, modelProse: { mode: "certified_only", droppedSentences: sentences.length } };
   }
   const kept = sentences.filter((x) => !namesSafetyTopic(x));
