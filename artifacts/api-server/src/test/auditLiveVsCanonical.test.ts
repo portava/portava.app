@@ -790,3 +790,198 @@ describe("buildModel — injected parsers, empty canonical band", () => {
     assert.ok(model.ledgerKeys.has("extension:pgcrypto"));
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Model gaps found by run 37608414616 (2026-10-07, main 116ca4541f): 1,001
+// findings, of which these three model defects produced 106 EXCESS_PRIVILEGE,
+// 17 UNEXPLAINED_LIVE and 113 POLICY_PREDICATE_DRIFT for objects the chain
+// plainly declares. Each case below is transcribed from the migration that
+// produced the finding. The real-tree cases read the committed baseline and
+// migrations with a no-op parseMig stub, so the guarded forward parser never
+// enters this file's import graph.
+// ─────────────────────────────────────────────────────────────────────────────
+import { readdirSync as mgReaddir, readFileSync as mgRead } from "node:fs";
+import { dirname as mgDirname, join as mgJoin, resolve as mgResolve } from "node:path";
+import { fileURLToPath as mgFileUrl } from "node:url";
+import {
+  CHAIN_START_PREFIX,
+  expandForeachLiteralLoops,
+  extractGrants,
+  partitionByChainStart,
+} from "../scripts/lib/liveVsCanonicalCore.js";
+
+const MG_API = mgResolve(mgDirname(mgFileUrl(import.meta.url)), "..", "..");
+const MG_MIGRATIONS = mgJoin(MG_API, "src", "migrations");
+const mgMig = (f: string) => mgRead(mgJoin(MG_MIGRATIONS, f), "utf8");
+const noParse = () => [] as { kind: string; key: string; label: string }[];
+
+describe("extractGrants — the GRANT shapes parseMigration cannot read", () => {
+  it("credits every target of a multi-table GRANT (2780:113, 2794:134)", () => {
+    const g = extractGrants(
+      "GRANT SELECT ON public.trip_subgroups, public.trip_subgroup_members TO authenticated;",
+    ).tableGrants;
+    assert.deepEqual([...g.keys()].sort(), ["trip_subgroup_members.authenticated", "trip_subgroups.authenticated"]);
+    assert.deepEqual([...g.get("trip_subgroups.authenticated")!], ["select"]);
+  });
+
+  it("credits every grantee, for table AND column grants (extractColumnGrants read the first only)", () => {
+    const { tableGrants, columnGrants } = extractGrants(
+      "GRANT SELECT, INSERT ON TABLE public.t TO anon, authenticated;\n" +
+        "GRANT SELECT (a, b), UPDATE (b) ON TABLE public.t TO anon, authenticated;",
+    );
+    assert.deepEqual([...tableGrants.get("t.anon")!].sort(), ["insert", "select"]);
+    assert.deepEqual([...tableGrants.get("t.authenticated")!].sort(), ["insert", "select"]);
+    assert.deepEqual([...columnGrants.get("t.b.authenticated")!].sort(), ["select", "update"]);
+    assert.deepEqual([...extractColumnGrants("GRANT SELECT (a) ON public.t TO anon, authenticated;").keys()].sort(), [
+      "t.a.anon",
+      "t.a.authenticated",
+    ]);
+  });
+
+  it("maps ALL [PRIVILEGES] to 'all' and keeps WITH GRANT OPTION out of the grantee list", () => {
+    const g = extractGrants("GRANT ALL PRIVILEGES ON public.t TO service_role WITH GRANT OPTION;").tableGrants;
+    assert.deepEqual([...g.get("t.service_role")!], ["all"]);
+  });
+
+  it("reads no grant from a non-table target, another schema, a format placeholder, or COMMENT prose", () => {
+    const sql = [
+      "GRANT EXECUTE ON FUNCTION public.f(uuid) TO authenticated;",
+      "GRANT USAGE ON SEQUENCE public.s TO anon;",
+      "GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;",
+      "GRANT SELECT ON storage.objects TO anon;",
+      "DO $$ BEGIN EXECUTE format('GRANT SELECT ON public.%I TO authenticated', 'x'); END $$;",
+      "COMMENT ON TABLE public.t IS 'clients never grant select on t to anon';",
+    ].join("\n");
+    const { tableGrants, columnGrants } = extractGrants(sql);
+    assert.equal(tableGrants.size, 0, [...tableGrants.keys()].join(","));
+    assert.equal(columnGrants.size, 0);
+  });
+
+  it("reads a GRANT inside an EXECUTE literal (a DO-block grant is a real grant)", () => {
+    const g = extractGrants("DO $$ BEGIN EXECUTE 'GRANT SELECT (catalog_id) ON TABLE public.user_stamps TO anon, authenticated'; END $$;");
+    assert.ok(g.columnGrants.has("user_stamps.catalog_id.authenticated"));
+  });
+});
+
+describe("expandForeachLiteralLoops — loop-issued DDL, exactly or not at all", () => {
+  it("writes out a FOREACH-literal loop element-major (2762's shape)", () => {
+    const out = expandForeachLiteralLoops(`DO $grants$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['trip_goals','trip_risks'] LOOP
+    EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
+    EXECUTE format(
+      'CREATE POLICY %I ON public.%I FOR SELECT USING (authz.is_trip_crew(trip_id))',
+      t || '_select_crew', t);
+    EXECUTE format('GRANT SELECT ON public.%I TO authenticated', t);
+  END LOOP;
+END
+$grants$;`);
+    assert.deepEqual(out.split("\n"), [
+      "ALTER TABLE public.trip_goals ENABLE ROW LEVEL SECURITY;",
+      "CREATE POLICY trip_goals_select_crew ON public.trip_goals FOR SELECT USING (authz.is_trip_crew(trip_id));",
+      "GRANT SELECT ON public.trip_goals TO authenticated;",
+      "ALTER TABLE public.trip_risks ENABLE ROW LEVEL SECURITY;",
+      "CREATE POLICY trip_risks_select_crew ON public.trip_risks FOR SELECT USING (authz.is_trip_crew(trip_id));",
+      "GRANT SELECT ON public.trip_risks TO authenticated;",
+    ]);
+  });
+
+  it("writes out a DO block's DECLAREd literal, and not one the body reassigns (2276's shape)", () => {
+    const fixed = expandForeachLiteralLoops(`DO $$
+DECLARE t text := 'intel_presence_verifications';
+BEGIN
+  EXECUTE format('CREATE TRIGGER %I BEFORE TRUNCATE ON public.%I FOR EACH STATEMENT EXECUTE FUNCTION public.intel_append_only()', t || '_no_truncate', t);
+END $$;`);
+    assert.match(fixed, /^CREATE TRIGGER intel_presence_verifications_no_truncate BEFORE TRUNCATE ON public\.intel_presence_verifications /);
+    const reassigned = expandForeachLiteralLoops(`DO $$
+DECLARE t text := 'a';
+BEGIN
+  t := 'b';
+  EXECUTE format('GRANT SELECT ON public.%I TO anon', t);
+END $$;`);
+    assert.equal(reassigned, "");
+  });
+
+  it("refuses what it cannot evaluate exactly: positional placeholders, computed arguments, non-literal arrays", () => {
+    for (const body of [
+      "FOREACH t IN ARRAY ARRAY['a'] LOOP EXECUTE format('GRANT SELECT ON public.%1$I TO anon', t); END LOOP;",
+      "FOREACH t IN ARRAY ARRAY['a'] LOOP EXECUTE format('GRANT SELECT ON public.%I TO anon', upper(t)); END LOOP;",
+      "FOREACH t IN ARRAY ARRAY['a'] LOOP EXECUTE format('GRANT SELECT ON public.%I TO %s', t, v_role); END LOOP;",
+      "FOREACH t IN ARRAY v_tables LOOP EXECUTE format('GRANT SELECT ON public.%I TO anon', t); END LOOP;",
+      "FOREACH t IN ARRAY ARRAY[v_x, 'b'] LOOP EXECUTE format('GRANT SELECT ON public.%I TO anon', t); END LOOP;",
+    ]) {
+      assert.equal(expandForeachLiteralLoops(`DO $$ BEGIN ${body} END $$;`), "", body);
+    }
+  });
+
+  it("expands the real 3002 loop into the three contributor-token triggers the audit reported", () => {
+    const out = expandForeachLiteralLoops(mgMig("3002_intel_contribution_identity.sql"));
+    for (const t of ["intel_observations", "intel_evidence", "intel_confirmations"]) {
+      assert.match(out, new RegExp(`CREATE TRIGGER ${t}_contributor_token BEFORE INSERT ON public\\.${t} `));
+    }
+  });
+});
+
+describe("buildModel — history before the baseline, chain after it", () => {
+  const baselineTables = new Map<string, { table: string; rlsEnabled: boolean; policyCount: number }>();
+  const policy = (pred: string) => `CREATE POLICY p ON public.t FOR INSERT WITH CHECK (${pred});`;
+
+  it("a pre-baseline file's stale CREATE POLICY does not overwrite the baseline's predicate", () => {
+    const model = buildModel({
+      baselineSql: policy("(auth.uid() = owner_id)"),
+      baselineTables,
+      historicalSqls: [policy("auth.uid() = user_id")],
+      canonicalSqls: [],
+      ledger: [],
+      parseMig: noParse,
+    });
+    assert.equal(normalizePredicate(model.policies.get("public.t.p")!.withCheck), "auth.uid() = owner_id");
+  });
+
+  it("a post-baseline file still replaces the baseline's predicate (the chain is newer)", () => {
+    const model = buildModel({
+      baselineSql: policy("(auth.uid() = owner_id)"),
+      baselineTables,
+      historicalSqls: [],
+      canonicalSqls: [policy("auth.uid() = creator_id")],
+      ledger: [],
+      parseMig: noParse,
+    });
+    assert.equal(normalizePredicate(model.policies.get("public.t.p")!.withCheck), "auth.uid() = creator_id");
+  });
+
+  it("partitions filenames at CHAIN_START_PREFIX, which is the replay harness's own boundary", () => {
+    const { historical, canonical } = partitionByChainStart(["2093_a.sql", "0026_b.sql", "20260808_c.sql", "3740_d.sql", "2092_e.sql"]);
+    assert.deepEqual(historical, ["0026_b.sql", "20260808_c.sql", "2092_e.sql"]);
+    assert.deepEqual(canonical, ["2093_a.sql", "3740_d.sql"]);
+    const upSh = mgRead(mgJoin(MG_API, "scripts", "local-db", "up.sh"), "utf8");
+    const from = /FROM="\$\{LOCAL_DB_FROM:-(\d{4})\}"/.exec(upSh);
+    assert.ok(from, "up.sh no longer declares its chain start");
+    assert.equal(CHAIN_START_PREFIX, `${from![1]}_`);
+  });
+
+  it("on the REAL tree: highlights_insert reads the baseline's owner_id, not 0026's user_id", () => {
+    const files = mgReaddir(MG_MIGRATIONS).filter((f) => f.endsWith(".sql"));
+    const { historical, canonical } = partitionByChainStart(files);
+    const baselineSql = mgRead(mgJoin(MG_API, "baseline", "20260819_baseline_structure.sql"), "utf8");
+    const model = buildModel({
+      baselineSql,
+      baselineTables,
+      historicalSqls: historical.map(mgMig),
+      canonicalSqls: canonical.map(mgMig),
+      ledger: [],
+      parseMig: noParse,
+    });
+    assert.equal(normalizePredicate(model.policies.get("public.highlights.highlights_insert")!.withCheck), "auth.uid() = owner_id");
+    // And the loop- and multi-target-issued objects the audit reported are modelled.
+    for (const t of ["trip_goals", "trip_decision_tasks", "trip_risks", "trip_presence", "trip_proposals", "trip_snapshots",
+      "trip_outcomes", "trip_subgroups", "trip_subgroup_members", "trip_meeting_checkpoints", "trip_meeting_checkpoint_participants"]) {
+      assert.ok(model.tableGrants.get(`${t}.authenticated`)?.has("select"), `${t}: authenticated SELECT not modelled`);
+    }
+    for (const p of ["trip_decision_tasks.trip_decision_tasks_select_crew", "trip_risks.trip_risks_select_crew",
+      "trip_presence.trip_presence_select_crew", "trip_outcomes.trip_outcomes_select_crew"]) {
+      assert.ok(model.policies.has(`public.${p}`), `${p} not modelled`);
+    }
+  });
+});

@@ -66,6 +66,7 @@ import {
   functionIdentityKey,
   normalizePrivilege,
   normalizeRoles,
+  partitionByChainStart,
 } from "./lib/liveVsCanonicalCore.js";
 import type { LiveInventory } from "./lib/liveVsCanonicalCore.js";
 
@@ -409,16 +410,24 @@ async function main(): Promise<void> {
   // asks it over this same file set; this auditor asks the other one. A dropped
   // object that is somehow live again is the single case neither sees, and it is
   // narrower than three findings this check cannot ever clear.
+  //
+  // WHERE THE BASELINE SITS IN THAT ORDER. Every file is still read, but the
+  // files the baseline already contains (prefix below CHAIN_START_PREFIX) are
+  // read BEFORE it and the rest after it. For sets that changes nothing; for
+  // the last-wins policy-predicate map it stops a pre-baseline file's stale
+  // CREATE POLICY text from overwriting the predicate the baseline captured
+  // from production. See buildModel.
   const canonicalDir = resolve(__dir, "../migrations");
-  const canonicalSqls = readdirSync(canonicalDir)
-    .filter((f) => f.endsWith(".sql"))
-    .sort()
-    .map((f) => readFileSync(join(canonicalDir, f), "utf8"));
+  const { historical, canonical } = partitionByChainStart(
+    readdirSync(canonicalDir).filter((f) => f.endsWith(".sql")),
+  );
+  const read = (f: string) => readFileSync(join(canonicalDir, f), "utf8");
 
   const model = buildModel({
     baselineSql,
     baselineTables,
-    canonicalSqls,
+    historicalSqls: historical.map(read),
+    canonicalSqls: canonical.map(read),
     ledger: EXPLAINED_LIVE_OBJECTS,
     parseMig: parseMigration,
   });

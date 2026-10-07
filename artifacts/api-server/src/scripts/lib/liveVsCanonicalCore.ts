@@ -873,31 +873,372 @@ export function extractPolicyPredicates(
  * 'table.column.grantee' -> {priv} from the paren column-grant syntax
  * `GRANT SELECT(id),UPDATE(id) ON TABLE [schema.]t TO role` that
  * parseMigration's `[a-z, ]` privilege regex cannot match.
+ *
+ * Every target table and every grantee of the statement is credited (see
+ * extractGrants). It used to read the FIRST grantee only, so `GRANT SELECT
+ * (a, b) ON t TO anon, authenticated` explained anon's column privilege and
+ * reported authenticated's identical one as excess.
  */
 export function extractColumnGrants(sql: string): Map<string, Set<string>> {
-  const out = new Map<string, Set<string>>();
-  // Only lines whose privilege list carries a paren column list are column grants.
-  const re =
-    /grant\s+([A-Za-z]+\s*\([^)]*\)(?:\s*,\s*[A-Za-z]+\s*\([^)]*\))*)\s+on\s+(?:table\s+)?(?:"?[A-Za-z_][\w$]*"?\.)?("?[A-Za-z_][\w$]*"?)\s+to\s+([A-Za-z_][\w$]*)/gi;
-  for (const m of blankSqlComments(sql).matchAll(re)) {
-    const privClause = m[1];
-    const table = unquote(m[2]).toLowerCase();
-    const grantee = m[3].toLowerCase();
-    // Each `PRIV(col1, col2)` grants PRIV on each listed column.
-    const pcRe = /([A-Za-z]+)\s*\(([^)]*)\)/g;
-    let pc: RegExpExecArray | null;
-    while ((pc = pcRe.exec(privClause)) !== null) {
-      const priv = normalizePrivilege(pc[1]);
-      for (const colRaw of pc[2].split(",")) {
-        const col = unquote(colRaw.trim()).toLowerCase();
-        if (!col) continue;
-        const key = `${table}.${col}.${grantee}`;
-        if (!out.has(key)) out.set(key, new Set());
-        out.get(key)!.add(priv);
+  return extractGrants(sql).columnGrants;
+}
+
+/** Targets a GRANT can name that are not tables, and so are not table grants. */
+const NON_TABLE_GRANT_TARGET =
+  /^(?:function|procedure|routine|sequence|schema|database|domain|type|language|large\s+object|foreign|tablespace|parameter|all\s+(?:tables|sequences|functions|procedures|routines)\b)/i;
+
+/** Keywords after which a GRANT can begin a statement inside plpgsql or a migration. */
+const GRANT_STATEMENT_LEAD = /(?:^|[;'$]|\b(?:begin|then|else|loop|do)\b)\s*$/i;
+
+/**
+ * Split on commas at paren depth 0. Unlike splitTopLevel it is used on GRANT
+ * clauses, which carry no string literals.
+ */
+function splitCommasTopLevel(s: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let cur = "";
+  for (const ch of s) {
+    if (ch === "(") depth++;
+    else if (ch === ")") depth--;
+    if (ch === "," && depth === 0) {
+      out.push(cur);
+      cur = "";
+    } else cur += ch;
+  }
+  if (cur.trim()) out.push(cur);
+  return out;
+}
+
+/** Index of the first `\b<word>\b` at paren depth 0 in `s`, or -1. */
+function topLevelWord(s: string, word: string, from = 0): number {
+  const re = new RegExp(String.raw`\b${word}\b`, "gi");
+  re.lastIndex = from;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(s)) !== null) {
+    let depth = 0;
+    for (let i = 0; i < m.index; i++) {
+      if (s[i] === "(") depth++;
+      else if (s[i] === ")") depth--;
+    }
+    if (depth === 0) return m.index;
+  }
+  return -1;
+}
+
+/**
+ * Every table and column privilege a GRANT statement in `sql` confers on a
+ * named table:
+ *
+ *   tableGrants   'table.grantee'        -> {privilege}   ('all' for ALL [PRIVILEGES])
+ *   columnGrants  'table.column.grantee' -> {privilege}
+ *
+ * WHY THIS EXISTS NEXT TO parseMigration's GRANT CLAIM. parseMigration (shared
+ * with audit:schema, deliberately unchanged) reads `GRANT <privs> ON <one table>
+ * TO <one role>`. Three shapes the chain really uses defeat it, and each one
+ * turned a privilege a migration plainly grants into a false EXCESS_PRIVILEGE:
+ *   * several TARGETS — 2780:113 `GRANT SELECT ON public.trip_subgroups,
+ *     public.trip_subgroup_members TO authenticated` (and 2794:134);
+ *   * several GRANTEES — `... TO anon, authenticated` credited anon only;
+ *   * a column-list privilege mixed with the others in one clause.
+ * The loop-generated form (2762:113, 2763:150 — `EXECUTE format('GRANT SELECT
+ * ON public.%I TO authenticated', t)` inside `FOREACH t IN ARRAY ARRAY[...]`)
+ * reaches this function through expandForeachLiteralLoops, which turns it into
+ * plain text first.
+ *
+ * WHAT IT REFUSES TO READ. A GRANT is credited only where a statement can begin
+ * (start of text, after `;`, an opening quote of an EXECUTE literal, a dollar
+ * quote, or BEGIN/THEN/ELSE/LOOP/DO) — so "grant select on x to y" in COMMENT ON
+ * prose is not a grant. A target still carrying a format placeholder (`%I`) is
+ * skipped: what it names is decided at run time. REVOKE is not modelled here or
+ * anywhere in this model (the model is a union of what the chain grants), so
+ * this function can only ever EXPLAIN a privilege the chain's own text grants.
+ */
+export function extractGrants(sql: string): {
+  tableGrants: Map<string, Set<string>>;
+  columnGrants: Map<string, Set<string>>;
+} {
+  const src = blankSqlComments(sql);
+  const tableGrants = new Map<string, Set<string>>();
+  const columnGrants = new Map<string, Set<string>>();
+  const credit = (m: Map<string, Set<string>>, k: string, p: string) => {
+    if (!m.has(k)) m.set(k, new Set());
+    m.get(k)!.add(p);
+  };
+
+  const headRe = /\bgrant\s+/gi;
+  let h: RegExpExecArray | null;
+  while ((h = headRe.exec(src)) !== null) {
+    if (!GRANT_STATEMENT_LEAD.test(src.slice(Math.max(0, h.index - 24), h.index))) continue;
+
+    // The statement runs to the first `;` or `'` (the close of an EXECUTE
+    // literal) at paren depth 0.
+    let i = h.index + h[0].length;
+    let depth = 0;
+    for (; i < src.length; i++) {
+      const ch = src[i];
+      if (ch === "(") depth++;
+      else if (ch === ")") depth--;
+      else if ((ch === ";" || ch === "'") && depth === 0) break;
+    }
+    const stmt = src.slice(h.index + h[0].length, i);
+
+    const onAt = topLevelWord(stmt, "on");
+    if (onAt === -1) continue;
+    const toAt = topLevelWord(stmt, "to", onAt + 2);
+    if (toAt === -1) continue;
+    const privClause = stmt.slice(0, onAt).trim();
+    let targetClause = stmt.slice(onAt + 2, toAt).trim();
+    let granteeClause = stmt.slice(toAt + 2);
+    if (NON_TABLE_GRANT_TARGET.test(targetClause)) continue;
+    // A role grant (`GRANT role TO other`) has no ON and was skipped above.
+    targetClause = targetClause.replace(/^table\s+/i, "");
+    granteeClause = granteeClause.replace(/\b(?:with\s+grant\s+option|granted\s+by)\b[\s\S]*$/i, "");
+
+    const tables: string[] = [];
+    for (const raw of splitCommasTopLevel(targetClause)) {
+      const t = raw.trim();
+      if (!t || t.includes("%")) continue;
+      const m = /^(?:("?)([A-Za-z_][\w$]*)\1\.)?("?)([A-Za-z_][\w$]*)\3$/.exec(t);
+      if (!m) continue;
+      const schema = (m[2] ?? "public").toLowerCase();
+      if (schema !== "public") continue;
+      tables.push(m[4]!.toLowerCase());
+    }
+    const grantees: string[] = [];
+    for (const raw of splitCommasTopLevel(granteeClause)) {
+      const g = unquote(raw.trim()).toLowerCase();
+      if (/^[a-z_][\w$]*$/.test(g)) grantees.push(g);
+    }
+    if (!tables.length || !grantees.length) continue;
+
+    for (const item of splitCommasTopLevel(privClause)) {
+      const pm = /^\s*([A-Za-z]+(?:\s+privileges)?)\s*(?:\(([^)]*)\))?\s*$/i.exec(item);
+      if (!pm) continue;
+      const priv = /^all\b/i.test(pm[1]!) ? "all" : normalizePrivilege(pm[1]!);
+      const cols = pm[2]
+        ?.split(",")
+        .map((c) => unquote(c.trim()).toLowerCase())
+        .filter(Boolean);
+      for (const t of tables) {
+        for (const g of grantees) {
+          if (cols && cols.length) {
+            for (const c of cols) credit(columnGrants, `${t}.${c}.${g}`, priv);
+          } else {
+            credit(tableGrants, `${t}.${g}`, priv);
+          }
+        }
       }
     }
   }
+  return { tableGrants, columnGrants };
+}
+
+/** quote_ident() for the names a migration loop splices: plain names pass through. */
+function quoteIdentLike(v: string): string {
+  return /^[a-z_][a-z0-9_$]*$/.test(v) ? v : `"${v.replace(/"/g, '""')}"`;
+}
+
+/**
+ * Read a single-quoted SQL literal starting at `src[at] === "'"`. Returns its
+ * value ('' unescaped) and the index just past the closing quote, or null.
+ */
+function readQuoted(src: string, at: number): { value: string; end: number } | null {
+  if (src[at] !== "'") return null;
+  let i = at + 1;
+  let v = "";
+  while (i < src.length) {
+    if (src[i] === "'" && src[i + 1] === "'") {
+      v += "'";
+      i += 2;
+    } else if (src[i] === "'") {
+      return { value: v, end: i + 1 };
+    } else v += src[i++];
+  }
+  return null;
+}
+
+/**
+ * The statements `EXECUTE format('<template>', <args>)` calls in `body` issue
+ * when `loopVar` takes each of `values` in turn, written out element-major (the
+ * order the loop runs them). The closed shape this interprets, and nothing
+ * else, is documented on expandForeachLiteralLoops.
+ */
+function expandFormatExecutes(body: string, loopVar: string, values: readonly string[]): string[] {
+  // perExec[k][n] = the statement the k-th EXECUTE issues on the n-th value
+  // (null where it cannot be expanded exactly).
+  const perExec: Array<Array<string | null>> = [];
+  const execRe = /\bexecute\s+format\s*\(/gi;
+  let e: RegExpExecArray | null;
+  while ((e = execRe.exec(body)) !== null) {
+    const stmts: Array<string | null> = values.map(() => null);
+    perExec.push(stmts);
+    const argsBody = balancedParenBody(body, e.index + e[0].length - 1);
+    if (argsBody === null) continue;
+    const args = splitTopLevel(argsBody).map((a) => a.trim());
+    const tpl = readQuoted(args[0] ?? "", 0);
+    if (!tpl || tpl.end !== (args[0] ?? "").length) continue;
+    if (/%\d+\$/.test(tpl.value)) continue;
+
+    const evalArg = (expr: string, v: string): string | null => {
+      let acc = "";
+      for (const piece of expr.split("||").map((p) => p.trim())) {
+        if (piece.toLowerCase() === loopVar) acc += v;
+        else {
+          const q = readQuoted(piece, 0);
+          if (!q || q.end !== piece.length) return null;
+          acc += q.value;
+        }
+      }
+      return acc;
+    };
+
+    values.forEach((v, n) => {
+      const argVals: string[] = [];
+      for (const a of args.slice(1)) {
+        const r = evalArg(a, v);
+        if (r === null) return;
+        argVals.push(r);
+      }
+      let k = 0;
+      let stmt = "";
+      for (let j = 0; j < tpl.value.length; j++) {
+        const ch = tpl.value[j];
+        if (ch !== "%") {
+          stmt += ch;
+          continue;
+        }
+        const spec = tpl.value[++j];
+        if (spec === "%") stmt += "%";
+        else if ((spec === "I" || spec === "s" || spec === "L") && k < argVals.length) {
+          const a = argVals[k++]!;
+          stmt +=
+            spec === "I" ? quoteIdentLike(a) : spec === "L" ? `'${a.replace(/'/g, "''")}'` : a;
+        } else {
+          return; // an unsupported placeholder, or more placeholders than arguments
+        }
+      }
+      stmts[n] = `${stmt};`;
+    });
+  }
+  const out: string[] = [];
+  values.forEach((_, n) => {
+    for (const stmts of perExec) if (stmts[n] !== null) out.push(stmts[n]!);
+  });
   return out;
+}
+
+/**
+ * The statements a migration issues through `EXECUTE format('<template>',
+ * <args>)` with a variable whose value(s) the text fixes, written out as plain
+ * SQL. Two shapes:
+ *
+ *   1. `FOREACH v IN ARRAY ARRAY['a','b',…] LOOP … END LOOP` — one copy of the
+ *      body's statements per array element, in order;
+ *   2. a DO block whose DECLARE section fixes `v text := '<literal>'` and whose
+ *      body never assigns `v` again — one copy, for that value.
+ *
+ * WHY. The chain creates objects this way and no text scan can see them:
+ * 2762/2763 enable RLS, create the `<t>_select_crew` policy and GRANT SELECT to
+ * authenticated on seven trip tables inside one such loop; 2130, 3002 and their
+ * siblings create the `<t>_no_update_delete`, `<t>_no_truncate` and
+ * `<t>_contributor_token` triggers the same way, and 2276 does it for a single
+ * table through `DECLARE t text := 'intel_presence_verifications'`. Every one
+ * of those objects was reported live-but-unexplained on every run although a
+ * migration plainly declares it.
+ *
+ * EXACT OR NOTHING. This interprets one closed shape and nothing else:
+ *   * the array must be a literal list of single-quoted strings (or the one
+ *     DECLAREd literal, never reassigned);
+ *   * the template must be a single-quoted literal;
+ *   * every argument must be the variable, a string literal, or a `||`
+ *     concatenation of those (`t || '_select_crew'`, `'public.' || t`);
+ *   * placeholders %I, %s, %L and %% only — a positional `%1$I` is refused.
+ * Anything else (a temp-table driven loop such as 3390's, an argument computed
+ * by a query, a placeholder fed by another variable) is skipped, so the object
+ * stays unexplained rather than guessed at. Conditionals inside the body are
+ * not evaluated: the expansion claims what each iteration COULD issue, which is
+ * the same stance parseMigration takes for statements inside DO blocks.
+ */
+export function expandForeachLiteralLoops(sql: string): string {
+  const src = blankSqlComments(sql);
+  const out: string[] = [];
+
+  // ── 1. FOREACH over a literal array ────────────────────────────────────────
+  const headRe = /\bforeach\s+([A-Za-z_]\w*)\s+in\s+array\s+array\s*\[/gi;
+  let h: RegExpExecArray | null;
+  while ((h = headRe.exec(src)) !== null) {
+    const loopVar = h[1]!.toLowerCase();
+    // The literal element list.
+    const values: string[] = [];
+    let i = h.index + h[0].length;
+    let ok = true;
+    for (;;) {
+      while (/\s/.test(src[i] ?? "")) i++;
+      if (src[i] === "]") {
+        i++;
+        break;
+      }
+      const q = readQuoted(src, i);
+      if (!q) {
+        ok = false;
+        break;
+      }
+      values.push(q.value);
+      i = q.end;
+      while (/\s/.test(src[i] ?? "")) i++;
+      if (src[i] === ",") i++;
+    }
+    if (!ok || !values.length) continue;
+    const loopKw = /^\s*loop\b/i.exec(src.slice(i));
+    if (!loopKw) continue;
+    const bodyStart = i + loopKw[0].length;
+
+    // The body, to the END LOOP that closes this loop (nested loops counted).
+    const wordRe = /\b(end\s+loop|loop)\b/gi;
+    wordRe.lastIndex = bodyStart;
+    let depth = 1;
+    let bodyEnd = -1;
+    let w: RegExpExecArray | null;
+    while ((w = wordRe.exec(src)) !== null) {
+      if (/^end/i.test(w[1]!)) {
+        if (--depth === 0) {
+          bodyEnd = w.index;
+          break;
+        }
+      } else depth++;
+    }
+    if (bodyEnd === -1) continue;
+    out.push(...expandFormatExecutes(src.slice(bodyStart, bodyEnd), loopVar, values));
+  }
+
+  // ── 2. A DO block's DECLAREd literal, never reassigned ─────────────────────
+  const doRe = /\bdo\s+(\$[A-Za-z_]*\$)/gi;
+  let d: RegExpExecArray | null;
+  while ((d = doRe.exec(src)) !== null) {
+    const tag = d[1]!;
+    const open = d.index + d[0].length;
+    const close = src.indexOf(tag, open);
+    if (close === -1) continue;
+    doRe.lastIndex = close + tag.length;
+    const block = src.slice(open, close);
+    const decl = /^\s*declare\b([\s\S]*?)\bbegin\b/i.exec(block);
+    if (!decl) continue;
+    const body = block.slice(decl[0].length);
+    for (const m of decl[1]!.matchAll(
+      /\b([A-Za-z_]\w*)\s+(?:constant\s+)?text\s*(?::=|=|\bdefault\b)\s*'((?:[^']|'')*)'\s*;/gi,
+    )) {
+      const v = m[1]!.toLowerCase();
+      const reassigned = new RegExp(
+        String.raw`\b${v}\s*:=|\binto\s+(?:strict\s+)?${v}\b|\bfor(?:each)?\s+${v}\b`,
+        "i",
+      );
+      if (reassigned.test(body)) continue;
+      out.push(...expandFormatExecutes(body, v, [m[2]!.replace(/''/g, "'")]));
+    }
+  }
+
+  return out.join("\n");
 }
 
 /** 'enumname.value' (lowercased) from CREATE TYPE ... AS ENUM ( 'a', 'b', … ).
@@ -937,24 +1278,79 @@ export function extractConstraintBackedIndexes(sql: string): Set<string> {
 // MODEL BUILDER (pure)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The first migration filename prefix whose objects the 2026-08-19 baseline
+ * does NOT contain. Every file that sorts below it is already reflected in the
+ * dump; every file at or above it post-dates the dump. The same boundary is
+ * `FROM="${LOCAL_DB_FROM:-2093}"` in scripts/local-db/up.sh and
+ * CHAIN_START_PREFIX in scripts/src/beta-db-core.ts; auditLiveVsCanonical.test.ts
+ * holds this constant equal to up.sh's default.
+ */
+export const CHAIN_START_PREFIX = "2093_";
+
+/** Split sorted migration filenames into the pre-baseline history and the post-baseline chain. */
+export function partitionByChainStart(filenames: readonly string[]): {
+  historical: string[];
+  canonical: string[];
+} {
+  const sorted = [...filenames].sort();
+  return {
+    historical: sorted.filter((f) => f < CHAIN_START_PREFIX),
+    canonical: sorted.filter((f) => f >= CHAIN_START_PREFIX),
+  };
+}
+
 export function buildModel(args: {
   baselineSql: string;
   baselineTables: Map<
     string,
     { table: string; rlsEnabled: boolean; policyCount: number }
   >;
+  /** Files AT or AFTER CHAIN_START_PREFIX, in apply order. */
   canonicalSqls: string[];
+  /**
+   * Files BEFORE CHAIN_START_PREFIX, in filename order. Read FIRST, before the
+   * baseline, so that for the one inventory where a later declaration replaces
+   * an earlier one — the policy predicates, a last-wins map — the baseline's
+   * production-captured text is never overwritten by the stale text of a file
+   * the baseline already contains. Optional so a fixture can omit it.
+   */
+  historicalSqls?: string[];
   ledger: ReadonlyArray<ExplainedEntry>;
   parseMig: ParseMig;
 }): Model {
   const { baselineSql, baselineTables, canonicalSqls, ledger, parseMig } = args;
+  const historicalSqls = args.historicalSqls ?? [];
   // Comments blanked ONCE, here, and every reader below sees the blanked text —
   // the injected forward parser included. parseMigration is shared with
   // audit:schema and is not changed; only what THIS model feeds it is. Offsets
   // are preserved (comment bytes become spaces), so index-based scans are
   // unaffected. See blankSqlComments for the apostrophe-in-a-comment failure
   // this closes.
-  const allSqls = [baselineSql, ...canonicalSqls].map(blankSqlComments);
+  //
+  // ORDER: history, then the baseline, then the chain. Every inventory but one
+  // is a set, where order changes nothing. The exception is `policies`, keyed by
+  // name and LAST-WINS, and reading every file in plain filename order after the
+  // baseline (as this did once the >= "2100" band was removed) let 0026, 0080,
+  // 2033 and the rest of the pre-baseline history overwrite the baseline's
+  // predicates with the text they had BEFORE the later rewrites the baseline
+  // captured — e.g. highlights_insert read `auth.uid() = user_id` from 0026
+  // while production and the dump say `owner_id`. Each such policy was reported
+  // as POLICY_PREDICATE_DRIFT on every run.
+  //
+  // Each file is followed by the plain-text expansion of its FOREACH-literal
+  // loops (expandForeachLiteralLoops), so loop-issued GRANTs, policies, RLS
+  // switches and triggers are read by the same parsers as written-out ones.
+  // The expansion is a SEPARATE text, not appended to its file: a scanner that
+  // starts inside a format() template of the original (`'CREATE POLICY %I ON
+  // …'`) reads to the next unquoted semicolon, and in a concatenation that
+  // swallowed the first expanded statements whole.
+  const allSqls = [...historicalSqls, baselineSql, ...canonicalSqls]
+    .map(blankSqlComments)
+    .flatMap((sql) => {
+      const expanded = expandForeachLiteralLoops(sql);
+      return expanded ? [sql, expanded] : [sql];
+    });
 
   const relations = new Set<string>();
   const columns = new Set<string>();
@@ -1046,9 +1442,16 @@ export function buildModel(args: {
         roles: normalizeRoles(v.roles),
       });
     }
-    for (const [k, privs] of extractColumnGrants(sql)) {
+    const grants = extractGrants(sql);
+    for (const [k, privs] of grants.columnGrants) {
       if (!columnGrants.has(k)) columnGrants.set(k, new Set());
       for (const p of privs) columnGrants.get(k)!.add(p);
+    }
+    // Table grants parseMigration cannot read (several targets, several
+    // grantees, loop-expanded); a union with its own claims above.
+    for (const [k, privs] of grants.tableGrants) {
+      if (!tableGrants.has(k)) tableGrants.set(k, new Set());
+      for (const p of privs) tableGrants.get(k)!.add(p);
     }
     for (const c of extractConstraints(sql)) constraints.add(c);
     for (const e of extractExtensions(sql)) extensions.add(e);
