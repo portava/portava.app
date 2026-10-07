@@ -71,6 +71,7 @@ const RESV = "cccccccc-0000-4000-8000-0000000000a1";
 const EVENT = "e0e0e0e0-0000-4000-8000-0000000000e0";
 const NEWU = "44444444-0000-4000-8000-000000000004"; // someone joining the group trip (R2)
 const JOIN_REQ = "4a4a4a4a-0000-4000-8000-00000000004a";
+const JOIN_REQ_SOLO = "4a4a4a4a-0000-4000-8000-0000000000b0"; // a request to join ANA's SOLO trip (verifier F1 on dc0107eda5)
 const SESSION = "5e5e5e5e-0000-4000-8000-00000000005e";
 const THREAD = "7e7e7e7e-0000-4000-8000-00000000007e";
 const SUGGESTION = "5a5a5a5a-0000-4000-8000-00000000005a";
@@ -88,7 +89,8 @@ function seed(restriction: Restriction, actor = ANA): Record<string, Rows> {
     events: [{ id: EVENT, host_id: BEN, state: "published", visibility: "public", title: "Fado night", starts_at: iso(6), ends_at: iso(8) }],
     layover_sessions: [{ id: SESSION, user_id: actor, airport_code: "LIS", status: "active", arrival_at: iso(-1), departure_at: iso(6), created_at: iso(-2) }],
     message_thread_members: [{ thread_id: THREAD, user_id: actor, left_at: null }],
-    trip_join_requests: [{ id: JOIN_REQ, trip_id: TRIP, user_id: NEWU, status: "pending", created_at: iso(-3) }],
+    trip_join_requests: [{ id: JOIN_REQ, trip_id: TRIP, user_id: NEWU, status: "pending", created_at: iso(-3) },
+      { id: JOIN_REQ_SOLO, trip_id: SOLO, user_id: NEWU, status: "pending", created_at: iso(-3) }],
     trip_invite_links: [{ id: "4b4b4b4b-0000-4000-8000-00000000004b", trip_id: TRIP, token: "link-token-r2", created_by: ORGANIZER, max_uses: null, use_count: 0, expires_at: null, revoked_at: null }],
     telegraph_chat_suggestions: [{ id: SUGGESTION, user_id: actor, thread_id: THREAD, title: "Tram 28", location_context: null, time_context: null }],
     profiles: [ORGANIZER, ANA, BEN, NEWU].map((id) => ({ id, handle: id.slice(0, 4), name: id.slice(0, 4), role: "user" })),
@@ -250,6 +252,30 @@ for (const d of DOORS) {
   });
 }
 
+describe("R-solo (verifier F1 on dc0107eda5). Adding a member or approving a join request makes a SOLO trip a group trip, so the hosting gate holds there too", () => {
+  // The D-24a solo exemption covers changing a trip that stays the person's alone. These two doors are the act
+  // that ends that, so a hosting-restricted owner is refused on their solo trip exactly as on a group trip.
+  const SOLO_DOORS = [
+    { name: "trip-members-add", path: `/trips/${SOLO}/members`, body: { userId: NEWU } },
+    { name: "join-request-approve", path: `/trips/${SOLO}/join-requests/${JOIN_REQ_SOLO}/approve`, body: {} },
+  ];
+  for (const d of SOLO_DOORS) {
+    it(`${d.name} R-solo. THE POINT: restricted from hosting, on the person's SOLO trip → 403 in the restriction's own words, nothing written`, async () => {
+      const c = use(seed("hosting", ANA));
+      const r = await call(harness.base, "POST", d.path, ANA, d.body);
+      assert.equal(r.status, 403, JSON.stringify(r.body).slice(0, 300));
+      assert.equal(r.body.error, "trust_restriction");
+      assert.equal(r.body.message, RESTRICTION_SENTENCES.hosting);
+      assert.equal(writes(c), 0);
+    });
+    it(`${d.name} R-solo CONTROL: unrestricted, the same request on the solo trip passes the gate`, async () => {
+      use(seed(null, ANA));
+      const r = await call(harness.base, "POST", d.path, ANA, d.body);
+      assert.equal(gateRefused(r), false, JSON.stringify(r.body).slice(0, 300));
+    });
+  }
+});
+
 describe("U2. a restriction table that is not there is not 'no restriction' either (lane L's Compass rule, so the two cannot disagree)", () => {
   for (const name of ["trail-start", "plan-add"]) {
     it(`U2 ${name}: trust_restrictions absent (42P01) → 503, never "restricted"`, async () => {
@@ -305,7 +331,7 @@ describe("R5 (census-trips §85). A membership restored to an ENDED trip's retai
     assert.notEqual(r.body?.error, "trip_record_read_only", JSON.stringify(r.body).slice(0, 300));
   });
   // census-trips §85.2 (verifier R3 on 1867c97df): ONE guard before every trip router refuses every member-level write.
-  const WRITES: Array<["POST" | "PATCH" | "DELETE", string, unknown]> = [
+  const WRITES: Array<["POST" | "PUT" | "PATCH" | "DELETE", string, unknown]> = [
     ["POST", `/trips/${TRIP}/notes`, { title: "n", body: "b" }],
     ["POST", `/trips/${TRIP}/documents`, { title: "d", url: "https://x.test/d.pdf" }],
     ["POST", `/trips/${TRIP}/checklists`, { title: "c" }],
@@ -319,6 +345,10 @@ describe("R5 (census-trips §85). A membership restored to an ENDED trip's retai
     ["POST", `/trips/${TRIP}/notifications/acted`, {}],
     ["PATCH", `/trips/${TRIP}/plan/items/${ITEM}`, { startsAt: iso(5) }],
     ["DELETE", `/trips/${TRIP}/notes/${ITEM}`, undefined],
+    // verifier F5 on dc0107eda5: the one PUT door, and a join request answered by a retained-record-only owner/co-host.
+    ["PUT", `/trips/${TRIP}/transport-policy`, { policy: {} }],
+    ["POST", `/trips/${TRIP}/join-requests/${JOIN_REQ}/approve`, {}],
+    ["POST", `/trips/${TRIP}/join-requests/${JOIN_REQ}/reject`, {}],
   ];
   for (const [m, p, b] of WRITES) {
     it(`R5 guard ${m} ${p.replace(TRIP, ":tripId")}: 403 trip_record_read_only, nothing written`, async () => {
@@ -354,6 +384,19 @@ describe("R5 (census-trips §85). A membership restored to an ENDED trip's retai
     const r = await call(harness.base, "POST", `/trips/${TRIP}/notes`, ANA, { title: "n", body: "b" });
     assert.equal(r.status, 503, JSON.stringify(r.body).slice(0, 300));
     assert.equal(r.body.error, "degraded_unavailable");
+    assert.equal(writes(c), 0);
+  });
+  it("R5 guard (verifier F6 on dc0107eda5): an Auth service THROW while resolving the caller → 503, never a pass-through the handler's own second call could turn into a write", async () => {
+    const c = use(retained("retained_record_only"));
+    // The guard's call throws; any later call (the handler's requireUser) succeeds — the differential failure.
+    let calls = 0;
+    const flaky = { ...c, auth: { getUser: async (token: string) => { calls += 1; if (calls === 1) throw new Error("auth transport down"); return c.auth.getUser(token); } } };
+    _setTestServiceClient(flaky as never);
+    _setTestClient(flaky as never, true);
+    const r = await call(harness.base, "POST", `/trips/${TRIP}/notes`, ANA, { title: "n", body: "b" });
+    assert.equal(r.status, 503, JSON.stringify(r.body).slice(0, 300));
+    assert.equal(r.body.error, "degraded_unavailable");
+    assert.ok(calls >= 1, "vacuity guard: the guard asked the auth service");
     assert.equal(writes(c), 0);
   });
   it("R5 guard: the caller is resolved through the account gate — a banned account's write is the gate's 403, never served, nothing written", async () => {

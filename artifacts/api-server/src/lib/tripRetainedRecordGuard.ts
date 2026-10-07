@@ -23,9 +23,11 @@
  *
  * WHO. The bearer token is resolved through the account gate
  * (optionalUserFromToken — never a hand-rolled `auth.getUser`, which
- * handRolledAuthAccountState.test.ts forbids). A request this guard cannot
- * attribute (no token, a token the auth service rejects, an Auth transport
- * failure) passes through untouched: the handler's own requireUser answers it.
+ * handRolledAuthAccountState.test.ts forbids). A request with no token, or a
+ * token the auth service rejects, passes through untouched: the handler's own
+ * requireUser answers it. An Auth transport THROW does not pass: it is 503 (below),
+ * because a second, succeeding call in the handler would otherwise write on an
+ * access level nobody read (verifier F6 on dc0107eda5).
  * A banned or suspended account, or an unreadable account state, is the gate's
  * own 403 / 503, handed to the global error handler exactly as requireUser's
  * is. The guard only ever REFUSES, so it cannot widen anything.
@@ -141,7 +143,10 @@ export function tripRetainedRecordWriteGuard() {
       if (!token) return next();
       const sc = getServiceClient();
       if (!sc) return next();
-      const userId = (await optionalUserFromToken(sc, token, { log: (req as { log?: unknown }).log, authThrowIsAnonymous: true }))?.id ?? null;
+      // An Auth transport THROW is not "anonymous" (verifier F6 on dc0107eda5): it reaches the catch below as 503, so
+      // a retained-record write can never proceed because the guard could not tell who asked. A REJECTED token is
+      // still null here, and the handler's own requireUser answers it.
+      const userId = (await optionalUserFromToken(sc, token, { log: (req as { log?: unknown }).log }))?.id ?? null;
       if (!userId) return next();
       if (exempt(req.method, rest, userId)) return next();
       const { data: row, error } = await sc.from("trip_members").select("permissions").eq("trip_id", tripId).eq("user_id", userId).maybeSingle();
