@@ -134,9 +134,11 @@ BEGIN
   END IF;
   -- An UPDATE that moves the person into or out of accepted membership
   -- (requireTripMember's rule) clears the same rows; a role change between two
-  -- accepted roles clears nothing.
-  was_accepted := coalesce(OLD.role, '') IN ('owner', 'co_host', 'member', 'viewer') AND coalesce(OLD.status, 'accepted') = 'accepted';
-  is_accepted  := coalesce(NEW.role, '') IN ('owner', 'co_host', 'member', 'viewer') AND coalesce(NEW.status, 'accepted') = 'accepted';
+  -- accepted roles clears nothing. `role` is the member_role ENUM: it is compared
+  -- as text, because coalesce(role, '') casts '' to member_role and raises 22P02 on
+  -- EVERY role/status update (CI's local-db replay: ACCEPT_INVITE, SET_PARTICIPANT_ROLE).
+  was_accepted := coalesce(OLD.role::text, '') IN ('owner', 'co_host', 'member', 'viewer') AND coalesce(OLD.status, 'accepted') = 'accepted';
+  is_accepted  := coalesce(NEW.role::text, '') IN ('owner', 'co_host', 'member', 'viewer') AND coalesce(NEW.status, 'accepted') = 'accepted';
   IF was_accepted IS DISTINCT FROM is_accepted OR OLD.user_id IS DISTINCT FROM NEW.user_id OR OLD.trip_id IS DISTINCT FROM NEW.trip_id THEN
     DELETE FROM public.trip_private_anchor_shares g
      WHERE (g.trip_id = OLD.trip_id AND (g.member_id = OLD.user_id OR g.owner_id = OLD.user_id))
