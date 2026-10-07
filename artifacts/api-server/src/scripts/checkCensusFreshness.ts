@@ -446,6 +446,11 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/routes/index.ts",
   ],
   "census-layover.md": [
+    // ── ADDED 2026-10-07 by lane R (§54.4) ──────────────────────────────────
+    // L200/L199's evidence: migration 3620 (owner decision L199-b, applied
+    // nowhere) and its static suite. Graded rows rest on them, so watched.
+    "artifacts/api-server/src/migrations/3620_layover_client_write_boundary.sql",
+    "artifacts/api-server/src/test/layoverClientWriteBoundary.test.ts",
     // ── ADDED 2026-09-22 by the INTEGRATING lane, because check:census-scope-coverage
     // ── went red and the remedy it prescribes is this one, never the floor.
     //
@@ -3099,6 +3104,9 @@ const CENSUS_SCOPE: Record<string, string[]> = {
   // paths resolve) and the most client-weighted: its subject is the typing
   // surface, so the hooks ARE the measurement, not evidence about it.
   "census-input-intelligence.md": [
+    // ── ADDED 2026-10-07 by lane R (§41) ────────────────────────────────────
+    // The proving suite G86 and G89 move C on (the zero-state place sources).
+    "artifacts/api-server/src/test/inputAssistanceZeroStatePlaces.test.ts",
     // ── ADDED 2026-10-05 by lane D (§37) ────────────────────────────────────
     // The proving tests §37's moves rest on: G320/G370 and the outcome term
     // (OD-INPUT-1/2), G25 (OD-INPUT-3), and G368's vocabulary pin. Cited as
