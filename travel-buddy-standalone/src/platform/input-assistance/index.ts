@@ -127,7 +127,6 @@ export {
   type ResolvedEntity,
 } from './services/entityResolution.ts';
 export {
-  recordSelection,
   getRecentSelections,
   clearRecentSelections,
   type RecentSelection,
@@ -143,6 +142,7 @@ export {
   mayRetainLocally,
   clearLocalZeroState,
   clearLocalRecents,
+  forgetLocalRecents,
   attachLocalRecents,
   detachLocalRecents,
   type LocalZeroStatePolicy,

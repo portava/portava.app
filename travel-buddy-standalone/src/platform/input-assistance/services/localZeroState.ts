@@ -12,8 +12,9 @@
  * exported from `index.ts` and READ BY NOTHING, and `recordSelection` was called
  * from nowhere in the app, so the buffer was always empty as well as unread.
  *
- * This module is that tier, and `SmartInput` is its writer. It also gives
- * `suggestionHistory.recordSelection` its FIRST caller in the app.
+ * This module is that tier, and `SmartInput` is its writer. (It once also fed
+ * `suggestionHistory.recordSelection`; since census G261 that module reads this
+ * store instead of keeping its own.)
  *
  * ── THE PRIVACY GATE IS THE POINT, NOT A DETAIL ──────────────────────────────
  *
@@ -61,7 +62,6 @@
  */
 import type { InputSuggestion } from '../types/inputSuggestion.ts';
 import type { InputContext, PrivacyClass } from '../types/inputContext.ts';
-import { recordSelection } from './suggestionHistory.ts';
 import { isCacheablePrivacyClass } from './suggestionCache.ts';
 import {
   LOCAL_RECENTS_STORAGE_KEY,
@@ -80,10 +80,9 @@ import {
  * alternative — rebuilding a row out of `value` and `label` — would have to
  * invent an `action`, and a zero-state row whose action the client made up is a
  * dead row (§13) or, worse, one that resolves somewhere the server never said
- * it did. So the row is what is retained, and `recordSelection` below is still
- * called so the existing buffer — which had NO writer in the app at all — is
- * populated by the same explicit accept. When §32's persistent store lands
- * (census G199) this map is what it replaces.
+ * it did. So the row is what is retained. (census G261, 2026-10-07: the first
+ * buffer no longer exists. `suggestionHistory.ts` is a read view over THIS map,
+ * so there is one store for the account-change erase to reach, not two.)
  */
 const rowStore = new Map<InputContext, InputSuggestion[]>();
 const MAX_PER_CONTEXT = 10;
@@ -160,6 +159,18 @@ export function clearLocalRecents(): void {
     .catch(() => {});
 }
 
+/**
+ * Forget ONE field's retained rows, in process memory AND on the device.
+ *
+ * `clearLocalZeroState(context)` drops only the process copy, so on its own the
+ * next cold start would hydrate the rows straight back from the blob. A
+ * per-field erase that a restart undoes is not an erase (census G261).
+ */
+export function forgetLocalRecents(context: InputContext): void {
+  rowStore.delete(context);
+  schedulePersist();
+}
+
 /** Await the trailing write. Tests only — production is fire-and-forget. */
 export async function flushLocalRecents(): Promise<void> {
   await pendingWrite;
@@ -229,10 +240,10 @@ export function recordLocalSelection(
   const list = (rowStore.get(context) ?? []).filter((r) => rowKey(r) !== key);
   list.unshift(s);
   rowStore.set(context, list.slice(0, MAX_PER_CONTEXT));
-  // The §35 buffer's first writer. Same explicit accept, same context, same
-  // dedupe-and-promote semantics — kept in step so a later persistent store can
-  // take this tier over rather than fork from it.
-  recordSelection(context, { value: s.entityId ?? s.replacementText ?? s.id, label });
+  // census G261 (2026-10-07): this used to ALSO forward the accept into
+  // `suggestionHistory`'s own in-memory Map, which the account-change erase
+  // (`clearLocalRecents`) never reached. That module is now a read view over
+  // this store, so this is the only write and `clearLocalRecents` the only erase.
   // §32 G199 — and onto the DEVICE, when one is attached. Queued, never
   // awaited: the selection has already happened and must not wait on a disk.
   schedulePersist();
