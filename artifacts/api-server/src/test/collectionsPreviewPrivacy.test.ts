@@ -404,11 +404,17 @@ describe("collection preview — reads do not scale with the page (verifier F5)"
 // ── decideHighlightViewAccessMany answers what decideHighlightViewAccess answers ─
 
 describe("the batched Highlight verdict is the single verdict, row by row", () => {
-  it("public, private, expired, deleted, archived, circle member/non-member, blocked either way, own, missing", async () => {
+  // Delta verification N2 (2026-10-06): the §11 control, the §10 consent, the
+  // `trip_only` rung and an unreadable circle read had no row here, and three
+  // mutants of the batched verdict (withheld -> ok, sharesTrip always true,
+  // unreadable circle read as membership) survived the whole file.
+  it("public, private, expired, deleted, archived, circle member/non-member, trip_only shared/not, §11 KEEP_PRIVATE_FOREVER, §10 consent_share=false, blocked either way, own, missing", async () => {
     const OTHER = "33333333-3333-3333-3333-333333333333";
     const BLOCKER = "44444444-4444-4444-4444-444444444444";
     const BLOCKED = "55555555-5555-5555-5555-555555555555";
     const CIRCLE = "66666666-6666-6666-6666-666666666666";
+    const TRIPMATE = "77777777-7777-7777-7777-777777777777";
+    const TRIP = "88888888-8888-8888-8888-888888888888";
     const id = (n: number) => `b0000000-0000-0000-0000-${String(2000 + n).padStart(12, "0")}`;
     const rows: Row[] = [
       highlightRow({ id: id(1), owner_id: OTHER }),
@@ -421,11 +427,28 @@ describe("the batched Highlight verdict is the single verdict, row by row", () =
       highlightRow({ id: id(8), owner_id: BLOCKER }),
       highlightRow({ id: id(9), owner_id: BLOCKED }),
       highlightRow({ id: id(10), owner_id: SAVER, visibility: "private" }),
+      highlightRow({ id: id(11), owner_id: TRIPMATE, visibility: "trip_only" }),
+      highlightRow({ id: id(12), owner_id: OTHER, visibility: "trip_only" }),
+      highlightRow({ id: id(13), owner_id: OTHER }),
+      highlightRow({ id: id(14), owner_id: OTHER }),
     ];
     const t = baseTables(SAVER, "highlight", H_ID);
     t.highlights = { rows };
     t.blocks = { rows: [{ blocker_id: BLOCKER, blocked_id: SAVER }, { blocker_id: SAVER, blocked_id: BLOCKED }] };
     t.circle_memberships = { rows: [{ user_id: CIRCLE, other_id: SAVER }] };
+    t.trips = { rows: [{ id: TRIP, owner_id: TRIPMATE }] };
+    t.trip_members = {
+      rows: [
+        { trip_id: TRIP, user_id: SAVER, role: "member", status: "accepted" },
+        { trip_id: TRIP, user_id: TRIPMATE, role: "owner", status: "accepted" },
+      ],
+    };
+    t.highlight_resurfacing_preferences = {
+      rows: [{ id: "r1", owner_id: OTHER, control: "KEEP_PRIVATE_FOREVER", subject_type: "highlight", subject_id: id(13) }],
+    };
+    t.highlight_projection_policies = {
+      rows: [{ id: "p1", highlight_id: id(14), owner_id: OTHER, consent_share: false }],
+    };
     const sc = makeClient(t) as unknown as Parameters<typeof decideHighlightViewAccess>[0];
     const ids = [...rows.map((r) => r.id as string), id(99)];
     const many = await decideHighlightViewAccessMany(sc, SAVER, ids);
@@ -446,6 +469,34 @@ describe("the batched Highlight verdict is the single verdict, row by row", () =
     assert.equal(expected[id(9)], "not_found:blocked");
     assert.equal(expected[id(7)], "not_found:invisible");
     assert.equal(expected[id(99)], "not_found:missing");
+    assert.equal(expected[id(11)], "ok", "trip_only, on a shared accepted trip");
+    assert.equal(expected[id(12)], "not_found:invisible", "trip_only, no shared trip");
+    assert.equal(expected[id(13)], "not_found:withheld", "§11 KEEP_PRIVATE_FOREVER on this Highlight");
+    assert.equal(expected[id(14)], "not_found:withheld", "§10 consent_share = false on this Highlight");
+  });
+
+  it("an UNREADABLE circle_memberships read: a circle_only row is refused in both forms, a public one is not", async () => {
+    const CIRCLE = "66666666-6666-6666-6666-666666666666";
+    const id = (n: number) => `b0000000-0000-0000-0000-${String(4000 + n).padStart(12, "0")}`;
+    const rows: Row[] = [
+      highlightRow({ id: id(1), owner_id: CIRCLE, visibility: "circle_only" }),
+      highlightRow({ id: id(2), owner_id: CIRCLE }),
+    ];
+    const t = baseTables(SAVER, "highlight", H_ID);
+    t.highlights = { rows };
+    // The saver IS in the owner's circle — the read that would say so fails.
+    t.circle_memberships = { rows: [{ user_id: CIRCLE, other_id: SAVER }], failSelect: true };
+    const sc = makeClient(t) as unknown as Parameters<typeof decideHighlightViewAccess>[0];
+    const many = await decideHighlightViewAccessMany(sc, SAVER, rows.map((r) => r.id as string));
+    for (const r of rows) {
+      const one = await decideHighlightViewAccess(sc, SAVER, r.id as string);
+      const m = many.get(r.id as string);
+      assert.deepEqual(m?.ok ? "ok" : m && `${m.code}:${m.reason}`, one.ok ? "ok" : `${one.code}:${one.reason}`, String(r.id));
+    }
+    const circleRow = many.get(id(1));
+    assert.equal(circleRow?.ok, false, "an unreadable circle read is never membership");
+    assert.equal(circleRow && !circleRow.ok && circleRow.reason, "invisible");
+    assert.equal(many.get(id(2))?.ok, true);
   });
 
   it("an unreadable blocks read refuses every row the viewer does not own, in both forms", async () => {

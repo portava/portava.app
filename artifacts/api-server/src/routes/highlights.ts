@@ -681,8 +681,8 @@ export async function decideHighlightViewAccess(
  * (census-highlights-memories §AE, verifier F5). This is the same ladder, rung
  * for rung, over the whole page: one highlights read, one two-direction blocks
  * read over the owner set, one circle read and one trip read for the owners
- * that need them, one §10/§11 read. `highlightViewAccessParity.test.ts` holds
- * it to the single verdict row by row, so the two cannot drift.
+ * that need them, one §10/§11 read. `collectionsPreviewPrivacy.test.ts` holds it
+ * to the single verdict row by row (§11/§10, trip_only, unreadable circle included).
  *
  * A failed read refuses only the rows it decides: an unreadable highlights read
  * answers `unreadable` for every id, an unreadable blocks read `blocks_unreadable`

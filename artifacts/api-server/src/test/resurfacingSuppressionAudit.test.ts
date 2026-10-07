@@ -198,4 +198,39 @@ describe("the wiring: both proactive feeds pass what they serve through the audi
       assert.equal(readResurfacingSuppressionAudit().violations, 0);
     } finally { await app.close(); }
   });
+
+  // Delta verification N7 (2026-10-06): the viewer-scoped half of F9 had a unit
+  // case only. Through the route: the VIEWER's own HIDE_PERSON_FROM_RESURFACING
+  // about the owner keeps every row of that person off /active, the viewer's
+  // own row stays, and the audit counts ZERO — the filter and the audit read
+  // the same `projectionInputs`, viewer set included. A row this case finds on
+  // the page, or a non-zero count, means one of the two was handed a narrower
+  // set than the other.
+  it("a VIEWER-scoped HIDE_PERSON_FROM_RESURFACING keeps the person off /active, end to end, with zero violations", async () => {
+    const app = await startApp({
+      tables: tablesWith([
+        { id: "2", owner_id: VIEWER, control: "HIDE_PERSON_FROM_RESURFACING", subject_type: "person", subject_id: OWNER },
+      ]),
+    });
+    try {
+      const r = await call(app, "GET", "/api/highlights/active", VIEWER);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.ok(!listIds(r.body).has(H_PUB), "the hidden person's Highlight is not served");
+      assert.ok(listIds(r.body).has(H_MINE), "the viewer's own Highlight is");
+      assert.equal(readResurfacingSuppressionAudit().violations, 0);
+    } finally { await app.close(); }
+  });
+
+  it("the same control set by the OWNER about the viewer suppresses nothing (it is not the owner's to set)", async () => {
+    const app = await startApp({
+      tables: tablesWith([
+        { id: "3", owner_id: OWNER, control: "HIDE_PERSON_FROM_RESURFACING", subject_type: "person", subject_id: VIEWER },
+      ]),
+    });
+    try {
+      const r = await call(app, "GET", "/api/highlights/active", VIEWER);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.ok(listIds(r.body).has(H_PUB), "a person-scoped control belongs to the viewer, not the owner (census H89)");
+    } finally { await app.close(); }
+  });
 });
