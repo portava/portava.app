@@ -6983,3 +6983,52 @@ This table RESTATES no verdict. The `standing` column is spelled out, which is �
 - A dead letter reported durable without a confirmed row, or a letter that never resolves.
 
 The suites in §AF.1 assert each of these.
+
+### §AF.5 Lead rulings (2026-10-07)
+
+The lead adopted the three choices this lane proposed. They are now lead rulings H-1, H-2 and H-3 (2026-10-07):
+
+- **H-1.** When a Memory kept from a candidate is deleted, its episode becomes a `deleted` tombstone. The tombstone keeps only its time window, kind and replay key. Summary, place, city, country and significance are cleared, and every evidence row is purged. The same photos are therefore never proposed again. Account deletion erases the tombstone (`erase_memory_for_user`, 2320).
+- **H-2.** A deletion dead letter holds ids, step names, failure text and times — no Memory content. service_role cannot DELETE it: a letter is resolved, never removed. It cascades with the Memory and with the account.
+- **H-3.** A Keep that would finish onto a Memory its owner deleted is refused (409), and the episode is retired. A retry never undoes a deletion.
+
+## §AG — 2026-10-07 (mission 4, lane H, wave 2): make-private reaches the derivative registry, dead letters are retried, four stale reasons restated — and NO VERDICT MOVES
+
+Same branch, same rules as §AF. `head_commit` is **NOT** re-declared. Controlled evidence only. No migration was applied. One FLAG was added to §AF's unapplied 3670: `memory_deletion_redrive_enabled`, seeded FALSE.
+
+### §AG.1 What was built
+
+1. **A privacy change re-derives the registry's derivatives (H189, H114).**
+   - The defect: only DELETE reached `memory_derivative_registry` (2730, applied). A visibility PATCH evicted the Compass caches and nothing else. A registered derivative — the owner's public one among them — went on carrying a Memory its audience had just lost.
+   - The fix: `revokeDerivativesForMemory` is the wrong tool here. A REVOKED registration is terminal by design, and the public scope is ONE registration per owner, so revoking it would end everyone's search of that person's public Memories. Instead, every ACTIVE registration that carries the Memory is RE-DERIVED from the committed rows (`artifacts/api-server/src/services/memoryProjections/narrowingReprojection.ts:84#export async function reprojectDerivativesAfterNarrowing(`). The public derivative is rebuilt without the Memory. The owner's timeline is rebuilt with it. What cannot be re-derived is revoked and emptied instead (`artifacts/api-server/src/services/memoryProjections/narrowingReprojection.ts:119#if (await revokeOne(client, reg.id`).
+   - The wiring: it runs on every audience change of `PATCH /memories/:id` (`artifacts/api-server/src/routes/memories.ts:1926#if (audienceChanged(previousAudience, nextAudience)) { const narrowed`).
+   - The tests: `artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:141#public → only_me: the public derivative no longer carries the Memory`, `artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:167#FAIL CLOSED: a derivative that cannot be re-derived is revoked and emptied` and `artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:158#a caption edit does not touch the registry`. That is 7 cases; 6 of 6 mutants were killed.
+2. **Open dead letters are retried (H193).**
+   - `artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:60#export async function runMemoryDeletionRedrivePass(` re-runs the §21 lifecycle hourly for open letters whose Memory is still deleted or gone.
+   - A letter whose Memory is NOT deleted is closed as moot, and no step runs (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:91#if (row && (row as any).state !== "deleted") {`).
+   - It is gated by `memory_deletion_redrive_enabled` (3670, seeded FALSE) and started at `artifacts/api-server/src/index.ts:196#startMemoryDeletionRedriveScheduler();`.
+   - It has the house loop shape plus a generation check (`artifacts/api-server/src/lib/memoryDeletionRedriveScheduler.ts:136#generation === _generation`). That check closes a two-loop leak that a stop() followed by start() during an in-flight pass produced.
+   - The tests: `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:515#flag ON: a still-deleted Memory's deletion is re-run to completion`, `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:532#a letter whose Memory is NOT deleted is closed as moot` and `artifacts/api-server/src/test/memoryDeletionEvidencePurge.test.ts:505#flag OFF (the seed)`. The lifecycle suite runs on real timers with only `Date` mocked: `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:72#stop() ends the loop, even when it lands while a pass is in flight` and `artifacts/api-server/src/test/memoryDeletionRedriveSchedulerTiming.test.ts:82#stop() then start() while a pass is in flight runs ONE loop`. 7 of 7 mutants were killed.
+
+### §AG.2 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H189 | BUILT-BUT-WRONG | The registry half is closed. Making a Memory private re-derives every registered derivative that carries it, so the public one no longer does, and the Memory is retained (§AG.1 item 1). W stands on §E.5's two other halves, unchanged. First, the cached feeds of a `public` Memory's losing audience cannot be enumerated. Second, the Compass graph derivative is revoked only on the daily rebuild, which is open decision D-D1 |
+| H114 | BUILT-BUT-WRONG | Searchable derivatives are now re-derived on every privacy change (§AG.1 item 1) and revoked on delete (§AF.1 item 2). The embedding half has no store anywhere: `SearchEmbedding` is NOT_CONFIGURED, and H171 is NOT-BUILT. That is the one blocker left |
+| H193 | BUILT-BUT-WRONG | Observable, retryable, dead-lettered, and now RETRIED: open letters are re-run by a flag-gated scheduler (§AG.1 item 2). W stands on storage: 3670 is unapplied, and its flag ships OFF |
+| H10 | BUILT-BUT-WRONG | "2720, unapplied" and "2721" are stale: both are applied, so resurfacing and publication policy are storable and enforced on the Highlights surface. W stands because no personalization path consults any of it (H210), and because the policies are Highlight-scoped: no Memory-level control exists (H36) |
+| H13 | BUILT-BUT-WRONG | "Test-only … 2730 is unapplied" is stale. The service has a production route (`artifacts/api-server/src/routes/memories.ts:995#router.post("/memories/search"`), and that route registers before it reads (`artifacts/api-server/src/services/memory/memorySearchService.ts:363#export async function ensureDerivative(`), on 2730, which is applied. The one blocker left is semantic retrieval, which has no backend (`SearchEmbedding` NOT_CONFIGURED, H171) |
+| H223 | BUILT-BUT-WRONG | "Storage is 2730 — written, unapplied" is stale: 2730 is applied. W stands on the eighth field, as stated: `projectionName` is null on the command path, and nothing writes a projection log line that carries it |
+| H244 | BUILT-BUT-WRONG | "memory_event_outbox is 2710, unapplied" is stale: 2710 is applied, and a consumer is started (`artifacts/api-server/src/index.ts:196#startMemoryOutboxScheduler();`). W stands for two reasons. The consumer's claim and ack functions are 2994, which is unapplied (H161). And `memory_kernel_enabled` is FALSE in the 2026-09-22 snapshot, so no event is written for a consumer to tolerate |
+
+### §AG.3 Headline
+
+**0 up, 0 down.** 266 = 69 C / 152 W / 43 N / 2 X.
+
+### §AG.4 What would turn this red
+
+- A visibility change that leaves a registered derivative carrying a Memory its audience lost.
+- A re-derivation failure left unrevoked and unreported.
+- A deletion step run against a Memory that is not deleted.
+- A stopped redrive loop that re-arms itself.

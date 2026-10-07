@@ -29,8 +29,7 @@ import { _setTestClient } from "../lib/http.js";
 import memoryCandidatesRouter from "../routes/memoryCandidates.js";
 import memoriesRouter from "../routes/memories.js";
 import { resetHighlightSchemaMemo } from "../services/highlights/highlightSchemaAvailability.js";
-import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js";
-import { runMemoryDeletionRedrivePass } from "../lib/memoryDeletionRedriveScheduler.js";
+import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { runMemoryDeletionRedrivePass } from "../lib/memoryDeletionRedriveScheduler.js"; // one line: the census cites this file by line
 
 const OWNER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const OTHER = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
