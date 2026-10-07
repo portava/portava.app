@@ -5041,3 +5041,5 @@ the Memories owner, and the fix belongs in both surfaces at once.
 None. The Memory accessors are graded in census-highlights-memories, where the §10 rows (H76, H79) stay
 `W` on their flag. For a viewer reading their own Memories, or with the gate off, every graded path is
 unchanged.
+
+- NOT-GRADED: artifacts/api-server/src/test/memoryCompassTools.test.ts — §45 cites its §10 cases; the Memory accessors it tests are graded in census-highlights-memories.
