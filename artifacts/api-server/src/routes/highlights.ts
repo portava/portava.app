@@ -1328,7 +1328,16 @@ router.get("/highlights/active", async (req, res) => {
     .is("deleted_at", null)
     .is("archived_at", null) // §21 Archive — see GET /users/:id/highlights
     .or(NOT_EXPIRED(rankedAt))
-    .in("visibility", ["public", "travelers_nearby", "circle_only", "trip_only"])
+    .in("visibility", ["public", "travelers_nearby", "circle_only", "trip_only"]);
+  // §12 "pinned/manual order always outranks automatic ordering" — IN THE
+  // QUERY'S OWN ORDER (census H100). The ranker below puts pins first, but
+  // only among the rows this read returned, and the read is a `limit * 5`
+  // window of the newest: an older pinned Highlight fell outside it and was
+  // never ranked at all. Pins first (earliest pin first, the order
+  // `pinnedFirst` uses), then newest — so a pin is always inside the window.
+  // Only when `pinned_at` is projected on this database (2723).
+  if (activeProjection.classProjected) q = q.order("pinned_at", { ascending: true, nullsFirst: false });
+  q = q
     .order("created_at", { ascending: false })
     .limit(limit * 5); // over-fetch to account for permission filtering
 
@@ -2344,12 +2353,18 @@ router.get("/highlights/archived", async (req, res) => {
   const { client, user } = auth;
 
   const archivedProjection = await highlightColumns(client);
-  const { data: rows, error } = await client
+  let archivedQuery = client
     .from("highlights")
     .select(archivedProjection.columns)
     .eq("owner_id", user.id)
     .is("deleted_at", null)
-    .not("archived_at", "is", null)
+    .not("archived_at", "is", null);
+  // §12 pins lead IN THE QUERY (census H100): `pinnedFirst` below reorders
+  // only what `.limit(200)` returned, so a pinned Highlight older than the
+  // 200 most recently archived was not on the page at all. Pins first, then
+  // archived_at order — only when `pinned_at` is projected (2723).
+  if (archivedProjection.classProjected) archivedQuery = archivedQuery.order("pinned_at", { ascending: true, nullsFirst: false });
+  const { data: rows, error } = await archivedQuery
     .order("archived_at", { ascending: false })
     .limit(200);
 
@@ -2763,6 +2778,46 @@ router.post("/highlights/:id/report", async (req, res) => {
  * Returns users the current user follows who have active highlights,
  * grouped per user with their full highlight objects.
  * ============================================================================ */
+/**
+ * The following-feed's page cursor (census H100). When pins lead the bounded
+ * query, a row's place in it is (pinned_at, created_at, id), so a cursor
+ * taken from a PINNED row carries all three: `pinned:<pinned_at>|<created_at>|<id>`.
+ * A cursor from an unpinned row is its bare created_at, exactly as before —
+ * the form every existing client already holds.
+ */
+function followingFeedCursor(row: { pinned_at?: unknown; created_at?: unknown; id?: unknown } | undefined, pinsLead: boolean): string | null {
+  if (!row) return null;
+  if (pinsLead && typeof row.pinned_at === "string" && typeof row.created_at === "string" && typeof row.id === "string") {
+    return `pinned:${row.pinned_at}|${row.created_at}|${row.id}`;
+  }
+  return typeof row.created_at === "string" ? row.created_at : null;
+}
+
+const FEED_CURSOR_TIMESTAMP = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}(\.\d{1,6})?(Z|[+-]\d{2}(:?\d{2})?)?$/;
+const FEED_CURSOR_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Read a cursor back. The pinned form's values are interpolated into an
+ * `or=` filter, so each must be exactly a timestamp or a UUID — anything else
+ * is `invalid`, never passed through. The bare form is handed to `.gt()` as a
+ * value, as it always was. A pinned cursor where pins do not lead (the column
+ * is not projected) is `invalid` too: there is no order it could continue.
+ */
+function readFollowingFeedCursor(
+  raw: string,
+  pinsLead: boolean,
+): { kind: "pinned"; pinnedAt: string; createdAt: string; id: string } | { kind: "created"; createdAt: string } | { kind: "invalid" } {
+  if (!raw.startsWith("pinned:")) return { kind: "created", createdAt: raw };
+  if (!pinsLead) return { kind: "invalid" };
+  const parts = raw.slice("pinned:".length).split("|");
+  if (parts.length !== 3) return { kind: "invalid" };
+  const [pinnedAt, createdAt, id] = parts as [string, string, string];
+  if (!FEED_CURSOR_TIMESTAMP.test(pinnedAt) || !FEED_CURSOR_TIMESTAMP.test(createdAt) || !FEED_CURSOR_ID.test(id)) {
+    return { kind: "invalid" };
+  }
+  return { kind: "pinned", pinnedAt, createdAt, id };
+}
+
 router.get("/highlights/following-feed", async (req, res) => {
   const auth = await requireUser(req, res);
   if (!auth) return;
@@ -2863,8 +2918,19 @@ router.get("/highlights/following-feed", async (req, res) => {
     .is("deleted_at", null)
     .is("archived_at", null) // §21 Archive — see GET /users/:id/highlights
     .or(NOT_EXPIRED())
-    .neq("visibility", "private")
-    .order("created_at", { ascending: true });
+    .neq("visibility", "private");
+  // §12 pins lead the BOUNDED feed in the query's own order (census H100).
+  // Bounded, a page is a window of the oldest-first rows, and the person's
+  // ring is regrouped pinned-first only inside it — so a pinned Highlight on
+  // page two never led its ring on page one. With `pinned_at` projected
+  // (2723), the bounded query orders pins first (earliest pin first, the
+  // order `pinnedFirst` uses), then created_at, then id, and the cursor
+  // carries that whole key (`followingFeedCursor` below). Unbounded, the query
+  // returns everything and the regroup alone is exact, so it is unchanged.
+  const pinsLead = feedLimit != null && feedProjection.classProjected;
+  if (pinsLead) feedQuery = feedQuery.order("pinned_at", { ascending: true, nullsFirst: false });
+  feedQuery = feedQuery.order("created_at", { ascending: true });
+  if (pinsLead) feedQuery = feedQuery.order("id", { ascending: true });
 
   // Over-fetch: the raw WINDOW this request examines. The visibility filter in
   // step 5 runs after this query and would otherwise shrink the page — the same
@@ -2873,7 +2939,24 @@ router.get("/highlights/following-feed", async (req, res) => {
   const feedWindow = feedLimit != null ? feedLimit * 5 : null;
   if (feedWindow != null) (feedQuery as any) = (feedQuery as any).limit(feedWindow);
   if (feedCursor) {
-    (feedQuery as any) = (feedQuery as any).gt("created_at", feedCursor);
+    const after = readFollowingFeedCursor(feedCursor, pinsLead);
+    if (after.kind === "invalid") {
+      sendError(res, "invalid_payload", "Invalid cursor");
+      return;
+    }
+    if (after.kind === "pinned") {
+      // Every row after (pinned_at P, created_at C, id I) in the query's order:
+      // the unpinned rows, later pins, and the ties on P and C after I. The
+      // three values were validated as timestamps and a UUID, so nothing in
+      // them can reach the filter grammar.
+      const { pinnedAt: P, createdAt: C, id: I } = after;
+      feedQuery = feedQuery.or(
+        `pinned_at.is.null,pinned_at.gt.${P},and(pinned_at.eq.${P},created_at.gt.${C}),and(pinned_at.eq.${P},created_at.eq.${C},id.gt.${I})`,
+      );
+    } else {
+      if (pinsLead) feedQuery = feedQuery.is("pinned_at", null);
+      feedQuery = feedQuery.gt("created_at", after.createdAt);
+    }
   }
 
   const { data: rows, error } = await feedQuery;
@@ -2979,9 +3062,9 @@ router.get("/highlights/following-feed", async (req, res) => {
   const nextCursor = feedLimit == null
     ? null
     : visible.length === feedLimit
-      ? (visible[visible.length - 1]?.created_at ?? null)
+      ? followingFeedCursor(visible[visible.length - 1], pinsLead)
       : windowFull
-        ? (allHighlights[allHighlights.length - 1]?.created_at ?? null)
+        ? followingFeedCursor(allHighlights[allHighlights.length - 1], pinsLead)
         : null;
 
   if (visible.length === 0) {
