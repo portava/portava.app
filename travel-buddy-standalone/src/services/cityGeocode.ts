@@ -14,6 +14,7 @@
  *
  * Returns null when the city cannot be resolved or on network error.
  */
+import { timeoutSignal } from '../lib/timeoutSignal.ts';
 
 // ── AsyncStorage interface ─────────────────────────────────────────────────────
 
@@ -157,7 +158,7 @@ export async function geocodeCityToCoords(
 
     const res = await fetch(url, {
       headers: { 'User-Agent': 'TravelBuddyApp/1.0' },
-      signal: AbortSignal.timeout(6_000),
+      signal: timeoutSignal(6_000), // not AbortSignal.timeout: absent in React Native (src/lib/timeoutSignal.ts)
     });
     if (!res.ok) {
       // Transient HTTP failure — cache in-memory only so the next session retries.

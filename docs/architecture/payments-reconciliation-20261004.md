@@ -112,10 +112,10 @@ builder refuses a non-zero settlement before reading anything else
 (`artifacts/api-server/src/lib/creatorLedgerEntries.ts:603#buildCreatorEarningEntries(`,
 `artifacts/api-server/src/lib/creatorLedgerEntries.ts:609#input.settledMinor`). The derived status
 vocabulary admits three of `09` §3's eight states and can never produce `payable` or `paid`
-(`artifacts/api-server/src/lib/creatorLedgerStatus.ts:184#EarningStatus`), with
+(`artifacts/api-server/src/lib/creatorLedgerStatus.ts:219#EarningStatus`), with
 `available` likewise a literal `0`
-(`artifacts/api-server/src/lib/creatorLedgerStatus.ts:255#available:`) carried with a stated reason
-(`artifacts/api-server/src/lib/creatorLedgerStatus.ts:266#AVAILABLE_REASON`).
+(`artifacts/api-server/src/lib/creatorLedgerStatus.ts:290#available:`) carried with a stated reason
+(`artifacts/api-server/src/lib/creatorLedgerStatus.ts:301#AVAILABLE_REASON`).
 
 | Module | Role | Reachable? |
 |---|---|---|
@@ -150,7 +150,7 @@ vocabulary admits three of `09` §3's eight states and can never produce `payabl
 | Route group | Endpoints | Authorization / gate |
 |---|---|---|
 | `routes/creatorEconomy.ts` | 3 creator-own reads, e.g. `artifacts/api-server/src/routes/creatorEconomy.ts:64#asyncHandler(async` | `requireUser` + the flag; payout eligibility **deliberately not served** |
-| `routes/adminCreatorLedger.ts` | 5: audit read, hold, release, recompute, `artifacts/api-server/src/routes/adminCreatorLedger.ts:101#asyncHandler(async` | `artifacts/api-server/src/routes/adminCreatorLedger.ts:85#requireAdmin(req,` + the flag re-checked in every service function |
+| `routes/adminCreatorLedger.ts` | 5: audit read, hold, release, recompute, `artifacts/api-server/src/routes/adminCreatorLedger.ts:104#asyncHandler(async` | `artifacts/api-server/src/routes/adminCreatorLedger.ts:88#requireAdmin(req,` + the flag re-checked in every service function |
 | `routes/rentABuddy.ts` pay | `pay-deposit` / `pay-full`, both **503**, no side effects (`artifacts/api-server/src/routes/rentABuddy.ts:2312#async`) | none needed — constant responses |
 | `routes/rentABuddy.ts` refund | `refund-eligibility`, **501** (`artifacts/api-server/src/routes/rentABuddy.ts:4096#async`) | none |
 | `routes/rentABuddySpec.ts` payouts | hold (`artifacts/api-server/src/routes/rentABuddySpec.ts:2446#asyncHandler(async`), release (`:2495#asyncHandler(async`) | `requireAdmin`; now **compare-and-swap** (§3) |

@@ -80,13 +80,13 @@ import { readTripAttention, applyAttentionSuppression, attentionNotConsulted, at
 import { buildCompassContext, defaultSignals } from "./CompassContextEngine.js";
 import { runPipeline } from "./CompassPipeline.js";
 import { qualifyWhyThis,
-  buildWhyThisText,
+  buildWhyThisText, whyThisRestsOnEstimate,
   loadCircleMemoryPreferenceTags,
   normalizeProfileForRanking,
 } from "./CompassRecommendationEngine.js";
 import {
   makeConfidence,
-  getLiveVenueStatus,
+  getLiveVenueStatus, liveVenueAnchorOf,
   CANT_VERIFY_NOTE,
 } from "../lib/liveIntelligence.js";
 import {
@@ -217,7 +217,7 @@ export const COMPASS_TOOL_DEFINITIONS = [
     type: "function" as const,
     function: {
       name: "get_place_details",
-      description: "Get full (privacy-safe) details for one place by its id from an earlier search_places result.",
+      description: "Get full (privacy-safe) details for one place by its id from an earlier search_places result. `unreadable: true` means the catalog could not be read right now — never tell the user the place does not exist; only `info: \"Place not found.\"` with no `unreadable` flag is a real miss.",
       parameters: {
         type: "object",
         properties: { placeId: { type: "string", description: "The place id" } },
@@ -745,7 +745,7 @@ interface ToolRankEntry {
   rank:           number;
   compassMatch:   number;
   communityScore: number;
-  whyThis:        string | null;
+  whyThis:        string | null; restsOnEstimate: boolean; // lead ruling D-67: the sentence rests on the listed-hours open-now estimate
 }
 
 /**
@@ -775,7 +775,7 @@ async function rankToolCandidates(
         rank:           idx,
         compassMatch:   r.compassMatch,
         communityScore: r.communityScore,
-        whyThis:        buildWhyThisText(r.rankingFactors),
+        whyThis:        buildWhyThisText(r.rankingFactors), restsOnEstimate: whyThisRestsOnEstimate(r.rankingFactors),
       });
     });
     return map;
@@ -805,7 +805,7 @@ function applyToolRanking<T extends { id: unknown }>(
         ...c,
         compassMatch: r.compassMatch,
         communityScore: r.communityScore,
-        whyThis: qualifyWhyThis(r.whyThis, isTruthClass(truthClass) ? truthClass : null),
+        whyThis: qualifyWhyThis(r.whyThis, isTruthClass(truthClass) ? truthClass : null, { restsOnEstimate: r.restsOnEstimate }),
         rank: r.rank,
       };
     })
@@ -1107,16 +1107,16 @@ async function toolGetPlaceDetails(sc: SupabaseClient, args: Record<string, unkn
   if (!placeId) return { place: null, info: "placeId is required." };
   const { data, error } = await sc
     .from("discovery_places")
-    .select(PLACE_SAFE_COLUMNS + ", secondary_categories, place_type")
+    .select(PLACE_SAFE_COLUMNS + ", secondary_categories, place_type, lat, lng")
     .eq("id", placeId)
     .maybeSingle();
-  if (error || !data) return { place: null, info: "Place not found." };
-  const p = data as any;
+  if (error || !data) return error ? { place: null, unreadable: true, info: "The place catalog is unreadable right now — this is temporary, NOT a statement that the place does not exist; say its details are unavailable and offer to try again." } : { place: null, info: "Place not found." }; // a failed read is never "not found"; only no error AND no row is a miss
+  const { lat: anchorLat, lng: anchorLng, ...p } = data as any; // lead ruling D-67: lat/lng are read ONLY as the live lookup's identity anchor — PLACE_SAFE_COLUMNS keeps coordinates out of every tool result, so they are split off here and never reach the returned place
 
   // Phase 8 — live open-now lookup at tool time (weather-cache pattern:
-  // short TTL, strict timeout, honest degradation). A null result means the
-  // live source is unavailable — we say so explicitly and never fabricate.
-  const live = await getLiveVenueStatus(String(p.name ?? ""), (p.city as string | null) ?? null);
+  // short TTL, strict timeout, honest degradation). A null result means the live
+  // source is unavailable or no record was confirmed as this place — never fabricated.
+  const live = await getLiveVenueStatus(String(p.name ?? ""), liveVenueAnchorOf(anchorLat, anchorLng));
   const liveStatus = live
     ? {
         available: true as const,

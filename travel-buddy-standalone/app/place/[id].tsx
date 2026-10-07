@@ -32,7 +32,7 @@ import { PlainBottomFiller } from '../../src/hooks/useBottomInset';
 import { TripWishlistPicker } from '../../src/components/discovery/TripWishlistPicker';
 import { checkSaved, toggleSave } from '../../src/services/collections';
 import { freshToken as freshApiToken } from '../../src/services/apiToken';
-import { getPlaceLiveStatus } from '../../src/services/discovery';
+import { getPlaceLiveStatus } from '../../src/services/discovery'; import { listedHoursText, LISTED_HOURS_UNVERIFIED_NOTE } from '../../src/features/discovery/listedHours';
 import { categoryColor } from '../../src/components/discovery/PlaceCard';
 import { ReviewsSection } from '../../src/components/ReviewsSection';
 import { WorthItVoteRow } from '../../src/components/WorthItVoteRow';
@@ -84,7 +84,7 @@ function parsePlaceJson(raw: string | string[] | undefined): DiscoveryPlace | nu
 
 // ── Discovery-place fallback view ─────────────────────────────────────────────
 
-function DiscoveryFallback({ place, city }: { place: DiscoveryPlace; city: string | null }) {
+function DiscoveryFallback({ place }: { place: DiscoveryPlace }) {
   const [saved, setSaved] = useState(false);
   const [pickerVisible, setPickerVisible] = useState(false);
   const [liveStatus, setLiveStatus] = useState<PlaceLiveStatus | null>(null);
@@ -98,11 +98,11 @@ function DiscoveryFallback({ place, city }: { place: DiscoveryPlace; city: strin
   useEffect(() => {
     setLiveStatus(null);
     let cancelled = false;
-    getPlaceLiveStatus(place.name, city)
+    getPlaceLiveStatus(place.name, { lat: place.lat, lng: place.lng }) // lead ruling D-67: the place's own coordinates
       .then((ls) => { if (!cancelled) setLiveStatus(ls); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [place.id, city]);
+  }, [place.id, place.lat, place.lng]);
 
   const liveOpenNow: boolean | null =
     liveStatus?.available && typeof liveStatus.openNow === 'boolean'
@@ -195,10 +195,10 @@ function DiscoveryFallback({ place, city }: { place: DiscoveryPlace; city: strin
         {place.openingHours ? (
           <View style={fb.infoRow}>
             <Clock size={15} color={color.mute} />
-            <Text style={fb.infoText}>
-              {place.openingHours}
+            <Text style={fb.infoText} testID="place-fallback-listed-hours">
+              {listedHoursText(place.openingHours)}
               {liveStatus != null && liveOpenNow == null ? (
-                <Text style={fb.lastKnownNote}>  · Last known hours — can't verify live</Text>
+                <Text style={fb.lastKnownNote}>  · {LISTED_HOURS_UNVERIFIED_NOTE}</Text>
               ) : null}
             </Text>
           </View>
@@ -464,7 +464,7 @@ export default function PlaceDetailScreen() {
     return (
       <>
         <Stack.Screen options={{ title: discoveryPlace.name }} />
-        <DiscoveryFallback place={discoveryPlace} city={city} />
+        <DiscoveryFallback place={discoveryPlace} />
       </>
     );
   }

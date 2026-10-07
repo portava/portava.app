@@ -20,8 +20,13 @@ import {
   annotateCandidate,
   buildWhyThisText,
   normalizeProfileForRanking,
+  presentableFactors,
+  qualifyWhyThis,
+  whyThisRestsOnEstimate,
+  OPEN_NOW_FACTOR_LABEL,
   type RankingFactor,
 } from "../compass/CompassRecommendationEngine.js";
+import { nearbyNowText } from "../lib/discoveryReasonCodes.js";
 import { runPipeline } from "../compass/CompassPipeline.js";
 import type { CompassItem, CompassProfile, CompassContext } from "../compass/types.js";
 
@@ -254,5 +259,68 @@ describe("F. Why-this text is grounded and privacy-safe", () => {
       { key: "interest_match", label: "Matches your interests",   weight: 0.5 },
     ])!;
     assert.ok(!text.toLowerCase().includes("risk"), "moderation signals must never surface");
+  });
+});
+
+// ── G. Lead ruling D-67: open-now from listed hours is an estimate, never live ──
+
+describe("G. D-67 — the open-now factor is a listed-hours estimate wherever it is shown", () => {
+  const LIVE_WORDING = /\bright now\b|\baround now\b|\bverified\b|\blive\b/i;
+
+  it("the factor says it is an estimate from listed hours, not that the place is open right now", () => {
+    const r = computeCompassMatch(item({ isOpenNow: true } as any), profileFor());
+    const f = r.factors.find((x) => x.key === "open_now");
+    assert.ok(f, "open_now still contributes");
+    assert.equal(f!.label, OPEN_NOW_FACTOR_LABEL);
+    assert.match(f!.label, /listed hours/i);
+    assert.match(f!.label, /estimate/i);
+    assert.doesNotMatch(f!.label, LIVE_WORDING);
+  });
+
+  it("a factor stored before D-67 as \"Open right now\" is re-worded when read, in the payload and the sentence", () => {
+    const stored: RankingFactor[] = [
+      { key: "open_now", label: "Open right now", weight: 1 },
+      { key: "interest_match", label: "Matches your interests", weight: 0.9, detail: "food" },
+    ];
+    assert.equal(presentableFactors(stored).find((x) => x.key === "open_now")!.label, OPEN_NOW_FACTOR_LABEL);
+    const text = buildWhyThisText(stored)!;
+    assert.match(text, /per its listed hours \(estimate\)/);
+    assert.doesNotMatch(text, /right now/i);
+  });
+
+  it("an explanation resting on the estimate is never presented as an observation by qualifyWhyThis", () => {
+    const factors: RankingFactor[] = [{ key: "open_now", label: OPEN_NOW_FACTOR_LABEL, weight: 1 }];
+    const text = buildWhyThisText(factors)!;
+    assert.equal(whyThisRestsOnEstimate(factors), true);
+    for (const cls of ["observed", "corroborated", null] as const) {
+      assert.equal(qualifyWhyThis(text, cls, { restsOnEstimate: true }), `${text} (inferred)`, `class ${cls}`);
+    }
+    // A class that is already not an observation keeps its own, weaker word.
+    assert.equal(qualifyWhyThis(text, "stale", { restsOnEstimate: true }), `${text} (stale)`);
+    // Without the estimate, an observed explanation is unchanged (CPV2-02 behaviour).
+    assert.equal(qualifyWhyThis("Recommended for you: matches your interests.", "observed"), "Recommended for you: matches your interests.");
+  });
+
+  it("only a sentence that includes the estimate is qualified by it — the same top-three selection buildWhyThisText makes", () => {
+    const heavy: RankingFactor[] = [
+      { key: "interest_match", label: "Matches your interests", weight: 3 },
+      { key: "city_match", label: "In your current city", weight: 3 },
+      { key: "history", label: "Like places you saved", weight: 3 },
+      { key: "open_now", label: OPEN_NOW_FACTOR_LABEL, weight: 1 },
+    ];
+    assert.doesNotMatch(buildWhyThisText(heavy)!, /listed hours/);
+    assert.equal(whyThisRestsOnEstimate(heavy), false);
+    const light = heavy.slice(1);
+    assert.match(buildWhyThisText(light)!, /listed hours/);
+    assert.equal(whyThisRestsOnEstimate(light), true);
+  });
+
+  it("the Discovery reason built on open_now says listed hours and estimate, and never 'around now'", () => {
+    for (const fired of [["open_now"], ["distance", "open_now"], ["cityMatch", "open_now"]]) {
+      const t = nearbyNowText(fired)!;
+      assert.match(t, /listed hours/i, fired.join("+"));
+      assert.match(t, /estimate/i, fired.join("+"));
+      assert.doesNotMatch(t, LIVE_WORDING, fired.join("+"));
+    }
   });
 });
