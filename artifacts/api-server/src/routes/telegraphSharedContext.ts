@@ -31,7 +31,7 @@
 import { Router } from "express";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isAcceptedTripMember, requireUser, sendError } from "../lib/http.js";
-import { asyncHandler } from "../lib/asyncHandler.js";
+import { asyncHandler } from "../lib/asyncHandler.js"; import { availabilityWithheldOwners } from "../services/telegraph/availabilityInvisibility.js"; // §4.3: invisible mode withholds the header's availability
 import { logger as rootLogger } from "../lib/logger.js";
 import {
   buildSharedContextProjection,
@@ -282,7 +282,7 @@ router.get(
     }
 
     // ── availability (§4, the AVAILABLE axis) ──────────────────────────────────
-    const windowsEnabled = await isFlagEnabled(client, OPEN_TO_PLANS_FLAG);
+    const windowsEnabled = await isFlagEnabled(client, OPEN_TO_PLANS_FLAG); const invisibleOwners = windowsEnabled ? await availabilityWithheldOwners(others) : new Set<string>(); // §4.3 invisible mode; null = unreadable, and every window is withheld
 
     const participants: HeaderParticipant[] = [];
     for (const other of others) {
@@ -290,7 +290,7 @@ router.get(
       let intents: string[] = [];
       let expiresAt: string | null = null;
       // Never across a block, either way, and never while the block state is unknown.
-      if (windowsEnabled && blocked !== null && !blocked.has(other)) {
+      if (windowsEnabled && blocked !== null && !blocked.has(other) && invisibleOwners !== null && !invisibleOwners.has(other)) {
         // §4.3 "Availability expires automatically and revokes across Telegraph,
         // Discovery and Compass" — expiry is re-evaluated HERE, on the read, by
         // the same predicate Passport uses. A stalled sweep cannot leave a stale

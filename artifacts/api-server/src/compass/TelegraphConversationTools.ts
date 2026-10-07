@@ -51,7 +51,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { logger as rootLogger } from "../lib/logger.js";
+import { logger as rootLogger } from "../lib/logger.js"; import { withholdInvisibleAvailability } from "../services/telegraph/availabilityInvisibility.js"; // §4.3: invisible mode withholds participant availability
 import { getNearbyVenues, type NearbyVenue } from "../lib/venuesService.js";
 import { resolvePrivacyVerdict, type TelegraphChatPrivacyVerdict } from "../services/telegraphChatSuggestions.js";
 import { resolveConversationCapabilities } from "../domain/telegraph/policies/conversationCapabilityPolicy.js";
@@ -369,7 +369,7 @@ export async function telegraphGetParticipantAvailability(
     }
   }
 
-  const sharing = out.filter((p) => p.windows.length > 0);
+  const shown = await withholdInvisibleAvailability(out, sc); if (shown.withheldForUnknown) unreadable += out.length; const sharing = shown.entries.filter((p) => p.windows.length > 0); // §4.3: an invisible owner's windows are withheld; unknown consent withholds all and counts as unreadable
   return {
     authorized: true,
     conversationId: gate.conversationId,
