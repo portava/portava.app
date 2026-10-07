@@ -301,14 +301,14 @@ export async function runMemoryDeletionLifecycle(
     version: MEMORY_DELETION_LIFECYCLE_VERSION,
   };
 
-  // The durable half (3670). A dead letter is WRITTEN; a completed run resolves
-  // any letter an earlier run left open. Neither can turn the deletion itself
-  // into a failure: the canonical row is already deleted by the caller.
-  if (deadLettered) {
+  // The durable half (3670). ANY run that does not complete is WRITTEN — a step
+  // that exhausted its retries AND a non-retryable failure (the Memory still
+  // published after the delete is the worst one); a completed run resolves.
+  if (!completed) {
     const written = await recordDeadLetter(sc, report, now);
     report.deadLetterDurable = written.durable;
     report.deadLetterDetail = written.detail;
-  } else if (completed) {
+  } else {
     const resolved = await resolveDeadLetter(sc, report.memoryId, report.ownerId, now);
     if (!resolved.ok) opts.log?.warn?.({ memoryId: report.memoryId, detail: resolved.detail }, "memories: an open §21 dead letter could not be marked resolved");
   }
@@ -316,11 +316,10 @@ export async function runMemoryDeletionLifecycle(
   if (!completed) {
     opts.log?.error(
       { report },
-      deadLettered
-        ? report.deadLetterDurable
-          ? "memories: §21 deletion lifecycle DEAD-LETTERED — recorded in memory_deletion_dead_letters"
-          : "memories: §21 deletion lifecycle DEAD-LETTERED — and the dead letter could NOT be recorded; this log line is the only record"
-        : "memories: §21 deletion lifecycle did not complete",
+      `memories: §21 deletion lifecycle ${deadLettered ? "DEAD-LETTERED" : "did not complete"} — ${report.deadLetterDurable
+        ? "recorded in memory_deletion_dead_letters"
+        : "and the dead letter could NOT be recorded; this log line is the only record"}`,
+      // (one statement: both outcomes are recorded, a retry-exhausted one and a non-retryable one)
     );
   }
   return report;
@@ -345,7 +344,7 @@ async function recordDeadLetter(sc: any, report: DeletionReport, now: Date): Pro
       .eq("memory_id", report.memoryId)
       .maybeSingle();
     if (priorErr) {
-      return { durable: false, detail: isTableAbsentError(priorErr) ? `${DEAD_LETTER_TABLE} is not deployed (3670 unapplied): ${String(priorErr.message ?? "")}` : `${DEAD_LETTER_TABLE} unreadable: ${String(priorErr.message ?? "")}` };
+      return { durable: false, detail: isStoreAbsent(priorErr) ? `${DEAD_LETTER_TABLE} is not deployed (3670 unapplied): ${String(priorErr.message ?? "")}` : `${DEAD_LETTER_TABLE} unreadable: ${String(priorErr.message ?? "")}` };
     }
     const nowIso = now.toISOString();
     const row = {

@@ -2036,9 +2036,9 @@ router.delete("/memories/:id", async (req, res) => {
   // projection: a feed assembled thirty seconds ago still contains this Memory
   // and is served from `compass_feed_cache` for up to four hours.
   //
-  // ONE OF THE FIVE STORES IS NOT DEPLOYED (`memory_evidence`, which has no
-  // migration anywhere). 2730 landed 2026-09-15, so DERIVATIVES_PURGED now runs
-  // against a real table — see memoryDeletionLifecycle.ts for the three outcomes.
+  // `memory_evidence` is migration 2320 (written, not applied everywhere); a
+  // run that cannot complete is recorded in memory_deletion_dead_letters (3670).
+  // 2730 landed 2026-09-15 — see memoryDeletionLifecycle.ts for the three outcomes.
   //
   // The report is LOGGED, not returned: DELETE answers 204 and changing that is
   // a client contract change. A caller is never told a deletion failed when the

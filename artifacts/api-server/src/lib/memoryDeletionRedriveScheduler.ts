@@ -55,13 +55,20 @@ export interface RedriveResult {
   moot: number;
   /** The Memory could not be read: left open. */
   unreadable: number;
+  /**
+   * The letter records that the DELETED step failed and the Memory is still not
+   * deleted: the deletion itself did not take. Never closed and never re-run
+   * here — an operator's letter. Moved to the back of the queue so it cannot
+   * starve the batch.
+   */
+  needsOperator: number;
 }
 
 export async function runMemoryDeletionRedrivePass(
   opts: { client?: any; now?: Date } = {},
 ): Promise<RedriveResult> {
   const db = "client" in opts && opts.client !== undefined ? opts.client : getServiceClient();
-  const out: RedriveResult = { skipped: true, reason: null, considered: 0, resolved: 0, stillFailing: 0, moot: 0, unreadable: 0 };
+  const out: RedriveResult = { skipped: true, reason: null, considered: 0, resolved: 0, stillFailing: 0, moot: 0, unreadable: 0, needsOperator: 0 };
   if (!db) return { ...out, reason: "no_client" };
   if (!(await isFlagEnabled(db, REDRIVE_FLAG))) return { ...out, reason: "disabled" };
   const now = opts.now ?? new Date();
@@ -69,7 +76,7 @@ export async function runMemoryDeletionRedrivePass(
   try {
     const { data, error } = await db
       .from("memory_deletion_dead_letters")
-      .select("memory_id, owner_id, detail")
+      .select("memory_id, owner_id, detail, failed_steps")
       .is("resolved_at", null)
       .order("last_failed_at", { ascending: true })
       .limit(REDRIVE_BATCH);
@@ -78,7 +85,7 @@ export async function runMemoryDeletionRedrivePass(
       logger.warn({ err: error }, "memory deletion redrive: open letters unreadable");
       return { ...out, reason: "error" };
     }
-    const letters = (Array.isArray(data) ? data : []) as Array<{ memory_id: string; owner_id: string; detail: string }>;
+    const letters = (Array.isArray(data) ? data : []) as Array<{ memory_id: string; owner_id: string; detail: string; failed_steps: string[] | null }>;
     const result: RedriveResult = { ...out, skipped: false, considered: letters.length };
 
     for (const letter of letters) {
@@ -89,6 +96,16 @@ export async function runMemoryDeletionRedrivePass(
         .maybeSingle();
       if (rowErr) { result.unreadable += 1; continue; }
       if (row && (row as any).state !== "deleted") {
+        if ((letter.failed_steps ?? []).includes("DELETED")) {
+          const { error: bumpErr } = await db
+            .from("memory_deletion_dead_letters")
+            .update({ last_failed_at: now.toISOString() })
+            .eq("memory_id", letter.memory_id)
+            .is("resolved_at", null)
+            .select("memory_id");
+          if (bumpErr) result.unreadable += 1; else result.needsOperator += 1;
+          continue;
+        }
         const { error: mootErr } = await db
           .from("memory_deletion_dead_letters")
           .update({ resolved_at: now.toISOString(), detail: `${String(letter.detail ?? "")} | moot: the Memory is '${String((row as any).state)}', not deleted — nothing was re-run`.slice(0, 4000) })

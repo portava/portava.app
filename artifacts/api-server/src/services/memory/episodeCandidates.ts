@@ -776,7 +776,7 @@ export async function confirmCandidate(
     .maybeSingle();
   if (keptErr) return { ok: false, reason: "unavailable", detail: `memories: ${keptErr.message}` };
   if (!keptRow || (keptRow as { state: string }).state === "deleted") {
-    const retired = await retireEpisodesAndPurgeEvidence(sc, { ownerId: input.ownerId, episodeIds: [ep.id], now: input.now });
+    const retired = await retireEpisodesAndPurgeEvidence(sc, { ownerId: input.ownerId, episodeIds: [ep.id], now: input.now, order: "purge_first" });
     if (retired.state !== "done") return { ok: false, reason: "unavailable", detail: `retiring a deleted Memory's suggestion: ${retired.detail}` };
     return { ok: false, reason: "not_a_candidate", detail: "the Memory this suggestion was kept as has been deleted" };
   }

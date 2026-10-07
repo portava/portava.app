@@ -95,7 +95,7 @@ function seed(): Record<string, any[]> {
 let gen = 0;
 const newId = () => `e${String(++gen).padStart(7, "0")}-0000-4000-8000-000000000000`;
 
-interface FakeOpts { absent?: Set<string>; failWrites?: Set<string> }
+interface FakeOpts { absent?: Set<string>; failWrites?: Set<string>; failReads?: Set<string> }
 
 function makeClient(store: Record<string, any[]>, opts: FakeOpts = {}) {
   function chain(table: string) {
@@ -147,7 +147,7 @@ function makeClient(store: Record<string, any[]>, opts: FakeOpts = {}) {
           }
         }
       }
-      if (mode !== "select" && opts.failWrites?.has(`${table}:${mode}`)) return err(`${table} ${mode} failed`, "57014");
+      if (mode !== "select" && opts.failWrites?.has(`${table}:${mode}`)) return err(`${table} ${mode} failed`, "57014"); if (mode === "select" && opts.failReads?.has(table)) return err(`${table} read failed`, "57014");
       const all = (store[table] ??= []);
       if (mode === "insert" || mode === "upsert") {
         const written: any[] = [];
@@ -547,5 +547,121 @@ describe("the redrive pass re-runs dead-lettered deletions (memory_deletion_redr
     app.store.feature_flags.push(FLAG_ON);
     const out = await runMemoryDeletionRedrivePass({ client: makeClient(app.store, { absent: new Set(["memory_deletion_dead_letters"]) }) });
     assert.deepEqual([out.skipped, out.reason], [true, "not_deployed"]);
+  });
+});
+
+describe("verifier findings F1-F5 (VERIFY-H-45bca4a1c6)", () => {
+  const letterOf = (a: App, memoryId: string) => (a.store.memory_deletion_dead_letters ?? []).find((r) => r.memory_id === memoryId);
+  const runAt = (a: App, memoryId: string, iso: string, opts: FakeOpts = {}) =>
+    runMemoryDeletionLifecycle(makeClient(a.store, opts) as any, {
+      memoryId, ownerId: OWNER, actorUserId: OWNER, previous: { visibility: "only_me", state: "published" }, now: new Date(iso),
+    });
+
+  it("F1: the link read FAILS (not absent): step 4 is a retryable failure, retried to the cap and dead-lettered — never `done` with nothing purged", async () => {
+    app = await start();
+    const { memoryId, episodeId } = await keepEvening(app);
+    _setTestClient(makeClient(app.store, { failReads: new Set(["memory_evidence"]) }) as any, true);
+    assert.equal((await call(app, "DELETE", `/api/memories/${memoryId}`)).status, 204);
+    const report = lifecycleReport(app);
+    const purge = step(report, "RAW_EVIDENCE_PURGED");
+    assert.deepEqual([purge.outcome, purge.retryable, purge.attempts], ["failed", true, 3]);
+    assert.match(purge.detail, /memory_evidence link read/);
+    assert.equal(report.deadLettered, true);
+    assert.equal(evidenceOf(app, episodeId).length, 4, "nothing was claimed purged");
+    assert.deepEqual(letterOf(app, memoryId).failed_steps, ["RAW_EVIDENCE_PURGED"]);
+  });
+
+  it("F2: a Keep whose Memory read FAILS is refused 503 — no link row and no photo is written", async () => {
+    app = await start();
+    assert.equal((await detect(app)).status, 200);
+    const ep = evening(app);
+    _setTestClient(makeClient(app.store, { failReads: new Set(["memories"]) }) as any, true);
+    const keep = await call(app, "POST", `/api/me/memory-candidates/${ep.id}/confirm`, {});
+    assert.equal(keep.status, 503, JSON.stringify(keep.body));
+    assert.equal(evidenceOf(app, ep.id).filter((v) => v.source_table === "memories").length, 0, "no link to a Memory whose state could not be read");
+    const made = app.store.memories.find((x) => x.owner_id === OWNER && x.id !== PLAIN_MEMORY);
+    assert.equal(app.store.memory_items.filter((i) => i.memory_id === made?.id).length, 0, "no photo attached");
+  });
+
+  it("F3: interrupted Keep → DELETE → Keep with the purge failing: the episode stays `confirmed` with its captures, and the next Keep purges and retires — nothing is orphaned", async () => {
+    app = await start();
+    assert.equal((await detect(app)).status, 200);
+    const ep = evening(app);
+    _setTestClient(makeClient(app.store, { failWrites: new Set(["memory_evidence:upsert"]) }) as any, true);
+    assert.equal((await call(app, "POST", `/api/me/memory-candidates/${ep.id}/confirm`, {})).status, 503);
+    const made = app.store.memories.find((x) => x.owner_id === OWNER && x.id !== PLAIN_MEMORY);
+    _setTestClient(makeClient(app.store) as any, true);
+    assert.equal((await call(app, "DELETE", `/api/memories/${made.id}`)).status, 204);
+
+    _setTestClient(makeClient(app.store, { failWrites: new Set(["memory_evidence:delete"]) }) as any, true);
+    assert.equal((await call(app, "POST", `/api/me/memory-candidates/${ep.id}/confirm`, {})).status, 503);
+    assert.equal(app.store.memory_episodes.find((e) => e.id === ep.id).state, "confirmed", "not retired while its evidence could not be purged");
+    assert.equal(evidenceOf(app, ep.id).length, 3, "the captures are still reachable from a live episode");
+    _setTestClient(makeClient(app.store) as any, true);
+    const inbox = await call(app, "GET", "/api/me/memory-candidates");
+    assert.ok(inbox.body.candidates.some((c: any) => c.id === ep.id && c.state === "interrupted"), "the owner is still shown it, so it is retried");
+
+    const again = await call(app, "POST", `/api/me/memory-candidates/${ep.id}/confirm`, {});
+    assert.equal(again.status, 409, "refused by the deleted Memory, not by the episode state");
+    assert.deepEqual(evidenceOf(app, ep.id), []);
+    assert.equal(app.store.memory_episodes.find((e) => e.id === ep.id).state, "deleted");
+    assert.equal(app.store.memories.find((x) => x.id === made.id).state, "deleted");
+  });
+
+  it("F4: a run that leaves the Memory published (DELETED fails, non-retryable) is RECORDED, and the redrive keeps it open for an operator without running a step", async () => {
+    app = await start();
+    const { memoryId, episodeId } = await keepEvening(app);
+    const report = await runAt(app, memoryId, "2026-10-07T10:00:00.000Z");
+    assert.deepEqual([report.completed, report.deadLettered, report.deadLetterDurable], [false, false, true]);
+    const letter = letterOf(app, memoryId);
+    assert.ok(letter.failed_steps.includes("DELETED"));
+    assert.match(letter.detail, /still in state 'published'/);
+
+    app.store.feature_flags.push({ flag: "memory_deletion_redrive_enabled", enabled: true });
+    const evidenceBefore = JSON.stringify(evidenceOf(app, episodeId));
+    const out = await runMemoryDeletionRedrivePass({ client: makeClient(app.store), now: new Date("2026-10-07T11:00:00.000Z") });
+    assert.deepEqual([out.needsOperator, out.moot, out.resolved], [1, 0, 0]);
+    assert.deepEqual([letterOf(app, memoryId).resolved_at, letterOf(app, memoryId).last_failed_at], [null, "2026-10-07T11:00:00.000Z"]);
+    assert.equal(JSON.stringify(evidenceOf(app, episodeId)), evidenceBefore, "no deletion step ran against the published Memory");
+  });
+
+  it("M1: a link to a Memory row that no longer exists — Keep refuses and attaches nothing", async () => {
+    app = await start();
+    const { memoryId, episodeId } = await keepEvening(app);
+    const itemsBefore = app.store.memory_items.length;
+    app.store.memories = app.store.memories.filter((x) => x.id !== memoryId); // hard-deleted
+    const keep = await call(app, "POST", `/api/me/memory-candidates/${episodeId}/confirm`, {});
+    assert.equal(keep.status, 409, JSON.stringify(keep.body));
+    assert.equal(app.store.memory_items.length, itemsBefore, "no photo attached to a Memory that is gone");
+    assert.deepEqual(evidenceOf(app, episodeId), []);
+  });
+
+  it("M3: a completing run does not re-stamp a letter that is already resolved", async () => {
+    app = await start();
+    const { memoryId } = await keepEvening(app);
+    app.store.memories.find((x) => x.id === memoryId).state = "deleted";
+    await runAt(app, memoryId, "2026-10-07T10:00:00.000Z", { failWrites: new Set(["memory_evidence:delete"]) });
+    await runAt(app, memoryId, "2026-10-07T11:00:00.000Z");
+    assert.equal(letterOf(app, memoryId).resolved_at, "2026-10-07T11:00:00.000Z");
+    const later = await runAt(app, memoryId, "2026-10-07T12:00:00.000Z");
+    assert.equal(later.completed, true);
+    assert.equal(letterOf(app, memoryId).resolved_at, "2026-10-07T11:00:00.000Z", "the first resolution is the record");
+  });
+
+  it("M2: a Memory linked from TWO episodes — both are retired and every row of both is purged", async () => {
+    app = await start();
+    const { memoryId, episodeId } = await keepEvening(app);
+    const second = { ...app.store.memory_episodes.find((e) => e.id === episodeId), id: "e7777777-0000-4000-8000-000000000000", detection_digest: "second", started_at: "2026-03-04T10:00:00.000Z", ended_at: "2026-03-04T11:00:00.000Z" };
+    app.store.memory_episodes.push(second);
+    app.store.memory_evidence.push(
+      { id: "f1000000-0000-4000-8000-000000000001", episode_id: second.id, user_id: OWNER, truth_level: "asserted", source_class: "explicit", source_table: "memories", source_id: memoryId, source_ref: {}, observed_at: null, recorded_at: "2026-10-07T00:00:00.000Z", weight: 1 },
+      { id: "f1000000-0000-4000-8000-000000000002", episode_id: second.id, user_id: OWNER, truth_level: "observed", source_class: "system", source_table: "media_assets", source_id: m(4), source_ref: {}, observed_at: null, recorded_at: "2026-10-07T00:00:00.000Z", weight: 0.7 },
+    );
+    assert.equal((await call(app, "DELETE", `/api/memories/${memoryId}`)).status, 204);
+    for (const id of [episodeId, second.id]) {
+      assert.deepEqual(evidenceOf(app, id), [], `episode ${id} keeps no evidence`);
+      assert.equal(app.store.memory_episodes.find((e) => e.id === id).state, "deleted");
+    }
+    assert.deepEqual([step(lifecycleReport(app), "RAW_EVIDENCE_PURGED").facts.purged, step(lifecycleReport(app), "RAW_EVIDENCE_PURGED").facts.episodesRetired], [6, 2]);
   });
 });

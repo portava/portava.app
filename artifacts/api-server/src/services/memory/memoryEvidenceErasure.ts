@@ -73,39 +73,65 @@ export const RETIRED_EPISODE_CLEARED = {
  */
 export async function retireEpisodesAndPurgeEvidence(
   sc: SupabaseClient,
-  input: { ownerId: string; episodeIds: readonly string[]; now: Date },
+  input: {
+    ownerId: string; episodeIds: readonly string[]; now: Date;
+    /**
+     * `retire_first` (the deletion lifecycle): the link row is the only way back
+     * from the Memory to its episode, so the episode is retired before the link
+     * is purged, and a failed purge is retried with the link still there.
+     * `purge_first` (a Keep that found its Memory deleted, which has NO link to
+     * follow): purge, then retire. A failed purge leaves the episode `confirmed`,
+     * so the inbox keeps it in front of the owner and the next Keep — refused by
+     * the deleted Memory, not by the episode state — retries the purge. Retiring
+     * first there would orphan the evidence under a tombstone nothing revisits.
+     */
+    order?: "retire_first" | "purge_first";
+  },
 ): Promise<EvidenceErasureOutcome> {
   const episodes = [...new Set(input.episodeIds)];
   if (episodes.length === 0) return { state: "done", episodes, retired: 0, purged: 0 };
+  if (input.order === "purge_first") {
+    const purged = await purge(sc, input.ownerId, episodes);
+    if (purged.state !== "done") return purged;
+    const retired = await retire(sc, input.ownerId, episodes, input.now);
+    if (retired.state !== "done") return retired;
+    return { state: "done", episodes, retired: retired.count, purged: purged.count };
+  }
+  const retired = await retire(sc, input.ownerId, episodes, input.now);
+  if (retired.state !== "done") return retired;
+  const purged = await purge(sc, input.ownerId, episodes);
+  if (purged.state !== "done") return purged;
+  return { state: "done", episodes, retired: retired.count, purged: purged.count };
+}
 
+type StepOutcome = { state: "done"; count: number } | Exclude<EvidenceErasureOutcome, { state: "done" }>;
+
+async function retire(sc: SupabaseClient, ownerId: string, episodes: string[], now: Date): Promise<StepOutcome> {
   const { data: retiredRows, error: retireErr } = await sc
     .from("memory_episodes")
-    .update({ state: "deleted", state_changed_at: input.now.toISOString(), ...RETIRED_EPISODE_CLEARED })
-    .eq("user_id", input.ownerId)
+    .update({ state: "deleted", state_changed_at: now.toISOString(), ...RETIRED_EPISODE_CLEARED })
+    .eq("user_id", ownerId)
     .in("id", episodes)
     .select("id");
   if (retireErr) {
     if (isTableAbsentError(retireErr)) return { state: "absent", detail: `memory_episodes: ${retireErr.message}` };
     return { state: "failed", detail: `memory_episodes retire: ${retireErr.message}`, episodes };
   }
+  return { state: "done", count: Array.isArray(retiredRows) ? retiredRows.length : 0 };
+}
 
+async function purge(sc: SupabaseClient, ownerId: string, episodes: string[]): Promise<StepOutcome> {
   const { data: purgedRows, error: purgeErr } = await sc
     .from("memory_evidence")
     .delete()
-    .eq("user_id", input.ownerId)
+    .eq("user_id", ownerId)
     .in("episode_id", episodes)
     .select("id");
   if (purgeErr) {
     if (isTableAbsentError(purgeErr)) return { state: "absent", detail: `memory_evidence: ${purgeErr.message}` };
     return { state: "failed", detail: `memory_evidence purge: ${purgeErr.message}`, episodes };
   }
-
-  return {
-    state: "done",
-    episodes,
-    retired: Array.isArray(retiredRows) ? retiredRows.length : 0,
-    purged: Array.isArray(purgedRows) ? purgedRows.length : 0,
-  };
+  return { state: "done", count: Array.isArray(purgedRows) ? purgedRows.length : 0 };
 }
 
 /** §21 RAW_EVIDENCE_PURGED for one Memory. Never throws for a resolved error. */
