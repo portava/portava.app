@@ -2943,7 +2943,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // ADDED 2026-09-13 (§11): CX-04 and CH-03 are C because of what this file
     // asserts, so an edit to it must age the census that rests on it.
     "artifacts/api-server/src/test/compassCensusCorrectness.test.ts",
-    "artifacts/api-server/src/services/airport/LayoverCompassService.ts",
+    "artifacts/api-server/src/services/airport/LayoverCompassService.ts", "artifacts/api-server/src/services/airport/layoverQuestionScope.ts", "artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts", // §50 (L3-FC): CL-02 rests on both; on this line so no cited line moves
     "artifacts/api-server/src/test/compass-live-constraints.test.ts",
     "travel-buddy-standalone/src/features/map/compass/compassMapModel.ts",
     "artifacts/api-server/src/test/compass-social.test.ts",
