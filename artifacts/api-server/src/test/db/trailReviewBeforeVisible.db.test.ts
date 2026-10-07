@@ -11,7 +11,10 @@
  *       decided Trail cannot be decided again;
  *   D4  approval makes it 'approved', activates a 'proposed' lifecycle, and
  *       every client can read it;
- *   D5  no client role can call trail_review_decide.
+ *   D5  no client role can call trail_review_decide;
+ *   D6  a Trail under review cannot be declared a parent, at the decision itself
+ *       (verifier on dc0107eda5, L3): invalid_parent and nothing written; once
+ *       approved, the same child is created under it.
  *
  * Skips without LOCAL_DB_URL (scripts/local-db/run-tests.sh refuses skipped > 0,
  * so CI's api-server-local-db job runs every case).
@@ -28,6 +31,8 @@ describe("3977: review before a Trail is visible", { skip: SKIP }, () => {
   let creator = "";
   /** A second person who starts Trails: 3975 allows one person three a day, and D1–D3 use `creator`'s three. */
   let creator2 = "";
+  /** D6's proposer (the other two have spent their allowance or most of it). */
+  let creator3 = "";
   let other = "";
   let admin = "";
   const tag = `d66${randomUUID().slice(0, 8)}`;
@@ -56,12 +61,13 @@ describe("3977: review before a Trail is visible", { skip: SKIP }, () => {
   before(() => {
     creator = seedUser("d66_creator");
     creator2 = seedUser("d66_creator2");
+    creator3 = seedUser("d66_creator3");
     other = seedUser("d66_other");
     admin = seedUser("d66_admin");
   });
   after(() => {
     if (made.length) exec(`DELETE FROM public.trails WHERE id IN (${made.map((x) => `'${x}'`).join(",")});`);
-    for (const u of [creator, creator2, other, admin]) if (u) deleteUser(u);
+    for (const u of [creator, creator2, creator3, other, admin]) if (u) deleteUser(u);
   });
 
   it("D1. a person's Trail is pending; a system proposal is approved", () => {
@@ -107,5 +113,20 @@ describe("3977: review before a Trail is visible", { skip: SKIP }, () => {
     assert.notEqual(r.status, 0, "an authenticated client decided a review");
     assert.match(r.stderr, /permission denied/);
     assert.equal(state(id), "pending|proposed|");
+  });
+
+  it("D6. a pending parent is refused at the decision (invalid_parent, nothing written); approved, the same child is created", () => {
+    const parent = propose(`${tag} Belem Pastry Loop`, creator3);
+    const child = (title: string) => JSON.parse(exec(
+      `SET LOCAL ROLE service_role;\nSELECT public.trail_propose('${title}', '${tag}-belem', NULL, '${parent}', '${creator3}')::text;`,
+      { single: true },
+    ).at(-1)!);
+    const before = scalar(`SELECT count(*) FROM public.trails WHERE parent_trail_id = '${parent}';`);
+    assert.equal(child(`${tag} Belem Riverside Custard`).outcome, "invalid_parent");
+    assert.equal(scalar(`SELECT count(*) FROM public.trails WHERE parent_trail_id = '${parent}';`), before, "nothing written");
+    assert.equal(decide(parent, "approve", null).outcome, "decided");
+    const ok = child(`${tag} Belem Riverside Custard`);
+    assert.equal(ok.outcome, "created", JSON.stringify(ok));
+    made.push(ok.trail.id);
   });
 });

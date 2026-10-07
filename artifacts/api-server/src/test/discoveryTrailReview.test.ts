@@ -31,7 +31,7 @@ import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import trailsRouter from "../routes/trails.js";
 import adminTrailsRouter from "../routes/adminTrails.js";
-import { trailIsPublic, trailVisibleTo } from "../services/trails/TrailService.js";
+import { trailIsPublic, trailVisibleTo, loadViewerTrailModifier } from "../services/trails/TrailService.js";
 import { maskUnseenTrailIds } from "../services/trails/trailReview.js";
 import { makeFakeClient, startRouter, call, type FakeClient, type FakeDbOptions, type RouterHarness } from "./telegraphCertificationHarness.js";
 
@@ -237,6 +237,37 @@ describe("O6 (verifier F3 on dc0107eda5) — the canonicalisation 409 never name
   });
 });
 
+describe("O7 (verifier on dc0107eda5, L2) — a followed Trail under review feeds nobody's ranking", () => {
+  // loadViewerTrailModifier turns the viewer's followed Trails into a place affinity. A follow placed on a
+  // `proposed` Trail before 3977 survives its move to `pending`, so the read narrows to approved Trails.
+  const followSeed = (followed: string) => {
+    const s = seed();
+    s.trail_follows = [{ user_id: OTHER, trail_id: followed, created_at: iso(-5) }];
+    s.content_trails = [{ id: `m-${followed.slice(-2)}`, trail_id: followed, source_type: "place", source_id: PLACE, relationship: "primary",
+      confidence: 0.9, contributor_id: CREATOR, content_state: "active", created_at: iso(-10) }];
+    return s;
+  };
+  it("O7a. THE POINT: a followed PENDING (or REJECTED) Trail contributes no affinity and is not reported as followed", async () => {
+    for (const t of [PENDING, REJECTED]) {
+      const r = await loadViewerTrailModifier(makeFakeClient(followSeed(t)), OTHER, [PLACE]);
+      assert.equal(r.refusal, null);
+      assert.deepEqual(r.followedTrailIds, [], t);
+      assert.deepEqual(r.trailAffinity, {}, t);
+    }
+  });
+  it("O7b. CONTROL: a followed APPROVED Trail does", async () => {
+    const s = followSeed(PUBLIC);
+    const r = await loadViewerTrailModifier(makeFakeClient(s), OTHER, [PLACE]);
+    assert.deepEqual(r.followedTrailIds, [PUBLIC]);
+    assert.ok((r.trailAffinity[PLACE] ?? 0) > 0, JSON.stringify(r.trailAffinity));
+  });
+  it("O7c. the review state unreadable: a refusal, never 'approved'", async () => {
+    const r = await loadViewerTrailModifier(makeFakeClient(followSeed(PUBLIC), { errors: { trails: { message: "trails down", code: "57P01", ops: ["select"] } } }), OTHER, [PLACE]);
+    assert.notEqual(r.refusal, null);
+    assert.deepEqual(r.trailAffinity, {});
+  });
+});
+
 describe("A — the admin", () => {
   it("A1. THE POINT: approving makes the Trail everyone's (and activates a proposed lifecycle)", async () => {
     const c = use();
@@ -331,8 +362,15 @@ describe("M — 3977's SQL, statically", () => {
     const stripped = fn
       .replace(", lifecycle_status, review_state)", ", lifecycle_status)")
       .replace(/'proposed',\n    -- 3977[^\n]*\n    CASE WHEN p_created_by IS NULL THEN 'approved' ELSE 'pending' END\)/, "'proposed')")
-      .replace(",\n    'review_state', v_row.review_state, 'review_reason', v_row.review_reason));", "));");
+      .replace(",\n    'review_state', v_row.review_state, 'review_reason', v_row.review_reason));", "));")
+      // the parent must be approved (verifier on dc0107eda5, L3): one declared variable, one wider read, one wider refusal
+      .replace("  v_parent_state text;\n  v_parent_review text;\n", "  v_parent_state text;\n")
+      .replace(/  -- 2\. The declared parent, read by id and held against a concurrent archive\.\n  --    3977[^\n]*\n  --[^\n]*\n/, "  -- 2. The declared parent, read by id and held against a concurrent archive.\n")
+      .replace("SELECT tr.lifecycle_status, tr.review_state INTO v_parent_state, v_parent_review", "SELECT tr.lifecycle_status INTO v_parent_state")
+      .replace("IF NOT FOUND OR v_parent_state = 'archived' OR v_parent_review IS DISTINCT FROM 'approved' THEN", "IF NOT FOUND OR v_parent_state = 'archived' THEN");
     assert.equal(stripped, fnOf(old));
+    assert.match(fn, /IF NOT FOUND OR v_parent_state = 'archived' OR v_parent_review IS DISTINCT FROM 'approved' THEN\s+RETURN jsonb_build_object\('outcome', 'invalid_parent'\);/,
+      "a parent under review is refused at the decision, not only by the API's pre-check");
   });
   it("M2. the client door: three RESTRICTIVE select policies (trails, members, edges); 3390's permissive ones untouched", () => {
     for (const p of ["trails_review_visible ON public.trails AS RESTRICTIVE", "content_trails_review_visible ON public.content_trails AS RESTRICTIVE", "trail_edges_review_visible ON public.trail_edges AS RESTRICTIVE"]) {

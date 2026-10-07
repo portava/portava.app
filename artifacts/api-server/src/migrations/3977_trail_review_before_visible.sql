@@ -185,6 +185,7 @@ AS $fn$
 DECLARE
   v_key bigint;
   v_parent_state text;
+  v_parent_review text;
   v_peers jsonb;
   v_verdict jsonb;
   v_refusals jsonb;
@@ -221,10 +222,12 @@ BEGIN
   END LOOP;
 
   -- 2. The declared parent, read by id and held against a concurrent archive.
+  --    3977 (lead ruling D-66): and against a Trail under review — a pending or
+  --    rejected Trail is not linked, so it cannot be a parent, whoever proposes.
   IF p_parent_trail_id IS NOT NULL THEN
-    SELECT tr.lifecycle_status INTO v_parent_state
+    SELECT tr.lifecycle_status, tr.review_state INTO v_parent_state, v_parent_review
       FROM public.trails AS tr WHERE tr.id = p_parent_trail_id FOR SHARE;
-    IF NOT FOUND OR v_parent_state = 'archived' THEN
+    IF NOT FOUND OR v_parent_state = 'archived' OR v_parent_review IS DISTINCT FROM 'approved' THEN
       RETURN jsonb_build_object('outcome', 'invalid_parent');
     END IF;
   END IF;

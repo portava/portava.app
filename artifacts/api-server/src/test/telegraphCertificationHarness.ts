@@ -471,7 +471,7 @@ export interface HttpResult {
 
 export async function call(
   base: string,
-  method: "GET" | "POST" | "PATCH" | "DELETE",
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
   path: string,
   asUser: string,
   body?: any,

@@ -1170,7 +1170,15 @@ export async function loadViewerTrailModifier(
     .eq("user_id", viewerId)
     .limit(MAX_FOLLOWED_TRAILS_PER_VIEWER);
   if (follows.error) return { ...none, refusal: refusalFor(follows.error, "loadViewerTrailModifier.follows") };
-  const followedTrailIds = ((follows.data ?? []) as any[]).map((r) => r.trail_id).filter(Boolean);
+  const followedAll = ((follows.data ?? []) as any[]).map((r) => r.trail_id).filter(Boolean);
+  if (followedAll.length === 0) return none;
+  // Lead ruling D-66 (verifier on dc0107eda5, L2): a Trail under review is not ranked. A follow placed on a
+  // `proposed` Trail before 3977 survives its move to `pending`, so the followed set is narrowed to APPROVED Trails
+  // here, as every other ranking reader is. An unreadable review state is a refusal, never "approved".
+  const approved = await sc.from("trails").select("id").in("id", followedAll).eq("review_state", "approved");
+  if (approved.error) return { ...none, refusal: refusalFor(approved.error, "loadViewerTrailModifier.reviewState") };
+  const approvedIds = new Set(((approved.data ?? []) as any[]).map((r) => String(r.id)));
+  const followedTrailIds = followedAll.filter((id: string) => approvedIds.has(String(id)));
   if (followedTrailIds.length === 0) return none;
 
   const members = await sc.from("content_trails")
