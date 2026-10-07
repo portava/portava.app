@@ -1388,9 +1388,14 @@ async function buildTrust(
     const label = badge.level === "new_traveler"
       ? (verified ? "New Traveler · Verified" : "New Traveler")
       : badge.label;
+    // Verifier finding 7 (2026-10-06): the raw evidence numbers are the trust
+    // engine's internals — the count includes negative events, so a stranger
+    // watching it move learns WHEN one landed, and weight against count
+    // reveals recency. census-trust A1/A3/C20: a non-owner sees the band and
+    // its basis, never the numbers. They ride only on the owner's own view.
     return {
       label, publicLevel: badge.level, score: null, confidence,
-      confidenceBasis, evidenceWeight, evidenceCount,
+      confidenceBasis,
       strengths: badge.strengths, domains,
       ...(degraded || badge.profileUnavailable ? { degraded: true } : {}),
     };
@@ -1433,7 +1438,9 @@ async function buildTrust(
 
   return {
     label, publicLevel: summary.publicLevel, score, confidence,
-    confidenceBasis, evidenceWeight, evidenceCount,
+    confidenceBasis,
+    // Owner-only, like `score` (see the public branch above for why).
+    ...(context === "self" ? { evidenceWeight, evidenceCount } : {}),
     strengths: summary.strengths, domains,
     ...(recoveryHints ? { recoveryHints } : {}),
     ...(degraded || summary.profileUnavailable ? { degraded: true } : {}),

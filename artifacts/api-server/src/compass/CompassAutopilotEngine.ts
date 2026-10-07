@@ -25,6 +25,7 @@ import { getWeatherContext, type DailyWeather } from "../lib/weatherCache.js";
 import { tripKernelClient, executeTripCommand, planCommandTypeForPatch } from "../domain/trips/commands/tripKernel.js";
 import { COMPASS_AUTOPILOT_ALGORITHM_VERSION } from "./CompassAlgorithmVersion.js";
 import { recordOpportunityCompletion } from "../domain/trips/services/tripOpportunityMetrics.js";
+import { PLAN_ITEM_PRIVACY_COLUMNS, planItemAccessFor, withholdPrivatePlanItems } from "./planItemAccess.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -308,16 +309,20 @@ export type PlanItemsRead =
   | { status: "ok"; items: PlanItem[] }
   | { status: "unread"; reason: string };
 
-export async function fetchPlanItems(sc: SupabaseClient, tripId: string): Promise<PlanItemsRead> {
+export async function fetchPlanItems(sc: SupabaseClient, tripId: string, viewerId: string): Promise<PlanItemsRead> {
   try {
     const { data, error } = await sc
       .from("trip_plan_items")
-      .select("id, title, category, status, lock_type, day_date, starts_at, ends_at, location_name, lat, lng, source_type, source_id, sort_order")
+      .select(`id, title, category, status, lock_type, day_date, starts_at, ends_at, location_name, lat, lng, source_type, source_id, sort_order, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
       .eq("trip_id", tripId)
       .is("removed_at", null)
       .neq("status", "cancelled");
     if (error) return { status: "unread", reason: "trip_plan_items could not be read" };
-    return { status: "ok", items: ((data ?? []) as any[]).map(toPlanItem) };
+    // OD-TRIP-3 (compass/planItemAccess.ts): another member's private item keeps
+    // its slot (id, time, lock type) and loses its place and name — so no
+    // conflict, travel time or proposal text can be derived from where it is.
+    const visible = withholdPrivatePlanItems((data ?? []) as any[], await planItemAccessFor(sc, tripId, viewerId));
+    return { status: "ok", items: visible.map(toPlanItem) };
   } catch {
     return { status: "unread", reason: "trip_plan_items could not be read" };
   }
@@ -666,7 +671,7 @@ export async function runAutopilotCheck(
 ): Promise<AutopilotRunResult> {
   const unreadSources: string[] = [];
   const settingsRead = await getAutopilotSettings(sc, tripId, userId);
-  const itemsRead = await fetchPlanItems(sc, tripId);
+  const itemsRead = await fetchPlanItems(sc, tripId, userId);
   const { data: trip, error: tripErr } = await sc
     .from("trips")
     .select("id, destination_city, start_date, end_date")
@@ -880,7 +885,7 @@ export async function applyProposal(
   }
   const settings = settingsRead.settings;
   const changes: ItemChange[] = Array.isArray(proposal.changes) ? proposal.changes : [];
-  const itemsRead = await fetchPlanItems(sc, proposal.trip_id);
+  const itemsRead = await fetchPlanItems(sc, proposal.trip_id, proposal.user_id);
   // An unreadable plan made `byId` empty, and every change was then refused
   // with "item no longer exists" — a statement about the TRIP, made from a
   // fact about the database, that invites the user to delete a proposal whose
@@ -996,7 +1001,7 @@ export async function computeHeartbeat(
     .eq("id", tripId)
     .maybeSingle();
   if (tripErr) unreadSources.push("trips");
-  const itemsRead = await fetchPlanItems(sc, tripId);
+  const itemsRead = await fetchPlanItems(sc, tripId, userId);
 
   // `status: "unknown"` rather than `"healthy"`. The plan is the Heartbeat's
   // whole subject: with no items every detector is silent, every count is 0 and

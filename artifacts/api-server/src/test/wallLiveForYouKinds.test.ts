@@ -520,11 +520,15 @@ describe("trip_signal producer — trip-scoped, anchored on a saved stop", () =>
     assert.deepEqual(cands, []);
   });
 
-  it("never surfaces a milestone that does not say it is public (privacy null) — D-65 (verifier L2)", async () => {
-    const cands = await buildTripSignalLiveCandidates(
+  it("OD-TRIP-3: never surfaces a milestone whose privacy flag is NULL or unread (the column defaults TRUE)", async () => {
+    const nullFlag = await buildTripSignalLiveCandidates(
       tripClient([planItem({ location_is_private: null })]), VIEWER, TRIPS, PLACES, { now: NOW },
     );
-    assert.deepEqual(cands, []);
+    assert.deepEqual(nullFlag, []);
+    const absent = planItem({});
+    delete (absent as Record<string, unknown>).location_is_private;
+    const unread = await buildTripSignalLiveCandidates(tripClient([absent]), VIEWER, TRIPS, PLACES, { now: NOW });
+    assert.deepEqual(unread, []);
   });
 
   it("never surfaces a removed or cancelled milestone", async () => {

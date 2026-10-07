@@ -226,11 +226,18 @@ function seedTrip(store: Record<string, Row[]>, city = "Cebu City"): void {
   }];
 }
 
-function seedPlanItem(store: Record<string, Row[]>, id: string, title: string, startsAtIso: string): void {
+function seedPlanItem(
+  store: Record<string, Row[]>, id: string, title: string, startsAtIso: string,
+  owner: { creatorId?: string; locationIsPrivate?: boolean | null } = {},
+): void {
   store.trip_plan_items ??= [];
   store.trip_plan_items.push({
     id, trip_id: "trip-1", title, starts_at: startsAtIso,
     status: "planned", day_date: TODAY, removed_at: null,
+    // OD-TRIP-3: whose item it is (default: the viewer's own) and whether it is
+    // private (default TRUE, the column default).
+    creator_id: owner.creatorId ?? USER_ID,
+    location_is_private: owner.locationIsPrivate === undefined ? true : owner.locationIsPrivate,
   });
 }
 
@@ -275,6 +282,19 @@ describe("Compass Live", () => {
     const state = await api("GET", "/compass/live/session");
     assert.equal(state.json.active, true);
     assert.equal(state.json.session.id, id);
+  });
+
+  it("OD-TRIP-3: another member's PRIVATE plan item reaches the live context as a slot — 'Private plan', never its title", async () => {
+    const { fakeClient, store } = makeFakeClient({ feature_flags: [enabledFlag()] });
+    _setTestClient(fakeClient, true);
+    seedTrip(store);
+    seedPlanItem(store, "item-a", "Women's shelter intake", atHour(9), { creatorId: "00000000-0000-0000-0000-0000000000bb" });
+    await api("POST", "/compass/live/start");
+    const c1 = await api("POST", "/compass/live/check");
+    const next = (c1.json as { session: { context: { nextItem: { id: string; title: string } } } }).session.context.nextItem;
+    assert.equal(next.id, "item-a", "the slot is still known");
+    assert.equal(next.title, "Private plan");
+    assert.doesNotMatch(JSON.stringify(c1.json), /shelter intake/, "another member's private title reached the viewer");
   });
 
   it("carries rolling context across a simulated sequence of events", async () => {

@@ -947,6 +947,8 @@ export async function buildTripSignalLiveCandidates(
       if (!row || typeof row.id !== "string" || row.id === "") continue;
       if (row.removed_at != null) continue;
       if (row.status === "cancelled") continue;
+      // OD-TRIP-3: only an item that SAYS it is public reaches the strip; a null
+      // or unread flag is private (the column defaults TRUE). Was `=== true`.
       if (row.location_is_private !== false) continue; // D-65: only an item KNOWN public (verifier L2: null was read as public)
       if (!TRIP_SIGNAL_PLAN_VISIBILITY.has(String(row.visibility ?? "members"))) continue;
       const startMs = Date.parse(String(row.starts_at ?? ""));
