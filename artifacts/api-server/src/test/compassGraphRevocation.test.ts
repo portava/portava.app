@@ -502,7 +502,7 @@ describe("§47 — a Memory reaches the world graph only as far as its owner's l
     const s = sources();
     if (gate !== null) s.feature_flags = [{ flag: GATE, enabled: gate }];
     const m1 = s.memories!.find((r) => r.id === "m-1")!;
-    m1.location_lat = 9.8481; m1.location_lng = 126.0458; m1.trip_id = "t-3";
+    m1.location_lat = 9.8481; m1.location_lng = 126.0458; m1.trip_id = "t-3"; m1.event_id = "ev-2"; // L6b F3: an event is a venue fact
     if (rung !== null) m1.location_precision = rung;
     for (const r of s.memories!) if (r.id !== "m-1") r.location_precision = "exact";
     return s;
@@ -514,7 +514,7 @@ describe("§47 — a Memory reaches the world graph only as far as its owner's l
 
   it("control: gate OFF — m-1 keeps its place, trip, city and slice edges", async () => {
     const st = await scratch(world("hidden", false));
-    assert.deepEqual(m1Edges(st), ["city:in_city", "place:at_place", "time_slice:active_in", "trip:during_trip"]);
+    assert.deepEqual(m1Edges(st), ["city:in_city", "event:at_event", "place:at_place", "time_slice:active_in", "trip:during_trip"]);
   });
 
   it("gate ON, rung `hidden`: no place, trip, city or slice — the person may still have the public Memory, with no country", async () => {
@@ -522,6 +522,7 @@ describe("§47 — a Memory reaches the world graph only as far as its owner's l
     assert.deepEqual(m1Edges(st), []);
     assert.equal((m1Node(st)?.attrs as Row).country, null);
     assert.equal((m1Node(st)?.attrs as Row).has_place, false);
+    assert.equal((m1Node(st)?.attrs as Row).has_event, false);
     assert.ok(hasEdge(st, (e) => e.src_key === C && e.edge_type === "experienced" && e.dst_key === "m-1"));
     // The control Memory at `exact` is untouched.
     assert.ok(hasEdge(st, (e) => e.src_key === "m-2" && e.edge_type === "at_place"));
@@ -539,9 +540,10 @@ describe("§47 — a Memory reaches the world graph only as far as its owner's l
     assert.deepEqual(m1Edges(st), ["city:in_city", "time_slice:active_in", "trip:during_trip"]);
   });
 
-  it("rung `venue`: the place too", async () => {
+  it("rung `venue`: the place and the event too", async () => {
     const st = await scratch(world("venue"));
-    assert.deepEqual(m1Edges(st), ["city:in_city", "place:at_place", "time_slice:active_in", "trip:during_trip"]);
+    assert.deepEqual(m1Edges(st), ["city:in_city", "event:at_event", "place:at_place", "time_slice:active_in", "trip:during_trip"]);
+    assert.equal((m1Node(st)?.attrs as Row).has_event, true);
   });
 
   it("REFUSAL: a null or off-ladder label, or no label at all with the gate on, is `hidden`", async () => {
@@ -576,7 +578,7 @@ describe("§47 — a Memory reaches the world graph only as far as its owner's l
   it("REVOCATION: an owner who moves to `hidden` has the Memory's place, city and slice edges retired on the next rebuild; the other Memory's stay", async () => {
     const store = world("exact");
     await engine.rebuildIntelligenceGraph(makeDb(store).db);
-    assert.deepEqual(m1Edges(store), ["city:in_city", "place:at_place", "time_slice:active_in", "trip:during_trip"], "fixture");
+    assert.deepEqual(m1Edges(store), ["city:in_city", "event:at_event", "place:at_place", "time_slice:active_in", "trip:during_trip"], "fixture");
     store.memories!.find((r) => r.id === "m-1")!.location_precision = "hidden";
     const report = await engine.rebuildIntelligenceGraph(makeDb(store).db);
     assert.deepEqual(m1Edges(store), [], "the hidden Memory's place survived the rebuild");

@@ -248,6 +248,26 @@ describe("D0b — the whole feature_flags table unreadable (census-compass §47)
     assert.ok(place(absent).length > 0, "control: with the gate absent (off) the Memories' place edges are written");
     assert.deepEqual(place(all), [], "an unreadable gate wrote a Memory's place into the graph");
   });
+
+  it("whole-graph identity (L6b F5): an unreadable table builds EXACTLY the graph of every flag off and every Memory at `hidden`", async () => {
+    // The oracle for 'nothing but the §10 clamp changed': no other flag the
+    // rebuild reads may make the graph differ under a whole-table outage.
+    at("2026-09-28T00:00:00Z");
+    const expected: Store = { ...sources(), feature_flags: [{ flag: "memory_location_precision_enabled", enabled: true }] };
+    expected.memories = (expected.memories ?? []).map((m) => ({ ...m, location_precision: "hidden" }));
+    const re = await rebuild(expected);
+    const all = sources();
+    const ra = await rebuild(all, { failSelect: new Set(["feature_flags"]) });
+    assert.equal(snapshot(all), snapshot(expected));
+    // The report differs only where it must: the reconcile cannot judge the
+    // families a Memory supports while the gate is unreadable, and says so.
+    const { edgeSupport: sa, ...restA } = ra; const { edgeSupport: se, ...restE } = re;
+    assert.deepEqual(restA, restE);
+    const { undecided: ua, undecidedFamilies: fa, unresolved: xa, ...supA } = sa!;
+    const { undecided: _ue, undecidedFamilies: _fe, unresolved: _xe, ...supE } = se!;
+    assert.deepEqual(supA, supE);
+    assert.ok(ua > 0 && fa.includes("experience") && xa === true, JSON.stringify(sa));
+  });
 });
 
 describe("D1 — the rule", () => {
