@@ -9234,6 +9234,47 @@ Tests:
 | CANNOT-VERIFY | 0 | 0 |
 | total | 296 | 296 |
 
+### §55.7 The lead's rulings applied (2026-10-07): four prohibitions move to `C ⌀`, and L163's erasure is built
+
+**Guarded prohibitions.** The lead ruled that §1's prohibition rule already decides the question. `C` is right when "a concrete artifact … refuses it". A CI guard qualifies when it meets three conditions: it covers the FULL scope, it runs in the always-run tier, and a test fails on a planted violation. `⌀` marks a `C` whose guarded path is empty. §55.2's hold is withdrawn:
+- **L7 and L256.** `check:no-money-in-ranking` runs in the static tier and scans the whole Layover engine (`artifacts/api-server/src/scripts/checkNoMoneyInRanking.ts:195#{ path: "services/airport", group: "ranker",`). K13 plants a sponsored term and a merchant term (`artifacts/api-server/src/test/noMoneyInRankingCheck.test.ts:538#K13. the Layover engine is in scope`).
+- **L164 and L168.** The source walk now derives its scope from every non-test `.ts`/`.tsx` path under `src/` and `app/` that names "layover" or "airport": 38 files, including the session context and the admin airports screen that the old list missed (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:186#the scope is the whole surface`). Two planted violations, a location prompt and a contacts read, are caught (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:195#PLANTED violations are caught`). The file runs in the mobile node:test runner, which CI's standalone check:all runs. Mutants G1–G4 are killed: the scope narrowed back to two directories, the import rule broken, the contacts rule dropped, and a real import planted in the session context.
+
+**L163, built under the lead's ruling adopting OD-MAP-4** (`docs/ops/owner-decisions-20261004.md`, OD-MAP-4: a pseudonymised, access-restricted audit record kept for up to 12 months, then deleted).
+
+Account deletion now runs a FATAL layover block (`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1416#const layoverEventsOk = await step(steps, "pseudonymise_layover_events"`). It does three things, in this order:
+1. **Pseudonymises the events.** Each loses its user and session, gets one random pseudonym for this deletion, has its metadata emptied, and gets a `retain_until` 365 days out.
+2. **Deletes the traveller's crew memberships.**
+3. **Deletes the sessions** (`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1438#const layoverSessionsOk`). Every other layover table goes with them through the session cascade.
+
+Migration 3621 makes that representable: a nullable user and session, the session FK set to SET NULL, and the `layover_events_identity_or_pseudonym` CHECK (`artifacts/api-server/src/migrations/3621_layover_erasure_audit_pseudonym.sql:87#layover_events_identity_or_pseudonym CHECK`). That CHECK refuses a pseudonym next to a user id, and any retention past 12 months. `artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:52#export async function runLayoverAuditRetentionSweep(` deletes each row at `retain_until`. The dispositions manifest records `layover_events` as RETAINED_WITH_REASON (`artifacts/api-server/src/lib/deletionDispositions.ts:295#table: "layover_events",`) and the rest as erased.
+
+Tests:
+- `artifacts/api-server/src/test/accountDeletionLayover.test.ts:78#pseudonymises the events, then deletes the crew memberships, then the sessions` and `artifacts/api-server/src/test/accountDeletionLayover.test.ts:119#a FAILED pseudonymisation deletes no session`, eight cases;
+- `artifacts/api-server/src/test/layoverAuditRetention.test.ts:67#deletes pseudonymised rows past retain_until, and only those`, ten cases including 3621's static shape;
+- the real-database suite's B7, which runs only on CI's harness.
+
+Mutants D1–D8, S1–S4, M1, M2 and P1 are all killed (15 of 15).
+
+**L163 stays `W`.** Its sentence asks for a ledger retained per a safety/diagnostic policy, with direct personal data minimised. For a DEPARTED traveller that now holds, once 3621 is applied. For a LIVE traveller, `layover_events` still carries `user_id` directly, and no retention period bounds it.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L7 | N | C | `C ⌀` (lead ruling, 2026-10-07): a full-scope, static-tier guard whose K13 fails a planted sponsored term in the layover recommendation ordering (`artifacts/api-server/src/test/noMoneyInRankingCheck.test.ts:538#K13. the Layover engine is in scope`). No commercial input exists, so the guarded path is empty. |
+| L256 | N | C | `C ⌀`: the same guard covers every file that computes a safety constraint, and K13 fails a planted merchant term in the safety engine. |
+| L164 | N | C | `C ⌀`: no layover/airport client file imports or calls a location permission or watch API. The scope is derived and complete (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:156#the layover surface imports no location API at all`), and a planted prompt fails (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:195#PLANTED violations are caught`). |
+| L168 | N | C | `C ⌀`: the same walk forbids photo, camera, media-library and contacts modules and calls (`travel-buddy-standalone/src/lib/__tests__/layoverSensingCadence.test.ts:174#the layover surface asks for no photos and no contacts`), and a planted contacts read fails. |
+
+### §55.8 Headline
+
+| bucket | was (§55.6) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 85 | 89 |
+| BUILT-BUT-WRONG | 145 | 145 |
+| NOT-BUILT | 66 | 62 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/test/docCitations.test.ts — The citation guard's own suite. §27.10 names its case 9 and §30.4 names it as npm test's one failing test; both report on the guard that measured this census. It is machinery this census reports on, not a subject it grades.
