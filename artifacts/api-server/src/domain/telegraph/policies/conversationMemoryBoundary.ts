@@ -530,3 +530,259 @@ export const REVIEWED_CALL_TREE_NON_FLOWS: readonly ReviewedNonFlow[] = [
     pinnedBy: "src/test/telegraphConversationMemoryBoundary.test.ts",
   },
 ];
+
+// ── Hardening, round 2 (lane T, 2026-10-07): the verifier's five survivors ───
+// Independent verification of 54ddc1de4, finding F3, injected five bypasses into
+// the real tree and only the plain control was caught:
+//   A. a helper `readHistory(sc, table) { return sc.from(table)… }` called with
+//      "messages" — an unresolved `.from(expr)` was DROPPED by the suite;
+//   B. `const { executeMemoryCommand } = await import("…")` — a dynamic import;
+//   C. a barrel `export { executeMemoryCommand } from "./memoryCommandBus.js"`;
+//   D. `const run = executeMemoryCommand; await run(…)` — a value, not a call;
+//   E. `CREATE TRIGGER … AFTER INSERT ON public.messages` whose function inserts
+//      a memory row from NEW.* — automatic, and no `FROM messages` anywhere.
+// What follows closes each. The suite applies them; the synthetic case for each
+// is in telegraphConversationMemoryBoundary.test.ts.
+
+/** A binding one file takes from another: `exported` there, `local` here ("default" for a default import). */
+export interface ImportBinding { readonly exported: string; readonly local: string }
+export interface ModuleImport {
+  readonly target: string | null;
+  readonly bindings: readonly ImportBinding[];
+  /** `import * as ns` / `const ns = await import(…)`: every reaching name of the target, through `ns`. */
+  readonly namespace?: string | null;
+}
+/** `export { a as b } from "x"` (bindings: exported = a there, local = b here) and `export * from "x"` (star). */
+export interface ModuleReexport {
+  readonly target: string | null;
+  readonly bindings: readonly ImportBinding[];
+  readonly star: boolean;
+}
+
+/**
+ * Every static and DYNAMIC import of a comment-stripped file (D-B), and every
+ * re-export (D-C). `resolveSpec` maps a specifier to a file, or null.
+ */
+export function moduleLinks(
+  code: string,
+  resolveSpec: (spec: string) => string | null,
+): { imports: ModuleImport[]; reexports: ModuleReexport[] } {
+  const imports: ModuleImport[] = [];
+  const reexports: ModuleReexport[] = [];
+  const parseBraces = (inner: string): ImportBinding[] => {
+    const out: ImportBinding[] = [];
+    for (const part of inner.split(",")) {
+      const t = part.trim().replace(/^type\s+/, "");
+      if (!t) continue;
+      const as = /^([A-Za-z0-9_$]+)\s+as\s+([A-Za-z0-9_$]+)$/.exec(t);
+      out.push(as ? { exported: as[1]!, local: as[2]! } : { exported: t, local: t });
+    }
+    return out;
+  };
+  for (const m of code.matchAll(/import\s+(?:type\s+)?([^;]*?)\s+from\s+["']([^"']+)["']/g)) {
+    const clause = m[1]!.trim();
+    const bindings: ImportBinding[] = [];
+    const braces = /\{([^}]*)\}/.exec(clause);
+    if (braces) bindings.push(...parseBraces(braces[1]!));
+    const def = /^([A-Za-z0-9_$]+)/.exec(clause);
+    if (def && !clause.startsWith("{") && !clause.startsWith("*")) bindings.push({ exported: "default", local: def[1]! });
+    const ns = /\*\s+as\s+([A-Za-z0-9_$]+)/.exec(clause);
+    imports.push({ target: resolveSpec(m[2]!), bindings, namespace: ns ? ns[1]! : null });
+  }
+  // Dynamic: `const { a, b: c } = await import("x")` and `const ns = await import("x")`.
+  for (const m of code.matchAll(/(?:const|let|var)\s+(\{[^}]*\}|[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*await\s+import\(\s*["'`]([^"'`]+)["'`]\s*\)/g)) {
+    const lhs = m[1]!.trim();
+    const target = resolveSpec(m[2]!);
+    if (lhs.startsWith("{")) {
+      const bindings = lhs.slice(1, -1).split(",").map((p) => p.trim()).filter(Boolean).map((p) => {
+        const kv = /^([A-Za-z0-9_$]+)\s*:\s*([A-Za-z0-9_$]+)$/.exec(p);
+        return kv ? { exported: kv[1]!, local: kv[2]! } : { exported: p, local: p };
+      });
+      imports.push({ target, bindings });
+    } else {
+      imports.push({ target, bindings: [], namespace: lhs });
+    }
+  }
+  // `(await import("x")).name(` — a dynamic import used inline.
+  for (const m of code.matchAll(/\(\s*await\s+import\(\s*["'`]([^"'`]+)["'`]\s*\)\s*\)\s*\.\s*([A-Za-z_$][A-Za-z0-9_$]*)/g)) {
+    imports.push({ target: resolveSpec(m[1]!), bindings: [{ exported: m[2]!, local: `__inline_${m[2]}` }] });
+  }
+  for (const m of code.matchAll(/export\s+(?:type\s+)?(\*|\{[^}]*\})\s*from\s+["']([^"']+)["']/g)) {
+    const what = m[1]!.trim();
+    const target = resolveSpec(m[2]!);
+    if (what === "*") reexports.push({ target, bindings: [], star: true });
+    else reexports.push({ target, bindings: parseBraces(what.slice(1, -1)), star: false });
+  }
+  return { imports, reexports };
+}
+
+/** Blank import and export-from statements (keeping line count), so a unit never "references" a name by importing it. */
+export function withoutModuleStatements(code: string): string {
+  return code.replace(/(?:import|export)\s+(?:type\s+)?[^;]*?\s+from\s+["'][^"']+["'];?/g, (s) => s.replace(/[^\n]/g, " "));
+}
+
+/**
+ * D-D: does `code` REFERENCE `name` — a call, a member access, or the bare value
+ * (`const run = name`, `fn(name)`)? Not a property of something else (`.name`),
+ * and not a JSX element (`<Name` / `</Name`): rendering a component is not
+ * calling it, and following JSX would make every screen that renders both a
+ * thread and a memory card a "path" with no data between them. `default` is a
+ * keyword here, never a reference.
+ */
+export function references(code: string, name: string): boolean {
+  if (name === "default") return false;
+  return new RegExp(`(^|[^A-Za-z0-9_$.<\/])${name.replace(/\$/g, "\\$")}(?![A-Za-z0-9_$])`).test(code);
+}
+
+/**
+ * D-A: functions of one file that read a table named by a PARAMETER —
+ * `function readHistory(sc, table) { … sc.from(table) … }` → readHistory: 1.
+ * Top-level `function` and `const name = (…) =>` forms.
+ */
+export function tableParameterFunctions(units: readonly CodeUnit[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const u of units) {
+    const head = /^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_$]+)\s*(?:<[^>]*>)?\s*\(([^)]*)\)/.exec(u.code.trim())
+      ?? /^(?:export\s+)?(?:const|let)\s+([A-Za-z0-9_$]+)\s*(?::[^=]+)?=\s*(?:async\s*)?\(([^)]*)\)\s*(?::[^=]*)?=>/.exec(u.code.trim());
+    if (!head) continue;
+    const params = head[2]!.split(",").map((p) => p.trim().replace(/[:=?].*$/s, "").trim());
+    for (const m of u.code.matchAll(/\.from\(\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*[,)]/g)) {
+      const idx = params.indexOf(m[1]!);
+      if (idx >= 0) { out.set(head[1]!, idx); break; }
+    }
+  }
+  return out;
+}
+
+/** The arguments of every call to `local` in `code`, by position, as written. */
+export function callArguments(code: string, local: string): string[][] {
+  const out: string[][] = [];
+  for (const m of code.matchAll(new RegExp(`(?<![A-Za-z0-9_$.])${local.replace(/\$/g, "\\$")}\\s*\\(`, "g"))) {
+    const before = code.slice(Math.max(0, (m.index ?? 0) - 24), m.index);
+    if (/\bfunction\s*$/.test(before)) continue;
+    out.push(splitTopLevelArgs(code, (m.index ?? 0) + m[0].length).map((a) => a.trim()));
+  }
+  return out;
+}
+
+/** D-E: functions a trigger runs AFTER/BEFORE a write ON a conversation-history table. */
+export function historyTriggerFunctions(sql: string): string[] {
+  const hist = CONVERSATION_HISTORY_TABLES.join("|");
+  const re = new RegExp(`CREATE\\s+(?:OR\\s+REPLACE\\s+)?(?:CONSTRAINT\\s+)?TRIGGER\\s+[A-Za-z0-9_"]+[\\s\\S]*?\\bON\\s+(?:public\\.)?"?(${hist})"?\\b[\\s\\S]*?EXECUTE\\s+(?:FUNCTION|PROCEDURE)\\s+(?:public\\.)?"?([A-Za-z0-9_]+)"?\\s*\\(`, "gi");
+  return [...sql.replace(/--.*$/gm, "").matchAll(re)].map((m) => m[2]!.toLowerCase());
+}
+
+/** D-E: the body of every `CREATE [OR REPLACE] FUNCTION name(` in a file, by lower-case name. */
+export function sqlFunctionBodies(sql: string): Map<string, string> {
+  const out = new Map<string, string>();
+  const code = sql.replace(/--.*$/gm, "");
+  for (const m of code.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(?:public\.)?"?([A-Za-z0-9_]+)"?\s*\(/gi)) {
+    const start = m.index ?? 0;
+    const tag = /AS\s+(\$[A-Za-z0-9_]*\$)/i.exec(code.slice(start));
+    if (!tag) continue;
+    const bodyStart = start + (tag.index ?? 0) + tag[0].length;
+    const end = code.indexOf(tag[1]!, bodyStart);
+    if (end < 0) continue;
+    out.set(m[1]!.toLowerCase(), code.slice(bodyStart, end));
+  }
+  return out;
+}
+
+/** True when a SQL function body inserts a row into a memory-creation table. */
+export function sqlInsertsMemory(body: string): boolean {
+  const mem = MEMORY_CREATION_TABLES.join("|");
+  return new RegExp(`INSERT\\s+INTO\\s+(public\\.)?"?(${mem})"?\\b`, "i").test(body);
+}
+
+/**
+ * The fixpoint again, over `moduleLinks` (static AND dynamic imports with their
+ * local aliases, namespace bindings, re-exports and `export *`) and with
+ * `references` (a value counts, not only a call). Supersedes `reachingNames`
+ * for the suite; `reachingNames` stays for its own synthetic cases.
+ */
+export function reachingNamesThrough(
+  units: ReadonlyMap<string, readonly CodeUnit[]>,
+  linksOf: (file: string) => { imports: readonly ModuleImport[]; reexports: readonly ModuleReexport[] },
+  seed: (file: string, unitCode: string) => boolean,
+): Map<string, Set<string>> {
+  const reach = new Map<string, Set<string>>();
+  for (const f of units.keys()) reach.set(f, new Set());
+  const seeded = new Map<string, Set<CodeUnit>>();
+  for (const [f, us] of units) seeded.set(f, new Set(us.filter((u) => seed(f, u.code))));
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [f, us] of units) {
+      const mine = reach.get(f)!;
+      const links = linksOf(f);
+      const importedLocal = new Set<string>();
+      for (const imp of links.imports) {
+        const theirs = imp.target ? reach.get(imp.target) : undefined;
+        if (!theirs || theirs.size === 0) continue;
+        for (const b of imp.bindings) if (theirs.has(b.exported)) importedLocal.add(b.local);
+        if (imp.namespace) importedLocal.add(imp.namespace);
+      }
+      for (const u of us) {
+        if (u.declares.length > 0 && u.declares.every((d) => mine.has(d))) continue;
+        const hit = seeded.get(f)!.has(u) ||
+          [...mine].some((n) => !u.declares.includes(n) && references(u.code, n)) ||
+          [...importedLocal].some((n) => references(u.code, n));
+        if (!hit) continue;
+        for (const d of u.declares) if (!mine.has(d)) { mine.add(d); changed = true; }
+        if (u.declares.length === 0 && /^export\s+default\s/.test(u.code) && !mine.has("default")) { mine.add("default"); changed = true; }
+      }
+      for (const re of links.reexports) {
+        const theirs = re.target ? reach.get(re.target) : undefined;
+        if (!theirs) continue;
+        if (re.star) { for (const n of theirs) if (n !== "default" && !mine.has(n)) { mine.add(n); changed = true; } }
+        else for (const b of re.bindings) if (theirs.has(b.exported) && !mine.has(b.local)) { mine.add(b.local); changed = true; }
+      }
+    }
+  }
+  return reach;
+}
+
+/** `crossingsTransitive` with `references` in place of `mentions`. */
+export function crossingsThrough(
+  units: readonly CodeUnit[],
+  reads: (unitCode: string) => readonly string[],
+  creates: (unitCode: string) => readonly string[],
+  readerNames: ReadonlySet<string>,
+  creatorNames: ReadonlySet<string>,
+): BoundaryCrossing[] {
+  const out: BoundaryCrossing[] = [];
+  for (const u of units) {
+    const r = [...reads(u.code)];
+    for (const n of readerNames) if (!u.declares.includes(n) && references(u.code, n)) r.push(`call:${n}`);
+    if (r.length === 0) continue;
+    const c = [...creates(u.code)];
+    for (const n of creatorNames) if (!u.declares.includes(n) && references(u.code, n)) c.push(`call:${n}`);
+    if (c.length > 0) out.push({ unit: u.code.trim().split("\n")[0]!.slice(0, 120), reads: r, creates: c });
+  }
+  return out;
+}
+
+/**
+ * D-A, both directions: for each function of one file that touches a table
+ * named by a PARAMETER, the parameter's position and whether that statement
+ * READS it or WRITES (insert / upsert) it — so a call site passing "messages"
+ * is a history read, and one passing "memories" to a writer is a creation.
+ */
+export function tableParameterUses(units: readonly CodeUnit[]): Map<string, { index: number; reads: boolean; writes: boolean }> {
+  const out = new Map<string, { index: number; reads: boolean; writes: boolean }>();
+  for (const u of units) {
+    const code = u.code.trim();
+    const head = /^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_$]+)\s*(?:<[^>]*>)?\s*\(([^)]*)\)/.exec(code)
+      ?? /^(?:export\s+)?(?:const|let)\s+([A-Za-z0-9_$]+)\s*(?::[^=]+)?=\s*(?:async\s*)?\(([^)]*)\)\s*(?::[^=]*)?=>/.exec(code);
+    if (!head) continue;
+    const params = head[2]!.split(",").map((p) => p.trim().replace(/[:=?][\s\S]*$/, "").trim());
+    for (const m of u.code.matchAll(/\.from\(\s*([A-Za-z_$][A-Za-z0-9_$]*)\s*[,)]/g)) {
+      const index = params.indexOf(m[1]!);
+      if (index < 0) continue;
+      const writes = /\.(insert|upsert)\(/.test(statementAfter(u.code, (m.index ?? 0) + m[0].length));
+      const prev = out.get(head[1]!);
+      out.set(head[1]!, { index, reads: (prev?.reads ?? false) || !writes, writes: (prev?.writes ?? false) || writes });
+    }
+  }
+  return out;
+}

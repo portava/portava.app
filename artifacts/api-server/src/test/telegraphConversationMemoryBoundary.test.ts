@@ -40,11 +40,18 @@ import {
   conversationReadsIn,
   conversationReadsResolved,
   crossingsInFile,
-  crossingsTransitive,
   importedNames,
   memoryCreationsIn,
   memoryCreationsResolved,
-  reachingNames,
+  reachingNamesThrough,
+  crossingsThrough,
+  moduleLinks,
+  withoutModuleStatements,
+  tableParameterUses,
+  callArguments,
+  historyTriggerFunctions,
+  sqlFunctionBodies,
+  sqlInsertsMemory,
   sqlCrossesBoundary,
   stringConstsIn,
   stripComments,
@@ -268,98 +275,162 @@ describe("T366 — no migration crosses the boundary in SQL", () => {
  * on a synthetic source FIRST, then the trees are judged with the closed holes.
  * ════════════════════════════════════════════════════════════════════════ */
 
-interface Imp { target: string | null; names: string[]; defaultName: string | null; namespace: string | null }
-
-/** Imports with the DEFAULT and NAMESPACE bindings kept apart from the named ones. */
-function importsIn(code: string, resolveSpec: (spec: string) => string | null): Imp[] {
-  const out: Imp[] = [];
-  for (const m of code.matchAll(/import\s+(?:type\s+)?([^;]*?)\s+from\s+["']([^"']+)["']/g)) {
-    const clause = m[1]!.trim();
-    const names: string[] = [];
-    const braces = /\{([^}]*)\}/.exec(clause);
-    if (braces) {
-      for (const part of braces[1]!.split(",")) {
-        const t = part.trim().replace(/^type\s+/, "");
-        if (!t) continue;
-        const as = /^([A-Za-z0-9_$]+)\s+as\s+([A-Za-z0-9_$]+)$/.exec(t);
-        // The EXPORTED name is what the target file's fixpoint knows; the local alias is what this file mentions.
-        names.push(as ? `${as[1]}=>${as[2]}` : t);
-      }
-    }
-    const def = /^([A-Za-z0-9_$]+)/.exec(clause);
-    const ns = /\*\s+as\s+([A-Za-z0-9_$]+)/.exec(clause);
-    out.push({ target: resolveSpec(m[2]!), names, defaultName: def && !clause.startsWith("{") && !clause.startsWith("*") ? def[1]! : null, namespace: ns ? ns[1]! : null });
-  }
-  return out;
-}
-
 interface Analysis {
   readonly files: string[];
   readonly units: Map<string, CodeUnit[]>;
   readonly code: Map<string, string>;
   readonly readers: Map<string, Set<string>>;
   readonly creators: Map<string, Set<string>>;
-  /** Local names in `file` (its own and imported) that reach a read / a creation. */
+  /** Local names in `file` (its own and imported, aliases and namespaces applied) that reach a read / a creation. */
   namesFor(file: string): { readers: Set<string>; creators: Set<string> };
-  crossings(file: string): ReturnType<typeof crossingsTransitive>;
+  crossings(file: string): ReturnType<typeof crossingsThrough>;
 }
 
+type Seed = (file: string, unitCode: string, consts: ReadonlyMap<string, string>, fileCode: string) => string[];
+
+/**
+ * The analysis, round 2 (verification F3): static AND dynamic imports with
+ * aliases, namespaces, re-exports and `export *` (moduleLinks); a value counts
+ * as a reference, not only a call (references); a table named by a parameter is
+ * resolved at every call site, for reads and for writes (tableParameterUses);
+ * an unresolvable `.from(expr)` counts as a possible read IN ITS OWN UNIT
+ * (`unknownReads`) — it is not a fixpoint seed, or every generic helper would
+ * become a reader of everything.
+ */
 function analyse(
   sources: Map<string, string>,
   resolveFrom: (from: string, spec: string) => string | null,
-  reads: (file: string, unit: string) => string[],
-  creates: (file: string, unit: string) => string[],
+  seedReads: Seed,
+  seedCreates: Seed,
+  unknownReads: Seed = () => [],
 ): Analysis {
   const files = [...sources.keys()];
-  const units = new Map(files.map((f) => [f, codeUnits(sources.get(f)!)]));
-  const imports = new Map(files.map((f) => [f, importsIn(sources.get(f)!, (spec) => resolveFrom(f, spec))]));
-  // The fixpoint sees exported names; aliases are applied below.
-  const importsOf = (f: string) => imports.get(f)!.map((i) => ({ ...i, names: i.names.map((n) => n.split("=>")[0]!) }));
-  const readers = reachingNames(units, importsOf, (f, u) => reads(f, u).length > 0);
-  const creators = reachingNames(units, importsOf, (f, u) => creates(f, u).length > 0);
-  // Aliased imports: credit the LOCAL alias in the importing file and re-run until stable.
-  const namesFor = (f: string) => {
-    const r = new Set(readers.get(f)!);
-    const c = new Set(creators.get(f)!);
-    for (const imp of imports.get(f)!) {
-      if (!imp.target) continue;
-      const tr = readers.get(imp.target);
-      const tc = creators.get(imp.target);
-      for (const n of imp.names) {
-        const [exported, local] = n.includes("=>") ? n.split("=>") as [string, string] : [n, n];
-        if (tr?.has(exported)) r.add(local);
-        if (tc?.has(exported)) c.add(local);
+  const code = new Map(files.map((f) => [f, withoutModuleStatements(sources.get(f)!)]));
+  const consts = new Map(files.map((f) => [f, stringConstsIn(code.get(f)!)]));
+  const units = new Map(files.map((f) => [f, codeUnits(code.get(f)!)]));
+  const links = new Map(files.map((f) => [f, moduleLinks(sources.get(f)!, (spec) => resolveFrom(f, spec))]));
+  const params = new Map(files.map((f) => [f, tableParameterUses(units.get(f)!)]));
+  const unitOf = new Map(files.map((f) => [f, new Map(units.get(f)!.map((u) => [u.code, u]))]));
+  // A function that passes one of ITS parameters on, in the table position, to a
+  // table-parameter function is one too — followed to a fixpoint, across imports.
+  for (let round = 0, grew = true; grew && round < 8; round++) {
+    grew = false;
+    for (const f of files) {
+      const visible = new Map(params.get(f)!);
+      for (const imp of links.get(f)!.imports) {
+        const theirs = imp.target ? params.get(imp.target) : undefined;
+        if (theirs) for (const b of imp.bindings) { const use = theirs.get(b.exported); if (use) visible.set(b.local, use); }
       }
-      if (imp.defaultName) { if (tr?.has("default")) r.add(imp.defaultName); if (tc?.has("default")) c.add(imp.defaultName); }
-      if (imp.namespace) { if (tr && tr.size > 0) r.add(imp.namespace); if (tc && tc.size > 0) c.add(imp.namespace); }
+      for (const u of units.get(f)!) {
+        const head = /^(?:export\s+)?(?:async\s+)?function\s+([A-Za-z0-9_$]+)\s*(?:<[^>]*>)?\s*\(([^)]*)\)/.exec(u.code.trim())
+          ?? /^(?:export\s+)?(?:const|let)\s+([A-Za-z0-9_$]+)\s*(?::[^=]+)?=\s*(?:async\s*)?\(([^)]*)\)\s*(?::[^=]*)?=>/.exec(u.code.trim());
+        if (!head || params.get(f)!.has(head[1]!)) continue;
+        const ps = head[2]!.split(",").map((x) => x.trim().replace(/[:=?][\s\S]*$/, "").trim());
+        for (const [local, use] of visible) {
+          if (local === head[1]) continue;
+          for (const args of callArguments(u.code, local)) {
+            const i = ps.indexOf((args[use.index] ?? "").trim());
+            if (i >= 0) { params.get(f)!.set(head[1]!, { index: i, reads: use.reads, writes: use.writes }); grew = true; break; }
+          }
+          if (params.get(f)!.has(head[1]!)) break;
+        }
+      }
     }
-    return { readers: r, creators: c };
+  }
+  const history = new Set<string>(CONVERSATION_HISTORY_TABLES);
+  const memory = new Set<string>(MEMORY_CREATION_TABLES);
+
+  const visibleParams = new Map<string, Map<string, { index: number; reads: boolean; writes: boolean }>>();
+  const paramFnsIn = (f: string) => {
+    let m = visibleParams.get(f);
+    if (m) return m;
+    m = new Map(params.get(f)!);
+    for (const imp of links.get(f)!.imports) {
+      const theirs = imp.target ? params.get(imp.target) : undefined;
+      if (!theirs) continue;
+      for (const b of imp.bindings) { const use = theirs.get(b.exported); if (use) m.set(b.local, use); }
+    }
+    visibleParams.set(f, m);
+    return m;
+  };
+  const resolveArg = (f: string, a: string | undefined): string | null => {
+    if (a === undefined) return null;
+    const lit = /^(["'`])([A-Za-z0-9_]+)\1$/.exec(a.trim());
+    return lit ? lit[2]! : (consts.get(f)!.get(a.trim()) ?? null);
+  };
+  const ownParams = (f: string, u: CodeUnit): Set<string> => {
+    const out = new Set<string>();
+    for (const d of u.declares) {
+      const use = params.get(f)!.get(d);
+      const head = use ? /\(([^)]*)\)/.exec(u.code) : null;
+      if (use && head) out.add(head[1]!.split(",").map((x) => x.trim().replace(/[:=?][\s\S]*$/, "").trim())[use.index]!);
+    }
+    return out;
+  };
+  const argUses = (f: string, u: CodeUnit, want: "reads" | "writes", tables: Set<string>) => {
+    const known: string[] = [];
+    const unknown: string[] = [];
+    for (const [local, use] of paramFnsIn(f)) {
+      if (!use[want] || u.declares.includes(local)) continue;
+      for (const args of callArguments(u.code, local)) {
+        const t = resolveArg(f, args[use.index]);
+        if (t === null) unknown.push(`?arg:${local}`);
+        else if (tables.has(t)) known.push(`arg:${local}:${t}`);
+      }
+    }
+    return { known, unknown };
+  };
+  const knownReads = (f: string, u: CodeUnit) => [...seedReads(f, u.code, consts.get(f)!, code.get(f)!), ...argUses(f, u, "reads", history).known];
+  const allReads = (f: string, u: CodeUnit) => {
+    const own = ownParams(f, u);
+    return [
+      ...knownReads(f, u),
+      ...unknownReads(f, u.code, consts.get(f)!, code.get(f)!).filter((x) => !own.has(x.replace(/^\?/, ""))),
+      ...argUses(f, u, "reads", history).unknown,
+    ];
+  };
+  const creates = (f: string, u: CodeUnit) => [...seedCreates(f, u.code, consts.get(f)!, code.get(f)!), ...argUses(f, u, "writes", memory).known];
+
+  const readers = reachingNamesThrough(units, (f) => links.get(f)!, (f, c) => knownReads(f, unitOf.get(f)!.get(c)!).length > 0);
+  const creators = reachingNamesThrough(units, (f) => links.get(f)!, (f, c) => creates(f, unitOf.get(f)!.get(c)!).length > 0);
+  const namesFor = (f: string) => {
+    const pick = (reach: Map<string, Set<string>>) => {
+      const s = new Set(reach.get(f)!);
+      for (const imp of links.get(f)!.imports) {
+        const theirs = imp.target ? reach.get(imp.target) : undefined;
+        if (!theirs || theirs.size === 0) continue;
+        for (const b of imp.bindings) if (theirs.has(b.exported)) s.add(b.local);
+        if (imp.namespace) s.add(imp.namespace);
+      }
+      return s;
+    };
+    return { readers: pick(readers), creators: pick(creators) };
   };
   return {
-    files, units, code: sources, readers, creators, namesFor,
+    files, units, code, readers, creators, namesFor,
     crossings: (f) => {
       const n = namesFor(f);
-      return crossingsTransitive(units.get(f)!, (u) => reads(f, u), (u) => creates(f, u), n.readers, n.creators);
+      return crossingsThrough(units.get(f)!, (c) => allReads(f, unitOf.get(f)!.get(c)!), (c) => creates(f, unitOf.get(f)!.get(c)!), n.readers, n.creators);
     },
   };
 }
 
-// The server analysis: reads and creations through constants; an unresolvable RPC is a creation.
-const serverConsts = new Map(files.map((f) => [f, stringConstsIn(codeOf.get(f)!)]));
-const serverReads = (f: string, u: string) =>
-  conversationReadsResolved(u, serverConsts.get(f) ?? stringConstsIn(u)).filter((x) => !x.startsWith("?"));
-const serverCreates = (f: string, u: string) =>
-  memoryCreationsResolved(u, serverConsts.get(f) ?? stringConstsIn(u), codeOf.get(f) ?? u).filter((x) => !x.startsWith("?") || x.startsWith("rpc:?"));
+// The server analysis. Known reads: history tables by literal or constant. Unknown
+// reads (direct, own unit): an unresolvable `.from(expr)`. Creations: memory tables
+// by literal or constant, and an unresolvable RPC (fail closed).
+const serverReads: Seed = (_f, u, consts) => conversationReadsResolved(u, consts).filter((x) => !x.startsWith("?"));
+const serverUnknownReads: Seed = (_f, u, consts) => conversationReadsResolved(u, consts).filter((x) => x.startsWith("?"));
+const serverCreates: Seed = (_f, u, consts, fileCode) =>
+  memoryCreationsResolved(u, consts, fileCode).filter((x) => !x.startsWith("?") || x.startsWith("rpc:?"));
 
 function serverAnalysis(extra: Map<string, string> = new Map()): Analysis {
   const sources = new Map<string, string>([...codeOf, ...extra]);
-  for (const [f, c] of extra) serverConsts.set(f, stringConstsIn(c));
   return analyse(sources, (from, spec) => {
     if (!spec.startsWith(".")) return null;
     const base = resolve(dirname(from), spec).replace(/\.js$/, "");
     for (const cand of [`${base}.ts`, join(base, "index.ts")]) if (sources.has(cand)) return cand;
     return null;
-  }, serverReads, serverCreates);
+  }, serverReads, serverCreates, serverUnknownReads);
 }
 
 const server = serverAnalysis();
@@ -448,6 +519,140 @@ describe("T366 hardening — each hole §45c named, shown closed on a synthetic 
   });
 });
 
+describe("T366 hardening, round 2 — the verifier's five survivors (verification of 54ddc1de4, F3), each caught on the REAL tree", () => {
+  const route = (name: string) => join(SRC, `routes/__t366_probe_${name}.ts`);
+  const caught = (name: string, src: string, extra: Array<[string, string]> = []) => {
+    const file = route(name);
+    const a = serverAnalysis(new Map<string, string>([[file, stripComments(src)], ...extra.map(([f, c]) => [f, stripComments(c)] as [string, string])]));
+    return a.crossings(file);
+  };
+
+  it("A: a helper that reads a table named by its PARAMETER, called with \"messages\" — the call site is the read", () => {
+    const src = [
+      'import { executeMemoryCommand } from "../lib/memoryCommandBus.js";',
+      "async function readHistory(sc, table) { return sc.from(table).select(\"body\"); }",
+      'router.post("/a", async (req, res) => {',
+      '  const { data } = await readHistory(sc, "messages");',
+      '  await executeMemoryCommand(sc, { commandType: "CREATE_MEMORY", payload: data });',
+      "});",
+    ].join("\n");
+    const c = caught("a", src);
+    assert.equal(c.length, 1, JSON.stringify(c));
+    assert.ok(c[0]!.reads.includes("arg:readHistory:messages"), JSON.stringify(c));
+  });
+
+  it("A, two levels: a helper that passes its table parameter on to another is followed too", () => {
+    const src = [
+      'import { executeMemoryCommand } from "../lib/memoryCommandBus.js";',
+      "async function readRows(sc, table) { return sc.from(table).select(\"body\"); }",
+      "async function readThread(sc, which) { return readRows(sc, which); }",
+      'router.post("/a1", async (req, res) => {',
+      '  const { data } = await readThread(sc, "message_translations");',
+      '  await executeMemoryCommand(sc, { commandType: "CREATE_MEMORY", payload: data });',
+      "});",
+    ].join("\n");
+    const c = caught("a1", src);
+    assert.equal(c.length, 1, JSON.stringify(c));
+    assert.ok(c[0]!.reads.includes("arg:readThread:message_translations"), JSON.stringify(c));
+  });
+
+  it("A, unresolvable: the same helper called with a table the file cannot name counts as a POSSIBLE read in that unit", () => {
+    const src = [
+      'import { executeMemoryCommand } from "../lib/memoryCommandBus.js";',
+      "async function readAny(sc, table) { return sc.from(table).select(\"*\"); }",
+      'router.post("/a2", async (req, res) => {',
+      "  const { data } = await readAny(sc, req.body.table);",
+      '  await executeMemoryCommand(sc, { commandType: "CREATE_MEMORY", payload: data });',
+      "});",
+    ].join("\n");
+    assert.equal(caught("a2", src).length, 1);
+  });
+
+  it("A, direct: an unresolvable `.from(expr)` in the unit that creates a memory counts (the policy's own words)", () => {
+    const src = [
+      'import { executeMemoryCommand } from "../lib/memoryCommandBus.js";',
+      'router.post("/a3", async (req, res) => {',
+      "  const { data } = await sc.from(req.query.t).select(\"*\");",
+      '  await executeMemoryCommand(sc, { commandType: "CREATE_MEMORY", payload: data });',
+      "});",
+    ].join("\n");
+    assert.equal(caught("a3", src).length, 1);
+  });
+
+  it("B: a DYNAMIC import of the memory kernel, after a history read", () => {
+    const src = [
+      'router.post("/b", async (req, res) => {',
+      '  const { data } = await sc.from("messages").select("body");',
+      '  const { executeMemoryCommand } = await import("../lib/memoryCommandBus.js");',
+      '  await executeMemoryCommand(sc, { commandType: "CREATE_MEMORY", payload: data });',
+      "});",
+    ].join("\n");
+    assert.equal(caught("b", src).length, 1);
+  });
+
+  it("C: the kernel reached through a BARREL re-export", () => {
+    const barrel = join(SRC, "lib/__t366_barrel.ts");
+    const src = [
+      'import { executeMemoryCommand } from "../lib/__t366_barrel.js";',
+      'router.post("/c", async (req, res) => {',
+      '  const { data } = await sc.from("messages").select("body");',
+      '  await executeMemoryCommand(sc, { commandType: "CREATE_MEMORY", payload: data });',
+      "});",
+    ].join("\n");
+    assert.equal(caught("c", src, [[barrel, 'export { executeMemoryCommand } from "./memoryCommandBus.js";']]).length, 1);
+    const star = join(SRC, "lib/__t366_star.ts");
+    const src2 = src.replace("__t366_barrel", "__t366_star");
+    assert.equal(caught("c2", src2, [[star, 'export * from "./memoryCommandBus.js";']]).length, 1, "export * is followed too");
+  });
+
+  it("D: the kernel used as a VALUE (`const run = executeMemoryCommand; await run(…)`)", () => {
+    const src = [
+      'import { executeMemoryCommand } from "../lib/memoryCommandBus.js";',
+      'router.post("/d", async (req, res) => {',
+      '  const { data } = await sc.from("messages").select("body");',
+      "  const run = executeMemoryCommand;",
+      '  await run(sc, { commandType: "CREATE_MEMORY", payload: data });',
+      "});",
+    ].join("\n");
+    assert.equal(caught("d", src).length, 1);
+  });
+
+  it("E: a TRIGGER on a history table whose function inserts a memory row from NEW.* — no FROM messages anywhere", () => {
+    const sql = [
+      "CREATE OR REPLACE FUNCTION public.remember_message() RETURNS trigger LANGUAGE plpgsql AS $fn$",
+      "BEGIN INSERT INTO public.memory_items (user_id, caption) VALUES (NEW.sender_id, NEW.body); RETURN NEW; END $fn$;",
+      "CREATE TRIGGER remember AFTER INSERT ON public.messages FOR EACH ROW EXECUTE FUNCTION public.remember_message();",
+    ].join("\n");
+    assert.equal(sqlCrossesBoundary(sql), false, "the file-level check misses it — the hole as F3 measured it");
+    const fns = historyTriggerFunctions(sql);
+    assert.deepEqual(fns, ["remember_message"]);
+    assert.equal(sqlInsertsMemory(sqlFunctionBodies(sql).get("remember_message")!), true);
+  });
+});
+
+describe("T366 — no trigger on a conversation-history table creates a memory row, in any migration", () => {
+  it("every history trigger's function, wherever it is defined, inserts into no memory table", () => {
+    const sqlFiles = [
+      ...readdirSync(join(SRC, "migrations")).filter((n) => n.endsWith(".sql")).map((n) => join(SRC, "migrations", n)),
+      join(PKG, "baseline/20260819_baseline_structure.sql"),
+    ];
+    const bodies = new Map<string, string>();
+    for (const f of sqlFiles) for (const [name, body] of sqlFunctionBodies(readFileSync(f, "utf8"))) bodies.set(name, body);
+    const triggers: string[] = [];
+    const offending: string[] = [];
+    for (const f of sqlFiles) {
+      for (const fn of historyTriggerFunctions(readFileSync(f, "utf8"))) {
+        triggers.push(fn);
+        const body = bodies.get(fn);
+        if (body === undefined) offending.push(`${relative(PKG, f)}: trigger function ${fn} has no body in any migration (cannot be checked)`);
+        else if (sqlInsertsMemory(body)) offending.push(`${relative(PKG, f)}: trigger function ${fn} inserts a memory row`);
+      }
+    }
+    assert.ok(triggers.length >= 2, `only ${triggers.length} history trigger(s) seen — the scan is not reading the triggers`);
+    assert.deepEqual(offending, []);
+  });
+});
+
 describe("T366 hardening — the server tree, followed to any depth", () => {
   it("the analysis is not vacuous: the kernel's bus is a creator, and creators and readers are many files apart", () => {
     assert.ok(server.creators.get(join(SRC, "lib/memoryCommandBus.ts"))!.has("executeMemoryCommand"), "the memory kernel's bus is not seen as a creator");
@@ -508,13 +713,15 @@ function serverEndpoints(): { reads: Set<string>; creates: Set<string> } {
   const creates = new Set<string>();
   for (const f of server.files) {
     const n = server.namesFor(f);
+    const fileCode = server.code.get(f)!;
+    const consts = stringConstsIn(fileCode);
     for (const u of server.units.get(f)!) {
       const m = /^router\.(get|post|put|patch|delete)\(\s*["'`]([^"'`]+)["'`]/.exec(u.code);
       if (!m) continue;
       const path = m[2]!.replace(/:[A-Za-z0-9_]+/g, "X").replace(/\*[A-Za-z0-9_]*/g, "X");
       const mentionsAny = (names: Set<string>) => [...names].some((x) => new RegExp(`(^|[^A-Za-z0-9_$.])${x.replace(/\$/g, "\\$")}\\s*[(.]`).test(u.code));
-      if (m[1] === "get" && (serverReads(f, u.code).length > 0 || mentionsAny(n.readers))) reads.add(path);
-      if (m[1] !== "get" && (serverCreates(f, u.code).length > 0 || mentionsAny(n.creators))) creates.add(path);
+      if (m[1] === "get" && (serverReads(f, u.code, consts, fileCode).length > 0 || mentionsAny(n.readers))) reads.add(path);
+      if (m[1] !== "get" && (serverCreates(f, u.code, consts, fileCode).length > 0 || mentionsAny(n.creators))) creates.add(path);
     }
   }
   return { reads, creates };
