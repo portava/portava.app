@@ -10190,7 +10190,7 @@ trip into a group trip. Each is now closed:
   redeemer is told "This invite isn't available right now." and nothing else
   (`artifacts/api-server/src/lib/tripTrustGate.ts:221#export async function refuseIfInviterCannotHost(`).
 - **R3.** One guard before every trip router refuses every member-level write by a retained-record-only member
-  (`artifacts/api-server/src/lib/tripRetainedRecordGuard.ts:127#export function tripRetainedRecordWriteGuard()`),
+  (`artifacts/api-server/src/lib/tripRetainedRecordGuard.ts:131#export function tripRetainedRecordWriteGuard()`),
   mounted on the router `routes/index.ts` registers first
   (`artifacts/api-server/src/routes/trips.ts:40#const router = Router(); router.use(tripRetainedRecordWriteGuard());`).
   Not refused: reads, compute-only POSTs, safety, leaving, revoking a share, invite answers, /commands (its own
@@ -10243,7 +10243,7 @@ this provider must open a `withRoutesRequestBudget` scope (lane R's files); unti
 
 A member restored to an ended trip's record only is still an accepted member, so they stayed in the trip's Telegraph
 thread and passed every meetup's trip check. The rule is now read by
-`artifacts/api-server/src/lib/tripRetainedRecordGuard.ts:114#export async function refuseRetainedTripWrite(`
+`artifacts/api-server/src/lib/tripRetainedRecordGuard.ts:118#export async function refuseRetainedTripWrite(`
 (403 `trip_record_read_only`; 503 when unreadable) at every write on a meetup that belongs to the trip — create,
 edit, invite, RSVP, time options, vote, confirm (cancelling one's own is not refused) — and such a member is not
 invitable (`artifacts/api-server/src/routes/meetups.ts:610#const eligibleSet = new Set((tripMembers ?? []).filter((r: any) => retainedAccessOf(r) !== "retained_record_only")`).

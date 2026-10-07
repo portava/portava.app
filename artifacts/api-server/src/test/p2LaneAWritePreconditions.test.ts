@@ -244,7 +244,7 @@ describe("POST /trips/:tripId/members — trip_members is a write precondition",
         // OTHER is already a full member. The route must not be able to see it.
         trip_members: [{ trip_id: TRIP, user_id: OTHER, role: "member" }],
       },
-      failOn: only("trip_members"),
+      failOn: (ctx) => (ctx.table === "trip_members" && ctx.eq("user_id") === OTHER ? READ_FAIL : null), // EXACTLY the read that decides the write (OTHER's row). census-trips §85.2's retained-record guard reads the CALLER's own row first and refuses 503 in its own words when that fails (trustRestrictionDoors R5); failing every trip_members read would measure the guard, not this handler (trap 2 above).
     });
 
     const r = await req("POST", `/api/trips/${TRIP}/members`, { userId: OTHER, role: "invited" });
