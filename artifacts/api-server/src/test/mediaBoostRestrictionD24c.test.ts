@@ -16,7 +16,9 @@
  *   A. rankMediaFeed: a withheld author's item gets NONE of the six lifts and
  *      keeps every other term; an unrestricted author keeps them; an ABSENT set
  *      (nobody's state read) withholds every lift (fail closed).
- *   B. loadMediaBoostLiftWithheld: messaging ⇒ withheld; any other restriction
+
+ *   B. the shared reader (compass/CompassFeedBuilder.loadBoostLiftWithheld, one
+ *      helper for Compass and Media since the unification): messaging ⇒ withheld; any other restriction
  *      ⇒ not; a failed read, a degraded read, a throw or no client ⇒ withheld;
  *      nothing is written (the preference is kept).
  *   C. mediaBoostLiftAuthors: only authors a lift would touch are read.
@@ -30,9 +32,9 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { loadBoostLiftWithheld } from "../compass/CompassFeedBuilder.js";
 import {
   rankMediaFeed,
-  loadMediaBoostLiftWithheld,
   mediaBoostLiftAuthors,
   type MediaFeedItem,
   type MediaRankingFlags,
@@ -155,14 +157,14 @@ function restrictionsDb(byUser: Record<string, Answer>) {
   };
 }
 
-describe("B. loadMediaBoostLiftWithheld reads the state through the seam and fails closed", () => {
+describe("B. the ONE D-24c reader Compass and Media share (compass/CompassFeedBuilder.loadBoostLiftWithheld) reads the state through the seam and fails closed", () => {
   it("messaging ⇒ withheld; hosting alone ⇒ not; none ⇒ not", async () => {
     const db = restrictionsDb({
       m: { data: [{ restriction_type: "messaging" }] },
       h: { data: [{ restriction_type: "hosting" }] },
       n: { data: [] },
     });
-    const w = await loadMediaBoostLiftWithheld(db as any, ["m", "h", "n"]);
+    const w = await loadBoostLiftWithheld(db as any, ["m", "h", "n"]);
     assert.deepEqual([...w].sort(), ["m"]);
     assert.deepEqual(db.reads.sort(), ["trust_restrictions:h", "trust_restrictions:m", "trust_restrictions:n"]);
     assert.deepEqual(db.writes, [], "the stored preference is kept: nothing is written");
@@ -174,14 +176,14 @@ describe("B. loadMediaBoostLiftWithheld reads the state through the seam and fai
       t: { error: { code: "42P01", message: 'relation "public.trust_restrictions" does not exist' } },
       x: { throws: true },
     });
-    const w = await loadMediaBoostLiftWithheld(db as any, ["e", "t", "x"]);
+    const w = await loadBoostLiftWithheld(db as any, ["e", "t", "x"]);
     assert.deepEqual([...w].sort(), ["e", "t", "x"]);
   });
 
   it("no client ⇒ everyone withheld; no authors ⇒ no reads", async () => {
-    assert.deepEqual([...(await loadMediaBoostLiftWithheld(null, ["a", "b"]))].sort(), ["a", "b"]);
+    assert.deepEqual([...(await loadBoostLiftWithheld(null, ["a", "b"]))].sort(), ["a", "b"]);
     const db = restrictionsDb({});
-    assert.equal((await loadMediaBoostLiftWithheld(db as any, [])).size, 0);
+    assert.equal((await loadBoostLiftWithheld(db as any, [])).size, 0);
     assert.deepEqual(db.reads, []);
   });
 });
@@ -238,6 +240,9 @@ describe("C2. verifier F7: each lift family on its own makes its author read, an
 describe("D. the Watch feed passes the loaded set to the ranker", () => {
   it("routes/mediaFeed.ts loads the withheld set for exactly the liftable authors and hands it to rankMediaFeed", () => {
     const src = readFileSync(join(HERE, "..", "routes", "mediaFeed.ts"), "utf8");
-    assert.match(src, /boostWithheldAuthors: await loadMediaBoostLiftWithheld\(sc, mediaBoostLiftAuthors\(rankCandidates, mediaFlags, undefined, nowMs\)\)/);
+    assert.match(src, /boostWithheldAuthors: await loadBoostLiftWithheld\(sc, mediaBoostLiftAuthors\(rankCandidates, mediaFlags, undefined, nowMs\)\)/);
+    assert.match(src, /import \{ loadBoostLiftWithheld \} from "\.\.\/compass\/CompassFeedBuilder\.js";/, "the Watch feed uses Compass's reader, not a copy");
+    const ranking = readFileSync(join(HERE, "..", "services", "ranking", "MediaFeedRankingService.ts"), "utf8");
+    assert.doesNotMatch(ranking, /getRestrictionState/, "no second D-24c reader in the media ranker");
   });
 });

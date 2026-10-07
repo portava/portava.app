@@ -16392,8 +16392,8 @@ window.
 - **Lead ruling D-24c on the Watch feed.** A messaging-restricted creator's posts get none of the six
   creator lifts. An unreadable restriction state means no lift. Nothing is written, so the preference
   is kept. The code is at
-  `artifacts/api-server/src/services/ranking/MediaFeedRankingService.ts:1244#export async function loadMediaBoostLiftWithheld(`
-  and is wired at `artifacts/api-server/src/routes/mediaFeed.ts:1567#boostWithheldAuthors: await loadMediaBoostLiftWithheld(`.
+  Compass's one D-24c reader, `loadBoostLiftWithheld` (the lane M copy was removed in §50.10), and is wired at
+  `artifacts/api-server/src/routes/mediaFeed.ts:1567#boostWithheldAuthors: await loadBoostLiftWithheld(`.
   Tested in `artifacts/api-server/src/test/mediaBoostRestrictionD24c.test.ts` (11). The trust and Compass
   censuses grade the restriction itself.
 - **Found, not changed (another lane's dependency).**
@@ -16519,7 +16519,7 @@ that goes red without it.
   (`travel-buddy-standalone/src/services/media/mediaPrivacy.ts`).
 - **F7 — a D-24c invariant was not pinned.** The six lift families were listed twice with no test that
   the two lists agree. Each family alone now makes its author read and is withheld
-  (`artifacts/api-server/src/test/mediaBoostRestrictionD24c.test.ts:203#describe("C2. verifier F7`).
+  (`artifacts/api-server/src/test/mediaBoostRestrictionD24c.test.ts:205#describe("C2. verifier F7`).
   Removing the featured clause from `mediaBoostLiftAuthors`, the verifier's surviving mutant, now turns it
   red.
 
@@ -16532,3 +16532,16 @@ that goes red without it.
 | ID | Was | Now | Evidence |
 | --- | --- | --- | --- |
 | MD79 | **C** | **C** | §50.1's evidence, plus F1's author bypass on the two feeds (`artifacts/api-server/src/routes/posts.ts:1524#p.author_id === user.id ? p : gemProtectPost(mapPublicPost(p), globalGemCtx, user.id)`) and the window on seven more readers (§50.7). Tests: `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:64#describe("F1.` and `artifacts/api-server/src/test/mediaLocationDisclosureLifetime.test.ts:167#describe("D. the two paths agree at every instant"`. The four closed readers show the city from release: less than the ruling allows, never more. |
+
+### 50.10 One D-24c reader for Compass and Media (lead request, 2026-10-07)
+
+Lane L's `loadBoostLiftWithheld` (#641) and lane M's `loadMediaBoostLiftWithheld` were two copies of one
+rule. They agreed: withheld on messaging, on either degraded shape, on a throw, and with no client. Two
+copies can still drift apart. The media copy and its `getRestrictionState` import are removed. The Watch
+feed now calls Compass's reader:
+`artifacts/api-server/src/routes/mediaFeed.ts:1567#boostWithheldAuthors: await loadBoostLiftWithheld(`.
+
+`artifacts/api-server/src/test/mediaBoostRestrictionD24c.test.ts` (18 tests) now tests the shared reader. It
+also pins that the media ranker holds no second reader. Removing the degraded check from the shared reader
+turns it red. `compass-feed` (46) is green. No verdict moves.
+

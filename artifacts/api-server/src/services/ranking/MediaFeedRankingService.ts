@@ -43,7 +43,7 @@ import {
   type ScoredCandidate,
   type DiversityOptions,
 } from "../../lib/portavaRank.js";
-import type { BucketType } from "../../lib/places/bucketClassifier.js"; import { getRestrictionState } from "../trust/TrustRestrictionService.js"; // lead ruling D-24c: the enforcement seam (never trust_restrictions directly)
+import type { BucketType } from "../../lib/places/bucketClassifier.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -238,7 +238,7 @@ export interface MediaRankingInput<T extends MediaFeedItem = MediaFeedItem> {
   /**
    * Lead ruling D-24c (2026-10-06): authors whose boost lift is WITHHELD — an
    * active messaging restriction, or a restriction state that could not be read.
-   * Load it with `loadMediaBoostLiftWithheld(sc, mediaBoostLiftAuthors(...))`.
+   * Load it with `loadBoostLiftWithheld(sc, mediaBoostLiftAuthors(...))` (compass/CompassFeedBuilder: the one D-24c reader).
    * ABSENT ⇒ nobody's restriction state was read ⇒ NO author gets a lift (fail
    * closed for reach amplification; it refuses nothing the person does).
    */
@@ -1203,7 +1203,7 @@ function boostLiftWithheldFor(withheld: ReadonlySet<string> | undefined, authorI
 /**
  * The authors a ranking pass could LIFT: those with at least one candidate on
  * which an enabled boost would be positive. Only these are passed to
- * loadMediaBoostLiftWithheld, so no restriction is read for anyone a boost would
+ * compass/CompassFeedBuilder.loadBoostLiftWithheld, so no restriction is read for anyone a boost would
  * not touch. Empty when ranking is off or no boost flag is on.
  */
 export function mediaBoostLiftAuthors(
@@ -1234,27 +1234,7 @@ export function mediaBoostLiftAuthors(
   return [...out];
 }
 
-/**
- * The authors (of those given) whose lift is withheld under D-24c. One read per
- * author through lane B's seam (`getRestrictionState`; there is no batch read and
- * route code must not query `trust_restrictions` directly). Withheld: an active
- * messaging restriction; EITHER degraded shape (fail_closed, or fail_open where
- * the can-flags read true but nobody read the table); a throw; or no client.
- */
-export async function loadMediaBoostLiftWithheld(
-  db: SupabaseClient | null | undefined,
-  authorIds: readonly string[],
-): Promise<Set<string>> {
-  const withheld = new Set<string>();
-  if (authorIds.length === 0) return withheld;
-  if (!db) { for (const id of authorIds) withheld.add(id); return withheld; }
-  await Promise.all(authorIds.map(async (id) => {
-    try {
-      const state = await getRestrictionState(db, id);
-      if (state.degraded || !state.canMessage) withheld.add(id);
-    } catch {
-      withheld.add(id);
-    }
-  }));
-  return withheld;
-}
+// The authors' restriction state is read by ONE helper shared with Compass:
+// compass/CompassFeedBuilder.loadBoostLiftWithheld (lane L, #641) — withheld on
+// an active messaging restriction, either degraded shape, a throw, or no client.
+// The Watch feed (routes/mediaFeed.ts) calls it with mediaBoostLiftAuthors().
