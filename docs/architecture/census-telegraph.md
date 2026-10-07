@@ -11442,7 +11442,7 @@ Telegraph is lane C's again (lanes T1 and T2 merged and closed). This section re
   (`artifacts/api-server/src/routes/telegraphSharedContext.ts:444#return windowRelationshipFromEdges(`,
   `artifacts/api-server/src/services/telegraph/reachablePeopleQuery.ts:167#return windowRelationshipFromEdges(`),
   and so does Compass. Passport maps its follow relationship through it too
-  (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:2524#export function windowRelationshipFor(`),
+  (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:2531#export function windowRelationshipFor(`),
   so §48's "Passport admits no one to a followers window" no longer holds: it admits mutual follows.
 
 ## §50 — Lane C (2026-10-06, wave 5): Compass's direct-thread availability under D-103, and the trip's thread under the retained-record rule. NO ROW MOVES
