@@ -272,3 +272,11 @@ In the order the workflow would meet them:
   snapshot now supplies; the intel files (`2276`–`2292`, `3002`, `3003`,
   `3310`) and `2140` are the most likely next stops if #632's overrides do not
   cover them.
+
+## After the build: the configuration step and the runtime
+
+Auth (sign-up closed, redirect URLs) and the feature-flag policy are applied by
+the separate, dispatch-only `.github/workflows/beta-config.yml`
+(`scripts/src/beta-configure.ts`, policy `scripts/src/beta-flag-policy.json`),
+after this workflow is green. The API deployment, the mobile build and the
+smoke check follow `docs/ops/beta-runtime-runbook.md`.

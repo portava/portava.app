@@ -177,6 +177,7 @@ router.get("/auth/signup-status", asyncHandler(async (_req, res) => {
  * Behaviour:
  *  - disable_signups = true  → 403 { error: "feature_disabled" }
  *  - flag DB query errors    → fail-CLOSED, the stop engages and signup is blocked
+ *  - invite_only_beta = true → 403 { error: "invite_required" } (no account created)
  *  - success                 → 201 { user: { id, email } }
  *    (client must then call supabase.auth.signInWithPassword to get a session)
  *
@@ -205,6 +206,29 @@ router.post("/auth/signup", signupLimiter, asyncHandler(async (req, res) => {
   const signupsDisabled = await isKillSwitchEngaged(client, "disable_signups");
   if (signupsDisabled) {
     res.status(403).json({ error: "feature_disabled" });
+    return;
+  }
+
+  // INVITE-ONLY IS ENFORCED HERE, NOT ONLY REPORTED. GET /auth/signup-status has
+  // always reported `inviteOnly` from this flag, but this route — which creates
+  // the account with the SERVICE ROLE, and so also bypasses Supabase Auth's own
+  // `disable_signup` setting — never read it: with invite_only_beta ON anyone
+  // could still create an account by calling it directly. Nothing here mints an
+  // invited account (invitees are created by an operator, docs/ops/beta-runtime-runbook.md),
+  // so while the flag is on this route creates nobody.
+  //
+  // The flag keeps its recorded CAPABILITY classification (check-flag-polarity.mjs:
+  // false on an unreadable row). That does not open this door on a database
+  // failure: the same unreadable feature_flags engages disable_signups above,
+  // which is a STOP.
+  //
+  // WHO THIS DOOR COVERS: direct API callers only. The mobile app does not use
+  // this route; it signs up through Supabase Auth (supabase.auth.signUp), where
+  // the beta is closed by Auth's own `disable_signup` (set by
+  // scripts/src/beta-configure.ts) and the sign-up screen's advisory message.
+  const inviteOnly = await isFlagEnabled(client, "invite_only_beta");
+  if (inviteOnly) {
+    res.status(403).json({ error: "invite_required", message: "Portava is invite-only right now. You need an invite to create an account." });
     return;
   }
 
