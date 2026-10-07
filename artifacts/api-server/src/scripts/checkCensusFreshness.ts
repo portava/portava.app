@@ -450,7 +450,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // L200/L199's evidence: migration 3620 (owner decision L199-b, applied
     // nowhere) and its static suite. Graded rows rest on them, so watched.
     "artifacts/api-server/src/migrations/3620_layover_client_write_boundary.sql",
-    "artifacts/api-server/src/test/layoverClientWriteBoundary.test.ts",
+    "artifacts/api-server/src/test/layoverClientWriteBoundary.test.ts", "artifacts/api-server/src/scripts/checkNoMoneyInRanking.ts", "artifacts/api-server/src/test/noMoneyInRankingCheck.test.ts", /* §55.2 (lane R wave 3): L7 and L256 rest on the guard and its K13; on this line so no cited line moves */
     // ── ADDED 2026-09-22 by the INTEGRATING lane, because check:census-scope-coverage
     // ── went red and the remedy it prescribes is this one, never the floor.
     //

@@ -9106,6 +9106,88 @@ Three rows move up.
 
 `check:census-integrity` reads **C=87 W=142 N=67 X=0** over 296.
 
+## §55 — 2026-10-07 (mission lane R, wave 3): presence intents meet D-PRESENCE-K, the Layover engine is inside the money-in-ranking guard, and the offline bundle carries return phrases; THREE ROWS MOVE
+
+This wave was built on `claude/residual-wave3-layover-20261007`, branched from the wave-2 head `3fe21ec19`. Every row was re-checked on that tree. Nothing ran against a database, and no flag was read or flipped. Migrations 3621–3639 were not needed.
+
+### §55.1 D-PRESENCE-K is built: a count is never below 5 and never beside a roster
+
+§52.1 made a minimum-k rule the activation prerequisite for `layover_presence_intents_enabled`, and §54.5 recorded the lead ruling (k = 5). `GET /airport/sessions/:id/presence/intents` now applies three rules before a count leaves:
+
+1. **The minimum.** Any count below 5, zero included, is `null` on the wire and means "fewer than 5" (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:243#export const PRESENCE_INTENT_MIN_K = 5;`, `artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:248#export function discloseIntentCounts(`). Zero is withheld too, because "nobody here is open to X" is a statement about everyone on a roster.
+2. **No roster beside the count.** Counts are served only while `layover_presence_ladder_enabled` is on, which keeps presence aggregate-only (`artifacts/api-server/src/routes/airport.ts:4698#if (!(await isFlagEnabled(sc, "layover_presence_ladder_enabled"))) {`). When it is off, absent or unreadable, the presence read serves named profiles for the same population. The counts are then withheld whole (`roster_visible`), and no other traveller's record is read.
+3. **Nobody the viewer can name is counted.** The viewer's own layover crew and the accepted crew of the session's trip are removed from the population before counting (`artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:264#export async function namedToViewer(`, called at `artifacts/api-server/src/routes/airport.ts:4711#const named = await namedToViewer(`). An unreadable crew or trip-crew read is a 503.
+
+On the client, nothing below 5 is rendered, even if an older server sends it (`travel-buddy-standalone/src/components/layover/LayoverPresenceIntents.tsx:41#n >= PRESENCE_INTENT_MIN_K`). "Fewer than 5" and "listed by name" replace "Nobody here has said".
+
+Tests:
+- `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:401#D-PRESENCE-K — a count below 5 is never shown, and never beside a roster` adds nine cases, among them `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:411#§52.1's probe P4` and `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:440#a member of the viewer's LAYOVER CREW`.
+- The base fixture gains four cleared travellers, so every earlier exclusion still shows as a count of 7.
+- Jest adds four cases.
+- 15 of 15 mutants are killed (K1–K11 on the server, KC1–KC4 on the client).
+
+**No row moves.** L27 and L129 stay N, and L187 stays W, on §51.1's grounds: 3900 is applied nowhere and both flags are seeded FALSE. The activation prerequisite §52.1 named is now met in code, and lighting the counts now also needs the presence ladder.
+
+### §55.2 L7 and L256: the Layover engine is inside `check:no-money-in-ranking`
+
+Both rows were `N ∅`, an unguarded absence: nothing paid reached the layover path, and nothing refused one being added. The guard scanned one Layover file. Its scope now names `services/airport` and `services/layover` (`artifacts/api-server/src/scripts/checkNoMoneyInRanking.ts:195#{ path: "services/airport", group: "ranker",`, `artifacts/api-server/src/scripts/checkNoMoneyInRanking.ts:196#{ path: "services/layover", group: "ranker",`).
+
+- **L7:** that covers the recommendation ordering.
+- **L256:** that covers every file that computes the window, the verdict, the buffers or the return deadline.
+
+On the real tree, 144 files are scanned and the result is clean. One allowlist entry is justified: `getTimeWallet` is the spec's time wallet, measured in minutes, not money. `artifacts/api-server/src/test/noMoneyInRankingCheck.test.ts:538#K13. the Layover engine is in scope` pins the scope on the real tree, and proves that a sponsored term in the ordering and a merchant term in the safety engine each fail at their line. Mutants M1–M3 are killed.
+
+By §1's rule for prohibitions, both rows become `C ⌀`: the guard is real and the path it guards is empty. Two limits are stated, not hidden. The guard reads identifiers, not data flow. Route files are out of its scope, and on `routes/airport.ts` the only ordering is the layover-buddy availability hint.
+
+### §55.3 L155: the return phrases the plan needs, cached with the bundle
+
+The offline bundle answered `no_phrase_catalogue` for every session. `artifacts/api-server/src/services/airport/layoverPhrases.ts:222#export function layoverPhrasesFor(` is now a static catalogue: no provider, no network, no machine translation. It holds five return sentences, and the first names this airport and its IATA code. The sentences come in 13 languages, keyed by the airport's country code (`artifacts/api-server/src/services/airport/layoverPhrases.ts:208#export const COUNTRY_LANGUAGE`), and each has its English beside it.
+
+When the bundle carries them (`artifacts/api-server/src/services/airport/LayoverDegradedService.ts:174#translationPhrases: phrasesOf(session, airport, input.stops ?? []),`):
+- **The plan leaves the airport:** a landside stop, or the traveller wants to leave. The phrases are served.
+- **The plan stays airside:** `plan_stays_airside`.
+- **The language is outside the catalogue:** `language_not_in_catalogue`. English is never passed off as a translation.
+
+The device keeps the phrases (`travel-buddy-standalone/src/lib/layoverPlanCache.ts:278#translationPhrases: normalisePhrases(bundle.translationPhrases),`). The offline plan card shows each local sentence with its English, or the reason there are none (`travel-buddy-standalone/src/components/layover/__tests__/LayoverOfflinePlanCard.phrases.component.test.tsx:52#cached phrases show the local sentence`).
+
+Tests:
+- `artifacts/api-server/src/test/layoverDegradedOffline.test.ts:293#§16 L155 — the return phrases the plan requires`.
+- `artifacts/api-server/src/services/airport/__tests__/layoverOfflineCrewMeetingPoint.test.ts:174#the overview's offline bundle carries the return phrases`: the overview route, end to end.
+- Three plan-cache cases.
+- Mutants T1–T6 and TC1–TC4 are killed.
+
+**L155 moves `N → W`, not `C`.** The catalogue covers 13 single-language countries. A layover anywhere else still has no phrases. The set is keyed to the return, not to each stop's category, because a stop's category does not reach the bundle.
+
+### §55.4 What the rest of this wave's scope needs
+
+- **#569 is still OPEN** (checked 2026-10-07): L124, L132–L135, L137, L139, L158, L166, L203 and L232 stay where they are.
+- **L13, L56–L59 and L178** grade the Temporal Freedom engine in `domain/trips/invariants/TripFreedomEngine.ts`. Trips owns that file. Their W reasons hold on this tree: domain ownership, the two inputs that never arrive, the trip-named engine, and no caller outside the tests.
+- **L163 needs a lead ruling.** `layover_events` and `layover_sessions` are in `UNCLASSIFIED_BACKLOG`, so account deletion erases no layover row. Recommendation, as the privacy-preserving default: erase the traveller's layover sessions, events, stops, recommendations, presence, checkpoints and crew memberships on account deletion, and set a retention period for `layover_events`. That is account deletion code, which is the lead's to direct.
+- **L254, L273 and L274** wait on Rent-a-Buddy (#640). **L268 and L112** wait on Compass's tool flag. **L275** waits on the Passport postcard. **L131** waits on a Telegraph crew thread.
+- **L205, L294, L236 and L295** stay CODE_FIXABLE and were not reached in this wave:
+  - L205: owner reads on a user client. Large, and it touches every airport route.
+  - L294: a typed read result. Architectural.
+  - L236 and L295: layover `*.db.test.ts` files. CI live-DB tier only.
+- **The NEEDS_MIGRATION rows** (L21, L26, L31, L33, L36, L38, L39, L192, L202) are unchanged. All but L202 add vocabulary or state to tables whose spec use waits on 2700. L202 would move the presence policy into the database, and the presence read runs on the service role by design.
+
+### §55.5 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L7 | N | C | `C ⌀`. Commercial ranking cannot enter the layover recommendation ordering: `check:no-money-in-ranking` scans `services/airport` (`artifacts/api-server/src/scripts/checkNoMoneyInRanking.ts:195#{ path: "services/airport", group: "ranker",`), and `artifacts/api-server/src/test/noMoneyInRankingCheck.test.ts:538#K13. the Layover engine is in scope` fails a sponsored term in it. The guarded path is empty. |
+| L256 | N | C | `C ⌀`. No sponsored or merchant input may reach a file that computes a safety constraint. The same scope covers LayoverSafetyEngine, LayoverFeasibility, LayoverEnvelope, LayoverConstraints, LayoverReturnCorridor, AirportProfileService and `services/layover`. K13 fails a merchant term in the safety engine. |
+| L155 | N | W | Return phrases in the airport's language are cached with the bundle and on the device when the plan leaves the airport (`artifacts/api-server/src/services/airport/layoverPhrases.ts:222#export function layoverPhrasesFor(`; `artifacts/api-server/src/test/layoverDegradedOffline.test.ts:293#§16 L155 — the return phrases the plan requires`). `W`: 13 single-language countries only, and keyed to the return rather than to each stop. |
+
+### §55.6 Headline
+
+| bucket | was (§54.7) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 87 | 89 |
+| BUILT-BUT-WRONG | 142 | 143 |
+| NOT-BUILT | 67 | 64 |
+| CANNOT-VERIFY | 0 | 0 |
+| total | 296 | 296 |
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/test/docCitations.test.ts — The citation guard's own suite. §27.10 names its case 9 and §30.4 names it as npm test's one failing test; both report on the guard that measured this census. It is machinery this census reports on, not a subject it grades.
