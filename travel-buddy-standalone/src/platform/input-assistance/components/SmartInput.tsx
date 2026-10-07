@@ -66,6 +66,7 @@ import {
 } from '../services/inputTelemetry.ts';
 import { recordSuggestionSelection } from '../services/selectionRecorder.ts';
 import { recordLocalSelection } from '../services/localZeroState.ts';
+import { bindLocally } from '../services/entityResolution.ts';
 import { color, space, radius, type as t } from '../../../theme/tokens.ts';
 
 export interface SmartInputProps extends Omit<TextInputProps, 'onChange'> {
@@ -347,7 +348,13 @@ export const SmartInput = forwardRef<TextInput, SmartInputProps>(function SmartI
   }, [value, telemetryField]);
 
   const handleSelect = useCallback(
-    (s: InputSuggestion) => {
+    (picked: InputSuggestion) => {
+      // §11 / census G260 — an UNRESOLVED row (a shipped-dictionary name offered
+      // offline) is bound to the canonical entity the person already accepted
+      // in this field, when exactly one matches; ambiguous or unknown stays
+      // unresolved. Everything below — the caller, both selection memories —
+      // sees the bound row, so an offline accept is not a bare string.
+      const s = bindLocally(picked, policy);
       if (policy) {
         emitInputEvent(
           'suggestion_selected',
