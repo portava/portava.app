@@ -1469,15 +1469,15 @@ and it was being violated on every thread that had ever carried a card.
   (`services/telegraph/shareables.ts:116#TelegraphShareable`) declares
   `getSharePreview` / `getCurrentState` / `getAvailableActions` /
   `getDeepLink`, and `shareableFor`
-  (`services/telegraph/shareables.ts:1362#shareableFor`) returns one for any of
+  (`services/telegraph/shareables.ts:1369#shareableFor`) returns one for any of
   fifteen object types across §5's five families —
-  `services/telegraph/shareables.ts:1352#SHAREABLE_OBJECT_TYPES`. A family with
+  `services/telegraph/shareables.ts:1359#SHAREABLE_OBJECT_TYPES`. A family with
   no loader returns `null`, and the resolver answers `not_found` rather than
   inventing a card: an unknown family must not silently become a live
   reference.
 - **§5.2's third layer is the whole point, and it is computed per read.**
   `resolveShareProjections`
-  (`services/telegraph/shareables.ts:1447#resolveShareProjections`) takes a
+  (`services/telegraph/shareables.ts:1454#resolveShareProjections`) takes a
   batch of references and a VIEWER and returns, for each, either a projection
   built from the live source row or an explicit unavailable state with a
   reason. An unavailable reference carries `projection: null`, `actions: []`
@@ -1498,7 +1498,7 @@ and it was being violated on every thread that had ever carried a card.
   forbids, so the ladder stops where this module's knowledge stops
   (`test/telegraphShare.test.ts:363`).
 - **The envelope is a REFERENCE.** `PortavaObjectBody`
-  (`services/telegraph/shareables.ts:1526#PortavaObjectBody`) carries five
+  (`services/telegraph/shareables.ts:1533#PortavaObjectBody`) carries five
   fields — kind, objectType, objectId, the sender's caption, and a version —
   and nothing from the object. `buildPortavaObjectBody` (`:687#buildPortavaObjectBody`)
   is the only constructor and `parsePortavaObjectBody` (`:702#parsePortavaObjectBody`)
@@ -1535,16 +1535,16 @@ and it was being violated on every thread that had ever carried a card.
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| T41 | N | **C** | **`TelegraphShareable` interface — `getSharePreview` / `getCurrentState` / `getAvailableActions` / `getDeepLink`** — all four methods exist under those names (`services/telegraph/shareables.ts:116#TelegraphShareable`) and are implemented for fifteen object types (`:1362#shareableFor`), asserted family by family at `test/telegraphShare.test.ts:252`. |
-| T44 | N | **C** | **Four-layer model: Share projection — what the recipient is *currently* authorized to see** — the layer exists and is computed per (viewer, object) on every read (`services/telegraph/shareables.ts:1447#resolveShareProjections`); the card is no longer whatever the sender serialised. |
+| T41 | N | **C** | **`TelegraphShareable` interface — `getSharePreview` / `getCurrentState` / `getAvailableActions` / `getDeepLink`** — all four methods exist under those names (`services/telegraph/shareables.ts:116#TelegraphShareable`) and are implemented for fifteen object types (`:1369#shareableFor`), asserted family by family at `test/telegraphShare.test.ts:252`. |
+| T44 | N | **C** | **Four-layer model: Share projection — what the recipient is *currently* authorized to see** — the layer exists and is computed per (viewer, object) on every read (`services/telegraph/shareables.ts:1454#resolveShareProjections`); the card is no longer whatever the sender serialised. |
 | T46 | W | **C** | **Revocation: a deleted/private/unauthorized source degrades to unavailable; never a backdoor into revoked content** — the violation is closed on both ends. Server: an unavailable reference carries `projection: null` and `actions: []`, proved by the assertion that the deleted post's own words do not appear anywhere in the serialised response (`test/telegraphShare.test.ts:324`). Client: the two cards that WERE frozen snapshots now re-resolve and degrade (`travel-buddy-standalone/src/features/telegraph/__tests__/shareRevocation.component.test.tsx:137`, `:176`). |
-| T43 | W | **C** | **Four-layer model: Source object** — a reference is now a RESOLVED reference, not a payload field: the envelope carries only `(objectType, objectId)` (`services/telegraph/shareables.ts:1526#PortavaObjectBody`) and the renderer dereferences it through the registry. The census's objection — "a payload field, not a resolved reference … nothing dereferences it at render" — is answered by `travel-buddy-standalone/src/features/telegraph/sharing/PortavaObjectMessage.tsx:28#PortavaObjectMessage`. |
+| T43 | W | **C** | **Four-layer model: Source object** — a reference is now a RESOLVED reference, not a payload field: the envelope carries only `(objectType, objectId)` (`services/telegraph/shareables.ts:1533#PortavaObjectBody`) and the renderer dereferences it through the registry. The census's objection — "a payload field, not a resolved reference … nothing dereferences it at render" — is answered by `travel-buddy-standalone/src/features/telegraph/sharing/PortavaObjectMessage.tsx:28#PortavaObjectMessage`. |
 | T55 | W | **C** | **Message kind PORTAVA_OBJECT** — it is now a typed kind, not `system` plus a bespoke subtype: the route writes `msg_type='portava_object'` (`routes/telegraphShare.ts:80#/threads/:threadId/share`), `messages.msg_type` carries no CHECK so this needs no migration (`baseline/20260819_baseline_structure.sql:7565`), and both conversation surfaces dispatch it. |
 | T35 | W | **W** | **One consistent share contract for all eligible Portava content** — the contract now EXISTS and fifteen types implement it, which is the half that was missing. It stays W because the four legacy producers the census named still write their own bespoke JSON (`discovery_card`, `post_card`, `compass_card`, `circle_status_card`): the new cards are revocable, but they are revocable by MAPPING the old payload, not by the old producers having moved to the contract. One contract plus four legacy shapes is not yet one shape. |
-| T36 | W | **W** | **Object family Social — profile, post, Highlight, public Memory derivative, Memory Note, Stamp** — profile, post and Memory are now shareable through the contract (`services/telegraph/shareables.ts:1352#SHAREABLE_OBJECT_TYPES`). Highlight and Stamp have no loader and `STAMP` is not in the registry, so three of six. |
+| T36 | W | **W** | **Object family Social — profile, post, Highlight, public Memory derivative, Memory Note, Stamp** — profile, post and Memory are now shareable through the contract (`services/telegraph/shareables.ts:1359#SHAREABLE_OBJECT_TYPES`). Highlight and Stamp have no loader and `STAMP` is not in the registry, so three of six. |
 | T37 | N | **W** | **Object family Travel — Trip, Trip stage, plan, event, route, reservation-safe derivative, layover plan** — was "none of the seven is shareable into a thread"; four now are (TRIP, TRIP_STAGE, PLAN/MEETUP, EVENT), each with its own authorization read. Route, reservation-safe derivative and layover plan have no loader. |
 | T38 | W | **W** | **Object family Places — place, Hidden Gem, map pin, neighborhood, meetup point** — place, gem, map pin and meetup point resolve through the contract; NEIGHBORHOOD is in the vocabulary and deliberately has no loader, so `shareableFor` returns null for it rather than pretending (`test/telegraphShare.test.ts:295`). Four of five. |
-| T39 | W | **W** | **Object family Services — Buddy profile/service, eligible booking card, Visa Buddy operational card** — the booking card now resolves with its two-party authorization (`services/telegraph/shareables.ts:1362#shareableFor`), and BUDDY_SERVICE maps to the same loader. There is no Visa Buddy card and no standalone Buddy profile share. |
+| T39 | W | **W** | **Object family Services — Buddy profile/service, eligible booking card, Visa Buddy operational card** — the booking card now resolves with its two-party authorization (`services/telegraph/shareables.ts:1369#shareableFor`), and BUDDY_SERVICE maps to the same loader. There is no Visa Buddy card and no standalone Buddy profile share. |
 | T3 | W | **W** | **Pillar Share — any eligible Portava object moves through a safe permission-aware share projection** — the "permission-aware share projection" half is now real and is exactly what §5.2 asked for. It stays W on "any eligible object": four object families are covered and Media (§5's fifth family — photo, video, voice, GIF, file) is not a shareable type at all; it travels as message media, which is a different mechanism. |
 
 ### 10.7 The §5 tests, and how each was shown red
@@ -4815,12 +4815,12 @@ a loader each.
 | route | `artifacts/api-server/src/services/telegraph/shareables.ts:996#const loadRoute` | `route_plan_members`, not the trip. Being on the trip a route was planned for is not being on the route. A draft degrades for everyone but its owner. **Corrected 2026-10-07** (census-highlights-memories §AF.4.1, verifier minor 2): the trip is now REQUIRED as well, as `GET /route-plans/:id` requires it, so a non-owner needs an accepted membership of the plan's trip AND a `route_plan_members` row, and a plan with no trip is refused to every non-owner. |
 | reservation-safe derivative | `artifacts/api-server/src/services/telegraph/shareables.ts:1060#const loadReservation` | Owner or accepted trip member — and the projection carries neither `confirmation_ref`, `raw_text` nor `extraction`. See §15.2. **Corrected 2026-10-07** (census-highlights-memories §AF.4.1, verifier minor 2): a block between the viewer and the reservation's creator, either way, refuses it (read first, census-highlights-memories §AH.2), because the grant is trip crew and a block outranks crew on the trip's own ladder. |
 | layover plan | `artifacts/api-server/src/services/telegraph/shareables.ts:1121#const loadLayoverPlan` | Owner, or an accepted member of the trip the session belongs to. A session with no `trip_id` is private to its traveller, full stop. **Superseded 2026-10-07 by lead ruling D-LAYOVER-SHARE-CREW** (census-highlights-memories §AF.4.3): the owner, or anyone else only where the owner shared it into the thread the card is read in; trip crew alone never grants it. |
-| Media | `artifacts/api-server/src/services/telegraph/shareables.ts:1235#const loadMedia` | `visibility: 'inherit'` — the column's DEFAULT — degrades to `private`. See §15.2. |
-| Buddy service | `artifacts/api-server/src/services/telegraph/shareables.ts:1293#const loadBuddyService` | `approved` AND `is_active`, or ownership. This one is a REPAIR, not an addition. See §15.3. |
+| Media | `artifacts/api-server/src/services/telegraph/shareables.ts:1242#const loadMedia` | `visibility: 'inherit'` — the column's DEFAULT — degrades to `private`. See §15.2. |
+| Buddy service | `artifacts/api-server/src/services/telegraph/shareables.ts:1300#const loadBuddyService` | `approved` AND `is_active`, or ownership. This one is a REPAIR, not an addition. See §15.3. |
 
 The three vocabulary types are `artifacts/api-server/src/services/telegraph/vocabulary.ts:52#"RESERVATION",`,
 `artifacts/api-server/src/services/telegraph/vocabulary.ts:53#"LAYOVER_PLAN",` and `artifacts/api-server/src/services/telegraph/vocabulary.ts:77#"MEDIA",`. The registry is
-`artifacts/api-server/src/services/telegraph/shareables.ts:1326#const LOADERS` and
+`artifacts/api-server/src/services/telegraph/shareables.ts:1333#const LOADERS` and
 now answers twenty-two object types where it answered fifteen
 (`:950#SHAREABLE_OBJECT_TYPES`). Forty-eight assertions:
 `artifacts/api-server/src/test/telegraphShareFamilies.test.ts:279#it("Services:`
