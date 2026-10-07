@@ -45,11 +45,11 @@
  * The last three restrict actions that are not messages and are enforced where
  * those actions live (routes/trips.ts, routes/tripCrewLocation.ts). Refusing a
  * chat message under them would extend a restriction past "the actions …
- * needed". THIS MAPPING IS A READING, NOT AN OWNER DECISION, and it is listed
- * for confirmation in the lane T2 report. The broader alternative — messaging
- * restriction refuses EVERY non-safety send — is one line here
- * (`initiatesContact` → true for every direct and group send), and would also
- * need the sentence the person is shown to change.
+ * needed". DECIDED: lead ruling D-24 (2026-10-06) confirmed this mapping — "the
+ * sentence a restricted person is shown must name every capability that
+ * restriction stops. Anything not named in that sentence must not be refused."
+ * The same rule now decides calls, plans, seen state and exact location (the
+ * capability table below, and "D-24 on the other capabilities" at the foot).
  *
  * ── NEVER SUPPRESSIBLE ──────────────────────────────────────────────────────
  * A send the caller marks `safety` is admitted whatever the restriction and
@@ -146,29 +146,29 @@ export function decideRestrictedSend(facts: RestrictionSendFacts, opts: { safety
 /**
  * The OTHER Telegraph capabilities a restriction reaches, in the same place as
  * the send scope so the whole OD-TRUST-5 reading is one table (census-telegraph
- * §45d, re-verification 5). Read by the capabilities projection only.
- *
- *   canCall                messaging — the call gateway's own rule ("messaging
- *                          restriction implies calling restriction",
- *                          lib/calls/callGatewayAdapter.ts), in ANY thread.
- *   canCreatePlan          hosting — main's rule, KEPT while owner decision
- *                          D-24 is open (census-telegraph §45d.4). The lanes'
- *                          reading (a conversation plan is not hosting a group
- *                          trip) is NOT shipped. Compass's plan draft is the
- *                          enforcing consumer; an unreadable state now refuses
- *                          it retryably, never as the restriction.
- *   canShareExactLocation  location_plan_join — the rule lane B applied to the
- *                          crew live-location share (routes/tripCrewLocation.ts),
- *                          the one door that shares a live position.
+ * §45d, re-verification 5). DECIDED by lead ruling D-24 (2026-10-06): a
+ * capability no restriction sentence names is not refused.
+ *   canCall                none of its own. A call is refused under messaging
+ *                          exactly where a SEND is — where it would start a new
+ *                          conversation, which is what the sentence names. The
+ *                          projection derives it from canSendMessage, and the
+ *                          call gateway asks decideRestrictedSendInThread (foot).
+ *   canCreatePlan          hosting — "change a group trip's shared plan" — and
+ *                          ONLY for a group trip: never a direct or circle
+ *                          conversation's plan, never a solo trip (D-24a). Applied
+ *                          to the plan's target by decidePlanCreation (foot);
+ *                          Compass's plan draft is the enforcing consumer.
+ *   canShareExactLocation  none: D-24's table, a location-plan restriction stops
+ *                          "nothing in Compass or messaging". Never true (§15.1).
  *
  * Same fail direction as a send: an unreadable state refuses a capability some
  * restriction could reach, retryably; a capability no restriction reaches is
  * decided without it.
  */
 export const RESTRICTION_CAPABILITY_SCOPE: Readonly<Record<"canCall" | "canCreatePlan" | "canShareExactLocation", readonly RestrictionType[]>> = {
-  canCall: ["messaging"],
+  canCall: [],
   canCreatePlan: ["hosting"],
-  canShareExactLocation: ["location_plan_join"],
+  canShareExactLocation: [],
 };
 
 export function decideRestrictedCapability(
@@ -257,4 +257,137 @@ export async function readRestrictionSendFacts(
     .limit(1);
   if (bookingErr) return { restriction, initiatesContact: null };
   return { restriction, initiatesContact: ((booking as unknown[]) ?? []).length === 0 };
+}
+
+// ── D-24 on the other capabilities (lane T, 2026-10-07) ─────────────────────
+// Appended at the foot so every line cited above keeps its number.
+//
+// Lead ruling D-24 (docs/ops/lead-rulings-20261006.md): "The sentence a
+// restricted person is shown must name every capability that restriction
+// stops. Anything not named in that sentence must not be refused." The
+// sentences (services/trust/TrustPrivacyGuard.ts, as amended):
+//   hosting    "You cannot host group trips, change a group trip's shared plan,
+//               or start or link public Trails. You also cannot be booked as a
+//               Buddy."
+//   messaging  "You cannot start new conversations, propose changes to a group
+//               trip, submit public content (…), or have your posts boosted."
+// Before this, the Telegraph projection refused three things no sentence names:
+// a plan in a direct or circle conversation (and on a solo trip) under hosting,
+// a call in an established conversation or a crew room under messaging, and
+// group seen state under ANY restriction. The send rule above already followed
+// the sentence; these now follow it the same way.
+
+/** Where a plan made in a conversation would land. */
+export type PlanTarget = "conversation" | "solo_trip" | "group_trip" | "unknown_trip";
+
+/**
+ * May a plan be created here, as far as a Trust restriction is concerned?
+ *
+ *   conversation   a direct or circle conversation's plan: no sentence names
+ *                  it, so no restriction refuses it — not even an unreadable
+ *                  state (a capability no restriction reaches is decided
+ *                  without it).
+ *   solo_trip      D-24a: a hosting restriction does not stop changes to a solo
+ *                  trip. Allowed without consulting the restriction.
+ *   group_trip     hosting refuses ("change a group trip's shared plan");
+ *                  an unreadable state refuses retryably.
+ *   unknown_trip   D-24a: "If whether a trip is solo cannot be read, treat it
+ *                  as a group trip and refuse with 'try again', never with
+ *                  'restricted'." Unrestricted, a group trip is allowed.
+ */
+export function decidePlanCreation(
+  restriction: Pick<RestrictionState, "activeRestrictions" | "degraded" | "degradedReason">,
+  target: PlanTarget,
+): { readonly allowed: true } | { readonly allowed: false; readonly reason: TelegraphReason } {
+  if (target === "conversation" || target === "solo_trip") return { allowed: true };
+  const verdict = decideRestrictedCapability("canCreatePlan", restriction);
+  if (verdict.allowed || target === "group_trip") return verdict;
+  return { allowed: false, reason: "TELEGRAPH_DEGRADED_TRUST_UNREADABLE" };
+}
+
+/** True when some restriction on this state could reach canCreatePlan — only then is the trip's shape read. */
+export function planRestrictionMayApply(
+  restriction: Pick<RestrictionState, "activeRestrictions" | "degradedReason">,
+): boolean {
+  return restriction.degradedReason === "fail_closed" ||
+    restriction.activeRestrictions.some((t) => RESTRICTION_CAPABILITY_SCOPE.canCreatePlan.includes(t));
+}
+
+const ACCEPTED_TRIP_ROLES: readonly string[] = ["owner", "co_host", "member", "viewer"];
+
+/**
+ * The solo/group test, D-24a. Solo: nobody but the actor is an accepted
+ * member — an accepted role (owner, co_host, member, viewer) with status
+ * accepted or unset, and the trip's owner counts even without a trip_members
+ * row. Invited people do not make a trip a group trip. Either read failing,
+ * throwing, or the trip row being absent is `unknown_trip`.
+ *
+ * The SAME rule lane C's lib/tripTrustGate.ts `readTripShape` applies at the
+ * Trips doors (not on main when this was written). D-24a asks every Compass
+ * and Trips door to apply one test: when that file lands, this body becomes a
+ * call to it, and tripPlanTargetRule.test.ts pins the cases both must answer.
+ */
+export async function readPlanTarget(
+  sc: SupabaseClient,
+  input: { tripId: string | null; threadType: string; actorId: string },
+): Promise<PlanTarget> {
+  if (!input.tripId) return input.threadType === "trip" ? "unknown_trip" : "conversation";
+  try {
+    const [members, trip] = await Promise.all([
+      sc.from("trip_members").select("user_id, status, role").eq("trip_id", input.tripId),
+      sc.from("trips").select("id, owner_id").eq("id", input.tripId).maybeSingle(),
+    ]);
+    if (members.error || trip.error || !trip.data) return "unknown_trip";
+    const accepted = new Set<string>();
+    const withRow = new Set<string>();
+    for (const m of (members.data ?? []) as Array<{ user_id?: unknown; status?: unknown; role?: unknown }>) {
+      withRow.add(String(m.user_id));
+      if (ACCEPTED_TRIP_ROLES.includes(String(m.role)) && (m.status == null || m.status === "accepted")) accepted.add(String(m.user_id));
+    }
+    const owner = (trip.data as { owner_id?: unknown }).owner_id;
+    if (typeof owner === "string" && !withRow.has(owner)) accepted.add(owner);
+    accepted.delete(input.actorId);
+    return accepted.size === 0 ? "solo_trip" : "group_trip";
+  } catch {
+    return "unknown_trip";
+  }
+}
+
+/**
+ * The restriction term of a SEND in one thread, read end to end — the thread's
+ * type, its other active members, then `readRestrictionSendFacts` and
+ * `decideRestrictedSend`. For a caller that is not a send door and holds only
+ * a thread id: the call gateway, so a 1:1 call is refused under messaging
+ * exactly where a message would be. A failed read is `unknown`, never allowed.
+ */
+export async function decideRestrictedSendInThread(
+  sc: SupabaseClient,
+  threadId: string,
+  senderId: string,
+  /** Pass the state if the caller already read it, so it is read once. */
+  alreadyRead?: RestrictionState,
+): Promise<RestrictionSendVerdict> {
+  const restriction = alreadyRead ?? (await getRestrictionState(sc, senderId));
+  const mayApply =
+    restriction.degradedReason === "fail_closed" ||
+    restriction.activeRestrictions.some((t) => RESTRICTION_SEND_SCOPE[t] !== "none");
+  if (!mayApply) return { allowed: true, reason: null };
+  const [{ data: thread, error: threadErr }, { data: others, error: othersErr }] = await Promise.all([
+    sc.from("message_threads").select("thread_type").eq("id", threadId).maybeSingle(),
+    sc.from("message_thread_members").select("user_id").eq("thread_id", threadId).is("left_at", null).neq("user_id", senderId),
+  ]);
+  if (threadErr || othersErr) {
+    return { allowed: false, refusal: "unknown", reason: "TELEGRAPH_DEGRADED_TRUST_UNREADABLE", message: RESTRICTION_UNKNOWN_MESSAGE };
+  }
+  return decideRestrictedSend(
+    await readRestrictionSendFacts(sc, {
+      threadId,
+      senderId,
+      threadType: ((thread as { thread_type?: unknown } | null)?.thread_type as string | undefined) ?? null,
+      otherMemberIds: ((others as Array<{ user_id?: unknown }>) ?? []).map((m) => String(m.user_id)),
+      safety: false,
+      restriction,
+    }),
+    { safety: false },
+  );
 }

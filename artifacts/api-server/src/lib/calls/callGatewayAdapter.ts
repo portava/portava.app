@@ -10,12 +10,12 @@
  *  - RAB eligibility         → rent_buddy_bookings matched by telegraph_thread_id
  *  - trip crew membership    → requireTripMember (accepted members only)
  *  - event room eligibility  → the canonical checkEventEligibility() + attendance
- *  - moderation restriction  → getRestrictionState().canMessage
+ *  - moderation restriction  → getRestrictionState() + the send gate's rule (D-24)
  *  - session/removal/decline/rate lookups → the call tables
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { canMessage as canMessageVerdict } from "../messagingPermissions";
-import { getRestrictionState } from "../../services/trust/TrustRestrictionService";
+import { getRestrictionState } from "../../services/trust/TrustRestrictionService"; import { decideRestrictedSendInThread } from "../../domain/telegraph/policies/restrictionSendPolicy"; // lead ruling D-24: a call is refused where a send is
 import { requireTripMember } from "../http";
 import { checkEventEligibility } from "../../routes/events";
 import { isTerminal } from "./callStateMachine";
@@ -261,17 +261,16 @@ export function makeCallGateway(sc: SupabaseClient): CallContextGateway {
       }
     },
 
-    async isCallRestricted(userId) {
+    async isCallRestricted(userId, threadId) {
       const state = await getRestrictionState(sc, userId);
-      // audit M3: messaging restriction implies calling restriction. A
-      // fail-closed degraded read also makes canMessage false — carry that
-      // forward so the engine denies with 'degraded_unavailable', not
-      // 'caller_restricted'. A fail-open degraded read leaves canMessage
-      // true, so it never reaches here restricted at all.
-      return {
-        restricted: !state.canMessage,
-        degraded: state.degradedReason === "fail_closed",
-      };
+      // audit M3, narrowed by lead ruling D-24: a messaging restriction stops a
+      // call exactly where it stops a message — where the call would START a
+      // conversation (decideRestrictedSendInThread, the send gate's own rule).
+      // An unreadable state refuses as degraded ('degraded_unavailable'), never
+      // as 'caller_restricted'. Without a thread the old, broader rule stands.
+      if (!threadId) return { restricted: !state.canMessage, degraded: state.degradedReason === "fail_closed" };
+      const verdict = await decideRestrictedSendInThread(sc, threadId, userId, state);
+      return verdict.allowed ? { restricted: false } : { restricted: true, degraded: verdict.refusal === "unknown" };
     },
 
     async isSessionTerminated(callId) {
