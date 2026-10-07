@@ -339,6 +339,12 @@ describe("TRV2-08 §4 — a member restored to an ended trip's record only may r
     assert.equal(r.proposal, null);
     assert.ok(String(r.info).startsWith(RETAINED_RECORD_ONLY_MESSAGE), r.info);
     assert.doesNotMatch(String(r.info), /restrict/i);
+    // The read_only wording itself (VL5b N1): the model is told the RECORD can be
+    // viewed but not changed — never the restricted fallthrough's "on a group trip
+    // for them … do not try another way", which frames an ended trip as a penalty.
+    assert.match(String(r.info), /can be viewed but no longer changed/, r.info);
+    assert.doesNotMatch(String(r.info), /group trip/i, r.info);
+    assert.doesNotMatch(String(r.info), /another way/i, r.info);
     assert.equal(kernelCalls(c), 0);
     const added: any = await executeCompassTool(makeClient(world([], { readOnly: true })), USER, null, "add_to_trip", { tripId: TRIP, placeId: PLACE });
     assert.ok(!added.proposal);

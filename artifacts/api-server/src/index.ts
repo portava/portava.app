@@ -1,6 +1,6 @@
 // Sentry must be the very first import so it can instrument the process before
 // any other module loads.  The module is a no-op when SENTRY_DSN is not set.
-import { Sentry } from "./lib/sentry.js";
+import { Sentry } from "./lib/sentry.js"; import "./lib/deploymentEnvironmentGuard.js"; // BEFORE ./app: a PORTAVA_DEPLOYMENT_ENV=beta process exits 1 unless SUPABASE_URL is portava-beta's (lib/deploymentEnvironment.ts)
 
 import app from "./app";
 import { logger } from "./lib/logger";

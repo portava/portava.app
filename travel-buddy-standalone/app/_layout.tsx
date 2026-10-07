@@ -318,7 +318,7 @@ function PushSetup() {
 // fails gracefully ("Calling is not available in this build yet.").
 const livekitBridge = createLiveKitBridge();
 
-export default function RootLayout() {
+function RootLayoutApp() { // the app; RootLayout (at the foot) renders it only when the build is consistent
   // Navigate to update-password screen when Supabase fires a PASSWORD_RECOVERY
   // event (user opened the app via the reset-password email link).
   useEffect(() => {
@@ -483,3 +483,28 @@ function MediaOfflineWarmupSetup() {
 }
 import { useFeatureFlags } from '../src/context/FeatureFlagsContext';
 import { installMediaOfflineWarmup } from '../src/services/media/mediaOfflineDevice';
+
+// ── Deployment consistency gate ─────────────────────────────────────────────
+// Appended at the foot so every line the censuses cite keeps its number; ES
+// imports are hoisted. A build whose database and API belong to different
+// deployments (beta vs production, either way round) shows an error screen and
+// never starts the app — src/lib/deploymentConsistency.ts. Literal
+// process.env.EXPO_PUBLIC_* reads, so Expo inlines them.
+import { deploymentConsistencyProblem } from '../src/lib/deploymentConsistency';
+import { DeploymentGate } from '../src/components/DeploymentMisconfiguredScreen';
+
+const DEPLOYMENT_PROBLEM = deploymentConsistencyProblem({
+  supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL,
+  apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL,
+  webOrigin: process.env.EXPO_PUBLIC_WEB_ORIGIN,
+  deploymentEnv: process.env.EXPO_PUBLIC_DEPLOYMENT_ENV,
+});
+if (DEPLOYMENT_PROBLEM) console.error(`[deployment] refusing to start: ${DEPLOYMENT_PROBLEM}`);
+
+export default function RootLayout() {
+  return (
+    <DeploymentGate problem={DEPLOYMENT_PROBLEM}>
+      <RootLayoutApp />
+    </DeploymentGate>
+  );
+}

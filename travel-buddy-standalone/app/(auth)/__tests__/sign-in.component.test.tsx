@@ -10,7 +10,7 @@
  */
 
 import React from 'react';
-import { render, screen } from '@testing-library/react-native';
+import { render, screen, fireEvent } from '@testing-library/react-native';
 
 // ── Router ────────────────────────────────────────────────────────────────────
 // NOTE: intentionally exhaustive — test only exercises push/replace navigation; spreading
@@ -49,6 +49,7 @@ jest.mock('../../../src/services/auth', () => ({
   signUp:                jest.fn().mockResolvedValue({ error: null, userId: 'u1' }),
   requestPasswordReset:  jest.fn().mockResolvedValue({ error: null }),
   lookupUsernameByEmail: jest.fn().mockResolvedValue({ handle: 'traveler', error: null }),
+  getSignupStatus:       jest.fn().mockResolvedValue({ signupsEnabled: true, inviteOnly: false }),
 }));
 
 // NOTE: intentionally exhaustive — only getMyProfile is called after sign-in; the real
@@ -171,5 +172,55 @@ describe('SignIn screen — redesign smoke test', () => {
     expect(screen.getByLabelText(/JOIN/)).toBeTruthy();
     expect(screen.getByLabelText(/EXPLORE/)).toBeTruthy();
     expect(screen.getByLabelText(/SHARE/)).toBeTruthy();
+  });
+});
+
+// ── Invite-only beta: the sign-up form says so BEFORE anyone types a password ──
+// GET /api/auth/signup-status is read when the sign-up form opens. While it says
+// inviteOnly (or sign-ups are closed) the screen shows why and the Create
+// Account button is disabled, so pressing it cannot call signUp. The healthy
+// case is asserted beside it: an open beta shows no message and creates.
+describe('SignIn screen — invite-only sign-up', () => {
+  const auth = jest.requireMock('../../../src/services/auth') as {
+    getSignupStatus: jest.Mock; signUp: jest.Mock;
+  };
+
+  beforeEach(() => {
+    auth.signUp.mockClear();
+    auth.getSignupStatus.mockReset();
+  });
+
+  async function openSignup() {
+    await render(<SignIn />);
+    await fireEvent.press(screen.getByLabelText('Create your Passport'));
+  }
+
+  it('INVITE-ONLY: shows the invite-only message and Create Account cannot submit', async () => {
+    auth.getSignupStatus.mockResolvedValue({ signupsEnabled: true, inviteOnly: true });
+    await openSignup();
+    const msg = await screen.findByTestId('signup-gate-message');
+    expect(msg.props.children).toMatch(/invite-only beta/);
+    await fireEvent.changeText(screen.getByLabelText('Email'), 'someone@example.com');
+    await fireEvent.changeText(screen.getByLabelText('Password'), 'long-enough');
+    await fireEvent.press(screen.getByText('Create Account'));
+    expect(auth.signUp).not.toHaveBeenCalled();
+  });
+
+  it('CLOSED: disable_signups shows the closed message', async () => {
+    auth.getSignupStatus.mockResolvedValue({ signupsEnabled: false, inviteOnly: true });
+    await openSignup();
+    const msg = await screen.findByTestId('signup-gate-message');
+    expect(msg.props.children).toMatch(/temporarily closed/);
+  });
+
+  it('OPEN: no message, and Create Account submits', async () => {
+    auth.getSignupStatus.mockResolvedValue({ signupsEnabled: true, inviteOnly: false });
+    await openSignup();
+    expect(auth.getSignupStatus).toHaveBeenCalled();
+    expect(screen.queryByTestId('signup-gate-message')).toBeNull();
+    await fireEvent.changeText(screen.getByLabelText('Email'), 'someone@example.com');
+    await fireEvent.changeText(screen.getByLabelText('Password'), 'long-enough');
+    await fireEvent.press(screen.getByText('Create Account'));
+    expect(auth.signUp).toHaveBeenCalledTimes(1);
   });
 });

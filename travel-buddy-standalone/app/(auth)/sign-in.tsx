@@ -49,7 +49,7 @@ import {
   Mail,
 } from 'lucide-react-native';
 
-import { signIn, signUp, requestPasswordReset, lookupUsernameByEmail, ensureProfile, reportEnsureProfileFailure } from '../../src/services/auth';
+import { signIn, signUp, requestPasswordReset, lookupUsernameByEmail, ensureProfile, reportEnsureProfileFailure, getSignupStatus } from '../../src/services/auth';
 import { signInWithApple, signInWithGoogle } from '../../src/services/ssoAuth';
 import { getMyProfile } from '../../src/services/profile';
 import { useSession } from '../../src/context/SessionContext';
@@ -178,6 +178,9 @@ export default function SignIn() {
   const [oauthBusy,    setOauthBusy]    = useState<'apple' | 'google' | null>(null);
   const [error,        setError]        = useState<string | null>(null);
   const [notice,       setNotice]       = useState<string | null>(null);
+  // Invite-only beta / closed sign-ups, read from GET /api/auth/signup-status
+  // when the sign-up form opens, so the person is told BEFORE typing a password.
+  const [signupGate,   setSignupGate]   = useState<'invite_only' | 'closed' | null>(null);
 
   // ── New visual state ────────────────────────────────────────────────────────
   // TODO: wire rememberMe to a persistent session preference when auth supports it
@@ -198,6 +201,17 @@ export default function SignIn() {
   useEffect(() => {
     if (isAuthed && !busy && !oauthBusy) router.replace('/(tabs)');
   }, [isAuthed, busy, oauthBusy]);
+
+  // Ask whether sign-up is open each time the sign-up form is shown.
+  useEffect(() => {
+    if (mode !== 'signup') { setSignupGate(null); return; }
+    let alive = true;
+    getSignupStatus().then((st) => {
+      if (!alive) return;
+      setSignupGate(!st.signupsEnabled ? 'closed' : st.inviteOnly ? 'invite_only' : null);
+    });
+    return () => { alive = false; };
+  }, [mode]);
 
   // Honour ?mode=forgot-password deep links (e.g. from the expired reset screen)
   useEffect(() => {
@@ -510,6 +524,15 @@ export default function SignIn() {
               </View>
             )}
 
+            {/* Invite-only beta / closed sign-ups — shown before the form is filled */}
+            {mode === 'signup' && signupGate && (
+              <Text style={s.noticeText} accessibilityRole="alert" testID="signup-gate-message">
+                {signupGate === 'invite_only'
+                  ? 'Portava is in a private, invite-only beta. You need an invite to create an account. If you have been invited, go back and sign in with the email and password you were given.'
+                  : 'New sign-ups are temporarily closed. Please check back soon.'}
+              </Text>
+            )}
+
             {/* Social buttons — signin only */}
             {isSignin && (
               <>
@@ -680,14 +703,15 @@ export default function SignIn() {
             ) : (
               /* Plain dark CTA for signup / forgot flows */
               <Pressable
-                style={[s.darkBtn, (busy || !!oauthBusy) && { opacity: 0.7 }]}
+                style={[s.darkBtn, (busy || !!oauthBusy || (mode === 'signup' && !!signupGate)) && { opacity: 0.7 }]}
                 onPress={
                   mode === 'forgot-password' ? sendPasswordReset
                   : mode === 'forgot-username' ? lookupUsername
                   : submit
                 }
-                disabled={busy || !!oauthBusy}
+                disabled={busy || !!oauthBusy || (mode === 'signup' && !!signupGate)}
                 accessibilityRole="button"
+                accessibilityState={{ disabled: busy || !!oauthBusy || (mode === 'signup' && !!signupGate) }}
               >
                 {busy
                   ? <ActivityIndicator color="#fff" />

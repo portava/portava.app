@@ -5,10 +5,14 @@
  * (`excerpt` for post/comment/message/review, `displayName` for a buddy
  * listing, …). The mobile "User Reports" screen once read keys the server never
  * sent and its test passed on a hand-written fixture (verifier finding 1,
- * 2026-10-06). So the fixture both sides use is GENERATED from the server
- * readers over these rows and committed at CONTRACT_FIXTURE_PATH:
- * adminModerationReportReview.test.ts fails if the server's output drifts from
- * the committed file, and the mobile test renders every entry of that file.
+ * 2026-10-06). So the fixture both sides use is BUILT by buildSnapshotContract()
+ * from the server's own readers over these rows, and committed at
+ * CONTRACT_FIXTURE_PATH. Nothing writes that file automatically:
+ * adminModerationReportReview.test.ts fails unless its bytes equal
+ * contractFileText(buildSnapshotContract()), so after a reader changes, write
+ * that string to the file by hand and re-run the mobile test, which renders
+ * every entry. The same suite fails if a subject type in READERS has no `ok`
+ * entry here, so a new reader cannot slip past the screen (VL5b N2).
  */
 import { loadModerationSubjectSnapshots, type SubjectSnapshot } from "../../lib/moderationReportSnapshots.js";
 
