@@ -78,7 +78,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { logger as rootLogger } from "../lib/logger.js";
 import { wrapUgc } from "./CompassStructuredContext.js";
-import { getLiveVenueStatus } from "../lib/liveIntelligence.js";
+import { getLiveVenueStatus, liveVenueAnchorOf } from "../lib/liveIntelligence.js";
 import {
   canCompassReadMemory,
   acceptedCrewOfTrip,
@@ -469,10 +469,11 @@ async function toolMemoryGetPlaceHistory(sc: SupabaseClient, viewerId: string, a
   );
   let placeName: string | null = null;
   if (placeId && UUID_RE.test(placeId)) {
-    const { data: place } = await sc.from("discovery_places").select("id, name, city").eq("id", placeId).maybeSingle();
+    const { data: place, error: placeError } = await sc.from("discovery_places").select("id, name, lat, lng").eq("id", placeId).maybeSingle();
+    if (placeError) current = currentWorldUnknown("The catalog place could not be read, so nothing may be said about its current status."); // a failed read is not "no place"
     if (place) {
       placeName = String((place as any).name ?? "");
-      const live = await getLiveVenueStatus(placeName, ((place as any).city as string | null) ?? null);
+      const live = await getLiveVenueStatus(placeName, liveVenueAnchorOf((place as any).lat, (place as any).lng)); // lead ruling D-67: the place's own coordinates confirm the record is this place
       current = live
         ? currentWorldReading(
             live.openNow === null
@@ -482,8 +483,7 @@ async function toolMemoryGetPlaceHistory(sc: SupabaseClient, viewerId: string, a
             `checked ${live.checkedAt} via ${live.source}`,
           )
         : currentWorldUnknown(
-            "The live source could not be reached, so nothing may be said about this place's current status.",
-          );
+            "No live record could be confirmed as this place, or the live source could not be reached, so nothing may be said about its current status.");
     }
   }
 

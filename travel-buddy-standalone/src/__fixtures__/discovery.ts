@@ -38,6 +38,9 @@ export interface DiscoveryItem {
   avgRating?: number | null;
   /** Number of community reviews — populated by the listing API. */
   reviewCount?: number | null;
+  /** The place's own coordinates (community listing API) — the live open-now identity anchor, lead ruling D-67. */
+  lat?: number | null;
+  lng?: number | null;
 }
 
 const SEED = { source: 'seed' as const, status: 'provisional' as const, verified: false };
@@ -123,6 +126,9 @@ export interface TravelerPick {
   status: DiscoveryStatus;
   verified: boolean;
   savedCount?: number;
+  /** The place's own coordinates (community listing API) — the live open-now identity anchor, lead ruling D-67. */
+  lat?: number | null;
+  lng?: number | null;
 }
 
 export const travelerPicks: TravelerPick[] = [

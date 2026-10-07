@@ -61,7 +61,7 @@ the flag flips are reversible by flipping back.
 ### Step 1 — the env gate, first **[OPERATOR]**
 
 `FOURSQUARE_API_KEY` is the external-data credential
-(`lib/foursquarePlaces.ts:35`, `lib/liveIntelligence.ts:131`). It fails
+(`lib/foursquarePlaces.ts:35`, `lib/liveIntelligence.ts:235`). It fails
 **gracefully**, not loudly: unset, the module logs
 *"FOURSQUARE_API_KEY not set — venue search disabled"* and venue search returns
 empty. An auth failure logs a warning and disables search the same way.
