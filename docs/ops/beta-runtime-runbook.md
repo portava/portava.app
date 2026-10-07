@@ -29,6 +29,23 @@ Replit deployment. Production is never reached by anything below.
   `beta `, `staging`) is refused, not ignored. The beta project's URL without
   the beta label is refused too. With the variable unset — production today —
   nothing changes.
+- **The fork cannot run unlabelled, and beta holds no production or live
+  credential** (added 2026-10-07):
+  - a process whose `REPLIT_DOMAINS` (set by Replit) names
+    `portava-beta.replit.app` is refused unless it is labelled beta, so a fork
+    that kept `.replit`'s production values and was never labelled cannot
+    serve production's data at the beta address;
+  - production's publishable key (the one `.replit` commits) is refused in a
+    beta environment like its ref and host;
+  - a LIVE-mode provider credential anywhere (Stripe `sk_live_`/`rk_live_`/
+    `pk_live_`, Persona `persona_production_`, a Sumsub `prd:` token) or
+    `PAYMENTS_ALLOW_LIVE` set to anything but empty/`false` is refused;
+  - a beta API refuses to start unless `NODE_ENV=production`: development and
+    test modes admit the unsigned mock identity provider and the fake payment
+    provider.
+
+  `scripts/src/beta-deployment-guard.test.ts` parses the real `.replit` and
+  proves every production value in it is refused by both rules.
 - **How sign-up is closed.**
   - **The app's own path.** The app signs up through Supabase Auth (`supabase.auth.signUp`). There, Auth's
     `disable_signup` refuses every new account. The configuration step sets it (step 3), so it is the setting that
@@ -41,12 +58,36 @@ Replit deployment. Production is never reached by anything below.
     creates accounts with the service role, which bypasses Auth's `disable_signup`, so the flags are its only
     guard.
 - **A build whose database and API disagree does not start.** The app compares
-  the Supabase ref with the API host (beta↔beta, production↔production). A beta
+  the Supabase ref with the API host (beta↔beta, production↔production), and
+  (since 2026-10-07) the inlined publishable key with both: a known key of the
+  other deployment is refused; an unknown (rotated) key is not judged. A beta
   build (`EXPO_PUBLIC_DEPLOYMENT_ENV=beta`) must point every address at beta.
   On a mismatch the app shows "This build is misconfigured" instead of starting
   (`travel-buddy-standalone/src/lib/deploymentConsistency.ts`).
 - **Flags follow one reviewed policy**, `scripts/src/beta-flag-policy.json`,
   applied and read back by `.github/workflows/beta-config.yml`.
+
+## The owner's commands
+
+| When | Command | Needs |
+| --- | --- | --- |
+| Any time | `pnpm -C scripts beta:status` | `gh auth login` (reads secret NAMES and run conclusions only). Read-only: prints every gate below as PASS / OPEN / UNKNOWN / MANUAL and the next command. |
+| Step 1 | `gh secret set BETA_SUPABASE_PROJECT_TOKEN --env ci-nonprod-supabase --repo portava/portava.app` | the token, pasted at the prompt (never on the command line) |
+| Steps 2 + 3 | `pnpm -C scripts beta:provision --confirm=PROVISION-BETA` | GitHub workflow-dispatch rights. Refuses while the step-1 secret is absent. Dispatches `beta-db.yml` (skipped if its last run succeeded; never a reset), waits, stops on a red verdict; dispatches `beta-config.yml`, waits; reads back that Supabase Auth refuses new users. |
+| Step 7 | `pnpm -C scripts beta:smoke --base https://portava-beta.replit.app` | nothing (public GETs) |
+
+**Measured 2026-10-07 (read-only):** the step-1 secret is absent (the
+environment lists 4 secret names); `beta-db.yml`'s only run (37462712102)
+failed with the 403 that secret fixes; `beta-config.yml` has never run;
+portava-beta's Supabase Auth reports `disable_signup: false` (sign-up OPEN,
+email provider on, Apple and Google off); `portava-beta.replit.app` answers
+404 "This app isn't live yet"; the `beta` profile's publishable key is
+accepted by portava-beta (200; no key or a wrong key gets 401).
+
+**Optional, now, with no token:** in the portava-beta dashboard, Authentication
+→ Sign In / Providers → turn off "Allow new users to sign up". Step 3 sets the
+same `disable_signup` and reads it back; doing it now closes the window until
+then.
 
 ## The steps, in order
 
@@ -98,7 +139,10 @@ replaces them.
 
 ### 5. Replace every production value — *Replit account; beta project's API keys*
 
-Set these as **Secrets** in the fork, starting with the first one.
+Set these as **Secrets** in the fork, starting with the first one. The API
+refuses to start, naming the variable, if any value names production, carries
+production's publishable key, holds a live-mode provider key, sets
+`PAYMENTS_ALLOW_LIVE`, or if `NODE_ENV` is not `production`.
 `PORTAVA_DEPLOYMENT_ENV` must be a Secret, not a `.replit` entry. A later pull
 of the tracked `.replit` would erase a `.replit` entry and switch the guard
 off. As a Secret it survives the pull, and the API then refuses the production
@@ -205,24 +249,32 @@ override `.replit`. The build's first line is the deployment-environment guard.
 pnpm -C scripts beta:smoke --base https://portava-beta.replit.app
 ```
 
-Expect four `PASS` lines:
+Expect six `PASS` lines:
 
 - health;
 - `signup-status` is exactly `{signupsEnabled:false, inviteOnly:true}`;
 - `401` without a token;
 - the Rent-a-Buddy booking stops are engaged: `GET /api/feature-flags` shows
   `disable_rent_buddy_booking`, `disable_rab_bookings` and
-  `RENT_BUDDY_ADMIN_ONLY_MODE` all true and `rent_buddy_enabled` false.
+  `RENT_BUDDY_ADMIN_ONLY_MODE` all true and `rent_buddy_enabled` false;
+- the same response equals `scripts/src/beta-flag-policy.json` at the commit
+  you run it from (every policy-ON flag served true, every known flag at its
+  policy value): this proves step 3 applied THIS policy to the database the
+  API reads. After any policy edit, re-run step 3 or this check fails;
+- portava-beta's public Auth settings report `disable_signup: true` (read with
+  the `beta` profile's publishable key): this is what closes the app's own
+  sign-up path, which the API cannot see.
 
-Two things print `NOT CHECKED`, because the API has no unauthenticated read
-for them:
+Two things print `NOT CHECKED`:
 
-- **Identity readiness.** In the deployment logs, the
-  `startup: payments/identity provider mode` line must not report identity as
-  operational. That is true today (mock refused), and it stays true after #612
-  with a sandbox key (Sumsub is uncertified). It must never show
-  `keyMode: "live"`.
-- **`NODE_ENV=production`.** Confirm it in the Secrets.
+- **Identity readiness.** The API has no unauthenticated read of it. In the
+  deployment logs, the `startup: payments/identity provider mode` line must not
+  report identity as operational. That is true today (mock refused), and it
+  stays true after #612 with a sandbox key (Sumsub is uncertified). It cannot
+  show `keyMode: "live"`: the deployment guard refuses a live key on beta.
+- **`NODE_ENV=production`.** Not observable from outside, but enforced: a beta
+  API refuses to start without it, and only a beta-labelled process may use the
+  beta database, which checks 2 and 5 show this API reads.
 
 ### 8. Create tester accounts — *beta Supabase project dashboard*
 
@@ -236,15 +288,23 @@ Email invitations ("Send invitation") need **custom SMTP**, which is an owner
 credential (an SMTP provider account). Supabase's built-in SMTP sends only to
 the project team's own addresses.
 
-Apple and Google sign-in have not been exercised on beta. With `disable_signup`
-on, Supabase Auth refuses to create a new user through them.
+Apple and Google sign-in are **off** on beta (its public Auth settings,
+2026-10-07: `apple: false`, `google: false`; only email is on). Testers sign in
+with email and password. Turning them on needs the owner's Apple Services ID /
+Google OAuth client configured in the beta project; with `disable_signup` on,
+Supabase Auth would still refuse to create a new user through them.
 
 ### 9. Build and distribute the app — *Expo account; Apple Developer / Google Play*
 
 See `docs/eas-runbook.md` § "Private beta build". In short:
 
-1. Run `eas build --profile beta`.
-2. Distribute the internal build.
+1. Run `eas build --profile beta` (internal: iOS ad hoc to registered
+   devices, Android APK), or `eas build --profile beta-store` for TestFlight
+   internal testing / the Google Play internal track.
+2. Distribute the internal build's install links, or
+   `eas submit --profile beta-store --platform ios|android` for the store
+   build. Never promote a `beta-store` build to an App Store or Play
+   production release: it talks to the beta.
 
 **Do not `eas env:set` or `eas env:create` anything for beta.** The `beta`
 profile in `eas.json` carries every value the app inlines:
@@ -267,7 +327,11 @@ ones.
 
 ## If the beta URL is not `portava-beta.replit.app`
 
-Four places name the expected origin:
+These places name the expected origin:
+
+- `artifacts/api-server/src/lib/deploymentEnvironment.ts` (`BETA_API_HOST`)
+  and `scripts/deployment-env-guard.sh` (the `REPLIT_DOMAINS` rule): the
+  unlabelled-fork guard;
 
 - `travel-buddy-standalone/eas.json` (`beta` profile);
 - `travel-buddy-standalone/src/lib/deploymentConsistency.ts` (the beta API host
@@ -276,7 +340,7 @@ Four places name the expected origin:
   and redirect list);
 - `ALLOWED_ORIGINS`, `EXPO_PUBLIC_API_BASE_URL` and `EXPO_PUBLIC_WEB_ORIGIN` in step 5.
 
-Change all four in one PR, then re-run steps 3 and 9.
+Change all of them in one PR, then re-run steps 3 and 9.
 
 ## What is still open
 
@@ -298,3 +362,25 @@ Change all four in one PR, then re-run steps 3 and 9.
   `COMPASS_FALLBACK_MODE_ENABLED` is OFF, as in production. Changing any value is a reviewed edit to
   `scripts/src/beta-flag-policy.json`, then re-dispatch step 3.
 - **Identity.** No real provider exists on `main` until #612. See step 5.
+- **New flags from open lanes (measured 2026-10-07 against their branches).**
+  Each merge turns `betaFlagPolicyCompleteness.test.ts` (api-server suite) and
+  `test:beta-configure` red until the policy lists the change. Run
+  `pnpm -C scripts beta:flag-policy-sync --write` on the merged tree: it adds
+  every new FALSE-seeded flag OFF and removes retired ones, and refuses (writes
+  nothing) if a migration turns a flag ON. Expected:
+  - lane B (#640): add `payment_ledger_reads_enabled` OFF (3823); remove
+    `rent_buddy_allow_bookings_without_kyc` (retired by 3932);
+  - lane C wave 5: add `trip_private_anchor_sharing_enabled` (3970),
+    `trip_routes_api_enabled` (3971) and `trail_creation_enabled` (3977), all
+    OFF. `trail_creation_enabled` OFF also keeps lead ruling D-66 safe on beta
+    until a reviewed edit turns it on;
+  - lane L wave 6: add `sensing_consent_split_enabled` OFF (3703).
+  Then re-dispatch step 3 (`beta:provision` skips the bootstrap).
+- **The beta schema does not follow `main` after the bootstrap.**
+  `beta-db.yml` builds an EMPTY project and refuses a built one; its only other
+  mode is a destructive reset. Migrations merged after the bootstrap (B, C and
+  L above all add some) reach beta only by reset + rebuild, which is harmless
+  before testers exist and destroys their data after. `beta:status` reports how
+  many migrations landed since the bootstrap. Bootstrap after the pending
+  migration PRs merge, or reset before step 8; an apply-pending mode for
+  `beta-db.yml` is not built.
