@@ -9106,7 +9106,7 @@ Three rows move up.
 
 `check:census-integrity` reads **C=87 W=142 N=67 X=0** over 296.
 
-## §55 — 2026-10-07 (mission lane R, wave 3): presence intents meet D-PRESENCE-K, the Layover engine is inside the money-in-ranking guard, and the offline bundle carries return phrases; THREE ROWS MOVE
+## §55 — 2026-10-07 (mission lane R, wave 3): presence intents meet D-PRESENCE-K, the Layover engine is inside the money-in-ranking guard, and the offline bundle carries return phrases; ONE ROW MOVES
 
 This wave was built on `claude/residual-wave3-layover-20261007`, branched from the wave-2 head `3fe21ec19`. Every row was re-checked on that tree. Nothing ran against a database, and no flag was read or flipped. Migrations 3621–3639 were not needed.
 
@@ -9137,7 +9137,7 @@ Both rows were `N ∅`, an unguarded absence: nothing paid reached the layover p
 
 On the real tree, 144 files are scanned and the result is clean. One allowlist entry is justified: `getTimeWallet` is the spec's time wallet, measured in minutes, not money. `artifacts/api-server/src/test/noMoneyInRankingCheck.test.ts:538#K13. the Layover engine is in scope` pins the scope on the real tree, and proves that a sponsored term in the ordering and a merchant term in the safety engine each fail at their line. Mutants M1–M3 are killed.
 
-By §1's rule for prohibitions, both rows become `C ⌀`: the guard is real and the path it guards is empty. Two limits are stated, not hidden. The guard reads identifiers, not data flow. Route files are out of its scope, and on `routes/airport.ts` the only ordering is the layover-buddy availability hint.
+**Both rows stay `N` — now a GUARDED absence, as L164 and L168 are graded at this document's re-census.** Read literally, §1's rule for prohibitions would make them `C ⌀`: the guard is real and the path it guards is empty. This document's own precedent goes the other way. L164 and L168 gained a source-walk guard and stayed `N` ("Guarded absence, same verdict"), and the triage records that as awaiting a lead ruling on whether a guarded prohibition is `C`. That ruling decides four rows at once, L7, L256, L164 and L168. This lane does not take it for two of them. Two limits are stated, not hidden. The guard reads identifiers, not data flow. Route files are out of its scope, and on `routes/airport.ts` the only ordering is the layover-buddy availability hint.
 
 ### §55.3 L155: the return phrases the plan needs, cached with the bundle
 
@@ -9174,17 +9174,17 @@ Tests:
 
 | id | was | now | why |
 | --- | --- | --- | --- |
-| L7 | N | C | `C ⌀`. Commercial ranking cannot enter the layover recommendation ordering: `check:no-money-in-ranking` scans `services/airport` (`artifacts/api-server/src/scripts/checkNoMoneyInRanking.ts:195#{ path: "services/airport", group: "ranker",`), and `artifacts/api-server/src/test/noMoneyInRankingCheck.test.ts:538#K13. the Layover engine is in scope` fails a sponsored term in it. The guarded path is empty. |
-| L256 | N | C | `C ⌀`. No sponsored or merchant input may reach a file that computes a safety constraint. The same scope covers LayoverSafetyEngine, LayoverFeasibility, LayoverEnvelope, LayoverConstraints, LayoverReturnCorridor, AirportProfileService and `services/layover`. K13 fails a merchant term in the safety engine. |
+| L7 | N | N | NOT-BUILT, and no longer unguarded. Commercial ranking cannot enter the layover recommendation ordering without failing the build: `check:no-money-in-ranking` scans `services/airport` (`artifacts/api-server/src/scripts/checkNoMoneyInRanking.ts:195#{ path: "services/airport", group: "ranker",`), and `artifacts/api-server/src/test/noMoneyInRankingCheck.test.ts:538#K13. the Layover engine is in scope` fails a sponsored term in it. Guarded absence, held at `N` as L164 is, pending the lead's ruling (§55.2). |
+| L256 | N | N | Same guard. Its scope covers every file that computes a safety constraint (LayoverSafetyEngine, LayoverFeasibility, LayoverEnvelope, LayoverConstraints, LayoverReturnCorridor, AirportProfileService) and `services/layover`, and K13 fails a merchant term in the safety engine. Guarded absence, held at `N` pending the same ruling. |
 | L155 | N | W | Return phrases in the airport's language are cached with the bundle and on the device when the plan leaves the airport (`artifacts/api-server/src/services/airport/layoverPhrases.ts:222#export function layoverPhrasesFor(`; `artifacts/api-server/src/test/layoverDegradedOffline.test.ts:293#§16 L155 — the return phrases the plan requires`). `W`: 13 single-language countries only, and keyed to the return rather than to each stop. |
 
 ### §55.6 Headline
 
 | bucket | was (§54.7) | now |
 | --- | --- | --- |
-| BUILT-AND-CORRECT | 87 | 89 |
+| BUILT-AND-CORRECT | 87 | 87 |
 | BUILT-BUT-WRONG | 142 | 143 |
-| NOT-BUILT | 67 | 64 |
+| NOT-BUILT | 67 | 66 |
 | CANNOT-VERIFY | 0 | 0 |
 | total | 296 | 296 |
 
