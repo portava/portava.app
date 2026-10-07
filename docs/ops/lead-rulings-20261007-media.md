@@ -231,6 +231,9 @@ stay W: their blocker is now **activation**, not an owner decision.
 - **Not built by lane M.** The payload lives in `routes/mapProjection.ts`, which lane L is changing, and the
   row also needs production flows.
 - Proposed by lane M, adopted by the lead 2026-10-07 under the owner's delegation.
+- **Update, later on 2026-10-07:** the lead asked lane M to build the gateway half once wave 6 was shown not
+  to touch the route. It is built, with one floor stricter than this ruling: a zone with fewer than three
+  disclosable places lists none. See census-media §50.11.
 
 ### D-26e (Q-L14a, MD77): should media ever stop being shown socially after a time?
 - **Ruling: NO** (§36.4 MD77 (c)). A post stays on social surfaces until its author deletes it or narrows

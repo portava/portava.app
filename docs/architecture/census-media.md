@@ -16545,3 +16545,57 @@ feed now calls Compass's reader:
 also pins that the media ranker holds no second reader. Removing the degraded check from the shared reader
 turns it red. `compass-feed` (46) is green. No verdict moves.
 
+### 50.11 MD162's gateway half: a published flow names its ends (lead request, 2026-10-07; ruling D-26d)
+
+The lead asked for MD162's gateway half once `git diff origin/main...origin/claude/mission-l-wave6-20261006 --stat`
+showed wave 6 does not touch `routes/mapProjection.ts`, `lib/mapProjection.ts` or `lib/mapAggregation.ts`.
+D-26d said this was not lane M's to build while lane L was changing that route; that condition no longer holds.
+
+**What is built.** A flow that `deriveCrowdFlow` has already published now carries
+`payload.endpoints = { from, to }`. Each end has the curated `geo_zones` name and the ids of the zone's
+disclosable public places. It is attached inside the `crowd_flow` task, so only behind
+`map_crowd_flow_enabled`, and only after the k floor and `MIN_SIGNAL_FAMILIES`
+(`artifacts/api-server/src/routes/mapProjection.ts:949#for (const f of await nameFlowEndpoints(sc, bbox, zones, flow.flows))`).
+A place is named only if all of these hold:
+- the Map place layer's own choke point serves it, and the §24 gate allows it outright. Coarsened is not
+  enough, because an id is exact (`artifacts/api-server/src/routes/mapProjection.ts:1547#classifyAgainstProtected(obj, protectedZones).action === "allow"`);
+- no restrictive Hidden Gem constrains it, by place id or by proximity
+  (`artifacts/api-server/src/routes/mapProjection.ts:1561#if (gemCeilingForItem(gems,`);
+- its zone holds at least three such places. **This floor is lane M's, and it is stricter than D-26d.**
+  The flow is published per zone so that the place a cohort stood at is never named; the crowd-flow
+  suite keeps that place id as a wire sentinel. A one- or two-place list would point at it
+  (`artifacts/api-server/src/lib/mapProjection.ts:1760#export const MIN_FLOW_ENDPOINT_PLACES = 3;`).
+
+A failed place, protected-zone or gem read names no place on either end (`placesStatus: "unread"`)
+(`artifacts/api-server/src/routes/mapProjection.ts:1557#return attachFlowEndpoints(flows, zones, null, null);`).
+A list the read could not have seen whole says so (`placesPartial`). The attach function is
+`artifacts/api-server/src/lib/mapProjection.ts:1772#export function attachFlowEndpoints<`.
+
+**TESTED:** `artifacts/api-server/src/test/mapCrowdFlowLayer.test.ts:1008#describe("MD162 (D-26d): a published flow names its ends"`,
+nine route cases over the real gateway, plus seven pure cases. Among them:
+`artifacts/api-server/src/test/mapCrowdFlowLayer.test.ts:1043#a PUBLIC origin place alone in its zone is still never named`.
+The suite's payload-shape pin now names `endpoints` and pins each end's five keys
+(`artifacts/api-server/src/test/mapCrowdFlowLayer.test.ts:949#["endpoints", "inferred", "observed"]`).
+Each of these mutants turns a case red:
+- the floor removed;
+- the gem filter removed;
+- a coarsened place admitted;
+- a failed gem read taken as "no gems";
+- the choke point bypassed for a nameless place;
+- truncation ignored;
+- either zone shape's name served raw;
+- an unread end not marked partial;
+- the endpoints never attached.
+
+`mapCrowdFlowLayer` has 43 tests, and the eight other gateway suites are green.
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD162 | **N** | **N** | Blocker (a) in the row's §21 statement is **built**: the gateway now publishes each end's name and a place→zone association, as above. The row still names a **Media** consumer: the NOW lens renders flows paired with each zone's recent perspectives. Nothing in Media reads `payload.endpoints` yet, and no flow is publishable in production (blocker (b), unchanged). **Turns red when:** a Media surface pairs a served flow's `endpoints.*.placeIds` with perspectives whose canonical place is in that list. That is now code-fixable, not owner-blocked, plus a production flow to show it. |
+
+No verdict moves. The headline in §50.5 stands.
+
+Cited, not graded (check:census-scope-coverage):
+- NOT-GRADED: artifacts/api-server/src/lib/mapProjection.ts — §50.11 cites the Map gateway's endpoint attach and its place floor; MD162's verdict rests on Media's consumer, which does not exist, and census-map grades this file.
+- NOT-GRADED: artifacts/api-server/src/test/mapCrowdFlowLayer.test.ts — the Map gateway's crowd-flow suite, cited for §50.11's proof; no Media row is graded on it.
+

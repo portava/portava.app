@@ -124,7 +124,7 @@ import { applyGemPrivacyBatch } from "../services/hiddenGems/HiddenGemPrivacyGua
 import { readLiveClaims, toLiveClaimEnvelope } from "../lib/liveClaimRead.js";
 import { loadNearbyEvents } from "./mapSearch.js";
 import { aggregateForViewport, bboxContains, deriveCrowdFlow, type BBox } from "../lib/mapAggregation.js";
-import { applyProtection, type ProtectedZone } from "../lib/protectedLocations.js";
+import { applyProtection, classifyAgainstProtected, type ProtectedZone } from "../lib/protectedLocations.js";
 import { recordProtectionPass } from "../lib/mapProtectionTelemetry.js";
 import { clearProtectedZoneCache, loadActiveProtectedZones } from "../lib/protectedZoneStore.js";
 import { CROWD_FLOW_FLAG, produceZoneTransitions } from "../lib/crowdFlowProducer.js";
@@ -170,7 +170,7 @@ import {
   countAdjacentActiveEvents,
   enrichWithLiveClaims,
   filterKinds,
-  indexPlaceZones,
+  indexPlaceZones, attachFlowEndpoints,
   paginate,
   parseBbox,
   parseCityGeographies,
@@ -946,7 +946,7 @@ router.get(
           const flow = deriveCrowdFlow(produced.transitions, { now: nowMs });
           report.published = flow.flows.length;
           report.withheld = flow.rejected.length;
-          for (const f of flow.flows) {
+          for (const f of await nameFlowEndpoints(sc, bbox, zones, flow.flows)) { // census-media MD162 (D-26d): endpoints named AFTER every flow gate
             if ((f.payload as { inferred?: unknown } | undefined)?.inferred != null) {
               report.inferredCause.attached += 1;
             }
@@ -1505,3 +1505,65 @@ export default router;
 const DISCOVERY_CANDIDATE_FLAG_PIN: "discovery_candidate_projection_enabled" =
   DISCOVERY_CANDIDATE_PROJECTION_FLAG;
 void DISCOVERY_CANDIDATE_FLAG_PIN;
+
+// ── census-media MD162, lead ruling D-26d: naming a published flow's ends ────
+// Declared below `export default router` for the reason given above: nothing
+// inserted here moves an anchored citation in the handler.
+import { gemCeilingForItem, loadRestrictiveGems } from "../lib/mediaLocationVisibility.js";
+
+/**
+ * Attach `payload.endpoints` to flows deriveCrowdFlow has ALREADY published, so
+ * the k floor and MIN_SIGNAL_FAMILIES have already been met, inside a task that
+ * only runs with `map_crowd_flow_enabled` on. D-26d: "only public places that
+ * the place-disclosure choke point already discloses". A place is named only if
+ * ALL of these hold, in this order:
+ *   1. projectPlace serves it — the Map place layer's own choke point (active,
+ *      unmerged, a coordinate, servable);
+ *   2. the §24 gate ALLOWS it outright — coarsened is not allowed, because an id
+ *      is exact whatever the geometry says;
+ *   3. no restrictive Hidden Gem constrains it (gemCeilingForItem, by place id
+ *      and by proximity) — the rule Media's disclosure choke point applies;
+ *   4. its zone holds at least MIN_FLOW_ENDPOINT_PLACES such places, so a list
+ *      can never single out the place a cohort stood at (attachFlowEndpoints).
+ * A failed place, protected-zone or gem read names NO place for any endpoint
+ * (placesStatus "unread") — an unread constraint is never an absent one. Zone
+ * names are curated `geo_zones` geography and are always attached.
+ */
+async function nameFlowEndpoints(
+  sc: any,
+  bbox: BBox,
+  zones: readonly FlowZone[],
+  flows: readonly MapObject[],
+): Promise<MapObject[]> {
+  if (flows.length === 0) return [];
+  const [read, protectedZones] = await Promise.all([
+    loadViewportPlaceRows(sc, bbox).catch(() => null),
+    loadProtectedZones(sc).catch(() => null),
+  ]);
+  if (read === null || protectedZones === null) return attachFlowEndpoints(flows, zones, null, null);
+
+  const disclosed = read.rows.filter((row) => {
+    const obj = projectPlace(row);
+    return obj !== null && classifyAgainstProtected(obj, protectedZones).action === "allow";
+  });
+
+  let gems: Awaited<ReturnType<typeof loadRestrictiveGems>>;
+  try {
+    gems = await loadRestrictiveGems(sc, {
+      placeIds: disclosed.map((r) => r.id),
+      cities: disclosed.map((r) => (typeof r.city === "string" ? r.city : null)),
+    });
+  } catch {
+    return attachFlowEndpoints(flows, zones, null, null);
+  }
+  const withheld = new Set<string>();
+  for (const r of disclosed) {
+    if (gemCeilingForItem(gems, { placeId: r.id, lat: Number(r.latitude), lng: Number(r.longitude) }) !== null) {
+      withheld.add(r.id);
+    }
+  }
+  return attachFlowEndpoints(flows, zones, indexPlaceZones(disclosed, zones), withheld, {
+    viewport: bbox,
+    truncated: read.truncated,
+  });
+}
