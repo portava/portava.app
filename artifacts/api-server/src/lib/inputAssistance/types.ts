@@ -280,7 +280,7 @@ export interface InputSuggestion {
    * surface already badges, and NEVER from a coordinate — `'exact'` is not in
    * the union because the gem search path cannot produce one.
    */
-  locationPrecision?: 'approximate' | 'hidden';
+  locationPrecision?: 'approximate' | 'hidden'; /** §28 G176 — a coarse band from the viewer's own position (distanceBand.ts); never a number, never a person or gem. */ distanceBand?: '<0.5km' | '0.5-1km' | '1-3km' | '3-10km' | '10-50km' | '50km+';
 
   source:
     | 'canonical'

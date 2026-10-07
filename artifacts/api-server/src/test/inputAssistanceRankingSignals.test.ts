@@ -1226,3 +1226,131 @@ describe("§15 PrivacyRisk/Staleness (G103/G104) — tier-preserving against eve
       `${finishedExact.confidence} vs ${tripPrefix.confidence}`);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §28 "Distance where permitted" (census G176; lead precision ruling 2026-10-07):
+// coarse, the app's own approximate-distance buckets, none when precision is unknown.
+//
+// MUTATION LOG (each applied, watched go RED, reverted, `git diff` clean):
+//   D1 projection.ts: drop the `rowDistanceBand(...)` assignment → "a place the
+//      viewer can see carries its coarse band" and the end-to-end test RED.
+//   D2 distanceBand.ts: drop the `coordsPrecision !== undefined` refusal → "a row
+//      the protection pass coarsened or withheld carries no band" RED.
+//   D3 distanceBand.ts: admit 'hidden_gems' (or every type) → "never a hidden
+//      gem, never a person" RED.
+//   D4 distanceBand.ts: a threshold moved (0.5 → 0.6) → the parity sweep against
+//      the client's distanceBucket RED.
+//   D5 the wiring, each link alone: routes/inputAssistance.ts without the
+//      `distanceOrigin` opt-in → the global_search end-to-end test RED; gateway.ts
+//      `origin: null` on the mixed path → the same RED; `origin: null` on the geo
+//      pickers' dispatchAndProject path, or `distanceOrigin` not forwarded to it
+//      → the place_picker end-to-end test RED.
+//
+// WHY THE ROUTE OPTS IN. `generateSuggestions` called alone emits no band:
+// searchPlatformGolden.test.ts pins that function's output byte for byte as a
+// behaviour-identity baseline (census-discovery §70), and a builder may not
+// re-record a baseline. The serve — the only production caller — passes the
+// viewer's position, so every real response carries the band where permitted.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("§28 distance where permitted (G176) — the band itself", () => {
+  it("uses exactly the app's approximate-distance buckets (parity sweep against mapTelemetry.distanceBucket)", async () => {
+    const { coarseDistanceBand } = await import("../lib/inputAssistance/distanceBand.js");
+    const { distanceBucket } = await import("../../../../travel-buddy-standalone/src/features/map/telemetry/mapTelemetry.ts");
+    for (let km = 0; km <= 80; km += 0.05) {
+      const client = distanceBucket(km);
+      assert.equal(coarseDistanceBand(km), client === "unknown" ? null : client, `at ${km.toFixed(2)} km`);
+    }
+    for (const bad of [NaN, -1, Infinity, null, undefined]) {
+      assert.equal(coarseDistanceBand(bad as number), null);
+    }
+  });
+
+  it("a place the viewer can see carries its coarse band — the band only, no number, no coordinate", async () => {
+    const { rowDistanceBand } = await import("../lib/inputAssistance/distanceBand.js");
+    const origin = { lat: 16.0544, lng: 108.2022 }; // Da Nang
+    const place = result({ id: "p1", type: "places", title: "Han Market", metadata: { lat: 16.0678, lng: 108.2240 } });
+    assert.equal(rowDistanceBand(place, origin), "1-3km");
+    const projected = projectSearchResult(place, "place_picker", POLICY_VERSION, "Han", { origin });
+    assert.equal(projected.distanceBand, "1-3km");
+    const wire = JSON.stringify(projected);
+    assert.ok(!wire.includes("16.0678") && !wire.includes("108.224"), "no coordinate rides along");
+    assert.ok(!/distanceKm|"km"/.test(wire), "no distance number rides along");
+  });
+
+  it("never a hidden gem, never a person — whatever their metadata says", async () => {
+    const { rowDistanceBand } = await import("../lib/inputAssistance/distanceBand.js");
+    const origin = { lat: 16.0544, lng: 108.2022 };
+    for (const type of ["hidden_gems", "travelers", "buddies", "cities", "trips"] as const) {
+      const row = result({ id: `x-${type}`, type, title: "X", metadata: { lat: 16.06, lng: 108.21 } });
+      assert.equal(rowDistanceBand(row, origin), null, type);
+      assert.equal(projectSearchResult(row, "global_search", POLICY_VERSION, "X", { origin }).distanceBand, undefined, type);
+    }
+  });
+
+  it("a row the protection pass coarsened or withheld carries no band (precision unknown → none)", async () => {
+    const { rowDistanceBand } = await import("../lib/inputAssistance/distanceBand.js");
+    const origin = { lat: 16.0544, lng: 108.2022 };
+    assert.equal(rowDistanceBand(result({ id: "p", type: "places", title: "P", metadata: { lat: 16.06, lng: 108.21, coordsPrecision: "approximate" } }), origin), null);
+    assert.equal(rowDistanceBand(result({ id: "p", type: "places", title: "P", metadata: { lat: null, lng: null, coordsPrecision: "hidden" } }), origin), null);
+    // An event whose venue is withheld from this viewer has no position, so no band.
+    assert.equal(rowDistanceBand(result({ id: "e", type: "events", title: "E", metadata: { lat: null, lng: null } }), origin), null);
+    // No viewer position on the request: nothing to measure from.
+    assert.equal(rowDistanceBand(result({ id: "p", type: "places", title: "P", metadata: { lat: 16.06, lng: 108.21 } }), null), null);
+    assert.equal(rowDistanceBand(result({ id: "p", type: "places", title: "P", metadata: { lat: 16.06, lng: 108.21 } }), { lat: null, lng: 108 }), null);
+  });
+});
+
+describe("§28 distance where permitted (G176) — end to end through POST /input-assistance/suggest", () => {
+  it("the request's own position yields a coarse band on a place row; a gem in the same answer gets none", async () => {
+    setup({
+      discovery_places: [
+        { id: "p-near", name: "Lantern Cafe", city: "Hoi An",
+          blurb: null, image_url: null, header_image_source: null, image_source_type: null,
+          image_accuracy_status: null, category: "cafe", primary_category: "cafe",
+          lat: 15.8801, lng: 108.3380, canonical_location_id: null, created_at: "2026-01-01T00:00:00Z",
+          submitted_by: null, status: "active", saved_count: 0 },
+      ],
+      hidden_gems: [
+        { id: "g-near", name: "Lantern Steps", city: "Hoi An", country: "Vietnam", submitted_by: HOST,
+          category: "viewpoint", status: "active", created_at: "2026-01-02T00:00:00Z",
+          sensitivity_level: "approximate", approx_latitude: 15.8802, approx_longitude: 108.3381 },
+      ],
+      profiles: [{ id: HOST, account_status: "active" }],
+      blocks: [], user_privacy_settings: [], canonical_locations: [],
+    });
+    const r = await suggest({ context: "global_search", text: "lantern", lat: 15.8790, lng: 108.3350 });
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const place = body.suggestions.find((s: any) => s.entityId === "p-near");
+    const gem = body.suggestions.find((s: any) => s.entityId === "g-near");
+    assert.ok(place, "the place is served");
+    assert.equal(place.distanceBand, "<0.5km");
+    assert.ok(gem, "the gem is served");
+    assert.equal(gem.distanceBand, undefined, "a gem never carries a distance");
+    // Without a position on the request, nothing is banded.
+    const r2 = await suggest({ context: "global_search", text: "lantern" });
+    const place2 = ((await r2.json()) as any).suggestions.find((s: any) => s.entityId === "p-near");
+    assert.equal(place2?.distanceBand, undefined);
+  });
+});
+
+describe("§28 distance where permitted (G176) — the geographic picker path", () => {
+  it("place_picker: a nearby place carries its coarse band from the request's position", async () => {
+    setup({
+      discovery_places: [
+        { id: "p-pick", name: "Lantern Cafe", city: "Hoi An",
+          blurb: null, image_url: null, header_image_source: null, image_source_type: null,
+          image_accuracy_status: null, category: "cafe", primary_category: "cafe",
+          lat: 15.8801, lng: 108.3380, canonical_location_id: null, created_at: "2026-01-01T00:00:00Z",
+          submitted_by: null, status: "active", saved_count: 0 },
+      ],
+      blocks: [], user_privacy_settings: [], canonical_locations: [],
+    });
+    const r = await suggest({ context: "place_picker", text: "lantern", lat: 15.8700, lng: 108.3380 });
+    assert.equal(r.status, 200);
+    const place = ((await r.json()) as any).suggestions.find((s: any) => s.entityId === "p-pick");
+    assert.ok(place, "the place is served");
+    assert.equal(place.distanceBand, "1-3km");
+  });
+});

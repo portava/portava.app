@@ -293,7 +293,7 @@ router.post(
         limit,
         sessionContext,
         lat,
-        lng,
+        lng, distanceOrigin: lat != null && lng != null ? { lat, lng } : null, // §28 G176 — the serve opts in; generateSuggestions alone does not
         city,
         draft,
         tz,

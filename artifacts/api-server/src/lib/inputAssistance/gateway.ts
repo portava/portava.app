@@ -232,7 +232,7 @@ export interface GenerateParams {
    * consent before reading anything. Absent (every non-consenting device) ⇒ the
    * serve issues no outcome read at all and ranks acceptance-only.
    */
-  outcomeLearning?: boolean;
+  outcomeLearning?: boolean; /** §28 G176 — the route's opt-in: the viewer's position for a coarse distance band (distanceBand.ts). Absent ⇒ no band. */ distanceOrigin?: { lat: number | null; lng: number | null } | null;
 }
 
 function uniq<T>(arr: T[]): T[] {
@@ -247,7 +247,7 @@ export async function generateSuggestions(
   sc: any,
   params: GenerateParams,
 ): Promise<InputSuggestion[]> {
-  const { context, policy, text, userId, limit, sessionContext, lat, lng, city, draft, tz, aiAssist, coverage, outcomeLearning } = params;
+  const { context, policy, text, userId, limit, sessionContext, lat, lng, city, draft, tz, aiAssist, coverage, outcomeLearning, distanceOrigin } = params;
 
   // no_assistance fields produce nothing (§6). generic_text lands here.
   if (policy.mode === 'no_assistance') return [];
@@ -578,12 +578,12 @@ export async function generateSuggestions(
       const otherTypes = dispatchTypes.filter((t) => t !== 'cities');
       if (otherTypes.length > 0) {
         let other = await dispatchAndProject(sc, otherTypes, {
-          q, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint, coverage,
+          q, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint, coverage, distanceOrigin,
         });
         // §10 second attempt — same rule as the city path above.
         if (other.length === 0 && norm.correctedQuery) {
           const retry = await dispatchAndProject(sc, otherTypes, {
-            q: norm.correctedQuery, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint, coverage,
+            q: norm.correctedQuery, userId, context, policy, lat, lng, city, temporalWindow, taskConstraint, coverage, distanceOrigin,
           });
           if (retry.length > 0) { other = retry; correctionHelped = true; }
         }
@@ -651,7 +651,7 @@ export async function generateSuggestions(
                 temporalWindow,
                 demoted: verdict.demotedIds.has(r.id),
                 tripFit: verdict.tripFitIds.has(r.id),
-                venueBinding: venueBindings.get(r.id) ?? null,
+                venueBinding: venueBindings.get(r.id) ?? null, origin: distanceOrigin ?? null, // §28 G176 — coarse distance band only
               }),
             );
           }
@@ -917,7 +917,7 @@ async function dispatchAndProject(
     context: InputContext;
     policy: InputFieldPolicy;
     lat: number | null;
-    lng: number | null;
+    lng: number | null; distanceOrigin?: { lat: number | null; lng: number | null } | null;
     city: string | null;
     /** §15 TemporalFit window resolved once by the caller (null when none). */
     temporalWindow: TemporalWindow | null;
@@ -958,7 +958,7 @@ async function dispatchAndProject(
         projectSearchResult(r, p.context, POLICY_VERSION, p.q, {
           temporalWindow: p.temporalWindow,
           demoted: verdict.demotedIds.has(r.id),
-          tripFit: verdict.tripFitIds.has(r.id),
+          tripFit: verdict.tripFitIds.has(r.id), origin: p.distanceOrigin ?? null, // §28 G176
         }),
       );
     }

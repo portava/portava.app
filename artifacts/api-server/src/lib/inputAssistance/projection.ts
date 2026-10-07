@@ -29,7 +29,7 @@ import {
   gemLocationPrecision,
   type TemporalWindow,
 } from './rankingSignals';
-import type { CanonicalVenueBinding } from './geoResolver';
+import type { CanonicalVenueBinding } from './geoResolver'; import { rowDistanceBand } from './distanceBand';
 import type {
   InputContext,
   InputSuggestion,
@@ -70,7 +70,7 @@ export interface ProjectionSignals {
    * is also what an unreadable canonical row produces, deliberately: see
    * `resolveVenueBindings` for why an outage must not render as `country: null`.
    */
-  venueBinding?: CanonicalVenueBinding | null;
+  venueBinding?: CanonicalVenueBinding | null; /** §28 G176 — the viewer's own position, used only for a coarse band. */ origin?: { lat: number | null; lng: number | null } | null;
 }
 
 /**
@@ -149,7 +149,7 @@ export function projectSearchResult(
 
   // Only copy display-safe optional fields — NEVER internal metadata (§42).
   if (r.subtitle) suggestion.subtitle = r.subtitle;
-  if (r.matchedReason) suggestion.reason = r.matchedReason;
+  if (r.matchedReason) suggestion.reason = r.matchedReason; const band = rowDistanceBand(r, signals.origin); if (band) suggestion.distanceBand = band; // §28 G176
   // §20 verification / trust context. Set only when TRUE, so a row that is not
   // a person carries neither key and no reader can mistake an absent flag for a
   // negative claim about somebody.
