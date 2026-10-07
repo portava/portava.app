@@ -8211,11 +8211,11 @@ rather than a filter.
 
 **The surface** — `routes/nearbyReachable.ts`, mounted at
 `routes/index.ts:406#router.use(nearbyReachableRouter)`. Flag-gated
-(`routes/nearbyReachable.ts:105#nearby_reachable_enabled`), rate-limited, and quantised: `quantiseNow`
-(`routes/nearbyReachable.ts:84#export function quantiseNow`) floors the clock to 60 s so two polls inside
+(`routes/nearbyReachable.ts:106#nearby_reachable_enabled`), rate-limited, and quantised: `quantiseNow`
+(`routes/nearbyReachable.ts:85#export function quantiseNow`) floors the clock to 60 s so two polls inside
 one quantum are byte-identical. A failed read is a retryable 503
-(`routes/nearbyReachable.ts:128#degraded_unavailable`), never an empty list. The one success log carries
-counts and bucket names (`routes/nearbyReachable.ts:132#req.log.info`).
+(`routes/nearbyReachable.ts:129#degraded_unavailable`), never an empty list. The one success log carries
+counts and bucket names (`routes/nearbyReachable.ts:146#req.log.info`).
 
 **Device-bound precise location** — `lib/preciseLocationDevice.ts` plus the two
 `/me/location-state` handlers. A precise coordinate is served only to the device
@@ -8248,7 +8248,7 @@ that says "none of these twenty people is available" when a table was unreadable
 | channel | closed by | what a regression would look like |
 | --- | --- | --- |
 | response body | `ReachablePersonProjection` has no positional field and `proximity.precision` is the literal `"bucket"` (`services/telegraph/reachablePeople.ts:192#readonly precision: "bucket"`) | a `distanceKm` appears "just for the UI" — caught by `nearbyRankOrderChannel.test.ts` walking the payload's KEYS (a substring scan cannot: "relationship" contains "lat") |
-| logs | the only success log is `reachableTelemetry`'s counts (`routes/nearbyReachable.ts:132#req.log.info`); nothing in the lane hands a logger a position, because the projection layer never holds one | a debug field carrying ids and coordinates — caught by `nearbyReachableRoute.test.ts`, which captures the payload the handler actually hands `req.log` |
+| logs | the only success log is `reachableTelemetry`'s counts (`routes/nearbyReachable.ts:146#req.log.info`); nothing in the lane hands a logger a position, because the projection layer never holds one | a debug field carrying ids and coordinates — caught by `nearbyReachableRoute.test.ts`, which captures the payload the handler actually hands `req.log` |
 | ranking ORDER | `nearbyRank` takes a bucket index, `orderReachablePeople` breaks ties on a geography-free hash (`services/telegraph/reachablePeople.ts:310#export function stableTiebreak`) | "nearest first, it reads better" — caught by swapping two people's true positions INSIDE one bucket and asserting the published order does not change |
 
 ### 31.3 Row moves
@@ -8257,7 +8257,7 @@ that says "none of these twenty people is available" when a table was unreadable
 | --- | --- | --- | --- |
 | T24 | N | **W** | **`nearbyRank` over availability, relationship, intent, shared context, overlap window, travel time, proximity bucket, freshness, safety** — The ranking function over people now exists: `services/telegraph/reachablePeople.ts:286#export function nearbyRank` scores all nine, each as a rank on a small ladder, with availability weighted above proximity so the surface is not a proximity radar wearing an availability label. Its factor type has no distance and no ETA, and the ORDER is rank then a per-viewer hash (`services/telegraph/reachablePeople.ts:320#export function orderReachablePeople`). Still W: the route that serves it is flag-dark, `safety` is supplied as the constant `clear` because no safety signal is wired to it, and the candidate set is capped at 24 graph members — a ranking over a bounded list, not over "people near me". |
 | T25 | N | **W** | **Approximate proximity or controlled distance buckets BY DEFAULT** — The default is not a coarsened precise value; it is a value the code cannot express precisely. `lib/proximityBuckets.ts:224#export function proximityBucketBetween` takes only points produced by `lib/proximityBuckets.ts:114#export function coarsePointFor`, exports no distance and no km → bucket function, and refuses a forged coarse point at runtime (`lib/proximityBuckets.ts:141#export function assertCoarsePoint`). The narrowest edge is pinned to ≥ 2× the finest map cell (`lib/proximityBuckets.ts:183#export const MIN_BUCKET_EDGE_KM`, asserted in `test/proximityBuckets.test.ts`). Still W: the only consumer is the dark route, so no live surface serves a bucket today. |
-| T26 | N `∅` | **W** | **Repeated refreshes must not become a movement-tracking side channel** — No longer an unguarded absence. There is now a refreshable proximity endpoint and it is guarded twice: a per-user rate limit, and — the one that closes the channel — an information quantum, `routes/nearbyReachable.ts:84#export function quantiseNow`, which floors the clock so two polls inside 60 s return byte-identical bytes. Differencing needs the subject to cross a ≥ 5 km bucket edge. Still W: the guard is per-request quantisation, not the per-relationship budget §4.5 describes, and nothing bounds observations across a long session. |
+| T26 | N `∅` | **W** | **Repeated refreshes must not become a movement-tracking side channel** — No longer an unguarded absence. There is now a refreshable proximity endpoint and it is guarded twice: a per-user rate limit, and — the one that closes the channel — an information quantum, `routes/nearbyReachable.ts:85#export function quantiseNow`, which floors the clock so two polls inside 60 s return byte-identical bytes. Differencing needs the subject to cross a ≥ 5 km bucket edge. Still W: the guard is per-request quantisation, not the per-relationship budget §4.5 describes, and nothing bounds observations across a long session. |
 | T29 | N | **W** | **Invisible mode suppresses Nearby / Bump / public availability while ALLOWING private Map use** — Both halves exist and are separately enforceable. `lib/invisibleMode.ts:125#export function resolveInvisibleMode` derives the state from the three live location-consent columns and fails closed on an unreadable row (`lib/invisibleMode.ts:127#prefs_unreadable`); the projection applies it as TWO live suppressions rather than one early exit (`services/telegraph/reachablePeople.ts:408#const nearbySuppressed`, `services/telegraph/reachablePeople.ts:409#const availabilitySuppressed`), so knocking either out is a red test rather than dead code; and the private half is a type — `lib/invisibleMode.ts:167#export function permitsPrivateMapUse` returns the literal `true`. Deliberately NOT derived from `show_online_status`: that would collapse two of §4.1's four permissions into one, and the test pins it. Still W: there is no user-facing "invisible mode" control — it is a server-side reading of controls that already exist — and the live Discovery map enforces the same columns through its own code rather than through this module. |
 | T235 | N | **W** | **Active precise location is device-specific and must not automatically transfer to a newly authenticated device** — `GET /me/location-state` now serves a precise coordinate only to the device that published it: `lib/preciseLocationDevice.ts:154#export function precisionForDevice` is precise in exactly one case and degrades to a grid-snapped point in six, including `lib/preciseLocationDevice.ts:172#device_mismatch`, which is this row's scenario. The `devices` registry the row recorded as never consulted by a location path is consulted (`lib/preciseLocationDevice.ts:210#export async function verifyDeviceForUser`), and the publishing device is re-bound on every fix, with an unattributable publish CLEARING the binding (`routes/location.ts:297#clearPreciseShare(user.id)`) so the reverse transfer is closed too. Still W, and the reason is structural: the binding is PROCESS-LOCAL with a 60-minute TTL, because no deployed location table has a device column. A restart, or a second instance, coarsens every share until the owning device publishes again — safe, but not durable — and `trip_crew_location_sessions` and the Safe Return live share are still keyed by account alone. |
 | T382 | N | **W** | **§30A.2 Server-built `ReachablePersonProjection` combining relationship, availability, permitted proximity, shared context, privacy and safety** — The projection exists and is built server-side from all six: `services/telegraph/reachablePeople.ts:386#export function projectReachablePerson`, fed by `services/telegraph/reachablePeopleQuery.ts:287#export async function loadReachablePeople`. Relationship comes from the canonical resolver rather than a fifth one (`services/telegraph/reachablePeople.ts:129#export function relationshipFrom` over `canMessage`'s context), availability from the §4/§31 audience predicate plus the live quick-status opt-in, proximity as a bucket only, and consent fails closed on every read. Still W: it is served by a dark route, `safety` is a constant, and the projection is computed per candidate with one `canMessage` round each, which is why the candidate set is capped at 24. |
@@ -11055,7 +11055,7 @@ CONTROLLED**; nothing was observed in production, no flag was touched, no migrat
   asked only about a position that would otherwise be published
   (`artifacts/api-server/src/services/telegraph/reachablePeopleQuery.ts:579#personPoint !== null &&`),
   and the viewer is sent ONE undifferentiated count
-  (`artifacts/api-server/src/routes/nearbyReachable.ts:150#notShown: viewerFacingNotShown(result.telemetry),`);
+  (`artifacts/api-server/src/routes/nearbyReachable.ts:165#notShown: viewerFacingNotShown(result.telemetry),`);
   the reasons stay in server telemetry. The test that pinned the leak now pins the opposite.
 - **F2 — T108's closeout was never drawn in a thread that coordinated** (any commitment or open
   decision). Fixed: `travel-buddy-standalone/src/features/telegraph/coordination/CoordinationPanel.tsx:321#const closeoutCard = closeoutVisible && closeout ? (`
@@ -11599,3 +11599,59 @@ capture-prevention API anywhere in the mobile package.
 
 451 rows. One moves (T408, C → W); four are restated without changing bucket. CONSTRUCTED (C + W)
 is 429 of 451 = 95.1 %; CORRECT is 259 of 451 = 57.4 %.
+
+## §53 — TELEGRAPH lane T (mission 4, 2026-10-07): T26's per-relationship observation budget (migration 3651). NO ROW CHANGES BUCKET
+
+Written 2026-10-07 by lane T. APPEND-ONLY. **Evidence is CONTROLLED**: the real budget over an
+in-memory table keyed as 3651's primary key, the real route over the fail-closed double, mutations.
+Migration 3651 is written and NOT applied anywhere; no flag is added (Nearby stays dark behind
+`nearby_reachable_enabled`); no database write.
+
+### 53.1 What was wrong, and what is built
+
+§8260's W: "the guard is per-request quantisation, not the per-relationship budget §4.5 describes, and
+nothing bounds observations across a long session." A viewer polling once a minute all day saw every
+bucket edge a crewmate crossed, timed to the minute.
+
+NOW, for each (viewer, person) pair the proximity a viewer is shown — bucket, travel band, freshness,
+and the rank they feed — is observed at most once per 15 minutes
+(`artifacts/api-server/src/services/telegraph/proximityObservationBudget.ts:66#export const OBSERVATION_INTERVAL_MS = 15 * 60_000;`):
+inside the interval the viewer is served the recorded proximity, whatever the person has done since
+(`artifacts/api-server/src/services/telegraph/proximityObservationBudget.ts:133#const earlier = servedFrom(byId.get(p.personId), nowMs);`),
+and the ORDER is re-ranked on what is served, so the sort cannot leak a move the budget withheld
+(`artifacts/api-server/src/services/telegraph/reachablePeople.ts:584#export function rerankForServedProximity(`).
+The record is a ROW, one per pair with no history
+(`artifacts/api-server/src/migrations/3651_nearby_proximity_observation_budget.sql:60#CONSTRAINT nearby_proximity_observations_pkey PRIMARY KEY (viewer_id, subject_id),`),
+so no instance and no polling rate widens it: 96 observations of a relationship a day. Withdrawal is
+never delayed — a person who stops publishing proximity, or leaves the viewer's list, is withheld at
+once and the pair's row deleted
+(`artifacts/api-server/src/services/telegraph/proximityObservationBudget.ts:152#for (const subject of byId.keys()) if (!listed.has(subject)) withdraw.push(subject);`);
+any read also deletes every row, of any viewer, older than 24 hours. The route applies it to every
+answer and refuses (503) when the record cannot be read or written — fresh proximity served unrecorded
+is the unbounded observation this exists to stop
+(`artifacts/api-server/src/routes/nearbyReachable.ts:139#const budget = await applyObservationBudget(db, user.id, result.people, nowMs);`).
+On a database without 3651 Nearby therefore serves no proximity at all. The table holds buckets only (a
+postcondition refuses a position column), is service-role only, and cascades on account deletion
+(ERASED_BY_CASCADE).
+
+### 53.2 Row
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T26 | W | **W** | **Repeated refreshes must not become a movement-tracking side channel.** Narrower: §8260's gap — no per-relationship budget, nothing bounding a long session — is built (53.1; `artifacts/api-server/src/test/telegraphNearbyObservationBudget.test.ts:138#a day of polling every minute while ANA changes bucket every minute observes her at most 96 times`). Still W, for two reasons. (1) The TRANSITIONS into and out of publication are not budgeted: withdrawal is immediate by design (consent), and a person who publishes again is observed afresh, so the moment someone enters or leaves a protected zone, pauses sharing or goes stale reaches a polling viewer at poll resolution (`artifacts/api-server/src/test/telegraphNearbyObservationBudget.test.ts:163#withdrawal is never delayed`). Budgeting those without delaying a consent withdrawal needs the loader to say WHY a person's proximity is unpublished and whether the viewer had a position at all; `services/telegraph/reachablePeopleQuery.ts` does not, and it is in lane C's in-flight diff. (2) 3651 is not applied anywhere. |
+
+### 53.3 Tests and mutations
+
+`telegraphNearbyObservationBudget` 14/14 (the real budget; the real route); the Nearby suites
+unchanged and green (`nearbyReachableRoute` 7, `reachablePeopleFailClosed` 22, `nearbyRankOrderChannel`
+14, `reachablePeopleProtectedZones` 14, `reachablePeopleZoneNoLeak` 8, `reachablePersonProjection` 19,
+`telegraphNearbyNotFromGps` 5); `accountDeletionCascade` 31, `migrationInventory` 75;
+`test:beta-configure` 29 (no flag added). Mutants, each alone: the recorded proximity never served
+(4 red), nothing recorded (9), the rank not re-ranked (1), withdrawal delayed (1), a person who left
+the list keeping their record (1), a refused write ignored (1), an unreadable record ignored (2), the
+interval never expiring (2), the purge removed (1), the purge scoped to the reading viewer (1), the
+route serving the fresh list (1), the route serving past a budget failure (2).
+
+### 53.4 The headline, restated from the rows
+
+Unchanged from §52.5: 259 / 170 / 20 / 2 of 451.

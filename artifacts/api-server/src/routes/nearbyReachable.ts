@@ -71,6 +71,7 @@ import { checkRateLimit } from "../lib/rateLimit.js";
 import { invisibleModeTelemetry } from "../lib/invisibleMode.js";
 import { viewerFacingNotShown, viewerMayUsePrivateMap } from "../services/telegraph/reachablePeople.js";
 import { loadReachablePeople, MAX_CANDIDATES } from "../services/telegraph/reachablePeopleQuery.js";
+import { applyObservationBudget, OBSERVATION_INTERVAL_MS } from "../services/telegraph/proximityObservationBudget.js";
 
 const router = Router();
 
@@ -129,14 +130,28 @@ router.get(
       return;
     }
 
-    req.log.info({ telemetry: result.telemetry }, "nearby/reachable served");
+    // §4.3 (census-telegraph T26): the per-RELATIONSHIP observation budget. The
+    // quantum above bounds a request; this bounds how often this viewer learns
+    // where each person is — once per OBSERVATION_INTERVAL_MS, recorded in a row
+    // so no instance and no polling rate can widen it. A record that cannot be
+    // read or written refuses the answer: fresh proximity served unrecorded is
+    // the unbounded observation the budget exists to stop.
+    const budget = await applyObservationBudget(db, user.id, result.people, nowMs);
+    if (!budget.ok) {
+      req.log.warn({ stage: budget.stage, message: budget.message }, "nearby/reachable refused");
+      sendError(res, "degraded_unavailable", "Reachability is temporarily unavailable.");
+      return;
+    }
+
+    req.log.info({ telemetry: result.telemetry, observationBudget: budget.served }, "nearby/reachable served");
 
     res.json({
       enabled: true,
       generatedAt: new Date(nowMs).toISOString(),
       pollQuantumMs: POLL_QUANTUM_MS,
       candidateCap: MAX_CANDIDATES,
-      people: result.people,
+      observationIntervalMs: OBSERVATION_INTERVAL_MS,
+      people: budget.people,
       // The viewer's own state, so the client can explain an empty list without
       // guessing. Coordinate-free by type.
       viewer: {

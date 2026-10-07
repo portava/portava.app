@@ -227,7 +227,7 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   // it is a day/context/task aggregate, so it is not user-keyed and not listed.)
   "input_outcome_consent",
   "input_outcome_counters",
-  "input_memory_context_consent",
+  "input_memory_context_consent", "nearby_proximity_observations", // lane T, migration 3651 (unapplied): viewer_id and subject_id both CASCADE from profiles (Telegraph §4.3 observation budget)
 ];
 
 /**
@@ -868,7 +868,7 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   // 3782 (post-baseline). Classified in ERASED_BY_CASCADE above.
   "input_outcome_consent",
   "input_outcome_counters",
-  "input_memory_context_consent",
+  "input_memory_context_consent", "nearby_proximity_observations", // lane T, migration 3651 (unapplied), classified ERASED_BY_CASCADE above
   "journey_observations",
   "journey_revocation_jobs",
   "journey_segment_revisions",

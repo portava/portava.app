@@ -4110,6 +4110,36 @@ applied** the function keeps 3000's body; the receipts routes already apply P-T6
 **Rollback:** `db/rollback/2026-10-07-3650-telegraph-unsend-blocked-reader-excluded-rollback.sql` restores
 3000's body verbatim and deletes the ledger row.
 
+
+## 2026-10-07 — `3651_nearby_proximity_observation_budget.sql`, written and NOT applied anywhere (lane T)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3651_nearby_proximity_observation_budget.sql` | **not applied** | **not applied** |
+
+**What it is.** census-telegraph T26 — Telegraph §4.3's "repeated refreshes must not become a
+movement-tracking side channel", as a per-RELATIONSHIP budget. One table,
+`public.nearby_proximity_observations` (PK `(viewer_id, subject_id)`, both columns REFERENCE `profiles`
+ON DELETE CASCADE, `bucket` / `travel` / `freshness` CHECKed to the coarse Nearby vocabularies,
+`observed_at`), with RLS on, no policy and no client privilege. No flag; no row is written by the file.
+
+**What reads and writes it.** `services/telegraph/proximityObservationBudget.ts`, called by
+`GET /api/nearby/reachable`: a viewer is shown the proximity recorded for a person for 15 minutes after it
+was observed, so one relationship is observed at most 96 times a day; a person who stops publishing
+proximity, or leaves the viewer's list, is withdrawn at once and the pair's row deleted; rows older than
+24 hours are deleted on the next read by any viewer. Not budgeted, stated: the transitions into and out of
+publication (census-telegraph T26).
+
+**Without it.** Nearby is dark (`nearby_reachable_enabled` absent → OFF). With the flag ON and 3651 absent,
+the route answers 503 — the budget cannot be read, and fresh proximity is never served unrecorded.
+
+**Deletion fate.** ERASED_BY_CASCADE (`lib/deletionDispositions.ts`, registered in POST_BASELINE_TABLES).
+
+**Prefix band.** 3651 is in lane T's band (3650-3669), inside the 3000-3999 range; the guard is unchanged.
+
+**Rollback:** `db/rollback/2026-10-07-3651-nearby-proximity-observation-budget-rollback.sql` drops the
+table and deletes the ledger row. Turn `nearby_reachable_enabled` off first if Nearby is in use.
+
 ## Apply-order overrides
 
 **What.** `artifacts/api-server/src/migrations/ORDER_OVERRIDES.json` is the single declared list of
