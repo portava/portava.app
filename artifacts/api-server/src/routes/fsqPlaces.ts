@@ -36,7 +36,7 @@ router.get("/cities/:cityKey/places", asyncHandler(async (req, res) => {
   const limit = Number(req.query.limit) || 200;
 
   const result = await getCityPlaces(sc, { cityKey, category, limit });
-  res.json({ ...result, enabled: true });
+  res.json({ ...result, enabled: true }); // each place's `isOpenNow` is the static dataset's ingest-time open_now, NOT a live status (lead ruling D-67)
 }));
 
 export default router;

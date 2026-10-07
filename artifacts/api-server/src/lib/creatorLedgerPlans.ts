@@ -30,7 +30,14 @@
 import type { CreatorAttribution } from "./creatorTypeAttribution.js";
 import { buildCreatorEarningEntries, type CreatorEarningInput } from "./creatorLedgerEntries.js";
 import { isCreatorType } from "./creatorTypes.js";
-import { toNum, indexChains, type AttributionRow, type EarningEntryRow } from "./creatorLedgerStatus.js";
+import {
+  beneficiaryIsNamed,
+  isIdentitySevered,
+  indexChains,
+  toNum,
+  type AttributionRow,
+  type EarningEntryRow,
+} from "./creatorLedgerStatus.js";
 
 // ── The door's payload (3387) ───────────────────────────────────────────────
 
@@ -110,6 +117,19 @@ export type PlanRefusal =
   | "unknown_transaction"
   | "already_reversed"
   | "chain_forked"
+  /**
+   * The row's beneficiary identity was erased and the accounting row retained
+   * (C-11 "retain pseudonymised"). There is no party to carry forward, compute
+   * for, or book to, so the operation has no subject — permanently. Distinct
+   * from `unknown_attribution` (no such row) and from a read that failed.
+   */
+  | "identity_severed"
+  /**
+   * The row's beneficiary column is absent or not a uuid: a READ FAULT, not an
+   * erasure (creatorLedgerStatus.ts `beneficiaryState`). Never reported as
+   * `identity_severed`, and not a 409 decision — the caller answers it as a fault.
+   */
+  | "beneficiary_unreadable"
   | "refused_by_model";
 
 export type Plan =
@@ -127,11 +147,48 @@ export function normaliseReason(reason: unknown): string | null {
 
 // ── Row ⇄ model ─────────────────────────────────────────────────────────────
 
-/** A persisted attribution row as the pure model's object, so the model's builders can run on it. */
-export function attributionModelFromRow(row: AttributionRow): CreatorAttribution {
+/**
+ * A persisted attribution row as the pure model's object, so the model's
+ * builders can run on it — or an explicit refusal when the row's beneficiary
+ * identity has been severed.
+ *
+ * ── WHY A SEVERED ROW HAS NO MODEL AT ALL ───────────────────────────────────
+ * `CreatorAttribution` exists to be RUN, not merely held:
+ * `buildCreatorEarningEntries` books the `creator_payable` leg to
+ * `beneficiaryUserId`, and `creatorTypeAttribution.ts`'s key builder derives
+ * an idempotency key from it. Neither question is answerable for nobody — an
+ * earning for no party is not a smaller earning, it is not an earning — so
+ * there is no model to hand back, and the honest answer is the state itself,
+ * which the caller must handle.
+ *
+ * The database says the same thing from the other side: once a record is
+ * pseudonymised it is FROZEN — no supersession and no new entry against it —
+ * so every operation a model would drive is refused there too. Returning a
+ * widened model with `beneficiaryUserId: null` would only move this decision
+ * into the key builder and the entry builder, where the same coercion would
+ * have to be re-made twice more.
+ *
+ * It is not `""`, not `"unknown"`, and above all not `String(null)` — the
+ * string `"null"`, one phantom beneficiary shared by every erased creator.
+ */
+export type AttributionModel =
+  | { ok: true; model: CreatorAttribution }
+  | { ok: false; reason: "identity_severed" | "beneficiary_unreadable"; detail: string };
+
+export function attributionModelFromRow(row: AttributionRow): AttributionModel {
+  if (isIdentitySevered(row)) {
+    return {
+      ok: false,
+      reason: "identity_severed",
+      detail:
+        `attribution ${String(row.id)} names no beneficiary: its identity was erased and the accounting ` +
+        `row retained, so it has no party to compute an earning for`,
+    };
+  }
+  if (!beneficiaryIsNamed(row)) return unreadableBeneficiary(row);
   const creatorType = isCreatorType(row.creator_type) ? row.creator_type : ("travel_partner" as const);
   const basis = row.attribution_basis === "recorded_value_event" ? "recorded_value_event" : "seam_no_producer";
-  return {
+  const model: CreatorAttribution = {
     id: row.idempotency_key,
     creatorType,
     subjectKind: row.subject_kind as CreatorAttribution["subjectKind"],
@@ -139,7 +196,7 @@ export function attributionModelFromRow(row: AttributionRow): CreatorAttribution
     valueEvent: row.value_event as CreatorAttribution["valueEvent"],
     valueEventId: row.value_event_id ? String(row.value_event_id) : null,
     basis,
-    beneficiaryUserId: String(row.beneficiary_user_id),
+    beneficiaryUserId: row.beneficiary_user_id,
     weight: toNum(row.weight),
     confidence: toNum(row.confidence),
     grossRevenueMinor: toNum(row.gross_revenue_minor),
@@ -153,18 +210,53 @@ export function attributionModelFromRow(row: AttributionRow): CreatorAttribution
     earnable: basis === "recorded_value_event" && row.fraud_hold !== true,
     idempotencyKey: row.idempotency_key,
   };
+  return { ok: true, model };
 }
 
-/** The successor row every supersession starts from: the head's identity, carried forward. */
-function successorOf(head: AttributionRow): DoorAttribution {
-  return {
+/**
+ * The successor row every supersession starts from: the head's identity,
+ * carried forward — or a refusal, when there is no identity left to carry.
+ *
+ * ── WHY A SEVERED HEAD HAS NO SUCCESSOR ─────────────────────────────────────
+ * A supersession IS "the same party's record, restated": 3387's
+ * `ca_supersession_is_lawful` admits a successor only when it keeps the head's
+ * type, subject AND beneficiary. A severed head has no beneficiary to keep, so
+ * no lawful successor exists for it — not a successor with a blank
+ * beneficiary, not one with a fresh one, none. `DoorAttribution`'s
+ * `beneficiary_user_id` therefore stays non-nullable on purpose: it is the
+ * WRITE side, and the C-11 answer forbids ever inserting a row that names
+ * nobody (`(beneficiary_user_id IS NULL) <> (beneficiary_pseudonym IS NULL)`,
+ * plus a trigger that refuses any insert already carrying a pseudonym).
+ *
+ * So the chain simply ends. The database agrees from its own side — a
+ * pseudonymised record is frozen against supersession — and a hold, a release
+ * or a recomputation of such a row is refused here before it is attempted
+ * there, with the reason named rather than a write that lands `"null"` in the
+ * beneficiary column of a brand-new row.
+ */
+type Successor =
+  | { ok: true; attribution: DoorAttribution }
+  | { ok: false; reason: "identity_severed" | "beneficiary_unreadable"; detail: string };
+
+function successorOf(head: AttributionRow): Successor {
+  if (isIdentitySevered(head)) {
+    return {
+      ok: false,
+      reason: "identity_severed",
+      detail:
+        `${String(head.id)} names no beneficiary: its identity was erased and the accounting row retained, ` +
+        `so there is no party for a successor to carry forward`,
+    };
+  }
+  if (!beneficiaryIsNamed(head)) return unreadableBeneficiary(head);
+  const attribution: DoorAttribution = {
     creator_type: head.creator_type,
     subject_kind: head.subject_kind,
     subject_id: String(head.subject_id),
     value_event: head.value_event,
     value_event_id: head.value_event_id ? String(head.value_event_id) : null,
     attribution_basis: head.attribution_basis,
-    beneficiary_user_id: String(head.beneficiary_user_id),
+    beneficiary_user_id: head.beneficiary_user_id,
     weight: toNum(head.weight),
     confidence: toNum(head.confidence),
     gross_revenue_minor: toNum(head.gross_revenue_minor),
@@ -177,6 +269,7 @@ function successorOf(head: AttributionRow): DoorAttribution {
     idempotency_key: "",
     recommendation_id: head.recommendation_id ?? null,
   };
+  return { ok: true, attribution };
 }
 
 /**
@@ -200,9 +293,14 @@ export function resolveHead(rows: readonly AttributionRow[], attributionId: stri
 export function planHold(head: AttributionRow, reasonIn: unknown, actor: LedgerActor): Plan {
   const reason = normaliseReason(reasonIn);
   if (!reason) return refuse("unexplained", "a hold with no reason is indistinguishable from a bug (2920 ca_hold_is_explained)");
+  // Severed BEFORE held: a severed record cannot be held OR released, so
+  // "already held" would describe a state the admin can do nothing about and
+  // hide the one they need to know.
+  const carried = successorOf(head);
+  if (!carried.ok) return refuse(carried.reason, carried.detail);
   if (head.fraud_hold) return refuse("already_held", `${head.id} is already held for ${head.fraud_hold_reason}`);
   const attribution: DoorAttribution = {
-    ...successorOf(head),
+    ...carried.attribution,
     fraud_hold: true,
     fraud_hold_reason: reason,
     idempotency_key: `creator-attr-hold:${head.id}`,
@@ -235,9 +333,11 @@ export function planHold(head: AttributionRow, reasonIn: unknown, actor: LedgerA
 export function planRelease(head: AttributionRow, reasonIn: unknown, actor: LedgerActor): Plan {
   const reason = normaliseReason(reasonIn);
   if (!reason) return refuse("unexplained", "a release with no reason is a hold nobody can account for lifting");
+  const carried = successorOf(head);
+  if (!carried.ok) return refuse(carried.reason, carried.detail);
   if (!head.fraud_hold) return refuse("not_held", `${head.id} is not held`);
   const attribution: DoorAttribution = {
-    ...successorOf(head),
+    ...carried.attribution,
     fraud_hold: false,
     fraud_hold_reason: null,
     idempotency_key: `creator-attr-release:${head.id}`,
@@ -347,6 +447,10 @@ export function planRecompute(
 ): Plan {
   const reason = normaliseReason(reasonIn);
   if (!reason) return refuse("unexplained", "a recomputation with no reason cannot be audited");
+  // Severed first: "release it before recomputing" is advice an admin cannot
+  // take on a severed record, because the release is refused for the same reason.
+  const carried = successorOf(head);
+  if (!carried.ok) return refuse(carried.reason, carried.detail);
   if (head.fraud_hold) return refuse("recompute_while_held", `${head.id} is held; release it before recomputing`);
   if (head.attribution_basis !== "recorded_value_event") {
     return refuse("seam_has_no_computation", `${head.id} is a seam: no value event, nothing to recompute`);
@@ -357,7 +461,7 @@ export function planRecompute(
 
   const key = `creator-attr-recompute:${head.id}@${next.ruleVersion}`;
   const attribution: DoorAttribution = {
-    ...successorOf(head),
+    ...carried.attribution,
     rule_version: next.ruleVersion,
     gross_revenue_minor: next.figures.grossRevenueMinor,
     provisional_share_minor: next.figures.creatorShareMinor,
@@ -373,7 +477,8 @@ export function planRecompute(
   // The new entries, built by the SAME model every other earning is built by,
   // against the new row as a model object whose id is its idempotency key.
   const model = attributionModelFromRow({ ...head, ...attribution, id: key, idempotency_key: key } as AttributionRow);
-  const built = buildCreatorEarningEntries(model, next.figures);
+  if (!model.ok) return refuse(model.reason, model.detail);
+  const built = buildCreatorEarningEntries(model.model, next.figures);
   if (built.status !== "built") return refuse("refused_by_model", `${built.reason}: ${built.detail}`);
   const fresh: DoorEntry[] = built.entries.map((e) => ({
     transaction_key: e.transactionKey,
@@ -417,5 +522,19 @@ export function planRecompute(
         idempotency_key: `audit:recompute:${head.id}@${next.ruleVersion}`,
       },
     },
+  };
+}
+
+/**
+ * The column was absent or not a uuid (creatorLedgerStatus.ts `beneficiaryState`).
+ * A read fault, named as one: neither an erasure nor a party.
+ */
+function unreadableBeneficiary(row: AttributionRow): { ok: false; reason: "beneficiary_unreadable"; detail: string } {
+  return {
+    ok: false,
+    reason: "beneficiary_unreadable",
+    detail:
+      `attribution ${String(row.id)} carries no readable beneficiary_user_id (absent, or not a uuid); ` +
+      `that is a read fault, not an erased identity, and nothing is computed from it`,
   };
 }

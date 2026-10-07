@@ -52,7 +52,7 @@ export interface FsqPlace {
   photoUrl: string | null;
   galleryImages: string[];
   // Hours
-  isOpenNow: boolean | null;
+  isOpenNow: boolean | null; // NOT LIVE (lead ruling D-67): the static FSQ dataset's open_now at ingest — never render it as "open now"; live status is /api/places/live-status
   // Amenities
   amenities: string[];
 }

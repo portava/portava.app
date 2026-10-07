@@ -5,6 +5,7 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase.ts';
 import { freshToken as freshApiToken } from './apiToken.ts';
 import { getSentry } from '../lib/sentry.ts';
+import { timeoutSignal } from '../lib/timeoutSignal.ts';
 
 /**
  * Report a silent ensureProfile failure to Sentry. Observability only — never
@@ -65,7 +66,22 @@ function networkMessage(e: unknown): string {
  * switch is a rollout control, not a security boundary — account creation is
  * still bounded server-side.
  */
-async function fetchSignupStatus(): Promise<{ signupsEnabled: boolean; inviteOnly: boolean }> {
+export interface SignupStatus { signupsEnabled: boolean; inviteOnly: boolean }
+
+/**
+ * The sign-up screen reads this BEFORE showing the form, so an invite-only
+ * beta says so up front instead of after the person has typed a password.
+ * Same contract as fetchSignupStatus below (it IS that function): never
+ * rejects, fail-open on an unreachable API. It is ADVISORY: on the app's own
+ * path (supabase.auth.signUp) what actually refuses is Supabase Auth's
+ * disable_signup, which the beta's configuration step sets; the server route's
+ * invite_required refusal covers direct API callers only.
+ */
+export function getSignupStatus(): Promise<SignupStatus> {
+  return fetchSignupStatus();
+}
+
+async function fetchSignupStatus(): Promise<SignupStatus> {
   const allowed = { signupsEnabled: true, inviteOnly: false };
   const apiBase = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
   if (!apiBase) return allowed;
@@ -73,7 +89,7 @@ async function fetchSignupStatus(): Promise<{ signupsEnabled: boolean; inviteOnl
   try {
     const res = await fetch(`${apiBase}/api/auth/signup-status`, {
       headers: { accept: 'application/json' },
-      signal: AbortSignal.timeout(5000),
+      signal: timeoutSignal(5000), // not AbortSignal.timeout: absent in React Native (src/lib/timeoutSignal.ts)
     });
     if (!res.ok) return allowed;
     const body = await res.json();

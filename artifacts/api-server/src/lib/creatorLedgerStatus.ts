@@ -61,7 +61,13 @@ export interface AttributionRow {
   value_event: string;
   value_event_id: string | null;
   attribution_basis: string;
-  beneficiary_user_id: string;
+  /**
+   * NULL means the beneficiary identity was SEVERED — see `isIdentitySevered`.
+   * 2920 declares the column NOT NULL; the C-11 "retain pseudonymised" answer
+   * drops that, so every reader must already be able to say what a severed
+   * identity means before it is applied.
+   */
+  beneficiary_user_id: string | null;
   weight: number | string;
   confidence: number | string;
   gross_revenue_minor: number | string;
@@ -97,6 +103,35 @@ export interface EarningEntryRow {
   idempotency_key: string;
   occurred_at?: string;
 }
+
+/**
+ * Whether a persisted attribution row's beneficiary identity has been SEVERED.
+ *
+ * `creator_attributions.beneficiary_user_id` is NULL on exactly one kind of
+ * row: one the C-11 "retain pseudonymised" answer has erased the identity from
+ * — the profile id is replaced by a pseudonym and the accounting row is kept.
+ *
+ * That is a STATE, and specifically NOT any of these:
+ *   * not a read that failed — the row is intact and readable, and what it no
+ *     longer says is WHO;
+ *   * not an absent row — `resolveHead`/`readAttributionChain` answer
+ *     `unknown_attribution`/`not_found` for that, and must keep doing so;
+ *   * not a beneficiary. `String(null)` is the string `"null"`, and a reader
+ *     that produced it would hand every erased creator in the ledger the SAME
+ *     phantom id — one collapsed beneficiary named `"null"`.
+ *
+ * Every reader asks the question here so there is one notion of severed and no
+ * second place for a coercion to reappear.
+ */
+export function beneficiaryIsNamed<T extends { beneficiary_user_id: string | null }>(
+  row: T,
+): row is T & { beneficiary_user_id: string } {
+  return beneficiaryState(row) === "named"; // a uuid; NULL is severed, anything else unreadable (foot)
+}
+
+/** Exactly NULL: erased. NOT the negation of `beneficiaryIsNamed` — see `beneficiaryState`. */
+export const isIdentitySevered = (row: { beneficiary_user_id: string | null }): boolean =>
+  beneficiaryState(row) === "severed";
 
 export const toNum = (v: unknown): number => {
   const n = typeof v === "string" ? Number(v) : (v as number);
@@ -405,4 +440,30 @@ export function impactSummary(rows: readonly AttributionRow[]): ImpactSummary {
       .sort((a, b) => a.valueEvent.localeCompare(b.valueEvent)),
     seams,
   };
+}
+
+// ── The three states of a persisted beneficiary column ───────────────────────
+// Appended at the foot so every cited line above keeps its number (verifier
+// finding F5 on PR #594, 2026-10-06).
+//
+//   named       a uuid-shaped string — the column is `uuid`, so anything else
+//               did not come from it intact;
+//   severed     exactly NULL — the identity was erased (C-11 "retain
+//               pseudonymised") and the accounting row kept;
+//   unreadable  anything else. `undefined` means the column was not selected or
+//               the row is not the shape this module thinks it is; `""`,
+//               whitespace, a non-uuid or a number cannot be a beneficiary. That
+//               is a READ FAULT, and it is never reported as `identity_severed`:
+//               doing so would assert an erasure that did not happen, which is
+//               the master invariant (a failed read is never an answer) seen from
+//               the other side.
+export type BeneficiaryState = "named" | "severed" | "unreadable";
+
+const BENEFICIARY_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function beneficiaryState(row: { beneficiary_user_id?: unknown }): BeneficiaryState {
+  const v = row?.beneficiary_user_id;
+  if (v === null) return "severed";
+  if (typeof v === "string" && BENEFICIARY_UUID.test(v)) return "named";
+  return "unreadable";
 }
