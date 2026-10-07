@@ -137,6 +137,41 @@ describe("§24 registry — honest in both directions", () => {
     walk(join(REPO, "travel-buddy-standalone/app"));
     assert.deepEqual(hits, []);
   });
+
+  // census-telegraph T295 (lane T, 2026-10-07): §45c left ONE raw read on the conversation
+  // surface — useReaderAvatars' `profiles.avatar_url`. The receipt now carries the faces
+  // (GET /threads/:id/receipts → readerFaces, src/test/telegraphReaderFaces.test.ts), and on
+  // the conversation surface `profiles` counts as a raw table too.
+  it("no conversation-surface client file reads `profiles` either (re-derived, not trusted)", () => {
+    const surface = [
+      "travel-buddy-standalone/src/features/telegraph",
+      "travel-buddy-standalone/app/messages",
+      "travel-buddy-standalone/src/components/telegraph",
+      "travel-buddy-standalone/src/components/GroupChatScreen.tsx",
+      "travel-buddy-standalone/src/components/TelegraphInboxScreen.tsx",
+    ];
+    const hits: string[] = [];
+    let files = 0;
+    const visit = (p: string) => {
+      if (!existsSync(p)) return;
+      if (statSync(p).isDirectory()) {
+        for (const name of readdirSync(p)) {
+          if (name === "node_modules" || name === "__tests__" || name.includes(".test.")) continue;
+          visit(join(p, name));
+        }
+      } else if (/\.tsx?$/.test(p)) {
+        files += 1;
+        if (/\.from\(\s*["']profiles["']/.test(readFileSync(p, "utf8"))) hits.push(p);
+      }
+    };
+    for (const s of surface) visit(join(REPO, s));
+    assert.ok(files > 50, `only ${files} conversation-surface files read`);
+    assert.deepEqual(hits, []);
+    // The chips' hook reads the server's answer, not a table.
+    const hook = readFileSync(join(REPO, "travel-buddy-standalone/src/features/telegraph/lifecycle/useReaderAvatars.ts"), "utf8");
+    assert.doesNotMatch(hook, /supabase/);
+    assert.match(hook, /readerFace\(/);
+  });
 });
 
 // ── the facts, through the real route ─────────────────────────────────────────

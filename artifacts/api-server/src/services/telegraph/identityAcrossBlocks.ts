@@ -71,3 +71,53 @@ export async function identityWithheldAcrossBlocks(
     withhold: (id) => typeof id === "string" && id !== viewerId && isExcluded(answer, id),
   };
 }
+
+/**
+ * Reader FACES for the receipt chips (census-telegraph T295). The app used to
+ * read `profiles.avatar_url` itself for the ids a receipt named
+ * (`useReaderAvatars`), the one raw read left on the conversation surface. The
+ * receipts route now answers the faces with the receipt, under the rule the
+ * app's read got from `profiles_select`, applied here because the route reads
+ * with the service client: no face across a block either way; a PRIVATE
+ * profile's face only to a friend; the viewer's own face always.
+ *
+ * DECORATIVE, and the failure says so: an unreadable profile read answers no
+ * faces and `degraded: true`; an unreadable block read withholds every other
+ * face; an unreadable friendship read withholds the private ones. None of it
+ * changes what the receipt claims — the count and the ids are the receipt's.
+ */
+export async function readerFacesFor(
+  sc: any,
+  viewerId: string,
+  ids: readonly string[],
+): Promise<{ faces: Record<string, string | null>; degraded: boolean }> {
+  const want = [...new Set(ids.filter((id) => typeof id === "string" && id.length > 0))];
+  const faces: Record<string, string | null> = {};
+  if (want.length === 0) return { faces, degraded: false };
+  const { data: rows, error } = await sc.from("profiles").select("id, avatar_url, is_private").in("id", want);
+  if (error) return { faces, degraded: true };
+  const blocks = await identityWithheldAcrossBlocks(sc, viewerId, want);
+  const byId = new Map<string, { avatar_url?: unknown; is_private?: unknown }>();
+  for (const r of (rows ?? []) as Array<{ id?: unknown; avatar_url?: unknown; is_private?: unknown }>) byId.set(String(r.id), r);
+  const privateIds = want.filter((id) => id !== viewerId && byId.get(id)?.is_private === true && !blocks.withhold(id));
+  let friends: Set<string> | null = new Set<string>();
+  if (privateIds.length > 0) {
+    const [asA, asB] = await Promise.all([
+      sc.from("user_friendships").select("user_b").eq("user_a", viewerId).in("user_b", privateIds),
+      sc.from("user_friendships").select("user_a").eq("user_b", viewerId).in("user_a", privateIds),
+    ]);
+    friends = asA?.error || asB?.error ? null : new Set<string>([
+      ...((asA?.data ?? []) as Array<{ user_b?: unknown }>).map((r) => String(r.user_b)),
+      ...((asB?.data ?? []) as Array<{ user_a?: unknown }>).map((r) => String(r.user_a)),
+    ]);
+  }
+  for (const id of want) {
+    const row = byId.get(id);
+    const url = row && typeof row.avatar_url === "string" ? row.avatar_url : null;
+    if (id === viewerId) { faces[id] = url; continue; }
+    if (blocks.withhold(id)) { faces[id] = null; continue; }
+    if (row?.is_private === true && !(friends?.has(id) ?? false)) { faces[id] = null; continue; }
+    faces[id] = url;
+  }
+  return { faces, degraded: blocks.unreadable || friends === null };
+}

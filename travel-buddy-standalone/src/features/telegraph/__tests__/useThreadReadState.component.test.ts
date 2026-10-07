@@ -434,3 +434,46 @@ describe("delivery — the server's own live receipt, and nothing invented", () 
     expect(hook.result.current.statusFor(mine)?.kind).toBe('sent');
   });
 });
+
+// ── T295: the reader chips' faces come WITH the receipt ──────────────────────
+// census-telegraph T295 (lane T, 2026-10-07): `useReaderAvatars` read
+// `profiles.avatar_url` itself — the last raw read on the conversation surface.
+// The receipts answer now carries `readerFaces` (the server applies the block and
+// private-profile rule); the read state publishes it and the chips look it up.
+describe('T295 — reader faces are the server\'s answer, not a profiles read', () => {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { useReaderAvatars } = require('../lifecycle/useReaderAvatars.ts') as typeof import('../lifecycle/useReaderAvatars.ts');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { _resetReaderFaces } = require('../lifecycle/readerFaces.ts') as typeof import('../lifecycle/readerFaces.ts');
+  beforeEach(() => { _resetReaderFaces(); });
+
+  it('a receipts answer\'s faces reach the chips; a face the server withholds is not drawn', async () => {
+    mockFetchReceipts.mockResolvedValue({
+      ok: true,
+      data: { threadId: T, receipts: [receipt(1, { status: 'SEEN', seenBy: 2, seenByUserIds: [THEM, 'blocked-3'] })], readerFaces: { [THEM]: 'https://cdn.example/them.jpg', 'blocked-3': null } },
+    });
+    await mount({ messages: [msg(1, ME, '2026-10-01T10:00:00Z')] });
+    await waitFor(() => expect(mockFetchReceipts).toHaveBeenCalled());
+    const chips = await renderHook(() => useReaderAvatars([THEM, 'blocked-3']));
+    await waitFor(() => expect(chips.result.current(THEM)).toBe('https://cdn.example/them.jpg'));
+    expect(chips.result.current('blocked-3')).toBeNull();
+  });
+
+  it('a later answer that withholds a face (a block made since) takes it away', async () => {
+    mockFetchReceipts.mockResolvedValueOnce({ ok: true, data: { threadId: T, receipts: [], readerFaces: { [THEM]: 'https://cdn.example/them.jpg' } } });
+    const hook = await mount({ messages: [msg(1, ME, '2026-10-01T10:00:00Z')] });
+    const chips = await renderHook(() => useReaderAvatars([THEM]));
+    await waitFor(() => expect(chips.result.current(THEM)).toBe('https://cdn.example/them.jpg'));
+    mockFetchReceipts.mockResolvedValueOnce({ ok: true, data: { threadId: T, receipts: [], readerFaces: { [THEM]: null } } });
+    await act(async () => { hook.result.current.refreshReceipts(); });
+    await waitFor(() => expect(chips.result.current(THEM)).toBeNull());
+  });
+
+  it('an answer from an older server (no readerFaces) draws no faces and breaks nothing', async () => {
+    mockFetchReceipts.mockResolvedValue({ ok: true, data: { threadId: T, receipts: [] } });
+    await mount({ messages: [msg(1, ME, '2026-10-01T10:00:00Z')] });
+    await waitFor(() => expect(mockFetchReceipts).toHaveBeenCalled());
+    const chips = await renderHook(() => useReaderAvatars([THEM]));
+    expect(chips.result.current(THEM)).toBeNull();
+  });
+});

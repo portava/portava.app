@@ -54,7 +54,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError } from "../lib/http.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { logger as rootLogger } from "../lib/logger.js";
+import { logger as rootLogger } from "../lib/logger.js"; import { readerFacesFor } from "../services/telegraph/identityAcrossBlocks.js"; // census-telegraph T295: the receipt chips' faces, server-built
 import { publishToThread } from "../lib/telegraphEvents.js";
 import { boundSeenReaders, strategyForAudience } from "../domain/telegraph/policies/transportClass.js";
 import {
@@ -208,9 +208,9 @@ router.get(
         return { ...r, seenByUserIds: b.seenByUserIds, seenByUserIdsSampled: b.seenByUserIdsSampled };
       });
 
-    res.status(200).json({
+    const faces = await readerFacesFor(client, user.id, receipts.flatMap((r) => r.seenByUserIds)); res.status(200).json({ // T295: the faces come WITH the receipt; the app no longer reads profiles for them
       threadId,
-      receipts,
+      receipts, readerFaces: faces.faces, readerFacesDegraded: faces.degraded,
       /**
        * §7.1 names a DELIVERED state. Nothing on this deployment produces a
        * delivery signal, so every receipt reports `delivered: null` and says
