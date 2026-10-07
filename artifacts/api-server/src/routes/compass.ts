@@ -182,6 +182,7 @@ import { buildCompassContext as buildLocationCompassContext } from "../services/
 import { buildCompassMediaContext, formatMediaContextLines } from "../compass/CompassMediaContext.js";
 import { resolveViewer as resolveMediaViewer } from "../services/media/MediaProjectionService.js";
 import { checkCompassActionRestriction, sendCompassRestrictionRefusal } from "../compass/CompassRestrictionGate.js";
+import { canSeePlanItemLocation, planItemAccessFor } from "../compass/planItemAccess.js";
 
 const router = Router();
 
@@ -2199,19 +2200,27 @@ router.post("/compass/proposals/:proposalId/confirm", async (req, res) => {
     // an unreadable trip_plan_items gives `data: null` — indistinguishable from
     // "not in the plan" — and the place gets added again. Refuse instead; the
     // proposal is still pending and the confirm is safe to retry.
-    const { data: existing, error: existingErr } = await sc
+    //
+    // Lead ruling D-65 (2026-10-06): another member's PRIVATE item is owner-only,
+    // place id included, so it is not "in your trip plan" for this caller — a 409
+    // naming it would tell them where that member privately plans to be. Only an
+    // item the caller may see (public, their own, or shared with them) is a
+    // duplicate; otherwise the caller's own item is added.
+    const { data: existingRows, error: existingErr } = await sc
       .from("trip_plan_items")
-      .select("id")
+      .select("id, creator_id, location_is_private")
       .eq("trip_id", proposal.tripId)
       .eq("source_type", "place")
       .eq("source_id", proposal.placeId)
       .is("removed_at", null)
-      .maybeSingle();
+      .limit(50);
     if (existingErr) {
       req.log?.warn({ err: existingErr, tripId: proposal.tripId, placeId: proposal.placeId }, "compass proposal confirm: duplicate check unavailable");
       sendError(res, "degraded_unavailable", "We could not check your trip plan right now. Please try again shortly.");
       return;
     }
+    const planAccess = await planItemAccessFor(sc, proposal.tripId, user.id);
+    const existing = ((existingRows ?? []) as Array<Record<string, unknown>>).some((r) => canSeePlanItemLocation(planAccess, r));
     if (existing) { sendError(res, "conflict", "This place is already in your trip plan"); return; }
   }
 

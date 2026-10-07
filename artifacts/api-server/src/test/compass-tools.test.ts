@@ -991,3 +991,65 @@ describe("H2. Trust restrictions reach the plan-proposal confirm (TRV2-08)", () 
     assert.deepEqual(client._getInserts()["trip_plan_items"] ?? [], []);
   });
 });
+
+// ── D-65 (lead ruling, 2026-10-06) at the confirm route's duplicate guard ─────
+// The guard answered "This place is already in your trip plan" when ANOTHER
+// member had the place as a PRIVATE item: a 409 that tells the caller where that
+// member privately plans to be. Only an item the caller may see is a duplicate.
+describe("D-65 — the confirm route's duplicate guard is not an oracle for another member's private item", () => {
+  const BOB_PRIVATE = { id: "pi-bob", trip_id: TRIP_ID, creator_id: BOB_ID, source_type: "place", source_id: PLACE_ID, removed_at: null, location_is_private: true, title: "Bob's secret cafe" };
+  function db(proposalId: string, items: any[]): Db {
+    return makeDb({
+      compass_conversations: [{ id: CONV_ID, user_id: ALICE_ID, last_active_at: new Date().toISOString() }],
+      compass_conversation_messages: [{
+        id: "m1", conversation_id: CONV_ID, role: "assistant", content: "confirm?",
+        payload: { pendingProposals: [{ proposalId, tripId: TRIP_ID, tripTitle: "Cebu trip", placeId: PLACE_ID, title: "Lantaw Cafe", category: "cafe", dayDate: null, status: "pending_confirmation" }] },
+        created_at: new Date().toISOString(),
+      }],
+      trips: [{ id: TRIP_ID, owner_id: ALICE_ID, title: "Cebu trip", plan_edit_permission: "all_members", status: "upcoming" }],
+      trip_members: [
+        { trip_id: TRIP_ID, user_id: ALICE_ID, role: "owner", status: "accepted" },
+        { trip_id: TRIP_ID, user_id: BOB_ID, role: "member", status: "accepted" },
+      ],
+      discovery_places: [{ id: PLACE_ID, name: "Lantaw Cafe", category: "cafe", city: "Cebu" }],
+      trust_restrictions: [],
+      trip_plan_items: items,
+    });
+  }
+
+  it("another member's PRIVATE item at the same place is not a duplicate: the caller's own item is added, and nothing names it", async () => {
+    const pid = "d6545678-1234-1234-1234-123456789abc";
+    const client = makeClient(db(pid, [{ ...BOB_PRIVATE }]));
+    _setTestClient(client, "test-token");
+    const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.doesNotMatch(JSON.stringify(r.body), /already in your trip plan|secret/i);
+    const added = client._getInserts()["trip_plan_items"] ?? [];
+    assert.equal(added.length, 1);
+    assert.equal(added[0].creator_id, ALICE_ID);
+  });
+
+  it("an item the caller can see — public, or their own private one — is still a duplicate (409, no write)", async () => {
+    for (const [label, item] of [
+      ["public", { ...BOB_PRIVATE, id: "pi-pub", location_is_private: false }],
+      ["own private", { ...BOB_PRIVATE, id: "pi-own", creator_id: ALICE_ID }],
+    ] as const) {
+      const pid = label === "public" ? "d6645678-1234-1234-1234-123456789abc" : "d6745678-1234-1234-1234-123456789abc";
+      const client = makeClient(db(pid, [item]));
+      _setTestClient(client, "test-token");
+      const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
+      assert.equal(r.status, 409, `${label}: ${JSON.stringify(r.body)}`);
+      assert.match(String(r.body.message), /already in your trip plan/);
+      assert.deepEqual(client._getInserts()["trip_plan_items"] ?? [], [], label);
+    }
+  });
+
+  it("a row whose privacy flag is absent is PRIVATE (owner-only default): another member's is not a duplicate", async () => {
+    const pid = "d6845678-1234-1234-1234-123456789abc";
+    const { location_is_private: _drop, ...noFlag } = BOB_PRIVATE;
+    const client = makeClient(db(pid, [noFlag]));
+    _setTestClient(client, "test-token");
+    const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+  });
+});
