@@ -18,7 +18,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import memoriesRouter from "../routes/memories.js";
 import itemVisibilityRouter from "../routes/memoryItemVisibility.js";
-import { deriveProjection, rebuildProjection, projectionStaleness } from "../services/memoryProjections/derivativeRegistry.js";
+import { deriveProjection, rebuildProjection, projectionStaleness } from "../services/memoryProjections/derivativeRegistry.js"; import { recapAdmits, sharedAudienceAdmits } from "../services/memoryProjections/projectionRegistry.js";
 import { hiddenItemKeys, ITEM_PAGE } from "../services/memory/memoryItemVisibility.js";
 import { readMemoryControls, readRecapControls, CONTROLS_PAGE } from "../services/memory/memoryResurfacingControls.js";
 
@@ -70,10 +70,10 @@ function makeClient(store: Record<string, any[]>, opts: FakeOpts = {}) {
     const filters: Array<(r: any) => boolean> = [];
     const named: string[] = [];
     let mode: "select" | "update" | "insert" | "delete" | "upsert" = "select";
-    let payload: any = null; let wantRows = false; let single = false; let countMode = false; let onConflict: string[] = [];
+    let payload: any = null; let selected: string | null = null; let wantRows = false; let single = false; let countMode = false; let onConflict: string[] = [];
     const f = (c: string, p: (r: any) => boolean) => { named.push(c); filters.push(p); return obj; };
     const obj: any = {
-      select(_c?: string, o?: any) { if (mode !== "select") wantRows = true; if (o?.count === "exact" && o?.head) countMode = true; return obj; },
+      select(c?: string, o?: any) { if (mode !== "select") wantRows = true; else if (typeof c === "string") selected = c; if (o?.count === "exact" && o?.head) countMode = true; return obj; },
       update(d: any) { mode = "update"; payload = d; return obj; },
       insert(d: any) { mode = "insert"; payload = d; return obj; },
       upsert(d: any, o?: any) { mode = "upsert"; payload = d; onConflict = String(o?.onConflict ?? "").split(",").filter(Boolean); return obj; },
@@ -106,8 +106,8 @@ function makeClient(store: Record<string, any[]>, opts: FakeOpts = {}) {
       }
       if (mode === "delete") return { data: null, error: null };
       if (countMode) return { data: null, error: null, count: matched.length };
-      if (single) return { data: matched[0] ? { ...matched[0] } : null, error: null };
-      return { data: matched.map((x) => ({ ...x })), error: null };
+      const project = (r: any) => (table === "memory_items" && selected && !/[*()]/.test(selected) ? Object.fromEntries(selected.split(",").map((k) => k.trim()).filter((k) => k in r).map((k) => [k, r[k]])) : { ...r }); /* VERIFY-H4 H4-2: a memory_items read gets only the columns it selected, as from PostgREST */ if (single) return { data: matched[0] ? project(matched[0]) : null, error: null };
+      return { data: matched.map((x) => project(x)), error: null };
     }
     return obj;
   }
@@ -320,5 +320,44 @@ describe("H3-7 — reads that could be truncated fail closed", () => {
     assert.equal((await readMemoryControls(makeClient(store), OWNER, ids)).state, "unreadable");
     app = await start(store);
     assert.equal((await call(app, "GET", `/trips/${TRIP}/memories/recap`, VIEWER)).status, 503);
+  });
+});
+
+// ── VERIFY-H4 (1dbeab8004): H4-1, H4-3, H4-4 ────────────────────────────────
+describe("VERIFY-H4 — the cases the delta verifier found missing", () => {
+  const VIEWER_SCOPE = { owner_id: OWNER, viewer_id: VIEWER, trip_id: TRIP, place_id: null, person_id: null };
+  const row = (over: Record<string, unknown>) => ({ ...seed().memories[0], ...over }) as any;
+
+  it("H4-1: a named viewer is in a `custom` audience only when the list names them (and the list is the control)", () => {
+    assert.equal(sharedAudienceAdmits({ scope: VIEWER_SCOPE }, row({ visibility: "custom", allowed_user_ids: [] })), false);
+    assert.equal(sharedAudienceAdmits({ scope: VIEWER_SCOPE }, row({ visibility: "custom", allowed_user_ids: ["someone-else"] })), false);
+    assert.equal(sharedAudienceAdmits({ scope: VIEWER_SCOPE }, row({ visibility: "custom", allowed_user_ids: [VIEWER] })), true);
+  });
+
+  it("H4-1: unreadable recap controls (null) admit no Memory to a recap; an empty set admits it", () => {
+    assert.equal(recapAdmits({ recapExcluded: null }, MEM), false);
+    assert.equal(recapAdmits({ recapExcluded: new Set<string>() }, MEM), true);
+    assert.equal(recapAdmits({ recapExcluded: new Set([MEM]) }, MEM), false);
+  });
+
+  it("H4-3: the registered TripMemoryProjection is source_unavailable on a FULL page of controls (999 rows builds)", async () => {
+    const scope = { owner_id: OWNER, viewer_id: OWNER, trip_id: TRIP, place_id: null, person_id: null };
+    const controls = (n: number) => Array.from({ length: n }, (_, i) => ({ memory_id: i === 0 ? MEM : `m-${i}`, owner_id: OWNER, control: "DO_NOT_RESURFACE" }));
+    const under = seed(null); under.memory_resurfacing_preferences = controls(999);
+    const ok = await deriveProjection(makeClient(under) as any, "TripMemoryProjection", scope);
+    assert.equal(ok.ok, true, JSON.stringify(ok));
+    const full = seed(null); full.memory_resurfacing_preferences = controls(1000);
+    const refused = await deriveProjection(makeClient(full) as any, "TripMemoryProjection", scope);
+    assert.deepEqual([refused.ok, (refused as any).reason, (refused as any).table], [false, "source_unavailable", "memory_resurfacing_preferences"]);
+  });
+
+  it("H4-4: rebuilt WITH a hidden photo present, the public registration is FRESH (the hidden set is in the version on both sides)", async () => {
+    const store = seed("only_me");
+    store.memory_derivative_registry = [];
+    const client = makeClient(store) as any;
+    const built = await rebuildProjection(client, "PublicMemoryProjection", PUBLIC_SCOPE, new Date("2026-10-07T12:00:00.000Z"));
+    assert.equal(projected(built)?.media_count, 1);
+    const fresh = await projectionStaleness(client, "PublicMemoryProjection", PUBLIC_SCOPE);
+    assert.ok(fresh.ok && fresh.value.state === "FRESH", JSON.stringify(fresh));
   });
 });
