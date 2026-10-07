@@ -140,6 +140,17 @@ describe("what GET /healthz/schedulers reads for this job (job 'layoverAuditRete
     assert.equal(s.lastAttemptAt, NOW.toISOString(), "the attempt is recorded even when the pass fails");
   });
 
+  it("a sweep that THROWS after the probe (the tick's own catch) counts as a failure", async () => {
+    _resetLayoverAuditRetentionStatus();
+    const ok = fakeDb([]);
+    let calls = 0;
+    const flaky = { from(t: string) { calls += 1; if (calls === 1) return ok.from(t); throw new Error("socket closed mid-sweep"); } };
+    const r = await runLayoverAuditRetentionTick({ client: flaky, now: NOW });
+    assert.equal(r.outcome, "failed");
+    const s = getLayoverAuditRetentionStatus();
+    assert.deepEqual([s.consecutiveFailures, s.lastOutcome, s.lastSuccessAt], [1, "failed", null]);
+  });
+
   it("without 3621 a tick is neither a success nor a failure: the attempt shows, the reason says why", async () => {
     _resetLayoverAuditRetentionStatus();
     await runLayoverAuditRetentionTick({ client: fakeDb([], { schema: false }), now: NOW });
