@@ -27,6 +27,7 @@ import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.j
 import {
   PRESENCE_INTENTS,
   PRESENCE_INTENTS_FLAG,
+  PRESENCE_INTENT_MIN_K, discloseIntentCounts,
   clearPresenceIntents,
   intentCounts,
   parsePresenceInput,
@@ -37,6 +38,12 @@ let base: string;
 const TOKEN = "presence-intents-token";
 const VIEWER = "user-1";
 const A = "user-a", B = "user-b", C = "user-c-blocked", D = "user-d-no-record", E = "user-e-aggregate-only", F = "user-f-expired", G = "user-g-elsewhere", P = "user-p-paused";
+// D-PRESENCE-K (k = 5): four more cleared travellers, so the base counts sit AT
+// and ABOVE the minimum — food 6 (A, B, Q1-Q4), nightlife 5 (A, Q1-Q4) — and
+// every exclusion below is still visible as a count of 7.
+const Q = ["user-q1", "user-q2", "user-q3", "user-q4"] as const;
+/** What the base fixture discloses: food 6, nightlife 5, and three intents below k (zero) withheld. */
+const BASE_DISCLOSED = { food: 6, nightlife: 5, shopping: null, culture: null, meetups: null };
 const DEPARTURE = new Date(Date.now() + 6 * 3_600_000).toISOString();
 const HOUR = 3_600_000;
 
@@ -71,16 +78,19 @@ function presence(sessionId: string, userId: string, intents: string[], over: Re
   };
 }
 
-function stage(opts: { flag?: boolean; viewerShares?: boolean; viewerStatus?: string; failures?: Record<string, { message: string; code?: string }> } = {}) {
+function stage(opts: { flag?: boolean; ladder?: boolean | null; viewerShares?: boolean; viewerStatus?: string; failures?: Record<string, { message: string; code?: string }> } = {}) {
   const tables: Record<string, any[]> = {
     feature_flags: [
       { flag: "airport_mode_enabled", enabled: true },
       ...(opts.flag === false ? [] : [{ flag: PRESENCE_INTENTS_FLAG, enabled: true }]),
+      // D-PRESENCE-K rule 2: counts need the aggregate-only presence surface.
+      ...(opts.ladder === null ? [] : [{ flag: "layover_presence_ladder_enabled", enabled: opts.ladder !== false }]),
     ],
     airport_profiles: [airportRow()],
     layover_sessions: [
       sessionRow({ user_id: VIEWER, share_city_status: opts.viewerShares !== false, departure_time: DEPARTURE, status: opts.viewerStatus ?? "active" }),
       other("s-a", A), other("s-b", B), other("s-c", C), other("s-d", D), other("s-e", E), other("s-f", F), other("s-g", G, "Osaka"), other("s-p", P),
+      ...Q.map((q) => other(`s-${q}`, q)),
     ],
     layover_presence: [
       presence("s-a", A, ["food", "nightlife"]),
@@ -90,6 +100,7 @@ function stage(opts: { flag?: boolean; viewerShares?: boolean; viewerStatus?: st
       presence("s-f", F, ["food"], { available_until: new Date(Date.now() - 60_000).toISOString(), expires_at: new Date(Date.now() - 60_000).toISOString(), available_from: new Date(Date.now() - 2 * HOUR).toISOString() }),
       presence("s-g", G, ["food"]),
       presence("s-p", P, ["food"]),
+      ...Q.map((q) => presence(`s-${q}`, q, ["food", "nightlife"])),
     ],
     blocks: [{ blocker_id: VIEWER, blocked_id: C }],
     location_preferences: [{ user_id: P, location_mode: "city_only", sharing_paused: true }],
@@ -177,14 +188,16 @@ describe("flag ON — what others see: counts, never people", () => {
     const r = await req("GET", I);
     assert.equal(r.status, 200, r.raw);
     assert.equal(r.body.available, true);
-    // A (food, nightlife) + B (food). Excluded: C blocked, E aggregate-only, F expired, G other city, P paused, D no record.
-    assert.deepEqual(r.body.counts, { food: 2, nightlife: 1, shopping: 0, culture: 0, meetups: 0 });
+    // A (food, nightlife) + B (food) + Q1-Q4 (both). Excluded: C blocked, E aggregate-only, F expired, G other city, P paused, D no record —
+    // any one of them counted makes food 7. Shopping, culture and meetups are zero, which is below k: withheld.
+    assert.deepEqual(r.body.counts, BASE_DISCLOSED);
+    assert.equal(r.body.minimumCount, 5);
   });
 
   it("no other traveller's id, session or window reaches the wire", async () => {
     stage();
     const r = await req("GET", I);
-    for (const id of [A, B, C, D, E, F, G, P, "s-a", "s-b", "s-c", "s-e", "s-g", "s-p"]) assert.ok(!r.raw.includes(id), `leaked ${id}`);
+    for (const id of [A, B, C, D, E, F, G, P, ...Q, "s-a", "s-b", "s-c", "s-e", "s-g", "s-p"]) assert.ok(!r.raw.includes(id), `leaked ${id}`);
     assert.ok(!r.raw.includes("available_until") && !r.raw.includes("max_travel"), r.raw);
   });
 
@@ -341,7 +354,7 @@ describe("each read answers for itself — a failure is never 'nobody' or 'none'
     const r = await req("GET", I);
     assert.equal(r.status, 200, r.raw);
     assert.deepEqual(r.body.own.intents, ["food", "shopping"]);
-    assert.deepEqual(r.body.counts, { food: 2, nightlife: 1, shopping: 0, culture: 0, meetups: 0 });
+    assert.deepEqual(r.body.counts, BASE_DISCLOSED);
   });
 
   it("the traveller's record from ANOTHER of their own sessions in the same city never counts either", async () => {
@@ -352,11 +365,13 @@ describe("each read answers for itself — a failure is never 'nobody' or 'none'
     // ONLY by that line, so this case is what makes it load-bearing.
     const t = stage();
     t.layover_sessions.push(other("s-v2", VIEWER));
-    t.layover_presence.push(presence("s-v2", VIEWER, ["culture"]));
+    // Restated for D-PRESENCE-K: a culture count of 1 is withheld either way, so the
+    // second record says FOOD, where being counted shows as 7 instead of 6.
+    t.layover_presence.push(presence("s-v2", VIEWER, ["food"]));
     const r = await req("GET", I);
     assert.equal(r.status, 200, r.raw);
-    assert.equal(r.body.counts.culture, 0, `the viewer's own second record was counted: ${r.raw}`);
-    assert.deepEqual(r.body.counts, { food: 2, nightlife: 1, shopping: 0, culture: 0, meetups: 0 });
+    assert.equal(r.body.counts.food, 6, `the viewer's own second record was counted: ${r.raw}`);
+    assert.deepEqual(r.body.counts, BASE_DISCLOSED);
   });
 
   it("an expired own record reads as none", async () => {
@@ -378,5 +393,93 @@ describe("each read answers for itself — a failure is never 'nobody' or 'none'
     assert.deepEqual(await clearPresenceIntents(db, "x1"), { ok: false, reason: "intents_disabled" });
     assert.equal(touched, 0);
     assert.equal(tables.layover_presence.length, 1);
+  });
+});
+
+// ── D-PRESENCE-K (lead ruling 2026-10-06): k = 5, no count beside a roster ──
+
+describe("D-PRESENCE-K — a count below 5 is never shown, and never beside a roster", () => {
+  it("a count of 4 is withheld and a count of exactly 5 is shown (the threshold is k = 5)", async () => {
+    const t = stage();
+    t.layover_presence = t.layover_presence.filter((x) => x.user_id !== "user-q4");
+    const r = await req("GET", I);
+    assert.equal(r.status, 200, r.raw);
+    assert.deepEqual(r.body.counts, { food: 5, nightlife: null, shopping: null, culture: null, meetups: null });
+    assert.equal(PRESENCE_INTENT_MIN_K, 5);
+  });
+
+  it("§52.1's probe P4 — ONE cleared traveller: nothing about them is shown, not even a zero", async () => {
+    const t = stage();
+    t.layover_presence = t.layover_presence.filter((x) => x.user_id === A);
+    const r = await req("GET", I);
+    assert.equal(r.status, 200, r.raw);
+    assert.deepEqual(r.body.counts, { food: null, nightlife: null, shopping: null, culture: null, meetups: null });
+  });
+
+  it("the presence ladder OFF (a named roster is served): counts withheld whole, and nobody else's record is read", async () => {
+    const t = stage({ ladder: false });
+    const db = makeLayoverDb(t, { users: { [TOKEN]: VIEWER } });
+    const realFrom = db.from;
+    let presenceReads = 0;
+    db.from = (name: string) => { if (name === "layover_presence") presenceReads += 1; return realFrom(name); };
+    _setTestClient(db, true);
+    const r = await req("GET", I);
+    assert.equal(r.status, 200, r.raw);
+    assert.strictEqual(r.body.counts, null);
+    assert.equal(r.body.countsWithheld, "roster_visible");
+    assert.equal(presenceReads, 1, "only the traveller's own record may be read");
+  });
+
+  it("the ladder flag ABSENT reads as off: withheld", async () => {
+    stage({ ladder: null });
+    const r = await req("GET", I);
+    assert.strictEqual(r.body.counts, null);
+    assert.equal(r.body.countsWithheld, "roster_visible");
+  });
+
+  it("a member of the viewer's LAYOVER CREW (named to them) is not counted", async () => {
+    const t = stage();
+    const later = new Date(Date.now() + 3 * HOUR).toISOString();
+    t.layover_crews = [{ id: "crew-1", city: "Taoyuan", airport_ref: null, created_by: VIEWER, created_session_id: "session-1", title: "Night market", meeting_point_label: null, status: "open", max_members: 6, expires_at: later, created_at: new Date().toISOString() }];
+    t.layover_crew_members = [
+      { crew_id: "crew-1", user_id: VIEWER, session_id: "session-1", role: "owner", joined_at: new Date().toISOString(), left_at: null },
+      { crew_id: "crew-1", user_id: "user-q1", session_id: "s-user-q1", role: "member", joined_at: new Date().toISOString(), left_at: null },
+    ];
+    const r = await req("GET", I);
+    assert.equal(r.status, 200, r.raw);
+    // food 6 -> 5; nightlife 5 -> 4, below k.
+    assert.deepEqual(r.body.counts, { food: 5, nightlife: null, shopping: null, culture: null, meetups: null });
+  });
+
+  it("an accepted member of the layover's TRIP (named to them) is not counted", async () => {
+    const t = stage();
+    t.layover_sessions[0].trip_id = "trip-1";
+    t.trips = [{ id: "trip-1", owner_id: VIEWER }];
+    t.trip_members = [{ trip_id: "trip-1", user_id: "user-q2", role: "member", status: "accepted" }];
+    const r = await req("GET", I);
+    assert.equal(r.status, 200, r.raw);
+    assert.deepEqual(r.body.counts, { food: 5, nightlife: null, shopping: null, culture: null, meetups: null });
+  });
+
+  it("the crew roster UNREADABLE: 503 — never counted as 'nobody to leave out'", async () => {
+    stage({ failures: { "layover_crew_members:select": { message: "boom" } } });
+    const r = await req("GET", I);
+    assert.equal(r.status, 503, r.raw);
+    assert.equal(r.body.counts, undefined);
+  });
+
+  it("the trip crew UNREADABLE: 503", async () => {
+    const t = stage({ failures: { "trip_members:select": { message: "boom" } } });
+    t.layover_sessions[0].trip_id = "trip-1";
+    const r = await req("GET", I);
+    assert.equal(r.status, 503, r.raw);
+    assert.equal(r.body.counts, undefined);
+  });
+
+  it("discloseIntentCounts: below k (zero included) is null, k and above is the count", () => {
+    assert.deepEqual(
+      discloseIntentCounts({ food: 0, nightlife: 4, shopping: 5, culture: 6, meetups: 40 }),
+      { food: null, nightlife: null, shopping: 5, culture: 6, meetups: 40 },
+    );
   });
 });

@@ -4692,6 +4692,13 @@ router.get("/airport/sessions/:id/presence/intents", async (req, res) => {
     res.json({ ok: true, available: true, own: own.record, counts: null, countsWithheld: session.shareCityStatus ? "sharing_gate_closed" : "sharing_off" });
     return;
   }
+  // D-PRESENCE-K rule 2 (LayoverPresenceStore.ts): no count beside a roster.
+  // With the ladder off, GET /:id/presence names the same population, so the
+  // counts are withheld whole. An unreadable flag reads as off: withheld.
+  if (!(await isFlagEnabled(sc, "layover_presence_ladder_enabled"))) {
+    res.json({ ok: true, available: true, own: own.record, counts: null, countsWithheld: "roster_visible" });
+    return;
+  }
   const airport = await airportOr503(sc, res, session);
   if (!airport) return;
   const city = airport.city !== "Unknown" ? airport.city : session.manualCity;
@@ -4700,9 +4707,13 @@ router.get("/airport/sessions/:id/presence/intents", async (req, res) => {
     sendError(res, "degraded_unavailable", "Who else is here could not be checked. Please try again.");
     return;
   }
-  const counts = await intentCounts(sc, presence.visibleUserIds, nowMs);
+  // Rule 3: nobody the viewer can name on a roster is counted.
+  const named = await namedToViewer(sc, user.id, session.tripId ?? null, new Date(nowMs).toISOString());
+  if (!named.ok) { sendError(res, "degraded_unavailable", "Intents nearby could not be loaded. Please try again."); return; }
+  const counts = await intentCounts(sc, presence.visibleUserIds.filter((id) => !named.ids.has(id)), nowMs);
   if (!counts.ok) { sendError(res, "degraded_unavailable", "Intents nearby could not be loaded. Please try again."); return; }
-  res.json({ ok: true, available: true, own: own.record, counts: counts.counts, city: city ?? null });
+  // Rule 1: a count below k (zero included) is withheld.
+  res.json({ ok: true, available: true, own: own.record, counts: discloseIntentCounts(counts.counts), minimumCount: PRESENCE_INTENT_MIN_K, city: city ?? null });
 });
 
 router.put("/airport/sessions/:id/presence/intents", async (req, res) => {
@@ -4746,6 +4757,7 @@ const PRESENCE_INPUT_MESSAGES: Record<PresenceInputError, string> = {
 import {
   MAX_TRAVEL_MINUTES_RANGE,
   PRESENCE_INTENTS,
+  PRESENCE_INTENT_MIN_K, discloseIntentCounts, namedToViewer,
   clearPresenceIntents,
   intentCounts,
   parsePresenceInput,

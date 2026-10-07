@@ -2469,7 +2469,13 @@ export function landsideSuppressionOf(v: unknown): LayoverLandsideSuppression | 
 
 export const PRESENCE_INTENT_KEYS = ['food', 'nightlife', 'shopping', 'culture', 'meetups'] as const;
 export type PresenceIntentKey = (typeof PRESENCE_INTENT_KEYS)[number];
-export type PresenceIntentCounts = Record<PresenceIntentKey, number>;
+/**
+ * Per intent: a count, or `null` — fewer than the minimum (lead ruling D-PRESENCE-K,
+ * k = 5; zero included). The server withholds below k; the client shows nothing
+ * below it either, so an older server's small count is never rendered.
+ */
+export type PresenceIntentCounts = Record<PresenceIntentKey, number | null>;
+export const PRESENCE_INTENT_MIN_K = 5;
 
 export interface OwnPresenceIntents {
   intents: PresenceIntentKey[];
@@ -2509,6 +2515,7 @@ function intentCountsOf(v: unknown): PresenceIntentCounts | null {
   const out = {} as PresenceIntentCounts;
   for (const k of PRESENCE_INTENT_KEYS) {
     const n = r[k];
+    if (n === null) { out[k] = null; continue; }
     if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) return null;
     out[k] = n;
   }

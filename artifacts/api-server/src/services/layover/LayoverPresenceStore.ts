@@ -34,7 +34,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../../lib/logger.js";
-import { isFlagEnabled } from "../../lib/featureFlags.js";
+import { isFlagEnabled } from "../../lib/featureFlags.js"; import { activeCrewForUser, crewMembers } from "./LayoverCrewStore.js"; import { acceptedCrewOfTrip } from "../memory/memoryReadPolicy.js"; // D-PRESENCE-K (lane R, 2026-10-07)
 
 const logger = rootLogger.child({ service: "LayoverPresenceStore" });
 
@@ -217,4 +217,72 @@ export async function intentCounts(
   }
   for (const k of PRESENCE_INTENTS) counts[k] = seen.get(k)!.size;
   return { ok: true, counts };
+}
+
+// ── D-PRESENCE-K: what a count may say, and to whom ─────────────────────────
+//
+// Lead ruling D-PRESENCE-K (2026-10-06; census-layover §52.1, §54.5):
+// "Presence intents never show a count below 5, and never combine a count with
+// a roster that could name someone." §52.1's probe P4 is the reason: with the
+// cleared crew at ONE traveller and that traveller named on the presence
+// roster, `nightlife: 1` said exactly what a named person was open to.
+//
+// Three rules, each applied by the intents read before a count leaves:
+//   1. MINIMUM k. A count below k — ZERO INCLUDED, because "nobody here is open
+//      to X" is a statement about every person on a roster — is withheld:
+//      `null` on the wire, "fewer than k", never a number.
+//   2. NO ROSTER BESIDE IT. Counts are served only while the presence surface
+//      itself is aggregate-only (`layover_presence_ladder_enabled` ON). With
+//      the ladder off, `GET /:id/presence` answers with named profiles for the
+//      same population, so the counts are withheld whole (`roster_visible`).
+//   3. NOBODY THE VIEWER CAN NAME IS COUNTED. The viewer's own layover crew
+//      (whose members the crew surface names to them) and the accepted crew of
+//      the session's trip are taken out of the population before counting.
+//      An unreadable roster read refuses; it is never "nobody to exclude".
+
+export const PRESENCE_INTENT_MIN_K = 5;
+
+/** Per intent: a count of at least k, or `null` — fewer than k (zero included). */
+export type DisclosedIntentCounts = Record<PresenceIntent, number | null>;
+
+export function discloseIntentCounts(raw: PresenceIntentCounts, k: number = PRESENCE_INTENT_MIN_K): DisclosedIntentCounts {
+  const out = {} as DisclosedIntentCounts;
+  for (const i of PRESENCE_INTENTS) {
+    const n = raw[i];
+    out[i] = Number.isInteger(n) && n >= k ? n : null;
+  }
+  return out;
+}
+
+export type NamedToViewerRead = { ok: true; ids: Set<string> } | { ok: false; reason: "crew_unreadable" | "trip_crew_unreadable" };
+
+/**
+ * The people the viewer can NAME on a roster this product shows them: the
+ * members of their live layover crew, and the accepted crew of the trip this
+ * layover belongs to. Rule 3 above takes them out of what the counts measure.
+ */
+export async function namedToViewer(
+  db: SupabaseClient,
+  viewerId: string,
+  tripId: string | null,
+  nowIso: string,
+): Promise<NamedToViewerRead> {
+  const ids = new Set<string>();
+  const mine = await activeCrewForUser(db, viewerId, nowIso);
+  if (!mine.ok) return { ok: false, reason: "crew_unreadable" };
+  if (mine.value) {
+    const members = await crewMembers(db, mine.value.crew.id);
+    if (!members.ok) return { ok: false, reason: "crew_unreadable" };
+    for (const m of members.value) ids.add(m.userId);
+  }
+  if (tripId) {
+    const crew = await acceptedCrewOfTrip(db, tripId);
+    if (!crew.ok) {
+      logger.warn({ err: crew.error, tripId }, "layover presence intents: trip crew unreadable — refusing rather than counting people the viewer can name");
+      return { ok: false, reason: "trip_crew_unreadable" };
+    }
+    for (const id of crew.ids) ids.add(id);
+  }
+  ids.delete(viewerId);
+  return { ok: true, ids };
 }
