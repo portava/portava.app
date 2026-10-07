@@ -30,8 +30,9 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { tmpdir } from 'node:os';
 
 import {
   LAYOVER_REFRESH_INTERVAL_MS,
@@ -92,27 +93,49 @@ test('no cadence ever permits continuous location sensing', () => {
 });
 
 /** The files the two prohibition scans below both cover. */
-function layoverSurfaceFiles(): string[] {
-  const root = new URL('../../..', import.meta.url).pathname;
-  const roots = [
-    join(root, 'src/components/layover'),
-    join(root, 'app/layover'),
-  ];
-  const files: string[] = [
-    join(root, 'src/services/layover.ts'),
-    join(root, 'src/lib/layoverPlanCache.ts'),
-    join(root, 'src/lib/layoverReasonCodes.ts'),
-    join(root, 'src/lib/layoverSensingCadence.ts'),
-  ];
+const APP_ROOT = new URL('../../..', import.meta.url).pathname;
+
+/**
+ * THE WHOLE layover/airport client scope, DERIVED rather than listed (lead
+ * ruling 2026-10-07 on guarded prohibitions: a guard is an artifact only if it
+ * covers the full scope). Every non-test `.ts`/`.tsx` under `src/` and `app/`
+ * whose path names "layover" or "airport", in any case — so a new layover file
+ * anywhere is in scope the day it is created, without editing this list.
+ */
+function layoverSurfaceFiles(root = APP_ROOT): string[] {
+  const files: string[] = [];
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir)) {
       const p = join(dir, entry);
-      if (statSync(p).isDirectory()) walk(p);
-      else if (/\.(ts|tsx)$/.test(entry)) files.push(p);
+      if (statSync(p).isDirectory()) {
+        if (entry === 'node_modules' || entry === '__tests__') continue;
+        walk(p);
+      } else if (/\.(ts|tsx)$/.test(entry) && !/\.(test|spec)\.tsx?$/.test(entry)) {
+        if (/layover|airport/i.test(relative(root, p))) files.push(p);
+      }
     }
   };
-  for (const r of roots) walk(r);
-  return files;
+  for (const top of ['src', 'app']) walk(join(root, top));
+  return files.sort();
+}
+
+/** The permission-bearing APIs each prohibition forbids, as import and call patterns. */
+const LOCATION_RULES: ReadonlyArray<[RegExp, string]> = [
+  [/from ['"]expo-location['"]/, 'imports expo-location'],
+  [/requestForegroundPermissionsAsync|requestBackgroundPermissionsAsync|watchPositionAsync|getCurrentPositionAsync/, 'calls a location permission/watch API'],
+];
+const PHOTO_CONTACT_RULES: ReadonlyArray<[RegExp, string]> = [
+  [/from ['"]expo-(image-picker|contacts|camera|media-library)['"]/, 'imports a photo/contacts module'],
+  [/launchImageLibraryAsync|launchCameraAsync|getContactsAsync/, 'calls a photo/contacts API'],
+];
+
+function permissionOffenders(files: readonly string[], rules: ReadonlyArray<[RegExp, string]>): string[] {
+  const out: string[] = [];
+  for (const f of files) {
+    const src = readFileSync(f, 'utf8');
+    for (const [re, what] of rules) if (re.test(src)) out.push(`${f}: ${what}`);
+  }
+  return out;
 }
 
 /**
@@ -132,16 +155,9 @@ function layoverSurfaceFiles(): string[] {
  */
 test('the layover surface imports no location API at all', () => {
   const files = layoverSurfaceFiles();
-  const offenders: string[] = [];
-  for (const f of files) {
-    const src = readFileSync(f, 'utf8');
-    // Import sites only: the words appear in this file's own prose and in the
-    // census commentary the surface carries, and a comment is not a prompt.
-    if (/from ['"]expo-location['"]/.test(src)) offenders.push(`${f}: imports expo-location`);
-    if (/requestForegroundPermissionsAsync|requestBackgroundPermissionsAsync|watchPositionAsync/.test(src)) {
-      offenders.push(`${f}: calls a location permission/watch API`);
-    }
-  }
+  // Import sites only: the words appear in this file's own prose and in the
+  // census commentary the surface carries, and a comment is not a prompt.
+  const offenders = permissionOffenders(files, LOCATION_RULES);
   assert.deepEqual(offenders, [], offenders.join('\n'));
   // The scan must actually have looked at something — a walk that found no
   // files would pass vacuously.
@@ -157,16 +173,46 @@ test('the layover surface imports no location API at all', () => {
  */
 test('the layover surface asks for no photos and no contacts', () => {
   const files = layoverSurfaceFiles();
-  const offenders: string[] = [];
-  for (const f of files) {
-    const src = readFileSync(f, 'utf8');
-    if (/from ['"]expo-(image-picker|contacts|camera|media-library)['"]/.test(src)) {
-      offenders.push(`${f}: imports a photo/contacts module`);
-    }
-    if (/launchImageLibraryAsync|launchCameraAsync|getContactsAsync/.test(src)) {
-      offenders.push(`${f}: calls a photo/contacts API`);
-    }
-  }
+  const offenders = permissionOffenders(files, PHOTO_CONTACT_RULES);
   assert.deepEqual(offenders, [], offenders.join('\n'));
   assert.ok(files.length > 15, `only ${files.length} files scanned`);
+});
+
+/**
+ * The guard's own proof (lead ruling 2026-10-07): the derived scope reaches
+ * the layover files outside the two directories the first version listed, and
+ * a PLANTED violation in a layover/airport-named file anywhere is reported.
+ */
+test('the scope is the whole surface: the screen, the context, the admin airports screen, the services', () => {
+  const rel = layoverSurfaceFiles().map((f) => relative(APP_ROOT, f));
+  for (const must of [
+    'app/layover/[id].tsx', 'src/context/LayoverSessionContext.tsx', 'app/admin/airports.tsx',
+    'src/services/layover.ts', 'src/lib/layoverPlanCache.ts', 'src/components/layover/LayoverMapCard.tsx',
+  ]) assert.ok(rel.includes(must), `${must} is not scanned`);
+  assert.ok(!rel.some((f) => /__tests__|\.test\./.test(f)), 'tests are not product code');
+});
+
+test('PLANTED violations are caught: a location prompt and a contacts read in new layover/airport files', () => {
+  const root = mkdtempSync(join(tmpdir(), 'layover-perm-guard-'));
+  try {
+    const plant = (rel: string, body: string) => {
+      const dir = join(root, rel.split('/').slice(0, -1).join('/'));
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(root, rel), body);
+    };
+    plant('src/features/layoverNew/ReturnAssist.tsx', "import * as Location from 'expo-location';\nexport const go = () => Location.requestForegroundPermissionsAsync();\n");
+    plant('app/airport/[code].tsx', "import * as Contacts from 'expo-contacts';\nexport const read = () => Contacts.getContactsAsync();\n");
+    plant('src/components/other/Unrelated.tsx', "import * as Location from 'expo-location';\n");
+    const files = layoverSurfaceFiles(root);
+    assert.deepEqual(files.map((f) => relative(root, f)), ['app/airport/[code].tsx', 'src/features/layoverNew/ReturnAssist.tsx']);
+    const loc = permissionOffenders(files, LOCATION_RULES).map((x) => x.replace(root + '/', ''));
+    assert.deepEqual(loc, [
+      'src/features/layoverNew/ReturnAssist.tsx: imports expo-location',
+      'src/features/layoverNew/ReturnAssist.tsx: calls a location permission/watch API',
+    ]);
+    const pc = permissionOffenders(files, PHOTO_CONTACT_RULES).map((x) => x.replace(root + '/', ''));
+    assert.deepEqual(pc, ['app/airport/[code].tsx: imports a photo/contacts module', 'app/airport/[code].tsx: calls a photo/contacts API']);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
