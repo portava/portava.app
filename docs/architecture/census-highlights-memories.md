@@ -7069,3 +7069,42 @@ Mutants killed: 9 of 9. They are the verifier's F1, F2, F3, F4, M1, M2 and M3, p
 ### §AI.3 Rows
 
 **0 up, 0 down.** H52, H190 and H114 keep §AF and §AG's reasons. The derivative half of each is now a rebuild rather than a revocation, and none of their named blockers moved. The headline is still 266 = 69 C / 152 W / 43 N / 2 X.
+
+## §AJ — 2026-10-07 (mission 4, lane H): §11's controls on a MEMORY (migration 3671, lead-approved, unapplied) — H36 moves N → W
+
+Same branch and rules as §AF. One migration was WRITTEN and applied to no database: `artifacts/api-server/src/migrations/3671_memory_resurfacing_preferences.sql:48#CREATE TABLE IF NOT EXISTS public.memory_resurfacing_preferences (`. It holds the four Memory-scoped names of 2720, verbatim, keyed on `memory_id`.
+
+### §AJ.1 What was built
+
+- **The read fails closed** (`artifacts/api-server/src/services/memory/memoryResurfacingControls.ts:51#export async function readMemoryControls(`). An absent table means "no control is set", which is true because no row can exist. An unreadable table means kept private, on every surface that would publish the Memory.
+- **The owner's switches.** GET, PUT and DELETE `/memories/:id/resurfacing-controls[/:control]` (`artifacts/api-server/src/routes/memoryResurfacingControls.ts:63#router.put("/memories/:id/resurfacing-controls/:control"`). They are owner-only: someone else's Memory and a deleted Memory both answer 404. KEEP_PRIVATE_FOREVER is refused on a Memory that is not `only_me`, so the owner narrows first (`artifacts/api-server/src/services/memory/memoryResurfacingControls.ts:117#export async function setMemoryControl(`).
+- **Enforced where a Memory is published.**
+  - PATCH will not widen a kept-private Memory past `only_me`: 409, or 503 when the controls cannot be read (`artifacts/api-server/src/routes/memories.ts:1740#if (await refuseWideningKeptPrivate(`).
+  - A kept-private Memory is never a Highlight source, and unreadable controls admit no source (`artifacts/api-server/src/services/highlights/highlightSources.ts:283#return fail("kept_private"`).
+- **The tests:** `artifacts/api-server/src/test/memoryResurfacingControls.test.ts:173#PATCH cannot widen a kept-private Memory past only_me`, `artifacts/api-server/src/test/memoryResurfacingControls.test.ts:181#FAIL CLOSED: when the controls cannot be read` and `artifacts/api-server/src/test/memoryResurfacingControls.test.ts:199#a kept-private Memory is never a Highlight source`. That is 8 cases; 7 of 7 mutants were killed.
+
+### §AJ.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H36 | N | W | `memory_resurfacing_preferences` exists as migration 3671, with a writer (the owner's routes) and two readers that fail closed (§AJ.1). W because 3671 is unapplied — this census's rule A.2: code built, storage unapplied ⇒ BBW |
+
+### §AJ.3 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H187 | BUILT-BUT-WRONG | The body's "still no such control on a Memory" is no longer true. DO_NOT_RESURFACE can be set on a Memory (3671, unapplied). No proactive MEMORY surface reads it yet. The §5 recaps already exclude `passport:memory`, and the trip recap derivative and the Compass memory tools are the consumers still owed |
+| H87 | BUILT-BUT-WRONG | As H187: a Memory-level DO_NOT_RESURFACE is storable and settable, and it is not yet consumed |
+| H88 | BUILT-BUT-WRONG | DO_NOT_INCLUDE_IN_RECAPS is now a recap-specific control on a Memory. No recap reads it yet. TripMemoryProjection, the trip recap, is the consumer still owed |
+
+### §AJ.4 Headline
+
+| bucket | was (§AD.4) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 69 | 69 |
+| BUILT-BUT-WRONG | 152 | 153 |
+| NOT-BUILT | 43 | 42 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**1 move: H36 N → W.** 266 = 69 C / 153 W / 42 N / 2 X. CONSTRUCTED% is (69 + 153) / 266 = 83.5 %. CORRECT% raw is unchanged at 25.9 %.
