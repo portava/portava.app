@@ -1331,3 +1331,16 @@ describe("extractGrants — GRANT-shaped text that is not a statement is not a g
     assert.ok(extractGrants("DO $$ BEGIN EXECUTE 'GRANT SELECT ON public.secret TO anon'; END $$;").tableGrants.has("secret.anon"));
   });
 });
+
+describe("replayAcl — GRANT/REVOKE-shaped text that is not a statement changes nothing (verifier F4)", () => {
+  it("a RAISE or COMMENT text starting with REVOKE or GRANT is not replayed; EXECUTE's literal operand is", () => {
+    const r = replayAcl("GRANT ALL ON TABLE public.t TO anon;", ["t"], [
+      "DO $$ BEGIN RAISE NOTICE 'REVOKE ALL ON public.t FROM anon'; END $$;",
+      "COMMENT ON TABLE public.t IS 'GRANT SELECT ON public.u TO anon';",
+    ]);
+    assert.equal(r.tableGrants.get("t.anon")?.size, 8);
+    assert.equal(r.tableGrants.get("u.anon"), undefined);
+    const e = replayAcl("GRANT ALL ON TABLE public.t TO anon;", ["t"], ["DO $$ BEGIN EXECUTE 'REVOKE ALL ON public.t FROM anon'; END $$;"]);
+    assert.equal(e.tableGrants.get("t.anon")?.size ?? 0, 0);
+  });
+});
