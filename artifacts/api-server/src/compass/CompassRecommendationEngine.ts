@@ -244,11 +244,11 @@ export function computeCompassMatch(
     score += w.budget * 0.5;
   }
 
-  // Open-now status (discovery places carry isOpenNow via adapter semantics)
+  // Open-now status — an ESTIMATE from the place's listed hours, never a live check (lead ruling D-67)
   const openNow = (item as Record<string, unknown>).isOpenNow;
   if (openNow === true) {
     score += w.openNow;
-    factors.push({ key: "open_now", label: "Open right now", weight: 1 });
+    factors.push({ key: "open_now", label: OPEN_NOW_FACTOR_LABEL, weight: 1 });
   } else if (openNow == null) {
     score += w.openNow * 0.5;
   }
@@ -467,7 +467,7 @@ const SENSITIVE_FACTOR_KEYS = new Set([
 export function presentableFactors(factors: RankingFactor[]): RankingFactor[] {
   return (factors ?? []).filter(
     (f) => f && !SENSITIVE_FACTOR_KEYS.has(f.key) && f.weight > 0,
-  );
+  ).map(relabelEstimateFactor); // D-67: a factor stored as "Open right now" is re-worded when it is read
 }
 
 /**
@@ -502,10 +502,10 @@ export function buildWhyThisText(factors: RankingFactor[]): string | null {
  * merely because a producer said nothing, which would make every explanation
  * hedge and none of them mean it.
  */
-export function qualifyWhyThis(text: string | null, truthClass: TruthClass | null | undefined): string | null {
-  if (text === null) return null;
-  if (!isTruthClass(truthClass) || truthClassMayRenderAsObservation(truthClass)) return text;
-  return `${text} (${TRUTH_WORDS[truthClass]})`;
+export function qualifyWhyThis(text: string | null, truthClass: TruthClass | null | undefined, opts?: { restsOnEstimate?: boolean }): string | null {
+  if (text === null) return null; const cls = opts?.restsOnEstimate ? estimateTruthClass(truthClass) : truthClass; // D-67: a reason resting on the listed-hours estimate is never an observation
+  if (!isTruthClass(cls) || truthClassMayRenderAsObservation(cls)) return text;
+  return `${text} (${TRUTH_WORDS[cls]})`;
 }
 
 // ── Profile normalisation (for callers with partial profiles, e.g. tools) ─────
@@ -527,4 +527,46 @@ export function normalizeProfileForRanking(profile: CompassProfile): CompassProf
     blockerUserIds:     profile.blockerUserIds     ?? [],
     mutedUserIds:       profile.mutedUserIds       ?? [],
   };
+}
+
+// ── Lead ruling D-67 (2026-10-06): the open-now factor is a listed-hours estimate ──
+//
+// `isOpenNow` on a ranked item comes from the place's LISTED opening hours read
+// against a clock approximated from its longitude (routes/discovery.ts
+// determineOpenNow) — a schedule somebody published, not a check of the door.
+// D-67 reserves "open right now" for a provider record confirmed as the place.
+// So the factor says what it is, an estimate from listed hours, wherever it is
+// shown: in the label, in every explanation built over it, and in the truth
+// word `qualifyWhyThis` appends. Declared at the foot so no cited line moves.
+
+/** The open-now factor's user-visible wording. */
+export const OPEN_NOW_FACTOR_LABEL = "Open now, per its listed hours (estimate)";
+
+/** Factor keys whose evidence is an estimate, never an observation. */
+export const ESTIMATE_FACTOR_KEYS: ReadonlySet<string> = new Set(["open_now"]);
+
+/** A stored or fresh `open_now` factor, shown with the estimate wording (snapshots written before D-67 say "Open right now"). */
+function relabelEstimateFactor(f: RankingFactor): RankingFactor {
+  return f.key === "open_now" && f.label !== OPEN_NOW_FACTOR_LABEL ? { ...f, label: OPEN_NOW_FACTOR_LABEL } : f;
+}
+
+/**
+ * The truth class of an explanation that rests on an estimate: a class that is
+ * already not an observation is kept (it is at least as weak); an observed,
+ * corroborated or absent one becomes `inferred`.
+ */
+function estimateTruthClass(cls: TruthClass | null | undefined): TruthClass {
+  return isTruthClass(cls) && !truthClassMayRenderAsObservation(cls) ? cls : "inferred";
+}
+
+/**
+ * Does the sentence `buildWhyThisText` builds from these factors rest on an
+ * estimate? The same selection it makes — presentable, heaviest first, top
+ * three — so a factor that did not make the sentence does not qualify it.
+ */
+export function whyThisRestsOnEstimate(factors: RankingFactor[]): boolean {
+  return presentableFactors(factors)
+    .sort((a, b) => b.weight - a.weight)
+    .slice(0, 3)
+    .some((f) => ESTIMATE_FACTOR_KEYS.has(f.key));
 }

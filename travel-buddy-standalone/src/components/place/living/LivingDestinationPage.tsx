@@ -61,7 +61,7 @@ import { CachedImage } from '../../CachedImage.tsx';
 import { color, space, radius, type as t, shadow, typography, icon, aspect, dot} from '../../../theme/tokens.ts';
 import { getPlaceTimeline } from '../../../services/places.ts';
 import { useIntelPrompts } from '../../../hooks/useIntelPrompts.ts';
-import { DecisionExposureChips, buildLiveClaims } from '../../intel/DecisionExposureChips.tsx'; import { PlaceLivePanel } from '../../../features/live/PlaceLivePanel.tsx';
+import { DecisionExposureChips, buildLiveClaims } from '../../intel/DecisionExposureChips.tsx'; import { PlaceLivePanel } from '../../../features/live/PlaceLivePanel.tsx'; import { listedHoursText } from '../../../features/discovery/listedHours.ts';
 import type {
   PlaceLivingResponse,
   LivingBucket,
@@ -718,7 +718,7 @@ function PlaceOfficialInfoCard({ info }: PlaceOfficialInfoCardProps) {
           {typeof info.hours === 'string' && info.hours ? (
             <View style={oc.row}>
               <Clock size={14} color={color.mute} />
-              <Text style={oc.rowText}>{String(info.hours)}</Text>
+              <Text style={oc.rowText} testID="living-official-listed-hours">{listedHoursText(String(info.hours))}</Text>
             </View>
           ) : null}
         </View>

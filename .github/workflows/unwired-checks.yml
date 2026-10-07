@@ -354,6 +354,26 @@ jobs:
         shell: bash
         run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:beta-bootstrap
 
+      # The beta runtime (docs/ops/beta-runtime-runbook.md): the build-time
+      # deployment guard (build-production.sh + its parity with the API's rule),
+      # the configuration step against a stubbed Management API plus the flag
+      # policy against the migrations, and the smoke check against a stubbed
+      # fetch. No credentials.
+      - name: 'scripts: test:beta-deployment-guard'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:beta-deployment-guard
+
+      - name: 'scripts: test:beta-configure'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:beta-configure
+
+      - name: 'scripts: test:beta-smoke'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:beta-smoke
+
   standalone:
     name: unwired · travel-buddy-standalone guards
     runs-on: ubuntu-latest

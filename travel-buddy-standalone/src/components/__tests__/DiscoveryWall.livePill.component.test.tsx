@@ -6,6 +6,8 @@
  *    resolves an available open status.
  * 2. HiddenGemCard shows the pill for a closed status.
  * 3. No pill renders when the live status is unavailable or null.
+ * 4. Lead ruling D-67: the lookup carries the place's own coordinates (the
+ *    server's identity anchor), and a card without them makes no lookup.
  *
  * Run with: pnpm test:component
  *
@@ -69,6 +71,8 @@ const gem: DiscoveryItem = {
   status: 'provisional',
   verified: false,
   savedCount: 0,
+  lat: 10.3415,
+  lng: 123.9056,
 } as DiscoveryItem;
 
 const pick: TravelerPick = {
@@ -84,7 +88,11 @@ const pick: TravelerPick = {
   status: 'provisional',
   verified: false,
   savedCount: 0,
+  lat: 10.3181,
+  lng: 123.9050,
 };
+const PICK_AT = { lat: 10.3181, lng: 123.9050 };
+const GEM_AT = { lat: 10.3415, lng: 123.9056 };
 
 const openStatus = {
   available: true,
@@ -105,7 +113,15 @@ describe('TravelerPickCard — live open-now pill', () => {
 
     await waitFor(() => expect(screen.getByTestId('pick-open-now-tp-1')).toBeTruthy(), { timeout: 3000 });
     expect(screen.getByText('Open now')).toBeTruthy();
-    expect(mockGetLive).toHaveBeenCalledWith('The Distillery Cebu', 'Cebu City');
+    expect(mockGetLive).toHaveBeenCalledWith('The Distillery Cebu', PICK_AT);
+  });
+
+  it('makes no lookup and shows no pill for a place without coordinates (D-67)', async () => {
+    mockGetLive.mockResolvedValue(openStatus);
+    await render(<TravelerPickCard pick={{ ...pick, id: 'tp-nocoords', lat: null, lng: null }} />);
+    await new Promise((r) => setTimeout(r, 800)); // past the 600 ms fetch delay
+    expect(mockGetLive).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('pick-open-now-tp-nocoords')).toBeNull();
   });
 
   it('renders no pill when the live status is unavailable', async () => {
@@ -135,7 +151,7 @@ describe('HiddenGemCard — live open-now pill', () => {
 
     await waitFor(() => expect(screen.getByTestId('gem-open-now-gem-1')).toBeTruthy(), { timeout: 3000 });
     expect(screen.getByText('Closed now')).toBeTruthy();
-    expect(mockGetLive).toHaveBeenCalledWith('Secret Falls Cafe', 'Cebu City');
+    expect(mockGetLive).toHaveBeenCalledWith('Secret Falls Cafe', GEM_AT);
   });
 });
 
@@ -156,13 +172,19 @@ const pick2: TravelerPick = {
   id: 'tp-2',
   place: 'Sirao Garden Cafe',
   city: 'Cebu City',
+  lat: 10.4247,
+  lng: 123.8530,
 };
+const PICK2_AT = { lat: 10.4247, lng: 123.8530 };
 
 const gem2: DiscoveryItem = {
   ...gem,
   id: 'gem-2',
   name: 'Tops Lookout Kiosk',
+  lat: 10.3707,
+  lng: 123.8730,
 } as DiscoveryItem;
+const GEM2_AT = { lat: 10.3707, lng: 123.8730 };
 
 describe('TravelerPickCard — recycled onto a different place', () => {
   it('discards the first place\'s slow lookup and only shows the new place\'s status', async () => {
@@ -176,7 +198,7 @@ describe('TravelerPickCard — recycled onto a different place', () => {
 
     // Wait until the first place's lookup has actually started (600 ms delay).
     await waitFor(
-      () => expect(mockGetLive).toHaveBeenCalledWith('The Distillery Cebu', 'Cebu City'),
+      () => expect(mockGetLive).toHaveBeenCalledWith('The Distillery Cebu', PICK_AT),
       { timeout: 3000 },
     );
 
@@ -189,7 +211,7 @@ describe('TravelerPickCard — recycled onto a different place', () => {
 
     // Second place's lookup fires for the new name.
     await waitFor(
-      () => expect(mockGetLive).toHaveBeenCalledWith('Sirao Garden Cafe', 'Cebu City'),
+      () => expect(mockGetLive).toHaveBeenCalledWith('Sirao Garden Cafe', PICK2_AT),
       { timeout: 3000 },
     );
 
@@ -219,7 +241,7 @@ describe('HiddenGemCard — recycled onto a different place', () => {
     const { rerender } = await render(<HiddenGemCard gem={gem} />);
 
     await waitFor(
-      () => expect(mockGetLive).toHaveBeenCalledWith('Secret Falls Cafe', 'Cebu City'),
+      () => expect(mockGetLive).toHaveBeenCalledWith('Secret Falls Cafe', GEM_AT),
       { timeout: 3000 },
     );
 
@@ -229,7 +251,7 @@ describe('HiddenGemCard — recycled onto a different place', () => {
     expect(screen.queryByTestId('gem-open-now-gem-2')).toBeNull();
 
     await waitFor(
-      () => expect(mockGetLive).toHaveBeenCalledWith('Tops Lookout Kiosk', 'Cebu City'),
+      () => expect(mockGetLive).toHaveBeenCalledWith('Tops Lookout Kiosk', GEM2_AT),
       { timeout: 3000 },
     );
 

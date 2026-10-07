@@ -28,7 +28,7 @@ import { getPlaceCategoryFallback } from '../../utils/placeCategoryFallback.ts';
 import { resolveHeaderImage } from '../../lib/visuals/resolveHeaderImage.ts';
 import type { HeaderCandidate } from '../../lib/visuals/resolveHeaderImage.ts';
 import { fallbackUriFor } from '../../lib/visuals/fallbackAssets.ts';
-import { AiRepresentationLabel } from '../visuals/AiRepresentationLabel.tsx';
+import { AiRepresentationLabel } from '../visuals/AiRepresentationLabel.tsx'; import { listedHoursText } from '../../features/discovery/listedHours.ts';
 
 // ── Price level labels ────────────────────────────────────────────────────────
 
@@ -78,7 +78,7 @@ function formatTodayHoursLabel(hours: NormalizedOpeningHours): string {
   const today = new Date().getDay();
   const entry = hours.find((h) => h.dayOfWeek === today);
   if (!entry) return 'Hours not available';
-  return `${DAY_NAMES[today]}: ${entry.open} – ${entry.close}`;
+  return listedHoursText(`${DAY_NAMES[today]} ${entry.open} – ${entry.close}`); // lead ruling D-67: stored hours are a listing, never a live check
 }
 
 // ── Open map helper ───────────────────────────────────────────────────────────
