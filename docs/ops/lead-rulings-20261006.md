@@ -22,7 +22,23 @@ must not be refused.
   - hosting: "You cannot host group trips or start or link public Trails."
   - messaging: "You cannot start new conversations, submit public content (Trail suggestions, gems, community
     places), or have your posts boosted."
-  - private-plan access and location plan: unchanged.
+  - **Amendment (2026-10-06, lane L verifier):** the confirmed mapping also stops a hosting-restricted person
+    changing a *group* trip's shared plan (adding, editing, removing or reordering items, proposals, confirming
+    Compass plan or Autopilot changes), so the hosting sentence names it too: "You cannot host group trips,
+    change a group trip's shared plan, or start or link public Trails. You also cannot be booked as a Buddy."
+    Solo trips stay unaffected (D-24a). Every surface that refuses under a restriction shows the sentence from
+    `restrictionSentence()`; no surface keeps its own copy.
+  - private-plan access: unchanged, plus "You also cannot book a Buddy."; location plan: unchanged.
+  - **Amendment (2026-10-06, lane B):** the hosting sentence also ends "You also cannot be booked as a
+    Buddy." The mapping this ruling confirms already stops both bookings (decision note §D-24 table, lane B
+    rows), and the sentences first written here left them out. Under this ruling's own rule an unnamed
+    capability may not be refused, so the clauses are added rather than the refusals dropped (dropping them
+    would widen who can reach a restricted person). The canonical text is `restrictionSentence()` in
+    `services/trust/TrustPrivacyGuard.ts`.
+  - **Amendment (2026-10-06, lane L):** the confirmed mapping refuses a trip proposal made through commands or
+    re-plan under hosting *or* messaging, so the messaging sentence also names it: "You cannot start new
+    conversations, propose changes to a group trip, submit public content (Trail suggestions, gems, community
+    places), or have your posts boosted."
 - **D-24a: a hosting restriction does NOT stop changes to a solo trip.** A solo trip affects nobody else. Every
   Compass and Trips door applies the same solo/group test. If whether a trip is solo cannot be read, treat it as a
   group trip and refuse with "try again", never with "restricted".
