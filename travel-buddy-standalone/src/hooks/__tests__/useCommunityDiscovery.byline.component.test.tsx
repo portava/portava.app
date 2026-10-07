@@ -14,6 +14,10 @@
  *     it rather than trust a string it was handed;
  *   - a `name` the server did not authorise never survives the mapping.
  *
+ * And one more mapping fact (lead ruling D-67, 2026-10-06): the served place's
+ * own coordinates are carried onto the gem and the pick, because the cards'
+ * live open-now lookup is anchored on them and makes no lookup without them.
+ *
  * Reachable from: Explore tab → `app/(tabs)/discovery.tsx` → `ForYouTab`
  * (`community = useCommunityDiscovery(destination, sortBy)`).
  *
@@ -144,5 +148,26 @@ describe('useCommunityDiscovery — C19 byline mapping', () => {
     await waitFor(() => expect(result.current.gems).toHaveLength(1));
 
     expect(result.current.gems[0].submittedBy!.name).toBe('@nikki');
+  });
+});
+
+describe('useCommunityDiscovery — the live lookup anchor (lead ruling D-67)', () => {
+  it('carries the served coordinates onto gems and picks, and null when the place has none', async () => {
+    const CITY = 'D67-anchor-city';
+    resolveWith([
+      servedItem({ id: 'gem-at', lat: 10.3415, lng: 123.9056 }),
+      servedItem({ id: 'pick-at', placeType: 'traveler_pick', lat: 10.3181, lng: 123.905 }),
+      servedItem({ id: 'gem-none' }),
+    ]);
+
+    const { result } = await renderHook(() => useCommunityDiscovery(CITY));
+    await waitFor(() => expect(result.current.picks).toHaveLength(1));
+
+    const gem = result.current.gems.find((g) => g.id === 'gem-at')!;
+    expect([gem.lat, gem.lng]).toEqual([10.3415, 123.9056]);
+    const pick = result.current.picks[0];
+    expect([pick.lat, pick.lng]).toEqual([10.3181, 123.905]);
+    const none = result.current.gems.find((g) => g.id === 'gem-none')!;
+    expect([none.lat, none.lng]).toEqual([null, null]);
   });
 });

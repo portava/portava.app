@@ -213,15 +213,15 @@ function windowsRead(): TripWindowsRead {
   } as unknown as TripWindowsRead;
 }
 
-interface App { baseUrl: string; store: Record<string, any[]>; calls: { live: string[]; windows: string[] }; close: () => Promise<void> }
+interface App { baseUrl: string; store: Record<string, any[]>; calls: { live: string[]; liveAnchors: unknown[]; windows: string[] }; close: () => Promise<void> }
 
 async function startApp(opts: { failReads?: string[]; failInReads?: string[]; deps?: Partial<MemoryActionDeps>; mutate?: (s: Record<string, any[]>) => void } = {}): Promise<App> {
   const store = tables();
   opts.mutate?.(store);
-  const calls = { live: [] as string[], windows: [] as string[] };
+  const calls = { live: [] as string[], liveAnchors: [] as unknown[], windows: [] as string[] };
   _setTestClient(makeClient(store, new Set(opts.failReads ?? []), new Set(opts.failInReads ?? [])) as any, true);
   _setMemoryActionDeps({
-    liveStatus: async (name) => { calls.live.push(name); return { openNow: true, venueName: name, source: "foursquare", checkedAt: iso(NOW) }; },
+    liveStatus: async (name, anchor) => { calls.live.push(name); calls.liveAnchors.push(anchor); return { openNow: true, venueName: name, source: "foursquare", checkedAt: iso(NOW) }; },
     tripWindows: async (_sc, tripId) => { calls.windows.push(tripId); return windowsRead(); },
     ...(opts.deps ?? {}),
   });
@@ -448,8 +448,20 @@ describe("GET /memories/:id/actions/DO_AGAIN — compiled through the current wo
     assert.equal(p.fusion.current.available, true);
     assert.equal(p.fusion.may_state_current_status, true);
     assert.deepEqual(app.calls.live, ["Ichiran Shibuya"], "the live source is asked about the CURRENT catalog name");
+    assert.deepEqual(app.calls.liveAnchors, [{ lat: 35.661, lng: 139.701 }], "lead ruling D-67: anchored on the catalog place's own coordinates");
     assert.equal(p.addToTrip.id, PLACE_OPEN);
     assert.equal(p.navigation.kind, "catalog_place");
+  });
+
+  it("lead ruling D-67: a catalog place with no coordinates is never looked up live, so nothing is said about now", async () => {
+    app = await startApp({ mutate: (s) => { for (const p of s.places!) if (p.id === PLACE_OPEN) { p.latitude = null; p.longitude = null; } } });
+    const r = await get(app, `/api/memories/${MEM_CATALOG}/actions/DO_AGAIN`, OWNER);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const f = r.body.compiled.fusion;
+    assert.deepEqual(app.calls.live, [], "no live source is asked about a place it could not be matched to");
+    assert.equal(f.current.available, false);
+    assert.match(f.current.reason, /no stored coordinates/);
+    assert.equal(f.may_state_current_status, false);
   });
 
   it("with no live reading it says nothing about now: current unavailable, may_state_current_status false", async () => {

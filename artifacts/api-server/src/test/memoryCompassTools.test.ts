@@ -46,7 +46,7 @@
  *   node --import tsx/esm --test src/test/memoryCompassTools.test.ts
  */
 
-import { describe, it } from "node:test";
+import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 
 import {
@@ -66,6 +66,8 @@ import {
   fuseHistoricalWithCurrent,
 } from "../services/memory/historicalTruth.js";
 import { canReadMemory, canCompassReadMemory } from "../services/memory/memoryReadPolicy.js";
+import { _clearLiveCache, _setSimulatedOutage } from "../lib/liveIntelligence.js";
+import { FOURSQUARE_KEY_VARS, snapshotKeyEnv, restoreKeyEnv, setKeyEnv } from "./helpers/apiKeyEnv.js";
 
 const ALICE = "aaaaaaaa-0000-4000-8000-000000000001";
 const BOB = "bbbbbbbb-0000-4000-8000-000000000002";
@@ -91,6 +93,9 @@ interface State {
   tagsError?: boolean;
   crewError?: boolean;
   itemsError?: boolean;
+  /** The catalog place's own coordinates (lead ruling D-67's identity anchor); absent = the fixture's none. */
+  placeCoords?: { lat: number | null; lng: number | null };
+  placeError?: boolean;
 }
 
 function memory(over: Record<string, unknown>): Record<string, unknown> {
@@ -165,6 +170,7 @@ interface Client { client: any; writes: Array<{ table: string; op: string }> }
 
 function makeClient(state: State = {}): Client {
   const db = fixture();
+  if (state.placeCoords) db.discovery_places = db.discovery_places!.map((p) => ({ ...p, ...state.placeCoords }));
   const writes: Array<{ table: string; op: string }> = [];
 
   function from(table: string) {
@@ -180,6 +186,7 @@ function makeClient(state: State = {}): Client {
       if (table === "memory_tags" && state.tagsError) return { message: "tags read blew up" };
       if (table === "trip_members" && state.crewError) return { message: "crew read blew up" };
       if (table === "memory_items" && state.itemsError) return { message: "items read blew up" };
+      if (table === "discovery_places" && state.placeError) return { message: "places read blew up" };
       return null;
     };
 
@@ -664,5 +671,71 @@ describe("§9 — place closure does not invalidate a historical visit", () => {
     assert.equal(out.visit_count, 1);
     assert.equal(out.current_world.available, false);
     assert.equal(out.visits[0].historical.claim.includes("2026-03-04"), true);
+  });
+});
+
+/* ───── lead ruling D-67: the live half is about THIS place, or it is absent ───── */
+
+describe("D-67 — memory_get_place_history anchors the live lookup on the catalog place", () => {
+  // Dragon Bridge's own coordinates, a provider record of it ~20 m away, and a namesake 2 km north.
+  const BRIDGE = { lat: 16.0612, lng: 108.2272 };
+  const AT_BRIDGE = { latitude: 16.06138, longitude: 108.2272 };
+  const ELSEWHERE = { latitude: 16.0792, longitude: 108.2272 };
+  const originalFetch = globalThis.fetch;
+  const originalKeys = snapshotKeyEnv(FOURSQUARE_KEY_VARS);
+  let calls: string[] = [];
+  let results: unknown[] = [];
+
+  beforeEach(() => {
+    calls = [];
+    _clearLiveCache();
+    _setSimulatedOutage("places_live", false);
+    setKeyEnv(FOURSQUARE_KEY_VARS, "test-key");
+    globalThis.fetch = (async (url: any) => {
+      calls.push(String(url));
+      return { ok: true, status: 200, json: async () => ({ results }) } as any;
+    }) as any;
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    restoreKeyEnv(originalKeys);
+  });
+
+  it("passes the place's own coordinates, and a record there is a verified-live reading", async () => {
+    results = [{ fsq_place_id: "fsq-bridge", name: "Dragon Bridge", ...AT_BRIDGE, hours: { open_now: true } }];
+    const { client } = makeClient({ placeCoords: BRIDGE });
+    const out: any = await executeMemoryCompassTool(client, ALICE, "memory_get_place_history", { placeId: PLACE_ID });
+    assert.equal(calls.length, 1);
+    assert.equal(new URL(calls[0]!).searchParams.get("ll"), `${BRIDGE.lat},${BRIDGE.lng}`);
+    assert.equal(out.current_world.available, true);
+    assert.equal(out.current_world.confidence.sourceClass, "verified_live");
+    assert.equal(out.fusion.may_state_current_status, true);
+  });
+
+  it("a namesake 2 km away says nothing about now", async () => {
+    results = [{ fsq_place_id: "fsq-other", name: "Dragon Bridge", ...ELSEWHERE, hours: { open_now: false } }];
+    const { client } = makeClient({ placeCoords: BRIDGE });
+    const out: any = await executeMemoryCompassTool(client, ALICE, "memory_get_place_history", { placeId: PLACE_ID });
+    assert.equal(calls.length, 1);
+    assert.equal(out.current_world.available, false);
+    assert.equal(out.fusion.may_state_current_status, false);
+  });
+
+  it("a place with no coordinates asks no provider", async () => {
+    results = [{ fsq_place_id: "fsq-bridge", name: "Dragon Bridge", ...AT_BRIDGE, hours: { open_now: true } }];
+    const { client } = makeClient({ placeCoords: { lat: null, lng: null } });
+    const out: any = await executeMemoryCompassTool(client, ALICE, "memory_get_place_history", { placeId: PLACE_ID });
+    assert.equal(calls.length, 0);
+    assert.equal(out.current_world.available, false);
+  });
+
+  it("a failed place read is reported as unreadable, never as 'no catalog place'", async () => {
+    const { client } = makeClient({ placeCoords: BRIDGE, placeError: true });
+    const out: any = await executeMemoryCompassTool(client, ALICE, "memory_get_place_history", { placeId: PLACE_ID });
+    assert.equal(calls.length, 0);
+    assert.equal(out.current_world.available, false);
+    assert.match(out.current_world.reason, /could not be read/);
+    assert.doesNotMatch(out.current_world.reason, /No catalog place was resolved/);
+    assert.equal(out.visit_count, 1, "the visits are still the visits");
   });
 });

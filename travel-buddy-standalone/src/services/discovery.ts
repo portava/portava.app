@@ -5,6 +5,7 @@
 import type { DiscoveryEventPost } from '../types/discovery.ts';
 import { openDiscoveryLease, isCurrentDiscoveryScope, isLeaseViewerCurrent, onDiscoveryScopeChange, VIEWER_CHANGED_ERROR, type DiscoveryLease, type DiscoveryScope } from './discoveryViewerScope.ts';
 import { stampCandidateReceipt } from '../features/discovery/candidateProjection.ts';
+import { placeLiveAnchorOf, liveCoordParam, type PlaceLiveAnchor } from '../features/discovery/placeLiveAnchor.ts';
 
 const apiBase = () => process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
@@ -288,6 +289,8 @@ export interface DiscoveryResult {
 // Confidence-labeled live open-now status from /api/places/live-status.
 // available=false means the live source couldn't verify — callers must
 // degrade honestly (no pill / "last known hours"), never invent a status.
+// The place's own coordinates go with the name: they are how the server
+// confirms a provider record IS this place (lead ruling D-67).
 
 export interface PlaceLiveConfidence {
   sourceClass: 'verified_live' | 'community_reported' | 'historical' | 'ai_inference';
@@ -305,16 +308,26 @@ export interface PlaceLiveStatus {
   confidence: PlaceLiveConfidence;
 }
 
+/**
+ * `anchor` is the place's OWN stored coordinates (lead ruling D-67). The
+ * server labels a provider record "verified live" only when its name matches
+ * AND it lies within 150 m of them; sent without them, it answers
+ * `available: false` (can't verify) and asks no provider.
+ */
 export async function getPlaceLiveStatus(
   name: string,
-  city?: string | null,
+  anchor: PlaceLiveAnchor | null,
 ): Promise<PlaceLiveStatus | null> {
   const base = apiBase();
-  if (!base || !name.trim()) return null;
-  const params = new URLSearchParams({ name: name.trim() });
-  if (city?.trim()) params.set('city', city.trim());
+  const token = base && name.trim() ? await freshToken() : null; // lead follow-up F5: the route requires a signed-in user — signed out, there is no pill
+  if (!base || !name.trim() || !token) return null;
+  const at = placeLiveAnchorOf(anchor); const params = new URLSearchParams({ name: name.trim() });
+  if (at) {
+    params.set('lat', liveCoordParam(at.lat));
+    params.set('lng', liveCoordParam(at.lng));
+  }
   try {
-    const res = await fetch(`${base}/api/places/live-status?${params}`);
+    const res = await fetch(`${base}/api/places/live-status?${params}`, { headers: { Authorization: `Bearer ${token}` } });
     if (!res.ok) return null;
     const body = (await res.json()) as { liveStatus?: PlaceLiveStatus } | null;  // typed: under Node's lib `json()` is `unknown`
     return (body?.liveStatus as PlaceLiveStatus | undefined) ?? null;
@@ -343,8 +356,10 @@ const _liveStatusInFlight = new Map<string, Promise<PlaceLiveStatus | null>>();
 let _liveStatusActive = 0;
 const _liveStatusQueue: (() => void)[] = [];
 
-function _liveStatusKey(name: string, city?: string | null): string {
-  return `${name.trim().toLowerCase()}|${(city ?? '').trim().toLowerCase()}`;
+/** Same name at two different places is two entries (D-67): the key carries the anchor. */
+function _liveStatusKey(name: string, anchor: PlaceLiveAnchor | null): string {
+  const at = placeLiveAnchorOf(anchor);
+  return `${name.trim().toLowerCase()}|${at ? `${at.lat},${at.lng}` : '-'}`;
 }
 
 function _acquireLiveStatusSlot(): Promise<void> {
@@ -370,10 +385,10 @@ function _releaseLiveStatusSlot(): void {
  */
 export async function getPlaceLiveStatusCached(
   name: string,
-  city?: string | null,
+  anchor: PlaceLiveAnchor | null,
 ): Promise<PlaceLiveStatus | null> {
   if (!name.trim()) return null;
-  const key = _liveStatusKey(name, city);
+  const key = _liveStatusKey(name, anchor);
 
   const cached = _liveStatusCache.get(key);
   if (cached) {
@@ -388,7 +403,7 @@ export async function getPlaceLiveStatusCached(
   const promise = (async () => {
     await _acquireLiveStatusSlot();
     try {
-      const value = await getPlaceLiveStatus(name, city);
+      const value = await getPlaceLiveStatus(name, anchor);
       _liveStatusCache.set(key, { value, at: Date.now() });
       return value;
     } finally {
