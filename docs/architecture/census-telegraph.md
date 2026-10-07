@@ -831,7 +831,7 @@ Backend paths relative to `artifacts/api-server/src/`; client paths to
 | T255 | P1 Coordination — immediate / high priority | W | `important` exists and is used for coordination-shaped events (`NotificationTemplateService.ts:67,105,118,130,169,188`) but it carries **no delivery difference** from `normal` — only `urgent` changes behaviour (T254). It is a label, not a priority. |
 | T256 | P2 Message — standard notification policy | C | `NotificationTemplateService.ts:215-222` — `telegraph.message`, `defaultPriority:'normal'`, `defaultChannels:['in_app','push','telegraph']`, deduped by `sourceId` at `NotificationDeduplicationService.ts:42-45`. |
 | T257 | P3 Media — large upload completion, passive/batched | N | No media-completion notification and no batching mechanism. |
-| T258 | P4 Ephemeral — typing, lightweight presence: realtime only, no persistent push | C | Structurally guaranteed. `routes/telegraphStream.ts:6-7` — *"typing relay (**no persistence**)"* — and there is **no typing template at all** in `NotificationTemplateService.ts`, so no push path can exist for it. `typing.started` / `typing.stopped` live only on the in-memory bus (`lib/telegraphEvents.ts:28-30`). |
+| T258 | P4 Ephemeral — typing, lightweight presence: realtime only, no persistent push | C | Structurally guaranteed. `routes/telegraphStream.ts:6-7` — *"typing relay (**no persistence**)"* — and there is **no typing template at all** in `NotificationTemplateService.ts`, so no push path can exist for it. `typing.started` / `typing.stopped` live only on the in-memory bus (`lib/telegraphEvents.ts:66-67`). |
 | T259 | P5 AI — lowest priority, degrades first | W | The priority half is right: `telegraph.ai_suggestion` is `defaultPriority:'low'` on `['in_app']` only — no push (`NotificationTemplateService.ts:233-240`). The *degrade-first* half does not exist: there is no load-shedding ladder anywhere. |
 | T260 | Inbox displays "12 unread · 1 needs action" | W | Unread is real and carefully built (`routes/messaging.ts:924-969`, with a schema-drift fallback when migration 0016's `last_read_at` is absent, `:949-952`). **"Needs action" has no representation** — nothing distinguishes a message from an unresolved decision. |
 | T261 | Acknowledgment for important operational changes is distinct from passive Seen | N | No acknowledgement primitive for any message or card. (Safe Return contacts carry `acknowledged_at`, `services/safeReturn/SafeReturnService.ts:75`, which is a different object.) |
@@ -11265,7 +11265,7 @@ T262–T451 there), so this is lane T1's §45.5 (247 / 170 / 32 / 2) and lane T2
 451 rows. This section restates four rows (T11, T12, T8 C → C; T107 W → W) and moves none.
 CONSTRUCTED (C + W) is 429 of 451 = 95.1 %; CORRECT is 257 of 451 = 57.0 %.
 
-## §51 — TELEGRAPH lane T (mission 4, 2026-10-07): two presence/identity leaks closed, lead ruling D-24 applied to Telegraph's other capabilities, T366 / T408 made structural, and the last raw read on the conversation surface removed. THREE ROWS MOVE (T366, T408, T295 W → C)
+## §51 — TELEGRAPH lane T (mission 4, 2026-10-07): three presence/identity leaks closed, lead ruling D-24 applied to Telegraph's other capabilities, T366 / T408 made structural, and the last raw read on the conversation surface removed. THREE ROWS MOVE (T366, T408, T295 W → C)
 
 Written 2026-10-07 by lane T, which holds Telegraph's open rows from this date (lanes T1/T2 closed;
 lane C's unmerged Telegraph sections §43, §44, §47–§50 and the rows they restate — T242, T418,
@@ -11304,6 +11304,18 @@ no flag, no database, nothing observed in production.
   The user id stays (every row already carries `senderId`), the messages stay, the viewer's own
   identity is never withheld, and an unreadable block read withholds every other person's identity
   (`lib/exclusionSet.ts` shape 2).
+- **Typing, read markers and seen receipts across a block (presence leak).** A block leaves a shared
+  thread in place — a DM that outlived it, a group with both people in it. The realtime bus fanned
+  every presence-class event to every active member, and both receipt routes listed every member's
+  read position: the person you blocked still watched you type and read, and a DM's Seen kept
+  updating across the block. NOW: for a presence-class event with a known actor, anyone in a block
+  with the actor, either direction, leaves the audience, and an unreadable block state drops the
+  event (`artifacts/api-server/src/lib/telegraphEvents.ts:661#const audience = await presenceAudience(`);
+  content events are untouched. The receipt is computed over the members the caller is in no block
+  with (`artifacts/api-server/src/routes/telegraphLifecycle.ts:187#const crossBlock = await identityWithheldAcrossBlocks(`),
+  and the group read-position route leaves a blocked member out
+  (`artifacts/api-server/src/server/telegraph/readReceiptsRoute.ts:122#const crossBlock = await identityWithheldAcrossBlocks(`);
+  both answer 503 when the block state cannot be read.
 - **Lead ruling D-24 on Telegraph's other capabilities.** D-24 (docs/ops/lead-rulings-20261006.md):
   "Anything not named in that sentence must not be refused." The send rule already followed it
   (§45b). Three capabilities did not: `canCreatePlan` was refused under `hosting` in EVERY thread
@@ -11345,7 +11357,7 @@ no flag, no database, nothing observed in production.
 | T295 | W | **C** | §24's closing rule, **mobile clients consume server-built projections**. §45c's remainder was "one decorative raw read … `useReaderAvatars` (`profiles.avatar_url` for reader chips), and the ratchet counts only the six messaging tables". Both are gone. The receipt answers its readers' faces (`artifacts/api-server/src/routes/telegraphLifecycle.ts:211#const faces = await readerFacesFor(`), under the rule the app's own read got from `profiles_select`, applied by the server — none across a block either way, a private profile's only to a friend, every failure withholding and saying degraded (`artifacts/api-server/src/services/telegraph/identityAcrossBlocks.ts:89#export async function readerFacesFor(`; `artifacts/api-server/src/test/telegraphReaderFaces.test.ts:73#describe("T295`). The app publishes each answer and the chips look it up, with no `supabase` in the hook (`travel-buddy-standalone/src/features/telegraph/lifecycle/useThreadReadState.ts:184#publishReaderFaces(r.data.readerFaces)`; `travel-buddy-standalone/src/features/telegraph/lifecycle/useReaderAvatars.ts:19#export function useReaderAvatars(`; `travel-buddy-standalone/src/features/telegraph/__tests__/useThreadReadState.component.test.ts:443#T295 — reader faces`). The ratchet now also counts a raw `profiles` read on the conversation surface (`artifacts/api-server/src/scripts/checkTelegraphSlos.ts:226#const CONVERSATION_SURFACE = [`; baseline still 0), re-derived independently (`artifacts/api-server/src/test/telegraphProjectionRegistryHonesty.test.ts:145#no conversation-surface client file reads`). |
 | T29 | W | **W** | **Invisible mode suppresses Nearby / Bump / public availability.** Same verdict, one fewer gap: public availability is now suppressed on the conversation header and in Compass as well as Nearby (51.1). Still W for §8261's two reasons: no user-facing "invisible mode" control, and the Discovery map enforces the same columns through its own code. |
 | T421 | W | **W** | **Unavailable/Invisible promptly revokes Nearby, Discovery and Compass availability projections.** Narrower: Compass's participant-availability projection and the Telegraph header now revoke on Invisible, read on every request (51.1); Discovery's people search already did (lib/discoveryPeoplePrivacy.ts, outside this census's scope). Still W: Nearby, where the block override and the invisible suppression both live, is dark behind `nearby_reachable_enabled`. |
-| T219 | W | **W** | **Block cascade across delivery, location, presence, Nearby, Bump, shared-memory, Crew suggestions and Compass.** Narrower: a blocked person's identity no longer reaches the other on the inbox or in the thread's rows and quotes (51.1). Still W: Nearby is dark, and Bump and Crew suggestions have no referent. |
+| T219 | W | **W** | **Block cascade across delivery, location, presence, Nearby, Bump, shared-memory, Crew suggestions and Compass.** Narrower: a blocked person's identity no longer reaches the other on the inbox or in the thread's rows and quotes, and their typing, read markers and seen receipts no longer reach each other on the bus or through either receipt route (51.1). Still W: Nearby is dark, and Bump and Crew suggestions have no referent. |
 | T199 | C | **C** | §14.1 `canCreatePlan`, restated under D-24: a non-crew viewer of a trip thread is still refused (`artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:305#else if (tripId && !tripMember) deny(d, "canCreatePlan"`); `hosting` now refuses only a GROUP trip's plan (`artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts:727#5b.2 hosting refuses canCreatePlan on a GROUP trip only`; `artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts:740#5b.2a whether the trip is solo cannot be read`). |
 | T206 | C | **C** | §14.1 `canSeeGroupReadReceipts`, restated under D-24: group threads only, and no Trust restriction refuses it (`artifacts/api-server/src/domain/telegraph/policies/conversationCapabilityPolicy.ts:347#else grant(d, "canSeeGroupReadReceipts");`; `artifacts/api-server/src/test/telegraphRestrictionSendGate.test.ts:769#5b.5 group seen state is refused by no restriction`). |
 
@@ -11369,6 +11381,10 @@ caller asymmetry is a hosting restriction on a GROUP trip again), and `callSyste
   request in, or booked); a crew or event room is never refused by a restriction.
 - **P-T4 — Withheld identity keeps the id.** Across a block the inbox keeps the member's id and the
   thread keeps `senderId`; only the handle, name and avatar are withheld.
+- **P-T6 — Read state and typing never cross a block.** In a thread both people are still in, neither
+  receives the other's typing, read markers or seen receipts, and neither's read position is in the
+  other's receipts; messages themselves are unaffected (who may write is the send path's decision).
+  An unreadable block state drops the presence event and makes the receipt routes answer 503.
 - **P-T5 — Reader faces follow profiles_select.** A receipt chip's face is withheld across a block
   and from a non-friend for a private profile — the rule the app's own read had — and every read
   failure withholds (decorative; the receipt's count and ids are never affected).
@@ -11400,19 +11416,26 @@ and checked clean.
   a withheld face not overwriting (1), the raw read put back in the hook (honesty 1, and
   `check:telegraph-slos` RATCHET VIOLATED), faces ignoring blocks (3), the private rule dropped (2),
   an unreadable profile read not degraded (1).
+- P-T6: `artifacts/api-server/src/test/telegraphPresenceAcrossBlocks.test.ts:69#describe("P-T6` 7/7 (the real bus
+  with real subscribers; the real lifecycle router). Mutants: bus filter removed (2 red), an
+  unreadable state failing open (1), content filtered too (2), receipts unfiltered (1, and 3 in
+  telegraphReaderFaces), read-receipts unfiltered (1). `telegraphStreamEndpoints`' fake gained
+  `.in()`; the group read-position case and telegraphReaderFaces were restated with CHANGED notes.
 - T408: `telegraphScreenshotInformational` 13/13. Mutants: a paraphrase in a client string (1 red),
   the same as JSX text (1), FLAG_SECURE in plugins/withPortavaNSE.js (1 red; the pre-existing
   scan alone stays green on it), a capture plugin in app.json (2).
 
 - NOT-GRADED: artifacts/api-server/src/test/telegraphAvailabilityInvisibleMode.test.ts — §51.4's evidence suite for the invisible-mode fix; T29 and T421 rest on the cited source lines.
 - NOT-GRADED: artifacts/api-server/src/test/telegraphIdentityAcrossBlocks.test.ts — §51.4's evidence suite for the identity fix; T219 rests on the cited source lines.
+- NOT-GRADED: artifacts/api-server/src/test/telegraphPresenceAcrossBlocks.test.ts — §51.4's evidence suite for P-T6; T219 rests on the cited source lines.
 - NOT-GRADED: artifacts/api-server/src/test/telegraphCallRestrictionD24.test.ts — §51.4's evidence suite for D-24 on calls; T199 and T206 rest on the cited source lines and the restriction suite.
 
 ### 51.5 What would turn this red
 
 An availability window shown on the header or to Compass for an owner whose consent row reads
 invisible, or when that row cannot be read; a handle, name or avatar of someone blocked either way
-on the inbox, a message row or a quote; a plan refused under `hosting` outside a group trip, a call
+on the inbox, a message row or a quote; a typing indicator, read marker or seen receipt delivered to
+someone in a block with its actor, or a blocked member's read position in a receipt; a plan refused under `hosting` outside a group trip, a call
 refused under messaging in a thread where a message would not be, or seen state refused by any
 restriction; a conversation→Memory path at any depth (server or app) outside the two closed lists;
 a string that mentions screen capture without being on the closed list, or a capture API anywhere in
