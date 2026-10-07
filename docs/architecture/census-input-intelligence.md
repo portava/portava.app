@@ -6189,9 +6189,9 @@ Branch `claude/residual-wave2-20261006`. `head_commit` is **NOT** re-declared. N
 
 `artifacts/api-server/src/lib/inputAssistance/zeroStatePlaces.ts:144#export async function buildNearbyPlaceSuggestions(` and its siblings add four zero-character sources:
 - **nearby** canonical places, around the position the request carries;
-- the viewer's **recent** places (`artifacts/api-server/src/lib/inputAssistance/zeroStatePlaces.ts:197#export async function buildRecentPlaceSuggestions(`);
-- the places on the viewer's live **Trips** (`artifacts/api-server/src/lib/inputAssistance/zeroStatePlaces.ts:280#export async function buildTripPlaceSuggestions(`);
-- the **current Trip** itself (`artifacts/api-server/src/lib/inputAssistance/zeroStatePlaces.ts:336#export async function buildCurrentTripSuggestion(`).
+- the viewer's **recent** places (`artifacts/api-server/src/lib/inputAssistance/zeroStatePlaces.ts:219#export async function buildRecentPlaceSuggestions(`);
+- the places on the viewer's live **Trips** (`artifacts/api-server/src/lib/inputAssistance/zeroStatePlaces.ts:302#export async function buildTripPlaceSuggestions(`);
+- the **current Trip** itself (`artifacts/api-server/src/lib/inputAssistance/zeroStatePlaces.ts:358#export async function buildCurrentTripSuggestion(`).
 
 The geo branch calls the first three (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:381#for (const build of [buildRecentPlaceSuggestions, buildTripPlaceSuggestions] as const) {`). The non-geo branch calls the current Trip and nearby (`artifacts/api-server/src/lib/inputAssistance/gateway.ts:432#const currentTrip = await buildCurrentTripSuggestion(sc, {`).
 
@@ -6235,3 +6235,11 @@ Mutants: Z1, Z3–Z10 are killed, and the bbox-plus-radius double mutant is kill
 | total | 373 | 373 |
 
 Of 373 rows: **299 BUILT-AND-CORRECT, 50 BUILT-BUT-WRONG, 20 NOT-BUILT, 4 CANNOT-VERIFY**.
+
+### §41.x The independent verification of this section (`3fe21ec19`), F3: the nearby rows take the §24 protected-zone pass
+
+`buildNearbyPlaceSuggestions` ranked places by distance and never asked the §24 pass that `GET /discovery/search` runs. The ranked rows now go through the same flag read, zone load and `applySearchProtection` (`artifacts/api-server/src/lib/inputAssistance/zeroStatePlaces.ts:179#const protectedRanked = await nearbyAfterProtection(db, ranked);`), so a place inside a suppress zone is not offered.
+
+One difference is deliberate. With the flag on and the policy unreadable, search keeps a row and withholds its position. A nearby row's whole claim is its position, so it is dropped instead (`artifacts/api-server/src/test/inputAssistanceZeroStatePlaces.test.ts:329#F3 (wave-2 verification)`).
+
+This was latent: the flag is FALSE and production has no zones. G86, G89 and G90 keep their verdicts.
