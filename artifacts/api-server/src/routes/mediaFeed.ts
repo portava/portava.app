@@ -58,7 +58,7 @@ import {
   gemCeilingForItem,
   resolveMediaPlaceDisclosure, // was resolveMediaLocationWithGemProtection: the place-disclosure resolver runs that same gem step AND the owner mode (census-media §36)
   type RestrictiveGem,
-} from "../lib/mediaLocationVisibility.js";
+} from "../lib/mediaLocationVisibility.js"; import { postLocationDisclosureExpiresAt, AFTER_LOCATION_DISCLOSURE_TIER } from "../lib/postLocationDisclosureLifetime.js"; // census-media MD79 (lead rulings D-26f/D-26g)
 import {
   encodeCursor,
   decodeCursor,
@@ -127,7 +127,7 @@ const GRID_POST_COLUMNS =
   "location_name, location_city, location_country, location_verified, " +
   "location_lat, location_lng, " +
   "created_at, category, " +
-  "status, post_status, visibility, location_privacy_mode"; // the OWNER's §34 choice — the grid label honours it (census-media §36)
+  "status, post_status, visibility, location_privacy_mode, published_at"; // the OWNER's §34 choice — the grid label honours it (census-media §36); published_at: the MD79 place window (read, never served)
 
 /**
  * Grid-mode post_media columns — includes relay fields so posterUrl and
@@ -151,7 +151,7 @@ const GRID_MEDIA_COLUMNS =
 const FEED_POST_COLUMNS =
   "id, author_id, trip_id, content, visibility, status, post_status, " +
   "created_at, category, " +
-  "location_name, location_city, location_country, location_source, location_verified, location_privacy_mode, " + // location_privacy_mode: census-media §36
+  "location_name, location_city, location_country, location_source, location_verified, location_privacy_mode, published_at, " + // location_privacy_mode: census-media §36; published_at: the MD79 place window (read, never served)
   "location_lat, location_lng, " +
   "save_count, like_count, comment_count, " +
   "canonical_place_id, post_buckets";
@@ -227,7 +227,7 @@ function protectedMediaLocation(
       // Legacy posts have no independent tier column → default 'place' (keep the
       // current place-level label). A real media_assets tier flows through here
       // unchanged once the canonical read path is enabled.
-      locationVisibility: (row as any).location_visibility ?? "place", locationPrivacyMode: (row as any).location_privacy_mode ?? null, postStatus: (row as any).post_status ?? null,
+      locationVisibility: (row as any).location_visibility ?? "place", locationPrivacyMode: (row as any).location_privacy_mode ?? null, postStatus: (row as any).post_status ?? null, locationDisclosureExpiresAt: postLocationDisclosureExpiresAt(row), afterLocationDisclosureExpiry: AFTER_LOCATION_DISCLOSURE_TIER, // MD79: a released "Publish after I leave" post shows its place 24 h, then the city; the instant is never served (it would date the author's exit)
       isOwner: (row as any).author_id === viewerUserId,
       coarsenSeed: (row as any).id ?? null,
       emitCoarseCoords: false,

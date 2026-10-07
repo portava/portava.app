@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod"; import { postLocationDisclosureEnded } from "./postLocationDisclosureLifetime.js"; // census-media MD79 (lead ruling D-26f): same line, so no cited line below moves
 
 /**
  * Hand-authored Zod validators for the posts API.
@@ -175,17 +175,36 @@ export function safeLocationLabel(
  * Exceptions:
  *   - mode null / 'none' → no privacy; pass through unchanged.
  *   - delayed_until_exit / delayed_until_time + post_status 'published' →
- *     geofence was cleared; location intentionally revealed.
+ *     geofence was cleared; location intentionally revealed (delayed_until_exit: for 24 h after published_at, then the city — census-media MD79).
  */
-export function mapPublicPost(row: any): any {
+export function mapPublicPost(row: any, nowMs: number = Date.now()): any {
   const mode = row.location_privacy_mode as string | null | undefined;
   if (!mode || mode === "none") return row;
   // A delayed post, once RELEASED: the geofence cleared, the place is revealed by design. Only the two delayed modes reach this branch.
+  if (mode === "delayed_until_exit" && row.post_status === "published" && postLocationDisclosureEnded(row, nowMs)) return releasedPlaceEnded(row); // census-media MD79 (lead rulings D-26f/D-26g): a "Publish after I leave" post shows its place for 24 h after release, then the city; an unreadable or unselected published_at has ENDED
   if ((mode === "delayed_until_exit" || mode === "delayed_until_time") && row.post_status === "published") return row;
   // Every other mode withholds the venue: city_only, hidden, trusted_circle_only, neighborhood_only (§34, 3350), an unreleased delayed post — AND a value this function does not know. An unknown mode used to fall through to the branch above and serve the venue of any published row (census-media §36).
   // The public label is rebuilt from city/country, never trusted: safeLocationLabel stored the VENUE as the label of every trusted_circle_only post, and adminPortavaPosts can store it for city_only. Hidden keeps no label, as it is written.
   const label = mode === "hidden" ? null : ([row.location_city, row.location_country].filter(Boolean).join(", ") || null);
   return { ...row, location_name: null, ...("public_location_label" in row ? { public_location_label: label } : {}) };
+}
+
+/**
+ * census-media MD79 (lead rulings D-26f/D-26g): a released "Publish after I
+ * leave" post whose 24-hour place window has ended falls to the CITY, exactly as
+ * "City only" does — the venue and its label go, and so do the public
+ * coordinates, which lib/delayedPostPublisher set to the EXACT point on release.
+ * Only keys the row already carries are touched.
+ */
+function releasedPlaceEnded(row: any): any {
+  const label = [row.location_city, row.location_country].filter(Boolean).join(", ") || null;
+  return {
+    ...row,
+    location_name: null,
+    ...("public_location_label" in row ? { public_location_label: label } : {}),
+    ...("public_lat" in row ? { public_lat: null } : {}),
+    ...("public_lng" in row ? { public_lng: null } : {}),
+  };
 }
 
 // ── Create schema ─────────────────────────────────────────────────────────────
@@ -324,6 +343,6 @@ export type ListPostsQuery = z.infer<typeof listPostsQuerySchema>;
  * The caller must SELECT `location_privacy_mode`: like mapPublicPost, a row
  * without the key reads as `none`.
  */
-export function postPlaceWithheld(row: { location_privacy_mode?: unknown; post_status?: unknown }): boolean {
+export function postPlaceWithheld(row: { location_privacy_mode?: unknown; post_status?: unknown; published_at?: unknown }): boolean { // published_at: census-media MD79 — a released "Publish after I leave" row without it reads as ENDED (withheld)
   return mapPublicPost(row) !== row;
 }

@@ -170,8 +170,11 @@ describe("B. mapPublicPost withholds the venue for neighborhood_only and for any
 
   it("hidden keeps no label; a released delayed post and 'none' are unchanged", () => {
     assert.equal(mapPublicPost(postRow("hidden", { public_location_label: null })).public_location_label, null);
-    const released = postRow("delayed_until_exit", { post_status: "published" });
-    assert.deepEqual(mapPublicPost(released), released);
+    // census-media MD79 (lead ruling D-26f): a released "Publish after I leave" post is unchanged for the
+    // 24 h after its release, and only then (the ended case is tested in mediaLocationDisclosureLifetime.test.ts).
+    const releasedAt = Date.parse("2026-10-07T10:00:00Z");
+    const released = postRow("delayed_until_exit", { post_status: "published", published_at: new Date(releasedAt).toISOString() });
+    assert.deepEqual(mapPublicPost(released, releasedAt + 60_000), released);
     const open = postRow("none");
     assert.deepEqual(mapPublicPost(open), open);
   });

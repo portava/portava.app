@@ -54,6 +54,14 @@ export const COMPOSER_LOCATION_MODES: readonly ComposerLocationMode[] = [
 /** When the post itself becomes visible to anyone but its author. */
 export type Release = 'now' | 'after_exit' | 'at_time';
 
+/**
+ * How long a released "After I leave" post shows its place to others before it
+ * falls to the city (census-media MD79, lead ruling D-26f). Mirrors the server's
+ * RELEASED_DELAYED_PLACE_WINDOW_MS (lib/postLocationDisclosureLifetime); the
+ * server parity test fails if the two differ.
+ */
+export const RELEASED_PLACE_WINDOW_HOURS = 24;
+
 export interface LocationDisclosure {
   /** The finest §33 tier a non-author can learn about the place, once the post is visible to them. */
   tier: LocationVisibility;
@@ -139,11 +147,11 @@ export function locationPrivacyHint(
   const d = DISCLOSURE[applied];
   const kept = 'Your city and country stay on the post.';
   if (chosen === 'none' && applied !== 'none') {
-    return "A post with a place is held until you've left it, then published with the place. Sharing a place instantly isn't available yet.";
+    return `A post with a place is held until you've left it, then published with the place for up to ${RELEASED_PLACE_WINDOW_HOURS} hours — after that, only your city and country. Sharing a place instantly isn't available yet.`;
   }
   if (d.placeName) return 'Published now, with the place you tagged.';
   if (d.release === 'after_exit') {
-    return "Your post waits until you've left this spot, then appears with the place.";
+    return `Your post waits until you've left this spot, then appears with the place for up to ${RELEASED_PLACE_WINDOW_HOURS} hours — after that, only your city and country.`;
   }
   if (d.release === 'at_time') {
     return opts.scheduledTime

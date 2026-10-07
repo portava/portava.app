@@ -766,7 +766,8 @@ describe("B. The Wall — the owner's location mode at the response", () => {
     assert.equal((await run([...base, at("4", "wb", "city_only")])).label, "2 people you follow were here recently", "a withheld post does not place its author here");
     assert.equal((await run([...base, at("4", "wb", "none")])).label, "3 people you follow were here recently", "the same post disclosed does");
     assert.equal((await run([...base, at("4", "wd", UNKNOWN_MODE)])).label, "2 people you follow were here recently", "unknown fails closed");
-    assert.equal((await run([...base, at("4", "wd", "delayed_until_exit")])).label, "3 people you follow were here recently", "a released delayed post is disclosed");
+    assert.equal((await run([...base, at("4", "wd", "delayed_until_time")])).label, "3 people you follow were here recently", "a released delayed post is disclosed");
+    assert.equal((await run([...base, at("4", "wd", "delayed_until_exit")])).label, "2 people you follow were here recently", "census-media MD79 (lead ruling D-26f): a released 'After I leave' post read without published_at has ended its place window (fail closed)");
     assert.equal((await run([at("1", "wa", "none"), at("4", "wb", "trusted_circle_only")])).label, null, "below the floor once the withheld post is not counted");
     assert.match((await run(base)).cols, /\blocation_privacy_mode\b/);
     assert.match((await run(base)).cols, /\bpost_status\b/);
@@ -1145,25 +1146,27 @@ describe("D. The public postcard wall — a postcard's copied venue follows its 
     for (const token of [null, "tok-v"]) {
       const res = await h.request("GET", "/api/users/target/passport/postcards", token);
       assert.equal(res.status, 200);
-      assert.deepEqual(venues(res), { "pc-n": "Hidden Courtyard", "pc-w": null, "pc-u": null, "pc-r": "Hidden Courtyard", "pc-o": null }, String(token));
+      // census-media MD79 (lead ruling D-26f): pc-r's post is a released "Publish after I leave" post, and this
+      // reader does not SELECT published_at, so its place window reads as ended — it loses the venue (fail closed).
+      assert.deepEqual(venues(res), { "pc-n": "Hidden Courtyard", "pc-w": null, "pc-u": null, "pc-r": null, "pc-o": null }, String(token));
       const byId = new Map((res.json.postcards as any[]).map((c) => [c.id, c]));
       const old = new Map((before.json.postcards as any[]).map((c) => [c.id, c]));
-      for (const id of ["pc-n", "pc-r"]) assert.deepStrictEqual(byId.get(id), old.get(id), `${id} WHOLE`);
-      for (const id of ["pc-w", "pc-u", "pc-o"]) assert.deepStrictEqual(byId.get(id), { ...old.get(id), locationName: null }, `${id}: one field fewer`);
+      for (const id of ["pc-n"]) assert.deepStrictEqual(byId.get(id), old.get(id), `${id} WHOLE`);
+      for (const id of ["pc-w", "pc-u", "pc-o", "pc-r"]) assert.deepStrictEqual(byId.get(id), { ...old.get(id), locationName: null }, `${id}: one field fewer`);
       assert.equal(byId.get("pc-w").locationCity, "Lisbon");
     }
     assert.deepEqual(venues(before), { "pc-n": "Hidden Courtyard", "pc-w": "Hidden Courtyard", "pc-u": "Hidden Courtyard", "pc-r": "Hidden Courtyard", "pc-o": "Hidden Courtyard" }, "the pre-§43 wall served every copy");
     assert.match(log.selects.find((s) => s.table === "posts")!.cols, /\blocation_privacy_mode\b/);
   });
 
-  it("D1n. [both ways] the none-mode and released postcards are WHOLE", async () => {
+  it("D1n. [both ways] the none-mode and released postcards are WHOLE — a released 'After I leave' card loses only the venue (census-media MD79)", async () => {
     use(world(POSTS()));
     const res = await h.request("GET", "/api/users/target/passport/postcards", null);
     const byId = new Map((res.json.postcards as any[]).map((c) => [c.id, c]));
     for (const [id, minutes] of [["pc-n", 1], ["pc-r", 4]] as const) {
       const c = card(id, id === "pc-n" ? "p-n" : "p-r", minutes);
       assert.deepStrictEqual(byId.get(id), {
-        id, postId: c.post_id, mediaUrl: c.media_url, caption: c.caption, locationName: "Hidden Courtyard",
+        id, postId: c.post_id, mediaUrl: c.media_url, caption: c.caption, locationName: id === "pc-n" ? "Hidden Courtyard" : null,
         locationCity: "Lisbon", locationCountry: "Portugal", locationVerified: true, stampEligible: false,
         visibility: "public", status: "active", pinnedAt: null, note: null, createdAt: c.created_at, media: [],
       });

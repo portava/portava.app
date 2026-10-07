@@ -255,11 +255,14 @@ describe("A. GET /api/pulse — the owner's location mode", () => {
     assert.deepEqual(byId.get("n2"), pulseShape(absent, false), "an absent mode is `none`, as mapPublicPost reads it");
   });
 
-  it("A2. a RELEASED delayed post keeps its venue — mapPublicPost's delayed-publish semantics are unchanged", async () => {
+  it("A2. a RELEASED delayed post: 'At a time' keeps its venue; 'After I leave' is withheld here, because this reader does not SELECT published_at (census-media MD79, fail-closed)", async () => {
+    // Lead ruling D-26f (2026-10-07): a released "Publish after I leave" post shows its place for 24 h, and a
+    // row whose release time was not read has ENDED. routes/pulse.ts does not select published_at, so Pulse
+    // shows the city from release — less than the ruling allows, never more.
     const exit = pulseRow("d1", "delayed_until_exit");
     const time = pulseRow("d2", "delayed_until_time");
     const { byId } = await servedAs("viewer-token", [exit, time]);
-    assert.deepEqual(byId.get("d1"), pulseShape(exit, false));
+    assert.deepEqual(byId.get("d1"), withheldPulseShape(exit));
     assert.deepEqual(byId.get("d2"), pulseShape(time, false));
   });
 
@@ -422,7 +425,7 @@ function discoveryParams(db: any, viewerId: string | null) {
 describe("B. eventPostsDiscovery — the owner's location mode, per viewer, after the shared cache", () => {
   beforeEach(() => _clearEventPostsCache());
 
-  it("B1. `none`-mode and released delayed posts are served EXACTLY as before, on both paths", async () => {
+  it("B1. `none`-mode and released 'At a time' posts are served EXACTLY as before, on both paths; a released 'After I leave' post lends no venue (MD79: this reader does not SELECT published_at)", async () => {
     const aNone = discoveryPost("a-none", "none");
     const aAbsent = discoveryPost("a-absent", null);
     const aNoVenue = discoveryPost("a-fallback", "none");
@@ -443,7 +446,13 @@ describe("B. eventPostsDiscovery — the owner's location mode, per viewer, afte
     assert.deepEqual(byId.get("a-absent"), pathAShape(aAbsent, EVENT_WITH_VENUE));
     assert.deepEqual(byId.get("a-fallback"), pathAShape(aNoVenue, EVENT_NO_VENUE), "a none-mode post still lends the venue when the event has none");
     assert.equal(byId.get("a-fallback")!.venueName, "Hotel Alfama");
-    assert.deepEqual(byId.get("a-released"), pathAShape(aReleased, EVENT_WITH_VENUE));
+    assert.deepEqual(byId.get("a-released"), { // census-media MD79 (lead ruling D-26f): no published_at read ⇒ the place window has ended ⇒ withheld, exactly as B2's modes
+      ...pathAShape(aReleased, EVENT_WITH_VENUE),
+      venueName: EVENT_WITH_VENUE.location_name ?? null,
+      publicLat: null,
+      publicLng: null,
+    });
+    assert.ok(!JSON.stringify(byId.get("a-released")).includes("Hotel Alfama"), "the post's venue appears nowhere");
     assert.deepEqual(byId.get("b-none"), pathBShape(bNone));
     assert.deepEqual(byId.get("b-released"), pathBShape(bReleased));
   });
@@ -593,14 +602,22 @@ async function tripFeed(token: string, posts: Row[]) {
 }
 
 describe("C. GET /api/trips/:tripId/posts — the Wall's redactor, which this reader never applied", () => {
-  it("C1. `none`-mode, absent-mode and released delayed posts are served EXACTLY as before", async () => {
+  it("C1. `none`-mode, absent-mode and released delayed posts are served EXACTLY as before — a released 'After I leave' post inside its 24 h place window", async () => {
     const rows = [
       tripRow("t-none", "none", { public_location_label: "Hotel Alfama" }),
       tripRow("t-absent", null),
-      tripRow("t-released", "delayed_until_exit", { public_lat: 38.711, public_lng: -9.13 }),
+      // POST_COLUMNS selects published_at (routes/posts.ts), so this reader has the MD79 window.
+      tripRow("t-released", "delayed_until_exit", { public_lat: 38.711, public_lng: -9.13, published_at: new Date(Date.now() - 60 * 60 * 1000).toISOString() }),
     ];
     const served = await tripFeed("stranger-tok", rows);
     for (const row of rows) assert.deepEqual(served.get(row.id), tripShape(row, false), String(row.location_privacy_mode));
+  });
+
+  it("C1b. census-media MD79 (lead ruling D-26f): once the 24 h window has ended, the venue, its label and the exact public point go; the city stays", async () => {
+    const ended = tripRow("t-ended", "delayed_until_exit", { public_lat: 38.711, public_lng: -9.13, published_at: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString() });
+    const served = await tripFeed("stranger-tok", [ended]);
+    assert.deepEqual(served.get("t-ended"), { ...tripShape(ended, false), location_name: null, public_location_label: "Lisbon, Portugal", public_lat: null, public_lng: null });
+    assert.ok(!JSON.stringify(served.get("t-ended")).includes("Hotel Alfama"), "the venue appears nowhere");
   });
 
   it("C2. a withholding mode reaches a non-owner without the venue, and with a label rebuilt from city/country", async () => {
@@ -656,12 +673,15 @@ describe("D. postPlaceWithheld ≡ mapPublicPost, over every mode × post_status
   });
 
   it("D2. the table, stated: none/absent and a released delayed post pass; everything else is withheld", () => {
+    const RECENT = new Date(Date.now() - 60 * 60 * 1000).toISOString(); // inside the MD79 24 h window
     const w = (mode: string | null | undefined, post_status: string | null = "published") =>
-      postPlaceWithheld({ location_privacy_mode: mode, post_status });
+      postPlaceWithheld({ location_privacy_mode: mode, post_status, published_at: RECENT });
     assert.equal(w("none"), false);
     assert.equal(w(null), false);
     assert.equal(w(undefined), false);
     assert.equal(w("delayed_until_exit"), false);
+    assert.equal(postPlaceWithheld({ location_privacy_mode: "delayed_until_exit", post_status: "published" }), true, "MD79: a released 'After I leave' row read WITHOUT published_at has ended (fail closed)");
+    assert.equal(postPlaceWithheld({ location_privacy_mode: "delayed_until_exit", post_status: "published", published_at: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString() }), true, "MD79: …and so has one past its 24 h window");
     assert.equal(w("delayed_until_time"), false);
     assert.equal(w("delayed_until_exit", "pending_location_exit"), true, "an unreleased delayed post is withheld");
     for (const m of WITHHOLDING_MODES) assert.equal(w(m), true, m);

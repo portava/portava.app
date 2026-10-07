@@ -84,7 +84,7 @@ describe('the location choices say what the server does', () => {
   it('attaching a place defaults to after-exit, and says the whole post waits', async () => {
     const view = await openWithPlace();
     await waitFor(() =>
-      expect(view.getByText("Your post waits until you've left this spot, then appears with the place.")).toBeTruthy(),
+      expect(view.getByText("Your post waits until you've left this spot, then appears with the place for up to 24 hours — after that, only your city and country.")).toBeTruthy(), // census-media MD79 (lead ruling D-26f)
     );
   });
 
@@ -114,7 +114,7 @@ describe('the location choices say what the server does', () => {
     await waitFor(() =>
       expect(
         view.getByText(
-          "A post with a place is held until you've left it, then published with the place. Sharing a place instantly isn't available yet.",
+          "A post with a place is held until you've left it, then published with the place for up to 24 hours — after that, only your city and country. Sharing a place instantly isn't available yet.", // census-media MD79 (lead ruling D-26f)
         ),
       ).toBeTruthy(),
     );

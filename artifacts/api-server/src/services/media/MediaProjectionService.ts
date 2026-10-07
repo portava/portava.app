@@ -45,7 +45,7 @@ import {
   resolveMediaPlaceDisclosure,
   type MediaPlaceDisclosure,
   type RestrictiveGem,
-} from "../../lib/mediaLocationVisibility.js";
+} from "../../lib/mediaLocationVisibility.js"; import { postLocationDisclosureExpiresAt, AFTER_LOCATION_DISCLOSURE_TIER } from "../../lib/postLocationDisclosureLifetime.js"; // census-media MD79 (lead rulings D-26f/D-26g)
 import { readLiveClaimEnvelopes, type LiveClaimEnvelope } from "../../lib/liveClaimRead.js";
 import { aggregateFreshness, type FreshnessState } from "../../lib/media/mediaFreshness.js";
 import {
@@ -624,7 +624,7 @@ export function disclosureForRow(
       // legacy posts default to 'place', exactly as mediaFeed.ts does.
       locationVisibility: (row as any).location_visibility ?? "place",
       locationPrivacyMode: row.location_privacy_mode ?? null,
-      postStatus: row.post_status ?? null,
+      postStatus: row.post_status ?? null, locationDisclosureExpiresAt: postLocationDisclosureExpiresAt(row as any), afterLocationDisclosureExpiry: AFTER_LOCATION_DISCLOSURE_TIER, // MD79: a released "Publish after I leave" post shows its place 24 h, then the city; the instant is never served
       coarsenSeed: row.id ?? null,
       // The World shell has never emitted coordinates and must not start.
       emitCoarseCoords: false,
