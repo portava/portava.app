@@ -533,8 +533,8 @@ const ENTITY_SPECS: EntitySpec[] = [
       // read is the generic card, as an absent one is.
       const precisionGate = await readMemoryPrecisionGate(sc);
       const { data, error } = precisionColumnSelectable(precisionGate)
-        ? await sc.from("memories").select("title, caption, visibility, state, location_city, location_country, location_precision").eq("id", id).maybeSingle()
-        : await sc.from("memories").select("title, caption, visibility, state, location_city, location_country").eq("id", id).maybeSingle();
+        ? await sc.from("memories").select("id, title, caption, visibility, state, location_city, location_country, location_precision").eq("id", id).maybeSingle()
+        : await sc.from("memories").select("id, title, caption, visibility, state, location_city, location_country").eq("id", id).maybeSingle();
       if (error || !data) return null;
       if (data.state !== "published") return null;
       if (data.visibility !== "public") return null;

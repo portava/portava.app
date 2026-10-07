@@ -76,6 +76,18 @@ const PARAPHRASES = [
   "Your plane leaves late, so stay out longer.",
 ];
 
+/** The wave-2 verifier's paraphrases (F2): five of these walked past the topic vocabulary. */
+const VERIFIER_PARAPHRASES = [
+  "You've got ample margin to venture beyond the terminal.",
+  "Comfortable cushion — a stroll to the harbour is doable.",
+  "Your connection is generous; the museum next door is worth it.",
+  "No need to stress, the cathedral is a short cab away.",
+  "Breathing room is good; grab lunch in the neighbourhood across the road.",
+  "The old quarter is lovely this evening.",
+  "A tram ride gets you to the river promenade.",
+  "Treat yourself to the harbour seafood.",
+];
+
 afterEach(() => _setTestOpenAI(null));
 
 describe("precondition: the two sessions are certified as the cases say", () => {
@@ -94,15 +106,37 @@ describe("§50.1's four paraphrases are never shown", () => {
       assert.equal(a.modelProse.mode, "certified_only");
       assert.match(a.answer, /not recommended|staying inside the airport/);
     });
-    it(`on a session certified YES the sentence names a topic and is dropped: ${p}`, async () => {
+    it(`on a session certified YES, a leaving question shows the certified text only: ${p}`, async () => {
       _setTestOpenAI(model(p));
       const a = await answerLayoverQuestion({} as never, { question: "Can I leave the airport?", session: YES_SESSION(), airport: AP, entry: PERMITTED });
       assert.ok(!a.answer.includes(p), a.answer);
-      assert.equal(a.modelProse.mode, "confined");
+      assert.equal(a.modelProse.mode, "certified_only");
       assert.equal(a.modelProse.droppedSentences, 1);
       assert.match(a.answer, /make sure you're back at security by/);
     });
   }
+});
+
+describe("F2 — on a leaving question, no model sentence is shown, whatever its words (lead ruling)", () => {
+  for (const p of VERIFIER_PARAPHRASES) {
+    it(`YES session, "Can I leave the airport?": ${p}`, async () => {
+      _setTestOpenAI(model(p));
+      const a = await answerLayoverQuestion({} as never, { question: "Can I leave the airport?", session: YES_SESSION(), airport: AP, entry: PERMITTED });
+      assert.ok(!a.answer.includes(p), a.answer);
+      assert.equal(a.modelProse.mode, "certified_only");
+      assert.match(a.answer, /^You have about \d+ minutes of usable time\. You can leave the airport/);
+    });
+  }
+  it("the composer itself: involvesLeaving on a yes verdict is the certified text alone", () => {
+    const r = confineModelProse({ modelText: VERIFIER_PARAPHRASES.join(" "), certified: "CERTIFIED.", verdict: "yes", involvesLeaving: true });
+    assert.equal(r.answer, "CERTIFIED.");
+    assert.deepEqual(r.modelProse, { mode: "certified_only", droppedSentences: VERIFIER_PARAPHRASES.length });
+  });
+  it("RECORDED LIMIT, not a pass: on a NON-leaving question the topic vocabulary still decides, and a paraphrase it does not know is shown", () => {
+    const r = confineModelProse({ modelText: VERIFIER_PARAPHRASES[0]!, certified: "CERTIFIED.", verdict: "yes", involvesLeaving: false });
+    assert.equal(r.modelProse.mode, "model_non_safety");
+    assert.equal(r.answer, VERIFIER_PARAPHRASES[0]);
+  });
 });
 
 describe("on a session certified NO, no model sentence is shown at all", () => {
@@ -121,21 +155,23 @@ describe("positive controls — what the model may still say", () => {
     assert.equal(a.answer, "Try the beef noodle soup at the food court.");
     assert.equal(a.modelProse.mode, "model_non_safety");
   });
-  it("on a YES session, a leaving question gets the certified text first, then the non-safety sentence; the timing sentence is dropped", async () => {
+  // Restated for the F2 ruling: on a leaving question the model's prose is
+  // never shown, so the night-market sentence no longer follows the certified text.
+  it("on a YES session, a leaving question gets the certified text ONLY; neither the timing nor the non-safety sentence follows", async () => {
     _setTestOpenAI(model("Try the night market for dinner. You have loads of time."));
     const a = await answerLayoverQuestion({} as never, { question: "Can I leave the airport?", session: YES_SESSION(), airport: AP, entry: PERMITTED });
     assert.match(a.answer, /^You have about \d+ minutes of usable time\. You can leave the airport/);
+    assert.ok(!/night market|loads of time/.test(a.answer), a.answer);
+    assert.equal(a.modelProse.mode, "certified_only");
+    assert.equal(a.modelProse.droppedSentences, 2);
+  });
+  it("on a YES session, a NON-leaving question whose answer names a topic: the certified text leads and only the clean sentence follows", async () => {
+    _setTestOpenAI(model("Try the night market for dinner. You have loads of time."));
+    const a = await answerLayoverQuestion({} as never, { question: "What should I eat?", session: YES_SESSION(), airport: AP, entry: PERMITTED });
     assert.ok(a.answer.endsWith("Try the night market for dinner."), a.answer);
     assert.ok(!/loads of time/.test(a.answer));
-    assert.equal(a.modelProse.droppedSentences, 1);
-  });
-  it("on a YES session, a leaving question ALWAYS leads with the certified text, even when the model named no topic", async () => {
-    _setTestOpenAI(model("Try the night market for dinner."));
-    const a = await answerLayoverQuestion({} as never, { question: "Can I leave the airport?", session: YES_SESSION(), airport: AP, entry: PERMITTED });
-    assert.match(a.answer, /^You have about \d+ minutes of usable time\. You can leave the airport/);
-    assert.ok(a.answer.endsWith("Try the night market for dinner."), a.answer);
     assert.equal(a.modelProse.mode, "confined");
-    assert.equal(a.modelProse.droppedSentences, 0);
+    assert.equal(a.modelProse.droppedSentences, 1);
   });
   it("with no model at all, the certified text is the answer", async () => {
     const a = await answerLayoverQuestion({} as never, { question: "Can I leave the airport?", session: NO_SESSION(), airport: AP, entry: PERMITTED });

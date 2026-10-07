@@ -21,7 +21,7 @@ import type { Server } from "node:http";
 import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _resetRateLimit } from "../lib/rateLimit.js";
-import inputAssistanceRouter from "../routes/inputAssistance.js";
+import inputAssistanceRouter from "../routes/inputAssistance.js"; import { invalidateSearchProtectionFlagCache } from "../lib/discoverySearchProtection.js"; import { clearProtectedZoneCache } from "../lib/protectedZoneStore.js";
 
 const ME = "aa000000-0000-4000-a000-000000000001";
 const MATE = "aa000000-0000-4000-a000-000000000002";
@@ -325,3 +325,37 @@ describe("G86 — the position bounds the READ, not only the page (wave-2 mutant
     assert.deepEqual(ids(rows, "Nearby"), [NEAR]);
   });
 });
+
+describe("F3 (wave-2 verification) — nearby rows take the §24 protected-zone pass search takes", () => {
+  const ZONE_FLAG = "discovery_search_protected_zones_enabled";
+  const NEAR2 = "b0000000-0000-4000-8000-0000000000b2";
+  const shelterAt = (lat: number, lng: number) => ({
+    id: "z-shelter", category: "shelter", action: null, privacy_floor: null, shape: "circle",
+    center_lat: lat, center_lng: lng, radius_meters: 60, ring: null, jurisdiction: null, policy_ref: null, active: true,
+  });
+  function protectedWorld(zones: Row[] | null): Record<string, Row[]> {
+    const db = world();
+    db.discovery_places = [...db.discovery_places!, place(NEAR2, "Corner Bakery", HERE.lat - 0.003, HERE.lng - 0.002)];
+    db.feature_flags = [{ flag: ZONE_FLAG, enabled: true }];
+    if (zones) db.protected_zones = zones;
+    return db;
+  }
+  beforeEach(() => { invalidateSearchProtectionFlagCache(); clearProtectedZoneCache(); });
+  after(() => { invalidateSearchProtectionFlagCache(); clearProtectedZoneCache(); });
+
+  it("a place inside a SUPPRESS zone is not offered as nearby; the one outside it still is", async () => {
+    const rows = await zeroState("place_picker", protectedWorld([shelterAt(HERE.lat + 0.002, HERE.lng + 0.001)]));
+    assert.deepEqual(ids(rows, "Nearby"), [NEAR2]);
+  });
+
+  it("flag on and the zone policy UNREADABLE: no nearby row at all — a nearby row's whole claim is its position", async () => {
+    const rows = await zeroState("place_picker", protectedWorld([]), { lat: HERE.lat, lng: HERE.lng }, new Set(["protected_zones"]));
+    assert.deepEqual(ids(rows, "Nearby"), []);
+  });
+
+  it("CONTROL — flag on, zones read and none registered: both nearby places are offered, nearest first", async () => {
+    const rows = await zeroState("place_picker", protectedWorld([]));
+    assert.deepEqual(ids(rows, "Nearby"), [NEAR, NEAR2]);
+  });
+});
+

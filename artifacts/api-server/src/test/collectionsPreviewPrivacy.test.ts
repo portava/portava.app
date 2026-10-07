@@ -654,6 +654,14 @@ describe("collection preview of a saved TRIP — canViewTrip decides", () => {
     t.user_follows = { rows: [{ follower_id: SAVER, following_id: OWNER }, { follower_id: OWNER, following_id: SAVER }] };
     assert.equal((await previews(t, "saver-token"))[0].title, "Da Nang");
   });
+  it("canViewTrip THROWS (a buddies trip whose follow read fails): the arm refuses the preview (wave-2 verification F5)", async () => {
+    const t = baseTables(SAVER, "trip", T_ID);
+    t.trips = { rows: [tripRow({ visibility: "buddies" })] };
+    t.user_follows = { rows: [{ follower_id: SAVER, following_id: OWNER }, { follower_id: OWNER, following_id: SAVER }], failSelect: true };
+    const items = await previews(t, "saver-token");
+    assert.equal(items[0].title, null);
+    assert.equal(items[0].coverUrl, null);
+  });
   it("a public trip whose owner blocked the saver shows nothing; an unreadable blocks table shows nothing", async () => {
     const t = baseTables(SAVER, "trip", T_ID);
     t.trips = { rows: [tripRow()] };
