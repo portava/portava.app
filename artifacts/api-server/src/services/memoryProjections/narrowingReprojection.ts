@@ -19,11 +19,28 @@
  * and the owner's own timeline, which keeps the Memory, would be revoked too.
  *
  * So each ACTIVE registration that carries the Memory is RE-DERIVED from the
- * canonical rows as they are NOW — after the narrowing committed. A projection
- * builder admits a Memory only for an audience allowed to see it, so the
- * public derivative is rebuilt without it while the owner's timeline is rebuilt
- * with it: the Memory is retained, the public derivative no longer carries it.
- * The read happens after the write committed, so it cannot see the old audience.
+ * canonical rows as they are NOW — after the narrowing committed. The read
+ * happens after the write committed, so it cannot see the old audience.
+ *
+ * WHAT A RE-DERIVATION EXCLUDES IS THE BUILDER'S BUSINESS, AND NOT EVERY
+ * BUILDER NARROWED (verifier VERIFY-H2, finding H2-2). The public builder admits
+ * only `public` Memories; the owner's timeline admits all of the owner's. But
+ * TripMemoryProjection — registered for the crew search with `viewer_id: null` —
+ * used to admit every non-deleted Memory of the trip, so after make-private the
+ * crew derivative still carried the Memory's title at rest and this module
+ * counted it `retained`. Lead ruling (2026-10-07): a derivative built for any
+ * non-owner audience excludes, AT BUILD TIME, every Memory whose audience does
+ * not admit that audience (projectionRegistry.sharedAudienceAdmits); the §23
+ * read-time ladder in runCrewMemorySearch stays as the second layer. So a
+ * registration that still carries the Memory after re-derivation is split by
+ * audience: the owner's own view (`retained`) is expected; any other
+ * (`retainedShared`) is a viewer-specific derivative whose viewer still has
+ * access, and it is reported and logged.
+ *
+ * BOUNDED. PostgREST answers at most 1000 rows. A read that comes back full may
+ * have been truncated, so it is reported `ok: false` with the reason; every
+ * registration it did return is still re-derived, and re-derived ones no longer
+ * match, so the deletion lifecycle's retry (and the redrive) drains the rest.
  *
  * FAIL CLOSED. A registration that cannot be re-derived — the builder refuses,
  * the write fails, the scope key cannot be parsed — is REVOKED instead, payload
@@ -48,8 +65,10 @@ export interface NarrowingReport {
   carried: number;
   /** Re-derived, and no longer carry it: the audience lost the Memory. */
   reprojected: number;
-  /** Re-derived, and still carry it: that audience still sees the Memory (the owner's own, for one). */
+  /** Re-derived, and still carry it, in the OWNER's own view (viewer = owner): expected. */
   retained: number;
+  /** Re-derived, and still carry it, in a view for someone ELSE: that viewer still has access. Reported and logged. */
+  retainedShared: number;
   /** Could not be re-derived, so revoked (payload emptied) instead. */
   revokedInstead: number;
   /** Neither re-derived nor revoked — the derivative may still carry the Memory. */
@@ -99,7 +118,7 @@ export async function reprojectDerivativesAfterNarrowing(
     mustExclude?: boolean;
   },
 ): Promise<NarrowingReport> {
-  const report: NarrowingReport = { ok: true, carried: 0, reprojected: 0, retained: 0, revokedInstead: 0, unresolved: [], absent: false };
+  const report: NarrowingReport = { ok: true, carried: 0, reprojected: 0, retained: 0, retainedShared: 0, revokedInstead: 0, unresolved: [], absent: false };
   const found = await client
     .from(DERIVATIVE_REGISTRY_TABLE)
     .select("id, scope_key, source_memory_ids, revocation_state")
@@ -112,6 +131,10 @@ export async function reprojectDerivativesAfterNarrowing(
     return report;
   }
   const rows = (Array.isArray(found.data) ? found.data : []) as Array<{ id: string; scope_key: string; source_memory_ids: string[] | null }>;
+  if (rows.length >= REGISTRY_PAGE) {
+    report.ok = false;
+    report.unresolved.push(`registry page full: ${rows.length} registrations returned, more may carry this Memory — re-derived these, the rest on the next run`);
+  }
   const carrying = rows.filter((r) => (r.source_memory_ids ?? []).includes(input.memoryId));
   report.carried = carrying.length;
 
@@ -128,7 +151,7 @@ export async function reprojectDerivativesAfterNarrowing(
     if (rebuilt && rebuilt.ok && !rebuilt.value.was_revoked) {
       const stillCarries = (rebuilt.value.registration.source_memory_ids ?? []).includes(input.memoryId);
       if (!stillCarries) { report.reprojected += 1; continue; }
-      if (!input.mustExclude) { report.retained += 1; continue; }
+      if (!input.mustExclude) { if (parsed!.scope.viewer_id === parsed!.scope.owner_id) report.retained += 1; else report.retainedShared += 1; continue; }
       // A deleted Memory that a rebuild still carries falls through to the revoke.
     }
     // Fail closed: what cannot be re-derived is emptied.
@@ -172,3 +195,6 @@ export async function reviveDeletionRevokedDerivative(
 }
 
 export { DELETION_REVOCATION_REASON };
+
+/** PostgREST's max-rows on Supabase: a read that returns this many may be truncated. */
+export const REGISTRY_PAGE = 1000;

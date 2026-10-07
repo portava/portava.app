@@ -591,14 +591,14 @@ describe("§15 SHARED_CREW: a crew search unions the crew's per-owner derivative
       assert.equal(crewRegs.length, 3, "one registration per crew member, not one for the union");
       assert.deepEqual(crewRegs.map((g: any) => g.owner_id).sort(), [OWNER, VIEWER, DEPARTING].sort());
       for (const g of crewRegs) assert.equal(g.revocation_state, "ACTIVE");
-      // NO member was withheld — and the union still does not claim to be
-      // complete, because the §23 ladder withheld the trip owner's only_me row
-      // (the case below). Both facts are reported, separately, because they are
-      // different failures: a member we could not read, and a row this reader may
-      // not have.
+      // NO member was withheld, and — since the §AL ruling (2026-10-07) — no ROW
+      // either: the trip owner's only_me Memory is excluded when the SHARED crew
+      // derivative is BUILT, so it never reaches the read for the §23 ladder to
+      // withhold. (Before the ruling this union reported audienceWithheldCount 1
+      // and unionComplete false; the case below proves the ladder still runs.)
       assert.deepEqual(r.body.withheldMembers, []);
-      assert.equal(r.body.audienceWithheldCount, 1);
-      assert.equal(r.body.unionComplete, false);
+      assert.equal(r.body.audienceWithheldCount, 0);
+      assert.equal(r.body.unionComplete, true);
       assert.equal(r.body.crewSize, 3);
       for (const id of [OWNER, VIEWER, DEPARTING]) {
         assert.equal(memberLine(r.body, id).state, "served", `${id} must be named as served`);
@@ -619,17 +619,26 @@ describe("§15 SHARED_CREW: a crew search unions the crew's per-owner derivative
       const r = await search(app, VIEWER, { intent: { kind: "crew_trip", tripId: TRIP } });
       assert.equal(r.status, 200);
       assert.ok(!ids(r.body).has(M_CREW_ONLY_ME), "a crew member's only_me Memory must not reach the crew");
-      // STATE: the row IS in the registered derivative. The ladder is the only
-      // thing keeping it out of the answer, so if that is ever removed this
-      // assertion is what fails rather than nothing.
+      // LAYER 1 (§AL ruling, 2026-10-07): the row is NOT in the shared crew
+      // derivative — a derivative built for a non-owner audience excludes, at
+      // BUILD time, every Memory that audience may not see. (Before the ruling
+      // this asserted the opposite, as a positive control for layer 2.)
       const ownerReg = app.store[REG].find((g: any) => g.projection_id === "TripMemoryProjection" && g.owner_id === OWNER);
       assert.ok(
-        (ownerReg.payload_json as any[]).some((row) => row.memory_id === M_CREW_ONLY_ME),
-        "positive control: the derivative itself does contain it",
+        !(ownerReg.payload_json as any[]).some((row) => row.memory_id === M_CREW_ONLY_ME),
+        "the shared crew derivative never carries an only_me Memory",
       );
-      // A narrowed union is not a complete one, and it says so.
-      assert.ok(r.body.audienceWithheldCount >= 1);
-      assert.equal(r.body.unionComplete, false);
+      // LAYER 2 stays: a derivative that DOES carry the row (written before the
+      // ruling, or by a future builder that forgets it) is still narrowed by the
+      // §23 ladder at read time. Plant the row and search again.
+      const planted = { ...(ownerReg.payload_json as any[])[0], memory_id: M_CREW_ONLY_ME, title: "the argument on the bridge" };
+      (ownerReg.payload_json as any[]).push(planted);
+      (ownerReg.source_memory_ids as string[]).push(M_CREW_ONLY_ME);
+      const again = await search(app, VIEWER, { intent: { kind: "crew_trip", tripId: TRIP } });
+      assert.equal(again.status, 200);
+      assert.ok(!ids(again.body).has(M_CREW_ONLY_ME), "the ladder still keeps it out");
+      assert.ok(again.body.audienceWithheldCount >= 1);
+      assert.equal(again.body.unionComplete, false);
     } finally { await app.close(); }
   });
 

@@ -1923,7 +1923,7 @@ router.patch("/memories/:id", async (req, res) => {
   // Compass feed, and a Memory whose audience did not move has nothing to
   // revoke.
   const nextAudience = mergedAudience(previousAudience, patch);
-  if (audienceChanged(previousAudience, nextAudience)) { const narrowed = await reprojectDerivativesAfterNarrowing(sc as any, { memoryId: id, now: new Date(audienceWriteCommittedAt), reason: "memory_visibility_changed" }); if (!narrowed.ok || narrowed.revokedInstead > 0) req.log.error({ memoryId: id, narrowed }, "memories: §18 derivatives could not all be re-derived after an audience change (revoked instead, or unresolved)"); // H189/H114: the registry's derivatives are re-derived from the committed audience (one line: cited by line)
+  if (audienceChanged(previousAudience, nextAudience)) { const narrowed = await reprojectDerivativesAfterNarrowing(sc as any, { memoryId: id, now: new Date(audienceWriteCommittedAt), reason: "memory_visibility_changed" }); if (!narrowed.ok || narrowed.revokedInstead > 0) req.log.error({ memoryId: id, narrowed }, "memories: §18 derivatives could not all be re-derived after an audience change (revoked instead, or unresolved)"); else if (narrowed.retainedShared > 0) req.log.warn({ memoryId: id, narrowed }, "memories: §18 a viewer-specific derivative still carries the Memory after an audience change (its viewer keeps access)"); // H189/H114: the registry's derivatives are re-derived from the committed audience (one line: cited by line)
     await revokeMemoryAudienceCaches(sc, {
       memoryId: id,
       ownerId: user.id,

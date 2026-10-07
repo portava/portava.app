@@ -21,7 +21,7 @@ import memoriesRouter from "../routes/memories.js";
 import { rebuildProjection, DERIVATIVE_REGISTRY_TABLE } from "../services/memoryProjections/derivativeRegistry.js";
 import { parseScopeKey, reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js";
 import { scopeKeyOf } from "../services/memoryProjections/projectionRegistry.js";
-import { DELETION_REVOCATION_REASON } from "../services/memoryProjections/narrowingReprojection.js";
+import { DELETION_REVOCATION_REASON, REGISTRY_PAGE } from "../services/memoryProjections/narrowingReprojection.js"; import { crewMemberTarget } from "../services/memory/memorySearchService.js";
 
 const OWNER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const M = "11111111-1111-4111-8111-111111111111";
@@ -45,7 +45,7 @@ function seed(): Record<string, any[]> {
   };
 }
 
-interface FakeOpts { failWrites?: Set<string> }
+interface FakeOpts { failWrites?: Set<string>; failReads?: Set<string> }
 let gen = 0;
 
 function makeClient(store: Record<string, any[]>, opts: FakeOpts = {}) {
@@ -72,7 +72,7 @@ function makeClient(store: Record<string, any[]>, opts: FakeOpts = {}) {
       then(ok: any, bad: any) { return run().then(ok, bad); },
     };
     async function run(): Promise<any> {
-      if (mode !== "select" && opts.failWrites?.has(`${table}:${mode}`)) return { data: null, error: { message: `${table} ${mode} failed`, code: "57014" } };
+      if (mode !== "select" && opts.failWrites?.has(`${table}:${mode}`)) return { data: null, error: { message: `${table} ${mode} failed`, code: "57014" } }; if (mode === "select" && opts.failReads?.has(table)) return { data: null, error: { message: `${table} read failed`, code: "57014" } };
       const all = (store[table] ??= []);
       if (mode === "upsert" || mode === "insert") {
         const written: any[] = [];
@@ -305,5 +305,87 @@ describe("lead ruling H-5 — a deletion REBUILDS the derivatives that carried t
     const out = await reprojectDerivativesAfterNarrowing(makeClient(store) as any, { memoryId: M, now: NOW, reason: DELETION_REVOCATION_REASON, mustExclude: true });
     assert.deepEqual([out.carried, out.retained, out.revokedInstead], [2, 0, 2]);
     assert.equal(reg(store, "MemoryTimelineProjection", OWNER_SCOPE).revocation_state, "REVOKED");
+  });
+});
+
+// ── VERIFY-H2 (2026-10-07): H2-2 crew derivative, H2-4 registry read error, the page bound ──
+const TRIPX = "66666666-6666-4666-8666-666666666666";
+function tripSeed(): Record<string, any[]> {
+  const st = seed();
+  for (const m of st.memories) m.trip_id = TRIPX;
+  return st;
+}
+const CREW_SCOPE = crewMemberTarget(OWNER, TRIPX).scope;
+const VIEWER_TRIP_SCOPE = { owner_id: OWNER, viewer_id: VIEWER, trip_id: TRIPX, place_id: null, person_id: null };
+const narrowingLog = (a: App) => a.logs.filter((l) => /§18/.test(l.msg)).at(-1);
+
+describe("VERIFY-H2 H2-2 — a derivative built for a non-owner audience excludes, at BUILD time, what that audience may not see", () => {
+  it("the crew search's TripMemoryProjection (viewer null): make-private through the router leaves it ACTIVE and WITHOUT the Memory or its title", async () => {
+    const store = tripSeed();
+    const client = makeClient(store) as any;
+    assert.ok((await rebuildProjection(client, "TripMemoryProjection", CREW_SCOPE, NOW)).ok);
+    const crew = () => store[DERIVATIVE_REGISTRY_TABLE].find((r) => r.scope_key === scopeKeyOf("TripMemoryProjection", CREW_SCOPE));
+    assert.ok(carries(crew(), M), "precondition: a public trip Memory is in the crew derivative");
+    app = await start(store);
+    assert.equal((await patch(app, M, { visibility: "only_me" })).status, 200);
+    assert.equal(crew().revocation_state, "ACTIVE");
+    assert.equal(carries(crew(), M), false, "the now-private Memory is gone from the crew derivative");
+    assert.ok(!JSON.stringify(crew().payload_json).includes(`t-${M.slice(0, 4)}`), "and so is its title");
+    assert.equal(carries(crew(), M2), true);
+  });
+
+  it("at build time the crew derivative carries only public / trip_crew Memories with nobody hidden", async () => {
+    const store = tripSeed();
+    store.memories.push(
+      { ...store.memories[0], id: "77777777-7777-4777-8777-777777777771", visibility: "friends_only" },
+      { ...store.memories[0], id: "77777777-7777-4777-8777-777777777772", visibility: "trip_crew" },
+      { ...store.memories[0], id: "77777777-7777-4777-8777-777777777773", visibility: "trip_crew", hidden_user_ids: [VIEWER] },
+      { ...store.memories[0], id: "77777777-7777-4777-8777-777777777774", visibility: "only_me" },
+    );
+    const built = await rebuildProjection(makeClient(store) as any, "TripMemoryProjection", CREW_SCOPE, NOW);
+    assert.ok(built.ok);
+    assert.deepEqual([...built.value.registration.source_memory_ids].sort(), [M, M2, "77777777-7777-4777-8777-777777777772"].sort());
+    const own = await rebuildProjection(makeClient(store) as any, "TripMemoryProjection", { ...CREW_SCOPE, viewer_id: OWNER }, NOW);
+    assert.ok(own.ok && own.value.registration.source_memory_ids.length === 6, "the owner's own view carries all six");
+  });
+
+  it("a viewer-specific derivative that still carries the Memory is counted retainedShared, and the route says so", async () => {
+    const store = tripSeed();
+    assert.ok((await rebuildProjection(makeClient(store) as any, "TripMemoryProjection", VIEWER_TRIP_SCOPE, NOW)).ok);
+    app = await start(store);
+    assert.equal((await patch(app, M, { visibility: "friends_only" })).status, 200);
+    const line = narrowingLog(app);
+    assert.ok(line && /viewer-specific derivative still carries/.test(line.msg), JSON.stringify(app.logs.map((l) => l.msg)));
+    assert.deepEqual([line!.obj.narrowed.retainedShared, line!.obj.narrowed.retained], [1, 0]);
+    // and narrowing that viewer out entirely removes it at build time
+    assert.equal((await patch(app, M, { visibility: "only_me" })).status, 200);
+    const reg = store[DERIVATIVE_REGISTRY_TABLE].find((r) => r.scope_key === scopeKeyOf("TripMemoryProjection", VIEWER_TRIP_SCOPE));
+    assert.equal(carries(reg, M), false);
+  });
+});
+
+describe("VERIFY-H2 H2-4 and the page bound", () => {
+  it("H2-4: an unreadable registry is ok:false with the reason, and the make-private route logs it (the decision itself still commits)", async () => {
+    const store = seed();
+    await registerBoth(store);
+    app = await start(store, { failReads: new Set([DERIVATIVE_REGISTRY_TABLE]) });
+    assert.equal((await patch(app, M, { visibility: "only_me" })).status, 200);
+    const line = narrowingLog(app);
+    assert.ok(line && /could not all be re-derived/.test(line.msg), JSON.stringify(app.logs.map((l) => l.msg)));
+    assert.equal(line!.obj.narrowed.ok, false);
+    assert.match(line!.obj.narrowed.unresolved[0], /registry unreadable/);
+  });
+
+  it("a FULL page (PostgREST's max-rows) is ok:false and says more may remain — every row it returned is still re-derived", async () => {
+    const store = seed();
+    await registerBoth(store);
+    for (let i = 0; i < REGISTRY_PAGE; i += 1) {
+      store[DERIVATIVE_REGISTRY_TABLE].push({ id: `bulk-${i}`, scope_key: `NoSuchProjection|owner:o${i}`, source_memory_ids: [M], revocation_state: "ACTIVE", payload_json: [{ memory_id: M }], row_count: 1 });
+    }
+    const out = await reprojectDerivativesAfterNarrowing(makeClient(store) as any, { memoryId: M, now: NOW, reason: "memory_visibility_changed" });
+    assert.equal(out.ok, false);
+    assert.match(out.unresolved[0], /registry page full/);
+    assert.equal(out.carried, REGISTRY_PAGE + 2);
+    assert.equal(reg(store, "PublicMemoryProjection", PUBLIC_SCOPE).revocation_state, "ACTIVE");
   });
 });

@@ -324,7 +324,7 @@ const DEFINITIONS: ProjectionDefinition[] = [
       const tripId = input.scope.trip_id ?? null;
       if (tripId === null) return [];
       return ownerVisible(input)
-        .filter((m) => m.trip_id === tripId && recapAdmits(input, m.id)) // §AK: DO_NOT_INCLUDE_IN_RECAPS / KEEP_PRIVATE_FOREVER, fail closed
+        .filter((m) => m.trip_id === tripId && recapAdmits(input, m.id) && sharedAudienceAdmits(input, m)) // §AK: recap controls, fail closed; §AL: a shared (crew) build carries only what the crew may see
         .sort((a, b) => occurredAt(a).localeCompare(occurredAt(b)) || a.id.localeCompare(b.id))
         .map((m) => project({
           ...m,
@@ -810,4 +810,33 @@ export function recapExcludedOf(controls: SourceControls | undefined): ReadonlyS
 export function recapAdmits(input: Pick<ProjectionInput, "recapExcluded">, memoryId: string): boolean {
   if (input.recapExcluded === null) return false;
   return !(input.recapExcluded?.has(memoryId) ?? false);
+}
+
+// ── §AL (lane H, 2026-10-07; lead ruling after VERIFY-H2 finding H2-2) ───────
+/**
+ * A derivative built for a SHARED audience — `viewer_id` null, the crew search's
+ * TripMemoryProjection — carries, AT BUILD TIME, only a Memory whose own
+ * audience admits that whole audience: `public`, or `trip_crew` (the trip filter
+ * above already pins it to this trip), with nobody hidden from it. Everything
+ * else — only_me, friends_only, circle_only, custom, or a hide list — admits some
+ * crew members and not others, and is left to the per-viewer path. The owner's
+ * own view (viewer = owner) admits all; a viewer-specific build is filtered by
+ * its caller's per-viewer gate (GET /trips/:tripId/memories/recap runs
+ * canReadMemory first). The §23 read-time ladder remains the second layer.
+ */
+export const SHARED_AUDIENCE_VISIBILITIES: readonly string[] = ["public", "trip_crew"];
+
+export function sharedAudienceAdmits(input: Pick<ProjectionInput, "scope">, m: MemorySourceRow): boolean {
+  const viewer = input.scope.viewer_id ?? null;
+  if (viewer !== null && viewer === input.scope.owner_id) return true; // the owner's own view
+  const vis = String(m.visibility ?? "");
+  const hidden = m.hidden_user_ids ?? [];
+  if (viewer === null) return SHARED_AUDIENCE_VISIBILITIES.includes(vis) && hidden.length === 0;
+  // ONE named non-owner viewer. What a synchronous builder CAN decide, it does:
+  // nobody but the owner is in an only_me audience, a hidden viewer is out, a
+  // custom list names its members. friends_only / circle_only / trip_crew need
+  // a graph read, and the caller's per-viewer gate made that decision first.
+  if (vis === "only_me" || hidden.includes(viewer)) return false;
+  if (vis === "custom") return (m.allowed_user_ids ?? []).includes(viewer);
+  return true;
 }

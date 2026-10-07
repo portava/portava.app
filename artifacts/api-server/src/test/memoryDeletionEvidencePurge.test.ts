@@ -665,3 +665,58 @@ describe("verifier findings F1-F5 (VERIFY-H-45bca4a1c6)", () => {
     assert.deepEqual([step(lifecycleReport(app), "RAW_EVIDENCE_PURGED").facts.purged, step(lifecycleReport(app), "RAW_EVIDENCE_PURGED").facts.episodesRetired], [6, 2]);
   });
 });
+
+describe("VERIFY-H2 — the redrive's untested branches (H2-1, H2-3, H2-5, the batch bound)", () => {
+  const FLAG_ON = { flag: "memory_deletion_redrive_enabled", enabled: true };
+  const letter = (memoryId: string, over: Record<string, unknown> = {}) => ({
+    memory_id: memoryId, owner_id: OWNER, failed_steps: ["RAW_EVIDENCE_PURGED"], reached_state: "DERIVATIVES_PURGED",
+    detail: "RAW_EVIDENCE_PURGED ×3: x", lifecycle_version: "memory-deletion@1", letters: 1,
+    first_failed_at: "2026-10-07T09:00:00.000Z", last_failed_at: "2026-10-07T09:00:00.000Z", resolved_at: null, ...over,
+  });
+
+  it("H2-1: the Memory row is UNREADABLE — the letter is left open and untouched, and no step runs (a live Memory's derivatives are not revoked)", async () => {
+    app = await start();
+    app.store.feature_flags.push(FLAG_ON);
+    app.store.memory_deletion_dead_letters = [letter(PLAIN_MEMORY)];
+    app.store.memory_derivative_registry = [{ id: "reg-public", owner_id: OWNER, projection_id: "PublicMemoryProjection", scope_key: `PublicMemoryProjection|owner:${OWNER}`, source_memory_ids: [PLAIN_MEMORY], revocation_state: "ACTIVE", payload_json: [{ memory_id: PLAIN_MEMORY }], row_count: 1 }];
+    const before = JSON.stringify([app.store.memory_deletion_dead_letters, app.store.memory_derivative_registry]);
+    const out = await runMemoryDeletionRedrivePass({ client: makeClient(app.store, { failReads: new Set(["memories"]) }), now: new Date("2026-10-07T13:00:00.000Z") });
+    assert.deepEqual([out.considered, out.unreadable, out.resolved, out.stillFailing, out.moot], [1, 1, 0, 0, 0]);
+    assert.equal(JSON.stringify([app.store.memory_deletion_dead_letters, app.store.memory_derivative_registry]), before);
+  });
+
+  it("H2-3: a RESOLVED letter beside an open one — only the open one is considered, and the resolved one is untouched", async () => {
+    app = await start();
+    app.store.feature_flags.push(FLAG_ON);
+    const resolved = letter("88888888-8888-4888-8888-888888888881", { resolved_at: "2026-10-07T10:00:00.000Z", last_failed_at: "2026-10-07T08:00:00.000Z" });
+    app.store.memory_deletion_dead_letters = [resolved, letter(PLAIN_MEMORY)];
+    const resolvedBefore = JSON.stringify(resolved);
+    const out = await runMemoryDeletionRedrivePass({ client: makeClient(app.store), now: new Date("2026-10-07T13:00:00.000Z") });
+    assert.equal(out.considered, 1);
+    assert.equal(JSON.stringify(app.store.memory_deletion_dead_letters.find((l) => l.memory_id === resolved.memory_id)), resolvedBefore);
+  });
+
+  it("H2-5: a letter whose Memory is ARCHIVED is closed as moot — 'not deleted' is every state but deleted — and no step runs", async () => {
+    app = await start();
+    const { memoryId, episodeId } = await keepEvening(app);
+    app.store.feature_flags.push(FLAG_ON);
+    app.store.memories.find((x) => x.id === memoryId).state = "archived";
+    app.store.memory_deletion_dead_letters = [letter(memoryId)];
+    const evidenceBefore = JSON.stringify(evidenceOf(app, episodeId));
+    const out = await runMemoryDeletionRedrivePass({ client: makeClient(app.store), now: new Date("2026-10-07T13:00:00.000Z") });
+    assert.deepEqual([out.moot, out.resolved, out.stillFailing], [1, 0, 0]);
+    assert.equal(JSON.stringify(evidenceOf(app, episodeId)), evidenceBefore);
+    assert.match(app.store.memory_deletion_dead_letters[0].detail, /moot: the Memory is 'archived'/);
+  });
+
+  it("the batch is bounded: 30 open letters, 25 considered in one pass, the rest left for the next", async () => {
+    app = await start();
+    app.store.feature_flags.push(FLAG_ON);
+    app.store.memory_deletion_dead_letters = Array.from({ length: 30 }, (_, i) =>
+      letter(`99999999-9999-4999-8999-${String(i).padStart(12, "0")}`, { last_failed_at: `2026-10-07T09:${String(i).padStart(2, "0")}:00.000Z` }));
+    for (const l of app.store.memory_deletion_dead_letters) app.store.memories.push({ id: l.memory_id, owner_id: OWNER, state: "published" });
+    const out = await runMemoryDeletionRedrivePass({ client: makeClient(app.store), now: new Date("2026-10-07T13:00:00.000Z") });
+    assert.deepEqual([out.considered, out.moot], [25, 25]);
+    assert.equal(app.store.memory_deletion_dead_letters.filter((l) => l.resolved_at == null).length, 5);
+  });
+});

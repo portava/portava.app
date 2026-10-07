@@ -94,8 +94,13 @@ export async function runMemoryDeletionRedrivePass(
         .select("id, owner_id, state, visibility, allowed_user_ids, hidden_user_ids, trip_id")
         .eq("id", letter.memory_id)
         .maybeSingle();
+      // An unreadable row is LEFT OPEN: running the lifecycle on a Memory whose
+      // state is unknown could revoke a LIVE Memory's derivatives for good.
       if (rowErr) { result.unreadable += 1; continue; }
-      if (row && (row as any).state !== "deleted") {
+      // Re-run ONLY when the deletion is still the Memory's state, said positively:
+      // `state === "deleted"` (or the row gone). Every other state is not deleted.
+      const stillDeleted = row == null || (row as any).state === "deleted";
+      if (!stillDeleted) {
         if ((letter.failed_steps ?? []).includes("DELETED")) {
           const { error: bumpErr } = await db
             .from("memory_deletion_dead_letters")

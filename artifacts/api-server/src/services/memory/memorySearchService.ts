@@ -570,13 +570,15 @@ function withhold(memberId: string, reason: CrewWithholdReason, detail: string):
  * Memories on the trip and runs NO audience ladder — `GET
  * /trips/:tripId/memories/recap` says so in its own header and handles it by
  * running `canReadMemory(..., "trip")` per row BEFORE it calls the builder. The
- * search path cannot do that: it reads a REGISTERED derivative (§28.6), the
- * registration is keyed by audience rather than by reader, and so the payload it
- * reads back contains every one of that member's trip Memories including the
- * `only_me` ones. `TRIP_FIELDS` does not even carry `visibility`, so the rows
- * themselves cannot be filtered on their own contents.
+ * search path cannot do that: it reads a REGISTERED derivative (§28.6), keyed
+ * by audience rather than by reader. UPDATED 2026-10-07 (census §AL, lead
+ * ruling after VERIFY-H2 finding H2-2): the shared crew derivative (viewer
+ * null) is now narrowed AT BUILD TIME to Memories the whole crew may see
+ * (`public` or `trip_crew`, nobody hidden), so an `only_me` Memory never sits
+ * in it; the reader's own slice is built in their own view. What follows is
+ * the SECOND layer and stays:
  *
- * So the ladder runs as an INTERSECTION after the read: the derivative decides
+ * the ladder runs as an INTERSECTION after the read: the derivative decides
  * which rows and which FIELDS exist (the whitelist stays structural, and no
  * canonical column is ever served), and `canReadMemory` decides whether this
  * viewer may have each of them. It can only ever narrow. A hit whose canonical
@@ -636,7 +638,13 @@ export async function runCrewMemorySearch(
   let rerankApplied = false;
 
   for (const memberId of inBound) {
-    const target = crewMemberTarget(memberId, tripId);
+    // The reader's OWN slice is their own view (viewer = owner), which carries
+    // their own only_me trip Memories. Every other member's slice is the SHARED
+    // crew derivative (viewer null), which since the §AL ruling excludes at BUILD
+    // time every Memory the whole crew may not see — so an only_me Memory never
+    // sits in a derivative built for the crew.
+    const crewTarget = crewMemberTarget(memberId, tripId);
+    const target: ResolvedTarget = memberId === viewerId ? { ...crewTarget, scope: { ...crewTarget.scope, viewer_id: viewerId } } : crewTarget;
     const prepared = await ensureDerivative(client, target, now, viewerId);
     if (!prepared.ok) {
       disclosures.push(withhold(memberId, "derivative_unavailable", prepared.detail));
