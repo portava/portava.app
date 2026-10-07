@@ -7076,12 +7076,12 @@ Same branch and rules as §AF. One migration was WRITTEN and applied to no datab
 
 ### §AJ.1 What was built
 
-- **The read fails closed** (`artifacts/api-server/src/services/memory/memoryResurfacingControls.ts:51#export async function readMemoryControls(`). An absent table means "no control is set", which is true because no row can exist. An unreadable table means kept private, on every surface that would publish the Memory.
-- **The owner's switches.** GET, PUT and DELETE `/memories/:id/resurfacing-controls[/:control]` (`artifacts/api-server/src/routes/memoryResurfacingControls.ts:63#router.put("/memories/:id/resurfacing-controls/:control"`). They are owner-only: someone else's Memory and a deleted Memory both answer 404. KEEP_PRIVATE_FOREVER is refused on a Memory that is not `only_me`, so the owner narrows first (`artifacts/api-server/src/services/memory/memoryResurfacingControls.ts:117#export async function setMemoryControl(`).
+- **The read fails closed** (`artifacts/api-server/src/services/memory/memoryResurfacingControls.ts:52#export async function readMemoryControls(`). An absent table means "no control is set", which is true because no row can exist. An unreadable table means kept private, on every surface that would publish the Memory.
+- **The owner's switches.** GET, PUT and DELETE `/memories/:id/resurfacing-controls[/:control]` (`artifacts/api-server/src/routes/memoryResurfacingControls.ts:63#router.put("/memories/:id/resurfacing-controls/:control"`). They are owner-only: someone else's Memory and a deleted Memory both answer 404. KEEP_PRIVATE_FOREVER is refused on a Memory that is not `only_me`, so the owner narrows first (`artifacts/api-server/src/services/memory/memoryResurfacingControls.ts:118#export async function setMemoryControl(`).
 - **Enforced where a Memory is published.**
   - PATCH will not widen a kept-private Memory past `only_me`: 409, or 503 when the controls cannot be read (`artifacts/api-server/src/routes/memories.ts:1740#if (await refuseWideningKeptPrivate(`).
   - A kept-private Memory is never a Highlight source, and unreadable controls admit no source (`artifacts/api-server/src/services/highlights/highlightSources.ts:283#return fail("kept_private"`).
-- **The tests:** `artifacts/api-server/src/test/memoryResurfacingControls.test.ts:173#PATCH cannot widen a kept-private Memory past only_me`, `artifacts/api-server/src/test/memoryResurfacingControls.test.ts:181#FAIL CLOSED: when the controls cannot be read` and `artifacts/api-server/src/test/memoryResurfacingControls.test.ts:199#a kept-private Memory is never a Highlight source`. That is 8 cases; 7 of 7 mutants were killed.
+- **The tests:** `artifacts/api-server/src/test/memoryResurfacingControls.test.ts:176#PATCH cannot widen a kept-private Memory past only_me`, `artifacts/api-server/src/test/memoryResurfacingControls.test.ts:184#FAIL CLOSED: when the controls cannot be read` and `artifacts/api-server/src/test/memoryResurfacingControls.test.ts:202#a kept-private Memory is never a Highlight source`. That is 8 cases; 7 of 7 mutants were killed.
 
 ### §AJ.2 Row moves
 
@@ -7108,3 +7108,30 @@ Same branch and rules as §AF. One migration was WRITTEN and applied to no datab
 | total | 266 | 266 |
 
 **1 move: H36 N → W.** 266 = 69 C / 153 W / 42 N / 2 X. CONSTRUCTED% is (69 + 153) / 266 = 83.5 %. CORRECT% raw is unchanged at 25.9 %.
+
+## §AK — 2026-10-07 (mission 4, lane H): the recaps honour the per-Memory controls; lead ruling H-7 — NO VERDICT MOVES
+
+### §AK.1 Lead ruling (2026-10-07)
+
+- **H-7.** KEEP_PRIVATE_FOREVER can only be set on a Memory that is `only_me`. Setting it never narrows the Memory's visibility as a side effect: the owner narrows first. §AJ.1 implements this, and `setMemoryControl` refuses otherwise with 409.
+
+### §AK.2 What was built
+
+- **The trip recap leaves the Memory out.** TripMemoryProjection, the trip recap, admits a Memory only when no recap-suppressing control is on (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:327#recapAdmits(input, m.id)`).
+  - The recap-suppressing controls are DO_NOT_INCLUDE_IN_RECAPS and KEEP_PRIVATE_FOREVER (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:798#export const RECAP_SUPPRESSING_CONTROLS`). That is `CONTROL_EFFECTS`'s own list; DO_NOT_RESURFACE does not suppress a recap.
+  - The controls are read by `readProjectionSources`, and the source version folds them in, so a control change makes the registration STALE (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:563#if (controls?.state === "unreadable") per["controls"]`). With no control set, the version is byte-identical to what it was before.
+  - The live route reads the same controls.
+- **Unreadable controls REFUSE the recap.** The route answers 503 (`artifacts/api-server/src/routes/memories.ts:3044#if (recapControls.state === "unreadable")`). A derivation returns `source_unavailable` (`artifacts/api-server/src/services/memoryProjections/derivativeRegistry.ts:213#if (def.id === "TripMemoryProjection" && sources.value.memoryControls`). A recap never carries a Memory its owner may have kept out, and it is never an empty answer standing in for a failed read.
+- **The §5 recaps and On This Day are unchanged, by design.** They resurface no scrapbook Memory at all: `passport:memory` is in neither resurfaceable set, under §5's fail-closed valence rule. A pin test fails if `passport:memory` is added there before the controls are honoured. The "What Portava Remembers" listing is the owner's explicit view, and `CONTROL_EFFECTS.DO_NOT_RESURFACE` leaves explicit retrieval unaffected.
+- **The tests:** `artifacts/api-server/src/test/memoryResurfacingControls.test.ts:248#GET /trips/:tripId/memories/recap leaves out`, `artifacts/api-server/src/test/memoryResurfacingControls.test.ts:261#unreadable controls: the recap is REFUSED`, `artifacts/api-server/src/test/memoryResurfacingControls.test.ts:274#the registered TripMemoryProjection` and `artifacts/api-server/src/test/memoryResurfacingControls.test.ts:297#a Memory carrying DO_NOT_RESURFACE`. 9 of 9 mutants were killed.
+- **The Compass memory tools are lane L's** (`MemoryCompassTools.ts`), and this lane did not touch them. They must honour DO_NOT_RESURFACE (no proactive mention) and RETAIN_BUT_DO_NOT_PERSONALIZE (not used to personalize), and must treat unreadable controls as both, through `readMemoryControls`.
+
+### §AK.3 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H88 | BUILT-BUT-WRONG | DO_NOT_INCLUDE_IN_RECAPS is a recap-specific control on a Memory, and the trip recap honours it on the route and in the registry, failing closed (§AK.2). W stands on storage: 3671 is unapplied |
+| H87 | BUILT-BUT-WRONG | A Memory-level DO_NOT_RESURFACE is storable. The one proactive Memory surface left to honour it is Compass (lane L). 3671 is unapplied |
+| H187 | BUILT-BUT-WRONG | As H87 |
+
+**0 up, 0 down.** 266 = 69 C / 153 W / 42 N / 2 X.
