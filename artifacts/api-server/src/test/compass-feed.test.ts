@@ -979,6 +979,21 @@ describe("D-24c — fair exposure and the fallback's boost-selected suggestions 
     assert.deepEqual(rs.map((r) => r.item.id).sort(), ["post:new", "post:old"]);
   });
 
+  it("two eligible authors, the SECOND restricted (wave-6 verifier F4): only the first is lifted, and both states are read", async () => {
+    const SECOND = ALICE_ID; // a second new verified author, distinct from NEW_ID
+    const two = (): CompassItem[] => [
+      ...pool(),
+      { id: "post:second", type: "suggestion", authorId: SECOND, authorJoinedAt: daysAgo(3), isVerified: true },
+    ];
+    const viewer = baseProfile({ userId: "99999999-0000-4000-8000-000000000009" });
+    const c = await client({ trust_restrictions: [R(SECOND, "messaging")] });
+    const rs = await rankItemsForDiscovery(two(), viewer, baseContext(), c, overrides);
+    assert.deepEqual(fair(rs), ["post:new"]);
+    assert.equal(c.restrictionReads, 2, "both eligible authors' states are read — and only theirs");
+    const control = await client({ trust_restrictions: [] });
+    assert.deepEqual(fair(await rankItemsForDiscovery(two(), viewer, baseContext(), control, overrides)).sort(), ["post:new", "post:second"]);
+  });
+
   it("buildFeed's own fair-exposure site applies the same rule", async () => {
     const ids = async (seed: any[]) => {
       const c = await client({ trust_restrictions: seed });
