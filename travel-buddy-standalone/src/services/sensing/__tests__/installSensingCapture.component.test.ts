@@ -72,7 +72,7 @@ jest.mock('../sensingZoneHint.ts', () => ({
 // NOTE: intentionally exhaustive — apiToken reaches the Supabase auth session.
 jest.mock('../../apiToken.ts', () => ({ freshToken: async () => 'test-token' }));
 
-import { installSensingCapture } from '../installSensingCapture';
+import { installSensingCapture } from '../installSensingCapture.ts';
 
 const PAYLOAD = { features: { dwellMs: 1 } };
 const flush = async () => { for (let i = 0; i < 5; i++) await Promise.resolve(); await new Promise((r) => setTimeout(r, 0)); };
