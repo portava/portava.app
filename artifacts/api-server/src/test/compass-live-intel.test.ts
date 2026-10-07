@@ -367,14 +367,16 @@ describe("D-67 — the identity rule", () => {
     assert.equal(await getLiveVenueStatus("Cafe Uno", CEBU), null);
   });
 
-  it("exactly 150 m is verified (the ruling's bound is inclusive), 150.01 m is not", async () => {
+  it("exactly 150 m is verified (the ruling's bound is inclusive); 150.0004 m and 150.01 m are not", async () => {
     // Offsets on the code's own sphere (R = 6 371 000 m), so the distance it computes is the one named.
     const metres = (m: number) => ({ latitude: CEBU.lat + (m * 180) / (Math.PI * 6_371_000), longitude: CEBU.lng });
     stubFetch(() => ({ results: [record("fsq-150", "Cafe Uno", metres(150), true)] }));
     assert.equal((await getLiveVenueStatus("Cafe Uno", CEBU))?.openNow, true, "a record exactly 150 m away is this place");
-    _clearLiveCache();
-    stubFetch(() => ({ results: [record("fsq-15001", "Cafe Uno", metres(150.01), true)] }));
-    assert.equal(await getLiveVenueStatus("Cafe Uno", CEBU), null);
+    for (const past of [150.0004, 150.01]) {
+      _clearLiveCache();
+      stubFetch(() => ({ results: [record(`fsq-${past}`, "Cafe Uno", metres(past), true)] }));
+      assert.equal(await getLiveVenueStatus("Cafe Uno", CEBU), null, `${past} m is past the bound — no rounding widens it`);
+    }
   });
 
   it("a record with no name is never confirmed, however close", async () => {

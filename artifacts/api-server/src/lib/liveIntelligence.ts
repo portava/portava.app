@@ -231,9 +231,7 @@ export function isSameVenue(
   if (normaliseVenueName(String(record.name ?? "")) !== want) return false;
   const at = liveVenueAnchorOf(record.latitude, record.longitude);
   if (!at) return false;
-  // Inclusive, to the millimetre: rounding first makes "exactly 150 m" one
-  // answer rather than whichever side a floating-point haversine lands on.
-  return Math.round(metresBetween(anchor, at) * 1_000) / 1_000 <= LIVE_IDENTITY_MAX_DISTANCE_M;
+  return metresBetween(anchor, at) <= LIVE_IDENTITY_MAX_DISTANCE_M;
 }
 
 /** Same name at two different places is two entries, never one. */
