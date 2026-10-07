@@ -11655,3 +11655,53 @@ route serving the fresh list (1), the route serving past a budget failure (2).
 ### 53.4 The headline, restated from the rows
 
 Unchanged from §52.5: 259 / 170 / 20 / 2 of 451.
+
+## §54 — TELEGRAPH lane T (mission 4, 2026-10-07): T220, Telegraph's free block reads moved onto the shared helper. NO ROW CHANGES BUCKET
+
+Written 2026-10-07 by lane T. APPEND-ONLY. **Evidence is CONTROLLED** (route and policy suites over
+the certification harness, mutations). No migration, no flag.
+
+### 54.1 What moved
+
+Four bespoke `blocks` reads in Telegraph files no other open branch holds now call the shared
+fail-closed helpers in `lib/exclusionSet.ts`, each line-neutral so no citation moved:
+
+- the call gateway's `isBlockedEither`
+  (`artifacts/api-server/src/lib/calls/callGatewayAdapter.ts:146#const pair = await readPairExclusion(sc, userA, userB);`);
+- `canMessage`, the send and call permission resolver
+  (`artifacts/api-server/src/lib/messagingPermissions.ts:157#const pair = await readPairExclusion(sc, senderId, recipientId);`);
+- the share registry's two-way read and the post card's
+  (`artifacts/api-server/src/services/telegraph/shareables.ts:290#const pair = await readPairExclusion(client, viewerId, ownerId);`,
+  `artifacts/api-server/src/services/telegraph/shareables.ts:351#const pair = await readPairExclusion(client, viewerId, r.author_id);`);
+- the recommendation route's mention filter, which built its `.or()` from a string of ids
+  (`artifacts/api-server/src/routes/telegraph.ts:245#const blockSet = await readBlockExclusions(sc, auth.user.id, { among: profileIds });`).
+
+Every answer is unchanged: a block either way refuses, an unreadable read fails closed (blocked,
+`unavailable` or `unknown`, as each site already said), a mutual block's two rows are read with
+`.limit(1)`. Two sites had NO test of the plain blocked case — the gateway (every call suite uses a fake
+gateway) and `canMessage` — and the mention route could not have one, because the harness's `.or()`
+parser does not read `in`. All three now do
+(`artifacts/api-server/src/test/telegraphCallRestrictionD24.test.ts:122#describe("T220`;
+`artifacts/api-server/src/test/messagingPermissionsHardening.test.ts:248#describe("canMessage — a block either way denies`;
+`artifacts/api-server/src/test/telegraphMentionBlockFailClosed.test.ts:206#a genuinely blocked person is not a mention (T220)`).
+
+### 54.2 Row
+
+| id | Was | Now | Why |
+| --- | --- | --- | --- |
+| T220 | W | **W** | **Block reads consolidated onto the shared helpers.** Narrower: counted by this lane (`.from(` `blocks` in non-test `.ts` under `artifacts/api-server/src`), 31 files before this section and 28 after, 25 outside `lib/blockGuard.ts`, `lib/blocks.ts` and `lib/exclusionSet.ts`, one of which (`scripts/checkSilentSupabaseReads.ts`) names the table rather than reading it (§24.6 counted 33 / 30 by a wider pattern; the direction is what this records). Still W: 24 modules keep their own read. In Telegraph, three are held by open branches — `routes/telegraphSharedContext.ts` (lane C), `services/interactionPermissions.ts` (lane B), and the share registry's Memory-card read (`services/telegraph/shareables.ts:660`, whose exact text census-highlights-memories anchors on; lane H) — and `routes/blocks.ts` is the block list's own CRUD. The other twenty belong to Compass (5), Circles and profile visibility (2), Stamps, Posts, Pulse, Media feed, Highlights, Memories, Follows, Airport, Admin, Content stamps, Wall and Creator ranking. |
+
+### 54.3 Tests and mutations
+
+`telegraphCallRestrictionD24` 13/13 (+3, the real adapter), `messagingPermissionsHardening` 21/21 (+2),
+`telegraphMentionBlockFailClosed` 6/6 (+2, the real route), and unchanged and green: `callSystem` 33,
+`callRoutes` 85, `callHardening` 21, `telegraphShare` 36, `telegraphShareFamilies` 52,
+`telegraphShareReadGates` 72, `telegraphPostProjectionByline` 10, `telegraphRestrictionSendGate` 159,
+`telegraphConversationCapabilities` 27, `messaging` 26, `blockExclusion` 12. Mutants, each alone: the
+gateway never blocked (2 red; it SURVIVED every call suite before the new cases), the gateway failing
+open (1; same), `canMessage` ignoring a block (1; same), `canMessage` ignoring an unreadable read (1),
+the share read's unreadable answered clear (7), the share read ignoring a block (13), the post card
+admitting an unreadable read (2) or a block (4), the mention route admitting an unreadable read (1) or a
+block (2; it SURVIVED before the new cases), the helper reading one direction only (1).
+
+- NOT-GRADED: artifacts/api-server/src/test/messagingPermissionsHardening.test.ts — §54.3's evidence for canMessage's blocked case; T220 rests on the cited source lines.

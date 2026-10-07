@@ -114,3 +114,29 @@ describe("D-24 — through the real permission engine", () => {
     assert.deepEqual(fresh, { allowed: false, reason: "caller_restricted" });
   });
 });
+
+// census-telegraph T220 (lane T, 2026-10-07): the REAL adapter's block read, now the shared
+// lib/exclusionSet.ts readPairExclusion. No call suite reached it — every engine suite uses a
+// fake gateway — so a block read that answered "not blocked", or read an outage as "not
+// blocked", stayed green. Here the adapter answers over the certification harness.
+describe("T220 — the real adapter's isBlockedEither (the shared pair read)", () => {
+  const withBlocks = (rows: Array<{ blocker_id: string; blocked_id: string }>, extra: FakeDbOptions = {}) => {
+    const tables: Record<string, unknown[]> = { blocks: rows };
+    return makeCallGateway(makeFakeClient(tables, extra) as any);
+  };
+
+  it("CONTROL: no block either way is not blocked", async () => {
+    assert.equal(await withBlocks([{ blocker_id: A, blocked_id: C }]).isBlockedEither(A, B), false);
+  });
+
+  it("a block either way, or a mutual block (two rows), is blocked", async () => {
+    assert.equal(await withBlocks([{ blocker_id: A, blocked_id: B }]).isBlockedEither(A, B), true);
+    assert.equal(await withBlocks([{ blocker_id: B, blocked_id: A }]).isBlockedEither(A, B), true);
+    assert.equal(await withBlocks([{ blocker_id: A, blocked_id: B }, { blocker_id: B, blocked_id: A }]).isBlockedEither(A, B), true);
+  });
+
+  it("an unreadable blocks table fails CLOSED (blocked), never 'not blocked'", async () => {
+    const gw = withBlocks([], { errors: { blocks: { message: "blocks: connection reset" } } });
+    assert.equal(await gw.isBlockedEither(A, B), true);
+  });
+});

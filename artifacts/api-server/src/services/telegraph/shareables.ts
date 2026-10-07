@@ -48,7 +48,7 @@ import { canViewEvent, checkEventEligibility } from "../../routes/events.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
 import { absenceDisclosure } from "../../lib/privacy/absenceDisclosure.js";
 import { nameVisibilitySet, presentedName, resolveHandle } from "../../lib/publicIdentity.js";
-import { resolveAccountRestriction } from "../../lib/accountStateGate.js";
+import { resolveAccountRestriction } from "../../lib/accountStateGate.js"; import { readPairExclusion } from "../../lib/exclusionSet.js"; // census-telegraph T220
 import {
   readProjectionInputs,
   publicProjectionVerdict,
@@ -283,13 +283,13 @@ type BlockRead = "clear" | "blocked" | "unreadable";
 
 async function readBlockBetween(client: SupabaseClient, viewerId: string, ownerId: unknown): Promise<BlockRead> {
   if (typeof ownerId !== "string" || ownerId.length === 0 || ownerId === viewerId) return "clear";
-  const [byOwner, byViewer] = await Promise.all([
-    client.from("blocks").select("blocker_id").eq("blocker_id", ownerId).eq("blocked_id", viewerId).limit(1),
-    client.from("blocks").select("blocker_id").eq("blocker_id", viewerId).eq("blocked_id", ownerId).limit(1),
-  ]);
-  if (byOwner.error || byViewer.error) return "unreadable";
-  const any = (rows: unknown) => Array.isArray(rows) && rows.length > 0;
-  return any(byOwner.data) || any(byViewer.data) ? "blocked" : "clear";
+  // census-telegraph T220: the shared two-way read (lib/exclusionSet.ts
+  // readPairExclusion), which keeps "could not read" apart from "blocked" —
+  // the distinction this function exists for — and reads a mutual block's two
+  // rows with `.limit(1)`.
+  const pair = await readPairExclusion(client, viewerId, ownerId);
+  if (!pair.ok) return "unreadable";
+  return pair.ids.size > 0 ? "blocked" : "clear";
 }
 
 function refusedByBlock(b: Exclude<BlockRead, "clear">): Loaded {
@@ -344,13 +344,13 @@ const loadPost: Loader = async (client, id, viewerId) => {
   // any post id on the service client. An unreadable block read is UNKNOWN,
   // never "no block", as loadProfile treats it.
   if (!mine && typeof r.author_id === "string") {
-    const { data: blockRows, error: blockErr } = await client
-      .from("blocks")
-      .select("blocker_id")
-      .or(`and(blocker_id.eq.${viewerId},blocked_id.eq.${r.author_id}),and(blocker_id.eq.${r.author_id},blocked_id.eq.${viewerId})`)
-      .limit(1);
-    if (blockErr) return { state: UNAVAILABLE("unknown"), projection: null };
-    if (((blockRows as unknown[]) ?? []).length > 0) return { state: UNAVAILABLE("unauthorized"), projection: null };
+    // census-telegraph T220: the shared two-way read (lib/exclusionSet.ts
+    // readPairExclusion) in place of an inline `.or()` — the same pair filter,
+    // and an unreadable read still answers UNKNOWN, never "no block".
+    //
+    const pair = await readPairExclusion(client, viewerId, r.author_id);
+    if (!pair.ok) return { state: UNAVAILABLE("unknown"), projection: null };
+    if (pair.ids.size > 0) return { state: UNAVAILABLE("unauthorized"), projection: null };
   }
   // The author's CURRENT public handle, read at resolve time — so a legacy post
   // card can say whose post it is without drawing the sender's snapshot of it

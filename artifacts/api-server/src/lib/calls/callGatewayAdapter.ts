@@ -20,7 +20,7 @@ import { requireTripMember } from "../http";
 import { checkEventEligibility } from "../../routes/events";
 import { isTerminal } from "./callStateMachine";
 import type { CallStatus } from "./callTypes";
-import { CALL_CONFIG } from "./callTypes";
+import { CALL_CONFIG } from "./callTypes"; import { readPairExclusion, isExcluded } from "../exclusionSet"; // census-telegraph T220
 import type { CallContextGateway, CallPreferences } from "./callPermissionEngine";
 
 export const DEFAULT_CALL_PREFERENCES: CallPreferences & { incomingCallNotifications: boolean } = {
@@ -136,15 +136,15 @@ export function makeCallGateway(sc: SupabaseClient): CallContextGateway {
 
     async isBlockedEither(userA, userB) {
       try {
-        const { data, error } = await sc
-          .from("blocks")
-          .select("blocker_id")
-          .or(
-            `and(blocker_id.eq.${userA},blocked_id.eq.${userB}),and(blocker_id.eq.${userB},blocked_id.eq.${userA})`,
-          )
-          .limit(1);
-        if (error) return true; // fail closed
-        return ((data as any[]) ?? []).length > 0;
+        // census-telegraph T220: the shared two-way read, not a bespoke one —
+        // lib/exclusionSet.ts readPairExclusion is the same `.or()` pair filter
+        // with `.limit(1)` (a mutual block is two rows), and it reports an
+        // unreadable block state as `ok: false` rather than as "no rows".
+        // isExcluded answers TRUE for an unreadable set, so the gateway still
+        // fails closed; true for a block either way, false only for a read
+        // that found none.
+        const pair = await readPairExclusion(sc, userA, userB);
+        return isExcluded(pair, userB);
       } catch {
         return true; // fail closed
       }
