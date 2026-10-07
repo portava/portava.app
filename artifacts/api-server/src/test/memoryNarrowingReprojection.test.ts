@@ -389,3 +389,16 @@ describe("VERIFY-H2 H2-4 and the page bound", () => {
     assert.equal(reg(store, "PublicMemoryProjection", PUBLIC_SCOPE).revocation_state, "ACTIVE");
   });
 });
+
+describe("§AL — a shared (crew) build carries a venue id only at the exact / venue rung", () => {
+  it("the crew derivative drops the place id (the registry reads no rung, so none is admitted); the owner's own view keeps it", async () => {
+    const store = tripSeed();
+    for (const m of store.memories) m.place_id = "place-venue-0001";
+    const crew = await rebuildProjection(makeClient(store) as any, "TripMemoryProjection", CREW_SCOPE, NOW);
+    assert.ok(crew.ok);
+    assert.ok(crew.value.rows.length > 0);
+    assert.ok(crew.value.rows.every((r: any) => r.place_id === null), JSON.stringify(crew.value.rows));
+    const own = await rebuildProjection(makeClient(store) as any, "TripMemoryProjection", { ...CREW_SCOPE, viewer_id: OWNER }, NOW);
+    assert.ok(own.ok && own.value.rows.every((r: any) => r.place_id === "place-venue-0001"));
+  });
+});

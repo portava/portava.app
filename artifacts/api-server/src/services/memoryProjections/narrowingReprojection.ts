@@ -119,6 +119,23 @@ export async function reprojectDerivativesAfterNarrowing(
   },
 ): Promise<NarrowingReport> {
   const report: NarrowingReport = { ok: true, carried: 0, reprojected: 0, retained: 0, retainedShared: 0, revokedInstead: 0, unresolved: [], absent: false };
+  // NEVER THROWS. It runs after the owner's decision has committed (PATCH) or
+  // inside a lifecycle step; a throw from a client would turn a committed
+  // privacy change into a 500. A throw is a failure, reported like one.
+  try {
+    return await reproject(client, input, report);
+  } catch (err) {
+    report.ok = false;
+    report.unresolved.push(`re-derivation threw: ${String((err as { message?: unknown })?.message ?? err)}`);
+    return report;
+  }
+}
+
+async function reproject(
+  client: ClientLike,
+  input: { memoryId: string; now: Date; reason: string; mustExclude?: boolean },
+  report: NarrowingReport,
+): Promise<NarrowingReport> {
   const found = await client
     .from(DERIVATIVE_REGISTRY_TABLE)
     .select("id, scope_key, source_memory_ids, revocation_state")

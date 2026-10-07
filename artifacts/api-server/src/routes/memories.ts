@@ -187,7 +187,7 @@ function protectMemoryRow(
   if (ceiling == null) return row; // no constraint from either source → unchanged
   const d = coarsenMemoryLocation(row, ceiling);
   return {
-    ...row,
+    ...row, ...(ceiling === "place" ? {} : { place_id: null, canonical_location_id: null, event_id: null }), // §AL: a place / venue / event id IS a location at venue precision — served to a non-owner only at the exact / venue rung (an unreadable gate, a missing or off-ladder rung, or a gem ceiling coarser than a venue gives none)
     location_city: d.city,
     location_country: d.country,
     location_lat: d.lat, // coarse grid-snapped — never the exact stored coord
@@ -3041,7 +3041,7 @@ router.get("/trips/:tripId/memories/recap", async (req, res) => {
   const definition = getProjectionDefinition("TripMemoryProjection");
   if (!definition) { sendError(res, "db_error", "Projection definition missing"); return; }
 
-  const sourceRows = readable as unknown as MemorySourceRow[]; const recapControls = await readRecapControls(sc, tripOwnerId, memoryIds); if (recapControls.state === "unreadable") { req.log.error({ tripId }, "trip-recap: memory_resurfacing_preferences unreadable — refusing rather than serving a recap that may carry a Memory its owner kept out of recaps"); sendError(res, "degraded_unavailable", "Could not build the trip recap. Please try again."); return; } // §AK (3671): DO_NOT_INCLUDE_IN_RECAPS / KEEP_PRIVATE_FOREVER; unreadable controls refuse, never an empty recap
+  const sourceRows = (await protectRecapRows(sc, readable, user.id)) as unknown as MemorySourceRow[]; const recapControls = await readRecapControls(sc, tripOwnerId, memoryIds); if (recapControls.state === "unreadable") { req.log.error({ tripId }, "trip-recap: memory_resurfacing_preferences unreadable — refusing rather than serving a recap that may carry a Memory its owner kept out of recaps"); sendError(res, "degraded_unavailable", "Could not build the trip recap. Please try again."); return; } // §AK (3671): DO_NOT_INCLUDE_IN_RECAPS / KEEP_PRIVATE_FOREVER; unreadable controls refuse, never an empty recap
   const built = definition.build({
     scope: { owner_id: tripOwnerId, viewer_id: user.id, trip_id: tripId },
     memories: sourceRows,
@@ -3732,3 +3732,29 @@ import {
 } from "../services/memory/layoverMemory.js";
 
 export default router;
+
+/**
+ * §AL — the trip recap's rows, protected for a non-owner exactly as every other
+ * non-owner read in this file is: the owner's §10 rung and the Hidden-Gem
+ * ceiling coarsen the location, and a place / venue / event id is served only
+ * at the exact / venue rung. The recap read selects no `location_precision`
+ * (MEMORY_SELECT), so with the gate on the rung is read here, by id; a rung that
+ * cannot be read stays missing, which publicationPrecision clamps to 'hidden'.
+ * The owner's own recap is unchanged.
+ */
+async function protectRecapRows(sc: any, rows: any[], viewerId: string): Promise<any[]> {
+  if (rows.every((r) => r.owner_id === viewerId)) return rows;
+  const gate = await readMemoryPrecisionGate(sc);
+  let withRung = rows;
+  if (precisionColumnSelectable(gate)) {
+    const rung = new Map<string, unknown>();
+    for (const batch of chunkIds(rows.map((r) => r.id as string))) {
+      const { data, error } = await sc.from("memories").select("id, location_precision").in("id", batch);
+      if (error) break; // unread ⇒ missing ⇒ 'hidden' for every row (fail closed)
+      for (const r of (data ?? []) as any[]) rung.set(r.id, r.location_precision);
+    }
+    withRung = rows.map((r) => (rung.has(r.id) ? { ...r, location_precision: rung.get(r.id) } : r));
+  }
+  const gemCtx = await loadMemoryGemContext(sc, withRung);
+  return withRung.map((r) => protectMemoryRow(r, gemCtx, viewerId, precisionClampApplies(gate)));
+}

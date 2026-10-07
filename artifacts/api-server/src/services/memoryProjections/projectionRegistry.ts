@@ -327,7 +327,7 @@ const DEFINITIONS: ProjectionDefinition[] = [
         .filter((m) => m.trip_id === tripId && recapAdmits(input, m.id) && sharedAudienceAdmits(input, m)) // §AK: recap controls, fail closed; §AL: a shared (crew) build carries only what the crew may see
         .sort((a, b) => occurredAt(a).localeCompare(occurredAt(b)) || a.id.localeCompare(b.id))
         .map((m) => project({
-          ...m,
+          ...m, place_id: venueIdFor(input, m), // §AL: a shared (crew) build carries a venue id only at the exact / venue rung
           memory_id: m.id,
           occurred_at: occurredAt(m),
           media_count: mediaCount(input, m.id),
@@ -839,4 +839,19 @@ export function sharedAudienceAdmits(input: Pick<ProjectionInput, "scope">, m: M
   if (vis === "only_me" || hidden.includes(viewer)) return false;
   if (vis === "custom") return (m.allowed_user_ids ?? []).includes(viewer);
   return true;
+}
+
+/** Rungs at which a place / venue id may be published (spec §4 / §10). */
+export const VENUE_ID_RUNGS: readonly string[] = ["exact", "venue"];
+
+/**
+ * §AL — a SHARED build (viewer null) carries a Memory's place id only when the
+ * row's own §10 rung is exact or venue. A row that does not carry the rung (the
+ * registry reads no `location_precision`) gives none: fail closed. The owner's
+ * own view, and a named viewer whose caller already protected the row, keep it.
+ */
+export function venueIdFor(input: Pick<ProjectionInput, "scope">, m: MemorySourceRow): string | null {
+  const id = (m.place_id as string | null | undefined) ?? null;
+  if (input.scope.viewer_id != null) return id;
+  return VENUE_ID_RUNGS.includes(String((m as { location_precision?: unknown }).location_precision ?? "")) ? id : null;
 }
