@@ -111,7 +111,7 @@ router.post(
     const sc = client;
 
     // §5.3, applied at the SEND end: you may only share what you can open.
-    const shareable = shareableFor(sc, objectType as TelegraphObjectType, objectId, undefined, req.log);
+    const shareable = shareableFor(sc, objectType as TelegraphObjectType, objectId, undefined, { log: req.log, conversationId: threadId });
     if (!shareable) {
       sendError(res, "invalid_payload", "That object family cannot be shared");
       return;

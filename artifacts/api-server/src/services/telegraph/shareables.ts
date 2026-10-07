@@ -62,6 +62,7 @@ import {
   type TelegraphAction,
   type TelegraphObjectType,
   isTelegraphObjectType,
+  msgTypeOf,
 } from "./vocabulary.js";
 import {
   searchBehaviourFor,
@@ -243,11 +244,22 @@ export interface ShareLog {
   error: (obj: unknown, msg: string) => void;
 }
 
+/**
+ * What a loader knows besides the object: where to log, and WHICH THREAD the
+ * card is being resolved for. The thread is what D-LAYOVER-SHARE-CREW keys on
+ * (see `loadLayoverPlan`); a caller that resolves outside a thread passes none,
+ * and a loader that needs one refuses.
+ */
+export interface ShareLoadContext {
+  log?: ShareLog;
+  conversationId?: string | null;
+}
+
 type Loader = (
   client: SupabaseClient,
   objectId: string,
   viewerId: string,
-  log?: ShareLog,
+  ctx: ShareLoadContext,
 ) => Promise<Loaded>;
 
 /**
@@ -779,7 +791,7 @@ const loadBooking: Loader = async (client, id, viewerId) => {
  * reason `loadMemory` states: the other three need a relationship read owned by
  * another surface, and approximating it here is the backdoor §5.3 forbids.
  */
-const loadHighlight: Loader = async (client, id, viewerId, log) => {
+const loadHighlight: Loader = async (client, id, viewerId, ctx) => {
   const { data, error } = await client
     .from("highlights")
     .select(
@@ -809,7 +821,7 @@ const loadHighlight: Loader = async (client, id, viewerId, log) => {
   // just below, which already tells an unreadable control table (`unknown`)
   // from a real refusal (`private`); every other rung answers here.
   if (!mine) {
-    const access = await decideHighlightViewAccess(client, viewerId, id, log);
+    const access = await decideHighlightViewAccess(client, viewerId, id, ctx.log);
     if (!access.ok && access.reason !== "withheld") {
       const state =
         access.reason === "unreadable" || access.reason === "blocks_unreadable" ? "unknown"
@@ -1079,11 +1091,21 @@ const loadReservation: Loader = async (client, id, viewerId) => {
  *
  * `layover_sessions` is the plan and `layover_plan_stops` hangs off it. A
  * layover is over when it is over: `expired` and `completed` are not states a
- * card should keep offering, and `cancelled` is a deletion. Only the traveller
- * and the accepted members of the trip the layover belongs to may see one; a
- * session with no `trip_id` is private to its owner, full stop.
+ * card should keep offering, and `cancelled` is a deletion.
+ *
+ * WHO MAY SEE ONE — lead ruling D-LAYOVER-SHARE-CREW (2026-10-07). The card
+ * resolves for its traveller, and for anyone else ONLY when the traveller has
+ * shared that layover into the thread the card is being read in: the thread
+ * holds a live PORTAVA_OBJECT message, authored by the traveller, that
+ * references this layover id. Trip-crew membership alone never grants it.
+ * This loader used to grant every accepted member of the session's trip,
+ * while every layover session read route (and the table's RLS) is owner-only,
+ * so a trip-mate could resolve another member's layover city and times by id
+ * through any thread. A shared card stays readable to the people it was shared
+ * with; the by-id lookup is closed for everyone else. A block still refuses,
+ * and an unreadable message read is `unknown`.
  */
-const loadLayoverPlan: Loader = async (client, id, viewerId) => {
+const loadLayoverPlan: Loader = async (client, id, viewerId, ctx) => {
   const { data, error } = await client
     .from("layover_sessions")
     .select(
@@ -1098,20 +1120,11 @@ const loadLayoverPlan: Loader = async (client, id, viewerId) => {
     return { state: UNAVAILABLE("deleted"), projection: null };
   }
   if (r.user_id !== viewerId) {
-    if (!r.trip_id) return { state: UNAVAILABLE("private"), projection: null };
-    // As for a reservation: the grant is trip crew, and a block outranks crew.
     const block = await readBlockBetween(client, viewerId, r.user_id);
     if (block !== "clear") return refusedByBlock(block);
-    const { data: member, error: mErr } = await client
-      .from("trip_members")
-      .select("user_id, status")
-      .eq("trip_id", r.trip_id)
-      .eq("user_id", viewerId)
-      .maybeSingle();
-    if (mErr) return { state: UNAVAILABLE("unknown"), projection: null };
-    if (!member || (member as Row).status !== "accepted") {
-      return { state: UNAVAILABLE("unauthorized"), projection: null };
-    }
+    const shared = await ownerSharedIntoThread(client, ctx.conversationId ?? null, r.user_id, "LAYOVER_PLAN", id);
+    if (shared === "unreadable") return { state: UNAVAILABLE("unknown"), projection: null };
+    if (shared !== "shared") return { state: UNAVAILABLE("private"), projection: null };
   }
   const where = (r.manual_city as string) ?? (r.manual_airport_name as string) ?? (r.manual_iata as string) ?? null;
   return {
@@ -1126,6 +1139,41 @@ const loadLayoverPlan: Loader = async (client, id, viewerId) => {
     ),
   };
 };
+
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Has `ownerId` shared this object into `conversationId`? A live (not deleted)
+ * PORTAVA_OBJECT message in that thread, sent by the owner, whose parsed body
+ * names exactly this (type, id). The `like` narrows the read; the parse
+ * decides. No thread, or an id that is not a UUID, is "not shared" — never a
+ * guess. A failed read is `unreadable`, never "not shared" and never "shared".
+ */
+async function ownerSharedIntoThread(
+  client: SupabaseClient,
+  conversationId: string | null,
+  ownerId: unknown,
+  objectType: TelegraphObjectType,
+  objectId: string,
+): Promise<"shared" | "not_shared" | "unreadable"> {
+  if (!conversationId || typeof ownerId !== "string" || !UUID_SHAPE.test(objectId)) return "not_shared";
+  const { data, error } = await client
+    .from("messages")
+    .select("id, body")
+    .eq("thread_id", conversationId)
+    .eq("sender_id", ownerId)
+    .eq("msg_type", msgTypeOf("PORTAVA_OBJECT"))
+    .eq("subtype", objectType.toLowerCase())
+    .is("deleted_at", null)
+    .like("body", `%${objectId}%`)
+    .limit(20);
+  if (error) return "unreadable";
+  for (const m of (data ?? []) as Row[]) {
+    const body = parsePortavaObjectBody(m.body);
+    if (body && body.objectType === objectType && body.objectId === objectId) return "shared";
+  }
+  return "not_shared";
+}
 
 /**
  * Media — §5's fifth family, and the one that had no loader at all.
@@ -1270,13 +1318,13 @@ export function shareableFor(
   objectType: TelegraphObjectType,
   objectId: string,
   conversationActions: TelegraphAction[] = shareActionsFor(objectType),
-  log?: ShareLog,
+  ctx: ShareLoadContext = {},
 ): TelegraphShareable | null {
   const loader = LOADERS[objectType];
   if (!loader) return null;
   let cache: Promise<Loaded> | null = null;
   const load = (viewerId: string) => {
-    if (!cache) cache = loader(client, objectId, viewerId, log);
+    if (!cache) cache = loader(client, objectId, viewerId, ctx);
     return cache;
   };
   return {
@@ -1360,7 +1408,7 @@ export async function resolveShareProjections(
   const out: ResolvedShare[] = [];
   for (const ref of refs) {
     const deepLink = deepLinkFor(ref.objectType, ref.objectId);
-    const shareable = shareableFor(client, ref.objectType, ref.objectId, undefined, log);
+    const shareable = shareableFor(client, ref.objectType, ref.objectId, undefined, { log, conversationId });
     if (!shareable) {
       out.push({
         objectType: ref.objectType,

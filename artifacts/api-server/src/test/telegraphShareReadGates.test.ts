@@ -38,7 +38,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { resolveShareProjections } from "../services/telegraph/shareables.js";
+import { buildPortavaObjectBody, resolveShareProjections } from "../services/telegraph/shareables.js";
 import type { TelegraphObjectType } from "../services/telegraph/vocabulary.js";
 
 const ALICE = "aaaaaaaa-0000-4000-8000-000000000001"; // the viewer
@@ -75,6 +75,7 @@ interface Builder extends PromiseLike<Result> {
   is(c: string, v: unknown): Builder;
   not(c: string, op: string, v: unknown): Builder;
   or(expr: string): Builder;
+  like(c: string, pattern: string): Builder;
   order(c?: string, o?: unknown): Builder;
   limit(n: number): Builder;
   maybeSingle(): Promise<Result>;
@@ -131,8 +132,24 @@ function tables(): Record<string, Row[]> {
     ],
     route_plan_members: [{ route_plan_id: ROUTE_NO_TRIP, user_id: ALICE }, { route_plan_id: ROUTE_ON_TRIP, user_id: ALICE }],
     trip_reservations: [{ id: RES, trip_id: TRIP_PUBLIC, user_id: BOB, type: "stay", title: "Riverside guesthouse", starts_at: null, ends_at: null, location_name: "Hue", status: "confirmed", updated_at: "2026-05-01T00:00:00.000Z" }],
+    messages: [],
     layover_sessions: [{ id: LAY, user_id: BOB, trip_id: TRIP_PUBLIC, manual_airport_name: "Changi", manual_city: "Singapore", manual_iata: "SIN", arrival_time: "2026-11-01T02:00:00.000Z", departure_time: "2026-11-01T11:00:00.000Z", status: "active", updated_at: "2026-05-01T00:00:00.000Z" }],
   };
+}
+
+/** A live PORTAVA_OBJECT message in `thread`, sent by `sender`, referencing `objectId`. */
+function shareMessage(sender: string, objectType: TelegraphObjectType, objectId: string, thread = THREAD, over: Row = {}): Row {
+  return {
+    id: `m-${sender.slice(0, 4)}-${objectId.slice(0, 4)}-${thread.slice(-2)}`,
+    thread_id: thread, sender_id: sender, msg_type: "portava_object", subtype: objectType.toLowerCase(),
+    deleted_at: null, body: JSON.stringify(buildPortavaObjectBody(objectType, objectId, null)), ...over,
+  };
+}
+
+/** BOB has shared his layover into THREAD. */
+function withLayoverShared(db: Record<string, Row[]>): Record<string, Row[]> {
+  db.messages = [shareMessage(BOB, "LAYOVER_PLAN", LAY)];
+  return db;
 }
 
 /** ALICE as an accepted member of BOB's public trip. */
@@ -192,6 +209,13 @@ function makeClient(db: Record<string, Row[]>, failing: ReadonlySet<string> = ne
         return b;
       },
       or(expr) { filters.push(orFilter(expr)); return b; },
+      like(c, pattern) {
+        // Only the `%needle%` shape the share loaders send.
+        if (!/^%[^%_]*%$/.test(pattern)) throw new Error(`fake: like(${pattern}) is not modelled`);
+        const needle = pattern.slice(1, -1);
+        filters.push((r) => typeof r[c] === "string" && (r[c] as string).includes(needle));
+        return b;
+      },
       order() { return b; },
       limit(n) { limitN = n; return b; },
       maybeSingle() { return run(true); },
@@ -309,7 +333,7 @@ const BLOCK_GATED: Array<[TelegraphObjectType, string, string, () => Record<stri
   ["TRIP", TRIP_PUBLIC, "Hue in winter", tables],
   ["POST", POST_PUBLISHED, "A bar with no sign", tables],
   ["RESERVATION", RES, "Riverside guesthouse", () => withCrew(tables())],
-  ["LAYOVER_PLAN", LAY, "Layover in Singapore", () => withCrew(tables())],
+  ["LAYOVER_PLAN", LAY, "Layover in Singapore", () => withLayoverShared(tables())],
 ];
 
 for (const [family, id, title, start] of BLOCK_GATED) {
@@ -516,5 +540,73 @@ describe("Telegraph share card — the Highlight verdict logs through the route'
       lines.some((l) => /UNREADABLE/.test(l.msg) && JSON.stringify(l.obj).includes("resolveViewAccess")),
       `the single-Highlight verdict's withholding reached the log: ${JSON.stringify(lines)}`,
     );
+  });
+});
+
+describe("Telegraph share card — LAYOVER_PLAN resolves only where its traveller shared it (lead ruling D-LAYOVER-SHARE-CREW)", () => {
+  const OTHER_THREAD = "dddddddd-0000-4000-8000-0000000000ee";
+
+  it("its OWN traveller resolves it, shared or not", async () => {
+    const r = await card("LAYOVER_PLAN", LAY, tables(), new Set(), BOB);
+    assert.equal(r.available, true);
+    assert.equal(r.projection?.title, "Layover in Singapore");
+  });
+
+  it("a thread member resolves it where the traveller shared it into THIS thread (intended case)", async () => {
+    const r = await card("LAYOVER_PLAN", LAY, withLayoverShared(tables()));
+    assert.equal(r.available, true);
+    assert.equal(r.projection?.title, "Layover in Singapore");
+  });
+
+  it("an accepted TRIP-MATE in a thread with no such share is refused — crew alone never grants it", async () => {
+    const r = await card("LAYOVER_PLAN", LAY, withCrew(tables()));
+    assert.equal(r.available, false);
+    assert.equal(r.available === false && r.reason, "private");
+    assert.equal(r.projection, null);
+    assert.ok(!JSON.stringify(r).includes("Singapore"));
+  });
+
+  it("a non-member of the trip with no share is refused", async () => {
+    const r = await card("LAYOVER_PLAN", LAY);
+    assert.equal(r.available, false);
+    assert.equal(r.available === false && r.reason, "private");
+  });
+
+  it("the traveller's share in ANOTHER thread does not open it here", async () => {
+    const db = withCrew(tables());
+    db.messages = [shareMessage(BOB, "LAYOVER_PLAN", LAY, OTHER_THREAD)];
+    const r = await card("LAYOVER_PLAN", LAY, db);
+    assert.equal(r.available, false);
+  });
+
+  it("a share sent by someone OTHER than the traveller does not open it", async () => {
+    const db = withCrew(tables());
+    db.messages = [shareMessage(ALICE, "LAYOVER_PLAN", LAY)];
+    const r = await card("LAYOVER_PLAN", LAY, db);
+    assert.equal(r.available, false);
+  });
+
+  it("a DELETED share message does not open it", async () => {
+    const db = tables();
+    db.messages = [shareMessage(BOB, "LAYOVER_PLAN", LAY, THREAD, { deleted_at: "2026-10-01T00:00:00.000Z" })];
+    const r = await card("LAYOVER_PLAN", LAY, db);
+    assert.equal(r.available, false);
+  });
+
+  it("the traveller's share of a DIFFERENT layover does not open this one", async () => {
+    const db = tables();
+    db.messages = [shareMessage(BOB, "LAYOVER_PLAN", "1a110000-0000-4000-8000-0000000000ff", THREAD, {
+      // the body names the other layover; the id of this one appears only in a caption
+      body: JSON.stringify(buildPortavaObjectBody("LAYOVER_PLAN", "1a110000-0000-4000-8000-0000000000ff", `not ${LAY}`)),
+    })];
+    const r = await card("LAYOVER_PLAN", LAY, db);
+    assert.equal(r.available, false, "the parsed reference decides, not a substring");
+  });
+
+  it("an UNREADABLE messages read is unknown, never a card", async () => {
+    const r = await card("LAYOVER_PLAN", LAY, withLayoverShared(tables()), new Set(["messages"]));
+    assert.equal(r.available, false);
+    assert.equal(r.available === false && r.reason, "unknown");
+    assert.equal(r.projection, null);
   });
 });
