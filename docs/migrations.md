@@ -4180,3 +4180,24 @@ until you do.
 targets portava-ci) still replays `>= "2100"` in plain byte order. It would run 2136, 2137 and 2140
 exactly as the harness did before these entries; it was left untouched here, and is the third replayer
 that should read `resolve-order.mjs`.
+
+## 2026-10-07 — `3670_memory_deletion_dead_letters.sql`, written and NOT applied anywhere (lane H)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3670_memory_deletion_dead_letters.sql` | **not applied** | **not applied** |
+
+**What it adds (Highlights/Memories spec §21, census H193).** One table, `memory_deletion_dead_letters`:
+one row per Memory whose §21 deletion lifecycle (`services/memory/memoryDeletionLifecycle.ts`) exhausted a
+step's retries — the failed steps, the furthest state reached, the steps' failure text, the lifecycle
+version, a repeat count and first/last failure times, and `resolved_at`, stamped by a later run that
+completes. No Memory content. RLS on with no policy; anon and authenticated get nothing; service_role gets
+SELECT, INSERT, UPDATE and NOT DELETE (a resolved letter is stamped, never removed). `memory_id` cascades from
+`public.memories` and `owner_id` from `auth.users`, so account deletion erases every letter without a service
+step (`deletionDispositions.ERASED_BY_CASCADE`).
+
+**Safe to leave unapplied.** The writer reads 42P01 / PGRST205, reports `deadLetterDurable: false` with that
+reason, and the deletion itself is unaffected — the behaviour before this file. No flag, function or trigger.
+
+**Rollback:** `db/rollback/2026-10-07-3670-memory-deletion-dead-letters-rollback.sql` — refuses while any letter
+is still open (an unfinished deletion), otherwise drops the table and its ledger row.

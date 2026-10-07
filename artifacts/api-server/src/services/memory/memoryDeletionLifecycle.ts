@@ -44,13 +44,13 @@
  * that is actually published. So every step is attempted, `reachedState` is the
  * §21 answer, and `completed` is false whenever any step failed.
  *
- * ── THE DEAD LETTER IS NOT DURABLE, AND THE REPORT SAYS SO ────────────────
+ * ── THE DEAD LETTER IS DURABLE ONLY WHEN IT WAS WRITTEN, AND SAYS WHICH ────
  *
  * §21 asks for dead-lettering "on repeated downstream failure". A dead letter
- * that only exists in a log line is not a queue: nothing retries it later and
- * nothing counts it. There is no table for one and this lane may not add a
- * migration, so `deadLetterDurable` is a hard `false` on every report. H193
- * stays W on that half, and this file is the reason it is only that half.
+ * that only exists in a log line is not a queue: nothing finds it again and
+ * nothing counts it. Migration 3670 adds memory_deletion_dead_letters; a
+ * dead-lettered report is written there, and `deadLetterDurable` is true only
+ * when that write was confirmed. Absent table (3670 unapplied) ⇒ false + why.
  */
 
 import { revokeDerivativesForMemory } from "../memoryProjections/derivativeRegistry.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; import { eraseEvidenceForMemory } from "./memoryEvidenceErasure.js"; // one line: cited by line
@@ -101,11 +101,11 @@ export interface DeletionReport {
   /** At least one step exhausted its retries. */
   deadLettered: boolean;
   /**
-   * ALWAYS false. There is no dead-letter table and this lane may not add one;
-   * saying so on every report is the difference between a known gap and a
-   * silent one.
+   * True ONLY when this report's dead letter was confirmed written to
+   * memory_deletion_dead_letters (3670). `deadLetterDetail` says why not when
+   * it is false; it is empty when nothing needed recording.
    */
-  deadLetterDurable: false;
+  deadLetterDurable: boolean; deadLetterDetail: string;
   version: string;
 }
 
@@ -297,16 +297,98 @@ export async function runMemoryDeletionLifecycle(
     completed,
     deadLettered,
     deadLetterDurable: false,
+    deadLetterDetail: "",
     version: MEMORY_DELETION_LIFECYCLE_VERSION,
   };
+
+  // The durable half (3670). A dead letter is WRITTEN; a completed run resolves
+  // any letter an earlier run left open. Neither can turn the deletion itself
+  // into a failure: the canonical row is already deleted by the caller.
+  if (deadLettered) {
+    const written = await recordDeadLetter(sc, report, now);
+    report.deadLetterDurable = written.durable;
+    report.deadLetterDetail = written.detail;
+  } else if (completed) {
+    const resolved = await resolveDeadLetter(sc, report.memoryId, report.ownerId, now);
+    if (!resolved.ok) opts.log?.warn?.({ memoryId: report.memoryId, detail: resolved.detail }, "memories: an open §21 dead letter could not be marked resolved");
+  }
 
   if (!completed) {
     opts.log?.error(
       { report },
       deadLettered
-        ? "memories: §21 deletion lifecycle DEAD-LETTERED — and the dead letter is a log line, not a queue"
+        ? report.deadLetterDurable
+          ? "memories: §21 deletion lifecycle DEAD-LETTERED — recorded in memory_deletion_dead_letters"
+          : "memories: §21 deletion lifecycle DEAD-LETTERED — and the dead letter could NOT be recorded; this log line is the only record"
         : "memories: §21 deletion lifecycle did not complete",
     );
   }
   return report;
+}
+
+/** §21's dead letter (migration 3670). One row per Memory. */
+export const DEAD_LETTER_TABLE = "memory_deletion_dead_letters";
+const DEAD_LETTER_DETAIL_MAX = 4000;
+
+/**
+ * Write (or bump) this Memory's dead letter. Durable only when the write is
+ * CONFIRMED by a returned row. Never throws: a dead letter that cannot be
+ * written must not turn a deletion that already happened into an error.
+ */
+async function recordDeadLetter(sc: any, report: DeletionReport, now: Date): Promise<{ durable: boolean; detail: string }> {
+  const failed = report.steps.filter((s) => s.outcome === "failed");
+  const detail = failed.map((s) => `${s.step} ×${s.attempts}: ${s.detail}`).join(" | ").slice(0, DEAD_LETTER_DETAIL_MAX);
+  try {
+    const { data: prior, error: priorErr } = await sc
+      .from("memory_deletion_dead_letters")
+      .select("letters, first_failed_at")
+      .eq("memory_id", report.memoryId)
+      .maybeSingle();
+    if (priorErr) {
+      return { durable: false, detail: isTableAbsentError(priorErr) ? `${DEAD_LETTER_TABLE} is not deployed (3670 unapplied): ${String(priorErr.message ?? "")}` : `${DEAD_LETTER_TABLE} unreadable: ${String(priorErr.message ?? "")}` };
+    }
+    const nowIso = now.toISOString();
+    const row = {
+      memory_id: report.memoryId,
+      owner_id: report.ownerId,
+      failed_steps: failed.map((s) => s.step),
+      reached_state: report.reachedState,
+      detail,
+      lifecycle_version: report.version,
+      letters: (typeof (prior as any)?.letters === "number" ? (prior as any).letters : 0) + 1,
+      first_failed_at: (prior as any)?.first_failed_at ?? nowIso,
+      last_failed_at: nowIso,
+      resolved_at: null,
+    };
+    const { data, error } = await sc
+      .from("memory_deletion_dead_letters")
+      .upsert(row, { onConflict: "memory_id" })
+      .select("memory_id");
+    if (error) return { durable: false, detail: `${DEAD_LETTER_TABLE} write failed: ${String(error.message ?? "")}` };
+    if (!Array.isArray(data) || data.length !== 1) return { durable: false, detail: `${DEAD_LETTER_TABLE} write unconfirmed: no row returned` };
+    return { durable: true, detail: "" };
+  } catch (err) {
+    return { durable: false, detail: `${DEAD_LETTER_TABLE} write threw: ${String((err as any)?.message ?? err)}` };
+  }
+}
+
+/**
+ * A run that completes resolves this Memory's open letter, if one exists.
+ * An absent table has no letter to resolve (true); any other failure is
+ * reported, and leaves the letter open — an over-report, never an under-report.
+ */
+async function resolveDeadLetter(sc: any, memoryId: string, ownerId: string, now: Date): Promise<{ ok: boolean; detail: string }> {
+  try {
+    const { error } = await sc
+      .from("memory_deletion_dead_letters")
+      .update({ resolved_at: now.toISOString() })
+      .eq("memory_id", memoryId)
+      .eq("owner_id", ownerId)
+      .is("resolved_at", null)
+      .select("memory_id");
+    if (!error || isTableAbsentError(error)) return { ok: true, detail: "" };
+    return { ok: false, detail: String(error.message ?? "update failed") };
+  } catch (err) {
+    return { ok: false, detail: String((err as any)?.message ?? err) };
+  }
 }

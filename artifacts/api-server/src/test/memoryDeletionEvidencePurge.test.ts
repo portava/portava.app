@@ -49,6 +49,11 @@ const COLUMNS_2320: Record<string, ReadonlySet<string>> = {
     "id", "episode_id", "user_id", "truth_level", "source_class", "source_table", "source_id",
     "source_ref", "observed_at", "recorded_at", "weight",
   ]),
+  // 3670, verbatim from its CREATE TABLE.
+  memory_deletion_dead_letters: new Set([
+    "memory_id", "owner_id", "failed_steps", "reached_state", "detail", "lifecycle_version",
+    "letters", "first_failed_at", "last_failed_at", "resolved_at",
+  ]),
 };
 
 const m = (n: number) => `30000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -157,6 +162,13 @@ function makeClient(store: Record<string, any[]>, opts: FakeOpts = {}) {
               return err("duplicate key value violates unique constraint \"memory_evidence_dedupe_idx\"", "23505");
             }
             Object.assign(r, { id: newId(), recorded_at: "2026-10-07T00:00:00.000Z" });
+          } else if (table === "memory_deletion_dead_letters") {
+            // PRIMARY KEY (memory_id): an upsert on it replaces the row, a plain insert is refused.
+            const had = all.find((x) => x.memory_id === r.memory_id);
+            if (had) {
+              if (mode === "upsert" && upsertOpts.onConflict === "memory_id") { Object.assign(had, r); written.push(had); continue; }
+              return err("duplicate key value violates unique constraint \"memory_deletion_dead_letters_pkey\"", "23505");
+            }
           } else {
             if (r.id != null && all.some((x) => x.id === r.id)) return err(`duplicate key value violates unique constraint "${table}_pkey"`, "23505");
             r.id = r.id ?? newId();
@@ -398,5 +410,81 @@ describe("§21 RAW_EVIDENCE_PURGED — partial failure never reopens a deleted M
     assert.equal(app.store.memory_items.filter((i) => i.memory_id === made.id).length, itemsBefore, "no photo is attached to a deleted Memory");
     assert.deepEqual(evidenceOf(app, ep.id), [], "no link to a deleted Memory, and the captures are purged");
     assert.equal(app.store.memory_episodes.find((e) => e.id === ep.id).state, "deleted");
+  });
+});
+
+describe("§21 dead letters are DURABLE (migration 3670) — census H193", () => {
+  const letterOf = (a: App, memoryId: string) => (a.store.memory_deletion_dead_letters ?? []).find((r) => r.memory_id === memoryId);
+  const runAt = (a: App, memoryId: string, iso: string, opts: FakeOpts = {}) =>
+    runMemoryDeletionLifecycle(makeClient(a.store, opts) as any, {
+      memoryId, ownerId: OWNER, actorUserId: OWNER, previous: { visibility: "only_me", state: "published" }, now: new Date(iso),
+    });
+
+  it("a dead-lettered deletion is WRITTEN: the failed step, how far it got, the attempts — and nothing the Memory said", async () => {
+    app = await start();
+    const { memoryId } = await keepEvening(app);
+    _setTestClient(makeClient(app.store, { failWrites: new Set(["memory_evidence:delete"]) }) as any, true);
+    assert.equal((await call(app, "DELETE", `/api/memories/${memoryId}`)).status, 204);
+    const report = lifecycleReport(app);
+    assert.equal(report.deadLettered, true);
+    assert.equal(report.deadLetterDurable, true, report.deadLetterDetail);
+    const letter = letterOf(app, memoryId);
+    assert.ok(letter, "the dead letter is a row, not only a log line");
+    assert.deepEqual([letter.owner_id, letter.failed_steps, letter.reached_state, letter.letters, letter.resolved_at],
+      [OWNER, ["RAW_EVIDENCE_PURGED"], "DERIVATIVES_PURGED", 1, null]);
+    assert.match(letter.detail, /RAW_EVIDENCE_PURGED ×3: memory_evidence purge/);
+    assert.ok(!letter.detail.includes("Fado night"), "a dead letter carries no Memory content");
+    assert.equal(letter.lifecycle_version, report.version);
+  });
+
+  it("a repeat dead letter for the same Memory bumps the count and keeps the first failure's time; a later run that completes resolves it", async () => {
+    app = await start();
+    const { memoryId } = await keepEvening(app);
+    // The route's soft delete, which the lifecycle runs after.
+    app.store.memories.find((x) => x.id === memoryId).state = "deleted";
+    const fail = { failWrites: new Set(["memory_evidence:delete"]) };
+    const first = await runAt(app, memoryId, "2026-10-07T10:00:00.000Z", fail);
+    assert.equal(first.deadLetterDurable, true);
+    const second = await runAt(app, memoryId, "2026-10-07T11:00:00.000Z", fail);
+    assert.equal(second.deadLetterDurable, true);
+    const letter = letterOf(app, memoryId);
+    assert.deepEqual([letter.letters, letter.first_failed_at, letter.last_failed_at, letter.resolved_at],
+      [2, "2026-10-07T10:00:00.000Z", "2026-10-07T11:00:00.000Z", null]);
+    assert.equal(app.store.memory_deletion_dead_letters.length, 1, "one row per Memory");
+
+    const healed = await runAt(app, memoryId, "2026-10-07T12:00:00.000Z");
+    assert.equal(healed.completed, true);
+    assert.equal(letterOf(app, memoryId).resolved_at, "2026-10-07T12:00:00.000Z");
+  });
+
+  it("3670 not applied: the deletion still answers 204, and the report says the dead letter is NOT durable and why", async () => {
+    app = await start();
+    const { memoryId } = await keepEvening(app);
+    _setTestClient(makeClient(app.store, { absent: new Set(["memory_deletion_dead_letters"]), failWrites: new Set(["memory_evidence:delete"]) }) as any, true);
+    assert.equal((await call(app, "DELETE", `/api/memories/${memoryId}`)).status, 204);
+    const report = lifecycleReport(app);
+    assert.deepEqual([report.deadLettered, report.deadLetterDurable], [true, false]);
+    assert.match(report.deadLetterDetail, /memory_deletion_dead_letters is not deployed \(3670 unapplied\)/);
+    assert.ok(app.logs.some((l) => /could NOT be recorded/.test(l.msg)), "the log line says it is the only record");
+  });
+
+  it("a dead-letter write that fails is reported as not durable — never as recorded", async () => {
+    app = await start();
+    const { memoryId } = await keepEvening(app);
+    app.store.memories.find((x) => x.id === memoryId).state = "deleted";
+    const report = await runAt(app, memoryId, "2026-10-07T10:00:00.000Z",
+      { failWrites: new Set(["memory_evidence:delete", "memory_deletion_dead_letters:upsert"]) });
+    assert.deepEqual([report.deadLettered, report.deadLetterDurable], [true, false]);
+    assert.match(report.deadLetterDetail, /write failed/);
+    assert.equal(letterOf(app, memoryId), undefined);
+  });
+
+  it("a deletion that completes writes no dead letter", async () => {
+    app = await start();
+    const { memoryId } = await keepEvening(app);
+    assert.equal((await call(app, "DELETE", `/api/memories/${memoryId}`)).status, 204);
+    const report = lifecycleReport(app);
+    assert.deepEqual([report.completed, report.deadLettered, report.deadLetterDurable, report.deadLetterDetail], [true, false, false, ""]);
+    assert.equal(letterOf(app, memoryId), undefined);
   });
 });

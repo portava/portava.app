@@ -154,12 +154,13 @@ describe("§21 memory deletion lifecycle", () => {
     assert.equal(report.completed, false);
   });
 
-  it("dead-lettering is reported as NOT durable, because no table holds it", async () => {
-    const sc = makeClient(baseState(), { memory_derivative_registry: TRANSIENT, memory_evidence: ABSENT });
+  it("dead-lettering is reported as NOT durable when no table holds it (3670 unapplied)", async () => {
+    const sc = makeClient(baseState(), { memory_derivative_registry: TRANSIENT, memory_evidence: ABSENT, memory_deletion_dead_letters: ABSENT });
     const report = await run(sc);
     assert.equal(report.deadLettered, true);
     assert.equal(report.deadLetterDurable, false,
       "a dead letter nobody stores must not be reported as stored");
+    assert.match(report.deadLetterDetail, /not deployed/);
   });
 
   it("reachedState stops at the first step that did not complete", async () => {
