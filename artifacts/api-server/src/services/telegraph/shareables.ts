@@ -46,7 +46,7 @@ import { canReadMemory } from "../memory/memoryReadPolicy.js";
 import { decideHighlightViewAccess } from "../../routes/highlights.js";
 import { canViewEvent, checkEventEligibility } from "../../routes/events.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
-import { ABSENCE_GUARD_FLAG, absenceDisclosure } from "../../lib/privacy/absenceDisclosure.js";
+import { absenceDisclosure } from "../../lib/privacy/absenceDisclosure.js";
 import { nameVisibilitySet, presentedName, resolveHandle } from "../../lib/publicIdentity.js";
 import { resolveAccountRestriction } from "../../lib/accountStateGate.js";
 import {
@@ -416,7 +416,7 @@ const loadTrip: Loader = async (client, id, viewerId) => {
   let start: string | null = (r.start_date as string | null) ?? null;
   let cover: string | null = (r.cover_url as string | null) ?? null;
   if (!authorized) {
-    const absence = absenceDisclosure(r, Date.now(), await isFlagEnabled(client, ABSENCE_GUARD_FLAG));
+    const absence = absenceDisclosure(r, Date.now(), await isFlagEnabled(client, "trip_absence_guard_enabled"));
     city = r.show_destination_city !== false ? city : null;
     start = !absence.withholdDates && r.show_exact_dates !== false ? start : null;
     cover = r.show_header_publicly === true ? cover : null;
