@@ -10083,7 +10083,7 @@ three walk layers, the request budget's four bounds, the gate's scope and shares
 
 ## §83 Lane C wave 2 (2026-10-05): the Trip Kernel can restore an appealed removal — ADMIN_RESTORE_PARTICIPANT written (3974), NO ROW MOVES BUCKET
 
-Lane B's appeal executor refused, naming this command. `artifacts/api-server/src/migrations/3974_trip_kernel_admin_restore_participant.sql:119#WHEN 'ADMIN_RESTORE_PARTICIPANT' THEN`
+Lane B's appeal executor refused, naming this command. `artifacts/api-server/src/migrations/3974_trip_kernel_admin_restore_participant.sql:122#WHEN 'ADMIN_RESTORE_PARTICIPANT' THEN`
 adds it by transform (2764/2798's method): the admin family; the removal event re-read from the kernel's
 own ledger (this trip, this person, this role, the latest removal); `access` re-decided from the trip as it
 is (retained record only for an ended trip, the membership for a live one); the row inserted in the role at
