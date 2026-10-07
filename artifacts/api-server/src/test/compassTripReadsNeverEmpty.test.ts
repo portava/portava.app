@@ -347,7 +347,7 @@ describe("CT-02 A — an unreadable autopilot settings row is never a GRANT", ()
     assert.deepEqual(r.issues, []);
     assert.ok(r.unreadSources.includes("trip_plan_items"),
       "zero issues over an unread plan must be labelled, or it reads as 'nothing is wrong'");
-    const read = await fetchPlanItems(sc as any, TRIP);
+    const read = await fetchPlanItems(sc as any, TRIP, "viewer-of-the-trip");
     assert.equal(read.status, "unread");
   });
 });

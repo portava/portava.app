@@ -46,6 +46,7 @@ import { getFeedShares, getCreatorCaps } from "../services/ranking/rankingConfig
 import { isFlagEnabled } from "../lib/featureFlags.js";
 import { buildPlaceAffinities } from "../services/ranking/MediaFeedRankingService.js";
 import { logger } from "../lib/logger.js";
+import { getRestrictionState } from "../services/trust/TrustRestrictionService.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -118,6 +119,68 @@ export interface FeedBuilderTestOverrides extends PipelineTestOverrides {
   placeAffinities?:   Record<string, number>;
   /** Pre-loaded author cooldown set — skip DB load in tests */
   cooldownSet?:       Set<string>;
+  /** Authors whose boost lift is withheld (D-24c) — skips the restriction reads in tests */
+  boostWithheld?:     Set<string>;
+}
+
+/**
+ * Lead ruling D-24c (2026-10-06): "While a messaging restriction is active, the
+ * person's posts get no boost lift. Their stored boost preference is kept, and
+ * the lift comes back when the restriction ends. If the restriction state cannot
+ * be read, apply no boost: this is fail-closed for reach amplification, and it
+ * refuses nothing the person does."
+ *
+ * Returns the authors (of those given) whose lift is withheld. Read-time only —
+ * `boost_visibility_enabled` is never written here, so the preference survives
+ * the restriction. Reads go through lane B's enforcement seam
+ * (`getRestrictionState`, one per author, in parallel — there is no batch read
+ * and route code must not query `trust_restrictions` directly). Withheld: an
+ * active messaging restriction, EITHER degraded shape (fail_closed, or fail_open
+ * whose can-flags all read true but nobody read the table), a throw, or no
+ * client at all. Only authors who would get a positive lift are passed in, so
+ * no restriction is read for anyone the boost would not touch.
+ */
+export async function loadBoostLiftWithheld(
+  db: SupabaseClient | null | undefined,
+  authorIds: readonly string[],
+): Promise<Set<string>> {
+  const withheld = new Set<string>();
+  if (authorIds.length === 0) return withheld;
+  if (!db) { for (const id of authorIds) withheld.add(id); return withheld; }
+  await Promise.all(authorIds.map(async (id) => {
+    try {
+      const state = await getRestrictionState(db, id);
+      if (state.degraded || !state.canMessage) withheld.add(id);
+    } catch {
+      withheld.add(id);
+    }
+  }));
+  return withheld;
+}
+
+/** Apply the active-user boosts, minus every lift D-24c withholds, and re-sort. */
+async function applyAuthorBoosts(
+  db: SupabaseClient | null | undefined,
+  results: PipelineResult[],
+  authorScores: Map<string, ActiveUserScoreResult>,
+  overrideWithheld: Set<string> | undefined,
+): Promise<PipelineResult[]> {
+  const lift = new Map<string, number>();
+  for (const r of results) {
+    const a = r.item.authorId;
+    if (!a || lift.has(a)) continue;
+    lift.set(a, computeItemVisibilityBoost(authorScores.get(a) ?? null));
+  }
+  const candidates = [...lift].filter(([, b]) => b > 0).map(([a]) => a);
+  const withheld = overrideWithheld ?? await loadBoostLiftWithheld(db, candidates);
+  const boosted: PipelineResult[] = results.map((r) => {
+    if (!r.item.authorId) return r;
+    const boost = withheld.has(r.item.authorId) ? 0 : (lift.get(r.item.authorId) ?? 0);
+    if (boost <= 0) return r;
+    return { ...r, finalScore: r.finalScore + boost, item: { ...r.item, activeVisibilityBoost: boost } };
+  });
+  boosted.sort((a, b) => b.finalScore - a.finalScore);
+  return boosted;
 }
 
 // ── Explanation key generation ────────────────────────────────────────────────
@@ -360,19 +423,8 @@ async function runFeedPipeline(
     );
   }
 
-  // Apply boosts and re-sort
-  const boosted: PipelineResult[] = results.map((r) => {
-    if (!r.item.authorId) return r;
-    const authorScore = authorScores.get(r.item.authorId!);
-    const boost       = computeItemVisibilityBoost(authorScore ?? null);
-    if (boost <= 0) return r;
-    return {
-      ...r,
-      finalScore: r.finalScore + boost,
-      item: { ...r.item, activeVisibilityBoost: boost },
-    };
-  });
-  boosted.sort((a, b) => b.finalScore - a.finalScore);
+  // Apply boosts (minus any lift D-24c withholds) and re-sort
+  const boosted: PipelineResult[] = await applyAuthorBoosts(db, results, authorScores, _overrides.boostWithheld);
 
   // ── DiscoveryRankingService additional boost pass ─────────────────────────
   // Applies activity boost, new-contributor boost, underexposure boost, and
@@ -600,14 +652,7 @@ export async function rankItemsForDiscovery(
       }),
     );
   }
-  const boosted: PipelineResult[] = results.map((r) => {
-    if (!r.item.authorId) return r;
-    const score = authorScores.get(r.item.authorId!);
-    const boost = computeItemVisibilityBoost(score ?? null);
-    if (boost <= 0) return r;
-    return { ...r, finalScore: r.finalScore + boost, item: { ...r.item, activeVisibilityBoost: boost } };
-  });
-  boosted.sort((a, b) => b.finalScore - a.finalScore);
+  const boosted: PipelineResult[] = await applyAuthorBoosts(db, results, authorScores, _overrides.boostWithheld);
 
   // Fair exposure
   let finalPool = boosted;

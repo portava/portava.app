@@ -44,6 +44,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CompassItem, CompassProfile } from "./types.js";
 import { stripCoordinateFields, wrapUgc, buildStructuredCompassContext } from "./CompassStructuredContext.js";
 import { proposalContractPayload } from "../domain/trips/contracts/TripProposalContract.js";
+import { checkCompassActionRestriction, compassRestrictionToolInfo } from "./CompassRestrictionGate.js";
 import { isAcceptedTripMember, canEditPlan, TripAccessUnavailableError } from "../lib/http.js";
 import { buildTripCompassProjection } from "../domain/trips/projections/TripCompassProjection.js";
 import { resolveCurrentTrip, resolveUserTrips, TOOL_TRIP_STATUSES, isWellFormedTripId, MALFORMED_TRIP_ID_INFO } from "./CompassCurrentTrip.js";
@@ -144,6 +145,7 @@ import {
   MEMORY_COMPASS_PROMPT_RULES,
   executeMemoryCompassTool,
 } from "./MemoryCompassTools.js";
+import { PLAN_ITEM_PRIVACY_COLUMNS, WITHHELD_PLAN_TITLE, planItemAccessFor, readPlanItemPrivacy, withholdPrivatePlanItems } from "./planItemAccess.js";
 
 /**
  * The number of tools the file header states, as a number this process can
@@ -853,7 +855,7 @@ export async function toolGetCurrentTrip(sc: SupabaseClient, userId: string, tri
     // so `sourceTripVersion` described a row nobody had compared it to. The
     // projection's own summary is now the one trip row, and TRIP_NOT_FOUND is
     // its answer to "no such trip" instead of a second lookup's empty result.
-    return projectCurrentTrip(sc, tripId, null);
+    return projectCurrentTrip(sc, tripId, null, userId);
   }
   // Trips the user owns or is an accepted member of, active or upcoming.
   //
@@ -879,7 +881,7 @@ export async function toolGetCurrentTrip(sc: SupabaseClient, userId: string, tri
     id: t.id, title: t.title, destination_city: t.destinationCity,
     destination_country: t.destinationCountry, start_date: t.startDate,
     end_date: t.endDate, status: t.status,
-  });
+  }, userId);
 }
 
 /** The projection's trip summary on the wire shape this tool has always used. */
@@ -904,7 +906,7 @@ function tripSummaryRow(t: { id: string; title: string | null; destinationCity: 
  * passes null, so a projection it cannot build is answered as no trip at all
  * rather than as a trip with an empty plan.
  */
-async function projectCurrentTrip(sc: SupabaseClient, tripId: string, fallback: any | null): Promise<unknown> {
+async function projectCurrentTrip(sc: SupabaseClient, tripId: string, fallback: any | null, viewerId: string): Promise<unknown> {
   // §19.1: the plan comes from the projection, accepted or refused by the one
   // consumer rule. A refused projection is SAID to be refused — the old read
   // handed the assistant an empty plan when the table could not be read.
@@ -921,10 +923,17 @@ async function projectCurrentTrip(sc: SupabaseClient, tripId: string, fallback: 
   }
   const p = built.projection;
   const trip = tripSummaryRow(p.trip);
+  // OD-TRIP-3 (compass/planItemAccess.ts): the shared projection does not carry
+  // the two privacy columns on this tree, so they are read by id; an item that
+  // cannot be proven public is another member's private item and keeps only its
+  // slot. An unreadable privacy read withholds every such item.
+  const privacy = p.planItems.status === "ok" && p.planItems.items.length > 0 ? await readPlanItemPrivacy(sc, tripId) : new Map();
+  const access = await planItemAccessFor(sc, tripId, viewerId);
   const planItems = p.planItems.status === "ok"
-    ? p.planItems.items.map((i) => ({
-        title: wrapUgc(String(i.title ?? "")), category: i.category, day_date: i.dayDate, status: i.status,
-      }))
+    ? p.planItems.items.map((i) => {
+        const [shown] = withholdPrivatePlanItems([{ id: i.id, title: i.title, ...(privacy?.get(i.id) ?? {}) }], access);
+        return { title: wrapUgc(String(shown!.title ?? "")), category: i.category, day_date: i.dayDate, status: i.status };
+      })
     : [];
   return {
     trip,
@@ -1206,7 +1215,7 @@ async function toolCheckTripConflicts(
   let itemsUnread = false;
   const { data: items, error: itemsErr } = await sc
     .from("trip_plan_items")
-    .select("trip_id, title, day_date")
+    .select(`id, trip_id, title, day_date, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
     .in("trip_id", overlaps.map((t) => t.id))
     .gte("day_date", startDate)
     .lte("day_date", endDate)
@@ -1215,8 +1224,15 @@ async function toolCheckTripConflicts(
   // Unbound before, like the three selection reads above: an unreadable plan
   // became an empty `plannedItems`, which reads as "those days are free".
   if (itemsErr) itemsUnread = true;
-  else for (const i of (items ?? []) as any[]) {
-    conflictItems.push({ tripId: i.trip_id, title: wrapUgc(String(i.title ?? "")), dayDate: i.day_date });
+  else {
+    // OD-TRIP-3: per trip, another member's private item is "Private plan".
+    const accessByTrip = new Map<string, Awaited<ReturnType<typeof planItemAccessFor>>>();
+    for (const t of overlaps) accessByTrip.set(t.id, await planItemAccessFor(sc, t.id, userId));
+    for (const raw of (items ?? []) as any[]) {
+      const access = accessByTrip.get(String(raw.trip_id));
+      const i = access ? withholdPrivatePlanItems([raw], access)[0]! : { ...raw, title: WITHHELD_PLAN_TITLE };
+      conflictItems.push({ tripId: i.trip_id, title: wrapUgc(String(i.title ?? "")), dayDate: i.day_date });
+    }
   }
 
   return {
@@ -1444,6 +1460,18 @@ export async function toolSimulatePlan(sc: SupabaseClient, userId: string, args:
   if (kind !== "add_plan" && !targetId) return { simulation: null, info: "targetId is required for this kind" };
   const loaded = await loadImpactState(sc, t.id);
   if (!loaded.ok) return { simulation: null, info: `Simulation unavailable (${loaded.reason}): ${loaded.message}` };
+  // OD-TRIP-3: the impact state names every plan on the trip; another member's
+  // private plan is "Private plan" before any conflict or explanation is
+  // written from it (the shared loader does not carry the privacy columns on
+  // this tree, so they are read by id; unreadable → every unproven item withheld).
+  {
+    const privacy = loaded.state.plans.length > 0 ? await readPlanItemPrivacy(sc, t.id) : new Map();
+    const access = await planItemAccessFor(sc, t.id, userId);
+    loaded.state.plans = loaded.state.plans.map((pl) => {
+      const [shown] = withholdPrivatePlanItems([{ id: pl.id, title: pl.title, ...(privacy?.get(pl.id) ?? {}) }], access);
+      return shown!.title === pl.title ? pl : { ...pl, title: shown!.title as string | null };
+    });
+  }
   const freedom = await buildTripFreedomProjection(sc, t.id);
   if (!freedom.ok) return { simulation: null, info: `Simulation unavailable (${freedom.reason}): ${freedom.message}` };
   const v = simulateChange({ kind: kind as any, targetId, startsAt: typeof args.startsAt === "string" ? args.startsAt : null, endsAt: typeof args.endsAt === "string" ? args.endsAt : null, title: typeof args.title === "string" ? args.title : null, proposedBy: userId }, loaded.state, freedom.projection.windows, Date.now());
@@ -1467,6 +1495,11 @@ export async function toolCreateProposal(sc: SupabaseClient, userId: string, arg
   if (!change) return { proposal: null, info: "change must be an object" };
   const rule = ["host", "majority", "unanimous", "anyone"].includes(String(args.decisionRule)) ? String(args.decisionRule) : "host";
   if (!(await isKernelFlagEnabled(sc, "trip_kernel_enabled"))) return { proposal: null, info: "Proposals go through the Trip Kernel, which is not enabled for this deployment (trip_kernel_enabled is false). Describe the change to the user instead." };
+  // census-trust TRV2-08 / OD-TRUST-5: a hosting restriction ("You cannot host
+  // group trips") refuses a proposal to a group trip this person hosts, and an
+  // unreadable state refuses retryably (compass/CompassRestrictionGate.ts).
+  const restriction = await checkCompassActionRestriction(sc, userId, t.id, "create_proposal");
+  if (!restriction.allowed) return { proposal: null, info: compassRestrictionToolInfo(restriction) };
   const r = await executeTripCommand(sc, {
     commandId: newCommandId(), tripId: t.id, actorUserId: userId, actorRole: "user",
     idempotencyKey: `compass:proposal:${userId}:${proposalType}:${JSON.stringify(change).slice(0, 120)}`, type: "CREATE_PROPOSAL",
@@ -1516,13 +1549,23 @@ export async function toolReplanDay(sc: SupabaseClient, userId: string, args: Re
   const strs = (v: unknown) => Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
   const r = await computeReplan(sc, t.id, userId, { day: typeof args.day === "string" ? args.day : null, constraints: { lockedPlanIds: strs(args.lockedPlanIds), dropPlanIds: strs(args.dropPlanIds), maxMoves: Number.isInteger(args.maxMoves) ? (args.maxMoves as number) : undefined, preferIndoor: args.preferIndoor === true } });
   if (!r.ok) return { replan: null, info: `Replan unavailable (${r.reason}): ${r.message}` };
+  // A replan writes nothing, so no restriction refuses it. But its reply must
+  // not point the model at create_proposal when the same shared decision would
+  // refuse that (TRV2-08; lead ruling D-24 — one rule for every door).
+  let proposalsInfo: string | null = null;
+  if (r.diff.proposals.length > 0) {
+    const gate = await checkCompassActionRestriction(sc, userId, t.id, "create_proposal");
+    proposalsInfo = gate.allowed
+      ? "The shared mutations are proposals: use create_proposal for each one the user wants to put to the crew."
+      : `The shared mutations would be proposals to the crew, and none can be made for this person now. ${compassRestrictionToolInfo(gate)}`;
+  }
   return {
     replan: {
       day: r.day, summary: wrapUgc(r.diff.summary), counts: r.diff.counts, requiresUserConfirmation: r.diff.requiresUserConfirmation,
       entries: r.diff.entries.map((e) => ({ op: e.op, planId: e.planId, title: e.title ? wrapUgc(e.title) : null, from: e.from, to: e.to, reason: e.reason, detail: wrapUgc(e.detail), sharedMutation: e.sharedMutation, experienceId: e.experienceId, bookingSideEffects: e.impact?.bookingSideEffects ?? null, governance: e.impact?.governance ?? null })),
       proposals: r.diff.proposals.length,
     },
-    info: r.diff.proposals.length > 0 ? "The shared mutations are proposals: use create_proposal, or ask the user to run the replan with createProposals." : null,
+    info: proposalsInfo,
   };
 }
 
@@ -1654,6 +1697,10 @@ async function toolAddToTrip(
   const permitted = await canEditPlan(sc, tripId, userId);
   if (permitted === null) return { error: "Trip not found." };
   if (!permitted) return { error: "The user does not have permission to edit this trip's plan." };
+  // TRV2-08 / lead ruling D-24: on a GROUP trip a hosting restriction stops
+  // adding to the shared plan — the same decision the confirm door makes.
+  const restriction = await checkCompassActionRestriction(sc, userId, tripId, "add_to_trip");
+  if (!restriction.allowed) return { error: compassRestrictionToolInfo(restriction) };
 
   // BOUND, both of them. supabase-js RESOLVES on a database failure, so a
   // discarded `error` here is byte-identical to "no such row" — and the two

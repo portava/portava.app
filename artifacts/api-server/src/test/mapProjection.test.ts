@@ -9,7 +9,7 @@
  *   3. It never SILENTLY truncates (a capped live enrichment must be reported,
  *      or "we only looked at 25 of them" reads as "there is nothing here").
  */
-import { describe, test } from "node:test";
+import { describe, test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -56,6 +56,13 @@ import mapProjectionRouter, {
 } from "../routes/mapProjection.js";
 import { startRouterApp, type FakeState } from "./helpers/fakeMapDb.js";
 import { PROTECTED_CATEGORIES, PROTECTION_ACTIONS } from "../lib/protectedLocations.js";
+import { captureProtection } from "./helpers/protectionTelemetry.js";
+
+// §24 counts are server telemetry now, not the response (lib/mapProtectionTelemetry.ts):
+// with one circle member, `protection.suppressed: 1` on the wire disclosed that the
+// member was inside a protected zone. Read from the telemetry sink, cleared per test.
+const protectionTelemetry = captureProtection();
+beforeEach(() => protectionTelemetry.clear());
 
 // ── fixtures ──────────────────────────────────────────────────────────────────
 
@@ -1109,9 +1116,11 @@ describe("M179 — protection applied before serialization, over a curated viewp
     assert.equal(r.body.enabled, true, "the gateway must be SERVING for this arm to mean anything");
     assert.equal("refusal" in r.body, false);
 
-    // `protection` non-null is half the census's sentence.
-    assert.notEqual(r.body.protection, null, "a serving response must report its protection pass");
-    const report = r.body.protection;
+    // A recorded protection pass is half the census's sentence. It is read from
+    // server telemetry: the per-reason counts must not reach the wire.
+    assert.equal("protection" in r.body, false, "per-reason protection counts reached the wire");
+    const report = protectionTelemetry.last()!;
+    assert.notEqual(report, null, "a serving response must have run its protection pass");
 
     // …and "at least one object coarsened or withheld" is the other half. Both
     // directions are asserted, because they are different policies: the medical
@@ -1171,7 +1180,7 @@ describe("M179 — protection applied before serialization, over a curated viewp
         "means 'no policy exists', never 'nothing may be shown'.",
     );
 
-    const report = r.body.protection;
+    const report = protectionTelemetry.last()!;
     assert.notEqual(report, null, "an identity pass still reports — a null report hides the no-op");
     assert.equal(report.evaluated, M179_PLACES.length);
     assert.equal(report.allowed, M179_PLACES.length, "every object was ALLOWED, explicitly");
@@ -1359,9 +1368,8 @@ describe("M139 — a served object needs no client-side normalisation", () => {
       assert.ok(o.geometry && typeof o.geometry.type === "string", `served ${o.id} has no geometry`);
     }
 
-    // And the gate ran: `protection` is the server's statement that §24 was
-    // applied before serialization. A response without it is one the client
-    // cannot tell apart from an ungated one.
-    assert.notEqual(body.protection, null);
+    // And the gate ran: the recorded protection pass is the server's statement
+    // that §24 was applied before serialization (telemetry, not the wire).
+    assert.notEqual(protectionTelemetry.last(), null);
   });
 });
