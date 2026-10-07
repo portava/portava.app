@@ -6861,6 +6861,8 @@ Every mutant is killed.
 - `neighborhood_picker` is registered but unmounted, so G66 stays `W`.
 - The provider-reconciliation clause of the row has no producer by OD-INPUT-6.
 
+- NOT-GRADED: travel-buddy-standalone/src/features/wall/services/wallSessionIntent.ts — §42.20 cites it only to record the Wall-side half of the G134 review fix; it is census-wall's file, graded there, and no verdict of this census rests on it.
+
 ### 42.21 Headline, restated after 42.20
 
 | bucket | §42.17 | now |
