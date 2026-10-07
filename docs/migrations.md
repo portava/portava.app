@@ -4051,6 +4051,27 @@ cannot be written.
 `telegraph_diagnostics` rows (they would violate the five-value CHECK — export them first; they are an
 audit trail), restores the five-value CHECK, deletes the flag row only if it carries this file's seed
 description, and deletes the ledger row. Turning the flag off keeps the trail and is usually what is wanted.
+## 2026-10-07 — `3650_telegraph_unsend_blocked_reader_excluded.sql`, written and NOT applied anywhere (lane T)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3650_telegraph_unsend_blocked_reader_excluded.sql` | **not applied** | **not applied** |
+
+**What it is.** Lead ruling P-T6 (2026-10-07: a read position never crosses a block) on the unsend door —
+the independent verification of lane T's branch, finding F1. `telegraph_unsend_message_before_seen` (3000)
+counted every active recipient's `last_read_at`, and `POST /threads/:id/messages/:id/unsend` publishes
+`seenBy` / `seen_by_recipient` to the sender, so a member who had blocked the sender (or been blocked)
+still told them "read". The file re-creates the function with 3000's body and ONE rule added to its two
+counts: a member in a block with the actor, either direction, is not an eligible recipient — not in
+`recipientCount`, and their read does not close the window. Outcomes, order, write, locks and grants are
+3000's; SECURITY DEFINER, the pinned search_path and service_role-only EXECUTE are re-asserted.
+
+**Requires** 2325 and 3000 (precondition: the live body writes `lifecycle_state`). **Before it is
+applied** the function keeps 3000's body; the receipts routes already apply P-T6 in code.
+
+**Rollback:** `db/rollback/2026-10-07-3650-telegraph-unsend-blocked-reader-excluded-rollback.sql` restores
+3000's body verbatim and deletes the ledger row.
+
 ## Apply-order overrides
 
 **What.** `artifacts/api-server/src/migrations/ORDER_OVERRIDES.json` is the single declared list of
