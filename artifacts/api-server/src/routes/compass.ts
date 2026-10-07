@@ -181,6 +181,7 @@ import {
 import { buildCompassContext as buildLocationCompassContext } from "../services/location/CompassLocationContext.js";
 import { buildCompassMediaContext, formatMediaContextLines } from "../compass/CompassMediaContext.js";
 import { resolveViewer as resolveMediaViewer } from "../services/media/MediaProjectionService.js";
+import { checkCompassActionRestriction, sendCompassRestrictionRefusal } from "../compass/CompassRestrictionGate.js";
 
 const router = Router();
 
@@ -2182,6 +2183,13 @@ router.post("/compass/proposals/:proposalId/confirm", async (req, res) => {
   const permitted = await canEditPlan(sc, proposal.tripId, user.id);
   if (permitted === null) { sendError(res, "not_found", "Trip not found"); return; }
   if (!permitted) { sendError(res, "forbidden", "You don't have permission to add items to this plan"); return; }
+
+  // census-trust TRV2-08 / OD-TRUST-5: the host of a group trip under a hosting
+  // restriction may not have Compass add to its shared plan; an unreadable
+  // state refuses retryably (compass/CompassRestrictionGate.ts). After the
+  // membership checks, so a stranger still gets "not a member".
+  const restriction = await checkCompassActionRestriction(sc, user.id, proposal.tripId, "confirm_plan_proposal");
+  if (!restriction.allowed) { sendCompassRestrictionRefusal(res, restriction); return; }
 
   // Duplicate guard for catalog places (same rule as the plan route).
   if (proposal.placeId) {

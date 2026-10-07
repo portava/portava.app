@@ -391,8 +391,8 @@ GET   /api/admin/feature-flags
 PATCH /api/admin/feature-flags/<flag>      Body: { "enabled": true }
 ```
 
-- `artifacts/api-server/src/routes/admin.ts:716#router.get` and
-  `artifacts/api-server/src/routes/admin.ts:775#router.patch`.
+- `artifacts/api-server/src/routes/admin.ts:717#router.get` and
+  `artifacts/api-server/src/routes/admin.ts:776#router.patch`.
 - Requires a bearer token for a profile whose `role` is `admin`
   (`artifacts/api-server/src/lib/requireAdmin.ts:74#DEFAULT_ROLES`); fail-closed
   on query error, absent profile and unmatched role.
@@ -401,7 +401,7 @@ PATCH /api/admin/feature-flags/<flag>      Body: { "enabled": true }
   committed toggle always has an audit row. If migration `0119` is missing the
   route answers **503 `server_not_configured`** naming that migration.
 - Flags in `HIDDEN_INERT_FLAGS`
-  (`artifacts/api-server/src/routes/admin.ts:662#HIDDEN_INERT_FLAGS`) are
+  (`artifacts/api-server/src/routes/admin.ts:663#HIDDEN_INERT_FLAGS`) are
   refused with **400 `not_operational`**. None of the flags in §2.2 is in that
   set — **VERIFIED**.
 
