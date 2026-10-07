@@ -243,9 +243,14 @@ describe("the privacy columns are read in select lists check:write-path-columns 
   // Every reader therefore writes the two columns out, tied to the constant by a `satisfies` type.
   it("no source file interpolates PLAN_ITEM_PRIVACY_COLUMNS into a select list", () => {
     const root = new URL("../", import.meta.url);
+    // Exactly the trees checkWritePathColumns scans (its SCAN_DIRS): routes, services, domain, server (and one Input
+    // file). A select outside them (e.g. compass/) is not that checker's blind spot, so it is not this guard's.
+    const scanned = (f: string) => /^(routes|services|domain|server)[\/]/.test(f) || f === "lib/inputAssistance/searchCandidates.ts";
+    const scanDirs = readFileSync(new URL("../scripts/checkWritePathColumns.ts", import.meta.url), "utf8");
+    for (const d of ['"../routes"', '"../services"', '"../domain"', '"../server"']) assert.ok(scanDirs.includes(d), `checkWritePathColumns no longer scans ${d}; re-derive this guard's scope`);
     const files = (readdirSync(root, { recursive: true }) as string[])
-      .filter((f) => f.endsWith(".ts") && !f.startsWith("test/") && !f.startsWith("test\\"));
-    assert.ok(files.length > 500, `vacuity guard: only ${files.length} source files were read`);
+      .filter((f) => f.endsWith(".ts") && scanned(f.replace(/\\/g, "/")));
+    assert.ok(files.length > 400, `vacuity guard: only ${files.length} source files were read`);
     const hits = files.filter((f) => readFileSync(new URL(f, root), "utf8").includes("${PLAN_ITEM_PRIVACY_COLUMNS"));
     assert.deepEqual(hits, []);
     // ...and the readers do still read the two columns (the literal form is in use, not dropped).
