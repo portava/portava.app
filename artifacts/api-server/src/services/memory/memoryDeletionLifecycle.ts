@@ -16,17 +16,17 @@
  *
  * ── THE DESIGN DECISION THIS FILE IS ABOUT ────────────────────────────────
  *
- * TWO OF THE FIVE STORES DO NOT EXIST, AND THAT MUST NOT LOOK LIKE SUCCESS OR
- * LIKE FAILURE. `memory_derivative_registry` is migration 2730, written and
- * unapplied; `memory_evidence` has no migration at all. A pipeline that
+ * A STORE THAT IS NOT DEPLOYED MUST NOT LOOK LIKE SUCCESS OR LIKE FAILURE.
+ * `memory_derivative_registry` (2730) is applied; `memory_evidence` (2320) is
+ * written and NOT applied everywhere. A pipeline that
  * reported `done` for them would be a decorated green — the exact failure mode
  * this census exists to catch. A pipeline that reported `failed` would retry
  * forever and dead-letter every single deletion, which is a pager that means
  * nothing.
  *
  * So there are THREE outcomes, not two, and which one you get is decided by
- * PostgREST's own missing-object codes (42P01 / 42703 / PGRST205 / PGRST204),
- * never by a heuristic on the message:
+ * PostgREST's own missing-TABLE codes (42P01 / PGRST205 — never 42703, which
+ * is a deployed store queried wrongly) and never by a heuristic on the message:
  *
  *     done            the step ran and did its work
  *     not_applicable  the store this step targets IS NOT DEPLOYED. Reported
@@ -53,7 +53,7 @@
  * stays W on that half, and this file is the reason it is only that half.
  */
 
-import { revokeDerivativesForMemory } from "../memoryProjections/derivativeRegistry.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; // one line: cited by line
+import { revokeDerivativesForMemory } from "../memoryProjections/derivativeRegistry.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; import { eraseEvidenceForMemory } from "./memoryEvidenceErasure.js"; // one line: cited by line
 import {
   revokeMemoryAudienceCaches,
   type MemoryAudienceState,
@@ -233,27 +233,22 @@ export async function runMemoryDeletionLifecycle(
     return { outcome: "failed", retryable: true, detail: `${result.reason}: ${result.detail}`, facts: {} };
   }));
 
-  // 4. RAW_EVIDENCE_PURGED. §3.6's `memory_evidence` has no migration anywhere
-  //    in this tree, so this is `not_applicable` today — but it is WRITTEN, and
-  //    the day the table lands this step starts purging without anybody
-  //    remembering that it should.
+  // 4. RAW_EVIDENCE_PURGED. §3.6's `memory_evidence` is migration 2320, and it
+  //    has NO memory_id column: evidence hangs off an episode, and a kept
+  //    candidate names its Memory with one explicit link row. This step used
+  //    to delete `WHERE memory_id = …` — a 42703 on every database where 2320
+  //    is applied, so every deletion dead-lettered and the evidence survived.
+  //    memoryEvidenceErasure follows the link, retires the episode (so its
+  //    photos are never proposed again) and purges every row it rests on.
   steps.push(await runStep("RAW_EVIDENCE_PURGED", async () => {
-    const { data, error } = await sc
-      .from("memory_evidence")
-      .delete()
-      .eq("memory_id", opts.memoryId)
-      .select("id");
-    if (error) {
-      if (isStoreAbsent(error)) {
-        return {
-          outcome: "not_applicable",
-          detail: `${RAW_EVIDENCE_TABLE} is not deployed: ${String((error as any).message ?? "absent")}`,
-          facts: {},
-        };
-      }
-      return { outcome: "failed", retryable: true, detail: String((error as any).message ?? "purge failed"), facts: {} };
+    const erased = await eraseEvidenceForMemory(sc, { ownerId: opts.ownerId, memoryId: opts.memoryId, now });
+    if (erased.state === "absent") {
+      return { outcome: "not_applicable", detail: `${RAW_EVIDENCE_TABLE} is not deployed: ${erased.detail}`, facts: {} };
     }
-    return { outcome: "done", facts: { purged: Array.isArray(data) ? data.length : 0 } };
+    if (erased.state === "failed") {
+      return { outcome: "failed", retryable: true, detail: erased.detail, facts: { episodes: erased.episodes.length } };
+    }
+    return { outcome: "done", facts: { purged: erased.purged, episodesRetired: erased.retired } };
   }));
 
   // 5. DELETED. Not an announcement — a READ. The soft delete is written by the
