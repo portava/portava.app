@@ -6298,3 +6298,55 @@ if both land.
   no server projected.
 * A private or unreadable person row, or a gem whose position may not be surfaced, ranked level with a public
   row of its tier. Also red: a PrivacyRisk demotion large enough to move a row across a match tier.
+
+### 42.8 Lead rulings 2026-10-07, and G104 built on the fourth
+
+The lead adopted all four of lane D2's proposed rulings on 2026-10-07. They are cited here as
+**lead ruling 2026-10-07**.
+
+| ruling | question | decision |
+| --- | --- | --- |
+| PR-D2-1 (G103) | What carries §15 PrivacyRisk, and by how much? | Only a row whose subject restricted its own exposure: a person row not explicitly `isPrivate: false`, or a Hidden Gem whose `coordsPrecision` is not `approximate`. A flat 0.10, below the smallest tier gap, so it reorders within a match tier only. Unknown fails closed. |
+| PR-D2-2 (G260) | What may an unresolved local row bind to? | Only a canonical row the person already accepted in the same field, read through the live-policy gate, of the same entity class, on exactly one distinct match. Never the shipped dictionary, never a server find-or-create. The bound row keeps `source: 'local'`. |
+| PR-D2-3 (G261) | May `suggestionHistory` keep a store of its own? | No. It is a read view over the device-local store, so an account change has one erase. A per-field clear persists. |
+| PR-D2-4 (G104) | Which visible rows are stale? | An EVENT whose state is `completed`, or whose start has passed and that is not `started`. Applied only when the query parsed no time window with a bound. A within-tier demotion of at most 0.10. |
+
+**G104 is built on PR-D2-4.**
+- The term is `artifacts/api-server/src/lib/inputAssistance/rankingSignals.ts:568#export function staleness(`.
+- It applies only with no time window: `artifacts/api-server/src/lib/inputAssistance/rankingSignals.ts:574#if (window && (window.startsAfter !== null || window.startsBefore !== null)) return 0;`.
+- A started event is live: `artifacts/api-server/src/lib/inputAssistance/rankingSignals.ts:577#if (state === 'started') return 0;`.
+- The size is within the ruling: `artifacts/api-server/src/lib/inputAssistance/rankingSignals.ts:563#export const STALENESS_DEMOTION = 0.08;`.
+- It is applied among the penalties on the same line-neutral projector line: `artifacts/api-server/src/lib/inputAssistance/projection.ts:117#staleness(r, signals.temporalWindow ?? null, Date.now())`.
+
+Every other row type is byte-identical. The related server files pass (57 files, 1,166 tests), including the
+TemporalFit, Trip-window and feasibility suites, whose fixtures include past-dated events.
+
+Proof:
+- `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1122#a due-but-not-started event ranks below an upcoming one on the same tier`;
+- `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1090#nothing is stale when the user asked about a time`;
+- end to end through `POST /input-assistance/suggest`, `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1149#an event that was due an hour ago and never started is demoted below the upcoming one`,
+  with its control `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1159#CONTROL: the same pair with the past event STARTED is level`.
+
+Mutants killed:
+- the wrapper dropped;
+- the `started` exemption dropped;
+- the time-window guard dropped;
+- the `completed` branch dropped;
+- a demotion of 0.15, which crosses a tier.
+
+| ID | from | **to** | evidence |
+| --- | --- | --- | --- |
+| G104 | W | **C** | A staleness PENALTY now exists for the stale rows that stay visible, by lead ruling 2026-10-07 (`artifacts/api-server/src/lib/inputAssistance/rankingSignals.ts:568#export function staleness(`). Applied at `artifacts/api-server/src/lib/inputAssistance/projection.ts:117#staleness(r, signals.temporalWindow ?? null, Date.now())`. Proven end to end (`artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1149#an event that was due an hour ago and never started is demoted below the upcoming one`). Stale live claims are still removed upstream, which this cell already called correct. |
+
+### 42.9 Headline, restated after 42.8
+
+| bucket | §42.6 | now |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 300 | 301 |
+| BUILT-BUT-WRONG | 50 | 49 |
+| NOT-BUILT | 19 | 19 |
+| CANNOT-VERIFY | 4 | 4 |
+| total | 373 | 373 |
+
+Of 373 rows: **301 BUILT-AND-CORRECT, 49 BUILT-BUT-WRONG, 19 NOT-BUILT, 4 CANNOT-VERIFY**. With lane R's §41,
+the rows give 303 / 47 / 19 / 4.

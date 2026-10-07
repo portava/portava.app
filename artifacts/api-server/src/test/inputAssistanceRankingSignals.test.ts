@@ -54,7 +54,7 @@ import {
   IMPERSONATION_DEMOTION,
   privacyRisk,
   applyPrivacyRisk,
-  PRIVACY_RISK_DEMOTION,
+  PRIVACY_RISK_DEMOTION, staleness, applyStaleness, STALENESS_DEMOTION,
 } from "../lib/inputAssistance/rankingSignals.js";
 import {
   resolveTaskConstraint,
@@ -1041,5 +1041,126 @@ describe("§15 PrivacyRisk end-to-end (G103) — through POST /input-assistance/
     assert.ok((gems[0].confidence ?? 0) > (gems[1].confidence ?? 0), "and lead BECAUSE of confidence");
     // The demotion is a number, never a disclosure: no risk word reaches the wire.
     assert.ok(!JSON.stringify(body).includes("privacyRisk"));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §15 Staleness (census G104, lead ruling 2026-10-07 / PR-D2-4)
+//
+// MUTATION LOG (each applied, watched go RED, reverted, `git diff` clean):
+//   S1 projection.ts: drop the `applyStaleness(…, staleness(…))` wrapper → "a
+//      due-but-not-started event ranks below an upcoming one" and the
+//      end-to-end test go RED.
+//   S2 rankingSignals.ts: drop the `state === 'started'` early return → "a
+//      STARTED event is live, not stale" RED (unit and end-to-end control).
+//   S3 rankingSignals.ts: drop the window guard → "nothing is stale when the
+//      user asked about a time" RED.
+//   S4 rankingSignals.ts: drop the `completed` branch → "a COMPLETED event is
+//      stale even with a future start" RED.
+//   S5 rankingSignals.ts: STALENESS_DEMOTION 0.08 → 0.15 → "never across a
+//      match tier" RED.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("§15 Staleness (G104) — the term itself", () => {
+  const NOW = Date.parse("2026-10-07T12:00:00.000Z");
+  const PAST = "2026-10-07T11:00:00.000Z";
+  const FUTURE = "2026-10-08T12:00:00.000Z";
+  const ev = (status: string | undefined, startsAt: string | null) =>
+    ({ type: "events", startsAt, metadata: status === undefined ? {} : { status } });
+
+  it("a COMPLETED event is stale even with a future start", () => {
+    assert.equal(staleness(ev("completed", PAST), null, NOW), 1);
+    assert.equal(staleness(ev("completed", FUTURE), null, NOW), 1);
+    assert.equal(staleness(ev("completed", null), null, NOW), 1);
+  });
+
+  it("an event whose start has passed and that is not started is stale, whatever else its state says", () => {
+    for (const st of ["open", "full", "waitlist", undefined, "some_future_label"]) {
+      assert.equal(staleness(ev(st, PAST), null, NOW), 1, `state ${String(st)}`);
+    }
+  });
+
+  it("a STARTED event is live, not stale; a future event is not stale; an unparseable start proves nothing", () => {
+    assert.equal(staleness(ev("started", PAST), null, NOW), 0);
+    assert.equal(staleness(ev("open", FUTURE), null, NOW), 0);
+    assert.equal(staleness(ev("open", "not-a-date"), null, NOW), 0);
+    assert.equal(staleness(ev("open", null), null, NOW), 0);
+  });
+
+  it("nothing is stale when the user asked about a time (a window with a bound)", () => {
+    const yesterday = { startsAfter: "2026-10-06T00:00:00.000Z", startsBefore: "2026-10-07T00:00:00.000Z" };
+    assert.equal(staleness(ev("completed", PAST), yesterday, NOW), 0);
+    assert.equal(staleness(ev("open", PAST), { startsAfter: null, startsBefore: FUTURE }, NOW), 0);
+    // A window with no bounds ("when we arrive") is not a window — as TemporalFit treats it.
+    assert.equal(staleness(ev("open", PAST), { startsAfter: null, startsBefore: null }, NOW), 1);
+  });
+
+  it("only events carry the term", () => {
+    assert.equal(staleness({ type: "places", startsAt: PAST, metadata: { status: "completed" } }, null, NOW), 0);
+    assert.equal(staleness({ type: "trips", startsAt: PAST, metadata: null }, null, NOW), 0);
+  });
+
+  it("demotes within the ruling's ceiling, never below zero, identity at 0", () => {
+    assert.ok(STALENESS_DEMOTION <= 0.1, "lead ruling 2026-10-07: ≤ 0.10");
+    assert.equal(applyStaleness(0.85, 0), 0.85);
+    assert.equal(applyStaleness(0.85, 1), 0.85 - STALENESS_DEMOTION);
+    assert.equal(applyStaleness(0.02, 1), 0);
+  });
+
+  it("never across a match tier: an exact-name finished event still leads a prefix-match upcoming one", () => {
+    const finishedExact = projectSearchResult(
+      result({ id: "e-done", type: "events", title: "Lantern", startsAt: new Date(Date.now() - 3600_000).toISOString(), metadata: { status: "completed" } }),
+      "global_search", POLICY_VERSION, "Lantern",
+    );
+    const upcomingPrefix = projectSearchResult(
+      result({ id: "e-next", type: "events", title: "Lantern Walk", startsAt: new Date(Date.now() + 86_400_000).toISOString(), metadata: { status: "open" } }),
+      "global_search", POLICY_VERSION, "Lantern",
+    );
+    assert.ok((finishedExact.confidence ?? 0) > (upcomingPrefix.confidence ?? 0));
+  });
+
+  it("a due-but-not-started event ranks below an upcoming one on the same tier — demoted, not removed", () => {
+    const due = projectSearchResult(
+      result({ id: "e-due", type: "events", title: "Night Market", startsAt: new Date(Date.now() - 3600_000).toISOString(), metadata: { status: "open" } }),
+      "global_search", POLICY_VERSION, "Night",
+    );
+    const next = projectSearchResult(
+      result({ id: "e-next", type: "events", title: "Night Markets", startsAt: new Date(Date.now() + 86_400_000).toISOString(), metadata: { status: "open" } }),
+      "global_search", POLICY_VERSION, "Night",
+    );
+    assert.ok((next.confidence ?? 0) > (due.confidence ?? 0));
+    assert.deepEqual(orderSuggestions([due, next], 10).map((s) => s.entityId), ["e-next", "e-due"]);
+  });
+});
+
+describe("§15 Staleness end-to-end (G104) — through POST /input-assistance/suggest", () => {
+  const seed = (pastState: string) => setup({
+    events: [
+      // The past one sorts FIRST (starts_at ascending), so a missing term is visible as "input order won".
+      { id: "evt-due", title: "Harbour Night", host_id: HOST, city: "Da Nang", country: "Vietnam",
+        starts_at: new Date(Date.now() - 3600_000).toISOString(), visibility: "public", state: pastState, created_at: "2026-01-01T00:00:00Z" },
+      { id: "evt-next", title: "Harbour Nights", host_id: HOST, city: "Da Nang", country: "Vietnam",
+        starts_at: new Date(Date.now() + 2 * 86_400_000).toISOString(), visibility: "public", state: "open", created_at: "2026-01-01T00:00:00Z" },
+    ],
+    profiles: [{ id: HOST, account_status: "active" }],
+    event_rsvps: [], blocks: [], user_privacy_settings: [], canonical_locations: [],
+  });
+
+  it("an event that was due an hour ago and never started is demoted below the upcoming one; both are returned", async () => {
+    seed("open");
+    const r = await suggest({ context: "global_search", text: "harbour", tz: "UTC" });
+    assert.equal(r.status, 200);
+    const events = ((await r.json()) as any).suggestions.filter((s: any) => s.entityType === "event");
+    assert.equal(events.length, 2, "a ranking term, not a filter");
+    assert.equal(events[0].entityId, "evt-next");
+    assert.ok((events[0].confidence ?? 0) > (events[1].confidence ?? 0));
+  });
+
+  it("CONTROL: the same pair with the past event STARTED is level — a live event is not stale", async () => {
+    seed("started");
+    const r = await suggest({ context: "global_search", text: "harbour", tz: "UTC" });
+    const events = ((await r.json()) as any).suggestions.filter((s: any) => s.entityType === "event");
+    assert.equal(events.length, 2);
+    assert.equal(events[0].confidence, events[1].confidence);
   });
 });

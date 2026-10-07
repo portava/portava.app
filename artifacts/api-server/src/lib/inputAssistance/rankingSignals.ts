@@ -529,3 +529,60 @@ export function applyPrivacyRisk(base: number, risk: number): number {
   if (!(risk > 0)) return base;
   return Math.max(0, base - Math.min(1, risk) * PRIVACY_RISK_DEMOTION);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// §15 Staleness — the second subtracted term (census G104, lead ruling 2026-10-07)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// A stale LIVE claim never reaches a row: `readLiveClaimEnvelopes` removes it
+// upstream and the client drops a stale label, so for live state "stale" means
+// "invisible", correctly. What WAS visible and never demoted is an EVENT that is
+// already over or already under way without having started: `searchEvents`
+// admits events whose start is up to two hours in the past by default, and any
+// past event inside a window the user asked for.
+//
+// THE RULE (lead ruling 2026-10-07, proposed by lane D2 as PR-D2-4):
+//   - an event whose state is `completed` is stale;
+//   - an event whose start has PASSED and whose state is not `started` is stale
+//     (it was due and nobody is there — `open`, `full`, `waitlist`, or a state
+//     this build cannot read);
+//   - an event that is `started` is live, not stale; a future event is not
+//     stale; a start time that cannot be parsed is not evidence of anything;
+//   - NOTHING is stale when the query parsed a time window with a bound. The
+//     user asked about a time, TemporalFit already ranks against it, and a
+//     second term that demoted the past would fight their own words. A window
+//     with no bounds ("when we arrive") is not a window, exactly as TemporalFit
+//     treats it.
+// Only events carry the term; every other row is byte-identical.
+//
+// SIZE. A demotion within a match tier: smaller than the smallest gap between
+// adjacent `tierConfidence` bands (0.14) and within the ruling's ceiling of
+// 0.10, so an exact-name match on a finished event still leads a prefix match.
+
+/** Confidence removed from a stale event (≤ 0.10 by lead ruling 2026-10-07). */
+export const STALENESS_DEMOTION = 0.08;
+
+/**
+ * Staleness in {0, 1} for one internal search row. Pure: `now` is handed in.
+ */
+export function staleness(
+  r: { type: string; startsAt?: string | null; metadata?: Record<string, unknown> | null },
+  window: TemporalWindow | null | undefined,
+  now: number,
+): number {
+  if (r.type !== 'events') return 0;
+  if (window && (window.startsAfter !== null || window.startsBefore !== null)) return 0;
+  const state = r.metadata?.status;
+  if (state === 'completed') return 1;
+  if (state === 'started') return 0;
+  if (typeof r.startsAt !== 'string' || r.startsAt.length === 0) return 0;
+  const t = Date.parse(r.startsAt);
+  if (!Number.isFinite(t)) return 0;
+  return t < now ? 1 : 0;
+}
+
+/** Apply Staleness to a base confidence. Identity at 0; never below zero. */
+export function applyStaleness(base: number, stale: number): number {
+  if (!(stale > 0)) return base;
+  return Math.max(0, base - Math.min(1, stale) * STALENESS_DEMOTION);
+}
