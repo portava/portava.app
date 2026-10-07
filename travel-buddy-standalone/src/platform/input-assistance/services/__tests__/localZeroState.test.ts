@@ -29,6 +29,9 @@
  *     The `REPLAYABLE_TYPES` record-guard mutation above is now observed on
  *     the DEVICE write (the second buffer bypassed the read filter; the device
  *     blob is the one store now).
+ *   - (verifier V2) localZeroState.ts replay without `stripPositionalClaims`,
+ *     localRecentsStore.ts encode keeping `distanceBand`, decode without the
+ *     strip → "a distance band … is never replayed" red (each alone).
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -45,6 +48,7 @@ import {
 } from '../localZeroState.ts';
 import { getRecentSelections, clearRecentSelections } from '../suggestionHistory.ts';
 import type { LocalRecentsStorage } from '../localRecentsStore.ts';
+import { encodeLocalRecents, decodeLocalRecents } from '../localRecentsStore.ts';
 import type { InputSuggestion } from '../../types/inputSuggestion.ts';
 
 const PUBLIC_POLICY: LocalZeroStatePolicy = {
@@ -225,4 +229,33 @@ test('a row that is not an ANSWER is never replayed into an empty field', async 
     await flushLocalRecents();
     assert.deepEqual(writes, [], `${type} must not be retained at all`);
   }
+});
+
+test('G176 (verifier V2): a distance band — like a live label — is never replayed, from memory or from the device', async () => {
+  // The band was measured from where the person stood when the row was served.
+  // Replayed next week in another city it would claim a distance nobody measured.
+  const served: InputSuggestion = {
+    ...city('Lantern Cafe', 'p1'),
+    entityType: 'place',
+    distanceBand: '<0.5km',
+    freshness: { state: 'fresh', updatedAtLabel: 'Updated 2m ago', label: 'Getting busier' },
+  };
+  recordLocalSelection(PUBLIC_POLICY, served);
+  const [replayed] = localZeroState(PUBLIC_POLICY);
+  assert.ok(replayed, 'premise: the accept is replayed');
+  assert.equal(replayed.distanceBand, undefined, 'no band from memory');
+  assert.equal(replayed.freshness, undefined, 'no live label from memory');
+  assert.equal(replayed.label, 'Lantern Cafe');
+
+  // The device blob never carries it …
+  const blob = encodeLocalRecents(new Map([['trip_destination', [served]]]), Date.now(), 'user-a');
+  assert.ok(!blob.includes('distanceBand'), 'the encoder drops the band');
+  // … and a blob from a build that did write one is restored without it.
+  const legacyBlob = JSON.stringify({
+    v: 1, savedAt: Date.now(), owner: 'user-a',
+    contexts: { trip_destination: [{ ...city('Lantern Cafe', 'p1'), distanceBand: '<0.5km' }] },
+  });
+  const restored = decodeLocalRecents(legacyBlob, Date.now()).get('trip_destination') ?? [];
+  assert.equal(restored.length, 1, 'the row itself is kept');
+  assert.equal(restored[0]!.distanceBand, undefined, 'the decoder drops the band');
 });

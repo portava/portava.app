@@ -141,8 +141,11 @@ export function encodeLocalRecents(
     if (rows.length === 0) continue;
     contexts[context] = rows.slice(0, LOCAL_RECENTS_MAX_PER_CONTEXT).map((row) => {
       // `freshness` is dropped on the way OUT as well as refused on the way in,
-      // so a blob written by this build can never carry one.
-      const { freshness: _dropped, ...rest } = row;
+      // so a blob written by this build can never carry one. So is a §28
+      // `distanceBand` (census G176, verifier V2): it was measured from where the
+      // person stood when the row was served, and replayed next week in another
+      // city it would claim a distance nobody measured.
+      const { freshness: _dropped, distanceBand: _band, ...rest } = row;
       return rest as InputSuggestion;
     });
   }
@@ -185,6 +188,7 @@ export function decodeLocalRecents(
     const context = key as InputContext;
     const rows = value
       .filter((row): row is InputSuggestion => isRestorableRow(row, context))
+      .map((row) => stripPositionalClaims(row))
       .slice(0, LOCAL_RECENTS_MAX_PER_CONTEXT);
     if (rows.length > 0) out.set(context, rows);
   }
@@ -205,4 +209,16 @@ export function decodeLocalRecentsOwner(raw: string | null | undefined): string 
   } catch {
     return null;
   }
+}
+
+/**
+ * A row as it may be REPLAYED: without any claim that was true only where and
+ * when it was served — a live label (`freshness`) or a distance band
+ * (`distanceBand`, census G176 / verifier V2). Used on decode and on the
+ * in-session replay in `localZeroState`, so neither door can show one.
+ */
+export function stripPositionalClaims(row: InputSuggestion): InputSuggestion {
+  if (row.distanceBand === undefined && row.freshness === undefined) return row;
+  const { distanceBand: _band, freshness: _fresh, ...rest } = row;
+  return rest as InputSuggestion;
 }

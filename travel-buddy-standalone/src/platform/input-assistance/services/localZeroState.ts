@@ -68,6 +68,7 @@ import {
   decodeLocalRecents,
   decodeLocalRecentsOwner,
   encodeLocalRecents,
+  stripPositionalClaims,
   type LocalRecentsStorage,
 } from './localRecentsStore.ts';
 
@@ -97,7 +98,10 @@ function rowKey(s: InputSuggestion): string {
 /** Drop every retained row. Tests + privacy controls. */
 export function clearLocalZeroState(context?: InputContext): void {
   if (context) rowStore.delete(context);
-  else rowStore.clear();
+  else {
+    rowStore.clear();
+    hydratedUnconfirmed = false; // nothing restored is held any more
+  }
 }
 
 // ── §32 G199 — the DEVICE-LOCAL half ────────────────────────────────────────
@@ -123,6 +127,11 @@ let boundAccount: string | null | undefined = undefined;
 let rowsOwner: string | null = null;
 /** True while `attachLocalRecents` is waiting on the device read. */
 let hydrating = false;
+/**
+ * verifier V5 — true when rows were restored from the device before the app said
+ * who is signed in. Until it does, those rows are nobody's to serve.
+ */
+let hydratedUnconfirmed = false;
 
 /**
  * Bind a storage backend and HYDRATE from it.
@@ -161,6 +170,7 @@ export async function attachLocalRecents(next: LocalRecentsStorage): Promise<voi
   for (const [context, rows] of restored) {
     if (rowStore.has(context)) continue;
     rowStore.set(context, rows.slice(0, MAX_PER_CONTEXT));
+    if (boundAccount === undefined) hydratedUnconfirmed = true;
   }
 }
 
@@ -182,6 +192,7 @@ export function detachLocalRecents(): void {
  */
 export function clearLocalRecents(): void {
   rowStore.clear();
+  hydratedUnconfirmed = false;
   const backend = storage;
   if (!backend) return;
   pendingWrite = pendingWrite
@@ -211,6 +222,9 @@ export function forgetLocalRecents(context: InputContext): void {
  *     store. Unknown fails CLOSED: a legacy blob with no owner is erased once.
  */
 export function bindLocalRecentsAccount(userId: string | null): void {
+  // Whatever happens below, the restored rows are decided now: kept as this
+  // account's, or erased.
+  hydratedUnconfirmed = false;
   if (userId === null) {
     clearLocalRecents();
     boundAccount = null;
@@ -237,10 +251,16 @@ export function bindLocalRecentsAccount(userId: string | null): void {
   rowsOwner = userId;
 }
 
+/** Set whose rows the store holds, bypassing the binder. TESTS ONLY (verifier V5). */
+export function _forceRowsOwnerForTests(owner: string | null): void {
+  rowsOwner = owner;
+}
+
 /** Forget who is signed in and whose rows are held. TESTS ONLY. */
 export function _resetLocalRecentsAccountForTests(): void {
   boundAccount = undefined;
   rowsOwner = null;
+  hydratedUnconfirmed = false;
 }
 
 /** Await the trailing write. Tests only — production is fire-and-forget. */
@@ -332,6 +352,11 @@ export function localZeroState(
   policy: LocalZeroStatePolicy | null | undefined,
 ): InputSuggestion[] {
   if (!mayRetainLocally(policy)) return [];
+  // verifier V5 — the READ is owner-aware too: rows restored from the device are
+  // not served until the app has said who is signed in, and once it has, only
+  // the bound account's rows are.
+  if (hydratedUnconfirmed) return [];
+  if (boundAccount !== undefined && rowsOwner !== boundAccount) return [];
   const p = policy as LocalZeroStatePolicy;
   const max = Math.max(0, p.maxSuggestions);
   if (max === 0) return [];
@@ -340,8 +365,10 @@ export function localZeroState(
     if (!REPLAYABLE_TYPES.has(s.type)) continue;
     // `recent` is the honest type for a row served out of selection memory: it
     // is what the SERVER's own recents branch projects, so the overlay's
-    // grouping and the §9 type order treat both identically.
-    out.push(s.type === 'recent' ? s : { ...s, type: 'recent' });
+    // grouping and the §9 type order treat both identically. A distance band or
+    // live label it carried is dropped: true where it was served, not now (V2).
+    const replay = stripPositionalClaims(s);
+    out.push(replay.type === 'recent' ? replay : { ...replay, type: 'recent' });
     if (out.length >= max) break;
   }
   return out;

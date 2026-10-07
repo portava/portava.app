@@ -25,6 +25,11 @@
  *     real applyAccountChange" red.
  *   - `bindLocalRecentsAccount` without the `hydrating` deferral → "the account
  *     lands WHILE the device read is in flight" red (the blob is erased mid-read).
+ *   - (verifier V4) attach's owner check weakened to `blobOwner !== null &&
+ *     blobOwner !== boundAccount` → "ACCOUNT FIRST, then a legacy ownerless blob" red.
+ *   - (verifier V5) drop the `hydratedUnconfirmed` read gate → "rows restored
+ *     before the app says who is signed in" red; drop the `rowsOwner !==
+ *     boundAccount` read gate → "rows of another account are never served" red.
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -39,6 +44,7 @@ import {
   localZeroState,
   bindLocalRecentsAccount,
   _resetLocalRecentsAccountForTests,
+  _forceRowsOwnerForTests,
   type LocalZeroStatePolicy,
 } from '../localZeroState.ts';
 import { LOCAL_RECENTS_STORAGE_KEY, encodeLocalRecents, decodeLocalRecentsOwner, type LocalRecentsStorage } from '../localRecentsStore.ts';
@@ -207,4 +213,32 @@ test('through the real applyAccountChange: the bindAccount port is what decides,
   assert.equal(changed, true, 'premise: the policy store DOES see null → A as a change');
   await flushLocalRecents();
   assert.equal(localZeroState(CITY).length, 1, '… and the recents survive it anyway');
+});
+
+test('PRIVACY (verifier V4): ACCOUNT FIRST, then a legacy ownerless blob — never restored, and erased', async () => {
+  const legacy = encodeLocalRecents(new Map([['city_picker', [city('Bangkok', 'c-bkk')]]]), Date.now());
+  assert.equal(decodeLocalRecentsOwner(legacy), null, 'premise: no owner in it');
+  const storage = fakeStorage({ [LOCAL_RECENTS_STORAGE_KEY]: legacy });
+  applyAccountChange('user-a', coldStore(), new SuggestionCache(), PORT); // the account lands first …
+  await attachLocalRecents(storage);                                     // … then the read
+  await flushLocalRecents();
+  assert.deepEqual(localZeroState(CITY), []);
+  assert.equal(storage.map.has(LOCAL_RECENTS_STORAGE_KEY), false);
+});
+
+test('PRIVACY (verifier V5): rows restored before the app says who is signed in are not served until it does', async () => {
+  const storage = await deviceUsedBy('user-a');
+  await attachLocalRecents(storage); // hydrated: A's Bangkok is in memory …
+  assert.deepEqual(localZeroState(CITY), [], '… and is served to nobody yet');
+  bindLocalRecentsAccount('user-a');
+  assert.deepEqual(localZeroState(CITY).map((s) => s.label), ['Bangkok'], 'its owner gets it once known');
+});
+
+test('PRIVACY (verifier V5): rows of another account are never served, even if the store still holds them', async () => {
+  bindLocalRecentsAccount('user-a');
+  recordLocalSelection(CITY, city('Bangkok', 'c-bkk'));
+  assert.equal(localZeroState(CITY).length, 1, 'premise: A sees their own pick');
+  // A bound account that is not the rows' owner (forced, as a later bug could leave it).
+  _forceRowsOwnerForTests('user-b');
+  assert.deepEqual(localZeroState(CITY), []);
 });

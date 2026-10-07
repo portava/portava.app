@@ -22,7 +22,7 @@
  * before being written down. A test whose mutation leaves it green is recorded
  * as worthless rather than kept.
  */
-import { describe, it, before, after, beforeEach } from "node:test";
+import { describe, it, before, after, beforeEach, mock } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import type { Server } from "node:http";
@@ -1352,5 +1352,48 @@ describe("§28 distance where permitted (G176) — the geographic picker path", 
     const place = ((await r.json()) as any).suggestions.find((s: any) => s.entityId === "p-pick");
     assert.ok(place, "the place is served");
     assert.equal(place.distanceBand, "1-3km");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Verifier V3 (2026-10-07): the time-window exemption is pinned through the
+// WIRING, not only at the function. Mutant: projection.ts passes `null` for the
+// window into `staleness(...)` → the completed event below is demoted → RED.
+// Date is frozen (node:test mock timers, Date only) so "tonight" and the two
+// event times sit in a known order whatever the wall clock says.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("§15 Staleness (G104) — a parsed time window exempts it, through POST /input-assistance/suggest", () => {
+  it("'tonight': a completed event inside tonight's window is level with an upcoming one (no demotion)", async () => {
+    mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-10-07T21:00:00.000Z") });
+    try {
+      setup({
+        events: [
+          { id: "evt-done", title: "Tonight at the Harbour", host_id: HOST, city: "Da Nang", country: "Vietnam",
+            starts_at: "2026-10-07T19:00:00.000Z", visibility: "public", state: "completed", created_at: "2026-01-01T00:00:00Z" },
+          { id: "evt-later", title: "Tonight at the Harbours", host_id: HOST, city: "Da Nang", country: "Vietnam",
+            starts_at: "2026-10-07T23:00:00.000Z", visibility: "public", state: "open", created_at: "2026-01-01T00:00:00Z" },
+        ],
+        profiles: [{ id: HOST, account_status: "active" }],
+        event_rsvps: [], blocks: [], user_privacy_settings: [], canonical_locations: [],
+      });
+      // The gateway searches the person's own text, so the titles carry the word they typed.
+      const r = await suggest({ context: "global_search", text: "tonight", tz: "UTC" });
+      assert.equal(r.status, 200);
+      const events = ((await r.json()) as any).suggestions.filter((s: any) => s.entityType === "event");
+      assert.equal(events.length, 2, "premise: both events are inside tonight's window");
+      assert.equal(events[0].confidence, events[1].confidence,
+        "the person asked about tonight — a finished event tonight is not demoted for being finished");
+
+      // CONTROL: the same pair with no time words — the finished one IS stale.
+      const r2 = await suggest({ context: "global_search", text: "at the harbour", tz: "UTC" });
+      const plain = ((await r2.json()) as any).suggestions.filter((s: any) => s.entityType === "event");
+      const done = plain.find((s: any) => s.entityId === "evt-done");
+      const later = plain.find((s: any) => s.entityId === "evt-later");
+      assert.ok(done && later, "premise: both served without a window");
+      assert.ok((later.confidence ?? 0) > (done.confidence ?? 0), "without a window the completed event is demoted");
+    } finally {
+      mock.timers.reset();
+    }
   });
 });

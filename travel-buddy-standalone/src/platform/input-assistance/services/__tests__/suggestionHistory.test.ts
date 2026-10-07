@@ -31,6 +31,8 @@ import {
   flushLocalRecents,
   localZeroState,
   clearLocalRecents,
+  bindLocalRecentsAccount,
+  _resetLocalRecentsAccountForTests,
   type LocalZeroStatePolicy,
 } from '../localZeroState.ts';
 import { getRecentSelections, clearRecentSelections } from '../suggestionHistory.ts';
@@ -76,6 +78,7 @@ function fakeStorage() {
 beforeEach(() => {
   detachLocalRecents();
   clearLocalZeroState();
+  _resetLocalRecentsAccountForTests();
 });
 
 test('intended: an explicit accept is readable as history, most recent first', () => {
@@ -91,14 +94,18 @@ test('intended: an explicit accept is readable as history, most recent first', (
 test('intended: history read after a COLD START comes off the device (it is the read path of the device recents)', async () => {
   const storage = fakeStorage();
   await attachLocalRecents(storage);
+  bindLocalRecentsAccount('user-a');
   recordLocalSelection(CITY, row('Bangkok', 'c1', 'city_picker'));
   await flushLocalRecents();
 
   detachLocalRecents();
   clearLocalZeroState();
+  _resetLocalRecentsAccountForTests();
   assert.deepEqual(getRecentSelections(CITY), [], 'premise: process memory is empty');
 
   await attachLocalRecents(storage);
+  assert.deepEqual(getRecentSelections(CITY), [], 'verifier V5: nothing before the account is known');
+  bindLocalRecentsAccount('user-a');
   assert.deepEqual(getRecentSelections(CITY), [{ value: 'c1', label: 'Bangkok' }]);
 });
 
@@ -147,6 +154,7 @@ test('fail-closed: no policy reads nothing', () => {
 test('PRIVACY: a per-field clear survives a restart — the blob does not hydrate it back', async () => {
   const storage = fakeStorage();
   await attachLocalRecents(storage);
+  bindLocalRecentsAccount('user-a');
   recordLocalSelection(CITY, row('Bangkok', 'c1', 'city_picker'));
   recordLocalSelection(TRIP, row('Da Nang', 'c2', 'trip_destination'));
   await flushLocalRecents();
@@ -158,7 +166,9 @@ test('PRIVACY: a per-field clear survives a restart — the blob does not hydrat
 
   detachLocalRecents();
   clearLocalZeroState();
+  _resetLocalRecentsAccountForTests();
   await attachLocalRecents(storage);
+  bindLocalRecentsAccount('user-a');
   assert.deepEqual(localZeroState(CITY), [], 'the cleared field stays cleared after a cold start');
   assert.deepEqual(getRecentSelections(TRIP), [{ value: 'c2', label: 'Da Nang' }]);
 });
