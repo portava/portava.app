@@ -3987,7 +3987,10 @@ true: `authz.private_anchor_granted(item, creator, trip)` (SECURITY DEFINER, `se
 that stopped being true: on `trip_members` delete, insert, or a move into or out of accepted membership
 (grants to AND by that person on that trip — a membership that begins holds none, so a left-over row cannot
 revive on rejoining or on an admin restore), and on `trip_plan_items` turning non-private or soft-removed
-(grants on that item). Requires 3970.
+(grants on that item). Requires 3970. *Corrected in place 2026-10-07 (still applied nowhere):* the membership
+trigger compared the `member_role` enum with `coalesce(OLD.role, '')`, which raised 22P02 on every role or status
+update (CI's local-db job: ACCEPT_INVITE, SET_PARTICIPANT_ROLE); it compares `role::text` now, and
+`src/test/db/tripPlanItemsPrivateAnchorRls.db.test.ts` executes the policy and every trigger branch.
 
 **Nothing waits on the press.** Every API reader runs as service_role (lib/http.ts `requireUser` hands
 the route the service client) and applies the same rule in code
@@ -4108,7 +4111,9 @@ a person's still-`proposed` Trail is backfilled 'pending'), `review_reason` (req
 `reviewed_by`, `reviewed_at`. `trail_review_decide` (service_role only): row-locked, pending only, approve also
 activates a `proposed` lifecycle. `trail_propose` is 3975's byte for byte plus review_state ('pending' for a person,
 'approved' for a system proposal). RESTRICTIVE select policies on `trails`, `content_trails` and `trail_edges`
-(approved, or the client created the Trail) on top of 3390's untouched permissive ones; `authz.trail_review_visible`
+(approved, or the client created the Trail) on top of 3390's untouched permissive ones, naming no role (a
+role-named restrictive policy on a kept path is what 3390's postcondition reads as a deny, so it could not be
+re-applied after its rollback; corrected in place 2026-10-07); `authz.trail_review_visible`
 is their SECURITY DEFINER read. `rebuild_place_cooccurrence` (3495) reads approved Trails only (a transform, both
 joins). `trail_creation_enabled` seeded FALSE: POST /v1/discovery/trails refuses while it is off.
 
