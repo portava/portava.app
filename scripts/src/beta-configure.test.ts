@@ -29,6 +29,7 @@ import {
   type SeededFlag,
 } from "./beta-config-core.js";
 import { runBetaConfigure } from "./beta-configure.js";
+import { applyPolicySync, flagKindOf, planPolicySync, serializePolicy } from "./beta-flag-policy-sync.js";
 
 const BETA_URL = `https://${BETA_PROJECT_REF}.supabase.co`;
 const CI_URL = "https://hwokxgbmezheskbzskfr.supabase.co";
@@ -499,5 +500,72 @@ describe("pure pieces", () => {
     assert.deepEqual(p.missing, ["disable_signups", "rent_buddy_enabled", "stories_enabled"]);
     assert.deepEqual(p.unknown, ["zzz"]);
     assert.deepEqual(p.changes, [{ flag: "invite_only_beta", from: false, to: true }, { flag: "zzz", from: true, to: false }]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// beta-flag-policy-sync.ts (lane BETA2, 2026-10-07): the merge-time helper that
+// keeps the policy complete without ever deciding a flag ON.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("beta-flag-policy-sync — new flags OFF, retired flags out, anything turned ON refused", () => {
+  const seeded = (flag: string, value = false, everSetTrue = value, seededIn = "9999_x.sql:1"): SeededFlag => ({ flag, seededIn, seededValue: value, everSetTrue });
+  const withPop = (extra: SeededFlag[], drop: string[] = []) => {
+    const m = new Map(population);
+    for (const f of drop) m.delete(f);
+    for (const s of extra) m.set(s.flag, s);
+    return m;
+  };
+
+  it("on this tree the policy is in sync, and its committed bytes are exactly the serializer's form", () => {
+    const plan = planPolicySync(policy, population);
+    assert.deepEqual(plan, { add: [], remove: [], refuse: [] });
+    const committed = readFileSync(join(REPO_ROOT, "scripts/src/beta-flag-policy.json"), "utf8");
+    assert.equal(serializePolicy(policy), committed, "a write would re-encode untouched entries");
+  });
+
+  it("a merged lane's FALSE-seeded flags are added OFF with a reason and no evidence, a retired flag is removed (lane B's shape)", () => {
+    // origin/claude/mission-b-payments-identity-trust-20261005: 3823 seeds payment_ledger_reads_enabled FALSE,
+    // 3932 retires rent_buddy_allow_bookings_without_kyc.
+    const pop = withPop([seeded("payment_ledger_reads_enabled", false, false, "3823_payment_attribution_and_scoped_reads.sql:512")], ["rent_buddy_allow_bookings_without_kyc"]);
+    const plan = planPolicySync(policy, pop);
+    assert.deepEqual(plan.refuse, []);
+    assert.deepEqual(plan.remove, ["rent_buddy_allow_bookings_without_kyc"]);
+    assert.equal(plan.add.length, 1);
+    const e = plan.add[0];
+    assert.deepEqual([e.flag, e.kind, e.enabled, e.evidence], ["payment_ledger_reads_enabled", "CAPABILITY", false, []]);
+    assert.match(e.reason, /^OFF: seeded FALSE by 3823_payment_attribution_and_scoped_reads\.sql:512/);
+    const next = applyPolicySync(policy, plan);
+    // the result satisfies the same structural rules the real policy is held to, against the new population
+    assert.deepEqual(flagPolicyProblems(next, pop), []);
+    assert.equal(next.flags.filter((x) => x.enabled).length, policy.flags.filter((x) => x.enabled).length, "nothing turned ON");
+    const names = next.flags.map((x) => x.flag);
+    assert.deepEqual(names, [...names].sort(), "sorted by name, as committed");
+    // a write changes only the added and removed entries
+    const before = serializePolicy(policy).split("\n");
+    const after = serializePolicy(next).split("\n");
+    assert.ok(Math.abs(after.length - before.length) <= 7 + 7, `${before.length} -> ${after.length} lines`);
+  });
+
+  it("a STOP-named new flag is added as a disengaged STOP", () => {
+    const plan = planPolicySync(policy, withPop([seeded("disable_new_thing")]));
+    assert.deepEqual(plan.add.map((e) => [e.flag, e.kind, e.enabled]), [["disable_new_thing", "STOP", false]]);
+  });
+
+  it("REFUSED, nothing written: a new flag any migration turns ON (TRUE seed, or an UPDATE … SET enabled = true)", () => {
+    for (const s of [seeded("shiny_enabled", true, true), seeded("sneaky_enabled", false, true)]) {
+      const plan = planPolicySync(policy, withPop([s]));
+      assert.deepEqual(plan.add, []);
+      assert.equal(plan.refuse.length, 1);
+      assert.match(plan.refuse[0].why, /POST_SNAPSHOT_SEEDED_TRUE/);
+      assert.throws(() => applyPolicySync(policy, plan), /refusing to write/);
+    }
+  });
+
+  it("REFUSED: a new flag whose kind is unreadable; the polarity file's CLASSIFIED decides kinds outside the conventions", () => {
+    const plan = planPolicySync(policy, withPop([seeded("SOME_MODE")]), () => null);
+    assert.equal(plan.refuse.length, 1);
+    assert.equal(flagKindOf("RENT_BUDDY_ADMIN_ONLY_MODE"), "STOP");
+    assert.equal(flagKindOf("invite_only_beta"), "CAPABILITY");
+    assert.equal(flagKindOf("NOT_A_FLAG_ANYWHERE"), null);
   });
 });
