@@ -69,7 +69,7 @@ import type { ClientLike } from "../memoryProjections/derivativeRegistry.js";
 import {
   projectionStaleness,
   rebuildProjection,
-} from "../memoryProjections/derivativeRegistry.js";
+} from "../memoryProjections/derivativeRegistry.js"; import { reviveDeletionRevokedDerivative } from "../memoryProjections/narrowingReprojection.js"; // one line: cited by line
 import type { ProjectionId, ProjectionScope } from "../memoryProjections/projectionRegistry.js";
 import { acceptedCrewOfTrip, canReadMemory } from "./memoryReadPolicy.js";
 import {
@@ -363,14 +363,14 @@ export interface MemorySearchRequest {
 export async function ensureDerivative(
   client: ClientLike,
   target: ResolvedTarget,
-  now: Date,
+  now: Date, /** Lead ruling H-5: the OWNER's request may rebuild a derivative a deletion revoked. */ viewerId?: string,
 ): Promise<{ ok: true; rebuilt: boolean; state: string } | { ok: false; detail: string; retryable: boolean }> {
   const staleness = await projectionStaleness(client, target.projectionId, target.scope);
   if (!staleness.ok) {
     return { ok: false, detail: staleness.detail, retryable: staleness.retryable };
   }
   const state = staleness.value.state;
-  if (state === "FRESH" || state === "REVOKED") return { ok: true, rebuilt: false, state };
+  if (state === "REVOKED" && viewerId !== undefined && viewerId === target.scope.owner_id && (await reviveDeletionRevokedDerivative(client, target.projectionId, target.scope, now)).state === "revived") return { ok: true, rebuilt: true, state: "REVIVED" }; if (state === "FRESH" || state === "REVOKED") return { ok: true, rebuilt: false, state }; // H-5: only a deletion's revocation, only for its owner; anything else stays REVOKED and is refused below
 
   const built = await rebuildProjection(client, target.projectionId, target.scope, now);
   if (!built.ok) return { ok: false, detail: built.detail, retryable: built.retryable };
@@ -405,7 +405,7 @@ export async function runMemorySearch(
   const target = resolved.value;
 
   const now = request.now ?? new Date();
-  const prepared = await ensureDerivative(client, target, now);
+  const prepared = await ensureDerivative(client, target, now, viewerId);
   if (!prepared.ok) {
     return refuse("registry_unavailable", prepared.detail, prepared.retryable);
   }
@@ -637,7 +637,7 @@ export async function runCrewMemorySearch(
 
   for (const memberId of inBound) {
     const target = crewMemberTarget(memberId, tripId);
-    const prepared = await ensureDerivative(client, target, now);
+    const prepared = await ensureDerivative(client, target, now, viewerId);
     if (!prepared.ok) {
       disclosures.push(withhold(memberId, "derivative_unavailable", prepared.detail));
       continue;

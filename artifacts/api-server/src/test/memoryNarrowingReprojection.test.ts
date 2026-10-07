@@ -21,6 +21,7 @@ import memoriesRouter from "../routes/memories.js";
 import { rebuildProjection, DERIVATIVE_REGISTRY_TABLE } from "../services/memoryProjections/derivativeRegistry.js";
 import { parseScopeKey, reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js";
 import { scopeKeyOf } from "../services/memoryProjections/projectionRegistry.js";
+import { DELETION_REVOCATION_REASON } from "../services/memoryProjections/narrowingReprojection.js";
 
 const OWNER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const M = "11111111-1111-4111-8111-111111111111";
@@ -223,5 +224,86 @@ describe("reprojectDerivativesAfterNarrowing — the parts the route does not sh
     assert.deepEqual(parseScopeKey(scopeKeyOf("PublicMemoryProjection", PUBLIC_SCOPE)), { projectionId: "PublicMemoryProjection", scope: PUBLIC_SCOPE });
     assert.equal(parseScopeKey("PublicMemoryProjection|viewer:v"), null, "no owner");
     assert.equal(parseScopeKey("PublicMemoryProjection|owner:a|owner:b"), null, "a repeated part");
+  });
+});
+
+// ── Lead ruling H-5 (2026-10-07) ─────────────────────────────────────────────
+const VIEWER = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+async function send(a: App, method: string, path: string, actor: string, body?: unknown) {
+  const res = await fetch(`${a.base}/api${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${actor}`, "Content-Type": "application/json", "Idempotency-Key": `h5-${++keyN}`, connection: "close" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await res.text();
+  let parsed: any = null; try { parsed = text ? JSON.parse(text) : null; } catch { parsed = text; }
+  return { status: res.status, body: parsed };
+}
+const lastLifecycle = (a: App) => a.logs.filter((l) => l.msg === "memories: §21 deletion lifecycle").at(-1)?.obj.report;
+const stepOf = (report: any, name: string) => report.steps.find((x: any) => x.step === name);
+
+describe("lead ruling H-5 — a deletion REBUILDS the derivatives that carried the Memory", () => {
+  it("DELETE: the public derivative and the owner's timeline are rebuilt without the Memory, ACTIVE, still carrying the rest", async () => {
+    const store = seed();
+    await registerBoth(store);
+    app = await start(store);
+    assert.equal((await send(app, "DELETE", `/memories/${M}`, OWNER)).status, 204);
+    for (const [projection, scope] of [["PublicMemoryProjection", PUBLIC_SCOPE], ["MemoryTimelineProjection", OWNER_SCOPE]] as const) {
+      const row = reg(store, projection, scope);
+      assert.equal(row.revocation_state, "ACTIVE", `${projection} is rebuilt, not killed`);
+      assert.equal(carries(row, M), false, `${projection} no longer carries the deleted Memory`);
+      assert.equal(carries(row, M2), true, `${projection} still carries the Memory that was not deleted`);
+    }
+    const s3 = stepOf(lastLifecycle(app), "DERIVATIVES_PURGED");
+    assert.deepEqual([s3.outcome, s3.facts.carried, s3.facts.rebuiltWithout, s3.facts.revokedInstead], ["done", 2, 2, 0]);
+  });
+
+  it("the owner's search after a deletion is never 410 for good: a derivative the deletion had to REVOKE is rebuilt on the owner's next search, without the deleted Memory", async () => {
+    const store = seed();
+    await registerBoth(store);
+    app = await start(store, { failWrites: new Set([`${DERIVATIVE_REGISTRY_TABLE}:upsert`]) });
+    assert.equal((await send(app, "DELETE", `/memories/${M}`, OWNER)).status, 204);
+    const revoked = reg(store, "MemoryTimelineProjection", OWNER_SCOPE);
+    assert.equal(revoked.revocation_state, "REVOKED", "precondition: the fail-closed fallback revoked it");
+    assert.ok(String(revoked.revocation_reason).startsWith(DELETION_REVOCATION_REASON));
+
+    _setTestClient(makeClient(store) as any, true);
+    const search = await send(app, "POST", "/memories/search", OWNER, { intent: { kind: "mine" } });
+    assert.notEqual(search.status, 410, JSON.stringify(search.body));
+    assert.equal(search.status, 200, JSON.stringify(search.body));
+    const mine = reg(store, "MemoryTimelineProjection", OWNER_SCOPE);
+    assert.deepEqual([mine.revocation_state, carries(mine, M), carries(mine, M2)], ["ACTIVE", false, true]);
+    assert.ok(!(search.body.hits ?? []).some((h: any) => h.memory_id === M || h.memoryId === M), "the deleted Memory is not a hit");
+  });
+
+  it("someone else's request does NOT rebuild a deletion-revoked derivative: it stays REVOKED and they are told 410", async () => {
+    const store = seed();
+    await registerBoth(store);
+    app = await start(store, { failWrites: new Set([`${DERIVATIVE_REGISTRY_TABLE}:upsert`]) });
+    assert.equal((await send(app, "DELETE", `/memories/${M}`, OWNER)).status, 204);
+    _setTestClient(makeClient(store) as any, true);
+    const theirs = await send(app, "POST", "/memories/search", VIEWER, { intent: { kind: "public", ownerId: OWNER } });
+    assert.equal(theirs.status, 410, JSON.stringify(theirs.body));
+    assert.equal(reg(store, "PublicMemoryProjection", PUBLIC_SCOPE).revocation_state, "REVOKED");
+  });
+
+  it("a derivative revoked for ANY other reason stays revoked, even on its owner's request", async () => {
+    const store = seed();
+    await registerBoth(store);
+    const mine = reg(store, "MemoryTimelineProjection", OWNER_SCOPE);
+    Object.assign(mine, { revocation_state: "REVOKED", revocation_reason: "memory_visibility_changed: re-derivation failed", payload_json: [], row_count: 0 });
+    app = await start(store);
+    const search = await send(app, "POST", "/memories/search", OWNER, { intent: { kind: "mine" } });
+    assert.equal(search.status, 410, JSON.stringify(search.body));
+    assert.equal(reg(store, "MemoryTimelineProjection", OWNER_SCOPE).revocation_state, "REVOKED");
+  });
+
+  it("mustExclude: a rebuild that still carries the Memory is revoked, never counted as retained", async () => {
+    const store = seed();
+    await registerBoth(store);
+    // M is NOT deleted here, so a rebuild keeps it: the deletion rule must still not let it stand.
+    const out = await reprojectDerivativesAfterNarrowing(makeClient(store) as any, { memoryId: M, now: NOW, reason: DELETION_REVOCATION_REASON, mustExclude: true });
+    assert.deepEqual([out.carried, out.retained, out.revokedInstead], [2, 0, 2]);
+    assert.equal(reg(store, "MemoryTimelineProjection", OWNER_SCOPE).revocation_state, "REVOKED");
   });
 });

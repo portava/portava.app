@@ -32,9 +32,13 @@
  */
 import {
   DERIVATIVE_REGISTRY_TABLE,
+  DELETION_REVOCATION_REASON,
+  isDeletionRevocation,
+  readRegistration,
   rebuildProjection,
   type ClientLike,
 } from "./derivativeRegistry.js";
+import { isTableAbsentError } from "../../lib/tableAbsence.js";
 import { listProjectionIds, type ProjectionId, type ProjectionScope } from "./projectionRegistry.js";
 
 export interface NarrowingReport {
@@ -50,6 +54,8 @@ export interface NarrowingReport {
   revokedInstead: number;
   /** Neither re-derived nor revoked — the derivative may still carry the Memory. */
   unresolved: string[];
+  /** The registry table is not deployed (42P01 / PGRST205): there is nothing to re-derive. */
+  absent: boolean;
 }
 
 /** `scopeKeyOf`'s inverse. Null for anything it did not write. */
@@ -83,15 +89,24 @@ async function revokeOne(client: ClientLike, id: string, reason: string, now: Da
  */
 export async function reprojectDerivativesAfterNarrowing(
   client: ClientLike,
-  input: { memoryId: string; now: Date; reason: string },
+  input: {
+    memoryId: string; now: Date; reason: string;
+    /**
+     * Lead ruling H-5: the Memory was DELETED, so no audience keeps it. A
+     * re-derived registration that still carries it is revoked, never counted
+     * as `retained`.
+     */
+    mustExclude?: boolean;
+  },
 ): Promise<NarrowingReport> {
-  const report: NarrowingReport = { ok: true, carried: 0, reprojected: 0, retained: 0, revokedInstead: 0, unresolved: [] };
+  const report: NarrowingReport = { ok: true, carried: 0, reprojected: 0, retained: 0, revokedInstead: 0, unresolved: [], absent: false };
   const found = await client
     .from(DERIVATIVE_REGISTRY_TABLE)
     .select("id, scope_key, source_memory_ids, revocation_state")
     .contains("source_memory_ids", [input.memoryId])
     .eq("revocation_state", "ACTIVE");
   if (found.error) {
+    if (isTableAbsentError(found.error)) { report.absent = true; return report; }
     report.ok = false;
     report.unresolved.push(`registry unreadable: ${found.error.message ?? "unknown error"}`);
     return report;
@@ -111,9 +126,10 @@ export async function reprojectDerivativesAfterNarrowing(
       }
     }
     if (rebuilt && rebuilt.ok && !rebuilt.value.was_revoked) {
-      if ((rebuilt.value.registration.source_memory_ids ?? []).includes(input.memoryId)) report.retained += 1;
-      else report.reprojected += 1;
-      continue;
+      const stillCarries = (rebuilt.value.registration.source_memory_ids ?? []).includes(input.memoryId);
+      if (!stillCarries) { report.reprojected += 1; continue; }
+      if (!input.mustExclude) { report.retained += 1; continue; }
+      // A deleted Memory that a rebuild still carries falls through to the revoke.
     }
     // Fail closed: what cannot be re-derived is emptied.
     if (await revokeOne(client, reg.id, `${input.reason}: re-derivation failed`, input.now)) {
@@ -125,3 +141,34 @@ export async function reprojectDerivativesAfterNarrowing(
   }
   return report;
 }
+
+/**
+ * Lead ruling H-5 — on the OWNER's request, rebuild a registration that was
+ * revoked because a Memory was deleted. The builders read the canonical rows
+ * as they are now, so every deleted or non-visible Memory is excluded. A
+ * registration revoked for any other reason is left REVOKED.
+ */
+export type ReviveOutcome =
+  | { state: "revived"; carried: number }
+  | { state: "not_revocable"; detail: string }
+  | { state: "failed"; detail: string };
+
+export async function reviveDeletionRevokedDerivative(
+  client: ClientLike,
+  projectionId: ProjectionId,
+  scope: ProjectionScope,
+  now: Date,
+): Promise<ReviveOutcome> {
+  const reg = await readRegistration(client, projectionId, scope);
+  if (!reg.ok) return { state: "failed", detail: reg.detail };
+  if (reg.value.revocation_state !== "REVOKED") return { state: "not_revocable", detail: `registration is ${reg.value.revocation_state}` };
+  if (!isDeletionRevocation(reg.value.revocation_reason)) {
+    return { state: "not_revocable", detail: `revoked for '${String(reg.value.revocation_reason ?? "")}', not by a deletion` };
+  }
+  const rebuilt = await rebuildProjection(client, projectionId, scope, now, { reviveDeletionRevoked: true });
+  if (!rebuilt.ok) return { state: "failed", detail: rebuilt.detail };
+  if (rebuilt.value.was_revoked) return { state: "failed", detail: "the rebuild declined to overwrite the revoked registration" };
+  return { state: "revived", carried: (rebuilt.value.registration.source_memory_ids ?? []).length };
+}
+
+export { DELETION_REVOCATION_REASON };

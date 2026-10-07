@@ -53,7 +53,7 @@
  * when that write was confirmed. Absent table (3670 unapplied) ⇒ false + why.
  */
 
-import { revokeDerivativesForMemory } from "../memoryProjections/derivativeRegistry.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; import { eraseEvidenceForMemory } from "./memoryEvidenceErasure.js"; // one line: cited by line
+import { reprojectDerivativesAfterNarrowing, DELETION_REVOCATION_REASON } from "../memoryProjections/narrowingReprojection.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; import { eraseEvidenceForMemory } from "./memoryEvidenceErasure.js"; // one line: cited by line
 import {
   revokeMemoryAudienceCaches,
   type MemoryAudienceState,
@@ -224,13 +224,16 @@ export async function runMemoryDeletionLifecycle(
   //    which was applied to production on 2026-09-15 — so this step now RUNS
   //    rather than reporting `not_applicable`, and a failure of it is a real
   //    retryable failure rather than a migration nobody had run.
+  //    Lead ruling H-5: every derivative that carried the Memory is REBUILT
+  //    without it (the builders exclude a deleted Memory), and revoked and
+  //    emptied only when that rebuild fails — so a deletion no longer leaves
+  //    the owner's own search answering 410 for good.
   steps.push(await runStep("DERIVATIVES_PURGED", async () => {
-    const result = await revokeDerivativesForMemory(sc, opts.memoryId, "memory_deleted", now);
-    if (result.ok) return { outcome: "done", facts: { revoked: result.value.revoked, scopeKeys: result.value.scope_keys } };
-    if (!result.retryable) {
-      return { outcome: "not_applicable", detail: `${result.reason}: ${result.detail}`, facts: {} };
-    }
-    return { outcome: "failed", retryable: true, detail: `${result.reason}: ${result.detail}`, facts: {} };
+    const r = await reprojectDerivativesAfterNarrowing(sc, { memoryId: opts.memoryId, now, reason: DELETION_REVOCATION_REASON, mustExclude: true });
+    const facts = { carried: r.carried, rebuiltWithout: r.reprojected, revokedInstead: r.revokedInstead };
+    if (r.absent) return { outcome: "not_applicable", detail: "memory_derivative_registry is not deployed", facts };
+    if (!r.ok) return { outcome: "failed", retryable: true, detail: `derivatives unresolved: ${r.unresolved.join(", ")}`, facts };
+    return { outcome: "done", facts };
   }));
 
   // 4. RAW_EVIDENCE_PURGED. §3.6's `memory_evidence` is migration 2320, and it

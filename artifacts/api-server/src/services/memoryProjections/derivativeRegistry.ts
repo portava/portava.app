@@ -289,14 +289,14 @@ export async function rebuildProjection(
   projectionId: ProjectionId,
   scope: ProjectionScope,
   now: Date,
-  opts: { significance?: ReadonlyMap<string, SignificanceExplanation> } = {},
+  opts: { significance?: ReadonlyMap<string, SignificanceExplanation>; /** Lead ruling H-5: rebuild a registration revoked ONLY because a Memory was deleted. */ reviveDeletionRevoked?: boolean } = {},
 ): Promise<ProjectionResult<{ registration: RegistrationRow; rows: ProjectedRow[]; was_revoked: boolean }>> {
   const derived = await deriveProjection(client, projectionId, scope, opts);
   if (!derived.ok) return derived;
 
   const existing = await readRegistration(client, projectionId, scope);
   if (!existing.ok && existing.reason !== "not_registered") return existing;
-  if (existing.ok && existing.value.revocation_state === "REVOKED") {
+  if (existing.ok && existing.value.revocation_state === "REVOKED" && !(opts.reviveDeletionRevoked === true && isDeletionRevocation(existing.value.revocation_reason))) { // H-5: only a deletion's revocation may be rebuilt, and only when asked
     return {
       ok: true,
       value: { registration: existing.value, rows: [], was_revoked: true },
@@ -625,4 +625,19 @@ async function readHighlightSources(
     };
   }
   return { ok: true, value: { highlights, highlight_policies: polRes.data as HighlightPolicyRow[] } };
+}
+
+// ── Lead ruling H-5 (2026-10-07), appended so every cited line above holds ──
+/**
+ * The `revocation_reason` a Memory DELETION writes, and the prefix of the one
+ * its fail-closed fallback writes ("memory_deleted: re-derivation failed").
+ * H-5: a registration revoked for this reason — and for no other — may be
+ * rebuilt on its owner's next request, excluding every deleted or non-visible
+ * Memory, so a deletion never leaves the owner's own search 410 for good.
+ */
+export const DELETION_REVOCATION_REASON = "memory_deleted";
+
+export function isDeletionRevocation(reason: string | null | undefined): boolean {
+  const r = String(reason ?? "");
+  return r === DELETION_REVOCATION_REASON || r.startsWith(`${DELETION_REVOCATION_REASON}:`);
 }
