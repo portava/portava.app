@@ -16,6 +16,12 @@
 -- creator_attributions.beneficiary_user_id could not become NOT NULL again over
 -- rows whose identity was removed. Nothing a removal did can be undone by a
 -- rollback — no mapping back to the person exists, by design.
+--
+-- ONE THING IS DELIBERATELY NOT RESTORED (2026-10-07): 3600 revokes the client
+-- roles' UPDATE (account_status) on public.profiles, so that nobody can mark
+-- themselves erased. No application path writes that column with a client key
+-- (every writer is the service client), so re-granting it would restore nothing
+-- but a self-service write to the account-state column. It stays revoked.
 
 BEGIN;
 

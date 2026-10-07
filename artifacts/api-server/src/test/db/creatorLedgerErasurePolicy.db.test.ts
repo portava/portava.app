@@ -56,6 +56,8 @@
  *          insert racing the tombstone (FOR SHARE); and a retained attribution's
  *          key re-sent through creator_ledger_append is refused CL452 instead of
  *          being answered as a replay by 3387's NULL-unsafe compare
+ *   B13    the tombstone marker (4b) trusts is server-only: a person cannot set
+ *          their own account_status
  *   S1     separation: every ledger row in every fixture belongs to a synthetic account
  *   R1     the flag row is FALSE in every fixture
  */
@@ -860,6 +862,25 @@ describe("the creator ledger on synthetic accounts, and C-11 in its three states
       const after = attempt(insert);
       assert.match(after.stderr, /creator_ledger_subject_erased/);
       assert.equal(mentions(Q), 0);
+    });
+
+    test("B13. (4b) the tombstone marker is server-only: a person cannot mark themselves erased (which would switch off holds on their own records); their other columns and the service path are unaffected", () => {
+      const self = seedSynthetic("self-b13").id;
+      const asSelf = (sql: string) => psql([
+        `SELECT set_config('request.jwt.claim.sub', '${self}', true);`,
+        `SELECT set_config('request.jwt.claim.role', 'authenticated', true);`,
+        `SET LOCAL ROLE authenticated;`,
+        `\\set VERBOSITY verbose`,
+        sql,
+      ].join("\n"), { single: true });
+      const r = asSelf(`UPDATE public.profiles SET account_status = 'deleted' WHERE id = '${self}';`);
+      assert.notEqual(r.status, 0, "a person may not set their own account_status");
+      assert.match(r.stderr, /42501|permission denied/);
+      assert.equal(scalar(`SELECT account_status FROM public.profiles WHERE id = '${self}'`), "active");
+      const rename = asSelf(`UPDATE public.profiles SET name = 'SYNTHETIC C-11 FIXTURE self-b13 renamed' WHERE id = '${self}';`);
+      assert.equal(rename.status, 0, `ordinary self-editing is untouched: ${rename.stderr}`);
+      assert.equal(attempt(`UPDATE public.profiles SET account_status = 'deactivated' WHERE id = '${self}';`).status, 0,
+        "the service role (routes/profile.ts, AccountDeletionService) still writes it");
     });
 
     test("S1. separation: every ledger row in fixture B belongs to a synthetic account (or to a pseudonym that replaced one)", () => {

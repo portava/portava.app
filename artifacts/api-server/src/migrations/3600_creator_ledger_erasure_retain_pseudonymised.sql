@@ -126,6 +126,14 @@
 --      read FOR SHARE, so the deletion's anonymise UPDATE waits for an insert
 --      already in flight, and the deletion's second ledger pass (after the
 --      tombstone) sees it; an insert that arrives after the tombstone is refused.
+--      THE MARKER IS MADE SERVER-ONLY HERE. The baseline grants anon and
+--      authenticated UPDATE (account_status) on profiles, and profiles_update
+--      lets a person update their own row, so without this a person could mark
+--      THEMSELVES erased and so switch off every fraud hold, recomputation and
+--      reversal of their own creator records. Every writer of the column in the
+--      tree is the service client (routes/profile.ts deactivate / reactivate,
+--      AccountDeletionService anonymise_profile), so the column-level UPDATE is
+--      revoked from both client roles, exactly as 2078 did for `role`.
 --  (4c) A retained record's key cannot be re-sent (same review: "3387 has a
 --      NULL-unsafe replay compare"). creator_ledger_append's replay check
 --      (3387) compares `ex.beneficiary_user_id <> (a->>'beneficiary_user_id')::uuid`,
@@ -412,6 +420,10 @@ DROP TRIGGER IF EXISTS clae_pseudonymised_is_frozen ON public.creator_ledger_aud
 CREATE TRIGGER clae_pseudonymised_is_frozen BEFORE INSERT ON public.creator_ledger_audit_events
   FOR EACH ROW EXECUTE FUNCTION public.creator_ledger_pseudonymised_is_frozen();
 
+-- (4b) trusts profiles.account_status = 'deleted'; no client may set it (header).
+REVOKE UPDATE (account_status) ON public.profiles FROM anon;
+REVOKE UPDATE (account_status) ON public.profiles FROM authenticated;
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- The receipt: that an identity was removed — never whose, never the pseudonym.
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -541,6 +553,10 @@ BEGIN
      OR position('creator_ledger_subject_erased' IN pg_get_functiondef('public.creator_ledger_pseudonymised_is_frozen()'::regprocedure)) = 0
      OR position('a.idempotency_key = NEW.idempotency_key' IN pg_get_functiondef('public.creator_ledger_pseudonymised_is_frozen()'::regprocedure)) = 0 THEN
     RAISE EXCEPTION '3600: POSTCONDITION FAILED: the frozen guard does not refuse an erased person (4b) or a re-sent retained key (4c)';
+  END IF;
+  IF has_column_privilege('anon', 'public.profiles', 'account_status', 'UPDATE')
+     OR has_column_privilege('authenticated', 'public.profiles', 'account_status', 'UPDATE') THEN
+    RAISE EXCEPTION '3600: POSTCONDITION FAILED: a client role can still set profiles.account_status, the erasure tombstone (4b) trusts';
   END IF;
   SELECT count(*) INTO n FROM information_schema.columns
    WHERE table_schema = 'public' AND table_name = 'creator_ledger_identity_removals'

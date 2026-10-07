@@ -180,6 +180,14 @@ describe("C-11 erasure design, on the files (census-discovery §107)", () => {
     // The migration asserts it about itself, so a hand-edited function cannot drop it unnoticed.
     assert.match(code(B), /position\('FOR SHARE' IN pg_get_functiondef\('public\.creator_ledger_pseudonymised_is_frozen\(\)'::regprocedure\)\) = 0/);
     assert.match(code(B), /position\('creator_ledger_subject_erased' IN pg_get_functiondef/);
+    // The marker it trusts is server-only: a person who could set their own
+    // account_status could mark themselves erased and switch off every hold,
+    // recompute and reversal of their own records.
+    for (const role of ["anon", "authenticated"]) {
+      assert.match(code(B), new RegExp(`REVOKE UPDATE \\(account_status\\) ON public\\.profiles FROM ${role};`), role);
+      assert.match(code(B), new RegExp(`has_column_privilege\\('${role}', 'public\\.profiles', 'account_status', 'UPDATE'\\)`), `${role}: asserted by a postcondition`);
+    }
+    assert.doesNotMatch(code(B_RB), /GRANT[^;]*account_status/, "the rollback does not hand the column back to the client roles");
   });
 
   it("E7. (4c) a re-sent key of a retained attribution is refused by the BEFORE INSERT guard, ahead of ON CONFLICT, so 3387's NULL-unsafe replay compare is never reached for it", () => {

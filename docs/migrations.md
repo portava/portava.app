@@ -4096,7 +4096,12 @@ second time after the tombstone (`pseudonymise_creator_ledger_after_tombstone`),
 producer skips an erased beneficiary before it writes. (4c): a re-sent key of a retained (pseudonymised)
 attribution is refused CL452 `creator_ledger_subject_pseudonymised` by the BEFORE INSERT trigger, ahead of
 ON CONFLICT, so 3387's NULL-unsafe replay compare is never reached for such a row (3387 is applied and is
-not edited). Postconditions assert both. No new object, grant or table.
+not edited). Postconditions assert both. **One grant changes:** (4b) trusts `profiles.account_status =
+'deleted'`, and the baseline lets `anon` / `authenticated` UPDATE that column on their own row, so a person
+could mark themselves erased and switch off every hold, recompute and reversal of their own creator records;
+3600 revokes the two client roles' column-level `UPDATE (account_status)` (as `2078` did for `role`; every
+writer in the tree is the service client) and asserts it. The rollback deliberately does not re-grant it. No
+new object or table.
 
 ## Apply-order overrides
 
