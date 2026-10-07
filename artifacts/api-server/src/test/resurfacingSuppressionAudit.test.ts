@@ -1,0 +1,236 @@
+/**
+ * §24 `resurfacing_suppression_violations` ("must be zero") — counted, and
+ * enforced, at the serving step of both proactive Highlight feeds.
+ * census-highlights-memories H221 (lane R, 2026-10-06).
+ *
+ * The row read NB: "Nothing counts a violation ... a violation could not be
+ * DETECTED if it happened". Two halves are proven here:
+ *
+ *   1. THE DETECTOR (unit). Given the same §10/§11 inputs a feed filtered with,
+ *      a row a stored control suppresses is DROPPED and COUNTED; an allowed row
+ *      passes and is counted as checked; the viewer's own row is neither; an
+ *      absent control table (2720 not deployed) reports nothing; a
+ *      recap-only control is not a violation of a proactive feed.
+ *   2. THE WIRING (route). GET /highlights/active and GET
+ *      /highlights/following-feed both pass their served rows through it — the
+ *      checked count moves on a real request — and on a correct handler the
+ *      violation count stays ZERO while a KEEP_PRIVATE_FOREVER row is still
+ *      kept off the page (the earlier filter did that; the audit saw nothing to
+ *      drop).
+ *
+ * Emitted, not aggregated (per-process counter + structured log line): §K.2's W.
+ */
+import { describe, it, beforeEach } from "node:test";
+import assert from "node:assert/strict";
+import {
+  auditServedResurfacing,
+  readResurfacingSuppressionAudit,
+  _resetResurfacingSuppressionAudit,
+  RESURFACING_SUPPRESSION_VIOLATIONS,
+} from "../services/highlights/resurfacingSuppressionAudit.js";
+import { suppressions, type ResurfacingControl, type ResurfacingSuppressions } from "../services/highlights/highlightResurfacing.js";
+import type { ProjectionInputs } from "../services/highlights/highlightPublicProjection.js";
+import type { ProjectionPolicyRead } from "../services/highlights/highlightProjectionPolicy.js";
+import { MEMORY_METRICS_NOT_MEASURABLE } from "../services/memory/memoryKernelMetrics.js";
+import {
+  startApp, call, fixtureTables, listIds, feedIds,
+  VIEWER, OWNER, H_PUB, H_MINE,
+} from "./highlightsSpecHarness.js";
+
+const ROW_A = { id: "50000000-0000-4000-8000-00000000000a", owner_id: OWNER };
+const ROW_B = { id: "50000000-0000-4000-8000-00000000000b", owner_id: OWNER };
+const MINE = { id: "50000000-0000-4000-8000-00000000000c", owner_id: VIEWER };
+
+const NO_POLICIES: ProjectionPolicyRead = { state: "absent", reason: "test: no §10 policy table" };
+const ABSENT_CONTROLS: ResurfacingSuppressions = { state: "absent", reason: "2720 not deployed" };
+
+function inputsWith(controls: Array<{ control: ResurfacingControl; subjectId: string }>): ProjectionInputs {
+  return {
+    controls: suppressions(controls),
+    viewerControls: suppressions([]),
+    policies: NO_POLICIES,
+  };
+}
+
+function recordingLog() {
+  const lines: Array<{ obj: Record<string, unknown>; msg: string }> = [];
+  return { lines, log: { error: (obj: unknown, msg: string) => { lines.push({ obj: obj as Record<string, unknown>, msg }); } } };
+}
+
+describe("the detector: a suppressed row at the serving step is counted AND dropped", () => {
+  beforeEach(() => _resetResurfacingSuppressionAudit());
+
+  it("drops and counts a row a stored KEEP_PRIVATE_FOREVER covers; serves the other", () => {
+    const { lines, log } = recordingLog();
+    const out = auditServedResurfacing(
+      [ROW_A, ROW_B], VIEWER, inputsWith([{ control: "KEEP_PRIVATE_FOREVER", subjectId: ROW_A.id }]), log, "unit",
+    );
+    assert.deepEqual(out.map((r) => r.id), [ROW_B.id]);
+    assert.deepEqual(readResurfacingSuppressionAudit(), {
+      metric: RESURFACING_SUPPRESSION_VIOLATIONS, violations: 1, rowsChecked: 2,
+    });
+    assert.equal(lines.length, 1);
+    assert.equal(lines[0]!.obj.metric, RESURFACING_SUPPRESSION_VIOLATIONS);
+    assert.equal(lines[0]!.obj.highlightId, ROW_A.id);
+  });
+
+  it("DO_NOT_RESURFACE on one Highlight drops that row and only that row", () => {
+    const { log } = recordingLog();
+    const out = auditServedResurfacing(
+      [ROW_A, ROW_B], VIEWER, inputsWith([{ control: "DO_NOT_RESURFACE", subjectId: ROW_A.id }]), log, "unit",
+    );
+    // DO_NOT_RESURFACE is highlight-scoped (feedSubjectScope): ROW_B, same owner, stays.
+    assert.deepEqual(out.map((r) => r.id), [ROW_B.id]);
+    assert.equal(readResurfacingSuppressionAudit().violations, 1);
+  });
+
+  it("a VIEWER-scoped control (HIDE_PERSON_FROM_RESURFACING, set by the viewer about the owner) is a violation too", () => {
+    const { lines, log } = recordingLog();
+    const out = auditServedResurfacing(
+      [ROW_A, MINE], VIEWER,
+      {
+        controls: suppressions([]),
+        viewerControls: suppressions([{ control: "HIDE_PERSON_FROM_RESURFACING", subjectId: OWNER }]),
+        policies: NO_POLICIES,
+      },
+      log, "unit",
+    );
+    assert.deepEqual(out.map((r) => r.id), [MINE.id], "every row of the hidden person is dropped; the viewer's own stays");
+    assert.equal(readResurfacingSuppressionAudit().violations, 1);
+    assert.equal(lines[0]!.obj.metric, RESURFACING_SUPPRESSION_VIOLATIONS);
+  });
+
+  it("a control that does not suppress proactive feeds is not a violation", () => {
+    const { lines, log } = recordingLog();
+    const out = auditServedResurfacing(
+      [ROW_A], VIEWER, inputsWith([{ control: "DO_NOT_INCLUDE_IN_RECAPS", subjectId: ROW_A.id }]), log, "unit",
+    );
+    assert.deepEqual(out.map((r) => r.id), [ROW_A.id]);
+    assert.equal(readResurfacingSuppressionAudit().violations, 0);
+    assert.equal(lines.length, 0);
+  });
+
+  it("the viewer's OWN row is never checked against controls about other people", () => {
+    const { log } = recordingLog();
+    const out = auditServedResurfacing(
+      [MINE], VIEWER, inputsWith([{ control: "KEEP_PRIVATE_FOREVER", subjectId: MINE.id }]), log, "unit",
+    );
+    assert.deepEqual(out.map((r) => r.id), [MINE.id]);
+    assert.deepEqual(readResurfacingSuppressionAudit(), {
+      metric: RESURFACING_SUPPRESSION_VIOLATIONS, violations: 0, rowsChecked: 0,
+    });
+  });
+
+  it("with the control table ABSENT there is nothing to violate, and nothing is invented", () => {
+    const { log } = recordingLog();
+    const out = auditServedResurfacing(
+      [ROW_A], VIEWER,
+      { controls: ABSENT_CONTROLS, viewerControls: ABSENT_CONTROLS, policies: NO_POLICIES },
+      log, "unit",
+    );
+    assert.deepEqual(out.map((r) => r.id), [ROW_A.id]);
+    assert.equal(readResurfacingSuppressionAudit().violations, 0);
+    assert.equal(readResurfacingSuppressionAudit().rowsChecked, 1);
+  });
+
+  it("a §10 refusal at the serving step is DROPPED but is not a §11 violation", () => {
+    const { lines, log } = recordingLog();
+    const out = auditServedResurfacing(
+      [ROW_A], VIEWER,
+      { controls: suppressions([]), viewerControls: suppressions([]), policies: { state: "unreadable", reason: "test: policy read failed" } },
+      log, "unit",
+    );
+    assert.deepEqual(out, [], "an unreadable §10 policy withholds at the last step too");
+    assert.equal(readResurfacingSuppressionAudit().violations, 0, "not a §11 suppression");
+    assert.equal(lines.length, 1);
+    assert.equal(lines[0]!.obj.metric, undefined, "the §11 metric name is not used for a §10 refusal");
+  });
+
+  it("the memory metrics module no longer lists the name as unmeasurable", () => {
+    assert.ok(!(RESURFACING_SUPPRESSION_VIOLATIONS in MEMORY_METRICS_NOT_MEASURABLE));
+  });
+});
+
+function tablesWith(rows: Array<Record<string, unknown>>) {
+  const t = fixtureTables();
+  t.highlight_resurfacing_preferences = rows;
+  return t;
+}
+
+describe("the wiring: both proactive feeds pass what they serve through the audit", () => {
+  beforeEach(() => _resetResurfacingSuppressionAudit());
+
+  it("GET /highlights/active checks every non-owner row it serves; zero violations on a correct handler", async () => {
+    const app = await startApp({ tables: tablesWith([]) });
+    try {
+      const r = await call(app, "GET", "/api/highlights/active", VIEWER);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.ok(listIds(r.body).has(H_PUB));
+      const s = readResurfacingSuppressionAudit();
+      assert.equal(s.rowsChecked, 1, "H_PUB (OWNER's) was checked; H_MINE (the viewer's) was not");
+      assert.equal(s.violations, 0);
+    } finally { await app.close(); }
+  });
+
+  it("GET /highlights/following-feed is wired the same way", async () => {
+    const app = await startApp({ tables: tablesWith([]) });
+    try {
+      const r = await call(app, "GET", "/api/highlights/following-feed", VIEWER);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.ok(feedIds(r.body).has(H_PUB));
+      assert.ok(readResurfacingSuppressionAudit().rowsChecked >= 1);
+      assert.equal(readResurfacingSuppressionAudit().violations, 0);
+    } finally { await app.close(); }
+  });
+
+  it("a KEEP_PRIVATE_FOREVER row stays off both feeds and the count stays ZERO (the filter, not the audit, removed it)", async () => {
+    const app = await startApp({
+      tables: tablesWith([
+        { id: "1", owner_id: OWNER, control: "KEEP_PRIVATE_FOREVER", subject_type: "highlight", subject_id: H_PUB },
+      ]),
+    });
+    try {
+      const active = await call(app, "GET", "/api/highlights/active", VIEWER);
+      assert.ok(!listIds(active.body).has(H_PUB));
+      assert.ok(listIds(active.body).has(H_MINE));
+      const feed = await call(app, "GET", "/api/highlights/following-feed", VIEWER);
+      assert.ok(!feedIds(feed.body).has(H_PUB));
+      assert.equal(readResurfacingSuppressionAudit().violations, 0);
+    } finally { await app.close(); }
+  });
+
+  // Delta verification N7 (2026-10-06): the viewer-scoped half of F9 had a unit
+  // case only. Through the route: the VIEWER's own HIDE_PERSON_FROM_RESURFACING
+  // about the owner keeps every row of that person off /active, the viewer's
+  // own row stays, and the audit counts ZERO — the filter and the audit read
+  // the same `projectionInputs`, viewer set included. A row this case finds on
+  // the page, or a non-zero count, means one of the two was handed a narrower
+  // set than the other.
+  it("a VIEWER-scoped HIDE_PERSON_FROM_RESURFACING keeps the person off /active, end to end, with zero violations", async () => {
+    const app = await startApp({
+      tables: tablesWith([
+        { id: "2", owner_id: VIEWER, control: "HIDE_PERSON_FROM_RESURFACING", subject_type: "person", subject_id: OWNER },
+      ]),
+    });
+    try {
+      const r = await call(app, "GET", "/api/highlights/active", VIEWER);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.ok(!listIds(r.body).has(H_PUB), "the hidden person's Highlight is not served");
+      assert.ok(listIds(r.body).has(H_MINE), "the viewer's own Highlight is");
+      assert.equal(readResurfacingSuppressionAudit().violations, 0);
+    } finally { await app.close(); }
+  });
+
+  it("the same control set by the OWNER about the viewer suppresses nothing (it is not the owner's to set)", async () => {
+    const app = await startApp({
+      tables: tablesWith([
+        { id: "3", owner_id: OWNER, control: "HIDE_PERSON_FROM_RESURFACING", subject_type: "person", subject_id: VIEWER },
+      ]),
+    });
+    try {
+      const r = await call(app, "GET", "/api/highlights/active", VIEWER);
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.ok(listIds(r.body).has(H_PUB), "a person-scoped control belongs to the viewer, not the owner (census H89)");
+    } finally { await app.close(); }
+  });
+});

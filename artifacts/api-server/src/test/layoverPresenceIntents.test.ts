@@ -344,6 +344,21 @@ describe("each read answers for itself — a failure is never 'nobody' or 'none'
     assert.deepEqual(r.body.counts, { food: 2, nightlife: 1, shopping: 0, culture: 0, meetups: 0 });
   });
 
+  it("the traveller's record from ANOTHER of their own sessions in the same city never counts either", async () => {
+    // census-layover §52.2: the fake does not model the airport_profiles(city)
+    // embed, so the viewer's airport-backed session resolves to city "" and is
+    // excluded by the city match, never by the route's `.neq("user_id")`. A
+    // second, manual-city session of the viewer's in the SAME city is excluded
+    // ONLY by that line, so this case is what makes it load-bearing.
+    const t = stage();
+    t.layover_sessions.push(other("s-v2", VIEWER));
+    t.layover_presence.push(presence("s-v2", VIEWER, ["culture"]));
+    const r = await req("GET", I);
+    assert.equal(r.status, 200, r.raw);
+    assert.equal(r.body.counts.culture, 0, `the viewer's own second record was counted: ${r.raw}`);
+    assert.deepEqual(r.body.counts, { food: 2, nightlife: 1, shopping: 0, culture: 0, meetups: 0 });
+  });
+
   it("an expired own record reads as none", async () => {
     const t = stage();
     const past = new Date(Date.now() - 60_000).toISOString();
