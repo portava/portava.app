@@ -7186,3 +7186,40 @@ Mutants killed: 11 of 11 for the verifier fixes and H-8, and 6 of 6 for the venu
 | H208 | BUILT-BUT-WRONG | The "Hidden-Gem ceiling only" reading is stale. `canSeeExactLocation` exists, the owner's rung coarsens coordinates and city, and since §AL it also withholds venue, place and event ids on every non-owner read in `routes/memories.ts` (§AL.3 item 4). W stands because `memory_location_precision_enabled` is FALSE in the 2026-09-22 snapshot, so with the gate off production serves the status quo |
 
 **0 up, 0 down.** 266 = 69 C / 153 W / 42 N / 2 X.
+
+## §AM — 2026-10-07 (mission 4, lane H): a photo's own audience (migration 3672, unapplied) — H80 moves N → W
+
+Same branch and rules as §AF. The lead assigned this as a privacy fix ahead of corrections. One migration was WRITTEN and applied to no database.
+
+### §AM.1 What was wrong, and what was built
+
+- **The leak.** `memory_items` had no audience of its own (H80's own words). Every photo of a Memory, with its URL and its caption, reached everyone who could see the Memory. That was true on the API server, and also straight through PostgREST, because `memory_items_public_read` lets anon read every item of a public Memory.
+- **The migration.**
+  - It adds `memory_items.visibility`: NULL means the photo inherits its Memory's audience, which every existing row does; `only_me` means the owner's alone (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:44#ALTER TABLE public.memory_items ADD COLUMN IF NOT EXISTS visibility text;`).
+  - In the same file, the public-read policy is re-created so that an `only_me` photo is not publicly readable (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:58#CREATE POLICY memory_items_public_read`).
+- **Server readers fail closed.** The hidden set is a separate read (`artifacts/api-server/src/services/memory/memoryItemVisibility.ts:39#export async function hiddenItemKeys(`). A missing column means none can be hidden, which is true. Any other failure refuses the read.
+  - The detail read drops a hidden photo for a non-owner (`artifacts/api-server/src/routes/memories.ts:1630#const hiddenItems = memory.owner_id === user.id`).
+  - The trip Memory cover withholds one (`artifacts/api-server/src/routes/memories.ts:2869#const coverHidden =`).
+  - The list covers withhold one: the feed, the profile lists and the saved shelf (`artifacts/api-server/src/routes/memories.ts:3305#const hiddenCovers =`).
+  - The owner sees every photo.
+- **The owner's switch:** `artifacts/api-server/src/routes/memoryItemVisibility.ts:17#router.put("/memories/:id/items/:itemId/visibility"`.
+- **The tests:** `artifacts/api-server/src/test/memoryItemVisibility.test.ts:137#a non-owner gets neither its URL nor its caption`, `artifacts/api-server/src/test/memoryItemVisibility.test.ts:152#FAIL CLOSED: the hidden-set read fails` and `artifacts/api-server/src/test/memoryItemVisibility.test.ts:174#the private cover is withheld from a non-owner`. Each cover site has a control that must serve the cover. 10 of 10 mutants were killed.
+- **Not yet built:** media COUNTS still count a hidden photo. That covers PublicMemoryProjection's `media_count`, the people and places counts, and TripPostTripProjections. The Compass memory tools' item read belongs to lane L.
+
+### §AM.2 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| H80 | N | W | A photo has an audience of its own (3672). Every non-owner server read that serves a photo's URL or caption honours it and fails closed, and the database's public-read policy does too (§AM.1). W, for two reasons: 3672 is unapplied (rule A.2), and the media counts still count a hidden photo |
+
+### §AM.3 Headline
+
+| bucket | was (§AJ.4) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 69 | 69 |
+| BUILT-BUT-WRONG | 153 | 154 |
+| NOT-BUILT | 42 | 41 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**1 move: H80 N → W.** 266 = 69 C / 154 W / 41 N / 2 X. CONSTRUCTED% is (69 + 154) / 266 = 83.8 %.
