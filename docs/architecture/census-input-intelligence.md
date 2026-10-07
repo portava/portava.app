@@ -6412,24 +6412,24 @@ It is served on every context.
 **The client.** It honours a grant only on re-checking every condition
 (`travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts:424#export function localAnswerSuffices(`).
 It also requires a real dictionary hit
-(`travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts:430#return rows.some((r) => r.type === 'entity') ? rows : [];`).
+(`travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts:491#if (hits.length === 0) return [];` *(repointed 2026-10-07: §42.15 rewrote this path to reproduce the server's answer; a no-hit still asks the server)*).
 The hook then answers with no request at all, so there is one answer and one impression
 (`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:227#const sufficient = aiAssist === true ? [] : sufficientLocalRows(`).
 
 **Proof**, in the exact shape G224 asked for:
 - zero requests on a sanctioned hit: `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.localSufficiency.component.test.tsx:110#G224: a SANCTIONED field answers a dictionary hit from the shipped list with ZERO requests`;
-- a viewer-scoped field still asks, even when the server claims sufficiency: `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.localSufficiency.component.test.tsx:130#G224: a VIEWER-SCOPED field still issues its request`;
-- an unsanctioned dictionary field keeps asking: `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.localSufficiency.component.test.tsx:135#G212: a static_dictionary field the authority did NOT sanction keeps asking`.
+- a viewer-scoped field still asks, even when the server claims sufficiency: `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.localSufficiency.component.test.tsx:133#G212: any OTHER field claiming sufficiency still asks` *(repointed 2026-10-07: under lead ruling PR-D2-5 the viewer-scoped language/interest fields ARE sufficient; every other field still asks — §42.15)*;
+- an unsanctioned dictionary field keeps asking: `travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.localSufficiency.component.test.tsx:133#G212: any OTHER field claiming sufficiency still asks` *(repointed 2026-10-07, §42.15)*.
 
 Each condition of both gates is killed by a mutant. The server's foot loop is an equivalent mutant today, because
 nothing declares a grant.
 
 **Why neither row moves.** The registry sanctions NO context today, so in production every keystroke still goes
-out (`artifacts/api-server/src/test/inputPolicyEndpoint.test.ts:160#is served on every context, as a boolean, and is false today on all of them`).
+out (`artifacts/api-server/src/test/inputPolicyEndpoint.test.ts:159#is served on every context as a boolean: true for language and interest, false everywhere else` *(repointed 2026-10-07: superseded by §42.15 — the two contexts are now sanctioned)*).
 The registry's only `static_dictionary` contexts are:
 - `language` and `interest`. Their server answer is a fixed list (`searchStatic`), but the §27 parity table raised
   their class to `viewer_scoped`
-  (`artifacts/api-server/src/test/inputPolicyEndpoint.test.ts:167#is judged on the FINAL policy`). G224's own
+  (`artifacts/api-server/src/test/inputPolicyEndpoint.test.ts:166#is judged on the FINAL policy`). G224's own
   criterion says a viewer-scoped field still asks.
 - `country_picker`. It is public, but its server answer reads traveller presence and carries canonical ids that
   the shipped list does not.
@@ -6641,7 +6641,7 @@ It asks the server instead when it cannot be sure it would answer as the server 
 - Server and client admit exactly the two contexts (`artifacts/api-server/src/test/inputLocalSufficiencyParity.test.ts:191#the authority sanctions exactly these two contexts`).
 
 **Through the real hook.** A sanctioned hit sends zero requests; no hit still asks; any other field that claims
-sufficiency still asks (`travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.localSufficiency.component.test.tsx:114#G224: a SANCTIONED field answers a dictionary hit from the shipped list with ZERO requests`).
+sufficiency still asks (`travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.localSufficiency.component.test.tsx:110#G224: a SANCTIONED field answers a dictionary hit from the shipped list with ZERO requests`).
 
 **Not covered by the test, stated.** The gateway's fail-closed block-list read returns nothing when the viewer's
 block list cannot be read. That is an outage, not a viewer property; the local answer does not reproduce it.
