@@ -3103,6 +3103,8 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // The guard lead ruling PR-D2-5 rests on: the shipped language/interest lists
     // and the no-request answer held to the server's, for every viewer.
     "artifacts/api-server/src/test/inputLocalSufficiencyParity.test.ts",
+    // §42.19: the client proving test for G134's Open Map dispatch (lead ruling PR-D2-6).
+    "travel-buddy-standalone/app/__tests__/search.openOnMapDispatch.component.test.tsx",
     // ── ADDED 2026-10-05 by lane D (§37) ────────────────────────────────────
     // The proving tests §37's moves rest on: G320/G370 and the outcome term
     // (OD-INPUT-1/2), G25 (OD-INPUT-3), and G368's vocabulary pin. Cited as
