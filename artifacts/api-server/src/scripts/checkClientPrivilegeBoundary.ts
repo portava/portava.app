@@ -51,6 +51,18 @@
  *      their RLS. 2776's trip_presence_current did, in production; 3741 fixes
  *      it. No exemptions: PostGIS's own metadata views are extension members
  *      the baseline and the chain never define (verifier G2-3).
+ *   6. Every profiles AUTHORITY column (lib/profileAuthorityColumns.ts — the
+ *      columns the server reads as facts about a user: role, is_official, the
+ *      verification columns, verified, verified_at, trust_score, trust_label,
+ *      featured_count, created_at, account_status) must END the chain with no
+ *      client UPDATE privilege — replayed over every GRANT/REVOKE in apply
+ *      order, column and table level, from both the production ACL and the
+ *      Supabase default ACL a replayed baseline takes — AND an enabled BEFORE
+ *      INSERT OR UPDATE row trigger whose function compares the column and
+ *      consults caller_may_write_profile_role(). profiles_update admits a
+ *      user's own row, so either barrier missing lets a user write it: 3742
+ *      closed seven columns that had neither. account_status's trigger is
+ *      PENDING until 3600 (PR #592) lands, and required from then on.
  *
  * ── ONE RULE DELIBERATELY NOT IMPLEMENTED ────────────────────────────────────
  * "A GRANT to a client role must be preceded by REVOKE ALL in the same file"
@@ -77,6 +89,13 @@ import {
   findClientDefinerViews,
   findUndecidedTables,
 } from "./lib/clientTableAclDecisions.js";
+import {
+  clientUpdatableAuthorityColumns,
+  PROFILE_AUTHORITY_COLUMNS,
+  replayProfilesTriggers,
+  replayProfilesUpdateAcl,
+  unguardedAuthorityColumns,
+} from "./lib/profileAuthorityColumns.js";
 import { BASELINE_PATH, parseBaselineTables } from "./parseBaselineSchema.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -243,6 +262,46 @@ function main(): void {
     });
   }
 
+  // Rule 6 — profiles authority columns are server-only. Real tree only: a
+  // fixture directory carries no profiles table, so it would read as nothing
+  // guarded; the rule's own shapes are tested on lib/profileAuthorityColumns.ts.
+  const pendingAuthority: string[] = [];
+  if (!process.env.CLIENT_PRIVILEGE_DIRS) {
+    const realBaseline = readFileSync(BASELINE_PATH, "utf8");
+    // VACUITY: the baseline alone grants the client roles UPDATE on 80 profiles
+    // columns, and four triggers guard authority columns. Reading far less
+    // means the parser or the paths broke and "nothing is writable" is noise.
+    const baselineUpdateCols = replayProfilesUpdateAcl([], realBaseline, "production").authenticated.cols.size;
+    const triggersSeen = replayProfilesTriggers(chainFiles, realBaseline).length;
+    if (baselineUpdateCols < 50 || triggersSeen < 4) {
+      console.error(
+        `\nFAIL — VACUOUS: rule 6 read ${baselineUpdateCols} baseline profiles UPDATE column grant(s) (expected >= 50) and ` +
+          `${triggersSeen} trigger(s) on profiles (expected >= 4).`,
+      );
+      process.exit(1);
+    }
+    for (const c of clientUpdatableAuthorityColumns(chainFiles, realBaseline)) {
+      findings.push({
+        file: "(replayed chain)",
+        rule: `profiles.${c.column} ends the chain UPDATE-able by ${c.roles.join(" and ")} (${c.models.join(", ")} ACL)`,
+        statement:
+          `An authority column the server trusts must not be client-writable. Add REVOKE UPDATE (${c.column}) ON public.profiles ` +
+          `FROM PUBLIC, anon, authenticated, or drop the grant that re-opened it.`,
+      });
+    }
+    for (const g of unguardedAuthorityColumns(chainFiles, realBaseline)) {
+      if (g.pending) {
+        pendingAuthority.push(`${g.column} (${g.note})`);
+        continue;
+      }
+      findings.push({
+        file: "(replayed chain)",
+        rule: `profiles.${g.column} has no guarding trigger`,
+        statement: `${g.note}. A column grant alone is undone by one careless GRANT UPDATE ON profiles (2078's header).`,
+      });
+    }
+  }
+
   console.log(
     `check:client-privilege-boundary — ${files.length} migration file(s), ${grantsExamined} GRANT statement(s) examined, ` +
       `${tablesExamined} post-baseline table(s) checked for a client-privilege decision, ${viewsExamined} view(s) checked for security_invoker`,
@@ -292,6 +351,12 @@ function main(): void {
   console.log(
     `✅ no client-readable view lacks security_invoker (rule 5; ${viewsExamined} view(s) checked, none exempt).`,
   );
+  if (!process.env.CLIENT_PRIVILEGE_DIRS) {
+    console.log(
+      `✅ every one of the ${PROFILE_AUTHORITY_COLUMNS.length} profiles authority column(s) is server-only: no client UPDATE grant, a guarding trigger (rule 6` +
+        (pendingAuthority.length ? `; trigger PENDING: ${pendingAuthority.join("; ")}).` : ")."),
+    );
+  }
 }
 
 main();

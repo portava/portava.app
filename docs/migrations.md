@@ -4152,6 +4152,39 @@ checks the tables it reads with its OWNER's privileges, and the owner is not sub
 on a table that does not `FORCE` it. 2776's view therefore bypassed `trip_presence`'s RLS until 3741. The
 correction lives here because 2776's bytes are applied and checksummed.
 
+## 2026-10-07 — `3742_profiles_authority_columns_server_only.sql`, written and NOT applied anywhere (lane G3)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3742_profiles_authority_columns_server_only.sql` | **not applied** | **not applied** |
+
+**Why.** `anon` and `authenticated` hold column UPDATE on `profiles.verified`, `verified_at`, `trust_score`,
+`trust_label`, `verification_method`, `featured_count`, `created_at` and `account_status` (the baseline's
+80-column list, re-issued by 3740), no trigger guards them, and `profiles_update` admits a user's own row —
+confirmed in production by the lead's read-only catalog query. A signed-in user could therefore set their own
+verified badge (verified-only events and comments read `profiles.verified`), trust score and account age (the
+Telegraph send tier reads `trust_score` and `created_at`) or "Featured by Portava" count. Every legitimate
+writer is the service client (admin verify / unverify, the verification flow, `portava_adjust_profile_counter`,
+the deactivate / reactivate routes and account deletion).
+
+**What.** (1) `REVOKE UPDATE` on 19 authority columns from `PUBLIC`, `anon`, `authenticated`: the eight above,
+`role` (restated), `is_official` and 2163's nine verification columns, whose triggers existed but whose grants
+2163 could not take while `portava-ci` held table-level UPDATE (3740 removes that). (2) A SECURITY INVOKER
+BEFORE INSERT OR UPDATE trigger, `trg_profiles_authority_privileged`, that refuses (42501) a change to — or a
+non-default INSERT of — the seven columns other than `account_status` unless `caller_may_write_profile_role()`
+admits the caller. `account_status`'s trigger is 3600's (PR #592); this file revokes its grant only, because
+3740 re-grants it and 3600's postcondition (re-run by `certify:migrations` on a full-chain build) pins its
+absence — measured on a replay: 3600 then 3740 fails 3600's postcondition, 3600 then 3740 then 3742 passes.
+
+**Depends on** 3740 (the `$pre$` block refuses while a client role holds table-level UPDATE on `profiles`, and
+while the seven columns' defaults differ from the ones the trigger admits on INSERT). **Postconditions:** no
+client role can UPDATE any present authority column; no `PUBLIC` column grant; the trigger is an enabled
+BEFORE INSERT OR UPDATE row trigger and its function still compares every guarded column.
+**Rollback:** `db/rollback/2026-10-07-3742-profiles-authority-columns-server-only-rollback.sql` (drops the
+trigger and re-opens the seven columns; never `account_status`). **Guard:** `checkClientPrivilegeBoundary.ts`
+rule 6 replays every GRANT/REVOKE on `profiles` and every trigger on it, and fails CI if any authority column
+ends client-updatable or unguarded (`account_status`'s trigger is reported PENDING until 3600 lands).
+
 ## Apply-order overrides
 
 **What.** `artifacts/api-server/src/migrations/ORDER_OVERRIDES.json` is the single declared list of

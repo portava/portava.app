@@ -32,6 +32,7 @@ import {
   clientUpdatableAuthorityColumns,
   PROFILE_AUTHORITY_COLUMNS,
   replayProfilesTriggers,
+  replayProfilesUpdateAcl,
   unguardedAuthorityColumns,
   type MigrationText,
 } from "../scripts/lib/profileAuthorityColumns.js";
@@ -186,7 +187,10 @@ describe("3742 — the migration", () => {
     for (const n of named) {
       const one = [f(n, readFileSync(join(MIGRATIONS, n), "utf8"))];
       assert.deepEqual(replayProfilesTriggers(one, ""), [], `${n} creates a profiles trigger`);
-      assert.deepEqual(clientUpdatableAuthorityColumns(one, ""), [], `${n} grants UPDATE on profiles`);
+      const acl = replayProfilesUpdateAcl(one, "", "production");
+      for (const r of ["anon", "authenticated", "public"] as const) {
+        assert.deepEqual([acl[r].table, [...acl[r].cols]], [false, []], `${n} grants UPDATE on profiles to ${r}`);
+      }
       assert.doesNotMatch(readFileSync(join(MIGRATIONS, n), "utf8"), /\b(?:grant|revoke)\b[^;]*\bon\s+(?:table\s+)?(?:public\.)?profiles\b/i, `${n} grants or revokes on profiles`);
     }
   });
