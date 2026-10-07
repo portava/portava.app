@@ -98,7 +98,7 @@ interface PolicySeed {
   offlinePolicy?: OfflineInputPolicy;
   privacyClass?: PrivacyClass;
   telemetryPolicy?: InputTelemetryPolicy;
-  zeroStateAssistance?: boolean;
+  zeroStateAssistance?: boolean; localSufficient?: boolean;
 }
 
 function policy(context: InputContext, seed: PolicySeed): InputFieldPolicy {
@@ -120,7 +120,7 @@ function policy(context: InputContext, seed: PolicySeed): InputFieldPolicy {
     privacyClass: seed.privacyClass ?? 'public',
     telemetryPolicy: seed.telemetryPolicy ?? STANDARD_TELEMETRY,
     // §14 — default FALSE: a context that does not claim a zero-state has none.
-    zeroStateAssistance: seed.zeroStateAssistance ?? false,
+    zeroStateAssistance: seed.zeroStateAssistance ?? false, localSufficient: seed.localSufficient === true, // §34 G224 — sanctioned at the foot, on the FINAL policy
   };
 }
 
@@ -453,4 +453,54 @@ const PRIVACY_CLASS_PARITY_RAISES: Partial<Record<InputContext, PrivacyClass>> =
 for (const [context, privacyClass] of Object.entries(PRIVACY_CLASS_PARITY_RAISES)) {
   const entry = REGISTRY[context as InputContext];
   if (entry) entry.privacyClass = privacyClass as PrivacyClass;
+}
+
+// ── §34 local sufficiency (census G224 / G212) ───────────────────────────────
+//
+// §34 says the client should not send every keystroke when local resolution is
+// sufficient, and the client may not decide that alone: the server owns
+// eligibility. This is the server's statement. A context that declares
+// `localSufficient` tells the client it may answer a typed query from its
+// SHIPPED dictionary and send no request at all.
+//
+// The authority grants it only where the local answer IS the server's answer:
+//   - `offlinePolicy: 'static_dictionary'` — the field has a shipped list;
+//   - `privacyClass: 'public'` — the answer is the same for every viewer;
+//   - no personalization, live context, memory or AI — nothing viewer-scoped or
+//     time-varying could make the server's ranking differ.
+// Anything else is refused here, whatever the seed says, so a mis-declared
+// context fails CLOSED (it keeps asking). The rule runs on the FINAL policy —
+// AFTER the parity raise above — because a seed that was public when declared
+// can be raised to viewer_scoped by that table, and a grant judged on the seed
+// would then survive the raise.
+//
+// TODAY NO CONTEXT QUALIFIES, and none declares it. The registry's only
+// `static_dictionary` contexts are `language` and `interest` (raised to
+// viewer_scoped by the parity table above; their server answer is
+// `searchStatic`'s fixed list) and `country_picker` (public, but its server
+// answer reads traveller presence and carries canonical ids the shipped list
+// does not). Whether a viewer_scoped field whose ANSWER is a fixed list may be
+// sanctioned is an open ruling (lane D2, PR-D2-5), not this module's call.
+export function sanctionLocalSufficiency(seed: {
+  localSufficient?: boolean;
+  offlinePolicy?: OfflineInputPolicy;
+  privacyClass?: PrivacyClass;
+  allowPersonalization?: boolean;
+  allowLiveContext?: boolean;
+  allowMemoryContext?: boolean;
+  allowAI?: boolean;
+}): boolean {
+  return (
+    seed.localSufficient === true &&
+    seed.offlinePolicy === 'static_dictionary' &&
+    (seed.privacyClass ?? 'public') === 'public' &&
+    seed.allowPersonalization !== true &&
+    seed.allowLiveContext !== true &&
+    seed.allowMemoryContext !== true &&
+    seed.allowAI !== true
+  );
+}
+
+for (const entry of Object.values(REGISTRY)) {
+  entry.localSufficient = sanctionLocalSufficiency(entry);
 }

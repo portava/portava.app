@@ -368,3 +368,64 @@ export function offlineLocalRows(
 
   return capSuggestions(rows, max);
 }
+
+// ── §34 local SUFFICIENCY (census G224 / G212) ──────────────────────────────
+
+/** The descriptor facts the sufficiency gate needs. A subset, so tests need no store. */
+export interface LocalSufficiencyFacts {
+  localSufficient?: boolean | null;
+  offlinePolicy?: OfflineInputPolicy | null;
+  privacyClass?: PrivacyClass | null;
+  allowPersonalization?: boolean | null;
+  allowLiveContext?: boolean | null;
+  allowMemoryContext?: boolean | null;
+  allowAI?: boolean | null;
+  authoritative?: boolean | null;
+}
+
+/**
+ * True when this field may answer a typed query from its shipped dictionary
+ * and send NO request.
+ *
+ * The SERVER decides this (`policyRegistry.ts#sanctionLocalSufficiency`), because
+ * the server owns eligibility and the client may not judge "the local answer is
+ * enough" alone (G224's boundary). The client re-checks every condition the
+ * server grants on and refuses on any doubt, so a newer or misbehaving server
+ * cannot make a viewer-scoped, personalised or live field skip the round trip:
+ *   - the grant must be a literal `true` from an AUTHORITATIVE table;
+ *   - the field's offline surface must be `static_dictionary`;
+ *   - its privacy class must be `public` (the answer is the same for everyone);
+ *   - nothing viewer-scoped or time-varying may shape the server's answer.
+ */
+export function localAnswerSuffices(d: LocalSufficiencyFacts | null | undefined): boolean {
+  if (!d) return false;
+  return (
+    d.localSufficient === true &&
+    d.authoritative === true &&
+    d.offlinePolicy === 'static_dictionary' &&
+    d.privacyClass === 'public' &&
+    d.allowPersonalization !== true &&
+    d.allowLiveContext !== true &&
+    d.allowMemoryContext !== true &&
+    d.allowAI !== true
+  );
+}
+
+/**
+ * The no-round-trip answer for a SUFFICIENT field, or `[]` when there is none.
+ *
+ * Only a real dictionary HIT counts: a list that holds nothing but the raw-query
+ * row is not an answer, and the request still goes out (§2 — the raw query is
+ * never a substitute for asking).
+ */
+export function sufficientLocalRows(
+  policy: LocalDictionaryPolicy | null | undefined,
+  facts: LocalSufficiencyFacts | null | undefined,
+  query: string,
+): InputSuggestion[] {
+  if (!localAnswerSuffices(facts)) return [];
+  const q = query.trim();
+  if (q.length === 0) return [];
+  const rows = offlineLocalRows(policy, q, []);
+  return rows.some((r) => r.type === 'entity') ? rows : [];
+}

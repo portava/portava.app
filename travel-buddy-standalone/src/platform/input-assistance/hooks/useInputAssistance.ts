@@ -37,7 +37,7 @@ import { sharedSuggestionCache, SuggestionCache, isCacheablePrivacyClass } from 
 import { createSequenceGuard } from '../services/raceGuard.ts';
 import { finalizeSuggestions, narrowToQuery } from '../services/suggestionRanking.ts';
 import { localZeroState } from '../services/localZeroState.ts';
-import { offlineLocalRows } from '../services/localDictionary.ts';
+import { offlineLocalRows, sufficientLocalRows } from '../services/localDictionary.ts';
 import { outcomeLearningConsented } from '../services/outcomeLearning.ts';
 import { emitInputEvent } from '../services/inputTelemetry.ts';
 
@@ -214,6 +214,22 @@ export function useInputAssistance(
     if (cached) {
       guardRef.current.invalidate();
       setSuggestions(cached); setRefusal(null); setAnsweredText(trimmed);
+      setLoading(false);
+      setUnavailable(false);
+      return;
+    }
+
+    // §34 census G224/G212 — the AUTHORITY's sufficiency tier. A field the server
+    // declares `localSufficient` (re-checked here, fail-closed: public,
+    // static_dictionary, nothing viewer-scoped) answers a dictionary HIT from the
+    // shipped list with NO request at all — one answer, so one impression.
+    // No hit, an AI opt-in, or any doubt → the request below goes out as before.
+    const sufficient = aiAssist === true ? [] : sufficientLocalRows(policy, getContextDescriptor(policy.context), trimmed);
+    if (sufficient.length > 0) {
+      abortRef.current?.abort();
+      abortRef.current = null;
+      guardRef.current.invalidate();
+      setSuggestions(finalizeSuggestions(sufficient, policy.maxSuggestions)); setRefusal(null); setAnsweredText(trimmed);
       setLoading(false);
       setUnavailable(false);
       return;

@@ -187,7 +187,7 @@ export interface InputFieldPolicy {
    * that a client can only ask for if it knows the field has one. Defaults to
    * FALSE, so a context that says nothing offers no zero-state.
    */
-  zeroStateAssistance?: boolean;
+  zeroStateAssistance?: boolean; /** §34 G224/G212: the authority sanctions answering a typed query from the shipped dictionary with NO round trip. Only `sanctionLocalSufficiency` (policyRegistry.ts) sets it. */ localSufficient?: boolean;
 
   allowPersonalization: boolean;
   allowLiveContext: boolean;

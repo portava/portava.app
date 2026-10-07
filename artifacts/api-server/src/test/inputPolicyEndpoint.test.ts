@@ -28,7 +28,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _resetRateLimit } from "../lib/rateLimit.js";
 import inputAssistanceRouter from "../routes/inputAssistance.js";
-import { resolvePolicy, KNOWN_CONTEXTS, POLICY_VERSION } from "../lib/inputAssistance/policyRegistry.js";
+import { resolvePolicy, KNOWN_CONTEXTS, POLICY_VERSION, sanctionLocalSufficiency } from "../lib/inputAssistance/policyRegistry.js";
 
 const ME = "aa000000-0000-4000-a000-000000000001";
 const ME_TOK = "tok-me";
@@ -138,5 +138,51 @@ describe("§48/G340 — GET /input-assistance/policies", () => {
     const body = (await (await get()).json()) as { contexts: Record<string, any> };
     assert.equal(body.contexts.display_name.mode, "no_assistance");
     assert.deepEqual(body.contexts.display_name.allowedSuggestionTypes, []);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §34 local SUFFICIENCY (census G224 / G212) — the authority's statement
+//
+// MUTATION LOG (each applied, watched go red, reverted, `git diff` clean):
+//   - routes/inputAssistance.ts: drop `localSufficient` from the served object →
+//     "served on every context, false today" red.
+//   - sanctionLocalSufficiency: drop each condition → the matching refusal red;
+//     the privacy-class condition is also what keeps the RAISED language policy
+//     out ("judged on the FINAL policy").
+//   - SURVIVES, by construction today: deleting the foot loop that re-judges
+//     every entry. No seed declares `localSufficient`, so `policy()`'s raw copy
+//     is already false everywhere; the loop only bites once a context is
+//     declared (PR-D2-5), and the "FINAL policy" case pins the rule it applies.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("§34 local sufficiency (G224/G212) — served by the authority, granted only where local IS the answer", () => {
+  it("is served on every context, as a boolean, and is false today on all of them", async () => {
+    const body = (await (await get()).json()) as { contexts: Record<string, any> };
+    for (const ctx of KNOWN_CONTEXTS) {
+      assert.equal(body.contexts[ctx].localSufficient, false, `${ctx} must not be sanctioned today`);
+    }
+  });
+
+  it("is judged on the FINAL policy: the raised (viewer_scoped) language policy is refused even if declared", () => {
+    const raised = resolvePolicy("language")!;
+    assert.equal(raised.privacyClass, "viewer_scoped", "premise: the parity raise applied");
+    assert.equal(sanctionLocalSufficiency({ ...raised, localSufficient: true }), false);
+    // The same policy, were it public, would qualify — so it is the class that refuses it.
+    assert.equal(sanctionLocalSufficiency({ ...raised, privacyClass: "public", localSufficient: true }), true);
+  });
+
+  it("a mis-declared seed is refused, condition by condition (fail-closed)", () => {
+    const ok = { localSufficient: true, offlinePolicy: "static_dictionary" as const, privacyClass: "public" as const };
+    assert.equal(sanctionLocalSufficiency(ok), true);
+    assert.equal(sanctionLocalSufficiency({ ...ok, localSufficient: false }), false);
+    assert.equal(sanctionLocalSufficiency({ ...ok, offlinePolicy: "cached_local" }), false);
+    assert.equal(sanctionLocalSufficiency({ ...ok, privacyClass: "viewer_scoped" }), false);
+    assert.equal(sanctionLocalSufficiency({ ...ok, allowPersonalization: true }), false);
+    assert.equal(sanctionLocalSufficiency({ ...ok, allowLiveContext: true }), false);
+    assert.equal(sanctionLocalSufficiency({ ...ok, allowMemoryContext: true }), false);
+    assert.equal(sanctionLocalSufficiency({ ...ok, allowAI: true }), false);
+    // An absent privacy class defaults to public in the registry's own helper.
+    assert.equal(sanctionLocalSufficiency({ localSufficient: true, offlinePolicy: "static_dictionary" }), true);
   });
 });
