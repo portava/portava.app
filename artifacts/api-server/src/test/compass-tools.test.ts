@@ -1020,7 +1020,7 @@ describe("D-65 — the confirm route's duplicate guard is not an oracle for anot
   it("another member's PRIVATE item at the same place is not a duplicate: the caller's own item is added, and nothing names it", async () => {
     const pid = "d6545678-1234-1234-1234-123456789abc";
     const client = makeClient(db(pid, [{ ...BOB_PRIVATE }]));
-    _setTestClient(client, "test-token");
+    _setTestClient(client, true);
     const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
     assert.equal(r.status, 201, JSON.stringify(r.body));
     assert.doesNotMatch(JSON.stringify(r.body), /already in your trip plan|secret/i);
@@ -1036,7 +1036,7 @@ describe("D-65 — the confirm route's duplicate guard is not an oracle for anot
     ] as const) {
       const pid = label === "public" ? "d6645678-1234-1234-1234-123456789abc" : "d6745678-1234-1234-1234-123456789abc";
       const client = makeClient(db(pid, [item]));
-      _setTestClient(client, "test-token");
+      _setTestClient(client, true);
       const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
       assert.equal(r.status, 409, `${label}: ${JSON.stringify(r.body)}`);
       assert.match(String(r.body.message), /already in your trip plan/);
@@ -1048,7 +1048,7 @@ describe("D-65 — the confirm route's duplicate guard is not an oracle for anot
     const pid = "d6845678-1234-1234-1234-123456789abc";
     const { location_is_private: _drop, ...noFlag } = BOB_PRIVATE;
     const client = makeClient(db(pid, [noFlag]));
-    _setTestClient(client, "test-token");
+    _setTestClient(client, true);
     const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
     assert.equal(r.status, 201, JSON.stringify(r.body));
   });
