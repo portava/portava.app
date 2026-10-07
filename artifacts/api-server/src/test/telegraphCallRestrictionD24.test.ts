@@ -25,7 +25,7 @@ import assert from "node:assert/strict";
 
 import { makeCallGateway } from "../lib/calls/callGatewayAdapter.js";
 import { canUserStartCall } from "../lib/calls/callPermissionEngine.js";
-import { makeFakeClient, type FakeDbOptions } from "./telegraphCertificationHarness.js";
+import { makeFakeClient, type FakeDbOptions, type InjectedError } from "./telegraphCertificationHarness.js";
 
 const A = "aaaaaaaa-0000-4000-8000-000000000001"; // the caller
 const B = "bbbbbbbb-0000-4000-8000-000000000002";
@@ -55,7 +55,7 @@ function client(w: World, extra: FakeDbOptions = {}) {
     message_requests: [],
     rent_buddy_bookings: [{ id: "22222222-0000-4000-8000-000000000001", telegraph_thread_id: DM_BOOKING, status: "confirmed" }],
   };
-  const errors = w === "fail_closed" ? { trust_restrictions: { message: "trust_restrictions: connection reset" } } : {};
+  const errors: Record<string, InjectedError> = w === "fail_closed" ? { trust_restrictions: { message: "trust_restrictions: connection reset" } } : {};
   return makeFakeClient(tables, { ...extra, errors: { ...errors, ...(extra.errors ?? {}) } }) as any;
 }
 
