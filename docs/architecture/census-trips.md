@@ -10257,3 +10257,43 @@ share is under `/trips/:tripId`, which §85.2's guard already refuses. Proven by
 - NOT-GRADED: artifacts/api-server/src/test/providerRouteCorridor.test.ts — §86.2's G1–G5; the gate rests on the provider lines cited.
 - NOT-GRADED: artifacts/api-server/src/routes/meetups.ts — §86.3 cites its retained-record refusal; the meetup surface is graded elsewhere.
 - NOT-GRADED: artifacts/api-server/src/lib/telegraphThreadWrite.ts — §86.3 cites its gate 4b; census-telegraph grades the send guard (§50).
+
+## §87 Lane C, mission 4 (2026-10-07): what CI's database job found in 3972 and 3974, and the client door now executed — NO ROW MOVES
+
+*Written 2026-10-07 by lane C on `claude/mission-c-wave5-20261006` after merging `main` at `116ca4541f`. CI evidence
+is run 37630680287 (head `623cdbb87`, the wave-4 branch). No database was written; 3970–3978 remain applied nowhere.*
+
+### §87.1 3972's membership trigger failed every role or status update
+
+CI's `api-server-local-db` job replays the chain onto a throwaway PostgreSQL (`scripts/local-db/up.sh`) and then runs
+`src/test/db/*.db.test.ts`. At `623cdbb87` the replay passed (425 applied in order, the two known-unreplayable skipped),
+and three kernel suites failed on one error, `invalid input value for enum member_role: ""`: 2783's
+SET_PARTICIPANT_ROLE, §4.2's INVITE_PARTICIPANT → ACCEPT_INVITE, and §18's offline replay (its hook). The trigger
+`trip_anchor_grants_clear_on_membership()` read `coalesce(OLD.role, '')`, and `role` is the `member_role` enum, so ''
+was cast to the enum and every `UPDATE OF role, status` on `trip_members` raised. Applied, 3972 would have broken
+accepting an invitation and changing a role. The comparison is now on text:
+`artifacts/api-server/src/migrations/3972_trip_private_anchor_rls_and_grant_lifecycle.sql:140#was_accepted := coalesce(OLD.role::text, '')`.
+3972 is applied to no database, so it is corrected in place.
+
+3972 had been pinned only by reading its SQL. `artifacts/api-server/src/test/db/tripPlanItemsPrivateAnchorRls.db.test.ts`
+now executes the policy and every trigger branch through RLS as `authenticated` (PostgREST's path): the creator
+reads her private stay (R1); a crew member and the organizer do not (R2, R3); a grantee does with sharing on and not
+off (R4); a grant whose giver left admits nobody (R5); an invitee and a stranger read nothing, service_role both (R6);
+the organizer's filtered UPDATE touches 0 rows, so he cannot flip the stay public and read it back (R7, with a control
+that he can update a row he sees); a role change between accepted roles keeps the grant and raises nothing (L1, the
+defect); leaving, the giver's removal, a move to `invited`, a delete, a membership that begins, and the stay made
+public or removed each clear it (L2–L7). It runs in CI's local-db job, which refuses `skipped > 0`; there is no
+PostgreSQL on the machine this was written on, so it was not executed here.
+
+### §87.2 3974's family count, in the form the kernel contract reads
+
+`623cdbb87` made 3974's three participant-family counts alignment-blind with `regexp_matches`, which fixed the
+replay and turned `tripKernelFamilyContract.test.ts` red in CI's node:test job (it requires the count be derived from
+the installed definition as `length(replace(d, E'v_family …))`). Each count now folds every alignment of `:=` to one
+space and counts that spelling; the transform folds a copy (`dn`), because `d` is EXECUTEd and keeps its spacing, and
+the postcondition folds its own read-only `d`
+(`artifacts/api-server/src/migrations/3974_trip_kernel_admin_restore_participant.sql:261#d := regexp_replace(d, 'v_family\s+:=', 'v_family :=', 'g');`).
+`tripKernelAdminRestore.test.ts` A9 pins the three folds; mutants (the postcondition back to `regexp_matches`; a
+fixed-spacing count with no fold) turn the contract test and A9 red.
+
+- NOT-GRADED: artifacts/api-server/src/test/db/tripPlanItemsPrivateAnchorRls.db.test.ts — §87.1's database suite (CI local-db job); no row's verdict rests on it while 3972 is unapplied.
