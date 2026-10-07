@@ -6515,3 +6515,25 @@ not an approval the team can give.
 
 No row moves. S18, S24, S32 and S39 stay `W` for §33.3's reasons.
 
+
+## §35 — 2026-10-07 (lane L, wave 6): §34's owed test is written — the installer is driven, and the device obeys OD-MAP-6 by behaviour. MOVES NOTHING
+
+*Last statement wins over §34's first bullet.*
+
+The real `installSensingCapture` now runs against stand-ins: a fake consent reader with its change channel, a
+fake capture loop that records the `submit` the installer gives it, and a fake transport
+(`travel-buddy-standalone/src/services/sensing/__tests__/installSensingCapture.component.test.ts:102#describe('installSensingCapture obeys OD-MAP-6 on the device'`,
+8 cases). The test shows:
+
+- **No loop starts** when capture is not granted, or when the consent cannot be read.
+- **Capture alone** runs the loop on the device, and every submit is dropped before it reaches the
+  transport.
+- **Capture with upload** lets a submit reach the transport.
+- **Withdrawing upload** in Settings drops the next submit and resets the transport's session.
+- **Withdrawing capture** stops the loop and clears the zone hint. A consent that becomes unreadable on
+  re-check does the same.
+- **`dispose()`** stops the loop and unsubscribes.
+
+Five mutations of the installer each turn the test red. §33.1's "the device obeys it" is now proven by
+behaviour, not only by source tripwires. No row moves; S18, S24, S32 and S39 stay `W` for §33.3's reasons.
+
