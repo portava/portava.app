@@ -4206,3 +4206,23 @@ The postcondition refuses a seed that finds it ON; turning it on is the owner's 
 
 **Rollback:** `db/rollback/2026-10-07-3670-memory-deletion-dead-letters-rollback.sql` — refuses while any letter
 is still open (an unfinished deletion) or the flag is ON, otherwise drops the table, the FALSE flag row and its ledger row.
+
+## 2026-10-07 — `3671_memory_resurfacing_preferences.sql`, written and NOT applied anywhere (lane H)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3671_memory_resurfacing_preferences.sql` | **not applied** | **not applied** |
+
+**What it adds (spec §3 / §11, census H36; approved by the lead 2026-10-07).** One table,
+`memory_resurfacing_preferences` (`memory_id`, `owner_id`, `control`, `created_at`; primary key `(memory_id, control)`):
+the four Memory-scoped §11 controls, named exactly as 2720 names them — DO_NOT_RESURFACE, DO_NOT_INCLUDE_IN_RECAPS,
+KEEP_PRIVATE_FOREVER, RETAIN_BUT_DO_NOT_PERSONALIZE. A row is the control ON; clearing deletes it. RLS on with no
+policy; service_role SELECT / INSERT / DELETE only (a control is set or cleared, never edited). Cascades from
+`memories` and `auth.users`. No flag, function or trigger.
+
+**Safe to leave unapplied.** `services/memory/memoryResurfacingControls.ts` reads an absent table as "no control
+set" (true: no row can exist) and an UNREADABLE one as kept private (fail closed). The routes answer 404
+`feature_disabled` until it is applied.
+
+**Rollback:** `db/rollback/2026-10-07-3671-memory-resurfacing-preferences-rollback.sql` — refuses while any row (a
+person's recorded choice) exists, otherwise drops the table and its ledger row.

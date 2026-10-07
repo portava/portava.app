@@ -227,7 +227,7 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   // it is a day/context/task aggregate, so it is not user-keyed and not listed.)
   "input_outcome_consent",
   "input_outcome_counters",
-  "input_memory_context_consent", "memory_deletion_dead_letters", // 3670 (census-highlights-memories §AF): §21 dead letters, erased by FK CASCADE from public.memories (account deletion hard-deletes every Memory) and from auth.users (its final step); no service step names it. One line so cited lines below hold.
+  "input_memory_context_consent", "memory_deletion_dead_letters", "memory_resurfacing_preferences", // 3671 (§AJ): per-Memory §11 controls, erased by the same two FK cascades as 3670. 3670 (census-highlights-memories §AF): §21 dead letters, erased by FK CASCADE from public.memories (account deletion hard-deletes every Memory) and from auth.users (its final step); no service step names it. One line so cited lines below hold.
 ];
 
 /**
@@ -868,7 +868,7 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   // 3782 (post-baseline). Classified in ERASED_BY_CASCADE above.
   "input_outcome_consent",
   "input_outcome_counters",
-  "input_memory_context_consent", "memory_deletion_dead_letters", // 3670 (post-baseline, unapplied): classified in ERASED_BY_CASCADE above. One line so cited lines below hold.
+  "input_memory_context_consent", "memory_deletion_dead_letters", "memory_resurfacing_preferences", // 3670, 3671 (post-baseline, unapplied): classified in ERASED_BY_CASCADE above. One line so cited lines below hold.
   "journey_observations",
   "journey_revocation_jobs",
   "journey_segment_revisions",

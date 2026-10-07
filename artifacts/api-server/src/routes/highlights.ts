@@ -669,7 +669,7 @@ function sendSourceLinkFailure(
   where: string,
 ): void {
   switch (reason) {
-    case "invalid":
+    case "invalid": case "kept_private": // §AJ: the detail says which (owner-only request, so naming it is no oracle)
       sendError(res, "invalid_payload", detail);
       return;
     case "source_not_owned":

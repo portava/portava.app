@@ -97,7 +97,7 @@ import {
   mergedAudience,
   revokeMemoryAudienceCaches,
 } from "../services/memory/memoryAudienceRevocation.js";
-import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; // one line: this file is cited by line
+import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; import { refuseWideningKeptPrivate } from "../services/memory/memoryResurfacingControls.js"; // one line: this file is cited by line
 import {
   classifyMemoryMediaUrl,
   FOREIGN_MEDIA_REFUSAL,
@@ -1737,7 +1737,7 @@ router.patch("/memories/:id", async (req, res) => {
   const existing = loaded.row;
   if (existing.owner_id !== user.id) { sendError(res, "forbidden", "Not your memory"); return; }
 
-  const d = parsed.data;
+  const d = parsed.data; if (await refuseWideningKeptPrivate(sc, res, sendError, id, user.id, d.visibility)) return; // §AJ (3671): a KEEP_PRIVATE_FOREVER Memory is not widened past only_me; unreadable controls refuse (one line: cited by line)
 
   // §21. The audience as it stands BEFORE the command, snapshotted rather than
   // re-read from `existing` afterwards. `existing` is the row object the write

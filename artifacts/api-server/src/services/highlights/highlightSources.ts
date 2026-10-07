@@ -106,7 +106,7 @@
  * the evidence for the grade rather than an argument against it.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { probeHighlightObject, type ObjectAvailability } from "./highlightSchemaAvailability.js";
+import { probeHighlightObject, type ObjectAvailability } from "./highlightSchemaAvailability.js"; import { keptPrivate } from "../memory/memoryResurfacingControls.js"; // one line: cited by line
 
 /** 2722: `source_type TEXT NOT NULL CHECK (source_type IN ('MEMORY','EPISODE'))`. */
 export const HIGHLIGHT_SOURCE_TYPES = ["MEMORY", "EPISODE"] as const;
@@ -175,7 +175,7 @@ export type SourceLinkFailure =
   /** A named source is not a live Memory belonging to the caller. */
   | "source_not_owned"
   /** The write reported no error and changed no row. */
-  | "write_unconfirmed";
+  | "write_unconfirmed" | /** A named source carries KEEP_PRIVATE_FOREVER (3671). */ "kept_private";
 
 export type SourceLinkResult<T> =
   | { readonly ok: true; readonly value: T }
@@ -280,7 +280,7 @@ export async function verifyMemorySources(
       // into an oracle for whether an arbitrary UUID is somebody's Memory.
       return fail("source_not_owned", `${missing.length} source memory id(s) are not live memories you own`);
     }
-    return { ok: true, value: ids };
+    { const k = await keptPrivate(sc, ownerId, ids); if (k.unreadable !== null) return fail("unavailable", `memory controls unreadable, so no source is admitted: ${k.unreadable}`); if (k.kept.length > 0) return fail("kept_private", `${k.kept.length} source memory id(s) are kept private forever (3671)`); } return { ok: true, value: ids }; // census-highlights-memories §AJ: a KEEP_PRIVATE_FOREVER Memory is never a Highlight source; unreadable controls admit none (one line: cited by line)
   } catch (err) {
     return fail("unavailable", `memories read threw: ${String((err as any)?.message ?? err)}`);
   }
