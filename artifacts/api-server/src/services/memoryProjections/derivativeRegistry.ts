@@ -34,12 +34,12 @@ import type {
   MemoryTagRow,
   ProjectedRow,
   ProjectionId,
-  ProjectionScope,
+  ProjectionScope, SourceControls,
 } from "./projectionRegistry.js";
 import {
   getProjectionDefinition,
   scopeKeyOf,
-  sourceVersionOf,
+  sourceVersionOf, recapExcludedOf,
 } from "./projectionRegistry.js";
 import type { SignificanceExplanation } from "./significance.js"; import { isTableAbsentError } from "../../lib/tableAbsence.js"; // one line: cited by line
 
@@ -111,7 +111,7 @@ const MEMORY_COLUMNS =
 export interface ProjectionSources {
   memories: MemorySourceRow[];
   items: MemoryItemRow[];
-  tags: MemoryTagRow[];
+  tags: MemoryTagRow[]; /** §AK (3671): the owner's per-Memory controls. */ memoryControls?: SourceControls;
   /** Empty unless asked for; a FAILED read is a refusal, never an empty array. */
   highlights: HighlightSourceRow[]; highlight_policies: HighlightPolicyRow[];
 }
@@ -166,7 +166,7 @@ export async function readProjectionSources(
   }
 
   const hl = opts.includeHighlights ? await readHighlightSources(client, scope) : NO_HIGHLIGHT_SOURCES;
-  return hl.ok ? { ok: true, value: { memories, items, tags, ...hl.value } } : hl;
+  return hl.ok ? { ok: true, value: { memories, items, tags, ...hl.value, memoryControls: await readSourceControls(client, scope.owner_id) } } : hl; // §AK: controls read last, never a refusal (unreadable is itself a state)
 }
 
 export interface DerivedProjection {
@@ -210,12 +210,12 @@ export async function deriveProjection(
   }
 
   const sources = await readProjectionSources(client, scope, { includeHighlights: readsHighlights(def) });
-  if (!sources.ok) return sources;
+  if (!sources.ok) return sources; if (def.id === "TripMemoryProjection" && sources.value.memoryControls?.state === "unreadable") return { ok: false, reason: "source_unavailable", table: "memory_resurfacing_preferences", detail: "the owner's recap controls are unreadable, so no recap is derived (§AK, fail closed)", retryable: true };
 
   const rows = def.build({
     scope,
     memories: sources.value.memories,
-    items: sources.value.items,
+    items: sources.value.items, recapExcluded: recapExcludedOf(sources.value.memoryControls),
     tags: sources.value.tags,
     significance: opts.significance, highlights: { rows: sources.value.highlights, policies: sources.value.highlight_policies },
   });
@@ -223,7 +223,7 @@ export async function deriveProjection(
   // The source version covers the rows the builder could see, not only the rows
   // it emitted: a Memory that was filtered OUT is still an input, and if it
   // changes so that it now qualifies, the projection is stale.
-  const version = sourceVersionOf(sources.value.memories, sources.value.highlights, sources.value.highlight_policies);
+  const version = sourceVersionOf(sources.value.memories, sources.value.highlights, sources.value.highlight_policies, sources.value.memoryControls);
 
   // Contribution is the narrower relation, and it is what the cleanup graph
   // walks. A projection with no memory_id in its whitelist contributes nothing
@@ -413,7 +413,7 @@ export async function projectionStaleness(
 ): Promise<ProjectionResult<StalenessVerdict>> {
   const sources = await readProjectionSources(client, scope, { includeHighlights: readsHighlights(getProjectionDefinition(projectionId)) });
   if (!sources.ok) return sources;
-  const current = sourceVersionOf(sources.value.memories, sources.value.highlights, sources.value.highlight_policies);
+  const current = sourceVersionOf(sources.value.memories, sources.value.highlights, sources.value.highlight_policies, sources.value.memoryControls);
 
   const reg = await readRegistration(client, projectionId, scope);
   if (!reg.ok) {
@@ -640,4 +640,19 @@ export const DELETION_REVOCATION_REASON = "memory_deleted";
 export function isDeletionRevocation(reason: string | null | undefined): boolean {
   const r = String(reason ?? "");
   return r === DELETION_REVOCATION_REASON || r.startsWith(`${DELETION_REVOCATION_REASON}:`);
+}
+
+// ── §AK (lane H, 2026-10-07): the owner's §11 per-Memory controls (3671) ─────
+/**
+ * Absent table ⇒ `absent` (no control can exist). Any other error, or a
+ * non-array answer ⇒ `unreadable`, which the recap builder treats as "carry
+ * nothing" and the source version folds in.
+ */
+async function readSourceControls(client: ClientLike, ownerId: string): Promise<SourceControls> {
+  const res = await client.from("memory_resurfacing_preferences").select("memory_id, control").eq("owner_id", ownerId);
+  if (res.error) return isTableAbsentError(res.error) ? { state: "absent" } : { state: "unreadable" };
+  if (!Array.isArray(res.data)) return { state: "unreadable" };
+  const byMemory: Record<string, string[]> = {};
+  for (const r of res.data as Array<{ memory_id: string; control: string }>) (byMemory[r.memory_id] ??= []).push(String(r.control));
+  return { state: "ok", byMemory };
 }

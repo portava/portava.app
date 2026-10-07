@@ -19,6 +19,9 @@ import { _setTestClient } from "../lib/http.js";
 import memoriesRouter from "../routes/memories.js";
 import controlsRouter from "../routes/memoryResurfacingControls.js";
 import { verifyMemorySources } from "../services/highlights/highlightSources.js";
+import { deriveProjection, projectionStaleness, rebuildProjection } from "../services/memoryProjections/derivativeRegistry.js";
+import { sourceVersionOf } from "../services/memoryProjections/projectionRegistry.js";
+import { buildOnThisDay, generateRecap } from "../compass/MemoryRecapsService.js";
 
 const OWNER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const OTHER = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -78,7 +81,7 @@ function makeClient(store: Record<string, any[]>, opts: FakeOpts = {}) {
         for (const r of (Array.isArray(payload) ? payload : [payload])) {
           const keys = String(upsertOpts.onConflict ?? "").split(",").filter(Boolean);
           const had = keys.length ? all.find((x) => keys.every((k) => x[k] === r[k])) : null;
-          if (had) { if (!upsertOpts.ignoreDuplicates) Object.assign(had, r); continue; }
+          if (had) { if (!upsertOpts.ignoreDuplicates) { Object.assign(had, r); written.push(had); } continue; }
           const row = { ...r }; all.push(row); written.push(row);
         }
         return { data: wantRows ? written : null, error: null };
@@ -207,5 +210,100 @@ describe("KEEP_PRIVATE_FOREVER is enforced where a Memory would be published", (
     assert.deepEqual([unreadable.ok, (unreadable as any).reason], [false, "unavailable"]);
     const absent = await verifyMemorySources(makeClient(store, { absent: new Set([TABLE]) }), OWNER, [PRIV]);
     assert.equal(absent.ok, true, "3671 not applied: no control can exist");
+  });
+});
+
+// ── §AK: the recaps honour the per-Memory controls ──────────────────────────
+const TRIP = "44444444-4444-4444-8444-444444444444";
+const T1 = "55555555-5555-4555-8555-555555555551";
+const T2 = "55555555-5555-4555-8555-555555555552";
+const T3 = "55555555-5555-4555-8555-555555555553";
+function tripStore(): Record<string, any[]> {
+  const st = seed();
+  st.memories.push(
+    memory(T1, { trip_id: TRIP, visibility: "only_me", starts_at: "2026-03-01T10:00:00.000Z", title: "one" }),
+    memory(T2, { trip_id: TRIP, visibility: "only_me", starts_at: "2026-03-02T10:00:00.000Z", title: "two" }),
+    memory(T3, { trip_id: TRIP, visibility: "only_me", starts_at: "2026-03-03T10:00:00.000Z", title: "three" }),
+  );
+  st.trips = [{ id: TRIP, owner_id: OWNER, start_date: "2026-03-01", end_date: "2026-03-05" }];
+  st.trip_members = [{ trip_id: TRIP, user_id: OWNER, role: "owner", status: "accepted" }];
+  return st;
+}
+async function startWith(store: Record<string, any[]>, opts: FakeOpts = {}): Promise<App> {
+  _setTestClient(makeClient(store, opts) as any, true);
+  const ex = express();
+  ex.use(express.json());
+  ex.use((req: any, _r: any, n: any) => { req.log = { error: () => {}, info: () => {}, warn: () => {} }; n(); });
+  ex.use("/api", controlsRouter);
+  ex.use("/api", memoriesRouter);
+  const srv = http.createServer(ex);
+  await new Promise<void>((r) => srv.listen(0, "127.0.0.1", () => r()));
+  const { port } = srv.address() as { port: number };
+  return { base: `http://127.0.0.1:${port}`, store, close: () => new Promise<void>((r) => { srv.closeAllConnections(); srv.close(() => r()); }) };
+}
+const recapIds = (body: any) => (body?.recap?.rows ?? []).map((r: any) => r.memory_id);
+const TRIP_SCOPE = { owner_id: OWNER, viewer_id: OWNER, trip_id: TRIP, place_id: null, person_id: null };
+
+describe("§AK — the trip recap honours DO_NOT_INCLUDE_IN_RECAPS and KEEP_PRIVATE_FOREVER", () => {
+  it("GET /trips/:tripId/memories/recap leaves out a Memory kept out of recaps or kept private forever; DO_NOT_RESURFACE alone does not", async () => {
+    const store = tripStore();
+    store[TABLE].push(
+      { memory_id: T1, owner_id: OWNER, control: "DO_NOT_INCLUDE_IN_RECAPS" },
+      { memory_id: T2, owner_id: OWNER, control: "KEEP_PRIVATE_FOREVER" },
+      { memory_id: T3, owner_id: OWNER, control: "DO_NOT_RESURFACE" },
+    );
+    app = await startWith(store);
+    const r = await call(app, "GET", `/trips/${TRIP}/memories/recap`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(recapIds(r.body), [T3]);
+  });
+
+  it("unreadable controls: the recap is REFUSED (503) — never served with a Memory its owner may have kept out", async () => {
+    app = await startWith(tripStore(), { failReads: new Set([TABLE]) });
+    const r = await call(app, "GET", `/trips/${TRIP}/memories/recap`);
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+  });
+
+  it("3671 not applied: no control can exist, and the recap carries every Memory", async () => {
+    app = await startWith(tripStore(), { absent: new Set([TABLE]) });
+    const r = await call(app, "GET", `/trips/${TRIP}/memories/recap`);
+    assert.equal(r.status, 200);
+    assert.deepEqual(recapIds(r.body), [T1, T2, T3]);
+  });
+
+  it("the registered TripMemoryProjection: excluded too, a control change makes it STALE, and unreadable controls refuse the derivation", async () => {
+    const store = tripStore();
+    const client = makeClient(store) as any;
+    const first = await rebuildProjection(client, "TripMemoryProjection", TRIP_SCOPE, new Date("2026-10-07T12:00:00.000Z"));
+    assert.ok(first.ok && first.value.registration.source_memory_ids.includes(T1));
+    store[TABLE].push({ memory_id: T1, owner_id: OWNER, control: "DO_NOT_INCLUDE_IN_RECAPS" });
+    const stale = await projectionStaleness(client, "TripMemoryProjection", TRIP_SCOPE);
+    assert.ok(stale.ok && stale.value.state === "STALE", "turning a control on changes the source version");
+    const again = await rebuildProjection(client, "TripMemoryProjection", TRIP_SCOPE, new Date("2026-10-07T12:01:00.000Z"));
+    assert.ok(again.ok && !again.value.registration.source_memory_ids.includes(T1) && again.value.registration.source_memory_ids.includes(T2));
+    const refused = await deriveProjection(makeClient(store, { failReads: new Set([TABLE]) }) as any, "TripMemoryProjection", TRIP_SCOPE);
+    assert.deepEqual([refused.ok, (refused as any).reason, (refused as any).table], [false, "source_unavailable", TABLE]);
+  });
+
+  it("the source version is byte-identical when no control is set (no stampede of STALE registrations on deploy)", () => {
+    const mems = tripStore().memories as any[];
+    assert.equal(sourceVersionOf(mems).digest, sourceVersionOf(mems, [], [], { state: "ok", byMemory: {} }).digest);
+    assert.equal(sourceVersionOf(mems).digest, sourceVersionOf(mems, [], [], { state: "absent" }).digest);
+    assert.notEqual(sourceVersionOf(mems).digest, sourceVersionOf(mems, [], [], { state: "unreadable" }).digest);
+  });
+});
+
+describe("§AK — the §5 recaps and On This Day never resurface a Memory (pinned)", () => {
+  it("a Memory carrying DO_NOT_RESURFACE / DO_NOT_INCLUDE_IN_RECAPS is in neither — §5 resurfaces no scrapbook Memory at all (fail-closed valence gate)", async () => {
+    const store = seed();
+    store.feature_flags.push({ flag: "memory_recaps", enabled: true });
+    store.memories = [memory(PRIV, { created_at: "2025-10-07T09:00:00.000Z", title: "anniversary" })];
+    store[TABLE].push({ memory_id: PRIV, owner_id: OWNER, control: "DO_NOT_RESURFACE" }, { memory_id: PRIV, owner_id: OWNER, control: "DO_NOT_INCLUDE_IN_RECAPS" });
+    const client = makeClient(store) as any;
+    const day = await buildOnThisDay(client, OWNER, { now: new Date("2026-10-07T12:00:00.000Z") });
+    assert.equal(day.enabled, true);
+    assert.ok(!day.items.some((i: any) => i.subjectType === "passport:memory"), "On This Day carries no Memory");
+    const recap = await generateRecap(client, OWNER, { kind: "year", year: 2025, now: new Date("2026-10-07T12:00:00.000Z") } as any);
+    assert.ok(!recap.sections.some((s: any) => s.items.some((i: any) => i.subjectType === "passport:memory")), "a recap carries no Memory");
   });
 });

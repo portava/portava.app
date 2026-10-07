@@ -121,7 +121,7 @@ export interface ProjectionInput {
   scope: ProjectionScope;
   memories: readonly MemorySourceRow[];
   tags: readonly MemoryTagRow[];
-  items: readonly MemoryItemRow[];
+  items: readonly MemoryItemRow[]; /** §AK (3671): Memory ids a RECAP must not carry. `null` = the owner's controls could not be read, so a recap carries none (fail closed); absent = none set. */ recapExcluded?: ReadonlySet<string> | null;
   /** Section 8 output, owner-facing only. Absent is normal, not an error. */
   significance?: ReadonlyMap<string, SignificanceExplanation>;
   /** §12's Highlights AND §10's policy over them — ONE field; see HighlightSourceRow. */
@@ -324,7 +324,7 @@ const DEFINITIONS: ProjectionDefinition[] = [
       const tripId = input.scope.trip_id ?? null;
       if (tripId === null) return [];
       return ownerVisible(input)
-        .filter((m) => m.trip_id === tripId)
+        .filter((m) => m.trip_id === tripId && recapAdmits(input, m.id)) // §AK: DO_NOT_INCLUDE_IN_RECAPS / KEEP_PRIVATE_FOREVER, fail closed
         .sort((a, b) => occurredAt(a).localeCompare(occurredAt(b)) || a.id.localeCompare(b.id))
         .map((m) => project({
           ...m,
@@ -547,11 +547,26 @@ export function sourceVersionOf(
    * moving it and nothing that cannot change it forces a rebuild.
    */
   policies: readonly HighlightPolicyRow[] = [],
+  /**
+   * §AK: the owner's per-Memory §11 controls (3671), folded in BY CONTENT so a
+   * control turned on or off makes every registration that read the Memory
+   * STALE. BACKWARD-COMPATIBLE: absent or empty adds nothing to the digest.
+   * `unreadable` is itself an input — when the controls become readable again
+   * the projection is stale and is rebuilt with them.
+   */
+  controls?: SourceControls,
 ): {
   digest: string;
   per_memory: Record<string, string>;
 } {
   const per: Record<string, string> = {};
+  if (controls?.state === "unreadable") per["controls"] = "unreadable";
+  else if (controls?.state === "ok") {
+    for (const id of Object.keys(controls.byMemory).sort()) {
+      const set = [...controls.byMemory[id]!].sort();
+      if (set.length > 0) per[`control:${id}`] = set.join("+");
+    }
+  }
   for (const m of [...memories].sort((a, b) => a.id.localeCompare(b.id))) per[m.id] = m.updated_at;
   for (const h of [...highlights].sort((a, b) => a.id.localeCompare(b.id))) {
     // `updated_at` is nullable on `highlights` (rows written before the column
@@ -767,4 +782,32 @@ function clampHighlightLocation(
     isLocationPrecision(stored) ? stored : "HIDDEN",
   );
   return { location_city: clamped.location_city, location_country: clamped.location_country };
+}
+
+// ── §AK (lane H, 2026-10-07): §11 per-Memory controls reach the recap ────────
+/** The owner's per-Memory §11 controls as a projection source (3671). */
+export type SourceControls =
+  | { readonly state: "ok"; readonly byMemory: Readonly<Record<string, readonly string[]>> }
+  | { readonly state: "absent" }
+  | { readonly state: "unreadable" };
+
+/**
+ * Controls that keep a Memory out of a RECAP — services/highlights/
+ * highlightResurfacing.ts CONTROL_EFFECTS: both suppress `recap`.
+ */
+export const RECAP_SUPPRESSING_CONTROLS: readonly string[] = ["DO_NOT_INCLUDE_IN_RECAPS", "KEEP_PRIVATE_FOREVER"];
+
+/** The ids a recap must not carry, or null when the controls could not be read. */
+export function recapExcludedOf(controls: SourceControls | undefined): ReadonlySet<string> | null | undefined {
+  if (!controls || controls.state === "absent") return undefined;
+  if (controls.state === "unreadable") return null;
+  const out = new Set<string>();
+  for (const [id, set] of Object.entries(controls.byMemory)) if (set.some((c) => RECAP_SUPPRESSING_CONTROLS.includes(c))) out.add(id);
+  return out;
+}
+
+/** May this Memory appear in a recap? Unreadable controls ⇒ no (fail closed). */
+export function recapAdmits(input: Pick<ProjectionInput, "recapExcluded">, memoryId: string): boolean {
+  if (input.recapExcluded === null) return false;
+  return !(input.recapExcluded?.has(memoryId) ?? false);
 }

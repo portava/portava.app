@@ -76,7 +76,7 @@ import { asHistoricalMemoryPayload } from "../services/memory/historicalTruth.js
 // read the registry, which is the blanket reason every §18 row is BBW.
 import {
   getProjectionDefinition,
-  sourceVersionOf,
+  sourceVersionOf, recapExcludedOf,
   type MemorySourceRow,
 } from "../services/memoryProjections/projectionRegistry.js";
 import {
@@ -97,7 +97,7 @@ import {
   mergedAudience,
   revokeMemoryAudienceCaches,
 } from "../services/memory/memoryAudienceRevocation.js";
-import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; import { refuseWideningKeptPrivate } from "../services/memory/memoryResurfacingControls.js"; // one line: this file is cited by line
+import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; import { refuseWideningKeptPrivate, readRecapControls } from "../services/memory/memoryResurfacingControls.js"; // one line: this file is cited by line
 import {
   classifyMemoryMediaUrl,
   FOREIGN_MEDIA_REFUSAL,
@@ -3041,12 +3041,12 @@ router.get("/trips/:tripId/memories/recap", async (req, res) => {
   const definition = getProjectionDefinition("TripMemoryProjection");
   if (!definition) { sendError(res, "db_error", "Projection definition missing"); return; }
 
-  const sourceRows = readable as unknown as MemorySourceRow[];
+  const sourceRows = readable as unknown as MemorySourceRow[]; const recapControls = await readRecapControls(sc, tripOwnerId, memoryIds); if (recapControls.state === "unreadable") { req.log.error({ tripId }, "trip-recap: memory_resurfacing_preferences unreadable — refusing rather than serving a recap that may carry a Memory its owner kept out of recaps"); sendError(res, "degraded_unavailable", "Could not build the trip recap. Please try again."); return; } // §AK (3671): DO_NOT_INCLUDE_IN_RECAPS / KEEP_PRIVATE_FOREVER; unreadable controls refuse, never an empty recap
   const built = definition.build({
     scope: { owner_id: tripOwnerId, viewer_id: user.id, trip_id: tripId },
     memories: sourceRows,
     tags: disclosedTags as any,
-    items: items as any,
+    items: items as any, recapExcluded: recapExcludedOf(recapControls),
   });
 
   res.json({
@@ -3060,7 +3060,7 @@ router.get("/trips/:tripId/memories/recap", async (req, res) => {
       // registry TABLE exists (2730, applied 2026-09-15) and no read path
       // writes it (H174), so the version travels on the response instead of
       // being stored — a caller can still tell one build of this recap from another.
-      sourceVersion: sourceVersionOf(sourceRows).digest,
+      sourceVersion: sourceVersionOf(sourceRows, [], [], recapControls).digest,
       rows: built,
     },
   });

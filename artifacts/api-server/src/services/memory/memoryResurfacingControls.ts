@@ -29,6 +29,7 @@
  * recap derivative and the Compass memory tools are the next consumers).
  */
 import { isTableAbsentError } from "../../lib/tableAbsence.js";
+import type { SourceControls } from "../memoryProjections/projectionRegistry.js";
 
 export const MEMORY_RESURFACING_CONTROLS = [
   "DO_NOT_RESURFACE",
@@ -147,4 +148,26 @@ export async function clearMemoryControl(
     return { ok: false, reason: "unavailable", detail: String(error.message ?? "") };
   }
   return { ok: true };
+}
+
+/**
+ * The controls as a §18 projection source (projectionRegistry.SourceControls),
+ * for a recap built outside the registry (GET /trips/:tripId/memories/recap).
+ */
+export async function readRecapControls(sc: any, ownerId: string, memoryIds: readonly string[]): Promise<SourceControls> {
+  // By OWNER, not `.in(memoryIds)`: a trip can hold more Memories than one URL
+  // can name, and an owner's set controls are few. Filtered to the trip after.
+  const wanted = new Set(memoryIds);
+  try {
+    const { data, error } = await sc.from("memory_resurfacing_preferences").select("memory_id, control").eq("owner_id", ownerId);
+    if (error) return isTableAbsentError(error) ? { state: "absent" } : { state: "unreadable" };
+    if (!Array.isArray(data)) return { state: "unreadable" };
+    const byMemory: Record<string, string[]> = {};
+    for (const r of data as Array<{ memory_id: string; control: string }>) {
+      if (wanted.has(r.memory_id) && isMemoryResurfacingControl(r.control)) (byMemory[r.memory_id] ??= []).push(r.control);
+    }
+    return { state: "ok", byMemory };
+  } catch {
+    return { state: "unreadable" };
+  }
 }
