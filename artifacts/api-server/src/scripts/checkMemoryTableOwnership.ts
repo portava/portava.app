@@ -222,6 +222,13 @@ const BOTH_ALLOWED = new Set([
   // ratchet stating a rename with the reason for it removed, which is the one
   // sentence a future reader most needs. Same judgement as 2710's header.
   "scripts/checkProductionDrift.ts",
+  // ADDED 2026-10-07 by lane G (wave 2). The RLS disposition manifest the
+  // inverse audit reads, GENERATED from the chain (lib/chainRlsFacts.ts): one
+  // entry per post-baseline table, so both logs appear as KEYS, each with its
+  // own creating migration (2183 memory_events, 2710 memory_domain_events). It
+  // reads and writes neither table; splitting a generated manifest by table
+  // family would only hide one of them from the audit.
+  "scripts/rlsDispositionsChain.ts",
   // ADDED 2026-10-06 by lane T2 (census-telegraph §45f; live-DB tier on #628).
   // Telegraph's §29 tripwire, "no automatic Memory creation from private
   // conversation history". It reads and writes NEITHER log: it is a closed
