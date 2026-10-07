@@ -97,7 +97,7 @@ import {
   mergedAudience,
   revokeMemoryAudienceCaches,
 } from "../services/memory/memoryAudienceRevocation.js";
-import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js";
+import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; // one line: this file is cited by line
 import {
   classifyMemoryMediaUrl,
   FOREIGN_MEDIA_REFUSAL,
@@ -1923,7 +1923,7 @@ router.patch("/memories/:id", async (req, res) => {
   // Compass feed, and a Memory whose audience did not move has nothing to
   // revoke.
   const nextAudience = mergedAudience(previousAudience, patch);
-  if (audienceChanged(previousAudience, nextAudience)) {
+  if (audienceChanged(previousAudience, nextAudience)) { const narrowed = await reprojectDerivativesAfterNarrowing(sc as any, { memoryId: id, now: new Date(audienceWriteCommittedAt), reason: "memory_visibility_changed" }); if (!narrowed.ok || narrowed.revokedInstead > 0) req.log.error({ memoryId: id, narrowed }, "memories: §18 derivatives could not all be re-derived after an audience change (revoked instead, or unresolved)"); // H189/H114: the registry's derivatives are re-derived from the committed audience (one line: cited by line)
     await revokeMemoryAudienceCaches(sc, {
       memoryId: id,
       ownerId: user.id,
