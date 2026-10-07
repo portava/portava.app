@@ -3107,7 +3107,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // ── ADDED 2026-10-07 by mission 4 lane D2 (§42.15) ───────────────────────
     // The guard lead ruling PR-D2-5 rests on: the shipped language/interest lists
     // and the no-request answer held to the server's, for every viewer.
-    "artifacts/api-server/src/test/inputLocalSufficiencyParity.test.ts",
+    "artifacts/api-server/src/test/inputLocalSufficiencyParity.test.ts", "artifacts/api-server/src/test/inputOfflineZeroStateParity.test.ts", // §42.24 G200/G201
     // §42.19: the client proving test for G134's Open Map dispatch (lead ruling PR-D2-6).
     "travel-buddy-standalone/app/__tests__/search.openOnMapDispatch.component.test.tsx",
     // ── ADDED 2026-10-05 by lane D (§37) ────────────────────────────────────
