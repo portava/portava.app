@@ -112,3 +112,90 @@ export async function dismissReport(
   }
   return res.json();
 }
+
+// ── The moderation_reports queue (what the in-app Report button writes) ─────
+//
+// The screen above reads the LEGACY `reports` table (GET /api/admin/reports).
+// The in-app report flow (src/services/moderation.ts) writes `moderation_reports`,
+// which only GET /api/admin/moderation/reports lists and only
+// POST /api/admin/moderation/reports/:id/review acts on. Until these two
+// functions, no client read that queue at all (census-trust TV-4a; verifier
+// finding 10, 2026-10-06).
+
+export type ModerationReportStatus = 'open' | 'reviewing' | 'actioned' | 'dismissed';
+export type ModerationReviewDecision = 'reviewing' | 'actioned' | 'dismissed';
+
+/** lib/moderationReportSnapshots.ts on the server: a failed read is never "missing content". */
+export type ModerationSubjectSnapshot =
+  | { state: 'ok'; [k: string]: unknown }
+  | { state: 'not_found' }
+  | { state: 'unavailable' }
+  | { state: 'unsupported' };
+
+export interface ModerationReport {
+  id: string;
+  reporter_id: string | null;
+  subject_type: string;
+  subject_id: string;
+  subject_user_id: string | null;
+  category: string;
+  details: string | null;
+  status: ModerationReportStatus;
+  created_at: string;
+  resolved_at: string | null;
+  subject_snapshot: ModerationSubjectSnapshot;
+}
+
+export interface ModerationReportsResult {
+  reports: ModerationReport[];
+  total: number;
+  page: number;
+  /** Subject types whose snapshot read FAILED on this page — the page is not complete. */
+  snapshotsUnavailableFor?: string[];
+}
+
+/** GET /api/admin/moderation/reports */
+export async function fetchModerationReports(opts: {
+  page?: number;
+  limit?: number;
+  status?: ModerationReportStatus | 'all';
+  category?: string;
+} = {}): Promise<ModerationReportsResult> {
+  const { page = 1, limit = 30, status = 'open', category = 'all' } = opts;
+  const params = new URLSearchParams({ page: String(page), limit: String(limit), status, category });
+  const res = await authedFetch(`${apiBase()}/api/admin/moderation/reports?${params}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body as any)?.message ?? `Failed to load the moderation queue: ${res.status}`);
+  }
+  return res.json() as Promise<ModerationReportsResult>;
+}
+
+/** Why a review was not applied, as the server says it. */
+export class ModerationReviewError extends Error {
+  constructor(
+    message: string,
+    /** 409: someone else moved it first, or the move is not allowed from its status. 503: try again. */
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = 'ModerationReviewError';
+  }
+}
+
+/** POST /api/admin/moderation/reports/:id/review — the server writes the audit row; the note never reaches the reporter. */
+export async function reviewModerationReport(
+  id: string,
+  decision: ModerationReviewDecision,
+  note?: string | null,
+): Promise<{ report: { id: string; status: ModerationReportStatus } }> {
+  const res = await authedFetch(`${apiBase()}/api/admin/moderation/reports/${id}/review`, {
+    method: 'POST',
+    body: JSON.stringify(note && note.trim() ? { decision, note: note.trim() } : { decision }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new ModerationReviewError((body as any)?.message ?? `Review failed: ${res.status}`, res.status);
+  }
+  return res.json();
+}

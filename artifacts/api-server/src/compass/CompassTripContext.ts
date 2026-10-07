@@ -30,6 +30,7 @@ import { readOpenSession } from "../lib/experienceSessionStore.js";
 import { sessionState, type ExperienceSessionEnvelope } from "../lib/experienceSession.js";
 import type { ContextKernel } from "../lib/contextKernel.js";
 import type { SurfaceProjection } from "../lib/opportunityEngine.js";
+import { PLAN_ITEM_PRIVACY_COLUMNS, planItemAccessFor, withholdPrivatePlanItems } from "./planItemAccess.js";
 
 const MAX_BLOCK_CHARS      = 1200;
 const UPCOMING_WINDOW_DAYS = 60;
@@ -181,7 +182,7 @@ export async function buildTripContextLines(sc: any, userId: string): Promise<st
       // Today's plan items (≤5, not cancelled, not removed).
       const { data: todayItems, error: todayErr } = await sc
         .from("trip_plan_items")
-        .select("title, starts_at, sort_order, status")
+        .select(`id, title, starts_at, sort_order, status, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
         .eq("trip_id", trip.id)
         .eq("day_date", today)
         .neq("status", "cancelled")
@@ -189,7 +190,12 @@ export async function buildTripContextLines(sc: any, userId: string): Promise<st
         .order("starts_at", { ascending: true })
         .order("sort_order", { ascending: true })
         .limit(MAX_TODAY_ITEMS);
-      const items = (todayErr ? [] : (todayItems ?? [])) as any[];
+      // OD-TRIP-3 (compass/planItemAccess.ts): another member's private item is
+      // listed as "Private plan" — the time is taken, the place and name are not
+      // this viewer's to know.
+      const items = (todayErr
+        ? []
+        : withholdPrivatePlanItems((todayItems ?? []) as any[], await planItemAccessFor(sc, trip.id, userId))) as any[];
       if (items.length > 0) {
         const parts = items.map((i) => {
           const itemTitle = wrapUgc(String(i.title ?? ""));
@@ -461,7 +467,7 @@ export async function buildTripWorldContext(
     const disruptions: TripDisruption[] = [];
     const { data: planRows, error: planErr } = await sc
       .from("trip_plan_items")
-      .select("id, title, place_id, status")
+      .select(`id, title, place_id, status, ${PLAN_ITEM_PRIVACY_COLUMNS}`)
       .eq("trip_id", trip.id)
       .eq("day_date", today)
       .neq("status", "cancelled")
@@ -470,7 +476,11 @@ export async function buildTripWorldContext(
     if (planErr) {
       unavailable.push("disruptions");
     } else {
-      for (const item of ((planRows ?? []) as any[])) {
+      // OD-TRIP-3: a withheld item has no place_id, so no disruption can be
+      // looked up for — and therefore no claim can disclose — another member's
+      // private place.
+      const visibleRows = withholdPrivatePlanItems((planRows ?? []) as any[], await planItemAccessFor(sc, trip.id, userId));
+      for (const item of visibleRows) {
         const placeId = typeof item.place_id === "string" ? item.place_id : null;
         if (!placeId) continue;
         const envelopes = await readLiveClaimEnvelopes(sc, placeId, {
