@@ -203,7 +203,7 @@ export interface DynamicPolicy {
   policy: string;
   /** Bare filename of the migration that issues it. */
   file: string;
-  /** 1-based line of the `CREATE POLICY %I` format template that issues it. */
+  /** 1-based line on which the `'CREATE POLICY %I …'` format template that issues it begins. */
   line: number;
   /** Which derivation produced it. */
   via: "loop" | "keep-list";
@@ -334,7 +334,7 @@ export function deriveLoopPolicies(file: string, sql: string): DynamicPolicy[] {
       const policy = evalStringExpr(args[1] ?? "", local);
       const table = head[1] === "%I" ? evalStringExpr(args[2] ?? "", local) : head[1]!.toLowerCase();
       if (policy === null || table === null) continue;
-      out.push({ table: table.toLowerCase(), policy: policy.toLowerCase(), file, line: lineOf(src, e.index), via: "loop" });
+      out.push({ table: table.toLowerCase(), policy: policy.toLowerCase(), file, line: lineOf(src, src.indexOf("'", open)), via: "loop" });
     }
   }
   return out;
@@ -377,7 +377,7 @@ export function deriveKeepListDenyPolicies(file: string, sql: string): DynamicPo
   const targets = rowsOf(tablesLoop[3]!).map((r) => r[0]!).sort();
   const keep = new Set(rowsOf(deniedFrom[1]!).map((r) => `${r[0]}|${r[1]}|${r[2]}`));
   const verbs = [...ops[1]!.matchAll(/'([A-Z]+)'/g)].map((m) => m[1]!);
-  const line = lineOf(src, tmpl.index);
+  const line = lineOf(src, tmpl.index + tmpl[0].indexOf("'"));
   const out: DynamicPolicy[] = [];
   for (const t of targets) {
     for (const op of verbs) {
@@ -537,6 +537,81 @@ export function renderChainRlsDispositions(
     "export const CHAIN_RLS_DISPOSITIONS: Readonly<Record<string, ChainRlsDisposition>> = {",
     ...lines,
     "};",
+    "",
+  ].join("\n");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The generated DYNAMIC_DDL ledger rows
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The dynamically created policies the inverse audit's model cannot read and
+ * the ledger must therefore explain: every deriveDynamicPolicies() result,
+ * minus any the model reads anyway (its FOREACH-literal expansion covers 2762
+ * and 2763), minus any a later file drops. Sorted by key.
+ */
+export function ledgerDynamicPolicies(
+  files: readonly MigrationText[],
+  modelPolicyKeys: ReadonlySet<string>,
+): DynamicPolicy[] {
+  const sorted = [...files].sort((a, b) => (a.name < b.name ? -1 : 1));
+  const drops = sorted.map((f) => {
+    const src = blankSqlComments(f.sql);
+    return {
+      name: f.name,
+      dropped: new Set(
+        [...events(src), ...events(expandForeachLiteralLoops(src))]
+          .filter((e) => e.k === "drop" || e.k === "rename")
+          .map((e) => `${e.t}.${e.p}`),
+      ),
+    };
+  });
+  const seen = new Set<string>();
+  const out: DynamicPolicy[] = [];
+  for (const d of deriveDynamicPolicies(sorted)) {
+    const key = `public.${d.table}.${d.policy}`;
+    if (modelPolicyKeys.has(key) || seen.has(key)) continue;
+    if (drops.some((x) => x.name > d.file && x.dropped.has(`${d.table}.${d.policy}`))) continue;
+    seen.add(key);
+    out.push(d);
+  }
+  return out.sort((a, b) => (`${a.table}.${a.policy}` < `${b.table}.${b.policy}` ? -1 : 1));
+}
+
+/**
+ * The exact text of src/scripts/explainedLiveObjectsDynamic.ts. The audit test
+ * compares the committed file with this byte for byte; regenerate with
+ *   WRITE_DYNAMIC_POLICY_LEDGER=1 node --import tsx/esm --test src/test/auditLiveVsCanonical.test.ts
+ */
+export function renderDynamicPolicyLedger(rows: readonly DynamicPolicy[]): string {
+  const reasonFor = (d: DynamicPolicy) =>
+    d.via === "loop"
+      ? `Created by EXECUTE format('CREATE POLICY %I ...') in ${d.file}; its name is fixed by the file's literal FOREACH arrays and format() arguments and is derived from that text by deriveLoopPolicies() (lib/chainRlsFacts.ts). No text scan can read it.`
+      : `Created by ${d.file}'s keep-list loop: a RESTRICTIVE deny for each client role its literal keep list does not keep, named format('%s_deny_%s_%s', tbl, lower(verb), who). Derived from that file's literal temp-table rows by deriveKeepListDenyPolicies() (lib/chainRlsFacts.ts). No text scan can read it.`;
+  return [
+    "/**",
+    " * GENERATED from the migration chain by renderDynamicPolicyLedger()",
+    " * (src/scripts/lib/chainRlsFacts.ts). Do not edit by hand. Regenerate with",
+    " *   WRITE_DYNAMIC_POLICY_LEDGER=1 node --import tsx/esm --test src/test/auditLiveVsCanonical.test.ts",
+    " * and review the diff; auditLiveVsCanonical.test.ts fails while this file and",
+    " * the migrations disagree.",
+    " *",
+    " * The EXPLAINED ledger's DYNAMIC_DDL rows for policies a migration creates",
+    " * through EXECUTE format() with names the inverse audit's model cannot read.",
+    " * Each provenance is the migration file:line where the generating",
+    " * 'CREATE POLICY %I ...' template begins.",
+    " */",
+    'import type { ExplainedEntry } from "./explainedLiveObjects.js";',
+    "",
+    "export const DYNAMIC_POLICY_LEDGER: ReadonlyArray<ExplainedEntry> = [",
+    ...rows.map(
+      (d) =>
+        `  { key: ${JSON.stringify(`policy:public.${d.table}.${d.policy}`)}, kind: "policy", ` +
+        `provenance: ${JSON.stringify(`artifacts/api-server/src/migrations/${d.file}:${d.line}`)}, disposition: "DYNAMIC_DDL", ` +
+        `reason: ${JSON.stringify(reasonFor(d))}, reviewed_on: ${JSON.stringify(CHAIN_DISPOSITIONS_GENERATED_ON)} },`,
+    ),
+    "];",
     "",
   ].join("\n");
 }

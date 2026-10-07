@@ -985,3 +985,113 @@ describe("buildModel — history before the baseline, chain after it", () => {
     }
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lane G wave 2: DYNAMIC_DDL ledger rows — generated, and each cited to the
+// migration line where its generating CREATE POLICY template begins.
+// ─────────────────────────────────────────────────────────────────────────────
+import { writeFileSync as dlWrite } from "node:fs";
+import { ledgerDynamicPolicies, renderDynamicPolicyLedger } from "../scripts/lib/chainRlsFacts.js";
+import { DYNAMIC_POLICY_LEDGER } from "../scripts/explainedLiveObjectsDynamic.js";
+
+describe("DYNAMIC_DDL ledger — loop-created policies the model cannot read", () => {
+  const files = mgReaddir(MG_MIGRATIONS).filter((f) => f.endsWith(".sql")).map((name) => ({ name, sql: mgMig(name) }));
+  const { historical, canonical } = partitionByChainStart(files.map((f) => f.name));
+  const model = buildModel({
+    baselineSql: mgRead(mgJoin(MG_API, "baseline", "20260819_baseline_structure.sql"), "utf8"),
+    baselineTables: new Map(),
+    historicalSqls: historical.map(mgMig),
+    canonicalSqls: canonical.map(mgMig),
+    ledger: [],
+    parseMig: noParse,
+  });
+  const rows = ledgerDynamicPolicies(files, new Set(model.policies.keys()));
+  const OUT = mgJoin(MG_API, "src", "scripts", "explainedLiveObjectsDynamic.ts");
+
+  it("the committed explainedLiveObjectsDynamic.ts is exactly what the migrations generate", () => {
+    const want = renderDynamicPolicyLedger(rows);
+    if (process.env.WRITE_DYNAMIC_POLICY_LEDGER) dlWrite(OUT, want);
+    assert.equal(mgRead(OUT, "utf8"), want, "regenerate explainedLiveObjectsDynamic.ts (see its header) and review the diff");
+  });
+
+  it("it is the 95 RESTRICTIVE deny policies run 37608414616 reported unexplained, and nothing the model reads", () => {
+    assert.equal(DYNAMIC_POLICY_LEDGER.length, 95);
+    for (const e of DYNAMIC_POLICY_LEDGER) {
+      assert.match(e.key, /^policy:public\.[a-z0-9_]+\.[a-z0-9_]+_deny_(select|insert|update|delete)_(clients|anon|authenticated)$/, e.key);
+      assert.ok(!model.policies.has(e.key.slice("policy:".length)), `${e.key} is modelled; a ledger row would falsely claim ledger-only coverage`);
+    }
+    // A sample from each derivation, against the file that issues it.
+    const keys = new Set(DYNAMIC_POLICY_LEDGER.map((e) => e.key));
+    for (const k of [
+      "policy:public.discovery_places.discovery_places_deny_update_clients", // 3390 keep-list, both roles denied
+      "policy:public.trails.trails_deny_select_anon", // 3390 keep-list, authenticated kept
+      "policy:public.trend_integrity_reviews.trend_integrity_reviews_deny_insert_clients", // 3486 nested loop
+      "policy:public.area_momentum.area_momentum_deny_delete_clients", // 3476 `pname := format(...)`
+    ]) assert.ok(keys.has(k), k);
+    assert.ok(!keys.has("policy:public.discovery_places.discovery_places_deny_select_clients"), "3390 KEEPS discovery_places SELECT for both roles");
+  });
+
+  it("every DYNAMIC_DDL row cites the line where its generating CREATE POLICY template begins", () => {
+    const dynamic = EXPLAINED_LIVE_OBJECTS.filter((e) => e.disposition === "DYNAMIC_DDL");
+    assert.ok(dynamic.length >= 97, `only ${dynamic.length} DYNAMIC_DDL rows`);
+    for (const e of dynamic) {
+      const m = /^artifacts\/api-server\/src\/migrations\/([^:]+):(\d+)$/.exec(e.provenance)!;
+      assert.ok(m, `${e.key}: provenance ${e.provenance}`);
+      const line = mgMig(m[1]!).split("\n")[Number(m[2]) - 1] ?? "";
+      assert.match(line, /'CREATE POLICY %I ON public\./, `${e.key}: ${e.provenance} is not the generating template: ${line}`);
+      const [, table, policy] = e.key.split(".");
+      assert.ok(new RegExp(`\\b${table}\\b`).test(mgMig(m[1]!)), `${e.provenance} never names ${table}`);
+      if (e.dynamic_predicate) assert.ok(mgMig(m[1]!).includes(`'${policy}'`), `${e.provenance} never names ${policy}`);
+    }
+  });
+
+  it("3502's two rewritten predicates are ledgered with a wired verifier; the rows validate", () => {
+    const pkg = JSON.parse(mgRead(mgJoin(MG_API, "package.json"), "utf8")) as { scripts: Record<string, string> };
+    for (const k of ["policy:public.highlights.highlights_select", "policy:public.highlights.highlights_select_active"]) {
+      const e = EXPLAINED_LIVE_OBJECTS.find((x) => x.key === k);
+      assert.ok(e?.dynamic_predicate, `${k} is not a dynamic_predicate row`);
+      assert.ok(e!.deep_verifier && e!.deep_verifier in pkg.scripts, `${k}: verifier '${e!.deep_verifier}' is not a package script`);
+      assert.ok(model.policies.has(k.slice("policy:".length)), `${k} must be modelled by name (2182) for the flag to mean anything`);
+    }
+    assert.deepEqual(validateLedgerShape(EXPLAINED_LIVE_OBJECTS), []);
+  });
+});
+
+describe("computeUnexplained — a dynamic_predicate ledger row", () => {
+  const base = (ledger: ExplainedEntry[], liveRoles = ["authenticated"]) => {
+    const model = makeModel({
+      relations: new Set(["t"]),
+      rlsClaimTables: new Set(["t"]),
+      policies: new Map([["public.t.p", { using: "old_text", withCheck: null, roles: ["authenticated"] }]]),
+      ledgerKeys: new Set(ledger.map((e) => e.key)),
+    });
+    const live = makeLive({
+      relations: new Map([["t", "r"]]),
+      policies: new Map([["public.t.p", { using: "(owner_id = auth.uid())", withCheck: null, roles: liveRoles, cmd: "select" }]]),
+    });
+    return computeUnexplained({ model, live, ledger, ledgerShapeProblems: [], dispositions: { t: { class: "RLS_REQUIRED", policyCount: 1 } }, ci: baseCi });
+  };
+  const row = (verifier: string): ExplainedEntry => ({
+    key: "policy:public.t.p", kind: "policy", provenance: "artifacts/api-server/src/migrations/3502_x.sql:440",
+    disposition: "DYNAMIC_DDL", dynamic_predicate: true, deep_verifier: verifier, reason: "r", reviewed_on: "2026-10-07",
+  });
+
+  it("without the row, the stale text is POLICY_PREDICATE_DRIFT", () => {
+    assert.deepEqual(base([]).findings.map((f) => f.code), ["POLICY_PREDICATE_DRIFT"]);
+  });
+  it("with the row and a wired verifier, the text is not compared", () => {
+    assert.deepEqual(base([row("audit:schema")]).findings, []);
+  });
+  it("with the row, a ROLE change is still drift", () => {
+    assert.deepEqual(base([row("audit:schema")], ["anon", "authenticated"]).findings.map((f) => f.code), ["POLICY_PREDICATE_DRIFT"]);
+  });
+  it("with an unwired verifier, VERIFIER_NOT_WIRED", () => {
+    assert.deepEqual(base([row("no:such-script")]).findings.map((f) => f.code), ["VERIFIER_NOT_WIRED"]);
+  });
+  it("validateLedgerShape refuses a DYNAMIC_DDL row without migration provenance, or a dynamic_predicate without a verifier", () => {
+    const bad1 = { ...row("audit:schema"), provenance: "docs/x.md:1" };
+    const bad2 = { ...row(""), deep_verifier: undefined };
+    assert.deepEqual(validateLedgerShape([bad1]).map((p) => p.code), ["DYNAMIC_DDL_PROVENANCE"]);
+    assert.deepEqual(validateLedgerShape([bad2]).map((p) => p.code), ["DYNAMIC_PREDICATE_WITHOUT_VERIFIER"]);
+  });
+});

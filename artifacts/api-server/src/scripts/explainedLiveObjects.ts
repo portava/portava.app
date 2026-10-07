@@ -52,6 +52,8 @@
  * remove `extension:<name>` rows until the two agree.
  */
 
+import { DYNAMIC_POLICY_LEDGER } from "./explainedLiveObjectsDynamic.js";
+
 /** The ten live inventories plus the ledger-only closures a key may name. */
 export type LedgerKind =
   | "relation"
@@ -76,6 +78,13 @@ export type LedgerKind =
  *   CORRECTIVE_MIGRATION_PENDING explained by ledger only, a corrective is forecast.
  *   HARDENED_INVARIANT          an invariant a deep_verifier proves in CI (verifier MANDATORY).
  *   REVIEWED_ACCEPTED           reviewed and accepted as-is.
+ *   DYNAMIC_DDL                 issued by a migration through EXECUTE format(), so no
+ *                               text scan can read its name (or, with
+ *                               dynamic_predicate, its predicate). provenance MUST be
+ *                               the migration file:line where the generating
+ *                               `'CREATE POLICY %I …'` template begins; the rows for
+ *                               loop-created objects are GENERATED from the
+ *                               migration text (explainedLiveObjectsDynamic.ts).
  */
 export type LedgerDisposition =
   | "MERGED_LIVE_SHAPE"
@@ -83,7 +92,8 @@ export type LedgerDisposition =
   | "LEGACY_PROVENANCE"
   | "CORRECTIVE_MIGRATION_PENDING"
   | "HARDENED_INVARIANT"
-  | "REVIEWED_ACCEPTED";
+  | "REVIEWED_ACCEPTED"
+  | "DYNAMIC_DDL";
 
 export interface ExplainedEntry {
   /**
@@ -108,6 +118,15 @@ export interface ExplainedEntry {
   corrective_migration?: string;
   /** npm script key; MANDATORY iff disposition === 'HARDENED_INVARIANT'. */
   deep_verifier?: string;
+  /**
+   * policy rows only, DYNAMIC_DDL only: the model knows this policy by name
+   * from an earlier migration, but a later one REWRITES its predicate at run
+   * time, so the model's predicate text is stale by construction. The inverse
+   * audit then compares the policy's roles but not its USING / WITH CHECK
+   * text, and the deep_verifier (MANDATORY with this flag) is what proves the
+   * predicate's shape in CI instead.
+   */
+  dynamic_predicate?: true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -184,6 +203,40 @@ export const EXPLAINED_LIVE_OBJECTS: ReadonlyArray<ExplainedEntry> = [
       "Supabase-managed secrets vault extension enabled by the project bootstrap; no canonical file installs it (packet §4.1 Q12). TODO: confirm against live pg_extension in Replit.",
     reviewed_on: "2026-08-19",
   },
+  // ── DYNAMIC_DDL: 3502 rewrites two Highlights SELECT policies' predicates ──
+  // 2182 declares both by name, so the model has them; 3502 then DROPs and
+  // re-CREATEs each with a qual it computes from the live one (the old head
+  // swapped for the owner-first head, plus a tail), so no migration text holds
+  // the predicate that results. The names are 3502's spec rows; the template
+  // begins at the provenance line. 3502's own DO $post$ block — re-run after
+  // COMMIT by certify:migrations stage 4 — asserts the predicate's shape
+  // (owner disjunct first, no top-level expiry conjunct, a NULL-expiry arm, no
+  // trip_members, PERMISSIVE SELECT, exactly these two policies), so that is
+  // the verifier the text comparison is replaced by.
+  {
+    key: "policy:public.highlights.highlights_select",
+    kind: "policy",
+    provenance: "artifacts/api-server/src/migrations/3502_highlights_permanent_visibility_owner_first.sql:440",
+    disposition: "DYNAMIC_DDL",
+    dynamic_predicate: true,
+    deep_verifier: "certify:migrations",
+    reason:
+      "3502 rewrites this policy's USING clause at run time from the live qual (owner-first head, NULL-expiry arm); the model's 2182 text is stale by construction. Roles are still compared; the predicate's shape is proven by 3502's $post$ block under certify:migrations.",
+    reviewed_on: "2026-10-07",
+  },
+  {
+    key: "policy:public.highlights.highlights_select_active",
+    kind: "policy",
+    provenance: "artifacts/api-server/src/migrations/3502_highlights_permanent_visibility_owner_first.sql:440",
+    disposition: "DYNAMIC_DDL",
+    dynamic_predicate: true,
+    deep_verifier: "certify:migrations",
+    reason:
+      "3502 rewrites this policy's USING clause at run time from the live qual (owner-first head, NULL-expiry arm, the trip_only branch kept); 2530 had already written it through format('… USING (%s)'). Roles are still compared; the predicate's shape is proven by 3502's $post$ block under certify:migrations.",
+    reviewed_on: "2026-10-07",
+  },
+  // ── DYNAMIC_DDL: loop-created policies, GENERATED from the migration text ──
+  ...DYNAMIC_POLICY_LEDGER,
 ];
 
 export interface LedgerShapeProblem {
@@ -260,6 +313,31 @@ export function validateLedgerShape(
         "PROVENANCE_UNRESOLVED",
         `Provenance '${e.provenance}' does not resolve to a file:line or census reference (must end ':<token>').`,
       );
+    }
+
+    if (
+      e.disposition === "DYNAMIC_DDL" &&
+      !/^artifacts\/api-server\/src\/migrations\/\d{4}_[^\s/]+\.sql:[1-9]\d*$/.test((e.provenance ?? "").trim())
+    ) {
+      push(
+        i,
+        key,
+        "DYNAMIC_DDL_PROVENANCE",
+        `A DYNAMIC_DDL entry must cite the generating migration as 'artifacts/api-server/src/migrations/<file>.sql:<line>'; got '${e.provenance}'.`,
+      );
+    }
+    if (e.dynamic_predicate) {
+      if (e.disposition !== "DYNAMIC_DDL" || e.kind !== "policy") {
+        push(i, key, "DYNAMIC_PREDICATE_SHAPE", "dynamic_predicate is only meaningful on a DYNAMIC_DDL policy entry.");
+      }
+      if (!e.deep_verifier?.trim()) {
+        push(
+          i,
+          key,
+          "DYNAMIC_PREDICATE_WITHOUT_VERIFIER",
+          "A dynamic_predicate entry replaces the predicate comparison, so it must name the deep_verifier that proves the predicate in CI.",
+        );
+      }
     }
 
     if (e.disposition === "HARDENED_INVARIANT" && !e.deep_verifier?.trim()) {

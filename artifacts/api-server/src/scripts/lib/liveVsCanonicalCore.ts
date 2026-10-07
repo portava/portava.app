@@ -1604,13 +1604,21 @@ export function computeUnexplained(input: UnexplainedInput): UnexplainedResult {
   }
 
   // (3) POLICY_PREDICATE_DRIFT — policies present on both sides whose predicate/roles differ.
+  // A policy whose predicate a migration REWRITES at run time (ledger
+  // dynamic_predicate, DYNAMIC_DDL, with a wired deep_verifier) is compared on
+  // roles only: the model's text for it is stale by construction, and the
+  // verifier proves the predicate instead (VERIFIER_NOT_WIRED below if not).
+  const dynamicPredicate = new Set(
+    ledger.filter((e) => e.dynamic_predicate && e.kind === "policy").map((e) => e.key.slice("policy:".length).toLowerCase()),
+  );
   for (const [k, lp] of live.policies) {
     const mp = model.policies.get(k);
     if (!mp) continue; // absence is UNEXPLAINED_LIVE's business
-    const lu = normalizePredicate(lp.using);
-    const mu = normalizePredicate(mp.using);
-    const lw = normalizePredicate(lp.withCheck);
-    const mw = normalizePredicate(mp.withCheck);
+    const textUnknowable = dynamicPredicate.has(k);
+    const lu = textUnknowable ? null : normalizePredicate(lp.using);
+    const mu = textUnknowable ? null : normalizePredicate(mp.using);
+    const lw = textUnknowable ? null : normalizePredicate(lp.withCheck);
+    const mw = textUnknowable ? null : normalizePredicate(mp.withCheck);
     const lr = normalizeRoles(lp.roles).join(",");
     const mr = normalizeRoles(mp.roles).join(",");
     if (lu !== mu || lw !== mw || lr !== mr) {
@@ -1741,14 +1749,16 @@ export function computeUnexplained(input: UnexplainedInput): UnexplainedResult {
     }
   }
 
-  // (6) VERIFIER_NOT_WIRED — HARDENED_INVARIANT ledger entry with an unwired verifier.
+  // (6) VERIFIER_NOT_WIRED — a HARDENED_INVARIANT entry, or a dynamic_predicate
+  //     entry (whose predicate comparison the verifier replaces), with an
+  //     unwired verifier.
   for (const e of ledger) {
-    if (e.disposition === "HARDENED_INVARIANT" && !isVerifierWired(e.deep_verifier, ci)) {
+    if ((e.disposition === "HARDENED_INVARIANT" || e.dynamic_predicate) && !isVerifierWired(e.deep_verifier, ci)) {
       add(
         "VERIFIER_NOT_WIRED",
         "ledger",
         e.key,
-        `HARDENED_INVARIANT deep_verifier '${e.deep_verifier ?? ""}' is not a package.json script`,
+        `${e.dynamic_predicate ? "dynamic_predicate" : "HARDENED_INVARIANT"} deep_verifier '${e.deep_verifier ?? ""}' is not a package.json script`,
       );
     }
   }
