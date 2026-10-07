@@ -186,7 +186,13 @@ describe("OD-MAP-6 — granting and withdrawing one consent touches that one onl
 
 // ── 4. The routes ────────────────────────────────────────────────────────────
 
-async function call(client: any, method: "GET" | "PUT", path: string, body?: unknown, token: string | null = TOKEN) {
+/** The route's own body shape (routes/sensingConsent.ts sensingConsentBody). */
+interface ConsentBody {
+  available: boolean;
+  consents: Array<{ scope: string; granted: boolean; current: boolean; effective: boolean; disclosureVersion: string | null; currentVersion: string }>;
+}
+
+async function call(client: any, method: "GET" | "PUT", path: string, body?: unknown, token: string | null = TOKEN): Promise<{ status: number; body: ConsentBody }> {
   _setTestClient(client, true);
   _setTestServiceClient(client);
   const a = express();
@@ -201,7 +207,7 @@ async function call(client: any, method: "GET" | "PUT", path: string, body?: unk
       headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-    return { status: res.status, body: await res.json().catch(() => null) };
+    return { status: res.status, body: (await res.json().catch(() => null)) as ConsentBody };
   } finally {
     await new Promise<void>((r) => server.close(() => r()));
   }
@@ -214,7 +220,7 @@ describe("GET/PUT /v1/sensing/consent — the person's own three switches", () =
     const on = await call(store([G("capture")]), "GET", "/v1/sensing/consent");
     assert.equal(on.status, 200);
     assert.equal(on.body.available, true);
-    assert.deepEqual(on.body.consents.map((c: any) => [c.scope, c.granted, c.effective, c.currentVersion]), [
+    assert.deepEqual(on.body.consents.map((c) => [c.scope, c.granted, c.effective, c.currentVersion]), [
       ["capture", true, true, V.capture], ["upload", false, false, V.upload], ["surface", false, false, V.surface],
     ]);
     const off = await call(store([], { flag: false }), "GET", "/v1/sensing/consent");
@@ -253,8 +259,8 @@ describe("GET/PUT /v1/sensing/consent — the person's own three switches", () =
     const ok = await call(s, "PUT", "/v1/sensing/consent/surface", { granted: true, displayedVersion: V.surface });
     assert.equal(ok.status, 200);
     assert.equal(s.rows[0].disclosure_version, V.surface);
-    assert.equal(ok.body.consents.find((c: any) => c.scope === "surface").granted, true);
-    assert.equal(ok.body.consents.find((c: any) => c.scope === "surface").effective, false, "surface has no effect without capture and upload");
+    assert.equal(ok.body.consents.find((c) => c.scope === "surface")?.granted, true);
+    assert.equal(ok.body.consents.find((c) => c.scope === "surface")?.effective, false, "surface has no effect without capture and upload");
     const stale = await call(store(), "PUT", "/v1/sensing/consent/capture", { granted: true, displayedVersion: "sensing_capture_v0" });
     assert.equal(stale.status, 409);
     assert.equal((await call(store(), "PUT", "/v1/sensing/consent/everything", { granted: true })).status, 400);
