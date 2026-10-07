@@ -37,7 +37,7 @@ jest.mock('../../../src/services/apiToken', () => ({
   freshToken: jest.fn(async () => 'admin-token'),
 }));
 
-import ModerationReportsScreen, { snapshotLine } from '../moderation-reports';
+import ModerationReportsScreen, { snapshotLine, snapshotState } from '../moderation-reports';
 // GENERATED from the server's snapshot readers and pinned on the server side by
 // adminModerationReportReview.test.ts ("the committed fixture IS what
 // loadModerationSubjectSnapshots emits"). Never hand-edit it.
@@ -192,6 +192,41 @@ describe('User reports — the moderation_reports queue reaches a client', () =>
     await render(<ModerationReportsScreen />);
     await screen.findByTestId(`modq-row-${R1}`);
     expect(screen.getByTestId(`modq-snapshot-${R1}`).props.children).toBe('Nadia — Local food guide');
+  });
+
+  it("every status/state key the SERVER emits is shown with its value — the subject's own moderation state (VL5b N3)", () => {
+    // Driven by the generated contract: a key ending in Status/State (other than
+    // the snapshot's own `state`) that the screen does not render turns this red.
+    let checked = 0;
+    for (const [key, entry] of Object.entries(CONTRACT)) {
+      const snap = entry.subject_snapshot as Record<string, unknown>;
+      if (snap.state !== 'ok') {
+        expect(snapshotState(entry.subject_type, entry.subject_snapshot)).toBeNull();
+        continue;
+      }
+      for (const [k, v] of Object.entries(snap)) {
+        if (k === 'state' || !/(Status|State)$/.test(k) || typeof v !== 'string') continue;
+        expect([key, snapshotState(entry.subject_type, entry.subject_snapshot)]).toEqual([key, expect.stringContaining(v)]);
+        checked++;
+      }
+    }
+    expect(checked).toBe(5); // user, media, review, event, buddy_listing
+    expect(snapshotState('post', CONTRACT.post.subject_snapshot)).toBeNull();
+    // Only an `ok` snapshot speaks for the subject: a read that failed says nothing about its state.
+    expect(snapshotState('user', { state: 'unavailable', accountStatus: 'active' } as any)).toBeNull();
+    expect(snapshotState('user', undefined)).toBeNull();
+  });
+
+  it('a row shows the subject state on screen, and a row without one shows none', async () => {
+    const rejected = { ...CONTRACT.media.subject_snapshot, moderationStatus: 'rejected' };
+    responder = () => ({ status: 200, body: { reports: [
+      row(R1, { subject_type: 'media', subject_snapshot: rejected }),
+      row(R2, { subject_type: 'post', subject_snapshot: CONTRACT.post.subject_snapshot }),
+    ], total: 2, page: 1 } });
+    await render(<ModerationReportsScreen />);
+    await screen.findByTestId(`modq-row-${R1}`);
+    expect(screen.getByTestId(`modq-subject-state-${R1}`).props.children).toBe('Media moderation: rejected');
+    expect(screen.queryByTestId(`modq-subject-state-${R2}`)).toBeNull();
   });
 
   it('absent snapshot and an unknown subject type each have their own words', () => {

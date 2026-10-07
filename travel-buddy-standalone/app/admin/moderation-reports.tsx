@@ -105,6 +105,32 @@ export function snapshotLine(subjectType: string, s: ModerationSubjectSnapshot |
   }
 }
 
+/**
+ * The reported thing's own moderation-relevant state, read from the status key
+ * the SERVER emits for its subject type (moderationReportSnapshots.ts READERS):
+ * a person's `accountStatus`, media's `moderationStatus`, a review's
+ * `reviewState`, an event's `eventState`, a buddy listing's `listingStatus`.
+ * A moderator deciding on a report needs to see whether the media is already
+ * rejected or the person already deactivated (wave-5 verifier, VL5b N3). The
+ * value is shown as the server sent it; nothing is inferred. Null when the
+ * snapshot is not `ok` or carries no such key.
+ */
+const SUBJECT_STATE_KEYS: Readonly<Record<string, { key: string; label: string }>> = {
+  user: { key: 'accountStatus', label: 'Account' },
+  media: { key: 'moderationStatus', label: 'Media moderation' },
+  review: { key: 'reviewState', label: 'Review' },
+  event: { key: 'eventState', label: 'Event' },
+  buddy_listing: { key: 'listingStatus', label: 'Listing' },
+};
+
+export function snapshotState(subjectType: string, s: ModerationSubjectSnapshot | undefined): string | null {
+  if (!s || s.state !== 'ok') return null;
+  const spec = SUBJECT_STATE_KEYS[subjectType];
+  if (!spec) return null;
+  const v = str(s as Record<string, unknown>, spec.key);
+  return v ? `${spec.label}: ${v}` : null;
+}
+
 export default function ModerationReportsScreen() {
   useRequireAdmin();
   const { isAuthed, loading: sessionLoading } = useSession();
@@ -252,6 +278,11 @@ export default function ModerationReportsScreen() {
               >
                 {snapshotLine(r.subject_type, r.subject_snapshot)}
               </Text>
+              {snapshotState(r.subject_type, r.subject_snapshot) ? (
+                <Text style={s.meta} testID={`modq-subject-state-${r.id}`}>
+                  {snapshotState(r.subject_type, r.subject_snapshot)}
+                </Text>
+              ) : null}
               <Text style={s.meta}>{new Date(r.created_at).toLocaleString()}</Text>
               {NEXT[r.status]?.length ? (
                 <View style={s.actions}>
