@@ -15,6 +15,14 @@
  *   E5  the chosen answer carries the owner's decision verbatim, says it is not
  *       yet applied to a hosted database, and does not invent the retention
  *       period the decision asks for and legal review has not set
+ *   E6  (4b) an ERASED person is never written back: the frozen guard reads the
+ *       named person's profile FOR SHARE and refuses a tombstone CL452
+ *       `creator_ledger_subject_erased` on all four ledgers, and the
+ *       postconditions assert it (review of PR #592: "the producer
+ *       re-identifies an erased beneficiary")
+ *   E7  (4c) a re-sent key of a retained attribution is refused by the BEFORE
+ *       INSERT guard — ahead of ON CONFLICT — so 3387's NULL-unsafe replay
+ *       compare is never reached for a pseudonymised row (same review)
  *
  * Run: node --import tsx/esm --test src/test/creatorLedgerErasurePolicyShape.test.ts
  */
@@ -41,6 +49,14 @@ const guardBody = (sql: string) => {
   return m![0];
 };
 const LEDGERS = ["rent_buddy_earnings_entries", "creator_attributions", "creator_earning_entries", "creator_ledger_audit_events"];
+const frozenBody = (sql: string) => {
+  const m = /CREATE OR REPLACE FUNCTION public\.creator_ledger_pseudonymised_is_frozen\(\)[\s\S]*?\$fn\$;/.exec(code(sql));
+  assert.ok(m, "the frozen guard is defined");
+  return m![0];
+};
+const TRIGGER_PREFIX: Record<string, string> = {
+  rent_buddy_earnings_entries: "rbee", creator_attributions: "ca", creator_earning_entries: "cee", creator_ledger_audit_events: "clae",
+};
 
 describe("C-11 erasure design, on the files (census-discovery §107)", () => {
   it("E1. C-11 is answered: answer B is in the chain as 3600, after its dependencies and after 3510; answer A is not, and the held numbers are not chain files", () => {
@@ -146,5 +162,38 @@ describe("C-11 erasure design, on the files (census-discovery §107)", () => {
     // itself, not left to the reader.
     assert.match(c, /client grant\(s\) \(anon \/ authenticated\) on a retained ledger table/);
     assert.match(c, /row-level security is off on the receipt/);
+  });
+
+  it("E6. (4b) an erased person is never written back: the named person's profile is read FOR SHARE and a tombstone is refused CL452 on all four ledgers", () => {
+    const body = frozenBody(B);
+    // The person a row names: the acting admin on the audit, the beneficiary on the other three.
+    assert.match(body, /who := CASE WHEN TG_TABLE_NAME = 'creator_ledger_audit_events'\s+THEN \(j->>'actor_user_id'\)::uuid\s+ELSE \(j->>'beneficiary_user_id'\)::uuid END;/);
+    // Read under a share lock, so the deletion's anonymise UPDATE waits for an insert in flight.
+    assert.match(body, /SELECT p\.account_status INTO who_status FROM public\.profiles p WHERE p\.id = who FOR SHARE;/);
+    assert.match(body, /IF who_status = 'deleted' THEN\s+RAISE EXCEPTION\s+'creator_ledger_subject_erased — [\s\S]*?USING ERRCODE = 'CL452'/);
+    // Before any table-specific branch, so no ledger is exempt.
+    assert.ok(body.indexOf("creator_ledger_subject_erased") < body.indexOf("IF TG_TABLE_NAME = 'creator_attributions' THEN"),
+      "the erased-person refusal runs for every ledger, before the per-table checks");
+    for (const t of LEDGERS) {
+      assert.match(code(B), new RegExp(`CREATE TRIGGER ${TRIGGER_PREFIX[t]}_pseudonymised_is_frozen BEFORE INSERT ON public\\.${t}\\s+FOR EACH ROW EXECUTE FUNCTION public\\.creator_ledger_pseudonymised_is_frozen\\(\\);`), t);
+    }
+    // The migration asserts it about itself, so a hand-edited function cannot drop it unnoticed.
+    assert.match(code(B), /position\('FOR SHARE' IN pg_get_functiondef\('public\.creator_ledger_pseudonymised_is_frozen\(\)'::regprocedure\)\) = 0/);
+    assert.match(code(B), /position\('creator_ledger_subject_erased' IN pg_get_functiondef/);
+  });
+
+  it("E7. (4c) a re-sent key of a retained attribution is refused by the BEFORE INSERT guard, ahead of ON CONFLICT, so 3387's NULL-unsafe replay compare is never reached for it", () => {
+    const body = frozenBody(B);
+    assert.match(body,
+      /IF TG_TABLE_NAME = 'creator_attributions' THEN\s+IF EXISTS \(SELECT 1 FROM public\.creator_attributions a\s+WHERE a\.idempotency_key = NEW\.idempotency_key AND a\.beneficiary_pseudonym IS NOT NULL\) THEN\s+RAISE EXCEPTION\s+'creator_ledger_subject_pseudonymised — [\s\S]*?USING ERRCODE = 'CL452'/);
+    // The guard is a BEFORE INSERT ROW trigger: PostgreSQL runs it before it arbitrates ON CONFLICT
+    // (and evaluates CHECK constraints before that too), which is what keeps the compare unreachable.
+    assert.match(code(B), /CREATE TRIGGER ca_pseudonymised_is_frozen BEFORE INSERT ON public\.creator_attributions\s+FOR EACH ROW/);
+    // The other NULL the compare could meet — a payload with no beneficiary — is refused by a CHECK.
+    assert.match(code(B), /ADD CONSTRAINT ca_one_beneficiary_identity\s+CHECK \(\(beneficiary_user_id IS NULL\) <> \(beneficiary_pseudonym IS NULL\)\)/);
+    // 3387 is applied and is not edited; the compare it carries is the one this guards.
+    const door = read(`${CHAIN}3387_creator_ledger_integrity_and_audit.sql`);
+    assert.match(door, /OR ex\.beneficiary_user_id <> \(a->>'beneficiary_user_id'\)::uuid/);
+    assert.match(code(B), /position\('a\.idempotency_key = NEW\.idempotency_key' IN pg_get_functiondef/);
   });
 });

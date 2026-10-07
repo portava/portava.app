@@ -4087,6 +4087,17 @@ identity instead of coercing it to `"null"`) must land first. Its database-tier 
 (`creatorLedgerErasurePolicy.db.test.ts`, `creatorLedgerLifecycle.db.test.ts`) run only in CI's local-db
 job.
 
+**2026-10-07 (lane P, still applied nowhere): the frozen guard gains (4b) and (4c).** Two review notes on
+#592, fixed in the file itself because it is applied nowhere. (4b): an INSERT into any of the four
+ledgers that names a person whose profile is the erasure tombstone (`account_status = 'deleted'`) is
+refused CL452 `creator_ledger_subject_erased`, reading the profile `FOR SHARE` so the deletion's
+anonymise UPDATE serialises after an insert in flight; `AccountDeletionService` runs its ledger pass a
+second time after the tombstone (`pseudonymise_creator_ledger_after_tombstone`), and the Travel Partner
+producer skips an erased beneficiary before it writes. (4c): a re-sent key of a retained (pseudonymised)
+attribution is refused CL452 `creator_ledger_subject_pseudonymised` by the BEFORE INSERT trigger, ahead of
+ON CONFLICT, so 3387's NULL-unsafe replay compare is never reached for such a row (3387 is applied and is
+not edited). Postconditions assert both. No new object, grant or table.
+
 ## Apply-order overrides
 
 **What.** `artifacts/api-server/src/migrations/ORDER_OVERRIDES.json` is the single declared list of

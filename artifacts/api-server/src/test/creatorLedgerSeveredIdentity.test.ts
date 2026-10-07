@@ -599,7 +599,7 @@ const severedTxnEntries = [
 
 describe("K — 3600's CL452 is a decision about a severed record, not a fault (F1)", () => {
   it("K1. classifyDbError maps every CL452 token, and the bare SQLSTATE, to identity_severed", () => {
-    for (const token of ["creator_ledger_subject_pseudonymised", "creator_ledger_pseudonym_on_insert", "creator_ledger_retained"]) {
+    for (const token of ["creator_ledger_subject_pseudonymised", "creator_ledger_pseudonym_on_insert", "creator_ledger_retained", "creator_ledger_subject_erased"]) {
       const r = classifyDbError(cl452(token));
       assert.ok(!r.ok);
       assert.equal(r.reason, "identity_severed", token);

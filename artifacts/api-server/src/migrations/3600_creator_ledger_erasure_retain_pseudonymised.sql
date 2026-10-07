@@ -113,6 +113,31 @@
 --      row may be INSERTED already carrying a pseudonym. Corrections to a
 --      retained record after erasure (a late refund, a chargeback) are a
 --      follow-up decision, not something this file invents.
+--  (4b) An ERASED person is never written back (review of PR #592, 2026-10-06:
+--      "the producer re-identifies an erased beneficiary"). The tombstone
+--      profile keeps the same id and rent_buddy_profiles.user_id still points at
+--      it, so a booking completed before the erasure but attributed after it —
+--      or every such booking at once, the day creator_attribution_enabled is
+--      turned on — would INSERT a fresh row naming the erased id, which (4) did
+--      not refuse (it fires only on a superseding or pseudonym-carrying insert).
+--      Every INSERT into the four ledgers that names a person whose profile is
+--      the tombstone (account_status = 'deleted', the marker 2200/2213 already
+--      use) is refused CL452 `creator_ledger_subject_erased`. The profile row is
+--      read FOR SHARE, so the deletion's anonymise UPDATE waits for an insert
+--      already in flight, and the deletion's second ledger pass (after the
+--      tombstone) sees it; an insert that arrives after the tombstone is refused.
+--  (4c) A retained record's key cannot be re-sent (same review: "3387 has a
+--      NULL-unsafe replay compare"). creator_ledger_append's replay check
+--      (3387) compares `ex.beneficiary_user_id <> (a->>'beneficiary_user_id')::uuid`,
+--      which is NULL — not true — once (2) has set that column to NULL, so a
+--      re-sent attribution key that already sits on a pseudonymised row was
+--      answered as a successful replay. A BEFORE INSERT trigger runs before
+--      ON CONFLICT is arbitrated, so the guard below refuses CL452
+--      `creator_ledger_subject_pseudonymised` first and the compare is never
+--      reached for such a row. The other way that compare meets a NULL — a
+--      payload with no beneficiary — is refused by ca_one_beneficiary_identity,
+--      a CHECK, which is also evaluated before the conflict. 3387 itself is
+--      applied and is not edited.
 --
 -- ── PSEUDONYMISED, NOT ANONYMOUS ────────────────────────────────────────────
 -- After (2) no column of the four ledgers holds the person's profile id. The
@@ -304,11 +329,45 @@ RETURNS trigger
 LANGUAGE plpgsql
 SET search_path TO ''
 AS $fn$
-DECLARE frozen boolean := false; j jsonb := to_jsonb(NEW);
+DECLARE
+  frozen boolean := false;
+  j jsonb := to_jsonb(NEW);
+  who uuid;
+  who_status text;
 BEGIN
   IF j->>'beneficiary_pseudonym' IS NOT NULL OR j->>'actor_pseudonym' IS NOT NULL THEN
     RAISE EXCEPTION 'creator_ledger_pseudonym_on_insert — % rows are never inserted pseudonymised; only creator_ledger_remove_identity sets a pseudonym', TG_TABLE_NAME
       USING ERRCODE = 'CL452';
+  END IF;
+  -- (4b) the person this row names, if any: the beneficiary on three ledgers,
+  -- the acting admin on the audit. Platform and traveller legs name nobody.
+  who := CASE WHEN TG_TABLE_NAME = 'creator_ledger_audit_events'
+              THEN (j->>'actor_user_id')::uuid
+              ELSE (j->>'beneficiary_user_id')::uuid END;
+  IF who IS NOT NULL THEN
+    -- FOR SHARE: the account deletion's anonymise_profile UPDATE conflicts with
+    -- this lock, so it waits for an insert already in flight (and its second
+    -- ledger pass then finds that row), and an insert that starts after the
+    -- tombstone reads the tombstone. No profile row: the foreign key answers.
+    SELECT p.account_status INTO who_status FROM public.profiles p WHERE p.id = who FOR SHARE;
+    IF who_status = 'deleted' THEN
+      RAISE EXCEPTION
+        'creator_ledger_subject_erased — % row refused: it names an account that was erased (its profile is the anonymised tombstone); under C-11 answer B the ledger keeps that person''s earlier records with the identity removed and never names them again',
+        TG_TABLE_NAME
+        USING ERRCODE = 'CL452',
+              HINT = 'A late event for an erased person (a booking completed before the erasure, a refund, a chargeback) is an undecided follow-up, not a new row naming them.';
+    END IF;
+  END IF;
+  -- (4c) a re-sent key of a retained attribution is neither a replay nor new.
+  IF TG_TABLE_NAME = 'creator_attributions' THEN
+    IF EXISTS (SELECT 1 FROM public.creator_attributions a
+                WHERE a.idempotency_key = NEW.idempotency_key AND a.beneficiary_pseudonym IS NOT NULL) THEN
+      RAISE EXCEPTION
+        'creator_ledger_subject_pseudonymised — creator_attributions key % is recorded on a retained row whose identity was removed (C-11 answer B); it names nobody, so this write is neither its replay nor a second claim about it',
+        NEW.idempotency_key
+        USING ERRCODE = 'CL452',
+              HINT = 'Corrections to a retained record after erasure are an undecided follow-up.';
+    END IF;
   END IF;
   IF TG_TABLE_NAME = 'creator_attributions' THEN
     frozen := NEW.supersedes_id IS NOT NULL AND EXISTS (
@@ -475,6 +534,13 @@ BEGIN
   IF has_function_privilege('anon', 'public.creator_ledger_remove_identity(uuid,text,uuid,text)', 'EXECUTE')
      OR has_function_privilege('authenticated', 'public.creator_ledger_remove_identity(uuid,text,uuid,text)', 'EXECUTE') THEN
     RAISE EXCEPTION '3600: POSTCONDITION FAILED: a client role can execute the identity-removal door';
+  END IF;
+  -- (4b)/(4c): the frozen guard refuses an erased person's id under a share lock
+  -- on their profile, and a re-sent key of a retained attribution.
+  IF position('FOR SHARE' IN pg_get_functiondef('public.creator_ledger_pseudonymised_is_frozen()'::regprocedure)) = 0
+     OR position('creator_ledger_subject_erased' IN pg_get_functiondef('public.creator_ledger_pseudonymised_is_frozen()'::regprocedure)) = 0
+     OR position('a.idempotency_key = NEW.idempotency_key' IN pg_get_functiondef('public.creator_ledger_pseudonymised_is_frozen()'::regprocedure)) = 0 THEN
+    RAISE EXCEPTION '3600: POSTCONDITION FAILED: the frozen guard does not refuse an erased person (4b) or a re-sent retained key (4c)';
   END IF;
   SELECT count(*) INTO n FROM information_schema.columns
    WHERE table_schema = 'public' AND table_name = 'creator_ledger_identity_removals'

@@ -44,6 +44,11 @@
  *   P8  no per-person row count is recorded on the step or persisted on the
  *       request receipt (3600: a count per person is a fingerprint)
  *   P9  the manifest says all four are a decided retention, with a reason
+ *   P10 the ledger is passed AGAIN after the tombstone (3600 (4b), review of
+ *       PR #592): a row written between the first pass and the anonymise —
+ *       the producer, a booking route, an admin hold — is pseudonymised before
+ *       the auth user goes; with nothing new the second pass calls nothing; and
+ *       it is FATAL like the first
  *
  * In every refusing case the test also asserts the deletion stopped BEFORE the
  * profile was anonymised and before the auth user was removed: the request stays
@@ -119,6 +124,10 @@ interface ClientOptions {
   rpcError?: { code?: string; message: string };
   /** The door resolves ok but changes nothing — a removal that did not remove. */
   rpcNoop?: boolean;
+  /** Runs when the tombstone UPDATE arrives, before it applies: a ledger write that committed just ahead of it. */
+  beforeTombstone?: (store: Record<string, any[]>) => void;
+  /** Every ledger read AFTER the tombstone resolves with an error envelope. */
+  failLedgerReadsAfterTombstone?: boolean;
 }
 
 /**
@@ -134,6 +143,7 @@ function makeClient(opts: ClientOptions = {}) {
   const authDeleted: string[] = [];
   const rpcCalls: Array<{ fn: string; args: any }> = [];
   let pseudonym: string | null = null;
+  let tombstoned = false;
 
   function matches(row: any, filters: any[]): boolean {
     return filters.every((f) => (f[0] === "eq" ? row[f[1]] === f[2] : true));
@@ -163,6 +173,13 @@ function makeClient(opts: ClientOptions = {}) {
       then(resolve: any, reject: any) { return q._run().then(resolve, reject); },
       _run() {
         ops.push({ table, op: q._op, filters: q._filters, values: q._values });
+        if (table === "profiles" && q._op === "update" && q._values?.account_status === "deleted") {
+          opts.beforeTombstone?.(store);
+          tombstoned = true;
+        }
+        if (q._op === "select" && tombstoned && opts.failLedgerReadsAfterTombstone && (LEDGERS as readonly string[]).includes(table)) {
+          return Promise.resolve({ data: null, error: { code: "57014", message: `canceling statement due to statement timeout (${table})` } });
+        }
         if (q._op === "select" && opts.readError?.[table]) {
           return Promise.resolve({ data: null, error: opts.readError[table] });
         }
@@ -471,6 +488,57 @@ describe("executeAccountDeletion — creator-ledger pseudonymisation (C-11 answe
     const outOnly = await executeAccountDeletion(only, USER_ID, { actorId: ADMIN_ID, contentOnly: true });
     assert.equal(stepOf(outOnly, "pseudonymise_creator_ledger"), undefined);
     assert.equal(ledgerText(only), ledgerText(makeClient({ seed: seedLedger() })), "content-only touches no ledger row");
+  });
+
+  it("P10. a ledger row written between the first pass and the tombstone is pseudonymised by the second pass, before the auth user goes", async () => {
+    // The Travel Partner producer attributed the buddy's completed booking in
+    // the gap: the row names the person, and the first pass has already run.
+    const late = {
+      id: "ca-late", beneficiary_user_id: USER_ID, beneficiary_pseudonym: null, subject_id: "bk-late",
+      rule_version: "creator-rules/travel-partner/v1", fraud_hold_reason: null,
+      idempotency_key: `creator-attr:travel_partner:bk-late:verified_booking:${USER_ID}`,
+    };
+    const c = makeClient({ seed: seedLedger(), beforeTombstone: (store) => { store.creator_attributions!.push({ ...late }); } });
+    const out = await executeAccountDeletion(c, USER_ID, { actorId: ADMIN_ID });
+    assert.equal(out.ok, true, JSON.stringify(out.steps.filter((s: any) => !s.ok)));
+
+    const row = (c._store.creator_attributions as any[]).find((r) => r.id === "ca-late")!;
+    assert.equal(row.beneficiary_user_id, null, "the late row's identity link is severed");
+    assert.equal(row.beneficiary_pseudonym, c._pseudonym(), "and it carries the pseudonym");
+    assert.doesNotMatch(ledgerText(c), new RegExp(USER_ID, "i"),
+      "no retained ledger row names the erased account, including one written during the erasure");
+
+    const order = out.steps.map((s: any) => s.step);
+    const second = order.indexOf("pseudonymise_creator_ledger_after_tombstone");
+    assert.ok(second > order.indexOf("anonymise_profile"), "the second pass runs after the tombstone");
+    assert.ok(second < order.indexOf("auth_delete_user"), "and before the auth user is removed");
+    assert.equal(c._rpcCalls.filter((r: any) => r.fn === "creator_ledger_remove_identity").length, 2,
+      "the door is called again only because a row named the person again");
+    assert.deepEqual(Object.keys(stepOf(out, "pseudonymise_creator_ledger_after_tombstone")!), ["step", "ok"],
+      "the second pass records no count either (P8)");
+    assert.deepEqual(c._authDeleted, [USER_ID]);
+  });
+
+  it("P10. with nothing written after the first pass, the second pass reads and calls nothing", async () => {
+    const c = makeClient({ seed: seedLedger() });
+    const out = await executeAccountDeletion(c, USER_ID, { actorId: ADMIN_ID });
+    assert.equal(out.ok, true);
+    assert.ok(stepOf(out, "pseudonymise_creator_ledger_after_tombstone")?.ok);
+    assert.equal(c._rpcCalls.filter((r: any) => r.fn === "creator_ledger_remove_identity").length, 1);
+  });
+
+  it("P10. the second pass is FATAL: a ledger it cannot read stops the deletion before the auth user is removed", async () => {
+    const c = makeClient({ seed: seedLedger(), failLedgerReadsAfterTombstone: true });
+    const out = await executeAccountDeletion(c, USER_ID, { actorId: ADMIN_ID });
+    assert.equal(out.ok, false, "an erasure that cannot see whether the ledger names the person again must refuse");
+    assert.ok(stepOf(out, "pseudonymise_creator_ledger")?.ok, "the first pass succeeded");
+    const s2 = stepOf(out, "pseudonymise_creator_ledger_after_tombstone");
+    assert.equal(s2?.ok, false);
+    assert.match(s2!.error!, /could not be read/);
+    assert.ok(out.warnings.some((w: string) => w.includes("written while the account was being erased")), JSON.stringify(out.warnings));
+    assert.equal(stepOf(out, "auth_delete_user"), undefined);
+    assert.deepEqual(c._authDeleted, [], "the auth user survives, so the request stays pending and retryable");
+    assert.equal(stepOf(out, "mark_request_completed"), undefined);
   });
 
   it("P9. all four ledgers are a DECIDED retention in the deletion-coverage manifest, with a reason", () => {

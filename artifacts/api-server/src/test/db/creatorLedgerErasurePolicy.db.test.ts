@@ -50,6 +50,12 @@
  *   B1–B9  THE CHOSEN ANSWER (fixture B, a clone so retained rows can be left
  *          behind): identity removed, rows retained, pseudonymised-not-anonymous
  *          pinned, and a person with no ledger row still erased normally
+ *   B10–B12 the two review notes on PR #592, fixed in 3600 (4b)/(4c): an erased
+ *          person (tombstone profile) is never written back — not by the
+ *          producer, not by any direct INSERT on any ledger, and not by an
+ *          insert racing the tombstone (FOR SHARE); and a retained attribution's
+ *          key re-sent through creator_ledger_append is refused CL452 instead of
+ *          being answered as a replay by 3387's NULL-unsafe compare
  *   S1     separation: every ledger row in every fixture belongs to a synthetic account
  *   R1     the flag row is FALSE in every fixture
  */
@@ -62,7 +68,8 @@ import https from "node:https";
 import net from "node:net";
 import tls from "node:tls";
 import dns from "node:dns";
-import { HAVE_DB, LOCAL_DB_URL, exec, psql, rows, scalar, useDatabase } from "./localDb.js";
+import { spawn } from "node:child_process";
+import { HAVE_DB, LOCAL_DB_URL, currentDatabaseUrl, exec, psql, rows, scalar, useDatabase } from "./localDb.js";
 import { creatorPsqlClient, lit } from "./creatorLedgerPsqlClient.js";
 import {
   bookCreatorEarningUnderRule,
@@ -746,6 +753,113 @@ describe("the creator ledger on synthetic accounts, and C-11 in its three states
            UNION ALL SELECT actor_user_id FROM public.creator_ledger_audit_events) x
           WHERE x.u IS NOT NULL AND NOT EXISTS (SELECT 1 FROM public.profiles p WHERE p.id = x.u)`), "0",
         "a retained ledger row may never name an account that is gone");
+    });
+
+    test("B10. (4b) an erased person is never written back: with the profile tombstoned, the producer skips their completed booking and an INSERT naming them is refused CL452 on all four ledgers; a live buddy in the same pass is attributed", async () => {
+      // X completed a booking before being erased, and it was never attributed
+      // (the producer had not run, or the flag was off). Y is live.
+      const X = seedSynthetic("erased-b10").id;
+      const Y = seedSynthetic("live-b10").id;
+      const bpX = scalar(`INSERT INTO public.rent_buddy_profiles (user_id, city) VALUES ('${X}', 'SYNTHETIC-C11') RETURNING id`)!;
+      const bpY = scalar(`INSERT INTO public.rent_buddy_profiles (user_id, city) VALUES ('${Y}', 'SYNTHETIC-C11') RETURNING id`)!;
+      const bkX = synId();
+      const bkY = synId();
+      exec(
+        `INSERT INTO public.rent_buddy_bookings (id, buddy_id, traveler_id, booking_date, duration_h, city, category, status) VALUES ` +
+        `('${bkX}', '${bpX}', '${w.T}', current_date, 2, 'SYNTHETIC-C11', 'local_guide', 'completed'), ` +
+        `('${bkY}', '${bpY}', '${w.T}', current_date, 2, 'SYNTHETIC-C11', 'local_guide', 'completed');`,
+      );
+      // The erasure's tombstone, as AccountDeletionService's anonymise_profile leaves it.
+      exec(`UPDATE public.profiles SET account_status = 'deleted', display_name = 'Deleted User' WHERE id = '${X}';`);
+
+      const pass = await attributeCompletedTravelPartnerBookings(on());
+      assert.equal(pass.ok, true, JSON.stringify(pass));
+      if (!pass.ok) throw new Error("unreachable");
+      assert.equal(pass.value.erasedBeneficiary, 1, JSON.stringify(pass.value));
+      assert.equal(mentions(X), 0, "the erased buddy's id is written into no ledger");
+      assert.equal(scalar(`SELECT count(*) FROM public.creator_attributions WHERE subject_id = '${bkY}' AND beneficiary_user_id = '${Y}'`), "1",
+        "the live buddy's completed booking is attributed in the same pass");
+
+      // A writer that does not ask first meets the database's refusal, on every ledger.
+      const before = ledgerSnapshot();
+      for (const [table, sql] of [
+        ["creator_attributions", `INSERT INTO public.creator_attributions (creator_type, subject_kind, subject_id, value_event, value_event_id, attribution_basis, beneficiary_user_id, rule_version, idempotency_key) VALUES ('travel_partner', 'booking', '${bkX}', 'verified_booking', '${bkX}', 'recorded_value_event', '${X}', ${lit(TP_V952)}, 'c11syn-b10-ca');`],
+        ["rent_buddy_earnings_entries", `INSERT INTO public.rent_buddy_earnings_entries (booking_id, beneficiary_user_id, idempotency_key) VALUES ('${bkX}', '${X}', 'c11syn-b10-rbee');`],
+        ["creator_earning_entries", `INSERT INTO public.creator_earning_entries (attribution_id, beneficiary_user_id, rule_version, idempotency_key) VALUES (gen_random_uuid(), '${X}', ${lit(TP_V952)}, 'c11syn-b10-cee');`],
+        ["creator_ledger_audit_events", `INSERT INTO public.creator_ledger_audit_events (action, actor_kind, actor_user_id, attribution_id, reason, idempotency_key) VALUES ('reversed', 'admin', '${X}', gen_random_uuid(), 'SYNTHETIC: B10', 'c11syn-b10-clae');`],
+      ] as const) {
+        const r = attempt(sql);
+        assert.notEqual(r.status, 0, `${table}: a row naming an erased person must be refused`);
+        assert.match(r.stderr, /CL452/, table);
+        assert.match(r.stderr, /creator_ledger_subject_erased/, table);
+      }
+      assert.deepEqual(ledgerSnapshot(), before, "nothing was written");
+    });
+
+    test("B11. (4c) a retained attribution's key cannot be re-sent: creator_ledger_append refuses it CL452 instead of answering a replay; a payload with no beneficiary is refused by the CHECK; an exact re-send of a live row is still a replay", async () => {
+      const Z = seedSynthetic("live-b11").id;
+      const live = await recorded(Z, 1_000);
+      const retained = scalar(`SELECT id FROM public.creator_attributions WHERE beneficiary_pseudonym IS NOT NULL AND supersedes_id IS NULL LIMIT 1`)!;
+      assert.ok(retained, "B2 left a retained first attribution");
+      const before = ledgerSnapshot();
+
+      // The retained row re-sent with a person in it. 3387's compare reads
+      // `NULL <> D` as NULL, which used to let this through as a replay.
+      const resend = attempt(
+        `SELECT public.creator_ledger_append(jsonb_build_object('attribution', ` +
+        `(to_jsonb(a) - 'beneficiary_pseudonym') || jsonb_build_object('beneficiary_user_id', '${w.D}'))) ` +
+        `FROM public.creator_attributions a WHERE a.id = '${retained}';`);
+      assert.notEqual(resend.status, 0, "a re-sent retained key is not a successful replay");
+      assert.match(resend.stderr, /CL452/);
+      assert.match(resend.stderr, /creator_ledger_subject_pseudonymised/);
+
+      // The other NULL that compare could meet: no beneficiary at all, on a live key.
+      const noOne = attempt(
+        `SELECT public.creator_ledger_append(jsonb_build_object('attribution', to_jsonb(a) - 'beneficiary_user_id')) ` +
+        `FROM public.creator_attributions a WHERE a.id = '${live}';`);
+      assert.notEqual(noOne.status, 0);
+      assert.match(noOne.stderr, /ca_one_beneficiary_identity/);
+
+      // Control: the live row re-sent exactly IS a replay, and writes nothing.
+      const replay = attempt(
+        `SELECT public.creator_ledger_append(jsonb_build_object('attribution', to_jsonb(a))) ` +
+        `FROM public.creator_attributions a WHERE a.id = '${live}';`);
+      assert.equal(replay.status, 0, replay.stderr);
+      assert.match(replay.stdout, /"attribution_inserted": false/);
+      assert.deepEqual(ledgerSnapshot(), before, "no row was added by any of the three");
+    });
+
+    test("B12. (4b) the profile is read FOR SHARE: while an insert naming a person is in flight, the tombstone UPDATE waits for it; after the tombstone the same insert is refused", async () => {
+      const Q = seedSynthetic("inflight-b12").id;
+      const attribution = scalar(`SELECT id FROM public.creator_attributions WHERE beneficiary_user_id = '${w.D}' LIMIT 1`)!;
+      const insert =
+        `INSERT INTO public.creator_ledger_audit_events (action, actor_kind, actor_user_id, attribution_id, reason, idempotency_key) ` +
+        `VALUES ('reversed', 'admin', '${Q}', '${attribution}', 'SYNTHETIC: B12 in flight', 'c11syn-b12');`;
+      // Session 1: the insert, held open. The audit's actor has no foreign key
+      // to profiles, so the ONLY lock on Q's profile is the guard's FOR SHARE.
+      const s1 = spawn("psql", ["-X", "-q", "-v", "ON_ERROR_STOP=1", "-At", currentDatabaseUrl()], { stdio: ["pipe", "ignore", "pipe"] });
+      let s1err = "";
+      s1.stderr.on("data", (d) => { s1err += String(d); });
+      const s1done = new Promise<number>((res) => s1.on("exit", (code) => res(code ?? -1)));
+      s1.stdin.end(`BEGIN;\n${insert}\nSELECT pg_sleep(8);\nROLLBACK;\n`);
+      let sleeping = false;
+      for (let i = 0; i < 60 && !sleeping; i++) {
+        sleeping = scalar(`SELECT count(*) FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND state = 'active' AND query LIKE 'SELECT pg_sleep(8)%'`) === "1";
+        if (!sleeping) await new Promise((r) => setTimeout(r, 100));
+      }
+      assert.ok(sleeping, `session 1 never reached its sleep: ${s1err}`);
+
+      // Session 2: the tombstone, with a short lock timeout. It must wait.
+      const tomb = psql(`SET lock_timeout = '1s';\nUPDATE public.profiles SET account_status = 'deleted' WHERE id = '${Q}';`);
+      assert.notEqual(tomb.status, 0, "the tombstone must wait for the insert in flight, not pass it");
+      assert.match(tomb.stderr, /lock timeout/);
+
+      assert.equal(await s1done, 0, s1err);
+      // Session 1 rolled back; now the tombstone goes through, and the insert is refused.
+      exec(`UPDATE public.profiles SET account_status = 'deleted' WHERE id = '${Q}';`);
+      const after = attempt(insert);
+      assert.match(after.stderr, /creator_ledger_subject_erased/);
+      assert.equal(mentions(Q), 0);
     });
 
     test("S1. separation: every ledger row in fixture B belongs to a synthetic account (or to a pseudonym that replaced one)", () => {

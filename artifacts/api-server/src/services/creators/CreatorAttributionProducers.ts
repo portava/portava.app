@@ -51,6 +51,19 @@
  *
  * FAIL-CLOSED on `creator_attribution_enabled` (2922, seeded FALSE): with it off
  * the pass reads the flag and nothing else, and writes nothing.
+ *
+ * ── AN ERASED BUDDY IS NEVER ATTRIBUTED (C-11 answer B, migration 3600) ─────
+ * Account erasure keeps an anonymised TOMBSTONE profile with the SAME id, and
+ * rent_buddy_profiles.user_id still points at it. So a booking the buddy
+ * completed before their erasure but that was never attributed — every such
+ * booking at once, the day the flag is turned on — would be attributed to the
+ * erased id: the identity the erasure removed from the ledger, written back
+ * into it (review of PR #592). Before writing, the pass reads the
+ * beneficiaries' `profiles.account_status`; a tombstone (`deleted`) is counted
+ * as `erasedBeneficiary` and skipped, and a read that fails or comes back with
+ * no rows stops the pass rather than reading as "nobody was erased". 3600's
+ * frozen guard refuses the same write in the database (CL452
+ * `creator_ledger_subject_erased`) for any writer that does not ask first.
  */
 import {
   creatorLedgerEnabled,
@@ -74,6 +87,8 @@ export interface ProducerPassTally {
   replayed: number;
   /** A completed booking whose buddy profile could not be read — named, never skipped silently. */
   noBeneficiary: number;
+  /** A completed booking whose buddy's account was erased (tombstone profile): never attributed (3600 (4b)). */
+  erasedBeneficiary: number;
   refused: number;
   /** True when the scan stopped at PRODUCER_MAX_SCAN with rows left. */
   truncated: boolean;
@@ -95,7 +110,7 @@ export async function attributeCompletedTravelPartnerBookings(
   const maxScan = opts.maxScan ?? PRODUCER_MAX_SCAN;
   const tally: ProducerPassTally = {
     scanned: 0, alreadyAttributed: 0, attributed: 0, replayed: 0,
-    noBeneficiary: 0, refused: 0, truncated: false, refusals: [],
+    noBeneficiary: 0, erasedBeneficiary: 0, refused: 0, truncated: false, refusals: [],
   };
 
   for (let from = 0; ; from += pageSize) {
@@ -129,9 +144,28 @@ export async function attributeCompletedTravelPartnerBookings(
       if (buddyErr) return classifyDbError(buddyErr);
       const userOf = new Map(((buddies ?? []) as any[]).map((b) => [String(b.id), b.user_id ? String(b.user_id) : null]));
 
+      // The beneficiaries' account state, so an erased buddy is never written back (header).
+      const beneficiaryIds = [...new Set([...userOf.values()].filter((u): u is string => u !== null))];
+      const statusOf = new Map<string, string>();
+      if (beneficiaryIds.length > 0) {
+        const { data: profiles, error: profileErr } = await sc
+          .from("profiles").select("id, account_status").in("id", beneficiaryIds);
+        if (profileErr) return classifyDbError(profileErr);
+        if (!Array.isArray(profiles)) {
+          return fail("db_error", "profiles: the beneficiaries' account state came back with no rows and no error; an unanswered read is not \"nobody was erased\"");
+        }
+        for (const p of profiles as any[]) {
+          if (typeof p?.account_status === "string") statusOf.set(String(p.id), p.account_status);
+        }
+      }
+
       for (const b of todo) {
         const beneficiary = userOf.get(String(b.buddy_id)) ?? null;
         if (!beneficiary) { tally.noBeneficiary++; continue; }
+        const accountStatus = statusOf.get(beneficiary);
+        // No readable state for this person is not "active": counted, never attributed.
+        if (accountStatus === undefined) { tally.noBeneficiary++; continue; }
+        if (accountStatus === "deleted") { tally.erasedBeneficiary++; continue; }
         const r = await recordCreatorAttribution(sc, {
           creatorType: "travel_partner",
           subjectId: String(b.id),

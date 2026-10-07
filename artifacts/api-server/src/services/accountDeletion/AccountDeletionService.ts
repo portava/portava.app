@@ -1491,6 +1491,26 @@ export async function executeAccountDeletion(
     return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
   }
 
+  // ── 4b. The creator ledger AGAIN, now that the profile is the tombstone ────
+  // The first pass ran before the tombstone, so a ledger write that landed
+  // between it and the anonymise above (the Travel Partner producer, a booking
+  // route, an admin hold) names the person in a record that is retained
+  // indefinitely. 3600 (4b) refuses every INSERT that names a tombstoned
+  // profile, and reads that profile FOR SHARE, so the anonymise waited for any
+  // insert already in flight: after it, no new row can name them, and this
+  // pass removes whatever arrived in the gap. Usually it finds nothing and calls
+  // nothing. FATAL like the first pass, and before the auth user goes: a retry
+  // re-runs every step, each idempotent.
+  const ledgerAfterOk = await step(steps, "pseudonymise_creator_ledger_after_tombstone", async () => {
+    await pseudonymiseCreatorLedger(sc, userId, opts.actorId ?? null);
+  });
+  if (!ledgerAfterOk) {
+    warnings.push(
+      "creator-ledger entries written while the account was being erased may still name it — deletion aborted before the auth user was removed; retry is safe",
+    );
+    return { ok: false, userId, executedAt, steps, warnings, deletedCounts, tombstonedCounts };
+  }
+
   // ── 5. Remove the auth user (this is what finally drops the email) ────────
   // profiles has no FK to auth.users, so the tombstone above survives this.
   const authOk = await step(steps, "auth_delete_user", async () => {
