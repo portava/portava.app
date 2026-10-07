@@ -114,15 +114,18 @@ describe("SC — the attribution scheduler's tick", () => {
   });
 
   it("SC5. the account-state read is fail-closed: an error or an unanswered read stops the pass, a missing row is never attributed", async () => {
-    for (const profiles of [
-      { data: null, error: { code: "42501", message: "permission denied for table profiles" } },
-      { data: null, error: null },
-    ]) {
+    for (const [profiles, says] of [
+      [{ data: null, error: { code: "42501", message: "permission denied for table profiles" } }, /permission denied for table profiles/],
+      [{ data: null, error: null }, /no rows and no error/],
+    ] as const) {
       const f = fake({ flagOn: true, profiles });
       _setTestClient(f.client);
       const t = await runCreatorAttributionTick();
       assert.equal(t.status, "ran");
-      if (t.status === "ran") assert.deepEqual([t.outcome.ok, !t.outcome.ok && t.outcome.reason], [false, "db_error"], JSON.stringify(profiles));
+      if (t.status === "ran") {
+        assert.deepEqual([t.outcome.ok, !t.outcome.ok && t.outcome.reason], [false, "db_error"], JSON.stringify(profiles));
+        assert.match((!t.outcome.ok && t.outcome.detail) || "", says, "the refusal says which read failed and how");
+      }
       assert.deepEqual(f.writes, [], `nothing is written when the account state is unreadable: ${JSON.stringify(profiles)}`);
       _setTestClient(null);
     }
