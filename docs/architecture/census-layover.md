@@ -9305,11 +9305,11 @@ Account deletion now runs a FATAL layover block (`artifacts/api-server/src/servi
 2. **Deletes the traveller's crew memberships.**
 3. **Deletes the sessions** (`artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:1438#const layoverSessionsOk`). Every other layover table goes with them through the session cascade.
 
-Migration 3621 makes that representable: a nullable user and session, the session FK set to SET NULL, and the `layover_events_identity_or_pseudonym` CHECK (`artifacts/api-server/src/migrations/3621_layover_erasure_audit_pseudonym.sql:87#layover_events_identity_or_pseudonym CHECK`). That CHECK refuses a pseudonym next to a user id, and any retention past 12 months. `artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:52#export async function runLayoverAuditRetentionSweep(` deletes each row at `retain_until`. The dispositions manifest records `layover_events` as RETAINED_WITH_REASON (`artifacts/api-server/src/lib/deletionDispositions.ts:295#table: "layover_events",`) and the rest as erased.
+Migration 3621 makes that representable: a nullable user and session, the session FK set to SET NULL, and the `layover_events_identity_or_pseudonym` CHECK (`artifacts/api-server/src/migrations/3621_layover_erasure_audit_pseudonym.sql:87#layover_events_identity_or_pseudonym CHECK`). That CHECK refuses a pseudonym next to a user id, and any retention past 12 months. `artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:60#export async function runLayoverAuditRetentionSweep(` deletes each row at `retain_until`. The dispositions manifest records `layover_events` as RETAINED_WITH_REASON (`artifacts/api-server/src/lib/deletionDispositions.ts:295#table: "layover_events",`) and the rest as erased.
 
 Tests:
 - `artifacts/api-server/src/test/accountDeletionLayover.test.ts:78#pseudonymises the events, then deletes the crew memberships, then the sessions` and `artifacts/api-server/src/test/accountDeletionLayover.test.ts:119#a FAILED pseudonymisation deletes no session`, eight cases;
-- `artifacts/api-server/src/test/layoverAuditRetention.test.ts:67#deletes pseudonymised rows past retain_until, and only those`, ten cases including 3621's static shape;
+- `artifacts/api-server/src/test/layoverAuditRetention.test.ts:68#deletes pseudonymised rows past retain_until, and only those`, ten cases including 3621's static shape;
 - the real-database suite's B7, which runs only on CI's harness.
 
 Mutants D1–D8, S1–S4, M1, M2 and P1 are all killed (15 of 15).
@@ -9348,6 +9348,25 @@ Mutants D1–D8, S1–S4, M1, M2 and P1 are all killed (15 of 15).
   That is a platform posture change across every route, so it is the lead's to direct. 3620 already removes every client WRITE path, so the remaining gap is defence in depth on reads.
 - **L294: re-read, still `W`.** "Degraded confidence a handler cannot skip" is a property of every layover read's return type: `cityPresence`, for example, returns data beside a `degraded` boolean. Converting one function would not move a row that grades the domain. It needs a typed-read-result convention applied across the layover stores, which is architectural, and it is recorded rather than half-built.
 - **L223: re-read, still `W`.** "Expanded options" for an overnight layover need lodging or lounge data. `discovery_places` has no lodging category (Foursquare's hotel and lodging names fold into the generic `place`), and `airport_profiles` carries no transit-hotel or lounge record. Generic advice would not be an option, for the reason §53.2 gave about L145.
+
+### §55.10 The L163 retention sweep is a REPORTED job, and a failed probe is a failure. NO ROW MOVES
+
+The full api-server suite on `8519525f8` caught two pins the L163 commit had not moved: 59 schedulers started (`schedulerCoverage.test.ts`) and 59 scheduler owners (`schedulerRelativeWindows.test.ts`). Moving them to 60 would have added a 46th job whose stopping leaves no trace. For this sweep that means pseudonymised rows outliving OD-MAP-4's 12 months, with nothing to say so. Instead the sweep now reports to `GET /healthz/schedulers` as `layoverAuditRetention`:
+- It keeps its attempt, success and failure state (`artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:125#export function getLayoverAuditRetentionStatus`).
+- The report sits on the same line as the serve-log retention report, so no cited line of `health.ts` moves.
+- The registry row claims it. `check:scheduler-coverage` reads **60 started, 13 reported, 6 job_health writers, 45 with no trace**, so the invisible count is unchanged (`artifacts/api-server/src/test/schedulerCoverage.test.ts:125#pins today's real coverage: 60 started, 13 reported, 6 durable, 45 invisible`).
+
+The probe was also too generous. It read ANY failure as "3621 not applied", which would have reported a broken connection as a sweep with nothing to do. Now only a missing column (42703 or PGRST204) counts as `schema_absent`. Any other error, or a throw, is `probe_failed` and counts as a failure (`artifacts/api-server/src/lib/layoverAuditRetentionScheduler.ts:53#return code === "42703" || code === "PGRST204" ? "absent" : "error";`; `artifacts/api-server/src/test/layoverAuditRetention.test.ts:98#a probe that fails for any reason but a MISSING COLUMN is FAILED`).
+
+The status cases are at `artifacts/api-server/src/test/layoverAuditRetention.test.ts:120#what GET /healthz/schedulers reads for this job`. Mutants H1–H7 are killed (7 of 7):
+- the registry row losing `reportedAs`;
+- the health report removed;
+- the success, the failure count, the throw count and the attempt each not recorded;
+- the probe error read as absent.
+
+H6 survived once and is now killed by a sweep that throws after the probe.
+
+L163 stays `W`, for §55.7's reason.
 
 ## Cited, not graded (check:census-scope-coverage)
 
