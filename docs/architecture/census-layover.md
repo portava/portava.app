@@ -9164,10 +9164,18 @@ Tests:
 - **L13, L56–L59 and L178** grade the Temporal Freedom engine in `domain/trips/invariants/TripFreedomEngine.ts`. Trips owns that file. Their W reasons hold on this tree: domain ownership, the two inputs that never arrive, the trip-named engine, and no caller outside the tests.
 - **L163 needs a lead ruling.** `layover_events` and `layover_sessions` are in `UNCLASSIFIED_BACKLOG`, so account deletion erases no layover row. Recommendation, as the privacy-preserving default: erase the traveller's layover sessions, events, stops, recommendations, presence, checkpoints and crew memberships on account deletion, and set a retention period for `layover_events`. That is account deletion code, which is the lead's to direct.
 - **L254, L273 and L274** wait on Rent-a-Buddy (#640). **L268 and L112** wait on Compass's tool flag. **L275** waits on the Passport postcard. **L131** waits on a Telegraph crew thread.
-- **L205, L294, L236 and L295** stay CODE_FIXABLE and were not reached in this wave:
+- **L236 and L295: a layover client-boundary suite on a real database, written and NOT yet run.** `artifacts/api-server/src/test/db/layoverClientBoundary.db.test.ts:1#census-layover L236 / L295` runs on CI's kernel-SQL harness (`scripts/local-db/up.sh`, the chain replayed onto PostgreSQL 16). Its cases:
+  - 3620's catalogue, at table and column level;
+  - 0127's owner policies as PostgREST would run them;
+  - every client write refused, with the rows unchanged afterwards;
+  - `anon` reads nothing;
+  - 3900's `layover_presence`: no coordinate column, no client privilege, and `precise_location_enabled` refused even for the service role;
+  - the session cascades.
+
+  This machine has no PostgreSQL, so the suite's first run is CI's, and it is not mutation-proved. **Neither row moves until that run is green.** §6105's "No CI database carries a layover schema" is stale: the harness replays the layover chain, and `layoverConstraintsStore.db.test.ts` already runs on it.
+- **L205 and L294** stay CODE_FIXABLE and were not reached in this wave:
   - L205: owner reads on a user client. Large, and it touches every airport route.
   - L294: a typed read result. Architectural.
-  - L236 and L295: layover `*.db.test.ts` files. CI live-DB tier only.
 - **The NEEDS_MIGRATION rows** (L21, L26, L31, L33, L36, L38, L39, L192, L202) are unchanged. All but L202 add vocabulary or state to tables whose spec use waits on 2700. L202 would move the presence policy into the database, and the presence read runs on the service role by design.
 
 ### §55.5 Row moves
