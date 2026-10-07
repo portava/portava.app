@@ -188,11 +188,12 @@ jest.mock('../../../src/components/discovery/DiscoveryMapView', () => {
   const React = require('react');
   const { View, Text } = require('react-native');
   return {
-    DiscoveryMapView: (props: { entities?: { id: string }[] }) => (
+    DiscoveryMapView: (props: { entities?: { id: string }[]; transportLayerOn?: boolean }) => (
       <View testID="map-view">
         <Text testID="map-marker-ids">
           {(props.entities ?? []).map((e) => e.id).join(',') || 'none'}
         </Text>
+        <Text testID="map-transport">{props.transportLayerOn === true ? 'on' : 'off'}</Text>
       </View>
     ),
   };
@@ -331,5 +332,22 @@ describe('FullScreenMapScreen — entities the pipeline never evaluated', () => 
     await mount();
 
     await waitFor(() => expect(markerIds()).toEqual(['event:e1', 'gem:g1']));
+  });
+});
+
+// census-map M122 (lead ruling D-36a): the §16 Transport layer is base-map
+// styling. The screen resolves it like every other layer and hands the answer to
+// the map; DiscoveryMapView.transportLayer.component.test.tsx proves the map
+// restyles on it.
+describe('FullScreenMapScreen — the Transport layer reaches the map', () => {
+  it('is off by default (§16), and the map is told so', async () => {
+    await mount();
+    await waitFor(() => expect(screen.getByTestId('map-transport').props.children).toBe('off'));
+  });
+
+  it('switched on in the Layers sheet, the map is told to draw it', async () => {
+    knobs.layerPrefs = { transport: 'on' };
+    await mount();
+    await waitFor(() => expect(screen.getByTestId('map-transport').props.children).toBe('on'));
   });
 });
