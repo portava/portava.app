@@ -9164,7 +9164,7 @@ Tests:
 - **L13, L56–L59 and L178** grade the Temporal Freedom engine in `domain/trips/invariants/TripFreedomEngine.ts`. Trips owns that file. Their W reasons hold on this tree: domain ownership, the two inputs that never arrive, the trip-named engine, and no caller outside the tests.
 - **L163 needs a lead ruling.** `layover_events` and `layover_sessions` are in `UNCLASSIFIED_BACKLOG`, so account deletion erases no layover row. Recommendation, as the privacy-preserving default: erase the traveller's layover sessions, events, stops, recommendations, presence, checkpoints and crew memberships on account deletion, and set a retention period for `layover_events`. That is account deletion code, which is the lead's to direct.
 - **L254, L273 and L274** wait on Rent-a-Buddy (#640). **L268 and L112** wait on Compass's tool flag. **L275** waits on the Passport postcard. **L131** waits on a Telegraph crew thread.
-- **L236 and L295: a layover client-boundary suite on a real database, written and NOT yet run.** `artifacts/api-server/src/test/db/layoverClientBoundary.db.test.ts:1#census-layover L236 / L295` runs on CI's kernel-SQL harness (`scripts/local-db/up.sh`, the chain replayed onto PostgreSQL 16). Its cases:
+- **L236 and L295: a layover client-boundary suite on a real database, written and NOT yet run.** `artifacts/api-server/src/test/db/layoverClientBoundary.db.test.ts:2#census-layover L236 / L295` runs on CI's kernel-SQL harness (`scripts/local-db/up.sh`, the chain replayed onto PostgreSQL 16). Its cases:
   - 3620's catalogue, at table and column level;
   - 0127's owner policies as PostgREST would run them;
   - every client write refused, with the rows unchanged afterwards;
