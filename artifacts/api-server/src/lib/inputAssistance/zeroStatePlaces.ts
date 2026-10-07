@@ -37,7 +37,7 @@
  *     behaves as it did before the source existed.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { fetchBlockedSet, submitterIsVisible } from '../blocks.js';
+import { fetchBlockedSet, submitterIsVisible } from '../blocks.js'; import { applySearchProtection, searchProtectionEnabled } from '../discoverySearchProtection.js'; import { loadActiveProtectedZones } from '../protectedZoneStore.js'; // §24 on nearby rows (wave-2 verification F3)
 import { canSeePlanItemLocation, planItemAccessFor, PLAN_ITEM_PRIVACY_COLUMNS } from './planItemAccess';
 import type { InputContext, InputFieldPolicy, InputSuggestion } from './types';
 
@@ -176,8 +176,9 @@ export async function buildNearbyPlaceSuggestions(
       .map((p) => ({ p, km: haversineKm(lat, lng, p.lat as number, p.lng as number) }))
       .filter((x) => x.km <= NEARBY_RADIUS_KM)
       .sort((a, b) => a.km - b.km || a.p.id.localeCompare(b.p.id));
+    const protectedRanked = await nearbyAfterProtection(db, ranked);
     const out: InputSuggestion[] = [];
-    for (const { p } of ranked) {
+    for (const { p } of protectedRanked) {
       if (out.length >= max) break;
       const s = projectPlace(p, { context: opts.context, policyVersion: opts.policyVersion, kind: 'nearby' });
       if (s) out.push(s);
@@ -186,6 +187,27 @@ export async function buildNearbyPlaceSuggestions(
   } catch {
     return [];
   }
+}
+
+/**
+ * §24 protected zones on the "nearby" rows (wave-2 verification F3), the same
+ * pass `GET /discovery/search` runs (lib/discoverySearchProtection.ts): a place
+ * inside a `suppress` zone is not offered. Flag off, absent or unreadable:
+ * nothing is read and the rows pass, exactly as search.
+ *
+ * ONE DELIBERATE DIFFERENCE. When the flag is on and the zone policy cannot be
+ * read, search keeps the row and withholds its position. A "nearby" row's
+ * whole claim IS its position — it is offered because it is close — so
+ * withholding the position cannot help, and the row is dropped instead.
+ */
+async function nearbyAfterProtection<R extends { p: PlaceRow }>(db: SupabaseClient, ranked: R[]): Promise<R[]> {
+  if (ranked.length === 0 || !(await searchProtectionEnabled(db))) return ranked;
+  let zones: Awaited<ReturnType<typeof loadActiveProtectedZones>>;
+  try { zones = await loadActiveProtectedZones(db); } catch { zones = null; }
+  const probes = ranked.map((r) => ({ id: r.p.id, type: 'places', title: String(r.p.name ?? r.p.id), metadata: { lat: r.p.lat, lng: r.p.lng } as Record<string, unknown> }));
+  const { results } = applySearchProtection(probes, zones);
+  const served = new Set(results.filter((x) => x.metadata?.coordsPrecision !== 'hidden').map((x) => x.id));
+  return ranked.filter((r) => served.has(r.p.id));
 }
 
 /**
