@@ -4843,7 +4843,7 @@ The mutant now dies.
 
 A Compass refusal says lane C's `RESTRICTION_SENTENCES` text. Today that equals the sentence the
 person's own restriction summary shows, and a test proves it through the real summary builder
-(`artifacts/api-server/src/test/compassRestrictionGate.test.ts:360#it("RESTRICTION_SENTENCES (lane C's copy the gate refuses with) equals TrustPrivacyGuard's summary sentence for hosting and messaging"`).
+(`artifacts/api-server/src/test/compassRestrictionGate.test.ts:366#it("RESTRICTION_SENTENCES (lane C's copy the gate refuses with) equals TrustPrivacyGuard's summary sentence for hosting and messaging"`).
 When lane B lands the amended D-24 sentences (PR #636: messaging names "propose changes to a group trip",
 hosting names "change a group trip's shared plan"), that test goes red until the refusal reads
 `restrictionSentence()` from TrustPrivacyGuard. That import cannot compile before B lands; the exact
