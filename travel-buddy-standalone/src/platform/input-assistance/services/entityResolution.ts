@@ -24,6 +24,9 @@
  * dictionary itself, and no identity is ever invented.
  *
  * The rules, each a reason to return null rather than guess:
+ *   - a row that is not an `entity` or `recent` row, or that names no entity
+ *     class — a "Search …" completion, a correction, an action or an AI row is
+ *     the person's text or a parse, never an entity to bind;
  *   - no policy, or a field whose privacy class forbids local retention — the
  *     retained rows are read through `localZeroState`, which applies the LIVE
  *     policy gate, so a viewer-scoped field has nothing to resolve against;
@@ -89,6 +92,9 @@ function prefillFrom(structured: unknown): ResolvedEntity['prefill'] | undefined
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+/** The assistance types an unresolved row may have and still be bound. */
+const BINDABLE_TYPES: ReadonlySet<InputSuggestion['type']> = new Set(['entity', 'recent']);
+
 /**
  * The retained canonical row an UNRESOLVED suggestion denotes in this field, or
  * null. Synchronous: the local index is in process memory. See the header for
@@ -100,6 +106,12 @@ export function resolveLocally(
 ): InputSuggestion | null {
   if (!policy) return null;
   if (suggestion.entityId) return null; // already resolved — nothing to do locally
+  // Only a row that stands for a THING of a named class may be bound. A
+  // completion, correction, action or AI row carries the person's own text or a
+  // parse; binding one would turn an explicit "Search …" tap into an entity pick
+  // (verifier finding F1, 2026-10-07). A row with no entity class has nothing to
+  // match a class against, so it is never bound either.
+  if (!BINDABLE_TYPES.has(suggestion.type) || !suggestion.entityType) return null;
   const key = foldForMatch(suggestion.replacementText ?? suggestion.label ?? '');
   if (!key) return null;
 

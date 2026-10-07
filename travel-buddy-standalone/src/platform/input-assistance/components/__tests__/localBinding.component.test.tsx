@@ -19,6 +19,9 @@
  * MUTATION LOG (each applied, watched go red, reverted, `git diff` clean):
  *   - SmartInput.tsx: `const s = bindLocally(picked, policy);` → `const s =
  *     picked;` → test 1 goes red (the screen receives no entityId).
+ *   - (verifier F1) entityResolution.ts: drop the `BINDABLE_TYPES` / entity-class
+ *     guard → test 3 goes red (the served "Search …" completion reaches the
+ *     screen as `open_entity city-bkk`, and no raw search is counted).
  */
 
 import React, { useState } from 'react';
@@ -39,6 +42,7 @@ jest.mock('../../services/selectionRecorder.ts', () => ({
 import { SmartInput } from '../SmartInput.tsx';
 import { requestSuggestions } from '../../services/inputAssistance.ts';
 import { recordSuggestionSelection } from '../../services/selectionRecorder.ts';
+import { setTelemetrySink, resetTelemetrySink, type InputTelemetryEvent } from '../../services/inputTelemetry.ts';
 import { registerField, unregisterField } from '../../contexts/fieldRegistry.ts';
 import { sharedSuggestionCache } from '../../services/suggestionCache.ts';
 import {
@@ -149,4 +153,39 @@ test('G260: with TWO accepted cities of that name the tap stays unresolved — n
   expect(got.entityId).toBeUndefined();
   expect(got.action).toBeUndefined();
   expect((mockRecord.mock.calls[0]![0] as InputSuggestion).entityId).toBeUndefined();
+});
+
+test('G260 (verifier F1): a served "Search …" COMPLETION stays a raw search — never rebound to the accepted city', async () => {
+  recordLocalSelection(CITY, canonical('Bangkok', 'city-bkk'));
+  const COMPLETION: InputSuggestion = {
+    id: 'city_picker:completion:bangkok',
+    type: 'completion',
+    context: 'city_picker',
+    label: 'Search "Bangkok"',
+    replacementText: 'Bangkok',
+    action: { type: 'submit_search', query: 'Bangkok' },
+    source: 'local',
+    policyVersion: 'input-2026-08',
+  };
+  mockRequest.mockResolvedValue({ ok: true, requestId: 'req-c', policyVersion: 'input-2026-08', suggestions: [COMPLETION] });
+  const events: InputTelemetryEvent[] = [];
+  setTelemetrySink((e) => { events.push(e); });
+  try {
+    const onSelect = jest.fn();
+    const r = await render(<Host onSelect={onSelect} />);
+    fireEvent(r.getByTestId('bind-input'), 'focus');
+    // A completion renders through EntitySuggestionRow (SuggestionList's default arm).
+    await waitFor(() => expect(r.getByTestId(`ia-entity-row-${COMPLETION.id}`)).toBeTruthy(), { timeout: 8000 });
+    fireEvent.press(r.getByTestId(`ia-entity-row-${COMPLETION.id}`));
+
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    const got = onSelect.mock.calls[0]![0] as InputSuggestion;
+    expect(got.entityId).toBeUndefined();
+    expect(got.action).toEqual({ type: 'submit_search', query: 'Bangkok' });
+    expect((mockRecord.mock.calls[0]![0] as InputSuggestion).entityId).toBeUndefined();
+    // The §44 raw-search counter still sees the tap.
+    expect(events.filter((e) => e.name === 'raw_search_submitted')).toHaveLength(1);
+  } finally {
+    resetTelemetrySink();
+  }
 });

@@ -18,6 +18,9 @@
  *     → "PRIVACY: a field whose class forbids retention…" red.
  *   - drop the `finite(b.lat) && finite(b.lng)` pair check → "a coordinate is
  *     taken only as a PAIR" red.
+ *   - (verifier F1) drop the `BINDABLE_TYPES` / entity-class guard →
+ *     "a Search… COMPLETION is never bound", "a CORRECTION…", "an AI row…" and
+ *     "a row with NO entity class…" red.
  */
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -202,4 +205,58 @@ test('an already-resolved row passes through unchanged (and never consults the i
     displayName: 'Bangkok',
   });
   assert.equal(bindLocally(row, CITY), row);
+});
+
+// ── verifier finding F1 (2026-10-07): only entity/recent rows WITH a class bind ──
+
+test('a Search… COMPLETION is never bound — the person asked for a raw search', async () => {
+  recordLocalSelection(CITY, canonical('Bangkok', 'city-bkk'));
+  const completion: InputSuggestion = {
+    id: 'local:city_picker:completion:Bangkok',
+    type: 'completion',
+    context: 'city_picker',
+    label: 'Search "Bangkok"',
+    replacementText: 'Bangkok',
+    action: { type: 'submit_search', query: 'Bangkok' },
+    source: 'local',
+    policyVersion: 'input-2026-08',
+  };
+  assert.equal(resolveLocally(completion, CITY), null);
+  assert.equal(bindLocally(completion, CITY), completion, 'unchanged: still a submit_search');
+  assert.equal(await resolveSuggestion(completion, { policy: CITY }), null);
+});
+
+test('a CORRECTION keeps its replace_text and is never bound', () => {
+  recordLocalSelection(CITY, canonical('Bangkok', 'city-bkk'));
+  const correction: InputSuggestion = {
+    id: 'corr:1', type: 'correction', context: 'city_picker', label: 'Bangkok', replacementText: 'Bangkok',
+    action: { type: 'replace_text', text: 'Bangkok' }, source: 'canonical', policyVersion: 'input-2026-08',
+  };
+  assert.equal(bindLocally(correction, CITY), correction);
+});
+
+test('an AI row and an ACTION row are never bound', () => {
+  recordLocalSelection(CITY, canonical('Bangkok', 'city-bkk'));
+  for (const type of ['ai_suggestion', 'action', 'validation', 'disambiguation', 'personalized', 'structured_value'] as const) {
+    const row: InputSuggestion = {
+      id: `x:${type}`, type, context: 'city_picker', label: 'Bangkok', replacementText: 'Bangkok',
+      entityType: 'city', source: 'ai', policyVersion: 'input-2026-08',
+    };
+    assert.equal(resolveLocally(row, CITY), null, type);
+  }
+});
+
+test('a row with NO entity class is never bound, even to a same-named retained row', () => {
+  recordLocalSelection(CITY, canonical('Paris', 'place-paris-cafe', { entityType: 'place' }));
+  const typeless: InputSuggestion = {
+    id: 'local:city_picker:x:Paris', type: 'entity', context: 'city_picker', label: 'Paris', replacementText: 'Paris',
+    source: 'local', policyVersion: 'input-2026-08',
+  };
+  assert.equal(resolveLocally(typeless, CITY), null);
+  assert.equal(bindLocally(typeless, CITY), typeless);
+});
+
+test('a RECENT row with a class still binds (the guard admits exactly entity and recent)', () => {
+  recordLocalSelection(CITY, canonical('Bangkok', 'city-bkk'));
+  assert.equal(resolveLocally({ ...dictionaryRow('Bangkok'), type: 'recent' }, CITY)?.entityId, 'city-bkk');
 });
