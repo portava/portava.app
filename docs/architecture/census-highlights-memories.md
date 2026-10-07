@@ -7163,3 +7163,19 @@ Lane N7's section, appended after lane R's §AE under the same label, is renumbe
 | total | 266 | 266 |
 
 **266 = 70 C / 154 W / 40 N / 2 X.**
+
+### §AH.7 The wave-2 head (2026-10-07, after the merge of wave 1 and `origin/main` 116ca4541f): the precision recheck, and three follow-ups. NO ROW MOVES
+
+- **The §10 precision gate on the two Memory surfaces that printed place words raw.** The lead asked for a recheck of "unreadable precision labels". The eight `routes/memories.ts` sites the A2 verifier named are already fixed on main by #625 (the three-state gate in `lib/memoryPrecisionGate.ts`). Two other Memory readers never consulted that gate. Both served location words to non-owners straight off the row:
+  - the Telegraph share card, whose subtitle was `location_city`;
+  - the anonymous link preview at `/memory/:id`, which said "A memory from <city>, <country>."
+
+  So with the gate on, an owner's `country` or `hidden` rung was ignored on both, and with the gate unreadable nothing clamped. Both now do four things:
+  - read the gate through `readMemoryPrecisionGate`;
+  - name `location_precision` only when the gate is definitely on (`artifacts/api-server/src/services/telegraph/shareables.ts:651#const precisionGate = await readMemoryPrecisionGate(client);`, `artifacts/api-server/src/routes/wellKnownShare.ts:534#const precisionGate = await readMemoryPrecisionGate(sc);`);
+  - take their words from `memoryPlaceLabelsForNonOwner(row, precisionClampApplies(gate))` (`artifacts/api-server/src/services/telegraph/shareables.ts:694#memoryPlaceLabelsForNonOwner(r, precisionClampApplies(precisionGate)).city`, `artifacts/api-server/src/routes/wellKnownShare.ts:541#const place = memoryPlaceLabelsForNonOwner`). That helper applies the stricter of the owner's rung and the gem ceiling, exactly as `protectMemoryRow` does;
+  - clamp to no city and no country when the gate is unreadable, or when the label is absent, null or off the ladder.
+
+  Nothing changes for the owner's own card, or when the gate is definitely off. Cases: `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:806#a Memory's city takes the §10 precision gate` (seven), including `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:835#gate UNREADABLE: the card still resolves`. The share-landing-page suite adds five more, and the helper's own suite four, one of which pins that no gem sensitivity is stricter than the ceiling the helper assumes. Mutants P1–P5, W1, W2, L1 and G1 are killed. W3 (the preview's row-read error ignored) survives as an equivalent: supabase-js returns `data: null` with every error, so the absent-row branch already answers it. No row here grades these two surfaces. `compass/MemoryCompassTools.ts` still serves `location_city`/`location_country` to non-owners without the rung, and says so itself; that file is Compass's, so it is recorded here and not changed.
+- **check:write-path-columns.** The R2 membership read passed `membershipSelect(...)` to `.select()`, a new unresolvable site in `services/`. It is now the literal `artifacts/api-server/src/services/telegraph/shareables.ts:1213#.select("thread_id, user_id, visible_from_at")`. Measured offline with the guard's own extractor: 63 keys, all within allowance.
+- **Verifier minors 5 and 8.** The share lookup now reads newest first (`artifacts/api-server/src/services/telegraph/shareables.ts:1234#.order("created_at", { ascending: false })`; `artifacts/api-server/src/test/telegraphShareReadGates.test.ts:775#the traveller's NEWEST share resolves the card`). The fake can now fail one direction of the two `blocks` reads, and there is a case for each direction (`artifacts/api-server/src/test/telegraphShareReadGates.test.ts:760#one-sided block reads`). Four mutants are killed.
