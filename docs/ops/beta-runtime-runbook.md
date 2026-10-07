@@ -35,6 +35,16 @@ Replit deployment. Production is never reached by anything below.
     `portava-beta.replit.app` is refused unless it is labelled beta, so a fork
     that kept `.replit`'s production values and was never labelled cannot
     serve production's data at the beta address;
+  - **and it fails closed where that cannot be seen:** an UNLABELLED process in
+    a Replit deployment (`REPLIT_DEPLOYMENT` present) with no `REPLIT_DOMAINS`
+    is refused at build and boot. Replit's docs (Secrets page, read
+    2026-10-07) list `REPLIT_DOMAINS` as a variable Replit sets but do not say
+    a published deployment carries it, and that has not been observed here. An
+    explicit label lifts the refusal. **Production pre-requisite: before the
+    next production deploy that contains this rule, add the Secret
+    `PORTAVA_DEPLOYMENT_ENV=production` to production** (harmless if
+    `REPLIT_DOMAINS` turns out to be present; without it, a deployment lacking
+    `REPLIT_DOMAINS` refuses to build and start);
   - production's publishable key (the one `.replit` commits) is refused in a
     beta environment like its ref and host;
   - a LIVE-mode provider credential anywhere (Stripe `sk_live_`/`rk_live_`/

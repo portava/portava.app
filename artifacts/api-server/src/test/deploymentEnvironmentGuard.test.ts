@@ -190,6 +190,22 @@ describe("deploymentEnvironmentRefusal — beta runs test-mode providers, in pro
   });
 });
 
+describe("deploymentEnvironmentRefusal — an unlabelled Replit deployment without REPLIT_DOMAINS fails closed (lead, 2026-10-07)", () => {
+  it("REFUSED: REPLIT_DEPLOYMENT present (any value), no label, REPLIT_DOMAINS absent or blank", () => {
+    for (const extra of [{ REPLIT_DEPLOYMENT: "1" }, { REPLIT_DEPLOYMENT: "" }, { REPLIT_DEPLOYMENT: "1", REPLIT_DOMAINS: "  " }]) {
+      const r = deploymentEnvironmentRefusal({ SUPABASE_URL: PROD_URL, ...extra });
+      assert.ok(r && r.includes("REPLIT_DOMAINS") && r.includes(`${DEPLOYMENT_ENV_VAR}=production`), `${JSON.stringify(extra)} → ${r}`);
+    }
+  });
+
+  it("starts: production declared, production with REPLIT_DOMAINS, the labelled beta, and every non-deployment run", () => {
+    assert.equal(deploymentEnvironmentRefusal({ SUPABASE_URL: PROD_URL, REPLIT_DEPLOYMENT: "1", [DEPLOYMENT_ENV_VAR]: "production" }), null);
+    assert.equal(deploymentEnvironmentRefusal({ SUPABASE_URL: PROD_URL, REPLIT_DEPLOYMENT: "1", REPLIT_DOMAINS: "portava.replit.app" }), null);
+    assert.equal(deploymentEnvironmentRefusal({ [DEPLOYMENT_ENV_VAR]: "beta", NODE_ENV: "production", SUPABASE_URL: BETA_SUPABASE_URL, REPLIT_DEPLOYMENT: "1" }), null);
+    assert.equal(deploymentEnvironmentRefusal({ SUPABASE_URL: PROD_URL }), null);
+  });
+});
+
 /** A child environment with nothing Supabase-, Sentry- or deployment-shaped inherited from this runner. */
 function childEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};

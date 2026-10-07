@@ -101,6 +101,14 @@ const CASES: Case[] = [
   { name: "production at portava.replit.app (REPLIT_DOMAINS unchanged behaviour)", vars: { REPLIT_DOMAINS: "portava.replit.app", SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD }, api: true, build: true },
   { name: "a host that merely contains the beta name is not the beta host", vars: { REPLIT_DOMAINS: "myportava-beta.replit.app", SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD }, api: true, build: true },
   { name: "the labelled beta fork at portava-beta.replit.app", vars: { ...BETA_OK, REPLIT_DOMAINS: "portava-beta.replit.app" }, api: true, build: true },
+  // Fail closed (lead, 2026-10-07): a Replit DEPLOYMENT with no REPLIT_DOMAINS must declare itself.
+  { name: "unlabelled deployment, REPLIT_DOMAINS absent", vars: { REPLIT_DEPLOYMENT: "1", SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD }, api: false, build: false },
+  { name: "unlabelled deployment, REPLIT_DOMAINS blank", vars: { REPLIT_DEPLOYMENT: "1", REPLIT_DOMAINS: " ", SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD }, api: false, build: false },
+  { name: "unlabelled deployment, REPLIT_DEPLOYMENT present but empty, REPLIT_DOMAINS absent", vars: { REPLIT_DEPLOYMENT: "", SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD }, api: false, build: false },
+  { name: "production deployment WITH REPLIT_DOMAINS (unchanged)", vars: { REPLIT_DEPLOYMENT: "1", REPLIT_DOMAINS: "portava.replit.app", SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD }, api: true, build: true },
+  { name: "production deployment declared PORTAVA_DEPLOYMENT_ENV=production, REPLIT_DOMAINS absent", vars: { REPLIT_DEPLOYMENT: "1", PORTAVA_DEPLOYMENT_ENV: "production", SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD }, api: true, build: true },
+  { name: "the labelled beta deployment, REPLIT_DOMAINS absent", vars: { ...BETA_OK, REPLIT_DEPLOYMENT: "1" }, api: true, build: true },
+  { name: "local / CI run (no REPLIT_DEPLOYMENT), no REPLIT_DOMAINS (unchanged)", vars: { SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD }, api: true, build: true },
 ];
 
 function runGuard(vars: Record<string, string>) {

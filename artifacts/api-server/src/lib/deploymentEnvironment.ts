@@ -55,6 +55,19 @@
  * label alone cannot arm a guard nobody set. Production's own REPLIT_DOMAINS
  * names portava.replit.app, which this does not match.
  *
+ * FAIL CLOSED WHEN REPLIT_DOMAINS IS ABSENT IN A DEPLOYMENT (lead, 2026-10-07).
+ * Replit's docs (Secrets page, read 2026-10-07) list REPLIT_DOMAINS among the
+ * variables Replit sets, but do NOT say whether a published deployment carries
+ * it; that has not been observed here. So an UNLABELLED process inside a Replit
+ * deployment (REPLIT_DEPLOYMENT present, "Set to 1 if the code is running in a
+ * published project") with no REPLIT_DOMAINS is refused: it cannot show that it
+ * is not the beta fork. An explicit label lifts it — PORTAVA_DEPLOYMENT_ENV=production
+ * on production, =beta on the fork. Local runs, tests and CI (no
+ * REPLIT_DEPLOYMENT) are unaffected. PRODUCTION PRE-REQUISITE: before the next
+ * production deploy that carries this rule, add PORTAVA_DEPLOYMENT_ENV=production
+ * to production's Secrets (or confirm REPLIT_DOMAINS is present there), or the
+ * deploy refuses to build and start.
+ *
  * Production's behaviour is unchanged: with the variable unset and production's
  * own URL, deploymentEnvironmentRefusal() returns null.
  *
@@ -199,6 +212,14 @@ export function deploymentEnvironmentRefusal(env: NodeJS.ProcessEnv = process.en
       );
     }
     return null;
+  }
+
+  if (label === null && env["REPLIT_DEPLOYMENT"] !== undefined && !(env["REPLIT_DOMAINS"] ?? "").trim()) {
+    return (
+      `this is a Replit deployment (REPLIT_DEPLOYMENT is set) with no REPLIT_DOMAINS and no ${DEPLOYMENT_ENV_VAR}, ` +
+      "so it cannot show it is not the beta fork serving .replit's inherited production values. Declare it: " +
+      `${DEPLOYMENT_ENV_VAR}=production on production, ${DEPLOYMENT_ENV_VAR}=beta on the beta fork (a Secret).`
+    );
   }
 
   if (replitDomainsNameBeta(env)) {
