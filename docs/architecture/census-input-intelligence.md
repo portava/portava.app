@@ -6412,7 +6412,7 @@ It is served on every context.
 **The client.** It honours a grant only on re-checking every condition
 (`travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts:424#export function localAnswerSuffices(`).
 It also requires a real dictionary hit
-(`travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts:491#if (hits.length === 0) return [];` *(repointed 2026-10-07: §42.15 rewrote this path to reproduce the server's answer; a no-hit still asks the server)*).
+(`travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts:502#if (hits.length === 0) return [];` *(repointed 2026-10-07: §42.15 rewrote this path to reproduce the server's answer; a no-hit still asks the server)*).
 The hook then answers with no request at all, so there is one answer and one impression
 (`travel-buddy-standalone/src/platform/input-assistance/hooks/useInputAssistance.ts:227#const sufficient = aiAssist === true ? [] : sufficientLocalRows(`).
 
@@ -6621,24 +6621,24 @@ applied at `artifacts/api-server/src/lib/inputAssistance/policyRegistry.ts:504#s
 **Client.** It admits the same two
 (`travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts:396#export const LOCALLY_SUFFICIENT_CONTEXTS`).
 It answers through a narrow path that reproduces the server's algorithm for these two static lists, row for row
-(`travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts:468#export function sufficientLocalRows(`).
+(`travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts:478#export function sufficientLocalRows(`).
 It does NOT go through the offline fallback, whose privacy gate is unchanged and still refuses both.
 
 It asks the server instead when it cannot be sure it would answer as the server does:
 - the query has fewer than two characters;
 - the query is anything but ASCII letters in single-spaced words;
-- the query contains a word the server's alias table rewrites (`travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts:479#if (lq.split(' ').some((w) => SERVER_REWRITTEN_TOKENS.has(w))) return [];`);
+- the query contains a word the server's alias table rewrites (`travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts:489#if (lq.split(' ').some((w) => SERVER_REWRITTEN_TOKENS.has(w))) return [];`);
 - there is no hit.
 
 **The conditions, as a test that fails when they stop holding.**
-- The shipped lists equal the server's, in order (`artifacts/api-server/src/test/inputLocalSufficiencyParity.test.ts:150#the shipped list IS the server's list`).
+- The shipped lists equal the server's, in order (`artifacts/api-server/src/test/inputLocalSufficiencyParity.test.ts:164#the shipped list IS the server's list`).
 - Any local answer equals the real gateway's, row for row, over a sweep of every two-letter query and every
-  prefix and three-letter substring of every label (`artifacts/api-server/src/test/inputLocalSufficiencyParity.test.ts:155#the no-request answer is the gateway's, row for row`).
+  prefix and three-letter substring of every label (`artifacts/api-server/src/test/inputLocalSufficiencyParity.test.ts:169#the no-request answer is the gateway's, row for row`).
   All fields are compared except `source: 'local'` and the device's `policyVersion`.
 - The server's answer does not vary by account, block list, position, city, time zone or Trip
-  (`artifacts/api-server/src/test/inputLocalSufficiencyParity.test.ts:168#the server's answer does not vary by viewer`).
-- The client's rewritten-word copy equals the server's alias keys (`artifacts/api-server/src/test/inputLocalSufficiencyParity.test.ts:185#the client refuses exactly the words the server rewrites`).
-- Server and client admit exactly the two contexts (`artifacts/api-server/src/test/inputLocalSufficiencyParity.test.ts:191#the authority sanctions exactly these two contexts`).
+  (`artifacts/api-server/src/test/inputLocalSufficiencyParity.test.ts:182#the server's answer does not vary by viewer`).
+- The client's rewritten-word copy equals the server's alias keys (`artifacts/api-server/src/test/inputLocalSufficiencyParity.test.ts:217#the client refuses exactly the words the server rewrites`).
+- Server and client admit exactly the two contexts (`artifacts/api-server/src/test/inputLocalSufficiencyParity.test.ts:223#the authority sanctions exactly these two contexts`).
 
 **Through the real hook.** A sanctioned hit sends zero requests; no hit still asks; any other field that claims
 sufficiency still asks (`travel-buddy-standalone/src/platform/input-assistance/hooks/__tests__/useInputAssistance.localSufficiency.component.test.tsx:110#G224: a SANCTIONED field answers a dictionary hit from the shipped list with ZERO requests`).
@@ -6672,8 +6672,8 @@ re-read it as two of four. One of its two missing halves landed later under G240
   - It is never offered over a disambiguation; that choice is the person's first (§19), per
     `artifacts/api-server/src/lib/inputAssistance/creation.ts:657#if (s.type !== 'entity' || s.entityType !== 'city' || !isCityBinding(s.structuredValue)) continue;`.
   - The gateway pushes it in the creation merge, on an existing line, away from lane R's hunks.
-  - Proven by `artifacts/api-server/src/test/inputAssistanceCreation.test.ts:998#hidden_gem_location offers 'Use approximate area' over the city it resolved`
-    and `artifacts/api-server/src/test/inputAssistanceCreation.test.ts:1042#an ambiguous city is the person's choice first`.
+  - Proven by `artifacts/api-server/src/test/inputAssistanceCreation.test.ts:1000#hidden_gem_location offers 'Use approximate area' over the city it resolved`
+    and `artifacts/api-server/src/test/inputAssistanceCreation.test.ts:1071#an ambiguous city is the person's choice first`.
   - Five mutants are killed, including the context gate. That gate is masked through the gateway by place_picker's
     policy, so it is also asked directly.
 - **Drop pin** (`artifacts/api-server/src/lib/inputAssistance/validationSuite.ts:334#action: { type: 'drop_pin' },`)
@@ -6681,7 +6681,7 @@ re-read it as two of four. One of its two missing halves landed later under G240
 
 | ID | from | **to** | evidence |
 | --- | --- | --- | --- |
-| G136 | W | **C** | All four Gem actions have producers on the Gem location field: approximate area (`artifacts/api-server/src/lib/inputAssistance/creation.ts:645#export function buildApproximateAreaRows(`), add new Gem (`artifacts/api-server/src/lib/inputAssistance/validationSuite.ts:360#Add a new ${create.noun}`), drop pin and confirm existing (unchanged). Proven through the real gateway (`artifacts/api-server/src/test/inputAssistanceCreation.test.ts:998#hidden_gem_location offers 'Use approximate area' over the city it resolved`). |
+| G136 | W | **C** | All four Gem actions have producers on the Gem location field: approximate area (`artifacts/api-server/src/lib/inputAssistance/creation.ts:645#export function buildApproximateAreaRows(`), add new Gem (`artifacts/api-server/src/lib/inputAssistance/validationSuite.ts:360#Add a new ${create.noun}`), drop pin and confirm existing (unchanged). Proven through the real gateway (`artifacts/api-server/src/test/inputAssistanceCreation.test.ts:1000#hidden_gem_location offers 'Use approximate area' over the city it resolved`). |
 
 Graded on the same footing as the two halves §33.2 counted: production of the action on the field. Whether a Gem
 creation screen mounts `hidden_gem_location` is G18's question.
@@ -6770,17 +6770,17 @@ fits, leave the action unproduced and keep the row `W` with the reason.
   `app/search.tsx`.
 - **Open Map**: now built.
   - It is the existing `open_entity` ("open this entity") on an action row whose destination is the app's own map,
-    focused on the entity (`artifacts/api-server/src/lib/inputAssistance/searchActions.ts:47#export function buildOpenOnMapRow(`).
+    focused on the entity (`artifacts/api-server/src/lib/inputAssistance/searchActions.ts:55#export function buildOpenOnMapRow(`).
   - At most one row per `global_search` serve, for the first place or event this viewer may place exactly
-    (`artifacts/api-server/src/lib/inputAssistance/searchActions.ts:36#const MAPPABLE_RESULT_TYPES`).
+    (`artifacts/api-server/src/lib/inputAssistance/searchActions.ts:44#const MAPPABLE_RESULT_TYPES`).
   - Never offered for a gem, a person, a coarsened or withheld position, or an event whose venue is withheld.
   - The route names the entity, its title and `entry=search`, and never a coordinate (G187/G129 are structural).
   - The client lifts only an ACTION row of this shape. Entity rows also carry `open_entity` and stay in the grouped
     lane (`travel-buddy-standalone/src/platform/input-assistance/search/smartActions.ts:167#export function getOpenOnMapTarget(`).
   - `app/search.tsx` routes it (`travel-buddy-standalone/app/search.tsx:503#const onMap = getOpenOnMapTarget(suggestion);`).
   - Proof, end to end on both sides:
-    `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1415#global_search offers ONE 'Open on map'`,
-    `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1456#never a gem, person or protected position`,
+    `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1416#global_search offers ONE 'Open on map'`,
+    `artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1468#never a gem, person or protected position`,
     and through the real hook, bridge, lift and dispatcher,
     `travel-buddy-standalone/app/__tests__/search.openOnMapDispatch.component.test.tsx:284#lifts the row into the action lane and opens the map`.
   - Ten mutants are killed across both sides.
@@ -6792,3 +6792,88 @@ fits, leave the action unproduced and keep the row `W` with the reason.
 
 **G134 stays `W`.** Four of five actions are now dispatchable end to end. Save and Start directions are unproduced
 by lead ruling PR-D2-6, and need either a §43 contract change or an owner ruling that allows one.
+
+### 42.20 Review and verifier fixes on G134, G136, PR-D2-5 and G66; one grading rule; G136 back to `W`
+
+**One grading rule (lead, 2026-10-07, verifier D3).** A row is `C` only when a user can reach the behaviour end to
+end on a mounted surface. §42.15 already applied this to G224/G212; it now applies to every row of this section.
+
+**G136 → `W`, restating §42.16.**
+- `hidden_gem_location` is registered but mounted on no screen (the field inventory records it as "registered and
+  unmounted").
+- No client consumer reads `kind: 'approximate_area'`.
+- So the approximate-area producer cannot be reached end to end. The producer itself stands, never over a
+  disambiguation or an id-less binding, and at most two rows.
+- §42.16's "Five mutants are killed" was wrong: it was four. With the two D2 cases added for this pass (an id-less
+  city binding gets no row, and three cities give two rows:
+  `artifacts/api-server/src/test/inputAssistanceCreation.test.ts:1044#verifier D2: a city row whose binding has NO canonical id`),
+  the count is six.
+- Remaining blocker: a mounted Gem location field and a consumer of the approximate area.
+
+**G134, restating §42.19's count.** Three of five actions are dispatchable end to end on the search bar: Add to Trip,
+Ask Compass and Open Map. §42.19's "four of five" was wrong. Save and Start directions are unproduced by lead
+ruling PR-D2-6. G134 stays `W`.
+
+**The Wall defect (review finding, G134).** The Wall's steer bar is also `global_search`. It declared no action-type
+restriction and rendered action rows, so the new "Open on map" row, and the existing Add to Trip row, became a feed
+filter. Three fixes:
+- The server builds Open Map only for the search bar's field
+  (`artifacts/api-server/src/lib/inputAssistance/searchActions.ts:62#if (!OPEN_MAP_FIELD_IDS.has(policy.fieldId)) return null;`).
+- The Wall declares that it takes no action rows
+  (`travel-buddy-standalone/src/platform/input-assistance/contexts/clientCapabilities.ts:146#export const WALL_STEER_CAPABILITIES`),
+  so the existing negotiation withholds them. This uses a new optional `capabilities` prop on SmartInput; every other
+  caller is unchanged.
+- `resolveWallIntent` sets no intent for an action row
+  (`travel-buddy-standalone/src/features/wall/services/wallSessionIntent.ts:74#if (suggestion.type === 'action') return { text: '' };`).
+
+Proven through the Wall component and end to end on the server
+(`travel-buddy-standalone/src/features/wall/components/__tests__/WallHeader.smartInput.component.test.tsx:127#G134 review`).
+Every mutant is killed.
+
+**Verifier D4.** `suggestionToPlace` now refuses an action row, as its docstring said
+(`travel-buddy-standalone/src/platform/input-assistance/geographic/geoSuggestions.ts:64#if (!s || s.type === 'action') return null;`).
+
+**Verifier D1 (PR-D2-5), restating §42.15.**
+- The no-request answer equals the server's only while the device asks for exactly the server's cap.
+- Both sides slice substring hits to a limit derived from `maxSuggestions` before ranking. The hook's cap is the
+  client's own default plus any field override.
+- So the client answers only at the mirrored server cap
+  (`travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts:453#export const SERVER_STATIC_MAX = 8;`,
+  enforced at `travel-buddy-standalone/src/platform/input-assistance/services/localDictionary.ts:491#if (policy.maxSuggestions !== SERVER_STATIC_MAX) return [];`)
+  and asks the server at any other.
+- The parity suite now builds the client policy through the hook's own path (`buildDefaultPolicy`, over a store
+  holding what the server serves). It pins the mirror to both server caps and sweeps caps 3, 5 and 12
+  (`artifacts/api-server/src/test/inputLocalSufficiencyParity.test.ts:199#verifier D1`).
+- §42.15's "row for row" is restated as: row for row at the server's cap. Any other cap asks.
+
+**G66 built; stays `W` by the one rule.**
+- Neighbourhoods are now their own id-space, read-only over `geo_zones` rows with `zone_type = 'neighborhood'`
+  (`artifacts/api-server/src/lib/inputAssistance/neighborhoods.ts:70#export async function resolveNeighborhoodRows(`,
+  filtered at `artifacts/api-server/src/lib/inputAssistance/neighborhoods.ts:84#.eq('zone_type', 'neighborhood')`).
+- By the lead's notes, there is no `is_system` filter: admin-created zones are `is_system = false`, and the table is
+  publicly readable.
+- The binding is the zone id, name, city, country code and the timezone of the zone's centre, never the centre
+  itself (G187).
+- An unreadable read is noted in the serve's coverage, never "none".
+- The gateway calls it for any field whose policy names `neighborhood`, on an existing line.
+- Proof: `artifacts/api-server/src/test/inputAssistanceGeoCore.test.ts:661#neighborhood_picker returns the NEIGHBOURHOOD`. Five mutants are killed.
+- Production holds no neighbourhood rows today. That is a data gap, not a code gap.
+- `neighborhood_picker` is registered but unmounted, so G66 stays `W`.
+- The provider-reconciliation clause of the row has no producer by OD-INPUT-6.
+
+### 42.21 Headline, restated after 42.20
+
+| bucket | §42.17 | now |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 303 | 302 |
+| BUILT-BUT-WRONG | 48 | 49 |
+| NOT-BUILT | 18 | 18 |
+| CANNOT-VERIFY | 4 | 4 |
+| total | 373 | 373 |
+
+| ID | from | **to** | evidence |
+| --- | --- | --- | --- |
+| G136 | C | **W** | By the one grading rule: the producer stands (`artifacts/api-server/src/lib/inputAssistance/creation.ts:645#export function buildApproximateAreaRows(`), but `hidden_gem_location` is unmounted and no client consumer reads `approximate_area`. |
+
+Of 373 rows: **302 BUILT-AND-CORRECT, 49 BUILT-BUT-WRONG, 18 NOT-BUILT, 4 CANNOT-VERIFY**. With lane R's §41, the
+rows give 304 / 47 / 18 / 4.
