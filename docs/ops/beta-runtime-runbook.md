@@ -73,7 +73,7 @@ Replit deployment. Production is never reached by anything below.
 | --- | --- | --- |
 | Any time | `pnpm -C scripts beta:status` | `gh auth login` (reads secret NAMES and run conclusions only). Read-only: prints every gate below as PASS / OPEN / UNKNOWN / MANUAL and the next command. |
 | Step 1 | `gh secret set BETA_SUPABASE_PROJECT_TOKEN --env ci-nonprod-supabase --repo portava/portava.app` | the token, pasted at the prompt (never on the command line) |
-| Steps 2 + 3 | `pnpm -C scripts beta:provision --confirm=PROVISION-BETA` | GitHub workflow-dispatch rights. Refuses while the step-1 secret is absent. Dispatches `beta-db.yml` (skipped if its last run succeeded; never a reset), waits, stops on a red verdict; dispatches `beta-config.yml`, waits; reads back that Supabase Auth refuses new users. |
+| Steps 2 + 3 | `pnpm -C scripts beta:provision --confirm=PROVISION-BETA` | GitHub workflow-dispatch rights. Refuses while the step-1 secret is absent. Dispatches `beta-db.yml` (skipped if its last run succeeded; never a reset), waits, stops on a red verdict; dispatches `beta-config.yml`, waits (it fails while 3740's `profiles` boundary does not hold); reads back that Supabase Auth refuses new users. |
 | Step 7 | `pnpm -C scripts beta:smoke --base https://portava-beta.replit.app` | nothing (public GETs) |
 
 **Measured 2026-10-07 (read-only):** the step-1 secret is absent (the
@@ -82,7 +82,8 @@ failed with the 403 that secret fixes; `beta-config.yml` has never run;
 portava-beta's Supabase Auth reports `disable_signup: false` (sign-up OPEN,
 email provider on, Apple and Google off); `portava-beta.replit.app` answers
 404 "This app isn't live yet"; the `beta` profile's publishable key is
-accepted by portava-beta (200; no key or a wrong key gets 401).
+accepted by portava-beta (200; no key or a wrong key gets 401); PostgREST
+answers `404 PGRST205` for `profiles` (the schema is empty).
 
 **Optional, now, with no token:** in the portava-beta dashboard, Authentication
 → Sign In / Providers → turn off "Allow new users to sign up". Step 3 sets the
@@ -129,6 +130,16 @@ It reads and plans the flags **before** writing anything. If a policy flag is
 missing from the database, it exits 1 with nothing written: neither Auth nor
 any flag. It also exits 1 if anything reads back differently. Re-dispatch it
 whenever the policy changes.
+
+Last, it reads (never writes) the client grants on `public.profiles` and
+exits 1 while `anon` or `authenticated` hold a TABLE-level SELECT or UPDATE
+there, or SELECT on a personal column (`date_of_birth`, `full_name`,
+`expo_push_token`, `phone_e164`, …). A baseline replay onto a Supabase project
+inherits exactly that grant (Supabase's default ACL; `scripts/src/beta-db-core.ts`
+sets it before a rebuild), and it lets the public anon key read those columns
+of every non-private profile. Migration **3740** (PR #647) removes it. Sign-up
+is already closed and the flags set when this check fails; the red run means:
+**create no tester account** (step 8).
 
 ### 4. Fork the Repl as `portava-beta` — *Replit account*
 
@@ -249,7 +260,7 @@ override `.replit`. The build's first line is the deployment-environment guard.
 pnpm -C scripts beta:smoke --base https://portava-beta.replit.app
 ```
 
-Expect six `PASS` lines:
+Expect seven `PASS` lines:
 
 - health;
 - `signup-status` is exactly `{signupsEnabled:false, inviteOnly:true}`;
@@ -263,7 +274,11 @@ Expect six `PASS` lines:
   API reads. After any policy edit, re-run step 3 or this check fails;
 - portava-beta's public Auth settings report `disable_signup: true` (read with
   the `beta` profile's publishable key): this is what closes the app's own
-  sign-up path, which the API cannot see.
+  sign-up path, which the API cannot see;
+- every personal `profiles` column (`date_of_birth`, `full_name`,
+  `expo_push_token`, `phone_e164`, …) is refused to the anon key: each is
+  probed through PostgREST with `limit=0`, so no row is ever returned. A `200`
+  means migration 3740 is not applied and no tester account may be created.
 
 Two things print `NOT CHECKED`:
 
@@ -277,6 +292,11 @@ Two things print `NOT CHECKED`:
   beta database, which checks 2 and 5 show this API reads.
 
 ### 8. Create tester accounts — *beta Supabase project dashboard*
+
+**Not before** `beta:status` gate 3c (smoke check 7) passes: migration 3740
+(PR #647) applied and the anon key refused on every personal `profiles`
+column. Until then a tester's date of birth, full name, phone and push token
+would be readable with the public key.
 
 Sign-up is closed, so testers are created by you. In the beta project, open
 Authentication → Users → Add user → Create new user. Enter the tester's email
@@ -376,6 +396,14 @@ Change all of them in one PR, then re-run steps 3 and 9.
     until a reviewed edit turns it on;
   - lane L wave 6: add `sensing_consent_split_enabled` OFF (3703).
   Then re-dispatch step 3 (`beta:provision` skips the bootstrap).
+- **3740 must be on beta before any tester exists (lead, 2026-10-07, from lane G / PR #647).**
+  A beta built from `main` without 3740 carries table-level SELECT/UPDATE for
+  `anon` and `authenticated` on `profiles` (the baseline replay inherits
+  Supabase's default ACL), so the public anon key reads `date_of_birth`,
+  `phone_e164`, `expo_push_token` and `full_name`. Enforced three ways:
+  `beta-config.yml` fails its last step, `beta:smoke` check 7 fails, and
+  `beta:status` gate 3c stays OPEN. `scripts/src/beta-db-core.ts`'s ACL step
+  is unchanged; 3740 in the chain is the fix.
 - **The beta schema does not follow `main` after the bootstrap.**
   `beta-db.yml` builds an EMPTY project and refuses a built one; its only other
   mode is a destructive reset. Migrations merged after the bootstrap (B, C and

@@ -37,6 +37,14 @@
  *                        disable_signup === true. This is what closes the APP's own sign-up
  *                        path (supabase.auth.signUp, Apple/Google), which checks 2 and 5 cannot
  *                        see. A 401 means eas.json's key is not portava-beta's.
+ *   7. profiles' personal for each column 3740 forbids a client to read (date_of_birth, full_name,
+ *      columns closed    expo_push_token, phone_e164 …): GET portava-beta's PostgREST
+ *                        /rest/v1/profiles?select=<column>&limit=0 with the same publishable key.
+ *                        PASS only if every one is refused with 42501 (permission denied) or the
+ *                        column does not exist (42703). A 200 means the anon key can read it — the
+ *                        TABLE-level grant a baseline replay inherits (migration 3740, PR #647) —
+ *                        and no tester account may be created. limit=0: the privilege check runs
+ *                        before execution, so no row is ever returned.
  *
  * REPORTED, NOT CHECKED — the API exposes no unauthenticated read of either,
  * and this lane does not add an endpoint that would publish configuration:
@@ -57,7 +65,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { BETA_PROJECT_REF, REPO_ROOT, argValue } from "./beta-db-core.js";
-import { loadFlagPolicy, type FlagPolicy } from "./beta-config-core.js";
+import { PROFILES_NEVER_READ, loadFlagPolicy, type FlagPolicy } from "./beta-config-core.js";
 
 export type SmokeFetch = (url: string, init: { method: "GET"; headers: Record<string, string>; signal?: AbortSignal }) => Promise<{ status: number; text(): Promise<string> }>;
 
@@ -148,6 +156,20 @@ export function flagPolicyMismatch(served: Record<string, unknown>, policy: Flag
 /** The beta project's public Auth settings endpoint (GoTrue GET /settings). */
 export const BETA_AUTH_SETTINGS_URL = `https://${BETA_PROJECT_REF}.supabase.co/auth/v1/settings`;
 
+/** A zero-row PostgREST probe of one profiles column, as the anon (publishable) key. */
+export function profilesColumnProbeUrl(column: string): string {
+  return `https://${BETA_PROJECT_REF}.supabase.co/rest/v1/profiles?select=${encodeURIComponent(column)}&limit=0`;
+}
+
+/** "closed" when the anon key may not read the column, "open" when it may, otherwise why it cannot be judged. */
+export function judgeProfilesProbe(status: number, body: unknown): "closed" | "open" | string {
+  const code = typeof body === "object" && body !== null ? (body as { code?: unknown }).code : undefined;
+  if ((status === 401 || status === 403) && code === "42501") return "closed";
+  if (status === 400 && code === "42703") return "closed"; // the column does not exist here: nothing to read
+  if (status === 200) return "open";
+  return `cannot judge (${status}${code ? ` ${String(code)}` : ""})`;
+}
+
 /** The beta PUBLISHABLE key the beta app build carries (travel-buddy-standalone/eas.json, profile `beta`). */
 export function betaPublishableKey(): string {
   const eas = JSON.parse(readFileSync(join(REPO_ROOT, "travel-buddy-standalone", "eas.json"), "utf8")) as {
@@ -223,6 +245,30 @@ export async function runBetaSmoke(base: string, fetchImpl: SmokeFetch, opts: Sm
     }
     return null;
   }, BETA_AUTH_SETTINGS_URL, { apikey: key });
+
+  // 7 — profiles' personal columns, through PostgREST as the anon key (3740).
+  const name7 = "profiles personal columns closed to the anon key";
+  try {
+    const verdicts = await Promise.all(PROFILES_NEVER_READ.map(async (column) => {
+      const r = await get(profilesColumnProbeUrl(column), { apikey: key });
+      return { column, verdict: judgeProfilesProbe(r.status, r.body) };
+    }));
+    const open = verdicts.filter((v) => v.verdict === "open").map((v) => v.column);
+    const unjudged = verdicts.filter((v) => v.verdict !== "open" && v.verdict !== "closed").map((v) => `${v.column}: ${v.verdict}`);
+    results.push(
+      open.length === 0 && unjudged.length === 0
+        ? { name: name7, ok: true, detail: `${verdicts.length} personal columns refused to the anon key (42501/absent)` }
+        : {
+            name: name7, ok: false,
+            detail: [
+              open.length ? `READABLE by the anon key: ${open.join(", ")} — apply migration 3740 (PR #647) before any tester account exists` : "",
+              unjudged.length ? `not judged: ${unjudged.join("; ")}` : "",
+            ].filter(Boolean).join("; "),
+          },
+    );
+  } catch (err) {
+    results.push({ name: name7, ok: false, detail: `a probe did not complete: ${(err as Error).message}` });
+  }
   return results;
 }
 

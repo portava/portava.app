@@ -23,7 +23,11 @@
 #      GET it back and compare;
 #   c. flags: every row set to the policy in ONE transaction with an audit row per
 #      flip; a policy flag missing from the database writes NOTHING and fails;
-#   d. read-back of every flag.
+#   d. read-back of every flag;
+#   e. READ-ONLY: the client grants on public.profiles. Exit 1 while anon or
+#      authenticated hold TABLE-level SELECT/UPDATE there or SELECT on a
+#      personal column — the grant a baseline replay inherits until migration
+#      3740 (PR #647) is in the chain. No tester account before this is green.
 # Exit 2 = refused before any write; 1 = a request failed or a read-back differs.
 #
 # The ONE secret is BETA_SUPABASE_PROJECT_TOKEN (the same one beta-db.yml's

@@ -30,6 +30,7 @@ import {
 } from "./beta-config-core.js";
 import { runBetaConfigure } from "./beta-configure.js";
 import { applyPolicySync, flagKindOf, planPolicySync, serializePolicy } from "./beta-flag-policy-sync.js";
+import { PROFILES_CLIENT_GRANT_SQL, PROFILES_NEVER_READ, profilesGrantProblems } from "./beta-config-core.js";
 
 const BETA_URL = `https://${BETA_PROJECT_REF}.supabase.co`;
 const CI_URL = "https://hwokxgbmezheskbzskfr.supabase.co";
@@ -303,6 +304,8 @@ function stubApi(opts: {
   authAfterPatch?: (patched: any) => Record<string, unknown>;
   /** Mutate the flags just after the apply (to simulate a read-back mismatch). */
   afterApply?: (flags: Record<string, boolean>) => void;
+  /** What the profiles client-grant read (3740) answers. Default: the boundary holds. */
+  profilesGrant?: Record<string, unknown>;
 }) {
   const calls: Call[] = [];
   const flags = { ...(opts.flags ?? { disable_signups: false, invite_only_beta: false, rent_buddy_enabled: true, stories_enabled: false }) };
@@ -324,6 +327,9 @@ function stubApi(opts: {
       const q: string = body.query;
       if (q.startsWith("SELECT flag, enabled FROM public.feature_flags")) {
         return reply(Object.entries(flags).sort().map(([flag, enabled]) => ({ flag, enabled })));
+      }
+      if (q.startsWith("SELECT to_regclass('public.profiles') IS NOT NULL AS profiles_exists")) {
+        return reply([opts.profilesGrant ?? { profiles_exists: true, findings: [] }]);
       }
       if (q.startsWith("WITH changed AS (")) {
         const on = new Set([...q.matchAll(/'([A-Za-z0-9_]+)'/g)].map((m) => m[1]));
@@ -366,7 +372,9 @@ describe("beta-configure — the right calls, in order", () => {
       "GET /config/auth",
       "POST /database/query",
       "POST /database/query",
+      "POST /database/query",
     ]);
+    assert.match(api.calls[5].body.query, /^SELECT to_regclass\('public\.profiles'\) IS NOT NULL AS profiles_exists/, "the 3740 grant read is last");
     assert.match(api.calls[0].body.query, /^SELECT flag, enabled FROM public\.feature_flags/, "the first request is the read, before any write");
     assert.match(api.calls[3].body.query, /^WITH changed AS \(/);
     assert.deepEqual(api.calls[1].body, BETA_AUTH_CONFIG);
@@ -389,7 +397,7 @@ describe("beta-configure — the right calls, in order", () => {
     const api = stubApi({});
     const { code } = await run(api, { argv: ["--confirm=CONFIGURE-BETA", "--dry-run"] });
     assert.equal(code, 0);
-    assert.deepEqual(api.calls.map((c) => `${c.method} ${c.path}`), ["POST /database/query", "GET /config/auth"]);
+    assert.deepEqual(api.calls.map((c) => `${c.method} ${c.path}`), ["POST /database/query", "GET /config/auth", "POST /database/query"]);
     assert.ok(!api.calls.some((c) => c.method === "PATCH"), "a dry run never PATCHes");
     assert.equal(api.flags.invite_only_beta, false);
   });
@@ -567,5 +575,66 @@ describe("beta-flag-policy-sync — new flags OFF, retired flags out, anything t
     assert.equal(flagKindOf("RENT_BUDDY_ADMIN_ONLY_MODE"), "STOP");
     assert.equal(flagKindOf("invite_only_beta"), "CAPABILITY");
     assert.equal(flagKindOf("NOT_A_FLAG_ANYWHERE"), null);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The profiles client grant (migration 3740, PR #647; lane BETA2, 2026-10-07)
+// ─────────────────────────────────────────────────────────────────────────────
+describe("beta-configure step f — no tester account on a database where the anon key reaches profiles' personal columns", () => {
+  it("the boundary holds: PASSED, and the read is read-only SQL (no write verb)", async () => {
+    const api = stubApi({});
+    const { code, errors } = await run(api);
+    assert.equal(code, 0, errors.join("\n"));
+    const q = api.calls[5].body.query as string;
+    const code_ = q.replace(/'(?:[^']|'')*'/g, "''"); // string literals ('SELECT', 'UPDATE' privilege names) masked
+    assert.match(code_, /^SELECT /);
+    assert.ok(!code_.includes(";"), "one statement");
+    assert.doesNotMatch(code_, /\b(INSERT|UPDATE|DELETE|GRANT|REVOKE|ALTER|DROP|CREATE|TRUNCATE)\b/i, "step f only reads");
+  });
+
+  it("FAILS (exit 1) while anon holds TABLE-level SELECT on profiles — after sign-up was closed and the flags were set", async () => {
+    const api = stubApi({ profilesGrant: { profiles_exists: true, findings: ["anon holds TABLE-level SELECT", "anon can SELECT date_of_birth"] } });
+    const { code, errors } = await run(api);
+    assert.equal(code, 1);
+    const msg = errors.join("\n");
+    assert.match(msg, /NOT ready for tester accounts/);
+    assert.match(msg, /anon holds TABLE-level SELECT/);
+    assert.match(msg, /3740 \(PR #647\)/);
+    // the protective writes still landed: sign-up closed and the policy applied
+    assert.equal(api.auth.disable_signup, true);
+    assert.equal(api.flags.invite_only_beta, true);
+  });
+
+  it("FAILS when the read answers as a JSON string too (the query endpoint's other shape), and when profiles is absent", async () => {
+    const asString = stubApi({ profilesGrant: { profiles_exists: "t", findings: JSON.stringify(["authenticated holds TABLE-level UPDATE"]) } });
+    assert.equal((await run(asString)).code, 1);
+    const absent = stubApi({ profilesGrant: { profiles_exists: false, findings: [] } });
+    const r = await run(absent);
+    assert.equal(r.code, 1);
+    assert.match(r.errors.join("\n"), /does not exist/);
+  });
+
+  it("--dry-run reports the finding and still writes nothing", async () => {
+    const api = stubApi({ profilesGrant: { profiles_exists: true, findings: ["anon holds TABLE-level SELECT"] } });
+    const lines: string[] = [];
+    const code = await runBetaConfigure({
+      argv: ["--confirm=CONFIGURE-BETA", "--dry-run"], env: { SUPABASE_URL: BETA_URL, SUPABASE_PROJECT_TOKEN: "t" }, fetch: api.fetch,
+      policy: TINY_POLICY, population: TINY_POPULATION, log: (l) => lines.push(l), error: () => {},
+    });
+    assert.equal(code, 0);
+    assert.match(lines.join("\n"), /step f would FAIL .*anon holds TABLE-level SELECT/);
+    assert.ok(!api.calls.some((c) => c.method === "PATCH"));
+  });
+
+  it("the SQL names every personal column 3740 forbids, and asks both client roles for table-level SELECT and UPDATE", () => {
+    for (const c of PROFILES_NEVER_READ) assert.ok(PROFILES_CLIENT_GRANT_SQL.includes(`'${c}'`), c);
+    for (const c of ["date_of_birth", "phone_e164", "expo_push_token", "full_name"]) assert.ok((PROFILES_NEVER_READ as readonly string[]).includes(c), c);
+    assert.match(PROFILES_CLIENT_GRANT_SQL, /ARRAY\['anon', 'authenticated'\]::name\[\]/);
+    assert.match(PROFILES_CLIENT_GRANT_SQL, /has_table_privilege\(r, to_regclass\('public\.profiles'\), p\)/);
+    assert.match(PROFILES_CLIENT_GRANT_SQL, /ARRAY\['SELECT', 'UPDATE'\]/);
+    assert.match(PROFILES_CLIENT_GRANT_SQL, /has_column_privilege\(r, a\.attrelid, a\.attnum, 'SELECT'\)/);
+    assert.deepEqual(profilesGrantProblems([{ profiles_exists: true, findings: [] }]), []);
+    assert.equal(profilesGrantProblems([]).length, 1, "no row is not a pass");
   });
 });

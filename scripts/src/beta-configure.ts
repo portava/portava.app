@@ -20,9 +20,15 @@
  *      before any flag is written).
  *   d. flags — one transaction sets every row and audits each flip.
  *   e. read-back — every row equals its target, or exit 1.
+ *   f. the profiles client grant (migration 3740, PR #647) — READ-ONLY. Exit 1
+ *      while anon/authenticated hold TABLE-level SELECT/UPDATE on
+ *      public.profiles, or SELECT on a personal column (date_of_birth,
+ *      phone_e164, expo_push_token, full_name …). Steps c-e have already
+ *      closed sign-up and set the flags (both protective); the red run says the
+ *      database is NOT ready for tester accounts (runbook step 8).
  *
- *   --dry-run  does (a) and (b), reads the auth config, prints the plan, and
- *              writes nothing.
+ *   --dry-run  does (a) and (b), reads the auth config and the profiles grant,
+ *              prints the plan, and writes nothing.
  *
  * EXIT 0 configured (or planned) · 1 a request failed or a read-back differs ·
  *      2 refused before any write
@@ -35,6 +41,7 @@ import {
   BETA_AUTH_CONFIG,
   CONFIRMATION,
   FLAG_STATE_SQL,
+  PROFILES_CLIENT_GRANT_SQL,
   authConfigProblems,
   betaManagementClient,
   buildFlagApplySql,
@@ -44,6 +51,7 @@ import {
   loadFlagPolicy,
   parseFlagRows,
   planFlagApply,
+  profilesGrantProblems,
   seededFlagPopulation,
   type FetchLike,
   type FlagPolicy,
@@ -112,6 +120,8 @@ export async function runBetaConfigure(deps: ConfigureDeps): Promise<0 | 1 | 2> 
     if (dryRun) {
       const now = authConfigProblems(await api.getAuthConfig());
       log(now.length ? `  would change: ${now.join("; ")}` : "  already as required");
+      const grant = profilesGrantProblems(await api.query(PROFILES_CLIENT_GRANT_SQL));
+      log(grant.length ? `::warning::step f would FAIL — profiles client grant (3740): ${grant.join("; ")}` : "  profiles client grant: as 3740 leaves it");
       log("\nbeta-configure DRY RUN — nothing written.");
       return 0;
     }
@@ -135,10 +145,23 @@ export async function runBetaConfigure(deps: ConfigureDeps): Promise<0 | 1 | 2> 
     const problems = flagStateProblems(after, plan.target);
     if (problems.length > 0) return fail(`the flag read-back differs from the policy:\n  ${problems.join("\n  ")}`);
     log(`  ${after.length} rows equal the policy; ON: ${after.filter((r) => r.enabled).map((r) => r.flag).join(", ")}`);
+
+    // ── f. the profiles client grant (3740) ──────────────────────────────────
+    log("── f · profiles client grant (migration 3740; read-only)");
+    const grant = profilesGrantProblems(await api.query(PROFILES_CLIENT_GRANT_SQL));
+    if (grant.length > 0) {
+      return fail(
+        "configured (sign-up closed, flags at policy), but the database is NOT ready for tester accounts — " +
+          `the anon key can reach personal columns of public.profiles:\n  ${grant.join("\n  ")}\n` +
+          "Migration 3740 (PR #647) must be applied and its postcondition verified before runbook step 8. " +
+          "Rebuild beta from a main that includes it (beta-db.yml has no apply-pending mode), then re-dispatch this step.",
+      );
+    }
+    log("  no TABLE-level SELECT/UPDATE for anon or authenticated, and no SELECT on a personal column — 3740's boundary holds");
   } catch (err) {
     return fail((err as Error).message);
   }
-  log("\nbeta-configure PASSED — sign-up closed in Supabase Auth, redirects set, flags at policy, all read back.");
+  log("\nbeta-configure PASSED — sign-up closed in Supabase Auth, redirects set, flags at policy, all read back; profiles' column boundary (3740) holds.");
   return 0;
 }
 

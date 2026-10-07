@@ -27,6 +27,8 @@ interface World {
   watchExit: Record<number, number>;
   disableSignup: boolean;
   apiDeployed: boolean;
+  /** portava-beta's profiles table as PostgREST shows it to the anon key: absent (schema not built), open, or closed (3740). */
+  profiles: "absent" | "open" | "closed";
   dispatchFails?: boolean;
 }
 
@@ -80,7 +82,10 @@ function fakeFetch(w: World) {
     assert.equal(init.method, "GET");
     let status = 404;
     let body: unknown = { error: "not_found" };
-    if (url === BETA_AUTH_SETTINGS_URL) {
+    if (url.startsWith("https://emfpckykpzfturllshly.supabase.co/rest/v1/profiles?")) {
+      assert.ok(url.endsWith("&limit=0"));
+      [status, body] = w.profiles === "absent" ? [404, { code: "PGRST205" }] : w.profiles === "open" ? [200, []] : [401, { code: "42501" }];
+    } else if (url === BETA_AUTH_SETTINGS_URL) {
       if (init.headers.apikey === KEY) { status = 200; body = { disable_signup: w.disableSignup, external: { email: true } }; }
       else { status = 401; body = { message: "Invalid API key" }; }
     } else if (w.apiDeployed) {
@@ -107,6 +112,7 @@ const today = (): World => ({
   watchExit: {},
   disableSignup: false,
   apiDeployed: false,
+  profiles: "absent",
 });
 
 const isDispatch = (c: string[]) => c[0] === "workflow" && c[1] === "run";
@@ -119,16 +125,17 @@ describe("beta:status — read-only", () => {
     const f = fakeFetch(w);
     const gates = await betaStatus(g.exec, f.fetch, { publishableKey: KEY });
     const byId = Object.fromEntries(gates.map((x) => [x.id, x.state]));
-    assert.deepEqual(byId, { "0": "PASS", "1": "OPEN", "2": "OPEN", "3a": "OPEN", "3b": "OPEN", "4-6": "OPEN", "7": "OPEN", "8": "MANUAL", "9": "MANUAL" });
+    assert.deepEqual(byId, { "0": "PASS", "1": "OPEN", "2": "OPEN", "3a": "OPEN", "3b": "OPEN", "3c": "OPEN", "4-6": "OPEN", "7": "OPEN", "8": "MANUAL", "9": "MANUAL" });
     assert.ok(!g.calls.some(isDispatch), "status must never dispatch");
     assert.ok(g.calls.every((c) => c[0] === "api" || (c[0] === "run" && c[1] === "list")), JSON.stringify(g.calls));
     assert.match(formatGates(gates), new RegExp(`NEXT \\(gate 1\\): .*gh secret set ${TOKEN_SECRET} --env ci-nonprod-supabase`));
-    // the only credential sent anywhere is the public key, to portava-beta's settings endpoint
-    for (const u of f.urls) assert.equal("apikey" in u.headers, u.url === BETA_AUTH_SETTINGS_URL, u.url);
+    // the only credential sent anywhere is the public key, and only to portava-beta itself
+    for (const u of f.urls) assert.equal("apikey" in u.headers, u.url.startsWith("https://emfpckykpzfturllshly.supabase.co/"), u.url);
+    for (const u of f.urls) assert.ok(!("authorization" in u.headers) && !("Authorization" in u.headers), u.url);
   });
 
   it("a fully provisioned and deployed beta: every automatable gate PASSES", async () => {
-    const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [run(1, "success")], cfgRuns: [run(2, "success")], disableSignup: true, apiDeployed: true };
+    const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [run(1, "success")], cfgRuns: [run(2, "success")], disableSignup: true, apiDeployed: true, profiles: "closed" };
     const gates = await betaStatus(fakeGh(w).exec, fakeFetch(w).fetch, { publishableKey: KEY });
     assert.deepEqual(gates.filter((x) => x.state !== "PASS").map((x) => [x.id, x.state]), [["8", "MANUAL"], ["9", "MANUAL"]], formatGates(gates));
   });
@@ -139,6 +146,17 @@ describe("beta:status — read-only", () => {
     const g = gates.find((x) => x.id === "2b");
     assert.equal(g?.state, "OPEN");
     assert.match(String(g?.detail), /1 migration\(s\).*3821_payment_ledger\.sql/);
+  });
+
+  it("3740 gate: a built, configured, deployed beta whose anon key can read profiles' personal columns is OPEN at 3c, and testers wait for it", async () => {
+    const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [run(1, "success")], cfgRuns: [run(2, "success")], disableSignup: true, apiDeployed: true, profiles: "open" };
+    const gates = await betaStatus(fakeGh(w).exec, fakeFetch(w).fetch, { publishableKey: KEY });
+    const g = gates.find((x) => x.id === "3c");
+    assert.equal(g?.state, "OPEN");
+    assert.match(String(g?.detail), /READABLE by the anon key: date_of_birth, full_name, expo_push_token/);
+    assert.match(String(g?.next), /3740 \(PR #647\).*Create NO tester account/);
+    assert.match(String(gates.find((x) => x.id === "8")?.detail), /ONLY after gate 3c PASSES/);
+    assert.match(formatGates(gates), /NEXT \(gate 3c\)/);
   });
 
   it("an unreadable secret list is UNKNOWN, never OPEN or PASS; a wrong publishable key is OPEN", async () => {

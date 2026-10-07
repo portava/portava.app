@@ -198,6 +198,18 @@ export async function betaStatus(exec: Exec, fetchImpl: SmokeFetch, opts: { publ
 
   // Steps 4–7 — the beta API is deployed, and the read-only smoke passes against it.
   const smoke = await runBetaSmoke(base, fetchImpl, key ? { publishableKey: key } : {});
+
+  // Before step 8 — profiles' personal columns closed to the anon key (migration 3740, PR #647). The probe goes to
+  // portava-beta's PostgREST directly, so it answers before the API is deployed.
+  const grant = smoke.find((r) => r.name === "profiles personal columns closed to the anon key");
+  gates.push(
+    grant?.ok
+      ? { id: "3c", name: "profiles personal columns closed to the anon key (3740)", state: "PASS", detail: grant.detail }
+      : {
+          id: "3c", name: "profiles personal columns closed to the anon key (3740)", state: "OPEN", detail: grant?.detail ?? "not probed",
+          next: "migration 3740 (PR #647) must be in the chain beta is built from: merge it, (re)build beta (reset if already built), re-run beta:provision. Create NO tester account until this gate PASSES",
+        },
+  );
   const health = smoke.find((r) => r.name === "health");
   gates.push(
     health?.ok
@@ -210,12 +222,12 @@ export async function betaStatus(exec: Exec, fetchImpl: SmokeFetch, opts: { publ
   const failed = smoke.filter((r) => !r.ok);
   gates.push(
     failed.length === 0
-      ? { id: "7", name: "beta smoke (6 read-only checks)", state: "PASS", detail: "all checks pass" }
-      : { id: "7", name: "beta smoke (6 read-only checks)", state: "OPEN", detail: `${failed.length} failing: ${failed.map((r) => r.name).join("; ")}`, next: `pnpm -C scripts beta:smoke --base ${base}   (details per check)` },
+      ? { id: "7", name: "beta smoke (7 read-only checks)", state: "PASS", detail: "all checks pass" }
+      : { id: "7", name: "beta smoke (7 read-only checks)", state: "OPEN", detail: `${failed.length} failing: ${failed.map((r) => r.name).join("; ")}`, next: `pnpm -C scripts beta:smoke --base ${base}   (details per check)` },
   );
 
   // Steps 8–9 — not observable without the owner's credentials.
-  gates.push({ id: "8", name: "tester accounts created", state: "MANUAL", detail: "needs the beta project dashboard (Authentication → Users → Add user, Auto Confirm)" });
+  gates.push({ id: "8", name: "tester accounts created", state: "MANUAL", detail: "ONLY after gate 3c PASSES; needs the beta project dashboard (Authentication → Users → Add user, Auto Confirm)" });
   gates.push({ id: "9", name: "beta app built and distributed", state: "MANUAL", detail: "needs the Expo account: cd travel-buddy-standalone && eas build --profile beta --platform all (docs/eas-runbook.md)" });
   return gates;
 }

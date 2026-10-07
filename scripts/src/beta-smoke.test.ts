@@ -1,7 +1,7 @@
 /**
  * beta-smoke.test.ts — the beta smoke check against a STUBBED fetch.
  *
- * A healthy beta passes all six checks; each way a beta can be wrong fails
+ * A healthy beta passes all seven checks; each way a beta can be wrong fails
  * the check that names it; every request is a GET (the smoke never writes);
  * and the smoke refuses to run against production's origin.
  *
@@ -14,6 +14,7 @@ import { join } from "node:path";
 
 import {
   BETA_AUTH_SETTINGS_URL,
+  judgeProfilesProbe,
   LIVE_PLACES_REQUIREMENTS,
   NOT_CHECKED,
   betaPublishableKey,
@@ -22,11 +23,14 @@ import {
   smokeBaseRefusal,
   type SmokeFetch,
 } from "./beta-smoke.js";
-import { loadFlagPolicy, type FlagPolicy } from "./beta-config-core.js";
+import { PROFILES_NEVER_READ, loadFlagPolicy, type FlagPolicy } from "./beta-config-core.js";
 import { REPO_ROOT } from "./beta-db-core.js";
 
 const BASE = "https://portava-beta.replit.app";
 const AUTH = "/auth/v1/settings (portava-beta)";
+const REST = "https://emfpckykpzfturllshly.supabase.co/rest/v1/profiles?select=";
+/** PostgREST's answer for a column the anon key may not read (the 3740 boundary holds). */
+const DENIED = { status: 401, body: { code: "42501", message: "permission denied for table profiles" } };
 
 type Routes = Record<string, { status: number; body: unknown }>;
 
@@ -41,16 +45,20 @@ const HEALTHY: Routes = {
   "/api/verification/status": { status: 401, body: { error: "unauthenticated" } },
   "/api/feature-flags": { status: 200, body: { flags: POLICY_FLAGS } },
   [AUTH]: { status: 200, body: { disable_signup: true, external: { email: true, apple: false, google: false } } },
+  ...Object.fromEntries(PROFILES_NEVER_READ.map((c) => [`PROFILES:${c}`, DENIED])),
 };
 
 function stub(routes: Routes) {
   const calls: Array<{ method: string; url: string; headers: Record<string, string> }> = [];
   const fetch: SmokeFetch = async (url, init) => {
     calls.push({ method: init.method, url, headers: init.headers });
-    const path = url === BETA_AUTH_SETTINGS_URL ? AUTH : url.replace(BASE, "");
+    const path = url === BETA_AUTH_SETTINGS_URL ? AUTH
+      : url.startsWith(REST) ? `PROFILES:${decodeURIComponent(url.slice(REST.length).replace(/&limit=0$/, ""))}`
+      : url.replace(BASE, "");
+    if (path.startsWith("PROFILES:")) assert.ok(url.endsWith("&limit=0"), "a profiles probe must never ask for rows");
     let r = routes[path] ?? { status: 404, body: { error: "not_found" } };
-    // GoTrue answers 401 without the project's own publishable key.
-    if (path === AUTH && init.headers.apikey !== KEY) r = { status: 401, body: { message: "Invalid API key" } };
+    // GoTrue and PostgREST answer 401 without the project's own publishable key.
+    if ((path === AUTH || path.startsWith("PROFILES:")) && init.headers.apikey !== KEY) r = { status: 401, body: { message: "Invalid API key" } };
     return { status: r.status, text: async () => JSON.stringify(r.body) };
   };
   return { fetch, calls };
@@ -67,12 +75,14 @@ describe("beta-smoke", () => {
       ["Rent-a-Buddy booking stops engaged", true],
       ["feature flags match the beta policy", true],
       ["Supabase Auth sign-up closed", true],
+      ["profiles personal columns closed to the anon key", true],
     ], JSON.stringify(results));
     assert.ok(s.calls.every((c) => c.method === "GET"));
     // one GET per URL: checks 4 and 5 judge the same /api/feature-flags response
     assert.deepEqual(s.calls.map((c) => c.url), [
       `${BASE}/api/healthz`, `${BASE}/api/auth/signup-status`, `${BASE}/api/verification/status`, `${BASE}/api/feature-flags`,
       "https://emfpckykpzfturllshly.supabase.co/auth/v1/settings",
+      ...PROFILES_NEVER_READ.map((c) => `${REST}${c}&limit=0`),
     ]);
     // the only credential ever sent is the beta PUBLISHABLE key, to the beta project only
     for (const c of s.calls) {
@@ -85,6 +95,7 @@ describe("beta-smoke", () => {
   const STOPS = "Rent-a-Buddy booking stops engaged";
   const MATCH = "feature flags match the beta policy";
   const AUTH_CLOSED = "Supabase Auth sign-up closed";
+  const PROFILES_CLOSED = "profiles personal columns closed to the anon key";
   const flagsWith = (patch: Record<string, unknown>) => ({ status: 200, body: { flags: { ...POLICY_FLAGS, ...patch } } });
   const flagsWithout = (flag: string) => {
     const { [flag]: _gone, ...rest } = POLICY_FLAGS;
@@ -111,6 +122,11 @@ describe("beta-smoke", () => {
     [[AUTH_CLOSED], AUTH, { status: 200, body: { disable_signup: false, external: { email: true } } }],
     [[AUTH_CLOSED], AUTH, { status: 200, body: { external: { email: true } } }],
     [[AUTH_CLOSED], AUTH, { status: 500, body: { message: "upstream" } }],
+    // check 7 alone: the TABLE-level grant a baseline replay inherits (3740 not applied) makes a personal column readable
+    [[PROFILES_CLOSED], "PROFILES:date_of_birth", { status: 200, body: [] }],
+    [[PROFILES_CLOSED], "PROFILES:expo_push_token", { status: 200, body: [] }],
+    // …and a probe that cannot be judged (no table: the schema is not built) is not a pass
+    [[PROFILES_CLOSED], "PROFILES:full_name", { status: 404, body: { code: "PGRST205", message: "Could not find the table" } }],
   ];
   for (const [names, path, reply] of broken) {
     it(`FAILS ${names.map((n) => `"${n}"`).join(" + ")} when ${path} answers ${reply.status} ${JSON.stringify(reply.body).slice(0, 120)}`, async () => {
@@ -155,7 +171,7 @@ describe("beta-smoke", () => {
   it("a request that does not complete is a FAIL, not a skip", async () => {
     const fetch: SmokeFetch = async () => { throw new Error("ECONNREFUSED"); };
     const results = await runBetaSmoke(BASE, fetch);
-    assert.equal(results.length, 6);
+    assert.equal(results.length, 7);
     assert.ok(results.every((r) => !r.ok && /did not complete/.test(r.detail)));
   });
 
@@ -171,5 +187,21 @@ describe("beta-smoke", () => {
     assert.equal(NOT_CHECKED.length, 2);
     assert.match(NOT_CHECKED.join(" "), /identity-verification readiness/);
     assert.match(NOT_CHECKED.join(" "), /NODE_ENV=production/);
+  });
+});
+
+describe("beta-smoke check 7 — judging one PostgREST probe", () => {
+  it("permission denied (42501) and an absent column (42703) are closed; 200 is open; anything else is not judged", () => {
+    assert.equal(judgeProfilesProbe(401, { code: "42501" }), "closed");
+    assert.equal(judgeProfilesProbe(403, { code: "42501" }), "closed");
+    assert.equal(judgeProfilesProbe(400, { code: "42703" }), "closed");
+    assert.equal(judgeProfilesProbe(200, []), "open");
+    assert.match(judgeProfilesProbe(404, { code: "PGRST205" }), /cannot judge/);
+    assert.match(judgeProfilesProbe(401, { message: "Invalid API key" }), /cannot judge/, "a refused KEY is not a refused COLUMN");
+  });
+
+  it("an absent phone column (2142 not applied) does not fail the check", async () => {
+    const results = await runBetaSmoke(BASE, stub({ ...HEALTHY, "PROFILES:phone_e164": { status: 400, body: { code: "42703" } } }).fetch);
+    assert.ok(results.every((r) => r.ok), JSON.stringify(results.filter((r) => !r.ok)));
   });
 });

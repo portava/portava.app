@@ -349,6 +349,63 @@ export function authConfigProblems(got: unknown, want: AuthConfig = BETA_AUTH_CO
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// THE profiles CLIENT GRANT (migration 3740, PR #647) — verified before testers
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The baseline is a pg_dump: it records profiles' client ACL as COLUMN grants
+// (anon/authenticated may read 61 columns, never date_of_birth, full_name,
+// expo_push_token, phone_e164 …). Replayed onto a Supabase project, whose
+// default ACL already hands anon and authenticated ALL on every new table in
+// public (and scripts/src/beta-db-core.ts buildResetSql sets that default before
+// a rebuild), CREATE TABLE profiles inherits TABLE-level SELECT/UPDATE, which
+// covers every column. On such a database the PUBLIC anon key reads the
+// personal columns of every non-private profile. 3740 revokes the table-level
+// grants and re-issues the baseline's column lists; its own postcondition
+// proves the result. This read proves the property independently on beta, and
+// the configuration step fails (after configuring) while it does not hold:
+// no tester account may exist on a database where it does not.
+
+/** Personal or authority columns no client role may read (3740's v_never_read). */
+export const PROFILES_NEVER_READ = [
+  "date_of_birth", "full_name", "expo_push_token", "phone_e164", "phone_verified_at",
+  "trust_score", "safety_flags_count", "id_verified_at", "selfie_verified_at", "verification_method",
+] as const;
+
+/**
+ * One row: does public.profiles exist, and which client privileges over it break the boundary — a TABLE-level
+ * SELECT or UPDATE held by anon/authenticated (directly or through PUBLIC), or SELECT on a never-read column.
+ * OID forms of has_*_privilege, so a missing table yields NULL (no error) and the row still answers.
+ */
+export const PROFILES_CLIENT_GRANT_SQL =
+  "SELECT to_regclass('public.profiles') IS NOT NULL AS profiles_exists, (" +
+  "SELECT coalesce(json_agg(f ORDER BY f), '[]'::json) FROM (" +
+  "SELECT r::text || ' holds TABLE-level ' || p AS f" +
+  " FROM unnest(ARRAY['anon', 'authenticated']::name[]) AS r CROSS JOIN unnest(ARRAY['SELECT', 'UPDATE']) AS p" +
+  " WHERE has_table_privilege(r, to_regclass('public.profiles'), p)" +
+  " UNION ALL " +
+  "SELECT r::text || ' can SELECT ' || a.attname::text" +
+  " FROM unnest(ARRAY['anon', 'authenticated']::name[]) AS r CROSS JOIN pg_catalog.pg_attribute AS a" +
+  " WHERE a.attrelid = to_regclass('public.profiles') AND a.attnum > 0 AND NOT a.attisdropped" +
+  ` AND a.attname = ANY(ARRAY[${PROFILES_NEVER_READ.map((c) => `'${c}'`).join(", ")}]::name[])` +
+  " AND has_column_privilege(r, a.attrelid, a.attnum, 'SELECT')" +
+  ") AS s) AS findings";
+
+/** Problems from PROFILES_CLIENT_GRANT_SQL's row (empty = the 3740 boundary holds). */
+export function profilesGrantProblems(rows: ReadonlyArray<Record<string, unknown>>): string[] {
+  if (rows.length !== 1) return [`the profiles grant read returned ${rows.length} rows, expected 1`];
+  const r = rows[0];
+  const exists = r.profiles_exists === true || r.profiles_exists === "t" || r.profiles_exists === "true";
+  if (!exists) return ["public.profiles does not exist: the schema is not built, so the boundary cannot be verified"];
+  let findings: unknown = r.findings;
+  if (typeof r.findings === "string") {
+    const raw = r.findings;
+    try { findings = JSON.parse(raw); } catch { return [`unreadable findings: ${raw.slice(0, 200)}`]; }
+  }
+  if (!Array.isArray(findings) || findings.some((f) => typeof f !== "string")) return [`unexpected findings ${JSON.stringify(findings).slice(0, 200)}`];
+  return findings as string[];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // THE MANAGEMENT API CLIENT — injectable fetch; never reads the environment.
 // ─────────────────────────────────────────────────────────────────────────────
 
