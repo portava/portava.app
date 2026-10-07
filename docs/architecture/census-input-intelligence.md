@@ -6137,3 +6137,46 @@ No row moves. The headline is §38.4's, unchanged: of 373 rows, 297 BUILT-AND-CO
 * A fail-open flag read on an outcome-learning or memory-context gate, or a TypeScript flag read on the
   hinted serve.
 * A serve scoped by anything other than the session's user.
+
+## §40 — 2026-10-06 (mission lane R): the open Input Intelligence rows re-triaged from `main` after lane D closed; NO ROW MOVES
+
+Lane R took over this surface after #630 merged. It re-read every non-`C` row at `ca49bbd286` against the code on
+`main` (ledger in the mission scratchpad, `lane-r/triage.psv`, not in this repository). It changed no counted
+file of this census, ran nothing against any database, and read or flipped no flag.
+
+### 40.1 What the 76 open rows need
+
+| need | rows |
+| --- | --- |
+| an observation on a running deployment, a device or handset run, an on-device recognizer, or the production apply of 3780–3783 with its flags and disclosure approval | 26 |
+| another owner's surface (Discovery hours, verification and the search endpoint's missing relationship filter for G98/G116: lane C; Rent-a-Buddy eligibility: lane B; Telegraph composer: lane C) | 14 |
+| an owner decision (G141: does `caption` cover postcards and Memories) | 1 |
+| intended by OD-INPUT-6 (no paid typeahead provider in the initial release) | 4 |
+| a new migration (G229's query-completion storage) | 1 |
+| code this lane can build (G306's live-DB suite included, §40.2b) | 30 |
+
+### 40.2 One class corrected
+
+G212 was ledgered as an open owner decision. OD-INPUT-7 already decides it: local results show at once while
+slower ones load. What reverted the earlier build was engineering — impressions counted twice, and a local
+entity row that could be tapped before it was bound. It is ledgered as code.
+
+### 40.2b Two more corrections (lane R wave-1 verification, F8)
+
+- **G306 is code, not environment.** Its own red-criterion asks for a live-DB suite that emits a §44 event through the
+  installed sink and reads the row back, plus the table existing in production. The second clause is met. The first
+  is a CI live-DB-tier test, the same kind of need ledgered as code for census-layover L236/L295, so G306 is
+  ledgered as code (CI tier), not as an environment blocker.
+- **G75's evidence is stale.** It reads that `input_selection_history` and the `input_record_selection` RPC were ABSENT
+  from production on 2026-09-21. The 2026-09-22 capture holds both
+  (`artifacts/api-server/src/lib/capability/snapshots/20260922-production-schema.json:6295#input_selection_history`,
+  `artifacts/api-server/src/lib/capability/snapshots/20260922-production-schema.json:6395#input_record_selection`), and
+  `2258_input_selection_history` is in `production-applied-migrations.json`. G85's cell already says so. G75 stays
+  `W` for the reason its own ledger entry gives: no recorded selection has been read back on a running deployment.
+
+- NOT-GRADED: artifacts/api-server/src/lib/capability/snapshots/20260922-production-schema.json — §40.2b cites the production capture only to correct G75's stale evidence; the capture is the capability record's artifact, and G75's verdict rests on its own ledger entry, not on this file.
+
+### 40.3 Headline
+
+No row moves. The headline is §38.4's, unchanged: of 373 rows, 297 BUILT-AND-CORRECT, 52 BUILT-BUT-WRONG,
+20 NOT-BUILT, 4 CANNOT-VERIFY.

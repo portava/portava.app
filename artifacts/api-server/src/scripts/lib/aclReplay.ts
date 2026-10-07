@@ -51,7 +51,9 @@ export interface AclStatement {
   grantOptionOnly: boolean;
 }
 
-const LEAD = /(?:^|[;'$]|\b(?:begin|then|else|loop|do)\b)\s*$/i;
+// A literal is read as SQL only as EXECUTE's operand: a RAISE / COMMENT text
+// beginning with GRANT or REVOKE is not a statement (verifier F4, lane G #647).
+const LEAD = /(?:^|[;$]|\bexecute\s*'|\b(?:begin|then|else|loop|do)\b)\s*$/i;
 
 function splitTop(s: string): string[] {
   const out: string[] = [];
@@ -90,7 +92,7 @@ export function aclStatements(sql: string): AclStatement[] {
   const head = /\b(grant|revoke)\s+/gi;
   let h: RegExpExecArray | null;
   while ((h = head.exec(src)) !== null) {
-    if (!LEAD.test(src.slice(Math.max(0, h.index - 24), h.index))) continue;
+    if (!LEAD.test(src.slice(Math.max(0, h.index - 32), h.index))) continue;
     let i = h.index + h[0].length;
     let depth = 0;
     for (; i < src.length; i++) {

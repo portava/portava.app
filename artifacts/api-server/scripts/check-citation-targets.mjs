@@ -635,7 +635,19 @@ import {
  * insert the T-01 violator claim is about, so the pointer now carries its
  * claim rather than having slid onto unrelated code. Every other line of the
  * list is the same pointer at a shifted line. Same rule as above. */
-export const MAX_DEAD_TARGETS = 156;
+/* RATCHETED 2026-10-06 156 -> 155 on lane R (census-highlights-memories §AF.4,
+ * delta verifier N5 on eadbce2d2). Isolated by diffing --list against main at
+ * 9f00ae661: the one pointer that left the list is census-discovery.md:76's
+ * inherited `services/telegraph/shareables.ts:540`, which landed on "//" at
+ * main and had slid ALIVE onto an unrelated comment line in loadMemory when
+ * lane R's share-loader fixes shifted the file — the trap the 2026-10-03 note
+ * above describes. Its claim is "registers a loader for fifteen object
+ * families", so it was repointed by reading it, with an anchor, onto
+ * `const LOADERS`; the row's `:91` (the interface) and `:152` (the action
+ * vocabulary) had drifted the same way and were anchored onto their claims
+ * too. Every other line of the list is the same pointer at a shifted line.
+ * Same rule as above. */
+export const MAX_DEAD_TARGETS = 155;
 
 /** Pinned to a commit by its own declaration; its lines must not track HEAD. */
 const PINNED_DOCS = new Set([

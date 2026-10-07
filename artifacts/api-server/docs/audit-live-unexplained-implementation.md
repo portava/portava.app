@@ -297,7 +297,8 @@ migrations (no database contacted). Classes: **(a)** real excess the chain itsel
 
 | code | n | class and cause | state after this change |
 |---|---:|---|---|
-| EXCESS_PRIVILEGE | 388 | (a) nine post-baseline tables kept Supabase's default client DML (2720-2722, 2811; SELECT on 2951/2952) | `3740` revokes; `checkClientPrivilegeBoundary` rule 4 stops the next one |
+| EXCESS_PRIVILEGE | 356 | (a) seven post-baseline tables kept Supabase's default client DML (2720-2722, 2811) | `3740` revokes; `checkClientPrivilegeBoundary` rule 4 stops the next one |
+| EXCESS_PRIVILEGE | 32 | (a) client SELECT on `media_processing_attempts` / `media_asset_lifecycle_events` (2951/2952): 2955 kept it deliberately and its re-run postcondition pins it | Left as reported (lead ruling G-2 withdrawn, verifier F1) |
 | EXCESS_PRIVILEGE | 54 | (d) `profiles` table-level SELECT/UPDATE for anon/authenticated: the baseline replayed over Supabase's default ACL | `3740` restores the baseline's column ACL |
 | EXCESS_PRIVILEGE | 106 | (c) GRANTs with several targets (2780, 2794) or issued from a FOREACH loop (2762, 2763) | model fixed: `extractGrants`, `expandForeachLiteralLoops` |
 | POLICY_PREDICATE_DRIFT | 113 | (c) pre-baseline files (0026, 0080, 2033 …) read AFTER the baseline overwrote its production-captured predicates in the last-wins policy map (introduced when #564 removed the band) | model fixed: history is read before the baseline |
@@ -310,8 +311,8 @@ migrations (no database contacted). Classes: **(a)** real excess the chain itsel
 | DISPOSITION_STALE | 1 | (b) `post_media_moderation_ledger` is in the baseline and production but absent on portava-ci | OPEN |
 | STALE_LEDGER_ENTRY | 1 | (b) `extension:unaccent` is installed on production, not on portava-ci | OPEN |
 
-Replayed against the model on this branch: 237 findings are explained (106 + 113 + 17 + 1); the 442 (a)/(d)
-grant findings clear when `3740` is applied to portava-ci.
+Replayed against the model on this branch: 237 findings are explained (106 + 113 + 17 + 1); 410 of the
+442 (a)/(d) grant findings clear when `3740` is applied to portava-ci (the 32 media SELECT findings stay).
 
 ## Lane G wave 2 (2026-10-07): the open model items closed
 
@@ -324,4 +325,4 @@ Replayed against run 37608414616's findings (no database contacted), on top of t
 | Predicate comparison | `lib/predicateCanonical.ts`: both sides parsed with PostgreSQL's precedence and compared as trees (literal casts, IN/ANY, BETWEEN, `!=`, LIKE, implicit qualification resolved by scope, parenthesised JOIN groups, functions moved with SET SCHEMA); unparseable falls back to text | POLICY_PREDICATE_DRIFT: 171 of 173 explained (the other 2 are 3502's ledgered rows) |
 | REVOKE | `lib/aclReplay.ts`: GRANT and REVOKE replayed in apply order; a table a GRANT cannot be evaluated on keeps the union | same 106 grant findings explained; 3,758 client privileges the chain revokes would now be reported if a database still held them |
 
-Expected on the next run once 3740 is applied to portava-ci: the 28 CI-only drift findings (class (b)) and nothing the model misreads.
+Expected on the next run once 3740 is applied to portava-ci: the 28 CI-only drift findings (class (b)), the 32 media SELECT findings 2955 keeps deliberately (G-2 withdrawn), and anything the REVOKE replay now sees that a database still holds — which would be real drift, not model error.

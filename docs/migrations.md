@@ -4061,13 +4061,15 @@ description, and deletes the ledger row. Turning the flag off keeps the trail an
 442 client-role privileges on `portava-ci` that no migration grants. Privilege-only; no row, policy, flag
 or `service_role` privilege changes.
 
-**Part 1.** `REVOKE ALL … FROM PUBLIC, anon, authenticated` on nine post-baseline tables whose creating
+**Part 1.** `REVOKE ALL … FROM PUBLIC, anon, authenticated` on seven post-baseline tables whose creating
 migrations never revoked Supabase's default client DML: `highlight_resurfacing_preferences` (2720),
 `highlight_projection_policies` (2721), `highlight_sources` (2722), `message_edits`, `message_reactions`,
-`message_attachments`, `conversation_action_refs` (2811), and the SELECT 2955 had left on
-`media_processing_attempts` (2951) and `media_asset_lifecycle_events` (2952). No client tree reaches any of
-them (`src/test/clientGrantExcessBoundary.test.ts` P-1 enforces that premise). Production receives this
-part by construction: the same files under the same default ACL.
+`message_attachments`, `conversation_action_refs` (2811). No client tree reaches any of them
+(`src/test/clientGrantExcessBoundary.test.ts` P-1 enforces that premise). Each table is revoked only if it
+exists: production records 2720–2722 but not 2811, and an absent table is named in a NOTICE, never refused;
+the postcondition asserts every table that is present. The two media lifecycle tables (2951/2952) are NOT
+in Part 1: 2955 kept their client SELECT on purpose and its own postcondition, which `certify:migrations`
+re-runs on a full-chain build, pins it (verifier F1; lead ruling G-2 withdrawn).
 
 **Part 2.** `profiles`: revoke TABLE-level SELECT/UPDATE from `anon`/`authenticated` and re-grant the
 baseline's exact column lists (61 SELECT, 80 UPDATE). Any database built by replaying the baseline over
@@ -4075,13 +4077,42 @@ Supabase's default ACL — `portava-ci` (measured), the beta bootstrap (`scripts
 the local harness (`scripts/local-db/shim.sql`) — gives both roles table-level SELECT and UPDATE on
 `profiles`, which overrides the column grants: the anon key reads `date_of_birth`, `phone_e164`,
 `expo_push_token` and `full_name` of every non-private profile. Production is the dump's source and keeps
-the column ACL; there the part re-issues identical grants (the postcondition proves the end state either way).
+the column ACL; there the part re-issues identical grants. The postcondition pins NO MORE than the
+baseline's columns and no fewer than the ten the app reads, deliberately not the rest (verifier F5): the
+baseline's UPDATE list carries authority columns no trigger guards (`verified_at`, `trust_score`,
+`trust_label`, `verification_method`, `featured_count`), and the file that narrows them must not turn this
+one red.
 
-**Depends on** 2720, 2721, 2722, 2811, 2951, 2952, 2954 (the precondition refuses otherwise).
+**Depends on** 2720–2722 (present on every database this runs on); 2811's tables are revoked where present.
 **Rollback:** `db/rollback/2026-10-07-3740-client-grant-excess-boundary-rollback.sql` restores Part 1's
-pre-3740 grants (re-opening them) and deliberately does not restore Part 2's table-level grants, which no
-migration ever made. **Guard:** `checkClientPrivilegeBoundary.ts` rule 4 now fails CI on a post-baseline
-`CREATE TABLE` that no migration follows with a client-role REVOKE.
+pre-3740 grants on the tables that exist (re-opening them) and deliberately does not restore Part 2's
+table-level grants, which no migration ever made. **Guard:** `checkClientPrivilegeBoundary.ts` rule 4 fails
+CI on a post-baseline `CREATE TABLE` (or a DROP-and-re-CREATE) that no migration follows with a client-role
+REVOKE.
+
+## 2026-10-07 — `3741_trip_presence_current_security_invoker.sql`, written and NOT applied anywhere (lane G)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3741_trip_presence_current_security_invoker.sql` | **not applied** | **not applied** |
+
+`ALTER VIEW public.trip_presence_current SET (security_invoker = true)`. 2776 created the view without it
+and granted SELECT to `authenticated`, so the view read `trip_presence` with its owner's rights, past
+`trip_presence_select_crew`: any signed-in user could read every presence row of every trip, `private`
+ones included. Confirmed on production by a read-only catalog query (owner `postgres`, `reloptions` NULL; 0
+rows on 2026-10-07). Postcondition asserts the option, anon's lack of SELECT and RLS on `trip_presence`.
+**Rollback:** `db/rollback/2026-10-07-3741-trip-presence-current-security-invoker-rollback.sql` (re-opens the
+read; recovery only). **Guard:** `checkClientPrivilegeBoundary.ts` rule 5 fails CI on any view the chain
+leaves readable by `anon`/`authenticated` without `security_invoker`, PostGIS's `geometry_columns` /
+`geography_columns` the only exemptions.
+
+### Correction: 2776_trip_presence_freshness_and_ordering.sql
+
+Its comment above the grants reads "The view inherits trip_presence's RLS (it is not SECURITY DEFINER and the
+underlying table's policy applies)". That is wrong in PostgreSQL: a view without `security_invoker = true`
+checks the tables it reads with its OWNER's privileges, and the owner is not subject to row-level security
+on a table that does not `FORCE` it. 2776's view therefore bypassed `trip_presence`'s RLS until 3741. The
+correction lives here because 2776's bytes are applied and checksummed.
 
 ## Apply-order overrides
 

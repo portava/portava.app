@@ -4,11 +4,10 @@
 --
 -- WHAT 3740 DID
 -- =============
---   Part 1  REVOKE ALL ON nine tables FROM PUBLIC, anon, authenticated:
---           highlight_resurfacing_preferences, highlight_projection_policies,
---           highlight_sources, message_edits, message_reactions,
---           message_attachments, conversation_action_refs,
---           media_processing_attempts, media_asset_lifecycle_events.
+--   Part 1  REVOKE ALL FROM PUBLIC, anon, authenticated on whichever of seven
+--           tables existed: highlight_resurfacing_preferences,
+--           highlight_projection_policies, highlight_sources, message_edits,
+--           message_reactions, message_attachments, conversation_action_refs.
 --   Part 2  On profiles, REVOKE table-level SELECT and UPDATE from anon and
 --           authenticated and re-GRANT the baseline's column lists (61 SELECT,
 --           80 UPDATE columns).
@@ -17,9 +16,8 @@
 -- WHAT THIS ROLLBACK DOES
 -- =======================
 -- Restores Part 1 to the state the creating migrations left: anon and
--- authenticated hold SELECT, INSERT, UPDATE and DELETE on the seven tables
--- created by 2720/2721/2722/2811 (Supabase's default ACL), and SELECT only on
--- the two media tables (2955 had already taken INSERT/UPDATE/DELETE).
+-- authenticated hold SELECT, INSERT, UPDATE and DELETE (Supabase's default
+-- ACL) on each of the seven tables that exists.
 --
 -- ⚠ IT RE-OPENS WHAT 3740 CLOSED. Those grants are what lets the anonymous key
 -- read or write these tables the moment any permissive policy admits it. Use it
@@ -40,47 +38,25 @@
 BEGIN;
 
 DO $$
-DECLARE
-  v_names text;
+DECLARE t text;
 BEGIN
-  SELECT string_agg(t, ', ' ORDER BY t) INTO v_names
-    FROM unnest(ARRAY[
-      'highlight_resurfacing_preferences', 'highlight_projection_policies',
-      'highlight_sources', 'message_edits', 'message_reactions',
-      'message_attachments', 'conversation_action_refs',
-      'media_processing_attempts', 'media_asset_lifecycle_events']) AS t
-   WHERE to_regclass('public.' || t) IS NULL;
-  IF v_names IS NOT NULL THEN
-    RAISE EXCEPTION 'PRECONDITION FAILED (3740 rollback): % absent; this is not a database 3740 ran on.', v_names;
-  END IF;
+  FOREACH t IN ARRAY ARRAY['highlight_resurfacing_preferences', 'highlight_projection_policies', 'highlight_sources', 'message_edits', 'message_reactions', 'message_attachments', 'conversation_action_refs'] LOOP
+    IF to_regclass('public.' || t) IS NULL THEN
+      RAISE NOTICE '3740 rollback: public.% absent; nothing to restore.', t;
+    ELSE
+      EXECUTE format('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.%I TO anon, authenticated', t);
+    END IF;
+  END LOOP;
 END $$;
-
-GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE
-  public.highlight_resurfacing_preferences,
-  public.highlight_projection_policies,
-  public.highlight_sources,
-  public.message_edits,
-  public.message_reactions,
-  public.message_attachments,
-  public.conversation_action_refs
-TO anon, authenticated;
-GRANT SELECT ON TABLE
-  public.media_processing_attempts,
-  public.media_asset_lifecycle_events
-TO anon, authenticated;
 
 DELETE FROM public.schema_migration_ledger WHERE filename = '3740_client_grant_excess_boundary.sql';
 COMMIT;
 
 DO $post$
 BEGIN
-  IF NOT has_table_privilege('anon', 'public.message_edits', 'SELECT')
-     OR NOT has_table_privilege('authenticated', 'public.highlight_sources', 'INSERT')
-     OR NOT has_table_privilege('anon', 'public.media_processing_attempts', 'SELECT') THEN
+  IF NOT has_table_privilege('authenticated', 'public.highlight_sources', 'INSERT')
+     OR NOT has_table_privilege('anon', 'public.highlight_projection_policies', 'SELECT') THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3740 rollback): the pre-3740 client grants are not back.';
-  END IF;
-  IF has_table_privilege('anon', 'public.media_processing_attempts', 'INSERT') THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3740 rollback): a media write grant came back; 2955 had removed it.';
   END IF;
   IF EXISTS (SELECT 1 FROM public.schema_migration_ledger
               WHERE filename = '3740_client_grant_excess_boundary.sql') THEN

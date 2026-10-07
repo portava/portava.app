@@ -1317,3 +1317,17 @@ describe("replayAcl — the ACL the chain leaves, not the union of what it ever 
     assert.deepEqual([...r.unknowable], ["post_media"]);
   });
 });
+
+describe("extractGrants — GRANT-shaped text that is not a statement is not a grant (verifier F4)", () => {
+  it("a RAISE message or COMMENT text beginning with GRANT credits nothing; EXECUTE's literal operand still does", () => {
+    for (const sql of [
+      "DO $$ BEGIN RAISE NOTICE 'GRANT SELECT ON public.secret TO anon'; END $$;",
+      "COMMENT ON TABLE public.x IS 'GRANT SELECT ON public.secret TO anon, authenticated was never issued';",
+      "-- GRANT SELECT ON public.secret TO anon;\n/* GRANT SELECT ON public.secret TO authenticated; */",
+    ]) {
+      const g = extractGrants(sql);
+      assert.equal(g.tableGrants.size + g.columnGrants.size, 0, sql);
+    }
+    assert.ok(extractGrants("DO $$ BEGIN EXECUTE 'GRANT SELECT ON public.secret TO anon'; END $$;").tableGrants.has("secret.anon"));
+  });
+});

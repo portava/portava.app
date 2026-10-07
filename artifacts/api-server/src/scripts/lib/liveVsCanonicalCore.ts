@@ -905,8 +905,14 @@ export function extractColumnGrants(sql: string): Map<string, Set<string>> {
 const NON_TABLE_GRANT_TARGET =
   /^(?:function|procedure|routine|sequence|schema|database|domain|type|language|large\s+object|foreign|tablespace|parameter|all\s+(?:tables|sequences|functions|procedures|routines)\b)/i;
 
-/** Keywords after which a GRANT can begin a statement inside plpgsql or a migration. */
-const GRANT_STATEMENT_LEAD = /(?:^|[;'$]|\b(?:begin|then|else|loop|do)\b)\s*$/i;
+/**
+ * Where a GRANT can begin a statement: start of text, after `;`, a dollar
+ * quote, BEGIN/THEN/ELSE/LOOP/DO — or inside a string literal ONLY when that
+ * literal is EXECUTE's operand. A RAISE message or COMMENT text that happens
+ * to begin with GRANT is not a grant (verifier F4): crediting it would let a
+ * sentence explain away a real EXCESS_PRIVILEGE.
+ */
+const GRANT_STATEMENT_LEAD = /(?:^|[;$]|\bexecute\s*'|\b(?:begin|then|else|loop|do)\b)\s*$/i;
 
 /**
  * Split on commas at paren depth 0. Unlike splitTopLevel it is used on GRANT
@@ -965,9 +971,9 @@ function topLevelWord(s: string, word: string, from = 0): number {
  * plain text first.
  *
  * WHAT IT REFUSES TO READ. A GRANT is credited only where a statement can begin
- * (start of text, after `;`, an opening quote of an EXECUTE literal, a dollar
- * quote, or BEGIN/THEN/ELSE/LOOP/DO) — so "grant select on x to y" in COMMENT ON
- * prose is not a grant. A target still carrying a format placeholder (`%I`) is
+ * (start of text, after `;`, the opening quote of EXECUTE's literal operand, a
+ * dollar quote, or BEGIN/THEN/ELSE/LOOP/DO) — so a COMMENT or RAISE text, even
+ * one that begins with "GRANT …", is not a grant. A target still carrying a format placeholder (`%I`) is
  * skipped: what it names is decided at run time. REVOKE is not modelled here or
  * anywhere in this model (the model is a union of what the chain grants), so
  * this function can only ever EXPLAIN a privilege the chain's own text grants.
@@ -987,7 +993,7 @@ export function extractGrants(sql: string): {
   const headRe = /\bgrant\s+/gi;
   let h: RegExpExecArray | null;
   while ((h = headRe.exec(src)) !== null) {
-    if (!GRANT_STATEMENT_LEAD.test(src.slice(Math.max(0, h.index - 24), h.index))) continue;
+    if (!GRANT_STATEMENT_LEAD.test(src.slice(Math.max(0, h.index - 32), h.index))) continue;
 
     // The statement runs to the first `;` or `'` (the close of an EXECUTE
     // literal) at paren depth 0.
