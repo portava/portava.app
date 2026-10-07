@@ -1397,3 +1397,83 @@ describe("§15 Staleness (G104) — a parsed time window exempts it, through POS
     }
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §21 "Open Map" (census G134, lead ruling PR-D2-6) — the existing open_entity
+// action on an action row destined for the app's map, never a coordinate.
+//
+// MUTATION LOG (each applied, watched go RED, reverted, `git diff` clean):
+//   M1 gateway.ts: drop `if (openOnMap) suggestions.push(openOnMap);` → "global_search
+//      offers ONE 'Open on map'" RED.
+//   M2 searchActions.ts: admit hidden_gems → "never a gem, person or protected position" RED.
+//   M3 searchActions.ts: drop the coordsPrecision refusal → same case RED.
+//   M4 searchActions.ts: put lat/lng on the route → "no position on the wire" RED.
+//   M5 searchActions.ts: drop the SEARCH_ACTION_CONTEXTS gate → "only on a search bar" RED.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("§21 Open Map on the search bar (G134) — no new action type, no coordinate", () => {
+  it("global_search offers ONE 'Open on map' for the first place it may place exactly, as open_entity to the map", async () => {
+    setup({
+      discovery_places: [
+        { id: "p-one", name: "Lantern Cafe", city: "Hoi An",
+          blurb: null, image_url: null, header_image_source: null, image_source_type: null,
+          image_accuracy_status: null, category: "cafe", primary_category: "cafe",
+          lat: 15.8801, lng: 108.3380, canonical_location_id: null, created_at: "2026-01-01T00:00:00Z",
+          submitted_by: null, status: "active", saved_count: 0 },
+        { id: "p-two", name: "Lantern Bar", city: "Hoi An",
+          blurb: null, image_url: null, header_image_source: null, image_source_type: null,
+          image_accuracy_status: null, category: "bar", primary_category: "bar",
+          lat: 15.8802, lng: 108.3381, canonical_location_id: null, created_at: "2026-01-01T00:00:00Z",
+          submitted_by: null, status: "active", saved_count: 0 },
+      ],
+      blocks: [], user_privacy_settings: [], canonical_locations: [], profiles: [],
+    });
+    const r = await suggest({ context: "global_search", text: "lantern" });
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const maps = body.suggestions.filter((s: any) => s.type === "action" && s.label === "Open on map");
+    assert.equal(maps.length, 1, "at most one Open-on-map row");
+    const m = maps[0];
+    assert.equal(m.action.type, "open_entity", "an EXISTING §43 type (lead ruling PR-D2-6)");
+    assert.equal(m.action.entityType, "place");
+    assert.ok(m.destination.route.startsWith(`/map?focusId=${m.entityId}`));
+    assert.ok(m.destination.route.includes("entry=search"));
+  });
+
+  it("no position on the wire: the route names the entity, never its coordinates", async () => {
+    const { buildOpenOnMapRow } = await import("../lib/inputAssistance/searchActions.js");
+    const policy = (await import("../lib/inputAssistance/policyRegistry.js")).resolvePolicy("global_search")!;
+    const row = buildOpenOnMapRow(
+      result({ id: "p1", type: "places", title: "Han Market", metadata: { lat: 16.0678, lng: 108.2240 } }),
+      "global_search", policy, POLICY_VERSION,
+    )!;
+    assert.ok(row, "premise: a place the viewer may place exactly gets the row");
+    const wire = JSON.stringify(row);
+    assert.ok(!wire.includes("16.0678") && !wire.includes("108.224"), "no coordinate rides along");
+    assert.ok(!/[?&](lat|lng)=/.test(row.destination!.route), "and none on the route");
+  });
+
+  it("never a gem, person or protected position; never an event whose venue is withheld", async () => {
+    const { buildOpenOnMapRow } = await import("../lib/inputAssistance/searchActions.js");
+    const policy = (await import("../lib/inputAssistance/policyRegistry.js")).resolvePolicy("global_search")!;
+    const cases = [
+      result({ id: "g", type: "hidden_gems", title: "Steps", metadata: { lat: 16, lng: 108 } }),
+      result({ id: "u", type: "travelers", title: "Sam", metadata: { lat: 16, lng: 108 } }),
+      result({ id: "p", type: "places", title: "P", metadata: { lat: 16, lng: 108, coordsPrecision: "approximate" } }),
+      result({ id: "p2", type: "places", title: "P2", metadata: { lat: null, lng: null, coordsPrecision: "hidden" } }),
+      result({ id: "e", type: "events", title: "E", metadata: { lat: null, lng: null } }),
+    ];
+    for (const c of cases) assert.equal(buildOpenOnMapRow(c, "global_search", policy, POLICY_VERSION), null, c.id);
+    // CONTROL: an event whose venue this viewer may see is mappable.
+    assert.ok(buildOpenOnMapRow(result({ id: "e2", type: "events", title: "E2", metadata: { lat: 16, lng: 108 } }), "global_search", policy, POLICY_VERSION));
+  });
+
+  it("only on a search bar, and only under a policy that permits action rows", async () => {
+    const { buildOpenOnMapRow } = await import("../lib/inputAssistance/searchActions.js");
+    const { resolvePolicy } = await import("../lib/inputAssistance/policyRegistry.js");
+    const place = result({ id: "p1", type: "places", title: "Han Market", metadata: { lat: 16.06, lng: 108.22 } });
+    const gs = resolvePolicy("global_search")!;
+    assert.equal(buildOpenOnMapRow(place, "place_picker", { ...gs, context: "place_picker" }, POLICY_VERSION), null);
+    assert.equal(buildOpenOnMapRow(place, "global_search", { ...gs, allowedSuggestionTypes: gs.allowedSuggestionTypes.filter((t) => t !== "action") }, POLICY_VERSION), null);
+  });
+});

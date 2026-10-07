@@ -64,7 +64,7 @@ import {
   EMPTY_TASK_CONSTRAINT,
   type TaskConstraint,
 } from './taskContext';
-import { applyDiversity, applyImpersonationRisk } from './rankingSignals';
+import { applyDiversity, applyImpersonationRisk } from './rankingSignals'; import { buildOpenOnMapRow } from './searchActions';
 import { extractTemporal } from './semanticParser';
 import type { TemporalWindow } from './rankingSignals';
 import { buildAiAssistedWriting, isAiTextContext } from './aiWriting';
@@ -637,7 +637,7 @@ export async function generateSuggestions(
             )
           : new Map<string, CanonicalVenueBinding>();
 
-        const seenIds = new Set<string>();
+        const seenIds = new Set<string>(); let openOnMap: InputSuggestion | null = null; // §21 G134 (lead ruling PR-D2-6)
         dispatchTypes.forEach((t, idx) => {
           let items = perTypeResults[idx] ?? [];
           if (t === 'cities' && geoRes.rows.length > 0) {
@@ -645,7 +645,7 @@ export async function generateSuggestions(
           }
           for (const r of items) {
             if (seenIds.has(r.id)) continue;
-            seenIds.add(r.id);
+            seenIds.add(r.id); openOnMap ??= buildOpenOnMapRow(r, context, policy, POLICY_VERSION);
             suggestions.push(
               projectSearchResult(r, context, POLICY_VERSION, q, {
                 temporalWindow,
@@ -655,7 +655,7 @@ export async function generateSuggestions(
               }),
             );
           }
-        });
+        }); if (openOnMap) suggestions.push(openOnMap);
       } else noteEligibilityUnreadable(coverage);
       // else: fail-closed — no entity suggestions when eligibility is unknown.
     }
