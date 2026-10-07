@@ -64,7 +64,12 @@ describe("3603 rb_buddy_earnings_summary floors the commission on a real databas
   });
 
   it("Q1 the installed body floors the per-booking fee and no longer rounds it", () => {
-    const body = scalar(`SELECT pg_get_functiondef(to_regprocedure('${FN}'))`) ?? "";
+    // The WHOLE definition: pg_get_functiondef is multi-line, and scalar() returns
+    // only the first output line (the CREATE header): the FLOOR assertion could
+    // never hold and the ROUND one held vacuously — the defect CI's first run of
+    // this file found (Q2 and Q3, the behaviour, passed). exec() returns every line.
+    const body = exec(`SELECT pg_get_functiondef(to_regprocedure('${FN}'))`).join("\n");
+    assert.match(body, /^CREATE OR REPLACE FUNCTION public\.rb_buddy_earnings_summary\(/, "the definition was read");
     assert.match(body, /FLOOR\(COALESCE\(b\.total_usd, 0\)::numeric \* COALESCE\(p_platform_fee_pct, 0\) \* 100\) \/ 100/,
       "3603 is not the installed definition");
     assert.doesNotMatch(body, /ROUND\(COALESCE\(b\.total_usd/, "3530's / 2330's half-away rounding is still installed");
