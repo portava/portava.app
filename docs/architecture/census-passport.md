@@ -1089,7 +1089,7 @@ are not.
 | P42 | **Evidence false — see §14.2.** Compass is two of two; Discovery is zero of one and is the whole of what remains. Discovery's people path is not a ranker at all (`artifacts/api-server/src/lib/inputAssistance/searchCandidates.ts:553#.order("name", { ascending: true })` — an alphabetical name-match search that weights no interest term either way), so the clause binds on Discovery's CONTENT ranker, and that ranker is on an explicit owner hold: `docs/discovery/ROADMAP.md:222#RANKER WORK GOES ON EXPLICIT HOLD`, which `census-discovery.md` A18 grades `N — owner hold`. The blocker is an owner ruling, not a contended file. | W |
 | P45 | Confirmed unchanged at `artifacts/api-server/src/services/passport/PassportProjectionService.ts:1232#measuredValue(k)` and `artifacts/api-server/src/services/passport/PassportProjectionService.ts:1132#if (score >= 50) return "Established";`. §13.2's `basis` is live and reaches the trips variant (`artifacts/api-server/src/services/passport/PassportConsumerProjections.ts:789#basis: d.basis`). Re-measured: **`trust.domains` still has no client consumer at all** — a repo-wide grep over `travel-buddy-standalone/src` for `trustDomains` and `domains[` returns **0**, and `useTrustProjection.ts` still builds its own six rows from capability flags. D-WORD, plus a client surface. | W |
 | P50 | Confirmed unchanged and deliberately so: `artifacts/api-server/src/services/passport/PassportProjectionService.ts:2497#export function passportTrustConfidence`. `evidenceWeight` / `evidenceCount` / `confidenceBasis` reach the projection beside it and make the two 82s distinguishable; the BAND is still travel-derived, and because `confidence === "low"` is what selects the non-stigmatizing "New Traveler" copy (`artifacts/api-server/src/services/passport/PassportProjectionService.ts:1389#"New Traveler · Verified"`), recalibrating the band changes the word a person is shown. D-WORD. | W |
-| P59 | **Evidence false — see §14.2, and the correction strengthens the N.** Re-confirmed absent: `canProvideVisaBuddyService`, `VisaBuddy` and `visa_buddy` return **0** across the server and client trees, and `artifacts/api-server/src/services/passport/PassportProjectionService.ts:759#export function buildOwnerCapabilities` returns exactly six keys. Now pinned by `artifacts/api-server/src/test/passportProjection.test.ts:587#§11 capabilities — six built` so a seventh cannot arrive by accident. | N |
+| P59 | **Evidence false — see §14.2, and the correction strengthens the N.** Re-confirmed absent: `canProvideVisaBuddyService`, `VisaBuddy` and `visa_buddy` return **0** across the server and client trees, and `artifacts/api-server/src/services/passport/PassportProjectionService.ts:759#export function buildOwnerCapabilities` returns exactly six keys. Now pinned by `artifacts/api-server/src/test/passportProjection.test.ts:592#§11 capabilities — six built` so a seventh cannot arrive by accident. | N |
 | P61 | **Evidence false on Contributor — see §14.2. Ten of eleven, not nine.** PLACE is the only type with no representation, and re-executing it shows the gap is narrower than "no label": the column is already written (`artifacts/api-server/src/services/passport/PassportStampService.ts:146#place_id: placeId ?? null`), and **no caller anywhere passes `placeId`** — all five `createStamp` call sites (`routes/location.ts`, `routes/hiddenGems.ts`, `routes/geofence.ts`, `routes/safeReturn.ts`, `routes/airport.ts`) omit it. So Place needs a CHECK label (migration, owner) AND a rule for what earns one (product, D-STAMP); it does not need schema work. Pinned by `artifacts/api-server/src/test/passportStampTypeVocabulary.test.ts:202#Contributor exists, Place does not`. | W |
 | P66 | Unchanged and still undecidable statically. The perforated half re-confirmed at all four cited files. New evidence the earlier passes did not have, and it is NOT enough to close the row: three RENDERED premium stamps are committed at the repo root (`premium-test-epic.png`, `premium-test-common.png`, `premium-hero-raw.png`) and the epic one shows a gold metallic ring, a scalloped edge, a unique per-city motif and an "OPEN EDITION · EPIC" rarity band. They arrived as a side effect of an unrelated Discovery PR (`a745ba11b`), no code in the tree references them, and a repo-root PNG of unknown provenance is not a rendered screen of the shipped app. | ? |
 | P77 | **Evidence false — one of five, not two (§14.2).** Re-executed: `travel-buddy-standalone/src/components/MemoriesTab.tsx:769#const MEMORY_VIEW_TABS` (**superseded 2026-09-14 — see §17.6; the two-tab catalogue this cited is gone, the verdict is not**) still offers exactly two tabs. §13.5's sequencing reason holds and is now sharper: People is blocked on memory-participant visibility, which is live in this tree as another lane's in-flight work (`artifacts/api-server/src/services/memory/**`), and Trips / Places / Map are client surfaces in `travel-buddy-standalone/**`. No part of this row lies in this census's own paths. | W |
@@ -1154,7 +1154,7 @@ the integration owner, and the allowlist route would register a test that never 
 |---|---|---|
 | `artifacts/api-server/src/test/unifiedStamps.test.ts:253#§12 Contributor stamps reach the Passport` | 4 cases: a `place_contributor` award keeps its catalog label through the unified read, carries `contribution_earned`, does not collapse two tiers into one, and readV2 **still asks the database for `stamp_type`**. | Hard-coding `stampType: null` in `readV2` → cases 1 and 3 RED. **Dropping `stamp_type` from the `stamp_definitions(...)` SELECT did NOT turn the behavioural cases red** — this file's fake ignores the select string — which is why the fourth case reads the shipped source; that mutation turns THAT one RED. Recorded because it is exactly the shape of a test that cannot fail. |
 | `artifacts/api-server/src/test/passportStampTypeVocabulary.test.ts:202#Contributor exists, Place does not` | 3 cases: migration 0198 seeds three `place_contributor` definitions, a shipped worker awards them on thresholds, and `createStamp` still writes `place_id` — so P61's residue is a label plus a caller, not schema work. The third also trips if a `place` label ever appears, so the D-STAMP migration must come past an assertion that says to re-read this row. | Retyping 0198's gold tier → case 1 RED; renaming the worker's `definitionSlug` → case 2 RED; deleting `place_id: placeId ?? null` from the insert → case 3 RED. |
-| `artifacts/api-server/src/test/passportProjection.test.ts:587#§11 capabilities — six built` | 3 cases: `buildOwnerCapabilities` returns exactly the six §11 capabilities that gate something, `VISA_HELP` is still a live travel-scam family, and `entryRequirements`' curated-source disclaimer is intact — the two artefacts that make P59 a policy question. | Adding a seventh capability key → case 1 RED naming it; renaming the `VISA_HELP` family → case 2 RED; weakening the DISCLAIMER sentence → case 3 RED. |
+| `artifacts/api-server/src/test/passportProjection.test.ts:592#§11 capabilities — six built` | 3 cases: `buildOwnerCapabilities` returns exactly the six §11 capabilities that gate something, `VISA_HELP` is still a live travel-scam family, and `entryRequirements`' curated-source disclaimer is intact — the two artefacts that make P59 a policy question. | Adding a seventh capability key → case 1 RED naming it; renaming the `VISA_HELP` family → case 2 RED; weakening the DISCLAIMER sentence → case 3 RED. |
 
 Run: 1 616 passport/stamp assertions, 1 612 pass. The four failures are the pre-existing guard-refused
 `*SelfVerification` suites §3 already names (`assert-nonprod-supabase.sh` refuses without a sanctioned
@@ -2470,3 +2470,51 @@ Unchanged, and recounted rather than carried forward from §25:
 - Migration 2294 applied and `passport_event_share_enabled` flipped: event-Passport sharing stops
   being implementation-complete-and-dark, and §25.5's awaiting clause has to be re-read as a shipped
   surface the same day.
+
+## §29 — 2026-10-07 (lane M): five rows move on the proposed lead rulings D-41, D-83 and D-32; P61's rule is set and not built
+
+*Branch `claude/mission4-m-media-passport-map-20261007`, from `origin/main` `116ca4541f`.
+`head_commit` is NOT re-declared. Documentation of code and tests on this branch. Nothing was read
+from or written to any database.*
+
+**Authority, and its condition.** The owner delegated routine product decisions to the lead on
+2026-10-06. Lane M proposed rulings D-41, D-83, D-32 and D-84 in
+`docs/ops/lead-rulings-20261007-media.md`. Each takes effect only when the lead accepts that file
+before merge. **Every move below rests on that acceptance.** If a ruling is declined, its rows return
+to the verdicts §26.1 gave them.
+
+### 29.1 Row moves
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| P59 | **N** | **C** | **D-41: no Visa Buddy.** §11 is amended to six capabilities. The six are derived at `artifacts/api-server/src/services/passport/PassportProjectionService.ts:759#export function buildOwnerCapabilities(`, and each gates something that exists (this row's own body). **TESTED:** `artifacts/api-server/src/test/passportProjection.test.ts:602#it("buildOwnerCapabilities derives exactly the six` — now P59's acceptance test, not only its tripwire. A seventh key turns it red. The two artefacts that frame the "no" stay pinned in the same suite: `VISA_HELP` is a scam family, and the entry-requirements disclaimer stands. |
+| P159 | **W** | **C** | **D-83: the "deeper Experience Graph" is dropped as a separate surface.** On the Passport, §9 Intelligence is Travel DNA and the yearbook, as built. Travel DNA: `artifacts/api-server/src/services/passport/PassportTravelIdentityService.ts:548#export function filterTravelIdentityForViewer(` (P89). The yearbook: `artifacts/api-server/src/services/passport/PassportYearbookService.ts:655#export async function buildYearbook(`, served owner-private at `artifacts/api-server/src/routes/passport.ts:1663#router.get("/passport/:userId/yearbook"`. **TESTED:** `artifacts/api-server/src/test/passportYearbookRoute.test.ts:139#it("withholds another traveller's yearbook` (10 cases, all red when the route is removed) and `artifacts/api-server/src/test/passportTravelIdentity.test.ts:97#it("emits named Travel DNA traits`. |
+| P13 | **W** | **C** | **D-32: keep the document card.** The spec's travel hero with an overlapping portrait is withdrawn, so §3 asks for the shipped composition: a vertical spine (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:357#<View style={s.spine}>`) and a left-column avatar (`travel-buddy-standalone/src/components/passport/PassportIdentityCard.tsx:671#leftCol:`). **TESTED:** `travel-buddy-standalone/src/components/passport/__tests__/PassportRatifiedIdentity.decision.component.test.ts:216#it('keeps the vertical spine and the left-column avatar'`. Removing the spine turns it red. |
+| P128 | **W** | **C** | **D-32: the light paper identity, not dark-mode first.** The colour half was closed on 2026-09-14 (§15.3). The theme half is now ruled: one light theme (`travel-buddy-standalone/src/theme/passportTokens.ts:8#paper:        '#FFFFFF',`), and no Passport surface reads the device colour scheme. **TESTED:** `travel-buddy-standalone/src/components/passport/__tests__/PassportRatifiedIdentity.decision.component.test.ts:107#it('does not read the device colour scheme anywhere in the Passport surfaces'`. Adding `useColorScheme` to the card turns it red. |
+| P133 | **W** | **C** | **D-32: the two clauses §26.1 left open are withdrawn.** The overlapping portrait goes with P13, and restrained glass — "genuinely UNDECIDED" in §26.1 — is withdrawn too. Rounded cards and a cover image were already present (two of four). **TESTED:** the composition case cited on P13, and the new glass pin `travel-buddy-standalone/src/components/passport/__tests__/PassportRatifiedIdentity.decision.component.test.ts:251#it('no Passport surface uses a blur/glass material'`. A `BlurView` on the card turns it red. |
+
+The decision guard's header says it "does NOT make P13, P128 or P133 pass". It now carries a dated
+amendment saying that under D-32 its assertions ARE their acceptance tests. Its thrown messages still
+name the 2026-09-14 palette decision, which ruled the colour; D-32 extends it to layout and theme.
+
+### 29.2 Restated, not moved
+
+| ID | Was | Now | Why |
+| --- | --- | --- | --- |
+| P61 | **W** | **W** | **D-84 sets the rule:** a verified check-in (QR or geofence) at a canonical place earns a Place stamp. There is one per person per place, and none inside the person's protected zones. `PassportPrivacyGuard.guardStamp` keeps `place_id` from everyone but the owner. **NOT BUILT here.** 2880 (the `'place'` label) is staged and unapplied. The live unique index does not include `place_id`, so a place-keyed index migration is needed too. 2880's own ordering — pinned by `passportStampPlaceVocabulary.test.ts` — forbids the producer until the label is applied. Remaining: the index migration (lane M's band 3800–3819), then the producer behind a flag seeded FALSE. |
+
+### 29.3 Headline, restated from the rows
+
+**169 requirements · 163 BUILT-AND-CORRECT · 5 BUILT-BUT-WRONG · 0 NOT-BUILT · 1 CANNOT-VERIFY.**
+163 + 5 + 0 + 1 = 169. CONSTRUCTED 99.4 % (168 / 169) · CORRECT 96.4 % (163 / 169).
+
+| Measure | Value |
+| --- | --- |
+| BUILT-AND-CORRECT | 163 |
+| BUILT-BUT-WRONG | 5 |
+| NOT-BUILT | 0 |
+| CANNOT-VERIFY | 1 |
+
+Counted on this branch, from `main`'s 158 / 9 / 1 / 1. Lane L's §27–§28 (P50 and P154, on its own
+unmerged branch) are not in it. Merged together, the rows count 165 / 3 / 0 / 1, and the integrator
+restates the headline once.

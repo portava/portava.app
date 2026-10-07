@@ -2028,6 +2028,13 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "db/rollback/2026-09-27-3365-post-media-write-boundary-rollback.sql",
     "artifacts/api-server/src/test/db/pulseGeoTagsWriteBoundary.db.test.ts",
     "artifacts/api-server/src/test/db/postMediaWriteBoundary.db.test.ts",
+    // WIDENED 2026-10-07 by lane M (census-media §50): the MD79 producer and the suites §50.1 moves MD79, MD71 and MD77 on, and §50.2's MD269 (a) and §50.4's D-24c suites.
+    "artifacts/api-server/src/lib/postLocationDisclosureLifetime.ts",
+    "artifacts/api-server/src/test/mediaLocationDisclosureLifetime.test.ts",
+    "artifacts/api-server/src/test/mediaFreshnessNeverLive.test.ts",
+    "artifacts/api-server/src/test/mediaNoSocialExpiry.test.ts",
+    "artifacts/api-server/src/test/mediaPostMediaHoldD82.test.ts",
+    "artifacts/api-server/src/test/mediaBoostRestrictionD24c.test.ts",
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a
@@ -4708,6 +4715,10 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/app/(tabs)/ai.tsx",
     "app/(tabs)/passport.tsx",
     "app/(tabs)/ai.tsx",
+    // WIDENED 2026-10-07 by lane M (census-passport §29): the suites P159 moves on, and the ordering pin §29.2 names for P61.
+    "artifacts/api-server/src/test/passportYearbookRoute.test.ts",
+    "artifacts/api-server/src/test/passportTravelIdentity.test.ts",
+    "artifacts/api-server/src/test/passportStampPlaceVocabulary.test.ts",
   ],
 };
 

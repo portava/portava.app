@@ -364,7 +364,7 @@ exists in two fail-closed readers:
 `false`, with **no error and no log**, and is indistinguishable from "feature not built yet."
 `migrations/2300_phantom_feature_flag_rows.sql` is the recorded case: five such rows, including
 `PORTAVA_PUBLISHER_BOOST_ENABLED` and `PORTAVA_FEATURED_BOOST_ENABLED`, read by
-`services/ranking/MediaFeedRankingService.ts:888-896` and by `routes/mediaFeed.ts`, seeded by
+`services/ranking/MediaFeedRankingService.ts:897-905` and by `routes/mediaFeed.ts`, seeded by
 nothing in the canonical chain. `2300:49-58` is worth quoting because it decides a question this
 document will otherwise be asked: a seed for `PORTAVA_PUBLISHER_BOOST_ENABLED` *does* exist, in
 `artifacts/api-server/supabase/migrations/` — and **"a seed in a directory nothing runs is not a
