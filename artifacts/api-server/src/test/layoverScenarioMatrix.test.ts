@@ -151,12 +151,15 @@ describe("§21.1 L220 — 4h international, landside 'depending on airport model
   const intl = { flightType: "international" as const, immigrationRequired: true };
 
   /**
-   * THE AIRPORT MODEL CHANGES THE NUMBERS AT 4h AND NOT THE ANSWER. Both rungs
-   * refuse. That is the half of L220 that is NOT satisfied, and it is asserted
-   * rather than described: a test that only checked the curated airport would
-   * have reported the same "no" and told a reader nothing about the model.
+   * FOR THIS FILE'S TWO AIRPORT MODELS, AT THE INSTANT OF ARRIVAL AND WITH NO
+   * CORRIDOR, 4h refuses at both. The numbers still vary, which is what the case
+   * pins. (Restated 2026-10-06, lane R: this used to say the 4h verdict "does
+   * not yet vary". It does for the decision corpus' pair — 20 minutes after
+   * arrival, corridor permitted, the curated model answers `tight` and the
+   * generic one `no` — and `layoverScenarioL220.test.ts` pins that pair against
+   * §21.1. The assertions below are unchanged.)
    */
-  it("refuses at BOTH airport models at 4h — the verdict does not yet vary", () => {
+  it("with no corridor and the traveller at arrival, BOTH of this file's airport models refuse at 4h (the corpus pair that varies is layoverScenarioL220.test.ts)", () => {
     const curated = run(curatedAirport(), layover(4, intl));
     const generic = run(genericAirport(), layover(4, intl));
     assert.equal(curated.advice.verdict, "no");
@@ -187,14 +190,15 @@ describe("§21.1 L220 — 4h international, landside 'depending on airport model
   });
 
   /**
-   * THE OTHER HALF OF L220 IS "VISA ALLOWED", AND IT IS UNREPRESENTABLE. No
-   * field of a session or an airport carries entry permission (census L34, L48,
-   * L230), so the scenario cannot be parameterised on it and the advice cannot
-   * turn on it. What the engine does instead is tell the traveller it does not
-   * know — which is the honest shape of the gap, and is pinned here so the
-   * sentence cannot quietly disappear.
+   * ENTRY PERMISSION IS NOT A SESSION OR AIRPORT FIELD. It reaches the engine
+   * as an `EntryEligibility` beside them (census L48; `adviseLeaving`'s third
+   * argument), which is how the decision corpus parameterises "visa allowed".
+   * When no corridor is supplied, as here, the engine tells the traveller it
+   * does not know — pinned so the sentence cannot quietly disappear.
+   * (Restated 2026-10-06, lane R: this used to say the scenario "cannot be
+   * parameterised on it". The assertions below are unchanged.)
    */
-  it("cannot be parameterised on entry permission, and says so to the traveller", () => {
+  it("entry permission is not a SESSION field, and an unread corridor is disclosed to the traveller", () => {
     const { advice } = run(curatedAirport(), layover(5, intl));
     assert.ok(
       advice.unknowns.some((u) => /visa|transit-permit/i.test(u)),
