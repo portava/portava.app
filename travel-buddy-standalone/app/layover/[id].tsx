@@ -65,7 +65,7 @@ import { LayoverEndSheet } from '../../src/components/layover/LayoverEndSheet'; 
 import { useSafeReturnAbort } from '../../src/components/layover/useSafeReturnAbort';
 import { LayoverCompassCard } from '../../src/components/layover/LayoverCompassCard';
 import { LayoverFlightChangeCard } from '../../src/components/layover/LayoverFlightChangeCard';
-import { fmtClock } from '../../src/components/layover/layoverFormat'; import { cancelReturnAlerts, describeReturnAlerts, planReturnAlerts, syncReturnAlerts, type ReturnAlertStatus } from '../../src/components/layover/layoverReturnAlerts'; // census L41/L18/L99/L272 — the lead's 2026-10-06 delivery ruling (on this line so no line below moves)
+import { fmtClock } from '../../src/components/layover/layoverFormat'; import { RETURN_ALERT_LIVE_STATUSES, cancelReturnAlerts, describeReturnAlerts, planReturnAlerts, syncReturnAlerts, type ReturnAlertStatus } from '../../src/components/layover/layoverReturnAlerts'; // census L41/L18/L99/L272 — the lead's 2026-10-06 delivery ruling (on this line so no line below moves)
 import {
   cacheCertifiedDeadline,
   cachedDeadlineAsBundle,
@@ -467,7 +467,17 @@ export default function LayoverDashboardScreen() {
    */
   const certifiedDeadline = overview?.offlineBundle?.returnDeadline?.hardReturnTime ?? null;
   const syncAlerts = useCallback(async (): Promise<ReturnAlertStatus | null> => {
-    if (!id || !overview || !certifiedDeadline) return null;
+    if (!id || !overview) return null;
+    // An ENDED layover has no deadline to warn about (verifier F1, wave 2): the
+    // overview still serves the old bundle for a completed, cancelled or expired
+    // session, and opening it from history must not re-arm "Head back now" for
+    // a flight that has gone. Only the server's live states keep alerts.
+    if (!RETURN_ALERT_LIVE_STATUSES.has(String(overview.session.status))) {
+      await cancelReturnAlerts(id);
+      setReturnAlerts(null);
+      return null;
+    }
+    if (!certifiedDeadline) return null;
     const status = await syncReturnAlerts(planReturnAlerts({
       sessionId: id,
       hardReturnTime: certifiedDeadline,

@@ -146,6 +146,13 @@ async function readStored(deps: ReturnAlertDeps, sessionId: string): Promise<Sto
   }
 }
 
+/**
+ * The session states a return alert may be armed for — the server's
+ * LAYOVER_LIVE_SESSION_STATUSES (services/airport/LayoverSessionService.ts).
+ * A completed, cancelled or expired layover cancels its alerts.
+ */
+export const RETURN_ALERT_LIVE_STATUSES: ReadonlySet<string> = new Set(['active', 'returning']);
+
 /** Cancel every alert this module stored for the session, and forget them. */
 export async function cancelReturnAlerts(sessionId: string, deps: ReturnAlertDeps = defaultReturnAlertDeps): Promise<void> {
   const stored = await readStored(deps, sessionId);
@@ -202,7 +209,15 @@ export async function syncReturnAlerts(
     ids,
     alerts: plan.alerts.map((a) => ({ rung: a.rung, at: a.at })),
   };
-  try { await deps.write(returnAlertsKey(plan.sessionId), JSON.stringify(record)); } catch { /* the alerts still fire; a later mount reschedules */ }
+  try {
+    await deps.write(returnAlertsKey(plan.sessionId), JSON.stringify(record));
+  } catch {
+    // Alerts this device cannot record are alerts it cannot cancel or move: the
+    // next mount would schedule a SECOND pair beside them (verifier minor 10).
+    // Undo them and say so, as a half-scheduled set is undone above.
+    for (const done of ids) await deps.cancel(done);
+    return { state: 'unavailable' };
+  }
   return { state: 'scheduled', alerts: record.alerts, rescheduled: stored !== null };
 }
 

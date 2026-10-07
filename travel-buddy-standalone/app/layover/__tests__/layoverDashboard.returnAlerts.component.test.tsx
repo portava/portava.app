@@ -14,6 +14,7 @@ import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import LayoverDashboardScreen from '../[id].tsx';
+import { returnAlertsKey } from '../../../src/components/layover/layoverReturnAlerts';
 
 // NOTE: intentional stub — requireActual pulls native-module internals that are
 // not safe under jest.
@@ -223,4 +224,28 @@ describe('return alerts on the dashboard', () => {
       expect(ids).toEqual(expect.arrayContaining(['notif-1', 'notif-2']));
     });
   });
+
+  for (const ended of ['completed', 'cancelled', 'expired']) {
+    it(`an ENDED layover (${ended}) re-arms nothing and cancels the alerts an earlier mount left (verifier F1)`, async () => {
+      notifications.getPermissionsAsync.mockResolvedValue({ granted: true, status: 'granted' });
+      notifications.scheduleLocalNotificationAt.mockClear();
+      notifications.cancelScheduledNotification.mockClear();
+      await AsyncStorage.clear();
+      await AsyncStorage.setItem(returnAlertsKey('sess-1'), JSON.stringify({
+        version: 1, sessionId: 'sess-1', hardReturnTime: HARD_RETURN, ids: ['old-1', 'old-2'],
+        alerts: [{ rung: 'RETURN_SOON', at: new Date(Date.parse(HARD_RETURN) - 30 * 60_000).toISOString() }, { rung: 'RETURN_NOW', at: HARD_RETURN }],
+      }));
+      (global as any).__bundle = bundle();
+      const body = overviewBody(undefined);
+      (global as any).__overview = { ...body, session: { ...body.session, status: ended } };
+      await render(<LayoverDashboardScreen />);
+      await waitFor(() => {
+        const ids = notifications.cancelScheduledNotification.mock.calls.map((c: [string | null]) => c[0]);
+        expect(ids).toEqual(expect.arrayContaining(['old-1', 'old-2']));
+      });
+      expect(notifications.scheduleLocalNotificationAt).not.toHaveBeenCalled();
+      expect(await AsyncStorage.getItem(returnAlertsKey('sess-1'))).toBeNull();
+      expect(screen.queryByTestId('layover-return-alerts-text')).toBeNull();
+    });
+  }
 });

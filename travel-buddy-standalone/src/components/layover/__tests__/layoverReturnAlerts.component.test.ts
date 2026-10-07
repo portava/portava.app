@@ -25,7 +25,7 @@ const MIN = 60_000;
 const NOW = Date.parse('2026-10-06T10:00:00.000Z');
 const DEADLINE = new Date(NOW + 3 * 60 * MIN).toISOString(); // 13:00Z
 
-function fakeDeps(perms: { granted?: boolean; status?: string }, opts: { failOn?: number } = {}) {
+function fakeDeps(perms: { granted?: boolean; status?: string }, opts: { failOn?: number; failWrite?: boolean } = {}) {
   const store = new Map<string, string>();
   const scheduled = new Map<string, { at: string; title: string; body: string }>();
   const cancelled: string[] = [];
@@ -41,7 +41,7 @@ function fakeDeps(perms: { granted?: boolean; status?: string }, opts: { failOn?
     },
     cancel: async (id) => { cancelled.push(id); scheduled.delete(id); },
     read: async (k) => store.get(k) ?? null,
-    write: async (k, v) => { store.set(k, v); },
+    write: async (k, v) => { if (opts.failWrite) throw new Error('disk full'); store.set(k, v); },
     remove: async (k) => { store.delete(k); },
   };
   return { deps, store, scheduled, cancelled };
@@ -139,6 +139,13 @@ describe('syncReturnAlerts — what the phone ends up holding', () => {
     expect(f.cancelled).toEqual(['notif-1']);
     expect(f.scheduled.size).toBe(0);
     expect(f.store.size).toBe(0);
+  });
+
+  it('alerts the device cannot RECORD are undone, so a later mount cannot stack a second pair (verifier minor 10)', async () => {
+    const f = fakeDeps({ granted: true }, { failWrite: true });
+    expect(await syncReturnAlerts(plan(), f.deps)).toEqual({ state: 'unavailable' });
+    expect(f.cancelled).toEqual(['notif-1', 'notif-2']);
+    expect(f.scheduled.size).toBe(0);
   });
 
   it('once the deadline has passed, stored alerts are cancelled and nothing new is set', async () => {
