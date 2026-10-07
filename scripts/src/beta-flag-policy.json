@@ -2086,6 +2086,13 @@
       ]
     },
     {
+      "flag": "sensing_consent_split_enabled",
+      "kind": "CAPABILITY",
+      "enabled": false,
+      "reason": "OFF: the split sensing consent (OD-MAP-6, migration 3703) stays off on beta until its consent flow and drafted words are reviewed there (wording pending legal review; census-sensing §33); with it off nobody can grant, and withdrawal still works.",
+      "evidence": []
+    },
+    {
       "flag": "sensing_presence_context_enabled",
       "kind": "CAPABILITY",
       "enabled": false,
