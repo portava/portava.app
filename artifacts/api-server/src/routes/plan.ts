@@ -8,7 +8,7 @@ import { Router } from "express";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { requireUser, isAcceptedTripMember, canEditPlan, sendError } from "../lib/http.js"; import { refuseTripActionIfRestricted } from "../lib/tripTrustGate.js"; import { getServiceClient as tripGateClient } from "../lib/supabase.js";
-import { asyncHandler } from "../lib/asyncHandler.js";
+import { asyncHandler } from "../lib/asyncHandler.js"; import { findVisibleSourcedPlanItem } from "../server/trips/privateAnchorShares.js"; // census-trips §87.3 (D-65)
 import { isMissingColumnError } from "../lib/capability/schemaCapability.js";
 import {
   tripKernelClient,
@@ -68,14 +68,9 @@ router.post("/meetups/:meetupId/add-to-trip-plan", asyncHandler(async (req, res)
   // unreadable trip_plan_items as "not added yet" and went on to ADD_PLAN —
   // putting the same meetup into the trip timeline twice for every member,
   // which no one can tell apart from a real second entry.
-  const { data: existing, error: existingErr } = await client
-    .from("trip_plan_items")
-    .select("id")
-    .eq("trip_id", tripId)
-    .eq("source_type", "meetup")
-    .eq("source_id", meetupId)
-    .is("removed_at", null)
-    .maybeSingle();
+  // Lead ruling D-65 (census-trips §87.3): only an item this caller may see is a duplicate — another member's
+  // PRIVATE item for this meetup is theirs alone, and a 409 naming it would say where they privately plan to be.
+  const { item: existing, error: existingErr } = await findVisibleSourcedPlanItem(client, tripId, user.id, "meetup", meetupId);
   if (existingErr) {
     req.log.error({ err: existingErr, tripId, meetupId }, "meetup plan duplicate check failed — refusing to add");
     sendError(res, "db_error", existingErr.message);
@@ -183,14 +178,8 @@ router.post("/places/:placeId/add-to-trip-plan", asyncHandler(async (req, res) =
   // Duplicate guard — see the meetup route above for why `error` must be bound:
   // an unreadable trip_plan_items otherwise reads as "not added yet" and the
   // ADD_PLAN below puts the same place into the trip timeline a second time.
-  const { data: existing, error: existingErr } = await client
-    .from("trip_plan_items")
-    .select("id")
-    .eq("trip_id", tripId)
-    .eq("source_type", "place")
-    .eq("source_id", placeId)
-    .is("removed_at", null)
-    .maybeSingle();
+  // Lead ruling D-65 (census-trips §87.3): a duplicate is an item this caller may see — see the meetup route.
+  const { item: existing, error: existingErr } = await findVisibleSourcedPlanItem(client, tripId, user.id, "place", placeId);
   if (existingErr) {
     req.log.error({ err: existingErr, tripId, placeId }, "place plan duplicate check failed — refusing to add");
     sendError(res, "db_error", existingErr.message);

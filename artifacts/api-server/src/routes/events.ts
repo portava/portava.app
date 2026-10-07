@@ -185,7 +185,7 @@ import { randomUUID } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { requireUser, sendError, type ApiErrorCode } from "../lib/http.js";
-import { getServiceClient } from "../lib/supabase.js";
+import { getServiceClient } from "../lib/supabase.js"; import { findVisibleSourcedPlanItem } from "../server/trips/privateAnchorShares.js"; // census-trips §87.3 (D-65)
 import { logger } from "../lib/logger.js";
 import { detectAndStoreLanguage, invalidateContentTranslations } from "../services/contentTranslation.js";
 import { nameVisibilitySet, sanitizeIdentity } from "../lib/publicIdentity.js";
@@ -6417,9 +6417,9 @@ router.post("/events/:id/add-to-trip", async (req, res) => {
   // `{ data: null }` — identical to "not in the plan" — so treating the failure
   // as "not present" adds the event to the trip twice. Refuse instead: the add
   // is retryable and the duplicate is not undoable from this route.
-  const { data: existingItem, error: existingItemErr } = await sc.from("trip_plan_items").select("id")
-    .eq("trip_id", tripId).eq("source_type", "event").eq("source_id", id)
-    .is("removed_at", null).maybeSingle();
+  // Lead ruling D-65 (census-trips §87.3): only an item this caller may see is "already added" — another member's
+  // PRIVATE item for this event is theirs alone (its id included), so the caller's own item is added instead.
+  const { item: existingItem, error: existingItemErr } = await findVisibleSourcedPlanItem(sc, tripId, user.id, "event", id);
   if (existingItemErr) {
     req.log.error({ err: existingItemErr, tripId, eventId: id }, "add-to-trip: duplicate check unavailable");
     sendError(res, "degraded_unavailable", "We could not check whether this event is already in the trip. Please try again shortly.");

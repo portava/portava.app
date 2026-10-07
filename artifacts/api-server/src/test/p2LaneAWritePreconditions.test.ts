@@ -313,6 +313,7 @@ describe("POST /trips/:tripId/plan/items — the duplicate guard is a write prec
         trip_plan_items: [{
           id: "item-1", trip_id: TRIP, source_type: "place",
           source_id: ITEM.sourceId, removed_at: null,
+          creator_id: ME, location_is_private: true, // census-trips §87.3 (D-65): the caller's own item — one they may see
         }],
       },
       failOn: only("trip_plan_items"),
@@ -336,6 +337,7 @@ describe("POST /trips/:tripId/plan/items — the duplicate guard is a write prec
         trip_plan_items: [{
           id: "item-1", trip_id: TRIP, source_type: "place",
           source_id: ITEM.sourceId, removed_at: null,
+          creator_id: ME, location_is_private: true, // census-trips §87.3 (D-65): the caller's own item — one they may see
         }],
       },
     });

@@ -253,3 +253,27 @@ export async function withheldPlanItemStopIds(
   }
   return out;
 }
+
+/**
+ * Lead ruling D-65 at an add-to-plan door's DUPLICATE GUARD (census-trips §87.3).
+ * Of the live plan items on `tripId` carrying one source, the first the viewer may
+ * see — public, their own, or shared with them while sharing is on — else null.
+ * Another member's PRIVATE item is owner-only, its source id included, so it is not
+ * "already in your plan" for this viewer: a refusal naming it would say where that
+ * member privately plans to be. The same rule as lane L's Compass proposal confirm.
+ * `error` is the read's own error, for the caller to refuse on (never "no duplicate").
+ */
+export async function findVisibleSourcedPlanItem(
+  sc: SupabaseClient, tripId: string, viewerId: string, sourceType: string, sourceId: string,
+): Promise<{ error: { message: string } | null; item: { id: string } | null }> {
+  const { data, error } = await sc.from("trip_plan_items")
+    .select("id, creator_id, location_is_private")
+    .eq("trip_id", tripId).eq("source_type", sourceType).eq("source_id", sourceId)
+    .is("removed_at", null).limit(50);
+  if (error) return { error, item: null };
+  const rows = (data ?? []) as Array<PlanRowLike & { id: string }>;
+  if (rows.length === 0) return { error: null, item: null };
+  const access = await planItemAccessFor(sc, tripId, viewerId);
+  const seen = rows.find((r) => canSeePlanItemLocation(access, r));
+  return { error: null, item: seen ? { id: String(seen.id) } : null };
+}

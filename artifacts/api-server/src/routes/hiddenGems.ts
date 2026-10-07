@@ -33,7 +33,7 @@ import { Router } from "express";
 import { randomUUID } from "node:crypto"; import { recordGemContributionSignal, recordGemAcceptedSignal, recordGemArrivalIfAttributable } from "../lib/mediaAnalytics.js";
 import { z } from "zod";
 import { requireUser, sendError, canEditPlan, optionalUserFromToken } from "../lib/http.js"; import { guardTelegraphThreadWrite, sendThreadWriteRefusal } from "../lib/telegraphThreadWrite.js";
-import { getServiceClient } from "../lib/supabase.js"; import { canSeePlanItemLocation, PLAN_ITEM_PRIVACY_COLUMNS } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor } from "../server/trips/privateAnchorShares.js"; import { refuseIfTrustRestricted } from "../lib/discoveryTrustGate.js"; import { refuseTripActionIfRestricted } from "../lib/tripTrustGate.js";
+import { getServiceClient } from "../lib/supabase.js"; import { canSeePlanItemLocation, PLAN_ITEM_PRIVACY_COLUMNS } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, findVisibleSourcedPlanItem } from "../server/trips/privateAnchorShares.js"; import { refuseIfTrustRestricted } from "../lib/discoveryTrustGate.js"; import { refuseTripActionIfRestricted } from "../lib/tripTrustGate.js";
 import {
   tripKernelClient,
   readCommandEnvelope,
@@ -1282,14 +1282,9 @@ router.post("/hidden-gems/:id/plan", async (req, res) => {
     // the ADD_PLAN below — which is exactly the 23505-sanitized-to-
     // "A database error occurred" outcome the 409 above exists to prevent, and
     // on the kernel path a genuine duplicate gem row in the trip plan.
-    const { data: existing, error: existingErr } = await client
-      .from("trip_plan_items")
-      .select("id")
-      .eq("trip_id", tripId)
-      .eq("source_type", "hidden_gem")
-      .eq("source_id", (gem as any).id)
-      .is("removed_at", null)
-      .maybeSingle();
+    // Lead ruling D-65 (census-trips §87.3): only an item this caller may see is a duplicate — another member's
+    // PRIVATE item for this gem is theirs alone, and a 409 naming it would say where they privately plan to be.
+    const { item: existing, error: existingErr } = await findVisibleSourcedPlanItem(client, tripId, user.id, "hidden_gem", String((gem as any).id));
     if (existingErr) {
       req.log.error({ err: existingErr, tripId }, "hidden gem plan duplicate check failed — refusing to add");
       sendError(res, "db_error", existingErr.message);

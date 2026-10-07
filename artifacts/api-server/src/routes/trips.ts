@@ -25,7 +25,7 @@ import {
 } from "../domain/trips/policies/tripPlanPrivacy.js";
 import { isMissingColumnError } from "../lib/capability/schemaCapability.js";
 import { sendTripRefusal } from "../domain/trips/contracts/tripReasonCodes.js";
-import { toCamel, readPlanItemsInOrder } from "./plan.js"; import { withholdPrivatePlanItems, redactWithheldPlanItem } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, privateItemEditRefusal, clearAnchorGrantsForItem, clearAnchorGrantsForMember } from "../server/trips/privateAnchorShares.js"; import { refuseTripActionIfRestricted, refuseIfInviterCannotHost, INVITE_UNCHECKABLE_MESSAGE } from "../lib/tripTrustGate.js"; import { tripRetainedRecordWriteGuard } from "../lib/tripRetainedRecordGuard.js";
+import { toCamel, readPlanItemsInOrder } from "./plan.js"; import { withholdPrivatePlanItems, redactWithheldPlanItem } from "../domain/trips/policies/privateAnchorAccess.js"; import { planItemAccessFor, privateItemEditRefusal, clearAnchorGrantsForItem, clearAnchorGrantsForMember, findVisibleSourcedPlanItem } from "../server/trips/privateAnchorShares.js"; import { refuseTripActionIfRestricted, refuseIfInviterCannotHost, INVITE_UNCHECKABLE_MESSAGE } from "../lib/tripTrustGate.js"; import { tripRetainedRecordWriteGuard } from "../lib/tripRetainedRecordGuard.js";
 import { logTripActivity, findTripActivityByKey } from "../domain/trips/events/tripActivityLog.js";
 import { syncTripChatMembers } from "../lib/chatSync.js";
 import { getRestrictionState } from "../services/trust/TrustRestrictionService.js"; import { refuseIfTrustRestricted } from "../lib/discoveryTrustGate.js";
@@ -1841,14 +1841,9 @@ router.post("/trips/:tripId/plan/items", async (req, res) => {
     // trip_plan_items resolves as `{ data: null }` — the same shape as "no
     // duplicate" — so ignoring `error` turns a retry into a second copy of the
     // same sourced item in the itinerary. Refuse; the add is safe to retry.
-    const { data: dup, error: dupErr } = await client
-      .from("trip_plan_items")
-      .select("id")
-      .eq("trip_id", tripId)
-      .eq("source_type", b.sourceType)
-      .eq("source_id", b.sourceId)
-      .is("removed_at", null)
-      .maybeSingle();
+    // Lead ruling D-65 (census-trips §87.3): only an item this caller may see is a duplicate — another member's
+    // PRIVATE sourced item is theirs alone, and a 409 naming it would say where they privately plan to be.
+    const { item: dup, error: dupErr } = await findVisibleSourcedPlanItem(client, tripId, user.id, b.sourceType, b.sourceId);
     if (dupErr) {
       req.log.error({ err: dupErr, tripId, sourceType: b.sourceType, sourceId: b.sourceId }, "plan item: duplicate check unavailable");
       sendError(res, "degraded_unavailable", "We could not check the plan for duplicates right now. Please try again shortly.");
