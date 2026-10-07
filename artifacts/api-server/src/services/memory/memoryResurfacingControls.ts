@@ -31,6 +31,9 @@
 import { isTableAbsentError } from "../../lib/tableAbsence.js";
 import type { SourceControls } from "../memoryProjections/projectionRegistry.js";
 
+/** PostgREST's max-rows on Supabase. A controls read that returns this many may be truncated. */
+export const CONTROLS_PAGE = 1000;
+
 export const MEMORY_RESURFACING_CONTROLS = [
   "DO_NOT_RESURFACE",
   "DO_NOT_INCLUDE_IN_RECAPS",
@@ -62,8 +65,10 @@ export async function readMemoryControls(sc: any, ownerId: string, memoryIds: re
       if (isTableAbsentError(error)) return { state: "absent", detail: String(error.message ?? "absent") };
       return { state: "unreadable", detail: String(error.message ?? "read failed") };
     }
+    if (!Array.isArray(data)) return { state: "unreadable", detail: "controls read returned no row array" };
+    if (data.length >= CONTROLS_PAGE) return { state: "unreadable", detail: `controls page full (${data.length} rows): refusing rather than missing a control past it` };
     const byMemory = new Map<string, Set<MemoryResurfacingControl>>();
-    for (const r of (Array.isArray(data) ? data : []) as Array<{ memory_id: string; control: string }>) {
+    for (const r of data as Array<{ memory_id: string; control: string }>) {
       if (!isMemoryResurfacingControl(r.control)) continue;
       if (!byMemory.has(r.memory_id)) byMemory.set(r.memory_id, new Set());
       byMemory.get(r.memory_id)!.add(r.control);
@@ -162,6 +167,7 @@ export async function readRecapControls(sc: any, ownerId: string, memoryIds: rea
     const { data, error } = await sc.from("memory_resurfacing_preferences").select("memory_id, control").eq("owner_id", ownerId);
     if (error) return isTableAbsentError(error) ? { state: "absent" } : { state: "unreadable" };
     if (!Array.isArray(data)) return { state: "unreadable" };
+    if (data.length >= CONTROLS_PAGE) return { state: "unreadable" }; // a full page may be truncated: a control past it would not be honoured — fail closed
     const byMemory: Record<string, string[]> = {};
     for (const r of data as Array<{ memory_id: string; control: string }>) {
       if (wanted.has(r.memory_id) && isMemoryResurfacingControl(r.control)) (byMemory[r.memory_id] ??= []).push(r.control);

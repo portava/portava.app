@@ -235,7 +235,7 @@ export type SearchServiceFailure =
   | "audience_unavailable";
 
 export type MemorySearchServiceResult =
-  | { readonly ok: true; readonly value: Extract<SearchResult, { ok: true }>["value"] & { readonly target: ResolvedTarget } }
+  | { readonly ok: true; readonly value: Extract<SearchResult, { ok: true }>["value"] & { readonly target: ResolvedTarget; /** §23 hits withheld from this reader at read time (H3-1). */ readonly audience_withheld_count: number } }
   | { readonly ok: false; readonly reason: SearchServiceFailure; readonly detail: string; readonly retryable: boolean };
 
 function refuse(reason: SearchServiceFailure, detail: string, retryable = false): MemorySearchServiceResult {
@@ -448,7 +448,34 @@ export async function runMemorySearch(
     }
   }
 
-  return { ok: true, value: { ...result.value, target } };
+  // ── §23 over a PUBLIC search by someone who is not the owner (verifier
+  //    VERIFY-H3 finding H3-1; lead ruling H-8's second layer). The public
+  //    derivative is built for an audience of everyone and admits a public
+  //    Memory whatever its hide list says; it MUST stay that way, or a hide
+  //    list would remove the Memory for everyone. So the hide list is honoured
+  //    here, at READ time: every hit is re-judged by canReadMemory(…,
+  //    "public_feed") on its canonical row, exactly as GET /memories/:id judges
+  //    it. A row that cannot be found is withheld; an unreadable read refuses.
+  if (target.scope.owner_id !== viewerId && result.value.hits.length > 0) {
+    const sc = client as any;
+    const ids = [...new Set(result.value.hits.map((h) => h.memory_id))];
+    const canonical = new Map<string, any>();
+    for (let i = 0; i < ids.length; i += LADDER_CHUNK) {
+      const { data, error } = await sc.from("memories").select(LADDER_COLUMNS).in("id", ids.slice(i, i + LADDER_CHUNK));
+      if (error || !Array.isArray(data)) {
+        return refuse("audience_unavailable", `the audience ladder could not read memories: ${(error as any)?.message ?? "no row array"}`, true);
+      }
+      for (const row of data as any[]) canonical.set(row.id as string, row);
+    }
+    const verdicts = await Promise.all(result.value.hits.map((hit) => {
+      const row = canonical.get(hit.memory_id);
+      return row ? canReadMemory(sc, row, viewerId, "public_feed") : Promise.resolve(false);
+    }));
+    const cleared = result.value.hits.filter((_h, i) => verdicts[i]);
+    return { ok: true, value: { ...result.value, hits: cleared, target, audience_withheld_count: result.value.hits.length - cleared.length } };
+  }
+
+  return { ok: true, value: { ...result.value, target, audience_withheld_count: 0 } };
 }
 
 /* ============================================================================
@@ -645,6 +672,14 @@ export async function runCrewMemorySearch(
     // sits in a derivative built for the crew.
     const crewTarget = crewMemberTarget(memberId, tripId);
     const target: ResolvedTarget = memberId === viewerId ? { ...crewTarget, scope: { ...crewTarget.scope, viewer_id: viewerId } } : crewTarget;
+    // H-5 for the SHARED crew scope (verifier VERIFY-H3 finding H3-2). Only a
+    // member other than X ever asks for X's viewer-null crew derivative, so no
+    // request is ever "its owner's" there and a deletion's fallback revocation
+    // would withhold X from the crew for good. X's own crew search is X's
+    // request: it rebuilds X's shared derivative when a DELETION revoked it —
+    // by the §AL rule, so the deleted Memory and anything the crew may not see
+    // stay out. Any other revocation reason stays revoked.
+    if (memberId === viewerId) await reviveDeletionRevokedDerivative(client, crewTarget.projectionId, crewTarget.scope, now);
     const prepared = await ensureDerivative(client, target, now, viewerId);
     if (!prepared.ok) {
       disclosures.push(withhold(memberId, "derivative_unavailable", prepared.detail));

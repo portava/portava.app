@@ -35,3 +35,20 @@ ALTER TABLE public.memory_items DROP COLUMN IF EXISTS visibility;
 DELETE FROM public.schema_migration_ledger WHERE filename = '3672_memory_item_visibility.sql';
 
 COMMIT;
+
+DO $post$
+DECLARE qual text;
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+              WHERE table_schema = 'public' AND table_name = 'memory_items' AND column_name = 'visibility') THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3672 rollback): memory_items.visibility still exists';
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'memory_items_visibility_check') THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3672 rollback): memory_items_visibility_check still exists';
+  END IF;
+  SELECT pg_get_expr(polqual, polrelid) INTO qual FROM pg_policy
+   WHERE polrelid = 'public.memory_items'::regclass AND polname = 'memory_items_public_read';
+  IF qual IS NULL OR position('visibility IS NULL' in qual) > 0 THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3672 rollback): memory_items_public_read is not the 0067 policy (qual: %)', qual;
+  END IF;
+END $post$;

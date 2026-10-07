@@ -652,6 +652,7 @@ async function readSourceControls(client: ClientLike, ownerId: string): Promise<
   const res = await client.from("memory_resurfacing_preferences").select("memory_id, control").eq("owner_id", ownerId);
   if (res.error) return isTableAbsentError(res.error) ? { state: "absent" } : { state: "unreadable" };
   if (!Array.isArray(res.data)) return { state: "unreadable" };
+  if (res.data.length >= 1000) return { state: "unreadable" }; // a full PostgREST page may be truncated — a control past it would not be honoured; fail closed
   const byMemory: Record<string, string[]> = {};
   for (const r of res.data as Array<{ memory_id: string; control: string }>) (byMemory[r.memory_id] ??= []).push(String(r.control));
   return { state: "ok", byMemory };

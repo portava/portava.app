@@ -835,3 +835,96 @@ describe("§15 SHARED_CREW bounds its fan-out and says what the bound is", () =>
     } finally { await app.close(); }
   });
 });
+
+// ── VERIFY-H3 (2026-10-07) ───────────────────────────────────────────────────
+describe("H3-1 — a PUBLIC search by someone the owner hid the Memory from does not hand it over (§23 at read time)", () => {
+  it("a stranger still finds the public Memory; the hidden viewer does not, and is told one hit was withheld", async () => {
+    const store = tables();
+    store.memories[0].hidden_user_ids = [VIEWER];
+    const app = await startApp({ store });
+    try {
+      const control = await search(app, STRANGER, { intent: { kind: "public", ownerId: OWNER } });
+      assert.equal(control.status, 200);
+      assert.ok(ids(control.body).has(M_PUB), "control: the public Memory is served to someone not hidden");
+      assert.equal(control.body.audienceWithheldCount, 0);
+      const r = await search(app, VIEWER, { intent: { kind: "public", ownerId: OWNER } });
+      assert.equal(r.status, 200);
+      assert.ok(!ids(r.body).has(M_PUB), "the hidden viewer must not get the Memory");
+      assert.equal(r.body.audienceWithheldCount, 1);
+      // The derivative itself still carries it — narrowing it at build time would remove it for everyone.
+      const pub = app.store.memory_derivative_registry.find((g: any) => g.projection_id === "PublicMemoryProjection" && g.owner_id === OWNER);
+      assert.ok((pub.source_memory_ids as string[]).includes(M_PUB));
+    } finally { await app.close(); }
+  });
+
+  /** The real fake, with ONLY the ladder's canonical read (its exact column list) failing or coming back empty. */
+  const LADDER = "id, owner_id, visibility, state, trip_id, allowed_user_ids, hidden_user_ids";
+  function ladderClient(store: Record<string, any[]>, mode: "fail" | "empty") {
+    const base: any = makeClient(store, new Set(), new Set());
+    return {
+      ...base,
+      from(table: string) {
+        const b = base.from(table);
+        if (table !== "memories") return b;
+        const select = b.select.bind(b);
+        b.select = (cols?: string, o?: any) => {
+          if (cols !== LADDER) return select(cols, o);
+          const answer = mode === "fail" ? { data: null, error: { code: "57014", message: "ladder read failed" } } : { data: [], error: null };
+          const stub: any = { in: () => stub, eq: () => stub, then: (f: any, r: any) => Promise.resolve(answer).then(f, r) };
+          return stub;
+        };
+        return b;
+      },
+    };
+  }
+
+  it("the ladder's canonical read FAILS: the public search refuses rather than serving hits it could not clear", async () => {
+    const app = await startApp();
+    try {
+      _setTestClient(ladderClient(app.store, "fail") as any, true);
+      const r = await search(app, STRANGER, { intent: { kind: "public", ownerId: OWNER } });
+      assert.equal(r.status, 503, JSON.stringify(r.body));
+      assert.ok(!ids(r.body).has(M_PUB));
+    } finally { await app.close(); }
+  });
+
+  it("a hit whose canonical row cannot be found is WITHHELD and counted, never served", async () => {
+    const app = await startApp();
+    try {
+      _setTestClient(ladderClient(app.store, "empty") as any, true);
+      const r = await search(app, STRANGER, { intent: { kind: "public", ownerId: OWNER } });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      assert.ok(!ids(r.body).has(M_PUB));
+      assert.equal(r.body.audienceWithheldCount, 1);
+    } finally { await app.close(); }
+  });
+});
+
+describe("H3-2 — H-5 reaches the SHARED crew scope: a member's own crew search rebuilds their deletion-revoked crew derivative", () => {
+  it("OWNER's crew derivative revoked by the deletion fallback is served to the crew again after OWNER's own crew search", async () => {
+    const app = await startApp({ store: crewTables() });
+    try {
+      assert.equal((await search(app, VIEWER, { intent: { kind: "crew_trip", tripId: TRIP } })).status, 200);
+      const shared = app.store[REG].find((g: any) => g.scope_key === scopeKeyOf("TripMemoryProjection", { owner_id: OWNER, viewer_id: null, trip_id: TRIP }));
+      assert.ok(shared, "precondition: VIEWER's crew search registered OWNER's shared crew derivative");
+      Object.assign(shared, { revocation_state: "REVOKED", revocation_reason: "memory_deleted: re-derivation failed", payload_json: [], row_count: 0 });
+      const before = await search(app, VIEWER, { intent: { kind: "crew_trip", tripId: TRIP } });
+      assert.equal(memberLine(before.body, OWNER).state, "withheld", "precondition: the revoked derivative withholds OWNER from the crew");
+      assert.equal((await search(app, OWNER, { intent: { kind: "crew_trip", tripId: TRIP } })).status, 200);
+      assert.equal(shared.revocation_state, "ACTIVE", "OWNER's own crew search rebuilt it");
+      const after = await search(app, VIEWER, { intent: { kind: "crew_trip", tripId: TRIP } });
+      assert.equal(memberLine(after.body, OWNER).state, "served");
+    } finally { await app.close(); }
+  });
+
+  it("a crew derivative revoked for any OTHER reason stays revoked after the member's own search", async () => {
+    const app = await startApp({ store: crewTables() });
+    try {
+      await search(app, VIEWER, { intent: { kind: "crew_trip", tripId: TRIP } });
+      const shared = app.store[REG].find((g: any) => g.scope_key === scopeKeyOf("TripMemoryProjection", { owner_id: OWNER, viewer_id: null, trip_id: TRIP }));
+      Object.assign(shared, { revocation_state: "REVOKED", revocation_reason: "memory_visibility_changed: re-derivation failed", payload_json: [], row_count: 0 });
+      await search(app, OWNER, { intent: { kind: "crew_trip", tripId: TRIP } });
+      assert.equal(shared.revocation_state, "REVOKED");
+    } finally { await app.close(); }
+  });
+});

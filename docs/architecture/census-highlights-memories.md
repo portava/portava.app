@@ -7235,8 +7235,8 @@ Same branch and rules as §AF. One migration was WRITTEN and applied to no datab
 
 ### §AJ.1 What was built
 
-- **The read fails closed** (`artifacts/api-server/src/services/memory/memoryResurfacingControls.ts:52#export async function readMemoryControls(`). An absent table means "no control is set", which is true because no row can exist. An unreadable table means kept private, on every surface that would publish the Memory.
-- **The owner's switches.** GET, PUT and DELETE `/memories/:id/resurfacing-controls[/:control]` (`artifacts/api-server/src/routes/memoryResurfacingControls.ts:63#router.put("/memories/:id/resurfacing-controls/:control"`). They are owner-only: someone else's Memory and a deleted Memory both answer 404. KEEP_PRIVATE_FOREVER is refused on a Memory that is not `only_me`, so the owner narrows first (`artifacts/api-server/src/services/memory/memoryResurfacingControls.ts:118#export async function setMemoryControl(`).
+- **The read fails closed** (`artifacts/api-server/src/services/memory/memoryResurfacingControls.ts:55#export async function readMemoryControls(`). An absent table means "no control is set", which is true because no row can exist. An unreadable table means kept private, on every surface that would publish the Memory.
+- **The owner's switches.** GET, PUT and DELETE `/memories/:id/resurfacing-controls[/:control]` (`artifacts/api-server/src/routes/memoryResurfacingControls.ts:63#router.put("/memories/:id/resurfacing-controls/:control"`). They are owner-only: someone else's Memory and a deleted Memory both answer 404. KEEP_PRIVATE_FOREVER is refused on a Memory that is not `only_me`, so the owner narrows first (`artifacts/api-server/src/services/memory/memoryResurfacingControls.ts:123#export async function setMemoryControl(`).
 - **Enforced where a Memory is published.**
   - PATCH will not widen a kept-private Memory past `only_me`: 409, or 503 when the controls cannot be read (`artifacts/api-server/src/routes/memories.ts:1740#if (await refuseWideningKeptPrivate(`).
   - A kept-private Memory is never a Highlight source, and unreadable controls admit no source (`artifacts/api-server/src/services/highlights/highlightSources.ts:283#return fail("kept_private"`).
@@ -7277,8 +7277,8 @@ Same branch and rules as §AF. One migration was WRITTEN and applied to no datab
 ### §AK.2 What was built
 
 - **The trip recap leaves the Memory out.** TripMemoryProjection, the trip recap, admits a Memory only when no recap-suppressing control is on (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:327#recapAdmits(input, m.id)`).
-  - The recap-suppressing controls are DO_NOT_INCLUDE_IN_RECAPS and KEEP_PRIVATE_FOREVER (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:798#export const RECAP_SUPPRESSING_CONTROLS`). That is `CONTROL_EFFECTS`'s own list; DO_NOT_RESURFACE does not suppress a recap.
-  - The controls are read by `readProjectionSources`, and the source version folds them in, so a control change makes the registration STALE (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:563#if (controls?.state === "unreadable") per["controls"]`). With no control set, the version is byte-identical to what it was before.
+  - The recap-suppressing controls are DO_NOT_INCLUDE_IN_RECAPS and KEEP_PRIVATE_FOREVER (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:802#export const RECAP_SUPPRESSING_CONTROLS`). That is `CONTROL_EFFECTS`'s own list; DO_NOT_RESURFACE does not suppress a recap.
+  - The controls are read by `readProjectionSources`, and the source version folds them in, so a control change makes the registration STALE (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:567#if (controls?.state === "unreadable") per["controls"]`). With no control set, the version is byte-identical to what it was before.
   - The live route reads the same controls.
 - **Unreadable controls REFUSE the recap.** The route answers 503 (`artifacts/api-server/src/routes/memories.ts:3044#if (recapControls.state === "unreadable")`). A derivation returns `source_unavailable` (`artifacts/api-server/src/services/memoryProjections/derivativeRegistry.ts:213#if (def.id === "TripMemoryProjection" && sources.value.memoryControls`). A recap never carries a Memory its owner may have kept out, and it is never an empty answer standing in for a failed read.
 - **The §5 recaps and On This Day are unchanged, by design.** They resurface no scrapbook Memory at all: `passport:memory` is in neither resurfaceable set, under §5's fail-closed valence rule. A pin test fails if `passport:memory` is added there before the controls are honoured. The "What Portava Remembers" listing is the owner's explicit view, and `CONTROL_EFFECTS.DO_NOT_RESURFACE` leaves explicit retrieval unaffected.
@@ -7312,9 +7312,9 @@ Where this section and §AF to §AK disagree, this section is the later statemen
 ### §AL.3 What changed
 
 1. **H-8 for the crew derivative.**
-   - The shared build (`viewer_id` null) carries only `public` or `trip_crew` Memories with nobody hidden (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:829#export function sharedAudienceAdmits(`).
+   - The shared build (`viewer_id` null) carries only `public` or `trip_crew` Memories with nobody hidden (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:833#export function sharedAudienceAdmits(`).
    - A named non-owner viewer's build never carries `only_me`, a viewer that is hidden, or a custom list that does not name the viewer.
-   - The reader's own slice of a crew search is built in the reader's own view (`artifacts/api-server/src/services/memory/memorySearchService.ts:647#const target: ResolvedTarget = memberId === viewerId`), so the owner still finds their own private trip Memory.
+   - The reader's own slice of a crew search is built in the reader's own view (`artifacts/api-server/src/services/memory/memorySearchService.ts:674#const target: ResolvedTarget = memberId === viewerId`), so the owner still finds their own private trip Memory.
    - Narrowing now splits `retained` (the owner's own view) from `retainedShared` (a viewer-specific derivative whose viewer keeps access), and logs the latter (`artifacts/api-server/src/services/memoryProjections/narrowingReprojection.ts:171#report.retainedShared += 1`).
    - Two assertions in `memorySearchRoute.test.ts` encoded the old design. Per the ruling they are INVERTED, not loosened: the shared derivative now must NOT carry the `only_me` row (`artifacts/api-server/src/test/memorySearchRoute.test.ts:622#LAYER 1 (§AL ruling`). The ladder is still proved by planting the row and showing it is withheld.
    - The test through the router: `artifacts/api-server/src/test/memoryNarrowingReprojection.test.ts:323#the crew search's TripMemoryProjection (viewer null)`.
@@ -7331,7 +7331,7 @@ Where this section and §AF to §AK disagree, this section is the later statemen
    - Every non-owner read in `routes/memories.ts` runs through `protectMemoryRow`. It now nulls `place_id`, `canonical_location_id` and `event_id` unless the effective ceiling is the venue tier: the rung is exact or venue, and no Hidden-Gem ceiling is coarser (`artifacts/api-server/src/routes/memories.ts:190#ceiling === "place" ? {}`).
    - An unreadable gate gives no id, and so does a missing or off-ladder rung, because each clamps to 'hidden'.
    - The trip recap runs the same protection (`artifacts/api-server/src/routes/memories.ts:3745#async function protectRecapRows`).
-   - The shared crew build carries a place id only at exact or venue (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:853#export function venueIdFor(`). The registry reads no rung, so in practice a crew derivative carries no place id at all: fail closed.
+   - The shared crew build carries a place id only at exact or venue (`artifacts/api-server/src/services/memoryProjections/projectionRegistry.ts:857#export function venueIdFor(`). The registry reads no rung, so in practice a crew derivative carries no place id at all: fail closed.
    - With the flag off, the status quo before 2338 stands, as it does for coordinates.
    - The tests start at `artifacts/api-server/src/test/memoryLocationPrecision.test.ts:663#§AL — place, venue and event ids`. They cover every rung on the detail read and five non-owner sites; each site has a control that must serve the id, over a fake that drops an unselected `location_precision`.
 
@@ -7354,15 +7354,15 @@ Same branch and rules as §AF. The lead assigned this as a privacy fix ahead of 
 
 - **The leak.** `memory_items` had no audience of its own (H80's own words). Every photo of a Memory, with its URL and its caption, reached everyone who could see the Memory. That was true on the API server, and also straight through PostgREST, because `memory_items_public_read` lets anon read every item of a public Memory.
 - **The migration.**
-  - It adds `memory_items.visibility`: NULL means the photo inherits its Memory's audience, which every existing row does; `only_me` means the owner's alone (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:44#ALTER TABLE public.memory_items ADD COLUMN IF NOT EXISTS visibility text;`).
-  - In the same file, the public-read policy is re-created so that an `only_me` photo is not publicly readable (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:58#CREATE POLICY memory_items_public_read`).
-- **Server readers fail closed.** The hidden set is a separate read (`artifacts/api-server/src/services/memory/memoryItemVisibility.ts:39#export async function hiddenItemKeys(`). A missing column means none can be hidden, which is true. Any other failure refuses the read.
+  - It adds `memory_items.visibility`: NULL means the photo inherits its Memory's audience, which every existing row does; `only_me` means the owner's alone (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:51#ALTER TABLE public.memory_items ADD COLUMN IF NOT EXISTS visibility text;`).
+  - In the same file, the public-read policy is re-created so that an `only_me` photo is not publicly readable (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:65#CREATE POLICY memory_items_public_read`).
+- **Server readers fail closed.** The hidden set is a separate read (`artifacts/api-server/src/services/memory/memoryItemVisibility.ts:41#export async function hiddenItemKeys(`). A missing column means none can be hidden, which is true. Any other failure refuses the read.
   - The detail read drops a hidden photo for a non-owner (`artifacts/api-server/src/routes/memories.ts:1630#const hiddenItems = memory.owner_id === user.id`).
   - The trip Memory cover withholds one (`artifacts/api-server/src/routes/memories.ts:2869#const coverHidden =`).
   - The list covers withhold one: the feed, the profile lists and the saved shelf (`artifacts/api-server/src/routes/memories.ts:3305#const hiddenCovers =`).
   - The owner sees every photo.
 - **The owner's switch:** `artifacts/api-server/src/routes/memoryItemVisibility.ts:17#router.put("/memories/:id/items/:itemId/visibility"`.
-- **The tests:** `artifacts/api-server/src/test/memoryItemVisibility.test.ts:137#a non-owner gets neither its URL nor its caption`, `artifacts/api-server/src/test/memoryItemVisibility.test.ts:152#FAIL CLOSED: the hidden-set read fails` and `artifacts/api-server/src/test/memoryItemVisibility.test.ts:174#the private cover is withheld from a non-owner`. Each cover site has a control that must serve the cover. 10 of 10 mutants were killed.
+- **The tests:** `artifacts/api-server/src/test/memoryItemVisibility.test.ts:147#a non-owner gets neither its URL nor its caption`, `artifacts/api-server/src/test/memoryItemVisibility.test.ts:162#FAIL CLOSED: the hidden-set read fails` and `artifacts/api-server/src/test/memoryItemVisibility.test.ts:184#the private cover is withheld from a non-owner`. Each cover site has a control that must serve the cover. 10 of 10 mutants were killed.
 - **Not yet built:** media COUNTS still count a hidden photo. That covers PublicMemoryProjection's `media_count`, the people and places counts, and TripPostTripProjections. The Compass memory tools' item read belongs to lane L.
 
 ### §AM.2 Row moves
@@ -7382,3 +7382,54 @@ Same branch and rules as §AF. The lead assigned this as a privacy fix ahead of 
 | total | 266 | 266 |
 
 **1 move: H80 N → W.** 266 = 69 C / 154 W / 41 N / 2 X. CONSTRUCTED% is (69 + 154) / 266 = 83.8 %.
+
+## §AN — 2026-10-07 (mission 4, lane H): the verifier's fixes to §AI to §AM (VERIFY-H3-176feabf05), the H80 counts, and the headline after merging `origin/main` `7d56400c0` — NO VERDICT MOVES
+
+Where this section and §AF to §AM disagree, this section is the later statement and wins.
+
+**A NAME COLLISION, stated.** `origin/main` carries lane R's §AE and §AF (2026-10-06, "mission lane R"). This file also carries lane H's §AF to §AN (2026-10-07, "mission 4, lane H"). They are different sections; each heading names its lane and date. Lane H's sections are not renamed, because they are cited by name in commit messages and in `CENSUS_STALENESS_ACKNOWLEDGED.json`.
+
+### §AN.1 What §AI to §AM overstated, corrected
+
+- **§AL.1 said H-8 applies to "any non-owner audience".** It was built for the crew door only. The public search door handed a public Memory to a viewer on its hide list (verifier finding H3-1).
+- **§AI.1 said H-5's "rebuilt on its owner's next request".** That could not be satisfied for the SHARED crew scope, because only another member ever asks for it (H3-2).
+- **§AM.2's H80 row said every non-owner server read that serves a photo's URL or caption honours it.** Compass `memory_get_evidence` (`MemoryCompassTools.ts:556`, lane L's file) still serves a private photo's caption (H3-3). Lane L has that item. H80's restated reason is in the table below.
+
+### §AN.2 What changed
+
+1. **H3-1, the public search door: the hide list is honoured at READ time.** Every hit in a public search by someone other than the owner is re-judged by `canReadMemory(…, "public_feed")` on its canonical row (`artifacts/api-server/src/services/memory/memorySearchService.ts:459#if (target.scope.owner_id !== viewerId && result.value.hits.length > 0) {`).
+   - A hit whose row cannot be found is withheld. An unreadable canonical read refuses.
+   - The route reports `audienceWithheldCount`.
+   - The public derivative itself is NOT narrowed at build time. A hide list must not remove the Memory for everyone else, and the verifier showed that the build-time variant does exactly that.
+   - The tests start at `artifacts/api-server/src/test/memorySearchRoute.test.ts:840#H3-1`.
+2. **H3-2, H-5 for the shared crew scope.** A member's own crew search rebuilds their shared crew derivative when a deletion revoked it (`artifacts/api-server/src/services/memory/memorySearchService.ts:682#if (memberId === viewerId) await reviveDeletionRevokedDerivative`). Any other revocation reason stays revoked. The tests start at `artifacts/api-server/src/test/memorySearchRoute.test.ts:903#H3-2`.
+3. **H3-4, H3-5 and H3-6, cases that were missing.**
+   - A photo on another owner's Memory cannot be switched through your own Memory id (`artifacts/api-server/src/test/memoryItemVisibility.test.ts:276#H3-4`).
+   - A two-Memory list cover page (`artifacts/api-server/src/test/memoryItemVisibility.test.ts:289#H3-5`).
+   - KEEP_PRIVATE_FOREVER against `custom`, `friends_only`, `trip_crew` and `circle_only`, and KEEP_PRIVATE_FOREVER refused on a `friends_only` Memory (`artifacts/api-server/src/test/memoryResurfacingControls.test.ts:312#H3-6`).
+4. **H3-7, reads that could be truncated fail closed.** `hiddenItemKeys` answers `ok:false` on a full PostgREST page (`artifacts/api-server/src/services/memory/memoryItemVisibility.ts:59#if (data.length >= ITEM_PAGE)`); a missing key would SERVE the photo. The three controls reads answer `unreadable` on a full page, so a recap that needs them is refused (`artifacts/api-server/src/test/memoryItemVisibility.test.ts:304#H3-7`).
+5. **H3-8, 3672 can be replayed.** The "no row changed audience" postcondition now asserts only on the run that ADDS the column (`artifacts/api-server/src/migrations/3672_memory_item_visibility.sql:45#PERFORM set_config('portava.m3672_first_apply'`). The rollback gained a postcondition.
+6. **The H80 counts.** A private photo is not counted for a non-owner in the trip recap, in a profile's Memory highlights, or in any registry projection built for a non-owner. Unreadable means 503 on a route and `source_unavailable` from the registry. The hidden set is part of the source version.
+
+Mutants killed: 11 of 11 for H3-1 to H3-7, and 8 of 8 for the counts.
+
+### §AN.3 Rows read, reason restated, NOT moved
+
+| id | standing | what is now true, and what still stops it |
+| --- | --- | --- |
+| H80 | BUILT-BUT-WRONG | Every non-owner server read in `routes/memories.ts` that serves a photo's URL, caption or count honours the photo's own audience and fails closed. So do the registry's counts and the database's public-read policy (§AM, §AN.2 item 6). W stands for two reasons. 3672 is unapplied. And Compass `memory_get_evidence` (lane L's `MemoryCompassTools.ts`) still serves a private photo's caption, which lane L has |
+| H189 | BUILT-BUT-WRONG | The public search now honours a hide list at read time, as the crew union already did (§AN.2 item 1). §AL.4's reasons stand |
+
+### §AN.4 Headline after the merge
+
+`origin/main` `7d56400c0` brought lane R's moves: H215, H216 and H221 went from N to W. This section counts its rows after them.
+
+| bucket | was (§AM.3) | now |
+| --- | --- | --- |
+| BUILT-AND-CORRECT | 69 | 69 |
+| BUILT-BUT-WRONG | 154 | 157 |
+| NOT-BUILT | 41 | 38 |
+| CANNOT-VERIFY | 2 | 2 |
+| total | 266 | 266 |
+
+**This section moves no row.** The three moves above are lane R's, merged from main. 266 = 69 C / 157 W / 38 N / 2 X. CONSTRUCTED% is (69 + 157) / 266 = 85.0 %.

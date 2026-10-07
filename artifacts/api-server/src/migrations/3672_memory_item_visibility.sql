@@ -39,6 +39,13 @@ BEGIN
   IF to_regclass('public.memory_items') IS NULL OR to_regclass('public.memories') IS NULL THEN
     RAISE EXCEPTION 'PRECONDITION FAILED (3672): public.memory_items / public.memories missing.';
   END IF;
+  -- Remember whether THIS run adds the column, so the "no row changed audience"
+  -- postcondition asserts a FIRST apply only and the file stays replayable after
+  -- an owner has kept a photo private (transaction-local setting).
+  PERFORM set_config('portava.m3672_first_apply',
+    CASE WHEN EXISTS (SELECT 1 FROM information_schema.columns
+                       WHERE table_schema = 'public' AND table_name = 'memory_items' AND column_name = 'visibility')
+         THEN 'false' ELSE 'true' END, true);
 END $$;
 
 ALTER TABLE public.memory_items ADD COLUMN IF NOT EXISTS visibility text;
@@ -81,8 +88,9 @@ BEGIN
   IF qual IS NULL OR position('visibility IS NULL' in qual) = 0 THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3672): memory_items_public_read does not exclude an only_me photo (qual: %)', qual;
   END IF;
-  IF EXISTS (SELECT 1 FROM public.memory_items WHERE visibility IS NOT NULL) THEN
-    RAISE EXCEPTION 'POSTCONDITION FAILED (3672): a photo changed audience on apply — this migration must change no row';
+  IF current_setting('portava.m3672_first_apply', true) = 'true'
+     AND EXISTS (SELECT 1 FROM public.memory_items WHERE visibility IS NOT NULL) THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3672): a photo changed audience on first apply — this migration must change no row';
   END IF;
 END $$;
 

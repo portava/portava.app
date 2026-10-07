@@ -19,6 +19,8 @@ import { _setTestClient } from "../lib/http.js";
 import memoriesRouter from "../routes/memories.js";
 import itemVisibilityRouter from "../routes/memoryItemVisibility.js";
 import { deriveProjection, rebuildProjection, projectionStaleness } from "../services/memoryProjections/derivativeRegistry.js";
+import { hiddenItemKeys, ITEM_PAGE } from "../services/memory/memoryItemVisibility.js";
+import { readMemoryControls, readRecapControls, CONTROLS_PAGE } from "../services/memory/memoryResurfacingControls.js";
 
 const OWNER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const VIEWER = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -266,5 +268,57 @@ describe("§AN — photo counts exclude a private photo for anyone but the owner
     const pub = await deriveProjection(client, "PublicMemoryProjection", PUBLIC_SCOPE);
     assert.deepEqual([pub.ok, (pub as any).reason, (pub as any).table], [false, "source_unavailable", "memory_items"]);
     assert.equal(projected(await deriveProjection(client, "MemoryTimelineProjection", OWNER_SCOPE))?.media_count, 2);
+  });
+});
+
+// ── VERIFY-H3 H3-4 / H3-5 ────────────────────────────────────────────────────
+describe("H3-4 / H3-5 — the switch is scoped to its Memory, and covers are judged per Memory", () => {
+  it("H3-4: owner A cannot flip the audience of a photo on owner B's Memory through A's own Memory id (404, B's row unchanged)", async () => {
+    const store = seed(null);
+    const B = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const B_MEM = "12222222-2222-4222-8222-222222222222";
+    const B_ITEM = "22222222-2222-4222-8222-222222222299";
+    store.memories.push({ ...store.memories[0], id: B_MEM, owner_id: B });
+    store.memory_items.push({ id: B_ITEM, memory_id: B_MEM, media_url: "b.jpg", media_type: "image/jpeg", caption: null, position: 0, created_at: "2026-01-01T00:00:00.000Z", visibility: "only_me" });
+    app = await start(store);
+    const r = await call(app, "PUT", `/memories/${MEM}/items/${B_ITEM}/visibility`, OWNER, { visibility: null });
+    assert.equal(r.status, 404, r.text);
+    assert.equal(app.store.memory_items.find((i) => i.id === B_ITEM).visibility, "only_me");
+  });
+
+  it("H3-5: a page of TWO Memories — the first one's inherited cover is served, the second one's private cover is withheld", async () => {
+    const store = seed(null);
+    const MEM2 = "11111111-1111-4111-8111-111111111112";
+    store.memories.push({ ...store.memories[0], id: MEM2, created_at: "2026-01-02T00:00:00.000Z", updated_at: "2026-01-02T00:00:00.000Z" });
+    store.memory_items.push({ id: "21111111-1111-4111-8111-111111111199", memory_id: MEM2, media_url: "post-media/memories/x/second-memory-PRIVATE.jpg", media_type: "image/jpeg", caption: null, position: 0, created_at: "2026-01-02T00:00:00.000Z", visibility: "only_me" });
+    app = await start(store);
+    const r = await call(app, "GET", `/users/${OWNER}/memories`, VIEWER);
+    assert.equal(r.status, 200, r.text.slice(0, 300));
+    assert.ok(r.text.includes(MEM) && r.text.includes(MEM2), "both Memories are served");
+    assert.ok(r.text.includes(COVER_URL), "the first Memory's inherited cover is served");
+    assert.ok(!r.text.includes("second-memory-PRIVATE"), "the second Memory's private cover is withheld");
+  });
+});
+
+// ── VERIFY-H3 H3-7: a FULL page fails CLOSED (PostgREST truncates silently) ──
+describe("H3-7 — reads that could be truncated fail closed", () => {
+  it("hiddenItemKeys: a full page of hidden photos is ok:false, never a set missing the ones past the page", async () => {
+    const store = seed(null);
+    for (let i = 0; i < ITEM_PAGE; i += 1) store.memory_items.push({ id: `h-${i}`, memory_id: MEM, media_url: `u${i}`, media_type: "image/jpeg", caption: null, position: 10 + i, created_at: "x", visibility: "only_me" });
+    const r = await hiddenItemKeys(makeClient(store), [MEM]);
+    assert.equal(r.ok, false);
+    const fewer = seed("only_me");
+    const ok = await hiddenItemKeys(makeClient(fewer), [MEM]);
+    assert.ok(ok.ok && ok.keys.has(`${MEM}#0`));
+  });
+
+  it("the controls reads: a full page is unreadable (and the recap that needs it is refused)", async () => {
+    const store = seed(null);
+    store.memory_resurfacing_preferences = Array.from({ length: CONTROLS_PAGE }, (_, i) => ({ memory_id: i === 0 ? MEM : `m-${i}`, owner_id: OWNER, control: "DO_NOT_INCLUDE_IN_RECAPS" }));
+    assert.equal((await readRecapControls(makeClient(store), OWNER, [MEM])).state, "unreadable");
+    const ids = store.memory_resurfacing_preferences.map((r) => r.memory_id);
+    assert.equal((await readMemoryControls(makeClient(store), OWNER, ids)).state, "unreadable");
+    app = await start(store);
+    assert.equal((await call(app, "GET", `/trips/${TRIP}/memories/recap`, VIEWER)).status, 503);
   });
 });

@@ -307,3 +307,24 @@ describe("§AK — the §5 recaps and On This Day never resurface a Memory (pinn
     assert.ok(!recap.sections.some((s: any) => s.items.some((i: any) => i.subjectType === "passport:memory")), "a recap carries no Memory");
   });
 });
+
+// ── VERIFY-H3 H3-6: KEEP_PRIVATE_FOREVER against every wider audience ───────
+describe("H3-6 — KEEP_PRIVATE_FOREVER holds against every audience wider than only_me", () => {
+  for (const visibility of ["custom", "friends_only", "trip_crew", "circle_only"]) {
+    it(`PATCH to '${visibility}' on a kept-private Memory is refused (409) and the Memory stays only_me`, async () => {
+      app = await start();
+      app.store[TABLE].push({ memory_id: PRIV, owner_id: OWNER, control: "KEEP_PRIVATE_FOREVER" });
+      const r = await call(app, "PATCH", `/memories/${PRIV}`, OWNER, { visibility, ...(visibility === "custom" ? { allowedUserIds: [OTHER] } : {}) });
+      assert.equal(r.status, 409, JSON.stringify(r.body));
+      assert.equal(vis(app, PRIV), "only_me");
+    });
+  }
+
+  it("KEEP_PRIVATE_FOREVER cannot be set on a friends_only Memory (409) — the owner narrows first", async () => {
+    app = await start();
+    app.store.memories.find((m) => m.id === PRIV).visibility = "friends_only";
+    const r = await call(app, "PUT", `/memories/${PRIV}/resurfacing-controls/KEEP_PRIVATE_FOREVER`);
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.deepEqual(rows(app), []);
+  });
+});

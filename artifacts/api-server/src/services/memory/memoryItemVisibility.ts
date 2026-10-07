@@ -20,6 +20,8 @@
  * routes/memories.ts selects those two, and the cover reads select no id.
  */
 export const HIDDEN_ITEM_VISIBILITY = "only_me";
+/** PostgREST's max-rows on Supabase. A read that returns this many may be truncated. */
+export const ITEM_PAGE = 1000;
 
 export type HiddenItems = { ok: true; keys: ReadonlySet<string> } | { ok: false; detail: string };
 
@@ -52,6 +54,9 @@ export async function hiddenItemKeys(sc: any, memoryIds: readonly string[]): Pro
         return { ok: false, detail: String((error as { message?: unknown }).message ?? "memory_items unreadable") };
       }
       if (!Array.isArray(data)) return { ok: false, detail: "memory_items returned no row array" };
+      // A FULL page may be truncated (PostgREST max-rows): the keys past it would
+      // be missing, and a missing key SERVES the photo. Fail closed instead.
+      if (data.length >= ITEM_PAGE) return { ok: false, detail: `memory_items hidden-photo page full (${data.length} rows): refusing rather than serving photos past it` };
       for (const r of data as Array<{ memory_id: string; position: number }>) keys.add(itemKey(r.memory_id, r.position));
     } catch (err) {
       return { ok: false, detail: String((err as { message?: unknown })?.message ?? err) };
