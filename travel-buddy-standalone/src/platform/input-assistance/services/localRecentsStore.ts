@@ -134,6 +134,7 @@ function isRestorableRow(v: unknown, context: InputContext): v is InputSuggestio
 export function encodeLocalRecents(
   snapshot: ReadonlyMap<InputContext, readonly InputSuggestion[]>,
   savedAt: number,
+  owner?: string | null,
 ): string {
   const contexts: Record<string, InputSuggestion[]> = {};
   for (const [context, rows] of snapshot) {
@@ -145,7 +146,13 @@ export function encodeLocalRecents(
       return rest as InputSuggestion;
     });
   }
-  return JSON.stringify({ v: ENVELOPE_VERSION, savedAt, contexts });
+  // The account the rows belong to (census G199, verifier F6). Omitted when
+  // unknown, and an ownerless blob is treated as belonging to nobody.
+  return JSON.stringify(
+    typeof owner === 'string' && owner.length > 0
+      ? { v: ENVELOPE_VERSION, savedAt, owner, contexts }
+      : { v: ENVELOPE_VERSION, savedAt, contexts },
+  );
 }
 
 /**
@@ -182,4 +189,20 @@ export function decodeLocalRecents(
     if (rows.length > 0) out.set(context, rows);
   }
   return out;
+}
+
+/**
+ * The account a stored blob was written for, or null when it names none or
+ * cannot be read (census G199, verifier finding F6). Read separately from the
+ * rows so `decodeLocalRecents`' shape — which its tests pin — is unchanged.
+ */
+export function decodeLocalRecentsOwner(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  try {
+    const env = JSON.parse(raw) as Record<string, unknown> | null;
+    const owner = env && typeof env === 'object' ? env.owner : null;
+    return typeof owner === 'string' && owner.length > 0 ? owner : null;
+  } catch {
+    return null;
+  }
 }

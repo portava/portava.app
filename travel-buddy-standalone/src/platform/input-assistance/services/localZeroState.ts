@@ -66,6 +66,7 @@ import { isCacheablePrivacyClass } from './suggestionCache.ts';
 import {
   LOCAL_RECENTS_STORAGE_KEY,
   decodeLocalRecents,
+  decodeLocalRecentsOwner,
   encodeLocalRecents,
   type LocalRecentsStorage,
 } from './localRecentsStore.ts';
@@ -106,6 +107,22 @@ let storage: LocalRecentsStorage | null = null;
 /** The in-flight write, so `flushLocalRecents` can be awaited in a test and a
  *  burst of accepts coalesces into one trailing write rather than N. */
 let pendingWrite: Promise<void> = Promise.resolve();
+/**
+ * census G199, verifier finding F6 — WHOSE rows these are. The account-change
+ * erase used to fire on every cold start: the policy store does not persist its
+ * active account, so the first sign-in of a launch read as `null → A`, an
+ * "account change", and erased A's own recents whenever the device blob had
+ * already been read (or erased the blob while it was being read). The blob now
+ * names its owner, and the erase is decided by owner rather than by "did the
+ * process's account variable change".
+ *   `boundAccount`: undefined until the app says who is signed in; then the
+ *     account (or null, signed out).
+ *   `rowsOwner`: the account the in-memory rows belong to, or null if unknown.
+ */
+let boundAccount: string | null | undefined = undefined;
+let rowsOwner: string | null = null;
+/** True while `attachLocalRecents` is waiting on the device read. */
+let hydrating = false;
 
 /**
  * Bind a storage backend and HYDRATE from it.
@@ -122,11 +139,24 @@ let pendingWrite: Promise<void> = Promise.resolve();
 export async function attachLocalRecents(next: LocalRecentsStorage): Promise<void> {
   storage = next;
   let raw: string | null = null;
+  hydrating = true;
   try {
     raw = await next.getItem(LOCAL_RECENTS_STORAGE_KEY);
   } catch {
     return; // unreadable device — an unattached process, in effect
+  } finally {
+    hydrating = false;
   }
+  const blobOwner = decodeLocalRecentsOwner(raw);
+  if (boundAccount !== undefined && (boundAccount === null || blobOwner !== boundAccount)) {
+    // The account is already known and this blob is not its: never restore it,
+    // and erase it rather than leave another person's picks on the device.
+    if (raw !== null) {
+      pendingWrite = pendingWrite.then(() => next.removeItem(LOCAL_RECENTS_STORAGE_KEY)).catch(() => {});
+    }
+    return;
+  }
+  if (boundAccount === undefined) rowsOwner = blobOwner; // decided when the account is known
   const restored = decodeLocalRecents(raw, Date.now());
   for (const [context, rows] of restored) {
     if (rowStore.has(context)) continue;
@@ -171,6 +201,48 @@ export function forgetLocalRecents(context: InputContext): void {
   schedulePersist();
 }
 
+/**
+ * Tell the recents WHO is signed in (census G199, verifier finding F6). This is
+ * the account-change erase, made owner-aware:
+ *   - signed out (null): erase everything, memory and device;
+ *   - the same account the rows (or the device blob) belong to: keep them — a
+ *     cold start of the same person is not an account change;
+ *   - anyone else, or rows whose owner is unknown: erase, then own the empty
+ *     store. Unknown fails CLOSED: a legacy blob with no owner is erased once.
+ */
+export function bindLocalRecentsAccount(userId: string | null): void {
+  if (userId === null) {
+    clearLocalRecents();
+    boundAccount = null;
+    rowsOwner = null;
+    return;
+  }
+  if (boundAccount === userId) return;
+  if (boundAccount === undefined && rowsOwner === userId) {
+    boundAccount = userId;
+    return;
+  }
+  if (boundAccount === undefined && hydrating) {
+    // The device read is still in flight, so whose blob it is is not known yet.
+    // Record who is signed in and let the read decide (it erases a blob that is
+    // not theirs). Erasing now would delete this person's own recents mid-read.
+    // Rows already in memory have no known owner, so they go (memory only).
+    rowStore.clear();
+    boundAccount = userId;
+    rowsOwner = userId;
+    return;
+  }
+  clearLocalRecents();
+  boundAccount = userId;
+  rowsOwner = userId;
+}
+
+/** Forget who is signed in and whose rows are held. TESTS ONLY. */
+export function _resetLocalRecentsAccountForTests(): void {
+  boundAccount = undefined;
+  rowsOwner = null;
+}
+
 /** Await the trailing write. Tests only — production is fire-and-forget. */
 export async function flushLocalRecents(): Promise<void> {
   await pendingWrite;
@@ -184,7 +256,7 @@ function schedulePersist(): void {
   pendingWrite = pendingWrite
     .then(() => backend.setItem(
       LOCAL_RECENTS_STORAGE_KEY,
-      encodeLocalRecents(rowStore, Date.now()),
+      encodeLocalRecents(rowStore, Date.now(), rowsOwner),
     ))
     .catch(() => {});
 }
