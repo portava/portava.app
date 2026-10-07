@@ -27,7 +27,7 @@ The **HAZARDS** of census-discovery §41.4 on DC-13 and DC-24 are binding on des
 
 - The exploration governor runs only inside the modifiers stage, `artifacts/api-server/src/lib/discoveryPde.ts:756#if (modifiers.enabled) {`, behind `discovery_ranking_modifiers_enabled` (2289, seeded OFF).
 - With the modifiers off, portavaRank's epsilon slot fills every 7th position with a pick drawn **at random** from the tail: `artifacts/api-server/src/lib/portavaRank.ts:497#export function injectExploration`. `06` §7 asks for exploration that is *"relevant, not random"*.
-- Census row DV-53 says `allocateFeedSlots` has **no production caller**. That is false. It is called on the Compass `for_you` path, `artifacts/api-server/src/compass/CompassFeedBuilder.ts:687#finalPool = allocateFeedSlots(finalPool, shares, { surface: "discovery"`, behind `DISCOVERY_DIVERSITY_ENABLED`, which is FALSE on production.
+- Census row DV-53 says `allocateFeedSlots` has **no production caller**. That is false. It is called on the Compass `for_you` path, `artifacts/api-server/src/compass/CompassFeedBuilder.ts:709#finalPool = allocateFeedSlots(finalPool, shares, { surface: "discovery"`, behind `DISCOVERY_DIVERSITY_ENABLED`, which is FALSE on production.
 - Compass fair exposure is inert on Discovery rows. `artifacts/api-server/src/compass/CompassDiscoveryAdapter.ts:36#export function discoveryPlaceToCompassItem` maps no `authorId`, so no creator is recognisable to it.
 
 **Module:** `lib/discoveryExplorationInventory.ts`. Given the merged candidate set and the viewer, it returns four reserved buckets:

@@ -177,7 +177,7 @@ construction that is inert in production; it counts as built, consistent with ev
 |---|---|---|---|
 | CTG-01 | `:87` Availability expiry revokes across Compass | **C** | The only availability Compass consumes is read live: `CompassTools.ts:72` imports `getActiveWindows` (*"explicit-only, expiry re-evaluated on read"*, `:897-898`), called per tool call at `:914-917`; nothing stores a copy. |
 | CTG-02 | `:285` Block cascade into Compass retrieval; no subsystem rediscovers a blocked relationship | **C** | T219 Compass leg `C`: `CompassTools.ts:295-323` `refreshHiddenUsers` per social call; feed-side `CompassSafetyFilter.ts:120-121` conditions 1–2. One hole closed this pass (§3.C CC-08). |
-| CTG-03 | `:369`, `:578` Deleted/unsent objects removed from Compass retrieval | **C ⌀** | Compass retrieves **no message content**: `/compass/telegraph` (`artifacts/api-server/src/routes/compass.ts:4691#router.get("/compass/telegraph",`) reads `message_thread_members`, `message_threads`, `trips`, `profiles` — never `messages`; the fallback builder reads membership only (`artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts:426#.from("message_thread_members")`). A report invalidates the Compass cache — **CITATION REPAIRED, §12.4**: the old pointer — `routes/messaging.ts` at what was then line 2723, written here as prose because it names code that is no longer there and a live pointer to it would be a dead target — was a message-TAGGING side-effect and had been since before `3ca68cb06`; the two real sites are `artifacts/api-server/src/routes/messaging.ts:4192#"thread_report"` and `artifacts/api-server/src/routes/messaging.ts:4438#"message_report"` (T276). Vacuous in the one place it could matter. |
+| CTG-03 | `:369`, `:578` Deleted/unsent objects removed from Compass retrieval | **C ⌀** | Compass retrieves **no message content**: `/compass/telegraph` (`artifacts/api-server/src/routes/compass.ts:4691#router.get("/compass/telegraph",`) reads `message_thread_members`, `message_threads`, `trips`, `profiles` — never `messages`; the fallback builder reads membership only (`artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts:427#.from("message_thread_members")`). A report invalidates the Compass cache — **CITATION REPAIRED, §12.4**: the old pointer — `routes/messaging.ts` at what was then line 2723, written here as prose because it names code that is no longer there and a live pointer to it would be a dead target — was a message-TAGGING side-effect and had been since before `3ca68cb06`; the two real sites are `artifacts/api-server/src/routes/messaging.ts:4192#"thread_report"` and `artifacts/api-server/src/routes/messaging.ts:4438#"message_report"` (T276). Vacuous in the one place it could matter. |
 | CTG-04 | `:621` Unavailable/Invisible revokes Compass availability projections promptly | **C** | Same read-time path as CTG-01; presence honours pauses/visibility per target through `canViewCirclePresenceBatch` (`CompassSocialEngine.ts:495-498`). |
 | CTG-05 | §18.3 Eight conversation tools (`getConversationContext` … `searchAuthorizedConversationContent`) | **N** | T244–T251: 0 of 8 in `CompassTools.ts:74-229`; `create_meetup_draft` exists outside Compass (`routes/telegraphCommands.ts:50#create_meetup_draft`). |
 | CTG-06 | §18.3 Compass sees only data authorized to the conversational context | **C** | T252 `C` (`services/telegraphChatSuggestions.ts:27#export interface TelegraphChatPrivacyVerdict`, `services/telegraphChatSuggestions.ts:106#export async function resolvePrivacyVerdict`, `services/telegraphChatSuggestions.ts:237-255#show_telegraph_dm, show_telegraph_trip, show_telegraph_circle`; `routes/telegraphChat.ts:17-21`). |
@@ -4132,12 +4132,12 @@ could not fire there. Two consequences:
 ### 35.2 The fix
 
 - The fallback reads the mute list beside the block list and fails closed on it
-  (`artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts:683#loadMutedIds(db, userId)`,
-  `artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts:791#loadMutedIds`), and hands the
-  ids to the safety profile (`artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts:117#[...mutedIds]`).
+  (`artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts:690#loadMutedIds(db, userId)`,
+  `artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts:798#loadMutedIds`), and hands the
+  ids to the safety profile (`artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts:118#[...mutedIds]`).
 - An unreadable mute list degrades exactly as an unreadable block list already did: the static safety
   tools only, `safeItems: []`, and a reason that names the list —
-  `+mute_list_unavailable` (`artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts:692#mute_list_unavailable`);
+  `+mute_list_unavailable` (`artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts:699#mute_list_unavailable`);
   an unreadable block list still says `+block_list_unavailable`.
 - All edits are line-neutral; the loader and its error class are appended at the file's foot.
 
@@ -4776,8 +4776,8 @@ Both feed boost sites now apply the "boost my visibility" lift through one funct
 from any author under an active messaging restriction, in either degraded shape, on a throw, or with no
 client (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:143#export async function loadBoostLiftWithheld(`,
 `artifacts/api-server/src/compass/CompassFeedBuilder.ts:153#if (state.degraded || !state.canMessage) withheld.add(id);`;
-`buildFeed` at `artifacts/api-server/src/compass/CompassFeedBuilder.ts:427#const boosted: PipelineResult[] = await applyAuthorBoosts(`,
-discovery ranking at `artifacts/api-server/src/compass/CompassFeedBuilder.ts:655#const boosted: PipelineResult[] = await applyAuthorBoosts(`).
+`buildFeed` at `artifacts/api-server/src/compass/CompassFeedBuilder.ts:444#const boosted: PipelineResult[] = await applyAuthorBoosts(`,
+discovery ranking at `artifacts/api-server/src/compass/CompassFeedBuilder.ts:676#const boosted: PipelineResult[] = await applyAuthorBoosts(`).
 Read-time only: `boost_visibility_enabled` is never written, so the lift returns when the restriction
 ends. Nothing the person does is refused and every post is still served. §38.2's header complaint is
 closed with it: the gate's header no longer describes the boost at all.
@@ -4904,3 +4904,50 @@ lane C's viewer-aware builder replaces main's.
 | CT-02 | W | **W** | §42. Compass applies the private-item rule at every plan reader it owns; the row asks for typed projections. |
 
 - NOT-GRADED: artifacts/api-server/src/test/tripRouteChainProjection.test.ts — §42.1 cites one get_route_chain case it holds; the suite is census-trips'.
+
+## §43 — 2026-10-07 (lane L, wave 6): lead ruling D-24c reaches the rest of the Compass boost path — fair exposure and the fallback feed's boost-selected suggestions. NO VERDICT MOVES
+
+*Measured on branch `claude/mission-l-wave6-20261006`. `head_commit` is not re-declared.*
+
+### 43.1 What was still open
+
+§40 withheld the active-user lift (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:195#const boost = withheld.has(r.item.authorId) ? 0`).
+Two other Compass paths lift a person's reach and read no restriction:
+
+- **Fair exposure.** A new author's item is moved to slot 2 and marked `isFairExposureBoosted`; its
+  "Why this?" calls that a boost. It now skips every author in the withheld set
+  (`artifacts/api-server/src/compass/CompassFairExposureEngine.ts:194#return !withheldAuthors.has(r.item.authorId!);`),
+  read at both builder sites for exactly the authors a fair-exposure pass could lift
+  (`artifacts/api-server/src/compass/CompassFeedBuilder.ts:566#const fairWithheld = await loadFairExposureWithheld(`,
+  `artifacts/api-server/src/compass/CompassFeedBuilder.ts:682#const fairWithheld = await loadFairExposureWithheld(`).
+  A withheld author's item keeps its organic place, and nothing is written.
+- **The fallback feed's `basic_discovery`.** It surfaces people because `boost_eligible` is true, which
+  needs the boost preference. Those rows now pass the same filter
+  (`artifacts/api-server/src/compass/CompassFallbackFeedBuilder.ts:642#const withheld = await loadBoostLiftWithheld(db, rows`).
+
+Both use §40's rule unchanged: an active messaging restriction, a degraded state of either shape, a
+throw or no client withholds the lift; a hosting restriction does not.
+
+Tests: `artifacts/api-server/src/test/compass-feed.test.ts:926#describe("D-24c — fair exposure and the fallback's boost-selected suggestions withhold the lift too"`,
+8 cases (compass-feed 54/54). Mutations, each red then restored: the engine ignores the withheld set
+(3 red); buildFeed's site passes an empty set (1 red); the fallback filter disabled (2 red); the
+withheld set read for every pool author instead of the eligible ones (1 red, the read-count case).
+
+### 43.2 Boost paths outside this census (reported, not changed)
+
+- Media feed creator boosts (`services/ranking/MediaFeedRankingService.ts`: active, new, returning and
+  underexposed creator boosts) read no restriction. All four flags are seeded FALSE. They belong to the
+  media lane.
+- The shared ranking service's creator boosts (`services/ranking/DiscoveryRankingService.ts`: activity,
+  new contributor, underexposure; `ACTIVITY_DISCOVERY_BOOST_ENABLED` and its siblings are seeded FALSE
+  in 2084) and `FeedSlotAllocator`'s `underexposed`/`newUser` buckets (behind
+  `DISCOVERY_DIVERSITY_ENABLED`, seeded FALSE) read no restriction either. Compass calls both, but
+  neither is Compass's. Whoever turns on one of these flags needs D-24c's withheld set applied there first.
+- Pulse's boosts are viewer relevance (who the viewer follows, the viewer's hashtags and city), and its
+  publisher boost applies only to Portava's own account. Neither lifts a person's reach, so D-24c does
+  not apply.
+
+### 43.3 Row moves
+
+None. No census-compass row grades restriction-dependent reach. For a person with no restriction and a
+readable state, every graded path is unchanged.
