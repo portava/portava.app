@@ -8939,6 +8939,106 @@ clause and #624's rule in the golden's own note
 `LAYOVER_FEASIBILITY_VERSION` bump, proven by reverting it on a scratch run. **L241 stays W** (§49.2's grounds,
 unchanged); no row moves.
 
+## §53 — 2026-10-06 (mission lane R): the open Layover rows re-triaged from `main` after lane A closed; NO ROW MOVES
+
+Lane R took over this surface after #629 merged. It re-read every non-`C` row at `ca49bbd286` against the
+code on `main` (ledger in the mission scratchpad, `lane-r/triage.psv`, not in this repository). Of this census's
+counted files it added one suite (§53.5) and two test cases (§53.4). It ran nothing against any database, and read or
+flipped no flag.
+
+### 53.1 What the 212 open rows need
+
+| need | rows |
+| --- | --- |
+| a production apply or flag (2700, 2992, 2740, 2860, 2977, 3640, 3900, 2981/3513; `layover_constraints_enabled`, `layover_stable_recommendation_ids_enabled`, `layover_safe_return_status_enabled`), a routing or flight-status provider and its secret, airport data curation (L220 among them, §53.5), or a lodging/help data source (L145, L223) | 152 |
+| another owner's surface (PR #569 crew planning and location grants, still OPEN; Trips' temporal-freedom engine; Compass's tool flag; Rent-a-Buddy categories; the money-in-ranking guard script) | 29 |
+| an owner decision (including L219's tier calibration: §21.1 expects airport-only where the engine's 2h domestic answer is the stricter `too_short`) | 13 |
+| a new migration (the spec's vocabulary columns and state machine) | 11 |
+| code this lane can build — L3 and L101 (waiting on §53.3's ruling), L155, L205, L236, L294, L295 | 7 |
+
+### 53.2 Three statuses this document carries that are no longer true
+
+- **#589 is merged** (2026-10-06). L82, L196 and L276 recorded it as in flight. The crowd-report channel is on
+  `main` (`artifacts/api-server/src/routes/airport.ts:2826#router.post("/airport/sessions/:id/observations"`). Their
+  verdicts are unchanged: production does not carry 2981 or 3513, so they stay `W` on the apply, not on the PR.
+- **#569 is still open.** L124, L132–L135, L137, L139, L158, L166, L203 and L232 stay where they are.
+- **L145 is not a code row.** `artifacts/api-server/src/services/airport/layoverSafeReturnDisruption.ts:276#export function recoveryPosture(`
+  publishes all three kinds of help as unavailable because there is no airline integration, no airline directory
+  and no airport help directory. Generic text written here would not be "rebooking / airline / airport help". It
+  needs a data source.
+
+### 53.3 Two rows that need a ruling before anyone builds them
+
+- **L18, L41, L99, L272 — who sends the return reminder.** `artifacts/api-server/src/services/airport/LayoverReturnEscalation.ts:38#IT SENDS NOTHING`
+  and the blocker ledger's `LAYOVER_RETURN_REMINDER_DELIVERY` (owner) is not among the lead's 2026-10-06 rulings.
+  Recommendation: client-scheduled local notifications at the certified RETURN_SOON and RETURN_NOW instants,
+  rescheduled when the certified deadline moves materially. Nothing leaves the device, and the escalation
+  priorities already published decide quiet-hours behaviour. Until then these rows stay `W`.
+- **L3, L101 — confining model prose.** §50.1 says what would make them `C`: compose the answer from certified
+  fields and refuse model text that names any of the five nouns. Doing that reverses a design an earlier pass chose
+  on purpose. That pass let cautious advice through the guard
+  (`artifacts/api-server/src/services/airport/__tests__/layoverCompassOperationalBoundary.test.ts:174#positive control: advice about the queue is published unchanged`),
+  and Compass's layover answers would become mostly deterministic text. That is a product call. It is recorded and
+  not made here.
+
+### 53.4 Both of §52.2's follow-ups, closed
+
+- **An unread plan-item access is owner-only.**
+  `artifacts/api-server/src/services/safeReturn/safeReturnPlanItemAccess.ts:72#if (access.status !== "ok") return false;`
+  now refuses before the grants map is consulted, so `{ status: "unread" }` carrying a grant no longer admits the
+  grantee (probe P8b). Case:
+  `artifacts/api-server/src/test/safeReturnPrivatePlanItems.test.ts:243#an UNREAD access is owner-only even when its grants map holds the creator's grant`.
+  The mutant that deletes the line is killed. The seam is still lane C's to rebind; this guard travels with it.
+- **The presence `.neq("user_id")` is load-bearing.** A second, manual-city session of the viewer's in the same city
+  is excluded only by that line, and
+  `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:347#the traveller's record from ANOTHER of their own sessions in the same city never counts either`
+  goes red when it is deleted (verifier mutant M9, now killed). Fixture and test only; the route is unchanged.
+
+Neither moves a row: L27, L129 and L187 stay where §51.1 put them.
+
+### 53.5 L220 stays `W`: the 4h pair is pinned against §21.1's sentence, and no production session can reach it
+
+§51.3 corrected L220's stated reason and held the row at `W` "until a test pins the 4h pair against §21.1's sentence".
+`artifacts/api-server/src/test/layoverScenarioL220.test.ts:52#§21.1 L220 — 4h international, visa allowed → potential landside depending on airport model`
+is that test. It runs the corpus through `decideScenario`, the decision-diff CI's own entry point, and asserts each
+clause:
+- **4h international.** The two corpus scenarios are the same 240-minute international session at the same clock with
+  the same corridor, and only the airport model differs.
+- **Visa allowed.** The corridor is `permitted`. The same curated scenario with a `refused` corridor says `no`, and an
+  `unresolved` one carries `ENTRY_NOT_CONFIRMED`, which the permitted one does not.
+- **Potential landside.** The curated model answers `tight` / `possible_but_risky`, never `yes`.
+- **Depending on airport model.** The generic model answers `no` for the identical session.
+
+Three engine mutants are killed: the airport's international buffer replaced by the generic constant, a refused
+corridor no longer overriding the clock, and an unresolved corridor treated as confirmed.
+
+**Why it is still `W`.** This census held L143 at `W` on exactly this production fact: 0 of 3,206 production airports
+are curated (header note 2), so the curated branch, which is the half of L220 that says "depending on airport model",
+is reached by no production session. §41 states the rule: a capability no production session can reach stays `W`.
+An earlier draft of this section moved L220 `W → C` on the engine's behaviour and attributed the production gap to
+L243. The independent verifier rejected that (lane R wave-1 finding F2), and it is withdrawn here before it reached
+`main`. The "visa allowed" half IS reachable in production (`passport_entry_intelligence_enabled` is true and the
+corridor tables are present), so the one thing between this row and `C` is curated airport data.
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| L220 | W | W | The §21.1 scenario holds clause by clause on the engine's own entry point (`layoverScenarioL220.test.ts`, three engine mutants killed). L143's precedent and §41's rule keep it `W`: no production airport is curated, so no production session can take the curated branch. It moves when one is. |
+
+`artifacts/api-server/src/test/layoverScenarioMatrix.test.ts` asserts that both of ITS airport models refuse at 4h. Its
+fixture has the traveller at the gate at the instant of arrival, with no corridor supplied, and its generic model is a
+slower one (a 150-minute international buffer). The corpus scenarios are 20 minutes after arrival with the corridor
+permitted. That file's two case titles and comments said the 4h verdict "does not yet vary" and that the scenario
+"cannot be parameterised on entry permission". Both are restated (F2); no assertion changed.
+
+**One observation for L48, not a move.** An `unresolved` corridor costs a session the clock's `yes`, which becomes
+`entry_unverified`. At the risky band it does not change `tight`; it only adds `ENTRY_NOT_CONFIRMED`. Both answers are
+`possible_but_risky`, so no band widens. Whether `tight` with an unconfirmed border should read as `entry_unverified`
+is L48's question.
+
+### 53.6 Headline
+
+No row moves. `check:census-integrity` reads **C=84 W=145 N=67 X=0** over 296, unchanged since §50.4.
+
 ## Cited, not graded (check:census-scope-coverage)
 
 - NOT-GRADED: artifacts/api-server/src/test/docCitations.test.ts — The citation guard's own suite. §27.10 names its case 9 and §30.4 names it as npm test's one failing test; both report on the guard that measured this census. It is machinery this census reports on, not a subject it grades.
@@ -8954,3 +9054,4 @@ unchanged); no row moves.
 - NOT-GRADED: artifacts/api-server/src/routes/memories.ts — §49.1 item 3 cites the from-layover route that builds L275's memory half; the router is census-highlights-memories' subject, and L275's held W rests on the missing postcard, not on this file.
 - NOT-GRADED: artifacts/api-server/src/services/memory/layoverMemory.ts — §50.3 cites the layover Memory row builder to record the trip_id fix; the module is census-highlights-memories' (lane A2) subject, and L275's held W rests on the missing postcard, not on this file.
 - NOT-GRADED: artifacts/api-server/src/services/safeReturn/safeReturnPlanItemAccess.ts — §52.2 records a follow-up for lane C's rebinding of this Safe Return plan-item seam (the `access.status` guard); no layover row rests on it.
+- NOT-GRADED: artifacts/api-server/src/test/safeReturnPrivatePlanItems.test.ts — §53.4 cites the case that pins the seam's `access.status` guard; the seam is Safe Return's and lane C's, and no layover row rests on it.
