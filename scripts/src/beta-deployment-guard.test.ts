@@ -117,6 +117,11 @@ const CASES: Case[] = [
   { name: "beta with an inherited web-bundle EXPO_PUBLIC_SENTRY_DSN", vars: { ...BETA_OK, EXPO_PUBLIC_SENTRY_DSN: SOME_DSN }, api: false, build: false },
   { name: "beta with both DSNs empty", vars: { ...BETA_OK, SENTRY_DSN: "", EXPO_PUBLIC_SENTRY_DSN: " " }, api: true, build: true },
   { name: "production with its DSN (unchanged)", vars: { SUPABASE_URL: PROD, EXPO_PUBLIC_SUPABASE_URL: PROD, SENTRY_DSN: SOME_DSN, EXPO_PUBLIC_SENTRY_DSN: SOME_DSN }, api: true, build: true },
+  // verifier F4: rows that make the two implementations' edges agree, not just their centres.
+  { name: "beta: `sk_live_` without a word boundary is not a key (ask_live_support)", vars: { ...BETA_OK, NOTE: "ask_live_support" }, api: true, build: true },
+  { name: "beta: a live key after a non-alphanumeric boundary inside a blob", vars: { ...BETA_OK, BLOB: '{"k":"sk_live_51x"}' }, api: false, build: false },
+  { name: "beta: PAYMENTS_ALLOW_LIVE=False (only empty or exactly false pass)", vars: { ...BETA_OK, PAYMENTS_ALLOW_LIVE: "False" }, api: false, build: false },
+  { name: "beta: PAYMENTS_ALLOW_LIVE=FALSE", vars: { ...BETA_OK, PAYMENTS_ALLOW_LIVE: "FALSE" }, api: false, build: false },
 ];
 
 function runGuard(vars: Record<string, string>) {

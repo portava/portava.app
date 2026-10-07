@@ -183,6 +183,8 @@ describe("deploymentEnvironmentRefusal — beta runs test-mode providers, in pro
       if (label) env[DEPLOYMENT_ENV_VAR] = label;
       assert.match(String(deploymentEnvironmentRefusal(env)), /REPLIT_DOMAINS names the beta origin portava-beta\.replit\.app/);
     }
+    // upper case is the same host (verifier F4: the API rule must fold case like the shell twin)
+    assert.match(String(deploymentEnvironmentRefusal({ SUPABASE_URL: PROD_URL, REPLIT_DOMAINS: "PORTAVA-BETA.REPLIT.APP" })), /REPLIT_DOMAINS names the beta origin/);
     // production's own domain, and a host that merely contains the name, are not the beta origin
     assert.equal(deploymentEnvironmentRefusal({ SUPABASE_URL: PROD_URL, REPLIT_DOMAINS: "portava.replit.app" }), null);
     assert.equal(deploymentEnvironmentRefusal({ SUPABASE_URL: PROD_URL, REPLIT_DOMAINS: "notportava-beta.replit.app" }), null);

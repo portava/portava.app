@@ -12,7 +12,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 import { BETA_PROJECT_REF, PRODUCTION_PROJECT_REF, REPO_ROOT } from "./beta-db-core.js";
@@ -625,6 +625,42 @@ describe("beta-configure step f — no tester account on a database where the an
     assert.equal(code, 0);
     assert.match(lines.join("\n"), /step f would FAIL .*anon holds TABLE-level SELECT/);
     assert.ok(!api.calls.some((c) => c.method === "PATCH"));
+  });
+
+  it("PROFILES_NEVER_READ is pinned: exactly 3740's ten never-read columns (verifier F1)", () => {
+    assert.deepEqual([...PROFILES_NEVER_READ], [
+      "date_of_birth", "full_name", "expo_push_token", "phone_e164", "phone_verified_at",
+      "trust_score", "safety_flags_count", "id_verified_at", "selfie_verified_at", "verification_method",
+    ]);
+  });
+
+  {
+    // Once migration 3740 (PR #647) is in the tree, its own v_never_read is the authority. Until then this test is
+    // SKIPPED, saying so; the lead re-checks after #647 merges (verifier F1).
+    const migDir = join(REPO_ROOT, "artifacts/api-server/src/migrations");
+    const file = readdirSync(migDir).find((f) => /^3740_.*\.sql$/.test(f));
+    it(
+      "PROFILES_NEVER_READ equals migration 3740's v_never_read, parsed from the file",
+      { skip: file ? false : "migration 3740 (PR #647) is not in this tree yet — re-check after #647 merges" },
+      () => {
+        const sql = readFileSync(join(migDir, file as string), "utf8");
+        const m = /v_never_read\s+constant\s+text\[\]\s*:=\s*ARRAY\[([^\]]*)\]/.exec(sql);
+        assert.ok(m, "v_never_read not found in 3740");
+        assert.deepEqual([...m[1].matchAll(/'([a-z0-9_]+)'/g)].map((x) => x[1]).sort(), [...PROFILES_NEVER_READ].sort());
+      },
+    );
+  }
+
+  it("the SQL also refuses column-level UPDATE on profiles.role (2078; verifier F2)", () => {
+    assert.match(PROFILES_CLIENT_GRANT_SQL, /a\.attname = 'role' AND has_column_privilege\(r, a\.attrelid, a\.attnum, 'UPDATE'\)/);
+    assert.match(PROFILES_CLIENT_GRANT_SQL, /' can UPDATE role'/);
+  });
+
+  it("FAILS (exit 1) on the role-UPDATE finding alone", async () => {
+    const api = stubApi({ profilesGrant: { profiles_exists: true, findings: ["authenticated can UPDATE role"] } });
+    const { code, errors } = await run(api);
+    assert.equal(code, 1);
+    assert.match(errors.join("\n"), /authenticated can UPDATE role/);
   });
 
   it("the SQL names every personal column 3740 forbids, and asks both client roles for table-level SELECT and UPDATE", () => {

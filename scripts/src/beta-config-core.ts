@@ -373,7 +373,8 @@ export const PROFILES_NEVER_READ = [
 
 /**
  * One row: does public.profiles exist, and which client privileges over it break the boundary — a TABLE-level
- * SELECT or UPDATE held by anon/authenticated (directly or through PUBLIC), or SELECT on a never-read column.
+ * SELECT or UPDATE held by anon/authenticated (directly or through PUBLIC), SELECT on a never-read column, or
+ * column-level UPDATE on `role` (2078; 3740's postcondition refuses it too — a tester could set their own role).
  * OID forms of has_*_privilege, so a missing table yields NULL (no error) and the row still answers.
  */
 export const PROFILES_CLIENT_GRANT_SQL =
@@ -388,6 +389,11 @@ export const PROFILES_CLIENT_GRANT_SQL =
   " WHERE a.attrelid = to_regclass('public.profiles') AND a.attnum > 0 AND NOT a.attisdropped" +
   ` AND a.attname = ANY(ARRAY[${PROFILES_NEVER_READ.map((c) => `'${c}'`).join(", ")}]::name[])` +
   " AND has_column_privilege(r, a.attrelid, a.attnum, 'SELECT')" +
+  " UNION ALL " +
+  "SELECT r::text || ' can UPDATE role'" +
+  " FROM unnest(ARRAY['anon', 'authenticated']::name[]) AS r CROSS JOIN pg_catalog.pg_attribute AS a" +
+  " WHERE a.attrelid = to_regclass('public.profiles') AND a.attnum > 0 AND NOT a.attisdropped AND a.attname = 'role'" +
+  " AND has_column_privilege(r, a.attrelid, a.attnum, 'UPDATE')" +
   ") AS s) AS findings";
 
 /** Problems from PROFILES_CLIENT_GRANT_SQL's row (empty = the 3740 boundary holds). */

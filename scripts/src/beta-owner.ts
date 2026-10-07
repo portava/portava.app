@@ -128,13 +128,17 @@ async function authSettings(fetchImpl: SmokeFetch, key: string): Promise<{ statu
 const PROVISION_CMD = `pnpm -C scripts beta:provision --confirm=${PROVISION_CONFIRMATION}`;
 
 /** Every beta gate the outside world can show, in runbook order. Pure over (exec, fetch). */
-export async function betaStatus(exec: Exec, fetchImpl: SmokeFetch, opts: { publishableKey?: string; base?: string } = {}): Promise<Gate[]> {
+export async function betaStatus(
+  exec: Exec,
+  fetchImpl: SmokeFetch,
+  opts: { publishableKey?: string; base?: string; readPublishableKey?: () => string } = {},
+): Promise<Gate[]> {
   const gates: Gate[] = [];
   const base = opts.base ?? BETA_WEB_ORIGIN;
 
   // Step 0 / 3 — Supabase Auth on beta refuses new users (public settings).
   let key: string | null = null;
-  try { key = opts.publishableKey ?? betaPublishableKey(); } catch { key = null; }
+  try { key = opts.publishableKey ?? (opts.readPublishableKey ?? betaPublishableKey)(); } catch { key = null; }
   let auth: { status: number; body: Record<string, unknown> | null } | null = null;
   try { auth = key ? await authSettings(fetchImpl, key) : null; } catch { auth = null; }
   gates.push(
@@ -213,7 +217,11 @@ export async function betaStatus(exec: Exec, fetchImpl: SmokeFetch, opts: { publ
   );
 
   // Steps 4–7 — the beta API is deployed, and the read-only smoke passes against it.
-  const smoke = await runBetaSmoke(base, fetchImpl, key ? { publishableKey: key } : {});
+  // The SAME key decision as gate 0: if it could not be read, the smoke must not quietly read it again on its own
+  // (verifier F3 found that path): checks 6 and 7 then fail, and gate 3c stays OPEN "not probed".
+  const smoke = await runBetaSmoke(base, fetchImpl, key
+    ? { publishableKey: key }
+    : { readPublishableKey: () => { throw new Error("the beta publishable key could not be read from eas.json"); } });
 
   // Before step 8 — profiles' personal columns closed to the anon key (migration 3740, PR #647). The probe goes to
   // portava-beta's PostgREST directly, so it answers before the API is deployed.

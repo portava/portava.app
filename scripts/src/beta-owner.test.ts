@@ -183,6 +183,16 @@ describe("beta:status — read-only", () => {
     assert.match(formatGates(gates), /NEXT \(gate 3c\)/);
   });
 
+  it("an unreadable eas.json key leaves gate 3c OPEN ('not probed') and testers waiting — never a pass by absence (verifier F3)", async () => {
+    const w: World = { ...today(), secrets: [TOKEN_SECRET], dbRuns: [run(1, "success")], cfgRuns: [run(2, "success")], disableSignup: true, apiDeployed: true, profiles: "closed" };
+    const gates = await betaStatus(fakeGh(w).exec, fakeFetch(w).fetch, { readPublishableKey: () => { throw new Error("eas.json build.beta carries no publishable key"); } });
+    const g3c = gates.find((x) => x.id === "3c");
+    assert.equal(g3c?.state, "OPEN");
+    assert.match(String(g3c?.detail), /not probed/);
+    assert.equal(gates.find((x) => x.id === "0")?.state, "UNKNOWN");
+    assert.match(String(gates.find((x) => x.id === "8")?.detail), /ONLY after gate 3c PASSES/);
+  });
+
   it("an unreadable secret list is UNKNOWN, never OPEN or PASS; a wrong publishable key is OPEN", async () => {
     const w: World = { ...today(), secrets: null };
     const gates = await betaStatus(fakeGh(w).exec, fakeFetch(w).fetch, { publishableKey: "sb_publishable_wrong" });

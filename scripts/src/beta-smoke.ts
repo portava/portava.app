@@ -44,7 +44,9 @@
  *                        column does not exist (42703). A 200 means the anon key can read it — the
  *                        TABLE-level grant a baseline replay inherits (migration 3740, PR #647) —
  *                        and no tester account may be created. limit=0: the privilege check runs
- *                        before execution, so no row is ever returned.
+ *                        before execution, so no row is ever returned. Column-level UPDATE on
+ *                        profiles.role is NOT probed here — that would mean sending an UPDATE, and
+ *                        this smoke never writes; beta-configure step f checks it in SQL.
  *
  * REPORTED, NOT CHECKED — the API exposes no unauthenticated read of either,
  * and this lane does not add an endpoint that would publish configuration:
@@ -185,6 +187,8 @@ export interface SmokeOptions {
   policy?: FlagPolicy;
   /** Defaults to the eas.json beta profile's publishable key. */
   publishableKey?: string;
+  /** How to read the key when none is given (default betaPublishableKey); a throw fails checks 6 and 7. */
+  readPublishableKey?: () => string;
 }
 
 export async function runBetaSmoke(base: string, fetchImpl: SmokeFetch, opts: SmokeOptions = {}): Promise<SmokeResult[]> {
@@ -231,7 +235,7 @@ export async function runBetaSmoke(base: string, fetchImpl: SmokeFetch, opts: Sm
   });
   let key: string;
   try {
-    key = opts.publishableKey ?? betaPublishableKey();
+    key = opts.publishableKey ?? (opts.readPublishableKey ?? betaPublishableKey)();
   } catch (err) {
     results.push({ name: "Supabase Auth sign-up closed", ok: false, detail: (err as Error).message });
     return results;

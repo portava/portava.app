@@ -40,11 +40,16 @@ Replit deployment. Production is never reached by anything below.
     is refused at build and boot. Replit's docs (Secrets page, read
     2026-10-07) list `REPLIT_DOMAINS` as a variable Replit sets but do not say
     a published deployment carries it, and that has not been observed here. An
-    explicit label lifts the refusal. **Production pre-requisite: before the
-    next production deploy that contains this rule, add the Secret
-    `PORTAVA_DEPLOYMENT_ENV=production` to production** (harmless if
-    `REPLIT_DOMAINS` turns out to be present; without it, a deployment lacking
-    `REPLIT_DOMAINS` refuses to build and start);
+    explicit label lifts the refusal. **Production pre-requisite (OWNER
+    ACTION, lead ruling BETA-7): before the next production deploy that
+    contains this rule, add the Secret `PORTAVA_DEPLOYMENT_ENV=production` to
+    production** (harmless if `REPLIT_DOMAINS` turns out to be present;
+    without it, a deployment lacking `REPLIT_DOMAINS` refuses to build and
+    start). BETA-7 keeps the unlabelled-fork rule keyed to the exact host
+    `portava-beta.replit.app` for now: a fork deployed under any other name
+    (`portava-beta-2.replit.app`, a custom domain) is not caught by it. Once
+    production carries its label, a follow-up can refuse EVERY unlabelled
+    Replit deployment, which closes that gap without an outage risk;
   - production's publishable key (the one `.replit` commits) is refused in a
     beta environment like its ref and host;
   - a LIVE-mode provider credential anywhere (Stripe `sk_live_`/`rk_live_`/
@@ -154,8 +159,10 @@ whenever the policy changes.
 
 Last, it reads (never writes) the client grants on `public.profiles` and
 exits 1 while `anon` or `authenticated` hold a TABLE-level SELECT or UPDATE
-there, or SELECT on a personal column (`date_of_birth`, `full_name`,
-`expo_push_token`, `phone_e164`, …). A baseline replay onto a Supabase project
+there, SELECT on a personal column (`date_of_birth`, `full_name`,
+`expo_push_token`, `phone_e164`, …), or column-level UPDATE on `role` (a
+tester could set their own role). The SQL was executed on PostgreSQL
+(PGlite) against seven grant shapes by the verifier and by this lane. A baseline replay onto a Supabase project
 inherits exactly that grant (Supabase's default ACL; `scripts/src/beta-db-core.ts`
 sets it before a rebuild), and it lets the public anon key read those columns
 of every non-private profile. Migration **3740** (PR #647) removes it. Sign-up
@@ -301,6 +308,8 @@ Expect seven `PASS` lines:
   `expo_push_token`, `phone_e164`, …) is refused to the anon key: each is
   probed through PostgREST with `limit=0`, so no row is ever returned. A `200`
   means migration 3740 is not applied and no tester account may be created.
+  (Column-level UPDATE on `role` is checked by step 3's SQL only: probing it
+  through PostgREST would mean sending an UPDATE, and the smoke never writes.)
 
 Two things print `NOT CHECKED`:
 
