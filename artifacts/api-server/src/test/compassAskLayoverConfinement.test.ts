@@ -34,7 +34,7 @@ import { _setTestOpenAI } from "../lib/openai.js";
 import { invalidateFlagsCache } from "../compass/flags.js";
 import { makeLayoverDb, airportRow, sessionRow } from "./helpers/fakeLayoverDb.js";
 import { certifiedLayoverSnapshot } from "../services/airport/LayoverSnapshot.js";
-import { certifiedLayoverAnswerText, isAirsideLayoverQuestion, mentionsLeaving } from "../services/airport/layoverQuestionScope.js";
+import { certifiedLayoverAnswerText, isAirsideLayoverQuestion, mentionsLeaving, LAYOVER_STATE_UNREADABLE_MESSAGE } from "../services/airport/layoverQuestionScope.js";
 
 const USER = "a1a1a1a1-aaaa-4aaa-8aaa-000000000001";
 const TOKEN = "layover-ask-token";
@@ -93,14 +93,21 @@ before(async () => {
 after(() => { server?.close(); });
 afterEach(() => { _setTestClient(null as any, false); _setTestOpenAI(null); invalidateFlagsCache(); });
 
-async function ask(prompt: string, opts: { layover: boolean; reply: string; stream?: boolean }) {
-  const inner = makeLayoverDb(tables({ layover: opts.layover }), { users: { [TOKEN]: USER } });
+async function ask(prompt: string, opts: { layover: boolean; reply: string; stream?: boolean; sessionsUnreadable?: boolean; sessionsThrow?: boolean }) {
+  const inner = makeLayoverDb(tables({ layover: opts.layover }), {
+    users: { [TOKEN]: USER },
+    // L3-FC-2: the layover session store cannot be read.
+    ...(opts.sessionsUnreadable ? { failures: { "layover_sessions:select": { message: "connection reset", code: "08006" } } } : {}),
+  });
   // The ask route reads its flags with `.like("flag", "COMPASS_%")` and calls
   // a few rpcs on non-fatal paths; this double models neither, so: `like` as
   // its case-insensitive `ilike`, and an rpc answers an error (never a shape).
   const db: any = {
     ...inner,
-    from: (t: string) => { const b = inner.from(t); b.like = (c: string, p: string) => b.ilike(c, p); return b; },
+    from: (t: string) => {
+      if (opts.sessionsThrow && t === "layover_sessions") throw new Error("socket hang up");
+      const b = inner.from(t); b.like = (c: string, p: string) => b.ilike(c, p); return b;
+    },
     rpc: async () => ({ data: null, error: { message: "rpc not modelled in this test", code: "XX000" } }),
   };
   _setTestClient(db, true);
@@ -121,7 +128,7 @@ async function ask(prompt: string, opts: { layover: boolean; reply: string; stre
   } else {
     body = JSON.parse(raw);
   }
-  const snap = opts.layover ? await certifiedLayoverSnapshot(db, USER) : null;
+  const snap = opts.layover && !opts.sessionsUnreadable && !opts.sessionsThrow ? await certifiedLayoverSnapshot(db, USER) : null;
   return { status: r.status, body, wire, mainCalls: m.calls.length, snap };
 }
 
@@ -169,6 +176,49 @@ describe("L3-FC — the general Compass chat on a live layover", () => {
     assert.equal(r.body.message, LEAVING_PROSE);
     assert.equal(r.mainCalls, 1);
     assert.equal(r.body.meta?.layoverAnswer, undefined);
+  });
+});
+
+describe("L3-FC-2 — the layover session store cannot be read", () => {
+  it("a question outside the allowlist gets the retryable refusal, and the model is never called", async () => {
+    for (const q of ["Can I see the cathedral?", "What should I do with my time?"]) {
+      const r = await ask(q, { layover: true, sessionsUnreadable: true, reply: LEAVING_PROSE });
+      assert.equal(r.status, 200);
+      assert.equal(r.body.message, LAYOVER_STATE_UNREADABLE_MESSAGE, q);
+      assert.equal(r.body.fallback, true);
+      assert.equal(r.body.fallbackReason, "layover_state_unreadable");
+      assert.equal(r.body.retryable, true);
+      assert.equal(r.mainCalls, 0, `${q}: the model was asked over an unreadable layover state`);
+      assert.doesNotMatch(JSON.stringify(r.body), /cathedral is a short cab|venture beyond/);
+    }
+  });
+
+  it("streamed: one error event carrying the retryable sentence; no model text on the wire", async () => {
+    const r = await ask("Can I see the cathedral?", { layover: true, sessionsUnreadable: true, reply: LEAVING_PROSE, stream: true });
+    assert.equal(r.body.error, true);
+    assert.equal(r.body.message, LAYOVER_STATE_UNREADABLE_MESSAGE);
+    assert.equal(r.body.retryable, true);
+    assert.equal(r.wire, "", "no delta was streamed");
+    assert.equal(r.mainCalls, 0);
+  });
+
+  it("a read that THROWS is unreadable too", async () => {
+    const r = await ask("Can I see the cathedral?", { layover: true, sessionsThrow: true, reply: LEAVING_PROSE });
+    assert.equal(r.body.message, LAYOVER_STATE_UNREADABLE_MESSAGE);
+    assert.equal(r.mainCalls, 0);
+  });
+
+  it("an airside question proceeds as normal", async () => {
+    const r = await ask("Where is the nearest lounge?", { layover: true, sessionsUnreadable: true, reply: AIRSIDE_PROSE });
+    assert.equal(r.mainCalls, 1);
+    assert.equal(r.body.message, AIRSIDE_PROSE);
+    assert.equal(r.body.fallback, undefined);
+  });
+
+  it("control: a READABLE store with no live layover is not a refusal (an answer, not an unknown)", async () => {
+    const r = await ask("Can I see the cathedral?", { layover: false, reply: LEAVING_PROSE });
+    assert.equal(r.body.message, LEAVING_PROSE);
+    assert.equal(r.body.fallbackReason, undefined);
   });
 });
 

@@ -52,6 +52,13 @@ export function isAirsideLayoverQuestion(question: string): boolean {
   return AIRSIDE_FACILITY.test(q) || INSIDE_PHRASE.test(q);
 }
 
+/**
+ * Lead ruling L3-FC-2 (2026-10-07): the layover session store could not be read.
+ * A question outside the airside allowlist is not answered at all (no model
+ * call) — it gets this retryable sentence; an airside question proceeds as normal.
+ */
+export const LAYOVER_STATE_UNREADABLE_MESSAGE = "We can't check your layover right now. Please try again in a moment.";
+
 /** The certified snapshot fields the text is rendered from. */
 export type CertifiedTextSnapshot = Pick<
   LayoverSnapshot,

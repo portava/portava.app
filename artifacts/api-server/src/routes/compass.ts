@@ -53,7 +53,7 @@ import {
 import { buildOpportunities, opportunityWorldValueKeys, projectForSurface, type SurfaceProjection } from "../lib/opportunityEngine.js";
 import { parseIntentMode } from "../lib/intentModes.js";
 import { certifiedLayoverSnapshot, isDegradedRefusal, landsideContextPhrase, type LayoverSnapshot } from "../services/airport/LayoverSnapshot.js";
-import { certifiedLayoverAnswerText, isAirsideLayoverQuestion, mentionsLeaving } from "../services/airport/layoverQuestionScope.js";
+import { certifiedLayoverAnswerText, isAirsideLayoverQuestion, mentionsLeaving, LAYOVER_STATE_UNREADABLE_MESSAGE } from "../services/airport/layoverQuestionScope.js";
 import {
   ALGORITHM_VERSION_KEY,
   COMPASS_RANKING_ALGORITHM_VERSION,
@@ -1728,6 +1728,7 @@ router.post("/compass/ask", async (req, res) => {
   //      on the model electing to call the tool. A store that could not be read
   //      is said so; "no live layover" is silent.
   let liveLayover: LayoverSnapshot | null = null; // L3-FC (below): the session this turn is answered under, if any
+  let layoverUnreadable = false; // L3-FC-2 (below): nobody could tell whether this traveller is on a layover
   try {
     const snap = await certifiedLayoverSnapshot(sc, user.id);
     if (snap.ok) {
@@ -1740,9 +1741,10 @@ router.post("/compass/ask", async (req, res) => {
           (s.unknowns.length ? `; unknowns: ${s.unknowns.join(", ")}` : ""),
       );
     } else if (isDegradedRefusal(snap.reason)) {
+      layoverUnreadable = true;
       ctxLines.push("[Layover \u2014 certified snapshot]", `Could not be read (${snap.reason}); do not assume the traveller is not in a layover.`);
     }
-  } catch { /* non-fatal */ }
+  } catch { layoverUnreadable = true; /* a throw is a read nobody completed (L3-FC-2) */ }
 
   // (b) CX-10 — the platform Context Kernel (lib/contextKernel), assembled for
   //     the subjects this turn already names. Pure; no flag. The live world read
@@ -1935,6 +1937,24 @@ router.post("/compass/ask", async (req, res) => {
   // question gets the model, but its answer is held back (not streamed) and
   // replaced by the certified text if it drifts into leaving.
   const layoverCertifiedOnly = liveLayover !== null && !isAirsideLayoverQuestion(prompt);
+  // L3-FC-2 (lead ruling 2026-10-07): the session store could not be read, so
+  // this may be a layover. Outside the airside allowlist: a retryable refusal,
+  // no model call. Airside questions proceed as normal.
+  if (layoverUnreadable && liveLayover === null && !isAirsideLayoverQuestion(prompt)) {
+    appendSystemEvent(sc, conversationId, "assistant_unavailable", { fallbackReason: "layover_state_unreadable" }).catch(() => {});
+    const refusal = { conversationId, message: LAYOVER_STATE_UNREADABLE_MESSAGE, payload: null, quickActions: [], promptVersion: COMPASS_ASK_PROMPT_VERSION, fallback: true, fallbackReason: "layover_state_unreadable", retryable: true };
+    if (stream) {
+      res.setHeader("Content-Type",  "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection",    "keep-alive");
+      res.flushHeaders();
+      res.write(`data: ${JSON.stringify({ error: true, ...refusal })}\n\n`);
+      res.end();
+      return;
+    }
+    res.json(refusal);
+    return;
+  }
   if (liveLayover !== null && layoverCertifiedOnly) {
     const message = certifiedLayoverAnswerText(liveLayover);
     const meta = { droppedInventedIds: 0, groundingViolations: [] as string[], toolsUsed: [] as string[], layoverAnswer: "certified_only" };
