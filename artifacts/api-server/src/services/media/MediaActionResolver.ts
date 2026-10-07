@@ -138,7 +138,7 @@ export type MediaActionId =
   | "invite_people"
   | "follow_this_night"
   | "save_route"
-  | "report" | "directions" | "view_event" | "view_passport" | "find_quieter" | "find_cheaper" | "contribute_gem" | "link_event" | "find_busier"; // find_busier: §15, census-media §36 (MD101) — offered only while media_find_busier_enabled
+  | "report" | "directions" | "view_event" | "view_passport" | "find_quieter" | "find_cheaper" | "contribute_gem" | "link_event" | "find_busier" | "remix"; // find_busier: §15, census-media §36 (MD101) — offered only while media_find_busier_enabled; remix: §23.1, census-media MD175 (D-26h)
 
 export interface MediaActionTarget {
   method: "GET" | "POST" | "DELETE";
@@ -683,7 +683,7 @@ export async function resolveMediaActions(
             })),
           },
         },
-      });
+      }); if (compassOn) actions.push(remixAction(mediaId)); // §23.1 Remix (census-media MD175, D-26h): Compass-gated, and only for a real chain
     }
   }
 
@@ -1261,3 +1261,36 @@ export async function withFindBusierAction(
   else out.push(busier);
   return out;
 }
+
+// ── §23.1 "Remix" (census-media MD175, lead ruling D-26h) ────────────────────
+// Appended at the tail so no cited line above moves.
+//
+// D-26h: Remix is a Compass VARIATION — "a night like this, elsewhere" — not an
+// editable copy. It is a Compass ask carrying the chain's public place ids, and
+// Compass stays propose-only. Nothing reaches the original author.
+//
+// Offered exactly where Follow This Night and Save Route are (a real chain: two
+// or more DISCLOSABLE places, resolveExperience having re-applied the viewer's
+// gate), and only with Compass on, like every other Compass action on the rail.
+//
+// The chain's place ids are NOT in the action's params. The client sends only
+// the media id and the server-written prompt (travel-buddy-standalone
+// features/media/services/mediaActions.ts, the find_quieter case), and the §32
+// context attaches the chain SERVER-SIDE at ask time, through the same viewer
+// gate (CompassMediaContext.remixChainFor). So a client can never hand Compass
+// a place list of its own, and a chain that has since become invisible to the
+// viewer is not described.
+
+/** The prompt the rail sends, verbatim. Server-written, like Find Quieter's. */
+export const REMIX_PROMPT = "Remix this night: suggest a night like this one, somewhere else.";
+
+/** The Remix rail action for a media item that is part of a chain. */
+export function remixAction(mediaId: string): MediaAction {
+  return {
+    id: "remix",
+    label: "Remix this night",
+    outcome: "compass",
+    target: { method: "POST", endpoint: "/api/compass/ask", params: { mediaId, prompt: REMIX_PROMPT } },
+  };
+}
+

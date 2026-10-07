@@ -262,6 +262,8 @@ stay W: their blocker is now **activation**, not an owner decision.
   carrying the chain's public place ids. Compass stays propose-only. Nothing reaches the original author.
 - **Rationale.** It reuses an existing propose-only path and creates no new copy of anyone's content.
 - Proposed by lane M, adopted by the lead 2026-10-07 under the owner's delegation.
+- **Update, later on 2026-10-07:** built by lane M at the lead's request. The chain's place ids reach Compass
+  through the server-side §32 context, not the client's request. See census-media §50.12.
 
 ### D-26i (Q-L14e, MD255): are `following` and `shared_moment` attachment-level audiences only?
 - **Ruling: YES** (§36.4 MD255 (c)).

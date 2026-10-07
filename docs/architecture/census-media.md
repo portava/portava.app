@@ -16599,3 +16599,31 @@ Cited, not graded (check:census-scope-coverage):
 - NOT-GRADED: artifacts/api-server/src/lib/mapProjection.ts — §50.11 cites the Map gateway's endpoint attach and its place floor; MD162's verdict rests on Media's consumer, which does not exist, and census-map grades this file.
 - NOT-GRADED: artifacts/api-server/src/test/mapCrowdFlowLayer.test.ts — the Map gateway's crowd-flow suite, cited for §50.11's proof; no Media row is graded on it.
 
+### 50.12 MD175 moves: Remix is built as ruled (lead request, 2026-10-07; ruling D-26h)
+
+The lead asked for MD175 if it touched no Compass file that wave 6 edits. Wave 6 edits `routes/compass.ts`
+and `CompassFeedBuilder.ts`; this change touches neither. It edits `CompassMediaContext.ts` and
+`MediaActionResolver.ts`, and neither is in wave 6's diff. The MediaActionResolver change is line-neutral,
+and it leaves `:878` and `:1018` for after lane C's #650.
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD175 | **N** | **C** | **Ruling D-26h:** Remix is a Compass variation ("a night like this, elsewhere"), §36.4 MD175 (b). **The action:** offered where Follow This Night and Save Route are, so only for a real chain of two or more disclosable places that the viewer may see, and only with Compass on (`artifacts/api-server/src/services/media/MediaActionResolver.ts:686#if (compassOn) actions.push(remixAction(mediaId));`). It is `POST /api/compass/ask` with the media id and a server-written prompt (`artifacts/api-server/src/services/media/MediaActionResolver.ts:1285#export const REMIX_PROMPT`). **The chain's place ids** are attached server-side to the ask's §32 context, through the viewer gate, at ask time (`artifacts/api-server/src/compass/CompassMediaContext.ts:315#chain: await remixChainFor(sc, viewer, entities.tripId, nowMs)`). That context holds only place ids and coarse labels, in capture order: no capture time, no count, no media id and no author (`artifacts/api-server/src/compass/CompassMediaContext.ts:454#export async function remixChainFor(`). So a client can never supply its own place list. **Propose-only:** the prompt says nothing is booked, saved or sent, and never to name, describe or contact whoever took the photos (`artifacts/api-server/src/compass/CompassMediaContext.ts:473#export function formatRemixChainLines(`). The client dispatches it as the same Compass ask as Find Quieter (`travel-buddy-standalone/src/features/media/services/mediaActions.ts:371#case 'find_quieter': case 'remix':`). **TESTED:** `artifacts/api-server/src/test/mediaActionsCompass.test.ts:1033#describe("MD175 (D-26h) — Remix is a propose-only Compass variation of the chain"` (9 cases), plus `travel-buddy-standalone/src/features/media/__tests__/mediaRemix.test.ts` (4 cases). Seven mutants each turn a case red: the Compass gate removed, an extra param, a capture time in the chain, a one-place chain, a raw label, the chain never attached, and the chain never printed. |
+
+### 50.13 Headline, restated from the rows
+
+`check:census-integrity` recounted after this section.
+
+| Measure | §50 | **§50.13** |
+| --- | ---: | ---: |
+| Denominator | 450 | **450** |
+| BUILT-AND-CORRECT | 414 | **415** |
+| BUILT-BUT-WRONG | 29 | **29** |
+| NOT-BUILT | 7 | **6** |
+| CANNOT-VERIFY | 0 | **0** |
+| CONSTRUCTED% | 98.4 % | **98.7 %** (444 / 450) |
+| CORRECT% raw | 92.0 % | **92.2 %** (415 / 450) |
+
+**What would turn MD175 red:** Remix offered without a chain or with Compass off; the ask carrying a
+client-supplied place list; or the chain context gaining a capture time, a media id or an author.
+
