@@ -70,32 +70,19 @@ export function getCreationDraftContexts(): InputContext[] {
   return [...CREATION_CONTEXTS];
 }
 
-// Which duplicate finders run for each context, and where the entity NAME comes
-// from. `text` = the typed field value; `draftName` = draft.name (used when the
-// typed field is a LOCATION rather than the entity's own name).
+// WHICH non-blocking checks run for a field is no longer decided here: the field
+// POLICY declares them (`policy.validationRules`, census G32 — see
+// `declaresCheck` at the foot of this file and the declarations at the foot of
+// policyRegistry.ts). What stays here is HOW each one runs. For the duplicate-Gem
+// check that includes where the entity NAME comes from: `text` = the typed field
+// value; `draftName` = draft.name (used when the typed field is a LOCATION rather
+// than the entity's own name). A context that declares `duplicate_gem` with no
+// entry here cannot run it, which a test in inputAssistanceCreation.test.ts forbids.
 const GEM_NAME_FROM: Partial<Record<InputContext, 'text' | 'draftName'>> = {
   hidden_gem_name: 'text',
   hidden_gem_location: 'draftName',
   trip_stop_place: 'text',
 };
-const PLACE_NAME_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>([
-  'hidden_gem_location',
-  'event_location',
-  'place_picker',
-  'trip_stop_place',
-  'address',
-]);
-const EVENT_NAME_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>(['event_title']);
-const TRIP_DATE_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>([
-  'trip_title',
-  'trip_destination',
-]);
-const CITY_COUNTRY_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>([
-  'hidden_gem_name',
-  'hidden_gem_location',
-  'event_title',
-  'event_location',
-]);
 // Location fields where an unresolved address may offer §37 fallbacks.
 const ADDRESS_FALLBACK_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>([
   'hidden_gem_location',
@@ -308,7 +295,7 @@ export async function buildCreationAssistance(
       }
     };
 
-    const gemNameSrc = GEM_NAME_FROM[context];
+    const gemNameSrc = declaresCheck(policy, 'duplicate_gem') ? GEM_NAME_FROM[context] : undefined;
     if (gemNameSrc) {
       const gemName = gemNameSrc === 'text' ? typed : (draft.name ?? '').trim();
       if (gemName.length >= 2) {
@@ -321,7 +308,7 @@ export async function buildCreationAssistance(
       }
     }
 
-    if (PLACE_NAME_CONTEXTS.has(context) && typed.length >= 2) {
+    if (declaresCheck(policy, 'duplicate_place') && typed.length >= 2) {
       take(
         await scanDuplicatePlaces(
           sc, { name: typed, city, country, category, lat: dlat, lng: dlng }, { max },
@@ -330,7 +317,7 @@ export async function buildCreationAssistance(
       );
     }
 
-    if (EVENT_NAME_CONTEXTS.has(context) && typed.length >= 2) {
+    if (declaresCheck(policy, 'duplicate_event') && typed.length >= 2) {
       take(
         await scanDuplicateEvents(
           sc, { name: typed, city, country, startsAt: draft.startDate }, { max },
@@ -359,7 +346,7 @@ export async function buildCreationAssistance(
   }
 
   // ── 2. City-country mismatch (§23) → correction ───────────────────────────────
-  if (allows(policy, 'correction') && CITY_COUNTRY_CONTEXTS.has(context) && city && country) {
+  if (allows(policy, 'correction') && declaresCheck(policy, 'city_country_mismatch') && city && country) {
     const verdict = checkCityCountryMismatch({ city, country });
     if (!verdict.ok) out.push(projectCityCountryCorrection(context, policyVersion, verdict, city));
   }
@@ -367,7 +354,7 @@ export async function buildCreationAssistance(
   // ── 3. Trip date conflict (§23) → validation ──────────────────────────────────
   if (
     allows(policy, 'validation') &&
-    TRIP_DATE_CONTEXTS.has(context) &&
+    declaresCheck(policy, 'trip_date_conflict') &&
     (draft.startDate || draft.endDate)
   ) {
     const existing = await fetchViewerTripWindows(sc, userId, sessionContext?.tripId).catch(
@@ -673,4 +660,36 @@ export function buildApproximateAreaRows(
     });
   }
   return out;
+}
+
+// ── §5/§23 the field's DECLARED non-blocking checks (census G32) ─────────────
+//
+// §5's field policy carries `validationRules`, "the field's non-blocking
+// checks". Until this existed the member was declared by no registry entry and
+// read by nothing: which checks ran was a set of context lists in this file, so
+// the policy could not say what a field validates and a field could not change
+// it. The registry now declares them per context (policyRegistry.ts, at its
+// foot) and `buildCreationAssistance` runs a check only when the policy it was
+// handed declares it. The declarations reproduce the context lists they replace
+// exactly — `src/test/inputAssistanceCreation.test.ts` pins that table — so no
+// field validates more or less than it did; what changed is who decides.
+//
+// Every check here is NON-BLOCKING (§23: the user stays in control). An
+// undeclared check simply does not run; it never blocks or rejects anything.
+// A rule whose kind this build does not know is ignored, and the registry may
+// not declare one (the same test refuses it).
+
+/** The checks a field may declare. Each is run by `buildCreationAssistance`. */
+export const CREATION_CHECK_KINDS = [
+  'duplicate_gem',
+  'duplicate_place',
+  'duplicate_event',
+  'city_country_mismatch',
+  'trip_date_conflict',
+] as const;
+export type CreationCheckKind = (typeof CREATION_CHECK_KINDS)[number];
+
+/** True when the field's policy declares the check. Absent or empty → none. */
+export function declaresCheck(policy: InputFieldPolicy, kind: CreationCheckKind): boolean {
+  return (policy.validationRules ?? []).some((r) => r != null && r.kind === kind);
 }

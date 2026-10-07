@@ -27,7 +27,7 @@ import type {
   PrivacyClass,
   OfflineInputPolicy,
   InputTelemetryPolicy,
-} from './types';
+} from './types'; import type { CreationCheckKind } from './creation'; // §5 G32 — the declared checks (foot)
 
 /**
  * Versioned independently of app releases (§48). Bump when the shape or
@@ -513,4 +513,33 @@ export function sanctionLocalSufficiency(seed: {
 
 for (const entry of Object.values(REGISTRY)) {
   entry.localSufficient = sanctionLocalSufficiency(entry);
+}
+
+// ── §5 the field's declared non-blocking checks (census G32) ─────────────────
+//
+// `validationRules` — "the field's non-blocking checks" (§5) — declared here,
+// per context, and RUN only where declared (`declaresCheck` in creation.ts).
+// Applied as a table at the foot for the reason the privacy raise above gives:
+// every line number above keeps pointing at what it pointed at.
+//
+// The table is exactly the context lists creation.ts used to hard-wire, so this
+// changes who decides, not what any field checks. A new check for a field is now
+// one line here; `src/test/inputAssistanceCreation.test.ts` pins the table and
+// refuses a kind no code runs, a declaration on a context the creation path
+// never reaches, and a duplicate-Gem declaration with no name source.
+const DECLARED_CHECKS: Partial<Record<InputContext, readonly CreationCheckKind[]>> = {
+  hidden_gem_name: ['duplicate_gem', 'city_country_mismatch'],
+  hidden_gem_location: ['duplicate_gem', 'duplicate_place', 'city_country_mismatch'],
+  trip_stop_place: ['duplicate_gem', 'duplicate_place'],
+  event_title: ['duplicate_event', 'city_country_mismatch'],
+  event_location: ['duplicate_place', 'city_country_mismatch'],
+  place_picker: ['duplicate_place'],
+  address: ['duplicate_place'],
+  trip_title: ['trip_date_conflict'],
+  trip_destination: ['trip_date_conflict'],
+};
+
+for (const [context, kinds] of Object.entries(DECLARED_CHECKS)) {
+  const entry = REGISTRY[context as InputContext];
+  if (entry && kinds) entry.validationRules = kinds.map((kind) => ({ id: kind, kind }));
 }

@@ -223,7 +223,7 @@ router.post(
 
     const text = typeof body.text === 'string' ? body.text : '';
     const sessionContext = parseSessionContext(body.sessionContext);
-    const draft = parseCreationDraft(body.draft);
+    const draft = withDeclaredSessionDates(parseCreationDraft(body.draft), body.sessionContext, policy); // §23 G150: the window a new Trip's form sends
     const lat = clampCoord(body.lat, 90);
     const lng = clampCoord(body.lng, 180);
     const city =
@@ -964,3 +964,39 @@ router.post(
 );
 
 import { PASTE_CONTEXTS, classifyPaste, resolvePaste } from '../lib/inputAssistance/pasteExtraction';
+import { declaresCheck } from '../lib/inputAssistance/creation'; import type { InputFieldPolicy } from '../lib/inputAssistance/types';
+
+// ── §23 the window a NEW trip's form already sends (census G150) ─────────────
+//
+// The Trip-date conflict check reads the candidate window from the creation
+// draft. The client sends that window where its contract says to — as
+// `sessionContext.startDate` / `endDate` ("so the gateway can explain a date
+// conflict … a NEW entity has no id yet", types/inputSuggestion.ts), which is
+// what app/trip/new.tsx does — and `parseSessionContext` above keeps only
+// `tripId` and `cityId`. So on the one mounted surface for this check the window
+// never arrived, and the conflict a traveller was meant to see could not be
+// produced.
+//
+// This hands the two dates to the draft, and ONLY for a field whose policy
+// declares the check (§5 `validationRules`, G32): no other field's draft gains
+// anything. A date the draft already carries wins. Each value must look like an
+// ISO date and is bounded like every other draft string; anything else is
+// dropped, never guessed.
+export function withDeclaredSessionDates(
+  draft: CreationDraft | undefined,
+  rawSession: unknown,
+  policy: InputFieldPolicy,
+): CreationDraft | undefined {
+  if (!declaresCheck(policy, 'trip_date_conflict')) return draft;
+  if (!rawSession || typeof rawSession !== 'object') return draft;
+  const o = rawSession as Record<string, unknown>;
+  const isoDate = (v: unknown): string | undefined =>
+    typeof v === 'string' && v.length <= 40 && /^\d{4}-\d{2}-\d{2}/.test(v.trim()) ? v.trim() : undefined;
+  const startDate = draft?.startDate ?? isoDate(o.startDate);
+  const endDate = draft?.endDate ?? isoDate(o.endDate);
+  if (!startDate && !endDate) return draft;
+  const out: CreationDraft = { ...(draft ?? {}) };
+  if (startDate) out.startDate = startDate;
+  if (endDate) out.endDate = endDate;
+  return out;
+}

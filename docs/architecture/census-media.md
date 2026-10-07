@@ -3885,7 +3885,7 @@ Hidden Gem opened `travel-buddy-standalone/src/components/media/GemsFeed.tsx:203
 three card kinds `travel-buddy-standalone/src/features/media/screens/MediaWorldShell.tsx:127#'visual_opportunity_open', { surface: 'now_zone' }`. Tests: `src/test/mediaOutcomeSignals.test.ts`
 (15 cases, route-level where the route could be mounted) and the client suite.
 
-**E. §16.1 DUPLICATE CHECK and OUTCOME.** The duplicate scan was real — `artifacts/api-server/src/lib/inputAssistance/creation.ts:316#await scanDuplicateGems(`
+**E. §16.1 DUPLICATE CHECK and OUTCOME.** The duplicate scan was real — `artifacts/api-server/src/lib/inputAssistance/creation.ts:303#await scanDuplicateGems(`
 — and ran as a gem was named on `/gems/submit` `travel-buddy-standalone/app/gems/submit.tsx:243#context: 'hidden_gem_name',`; the Media add-gem
 form submitted without it. It now runs the same scan with the same pick-existing
 step `travel-buddy-standalone/src/components/media/AddGemForm.tsx:135#context: 'hidden_gem_name',`, and a guard ENUMERATES every caller of `submitGem` and requires

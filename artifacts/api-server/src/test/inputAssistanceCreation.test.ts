@@ -37,7 +37,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { generateSuggestions } from "../lib/inputAssistance/gateway.js";
-import { resolvePolicy, POLICY_VERSION } from "../lib/inputAssistance/policyRegistry.js";
+import { resolvePolicy, POLICY_VERSION, KNOWN_CONTEXTS } from "../lib/inputAssistance/policyRegistry.js";
 import {
   scoreGemDuplicate,
   findDuplicateGems,
@@ -60,7 +60,7 @@ import {
   buildCreationAssistance,
   buildUnresolvedAddress,
   DUPLICATE_SCAN_UNREADABLE_POLICY_GAP,
-  buildApproximateAreaRows,
+  buildApproximateAreaRows, CREATION_CHECK_KINDS, CREATION_CONTEXTS, // + §5 G32 declared checks
 } from "../lib/inputAssistance/creation.js";
 import { isResolvable } from "../lib/inputAssistance/projection.js";
 import { getDuplicateCandidates } from "../services/hiddenGems/HiddenGemModerationService.js";
@@ -1073,5 +1073,105 @@ describe("§24/§36 use approximate area for a Hidden Gem (G136)", () => {
     const out = await gen(sc, "hidden_gem_location", "Paris");
     assert.ok(out.some((s: any) => s.type === "disambiguation"), "premise: Paris is ambiguous");
     assert.equal(areaRows(out).length, 0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §5 `validationRules` — the field DECLARES its non-blocking checks (census G32)
+//
+// Which checks run is the policy's declaration, not a context list in
+// creation.ts. The table below is the hard-wired lists the declarations
+// replaced, so every field checks exactly what it did; the remaining cases
+// prove the declaration is what decides.
+//
+// MUTATION LOG (each applied with scratchpad mutate.py, watched go red, restored):
+//   - creation.ts `declaresCheck` returns true → "a field that does not declare
+//     the check does not run it" red.
+//   - creation.ts: the trip-date gate becomes a context test (`context ===
+//     'trip_title' || context === 'trip_destination'`) → "a check declared on a
+//     field that never ran it now runs there" red.
+//   - policyRegistry.ts: drop 'duplicate_place' from place_picker's declaration →
+//     "the registry declares exactly the checks the hard-wired lists ran" red.
+//   - creation.ts `declaresCheck` matches any rule (drops the kind test) →
+//     "a rule whose kind no code runs is ignored" red.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+async function creationRowsWithRules(
+  sc: any,
+  context: InputContext,
+  text: string,
+  draft: CreationDraft,
+  rules: Array<{ id: string; kind: string }>,
+) {
+  const policy = { ...resolvePolicy(context)!, validationRules: rules };
+  return buildCreationAssistance(sc as any, {
+    context, policy, text, userId: ME, draft, viewerCity: "Da Nang", lat: null, lng: null,
+    policyVersion: POLICY_VERSION, max: policy.maxSuggestions,
+  });
+}
+
+const CONFLICTING_TRIP = {
+  trip_members: [{ trip_id: "t1", role: "owner", user_id: ME }],
+  trips: [{ id: "t1", title: "Bangkok Week", start_date: "2026-03-10", end_date: "2026-03-20", status: "upcoming" }],
+};
+const CONFLICTING_DRAFT: CreationDraft = { startDate: "2026-03-15", endDate: "2026-03-25" };
+
+describe("§5 validationRules: the field declares its non-blocking checks (G32)", () => {
+  it("the registry declares exactly the checks the hard-wired lists ran", () => {
+    // The lists creation.ts used to hold, verbatim, as of 67494b04e.
+    const WAS: Partial<Record<InputContext, string[]>> = {
+      hidden_gem_name: ["city_country_mismatch", "duplicate_gem"],
+      hidden_gem_location: ["city_country_mismatch", "duplicate_gem", "duplicate_place"],
+      trip_stop_place: ["duplicate_gem", "duplicate_place"],
+      event_title: ["city_country_mismatch", "duplicate_event"],
+      event_location: ["city_country_mismatch", "duplicate_place"],
+      place_picker: ["duplicate_place"],
+      address: ["duplicate_place"],
+      trip_title: ["trip_date_conflict"],
+      trip_destination: ["trip_date_conflict"],
+    };
+    for (const context of KNOWN_CONTEXTS) {
+      const declared = (resolvePolicy(context)!.validationRules ?? []).map((r) => r.kind).sort();
+      assert.deepEqual(declared, WAS[context] ?? [], context);
+    }
+  });
+
+  it("no context declares a check no code runs, or one on a field the creation path never reaches", () => {
+    for (const context of KNOWN_CONTEXTS) {
+      const rules = resolvePolicy(context)!.validationRules ?? [];
+      if (rules.length > 0) assert.ok(CREATION_CONTEXTS.has(context), `${context} declares checks nothing runs`);
+      for (const r of rules) assert.ok((CREATION_CHECK_KINDS as readonly string[]).includes(r.kind), `${context}: ${r.kind}`);
+    }
+  });
+
+  it("every field that declares the duplicate-Gem check can run it", async () => {
+    const sc = makeFakeClient(baseTables({ hidden_gems: [gemRow("g1", "Sky Cafe")] }));
+    for (const context of KNOWN_CONTEXTS) {
+      if (!(resolvePolicy(context)!.validationRules ?? []).some((r) => r.kind === "duplicate_gem")) continue;
+      const rows = await creationRows(sc, context, "Sky Cafe", { name: "Sky Cafe" });
+      assert.ok(rows.some((r) => r.type === "disambiguation" && r.entityId === "g1"), `${context} declares duplicate_gem and ran nothing`);
+    }
+  });
+
+  it("a field that does not declare the check does not run it — the same trip_title draft, no conflict row", async () => {
+    const sc = makeFakeClient(baseTables(CONFLICTING_TRIP));
+    const declared = await creationRowsWithRules(sc, "trip_title", "Spring Escape", CONFLICTING_DRAFT, [{ id: "trip_date_conflict", kind: "trip_date_conflict" }]);
+    assert.ok(declared.some((r) => r.type === "validation"), "premise: declared, the conflict is surfaced");
+    const undeclared = await creationRowsWithRules(sc, "trip_title", "Spring Escape", CONFLICTING_DRAFT, []);
+    assert.deepEqual(undeclared, []);
+  });
+
+  it("a check declared on a field that never ran it now runs there", async () => {
+    const sc = makeFakeClient(baseTables(CONFLICTING_TRIP));
+    const before = await creationRows(sc, "hidden_gem_name", "Sky Cafe", CONFLICTING_DRAFT);
+    assert.ok(!before.some((r) => (r.structuredValue as any)?.kind === "trip_date_conflict"), "premise: the Gem name field does not check trip dates");
+    const rows = await creationRowsWithRules(sc, "hidden_gem_name", "Sky Cafe", CONFLICTING_DRAFT, [{ id: "trip_date_conflict", kind: "trip_date_conflict" }]);
+    assert.equal((rows.find((r) => r.type === "validation")!.structuredValue as any).conflictsWithTripId, "t1");
+  });
+
+  it("a rule whose kind no code runs is ignored, and runs nothing", async () => {
+    const sc = makeFakeClient(baseTables(CONFLICTING_TRIP));
+    const rows = await creationRowsWithRules(sc, "trip_title", "Spring Escape", CONFLICTING_DRAFT, [{ id: "x", kind: "not_a_check" }]);
+    assert.deepEqual(rows, []);
   });
 });
