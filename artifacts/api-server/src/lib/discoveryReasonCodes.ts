@@ -340,9 +340,9 @@ export const NEARBY_NOW_SIGNAL_FAMILY: Readonly<Record<string, "location" | "ope
 };
 
 const NEARBY_NOW_TEXT = {
-  locationAndOpen: "In this area, and open around now.",
+  locationAndOpen: "In this area, and open now per its listed hours (estimate).",
   location:        "In this area.",
-  open:            "Open around now.",
+  open:            "Open now, per its listed hours (estimate).", // lead ruling D-67: open_now is a listed-hours estimate, never a live check
   timing:          "You can still make it or join in.",
 } as const;
 
