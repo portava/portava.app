@@ -82,6 +82,22 @@ describe("3620 — what the migration does", () => {
     assert.match(post, /relrowsecurity/);
   });
 
+  it("the postconditions are the LAST statement: nothing but COMMIT follows `END $post$;` (wave-2 verification F4)", () => {
+    // A GRANT appended after the postconditions would commit with them already
+    // green. Comments are stripped above; whitespace is all that may remain.
+    const end = code.indexOf("END $post$;");
+    const commit = code.lastIndexOf("COMMIT;");
+    assert.ok(end > 0 && commit > end, "END $post$; precedes COMMIT;");
+    assert.equal(code.slice(end + "END $post$;".length, commit).trim(), "", "a statement sits between the postconditions and COMMIT");
+    assert.equal(code.slice(commit + "COMMIT;".length).trim(), "", "a statement follows COMMIT");
+  });
+
+  it("grants no write verb ANYWHERE in the file to anon, authenticated or PUBLIC (wave-2 verification F4)", () => {
+    const grants = code.match(/GRANT\s+[^;]*;/gi) ?? [];
+    const writes = grants.filter((g) => /\b(ALL|INSERT|UPDATE|DELETE|TRUNCATE|REFERENCES|TRIGGER|MAINTAIN)\b/i.test(g.split(/\bON\b/i)[0] ?? "") && /\bTO\s+[^;]*\b(anon|authenticated|PUBLIC)\b/i.test(g));
+    assert.deepEqual(writes, []);
+  });
+
   it("changes no policy, row or flag", () => {
     assert.doesNotMatch(code, /\b(CREATE|DROP|ALTER)\s+POLICY\b/i);
     assert.doesNotMatch(code, /\b(INSERT\s+INTO|UPDATE\s+public\.|DELETE\s+FROM)\b/i);
