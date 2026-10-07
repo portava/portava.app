@@ -28,6 +28,7 @@ import {
   sanitizeToolResult,
   COMPASS_TOOL_DEFINITIONS,
 } from "../compass/CompassTools.js";
+import { RESTRICTION_SENTENCES } from "../lib/discoveryTrustGate.js";
 import type { CompassProfile } from "../compass/types.js";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -292,6 +293,46 @@ describe("E. check_trip_conflicts", () => {
   it("returns an honest empty result when nothing overlaps", async () => {
     const result: any = await executeCompassTool(makeClient(makeDb()), ALICE_ID, profileFor(), "check_trip_conflicts", { startDate: "2026-08-05" });
     assert.deepEqual(result.conflicts, []);
+  });
+});
+
+// ── E2. OD-TRIP-3 — another member's private plan item reaches no Compass tool ──
+describe("E2. OD-TRIP-3 — another member's private plan item reaches the model only as a slot", () => {
+  const OTHER = "c3c3c3c3-cccc-4ccc-8ccc-000000000003";
+  function sharedTripDb(): Db {
+    return makeDb({
+      trips: [{ id: TRIP_ID, owner_id: OTHER, title: "Cebu trip", destination_city: "Cebu", start_date: "2026-08-01", end_date: "2026-08-07", status: "upcoming" }],
+      trip_members: [
+        { trip_id: TRIP_ID, user_id: ALICE_ID, role: "member", status: "accepted" },
+        { trip_id: TRIP_ID, user_id: OTHER, role: "owner", status: "accepted" },
+      ],
+      trip_plan_items: [
+        { id: "p-mine", trip_id: TRIP_ID, title: "Alice's dive", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: ALICE_ID, location_is_private: true },
+        { id: "p-secret", trip_id: TRIP_ID, title: "Rehab clinic", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: OTHER, location_is_private: true },
+        { id: "p-null", trip_id: TRIP_ID, title: "Unknown flag place", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: OTHER, location_is_private: null },
+        { id: "p-public", trip_id: TRIP_ID, title: "Group dinner", day_date: "2026-08-05", status: "confirmed", removed_at: null, creator_id: OTHER, location_is_private: false },
+      ],
+    });
+  }
+
+  it("check_trip_conflicts: the viewer's own and the public items keep their titles; the private and NULL-flag ones are 'Private plan'", async () => {
+    const result: any = await executeCompassTool(makeClient(sharedTripDb()), ALICE_ID, profileFor(), "check_trip_conflicts", { startDate: "2026-08-05", endDate: "2026-08-06" });
+    const wire = JSON.stringify(result);
+    assert.match(wire, /Alice's dive/);
+    assert.match(wire, /Group dinner/);
+    assert.doesNotMatch(wire, /Rehab clinic/, "another member's private title reached the model");
+    assert.doesNotMatch(wire, /Unknown flag place/, "an item whose privacy flag is NULL was treated as public");
+    assert.equal(result.plannedItems.filter((i: any) => /Private plan/.test(i.title)).length, 2, "the slots are still there");
+  });
+
+  it("get_current_trip: the projection's plan items obey the same rule", async () => {
+    const result: any = await executeCompassTool(makeClient(sharedTripDb()), ALICE_ID, profileFor(), "get_current_trip", { tripId: TRIP_ID });
+    const wire = JSON.stringify(result);
+    assert.ok(Array.isArray(result.planItems) && result.planItems.length === 4, `expected the four slots, got ${wire.slice(0, 300)}`);
+    assert.match(wire, /Alice's dive/);
+    assert.match(wire, /Group dinner/);
+    assert.doesNotMatch(wire, /Rehab clinic/);
+    assert.doesNotMatch(wire, /Unknown flag place/);
   });
 });
 
@@ -843,6 +884,110 @@ describe("H. Proposal confirmation flow", () => {
 
     const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
     assert.equal(r.status, 403);
+    assert.deepEqual(client._getInserts()["trip_plan_items"] ?? [], []);
+  });
+});
+
+// ── H2. census-trust TRV2-08 / OD-TRUST-5 / lead rulings D-24, D-24a — a
+// hosting restriction reaches the Compass plan-proposal confirm on a GROUP trip
+// (any accepted member: it changes the group trip's shared plan), never on a
+// SOLO trip. compass/CompassRestrictionGate.ts asks lib/tripTrustGate.ts, the
+// Trips doors' own decision; compassRestrictionGate.test.ts pins the mapping,
+// these cases pin the wire.
+describe("H2. Trust restrictions reach the plan-proposal confirm (TRV2-08)", () => {
+  const BOB_MEMBER = { trip_id: TRIP_ID, user_id: BOB_ID, role: "member", status: "accepted" };
+  function seededDb(proposalId: string, restrictions: any[] = [], opts: { group?: boolean; aliceOwns?: boolean; readOnly?: boolean } = {}): Db {
+    const group = opts.group !== false;
+    const aliceOwns = opts.aliceOwns !== false;
+    return makeDb({
+      compass_conversations: [{ id: CONV_ID, user_id: ALICE_ID, last_active_at: new Date().toISOString() }],
+      compass_conversation_messages: [{
+        id: "m1", conversation_id: CONV_ID, role: "assistant", content: "confirm?",
+        payload: { pendingProposals: [{ proposalId, tripId: TRIP_ID, tripTitle: "Cebu trip", placeId: PLACE_ID, title: "Lantaw Cafe", category: "cafe", dayDate: null, status: "pending_confirmation" }] },
+        created_at: new Date().toISOString(),
+      }],
+      trips: [{ id: TRIP_ID, owner_id: aliceOwns ? ALICE_ID : BOB_ID, title: "Cebu trip", plan_edit_permission: "all_members", status: "upcoming" }],
+      trip_members: [
+        { trip_id: TRIP_ID, user_id: ALICE_ID, role: aliceOwns ? "owner" : "member", status: "accepted", ...(opts.readOnly ? { permissions: { access: "retained_record_only" } } : {}) },
+        ...(group ? [aliceOwns ? BOB_MEMBER : { ...BOB_MEMBER, role: "owner" }] : []),
+      ],
+      discovery_places: [{ id: PLACE_ID, name: "Lantaw Cafe", category: "cafe", city: "Cebu" }],
+      trust_restrictions: restrictions,
+    });
+  }
+  /** The same client, with `trust_restrictions` answering a database error. */
+  function unreadableRestrictions(client: any): any {
+    const realFrom = client.from;
+    client.from = (t: string) => {
+      if (t !== "trust_restrictions") return realFrom(t);
+      const f: any = {
+        select: () => f, eq: () => f, is: () => f, or: () => f,
+        then: (ok: any) => ok({ data: null, error: { message: "trust_restrictions unavailable", code: "XX000" } }),
+      };
+      return f;
+    };
+    return client;
+  }
+  const HOSTING = { user_id: ALICE_ID, restriction_type: "hosting", lifted_at: null, expires_at: null };
+  const MESSAGING = { user_id: ALICE_ID, restriction_type: "messaging", lifted_at: null, expires_at: null };
+
+  it("the HOST of a group trip under a hosting restriction: 403 and no plan write; lifted, the SAME proposal confirms", async () => {
+    const pid = "82345678-1234-1234-1234-123456789abc";
+    const db = seededDb(pid, [{ ...HOSTING }]);
+    const client = makeClient(db);
+    _setTestClient(client, true);
+
+    const refused = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
+    assert.equal(refused.status, 403);
+    assert.equal(refused.body.error, "trust_restriction");
+    assert.deepEqual(refused.body.restrictionTypes, ["hosting"]);
+    assert.equal(String(refused.body.message), RESTRICTION_SENTENCES.hosting, "the restriction's own sentence, nothing wider");
+    assert.deepEqual(client._getInserts()["trip_plan_items"] ?? [], [], "a restricted confirm wrote a plan item");
+
+    db.trust_restrictions[0].lifted_at = "2026-10-05T00:00:00Z";
+    const after = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
+    assert.equal(after.status, 201, "the refusal must not have consumed the proposal");
+    assert.equal(client._getInserts()["trip_plan_items"].length, 1);
+  });
+
+  it("a hosting restriction stops a MEMBER of a group trip too (it changes the group's shared plan, D-24), with no write; it does NOT stop a solo trip (D-24a)", async () => {
+    const asMember = makeClient(seededDb("92345678-1234-1234-1234-123456789abc", [{ ...HOSTING }], { aliceOwns: false }));
+    _setTestClient(asMember, true);
+    assert.equal((await post(`/api/compass/proposals/92345678-1234-1234-1234-123456789abc/confirm`, { conversationId: CONV_ID })).status, 403);
+    assert.deepEqual(asMember._getInserts()["trip_plan_items"] ?? [], [], "a restricted member's confirm wrote a plan item");
+    const solo = makeClient(seededDb("93345678-1234-1234-1234-123456789abc", [{ ...HOSTING }], { group: false }));
+    _setTestClient(solo, true);
+    assert.equal((await post(`/api/compass/proposals/93345678-1234-1234-1234-123456789abc/confirm`, { conversationId: CONV_ID })).status, 201);
+  });
+
+  it("a member restored to an ENDED trip's record only (lane C's R5): 403 trip_record_read_only, no plan write, and no word about a restriction", async () => {
+    const pid = "95345678-1234-1234-1234-123456789abc";
+    const client = makeClient(seededDb(pid, [], { readOnly: true }));
+    _setTestClient(client, true);
+    const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
+    assert.equal(r.status, 403);
+    assert.equal(r.body.error, "trip_record_read_only");
+    assert.equal(r.body.restrictionTypes, undefined);
+    assert.doesNotMatch(String(r.body.message), /restrict/i);
+    assert.deepEqual(client._getInserts()["trip_plan_items"] ?? [], []);
+  });
+
+  it("a messaging restriction does not stop the confirm — it is not a conversation", async () => {
+    const pid = "94345678-1234-1234-1234-123456789abc";
+    const client = makeClient(seededDb(pid, [{ ...MESSAGING }]));
+    _setTestClient(client, true);
+    const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
+    assert.equal(r.status, 201);
+  });
+
+  it("a host's confirm with an UNREADABLE trust_restrictions → 503, retryable, not worded as a restriction, no write", async () => {
+    const pid = "a2345678-1234-1234-1234-123456789abc";
+    const client = unreadableRestrictions(makeClient(seededDb(pid)));
+    _setTestClient(client, true);
+    const r = await post(`/api/compass/proposals/${pid}/confirm`, { conversationId: CONV_ID });
+    assert.equal(r.status, 503);
+    assert.equal(r.body.error, "degraded_unavailable");
+    assert.doesNotMatch(String(r.body.message), /restrict/i);
     assert.deepEqual(client._getInserts()["trip_plan_items"] ?? [], []);
   });
 });

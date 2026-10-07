@@ -520,6 +520,17 @@ describe("trip_signal producer — trip-scoped, anchored on a saved stop", () =>
     assert.deepEqual(cands, []);
   });
 
+  it("OD-TRIP-3: never surfaces a milestone whose privacy flag is NULL or unread (the column defaults TRUE)", async () => {
+    const nullFlag = await buildTripSignalLiveCandidates(
+      tripClient([planItem({ location_is_private: null })]), VIEWER, TRIPS, PLACES, { now: NOW },
+    );
+    assert.deepEqual(nullFlag, []);
+    const absent = planItem({});
+    delete (absent as Record<string, unknown>).location_is_private;
+    const unread = await buildTripSignalLiveCandidates(tripClient([absent]), VIEWER, TRIPS, PLACES, { now: NOW });
+    assert.deepEqual(unread, []);
+  });
+
   it("never surfaces a removed or cancelled milestone", async () => {
     const removed = await buildTripSignalLiveCandidates(
       tripClient([planItem({ removed_at: PAST })]), VIEWER, TRIPS, PLACES, { now: NOW },

@@ -1,0 +1,124 @@
+{
+  "user": {
+    "subject_type": "user",
+    "subject_snapshot": {
+      "state": "ok",
+      "name": "Nadia Rahman",
+      "handle": "nadia",
+      "accountStatus": "active",
+      "accountableUserId": "00000000-0000-4000-8000-000000000001"
+    }
+  },
+  "post": {
+    "subject_type": "post",
+    "subject_snapshot": {
+      "state": "ok",
+      "excerpt": "the reported post text",
+      "createdAt": "2026-10-05T10:00:00.000Z",
+      "deleted": false,
+      "accountableUserId": "00000000-0000-4000-8000-000000000001"
+    }
+  },
+  "post_deleted": {
+    "subject_type": "post",
+    "subject_snapshot": {
+      "state": "ok",
+      "excerpt": null,
+      "createdAt": "2026-10-05T10:00:00.000Z",
+      "deleted": true,
+      "accountableUserId": "00000000-0000-4000-8000-000000000001"
+    }
+  },
+  "comment": {
+    "subject_type": "comment",
+    "subject_snapshot": {
+      "state": "ok",
+      "excerpt": "the reported comment text",
+      "postId": "00000000-0000-4000-8000-000000000002",
+      "createdAt": "2026-10-05T10:00:00.000Z",
+      "deleted": false,
+      "accountableUserId": "00000000-0000-4000-8000-000000000001"
+    }
+  },
+  "message": {
+    "subject_type": "message",
+    "subject_snapshot": {
+      "state": "ok",
+      "excerpt": "the reported message text",
+      "threadId": "00000000-0000-4000-8000-000000000009",
+      "createdAt": "2026-10-05T10:00:00.000Z",
+      "deleted": false,
+      "accountableUserId": "00000000-0000-4000-8000-000000000001"
+    }
+  },
+  "event": {
+    "subject_type": "event",
+    "subject_snapshot": {
+      "state": "ok",
+      "title": "Night market crawl",
+      "startsAt": "2026-10-07T18:00:00.000Z",
+      "city": "Da Nang",
+      "eventState": "published",
+      "accountableUserId": "00000000-0000-4000-8000-000000000001"
+    }
+  },
+  "review": {
+    "subject_type": "review",
+    "subject_snapshot": {
+      "state": "ok",
+      "excerpt": "the reported review text",
+      "rating": 1,
+      "reviewedEntityType": "buddy",
+      "reviewedEntityId": "00000000-0000-4000-8000-000000000008",
+      "reviewState": "published",
+      "accountableUserId": "00000000-0000-4000-8000-000000000001"
+    }
+  },
+  "buddy_listing": {
+    "subject_type": "buddy_listing",
+    "subject_snapshot": {
+      "state": "ok",
+      "displayName": "Nadia",
+      "tagline": "Local food guide",
+      "listingStatus": "active",
+      "accountableUserId": "00000000-0000-4000-8000-000000000001"
+    }
+  },
+  "media": {
+    "subject_type": "media",
+    "subject_snapshot": {
+      "state": "ok",
+      "mediaType": "photo",
+      "caption": "the reported caption",
+      "moderationStatus": "approved",
+      "accountableUserId": "00000000-0000-4000-8000-000000000001"
+    }
+  },
+  "place": {
+    "subject_type": "place",
+    "subject_snapshot": {
+      "state": "ok",
+      "name": "Han Market",
+      "address": "119 Tran Phu, Da Nang",
+      "accountableUserId": null
+    }
+  },
+  "not_found": {
+    "subject_type": "post",
+    "subject_snapshot": {
+      "state": "not_found"
+    }
+  },
+  "unsupported": {
+    "subject_type": "trip",
+    "subject_snapshot": {
+      "state": "unsupported"
+    }
+  },
+  "unavailable": {
+    "subject_type": "message",
+    "subject_snapshot": {
+      "state": "unavailable"
+    }
+  }
+}

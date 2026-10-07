@@ -121,7 +121,7 @@ Two further reasons it would be inert anyway:
 1. **The mode cannot be turned on.** Migration 2091, which seeds `DISCOVERY_ENGINE_MODE`, is
    unapplied in CI *and* production, and `metadata.mode` — the field D2=A makes load-bearing —
    has **no write path**: `PATCH /admin/feature-flags/:flag` accepts only `{ enabled }`
-   (`admin.ts:654`) and the RPC behind it takes no metadata parameter. The three-valued switch
+   (`admin.ts:655`) and the RPC behind it takes no metadata parameter. The three-valued switch
    cannot be moved off `legacy` through any supported surface.
 2. **It could not be validated.** Divergence and engagement both need traffic.
 
