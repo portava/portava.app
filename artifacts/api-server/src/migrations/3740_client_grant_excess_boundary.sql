@@ -1,7 +1,7 @@
 -- 3740_client_grant_excess_boundary.sql
 --
 -- `anon` and `authenticated` stop holding privileges that no migration grants
--- and no client code path uses: on nine post-baseline tables, everything; on
+-- and no client code path uses: on seven post-baseline tables, everything; on
 -- `profiles`, the TABLE-level SELECT and UPDATE that override its column
 -- grants. POST-CUTOVER CANONICAL FORWARD MIGRATION (3000-3999 band). Lane G
 -- (mission 4, grants / inverse schema audit), band 3740-3759.
@@ -25,13 +25,13 @@
 -- the same change, not here). The other 442 are real, and are these ten tables.
 --
 -- ══════════════════════════════════════════════════════════════════════════════
--- PART 1 — NINE TABLES THAT INHERITED SUPABASE'S DEFAULT ACL AND KEPT IT
+-- PART 1 — SEVEN TABLES THAT INHERITED SUPABASE'S DEFAULT ACL AND KEPT IT
 -- ══════════════════════════════════════════════════════════════════════════════
 -- Supabase's `ALTER DEFAULT PRIVILEGES` gives `anon` and `authenticated`
 -- SELECT, INSERT, UPDATE and DELETE on every table created in `public` (2490
 -- removed only the four privileges RLS cannot police). A migration that creates
 -- a table and does not REVOKE leaves the anonymous key holding all four. These
--- nine were created that way, and nothing since revoked them:
+-- seven were created that way, and nothing since revoked them:
 --
 --   table                               created by   client policies (all TO authenticated)
 --   highlight_resurfacing_preferences   2720         owner-only, all four verbs (2720:133-157)
@@ -41,22 +41,31 @@
 --   message_reactions                   2811         member SELECT only (2811:228)
 --   message_attachments                 2811         member SELECT only (2811:239)
 --   conversation_action_refs            2811         member SELECT only (2811:250)
---   media_processing_attempts           2951         owner SELECT (2954), TO public
---   media_asset_lifecycle_events        2952         owner SELECT (2954), TO public
 --
--- (2955 revoked INSERT/UPDATE/DELETE on the last two and deliberately left
--- SELECT, 2955:54, "for the owner SELECT policies". This file takes SELECT as
--- well, for the reason below; it is the one place it overrides an earlier
--- file's stated choice, and it says so.)
+-- NOT here, deliberately: media_processing_attempts (2951) and
+-- media_asset_lifecycle_events (2952). The inverse audit reports their client
+-- SELECT too, but 2955 revoked their client writes and KEPT that SELECT on
+-- purpose (2955:54), and 2955's own postcondition (2955:124-132, "expected 6
+-- surviving client SELECT grants") pins it. certify:migrations stage 4 re-runs
+-- that postcondition after COMMIT on every build that applies the whole chain in
+-- one run (the beta bootstrap), so revoking the SELECT here would turn a correct
+-- 2955 red there. Lead ruling G-2 is WITHDRAWN on that finding (verifier F1,
+-- 2026-10-07); the two SELECTs stay the inverse audit's to report.
+--
+-- PRESENT OR NOT. production-applied-migrations.json records 2720-2722 on
+-- production but not 2811. Each table is revoked only if it exists, and an
+-- absent one is NAMED in a NOTICE, never refused and never silently passed:
+-- the postcondition asserts every table that exists, so nothing present can
+-- fail open.
 --
 -- ── Why the grant matters when RLS is on ─────────────────────────────────────
--- No policy on any of the nine admits `anon`, so today the anon key reads zero
+-- No policy on any of the seven admits `anon`, so today the anon key reads zero
 -- rows and its writes are refused. That denial rests on the ABSENCE of a
 -- policy. The first permissive policy anyone adds — `FOR ALL`, or `TO public`
--- as 2954 already writes — turns the standing grant into live access for the
+-- as 2954 writes on the media tables — turns the standing grant into live access for the
 -- anonymous key, and nothing in review would flag it, because the grant was
 -- made by CREATE TABLE and no migration names it. The same holds for the
--- `authenticated` writes on the seven tables whose policies are SELECT-only or
+-- `authenticated` writes on these tables, whose policies are SELECT-only or
 -- owner-only: they are one policy away from a client write path that bypasses
 -- every server-side check (the Telegraph tables' own postcondition, 2811:286-
 -- 290, says "writes must go through the service role"). This repository has
@@ -65,7 +74,7 @@
 -- message); a grant nobody needs is a bet that the next policy is right.
 --
 -- ── Why no caller breaks ─────────────────────────────────────────────────────
--- No client code path reaches any of the nine. Every direct table access in
+-- No client code path reaches any of the seven. Every direct table access in
 -- the client trees (travel-buddy-standalone/src and /app, src/, app/,
 -- packages/, posts-ui/, lib/ — tests excluded) touches only: profiles, trips,
 -- user_location_privacy, trip_members, map_pins, user_locations, user_follows,
@@ -77,11 +86,11 @@
 -- services/messaging.ts:921-934), and the API server's one runtime client is
 -- service_role (src/lib/supabase.ts:20), which this file does not touch. No
 -- view, no policy on another table, and no SQL function references any of the
--- nine (checked over the baseline and every migration). Referential actions
--- (ON DELETE CASCADE from messages, highlights, media_assets) run as the
--- table owner and need no client privilege.
+-- seven (checked over the baseline and every migration). Referential actions
+-- (ON DELETE CASCADE from messages and highlights) run as the table owner and
+-- need no client privilege.
 --
--- After this file the policies on the nine are inert for client roles — they
+-- After this file the policies on the seven are inert for client roles — they
 -- narrow a privilege nobody holds. That is the intended end state: the day a
 -- client path needs one of these tables, its migration GRANTs exactly the
 -- verbs it needs, beside the policy that polices them, and says why.
@@ -129,21 +138,28 @@
 -- revokes their column-level SELECT/UPDATE when the table-level privilege is
 -- revoked), then grant the baseline's exact column lists again. Where the
 -- column ACL was already the baseline's (production), the end state equals the
--- start state, and the postcondition proves it either way. INSERT and DELETE
+-- start state. The postcondition asserts NO MORE than the baseline's columns
+-- for either privilege, and no fewer than the columns the app reads (id,
+-- handle, name, display_name, avatar_url, verified, current_city, is_private,
+-- role, account_status); it deliberately does NOT pin the rest. The baseline's
+-- UPDATE list includes authority columns no trigger guards (verified_at,
+-- trust_score, trust_label, verification_method, featured_count, …), and a
+-- future file that narrows them must not turn this file red on every
+-- full-chain build (verifier F5). INSERT and DELETE
 -- (granted table-level by the baseline, policed by profiles_insert and by the
 -- absence of a DELETE policy) are untouched.
 --
 -- ══════════════════════════════════════════════════════════════════════════════
 -- APPLY ORDER, ROLLBACK, AND WHAT IS NOT HERE
 -- ══════════════════════════════════════════════════════════════════════════════
--- Needs 2720, 2721, 2722, 2811, 2951, 2952 and 2954 applied (the precondition
--- refuses otherwise); sorts after all of them. Rollback:
+-- Sorts after 2720, 2721, 2722 and 2811; revokes whichever of their tables
+-- exist (see PRESENT OR NOT). Rollback:
 -- db/rollback/2026-10-07-3740-client-grant-excess-boundary-rollback.sql
 -- (restores Part 1's pre-3740 grants; does not restore Part 2's table-level
 -- grants, which no migration ever made).
 --
 -- NOT here: the Supabase default ACL itself. It still hands anon and
--- authenticated the DML four on every FUTURE table, which is how these nine got
+-- authenticated the DML four on every FUTURE table, which is how these seven got
 -- them. checkClientPrivilegeBoundary.ts rule 4 (same change) now fails CI on a
 -- post-baseline CREATE TABLE that no migration follows with a client-role
 -- REVOKE, and the inverse audit reports the live result daily.
@@ -155,8 +171,7 @@ DECLARE
   v_targets constant text[] := ARRAY[
     'highlight_resurfacing_preferences', 'highlight_projection_policies',
     'highlight_sources', 'message_edits', 'message_reactions',
-    'message_attachments', 'conversation_action_refs',
-    'media_processing_attempts', 'media_asset_lifecycle_events'];
+    'message_attachments', 'conversation_action_refs'];
   v_cols constant text[] := ARRAY[
     'id', 'handle', 'name', 'avatar_url', 'home_city', 'home_country',
     'current_city', 'travel_style', 'interests', 'verified', 'open_to_meet',
@@ -186,10 +201,12 @@ DECLARE
   v_names text;
   v_role  text;
 BEGIN
+  -- An absent table is named, not refused: production records 2720-2722 but
+  -- not 2811. The postcondition asserts every table that IS present.
   SELECT string_agg(t, ', ' ORDER BY t) INTO v_names
     FROM unnest(v_targets) AS t WHERE to_regclass('public.' || t) IS NULL;
   IF v_names IS NOT NULL THEN
-    RAISE EXCEPTION '3740 PRECONDITION FAILED: % absent from schema public. Apply 2720, 2721, 2722, 2811, 2951, 2952 and 2954 first.', v_names;
+    RAISE NOTICE '3740: % absent from schema public; skipped (its creating migration has not run here).', v_names;
   END IF;
 
   IF to_regclass('public.profiles') IS NULL THEN
@@ -234,17 +251,19 @@ BEGIN
 END $pre$;
 
 -- ── Part 1 ───────────────────────────────────────────────────────────────────
-REVOKE ALL ON TABLE
-  public.highlight_resurfacing_preferences,
-  public.highlight_projection_policies,
-  public.highlight_sources,
-  public.message_edits,
-  public.message_reactions,
-  public.message_attachments,
-  public.conversation_action_refs,
-  public.media_processing_attempts,
-  public.media_asset_lifecycle_events
-FROM PUBLIC, anon, authenticated;
+-- One table at a time, so an absent one (2811's, on a database that has not
+-- applied it) is skipped by name instead of failing the whole statement.
+DO $part1$
+DECLARE t text;
+BEGIN
+  FOREACH t IN ARRAY ARRAY['highlight_resurfacing_preferences', 'highlight_projection_policies', 'highlight_sources', 'message_edits', 'message_reactions', 'message_attachments', 'conversation_action_refs'] LOOP
+    IF to_regclass('public.' || t) IS NULL THEN
+      RAISE NOTICE '3740: public.% absent; nothing to revoke.', t;
+    ELSE
+      EXECUTE format('REVOKE ALL ON TABLE public.%I FROM PUBLIC, anon, authenticated', t);
+    END IF;
+  END LOOP;
+END $part1$;
 
 -- ── Part 2 ───────────────────────────────────────────────────────────────────
 -- Revoking the table-level privilege also revokes the two roles' column-level
@@ -302,8 +321,7 @@ DECLARE
   v_targets constant text[] := ARRAY[
     'highlight_resurfacing_preferences', 'highlight_projection_policies',
     'highlight_sources', 'message_edits', 'message_reactions',
-    'message_attachments', 'conversation_action_refs',
-    'media_processing_attempts', 'media_asset_lifecycle_events'];
+    'message_attachments', 'conversation_action_refs'];
   -- The baseline's profiles column ACL for both client roles, exactly.
   v_select constant text[] := ARRAY[
     'id', 'handle', 'name', 'avatar_url', 'home_city', 'home_country',
@@ -354,21 +372,27 @@ DECLARE
     'date_of_birth', 'full_name', 'expo_push_token', 'phone_e164',
     'phone_verified_at', 'trust_score', 'safety_flags_count',
     'id_verified_at', 'selfie_verified_at', 'verification_method'];
+  -- The columns the app reads from profiles directly (travel-buddy-standalone:
+  -- SessionContext, settings, profile/edit, map, follows, useReaderAvatars).
+  v_app_reads constant text[] := ARRAY[
+    'id', 'handle', 'name', 'display_name', 'avatar_url', 'verified',
+    'current_city', 'is_private', 'role', 'account_status'];
   v_present int;
   v_names   text;
   v_role    text;
   v_got     text[];
-  v_want    text[];
 BEGIN
-  -- VACUITY GUARD: a sweep over no tables proves nothing.
+  -- VACUITY GUARD: a sweep over no tables proves nothing. The three Highlights
+  -- tables (2720-2722) are on every database this runs on, production included
+  -- (production-applied-migrations.json); 2811's four may not be.
   SELECT count(*) INTO v_present
     FROM unnest(v_targets) AS t WHERE to_regclass('public.' || t) IS NOT NULL;
-  IF v_present <> 9 THEN
-    RAISE EXCEPTION '3740 POSTCONDITION VACUOUS: only % of the 9 named tables exist.', v_present;
+  IF v_present < 3 THEN
+    RAISE EXCEPTION '3740 POSTCONDITION VACUOUS: only % of the 7 named tables exist; expected at least the 3 Highlights tables.', v_present;
   END IF;
 
-  -- 1. No named table grants anon, authenticated or PUBLIC anything, at table
-  --    or column level.
+  -- 1. No PRESENT named table grants anon, authenticated or PUBLIC anything,
+  --    at table or column level.
   SELECT string_agg(DISTINCT t, ', ') INTO v_names
     FROM unnest(v_targets) AS t
     JOIN pg_class c ON c.oid = to_regclass('public.' || t)
@@ -392,7 +416,8 @@ BEGIN
   SELECT string_agg(t || ':' || p, ', ' ORDER BY t, p) INTO v_names
     FROM unnest(v_targets) AS t
     CROSS JOIN unnest(ARRAY['SELECT', 'INSERT', 'UPDATE', 'DELETE']) AS p
-   WHERE NOT has_table_privilege('service_role', 'public.' || t, p);
+   WHERE to_regclass('public.' || t) IS NOT NULL
+     AND NOT has_table_privilege('service_role', 'public.' || t, p);
   IF v_names IS NOT NULL THEN
     RAISE EXCEPTION '3740 POSTCONDITION FAILED: service_role lost %', v_names;
   END IF;
@@ -408,8 +433,10 @@ BEGIN
     RAISE EXCEPTION '3740 POSTCONDITION FAILED: table-level % on public.profiles; it overrides every column grant.', v_names;
   END IF;
 
-  -- 4. profiles: each client role's column SELECT and UPDATE sets are the
-  --    baseline's, exactly — no more (a leak) and no fewer (a broken reader).
+  -- 4. profiles: each client role's column SELECT and UPDATE sets are WITHIN
+  --    the baseline's (no more: a leak), and SELECT still covers every column
+  --    the app reads (no fewer there: a broken reader). Nothing else is pinned,
+  --    so a later file may narrow the baseline's unguarded authority columns.
   --    DISTINCT: one column can carry the same privilege from two grantors (a
   --    REVOKE removes only the grants its own role made), and the set, not the
   --    grantor, is what a client sees.
@@ -420,12 +447,13 @@ BEGIN
               FROM pg_attribute a CROSS JOIN LATERAL aclexplode(a.attacl) x
              WHERE a.attrelid = 'public.profiles'::regclass AND a.attnum > 0 AND NOT a.attisdropped
                AND x.grantee = v_role::regrole AND x.privilege_type = 'SELECT') s;
-    SELECT array_agg(c ORDER BY c COLLATE "C") INTO v_want FROM unnest(v_select) AS c;
-    IF v_got IS DISTINCT FROM v_want THEN
-      RAISE EXCEPTION '3740 POSTCONDITION FAILED: % column SELECT on public.profiles is not the baseline''s. Extra: %. Missing: %.',
-        v_role,
-        (SELECT string_agg(g, ', ') FROM unnest(v_got) g WHERE g <> ALL (v_want)),
-        (SELECT string_agg(w, ', ') FROM unnest(v_want) w WHERE w <> ALL (v_got));
+    v_names := (SELECT string_agg(g, ', ' ORDER BY g) FROM unnest(v_got) g WHERE g <> ALL (v_select));
+    IF v_names IS NOT NULL THEN
+      RAISE EXCEPTION '3740 POSTCONDITION FAILED: % column SELECT on public.profiles exceeds the baseline''s. Extra: %.', v_role, v_names;
+    END IF;
+    v_names := (SELECT string_agg(w, ', ' ORDER BY w) FROM unnest(v_app_reads) w WHERE w <> ALL (v_got));
+    IF v_names IS NOT NULL THEN
+      RAISE EXCEPTION '3740 POSTCONDITION FAILED: % lost column SELECT the app reads on public.profiles: %.', v_role, v_names;
     END IF;
 
     SELECT coalesce(array_agg(s.n ORDER BY s.n COLLATE "C"), ARRAY[]::text[])
@@ -434,12 +462,9 @@ BEGIN
               FROM pg_attribute a CROSS JOIN LATERAL aclexplode(a.attacl) x
              WHERE a.attrelid = 'public.profiles'::regclass AND a.attnum > 0 AND NOT a.attisdropped
                AND x.grantee = v_role::regrole AND x.privilege_type = 'UPDATE') s;
-    SELECT array_agg(c ORDER BY c COLLATE "C") INTO v_want FROM unnest(v_update) AS c;
-    IF v_got IS DISTINCT FROM v_want THEN
-      RAISE EXCEPTION '3740 POSTCONDITION FAILED: % column UPDATE on public.profiles is not the baseline''s. Extra: %. Missing: %.',
-        v_role,
-        (SELECT string_agg(g, ', ') FROM unnest(v_got) g WHERE g <> ALL (v_want)),
-        (SELECT string_agg(w, ', ') FROM unnest(v_want) w WHERE w <> ALL (v_got));
+    v_names := (SELECT string_agg(g, ', ' ORDER BY g) FROM unnest(v_got) g WHERE g <> ALL (v_update));
+    IF v_names IS NOT NULL THEN
+      RAISE EXCEPTION '3740 POSTCONDITION FAILED: % column UPDATE on public.profiles exceeds the baseline''s. Extra: %.', v_role, v_names;
     END IF;
 
     -- 5. The named personal and authority columns, through the privilege

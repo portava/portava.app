@@ -297,7 +297,8 @@ migrations (no database contacted). Classes: **(a)** real excess the chain itsel
 
 | code | n | class and cause | state after this change |
 |---|---:|---|---|
-| EXCESS_PRIVILEGE | 388 | (a) nine post-baseline tables kept Supabase's default client DML (2720-2722, 2811; SELECT on 2951/2952) | `3740` revokes; `checkClientPrivilegeBoundary` rule 4 stops the next one |
+| EXCESS_PRIVILEGE | 356 | (a) seven post-baseline tables kept Supabase's default client DML (2720-2722, 2811) | `3740` revokes; `checkClientPrivilegeBoundary` rule 4 stops the next one |
+| EXCESS_PRIVILEGE | 32 | (a) client SELECT on `media_processing_attempts` / `media_asset_lifecycle_events` (2951/2952): 2955 kept it deliberately and its re-run postcondition pins it | Left as reported (lead ruling G-2 withdrawn, verifier F1) |
 | EXCESS_PRIVILEGE | 54 | (d) `profiles` table-level SELECT/UPDATE for anon/authenticated: the baseline replayed over Supabase's default ACL | `3740` restores the baseline's column ACL |
 | EXCESS_PRIVILEGE | 106 | (c) GRANTs with several targets (2780, 2794) or issued from a FOREACH loop (2762, 2763) | model fixed: `extractGrants`, `expandForeachLiteralLoops` |
 | POLICY_PREDICATE_DRIFT | 113 | (c) pre-baseline files (0026, 0080, 2033 …) read AFTER the baseline overwrote its production-captured predicates in the last-wins policy map (introduced when #564 removed the band) | model fixed: history is read before the baseline |
@@ -310,5 +311,5 @@ migrations (no database contacted). Classes: **(a)** real excess the chain itsel
 | DISPOSITION_STALE | 1 | (b) `post_media_moderation_ledger` is in the baseline and production but absent on portava-ci | OPEN |
 | STALE_LEDGER_ENTRY | 1 | (b) `extension:unaccent` is installed on production, not on portava-ci | OPEN |
 
-Replayed against the model on this branch: 237 findings are explained (106 + 113 + 17 + 1); the 442 (a)/(d)
-grant findings clear when `3740` is applied to portava-ci.
+Replayed against the model on this branch: 237 findings are explained (106 + 113 + 17 + 1); 410 of the
+442 (a)/(d) grant findings clear when `3740` is applied to portava-ci (the 32 media SELECT findings stay).

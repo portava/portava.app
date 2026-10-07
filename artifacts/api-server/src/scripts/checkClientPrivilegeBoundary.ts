@@ -45,6 +45,12 @@
  *      in lib/clientTableAclDecisions.ts. It is NOT the "revoke before grant"
  *      rule described below: it asks only that a decision exists somewhere in
  *      the chain after the CREATE, which every correct shape satisfies.
+ *   5. No view may END client-readable (anon or authenticated, by GRANT or by
+ *      the default ACL a chain CREATE VIEW takes) without security_invoker =
+ *      true: a definer view reads its tables with the owner's rights, past
+ *      their RLS. 2776's trip_presence_current did, in production; 3741 fixes
+ *      it. Exempt: exactly VIEW_INVOKER_EXEMPT (PostGIS's geometry_columns and
+ *      geography_columns).
  *
  * ── ONE RULE DELIBERATELY NOT IMPLEMENTED ────────────────────────────────────
  * "A GRANT to a client role must be preceded by REVOKE ALL in the same file"
@@ -65,7 +71,13 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { stripSqlComments } from "./lib/canonicalSchema.js";
 import { CHAIN_START_PREFIX } from "./lib/liveVsCanonicalCore.js";
-import { createdTables, findUndecidedTables } from "./lib/clientTableAclDecisions.js";
+import {
+  countViews,
+  createdTables,
+  findClientDefinerViews,
+  findUndecidedTables,
+  VIEW_INVOKER_EXEMPT,
+} from "./lib/clientTableAclDecisions.js";
 import { BASELINE_PATH, parseBaselineTables } from "./parseBaselineSchema.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -94,6 +106,9 @@ const MIN_GRANTS_EXAMINED = 50;
  * the rule is reading nothing.
  */
 const MIN_TABLES_EXAMINED = 100;
+
+/** Rule 5's floor: the baseline and the chain defined 13 views on 2026-10-07. */
+const MIN_VIEWS_EXAMINED = 10;
 
 type Finding = { file: string; rule: string; statement: string };
 
@@ -213,10 +228,33 @@ function main(): void {
     });
   }
 
+  // Rule 5 — client-readable views must be security_invoker.
+  // Fixture mode judges only the fixture's own SQL: the real baseline's nine
+  // compatibility views are made invoker by 3820, which a fixture directory
+  // does not carry.
+  const baselineText = process.env.CLIENT_PRIVILEGE_DIRS ? "" : readFileSync(BASELINE_PATH, "utf8");
+  const viewsExamined = countViews(chainFiles, baselineText);
+  for (const v of findClientDefinerViews(chainFiles, baselineText)) {
+    findings.push({
+      file: v.definedIn,
+      rule: `view public.${v.view} is readable by ${v.roles.join(" and ")} without security_invoker = true`,
+      statement:
+        `A view without security_invoker reads its tables with its OWNER's rights, past their row-level security. ` +
+        `Add ALTER VIEW public.${v.view} SET (security_invoker = true), or revoke the client roles.`,
+    });
+  }
+
   console.log(
     `check:client-privilege-boundary — ${files.length} migration file(s), ${grantsExamined} GRANT statement(s) examined, ` +
-      `${tablesExamined} post-baseline table(s) checked for a client-privilege decision`,
+      `${tablesExamined} post-baseline table(s) checked for a client-privilege decision, ${viewsExamined} view(s) checked for security_invoker`,
   );
+
+  if (!process.env.CLIENT_PRIVILEGE_DIRS && viewsExamined < MIN_VIEWS_EXAMINED) {
+    console.error(
+      `\nFAIL — VACUOUS: only ${viewsExamined} view(s) found, expected at least ${MIN_VIEWS_EXAMINED}. Rule 5 read nothing worth trusting.`,
+    );
+    process.exit(1);
+  }
 
   if (!process.env.CLIENT_PRIVILEGE_DIRS && tablesExamined < MIN_TABLES_EXAMINED) {
     console.error(
@@ -252,6 +290,9 @@ function main(): void {
 
   console.log("✅ no migration grants a client role a privilege RLS cannot police.");
   console.log(`✅ every one of the ${tablesExamined} post-baseline table(s) carries a client-privilege decision (rule 4).`);
+  console.log(
+    `✅ no client-readable view lacks security_invoker (rule 5; ${viewsExamined} view(s) checked, ${VIEW_INVOKER_EXEMPT.size} PostGIS metadata views exempt).`,
+  );
 }
 
 main();
