@@ -634,14 +634,14 @@ describe("POST /suggest — an emoji hashtag answers instead of going silent (§
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// §11/§12 neighbourhoods as their own id-space (census G66; lead ruling PR-D2-7
-// proposed: system zones only)
+// §11/§12 neighbourhoods as their own id-space (census G66; lead, 2026-10-07:
+// every neighbourhood zone, no is_system filter; no position on the binding)
 //
 // MUTATION LOG (each applied, watched go red, reverted, `git diff` clean):
 //   N1 gateway.ts: drop the resolveNeighborhoodRows call → "neighborhood_picker
 //      returns the NEIGHBOURHOOD, bound to its own id" red.
-//   N2 neighborhoods.ts: drop `.eq('is_system', true)` → "a zone a person created
-//      is never offered" red.
+//   N2 neighborhoods.ts: put the centre on the binding → "the binding carries no
+//      position" red.
 //   N3 neighborhoods.ts: drop `.eq('zone_type', 'neighborhood')` → "a venue or
 //      hotel zone is not a neighbourhood" red.
 //   N4 neighborhoods.ts: an unreadable read answers `unreadable: false` → "an
@@ -670,15 +670,19 @@ describe("§11/§12 neighbourhoods (G66) — the neighbourhood picker binds a ne
     assert.equal(hood.action.type, "set_structured_value");
     assert.deepEqual(hood.structuredValue, {
       entityType: "neighborhood", neighborhoodId: "zone-old-quarter", name: "Old Quarter",
-      city: "Hanoi", countryCode: "VN", lat: 21.0341, lng: 105.8508,
+      city: "Hanoi", countryCode: "VN", timezone: "Asia/Bangkok",
     });
-    assert.ok(!JSON.stringify(hood).includes("created_by"), "no owner on the wire");
+    const wire = JSON.stringify(hood);
+    assert.ok(!wire.includes("created_by") && !wire.includes("someone"), "no owner on the wire");
+    assert.ok(!wire.includes("21.0341") && !wire.includes("105.8508"), "the binding carries no position (G187)");
   });
 
-  it("a zone a person created is never offered", async () => {
+  it("an admin-created zone (is_system false) is offered too — the lead ruled out an is_system filter", async () => {
     setup({ ...GEO_STATE, geo_zones: [MY_STREET] });
     const body = await (await post({ context: "neighborhood_picker", text: "old quarter" })).json() as any;
-    assert.equal(body.suggestions.filter((s: any) => s.entityType === "neighborhood").length, 0);
+    const hoods = body.suggestions.filter((s: any) => s.entityType === "neighborhood");
+    assert.equal(hoods.length, 1);
+    assert.ok(!JSON.stringify(hoods[0]).includes("someone"), "its creator never reaches the wire");
   });
 
   it("a venue or hotel zone is not a neighbourhood", async () => {

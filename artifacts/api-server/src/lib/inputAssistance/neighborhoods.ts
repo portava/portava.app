@@ -8,20 +8,23 @@
  * (baseline `CREATE TABLE public.geo_zones`, publicly readable). This module is
  * the resolver over it, read-only.
  *
- * WHICH ZONES (lead ruling PR-D2-7, proposed by lane D2 as the safe default):
- * ONLY system zones (`is_system = true`). `geo_zones` also holds zones people
- * create (`created_by`), and a person's own named area is not a public
- * neighbourhood to offer every viewer. A system zone is the platform's own
- * geography, the same footing as a canonical city.
+ * WHICH ZONES (lead, 2026-10-07): every `zone_type = 'neighborhood'` row. The
+ * lead ruled against filtering on `is_system`, because the zones admins create
+ * carry `is_system = false`; the table is publicly readable
+ * (`geo_zones_public_read`), so the picker offers nothing a reader could not
+ * already list. Production holds no neighbourhood rows today: that is a data
+ * gap, not a code gap.
  *
  * WHAT A ROW CARRIES. A canonical binding the field can set — the zone id, its
- * name, city and country code, and the zone's centre — exactly as a city row
- * carries the city's public centroid. No person, no owner, no polygon.
+ * name, city and country code, and the IANA timezone of the zone's centre.
+ * NO POSITION (census G187: no suggestion carries a coordinate; the lead allowed
+ * the timezone derived from the centre). No person, no owner, no polygon.
  *
  * FAIL-CLOSED. An unreadable `geo_zones` answers nothing and says so through the
  * caller's coverage note; it is never an empty result.
  */
 import { matchTier } from './searchQueryHelpers';
+import { timezoneForCoords } from './geoResolver';
 import type { InputContext, InputSuggestion } from './types';
 
 export interface NeighborhoodBinding {
@@ -30,8 +33,8 @@ export interface NeighborhoodBinding {
   name: string;
   city: string | null;
   countryCode: string | null;
-  lat: number | null;
-  lng: number | null;
+  /** IANA zone of the zone's centre, or null. Never the centre itself (G187). */
+  timezone: string | null;
 }
 
 export interface NeighborhoodResolution {
@@ -42,6 +45,13 @@ export interface NeighborhoodResolution {
 
 function finiteOrNull(v: unknown): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/** The centre's timezone — computed from a full pair only, and the pair never leaves. */
+function centreTimezone(lat: unknown, lng: unknown): string | null {
+  const a = finiteOrNull(lat);
+  const b = finiteOrNull(lng);
+  return a === null || b === null ? null : timezoneForCoords(a, b);
 }
 
 function tierConfidence(tier: number): number {
@@ -72,7 +82,6 @@ export async function resolveNeighborhoodRows(
       .from('geo_zones')
       .select('id, name, city, country_code, center_lat, center_lng')
       .eq('zone_type', 'neighborhood')
-      .eq('is_system', true)
       .ilike('name', likePattern(query))
       .limit(Math.max(1, max));
     if (res?.error) return { rows: [], unreadable: true };
@@ -93,13 +102,8 @@ export async function resolveNeighborhoodRows(
       name,
       city: typeof z.city === 'string' && z.city.trim() ? z.city.trim() : null,
       countryCode: typeof z.country_code === 'string' && z.country_code.trim() ? z.country_code.trim() : null,
-      lat: finiteOrNull(z.center_lat),
-      lng: finiteOrNull(z.center_lng),
+      timezone: centreTimezone(z.center_lat, z.center_lng),
     };
-    if (binding.lat === null || binding.lng === null) {
-      binding.lat = null;
-      binding.lng = null; // never half a position
-    }
     const subtitle = [binding.city, binding.countryCode].filter(Boolean).join(', ');
     const row: InputSuggestion = {
       id: `${context}:neighborhood:${id}`,
