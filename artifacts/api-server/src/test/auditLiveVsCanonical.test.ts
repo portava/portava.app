@@ -1209,3 +1209,111 @@ describe("canonicalPredicate — PostgreSQL's rendering is not drift; a real cha
     assert.deepEqual(run("a = %s"), ["POLICY_PREDICATE_DRIFT"]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lane G wave 2: GRANT and REVOKE replayed in apply order (lib/aclReplay.ts).
+// ─────────────────────────────────────────────────────────────────────────────
+import { replayAcl, expandTempTableLoops } from "../scripts/lib/aclReplay.js";
+
+describe("replayAcl — the ACL the chain leaves, not the union of what it ever granted", () => {
+  const privs = (r: ReturnType<typeof replayAcl>, k: string) => [...(r.tableGrants.get(k) ?? [])].sort();
+  const cols = (r: ReturnType<typeof replayAcl>, k: string) => [...(r.columnGrants.get(k) ?? [])].sort();
+
+  it("GRANT ALL then REVOKE some leaves the rest; REVOKE GRANT OPTION FOR changes nothing", () => {
+    const r = replayAcl("GRANT ALL ON TABLE public.t TO anon;", ["t"], [
+      "REVOKE TRUNCATE, REFERENCES, TRIGGER, MAINTAIN ON public.t FROM anon;",
+      "REVOKE GRANT OPTION FOR SELECT ON public.t FROM anon;",
+    ]);
+    assert.deepEqual(privs(r, "t.anon"), ["delete", "insert", "select", "update"]);
+  });
+
+  it("a table-level REVOKE also takes the column privilege; a column REVOKE only the column", () => {
+    const r = replayAcl("GRANT SELECT(a),SELECT(b),UPDATE(a) ON TABLE public.t TO anon;", ["t"], [
+      "REVOKE UPDATE ON public.t FROM anon;",
+      "REVOKE SELECT (b) ON public.t FROM anon;",
+    ]);
+    assert.deepEqual(cols(r, "t.a.anon"), ["select"]);
+    assert.deepEqual(cols(r, "t.b.anon"), []);
+  });
+
+  it("ON ALL TABLES reaches the tables that exist at that point, not later ones", () => {
+    const r = replayAcl("GRANT ALL ON TABLE public.t TO anon;", ["t"], [
+      "CREATE TABLE public.u (id int);\nGRANT SELECT, TRUNCATE ON public.u TO anon;",
+      "REVOKE TRUNCATE ON ALL TABLES IN SCHEMA public FROM anon;",
+      "CREATE TABLE public.v (id int);\nGRANT TRUNCATE ON public.v TO anon;",
+    ]);
+    assert.ok(!privs(r, "t.anon").includes("truncate"));
+    assert.deepEqual(privs(r, "u.anon"), ["select"]);
+    assert.deepEqual(privs(r, "v.anon"), ["truncate"]);
+  });
+
+  it("CREATE TABLE starts empty (Supabase's default ACL is not modelled); DROP TABLE forgets", () => {
+    const r = replayAcl("GRANT ALL ON TABLE public.t TO anon;", ["t"], ["CREATE TABLE public.u (id int);", "DROP TABLE public.t;"]);
+    assert.equal(r.tableGrants.get("u.anon"), undefined);
+    assert.equal(r.tableGrants.get("t.anon"), undefined);
+  });
+
+  it("loop-issued statements count: FOREACH-literal (2762) and temp-table rows (3504)", () => {
+    const r = replayAcl("GRANT ALL ON TABLE public.a TO anon;\nGRANT ALL ON TABLE public.b TO anon;\nGRANT ALL ON TABLE public.c TO anon;", ["a", "b", "c"], [
+      `DO $g$ DECLARE t text; BEGIN FOREACH t IN ARRAY ARRAY['a'] LOOP
+         EXECUTE format('REVOKE ALL ON public.%I FROM PUBLIC, anon, authenticated', t);
+         EXECUTE format('GRANT SELECT ON public.%I TO anon', t);
+       END LOOP; END $g$;`,
+      `CREATE TEMP TABLE _p (rel text PRIMARY KEY) ON COMMIT DROP;
+       INSERT INTO _p (rel) VALUES ('b');
+       DO $$ DECLARE r record; BEGIN
+         FOR r IN SELECT t.rel FROM _p t ORDER BY t.rel LOOP
+           EXECUTE format('REVOKE ALL ON TABLE public.%I FROM anon, authenticated, PUBLIC', r.rel);
+         END LOOP;
+       END $$;`,
+    ]);
+    assert.deepEqual(privs(r, "a.anon"), ["select"]);
+    assert.deepEqual(privs(r, "b.anon"), []);
+    assert.equal(privs(r, "c.anon").length, 8, "an untouched table keeps what the baseline granted");
+    assert.match(expandTempTableLoops(`CREATE TEMP TABLE _p (rel text) ON COMMIT DROP; INSERT INTO _p (rel) VALUES ('x'), ('y');
+      DO $$ DECLARE r record; BEGIN FOR r IN SELECT rel FROM _p LOOP EXECUTE format('REVOKE ALL ON public.%I FROM anon', r.rel); END LOOP; END $$;`),
+      /^REVOKE ALL ON public\.x FROM anon;\nREVOKE ALL ON public\.y FROM anon;$/);
+  });
+
+  it("a GRANT nobody can evaluate makes its table unknowable (3365's computed column list)", () => {
+    const r = replayAcl("GRANT ALL ON TABLE public.post_media TO authenticated;", ["post_media"], [
+      `REVOKE INSERT ON TABLE public.post_media FROM authenticated;
+       DO $$ BEGIN EXECUTE format('GRANT INSERT (%s) ON TABLE public.post_media TO authenticated', (SELECT string_agg(c, ', ') FROM unnest(x) c)); END $$;`,
+    ]);
+    assert.ok(r.unknowable.has("post_media"));
+  });
+
+  it("computeUnexplained: a live grant the chain REVOKED is excess under the replay; an unknowable table keeps the union", () => {
+    const union = new Map([["t.anon", new Set(["all"])], ["post_media.anon", new Set(["all"])]]);
+    const run = (aclReplay?: Model["aclReplay"]) =>
+      computeUnexplained({
+        model: makeModel({ relations: new Set(["t", "post_media"]), rlsClaimTables: new Set(["t", "post_media"]), tableGrants: union, aclReplay }),
+        live: makeLive({
+          relations: new Map([["t", "r"], ["post_media", "r"]]),
+          tableGrants: new Map([["t.anon", new Set(["truncate"])], ["post_media.anon", new Set(["truncate"])]]),
+        }),
+        ledger: [],
+        ledgerShapeProblems: [],
+        dispositions: { t: { class: "RLS_REQUIRED", policyCount: 1 }, post_media: { class: "RLS_REQUIRED", policyCount: 1 } },
+        ci: baseCi,
+      }).findings.map((f) => f.key);
+    assert.deepEqual(run(undefined), [], "the union explained both");
+    const replay = { tableGrants: new Map([["t.anon", new Set(["select"])], ["post_media.anon", new Set(["select"])]]), columnGrants: new Map(), unknowable: new Set(["post_media"]) };
+    assert.deepEqual(run(replay), ["t.anon"]);
+  });
+
+  it("on the REAL chain: 2490's sweep, 3504's list, 3740 and the trip loops are all applied", () => {
+    const files = mgReaddir(MG_MIGRATIONS).filter((f) => f.endsWith(".sql"));
+    const { canonical } = partitionByChainStart(files);
+    const baselineSql = mgRead(mgJoin(MG_API, "baseline", "20260819_baseline_structure.sql"), "utf8");
+    const tables = [...baselineSql.matchAll(/^CREATE TABLE public\.(\w+) /gm)].map((m) => m[1]!);
+    const r = replayAcl(baselineSql, tables, canonical.map(mgMig));
+    assert.deepEqual(privs(r, "profiles.anon"), ["delete", "insert"], "2490 removed the destructive four; 3740 removed nothing else at table level");
+    assert.equal(cols(r, "profiles.date_of_birth.anon").includes("select"), false);
+    assert.deepEqual(cols(r, "profiles.handle.anon"), ["select", "update"]);
+    assert.deepEqual(privs(r, "admin_access_log.anon"), [], "3504");
+    assert.deepEqual(privs(r, "message_edits.anon"), [], "3740");
+    assert.deepEqual(privs(r, "trip_goals.authenticated"), ["select"], "2762's loop");
+    assert.deepEqual([...r.unknowable], ["post_media"]);
+  });
+});

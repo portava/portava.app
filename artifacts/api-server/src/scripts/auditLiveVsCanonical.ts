@@ -69,6 +69,7 @@ import {
   partitionByChainStart,
 } from "./lib/liveVsCanonicalCore.js";
 import type { LiveInventory } from "./lib/liveVsCanonicalCore.js";
+import { replayAcl } from "./lib/aclReplay.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const lc = (s: string) => s.toLowerCase();
@@ -423,14 +424,18 @@ async function main(): Promise<void> {
   );
   const read = (f: string) => readFileSync(join(canonicalDir, f), "utf8");
 
+  const canonicalSqls = canonical.map(read);
   const model = buildModel({
     baselineSql,
     baselineTables,
     historicalSqls: historical.map(read),
-    canonicalSqls: canonical.map(read),
+    canonicalSqls,
     ledger: EXPLAINED_LIVE_OBJECTS,
     parseMig: parseMigration,
   });
+  // GRANT and REVOKE replayed in apply order, so a privilege the chain took
+  // back no longer explains a live one (lib/aclReplay.ts).
+  model.aclReplay = replayAcl(baselineSql, baselineTables.keys(), canonicalSqls);
   const ledgerShapeProblems = validateLedgerShape(EXPLAINED_LIVE_OBJECTS);
   const ci = readCiSurface();
 

@@ -86,6 +86,17 @@ export interface Model {
    * may omit it.
    */
   functionSchemas?: Map<string, string>;
+  /**
+   * The ACL the baseline plus the chain leave, GRANT and REVOKE replayed in
+   * apply order (lib/aclReplay.ts). When present, EXCESS_PRIVILEGE judges
+   * every table against it — except the `unknowable` ones, which keep the
+   * union of grants above. Absent (a fixture), the union is used throughout.
+   */
+  aclReplay?: {
+    tableGrants: Map<string, Set<string>>;
+    columnGrants: Map<string, Set<string>>;
+    unknowable: Set<string>;
+  };
 }
 
 export interface CiSurface {
@@ -1588,9 +1599,15 @@ export function computeUnexplained(input: UnexplainedInput): UnexplainedResult {
   const covers = (privs: Set<string>, p: string): boolean =>
     privs.has(p) || privs.has("all");
 
+  // Which grant state judges a table: the replayed ACL, unless the chain
+  // issues a GRANT on it that cannot be evaluated (then the union, as before).
+  const replayed = (table: string): boolean => !!model.aclReplay && !model.aclReplay.unknowable.has(table);
+  const tableGrantsFor = (table: string) => (replayed(table) ? model.aclReplay!.tableGrants : model.tableGrants);
+  const columnGrantsFor = (table: string) => (replayed(table) ? model.aclReplay!.columnGrants : model.columnGrants);
+
   for (const [k, livePrivs] of live.tableGrants) {
     if (!AUDITED_GRANT_ROLES.has(k.slice(k.lastIndexOf(".") + 1))) continue;
-    const modelPrivs = model.tableGrants.get(k) ?? new Set<string>();
+    const modelPrivs = tableGrantsFor(k.slice(0, k.lastIndexOf("."))).get(k) ?? new Set<string>();
     for (const p of livePrivs) {
       if (!covers(modelPrivs, p)) {
         add("EXCESS_PRIVILEGE", "grant", k, `live holds '${p}' on ${k} beyond the model`);
@@ -1603,9 +1620,9 @@ export function computeUnexplained(input: UnexplainedInput): UnexplainedResult {
     const grantee = parts[parts.length - 1];
     if (!AUDITED_GRANT_ROLES.has(grantee)) continue;
     const table = parts.slice(0, parts.length - 2).join(".");
-    const colPrivs = model.columnGrants.get(k) ?? new Set<string>();
+    const colPrivs = columnGrantsFor(table).get(k) ?? new Set<string>();
     const tblPrivs =
-      model.tableGrants.get(`${table}.${grantee}`) ?? new Set<string>();
+      tableGrantsFor(table).get(`${table}.${grantee}`) ?? new Set<string>();
     for (const p of livePrivs) {
       if (!covers(colPrivs, p) && !covers(tblPrivs, p)) {
         add(
