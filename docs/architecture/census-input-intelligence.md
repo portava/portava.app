@@ -817,7 +817,7 @@ declared and read by nothing (G30). What follows is what actually exists.
 | --- | --- | --- | --- |
 | G238 | Available fallback actions are context-dependent | C | `creation.ts:330-345` builds only the fallbacks the context's policy permits, and `gateway.ts:546-551` reaches it only when nothing canonical resolved and no duplicate was found. |
 | G239 | A city picker should not offer "create city" | C | `policyRegistry.ts:111-117` gives `city_picker` only `['entity','recent']`, and the fallback builder is reachable only from `isCreationContext` (`creation.ts:51-63`), which excludes it. |
-| G240 | A Hidden Gem / location flow may offer map-point or new-entity creation under policy | C | The missing element of §37's own empty-state mock (`[Search instead][Drop a pin][Add a new Place][Ask Compass][Search nearby]`) is produced. `artifacts/api-server/src/lib/inputAssistance/validationSuite.ts:353#const create = allow.createEntity;` emits an "Add a new …" row whose label names the record the context would mint (`artifacts/api-server/src/lib/inputAssistance/validationSuite.ts:360#label:`), gated at `artifacts/api-server/src/lib/inputAssistance/creation.ts:418#const creatable = CREATABLE_ENTITY_BY_CONTEXT[context];` by TWO policy conditions — the context must be one that creates that kind of record (`artifacts/api-server/src/lib/inputAssistance/creation.ts:112#const CREATABLE_ENTITY_BY_CONTEXT`) and the context's policy must declare the entity type — which is what makes it "under policy" rather than a hard-coded table. It carries **no new §43 action type**: it is a `set_structured_value` with a `create_entity` kind, the same shape `checkHashtag` already uses, so §43's union is unchanged and the row is resolvable under `isResolvable`. Proven at `artifacts/api-server/src/test/inputAssistanceCreation.test.ts:512#§37 new-entity creation under policy (G240)` — five cases including `artifacts/api-server/src/test/inputAssistanceCreation.test.ts:527#hidden_gem_location offers 'Add a new Gem'` and `artifacts/api-server/src/test/inputAssistanceCreation.test.ts:538#a city picker still offers NO creation row`. Mutation-proven twice (force `createEntity: null`; drop the `entityTypes` half of the gate). **One mutation did NOT go red and is recorded in the test file rather than hidden**: adding `city_picker` to the context map leaves the city-picker refusal green, because that policy declares no `action` type and refuses first — §12.5's "one gate masked another". |
+| G240 | A Hidden Gem / location flow may offer map-point or new-entity creation under policy | C | The missing element of §37's own empty-state mock (`[Search instead][Drop a pin][Add a new Place][Ask Compass][Search nearby]`) is produced. `artifacts/api-server/src/lib/inputAssistance/validationSuite.ts:353#const create = allow.createEntity;` emits an "Add a new …" row whose label names the record the context would mint (`artifacts/api-server/src/lib/inputAssistance/validationSuite.ts:360#label:`), gated at `artifacts/api-server/src/lib/inputAssistance/creation.ts:418#const creatable = CREATABLE_ENTITY_BY_CONTEXT[context];` by TWO policy conditions — the context must be one that creates that kind of record (`artifacts/api-server/src/lib/inputAssistance/creation.ts:112#const CREATABLE_ENTITY_BY_CONTEXT`) and the context's policy must declare the entity type — which is what makes it "under policy" rather than a hard-coded table. It carries **no new §43 action type**: it is a `set_structured_value` with a `create_entity` kind, the same shape `checkHashtag` already uses, so §43's union is unchanged and the row is resolvable under `isResolvable`. Proven at `artifacts/api-server/src/test/inputAssistanceCreation.test.ts:514#§37 new-entity creation under policy (G240)` — five cases including `artifacts/api-server/src/test/inputAssistanceCreation.test.ts:529#hidden_gem_location offers 'Add a new Gem'` and `artifacts/api-server/src/test/inputAssistanceCreation.test.ts:540#a city picker still offers NO creation row`. Mutation-proven twice (force `createEntity: null`; drop the `entityTypes` half of the gate). **One mutation did NOT go red and is recorded in the test file rather than hidden**: adding `city_picker` to the context map leaves the city-picker refusal green, because that policy declares no `action` type and refuses first — §12.5's "one gate masked another". |
 
 ### §38 Failure Fallback Ladder
 
@@ -6654,3 +6654,47 @@ sanctioned and parity-guarded path that nothing mounts is not complete.
   answer from a static dictionary WITHOUT a round trip" — is otherwise met.
 - G224's wording "a viewer-scoped field still issues one" is narrowed by the ruling. Every viewer-scoped field
   except these two still does.
+
+### 42.16 G136: all four Hidden Gem actions now have producers
+
+G136 names four actions: drop pin, use approximate area, confirm existing Gem, and add new Gem. §33.2 last
+re-read it as two of four. One of its two missing halves landed later under G240 and was never written back here:
+
+- **Add a new Gem.** On the no-match path, `hidden_gem_location` offers it
+  (`artifacts/api-server/src/lib/inputAssistance/validationSuite.ts:360#label: \`Add a new ${create.noun}\`,`).
+  Proven by `artifacts/api-server/src/test/inputAssistanceCreation.test.ts:529#hidden_gem_location offers 'Add a new Gem'`.
+- **Use approximate area.** This was the remaining gap, and is now built
+  (`artifacts/api-server/src/lib/inputAssistance/creation.ts:645#export function buildApproximateAreaRows(`).
+  - It is one action row per unambiguous canonical city the field served, at most two.
+  - Each row carries that city's binding under `kind: 'approximate_area'`: the city's public centre, never the Gem's
+    position.
+  - It is gated to Gem location fields, under a policy that permits action rows and names `hidden_gem`.
+  - It is never offered over a disambiguation; that choice is the person's first (§19), per
+    `artifacts/api-server/src/lib/inputAssistance/creation.ts:657#if (s.type !== 'entity' || s.entityType !== 'city' || !isCityBinding(s.structuredValue)) continue;`.
+  - The gateway pushes it in the creation merge, on an existing line, away from lane R's hunks.
+  - Proven by `artifacts/api-server/src/test/inputAssistanceCreation.test.ts:998#hidden_gem_location offers 'Use approximate area' over the city it resolved`
+    and `artifacts/api-server/src/test/inputAssistanceCreation.test.ts:1042#an ambiguous city is the person's choice first`.
+  - Five mutants are killed, including the context gate. That gate is masked through the gateway by place_picker's
+    policy, so it is also asked directly.
+- **Drop pin** (`artifacts/api-server/src/lib/inputAssistance/validationSuite.ts:334#action: { type: 'drop_pin' },`)
+  and **confirm existing** (the duplicate disambiguation rows) are unchanged.
+
+| ID | from | **to** | evidence |
+| --- | --- | --- | --- |
+| G136 | W | **C** | All four Gem actions have producers on the Gem location field: approximate area (`artifacts/api-server/src/lib/inputAssistance/creation.ts:645#export function buildApproximateAreaRows(`), add new Gem (`artifacts/api-server/src/lib/inputAssistance/validationSuite.ts:360#label: \`Add a new ${create.noun}\`,`), drop pin and confirm existing (unchanged). Proven through the real gateway (`artifacts/api-server/src/test/inputAssistanceCreation.test.ts:998#hidden_gem_location offers 'Use approximate area' over the city it resolved`). |
+
+Graded on the same footing as the two halves §33.2 counted: production of the action on the field. Whether a Gem
+creation screen mounts `hidden_gem_location` is G18's question.
+
+### 42.17 Headline, restated after 42.16
+
+| bucket | §42.14 | now |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 302 | 303 |
+| BUILT-BUT-WRONG | 49 | 48 |
+| NOT-BUILT | 18 | 18 |
+| CANNOT-VERIFY | 4 | 4 |
+| total | 373 | 373 |
+
+Of 373 rows: **303 BUILT-AND-CORRECT, 48 BUILT-BUT-WRONG, 18 NOT-BUILT, 4 CANNOT-VERIFY**. With lane R's §41
+(G86, G89), the rows give 305 / 46 / 18 / 4.
