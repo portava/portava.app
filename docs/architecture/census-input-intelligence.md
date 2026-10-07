@@ -5204,14 +5204,14 @@ coordinates `artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:196
 map links `artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:280#export function parseMapLink`,
 lists and itineraries) and resolves every
 item through the SAME serve typed text uses —
-`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:623#const res = await resolveText(sc, params, item.query`
+`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:631#const res = await resolveText(sc, params, item.query`
 calls `generateSuggestionsWithCoverage`, so a pasted "hcmc" meets the same alias
 table, stroke fold, privacy gate and ranking as a typed one. It writes nothing
 and says so on every answer
 (`artifacts/api-server/src/routes/inputAssistance.ts:956#mutated: false,`).
 Each item is `resolved`, `no_match`, `failed` or `unsupported`, plus `partial`;
 a failed source with no rows is `failed`, never `no_match`
-(`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:569#if (rows.length === 0 && refusal)`).
+(`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:577#if (rows.length === 0 && refusal)`).
 Coordinates are named by the existing server geocoder through a new variant that
 tells an outage from an answered nothing
 (`artifacts/api-server/src/services/geocodingService.ts:110#export async function reverseGeocodeOutcome`).
@@ -5299,7 +5299,7 @@ opens the §6.2 LOCATION sheet pre-filled
 
 | ID | from | **to** | evidence |
 | --- | --- | --- | --- |
-| G154 | N | **C** | Controlled. Every pasted item with text is resolved by `generateSuggestionsWithCoverage` (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:623#const res = await resolveText(sc, params, item.query`); `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts` shows "danang" resolved by the stroke fold and "hcmc" by the alias table through the real route. |
+| G154 | N | **C** | Controlled. Every pasted item with text is resolved by `generateSuggestionsWithCoverage` (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:631#const res = await resolveText(sc, params, item.query`); `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts` shows "danang" resolved by the stroke fold and "hcmc" by the alias table through the real route. |
 | G155 | N | **C** | Controlled. A place name or an address is one item — a comma is deliberately not a separator (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:370#const SEQUENCE_SEPARATORS`); mutation S7 (comma as separator) turns the address test red. |
 | G156 | N | **C** | Controlled. Google (place, dir, @, q), Apple (ll, q), OpenStreetMap (mlat/mlon, #map) and geo: parsers (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:280#export function parseMapLink`); a shortened or unknown link is REPORTED `unsupported` with copy, never dropped (mutation S9 red). |
 | G157 | N | **C** | Controlled. Decimal, hemisphere and DMS pairs (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:196#export function parseCoordinates`), named by `artifacts/api-server/src/services/geocodingService.ts:110#export async function reverseGeocodeOutcome` and then resolved like typed text; a geocoder outage is `failed` (mutations S5, S6 red). |
@@ -6879,3 +6879,56 @@ Every mutant is killed.
 
 Of 373 rows: **302 BUILT-AND-CORRECT, 49 BUILT-BUT-WRONG, 18 NOT-BUILT, 4 CANNOT-VERIFY**. With lane R's §41, the
 rows give 304 / 47 / 18 / 4.
+
+### 42.22 G159 on lead ruling PR-D2-7: flight and hotel text read, nothing else kept — `N → W`
+
+**The ruling (lead, 2026-10-07).**
+- A hotel confirmation yields exactly one item: the property name, or its labelled address.
+- Every other line is dropped before lookup and never echoed: guest names, confirmation numbers, card digits.
+- Flight text yields one unsupported item, with fixed copy and no query.
+- Existing shape values are reused.
+
+**Built.** A booking is read before the line splitter, so no other line of it can become an item
+(`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:474#const booking = classifyTravelBooking(lines);`,
+`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:746#export function classifyTravelBooking(`).
+- It takes TWO independent signals to make a paste a booking. One line naming a hotel stays a place.
+- Flight signals win over hotel ones.
+- A booking with neither a name nor an address is one unsupported item. It fails closed and never guesses.
+- The item's `raw` is the extracted value only, or fixed copy.
+- Shape is the existing `single`.
+
+Proof:
+- `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:521#a hotel confirmation yields EXACTLY ONE item`;
+- `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:546#flight text yields ONE unsupported item`;
+- through the real route, only the property name reaches any read (every filter value recorded), the geocoder is
+  never called, and the response carries no other line:
+  `artifacts/api-server/src/test/inputAssistancePasteExtraction.test.ts:565#through the route: only the property name is looked up`.
+
+Five mutants are killed.
+
+**Why `W`, by the one grading rule.** The spec reads "flight/hotel text when the receiving field supports those
+objects". The only mounted paste surface is the Trip stop editor
+(`travel-buddy-standalone/src/components/trip/DestinationListEditor.tsx:366#<PasteReviewSheet`), whose
+`trip_destination` field takes cities, not hotels or flights. There, a pasted hotel booking yields its one item and
+an honest no-match, and flight text yields its fixed refusal. No mounted field supports a hotel or flight object
+that the item could bind to.
+
+The parse is complete and leaks nothing. It moves to `C` when a field that takes a hotel (a place picker) mounts the
+paste surface.
+
+### 42.23 Headline, restated after 42.22
+
+| bucket | §42.21 | now |
+| --- | ---: | ---: |
+| BUILT-AND-CORRECT | 302 | 302 |
+| BUILT-BUT-WRONG | 49 | 50 |
+| NOT-BUILT | 18 | 17 |
+| CANNOT-VERIFY | 4 | 4 |
+| total | 373 | 373 |
+
+| ID | from | **to** | evidence |
+| --- | --- | --- | --- |
+| G159 | N | **W** | The lead ruling's extraction is built and leaks nothing (`artifacts/api-server/src/lib/inputAssistance/pasteExtraction.ts:746#export function classifyTravelBooking(`). No mounted field supports a hotel or flight object it could bind to (42.22). |
+
+Of 373 rows: **302 BUILT-AND-CORRECT, 50 BUILT-BUT-WRONG, 17 NOT-BUILT, 4 CANNOT-VERIFY**. With lane R's §41, the
+rows give 304 / 48 / 17 / 4.
