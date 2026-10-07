@@ -1028,3 +1028,19 @@ describe("NEW-5: the refund in-flight rules, edge by edge", () => {
     });
   }
 });
+
+// ── Verifier M5 (2026-10-07): sameInstant never matches an unparsable stamp ──
+// The F1 re-check treats "the row moved" as CAS_MISS. A stamp that cannot be
+// parsed must therefore never read as "unchanged".
+import { sameInstant } from "../services/payments/bookingPayments/webhookProcessor.js";
+
+describe("M5: sameInstant compares instants and fails closed on an unparsable stamp", () => {
+  it("the PostgREST form and the JS form of one instant match", () => {
+    assert.equal(sameInstant("2026-10-07T12:00:00+00:00", "2026-10-07T12:00:00.000Z"), true);
+  });
+  it("an unparsable stamp never matches, on either side or both", () => {
+    assert.equal(sameInstant("garbage", "2026-10-07T12:00:00.000Z"), false);
+    assert.equal(sameInstant("2026-10-07T12:00:00.000Z", "garbage"), false);
+    assert.equal(sameInstant("garbage", "garbage"), false);
+  });
+});

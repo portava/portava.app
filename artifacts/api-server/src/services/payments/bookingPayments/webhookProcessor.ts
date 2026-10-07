@@ -324,7 +324,7 @@ export async function processPaymentWebhook(deps: PaymentSliceDeps, delivery: We
 }
 
 /** Two timestamps name the same instant, whatever their text form (PostgREST "…+00:00" vs JS "….000Z"). An unparsable one never matches. */
-function sameInstant(a: string, b: string): boolean {
+export function sameInstant(a: string, b: string): boolean {
   const x = Date.parse(a), y = Date.parse(b);
   return Number.isFinite(x) && Number.isFinite(y) && x === y;
 }

@@ -217,6 +217,8 @@ describe("liftOwnRestrictionOnAppeal — lifts exactly the appealed row, attribu
 
   it("zero rows touched is MATCHED_NOTHING, never success", async () => {
     assert.deepEqual(await liftOwnRestrictionOnAppeal(recordingDb({ data: [], error: null }).client, input), { state: "matched_nothing" });
+    // No rows came back at all (a statement that was not RETURNING, or a row hidden from the caller): nothing is known lifted.
+    assert.deepEqual(await liftOwnRestrictionOnAppeal(recordingDb({ data: null, error: null }).client, input), { state: "matched_nothing" });
   });
 
   it("a database error or a throw is FAILED, never success", async () => {
