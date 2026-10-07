@@ -71,27 +71,29 @@ async function receipts(tables: Record<string, unknown[]>, opts?: FakeDbOptions)
 }
 
 describe("T295 — the receipt answers its readers' faces, under profiles_select's rule", () => {
-  it("the receipt still names every reader; the faces follow the rule", async () => {
+  it("the faces follow the rule; a reader in a block with the viewer is not in the receipt at all (P-T6)", async () => {
     const b = await receipts(seed());
-    assert.deepEqual([...b.receipts[0]!.seenByUserIds].sort(), [BOB, CARL, DANA, ERIN].sort(), "the receipt itself is unchanged");
+    assert.deepEqual([...b.receipts[0]!.seenByUserIds].sort(), [BOB, CARL, ERIN].sort(), "DANA blocked ALICE: her read is not ALICE's to see");
+    assert.equal(b.receipts[0]!.seenByUserIds.includes(DANA), false);
     assert.equal(b.readerFaces[BOB], face(BOB), "CONTROL: a public, unblocked reader's face is shown");
     assert.equal(b.readerFaces[ERIN], face(ERIN), "a private reader who is a friend: shown");
     assert.equal(b.readerFaces[CARL], null, "a private reader who is not a friend: withheld");
-    assert.equal(b.readerFaces[DANA], null, "a reader who blocked the viewer: withheld");
+    assert.equal(DANA in b.readerFaces, false, "nothing about DANA is on the wire");
     assert.equal(b.readerFacesDegraded, false);
   });
 
-  it("the viewer blocked the reader: withheld too (either direction)", async () => {
+  it("the viewer blocked the reader: out of the receipt too (either direction)", async () => {
     const b = await receipts(seed({ blocks: [{ blocker_id: ALICE, blocked_id: BOB }] }));
-    assert.equal(b.readerFaces[BOB], null);
-    assert.equal(b.readerFaces[DANA], face(DANA), "with no block left on DANA, hers is shown");
+    assert.equal(b.receipts[0]!.seenByUserIds.includes(BOB), false);
+    assert.equal(BOB in b.readerFaces, false);
+    assert.equal(b.readerFaces[DANA], face(DANA), "with no block left on DANA, she is in the receipt and hers is shown");
   });
 
-  it("an unreadable block read withholds every face and says degraded; the receipt is untouched", async () => {
-    const b = await receipts(seed(), { errors: { blocks: { message: "blocks: timeout" } } });
-    assert.equal(b.receipts[0]!.seenByUserIds.length, 4);
-    for (const id of [BOB, CARL, DANA, ERIN]) assert.equal(b.readerFaces[id], null, id);
-    assert.equal(b.readerFacesDegraded, true);
+  it("an unreadable block read answers no receipt at all — 'could not check' is a retryable refusal (P-T6)", async () => {
+    _setTestClient(makeFakeClient(seed(), { errors: { blocks: { message: "blocks: timeout" } } }), true);
+    const r = await call(h.base, "GET", `/threads/${THREAD}/receipts?messageIds=${MSG}`, ALICE);
+    assert.equal(r.status, 503, JSON.stringify(r.body));
+    assert.ok(!JSON.stringify(r.body).includes(".jpg"));
   });
 
   it("an unreadable friendship read withholds the PRIVATE faces only", async () => {
@@ -106,6 +108,6 @@ describe("T295 — the receipt answers its readers' faces, under profiles_select
     const b = await receipts(seed(), { errors: { profiles: { message: "profiles: timeout", afterOps: 1 } } });
     assert.deepEqual(b.readerFaces, {});
     assert.equal(b.readerFacesDegraded, true);
-    assert.equal(b.receipts[0]!.seenByUserIds.length, 4);
+    assert.equal(b.receipts[0]!.seenByUserIds.length, 3, "the receipt is still answered (DANA's block applies)");
   });
 });

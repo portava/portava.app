@@ -525,12 +525,15 @@ describe("GET /threads/:threadId/read-receipts", () => {
     return { status: res.status, body: (await res.json()) as any };
   }
 
-  it("a group thread returns every active member's read position", async () => {
+  // CHANGED 2026-10-07 (lane T, census-telegraph §51, proposed ruling P-T6): was "returns every
+  // active member's read position". CARL blocked ALICE in this fixture, and a read position is a
+  // presence signal: it no longer crosses a block, in either direction.
+  it("a group thread returns every active member's read position — except across a block", async () => {
     _setTestClient(makeClient({}), true);
     const { status, body } = await get(TRIP_THREAD, ALICE);
     assert.equal(status, 200);
     const users = body.receipts.map((r: any) => r.userId).sort();
-    assert.deepEqual(users, [ALICE, BOB, CARL].sort());
+    assert.deepEqual(users, [ALICE, BOB].sort(), "CARL blocked ALICE: his read position must not reach her");
   });
 
   it("a DIRECT thread is refused — the capability is false and the route obeys it", async () => {
