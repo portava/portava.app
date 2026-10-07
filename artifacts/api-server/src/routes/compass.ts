@@ -52,7 +52,8 @@ import {
 } from "../compass/CompassPlatformContext.js";
 import { buildOpportunities, opportunityWorldValueKeys, projectForSurface, type SurfaceProjection } from "../lib/opportunityEngine.js";
 import { parseIntentMode } from "../lib/intentModes.js";
-import { certifiedLayoverSnapshot, isDegradedRefusal, landsideContextPhrase } from "../services/airport/LayoverSnapshot.js";
+import { certifiedLayoverSnapshot, isDegradedRefusal, landsideContextPhrase, type LayoverSnapshot } from "../services/airport/LayoverSnapshot.js";
+import { certifiedLayoverAnswerText, isAirsideLayoverQuestion, mentionsLeaving } from "../services/airport/layoverQuestionScope.js";
 import {
   ALGORITHM_VERSION_KEY,
   COMPASS_RANKING_ALGORITHM_VERSION,
@@ -1726,10 +1727,12 @@ router.post("/compass/ask", async (req, res) => {
   //      time budget of Compass's own. Proactive: the deadline must not depend
   //      on the model electing to call the tool. A store that could not be read
   //      is said so; "no live layover" is silent.
+  let liveLayover: LayoverSnapshot | null = null; // L3-FC (below): the session this turn is answered under, if any
   try {
     const snap = await certifiedLayoverSnapshot(sc, user.id);
     if (snap.ok) {
       const s = snap.snapshot;
+      liveLayover = s;
       ctxLines.push(
         "[Layover \u2014 certified snapshot]",
         `Verdict ${s.verdict}; return state ${s.returnState}; tier ${s.tier}; usable ${s.usableMinutes} min; ` +
@@ -1925,6 +1928,37 @@ router.post("/compass/ask", async (req, res) => {
     "compass/ask: LLM call",
   );
 
+  // ── L3-FC (lead ruling 2026-10-07; census-compass §50, CL-02) ──────────────
+  // On a live layover EVERY question is a leaving question — the certified text
+  // only, no model prose, no model call — unless the airside allowlist
+  // (services/airport/layoverQuestionScope) recognises it. An allowlisted
+  // question gets the model, but its answer is held back (not streamed) and
+  // replaced by the certified text if it drifts into leaving.
+  const layoverCertifiedOnly = liveLayover !== null && !isAirsideLayoverQuestion(prompt);
+  if (liveLayover !== null && layoverCertifiedOnly) {
+    const message = certifiedLayoverAnswerText(liveLayover);
+    const meta = { droppedInventedIds: 0, groundingViolations: [] as string[], toolsUsed: [] as string[], layoverAnswer: "certified_only" };
+    try {
+      await appendMessage(sc, conversationId, "assistant", message, { layoverAnswer: "certified_only" }, COMPASS_ASK_PROMPT_VERSION);
+      await touchConversation(sc, conversationId);
+    } catch { /* non-fatal */ }
+    if (stream) {
+      res.setHeader("Content-Type",  "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection",    "keep-alive");
+      res.flushHeaders();
+      res.write(`data: ${JSON.stringify({ delta: message })}\n\n`);
+      res.write(`data: ${JSON.stringify({ done: true, conversationId, message, promptVersion: COMPASS_ASK_PROMPT_VERSION, payload: null, quickActions: [], pendingProposals: [], uiBlocks: [], meta, intent: intentResult })}\n\n`);
+      res.end();
+      return;
+    }
+    res.json({ conversationId, message, payload: null, quickActions: [], pendingProposals: [], uiBlocks: [], meta, promptVersion: COMPASS_ASK_PROMPT_VERSION, intent: intentResult });
+    return;
+  }
+  /** L3-FC: an allowlisted layover answer that drifts into leaving is the certified text instead (and carries no correction). */
+  const layoverConfine = (g: GroundingResult): GroundingResult =>
+    liveLayover !== null && mentionsLeaving(g.text) ? { ...g, text: certifiedLayoverAnswerText(liveLayover), correction: null } : g;
+
   // ── SSE streaming ─────────────────────────────────────────────────────────
   if (stream) {
     res.setHeader("Content-Type",  "text/event-stream");
@@ -1946,7 +1980,7 @@ router.post("/compass/ask", async (req, res) => {
       // Phase 4). The done event still carries the parsed message fields.
       const { finalRaw, toolLog, proposals } = await withAskProjections(() => runToolCallingLoop(
         sc, user.id, guardProfile, messages as any, req.log,
-        (delta) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify({ delta })}\n\n`); },
+        (delta) => { if (liveLayover === null && !res.writableEnded) res.write(`data: ${JSON.stringify({ delta })}\n\n`); }, // L3-FC: held back on a layover
         clientAbort.signal,
       ));
       const _parsed = _parseModelResponse(finalRaw);
@@ -1954,9 +1988,10 @@ router.post("/compass/ask", async (req, res) => {
       // Sensing `:148`. The tokens are already on the wire — the client rebuilds
       // the bubble from the accumulated deltas — so the correction is sent as
       // one more delta rather than by rewriting what was said.
-      const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);
+      const _grounded    = layoverConfine(groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence)); // L3-FC
       const message      = _grounded.text;
-      if (_grounded.correction && !res.writableEnded) {
+      if (liveLayover !== null && !res.writableEnded) res.write(`data: ${JSON.stringify({ delta: message })}\n\n`); // L3-FC: the checked answer (its correction included), once
+      if (_grounded.correction && liveLayover === null && !res.writableEnded) {
         req.log.warn(
           { userId: user.id, violations: _grounded.violations.map((v) => v.kind) },
           "compass/ask stream: answer over-claimed against its own tool evidence",
@@ -2026,7 +2061,7 @@ router.post("/compass/ask", async (req, res) => {
     const _rawMessage  = finalRaw === "" ? SUMMARISE_EMPTY_FALLBACK_MESSAGE : _parsed.message;
     // Sensing `:148` — the same boundary the streamed branch applies, on the
     // same tool log, so the two branches cannot publish different answers.
-    const _grounded    = groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence);
+    const _grounded    = layoverConfine(groundCompassAnswer(_rawMessage, toolLog, liveClaimEvidence)); // L3-FC
     const message      = _grounded.text;
     if (_grounded.correction) {
       req.log.warn(
