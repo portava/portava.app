@@ -3939,7 +3939,7 @@ moderator id/note on the report row; unowned subject closed unattributed.
 
 ## §36 (lane B, payments / identity / Trust) — 2026-10-05 · The booking paths now enforce Trust restrictions and identity on BOTH people; six owner decisions land on Trust rows. **ONE ROW MOVES: TRV2-08, N → W.**
 
-*Numbered §35–§37 on lane B's branch; renumbered §36–§38 on 2026-10-07 when main's §35 (lane L's TV-4a evidence) merged first. Lane L's §35 above is untouched.*
+*Numbered §35–§37 on lane B's branch; renumbered §36–§38 on 2026-10-07 when main's §35 (lane L's TV-4a evidence) merged first. Lane L's §35 above is untouched. Where text written before 2026-10-07 by lane B names its own §35, §36 or §37, it means §36, §37 or §38. That covers lane reports, commit messages and the lane-B reasons in CENSUS_STALENESS_ACKNOWLEDGED.json.*
 
 Lane B, branch `claude/mission-b-payments-identity-trust-20261005`, cut from `main` at `2e46835263` and
 merged with `main` at `800516a2ff`. `head_commit` is **not** re-declared: this section records one build and
