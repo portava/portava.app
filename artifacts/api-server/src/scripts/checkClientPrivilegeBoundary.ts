@@ -250,10 +250,8 @@ function main(): void {
     process.exit(1);
   }
 
-  console.log(
-    "✅ no migration grants a client role a privilege RLS cannot police, and every post-baseline table " +
-      "carries a client-privilege decision.",
-  );
+  console.log("✅ no migration grants a client role a privilege RLS cannot police.");
+  console.log(`✅ every one of the ${tablesExamined} post-baseline table(s) carries a client-privilege decision (rule 4).`);
 }
 
 main();

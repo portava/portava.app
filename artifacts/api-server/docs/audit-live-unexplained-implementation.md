@@ -306,9 +306,9 @@ migrations (no database contacted). Classes: **(a)** real excess the chain itsel
 | UNEXPLAINED_LIVE | 17 | (c) 11 intel triggers (2130/3002/2276) and 6 trip policies (2762/2763) created in FOREACH / DECLARE loops | model fixed: `expandForeachLiteralLoops` |
 | UNEXPLAINED_LIVE | 95 | (c) RESTRICTIVE `*_deny_*` policies created by temp-table-driven loops (3390 family) | OPEN: the EXPLAINED ledger is their home (as recorded above) |
 | UNEXPLAINED_LIVE | 24 | (b) `sensing_anon_publications` / `sensing_anon_projection` (2 tables, 8 columns, 5 constraints, 2 indexes), 3 sensing functions, `sensing_contribution_sessions.contributor_token` / `.group_seed` (columns 2480's postcondition says must NOT exist), `highlights_expiry_is_permanent_or_dated` + `highlights_owner_archive_idx` (unmerged branch `claude/highlights-truncation-20260906`'s 2313) | OPEN: CI cleanup is the lead's decision; no committed file defines them |
-| DISPOSITION_MISSING | 142 | (c) 140 post-baseline tables have no RLS disposition (the auditor reads only `RLS_DISPOSITIONS`, which its test restricts to baseline tables, and ignores `POST_BASELINE_RLS_DISPOSITIONS`); 2 are the (b) sensing tables | OPEN |
+| DISPOSITION_MISSING | 142 | (c) 140 post-baseline tables have no RLS disposition the auditor reads. It read only `RLS_DISPOSITIONS` (which its test restricts to baseline tables) and ignored `POST_BASELINE_RLS_DISPOSITIONS`, the list `rlsDispositions.ts` says to write them in; 2 are the (b) sensing tables | Auditor fixed (`auditedRlsDispositions()`): 1 explained (`intel_state_snapshot_versions`). OPEN: 139 tables have no written disposition yet |
 | DISPOSITION_STALE | 1 | (b) `post_media_moderation_ledger` is in the baseline and production but absent on portava-ci | OPEN |
 | STALE_LEDGER_ENTRY | 1 | (b) `extension:unaccent` is installed on production, not on portava-ci | OPEN |
 
-Replayed against the model on this branch: 236 findings are explained (106 + 113 + 17); the 442 (a)/(d)
+Replayed against the model on this branch: 237 findings are explained (106 + 113 + 17 + 1); the 442 (a)/(d)
 grant findings clear when `3740` is applied to portava-ci.

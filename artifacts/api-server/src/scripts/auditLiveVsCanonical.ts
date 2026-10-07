@@ -58,7 +58,7 @@ import {
   EXPLAINED_LIVE_OBJECTS,
   validateLedgerShape,
 } from "./explainedLiveObjects.js";
-import { RLS_DISPOSITIONS } from "./rlsDispositions.js";
+import { auditedRlsDispositions } from "./rlsDispositions.js";
 import { BASELINE_PATH, parseBaselineTables } from "./parseBaselineSchema.js";
 import {
   buildModel,
@@ -439,7 +439,7 @@ async function main(): Promise<void> {
     live,
     ledger: EXPLAINED_LIVE_OBJECTS,
     ledgerShapeProblems,
-    dispositions: RLS_DISPOSITIONS,
+    dispositions: auditedRlsDispositions(),
     ci,
   });
 
