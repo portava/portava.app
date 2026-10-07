@@ -5290,3 +5290,60 @@ Tests: `artifacts/api-server/src/test/compassAskLayoverConfinement.test.ts:182#d
 | id | was | now | why |
 | --- | --- | --- | --- |
 | CL-02 | C | **C** | §51. The door now also fails closed when the layover state cannot be read, so no question outside the airside allowlist is answered on a guess. |
+
+## §52 — 2026-10-07 (lane L, wave 6): CPH-08's live places and events are built behind a flag seeded FALSE (lead ruling CPH-08-ADAPT). CPH-08 stays W: the owner action remains
+
+*Measured on branch `claude/mission-l-wave6-20261006`. `head_commit` is not re-declared.*
+
+### 52.1 What is built
+
+`search_places` and `search_events` still search the catalog first. A live provider (Foursquare for
+places, Ticketmaster for events) is asked only when three checks pass, in this order, so that a refusal
+spends nothing (`artifacts/api-server/src/compass/CompassLiveSearch.ts:72#async function admit(`):
+
+1. The flag `compass_live_search_enabled` is on. It is seeded FALSE by migration 3704, and an
+   unreadable flag counts as off.
+2. The provider key is set.
+3. The person has quota left: 5 per person per UTC day, taken atomically by
+   `compass_live_search_take`. An unreadable quota counts as no quota.
+
+If any check refuses, or the provider fails, the search falls back to the catalog with no error to the
+person. With the flag off, the result is exactly what it was before this change.
+
+**D-67** decides anything labelled live. A provider record confirms a catalog place only when the names
+match after normalisation and the record is within 150 m of the place's own coordinates
+(`artifacts/api-server/src/compass/CompassLiveSearch.ts:130#return anchor !== null && isSameVenue(c.name, anchor, rec);`).
+Only that confirmed place is labelled verified live. Every other provider record is a listing labelled
+not verified live, carries Foursquare's attribution, and has no coordinates. Events are never labelled
+live.
+
+The tools call the adapter at `artifacts/api-server/src/compass/CompassTools.ts:1015#const live = await livePlaces(sc, userId, {`.
+
+Tests: `artifacts/api-server/src/test/compassLiveSearch.test.ts:65#describe("CPH-08-ADAPT — the gates, in order, and nothing spent on a refusal"`
+(13 cases, 13/13). Twelve mutations, each red, then restored.
+
+Migration 3704 (table, function and flag) and the owner's setup are described in
+`docs/ops/compass-live-search-setup.md` and `docs/migrations.md`.
+
+### 52.2 Why CPH-08 stays `W`
+
+The roadmap clause asks for live sources at tool time. These are now in code, but they are dark until
+the owner acts. Before CPH-08 can move, the owner must do three things:
+
+- apply 3704;
+- supply the keys;
+- turn on `compass_live_search_enabled`, which is the spend decision.
+
+Route time, the fifth source, is still lane C's: the routed provider in `TripRouteChainProjection`.
+
+### 52.3 Two triage corrections (lead, 2026-10-07)
+
+- **CCL-05** is `BLOCKED_ENV`, flag only. The ranking half is built (§26.2), and only
+  `opportunity_engine_enabled` remains.
+- **CT-02** waits on #650 and lane C's viewer-aware builders.
+
+### 52.4 Row moves
+
+| id | was | now | why |
+| --- | --- | --- | --- |
+| CPH-08 | W | **W** | §52. Live places and events are built behind 3704's flag, quota and D-67. The owner's three actions remain (apply 3704, supply the keys, turn the flag on), and lane C still owes the routed provider. |
