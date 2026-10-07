@@ -6661,7 +6661,7 @@ G136 names four actions: drop pin, use approximate area, confirm existing Gem, a
 re-read it as two of four. One of its two missing halves landed later under G240 and was never written back here:
 
 - **Add a new Gem.** On the no-match path, `hidden_gem_location` offers it
-  (`artifacts/api-server/src/lib/inputAssistance/validationSuite.ts:360#label: \`Add a new ${create.noun}\`,`).
+  (`artifacts/api-server/src/lib/inputAssistance/validationSuite.ts:360#Add a new ${create.noun}`).
   Proven by `artifacts/api-server/src/test/inputAssistanceCreation.test.ts:529#hidden_gem_location offers 'Add a new Gem'`.
 - **Use approximate area.** This was the remaining gap, and is now built
   (`artifacts/api-server/src/lib/inputAssistance/creation.ts:645#export function buildApproximateAreaRows(`).
@@ -6681,7 +6681,7 @@ re-read it as two of four. One of its two missing halves landed later under G240
 
 | ID | from | **to** | evidence |
 | --- | --- | --- | --- |
-| G136 | W | **C** | All four Gem actions have producers on the Gem location field: approximate area (`artifacts/api-server/src/lib/inputAssistance/creation.ts:645#export function buildApproximateAreaRows(`), add new Gem (`artifacts/api-server/src/lib/inputAssistance/validationSuite.ts:360#label: \`Add a new ${create.noun}\`,`), drop pin and confirm existing (unchanged). Proven through the real gateway (`artifacts/api-server/src/test/inputAssistanceCreation.test.ts:998#hidden_gem_location offers 'Use approximate area' over the city it resolved`). |
+| G136 | W | **C** | All four Gem actions have producers on the Gem location field: approximate area (`artifacts/api-server/src/lib/inputAssistance/creation.ts:645#export function buildApproximateAreaRows(`), add new Gem (`artifacts/api-server/src/lib/inputAssistance/validationSuite.ts:360#Add a new ${create.noun}`), drop pin and confirm existing (unchanged). Proven through the real gateway (`artifacts/api-server/src/test/inputAssistanceCreation.test.ts:998#hidden_gem_location offers 'Use approximate area' over the city it resolved`). |
 
 Graded on the same footing as the two halves §33.2 counted: production of the action on the field. Whether a Gem
 creation screen mounts `hidden_gem_location` is G18's question.
