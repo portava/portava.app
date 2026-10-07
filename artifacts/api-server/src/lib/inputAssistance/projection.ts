@@ -26,6 +26,8 @@ import {
   applyFeasibility,
   applyTripFit,
   applySpamRisk,
+  applyPrivacyRisk,
+  privacyRisk,
   gemLocationPrecision,
   type TemporalWindow,
 } from './rankingSignals';
@@ -97,10 +99,11 @@ export function projectSearchResult(
   const entityType = searchTypeToEntity(r.type as DispatchSearchType);
   // §15 signal stack. Order is deliberate: the boosts (Trust, Temporal, TripFit)
   // are applied first and each is clamped by SIGNAL_CEILING, then the penalties
-  // (SpamRisk, task infeasibility) subtract from the result — so a stuffed or
-  // out-of-task row cannot boost its way back above a clean one.
+  // (SpamRisk, PrivacyRisk, task infeasibility) subtract from the result — so a
+  // stuffed, privacy-restricted or out-of-task row cannot boost its way back
+  // above a clean one.
   const confidence = applyFeasibility(
-    applySpamRisk(
+    applyPrivacyRisk(applySpamRisk(
       applyTripFit(
         applyTemporalFit(
           applyTrustConfidence(
@@ -114,7 +117,7 @@ export function projectSearchResult(
         signals.tripFit === true,
       ),
       `${r.title} ${r.subtitle ?? ''}`,
-    ),
+    ), privacyRisk(r)),
     signals.demoted === true,
   );
 

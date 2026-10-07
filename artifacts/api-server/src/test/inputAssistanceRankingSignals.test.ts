@@ -52,6 +52,9 @@ import {
   handleSignature,
   applyImpersonationRisk,
   IMPERSONATION_DEMOTION,
+  privacyRisk,
+  applyPrivacyRisk,
+  PRIVACY_RISK_DEMOTION,
 } from "../lib/inputAssistance/rankingSignals.js";
 import {
   resolveTaskConstraint,
@@ -923,5 +926,120 @@ describe("§36 impersonation end-to-end (G233) — through POST /input-assistanc
       (withTarget.confidence ?? 0) < alone,
       "co-occurrence is the whole trigger — that is the coverage G233 still lacks",
     );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §15 PrivacyRisk (census G103) — the subtracted term that had no producer
+//
+// MUTATION LOG (each applied, watched go RED, reverted, `git diff` clean):
+//   P1 projection.ts: drop the `applyPrivacyRisk(…, privacyRisk(r))` wrapper →
+//      "a private person ranks below a public one on the same tier" and the
+//      end-to-end gem test go RED (input order wins; the restricted row is
+//      seeded FIRST for that reason).
+//   P2 rankingSignals.ts: `isPrivate === false ? 0 : 1` → `isPrivate === true
+//      ? 1 : 0` (fail OPEN on an unknown person) → "an unknown answer about a
+//      person is the restrictive one" RED.
+//   P3 rankingSignals.ts: `coordsPrecision === 'approximate' ? 0 : 1` →
+//      `coordsPrecision === 'hidden' ? 1 : 0` → "a gem precision this build
+//      cannot name counts as hidden" RED.
+//   P4 rankingSignals.ts: PRIVACY_RISK_DEMOTION 0.1 → 0.2 → "never across a
+//      match tier: a private EXACT match still leads a public PREFIX match" RED.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("§15 PrivacyRisk (G103) — the term itself", () => {
+  it("is 1 only for a row whose subject restricted its own exposure", () => {
+    assert.equal(privacyRisk({ type: "travelers", privacyState: { isPrivate: true } }), 1);
+    assert.equal(privacyRisk({ type: "buddies", privacyState: { isPrivate: true } }), 1);
+    assert.equal(privacyRisk({ type: "travelers", privacyState: { isPrivate: false } }), 0);
+    assert.equal(privacyRisk({ type: "hidden_gems", metadata: { coordsPrecision: "hidden" } }), 1);
+    assert.equal(privacyRisk({ type: "hidden_gems", metadata: { coordsPrecision: "approximate" } }), 0);
+    // Rows that are not people or gems never carry risk, whatever their bag says.
+    assert.equal(privacyRisk({ type: "places", metadata: { coordsPrecision: "hidden" } }), 0);
+    assert.equal(privacyRisk({ type: "events", privacyState: { isPrivate: true } }), 0);
+    assert.equal(privacyRisk({ type: "cities", privacyState: null }), 0);
+  });
+
+  it("an unknown answer about a person is the restrictive one (fail-closed)", () => {
+    assert.equal(privacyRisk({ type: "travelers", privacyState: null }), 1);
+    assert.equal(privacyRisk({ type: "travelers" }), 1);
+    assert.equal(privacyRisk({ type: "travelers", privacyState: { isPublic: true } }), 1,
+      "only an explicit isPrivate:false clears a person row");
+  });
+
+  it("a gem precision this build cannot name counts as hidden (fail-closed)", () => {
+    assert.equal(privacyRisk({ type: "hidden_gems", metadata: null }), 1);
+    assert.equal(privacyRisk({ type: "hidden_gems", metadata: { coordsPrecision: "exact" } }), 1);
+    assert.equal(privacyRisk({ type: "hidden_gems", metadata: {} }), 1);
+  });
+
+  it("demotes by a bounded amount, never below zero, and is the identity at risk 0", () => {
+    assert.equal(applyPrivacyRisk(0.85, 0), 0.85);
+    assert.equal(applyPrivacyRisk(0.85, 1), 0.85 - PRIVACY_RISK_DEMOTION);
+    assert.equal(applyPrivacyRisk(0.05, 1), 0);
+    assert.equal(applyPrivacyRisk(0.6, 5), 0.6 - PRIVACY_RISK_DEMOTION, "risk is clamped to 1");
+  });
+
+  it("a private person ranks below a public one on the same tier — demoted, not removed", () => {
+    const priv = projectSearchResult(
+      result({ id: "u-private", type: "travelers", title: "Sam Rivers", privacyState: { isPrivate: true } }),
+      "global_search", POLICY_VERSION, "Sam",
+    );
+    const pub = projectSearchResult(
+      result({ id: "u-public", type: "travelers", title: "Sam Rivera", privacyState: { isPrivate: false } }),
+      "global_search", POLICY_VERSION, "Sam",
+    );
+    assert.ok((pub.confidence ?? 0) > (priv.confidence ?? 0));
+    const ordered = orderSuggestions([priv, pub], 10);
+    assert.deepEqual(ordered.map((s) => s.entityId), ["u-public", "u-private"], "both returned, public first");
+  });
+
+  it("never across a match tier: a private EXACT match still leads a public PREFIX match", () => {
+    const privExact = projectSearchResult(
+      result({ id: "u-exact", type: "travelers", title: "Sam", privacyState: { isPrivate: true } }),
+      "global_search", POLICY_VERSION, "Sam",
+    );
+    const pubPrefix = projectSearchResult(
+      result({ id: "u-prefix", type: "travelers", title: "Samantha", privacyState: { isPrivate: false } }),
+      "global_search", POLICY_VERSION, "Sam",
+    );
+    assert.ok((privExact.confidence ?? 0) > (pubPrefix.confidence ?? 0),
+      `someone who types a private friend's exact name must still find them first (${privExact.confidence} vs ${pubPrefix.confidence})`);
+  });
+
+  it("CONTROL: two public rows on the same tier stay identical (the term moves nothing else)", () => {
+    const a = projectSearchResult(result({ id: "a", type: "travelers", title: "Sam Rivers", privacyState: { isPrivate: false } }),
+      "global_search", POLICY_VERSION, "Sam");
+    const b = projectSearchResult(result({ id: "b", type: "places", title: "Sam Rivera Cafe" }),
+      "global_search", POLICY_VERSION, "Sam");
+    assert.equal(a.confidence, b.confidence);
+  });
+});
+
+describe("§15 PrivacyRisk end-to-end (G103) — through POST /input-assistance/suggest", () => {
+  it("a gem whose position may not be surfaced is demoted below a placeable one, and both are returned", async () => {
+    setup({
+      hidden_gems: [
+        // Seeded FIRST so a missing term is visible as "input order won".
+        { id: "g-protected", name: "Lantern Steps", city: "Hoi An", country: "Vietnam", submitted_by: HOST,
+          category: "viewpoint", status: "active", created_at: "2026-01-02T00:00:00Z",
+          sensitivity_level: "protected", approx_latitude: 15.88, approx_longitude: 108.33 },
+        { id: "g-approx", name: "Lantern Stairs", city: "Hoi An", country: "Vietnam", submitted_by: HOST,
+          category: "viewpoint", status: "active", created_at: "2026-01-01T00:00:00Z",
+          sensitivity_level: "approximate", approx_latitude: 15.87, approx_longitude: 108.32 },
+      ],
+      profiles: [{ id: HOST, account_status: "active" }],
+      blocks: [], user_privacy_settings: [], canonical_locations: [],
+    });
+    const r = await suggest({ context: "global_search", text: "lantern" });
+    assert.equal(r.status, 200);
+    const body = await r.json() as any;
+    const gems = body.suggestions.filter((s: any) => s.entityType === "hidden_gem");
+    assert.equal(gems.length, 2, "both gems are still RETURNED — this is a ranking term, not a filter");
+    assert.equal(gems[0].entityId, "g-approx", "the placeable gem must lead");
+    assert.equal(gems[1].entityId, "g-protected");
+    assert.ok((gems[0].confidence ?? 0) > (gems[1].confidence ?? 0), "and lead BECAUSE of confidence");
+    // The demotion is a number, never a disclosure: no risk word reaches the wire.
+    assert.ok(!JSON.stringify(body).includes("privacyRisk"));
   });
 });
