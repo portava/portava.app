@@ -71,6 +71,8 @@ function toDiscoveryItem(item: CommunityPlaceItem): DiscoveryItem {
     worthItCount: item.worthItCount ?? null,
     avgRating:    item.avgRating ?? null,
     reviewCount:  item.reviewCount ?? null,
+    lat:          item.lat ?? null, // the live open-now identity anchor (lead ruling D-67)
+    lng:          item.lng ?? null,
   };
 }
 
@@ -88,6 +90,8 @@ function toTravelerPick(item: CommunityPlaceItem): TravelerPick {
     source:  (item.source ?? 'traveler') as TravelerPick['source'],
     status:  (item.status ?? 'provisional') as TravelerPick['status'],
     verified: item.verified,
+    lat:      item.lat ?? null, // the live open-now identity anchor (lead ruling D-67)
+    lng:      item.lng ?? null,
   };
 }
 

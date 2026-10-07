@@ -37,7 +37,7 @@ export interface FsqPlace {
   photoUrl: string | null;
   galleryImages: string[];
   // Hours
-  isOpenNow: boolean | null;
+  isOpenNow: boolean | null; // NOT LIVE: the static dataset's open_now at ingest (lead ruling D-67) — never render as "open now"
   // Amenities
   amenities: string[];
 }
@@ -121,7 +121,7 @@ function rowToPlace(r: any): FsqPlace {
     photoUrl,
     galleryImages: allPhotos.slice(1), // first is photoUrl; rest go to gallery
     // Hours
-    isOpenNow: typeof r.hours?.open_now === "boolean" ? r.hours.open_now : null,
+    isOpenNow: typeof r.hours?.open_now === "boolean" ? r.hours.open_now : null, // NOT LIVE (lead ruling D-67): `open_now` frozen into the static FSQ OS dataset at ingest (dataset_date) — no renderer may show it as "open now"; live open-now is lib/liveIntelligence's identity-checked lookup
     // Amenities
     amenities: toStringArray(r.features?.amenities ?? r.amenities),
   };
