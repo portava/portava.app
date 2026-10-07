@@ -104,10 +104,16 @@ describe("A. 3974 transforms the kernel it says it transforms", () => {
     assert.match(rb, /IF n <> branches_before - 1 THEN/);
   });
   it("A9. the +2 family-assignment check counts what the branch actually writes: whitespace-insensitive, and the branch carries exactly two (CI's replay refused 3974 when it counted one spacing: 0 → 1)", () => {
-    // The SAME pattern the migration's three counts use, as a JS regex.
-    const sqlPattern = "v_family\\s+:= ''participant'';";
-    assert.equal(count(m3974, `regexp_matches(d, '${sqlPattern}', 'g')`), 3, "before, after EXECUTE, and the postcondition all count the same way");
-    assert.equal(count(m3974, "replace(d, E'v_family     := ''participant'';'"), 0, "no count depends on one alignment of `:=`");
+    // Each of the three counts (before, after EXECUTE, the postcondition) first folds every alignment of `:=` to one
+    // space, then counts that one spelling. The two in the transform fold a COPY (d is EXECUTEd and keeps its spacing);
+    // the postcondition folds its own read-only d, so tripKernelFamilyContract's "derived from the installed
+    // definition" (`length(replace(d, E'v_family`) holds of it.
+    assert.equal(count(m3974, "regexp_replace(d, 'v_family\\s+:=', 'v_family :=', 'g')"), 3, "every count folds the alignment first");
+    assert.equal(count(m3974, "dn := regexp_replace(d,"), 2, "the transform's two counts fold a copy, never the d it EXECUTEs");
+    assert.equal(count(m3974, "replace(dn, E'v_family := ''participant'';'"), 2);
+    assert.equal(count(m3974, "replace(d, E'v_family := ''participant'';'"), 1, "the postcondition counts the installed definition");
+    assert.ok(m3974.indexOf("d := regexp_replace(d,") > m3974.indexOf("$post$"), "only the read-only postcondition folds d itself");
+    assert.equal(count(m3974, "v_family     := ''participant'';'"), 0, "no count depends on one alignment of `:=`");
     const js = /v_family\s+:= 'participant';/g;
     assert.equal((branch.match(js) ?? []).length, 2, "the branch sets the family at entry and again before its event");
     assert.ok((kbody.match(js) ?? []).length > 0, "the kernel in front already carries participant assignments the count must see, in its own spacing");
