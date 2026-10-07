@@ -255,8 +255,10 @@ describe("A. Active trip grounding in /ask context", () => {
         timezone: null,
       }],
       tripPlanItems: [
-        { id: "i1", trip_id: TRIP_ID, title: "Sagrada Familia tour",  day_date: today, status: "confirmed", starts_at: `${today}T09:00:00.000Z`, sort_order: 1, removed_at: null },
-        { id: "i2", trip_id: TRIP_ID, title: "Tapas crawl in El Born", day_date: today, status: "tentative", starts_at: null,                     sort_order: 2, removed_at: null },
+        // OD-TRIP-3: the viewer's own items (private by the column default) and a
+        // public one — both visible to the viewer.
+        { id: "i1", trip_id: TRIP_ID, title: "Sagrada Familia tour",  day_date: today, status: "confirmed", starts_at: `${today}T09:00:00.000Z`, sort_order: 1, removed_at: null, creator_id: ALICE_ID, location_is_private: true },
+        { id: "i2", trip_id: TRIP_ID, title: "Tapas crawl in El Born", day_date: today, status: "tentative", starts_at: null,                     sort_order: 2, removed_at: null, creator_id: "someone-else", location_is_private: false },
       ],
     });
     _setTestClient(client, true);
@@ -283,6 +285,32 @@ describe("A. Active trip grounding in /ask context", () => {
     assert.ok(ctx.includes("Tapas crawl in El Born"), "today's second item title should be in context");
     assert.ok(ctx.includes("Today's plan:"), "today's plan line should be present");
     assert.ok(ctx.includes("(09:00)"), "timed item should carry its HH:MM");
+  });
+});
+
+describe("A2. OD-TRIP-3 — another member's private plan item in the trip context", () => {
+  it("is listed as 'Private plan' — its title never reaches the model", async () => {
+    const today = todayYmd();
+    const client = makeClient({
+      trips: [{
+        id: TRIP_ID, owner_id: ALICE_ID, title: "Barcelona Summer", destination_city: "Barcelona",
+        destination_country: "Spain", status: "active", start_date: ymdPlus(-1), end_date: ymdPlus(2), timezone: null,
+      }],
+      tripPlanItems: [
+        { id: "i9", trip_id: TRIP_ID, title: "Fertility clinic", day_date: today, status: "confirmed", starts_at: `${today}T10:00:00.000Z`, sort_order: 1, removed_at: null, creator_id: "another-member", location_is_private: true },
+        { id: "i8", trip_id: TRIP_ID, title: "Beach", day_date: today, status: "confirmed", starts_at: `${today}T15:00:00.000Z`, sort_order: 2, removed_at: null, creator_id: "another-member", location_is_private: null },
+      ],
+    });
+    _setTestClient(client, true);
+    const capture: Capture = { mainMessages: null, mainCalls: 0 };
+    _setTestOpenAI(makeCapturingOpenAI(capture, { intent: "question", confidence: 0.9 }, { message: "ok", payload: null, quickActions: [] }) as any);
+    const { status } = await ask({ prompt: "What is on today?" });
+    assert.equal(status, 200);
+    const ctx = joinedContent(capture.mainMessages);
+    assert.ok(ctx.includes("Today's plan:"), "the slots are still listed");
+    assert.ok(!ctx.includes("Fertility clinic"), "another member's private title reached the model");
+    assert.ok(!ctx.includes("Beach"), "an item whose privacy flag is NULL was treated as public");
+    assert.ok(ctx.includes("Private plan"));
   });
 });
 

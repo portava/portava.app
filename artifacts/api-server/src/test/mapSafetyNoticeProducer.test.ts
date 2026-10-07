@@ -60,6 +60,13 @@ import {
 import { parseBbox } from "../lib/mapProjection.js";
 import { NEVER_AGGREGATED_KINDS, type BBox } from "../lib/mapAggregation.js";
 import { projectSavedPlace, resolveDiscoveryVenue } from "../lib/mapProducers/savedPlaceProducer.js";
+import { captureProtection } from "./helpers/protectionTelemetry.js";
+
+// §24 counts are server telemetry now, not the response (lib/mapProtectionTelemetry.ts):
+// with one circle member, `protection.suppressed: 1` on the wire disclosed that the
+// member was inside a protected zone. Read from the telemetry sink, cleared per test.
+const protectionTelemetry = captureProtection();
+beforeEach(() => protectionTelemetry.clear());
 
 // ── fixtures ──────────────────────────────────────────────────────────────────
 
@@ -430,8 +437,8 @@ describe("safety_notice through GET /api/map/projection", () => {
       `bbox=${BBOX_STR}&zoom=14&kinds=safety_notice,saved_place`,
     );
     assert.deepEqual((r.body.objects as MapObject[]).map((o: MapObject) => o.kind), ["safety_notice"]);
-    assert.equal(r.body.protection.safetyExempt, 1);
-    assert.equal(r.body.protection.suppressed, 1);
+    assert.equal(protectionTelemetry.last()!.safetyExempt, 1);
+    assert.equal(protectionTelemetry.last()!.suppressed, 1);
   });
 
   it("is never folded into an activity zone at city zoom", async () => {

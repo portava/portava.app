@@ -47,6 +47,7 @@ import mapProjectionRouter, {
 } from "../routes/mapProjection.js";
 import { _clearPromotedScopeCache } from "../lib/liveClaimRead.js";
 import { makeFakeMapDb, mountRouterApp, type FakeState, type ProjectionApp } from "./helpers/fakeMapDb.js";
+import { captureProtection } from "./helpers/protectionTelemetry.js";
 import type { MapObject } from "../lib/mapObjects.js";
 import { PLACE_PRIVACY_CLASS, discoveryServedIdFor } from "../lib/mapProjectPlace.js";
 import {
@@ -177,7 +178,6 @@ const GOLDEN_FLAGS_OFF = JSON.stringify({
   nextCursor: null,
   sources: ["places"],
   aggregation: { band: "district", cellSizeDegrees: null, aggregated: 0, individual: 2, dropped: 0, suppressedForKAnonymity: 0, zones: 0 },
-  protection: { evaluated: 2, allowed: 2, coarsened: 0, suppressed: 0, safetyExempt: 0 },
   liveEnrichment: { considered: 2, enriched: 0, skipped: 0 },
   crowdFlow: null,
   producers: { meeting_point: null, memory: null, safety_notice: null, saved_place: null },
@@ -277,9 +277,14 @@ describe("§57 A25 — the Map consumes Discovery's candidate projection, graded
   });
 
   /** One request as `viewer`, through the real gateway, over a recorder. */
+  // The §24 protection counts are server telemetry since census-map §50 (they
+  // disclosed a protected-zone fact on the wire); the golden below carries no
+  // `protection` key, and G1 reads the counts from the sink instead.
+  const protection = captureProtection();
   async function serve(state: FakeState, viewer: string = VIEWER_A, query: string = QUERY) {
     if (app) { await app.close(); app = null; }
     reset();
+    protection.clear();
     const opts = { token: TOKEN, userId: viewer };
     const rec = recording(makeFakeMapDb(state, opts));
     app = await mountRouterApp(mapProjectionRouter, rec.client, opts);
@@ -294,6 +299,8 @@ describe("§57 A25 — the Map consumes Discovery's candidate projection, graded
       const r = await serve(world());
       assert.equal(r.status, 200);
       assert.equal(JSON.stringify(unclocked(r.body)), GOLDEN_FLAGS_OFF);
+      // The §24 gate still ran over both places — recorded server-side, not served.
+      assert.deepEqual(protection.last(), { evaluated: 2, allowed: 2, coarsened: 0, suppressed: 0, safetyExempt: 0 });
     });
 
     it("G1b flag FALSE (migration 2361's seed): the same bytes", async () => {

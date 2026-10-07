@@ -17,6 +17,8 @@ import { SmartInput } from '../../../platform/input-assistance/components/SmartI
 import { registerField, isFieldRegistered } from '../../../platform/input-assistance/contexts/fieldRegistry.ts';
 import type { InputSuggestion } from '../../../platform/input-assistance/types/inputSuggestion.ts';
 import { resolveWallIntent, type ResolvedWallIntent } from '../services/wallSessionIntent.ts';
+import { WallPushToTalk } from './WallPushToTalk.tsx';
+import type { SpeechRecognizerPort } from '../../../platform/input-assistance/voice/speechRecognizer.ts';
 
 /**
  * The Wall steer bar joins the platform Global Input Intelligence layer by
@@ -39,6 +41,7 @@ export function WallHeader({
   onClearIntent,
   onOpenNotifications,
   onOpenTelegraph,
+  voiceRecognizer,
 }: {
   city?: string | null;
   notificationsBadge?: number;
@@ -50,6 +53,8 @@ export function WallHeader({
   onClearIntent?: () => void;
   onOpenNotifications?: () => void;
   onOpenTelegraph?: () => void;
+  /** Injected in tests; defaults to the platform's on-device recognizer (W71). */
+  voiceRecognizer?: SpeechRecognizerPort;
 }) {
   const [draft, setDraft] = React.useState('');
 
@@ -161,6 +166,16 @@ export function WallHeader({
               overlayMaxHeight={260}
             />
           </View>
+          {/* census-wall W71 / OD-TRUST-8: hold to talk, recognised on the
+              device; the transcript lands in the field above as if typed, so it
+              takes the same shared Global Input Intelligence path. */}
+          <WallPushToTalk
+            fieldId={WALL_INTENT_FIELD_ID}
+            context="global_search"
+            onTranscript={setDraft}
+            disabled={intentPending}
+            recognizer={voiceRecognizer}
+          />
         </View>
       )}
     </View>

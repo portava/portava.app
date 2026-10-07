@@ -28,6 +28,7 @@ import mapProjectionRouter, {
   _clearFlowZoneCache,
 } from "../routes/mapProjection.js";
 import { makeFakeMapDb, startRouterApp, type FakeState, type ProjectionApp } from "./helpers/fakeMapDb.js";
+import { captureProtection } from "./helpers/protectionTelemetry.js";
 import {
   MAX_SAVED_PLACE_ROWS,
   SAVED_PLACE_PRIVACY_CLASS,
@@ -295,8 +296,12 @@ function gatewayWorld(over: FakeState = {}): FakeState {
 
 describe("saved_place through GET /api/map/projection", () => {
   let app: ProjectionApp | null = null;
+  // §24's counts are server telemetry since census-map §50 — on the wire they
+  // told a viewer a member was inside a protected zone.
+  const protection = captureProtection();
 
   beforeEach(() => {
+    protection.clear();
     _clearProtectedZoneCache();
     _clearFlowZoneCache();
     _clearPlaceIdBridgeCache();
@@ -363,6 +368,7 @@ describe("saved_place through GET /api/map/projection", () => {
     );
     assert.deepEqual(r.body.objects, []);
     assert.deepEqual(r.body.producers.saved_place, { refusal: null, collected: 1 });
-    assert.equal(r.body.protection.suppressed, 1);
+    assert.equal(protection.last()?.suppressed, 1);
+    assert.equal("protection" in r.body, false, "the per-reason counts must not reach the wire");
   });
 });

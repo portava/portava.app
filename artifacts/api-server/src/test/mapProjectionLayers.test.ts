@@ -42,6 +42,7 @@ import {
   projectTrip,
 } from "../lib/mapProjection.js";
 import { KIND_DEFAULT_PRIORITY, isServable } from "../lib/mapObjects.js";
+import { _setProtectionTelemetrySink, type ProtectionTelemetryEvent } from "../lib/mapProtectionTelemetry.js";
 
 // ── ids ───────────────────────────────────────────────────────────────────────
 
@@ -823,3 +824,85 @@ describe("GET /api/map/projection — a failed read is never reported as an empt
     assert.ok(r.body.sources.includes("trips"), "a healthy layer was dropped with the failing one");
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. A protected zone must not be inferable from the response (2026-10-06)
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The response used to carry `protection: { …, suppressed }`. With one circle
+// member, `suppressed: 1` beside an empty object list told the viewer that
+// their friend was INSIDE a protected zone (a clinic, a shelter) — the exact
+// fact the zone exists to hide. The counts are now server telemetry
+// (lib/mapProtectionTelemetry.ts). These cases pin that the WHOLE response for
+// "hidden by a zone" is byte-identical to "not shown for another reason", and
+// that the gate still ran (observed through the telemetry sink, not the wire).
+
+describe("GET /api/map/projection — a protected zone leaves no trace on the wire", () => {
+  const coarse = coarsenPosition(MEM_A, RAW.lat, RAW.lng, "neighborhood");
+  // A SUPPRESS-class zone (a shelter). A coarsen-class zone (a clinic) leaves
+  // an already-approximate circle member's position unchanged — its floor is
+  // `approximate` — so the hiding case is the suppress class.
+  const shelter = {
+    id: "pz-shelter", category: "shelter", action: null, privacy_floor: null, shape: "circle",
+    center_lat: coarse.lat, center_lng: coarse.lng, radius_meters: 500, ring: null,
+    jurisdiction: null, policy_ref: null, active: true,
+  };
+  const optedOut = { location_preferences: [{ user_id: MEM_A, trusted_circle_share: false, location_mode: "nearby" }] };
+  const stale = {
+    user_location_state: [{
+      user_id: MEM_A, lat: RAW.lat, lng: RAW.lng, city: "Da Nang", country: "VN",
+      updated_at: new Date(Date.now() - 6 * 3_600_000).toISOString(),
+      last_known_at: new Date(Date.now() - 6 * 3_600_000).toISOString(),
+    }],
+  };
+
+  let events: ProtectionTelemetryEvent[] = [];
+  before(() => _setProtectionTelemetrySink((e) => { events.push(e); }));
+  after(() => _setProtectionTelemetrySink(null));
+  beforeEach(() => { events = []; });
+
+  /**
+   * The body with ONE field normalised: `generatedAt` is the request's clock
+   * reading and differs between any two requests. Everything else the viewer
+   * receives is compared byte for byte.
+   */
+  async function bodyFor(over: FakeState): Promise<string> {
+    _clearProtectedZoneCache();
+    const r = await projection("crew_member", projectionState(over));
+    assert.equal(r.status, 200);
+    return JSON.stringify({ ...r.body, generatedAt: "<clock>" });
+  }
+
+  it("control: outside any zone the member IS on the map (so the cases below compare real absences)", async () => {
+    const body = JSON.parse(await bodyFor({ protected_zones: [{ ...shelter, center_lat: coarse.lat + 1, center_lng: coarse.lng + 1 }] }));
+    assert.ok(body.objects.some((o: any) => o.id === `friend:${MEM_A}`));
+  });
+
+  it("member inside a shelter zone ≡ member who opted out of sharing — byte-identical responses", async () => {
+    const inZone = await bodyFor({ protected_zones: [shelter] });
+    const notShared = await bodyFor({ ...optedOut, protected_zones: [shelter] });
+    assert.equal(JSON.parse(inZone).objects.length, 0, "the zone did not hide the member");
+    assert.equal(inZone, notShared, "the response for 'in a protected zone' differs from 'not shared'");
+  });
+
+  it("member inside a shelter zone ≡ member whose fix is stale — byte-identical responses", async () => {
+    const inZone = await bodyFor({ protected_zones: [shelter] });
+    const notFresh = await bodyFor({ ...stale, protected_zones: [shelter] });
+    assert.equal(inZone, notFresh);
+  });
+
+  it("the response carries no per-reason protection counts at all", async () => {
+    const body = JSON.parse(await bodyFor({ protected_zones: [shelter] }));
+    assert.equal("protection" in body, false);
+    assert.doesNotMatch(JSON.stringify(body), /"suppressed"|"coarsened"|"safetyExempt"|"evaluated"/);
+  });
+
+  it("the gate still RAN — its counts reach server telemetry, not the wire", async () => {
+    await bodyFor({ protected_zones: [shelter] });
+    const pass = events.find((e) => e.route === "map_projection");
+    assert.ok(pass, "no protection pass was recorded");
+    assert.equal(pass!.report.evaluated, 1);
+    assert.equal(pass!.report.suppressed, 1);
+  });
+});
+
