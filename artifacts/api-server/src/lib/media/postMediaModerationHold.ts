@@ -1,64 +1,100 @@
 /**
  * census-media MD269 (a) — when the moderation stage holds a general post's
  * media, what happens to the POST? Lead ruling D-82
- * (docs/ops/lead-rulings-20261007-media.md, proposed by lane M under the owner's
- * 2026-10-06 delegation): REFUSE TO CREATE THE POST while any of its media is
- * held — census-media §37.8.5 option 3.
+ * (docs/ops/lead-rulings-20261007-media.md, adopted by the lead 2026-10-07 under
+ * the owner's 2026-10-06 delegation): REFUSE TO CREATE THE POST while any of its
+ * media is held — census-media §37.8.5 option 3. "If the media's moderation state
+ * cannot be read, the post is also refused, with 'try again'."
  *
  * WHY THIS IS THE GATE. A general post's media travel as `posts.media_urls`, and
  * the legacy readers (Pulse, Wall, the profile grid, GET /posts/:id) consult no
  * per-media moderation state. So a held file that reaches a post is DISTRIBUTED
- * by every one of them. Refusing the create keeps it out of all of them at once,
+ * by every one of them. Refusing the write keeps it out of all of them at once,
  * and leaves the delayed-publish state machine (post_status) exactly as it is.
  *
- * THE DECISION, per file, read from the canonical store the §36 stage writes:
- *   - stage off (`media_moderation_classifier_enabled`, seeded FALSE) ⇒ CLEAR:
- *     nothing changes for anyone while the stage is off;
- *   - a canonical row whose `moderation_status` is not `active` (born `limited`
- *     while the stage is on, `processing` before the decider ran, or `rejected`
- *     / `removed` / `owner_deleted`) ⇒ HELD — the post is refused;
- *   - a failed read ⇒ UNKNOWN — refused with "try again", never as "rejected";
- *   - no canonical row ⇒ CLEAR. The stage holds only what it recorded: a file
- *     written while `media_canonical_enabled` was off (or on a pre-2250 schema)
- *     has no row to hold, which census-media §37.8.4 states as the stage's limit.
- *     A reference that names no app storage object at all (the migration-era
- *     absolute URL `appMediaRef` still accepts) can have no row either.
- *
- * Every form `appMediaRef` accepts that names an app storage object is resolved:
- * a bare `<bucket>/<path>`, a public storage URL on the configured origin
- * (both via appStorageUrlInfo), and the relay path `/api/media/file/<bucket>/<path>`,
- * relative or absolute — so the relay form is not a way around the hold.
+ * THE DECISION:
+ *   - the stage flag (`media_moderation_classifier_enabled`, seeded FALSE) is
+ *     read HERE, with a failed read told apart from FALSE (verifier F2: the
+ *     shared isFlagEnabled reads an error as false, which would let held media
+ *     through during a blip). off/absent ⇒ CLEAR, nothing else is read;
+ *     unreadable ⇒ UNKNOWN (refused, "try again");
+ *   - each reference is canonicalised the way the media relay resolves it
+ *     (verifier F3) — leading slashes stripped, query and fragment cut,
+ *     percent-encoding decoded — so another spelling of the same object cannot
+ *     miss its row. A reference that names one of our buckets but does not
+ *     canonicalise to a clean path is HELD;
+ *   - a canonical row whose moderation state, in the §36 vocabulary
+ *     (toCanonicalModerationStatus — legacy `approved` is `active`, verifier F4),
+ *     is anything but `active` ⇒ HELD (`processing`, `limited`, `rejected`,
+ *     `removed`, `owner_deleted`, unknown);
+ *   - NO canonical row for an app-storage object ⇒ HELD while the stage is on
+ *     (verifier F3): every upload writes a row while the canonical store runs, so
+ *     a missing one is a file the stage never cleared;
+ *   - a failed read ⇒ UNKNOWN, refused with "try again", never "rejected";
+ *   - a reference to no app storage object at all (the migration-era absolute
+ *     URL on a foreign origin `appMediaRef` still accepts) has nothing to hold.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { appStorageUrlInfo } from "../mediaUrl.js";
-import { isMediaModerationStageEnabled } from "./vendors/mediaVendorStages.js";
+import { MEDIA_MODERATION_STAGE_FLAG } from "./vendors/mediaVendorStages.js";
+import { toCanonicalModerationStatus } from "./mediaAssetContract.js";
 
 export type PostMediaHold =
   | { state: "clear" }
   | { state: "held"; heldCount: number }
   | { state: "unknown"; reason: "unreadable" };
 
+const APP_BUCKETS = new Set(["post-media", "profile-media"]);
 const RELAY_PREFIX = "/api/media/file/";
-const RELAY_BUCKETS = new Set(["post-media", "profile-media"]);
 
-/** The storage object a post's media reference names, or null when it names none. */
-export function postMediaStorageRef(ref: string): { bucket: string; path: string } | null {
-  const direct = appStorageUrlInfo(ref);
-  if (direct) return direct;
-  let pathname: string | null = null;
-  if (ref.startsWith(RELAY_PREFIX)) pathname = ref;
-  else {
-    try { pathname = new URL(ref).pathname; } catch { pathname = null; }
-  }
-  if (!pathname || !pathname.startsWith(RELAY_PREFIX)) return null;
-  const rest = pathname.slice(RELAY_PREFIX.length).split(/[?#]/)[0]!;
-  const slash = rest.indexOf("/");
-  if (slash <= 0) return null;
-  let bucket: string; let path: string;
-  try { bucket = decodeURIComponent(rest.slice(0, slash)); path = decodeURIComponent(rest.slice(slash + 1)); } catch { return null; }
-  if (!RELAY_BUCKETS.has(bucket) || !path || path.includes("..")) return null;
+/** One storage object, as the relay would resolve it, or null when the spelling is not a clean object path. */
+function canonicalObject(bucket: string, rawPath: string): { bucket: string; path: string } | null {
+  let path = rawPath.split(/[?#]/)[0]!.replace(/^\/+/, "");
+  try { path = decodeURIComponent(path); } catch { return null; }
+  path = path.replace(/^\/+/, "");
+  if (!APP_BUCKETS.has(bucket) || path === "" || path.endsWith("/")) return null;
+  if (path.includes("//") || path.includes("\\") || path.split("/").some((seg) => seg === "." || seg === "..")) return null;
   return { bucket, path };
+}
+
+/**
+ * What a post's media reference points at:
+ *   { kind: "object", bucket, path } — one of our storage objects, canonicalised;
+ *   { kind: "unclean" } — it names one of our buckets but not a clean object path;
+ *   { kind: "foreign" } — it names no app storage at all.
+ */
+export function postMediaStorageRef(ref: string):
+  | { kind: "object"; bucket: string; path: string }
+  | { kind: "unclean" }
+  | { kind: "foreign" } {
+  const s = typeof ref === "string" ? ref.trim() : "";
+  // The relay path, relative or absolute: /api/media/file/<bucket>/<path>.
+  let pathname: string | null = null;
+  if (s.startsWith(RELAY_PREFIX)) pathname = s;
+  else if (/^[a-z]+:\/\//i.test(s)) { try { pathname = new URL(s).pathname; } catch { pathname = null; } }
+  if (pathname && pathname.startsWith(RELAY_PREFIX)) {
+    const rest = pathname.slice(RELAY_PREFIX.length);
+    const slash = rest.indexOf("/");
+    if (slash <= 0) return { kind: "unclean" };
+    const o = canonicalObject(rest.slice(0, slash), rest.slice(slash + 1));
+    return o ? { kind: "object", ...o } : { kind: "unclean" };
+  }
+  // A bare "<bucket>/<path>" in one of our buckets.
+  const bare = /^([a-z-]+)\/(.*)$/.exec(s);
+  if (bare && !s.includes("://") && APP_BUCKETS.has(bare[1]!)) {
+    const o = canonicalObject(bare[1]!, bare[2]!);
+    return o ? { kind: "object", ...o } : { kind: "unclean" };
+  }
+  // A public storage URL on the configured origin.
+  const direct = appStorageUrlInfo(s);
+  if (direct) {
+    const o = canonicalObject(direct.bucket, direct.path);
+    return o ? { kind: "object", ...o } : { kind: "unclean" };
+  }
+  // Our origin's storage prefix in any other spelling is still ours.
+  if (/\/storage\/v1\/(?:object|render\/image)\/public\/(post-media|profile-media)\//.test(s)) return { kind: "unclean" };
+  return { kind: "foreign" };
 }
 
 /** The only canonical moderation state a post may carry its file in. */
@@ -69,22 +105,40 @@ export const POST_MEDIA_HELD_MESSAGE =
 export const POST_MEDIA_UNREADABLE_MESSAGE =
   "We couldn't check your photos and videos just now. Please try again.";
 
+/** The stage flag, with a failed read told apart from FALSE. */
+async function readStage(sc: SupabaseClient | null | undefined): Promise<"on" | "off" | "unknown"> {
+  if (!sc || typeof (sc as any).from !== "function") return "unknown";
+  try {
+    const { data, error } = await sc
+      .from("feature_flags")
+      .select("enabled")
+      .eq("flag", MEDIA_MODERATION_STAGE_FLAG)
+      .maybeSingle();
+    if (error) return "unknown";
+    return (data as { enabled?: unknown } | null)?.enabled === true ? "on" : "off";
+  } catch {
+    return "unknown";
+  }
+}
+
 export async function postMediaModerationHold(
   sc: SupabaseClient | null | undefined,
   mediaUrls: readonly string[] | null | undefined,
 ): Promise<PostMediaHold> {
   const urls = (mediaUrls ?? []).filter((u) => typeof u === "string" && u.trim().length > 0);
   if (urls.length === 0) return { state: "clear" };
-  if (!(await isMediaModerationStageEnabled(sc))) return { state: "clear" };
-  if (!sc) return { state: "unknown", reason: "unreadable" };
+  const stage = await readStage(sc);
+  if (stage === "unknown") return { state: "unknown", reason: "unreadable" };
+  if (stage === "off") return { state: "clear" };
 
   let held = 0;
   for (const url of urls) {
     const ref = postMediaStorageRef(url);
-    if (!ref) continue; // names no app storage object, so no canonical row can hold it
+    if (ref.kind === "foreign") continue; // names no app storage object, so no canonical row can hold it
+    if (ref.kind === "unclean") { held++; continue; }
     let row: { moderation_status?: unknown } | null;
     try {
-      const { data, error } = await sc
+      const { data, error } = await sc!
         .from("media_assets")
         .select("moderation_status")
         .eq("storage_bucket", ref.bucket)
@@ -96,7 +150,7 @@ export async function postMediaModerationHold(
     } catch {
       return { state: "unknown", reason: "unreadable" };
     }
-    if (row && row.moderation_status !== POST_MEDIA_DISTRIBUTABLE_STATUS) held++;
+    if (!row || toCanonicalModerationStatus(row.moderation_status) !== POST_MEDIA_DISTRIBUTABLE_STATUS) held++;
   }
   return held > 0 ? { state: "held", heldCount: held } : { state: "clear" };
 }

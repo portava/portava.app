@@ -147,11 +147,11 @@ export function locationPrivacyHint(
   const d = DISCLOSURE[applied];
   const kept = 'Your city and country stay on the post.';
   if (chosen === 'none' && applied !== 'none') {
-    return `A post with a place is held until you've left it, then published with the place for up to ${RELEASED_PLACE_WINDOW_HOURS} hours — after that, only your city and country. Sharing a place instantly isn't available yet.`;
+    return `A post with a place is held until you've left it. Others may then see the place for up to ${RELEASED_PLACE_WINDOW_HOURS} hours — after that, only your city and country. Sharing a place instantly isn't available yet.`; // "may": place pages, their rails and recaps, and Compass show only the city from release (census-media §50.7)
   }
   if (d.placeName) return 'Published now, with the place you tagged.';
   if (d.release === 'after_exit') {
-    return `Your post waits until you've left this spot, then appears with the place for up to ${RELEASED_PLACE_WINDOW_HOURS} hours — after that, only your city and country.`;
+    return `Your post waits until you've left this spot. Others may then see the place for up to ${RELEASED_PLACE_WINDOW_HOURS} hours — after that, only your city and country.`;
   }
   if (d.release === 'at_time') {
     return opts.scheduledTime

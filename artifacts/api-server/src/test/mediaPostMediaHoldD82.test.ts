@@ -106,9 +106,44 @@ describe("A. the hold decision", () => {
     assert.deepEqual(await postMediaModerationHold(sc, [CLEARED, HELD]), { state: "held", heldCount: 1 });
   });
 
-  it("a file the stage never recorded (no canonical row) is not held — the stage's stated limit", async () => {
+  it("verifier F3: with the stage ON, an app-storage file with NO canonical row is held — the stage never cleared it", async () => {
     const sc = withStage({ from() { throw new Error("x"); } }, true);
-    assert.deepEqual(await postMediaModerationHold(sc, [UNRECORDED]), { state: "clear" });
+    assert.deepEqual(await postMediaModerationHold(sc, [UNRECORDED]), { state: "held", heldCount: 1 });
+  });
+
+  it("verifier F3: another spelling of the held object — double slash, query string, percent-encoding — is still held", async () => {
+    for (const spelling of ["post-media//author-1/held.jpg", "post-media/author-1/held.jpg?x=1", "post-media/author-1/held%2Ejpg", "/api/media/file/post-media//author-1/held.jpg"]) {
+      const sc = withStage({ from() { throw new Error("x"); } }, true);
+      assert.deepEqual(await postMediaModerationHold(sc, [spelling]), { state: "held", heldCount: 1 }, spelling);
+    }
+    // Each canonicalises to the held row itself (not merely "no row").
+    assert.deepEqual(postMediaStorageRef("post-media//author-1/held.jpg"), { kind: "object", bucket: "post-media", path: "author-1/held.jpg" });
+    assert.deepEqual(postMediaStorageRef("post-media/author-1/held.jpg?x=1"), { kind: "object", bucket: "post-media", path: "author-1/held.jpg" });
+    assert.deepEqual(postMediaStorageRef("post-media/author-1/held%2Ejpg"), { kind: "object", bucket: "post-media", path: "author-1/held.jpg" });
+    // A spelling that names our bucket but no clean object is held outright.
+    for (const bad of ["post-media/a/../held.jpg", "post-media/a/%2E%2E/held.jpg", "post-media/author-1/", "post-media/a%2F%2Fb.jpg"]) {
+      assert.deepEqual(postMediaStorageRef(bad), { kind: "unclean" }, bad);
+      const sc = withStage({ from() { throw new Error("x"); } }, true);
+      assert.deepEqual(await postMediaModerationHold(sc, [bad]), { state: "held", heldCount: 1 }, bad);
+    }
+  });
+
+  it("verifier F2: a stage flag that cannot be read is UNKNOWN — refused with 'try again', never clear", async () => {
+    const erroring: any = { from(table: string) {
+      const b: any = { select() { return b; }, eq() { return b; }, maybeSingle() { return Promise.resolve(table === "feature_flags" ? { data: null, error: { code: "57014", message: "timeout" } } : { data: null, error: null }); } };
+      return b;
+    } };
+    assert.deepEqual(await postMediaModerationHold(erroring, [CLEARED]), { state: "unknown", reason: "unreadable" });
+    const throwing: any = { from() { throw new Error("socket hang up"); } };
+    assert.deepEqual(await postMediaModerationHold(throwing, [CLEARED]), { state: "unknown", reason: "unreadable" });
+    assert.deepEqual(await postMediaModerationHold(null, [CLEARED]), { state: "unknown", reason: "unreadable" });
+  });
+
+  it("verifier F4: the state is read in the §36 vocabulary — legacy 'approved' is active, legacy 'pending' and 'flagged' are held", async () => {
+    const at = (status: string) => withStage({ from() { throw new Error("x"); } }, true, [{ storage_bucket: "post-media", storage_path: "a/b.jpg", moderation_status: status }]);
+    assert.deepEqual(await postMediaModerationHold(at("approved"), ["post-media/a/b.jpg"]), { state: "clear" });
+    assert.deepEqual(await postMediaModerationHold(at("pending"), ["post-media/a/b.jpg"]), { state: "held", heldCount: 1 });
+    assert.deepEqual(await postMediaModerationHold(at("flagged"), ["post-media/a/b.jpg"]), { state: "held", heldCount: 1 });
   });
 
   it("a FAILED read is unknown — never clear", async () => {
@@ -117,10 +152,11 @@ describe("A. the hold decision", () => {
   });
 
   it("the relay path is resolved too, relative and absolute — it is not a way around the hold", async () => {
-    assert.deepEqual(postMediaStorageRef("/api/media/file/post-media/author-1/held.jpg"), { bucket: "post-media", path: "author-1/held.jpg" });
-    assert.deepEqual(postMediaStorageRef("https://api.example.com/api/media/file/post-media/author-1/held.jpg?x=1"), { bucket: "post-media", path: "author-1/held.jpg" });
-    assert.equal(postMediaStorageRef("/api/media/file/secrets/a.jpg"), null, "an unknown bucket names nothing");
-    assert.equal(postMediaStorageRef("/api/media/file/post-media/../x.jpg"), null);
+    assert.deepEqual(postMediaStorageRef("/api/media/file/post-media/author-1/held.jpg"), { kind: "object", bucket: "post-media", path: "author-1/held.jpg" });
+    assert.deepEqual(postMediaStorageRef("https://api.example.com/api/media/file/post-media/author-1/held.jpg?x=1"), { kind: "object", bucket: "post-media", path: "author-1/held.jpg" });
+    assert.deepEqual(postMediaStorageRef("/api/media/file/secrets/a.jpg"), { kind: "unclean" }, "a relay path to a bucket we do not serve is not a clean object — held, not skipped");
+    assert.deepEqual(postMediaStorageRef("/api/media/file/post-media/../x.jpg"), { kind: "unclean" });
+    assert.deepEqual(postMediaStorageRef("https://elsewhere.example/photo.jpg"), { kind: "foreign" }, "a foreign URL names no app object");
     const sc = withStage({ from() { throw new Error("x"); } }, true);
     assert.deepEqual(await postMediaModerationHold(sc, ["/api/media/file/post-media/author-1/held.jpg"]), { state: "held", heldCount: 1 });
   });

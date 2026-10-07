@@ -1340,7 +1340,7 @@ router.get("/posts", async (req, res) => {
     // for posts that sit at / are tagged to a protected gem.
     const followingGemCtx = await loadPostGemContext(sc, posts);
     const merged = posts.map((p) => {
-      const safe = gemProtectPost(mapPublicPost(p), followingGemCtx, user.id);
+      const safe = withholdReleaseTiming(p.author_id === user.id ? p : gemProtectPost(mapPublicPost(p), followingGemCtx, user.id), user.id); // census-media MD79 (verifier F1): the author is never capped; F6: the release instant is the author's alone
       const pr = profileMap[p.author_id];
       const eng = engMap.get(p.id) ?? UNKNOWN_POST_ENGAGEMENT; // census-media §47: null is "could not be read", never 0/false
       const spans = (followingSpansMap as any)[p.id] ?? { tags: [], hashtagUsages: [] };
@@ -1521,7 +1521,7 @@ router.get("/posts", async (req, res) => {
   // Hidden-Gem location protection (fail-closed).
   const globalGemCtx = await loadPostGemContext(svc, globalPosts);
   const mergedGlobal = globalPosts.map((p) => {
-    const safe = gemProtectPost(mapPublicPost(p), globalGemCtx, user.id);
+    const safe = withholdReleaseTiming(p.author_id === user.id ? p : gemProtectPost(mapPublicPost(p), globalGemCtx, user.id), user.id); // census-media MD79 (verifier F1): the author is never capped; F6: the release instant is the author's alone
     const pr = globalProfileMap[p.author_id];
     const eng = globalEngMap.get(p.id) ?? UNKNOWN_POST_ENGAGEMENT; // census-media §47: null is "could not be read", never 0/false
     const spans = (globalSpansMap as any)[p.id] ?? { tags: [], hashtagUsages: [] };
@@ -1718,7 +1718,7 @@ router.get("/trips/:tripId/posts", async (req, res) => {
     // public: any authenticated user; trip_only: accepted members only; private: no public engagement
     const canEngage = p.visibility === "public" || (p.visibility === "trip_only" && accepted);
     return {
-      ...(p.author_id === user.id ? p : mapPublicPost(p)), // census-media §42: the Wall's redactor, applied to everyone but the author. This reader served location_name, and a public_location_label that stored the venue for trusted_circle_only posts written before §36, whatever the owner's location mode
+      ...(p.author_id === user.id ? p : withholdReleaseTiming(mapPublicPost(p), user.id)), // F6: the release instant is the author's alone; census-media §42: the Wall's redactor, applied to everyone but the author. This reader served location_name, and a public_location_label that stored the venue for trusted_circle_only posts written before §36, whatever the owner's location mode
       author: pr ? { id: pr.id, handle: pr.handle, name: pr.name, avatarUrl: pr.avatar_url ?? null, isOfficial: (pr.is_official as boolean) ?? false } : null,
       likeCount: eng.likeCount,
       commentCount: eng.commentCount,
@@ -1978,7 +1978,7 @@ router.get("/posts/:postId", async (req, res) => {
   const singlePostGemCtx = isAuthor ? null : await loadPostGemContext(sc, [post]);
   const base = isAuthor
     ? post
-    : gemProtectPost(mapPublicPost(post), singlePostGemCtx!, user.id);
+    : withholdReleaseTiming(gemProtectPost(mapPublicPost(post), singlePostGemCtx!, user.id), user.id); // F6: the release instant is the author's alone
   const featuredByPortava = featuredRow
     ? { category: (featuredRow as any).category, featuredAt: (featuredRow as any).featured_at }
     : null;
@@ -3693,4 +3693,4 @@ import { runMediaVendorIngest, canonicalModerationAtBirth } from "../lib/media/v
 // Imported at the TAIL so no cited line above moves; ESM hoists it (census-media §36, MD262).
 import { neighborhoodOnlyModePermitted, NEIGHBORHOOD_ONLY_DISABLED_MESSAGE } from "../lib/media/neighborhoodOnlyMode.js";
 // census-media §36 (MD82–MD85): tail import, ESM hoists it.
-import { decidePerspectiveVantageWrite } from "../lib/media/perspectiveVantage.js"; import { postMediaModerationHold, POST_MEDIA_HELD_MESSAGE, POST_MEDIA_UNREADABLE_MESSAGE } from "../lib/media/postMediaModerationHold.js"; // census-media MD269 (a), lead ruling D-82
+import { decidePerspectiveVantageWrite } from "../lib/media/perspectiveVantage.js"; import { postMediaModerationHold, POST_MEDIA_HELD_MESSAGE, POST_MEDIA_UNREADABLE_MESSAGE } from "../lib/media/postMediaModerationHold.js"; import { withholdReleaseTiming } from "../lib/postLocationDisclosureLifetime.js"; // census-media MD269 (a), lead ruling D-82; verifier F6 (release timing)

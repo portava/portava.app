@@ -13076,7 +13076,7 @@ whether it is a POST read that reaches a non-owner.
 | GET /api/pulse | venue name, geo-tag venue and district, place id | no | **fixed** (§42.3) |
 | Discovery "Live from events" | Path A: venue fallback, coordinates. Path B: the place name, and the listing itself | no | **fixed** (§42.3) |
 | GET /api/trips/:tripId/posts | `location_name`, `public_location_label` | no | **fixed** (§42.3) |
-| Wall: GET /posts (following, global), GET /posts/:postId | through mapPublicPost, then the gem gate (`artifacts/api-server/src/routes/posts.ts:1343#const safe = gemProtectPost(mapPublicPost(p), followingGemCtx, user.id);`) | yes | unchanged |
+| Wall: GET /posts (following, global), GET /posts/:postId | through mapPublicPost, then the gem gate (`artifacts/api-server/src/routes/posts.ts:1343#gemProtectPost(mapPublicPost(p), followingGemCtx, user.id)`) | yes | unchanged |
 | Media (Watch feed, grid, World views, rail, Compass media context) | through resolveMediaPlaceDisclosure (§36) | yes | unchanged |
 | GET /airport/pulse | city and country only | not applicable | unchanged |
 | My World memories (`MyWorldMemoryService`) | the owner's own posts only | not applicable | unchanged |
@@ -13151,7 +13151,7 @@ too, and the suite checks it over every mode × status (D1).
 **GET /api/trips/:tripId/posts**
 - mapPublicPost, the Wall's own redactor, is applied to every row but the
   viewer's own
-  (`artifacts/api-server/src/routes/posts.ts:1721#...(p.author_id === user.id ? p : mapPublicPost(p)),`).
+  (`artifacts/api-server/src/routes/posts.ts:1721#...(p.author_id === user.id ? p : withholdReleaseTiming(mapPublicPost(p), user.id)),`).
 - `location_name` is nulled, and the label is rebuilt from city and country
   (`hidden`: no label).
 
@@ -13197,7 +13197,7 @@ The first row passing on both sides is the proof that nothing else changed.
   (`artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:565#it("B7. the page a non-owner gets is the page as scored and capped`).
 - `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:647#describe("C. GET /api/trips/:tripId/posts`
   uses the shared posts-route harness.
-- `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:697#describe("D. postPlaceWithheld ≡ mapPublicPost`.
+- `artifacts/api-server/src/test/postLocationModeOutsideMedia.test.ts:698#describe("D. postPlaceWithheld ≡ mapPublicPost`.
 
 For each reader, the suite checks:
 - a withholding mode reaches a non-owner without the venue;
@@ -15286,7 +15286,7 @@ kept everywhere, as mapPublicPost keeps them.
      internally;
   4. the trip feed shares the module and could call
      `gemProtectPost(mapPublicPost(p), ctx, user.id)` at
-     `artifacts/api-server/src/routes/posts.ts:1721#...(p.author_id === user.id ? p : mapPublicPost(p)),`
+     `artifacts/api-server/src/routes/posts.ts:1721#...(p.author_id === user.id ? p : withholdReleaseTiming(mapPublicPost(p), user.id)),`
      after loading a context for the trip's rows.
 - Each of these coarsens `none`-mode rows near a restrictive gem, and EVERY
   non-owner row whenever the gem lookup fails (it fails closed). That is a
@@ -16340,7 +16340,7 @@ Each of these is no longer blocked on an owner decision. What still blocks it is
 | MD162 | **N** | **N** | D-26d: yes, narrowly — names and public place ids only, and only on flows that clear the floors. NOT BUILT: the payload is in `routes/mapProjection.ts`, which lane L is changing, and the row also needs production flows. |
 | MD175 | **N** | **N** | D-26h: Remix is a Compass variation, propose-only. NOT BUILT: it is a Compass action, and Compass is lane L's this mission. |
 | MD385 | **W** | **W** | D-26j: a Memory may be made from one's own media only. NOT BUILT: it needs `memory_items.source_post_id` (a migration in the Memory surfaces, now the lead's) and the action. |
-| MD269 | **W** | **W** | **(a) is BUILT on this branch.** D-82: while the stage holds any of a post's media, `POST /posts` and `PATCH /posts/:id` refuse it and write nothing (`artifacts/api-server/src/lib/media/postMediaModerationHold.ts:72#export async function postMediaModerationHold(`). **TESTED:** `artifacts/api-server/src/test/mediaPostMediaHoldD82.test.ts` (12; five mutations each red). The row stays W only because no classifier vendor or staffed review exists. That is D-27d, a vendor choice the rulings file leaves NOT RULED. |
+| MD269 | **W** | **W** | **(a) is BUILT on this branch.** D-82: while the stage holds any of a post's media, `POST /posts` and `PATCH /posts/:id` refuse it and write nothing (`artifacts/api-server/src/lib/media/postMediaModerationHold.ts:124#export async function postMediaModerationHold(`). **TESTED:** `artifacts/api-server/src/test/mediaPostMediaHoldD82.test.ts` (12; five mutations each red). The row stays W only because no classifier vendor or staffed review exists. That is D-27d, a vendor choice the rulings file leaves NOT RULED. |
 | MD63 | **N** | **N** | D-27a NOT RULED (vendor). Unchanged. |
 | MD277 | **N** | **N** | D-27b NOT RULED (vendor). Unchanged. |
 | MD280 | **N** | **N** | D-28, the Media half, NOT RULED (vendor). Unchanged. |
@@ -16393,8 +16393,10 @@ window.
 ### 50.6 What would turn this red
 
 - The lead declines a ruling. Its row returns to its §48 verdict.
-- A reader serves `published_at`, or `locationDisclosureExpiresAt` reaches the §11 member a client
-  receives. Either one dates the author's exit.
+- A door serves `published_at`, `publish_eligible_at` or `publish_after_exit` to anyone but the author,
+  or `locationDisclosureExpiresAt` reaches the §11 member a client receives. Each one dates the author's exit.
+  *(Corrected after verification, §50.9: as first written this line described a state the tree did not
+  have — `routes/posts.ts` served those three fields to every viewer.)*
 - `toMediaAsset` serving any `"live"`, a social lifetime added by age, a writer with no stated source,
   another account's reputation served, or an unknown audience admitted to the following feed. Each is
   pinned by the test named in its row.
@@ -16448,3 +16450,58 @@ each red. MD269 stays **W** only on D-27d, the classifier vendor, which is not r
 
 - NOT-GRADED: artifacts/api-server/src/routes/events.ts — §50.7 cites only the D-82 gate on `POST /events/:id/posts`; no Media row is graded on this file, and MD269's verdict rests on `lib/media/postMediaModerationHold.ts`.
 - NOT-GRADED: artifacts/api-server/src/routes/adminPortavaPosts.ts — as above, for the official account's posts.
+
+### 50.9 Corrections required by the independent verification of `487c803f19` (verifier findings F1–F7), and MD79 regraded
+
+The verifier accepted §50.1 with required fixes. Each fix below is on this branch and proven by a test
+that goes red without it.
+
+- **F1 — the author was capped on their own feeds.** The global feed and the following feed applied the
+  redactor to the caller's own posts, so a day after release the author lost their own venue. Both now
+  bypass the author (`artifacts/api-server/src/routes/posts.ts:1343#p.author_id === user.id ? p : gemProtectPost(mapPublicPost(p), followingGemCtx, user.id)`),
+  as the trip feed and the single read already did.
+  Test: `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:64#describe("F1. the author is never capped on their own feeds"`.
+- **F6 — the release instant was served to every viewer.** This was pre-existing. `routes/posts.ts`
+  served `published_at`, `publish_eligible_at` and `publish_after_exit` to everyone, and for a
+  "Publish after I leave" post they date the author's exit. Two changes:
+  - The four non-author post doors now null them
+    (`artifacts/api-server/src/lib/postLocationDisclosureLifetime.ts:116#export function withholdReleaseTiming<T>(row: T, viewerId: string | null | undefined): T {`).
+  - The Wall shows, orders and pages a non-author by the post's creation instant
+    (`artifacts/api-server/src/lib/postLocationDisclosureLifetime.ts:133#export function wallPublishedAtForViewer(`).
+    That function is used by the post spine, the postcard loader and revalidation.
+
+  §50.6's red line is corrected to match. Test:
+  `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:83#describe("F6. the release instant is the author's alone"`.
+- **F2 — the D-82 hold failed open on an unreadable stage flag.** The hold now reads the flag itself and
+  tells a failed read apart from FALSE
+  (`artifacts/api-server/src/lib/media/postMediaModerationHold.ts:109#async function readStage(`).
+  An unreadable flag gets "try again".
+- **F3 — another spelling of a held object dodged the hold.** The four dodges were a double slash, a query
+  string, percent-encoding and a relay path. References are now canonicalised the way the relay resolves
+  them. A reference to one of our buckets that is not a clean object path is held. With the stage on, an
+  app-storage object with no canonical row is held too: every upload writes one while the canonical store
+  runs.
+- **F4 — legacy statuses were over-refused.** The state is now read in the §36 vocabulary
+  (`toCanonicalModerationStatus`), so legacy `approved` is `active`, while `pending` and `flagged` are
+  still held. F2, F3 and F4 are tested in
+  `artifacts/api-server/src/test/mediaPostMediaHoldD82.test.ts:131#verifier F2: a stage flag that cannot be read`
+  (15 tests).
+- **F5 — the readers that showed the city from release.** Seven of the eleven now read `published_at`
+  and give the window (§50.7). The four whose decision outlives the request stay closed, and are pinned.
+  The composer no longer promises the place: it says others **may** see the place for up to 24 hours
+  (`travel-buddy-standalone/src/services/media/mediaPrivacy.ts`).
+- **F7 — a D-24c invariant was not pinned.** The six lift families were listed twice with no test that
+  the two lists agree. Each family alone now makes its author read and is withheld
+  (`artifacts/api-server/src/test/mediaBoostRestrictionD24c.test.ts:203#describe("C2. verifier F7`).
+  Removing the featured clause from `mediaBoostLiftAuthors`, the verifier's surviving mutant, now turns it
+  red.
+
+**MD79, regraded.** It **stays `C`**, now honestly:
+- a non-owner stops seeing the place at the end of the window on every surface, and never sees it on the
+  four closed ones;
+- the author sees their own place on every surface;
+- the composer says no more than that.
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| MD79 | **C** | **C** | §50.1's evidence, plus F1's author bypass on the two feeds (`artifacts/api-server/src/routes/posts.ts:1524#p.author_id === user.id ? p : gemProtectPost(mapPublicPost(p), globalGemCtx, user.id)`) and the window on seven more readers (§50.7). Tests: `artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts:64#describe("F1.` and `artifacts/api-server/src/test/mediaLocationDisclosureLifetime.test.ts:167#describe("D. the two paths agree at every instant"`. The four closed readers show the city from release: less than the ruling allows, never more. |

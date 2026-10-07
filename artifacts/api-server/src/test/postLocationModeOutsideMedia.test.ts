@@ -653,13 +653,14 @@ describe("C. GET /api/trips/:tripId/posts — the Wall's redactor, which this re
       tripRow("t-released", "delayed_until_exit", { public_lat: 38.711, public_lng: -9.13, published_at: new Date(Date.now() - 60 * 60 * 1000).toISOString() }),
     ];
     const served = await tripFeed("stranger-tok", rows);
-    for (const row of rows) assert.deepEqual(served.get(row.id), tripShape(row, false), String(row.location_privacy_mode));
+    // Verifier F6: the release instant is the author's alone, so a stranger receives published_at as null.
+    for (const row of rows) assert.deepEqual(served.get(row.id), row.published_at != null ? { ...tripShape(row, false), published_at: null } : tripShape(row, false), String(row.location_privacy_mode));
   });
 
   it("C1b. census-media MD79 (lead ruling D-26f): once the 24 h window has ended, the venue, its label and the exact public point go; the city stays", async () => {
     const ended = tripRow("t-ended", "delayed_until_exit", { public_lat: 38.711, public_lng: -9.13, published_at: new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString() });
     const served = await tripFeed("stranger-tok", [ended]);
-    assert.deepEqual(served.get("t-ended"), { ...tripShape(ended, false), location_name: null, public_location_label: "Lisbon, Portugal", public_lat: null, public_lng: null });
+    assert.deepEqual(served.get("t-ended"), { ...tripShape(ended, false), location_name: null, public_location_label: "Lisbon, Portugal", public_lat: null, public_lng: null, published_at: null });
     assert.ok(!JSON.stringify(served.get("t-ended")).includes("Hotel Alfama"), "the venue appears nowhere");
   });
 

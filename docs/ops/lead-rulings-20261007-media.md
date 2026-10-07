@@ -1,6 +1,8 @@
 # Lead rulings on the open Map, Media, Passport (and neighbouring) questions (2026-10-07)
 
-**Status: PROPOSED by lane M, for the lead's review before merge.** Each entry below carries the line
+**Status: ACCEPTED by the lead on 2026-10-07, as written.** One correction since, from the independent
+verification of 487c803f19 (finding F8): D-26f's rationale now says where its 24-hour figure comes from.
+The original status line follows. **Status (as proposed): PROPOSED by lane M, for the lead's review before merge.** Each entry below carries the line
 "proposed by lane M, adopted by the lead 2026-10-07 under the owner's delegation". That line takes effect
 only when the lead accepts this file. Until then nothing in it is a decision.
 
@@ -242,7 +244,9 @@ stay W: their blocker is now **activation**, not an owner decision.
   - A released post whose release time cannot be read counts as already ended (fail closed).
   - The author always sees their own place.
 - **Rationale.** The person chose that mode so that others would not learn where they were. The 24-hour
-  figure is the spec's own example window. It is recorded here so that it can be changed in one place.
+  figure is lane M's choice. It borrows the example window census-media §36.4 gives for MD77 option (a)
+  ("show for 24 h / 7 days"); the spec names no hour figure. It is recorded here so that it can be changed
+  in one place.
 - Proposed by lane M, adopted by the lead 2026-10-07 under the owner's delegation.
 
 ### D-26g (Q-L14c, MD79): when the place stops being shown, what replaces it?

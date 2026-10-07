@@ -189,11 +189,17 @@ describe("E. who reads the window, and that nobody is served it", () => {
     assert.match(constant("GRID_POST_COLUMNS"), /\bpublished_at\b/);
   });
 
-  it("routes/posts.ts's POST_COLUMNS (the Wall, trip posts, a single post) carries it", () => {
+  it("routes/posts.ts's POST_COLUMNS (the Wall, trip posts, a single post) carries it — and every post door hands it only to the author (verifier F6)", () => {
     const posts = readFileSync(join(SRC, "routes", "posts.ts"), "utf8");
     const m = posts.match(/const POST_COLUMNS =([\s\S]*?);/);
     assert.ok(m);
     assert.match(m![1], /\bpublished_at\b/);
+    // Correction (verifier F6, 2026-10-07): POST_COLUMNS rows were served WITH published_at to every viewer, so
+    // "nobody is served it" was false outside Media. The four non-author doors now pass through
+    // withholdReleaseTiming (behaviour: postReleaseTimingAndAuthor.test.ts).
+    assert.equal((posts.match(/withholdReleaseTiming\(/g) ?? []).length, 4, "global, following, trip and single-post doors");
+    const wall = readFileSync(join(SRC, "routes", "wall.ts"), "utf8");
+    assert.match(wall, /publishedAt: wallPublishedAtForViewer\(r, opts\.viewerId\)/, "the Wall shows others a creation instant");
   });
 
   it("the §11 instant is handed only to the choke point — never to the temporal-state member a client receives", () => {

@@ -95,3 +95,49 @@ export function locationDisclosureEndPassed(endsAt: string | null | undefined, n
   if (!Number.isFinite(t)) return true;
   return t <= nowMs;
 }
+
+// ── Release timing (verifier F6, 2026-10-07) ─────────────────────────────────
+//
+// For a "Publish after I leave" post, `published_at` is the instant the
+// delayed-publish worker released it — minutes after the author left the place —
+// and `publish_eligible_at` / `publish_after_exit` describe that same exit. Told
+// to anyone else, they date the author's departure. So no door serves them to
+// anyone but the author. (3362 already withholds them from the PostgREST client
+// roles; this is the API's half.)
+
+/** The posts columns that describe WHEN a delayed post was released. */
+export const RELEASE_TIMING_FIELDS = ["published_at", "publish_after_exit", "publish_eligible_at"] as const;
+
+/**
+ * `row` as a viewer may receive it: the author gets it unchanged (the same
+ * object); anyone else gets the release-timing fields the row carries set to
+ * null. Keys the row does not carry are not added.
+ */
+export function withholdReleaseTiming<T>(row: T, viewerId: string | null | undefined): T {
+  if (row == null || typeof row !== "object") return row;
+  const r = row as Record<string, unknown>;
+  if (typeof viewerId === "string" && viewerId.length > 0 && r.author_id != null && String(r.author_id) === viewerId) return row;
+  let out: Record<string, unknown> | null = null;
+  for (const k of RELEASE_TIMING_FIELDS) {
+    if (k in r && r[k] != null) { out ??= { ...r }; out[k] = null; }
+  }
+  return (out ?? row) as T;
+}
+
+/**
+ * The instant the Wall shows (and orders and pages by) for a post, per viewer.
+ * The author: the release instant. Anyone else, for a "Publish after I leave"
+ * post — or a row whose mode was not read: its creation instant, never the
+ * release. Every other post: the release instant, falling back to creation.
+ */
+export function wallPublishedAtForViewer(
+  row: { author_id?: unknown; location_privacy_mode?: unknown; published_at?: unknown; created_at?: unknown },
+  viewerId: string | null | undefined,
+): string {
+  const isAuthor = typeof viewerId === "string" && viewerId.length > 0 && row.author_id != null && String(row.author_id) === viewerId;
+  const modeUnread = !("location_privacy_mode" in row);
+  if (!isAuthor && (modeUnread || row.location_privacy_mode === "delayed_until_exit")) {
+    return String(row.created_at ?? row.published_at);
+  }
+  return String(row.published_at ?? row.created_at);
+}

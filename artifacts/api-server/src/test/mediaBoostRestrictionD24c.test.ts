@@ -200,6 +200,41 @@ describe("C. only the authors a lift would touch are read", () => {
   });
 });
 
+describe("C2. verifier F7: each lift family on its own makes its author read, and is withheld", () => {
+  /** An item on which NO lift is positive. */
+  const plain = (authorId: string): MediaFeedItem => ({
+    id: `p-${authorId}`, kind: "post", authorId, city: "da nang", category: "food", tags: [],
+    createdAt: new Date(NOW - 400 * DAY).toISOString(), likeCount: 0, joinCount: 0,
+    isOfficialPublisher: false, creatorWeeklyPostCount: 0, creatorAccountAgeDays: 400,
+    creatorLastPostAt: null, featuredAt: null, qualifiedViewCount: 100000, totalImpressionCount: 100000,
+  } as MediaFeedItem);
+  const FAMILIES: Array<[string, Partial<MediaFeedItem>]> = [
+    ["officialPublisher", { isOfficialPublisher: true }],
+    ["activeCreator", { creatorWeeklyPostCount: 4 }],
+    ["newCreator", { creatorAccountAgeDays: 3, qualifiedViewCount: 3, totalImpressionCount: 10 }],
+    ["returningCreator", { creatorLastPostAt: new Date(NOW - 40 * DAY).toISOString() }],
+    ["featuredByPortava", { featuredAt: new Date(NOW - DAY).toISOString() }],
+    ["underexposed", { qualifiedViewCount: 3, totalImpressionCount: 10, createdAt: new Date(NOW - 60 * 60 * 1000).toISOString() }],
+  ];
+
+  it("precondition: the plain item carries no lift, and nobody is read for it", () => {
+    const r = rankMediaFeed(input(new Set(), [plain(FREE)]))[0]!;
+    for (const f of LIFT_FEATURES) assert.equal(r.features[f] ?? 0, 0, f);
+    assert.deepEqual(mediaBoostLiftAuthors([plain(FREE)], ALL_LIFTS, {}, NOW), []);
+  });
+
+  for (const [family, patch] of FAMILIES) {
+    it(`${family} alone: the author is read, the lift applies when free and is withheld when restricted`, () => {
+      const item = { ...plain(RESTRICTED), ...patch } as MediaFeedItem;
+      assert.deepEqual(mediaBoostLiftAuthors([item], ALL_LIFTS, {}, NOW), [RESTRICTED], `${family}: a restricted author whose only lift is ${family} must be read`);
+      const free = rankMediaFeed(input(new Set(), [item]))[0]!;
+      assert.ok((free.features[family] ?? 0) > 0, `${family} applies to an unrestricted author`);
+      const held = rankMediaFeed(input(new Set([RESTRICTED]), [item]))[0]!;
+      assert.equal(held.features[family] ?? 0, 0, `${family} is withheld`);
+    });
+  }
+});
+
 describe("D. the Watch feed passes the loaded set to the ranker", () => {
   it("routes/mediaFeed.ts loads the withheld set for exactly the liftable authors and hands it to rankMediaFeed", () => {
     const src = readFileSync(join(HERE, "..", "routes", "mediaFeed.ts"), "utf8");
