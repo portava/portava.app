@@ -5096,3 +5096,53 @@ unchanged.
 None.
 
 - NOT-GRADED: artifacts/api-server/src/test/testTimerLoggerReady.test.ts — §46.2 cites the guard's rule; it grades no Compass row.
+
+## §47 — 2026-10-07 (lane L, wave 6): the §10 location-precision rung reaches the intelligence graph's Memory reads (lane R's verifier). NO VERDICT MOVES
+
+*Measured on branch `claude/mission-l-wave6-20261006`. `head_commit` is not re-declared.*
+
+The graph build read every published, public Memory's city, country, place, trip, event and coordinates,
+across all owners, into nodes and edges. Every user reads those nodes and edges: through the world
+models, the confidence index and the feed lines. None of that consulted the owner's §10 rung. The defect
+is the same class as §45.
+
+Each Memory is now written to the graph only as far as its owner's rung allows
+(`artifacts/api-server/src/compass/CompassGraphEngine.ts:915#const memoryClamp = precisionClampApplies(memoryGate);`):
+
+- **City and country words.** The `country` rung keeps the country only. The `hidden` rung, an
+  unreadable gate, and a null, absent or off-ladder label keep neither word.
+- **What needs the city word.** The city edge, its time slices, the person's slice edge and
+  `during_trip` all need it. A trip names its destination, so `during_trip` counts as a city fact.
+- **Place and event edges.** These name a venue, so they are written only at the `exact` or `venue` rung
+  (`artifacts/api-server/src/compass/CompassGraphEngine.ts:939#const venue = rung === "exact" || rung === "venue";`).
+- **Coordinates.** They are never written to a node. They are used only to pick a city's timezone, and
+  only at the `exact` rung.
+
+With the gate definitely off, which is production today, every row is treated as `exact`, and the build
+is unchanged.
+
+The reconcile replays the build with the same gate. If the gate is unreadable, every replay that reads
+Memories decides nothing
+(`artifacts/api-server/src/compass/CompassGraphEngine.ts:2576#if ("memories" in reads && memoryGate === "unreadable") return null;`).
+A failed flag read therefore never deletes Memory edges. When an owner tightens their rung, the next
+rebuild retires the edges that the new rung no longer supports.
+
+Tests: `artifacts/api-server/src/test/compassGraphRevocation.test.ts:499#describe("§47 — a Memory reaches the world graph`
+(9 cases, 29/29). Mutations, each red, then restored:
+
+| mutation | result |
+|---|---|
+| no clamp | 6 red |
+| venue edges at every rung | 6 red |
+| trip edge without the city word | 4 red |
+| the reconcile decides under an unreadable gate | 1 red |
+| a coordinate in a node | 1 red |
+| the build reads an unreadable gate as off | 1 red |
+| the support reads never name the rung | 4 red |
+| the build never names the rung | 5 red |
+
+### 47.1 Row moves
+
+None. No census-compass row grades where a Memory appears in the graph.
+
+- NOT-GRADED: artifacts/api-server/src/test/compassGraphRevocation.test.ts — §47 cites its §10 cases; the graph's revocation suite grades no Compass row.
