@@ -498,6 +498,7 @@ const DEPLOYMENT_PROBLEM = deploymentConsistencyProblem({
   apiBaseUrl: process.env.EXPO_PUBLIC_API_BASE_URL,
   webOrigin: process.env.EXPO_PUBLIC_WEB_ORIGIN,
   deploymentEnv: process.env.EXPO_PUBLIC_DEPLOYMENT_ENV,
+  publishableKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
 });
 if (DEPLOYMENT_PROBLEM) console.error(`[deployment] refusing to start: ${DEPLOYMENT_PROBLEM}`);
 

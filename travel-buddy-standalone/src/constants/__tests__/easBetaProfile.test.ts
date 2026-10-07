@@ -68,4 +68,31 @@ describe('eas.json beta profile', () => {
     assert.notEqual(key, prodKey, 'the beta profile carries PRODUCTION\'s publishable key');
   });
 
+  // lane BETA2 (2026-10-07): the store-distribution twin for TestFlight / Play internal testing.
+  describe('beta-store (TestFlight internal testing / Google Play internal track)', () => {
+    const store = eas.build['beta-store'];
+    const submit = (eas as unknown as { submit?: Record<string, { android?: { track?: string }; ios?: Record<string, unknown> }> }).submit ?? {};
+
+    it('carries EXACTLY the beta profile\'s inlined values (no reliance on how `extends` merges env)', () => {
+      assert.ok(store, 'build.beta-store is missing');
+      assert.equal(store.extends, undefined, 'spelled out, not extended: Expo does not document env merging under extends');
+      assert.deepEqual(store.env, beta.env);
+      assert.equal(store.environment, beta.environment);
+    });
+
+    it('is a store build, versioned like production', () => {
+      assert.equal(store.distribution, 'store');
+      assert.equal(store.autoIncrement, true);
+    });
+
+    it("never names production's Supabase ref or production's origin", () => {
+      const text = JSON.stringify(store);
+      assert.ok(!text.includes(PRODUCTION_REF) && !text.includes(PRODUCTION_ORIGIN));
+    });
+
+    it('submits to testing tracks only: Android internal; nothing that targets a public release', () => {
+      assert.equal(submit['beta-store']?.android?.track, 'internal');
+      assert.doesNotMatch(JSON.stringify(submit['beta-store']), /"production"|"beta"\s*:|"alpha"|releaseStatus/);
+    });
+  });
 });
