@@ -2200,7 +2200,7 @@ sentences derived from the server's own diff
 (`travel-buddy-standalone/src/components/layover/LayoverFlightChangeCard.tsx:82#export function replanLines`), never re-derived on the client, and every
 refusal in the traveller's language (`travel-buddy-standalone/src/components/layover/LayoverFlightChangeCard.tsx:49#const REFUSAL_TEXT`) so a press is
 never left unanswered. It is mounted on the dashboard between the can-I-leave
-card and the plan (`travel-buddy-standalone/app/layover/[id].tsx:860#<LayoverFlightChangeCard`),
+card and the plan (`travel-buddy-standalone/app/layover/[id].tsx:861#<LayoverFlightChangeCard`),
 and `updateLayoverSession`
 (`travel-buddy-standalone/src/services/layover.ts:1003#export async function updateLayoverSession`)
 — which until this pass **had no caller anywhere in the app** — now returns the
@@ -2619,9 +2619,9 @@ safe-return pass, is in the client's own `SafeReturnPosture` type, and was read
 by **nothing**, while `returnRoutePrimary` — the field beside it in the same
 object, set from the same boolean — was read. The dashboard now collapses the
 three exploration surfaces (recommendations, map, people) into one notice
-(`travel-buddy-standalone/app/layover/[id].tsx:768#explorationCollapsed === true`,
+(`travel-buddy-standalone/app/layover/[id].tsx:769#explorationCollapsed === true`,
 rendered at
-`travel-buddy-standalone/app/layover/[id].tsx:895#layover-exploration-collapsed`).
+`travel-buddy-standalone/app/layover/[id].tsx:896#layover-exploration-collapsed`).
 
 **Collapsed, not hidden**, and the distinction is the requirement: §13 asks for
 exploration-first affordances to be suppressed when the traveller is due back,
@@ -3068,7 +3068,7 @@ is precisely what §13.4 said a second control must not cost.
 The footer read *Remind me / Ask locals / End* in every posture. At RETURN_NOW a
 reminder is a promise about a future that has arrived. The primary slot now
 becomes **Return to airport**
-(`travel-buddy-standalone/app/layover/[id].tsx:1028#layover-footer-return-now`),
+(`travel-buddy-standalone/app/layover/[id].tsx:1029#layover-footer-return-now`),
 keyed on the server's `returnRoutePrimary` — the same certified boolean that
 hoists the abort card, so the footer and the layout cannot disagree and nothing
 re-derives a return state from a clock. It fires the lifted controller, so the
@@ -3746,7 +3746,7 @@ the two outcomes and an election that is **off until it is pressed**
 (`travel-buddy-standalone/src/components/layover/LayoverEndSheet.tsx:40#const [keepStamp, setKeepStamp]`,
 `travel-buddy-standalone/src/components/layover/LayoverEndSheet.tsx:55#layover-end-stamp-election`),
 mounted at
-`travel-buddy-standalone/app/layover/[id].tsx:1092#<LayoverEndSheet`.
+`travel-buddy-standalone/app/layover/[id].tsx:1113#<LayoverEndSheet`.
 
 **ONE SHEET ON BOTH PLATFORMS, WHICH BREAKS THIS SCREEN'S OWN RULE AND SAYS SO.**
 `app/layover/[id].tsx` kept `Alert.alert` on native because an OS alert is the
@@ -6449,7 +6449,7 @@ already canonical (`createCrew` writes it that way); the caller's is not.
 `crewAction` in `travel-buddy-standalone/src/services/layover.ts:1847#message: typeof parsed.message === 'string' ? parsed.message : 'That did not work. Please try again.',`
 surfaces the server's own `message` on any non-ok response, so the new refusal
 renders as written. The surface is mounted, not dark:
-`travel-buddy-standalone/app/layover/[id].tsx:996#<LayoverCrewSection`. **No file
+`travel-buddy-standalone/app/layover/[id].tsx:997#<LayoverCrewSection`. **No file
 under `travel-buddy-standalone/` was changed by this pass.**
 
 ### 27.3 The mutations
@@ -7051,7 +7051,7 @@ structural stands in the way any more:
 |---|---|
 | server gate | built, on `main`, reads the literal flag name, fail-closed |
 | flag row | seeded FALSE on production by 2971 |
-| client consumer | built and mounted — `LayoverDiscoveryCard` at `travel-buddy-standalone/app/layover/[id].tsx:985#<LayoverDiscoveryCard` |
+| client consumer | built and mounted — `LayoverDiscoveryCard` at `travel-buddy-standalone/app/layover/[id].tsx:986#<LayoverDiscoveryCard` |
 | client tests | 10 across two suites, gate-off asserted as its own member rather than an empty list |
 | what remains | an owner decision to enable, after the deployed consumer is verified |
 
@@ -7222,7 +7222,7 @@ policy.
 not "nobody knows the URL" (false) and not "the code is not written" (also
 false — the server gate is built and on `main`, the flag row is seeded FALSE by
 2971, and `LayoverDiscoveryCard` is mounted at
-`travel-buddy-standalone/app/layover/[id].tsx:985#<LayoverDiscoveryCard`). It is
+`travel-buddy-standalone/app/layover/[id].tsx:986#<LayoverDiscoveryCard`). It is
 that **no probe of the deployed build is reachable from this session**, so
 whether the running API carries the gate is UNKNOWN here.
 
@@ -9274,6 +9274,22 @@ Mutants D1–D8, S1–S4, M1, M2 and P1 are all killed (15 of 15).
 | NOT-BUILT | 66 | 62 |
 | CANNOT-VERIFY | 0 | 0 |
 | total | 296 | 296 |
+
+### §55.9 L120 gets its route half; L205, L294 and L223 are re-read and recorded. NO ROW MOVES
+
+- **L120: the route half is built, the gate half has no data.**
+  - **The requirement:** "When RETURN_NOW is active, suppress exploration-first affordances and prioritise airport route/gate."
+  - **The new piece.** The suppression half was L141's collapse, and the CTA was L42's switch. In the certified return posture, the footer's exploration slot ("Ask locals") now gives way to **Directions** to this airport's coordinate (`travel-buddy-standalone/app/layover/[id].tsx:1064#returnCardFirst && airportPoint ? (`). The route comes from the phone's own maps app: Apple Maps `daddr` on iOS, Google Maps directions elsewhere (`travel-buddy-standalone/src/lib/maps.ts:74#export function directionsUrl(`). The app reads no location to do it. An airport at 0,0, which is the column's default, keeps the old slot rather than guess.
+  - **Tests:** the dashboard gains three cases (`travel-buddy-standalone/app/layover/__tests__/layoverDashboard.safeReturn.component.test.tsx:664#L120 — at RETURN_NOW the footer offers directions`), and a URL suite has two. Mutants R1–R5 are killed.
+  - **Still `W`:** there is no gate or terminal context to prioritise, because `terminal_info` is null on every production airport (L143). That needs data, not code.
+- **L205: re-read, still `W`, not built here.** Every layover route reads through the service-role client. Making owner reads go through RLS needs three things the platform does not have:
+  - a user-scoped PostgREST client, built with the anon key and the caller's JWT; `lib/supabase.ts` builds one client, the service client;
+  - a change to the client-construction pin that `handRolledAuthAccountState.test.ts` holds;
+  - a decision on the anon-key secret in the API server's environment.
+
+  That is a platform posture change across every route, so it is the lead's to direct. 3620 already removes every client WRITE path, so the remaining gap is defence in depth on reads.
+- **L294: re-read, still `W`.** "Degraded confidence a handler cannot skip" is a property of every layover read's return type: `cityPresence`, for example, returns data beside a `degraded` boolean. Converting one function would not move a row that grades the domain. It needs a typed-read-result convention applied across the layover stores, which is architectural, and it is recorded rather than half-built.
+- **L223: re-read, still `W`.** "Expanded options" for an overnight layover need lodging or lounge data. `discovery_places` has no lodging category (Foursquare's hotel and lodging names fold into the generic `place`), and `airport_profiles` carries no transit-hotel or lounge record. Generic advice would not be an option, for the reason §53.2 gave about L145.
 
 ## Cited, not graded (check:census-scope-coverage)
 
