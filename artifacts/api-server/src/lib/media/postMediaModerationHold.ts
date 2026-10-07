@@ -37,7 +37,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { appStorageUrlInfo } from "../mediaUrl.js";
-import { MEDIA_MODERATION_STAGE_FLAG } from "./vendors/mediaVendorStages.js";
 import { toCanonicalModerationStatus } from "./mediaAssetContract.js";
 
 export type PostMediaHold =
@@ -112,7 +111,7 @@ async function readStage(sc: SupabaseClient | null | undefined): Promise<"on" | 
     const { data, error } = await sc
       .from("feature_flags")
       .select("enabled")
-      .eq("flag", MEDIA_MODERATION_STAGE_FLAG)
+      .eq("flag", "media_moderation_classifier_enabled") // = vendors/mediaVendorStages MEDIA_MODERATION_STAGE_FLAG, spelled as a literal so check:flag-polarity can resolve it (DIRECT_READS); the tests key the stage row by that constant, so a drift turns them red
       .maybeSingle();
     if (error) return "unknown";
     return (data as { enabled?: unknown } | null)?.enabled === true ? "on" : "off";

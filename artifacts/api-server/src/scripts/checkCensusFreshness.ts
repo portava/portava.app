@@ -2036,6 +2036,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "artifacts/api-server/src/test/mediaPostMediaHoldD82.test.ts",
     "artifacts/api-server/src/test/mediaBoostRestrictionD24c.test.ts",
     "artifacts/api-server/src/test/mediaPostMediaHoldD82Surfaces.test.ts", // census-media §50.7
+    "artifacts/api-server/src/test/postReleaseTimingAndAuthor.test.ts", // census-media §50.9
   ],
   // census-telegraph.md — declared 2026-09-11 on the same basis as Media above:
   // 451 requirements out of CANNOT BE CHECKED, a clock started rather than a
