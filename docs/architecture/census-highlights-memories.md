@@ -7027,13 +7027,15 @@ No row moves. **266 = 69 C / 155 W / 40 N / 2 X**.
 - NOT-GRADED: artifacts/api-server/src/test/silentSupabaseReadsGuard.test.ts — §AF.2 names the guard suite that showed that entry stale; machinery, no row rests on it.
 - NOT-GRADED: artifacts/api-server/src/test/telegraphShareFamilies.test.ts — §AF.4.1 names the Telegraph lane's family suite because two of its route fixture rows gained a `trip_id`; census-telegraph grades the share families, and no row here rests on it.
 
-## §AE — 2026-10-06 (mission lane N7): §AD.6's open question is answered — a live reading is about THIS place or it is absent (lead ruling D-67), and NO VERDICT MOVES
+## §AG — 2026-10-06 (mission lane N7): §AD.6's open question is answered — a live reading is about THIS place or it is absent (lead ruling D-67), and NO VERDICT MOVES
+
+*Renumbered from §AE to §AG on 2026-10-07 by lane R (the census owner), to remove a duplicate label: lane R's own §AE above already used it. The content below is lane N7's, verbatim.*
 
 Branch `claude/live-identity-d67-20261006`, cut from `main` at `ca49bbd28`. `head_commit` is **NOT**
 re-declared. Controlled evidence only: node:test suites over the files' own fakes and a stubbed
 `fetch`. No flag, no migration, no database read.
 
-### §AE.1 What §AD.6 recorded, and what closes it
+### §AG.1 What §AD.6 recorded, and what closes it
 
 §AD.6's first item said the live source looked a venue up by name with a top-1 search and checked
 nothing, so the Do Again plan could say "open right now", marked `verified_live`, about a different
@@ -7049,7 +7051,7 @@ a record that passes (`artifacts/api-server/src/lib/liveIntelligence.ts:309#cons
 census-compass §37.2 states the rule and the lookup's own tests; this section grades the two Memory
 callers.
 
-### §AE.2 The Memory callers
+### §AG.2 The Memory callers
 
 - **Do Again's current half.** `readCurrentWorld` anchors on the catalog row's own
   `places.latitude`/`longitude`, and a row without them gets an honest unknown without the live source
@@ -7064,7 +7066,7 @@ callers.
   (`artifacts/api-server/src/compass/MemoryCompassTools.ts:473#if (placeError) current = currentWorldUnknown(`).
   The edit is line-neutral from `:469` down, so H109's `fuseHistoricalWithCurrent` caller keeps its line.
 
-### §AE.3 The tests, each mutation-proved (revert → red → restore, tree clean after)
+### §AG.3 The tests, each mutation-proved (revert → red → restore, tree clean after)
 
 - `artifacts/api-server/src/test/memoryActions.test.ts:451#lead ruling D-67: anchored on the catalog place's own coordinates`
   — red when the action passes any other point.
@@ -7079,7 +7081,7 @@ callers.
 - `artifacts/api-server/src/test/memoryCompassTools.test.ts:732#a failed place read is reported as unreadable, never as 'no catalog place'`
   — red when the `placeError` line is removed.
 
-### §AE.4 Rows
+### §AG.4 Rows
 
 **0 up, 0 down.** H107 stays `W` for the reason §AD.1 gives (the free-time leg is behind
 `trip_operational_projections_enabled`, FALSE); its live leg is now about the right venue, which
@@ -7087,7 +7089,7 @@ removes a defect §AD.6 recorded beside the verdict rather than inside it. H109,
 fusion boundary, which is unchanged: a wrong-venue reading was always kept apart from history; it is
 now also not produced. H16 stays `W` on §AD.1's two remaining reasons. The headline is §AD.4's.
 
-### §AE.5 What would turn this red
+### §AG.5 What would turn this red
 
 - A Memory caller that passes the trip's or the city's coordinates instead of the place row's: the
   150 m rule would confirm against the wrong point. Both callers read the place row today.

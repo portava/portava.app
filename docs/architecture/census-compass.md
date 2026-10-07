@@ -4358,7 +4358,7 @@ line and its anchor (`artifacts/api-server/src/compass/CompassTools.ts:1119#getL
 as do CR-05's `:1138-1139` and CPH-08's `:1126`, `:1129-1133` and `:1132`: the edit was made
 line-neutral. The Memory place-history tool in this tree passes its place's anchor the same way
 (`artifacts/api-server/src/compass/MemoryCompassTools.ts:476#liveVenueAnchorOf((place as any).lat, (place as any).lng)`);
-census-highlights-memories §AE grades that half.
+census-highlights-memories §AG grades that half.
 
 ### 37.3 The tests, and what turns them red
 
