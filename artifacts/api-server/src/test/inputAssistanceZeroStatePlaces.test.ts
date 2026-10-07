@@ -63,12 +63,19 @@ interface Builder extends PromiseLike<Result> {
   single(): Promise<Result>;
 }
 
+const UUID_SHAPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function makeClient(db: Record<string, Row[]>, failing: ReadonlySet<string> = new Set()) {
   function from(table: string): Builder {
     const filters: Array<(r: Row) => boolean> = [];
     let limitN: number | null = null;
+    // Postgres refuses a non-UUID compared with a uuid column (22P02) and the
+    // WHOLE read fails — so a provider id slipped into `.in('id', …)` costs
+    // every row, not just its own. Modelled for the uuid `id` columns read here.
+    let badUuid = false;
     const run = async (one: boolean): Promise<Result> => {
       if (failing.has(table)) return { data: null, error: { message: `injected failure on ${table}` } };
+      if (badUuid) return { data: null, error: { code: "22P02", message: "invalid input syntax for type uuid" } };
       let rows = (db[table] ?? []).filter((r) => filters.every((f) => f(r)));
       if (limitN !== null) rows = rows.slice(0, limitN);
       return { data: one ? (rows[0] ?? null) : rows, error: null };
@@ -79,7 +86,11 @@ function makeClient(db: Record<string, Row[]>, failing: ReadonlySet<string> = ne
       select() { return b; },
       eq(c, v) { filters.push((r) => r[c] === v); return b; },
       neq(c, v) { filters.push((r) => r[c] !== v); return b; },
-      in(c, vs) { filters.push((r) => vs.includes(r[c])); return b; },
+      in(c, vs) {
+        if (c === "id" && vs.some((v) => typeof v !== "string" || !UUID_SHAPE.test(v))) badUuid = true;
+        filters.push((r) => vs.includes(r[c]));
+        return b;
+      },
       is(c, v) { filters.push((r) => (v === null ? r[c] == null : r[c] === v)); return b; },
       not(c, op, v) { if (op === "is") filters.push((r) => r[c] != null && r[c] !== v); return b; },
       gte(c, v) { filters.push((r) => cmp(r[c], v, (a, x) => a >= x)); return b; },
