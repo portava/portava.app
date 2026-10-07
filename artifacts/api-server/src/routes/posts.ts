@@ -573,7 +573,7 @@ router.post("/posts", async (req, res) => {
     locationPrivacyMode: reqPrivacyMode, publishAfterTime, geofenceRadiusMeters,
     venueName, venueId, category, perspectiveVantage,
   } = parsed.data;
-  const locationSource = locationSrc ?? 'none'; if (!(await neighborhoodOnlyModePermitted(flagSc, reqPrivacyMode))) { sendError(res, "feature_disabled", NEIGHBORHOOD_ONLY_DISABLED_MESSAGE); return; } // §34 "Show neighborhood only" is refused, and nothing written, until media_neighborhood_only_mode_enabled (census-media §36)
+  const locationSource = locationSrc ?? 'none'; if (!(await neighborhoodOnlyModePermitted(flagSc, reqPrivacyMode))) { sendError(res, "feature_disabled", NEIGHBORHOOD_ONLY_DISABLED_MESSAGE); return; } const mediaHold = await postMediaModerationHold(flagSc, mediaUrls ?? []); if (mediaHold.state !== "clear") { sendError(res, mediaHold.state === "held" ? "conflict" : "degraded_unavailable", mediaHold.state === "held" ? POST_MEDIA_HELD_MESSAGE : POST_MEDIA_UNREADABLE_MESSAGE); return; } // §34 "Show neighborhood only" is refused, and nothing written, until media_neighborhood_only_mode_enabled (census-media §36); census-media MD269 (a), lead ruling D-82: while the moderation stage holds any of its media, the post is refused and nothing is written
 
   // ── Delayed geotag: compute sensitivity / privacy mode / geofence radius ──
   const sens = sensitivityLevel(venueName ?? null); const vantageDecision = await decidePerspectiveVantageWrite(flagSc, perspectiveVantage ?? null, category ?? null); if (!vantageDecision.ok) { sendError(res, vantageDecision.code, vantageDecision.message); return; } // §12 vantage: refused while media_perspective_vantage_enabled is off, and outside the category's §12 groups (census-media §36)
@@ -2294,7 +2294,7 @@ router.patch("/posts/:postId", async (req, res) => {
 
   const patch: Record<string, unknown> = { updated_by: user.id };
   if (parsed.data.content !== undefined) patch.content = parsed.data.content;
-  if (parsed.data.mediaUrls !== undefined) patch.media_urls = parsed.data.mediaUrls;
+  if (parsed.data.mediaUrls !== undefined) { const mediaHold = await postMediaModerationHold(getServiceClient(), parsed.data.mediaUrls); if (mediaHold.state !== "clear") { sendError(res, mediaHold.state === "held" ? "conflict" : "degraded_unavailable", mediaHold.state === "held" ? POST_MEDIA_HELD_MESSAGE : POST_MEDIA_UNREADABLE_MESSAGE); return; } patch.media_urls = parsed.data.mediaUrls; } // census-media MD269 (a), lead ruling D-82: an edit cannot put held media into a post either
   if (parsed.data.visibility !== undefined) patch.visibility = parsed.data.visibility;
   if (parsed.data.status !== undefined) patch.status = parsed.data.status;
   if (parsed.data.category !== undefined) patch.category = parsed.data.category ?? null;
@@ -3693,4 +3693,4 @@ import { runMediaVendorIngest, canonicalModerationAtBirth } from "../lib/media/v
 // Imported at the TAIL so no cited line above moves; ESM hoists it (census-media §36, MD262).
 import { neighborhoodOnlyModePermitted, NEIGHBORHOOD_ONLY_DISABLED_MESSAGE } from "../lib/media/neighborhoodOnlyMode.js";
 // census-media §36 (MD82–MD85): tail import, ESM hoists it.
-import { decidePerspectiveVantageWrite } from "../lib/media/perspectiveVantage.js";
+import { decidePerspectiveVantageWrite } from "../lib/media/perspectiveVantage.js"; import { postMediaModerationHold, POST_MEDIA_HELD_MESSAGE, POST_MEDIA_UNREADABLE_MESSAGE } from "../lib/media/postMediaModerationHold.js"; // census-media MD269 (a), lead ruling D-82
