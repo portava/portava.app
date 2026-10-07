@@ -1447,6 +1447,7 @@ jobs:
       - api-server-local-db
       - standalone-checks
       - ci-self-check
+      - beta-scripts
     steps:
       - name: Every CI job must have run and succeeded
         shell: bash
@@ -1457,6 +1458,7 @@ jobs:
           R_API_LOCAL_DB: ${{ needs['api-server-local-db'].result }}
           R_STANDALONE: ${{ needs['standalone-checks'].result }}
           R_SELF_CHECK: ${{ needs['ci-self-check'].result }}
+          R_BETA_SCRIPTS: ${{ needs['beta-scripts'].result }}
         run: |
           set -uo pipefail
           BAD=0
@@ -1473,7 +1475,8 @@ jobs:
             "api-server-tests:$R_API_TESTS" \
             "api-server-local-db:$R_API_LOCAL_DB" \
             "standalone-checks:$R_STANDALONE" \
-            "ci-self-check:$R_SELF_CHECK"
+            "ci-self-check:$R_SELF_CHECK" \
+            "beta-scripts:$R_BETA_SCRIPTS"
           do
             NAME="${PAIR%%:*}"
             RESULT="${PAIR#*:}"
@@ -1494,3 +1497,85 @@ jobs:
             exit 1
           fi
           echo "All CI jobs ran and succeeded."
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # beta-scripts — the private beta's credential-free suites (graduated from
+  # unwired-checks.yml on 2026-10-07, lead), so a change that breaks the beta
+  # path cannot merge on green. Placed after ci-verdict only so that the
+  # verdict's line, which docs cite, does not move; the verdict needs it like
+  # every other job. No database, no token, no network: the Management API,
+  # gh and fetch are stubbed.
+  #   test:beta-bootstrap        the pure half of beta-db.yml
+  #   test:beta-deployment-guard the build/boot guard (both implementations, one
+  #                              case table) and the real .replit a fork inherits
+  #   test:beta-configure        the config step + flag policy vs the migrations
+  #                              + the 3740 profiles-grant check + policy sync
+  #   test:beta-smoke            the seven read-only smoke checks
+  #   test:beta-owner            beta:status and beta:provision against a fake gh
+  # ───────────────────────────────────────────────────────────────────────────
+  beta-scripts:
+    name: beta · scripts suites (guard, config, smoke, owner)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: preflight
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Enable corepack (pnpm version comes from root packageManager)
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          echo "pnpm $(pnpm --version)"
+          node --version
+
+      - name: Resolve pnpm store path
+        id: pnpm-store
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-root-${{ runner.os }}-node${{ env.NODE_VERSION }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-root-${{ runner.os }}-node${{ env.NODE_VERSION }}-
+
+      - name: Install (root workspace, frozen lockfile)
+        id: install
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+
+      # Each suite runs even if an earlier one failed, and fails on its own step.
+      - name: 'scripts: test:beta-bootstrap'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:beta-bootstrap
+
+      - name: 'scripts: test:beta-deployment-guard'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:beta-deployment-guard
+
+      - name: 'scripts: test:beta-configure'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:beta-configure
+
+      - name: 'scripts: test:beta-smoke'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:beta-smoke
+
+      - name: 'scripts: test:beta-owner'
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        shell: bash
+        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:beta-owner

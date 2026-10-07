@@ -63,7 +63,10 @@ Replit deployment. Production is never reached by anything below.
     in this repository, which is why the rule is an allowlist.
 
   `scripts/src/beta-deployment-guard.test.ts` parses the real `.replit` and
-  proves every production value in it is refused by both rules.
+  proves every production value in it is refused by both rules. The five beta
+  script suites run in `ci.yml`'s `beta-scripts` job (since 2026-10-07), which
+  the CI verdict requires, so a change that breaks the beta path cannot merge
+  green.
 - **How sign-up is closed.**
   - **The app's own path.** The app signs up through Supabase Auth (`supabase.auth.signUp`). There, Auth's
     `disable_signup` refuses every new account. The configuration step sets it (step 3), so it is the setting that

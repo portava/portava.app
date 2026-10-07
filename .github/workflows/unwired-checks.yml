@@ -346,40 +346,9 @@ jobs:
         shell: bash
         run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts check:rent-buddy-contract
 
-      # The pure half of .github/workflows/beta-db.yml: the baseline split and
-      # skip-rule counts, batching, the ledger backfill set, the 2254 DDL cut
-      # and the reference snapshot's allowlist/nulling. No credentials.
-      - name: 'scripts: test:beta-bootstrap'
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        shell: bash
-        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:beta-bootstrap
-
-      # The beta runtime (docs/ops/beta-runtime-runbook.md): the build-time
-      # deployment guard (build-production.sh + its parity with the API's rule),
-      # the configuration step against a stubbed Management API plus the flag
-      # policy against the migrations, and the smoke check against a stubbed
-      # fetch. No credentials.
-      - name: 'scripts: test:beta-deployment-guard'
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        shell: bash
-        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:beta-deployment-guard
-
-      - name: 'scripts: test:beta-configure'
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        shell: bash
-        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:beta-configure
-
-      - name: 'scripts: test:beta-smoke'
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        shell: bash
-        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:beta-smoke
-
-      # The owner's beta:status (read-only) and beta:provision (dispatch) commands
-      # against a fake gh and a stubbed fetch. No credentials, nothing dispatched.
-      - name: 'scripts: test:beta-owner'
-        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
-        shell: bash
-        run: bash .github/scripts/pnpm-run.sh scripts @workspace/scripts test:beta-owner
+      # The five beta script suites (test:beta-bootstrap, -deployment-guard,
+      # -configure, -smoke, -owner) graduated to ci.yml's `beta-scripts` job on
+      # 2026-10-07 (lead), so they gate merges; they no longer run here.
 
   standalone:
     name: unwired · travel-buddy-standalone guards

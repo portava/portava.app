@@ -5,11 +5,13 @@
  * scripts/src/beta-flag-policy.json decides, flag by flag, what the beta database
  * holds (applied by .github/workflows/beta-config.yml, which REFUSES to write
  * when a policy flag is missing from the database). Its full test,
- * scripts/src/beta-configure.test.ts, runs only in unwired-checks.yml, which is
- * on probation and not what a merge is judged on. So a lane could merge a
- * migration that seeds or retires a flag, main would stay green, and the next
- * beta-config.yml dispatch would fail — or, worse, a flag would sit in the beta
- * database undecided (forced OFF and reported, never reviewed).
+ * scripts/src/beta-configure.test.ts, ran only in unwired-checks.yml (probation)
+ * when this file was written; since 2026-10-07 it also runs in ci.yml's
+ * beta-scripts job. This file keeps the completeness rule inside the
+ * api-server suite as well, so a lane merging a migration that seeds or retires
+ * a flag cannot leave main green while the next beta-config.yml dispatch would
+ * fail — or a flag sits in the beta database undecided (forced OFF, never
+ * reviewed).
  *
  * This test runs the policy's own structural rules (flagPolicyProblems: every
  * seeded flag listed exactly once, nothing unknown listed, every ON entry with
