@@ -29,7 +29,9 @@ import { fileURLToPath } from "node:url";
 import {
   SCREENSHOT_CAPTURE_APIS,
   SCREENSHOT_SIGNAL_SITES,
+  SCREEN_CAPTURE_MENTIONS,
   isScreenshotGuarantee,
+  mentionsScreenCapture,
   screenshotApisIn,
 } from "../domain/telegraph/policies/screenshotSignal.js";
 import { stripComments } from "../domain/telegraph/policies/conversationMemoryBoundary.js";
@@ -146,5 +148,121 @@ describe("T408 — nothing tells a person screen capture is prevented", () => {
       }
     }
     assert.deepEqual(hits, []);
+  });
+});
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * HARDENING (lane T, mission 4, 2026-10-07) — census-telegraph §45c: "A
+ * deny-list a paraphrase gets past is not C … an Expo config plugin injecting
+ * FLAG_SECURE would sit outside the scan." Each hole is shown on synthetic input
+ * first (the old check misses it, the new one does not), then the trees.
+ * ════════════════════════════════════════════════════════════════════════ */
+
+const collapse = (t: string) => t.replace(/\s+/g, " ").trim();
+
+/** Every text file of a tree that can ship, any extension a build reads. */
+function walkAll(dir: string, exts: RegExp, skip: ReadonlySet<string>, out: string[] = []): string[] {
+  if (!existsSync(dir)) return out;
+  for (const name of readdirSync(dir).sort()) {
+    if (skip.has(name)) continue;
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) walkAll(p, exts, skip, out);
+    else if (exts.test(name) && !/\.(test|spec)\.[cm]?[jt]sx?$/.test(name) && !name.endsWith(".d.ts")) out.push(p);
+  }
+  return out;
+}
+
+const NATIVE_AND_CODE = /\.(?:[cm]?[jt]sx?|json|xml|plist|gradle|kts|kt|java|swift|mm?|h|properties|html|hbs|ejs|txt)$/;
+const SKIP = new Set(["node_modules", "__tests__", "__mocks__", ".expo", "dist", "build", "docs"]);
+/** The whole mobile package: config, config plugins, native and vendored code, server templates — not only src/ and app/. */
+const mobileAll = walkAll(CLIENT, NATIVE_AND_CODE, SKIP).filter((f) => !f.endsWith("pnpm-lock.yaml"));
+/** The server package's files that are not TypeScript sources the older scan already read. */
+const serverOther = walkAll(PKG, /\.(?:mjs|cjs|js|mts|html|hbs|ejs|txt)$/, new Set([...SKIP, "test", "baseline"]));
+
+/** String literals (single-line, any quote) and JSX text, of comment-stripped code. */
+function userFacingStrings(code: string): string[] {
+  const out = stringLiterals(code);
+  for (const m of code.matchAll(/>([^<>{}=]+)</g)) {
+    const t = m[1]!.trim();
+    if (t.length > 0) out.push(t);
+  }
+  return out;
+}
+
+/** Every string in `files` that mentions screen capture, collapsed. */
+function mentionsIn(files: readonly string[]): Array<{ file: string; text: string }> {
+  const out: Array<{ file: string; text: string }> = [];
+  for (const f of files) {
+    const raw = readFileSync(f, "utf8");
+    const code = /\.(?:json|html|hbs|ejs|txt|xml|plist)$/.test(f) ? raw : stripComments(raw);
+    for (const t of userFacingStrings(code)) if (mentionsScreenCapture(t)) out.push({ file: relative(REPO, f), text: collapse(t) });
+  }
+  return out;
+}
+
+const SHIPPED_CLIENT = ["src", "app", "components", "hooks", "constants", "plugins", "server"]
+  .flatMap((d) => walkAll(join(CLIENT, d), NATIVE_AND_CODE, SKIP))
+  .concat([join(CLIENT, "app.json")].filter(existsSync));
+
+describe("T408 hardening — the two holes §45c named, shown on synthetic input", () => {
+  it("the paraphrases §45c quoted pass the deny-list — and are caught as MENTIONS not on the closed list", () => {
+    const listed = new Set(SCREEN_CAPTURE_MENTIONS.map((m) => m.text));
+    for (const s of ["Screenshots aren't allowed in this chat", "Screen capture is disabled for this conversation", "Screen recording is turned off here"]) {
+      assert.equal(isScreenshotGuarantee(s), false, `the deny-list now catches "${s}" — fine, but this case pins the gap the closed list closes`);
+      assert.equal(mentionsScreenCapture(s), true, s);
+      assert.equal(listed.has(collapse(s)), false);
+    }
+    // JSX text is user-facing too, and is not a string literal.
+    assert.deepEqual(userFacingStrings("<Text>Screen capture is disabled</Text>").filter(mentionsScreenCapture), ["Screen capture is disabled"]);
+    // A different word for the same thing: not a mention, so not a guarantee either.
+    assert.equal(mentionsScreenCapture("Offscreen capture target"), false);
+  });
+
+  it("an Expo config plugin that sets FLAG_SECURE is seen, as are .js and native sources", () => {
+    const plugin = "module.exports = (config) => withMainActivity(config, (c) => { c.modResults.contents += 'getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);'; return c; });";
+    assert.ok(screenshotApisIn(plugin).includes("FLAG_SECURE"));
+    assert.ok(NATIVE_AND_CODE.test("withSecure.js") && NATIVE_AND_CODE.test("MainActivity.kt") && NATIVE_AND_CODE.test("AppDelegate.mm") && NATIVE_AND_CODE.test("app.json"));
+    assert.ok(mobileAll.some((f) => f.endsWith("plugins/withPortavaNSE.js")), "config plugins are not scanned");
+    assert.ok(mobileAll.some((f) => f.endsWith("app.json")), "the Expo app config is not scanned");
+    assert.ok(mobileAll.some((f) => f.includes(`${join("server", "templates")}`)), "the mobile package's server templates are not scanned");
+  });
+});
+
+describe("T408 hardening — the trees, read whole", () => {
+  it("no file of the mobile package, nor any non-TypeScript server file, uses or names a capture API", () => {
+    assert.ok(mobileAll.length > clientFiles.length, `the wide scan read ${mobileAll.length} files, the old one ${clientFiles.length}`);
+    const hits: string[] = [];
+    for (const f of [...mobileAll, ...serverOther]) {
+      if (allowedSites.has(f)) continue;
+      const raw = readFileSync(f, "utf8");
+      const apis = screenshotApisIn(/\.(?:json|xml|plist|html|hbs|ejs|txt)$/.test(f) ? raw : stripComments(raw));
+      if (apis.length > 0) hits.push(`${relative(REPO, f)}: ${apis.join(", ")}`);
+    }
+    assert.deepEqual(hits, []);
+  });
+
+  it("the Expo config names no capture plugin", () => {
+    const expo = JSON.parse(readFileSync(join(CLIENT, "app.json"), "utf8")).expo ?? {};
+    const plugins = ((expo.plugins ?? []) as unknown[]).map((p) => (Array.isArray(p) ? String(p[0]) : String(p)));
+    assert.ok(plugins.length > 0, "no plugins read — the check would be vacuous");
+    assert.deepEqual(plugins.filter((p) => screenshotApisIn(p).length > 0 || /screen|secure/i.test(p)), []);
+  });
+
+  it("every string in either tree that mentions screen capture is on the closed list, and every listed one is informational and still present", () => {
+    const listed = new Map(SCREEN_CAPTURE_MENTIONS.map((m) => [`${m.tree}:${m.text}`, m]));
+    const found = [
+      ...mentionsIn(SHIPPED_CLIENT).map((m) => ({ ...m, tree: "client" as const })),
+      ...mentionsIn([...serverFiles, ...serverOther]).map((m) => ({ ...m, tree: "server" as const })),
+    ];
+    const unlisted = found.filter((m) => !listed.has(`${m.tree}:${m.text}`)).map((m) => `${m.file}: ${m.text}`);
+    assert.deepEqual(unlisted, [], "§30A.9: a string that talks about screen capture must be reviewed onto SCREEN_CAPTURE_MENTIONS " +
+      "with why it is informational. It may say someone took one; it may never say the app stops it.");
+    const seen = new Set(found.map((m) => `${m.tree}:${m.text}`));
+    for (const [key, m] of listed) {
+      assert.ok(seen.has(key), `${key} is listed and no longer appears — remove it`);
+      assert.equal(isScreenshotGuarantee(m.text), false, `${key} reads as a guarantee`);
+      assert.ok(m.why.length > 20);
+    }
   });
 });
