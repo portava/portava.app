@@ -31,6 +31,7 @@ import type {
   LedgerShapeProblem,
 } from "../explainedLiveObjects.js";
 import { ledgerKeySet } from "../explainedLiveObjects.js";
+import { canonicalPredicate } from "./predicateCanonical.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TYPES
@@ -79,6 +80,12 @@ export interface Model {
   constraints: Set<string>;
   extensions: Set<string>;
   ledgerKeys: Set<string>;
+  /**
+   * Functions the chain moved out of public (ALTER FUNCTION … SET SCHEMA s,
+   * not followed by a re-CREATE in public): name -> s. Optional so a fixture
+   * may omit it.
+   */
+  functionSchemas?: Map<string, string>;
 }
 
 export interface CiSurface {
@@ -1431,7 +1438,14 @@ export function buildModel(args: {
   const constraints = new Set<string>();
   const extensions = new Set<string>();
 
+  const functionSchemas = new Map<string, string>();
   for (const sql of allSqls) {
+    for (const m of sql.matchAll(
+      /\b(?:alter\s+function\s+(?:"?public"?\.)?"?([A-Za-z_][\w$]*)"?\s*\([^)]*\)\s+set\s+schema\s+"?([A-Za-z_][\w$]*)"?|create\s+(?:or\s+replace\s+)?function\s+(?:"?public"?\.)?"?([A-Za-z_][\w$]*)"?\s*\()/gi,
+    )) {
+      if (m[1]) functionSchemas.set(m[1].toLowerCase(), m[2]!.toLowerCase());
+      else if (m[3] && !/function\s+"?(?!public)[A-Za-z_][\w$]*"?\./i.test(m[0])) functionSchemas.delete(m[3].toLowerCase());
+    }
     for (const [name, argset] of extractFunctionSignatures(sql)) {
       for (const a of argset) functions.add(`${name}(${a})`);
     }
@@ -1475,6 +1489,7 @@ export function buildModel(args: {
     constraints,
     extensions,
     ledgerKeys: ledgerKeySet(ledger),
+    functionSchemas,
   };
 }
 
@@ -1611,17 +1626,43 @@ export function computeUnexplained(input: UnexplainedInput): UnexplainedResult {
   const dynamicPredicate = new Set(
     ledger.filter((e) => e.dynamic_predicate && e.kind === "policy").map((e) => e.key.slice("policy:".length).toLowerCase()),
   );
+  //
+  // Predicates are compared by STRUCTURE (lib/predicateCanonical.ts): parsed
+  // with PostgreSQL's precedence, columns resolved to the FROM item that owns
+  // them (the live column inventory, then the model's), and printed
+  // canonically, so pg_get_expr's parentheses, literal casts, IN-as-ANY and
+  // implicit qualification no longer read as drift. A predicate either side
+  // cannot parse falls back to the text comparison, so nothing unparseable is
+  // ever taken as equal.
+  const columnsByTable = new Map<string, Set<string>>();
+  for (const c of [...live.columns, ...model.columns]) {
+    const dot = c.lastIndexOf(".");
+    const t = c.slice(0, dot);
+    if (!columnsByTable.has(t)) columnsByTable.set(t, new Set());
+    columnsByTable.get(t)!.add(c.slice(dot + 1));
+  }
+  const columnsOf = (t: string) => columnsByTable.get(t);
+  const functionSchemaOf = (f: string) => model.functionSchemas?.get(f);
+  const samePredicate = (m: string | null, l: string | null, table: string): boolean => {
+    const cm = canonicalPredicate(m, table, columnsOf, functionSchemaOf);
+    const cl = canonicalPredicate(l, table, columnsOf, functionSchemaOf);
+    if (cm !== null && cl !== null) return cm === cl;
+    return normalizePredicate(m) === normalizePredicate(l);
+  };
   for (const [k, lp] of live.policies) {
     const mp = model.policies.get(k);
     if (!mp) continue; // absence is UNEXPLAINED_LIVE's business
     const textUnknowable = dynamicPredicate.has(k);
+    const table = k.split(".")[1] ?? "";
     const lu = textUnknowable ? null : normalizePredicate(lp.using);
     const mu = textUnknowable ? null : normalizePredicate(mp.using);
     const lw = textUnknowable ? null : normalizePredicate(lp.withCheck);
     const mw = textUnknowable ? null : normalizePredicate(mp.withCheck);
     const lr = normalizeRoles(lp.roles).join(",");
     const mr = normalizeRoles(mp.roles).join(",");
-    if (lu !== mu || lw !== mw || lr !== mr) {
+    const predicatesMatch =
+      textUnknowable || (samePredicate(mp.using, lp.using, table) && samePredicate(mp.withCheck, lp.withCheck, table));
+    if (!predicatesMatch || lr !== mr) {
       add(
         "POLICY_PREDICATE_DRIFT",
         "policy",

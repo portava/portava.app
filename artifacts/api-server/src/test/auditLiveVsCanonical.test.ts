@@ -1095,3 +1095,111 @@ describe("computeUnexplained — a dynamic_predicate ledger row", () => {
     assert.deepEqual(validateLedgerShape([bad2]).map((p) => p.code), ["DYNAMIC_PREDICATE_WITHOUT_VERIFIER"]);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lane G wave 2: predicates compared by structure (lib/predicateCanonical.ts).
+// Each "equal" pair is a model text and the pg_get_expr text run 37608414616
+// reported as drift; each "different" pair is a real change that must stay drift.
+// ─────────────────────────────────────────────────────────────────────────────
+import { canonicalPredicate } from "../scripts/lib/predicateCanonical.js";
+
+describe("canonicalPredicate — PostgreSQL's rendering is not drift; a real change is", () => {
+  const cols: Record<string, string[]> = {
+    layover_sessions: ["id", "user_id"],
+    layover_plan_stops: ["session_id"],
+    compass_conversations: ["id", "user_id"],
+    compass_conversation_messages: ["conversation_id"],
+    messages: ["id", "thread_id"],
+    message_thread_members: ["thread_id", "user_id", "left_at"],
+    message_edits: ["message_id"],
+    highlights: ["id", "owner_id"],
+    highlight_sources: ["highlight_id"],
+    t: ["a", "b", "c", "owner_id"],
+    t2: ["id"],
+  };
+  const colsOf = (x: string) => (cols[x] ? new Set(cols[x]) : undefined);
+  const fns = (f: string) => (f === "can_see_location" ? "authz" : undefined);
+  const same = (table: string, m: string, l: string) => {
+    const cm = canonicalPredicate(m, table, colsOf, fns);
+    const cl = canonicalPredicate(l, table, colsOf, fns);
+    assert.ok(cm !== null && cl !== null, `unparsed: ${cm === null ? m : l}`);
+    return cm === cl;
+  };
+
+  it("parens, literal casts and qualified casts", () => {
+    assert.ok(same("objects",
+      "bucket_id = 'post-media' and (storage.foldername(name))[1] = auth.uid()::text",
+      "(bucket_id = 'post-media'::text) AND ((storage.foldername(name))[1] = (auth.uid())::text)"));
+  });
+  it("IN (list) is = ANY (ARRAY[list]); a cast ARRAY of literals is an ARRAY of cast literals", () => {
+    assert.ok(same("objects",
+      "lower(storage.extension(name)) in ( 'jpg', 'png' )",
+      "(lower(storage.extension(name)) = ANY (ARRAY['jpg'::text, 'png'::text]))"));
+    assert.ok(same("t",
+      "authz.accepted_trip_role(trip_id) = ANY (ARRAY['owner','co_host']::member_role[])",
+      "(authz.accepted_trip_role(trip_id) = ANY (ARRAY['owner'::member_role, 'co_host'::member_role]))"));
+  });
+  it("BETWEEN, !=, LIKE are what PostgreSQL rewrites them to", () => {
+    assert.ok(same("t", "a between 1 and 5", "((a >= 1) AND (a <= 5))"));
+    assert.ok(same("t", "a != 'x'", "(a <> 'x'::text)"));
+    assert.ok(same("t", "a like 'x%'", "(a ~~ 'x%'::text)"));
+  });
+  it("implicit qualification inside a subquery, inner and outer", () => {
+    assert.ok(same("layover_plan_stops",
+      "session_id in ( select id from layover_sessions where user_id = auth.uid() )",
+      "(session_id IN ( SELECT layover_sessions.id FROM layover_sessions WHERE (layover_sessions.user_id = auth.uid())))"));
+    assert.ok(same("compass_conversation_messages",
+      "exists ( select 1 from compass_conversations c where c.id = conversation_id and c.user_id = auth.uid() )",
+      "(EXISTS ( SELECT 1 FROM compass_conversations c WHERE ((c.id = compass_conversation_messages.conversation_id) AND (c.user_id = auth.uid()))))"));
+  });
+  it("a JOIN, written plainly and as pg_get_expr's parenthesised join group", () => {
+    assert.ok(same("message_edits",
+      "exists ( select 1 from messages m join message_thread_members mm on mm.thread_id = m.thread_id where m.id = message_edits.message_id and mm.user_id = auth.uid() and mm.left_at is null )",
+      "(EXISTS ( SELECT 1 FROM (messages m JOIN message_thread_members mm ON ((mm.thread_id = m.thread_id))) WHERE ((m.id = message_edits.message_id) AND (mm.user_id = auth.uid()) AND (mm.left_at IS NULL))))"));
+  });
+  it("a function the chain moved to authz (2182) is the same function", () => {
+    assert.ok(same("t", "can_see_location(auth.uid(), owner_id)", "authz.can_see_location(auth.uid(), owner_id)"));
+    assert.ok(!same("t", "other_fn(auth.uid(), owner_id)", "authz.other_fn(auth.uid(), owner_id)"), "only a MOVED function is mapped");
+  });
+  it("real changes stay different: precedence, operator, operand, literal, quantifier, function", () => {
+    assert.ok(!same("t", "(a = 1 or b = 1) and c = 1", "a = 1 or (b = 1 and c = 1)"));
+    assert.ok(!same("t", "a = 1 and b = 1", "a = 1 or b = 1"));
+    assert.ok(!same("t", "a = 1 and b = 1", "b = 1 and a = 1"));
+    assert.ok(!same("t", "a = 'x'", "a = 'y'"));
+    assert.ok(!same("t", "a in ('x')", "a not in ('x')"));
+    assert.ok(!same("t", "owner_id = auth.uid()", "owner_id = auth.role()"));
+    assert.ok(!same("t", "a::text = 'x'", "a = 'x'"), "a cast on a column is not a literal cast and is kept");
+  });
+  it("a reference that resolves to a DIFFERENT table is different", () => {
+    // t2 has no owner_id: unqualified owner_id inside the subquery is the OUTER t.owner_id.
+    assert.ok(!same("t", "exists (select 1 from t2 x where owner_id = auth.uid())", "exists (select 1 from t2 x where x.id = auth.uid())"));
+    assert.ok(same("t", "exists (select 1 from t2 x where owner_id = auth.uid())", "(EXISTS ( SELECT 1 FROM t2 x WHERE (t.owner_id = auth.uid())))"));
+  });
+  it("what it cannot parse is null, so the caller falls back to text", () => {
+    assert.equal(canonicalPredicate("%s", "t"), null);
+    assert.equal(canonicalPredicate("a = ", "t"), null);
+    assert.equal(canonicalPredicate(null, "t"), "<none>");
+  });
+  it("computeUnexplained: rendering-only differences are not drift; a changed predicate still is", () => {
+    const run = (live: string) =>
+      computeUnexplained({
+        model: makeModel({
+          relations: new Set(["t"]),
+          columns: new Set(["t.a", "t.b"]),
+          rlsClaimTables: new Set(["t"]),
+          policies: new Map([["public.t.p", { using: "a in ('x','y') and b != 1", withCheck: null, roles: ["authenticated"] }]]),
+        }),
+        live: makeLive({
+          relations: new Map([["t", "r"]]),
+          columns: new Set(["t.a", "t.b"]),
+          policies: new Map([["public.t.p", { using: live, withCheck: null, roles: ["authenticated"], cmd: "select" }]]),
+        }),
+        ledger: [],
+        ledgerShapeProblems: [],
+        dispositions: { t: { class: "RLS_REQUIRED", policyCount: 1 } },
+        ci: baseCi,
+      }).findings.map((f) => f.code);
+    assert.deepEqual(run("((a = ANY (ARRAY['x'::text, 'y'::text])) AND (b <> 1))"), []);
+    assert.deepEqual(run("((a = ANY (ARRAY['x'::text, 'z'::text])) AND (b <> 1))"), ["POLICY_PREDICATE_DRIFT"]);
+  });
+});
