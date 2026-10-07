@@ -2716,7 +2716,7 @@ that may only fall permits. `check:doc-citations` returns **RESULT clean**.
 
 One unrelated pointer moved with it: adding two paths to this census's sibling
 scope block shifted `checkCensusFreshness.ts` by 29 lines, breaking a census-wall
-anchor, which is repointed to `artifacts/api-server/src/scripts/checkCensusFreshness.ts:1522#ADDED 2026-09-20 by census-wall §13`
+anchor, which is repointed to `artifacts/api-server/src/scripts/checkCensusFreshness.ts:1527#ADDED 2026-09-20 by census-wall §13`
 in the same commit.
 
 No verdict in this census changed.

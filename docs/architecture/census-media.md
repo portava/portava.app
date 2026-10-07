@@ -8976,7 +8976,7 @@ pass owns them. No verdict moves on any of them.
 
 **Two citations were repointed, not moved in meaning.** census-trust and
 census-wall each cite
-`artifacts/api-server/src/scripts/checkCensusFreshness.ts:1522#ADDED 2026-09-20 by census-wall §13`.
+`artifacts/api-server/src/scripts/checkCensusFreshness.ts:1527#ADDED 2026-09-20 by census-wall §13`.
 The widened scope arrays above it moved it from line 1406.
 
 ## 38. Lane E — six stale census statements and one lagging sentence, corrected in place — 2026-09-27
