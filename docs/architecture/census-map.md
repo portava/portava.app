@@ -2992,3 +2992,50 @@ C earlier, M43 moves here, and M123 was never code.
 written. The new test file is inside this census's watched paths, so
 `CENSUS_STALENESS_ACKNOWLEDGED.json` names it, with the argument that it is
 evidence for the regrade this section takes.
+
+## §52 — 2026-10-07 (lane M): M122 moves on proposed lead ruling D-36a; M65's three input questions are ruled; M129 and M130 are left with the owner (scope)
+
+*Branch `claude/mission4-m-media-passport-map-20261007`, from `origin/main` `116ca4541f`.
+`head_commit` is NOT re-declared. Lane L's §48–§51, on its own unmerged branch, are not on this
+tree; this section is numbered after them so the two can be merged in order.*
+
+**Authority, and its condition.** The rulings are proposed by lane M in
+`docs/ops/lead-rulings-20261007-media.md` under the owner's 2026-10-06 delegation to the lead. They
+take effect only when the lead accepts that file before merge. **The move below rests on that
+acceptance.**
+
+### 52.1 Row moves
+
+| ID | Was | Now | Evidence |
+| --- | --- | --- | --- |
+| M122 | **N** | **C** | **D-36a: the Transport layer is base-map styling.** It adds no `MapObjectKind`, so §18's thirteen stay closed and `kindsForLayer('transport')` stays `[]`. The toggle drives the style. This is the first of the two forms this row's own settlement names, and it lands in the one file the row names (`travel-buddy-standalone/src/constants/mapStyle.ts`). **The source** is the base map's own OpenMapTiles `transportation` and `poi` layers (`travel-buddy-standalone/src/constants/mapStyle.ts:534#export const TRANSPORT_STYLE_LAYERS: LayerSpecification[] = [`): transit and rail of every service, ferries, and station dots. There is no text, so §4's label budget is unchanged. **The whole path:** `travel-buddy-standalone/src/constants/mapStyle.ts:589#export function portavaBaseMapStyle(opts: { transport: boolean }): StyleSpecification {` returns the base style itself when off. `travel-buddy-standalone/src/components/discovery/DiscoveryMapView.tsx:548#mapStyle={mapStyle === PORTAVA_DARK_MAP_STYLE ? portavaBaseMapStyle(` renders through it. `travel-buddy-standalone/app/map/index.tsx:2575#transportLayerOn={resolveLayers(effectiveLayerPrefs, layerContext).transport.visible}` feeds it the same §16 resolution every layer uses. **TESTED:** `travel-buddy-standalone/src/constants/mapTransportStyle.test.ts:44#it('draws them below every label'` (6), `travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryMapView.transportLayer.component.test.tsx:70#it('on: the same base map with the transit lines and stations drawn'` and `travel-buddy-standalone/app/map/__tests__/layerFilteredMarkers.component.test.tsx:348#switched on in the Layers sheet`. Four mutations are each red. **Not device-verified:** the station classes come from the OpenMapTiles schema, not from a rendered tile. |
+
+### 52.2 Restated, not moved
+
+| ID | Was | Now | Why |
+| --- | --- | --- | --- |
+| M65 | **W** | **W** | **Ruled** — D-81a: a hop may start from the coarse zone the device is in when navigation starts, zone-granular, opt-in, suppressed in protected zones, at most 180 days, flag seeded off. D-81b: an arrival without a named origin is not a hop. D-81c: population presence changes are not crowd flow. So the criterion is amended to the families that can be fed honestly: the observed families plus `navigation_start`, and never presence deltas. **Not built:** the `navigation_start` capture, its consent scope and its producer (`artifacts/api-server/src/lib/crowdFlowProducer.ts:290#export const WIRED_SIGNAL_SOURCES`). These sit in Sensing and crowd flow, which lane L is changing this mission. |
+| M129 | **W** | **W** | **NOT RULED (scope).** An entrance kind would be a fourteenth kind, which the scope ruling admits only on an owner amendment with a written contract. There is no entrance import either. Unchanged. |
+| M130 | **N** | **N** | **NOT RULED (scope).** As M129, plus a venue-interior data source that does not exist. Unchanged. |
+
+The 17 map telemetry rows (M259–M275) are not touched here. Their 30-day retention is migration 3701 on
+lane L's branch (§51 there).
+
+### 52.3 What would turn this red
+
+- The lead declines D-36a. M122 returns to N.
+- A Transport kind or producer added beside the styling. The layer would then be two things, and §18's
+  closed set would need its amendment.
+- The Transport style drawn over the labels, given text, or given a source other than the base map's own.
+
+### 52.4 Headline, restated from the rows
+
+**293 requirements · 240 BUILT-AND-CORRECT · 44 BUILT-BUT-WRONG · 4 NOT-BUILT · 5 CANNOT-VERIFY.**
+240 + 44 + 4 + 5 = 293. CONSTRUCTED 96.9 % (284 / 293) · CORRECT 81.9 % (240 / 293).
+
+| Measure | Value |
+| --- | --- |
+| BUILT-AND-CORRECT | 240 |
+| BUILT-BUT-WRONG | 44 |
+| NOT-BUILT | 4 |
+| CANNOT-VERIFY | 5 |

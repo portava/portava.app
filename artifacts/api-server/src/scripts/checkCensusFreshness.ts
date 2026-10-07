@@ -2558,6 +2558,9 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WIDENED 2026-09-27 by lane X (census-map §45.11–§45.12): the local-harness rehearsal of 3360/3361, and the hook that decides whether the map offers the photo step.
     "artifacts/api-server/src/test/db/intelEvidenceSealedReference.db.test.ts",
     "travel-buddy-standalone/src/hooks/usePhotoEvidenceCoverage.ts",
+    // WIDENED 2026-10-07 by lane M (census-map §52): the two suites M122 moves on that sit outside the watched directories.
+    "travel-buddy-standalone/src/constants/mapTransportStyle.test.ts",
+    "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryMapView.transportLayer.component.test.tsx",
   ],
   "census-sensing.md": [
     // ADDED 2026-09-14 on the Sensing lane's standing request. The scope covered
