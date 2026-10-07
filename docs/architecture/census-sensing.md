@@ -6458,7 +6458,7 @@ applied, flipped or deployed: 3703 is applied nowhere and `sensing_consent_split
   (`artifacts/api-server/src/lib/sensingConsentGrants.ts:178#if (granted && displayedVersion !== version) return`).
 - **Revocable.** Granting needs the flag ON; withdrawing never does
   (`artifacts/api-server/src/routes/sensingConsent.ts:91#if (parsed.data.granted) {`;
-  `artifacts/api-server/src/test/sensingConsentGrants.test.ts:242#it("PUT WITHDRAW is always accepted`).
+  `artifacts/api-server/src/test/sensingConsentGrants.test.ts:248#it("PUT WITHDRAW is always accepted`).
 - **The issuer obeys it, and nothing else.** No session without the flag
   (`artifacts/api-server/src/routes/sensingSession.ts:102#const split = await readFlagState(db, "sensing_consent_split_enabled");`)
   or without capture AND upload; `surface` only on its own grant AND the policy in force
