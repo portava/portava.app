@@ -60,10 +60,12 @@ import {
   buildCreationAssistance,
   buildUnresolvedAddress,
   DUPLICATE_SCAN_UNREADABLE_POLICY_GAP,
+  buildApproximateAreaRows,
 } from "../lib/inputAssistance/creation.js";
 import { isResolvable } from "../lib/inputAssistance/projection.js";
 import { getDuplicateCandidates } from "../services/hiddenGems/HiddenGemModerationService.js";
 import type { InputContext, CreationDraft } from "../lib/inputAssistance/types.js";
+import { searchKey, normalizeLocationName } from "../lib/canonicalLocations.js";
 
 const ME = "aa000000-0000-4000-a000-000000000001";
 
@@ -960,5 +962,87 @@ describe("D11: an unreadable trip list never becomes 'your dates are clear'", ()
       "trip_title", "Spring Escape", draft,
     );
     assert.deepEqual(allClear, [], "a measured all-clear is still silent — that is the honest zero");
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// §24/§36 "use approximate area" for a Hidden Gem (census G136)
+//
+// MUTATION LOG (each applied, watched go red, reverted, `git diff` clean):
+//   - gateway.ts: drop the `buildApproximateAreaRows(...)` push → "hidden_gem_location
+//     offers 'Use approximate area' over the city it resolved" red.
+//   - creation.ts: drop the APPROXIMATE_AREA_CONTEXTS gate → "a place picker is
+//     not a Gem field" red.
+//   - creation.ts: drop the `includes('hidden_gem')` half of the policy gate →
+//     "under policy" red.
+//   - creation.ts: admit `disambiguation` city rows → "an ambiguous city is the
+//     person's choice first" red.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function canonCity(name: string, o: { country: string; countryCode: string; lat: number; lng: number; id: string; region?: string }) {
+  return {
+    id: o.id, kind: "city", name, normalized_name: normalizeLocationName(name), search_key: searchKey(name),
+    display_name: `${name}, ${o.country}`, city: null, region: o.region ?? null, country: o.country,
+    country_code: o.countryCode, postal_code: null, lat: o.lat, lng: o.lng, provider_ids: {}, aliases: [],
+  };
+}
+const DA_NANG_CANON = canonCity("Da Nang", { country: "Vietnam", countryCode: "VN", lat: 16.0678, lng: 108.2208, id: "canon-da-nang" });
+const PARIS_FR_CANON = canonCity("Paris", { country: "France", countryCode: "FR", lat: 48.8566, lng: 2.3522, id: "canon-paris-fr" });
+const PARIS_TX_CANON = canonCity("Paris", { country: "United States", countryCode: "US", region: "Texas", lat: 33.66, lng: -95.55, id: "canon-paris-tx" });
+
+function areaRows(out: any[]) {
+  return out.filter((s) => (s.action as any)?.type === "set_structured_value" && (s.action as any)?.value?.kind === "approximate_area");
+}
+
+describe("§24/§36 use approximate area for a Hidden Gem (G136)", () => {
+  it("hidden_gem_location offers 'Use approximate area' over the city it resolved, carrying that city's binding", async () => {
+    const sc = makeFakeClient(baseTables({ canonical_locations: [DA_NANG_CANON] }));
+    const out = await gen(sc, "hidden_gem_location", "Da Nang");
+    const city = out.find((s: any) => s.type === "entity" && s.entityType === "city");
+    assert.ok(city, "premise: the field resolved the canonical city");
+    const rows = areaRows(out);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].label, "Use approximate area");
+    assert.equal(rows[0].type, "action");
+    const v = (rows[0].action as any).value;
+    assert.equal(v.areaType, "city");
+    assert.equal(v.cityId, "canon-da-nang");
+    assert.equal(v.city, "Da Nang");
+    assert.deepEqual(rows[0].structuredValue, v);
+    // The area's centre is the CITY's public centroid — the same binding the city row carries.
+    assert.equal(v.lat, (city!.structuredValue as any).lat);
+    assert.ok(isResolvable(rows[0]), "§13: not a dead row");
+  });
+
+  it("a place picker is not a Gem field: no approximate area", async () => {
+    const sc = makeFakeClient(baseTables({ canonical_locations: [DA_NANG_CANON] }));
+    const out = await gen(sc, "place_picker", "Da Nang");
+    assert.equal(areaRows(out).length, 0);
+    // The context gate on its own: through the gateway it is masked by place_picker's
+    // policy (no hidden_gem), so it is asked directly with a policy that names both.
+    const gemOut = await gen(sc, "hidden_gem_location", "Da Nang");
+    const cityRow = gemOut.find((s: any) => s.type === "entity" && s.entityType === "city")!;
+    const permissive = { ...resolvePolicy("place_picker")!, entityTypes: ["place", "city", "hidden_gem"] as any, allowedSuggestionTypes: ["entity", "action"] as any };
+    assert.deepEqual(buildApproximateAreaRows("place_picker", permissive, POLICY_VERSION, [cityRow]), []);
+    assert.equal(buildApproximateAreaRows("hidden_gem_location", permissive, POLICY_VERSION, [cityRow]).length, 1, "control");
+  });
+
+  it("under policy: a Gem field whose policy names no hidden_gem, or permits no action, offers none", async () => {
+    const sc = makeFakeClient(baseTables({ canonical_locations: [DA_NANG_CANON] }));
+    const base = resolvePolicy("hidden_gem_location")!;
+    for (const policy of [
+      { ...base, entityTypes: ["place", "city"] as any },
+      { ...base, allowedSuggestionTypes: base.allowedSuggestionTypes.filter((t) => t !== "action") },
+    ]) {
+      const out = await generateSuggestions(sc, { context: "hidden_gem_location", policy, text: "Da Nang", userId: ME, limit: policy.maxSuggestions, lat: null, lng: null, city: null });
+      assert.equal(areaRows(out).length, 0);
+    }
+  });
+
+  it("an ambiguous city is the person's choice first: no approximate area over a disambiguation", async () => {
+    const sc = makeFakeClient(baseTables({ canonical_locations: [PARIS_FR_CANON, PARIS_TX_CANON] }));
+    const out = await gen(sc, "hidden_gem_location", "Paris");
+    assert.ok(out.some((s: any) => s.type === "disambiguation"), "premise: Paris is ambiguous");
+    assert.equal(areaRows(out).length, 0);
   });
 });

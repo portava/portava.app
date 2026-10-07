@@ -19,7 +19,7 @@
  * assistance types (§6): a context only ever emits what its policy permits.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { searchKey } from '../canonicalLocations';
+import { searchKey } from '../canonicalLocations'; import type { CanonicalCityBinding } from './geoResolver';
 import {
   scanDuplicateGems,
   scanDuplicatePlaces,
@@ -608,4 +608,69 @@ export function projectTripWindowsUnreadable(
     reason: 'trip_windows_unreadable',
     policyVersion,
   };
+}
+
+// ── §24/§36 "use approximate area" for a Hidden Gem (census G136) ─────────────
+//
+// The spec's Hidden Gem location flow ends in "Exact location OR approximate
+// area OR map point". Drop-pin (the map point), confirm-existing (the duplicate
+// rows) and "Add a new Gem" (§37, `buildUnresolvedAddress`) had producers; the
+// approximate area did not, so a person creating a sensitive Gem could only
+// pin it exactly or not at all.
+//
+// The row is offered over a CANONICAL CITY the field already resolved: the
+// person typed the area, the gateway bound it to `canonical_locations`, and the
+// row lets them place the Gem by that area rather than by a point. It carries
+// the city binding the city row already carries (its centroid is the city's
+// public centre, not the Gem's position) under `kind: 'approximate_area'`, so
+// a creation screen can tell "this Gem is somewhere in Da Nang" from "this Gem
+// is AT Da Nang's centre".
+//
+// The gates, each a reason to offer nothing:
+//   - only a Gem location field (`APPROXIMATE_AREA_CONTEXTS`);
+//   - the policy must permit `action` rows and name `hidden_gem` among its
+//     entity types — the same "under policy" pair §37's creation row uses;
+//   - only an unambiguous CITY row (`type: 'entity'`, a well-formed binding).
+//     A disambiguation choice is the person's to make first (§19);
+//   - at most two, in the order the cities were served.
+const APPROXIMATE_AREA_CONTEXTS: ReadonlySet<InputContext> = new Set<InputContext>(['hidden_gem_location']);
+const MAX_APPROXIMATE_AREA_ROWS = 2;
+
+function isCityBinding(v: unknown): v is CanonicalCityBinding {
+  if (!v || typeof v !== 'object') return false;
+  const b = v as Record<string, unknown>;
+  return b.entityType === 'city' && typeof b.cityId === 'string' && b.cityId.length > 0 && typeof b.city === 'string';
+}
+
+export function buildApproximateAreaRows(
+  context: InputContext,
+  policy: InputFieldPolicy,
+  policyVersion: string,
+  served: readonly InputSuggestion[],
+): InputSuggestion[] {
+  if (!APPROXIMATE_AREA_CONTEXTS.has(context)) return [];
+  if (!policy.allowedSuggestionTypes.includes('action')) return [];
+  if (!(policy.entityTypes ?? []).includes('hidden_gem')) return [];
+  const out: InputSuggestion[] = [];
+  for (const s of served) {
+    if (out.length >= MAX_APPROXIMATE_AREA_ROWS) break;
+    if (s.type !== 'entity' || s.entityType !== 'city' || !isCityBinding(s.structuredValue)) continue;
+    const city = s.structuredValue;
+    const value = { kind: 'approximate_area', areaType: 'city', ...city };
+    out.push({
+      id: `${context}:action:approximate-area:${city.cityId}`,
+      type: 'action',
+      context,
+      label: 'Use approximate area',
+      subtitle: [city.city, city.country].filter(Boolean).join(', '),
+      action: { type: 'set_structured_value', value },
+      structuredValue: value,
+      // Below the city row itself (an exact binding of the AREA), above drop-pin.
+      confidence: 0.55,
+      source: 'canonical',
+      reason: 'Place the Gem by its area, not an exact point',
+      policyVersion,
+    });
+  }
+  return out;
 }

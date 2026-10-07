@@ -54,7 +54,7 @@ import { POLICY_VERSION } from './policyRegistry';
 import {
   isCreationContext,
   buildCreationAssistance,
-  buildUnresolvedAddress,
+  buildUnresolvedAddress, buildApproximateAreaRows,
 } from './creation';
 import { buildSemanticAssistance, isSemanticContext } from './semanticIntent';
 import { normalizeQuery, buildTypoCorrectionRow, type NormalizedQuery } from './queryNormalizer';
@@ -794,7 +794,7 @@ export async function generateSuggestions(
   // §37: only when NOTHING canonical resolved do we offer context-appropriate
   // fallback actions — policy-gated so a canonical city picker never offers them.
   if (isCreationContext(context)) {
-    const hasEntity = suggestions.some((s) => s.type === 'entity');
+    const hasEntity = suggestions.some((s) => s.type === 'entity'); creationRows.push(...buildApproximateAreaRows(context, policy, POLICY_VERSION, suggestions)); // §24/§36 G136
     const hasDuplicate = creationRows.some((s) => s.type === 'disambiguation');
     if (!hasEntity && !hasDuplicate && q.length >= 2) {
       creationRows.push(...buildUnresolvedAddress(context, policy, POLICY_VERSION, trimmed));
