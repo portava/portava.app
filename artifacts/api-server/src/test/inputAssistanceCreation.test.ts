@@ -977,6 +977,8 @@ describe("D11: an unreadable trip list never becomes 'your dates are clear'", ()
 //     "under policy" red.
 //   - creation.ts: admit `disambiguation` city rows → "an ambiguous city is the
 //     person's choice first" red.
+//   - (verifier D2) creation.ts: drop the non-empty cityId check → "a city row whose
+//     binding has NO canonical id" red; drop the two-row break → "at most two" red.
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function canonCity(name: string, o: { country: string; countryCode: string; lat: number; lng: number; id: string; region?: string }) {
@@ -1037,6 +1039,33 @@ describe("§24/§36 use approximate area for a Hidden Gem (G136)", () => {
       const out = await generateSuggestions(sc, { context: "hidden_gem_location", policy, text: "Da Nang", userId: ME, limit: policy.maxSuggestions, lat: null, lng: null, city: null });
       assert.equal(areaRows(out).length, 0);
     }
+  });
+
+  it("verifier D2: a city row whose binding has NO canonical id (airport / trip-destination bindings) gets no area row", () => {
+    // MUTATION-PROOF: drop `typeof b.cityId === 'string' && b.cityId.length > 0`
+    // from isCityBinding → the id-less row yields an area row → RED.
+    const policy = resolvePolicy("hidden_gem_location")!;
+    const idless = {
+      id: "x", type: "entity", context: "hidden_gem_location", label: "Da Nang", entityType: "city",
+      structuredValue: { entityType: "city", cityId: "", city: "Da Nang", country: "Vietnam", countryCode: "VN", lat: 16.05, lng: 108.2, timezone: null },
+      source: "canonical", policyVersion: "v",
+    } as any;
+    assert.deepEqual(buildApproximateAreaRows("hidden_gem_location", policy, POLICY_VERSION, [idless]), []);
+    const withId = { ...idless, structuredValue: { ...idless.structuredValue, cityId: "canon-da-nang" } };
+    assert.equal(buildApproximateAreaRows("hidden_gem_location", policy, POLICY_VERSION, [withId]).length, 1, "control");
+  });
+
+  it("verifier D2: at most two area rows, in the order the cities were served", () => {
+    // MUTATION-PROOF: drop the MAX_APPROXIMATE_AREA_ROWS break → three rows → RED.
+    const policy = resolvePolicy("hidden_gem_location")!;
+    const city = (id: string, name: string) => ({
+      id, type: "entity", context: "hidden_gem_location", label: name, entityType: "city",
+      structuredValue: { entityType: "city", cityId: id, city: name, country: "Vietnam", countryCode: "VN", lat: 16, lng: 108, timezone: null },
+      source: "canonical", policyVersion: "v",
+    }) as any;
+    const rows = buildApproximateAreaRows("hidden_gem_location", policy, POLICY_VERSION,
+      [city("c1", "Hue"), city("c2", "Hoi An"), city("c3", "Da Lat")]);
+    assert.deepEqual(rows.map((r) => (r.structuredValue as any).cityId), ["c1", "c2"]);
   });
 
   it("an ambiguous city is the person's choice first: no approximate area over a disambiguation", async () => {
