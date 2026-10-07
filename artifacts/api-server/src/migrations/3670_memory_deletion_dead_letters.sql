@@ -4,7 +4,16 @@
 --
 -- POST-CUTOVER CANONICAL FORWARD MIGRATION (3000-3999 band; lane H 3670-3689).
 -- APPLIED TO NO DATABASE by the lane that wrote it. Additive and idempotent:
--- one table, two indexes, grants. No flag, no function, no trigger, no row.
+-- one table, two indexes, grants, and ONE flag seeded FALSE
+-- (`memory_deletion_redrive_enabled`). No function, no trigger.
+--
+-- ── THE FLAG ────────────────────────────────────────────────────────────────
+-- `memory_deletion_redrive_enabled` gates lib/memoryDeletionRedriveScheduler:
+-- ON, an hourly pass re-runs the §21 lifecycle for open letters whose Memory is
+-- still deleted (or gone), and a letter whose Memory is NOT deleted is closed as
+-- moot without running anything. OFF / absent (the seed): one flag read per
+-- tick, nothing else. Letters are written and resolved by the deletion path
+-- itself whatever the flag says.
 --
 -- ── WHY ─────────────────────────────────────────────────────────────────────
 -- services/memory/memoryDeletionLifecycle.ts runs §21's five steps for one
@@ -49,6 +58,9 @@ BEGIN
   IF to_regclass('auth.users') IS NULL THEN
     RAISE EXCEPTION 'PRECONDITION FAILED (3670): auth.users is missing — the erasure cascade cannot be created.';
   END IF;
+  IF to_regclass('public.feature_flags') IS NULL THEN
+    RAISE EXCEPTION 'PRECONDITION FAILED (3670): public.feature_flags does not exist.';
+  END IF;
 END $$;
 
 CREATE TABLE IF NOT EXISTS public.memory_deletion_dead_letters (
@@ -82,6 +94,14 @@ ALTER TABLE public.memory_deletion_dead_letters ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.memory_deletion_dead_letters FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT, INSERT, UPDATE ON public.memory_deletion_dead_letters TO service_role;
 
+INSERT INTO public.feature_flags (flag, enabled, description) VALUES
+  (
+    'memory_deletion_redrive_enabled',
+    false,
+    'Highlights/Memories spec 21 dead-letter redrive (census H193). ON: an hourly pass re-runs the deletion lifecycle for open memory_deletion_dead_letters rows whose Memory is still deleted, and closes as moot a letter whose Memory is not. OFF / absent (the seed): the pass reads this flag and does nothing else. Letters are still written and resolved by the deletion path itself.'
+  )
+ON CONFLICT (flag) DO NOTHING;
+
 COMMENT ON TABLE public.memory_deletion_dead_letters IS
   'Spec §21 dead letters: one row per Memory whose deletion lifecycle exhausted a step''s retries (memoryDeletionLifecycle.ts). Ids, step names, failure text and times only. Erased by cascade from memories and auth.users. service_role only.';
 
@@ -104,6 +124,12 @@ BEGIN
   END IF;
   IF has_table_privilege('service_role', 'public.memory_deletion_dead_letters', 'DELETE') THEN
     RAISE EXCEPTION 'POSTCONDITION FAILED (3670): service_role must not DELETE a dead letter; a resolved one is stamped, not removed';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM public.feature_flags WHERE flag = 'memory_deletion_redrive_enabled') THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3670): memory_deletion_redrive_enabled was not seeded';
+  END IF;
+  IF EXISTS (SELECT 1 FROM public.feature_flags WHERE flag = 'memory_deletion_redrive_enabled' AND enabled = TRUE) THEN
+    RAISE EXCEPTION 'POSTCONDITION FAILED (3670): memory_deletion_redrive_enabled is ON — it must ship OFF; turning it on is an owner decision';
   END IF;
   IF NOT has_table_privilege('service_role', 'public.memory_deletion_dead_letters', 'INSERT')
      OR NOT has_table_privilege('service_role', 'public.memory_deletion_dead_letters', 'UPDATE') THEN

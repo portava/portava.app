@@ -3,7 +3,7 @@
  * whether each one is still running.
  *
  * ── WHY THIS FILE EXISTS ─────────────────────────────────────────────────────
- * `index.ts` starts 59 schedulers at boot (58 until #549 added one that reports). Every one is a `setInterval` inside
+ * `index.ts` starts 60 schedulers at boot (59 until lane H added the deletion redrive, 58 until #549 added one that reports). Every one is a `setInterval` inside
  * the process, and `.replit` sets `deploymentTarget = "autoscale"`, which
  * suspends a container after fifteen idle minutes; a suspended container's
  * event loop does not advance. On 2026-09-30 15:28 all 58 stopped together and
@@ -24,7 +24,7 @@
  *   `start`       the function `index.ts` calls. The guard asserts this set is
  *                 EXACTLY the set of `start…()` statements in `index.ts`, in
  *                 both directions, so a scheduler added without a row here
- *                 fails the build rather than quietly joining the 45.
+ *                 fails the build rather than quietly joining the 46.
  *   `reportedAs`  the job names this scheduler contributes to
  *                 `GET /healthz/schedulers`. The guard asserts each one appears
  *                 as a `job: "…"` literal in `routes/health.ts`, and that every
@@ -36,18 +36,18 @@
  *
  * A row with NEITHER field is a job whose stopping leaves no trace anywhere:
  * no row to go stale, no counter to read, nothing an operator or an alert could
- * notice. There are 45 of those, and that number is the point of this file.
+ * notice. There are 46 of those (45 until lane H's flag-gated deletion redrive), and that number is the point of this file.
  * It was 46 until `startHealthMonitorLoop` began writing its own
  * `stamp_health_monitor` row; the monitor reported to the logger only, and logs
  * on this host are not retained anywhere queryable, so nothing outside the
  * process could establish that it had run at all.
  *
  * ── WHAT THIS FILE IS NOT ────────────────────────────────────────────────────
- * It is not a fix. Knowing that 45 jobs are unobservable does not make them
+ * It is not a fix. Knowing that 46 jobs are unobservable does not make them
  * observable, and it does nothing at all about the suspension that stops all
  * 58 — that needs either an always-on host or an external trigger per job, and
  * both are the owner's call, not a default anyone should pick in a registry.
- * Nobody has yet assessed which of the 45 are time-critical.
+ * Nobody has yet assessed which of the 46 are time-critical.
  *
  * It also does not claim 58 is the number of LOOPS. `startTripProjectionWorkers`
  * starts several workers behind one call, and this list counts the call, which
@@ -105,7 +105,7 @@ export const STARTED_SCHEDULERS: readonly SchedulerRow[] = [
   { start: "startLocationSnapshotPurgeScheduler" },
   { start: "startMediaDedupWorker" },
   { start: "startMediaProcessingWorker" },
-  { start: "startMemoryOutboxScheduler" },
+  { start: "startMemoryOutboxScheduler" }, { start: "startMemoryDeletionRedriveScheduler" }, // §AF (H193), line-neutral
   { start: "startMemoryProjectionScheduler" },
   { start: "startNotificationMaintenanceScheduler", reportedAs: ["notificationMaintenanceScheduler"] },
   { start: "startPendingUploadSweepScheduler" },

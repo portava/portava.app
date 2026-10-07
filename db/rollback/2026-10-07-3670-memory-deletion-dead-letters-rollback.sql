@@ -3,7 +3,7 @@
 -- NOT applied to travel-buddy (ajrurzioarfkagpuxfnb).
 --
 -- WHAT 3670 DID: created public.memory_deletion_dead_letters (and its two
--- indexes) — the durable record of a Memory deletion whose §21 lifecycle
+-- indexes) and seeded memory_deletion_redrive_enabled FALSE — the durable record of a Memory deletion whose §21 lifecycle
 -- exhausted a step's retries.
 -- WHAT THIS ROLLBACK DOES: drops it — ONLY while it holds no OPEN letter. An
 -- open letter is a deletion that did not finish (a derivative, an evidence row
@@ -16,6 +16,9 @@ BEGIN;
 
 DO $$
 BEGIN
+  IF EXISTS (SELECT 1 FROM public.feature_flags WHERE flag = 'memory_deletion_redrive_enabled' AND enabled = TRUE) THEN
+    RAISE EXCEPTION 'ROLLBACK REFUSED (3670): memory_deletion_redrive_enabled is TRUE. Turn it off deliberately first.';
+  END IF;
   IF to_regclass('public.memory_deletion_dead_letters') IS NOT NULL
      AND EXISTS (SELECT 1 FROM public.memory_deletion_dead_letters WHERE resolved_at IS NULL) THEN
     RAISE EXCEPTION 'ROLLBACK REFUSED (3670): memory_deletion_dead_letters holds open dead letters. Finish or record those deletions first.';
@@ -23,6 +26,7 @@ BEGIN
 END $$;
 
 DROP TABLE IF EXISTS public.memory_deletion_dead_letters;
+DELETE FROM public.feature_flags WHERE flag = 'memory_deletion_redrive_enabled' AND enabled = FALSE;
 DELETE FROM public.schema_migration_ledger WHERE filename = '3670_memory_deletion_dead_letters.sql';
 
 COMMIT;

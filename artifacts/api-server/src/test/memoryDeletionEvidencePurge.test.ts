@@ -30,6 +30,7 @@ import memoryCandidatesRouter from "../routes/memoryCandidates.js";
 import memoriesRouter from "../routes/memories.js";
 import { resetHighlightSchemaMemo } from "../services/highlights/highlightSchemaAvailability.js";
 import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js";
+import { runMemoryDeletionRedrivePass } from "../lib/memoryDeletionRedriveScheduler.js";
 
 const OWNER = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const OTHER = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
@@ -486,5 +487,66 @@ describe("§21 dead letters are DURABLE (migration 3670) — census H193", () =>
     const report = lifecycleReport(app);
     assert.deepEqual([report.completed, report.deadLettered, report.deadLetterDurable, report.deadLetterDetail], [true, false, false, ""]);
     assert.equal(letterOf(app, memoryId), undefined);
+  });
+});
+
+describe("the redrive pass re-runs dead-lettered deletions (memory_deletion_redrive_enabled, 3670) — H193", () => {
+  const FLAG_ON = { flag: "memory_deletion_redrive_enabled", enabled: true };
+  const letterOf = (a: App, memoryId: string) => (a.store.memory_deletion_dead_letters ?? []).find((r) => r.memory_id === memoryId);
+  /** Keep the evening, delete it with a purge that fails, so its deletion dead-letters. */
+  async function deadLettered(): Promise<{ memoryId: string; episodeId: string }> {
+    app = await start();
+    const kept = await keepEvening(app);
+    _setTestClient(makeClient(app.store, { failWrites: new Set(["memory_evidence:delete"]) }) as any, true);
+    assert.equal((await call(app, "DELETE", `/api/memories/${kept.memoryId}`)).status, 204);
+    assert.ok(letterOf(app, kept.memoryId), "precondition: an open dead letter");
+    return kept;
+  }
+
+  it("flag OFF (the seed): one flag read and nothing else — the letter stays open, nothing is re-run", async () => {
+    const { memoryId, episodeId } = await deadLettered();
+    const before = JSON.stringify([app!.store.memory_evidence, app!.store.memory_deletion_dead_letters]);
+    const out = await runMemoryDeletionRedrivePass({ client: makeClient(app!.store), now: new Date("2026-10-07T13:00:00.000Z") });
+    assert.deepEqual([out.skipped, out.reason], [true, "disabled"]);
+    assert.equal(JSON.stringify([app!.store.memory_evidence, app!.store.memory_deletion_dead_letters]), before);
+    assert.ok(evidenceOf(app!, episodeId).length > 0);
+    assert.equal(letterOf(app!, memoryId).resolved_at, null);
+  });
+
+  it("flag ON: a still-deleted Memory's deletion is re-run to completion, its evidence purged and its letter resolved", async () => {
+    const { memoryId, episodeId } = await deadLettered();
+    app!.store.feature_flags.push(FLAG_ON);
+    const out = await runMemoryDeletionRedrivePass({ client: makeClient(app!.store), now: new Date("2026-10-07T13:00:00.000Z") });
+    assert.deepEqual([out.considered, out.resolved, out.stillFailing, out.moot], [1, 1, 0, 0]);
+    assert.deepEqual(evidenceOf(app!, episodeId), []);
+    assert.equal(letterOf(app!, memoryId).resolved_at, "2026-10-07T13:00:00.000Z");
+  });
+
+  it("flag ON, still failing: the letter stays open and its count goes up", async () => {
+    const { memoryId } = await deadLettered();
+    app!.store.feature_flags.push(FLAG_ON);
+    const out = await runMemoryDeletionRedrivePass({ client: makeClient(app!.store, { failWrites: new Set(["memory_evidence:delete"]) }), now: new Date("2026-10-07T13:00:00.000Z") });
+    assert.deepEqual([out.resolved, out.stillFailing], [0, 1]);
+    assert.deepEqual([letterOf(app!, memoryId).letters, letterOf(app!, memoryId).resolved_at], [2, null]);
+  });
+
+  it("a letter whose Memory is NOT deleted is closed as moot, and no deletion step runs against a live Memory", async () => {
+    const { memoryId, episodeId } = await deadLettered();
+    app!.store.feature_flags.push(FLAG_ON);
+    app!.store.memories.find((x) => x.id === memoryId).state = "published"; // restored by support
+    const evidenceBefore = JSON.stringify(evidenceOf(app!, episodeId));
+    const out = await runMemoryDeletionRedrivePass({ client: makeClient(app!.store), now: new Date("2026-10-07T13:00:00.000Z") });
+    assert.deepEqual([out.moot, out.resolved, out.stillFailing], [1, 0, 0]);
+    assert.equal(JSON.stringify(evidenceOf(app!, episodeId)), evidenceBefore, "nothing was purged for a live Memory");
+    const letter = letterOf(app!, memoryId);
+    assert.equal(letter.resolved_at, "2026-10-07T13:00:00.000Z");
+    assert.match(letter.detail, /moot: the Memory is 'published', not deleted/);
+  });
+
+  it("3670 not applied: `not_deployed`, and nothing else is read", async () => {
+    app = await start({ absent: new Set(["memory_deletion_dead_letters"]) });
+    app.store.feature_flags.push(FLAG_ON);
+    const out = await runMemoryDeletionRedrivePass({ client: makeClient(app.store, { absent: new Set(["memory_deletion_dead_letters"]) }) });
+    assert.deepEqual([out.skipped, out.reason], [true, "not_deployed"]);
   });
 });

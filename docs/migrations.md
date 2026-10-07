@@ -4197,7 +4197,12 @@ SELECT, INSERT, UPDATE and NOT DELETE (a resolved letter is stamped, never remov
 step (`deletionDispositions.ERASED_BY_CASCADE`).
 
 **Safe to leave unapplied.** The writer reads 42P01 / PGRST205, reports `deadLetterDurable: false` with that
-reason, and the deletion itself is unaffected — the behaviour before this file. No flag, function or trigger.
+reason, and the deletion itself is unaffected — the behaviour before this file. No function or trigger.
+
+**One flag, seeded FALSE: `memory_deletion_redrive_enabled`.** It gates `lib/memoryDeletionRedriveScheduler.ts`
+(hourly): ON, open letters whose Memory is still deleted (or gone) are re-run through the §21 lifecycle, and a
+letter whose Memory is not deleted is closed as moot without running any step. OFF / absent: one flag read a tick.
+The postcondition refuses a seed that finds it ON; turning it on is the owner's call.
 
 **Rollback:** `db/rollback/2026-10-07-3670-memory-deletion-dead-letters-rollback.sql` — refuses while any letter
-is still open (an unfinished deletion), otherwise drops the table and its ledger row.
+is still open (an unfinished deletion) or the flag is ON, otherwise drops the table, the FALSE flag row and its ledger row.
