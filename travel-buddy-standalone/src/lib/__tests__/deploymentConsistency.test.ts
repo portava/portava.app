@@ -58,6 +58,16 @@ describe('deploymentConsistencyProblem', () => {
     assert.ok(problem({ supabaseUrl: BETA_DB, apiBaseUrl: 'https://PORTAVA.replit.app', deploymentEnv: 'beta' }));
   });
 
+  it('REFUSED (verifier N7): an http:// or path-suffixed Supabase URL is judged by its host', () => {
+    assert.ok(problem({ supabaseUrl: 'http://ajrurzioarfkagpuxfnb.supabase.co', apiBaseUrl: BETA_API }));
+    assert.ok(problem({ supabaseUrl: `${PROD_DB}/rest/v1`, apiBaseUrl: BETA_API }));
+    assert.ok(problem({ supabaseUrl: 'https://AJRURZIOARFKAGPUXFNB.supabase.co:443/', apiBaseUrl: BETA_API }));
+    assert.ok(problem({ supabaseUrl: `${PROD_DB}/rest/v1`, apiBaseUrl: BETA_API, webOrigin: BETA_API, deploymentEnv: 'beta' }));
+    // the same spellings of the RIGHT project still run
+    assert.equal(problem({ supabaseUrl: `${BETA_DB}/rest/v1`, apiBaseUrl: BETA_API, webOrigin: BETA_API, deploymentEnv: 'beta' }), null);
+    assert.equal(problem({ supabaseUrl: 'http://ajrurzioarfkagpuxfnb.supabase.co/', apiBaseUrl: PROD_API }), null);
+  });
+
   it('REFUSED: an unknown declared deployment', () => {
     assert.match(String(problem({ supabaseUrl: BETA_DB, apiBaseUrl: BETA_API, deploymentEnv: 'staging' })), /unknown deployment/);
   });

@@ -142,6 +142,19 @@ const DELETE_RE = /DELETE\s+FROM\s+(?:[A-Za-z_][A-Za-z0-9_]*\.)?feature_flags\b/
 const UPDATE_RE = /UPDATE\s+(?:[A-Za-z_][A-Za-z0-9_]*\.)?feature_flags\b/gi;
 const ROW_RE = /\(\s*'([A-Za-z0-9_]+)'\s*,\s*(true|false)\b/gi;
 
+/** A SQL LIKE pattern (`%`, `_`, backslash escapes) as an anchored RegExp; ILIKE is case-insensitive. */
+export function likeToRegExp(pattern: string, caseInsensitive = false): RegExp {
+  let out = "";
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i];
+    if (c === "\\" && i + 1 < pattern.length) { out += pattern[++i].replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); continue; }
+    if (c === "%") out += ".*";
+    else if (c === "_") out += ".";
+    else out += c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+  return new RegExp(`^${out}$`, caseInsensitive ? "i" : "");
+}
+
 /**
  * Flags the migration chain leaves in public.feature_flags, in chain order:
  * seeded by an INSERT, minus those a later DELETE retires (re-seeding after a
@@ -154,7 +167,7 @@ export function seededFlagPopulation(
   const live = new Map<string, SeededFlag>();
   for (const f of files) {
     const text = stripSqlComments(read(f));
-    const events: Array<{ at: number; kind: "seed" | "delete" | "set-true"; flag: string; value?: boolean; line?: number }> = [];
+    const events: Array<{ at: number; kind: "seed" | "delete" | "set-true" | "set-true-like"; flag: string; value?: boolean; line?: number }> = [];
     for (const m of text.matchAll(INSERT_RE)) {
       const stmt = statementAt(text, m.index ?? 0);
       for (const r of stmt.matchAll(ROW_RE)) {
@@ -164,9 +177,18 @@ export function seededFlagPopulation(
     }
     for (const m of text.matchAll(UPDATE_RE)) {
       const stmt = statementAt(text, m.index ?? 0);
-      if (!/\bSET\s+enabled\s*=\s*true\b/i.test(stmt)) continue;
-      const where = stmt.slice(stmt.search(/\bWHERE\b/i) >= 0 ? stmt.search(/\bWHERE\b/i) : stmt.length);
+      const setAt = stmt.search(/\bSET\b/i);
+      if (setAt < 0) continue;
+      const whereAt = stmt.search(/\bWHERE\b/i);
+      const setClause = stmt.slice(setAt + 3, whereAt >= 0 ? whereAt : stmt.length);
+      // `enabled = true` anywhere in the SET list (`SET metadata = '{}', enabled = true` too), outside literals.
+      if (!/(?:^|,)\s*enabled\s*=\s*true\b/i.test(setClause.replace(/'(?:[^']|'')*'/g, "''"))) continue;
+      const where = whereAt >= 0 ? stmt.slice(whereAt) : "";
       for (const r of where.matchAll(/'([A-Za-z0-9_]+)'/g)) events.push({ at: m.index ?? 0, kind: "set-true", flag: r[1] });
+      // `WHERE flag LIKE 'wall\_%'` — every live flag the pattern matches at this point in the chain.
+      for (const r of where.matchAll(/\bflag\s+(I?LIKE)\s+'((?:[^']|'')*)'/gi)) {
+        events.push({ at: m.index ?? 0, kind: "set-true-like", flag: r[2], value: r[1].toUpperCase() === "ILIKE" });
+      }
     }
     for (const m of text.matchAll(DELETE_RE)) {
       const stmt = statementAt(text, m.index ?? 0);
@@ -178,6 +200,9 @@ export function seededFlagPopulation(
       else if (e.kind === "set-true") {
         const cur = live.get(e.flag);
         if (cur) cur.everSetTrue = true;
+      } else if (e.kind === "set-true-like") {
+        const re = likeToRegExp(e.flag, e.value === true);
+        for (const cur of live.values()) if (re.test(cur.flag)) cur.everSetTrue = true;
       } else if (!live.has(e.flag)) {
         live.set(e.flag, { flag: e.flag, seededIn: `${f}:${e.line}`, seededValue: e.value === true, everSetTrue: e.value === true });
       } else if (e.value === true) {

@@ -255,6 +255,22 @@ describe("beta-flag-policy.json — every flag the beta database will hold, deci
     } as Record<string, string>)[f]);
     assert.equal(q.get("z_enabled")?.everSetTrue, true, "an UPDATE … SET enabled = true turns it on");
     assert.equal(q.get("w_enabled")?.everSetTrue, false, "a commented or a FALSE update does not");
+    // verifier N6: `enabled = true` later in the SET list, and `WHERE flag LIKE`.
+    const r = seededFlagPopulation(["a.sql", "b.sql"], (f) => ({
+      "a.sql": "INSERT INTO feature_flags (flag, enabled) VALUES ('m_enabled', false), ('wall_a_enabled', false), ('wall_b_enabled', false), ('wallx_enabled', false), ('n_enabled', false), ('o_enabled', false);",
+      "b.sql": [
+        "UPDATE public.feature_flags SET metadata = '{\"rollout\":1}', updated_at = now(), enabled = true WHERE flag = 'm_enabled';",
+        "UPDATE feature_flags SET enabled = true WHERE flag LIKE 'wall\\_%';",
+        "UPDATE feature_flags SET description = 'enabled = true is only text here' WHERE flag = 'n_enabled';",
+        "UPDATE feature_flags SET enabled = true, metadata = '{}' WHERE flag ILIKE 'O\\_ENABLED';",
+      ].join("\n"),
+    } as Record<string, string>)[f]);
+    assert.equal(r.get("m_enabled")?.everSetTrue, true, "SET …, enabled = true");
+    assert.equal(r.get("wall_a_enabled")?.everSetTrue, true, "WHERE flag LIKE 'wall\\_%'");
+    assert.equal(r.get("wall_b_enabled")?.everSetTrue, true);
+    assert.equal(r.get("wallx_enabled")?.everSetTrue, false, "the escaped underscore is literal");
+    assert.equal(r.get("n_enabled")?.everSetTrue, false, "'enabled = true' inside a string literal is not a SET");
+    assert.equal(r.get("o_enabled")?.everSetTrue, true, "ILIKE is case-insensitive");
   });
 });
 

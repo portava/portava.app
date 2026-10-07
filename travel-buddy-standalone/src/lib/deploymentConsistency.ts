@@ -43,9 +43,15 @@ export interface DeploymentAddresses {
   deploymentEnv?: string;
 }
 
+/**
+ * The project ref of any Supabase URL — `http://` or `https://`, with or without
+ * a path, port or trailing slash (verifier N7): the host `<ref>.supabase.co`
+ * decides, not the URL's exact spelling. Anything else → null (not judged).
+ */
 function supabaseRef(url: string | undefined): string | null {
-  const m = /^https:\/\/([a-z0-9]+)\.supabase\.co\/?$/i.exec((url ?? '').trim());
-  return m ? m[1].toLowerCase() : null;
+  const host = hostOf(url);
+  const m = host ? /^([a-z0-9]+)\.supabase\.co$/.exec(host) : null;
+  return m ? m[1] : null;
 }
 
 function hostOf(url: string | undefined): string | null {
