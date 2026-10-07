@@ -1116,6 +1116,7 @@ describe("canonicalPredicate — PostgreSQL's rendering is not drift; a real cha
     highlight_sources: ["highlight_id"],
     t: ["a", "b", "c", "owner_id"],
     t2: ["id"],
+    t3: ["owner_id"],
   };
   const colsOf = (x: string) => (cols[x] ? new Set(cols[x]) : undefined);
   const fns = (f: string) => (f === "can_see_location" ? "authz" : undefined);
@@ -1174,6 +1175,9 @@ describe("canonicalPredicate — PostgreSQL's rendering is not drift; a real cha
     // t2 has no owner_id: unqualified owner_id inside the subquery is the OUTER t.owner_id.
     assert.ok(!same("t", "exists (select 1 from t2 x where owner_id = auth.uid())", "exists (select 1 from t2 x where x.id = auth.uid())"));
     assert.ok(same("t", "exists (select 1 from t2 x where owner_id = auth.uid())", "(EXISTS ( SELECT 1 FROM t2 x WHERE (t.owner_id = auth.uid())))"));
+    // t3 HAS owner_id: the same column name, qualified to the inner or the outer table, is two different predicates.
+    assert.ok(!same("t", "exists (select 1 from t3 x where x.owner_id = auth.uid())", "exists (select 1 from t3 x where t.owner_id = auth.uid())"));
+    assert.ok(same("t", "exists (select 1 from t3 x where owner_id = auth.uid())", "exists (select 1 from t3 x where x.owner_id = auth.uid())"), "unqualified resolves to the innermost table that has it");
   });
   it("what it cannot parse is null, so the caller falls back to text", () => {
     assert.equal(canonicalPredicate("%s", "t"), null);
@@ -1201,5 +1205,7 @@ describe("canonicalPredicate — PostgreSQL's rendering is not drift; a real cha
       }).findings.map((f) => f.code);
     assert.deepEqual(run("((a = ANY (ARRAY['x'::text, 'y'::text])) AND (b <> 1))"), []);
     assert.deepEqual(run("((a = ANY (ARRAY['x'::text, 'z'::text])) AND (b <> 1))"), ["POLICY_PREDICATE_DRIFT"]);
+    // A live predicate the parser cannot read is compared as text, never assumed equal.
+    assert.deepEqual(run("a = %s"), ["POLICY_PREDICATE_DRIFT"]);
   });
 });
