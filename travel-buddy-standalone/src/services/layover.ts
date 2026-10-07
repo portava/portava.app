@@ -312,7 +312,13 @@ export type OfflineUnavailableReason =
   | 'no_envelope_geometry'
   | 'no_flight_feed'
   | 'no_crew_storage' | 'crew_not_read' | 'not_in_crew' | 'no_meeting_point_set' | 'crew_unreadable' // §48 L154; the first is what pre-§48 cached bundles carry
-  | 'no_phrase_catalogue';
+  | 'no_phrase_catalogue' // what bundles cached before §16 L155 carry
+  | 'language_not_in_catalogue' | 'plan_stays_airside'; // §16 L155 (lane R, 2026-10-07)
+
+/** §16 L155 — one return phrase: the local sentence to show, and what it says. */
+export interface LayoverPhrase { key: string; english: string; local: string }
+/** §16 L155 — the return phrases the plan requires, in the airport country's language. */
+export interface LayoverPhraseSet { language: string; languageName: string; phrases: LayoverPhrase[] }
 
 export interface OfflineCapability<T> {
   available: boolean;
@@ -370,7 +376,8 @@ export interface LayoverOfflineBundle {
    * still say where to meet when the network has gone.
    */
   crewMeetingPoint: OfflineCapability<string>;
-  translationPhrases: OfflineCapability<never>;
+  /** §16 L155 — the return phrases, cached with the bundle so they survive the network going (layoverPlanCache). */
+  translationPhrases: OfflineCapability<LayoverPhraseSet>;
   stops: Array<{ title: string; durationMin: number; travelMin: number; insideAirport: boolean }>;
 }
 
