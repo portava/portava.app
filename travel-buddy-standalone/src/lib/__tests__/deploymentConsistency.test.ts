@@ -68,6 +68,17 @@ describe('deploymentConsistencyProblem', () => {
     assert.equal(problem({ supabaseUrl: 'http://ajrurzioarfkagpuxfnb.supabase.co/', apiBaseUrl: PROD_API }), null);
   });
 
+  it('REFUSED (N7 residual): a trailing-dot host is judged, unlabelled and beta-labelled', () => {
+    // unlabelled: production database (FQDN spelling) + beta API, and beta database + production API (FQDN)
+    assert.ok(problem({ supabaseUrl: 'https://ajrurzioarfkagpuxfnb.supabase.co.', apiBaseUrl: BETA_API }));
+    assert.ok(problem({ supabaseUrl: BETA_DB, apiBaseUrl: 'https://portava.replit.app./' }));
+    // beta-labelled: the same two
+    assert.match(String(problem({ supabaseUrl: 'https://ajrurzioarfkagpuxfnb.supabase.co.', apiBaseUrl: BETA_API, deploymentEnv: 'beta' })), /its database \(ajrurzioarfkagpuxfnb\)/);
+    assert.match(String(problem({ supabaseUrl: BETA_DB, apiBaseUrl: 'https://portava.replit.app./', deploymentEnv: 'beta' })), /its API \(portava\.replit\.app\)/);
+    // and the right project spelled that way still runs
+    assert.equal(problem({ supabaseUrl: 'https://emfpckykpzfturllshly.supabase.co.', apiBaseUrl: 'https://portava-beta.replit.app./', deploymentEnv: 'beta' }), null);
+  });
+
   it('REFUSED: an unknown declared deployment', () => {
     assert.match(String(problem({ supabaseUrl: BETA_DB, apiBaseUrl: BETA_API, deploymentEnv: 'staging' })), /unknown deployment/);
   });

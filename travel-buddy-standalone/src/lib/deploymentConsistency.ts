@@ -58,7 +58,9 @@ function hostOf(url: string | undefined): string | null {
   const v = (url ?? '').trim();
   if (!v) return null;
   try {
-    return new URL(v).hostname.toLowerCase();
+    // One trailing dot is the DNS-equivalent fully-qualified spelling
+    // (`portava.replit.app.`); WHATWG URL keeps it, so strip it before judging.
+    return new URL(v).hostname.toLowerCase().replace(/\.$/, '');
   } catch {
     return null;
   }

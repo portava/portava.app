@@ -261,7 +261,7 @@ describe("beta-flag-policy.json — every flag the beta database will hold, deci
       "b.sql": [
         "UPDATE public.feature_flags SET metadata = '{\"rollout\":1}', updated_at = now(), enabled = true WHERE flag = 'm_enabled';",
         "UPDATE feature_flags SET enabled = true WHERE flag LIKE 'wall\\_%';",
-        "UPDATE feature_flags SET description = 'enabled = true is only text here' WHERE flag = 'n_enabled';",
+        "UPDATE feature_flags SET description = 'foo, enabled = true' WHERE flag = 'n_enabled';",
         "UPDATE feature_flags SET enabled = true, metadata = '{}' WHERE flag ILIKE 'O\\_ENABLED';",
       ].join("\n"),
     } as Record<string, string>)[f]);
