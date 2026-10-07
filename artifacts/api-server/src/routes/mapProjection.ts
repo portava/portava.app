@@ -125,6 +125,7 @@ import { readLiveClaims, toLiveClaimEnvelope } from "../lib/liveClaimRead.js";
 import { loadNearbyEvents } from "./mapSearch.js";
 import { aggregateForViewport, bboxContains, deriveCrowdFlow, type BBox } from "../lib/mapAggregation.js";
 import { applyProtection, type ProtectedZone } from "../lib/protectedLocations.js";
+import { recordProtectionPass } from "../lib/mapProtectionTelemetry.js";
 import { clearProtectedZoneCache, loadActiveProtectedZones } from "../lib/protectedZoneStore.js";
 import { CROWD_FLOW_FLAG, produceZoneTransitions } from "../lib/crowdFlowProducer.js";
 import { readMeetingPoints } from "../lib/mapProducers/meetingPointProducer.js";
@@ -1060,6 +1061,10 @@ router.get(
 
     const protection = applyProtection(objects, zones);
     objects = protection.objects;
+    // The per-reason counts are SERVER TELEMETRY, never the response: with one
+    // circle member, `suppressed: 1` told the viewer their friend was inside a
+    // protected zone (lib/mapProtectionTelemetry.ts).
+    recordProtectionPass(req.log, "map_projection", protection.report);
 
     // §31 viewport aggregation. At wide zoom many objects collapse into
     // activity zones; below the k-anonymity floor a cell is SUPPRESSED rather
@@ -1438,9 +1443,6 @@ router.get(
         suppressedForKAnonymity: aggregation.suppressedForKAnonymity,
         zones: aggregation.zones,
       },
-      // Counts only, by construction — naming WHICH zone hid what would
-      // re-leak the location the gate just removed.
-      protection: protection.report,
       liveEnrichment: {
         considered: enrichment.considered,
         enriched: enrichment.enriched,
