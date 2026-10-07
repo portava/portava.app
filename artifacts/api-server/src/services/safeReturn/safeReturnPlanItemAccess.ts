@@ -64,6 +64,12 @@ export function canSeePlanItemLocation(access: PlanItemAccess, row: PlanRowLike)
   const owner = typeof row.creator_id === "string" ? row.creator_id : null;
   if (owner !== null && owner === access.viewerId) return true;
   if (row.removed_at !== undefined && row.removed_at !== null) return false;
+  // A grant read that FAILED is owner-only, whatever the grants map holds
+  // (census-layover §52.2, verifier probe P8b): `{ status: "unread" }` with a
+  // non-empty map used to admit the grantee. Nothing on this tree builds that
+  // state, and lane C's `planItemAccessFor` must not be able to either once it
+  // is bound here.
+  if (access.status !== "ok") return false;
   const grantOwner = typeof row.id === "string" ? access.grants.get(row.id) : undefined;
   return owner !== null && grantOwner === owner;
 }
