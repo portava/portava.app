@@ -191,19 +191,39 @@ function orFilter(expr: string): (r: Row) => boolean {
   return (r) => clauses.some((f) => f(r));
 }
 
+/**
+ * `failing` names a table whose every read fails, or `table@column=value` for a
+ * failure on only the reads that filter `.eq(column, value)` — one direction of
+ * the two `blocks` reads (verifier minor 5). `order` is honoured (verifier minor
+ * 8): rows without the column sort last, and `limit` applies after it.
+ */
 function makeClient(db: Record<string, Row[]>, failing: ReadonlySet<string> = new Set()) {
   function from(table: string): Builder {
     const filters: Array<(r: Row) => boolean> = [];
+    const eqs: string[] = [];
     let limitN: number | null = null;
+    let orderBy: { c: string; asc: boolean } | null = null;
     const run = async (one: boolean): Promise<Result> => {
-      if (failing.has(table)) return { data: null, error: { message: `injected failure on ${table}`, code: "XX000" } };
+      if (failing.has(table) || eqs.some((e) => failing.has(`${table}@${e}`))) {
+        return { data: null, error: { message: `injected failure on ${table}`, code: "XX000" } };
+      }
       let rows = (db[table] ?? []).filter((r) => filters.every((f) => f(r)));
+      if (orderBy) {
+        const { c, asc } = orderBy;
+        rows = [...rows].sort((x, y) => {
+          const a = x[c], z = y[c];
+          if (a == null && z == null) return 0;
+          if (a == null) return 1;
+          if (z == null) return -1;
+          return (String(a) < String(z) ? -1 : String(a) > String(z) ? 1 : 0) * (asc ? 1 : -1);
+        });
+      }
       if (limitN !== null) rows = rows.slice(0, limitN);
       return { data: one ? (rows[0] ?? null) : rows, error: null };
     };
     const b: Builder = {
       select() { return b; },
-      eq(c, v) { filters.push((r) => r[c] === v); return b; },
+      eq(c, v) { eqs.push(`${c}=${String(v)}`); filters.push((r) => r[c] === v); return b; },
       neq(c, v) { filters.push((r) => r[c] !== v); return b; },
       in(c, vs) { filters.push((r) => vs.includes(r[c])); return b; },
       is(c, v) { filters.push((r) => (r[c] ?? null) === v); return b; },
@@ -221,7 +241,10 @@ function makeClient(db: Record<string, Row[]>, failing: ReadonlySet<string> = ne
         filters.push((r) => typeof r[c] === "string" && (r[c] as string).includes(needle));
         return b;
       },
-      order() { return b; },
+      order(c, o) {
+        if (c) orderBy = { c, asc: (o as { ascending?: boolean } | undefined)?.ascending !== false };
+        return b;
+      },
       limit(n) { limitN = n; return b; },
       maybeSingle() { return run(true); },
       single() { return run(true); },
@@ -728,5 +751,37 @@ describe("Telegraph share card — layover and trip state edges (verifier minors
     db.trip_members = [{ trip_id: TRIP_PUBLIC, user_id: ALICE, status: "accepted" }];
     const accepted = await card("TRIP", TRIP_PUBLIC, db);
     assert.equal(accepted.available, true);
+  });
+});
+
+describe("Telegraph share card — one-sided block reads and the share lookup's order (verifier minors 5 and 8)", () => {
+  it("only the OWNER-direction blocks read fails: unknown, never a card", async () => {
+    const r = await card("MEMORY", M_PUBLIC, tables(), new Set([`blocks@blocker_id=${BOB}`]));
+    assert.equal(r.available, false);
+    assert.equal(r.reason, "unknown");
+    assert.equal(r.projection, null);
+  });
+
+  it("only the VIEWER-direction blocks read fails: unknown, never a card", async () => {
+    const r = await card("MEMORY", M_PUBLIC, tables(), new Set([`blocks@blocker_id=${ALICE}`]));
+    assert.equal(r.available, false);
+    assert.equal(r.reason, "unknown");
+    assert.equal(r.projection, null);
+  });
+
+  it("the traveller's NEWEST share resolves the card behind 20 older shares that also carry its id", async () => {
+    const db = withCrew(tables());
+    const OTHER = "1a110000-0000-4000-8000-0000000000ff";
+    const decoys = Array.from({ length: 20 }, (_, i) =>
+      shareMessage(BOB, "LAYOVER_PLAN", OTHER, THREAD, {
+        id: `decoy-${i}`,
+        created_at: `2026-10-01T00:${String(i).padStart(2, "0")}:00.000Z`,
+        body: JSON.stringify(buildPortavaObjectBody("LAYOVER_PLAN", OTHER, `see also ${LAY}`)),
+      }),
+    );
+    db.messages = [...decoys, shareMessage(BOB, "LAYOVER_PLAN", LAY, THREAD, { created_at: "2026-10-02T00:00:00.000Z" })];
+    const r = await card("LAYOVER_PLAN", LAY, db);
+    assert.equal(r.available, true, "the newest share is among the 20 read");
+    assert.equal(r.projection?.objectId, LAY);
   });
 });

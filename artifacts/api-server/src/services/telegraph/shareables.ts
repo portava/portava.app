@@ -43,7 +43,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { mayDiscloseGemIdentity } from "../hiddenGems/HiddenGemPrivacyGuard.js";
 import { canReadMemory } from "../memory/memoryReadPolicy.js";
-import { applyHistoryWindow, historyBoundEnabled, membershipSelect, visibleFromOf } from "../groupChatHistoryBound.js";
+import { applyHistoryWindow, historyBoundEnabled, visibleFromOf } from "../groupChatHistoryBound.js";
 import { decideHighlightViewAccess } from "../../routes/highlights.js";
 import { canViewEvent, checkEventEligibility } from "../../routes/events.js";
 import { isFlagEnabled } from "../../lib/featureFlags.js";
@@ -1192,7 +1192,9 @@ async function ownerSharedIntoThread(
   if (boundOn) {
     const { data: membership, error: mErr } = await client
       .from("message_thread_members")
-      .select(membershipSelect("thread_id, user_id", boundOn))
+      // A literal, not membershipSelect(...): check:write-path-columns resolves only
+      // literals and same-file consts, and this branch runs only with the bound on.
+      .select("thread_id, user_id, visible_from_at")
       .eq("thread_id", conversationId)
       .eq("user_id", viewerId)
       .maybeSingle();
@@ -1209,7 +1211,12 @@ async function ownerSharedIntoThread(
     .eq("subtype", objectType.toLowerCase())
     .is("deleted_at", null)
     .like("body", `%${objectId}%`);
-  const { data, error } = await applyHistoryWindow(query, visibleFrom, viewerId).limit(20);
+  // Newest first (verifier minor 8): the 20 read are the owner's latest shares of
+  // this kind in this thread, so older decoys cannot crowd out a recent share.
+  // Still fail-closed: a share older than 20 such messages is "not shared".
+  const { data, error } = await applyHistoryWindow(query, visibleFrom, viewerId)
+    .order("created_at", { ascending: false })
+    .limit(20);
   if (error) return "unreadable";
   for (const m of (data ?? []) as Row[]) {
     const body = parsePortavaObjectBody(m.body);
