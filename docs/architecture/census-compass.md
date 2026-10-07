@@ -4340,13 +4340,13 @@ A provider record is this place only when the names are equal after NFKD, diacri
 full case fold, punctuation removal and whitespace collapsing, AND the record's own coordinates lie
 within `artifacts/api-server/src/lib/liveIntelligence.ts:125#export const LIVE_IDENTITY_MAX_DISTANCE_M = 150;`
 of the place's (`artifacts/api-server/src/lib/liveIntelligence.ts:231#!== want) return false;`,
-`artifacts/api-server/src/lib/liveIntelligence.ts:236#<= LIVE_IDENTITY_MAX_DISTANCE_M;`).
+`artifacts/api-server/src/lib/liveIntelligence.ts:234#<= LIVE_IDENTITY_MAX_DISTANCE_M;`).
 The lookup takes the place's coordinates as a required anchor; with none it asks no provider and
-returns null (`artifacts/api-server/src/lib/liveIntelligence.ts:265#if (!at) return null;`). It
+returns null (`artifacts/api-server/src/lib/liveIntelligence.ts:263#if (!at) return null;`). It
 searches around the anchor for five candidates with their coordinates
-(`artifacts/api-server/src/lib/liveIntelligence.ts:282#ll:`) and uses the FIRST that passes
-(`artifacts/api-server/src/lib/liveIntelligence.ts:311#const r = results.find((x) => x?.fsq_place_id && isSameVenue(name, at, x));`).
-The cache key carries the anchor (`artifacts/api-server/src/lib/liveIntelligence.ts:241#|${anchor.lat},${anchor.lng}`),
+(`artifacts/api-server/src/lib/liveIntelligence.ts:280#ll:`) and uses the FIRST that passes
+(`artifacts/api-server/src/lib/liveIntelligence.ts:309#const r = results.find((x) => x?.fsq_place_id && isSameVenue(name, at, x));`).
+The cache key carries the anchor (`artifacts/api-server/src/lib/liveIntelligence.ts:239#|${anchor.lat},${anchor.lng}`),
 so two same-named places never share an entry. No catalog table stores a Foursquare id this lookup
 is handed (`discovery_places` has `lat`/`lng` and no provider-id column), so the ruling's
 stored-id branch has no carrier today and is not built.
@@ -4364,15 +4364,15 @@ census-highlights-memories §AE grades that half.
 
 `artifacts/api-server/src/test/compass-live-intel.test.ts` gains two suites:
 
-- the identity rule — `artifacts/api-server/src/test/compass-live-intel.test.ts:346#same name within 150 m → verified live`,
-  `artifacts/api-server/src/test/compass-live-intel.test.ts:354#same name just past 150 m → not verified`,
-  `artifacts/api-server/src/test/compass-live-intel.test.ts:360#same name 2 km away → not verified`,
-  `artifacts/api-server/src/test/compass-live-intel.test.ts:365#different name at the same coordinates → not verified`,
-  `artifacts/api-server/src/test/compass-live-intel.test.ts:399#the second result is used when the first is a namesake elsewhere`,
-  `artifacts/api-server/src/test/compass-live-intel.test.ts:427#null anchor → the provider is not asked and the answer is null`,
-  and the cache crossing anchors in both orders (`artifacts/api-server/src/test/compass-live-intel.test.ts:447#the cache does not cross anchors`);
-- the tool — `artifacts/api-server/src/test/compass-live-intel.test.ts:466#passes the row's own coordinates and never returns them on the place`
-  and `artifacts/api-server/src/test/compass-live-intel.test.ts:478#a namesake 2 km away gives no verified-live label`.
+- the identity rule — `artifacts/api-server/src/test/compass-live-intel.test.ts:347#same name within 150 m → verified live`,
+  `artifacts/api-server/src/test/compass-live-intel.test.ts:355#same name just past 150 m → not verified`,
+  `artifacts/api-server/src/test/compass-live-intel.test.ts:361#same name 2 km away → not verified`,
+  `artifacts/api-server/src/test/compass-live-intel.test.ts:366#different name at the same coordinates → not verified`,
+  `artifacts/api-server/src/test/compass-live-intel.test.ts:412#the second result is used when the first is a namesake elsewhere`,
+  `artifacts/api-server/src/test/compass-live-intel.test.ts:440#null anchor → the provider is not asked and the answer is null`,
+  and the cache crossing anchors in both orders (`artifacts/api-server/src/test/compass-live-intel.test.ts:460#the cache does not cross anchors`);
+- the tool — `artifacts/api-server/src/test/compass-live-intel.test.ts:479#passes the row's own coordinates and never returns them on the place`
+  and `artifacts/api-server/src/test/compass-live-intel.test.ts:491#a namesake 2 km away gives no verified-live label`.
 
 Mutation-proved one at a time (revert → red → restore, tree clean after each): removing the distance
 test, the name test, the anchor guard, the anchor from the cache key or the `ll` centre; going back to
@@ -4429,9 +4429,9 @@ live source.
 
 ### 38.3 Tests and mutation proofs
 
-- `artifacts/api-server/src/test/compass-live-intel.test.ts:500#a failed discovery_places read says unreadable and asks no live source`
+- `artifacts/api-server/src/test/compass-live-intel.test.ts:513#a failed discovery_places read says unreadable and asks no live source`
   — red when the tool answers a failed read as "Place not found." again.
-- `artifacts/api-server/src/test/compass-live-intel.test.ts:511#a real miss (no error, no row) is still 'Place not found.'`
+- `artifacts/api-server/src/test/compass-live-intel.test.ts:524#a real miss (no error, no row) is still 'Place not found.'`
   — red when the tool answers every null as unreadable.
 
 Each was mutation-proven (revert → red → restore, tree clean after).
@@ -4453,14 +4453,18 @@ Three guarantees §37 stated had no test, so a mutant of each survived. Each now
 mutant is red:
 
 - A different name at the same anchor is a different cache entry. Mutant: the key without the name.
-  Test: `artifacts/api-server/src/test/compass-live-intel.test.ts:386#the cache does not cross names`.
+  Test: `artifacts/api-server/src/test/compass-live-intel.test.ts:399#the cache does not cross names`.
 - A record with no name is never confirmed. Mutant: accept a nameless record.
-  Test: `artifacts/api-server/src/test/compass-live-intel.test.ts:380#a record with no name is never confirmed`.
-- Exactly 150 m is verified and 150.01 m is not. Mutant: `<=` made `<`. The distance is now rounded to
-  the millimetre before the inclusive comparison
-  (`artifacts/api-server/src/lib/liveIntelligence.ts:236#Math.round(metresBetween(anchor, at) * 1_000) / 1_000 <= LIVE_IDENTITY_MAX_DISTANCE_M;`),
-  so "exactly 150 m" has one answer and is not decided by which side a floating-point haversine lands on.
-  Test: `artifacts/api-server/src/test/compass-live-intel.test.ts:370#exactly 150 m is verified`.
+  Test: `artifacts/api-server/src/test/compass-live-intel.test.ts:393#a record with no name is never confirmed`.
+- Exactly 150 m is verified; 150.0004 m and 150.01 m are not. The comparison is the plain inclusive one
+  (`artifacts/api-server/src/lib/liveIntelligence.ts:234#return metresBetween(anchor, at) <= LIVE_IDENTITY_MAX_DISTANCE_M;`).
+  A first version rounded the distance to the millimetre before comparing. The delta verifier found that this
+  widened the bound to 150.0005 m, which D-67 rules out, so the rounding was removed. Haversine float error at
+  150 m is about 1e-8 m, so no epsilon is needed.
+  - Mutant `<=` made `<`: red. Test: `artifacts/api-server/src/test/compass-live-intel.test.ts:383#a record the code's own metric puts at exactly 150 m is verified`.
+    Its fixture is a latitude that the code's own `metresBetween` puts at exactly 150.000000000000 m, and the
+    test asserts that the fixture really is exactly 150 m.
+  - Mutant: the millimetre rounding restored: red. Test: `artifacts/api-server/src/test/compass-live-intel.test.ts:371#150.0004 m and 150.01 m are not`.
 
 The search's 1 km bias radius is also pinned now.
 
@@ -4497,7 +4501,7 @@ top-three selection dropped.
 The cache held one entry per distinct name and coordinate pair, with no bound. It is now capped at
 `artifacts/api-server/src/lib/liveIntelligence.ts:156#export const LIVE_CACHE_MAX_ENTRIES = 5_000;`
 and evicts the oldest entry first (`:161`). An expired entry is dropped when it is read.
-Test: `artifacts/api-server/src/test/compass-live-intel.test.ts:523#holds at most LIVE_CACHE_MAX_ENTRIES and evicts the oldest entry first`.
+Test: `artifacts/api-server/src/test/compass-live-intel.test.ts:536#holds at most LIVE_CACHE_MAX_ENTRIES and evicts the oldest entry first`.
 The rest of verifier F5 is the Explore route `/places/live-status`, which no row here grades:
 
 - it now requires an authenticated user;
