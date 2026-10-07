@@ -6430,7 +6430,7 @@ A test derives the headroom from the ceilings and from the projector's exact ban
 red. The personalization ceiling is exported, line-neutrally. The live ceiling is read from `liveSuggestions.ts`'s
 source, because that file is counted by three censuses and stays untouched (`artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1178#the demotion is smaller than the headroom`).
 A second test checks the case the verifier built
-(`artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1190#a private EXACT match still leads an OFFICIAL or TRIP-FIT public PREFIX match`).
+(`artifacts/api-server/src/test/inputAssistanceRankingSignals.test.ts:1196#a private EXACT match still leads an OFFICIAL or TRIP-FIT public PREFIX match`).
 §42.3's sentence "below the smallest gap between match tiers (0.14)" is withdrawn; this paragraph replaces it.
 
 **F3. PrivacyRisk now reaches the @mention projector.**
@@ -6488,9 +6488,6 @@ All five §49 dimensions now have an implementation and a controlled test:
 The row stays `W` for the reason §38 gave G326: the device certification ledger has not been run on iOS and
 Android.
 
-- NOT-GRADED: travel-buddy-standalone/src/components/selectors/GlobalPlacePicker.tsx — §42.11 F4 names it only as an accept path that bypasses `SmartInput`; no verdict here rests on it, and it is the place-picker owner's file.
-- NOT-GRADED: travel-buddy-standalone/src/hooks/useGlobalSearchSuggestions.ts — as above: an accept path named by F4 that serves no local row; graded nowhere in this census.
-- NOT-GRADED: travel-buddy-standalone/src/hooks/useTelegraphRecipients.ts — as above, and the Telegraph composer's file.
 - NOT-GRADED: artifacts/api-server/src/test/inputAssistanceSocialIdentity.test.ts — cited by §42.11 F3 as the proof that the @mention projector applies PrivacyRisk. G103's verdict rests on `rankingSignals.ts`, `projection.ts` and `inputAssistanceRankingSignals.test.ts`, all watched; the social-identity suite is graded by its own rows (§26).
 
 ### 42.12 Headline, restated after 42.11
