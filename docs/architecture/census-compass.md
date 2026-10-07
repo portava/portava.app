@@ -4330,7 +4330,7 @@ client. No flag, no migration, no database read.
 `limit=1` by name near a city and labelled whatever came back `verified_live`. Nothing compared the
 record with the place, so a namesake — a chain's other branch, a same-named venue across town — had
 its hours handed to the model as this place's, "open right now", with a `verified_live` confidence
-that the CONFIDENCE RULE (`artifacts/api-server/src/compass/CompassTools.ts:638#only claim something is open/closed RIGHT NOW when a datum is verified_live`)
+that the CONFIDENCE RULE (`artifacts/api-server/src/compass/CompassTools.ts:640#only claim something is open/closed RIGHT NOW when a datum is verified_live`)
 tells it to trust. CPH-08's **Honest degradation ✓** was true of the outage path and silent about
 this one: a wrong answer is not a degraded one.
 
@@ -4352,9 +4352,9 @@ is handed (`discovery_places` has `lat`/`lng` and no provider-id column), so the
 stored-id branch has no carrier today and is not built.
 
 `get_place_details` now selects `lat, lng` for the anchor and splits them off before the place is
-returned (`artifacts/api-server/src/compass/CompassTools.ts:1114#const { lat: anchorLat, lng: anchorLng, ...p } = data as any;`);
+returned (`artifacts/api-server/src/compass/CompassTools.ts:1123#const { lat: anchorLat, lng: anchorLng, ...p } = data as any;`);
 `PLACE_SAFE_COLUMNS` is unchanged and still excludes coordinates. The call CPH-08 cites keeps its
-line and its anchor (`artifacts/api-server/src/compass/CompassTools.ts:1119#getLiveVenueStatus(String(p.name`),
+line and its anchor (`artifacts/api-server/src/compass/CompassTools.ts:1128#getLiveVenueStatus(String(p.name`),
 as do CR-05's `:1138-1139` and CPH-08's `:1126`, `:1129-1133` and `:1132`: the edit was made
 line-neutral. The Memory place-history tool in this tree passes its place's anchor the same way
 (`artifacts/api-server/src/compass/MemoryCompassTools.ts:476#liveVenueAnchorOf((place as any).lat, (place as any).lng)`);
@@ -4414,16 +4414,16 @@ failure, `{ data: null, error }`.
 `get_place_details` answered `if (error || !data)` with `{ place: null, info: "Place not found." }`.
 A failed `discovery_places` read therefore came back as a settled claim that the place does not
 exist, and the model relays a tool's denial to the person as fact. `add_to_trip` had already been
-fixed for the same read shape (`artifacts/api-server/src/compass/CompassTools.ts:1695#AN OUTAGE IS NOT A FINDING.`);
+fixed for the same read shape (`artifacts/api-server/src/compass/CompassTools.ts:1760#AN OUTAGE IS NOT A FINDING.`);
 this tool had not.
 
 ### 38.2 The fix
 
 A failed read now returns `unreadable: true` with an info line that says the outage is temporary and
 is not a statement about the place. Only no error AND no row is `"Place not found."`
-(`artifacts/api-server/src/compass/CompassTools.ts:1113#if (error || !data) return error ? { place: null, unreadable: true`).
+(`artifacts/api-server/src/compass/CompassTools.ts:1122#if (error || !data) return error ? { place: null, unreadable: true`).
 The tool's description tells the model the difference
-(`artifacts/api-server/src/compass/CompassTools.ts:220#\`unreadable: true\` means the catalog could not be read right now`).
+(`artifacts/api-server/src/compass/CompassTools.ts:222#\`unreadable: true\` means the catalog could not be read right now`).
 Both edits replace a line with a line, so no citation into this file moves. Neither path asks the
 live source.
 
