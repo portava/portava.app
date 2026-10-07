@@ -48,6 +48,19 @@
  * Source-text assertions (rather than render assertions) are deliberate: the
  * claim being guarded is about what the tree DECLARES, which is exactly what a
  * future sweep would edit.
+ *
+ * AMENDED 2026-10-07 — LEAD RULING D-32 (docs/ops/lead-rulings-20261007-media.md,
+ * proposed by lane M, adopted by the lead under the owner's 2026-10-06 delegation):
+ * KEEP the document-card composition and the light paper identity. The spec's
+ * hero image, overlapping portrait, glass effect and dark-mode-first theme are
+ * WITHDRAWN, so the spec now asks for what this file pins. Two things change:
+ *   - "WHAT THIS FILE DOES NOT CLAIM" above is superseded for P13, P128 and P133:
+ *     under the amended spec these assertions ARE their acceptance tests, and the
+ *     rows move to C on them (census-passport §29).
+ *   - "restrained glass" is no longer undecided: D-32 withdrew it, so the last
+ *     describe below pins its absence the same way the others pin their choice.
+ * The thrown messages below still name the 2026-09-14 palette decision; that
+ * decision ruled colour, and D-32 extends it to layout and theme.
  */
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -229,5 +242,29 @@ describe('P13 / P133 — the document-card composition is ratified, not a defect
       }
     }
     expect(card).toMatch(/style=\{s\.leftCol\}/);
+  });
+});
+
+// ── P133 · restrained glass — withdrawn by lead ruling D-32 (2026-10-07) ─────
+
+describe('P133 — no glass treatment on the Passport (lead ruling D-32)', () => {
+  it('no Passport surface uses a blur/glass material', () => {
+    const dirs = ['src/theme', 'src/components/passport', 'src/features/passport', 'app/passport'];
+    const offenders: string[] = [];
+    for (const dir of dirs) {
+      for (const file of sourceFiles(dir)) {
+        if (dir === 'src/theme' && !/passport/i.test(file)) continue; // the shared theme is not the Passport's
+        if (/BlurView|expo-blur|backdropFilter|\bglass/i.test(read(file))) offenders.push(file);
+      }
+    }
+    if (offenders.length > 0) {
+      throw new Error(
+        `A Passport surface now uses a blur/glass material: ${offenders.join(', ')}.\n` +
+        `census-passport.md P133's "restrained glass" was WITHDRAWN by lead ruling D-32 (2026-10-07,\n` +
+        `docs/ops/lead-rulings-20261007-media.md): the Passport keeps its paper document card.\n` +
+        `A glass treatment needs a new ruling, not a census-row cleanup.`,
+      );
+    }
+    expect(offenders).toEqual([]);
   });
 });
