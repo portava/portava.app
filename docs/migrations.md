@@ -4226,3 +4226,23 @@ set" (true: no row can exist) and an UNREADABLE one as kept private (fail closed
 
 **Rollback:** `db/rollback/2026-10-07-3671-memory-resurfacing-preferences-rollback.sql` — refuses while any row (a
 person's recorded choice) exists, otherwise drops the table and its ledger row.
+
+## 2026-10-07 — `3672_memory_item_visibility.sql`, written and NOT applied anywhere (lane H)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3672_memory_item_visibility.sql` | **not applied** | **not applied** |
+
+**What it adds (spec §10 "Media visibility is independent from Memory visibility", census H80).**
+`memory_items.visibility`, nullable, with one non-null value: NULL means the photo inherits its Memory's audience
+(every existing row; nothing changes on apply), and `'only_me'` means the photo is the owner's alone. It can only narrow.
+It also re-creates `memory_items_public_read` with `memory_items.visibility IS NULL` in front of its unchanged EXISTS,
+so a private photo of a public Memory is not readable straight through PostgREST either. The owner policy is unchanged.
+The postconditions check the column, the CHECK, the policy text, and that no row changed audience.
+
+**Safe to leave unapplied.** `services/memory/memoryItemVisibility.ts` reads the hidden set in a separate query. A 42703
+naming the column means no photo can be hidden, which is true. Any other failure refuses the read (fail closed). The owner's
+switch (`PUT /memories/:id/items/:itemId/visibility`) answers 404 `feature_disabled` until 3672 is applied.
+
+**Rollback:** `db/rollback/2026-10-07-3672-memory-item-visibility-rollback.sql` refuses while any photo is `only_me`
+(rolling back would expose it). Otherwise it restores the 0067 policy verbatim and drops the column and its CHECK.

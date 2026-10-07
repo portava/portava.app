@@ -97,7 +97,7 @@ import {
   mergedAudience,
   revokeMemoryAudienceCaches,
 } from "../services/memory/memoryAudienceRevocation.js";
-import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; import { refuseWideningKeptPrivate, readRecapControls } from "../services/memory/memoryResurfacingControls.js"; // one line: this file is cited by line
+import { runMemoryDeletionLifecycle } from "../services/memory/memoryDeletionLifecycle.js"; import { reprojectDerivativesAfterNarrowing } from "../services/memoryProjections/narrowingReprojection.js"; import { refuseWideningKeptPrivate, readRecapControls } from "../services/memory/memoryResurfacingControls.js"; import { hiddenItemKeys, itemKey } from "../services/memory/memoryItemVisibility.js"; // one line: this file is cited by line
 import {
   classifyMemoryMediaUrl,
   FOREIGN_MEDIA_REFUSAL,
@@ -1627,7 +1627,7 @@ router.get("/memories/:id", async (req, res) => {
     return;
   }
 
-  const ownerProfile = await sc
+  const hiddenItems = memory.owner_id === user.id ? { ok: true as const, keys: new Set<string>() } : await hiddenItemKeys(sc, [id]); if (!hiddenItems.ok) { req.log.error({ memoryId: id, detail: hiddenItems.detail }, "memories: memory_items visibility read failed — refusing rather than serving photos whose audience could not be checked"); sendError(res, "degraded_unavailable", "Could not load this Memory. Please try again."); return; } const ownerProfile = await sc // §AM (3672): a photo kept only_me never reaches a non-owner
     .from("profiles")
     .select("id, name, handle, avatar_url")
     .eq("id", memory.owner_id)
@@ -1686,7 +1686,7 @@ router.get("/memories/:id", async (req, res) => {
   res.json({
     memory: {
       ...mapMemory(safeMemory, user.id),
-      items: (items.data ?? []).map(mapItem),
+      items: ((items.data ?? []) as any[]).filter((it) => !hiddenItems.keys.has(itemKey(id, it.position))).map(mapItem),
       tags: participants.participants,
       anonymousParticipants: participants.anonymousCount,
       likeCount: likeCount.count ?? 0,
@@ -2866,7 +2866,7 @@ router.get("/trips/:tripId/memory", async (req, res) => {
     }
   }
 
-  const ownerNameAllowed = ownerId === user.id || await nameVisibleFor(sc, ownerId);
+  const ownerNameAllowed = ownerId === user.id || await nameVisibleFor(sc, ownerId); const coverHidden = ownerId === user.id ? { ok: true as const, keys: new Set<string>() } : await hiddenItemKeys(sc, [memoryId]); if (!coverHidden.ok) { req.log.error({ memoryId, detail: coverHidden.detail }, "trip-memory: memory_items visibility read failed — refusing rather than serving a cover whose audience could not be checked"); sendError(res, "degraded_unavailable", "Could not load this memory. Please try again."); return; } // §AM (3672)
 
   // Location protection (fail-closed) — the stricter of the Hidden-Gem ceiling
   // and the owner's §10 precision rung, for non-owner reads.
@@ -2878,7 +2878,7 @@ router.get("/trips/:tripId/memory", async (req, res) => {
       ...mapMemory(safeTripMemory, user.id),
       likeCount: likeCount.count ?? 0,
       likedByMe: Boolean(likedByMe.data),
-      cover: coverRow.data ? { mediaUrl: (coverRow.data as any).media_url, mediaType: (coverRow.data as any).media_type } : null,
+      cover: coverRow.data && !coverHidden.keys.has(itemKey(memoryId, 0)) ? { mediaUrl: (coverRow.data as any).media_url, mediaType: (coverRow.data as any).media_type } : null,
       owner: ownerProfile.data ? {
         id: (ownerProfile.data as any).id,
         name: ownerNameAllowed ? (ownerProfile.data as any).name : null,
@@ -3302,9 +3302,9 @@ async function enrichMemories(
     if (r.user_id === viewerId) likedByMeSet.add(r.memory_id);
   }
 
-  const savedSet = new Set<string>((savedRows.data ?? []).map((r: any) => r.memory_id as string));
+  const savedSet = new Set<string>((savedRows.data ?? []).map((r: any) => r.memory_id as string)); const notMine = rows.filter((m) => m.owner_id !== viewerId).map((m) => m.id as string); const hiddenCovers = notMine.length === 0 ? { ok: true as const, keys: new Set<string>() } : await hiddenItemKeys(sc, notMine); if (!hiddenCovers.ok) { log?.error({ detail: hiddenCovers.detail, table: "memory_items" }, "memories: memory_items visibility read failed — refusing rather than serving covers whose audience could not be checked"); return { ok: false, table: "memory_items" }; } // §AM (3672)
   const coverMap: Record<string, { mediaUrl: string; mediaType: string }> = {};
-  for (const r of (coverRows.data ?? []) as any[]) {
+  for (const r of ((coverRows.data ?? []) as any[]).filter((c) => !hiddenCovers.keys.has(itemKey(c.memory_id, 0)))) {
     coverMap[r.memory_id] = { mediaUrl: r.media_url, mediaType: r.media_type };
   }
 
