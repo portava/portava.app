@@ -9156,7 +9156,7 @@ The lead's ruling **L3-FC** turns the test round. On a layover session every que
   - unknown phrasings fall to certified text;
   - each allowlisted subject is recognised;
   - each widened leaving word, paired with an airside subject, is still a leaving question.
-- Mutants killed (21 of 21):
+- Mutants: 18 distinct, all killed. One, the bare `leave` pattern removed, first SURVIVED: every phrasing that used the word had no airside subject, so it fell to certified text anyway. The paired-word cases were added for it and it is now killed. The 18 are:
   - the call site back on the old detector;
   - the default flipped;
   - the leaving check dropped from `isAirsideQuestion`;
