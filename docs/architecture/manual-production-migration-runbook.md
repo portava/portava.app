@@ -1305,11 +1305,11 @@ rows" and "no writer" are different claims**, and this file retires on writer
 evidence with the row count used only as a safety veto.
 
 The seven that *are* retired appear only as members of the `SurfaceName` type
-union (`services/ranking/DiscoveryRankingService.ts:29-39`). Its three analytics
+union (`services/ranking/DiscoveryRankingService.ts:30-40`). Its three analytics
 writers take `surface: SurfaceName` as a *parameter*, so the union makes the
 labels expressible; no production call site passes any of them. The only
 occurrences outside the type declaration are a doc comment and
-`services/ranking/__tests__/feedSlotAllocator.test.ts:204`, which reaches
+`services/ranking/__tests__/feedSlotAllocator.test.ts:205`, which reaches
 `allocateFeedSlots` and never `rank_events`. **A type union is not a writer.**
 
 Independently corroborated: after 2893, `check:enum-literals` derives
@@ -1539,7 +1539,7 @@ kept alive with no writer is the state §10.3-4 exists to end.
 and 2892 are unaffected.
 
 **A residual asymmetry worth naming:** `SurfaceName`
-(`services/ranking/DiscoveryRankingService.ts:29-39`) still lists all seven
+(`services/ranking/DiscoveryRankingService.ts:30-40`) still lists all seven
 retired labels as type members. After 2893, the type permits what the database
 refuses. The smallest correct follow-up is to narrow that union to the eight —
 but it is application source outside the migrations lane, it is used for

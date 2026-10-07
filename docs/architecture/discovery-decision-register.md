@@ -1411,7 +1411,7 @@ Lane W10-S1, 2026-09-28, branch `disc-w10-s1-search`. Census section: census-dis
 
 ### AR-W11A-3 — APPROVAL REQUIRED: one production path that records the graph reading for debugging (DV-52; production activation and retention)
 
-- **The question:** DV-52, `05` §9: *"it remains explainable enough for debugging."* The code is complete. §63 records the reading on a served page under `discovery_ranking_modifiers_enabled` (2289), and the DRS debug sample lands under `RANKING_EXPERIMENT_ENABLED` (`artifacts/api-server/src/services/ranking/DiscoveryRankingService.ts:1257#if (experimentEnabled && db) {`). 3421 makes it land on production's structure. No production deployment has either switch on. 2289 is a held-design flag that W10D-A4f keeps FALSE. `RANKING_EXPERIMENT_ENABLED`'s production value has never been read (§57.10 Q5).
+- **The question:** DV-52, `05` §9: *"it remains explainable enough for debugging."* The code is complete. §63 records the reading on a served page under `discovery_ranking_modifiers_enabled` (2289), and the DRS debug sample lands under `RANKING_EXPERIMENT_ENABLED` (`artifacts/api-server/src/services/ranking/DiscoveryRankingService.ts:1281#if (experimentEnabled && db) {`). 3421 makes it land on production's structure. No production deployment has either switch on. 2289 is a held-design flag that W10D-A4f keeps FALSE. `RANKING_EXPERIMENT_ENABLED`'s production value has never been read (§57.10 Q5).
 - **Recommended action (exact):**
   1. Pre-flight, read-only: `SELECT flag, enabled FROM public.feature_flags WHERE flag IN ('RANKING_EXPERIMENT_ENABLED','discovery_ranking_modifiers_enabled');`.
   2. Apply 3421 with batch P1 (W10D-A1), then deploy the API (W10D-A3).

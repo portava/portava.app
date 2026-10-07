@@ -3535,7 +3535,7 @@ users.
    running the real router against a real Postgres (census-wall §14). The cause was one argument
    doing two unrelated jobs: the weight-profile name and the persisted analytics label. They are
    split — `artifacts/api-server/src/services/wall/WallRankingService.ts:95#FOR_YOU_ANALYTICS_SURFACE` — and
-   `artifacts/api-server/src/services/ranking/DiscoveryRankingService.ts:76#export const PERSISTED_RANK_SURFACES` states the database's vocabulary
+   `artifacts/api-server/src/services/ranking/DiscoveryRankingService.ts:77#export const PERSISTED_RANK_SURFACES` states the database's vocabulary
    once in code, so a retired label is now a COMPILE error rather than a runtime 23514. Ranking is
    provably unchanged: a corpus engineered to rank oppositely under the two profiles pins both the
    order and the exact scores. **2893's header is now provably false and is a landmine for the next
