@@ -4994,3 +4994,50 @@ lane C's wave-5 branch. That file is not this lane's, so it is reported to the l
 | id | was | now | why |
 | --- | --- | --- | --- |
 | CT-02 | W | **W** | §44. D-65 holds at every Compass plan reader and at the confirm guard. The row asks for typed projections. |
+
+## §45 — 2026-10-07 (lane L, wave 6): the §10 location-precision rung reaches Compass's Memory tools (lane R's finding). NO VERDICT MOVES
+
+*Measured on branch `claude/mission-l-wave6-20261006`. `head_commit` is not re-declared.*
+
+`compass/MemoryCompassTools.ts` served the city and country of other people's Memories (tagged,
+trip-crew, allow-listed) straight off the row, and its own header said the §10 rung was not consulted.
+An owner's `country` or `hidden` rung was ignored there, and so was an unreadable gate. This is the
+defect lane R fixed in the Telegraph share card and the link preview (`2c73813c9`).
+
+Every row a tool matches, scores or returns now goes through
+`artifacts/api-server/src/compass/MemoryCompassTools.ts:193#async function withPlaceLabelsForViewer(`:
+
+- The viewer's own rows are unchanged.
+- The gate is main's three-state one:
+  - **off**: the rows are unchanged.
+  - **unreadable**: the rows are clamped, and the column is never named.
+  - **on**: `location_precision` is read by id. A failed read is not `exact`.
+- The words come from the same rule as `protectMemoryRow` and lane R's `memoryPlaceLabelsForNonOwner`.
+  That helper is copied here from main's parts until R's lands.
+- It runs before the city filters and the token scorer
+  (`artifacts/api-server/src/compass/MemoryCompassTools.ts:386#return { ok: true, rows: await withPlaceLabelsForViewer(sc, authorized, viewerId) };`),
+  so a city argument cannot test where a hidden Memory is.
+- A withheld place is described as withheld, not as absent
+  (`artifacts/api-server/src/compass/MemoryCompassTools.ts:276#const unplaced = row?.place_withheld === true`).
+
+Tests: `artifacts/api-server/src/test/memoryCompassTools.test.ts:775#describe("§10 — the owner's location-precision rung reaches the Compass Memory tools"`
+(10 cases, 52/52). Six mutations, each red, then restored:
+
+| mutation | result |
+|---|---|
+| no clamp | 8 red |
+| unreadable gate treated as off | 1 red |
+| failed rung read treated as `exact` | 1 red |
+| history unclamped | 2 red |
+| owner clamped | 1 red |
+| claim says "No place is recorded" | 1 red |
+
+Not changed, and reported: `place_id` is still returned for other people's Memories, as
+`routes/memories.ts` does. A place id names the place whatever the rung says. That is a decision for
+the Memories owner, and the fix belongs in both surfaces at once.
+
+### 45.1 Row moves
+
+None. The Memory accessors are graded in census-highlights-memories, where the §10 rows (H76, H79) stay
+`W` on their flag. For a viewer reading their own Memories, or with the gate off, every graded path is
+unchanged.
