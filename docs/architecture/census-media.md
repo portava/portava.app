@@ -7889,7 +7889,7 @@ draw. Five more had not been measured.
    - **Before.** Two pairs failed, each at 2.88:1 on `paperRaised`:
      - the correction banner's dismiss icon in `faint`;
      - a duplicate row's reason in `faint`
-       (`travel-buddy-standalone/src/platform/input-assistance/components/EntitySuggestionRow.tsx:195#color: color.faint,`).
+       (`travel-buddy-standalone/src/platform/input-assistance/components/EntitySuggestionRow.tsx:196#color: color.faint,`).
    - **The fix.** CreationAssist gains an optional `quietColor`
      (`travel-buddy-standalone/src/platform/input-assistance/creation/CreationAssist.tsx:42#quietColor?: string;`).
      - It hands the colour to CorrectionBanner as `dismissColor`
@@ -7897,7 +7897,7 @@ draw. Five more had not been measured.
        `travel-buddy-standalone/src/platform/input-assistance/components/CorrectionBanner.tsx:67#color={dismissColor ?? color.faint}`).
      - It hands it to EntitySuggestionRow as `reasonColor`
        (`travel-buddy-standalone/src/platform/input-assistance/creation/CreationAssist.tsx:132#{...(quietColor !== undefined ? { reasonColor: quietColor } : {})}`,
-       `travel-buddy-standalone/src/platform/input-assistance/components/EntitySuggestionRow.tsx:133#reasonColor === undefined ? styles.reason : [styles.reason, { color: reasonColor }]`).
+       `travel-buddy-standalone/src/platform/input-assistance/components/EntitySuggestionRow.tsx:134#reasonColor === undefined ? styles.reason : [styles.reason, { color: reasonColor }]`).
      - The add-gem sheet passes `mute`
        (`travel-buddy-standalone/src/components/media/AddGemForm.tsx:572#onPickExisting={pickExistingGem} quietColor={color.mute}`).
      - Both marks read 5.55:1.
