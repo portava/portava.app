@@ -623,7 +623,7 @@ content) — **all 12 NOT-BUILT.** No fixture file exists for any of them.
 | Public location precision cannot exceed owner policy | NB | |
 | User correction cannot be overwritten by weaker inference | BBW | `test/memoryPassportRemembers.test.ts` and `test/memoryLifecycle.test.ts` assert exactly this — for `memory_projections` |
 | Historical memory cannot assert current venue availability | NB | |
-| Projection consumers tolerate duplicate/out-of-order events | BBW | `test/memoryProjectionSchedulerTiming.test.ts:253` asserts the idempotent projector ordering — for the projection family, and there are no events |
+| Projection consumers tolerate duplicate/out-of-order events | BBW | `test/memoryProjectionSchedulerTiming.test.ts:264` asserts the idempotent projector ordering — for the projection family, and there are no events |
 
 **9 property/chaos scenarios** (duplicate upload · out-of-order evidence · projection worker outage ·
 search-index delay · concurrent merge and edit · offline correction · partial media deletion ·
