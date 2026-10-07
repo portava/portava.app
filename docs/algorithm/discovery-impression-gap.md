@@ -292,7 +292,7 @@ Every read of `rank_events` in the tree was checked against the new rows:
 
 | Reader | Filter | Sees Stage 0 rows? |
 |---|---|---|
-| `compass/CompassGraphEngine.ts:577` | `.neq("outcome","impression")` | **No** — excluded by construction |
+| `compass/CompassGraphEngine.ts:578` | `.neq("outcome","impression")` | **No** — excluded by construction |
 | `routes/mediaFeed.ts:1156`, `:1256` | `.eq("surface","watch_feed")` | **No** |
 | `services/ranking/MediaFeedRankingService.ts:936` | `.in("event_type",[watch_*])` | **No** — Stage 0 rows set no `event_type` |
 | Place-affinity boost (`lib/portavaRank.ts:95`, `compass/CompassScoringEngine.ts:518`) | `event_type='place_view'` | **No** — same reason |
