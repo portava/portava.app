@@ -5834,7 +5834,7 @@ tree; the full-suite record is in the lane report.
    (`travel-buddy-standalone/src/platform/input-assistance/voice/speechRecognizer.ts:244#if (!('processLocally' in rec)) {`).
 8. **Deletion.** The three user-keyed tables are `ERASED_BY_CASCADE`, by `user_id REFERENCES
    auth.users (id) ON DELETE CASCADE` firing when AccountDeletionService calls `auth.admin.deleteUser`
-   (`artifacts/api-server/src/lib/deletionDispositions.ts:228#"input_outcome_consent",`). `check:deletion-coverage`
+   (`artifacts/api-server/src/lib/deletionDispositions.ts:248#"input_outcome_consent",`). `check:deletion-coverage`
    could NOT see them: it reads the 2026-08-19 baseline and was green with all three unregistered
    (`artifacts/api-server/src/scripts/checkDeletionCoverage.ts:37#post-baseline tables. The baseline is the 2026-08-19 snapshot`).
    A band-local test now reads every `CREATE TABLE` in 3780–3799 and requires a stated fate

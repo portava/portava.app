@@ -2067,7 +2067,7 @@ still the moderation and visibility decision the module reserves, and lane I's
 MD65 Question 5.
 
 **C. Account deletion finds the bytes again.** The collection step now calls
-`` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:669#collectOwnEvidenceObjectKeys(sc, userId, readAll)` ``.
+`` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:682#collectOwnEvidenceObjectKeys(sc, userId, readAll)` ``.
 That function reads the rows under every identity the account's rows may carry
 (`` `artifacts/api-server/src/lib/intelEvidenceCapture.ts:642#for (const identity of identities.identities) {` ``)
 and opens each reference.
@@ -2078,7 +2078,7 @@ and opens each reference.
   orphaned.
 - A reference that does not open fails the step, and the receipt carries the
   warning:
-  `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:680#if (unopenable > 0) throw new Error(` ``.
+  `` `artifacts/api-server/src/services/accountDeletion/AccountDeletionService.ts:693#if (unopenable > 0) throw new Error(` ``.
 
 The edit is line-neutral. Every citation into the file below line 682 still
 lands on its line.
