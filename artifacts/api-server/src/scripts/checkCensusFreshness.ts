@@ -2560,6 +2560,11 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     // WIDENED 2026-09-27 by lane X (census-map §45.11–§45.12): the local-harness rehearsal of 3360/3361, and the hook that decides whether the map offers the photo step.
     "artifacts/api-server/src/test/db/intelEvidenceSealedReference.db.test.ts",
     "travel-buddy-standalone/src/hooks/usePhotoEvidenceCoverage.ts",
+    // WIDENED 2026-10-05 by lane L (census-map §48.1): M256's server-half harness, which the row said did not exist.
+    "artifacts/api-server/src/test/mapProjectionPerf.test.ts",
+    // WIDENED 2026-10-06 by lane L (census-map §50): M179's evidence that a protected zone leaves no trace on the wire, and the telemetry the counts moved to.
+    "artifacts/api-server/src/test/mapProjectionLayers.test.ts",
+    "artifacts/api-server/src/lib/mapProtectionTelemetry.ts",
     // WIDENED 2026-10-07 by lane M (census-map §52): the two suites M122 moves on that sit outside the watched directories.
     "travel-buddy-standalone/src/constants/mapTransportStyle.test.ts",
     "travel-buddy-standalone/src/components/discovery/__tests__/DiscoveryMapView.transportLayer.component.test.tsx",
@@ -4671,6 +4676,7 @@ const CENSUS_SCOPE: Record<string, string[]> = {
     "travel-buddy-standalone/src/features/passport/__tests__/JourneysScreen.component.test.tsx",
     "travel-buddy-standalone/src/features/passport/__tests__/MyWorldScreen.component.test.tsx",
     "travel-buddy-standalone/src/features/passport/__tests__/TrustDomainsFromServer.component.test.tsx",
+    "travel-buddy-standalone/src/features/passport/__tests__/TrustScreen.confidenceUnmeasured.component.test.tsx",
     "travel-buddy-standalone/src/features/passport/installPassportTelemetry.ts",
     "travel-buddy-standalone/src/features/passport/passportNav.ts",
     "travel-buddy-standalone/src/features/passport/passportQrProjection.ts",

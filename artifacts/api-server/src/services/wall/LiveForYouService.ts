@@ -947,7 +947,9 @@ export async function buildTripSignalLiveCandidates(
       if (!row || typeof row.id !== "string" || row.id === "") continue;
       if (row.removed_at != null) continue;
       if (row.status === "cancelled") continue;
-      if (row.location_is_private === true) continue;
+      // OD-TRIP-3: only an item that SAYS it is public reaches the strip; a null
+      // or unread flag is private (the column defaults TRUE). Was `=== true`.
+      if (row.location_is_private !== false) continue;
       if (!TRIP_SIGNAL_PLAN_VISIBILITY.has(String(row.visibility ?? "members"))) continue;
       const startMs = Date.parse(String(row.starts_at ?? ""));
       if (Number.isNaN(startMs)) continue;

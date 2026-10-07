@@ -322,3 +322,93 @@ describe("P50 §5 — D-WORD was DECIDED 2026-09-22; this moved on purpose", () 
     }
   });
 });
+
+// ── §6 — P154: with the engine dark, the owner's own view carries no invented number ──
+//
+// census-passport P154 "fabricates its central number when the engine is dark".
+// The central number is the owner-only score (§9). With NO trust_profiles row —
+// the engine has never run for this person — and with an UNREADABLE one, the
+// owner must see no number at all, and no domain may carry a rating word, while
+// a measured profile still shows its own rounded score. Added 2026-10-05 by
+// lane L when grading P154 (census-passport §27).
+describe("P154 §6 — the owner's own view invents no score when the engine is dark", () => {
+  it("absent profile: score null, every domain 'Not yet rated', none 'Established'", async () => {
+    const p = (await buildPassportProjection(db(null, { stamps: 20, trips: 9 }), OWNER, OWNER, { resolveViewerContext: resolver(SELF) }))!;
+    assert.equal(p.trust!.score, null, "the owner was shown a score nobody measured");
+    const domains = p.trust!.domains as any[];
+    assert.ok(domains.length > 0);
+    for (const d of domains) {
+      if (d.applicable === false) continue;
+      assert.notEqual(d.presentation, "Established", `${d.key} carries a rating word with no measurement`);
+    }
+    assert.equal(domains.find((d) => d.key === "overall")!.presentation, "Not yet rated");
+  });
+
+  it("unreadable profile: score null and the section says it is degraded", async () => {
+    const p = (await buildPassportProjection(db(scored(10), { failTrustRead: true }), OWNER, OWNER, { resolveViewerContext: resolver(SELF) }))!;
+    assert.equal(p.trust!.score, null);
+    assert.equal((p.trust as any).degraded, true);
+  });
+
+  it("control: a measured profile shows its own rounded score to its owner", async () => {
+    const p = (await buildPassportProjection(db(scored(10)), OWNER, OWNER, { resolveViewerContext: resolver(SELF) }))!;
+    assert.equal(p.trust!.score, 82);
+  });
+});
+
+// ── §7 — verifier finding 7 (2026-10-06): the raw evidence numbers reach the owner only ──
+//
+// `evidenceWeight` / `evidenceCount` are the trust engine's internals; the count
+// includes negative events, so a viewer watching it change learns when one
+// landed, and weight against count reveals recency (census-trust A1/A3/C20).
+// Every viewer type is enumerated from PassportViewerContext; a new context
+// added there must be added here, which is the point of listing them.
+const ALL_CONTEXTS = ["self", "public", "follower", "following", "trip_crew", "trip_host", "buddy_customer", "buddy_provider", "event_group"] as const;
+
+describe("P50 §7 — the raw evidence numbers never reach a non-owner, on any viewer path", () => {
+  for (const context of ALL_CONTEXTS) {
+    it(`${context}: band and basis present; raw numbers ${context === "self" ? "present" : "absent from the wire"}`, async () => {
+      const resolution: ViewerResolution = context === "self"
+        ? SELF
+        : { ...PUBLIC, context, permissions: { ...permsPublic(), relationshipLabel: context } } as ViewerResolution;
+      const viewer = context === "self" ? OWNER : "viewer-7";
+      const p = (await buildPassportProjection(db(scoredWith(10, 37)), OWNER, viewer, { resolveViewerContext: resolver(resolution) }))!;
+      assert.equal(p.trust!.confidence, "high", "the band is still shown to every viewer");
+      assert.equal(p.trust!.confidenceBasis, "trust_evidence");
+      const wire = JSON.stringify(p);
+      if (context === "self") {
+        assert.equal(p.trust!.evidenceWeight, 10);
+        assert.equal(p.trust!.evidenceCount, 37);
+      } else {
+        assert.equal("evidenceWeight" in p.trust!, false, `${context} was sent evidenceWeight`);
+        assert.equal("evidenceCount" in p.trust!, false, `${context} was sent evidenceCount`);
+        assert.doesNotMatch(wire, /evidence_?[Ww]eight|evidence_?[Cc]ount/, `${context}'s serialized projection carries a raw evidence number`);
+      }
+    });
+  }
+});
+
+// ── §8 — verifier finding 8: the band reads the WEIGHT, not the count ─────────
+//
+// Every earlier fixture set count = ceil(weight), so a band computed from the
+// count passed them all. These two disagree on purpose.
+describe("P50 §8 — weight and count disagree; the band follows the weight", () => {
+  it("many old, decayed events (count 40, weight below full credit) read 'medium', not 'high'", async () => {
+    const p = (await buildPassportProjection(db(scoredWith(TRUST_EARN_CONFIDENCE_WEIGHT / 2, 40)), OWNER, OWNER, { resolveViewerContext: resolver(SELF) }))!;
+    assert.equal(p.trust!.confidence, "medium");
+  });
+
+  it("few recent, heavy events (count 1, weight at full credit) read 'high', not 'medium'", async () => {
+    const p = (await buildPassportProjection(db(scoredWith(TRUST_EARN_CONFIDENCE_WEIGHT, 1)), OWNER, OWNER, { resolveViewerContext: resolver(SELF) }))!;
+    assert.equal(p.trust!.confidence, "high");
+  });
+
+  it("a recorded count of zero with a weight of zero is 'low' (measured and empty)", async () => {
+    const p = (await buildPassportProjection(db(scoredWith(0, 0)), OWNER, OWNER, { resolveViewerContext: resolver(SELF) }))!;
+    assert.equal(p.trust!.confidence, "low");
+  });
+});
+
+function scoredWith(evidenceWeight: number, evidenceCount: number) {
+  return { ...scored(null), evidence_weight: evidenceWeight, evidence_count: evidenceCount };
+}

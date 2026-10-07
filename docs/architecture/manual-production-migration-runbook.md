@@ -267,7 +267,7 @@ licence to replay the chain in file order.
 - **Purpose** the map gateway flag row (2201), telemetry (2202), crowd flow (2218), locate-my-friends (2219), route-hop consent (2224), world intelligence (2295).
 - **Depends on A3 (2217) for anything that serves.**
 - **Type** additive. **Risk LOW** individually; the risk is in the *flag flip*, not the DDL.
-- **Critical** applying every one of these still leaves **Crowd Flow dark**, because `geo_zones` holds **0 rows** and `routes/mapProjection.ts:836` refuses with `no_zone_model`. Populating `geo_zones` is an **ops action, not a migration**.
+- **Critical** applying every one of these still leaves **Crowd Flow dark**, because `geo_zones` holds **0 rows** and `routes/mapProjection.ts:896#report.refusal = "no_zone_model";` refuses with `no_zone_model` *(cited as line 836 until 2026-10-06; repointed by reading the claim when lane L's Map edits moved it)*. Populating `geo_zones` is an **ops action, not a migration**.
 - **POST-CHECK**
   ```sql
   select flag, enabled from public.feature_flags where flag like 'map_%' order by flag;
