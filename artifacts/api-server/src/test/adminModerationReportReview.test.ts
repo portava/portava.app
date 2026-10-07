@@ -30,7 +30,7 @@ import express from "express";
 import { _setTestClient } from "../lib/http.js";
 import { _setTestServiceClient } from "../lib/supabase.js";
 import adminRouter from "../routes/admin.js";
-import { SNAPSHOT_EXCERPT_CHARS } from "../lib/moderationReportSnapshots.js";
+import { SNAPSHOT_EXCERPT_CHARS, SNAPSHOT_SUBJECT_TYPES } from "../lib/moderationReportSnapshots.js";
 import { readFileSync as __readContract } from "node:fs";
 import { fileURLToPath as __contractUrl } from "node:url";
 import { dirname as __contractDir, resolve as __contractResolve } from "node:path";
@@ -376,5 +376,18 @@ describe("the moderation snapshot contract shared with the mobile admin screen",
     assert.equal((built.review.subject_snapshot as any).excerpt, "the reported review text");
     assert.equal((built.buddy_listing.subject_snapshot as any).displayName, "Nadia");
     assert.equal(built.unavailable.subject_snapshot.state, "unavailable");
+  });
+
+  it("every subject type the server reads has an `ok` entry in the contract, so a new reader cannot ship past the screen (VL5b N2)", async () => {
+    // The fixture's reports are a hand list; without this, a reader added to
+    // READERS (a `trail`, say) leaves the committed file — and so the mobile
+    // test — unchanged, and the screen never learns its keys.
+    const built = await buildSnapshotContract();
+    const okTypes = new Set(Object.values(built).filter((e) => e.subject_snapshot.state === "ok").map((e) => e.subject_type));
+    const missing = SNAPSHOT_SUBJECT_TYPES.filter((t) => !okTypes.has(t));
+    assert.deepEqual(missing, [], `add a ROWS entry and a REPORTS entry for ${missing.join(", ")} to src/test/helpers/moderationSnapshotContract.ts, then regenerate ${CONTRACT_FIXTURE_PATH}`);
+    // And the `unsupported` entry really names a type no reader handles.
+    assert.equal(built.unsupported.subject_snapshot.state, "unsupported");
+    assert.ok(!SNAPSHOT_SUBJECT_TYPES.includes(built.unsupported.subject_type), built.unsupported.subject_type);
   });
 });
