@@ -8813,7 +8813,7 @@ branch). Controlled evidence only; migration 3900 is applied to no database and 
 creates the spec's record — intents from a CHECKed vocabulary, an availability window, an optional maximum
 travel time, a visibility scope, `precise_location_enabled` CHECKed FALSE, and an expiry — service-role only
 and with no coordinate column, and seeds `layover_presence_intents_enabled` FALSE. The traveller sets it
-through `artifacts/api-server/src/routes/airport.ts:4708#router.put("/airport/sessions/:id/presence/intents"`
+through `artifacts/api-server/src/routes/airport.ts:4719#router.put("/airport/sessions/:id/presence/intents"`
 (refused unless they share their city and their sharing gate is open), and sees the city's counts through
 `artifacts/api-server/src/routes/airport.ts:4675#router.get("/airport/sessions/:id/presence/intents"`:
 `artifacts/api-server/src/services/layover/LayoverPresenceStore.ts:189#export async function intentCounts(`
@@ -8879,7 +8879,7 @@ migration 2740), the presence read answers with the cleared roster: `disclosePre
 that roster and then `artifacts/api-server/src/routes/airport.ts:4675#router.get("/airport/sessions/:id/presence/intents"`
 learns, whenever the cleared crew is ONE traveller, exactly what that named person is open to — the verifier's
 probe P4 read `count: 1` with alice on the roster and `nightlife: 1` on the intents read. A small crew narrows
-the same way. The client line `travel-buddy-standalone/src/components/layover/LayoverPresenceIntents.tsx:94#never who`
+the same way. The client line `travel-buddy-standalone/src/components/layover/LayoverPresenceIntents.tsx:107#never who`
 is therefore true only above a threshold, and the spec's §14 states no minimum count.
 
 - **ACTIVATION PREREQUISITE, before the flag flips — not a merge condition:** a minimum-k rule. Counts below k
@@ -8898,7 +8898,7 @@ is therefore true only above a threshold, and the spec's §14 states no minimum 
   empty map, so "unread" withholds (P8a). At the rebinding to lane C's `planItemAccessFor`, guard with
   `access.status !== "ok"` → owner only, or assert that C's "unread" carries no grants.
 - **`fakeLayoverDb` does not model the `airport_profiles(city)` embed, so the `.neq("user_id")` line is unproven.**
-  `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:338#the traveller's own record never counts toward what THEY see`
+  `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:351#the traveller's own record never counts toward what THEY see`
   stays green with `artifacts/api-server/src/routes/airport.ts:2031#.neq("user_id", userId)` deleted (verifier
   mutant M9, 31/31): in the fake the viewer's airport-backed session resolves to city "" and is excluded by the
   city match, never by the `.neq`. The fix is fixture-only — give the viewer's session a `manual_city` equal to
@@ -8991,7 +8991,7 @@ flipped no flag.
   The mutant that deletes the line is killed. The seam is still lane C's to rebind; this guard travels with it.
 - **The presence `.neq("user_id")` is load-bearing.** A second, manual-city session of the viewer's in the same city
   is excluded only by that line, and
-  `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:347#the traveller's record from ANOTHER of their own sessions in the same city never counts either`
+  `artifacts/api-server/src/test/layoverPresenceIntents.test.ts:360#the traveller's record from ANOTHER of their own sessions in the same city never counts either`
   goes red when it is deleted (verifier mutant M9, now killed). Fixture and test only; the route is unchanged.
 
 Neither moves a row: L27, L129 and L187 stay where §51.1 put them.
