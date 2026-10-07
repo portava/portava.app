@@ -253,6 +253,22 @@ describe("L3-FC — every question is a leaving question unless positively airsi
     }
   });
 
+  it("every widened leaving word, paired with an airside subject, still makes a leaving question", () => {
+    // One phrasing per widened LEAVING pattern; each also names an allowlisted
+    // subject, so only the leaving word keeps it out of the airside branch.
+    const paired = [
+      "Is it worth leaving for dinner?", "Is the food better landside?", "Is there a bar in town?",
+      "Best coffee in the city?", "Should I shop outside the airport?", "Can I pop out for coffee?",
+      "Should I head out for lunch?", "Is a restaurant reachable?", "Can I make it to a restaurant and back?",
+      "Can I explore for food?", "Should I visit a bar nearby?", "Sightseeing then lunch?",
+      "Can I eat downtown before my flight?",
+    ];
+    for (const q of paired) {
+      assert.equal(isAirsideQuestion(q), false, q);
+      assert.equal(treatAsLeavingQuestion(q), true, q);
+    }
+  });
+
   it("RECORDED LIMIT, not a pass: on a POSITIVELY airside question the model's prose is still filtered by the topic vocabulary", () => {
     const r = confineModelProse({ modelText: "The cathedral is a short cab away.", certified: "CERTIFIED.", verdict: "yes", involvesLeaving: treatAsLeavingQuestion("Where can I eat?") });
     assert.equal(r.modelProse.mode, "model_non_safety", "an airside question's answer can still carry a landside suggestion the vocabulary does not name");
