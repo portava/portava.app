@@ -175,6 +175,23 @@ describe("OD-MAP-6 — granting and withdrawing one consent touches that one onl
     if (r.ok && r.grants) assert.deepEqual(effectiveSensingConsent(r.grants), { capture: true, upload: false, surface: false });
   });
 
+  it("withdrawing twice keeps the FIRST withdrawal's stamp — a retry or double-tap does not rewrite when the person withdrew (wave-6 verifier F5)", async () => {
+    const s = store([G("upload")]);
+    const first = await setSensingConsent(s, USER, "upload", false, undefined, NOW);
+    assert.equal(first.ok, true);
+    const later = new Date(NOW.getTime() + 60_000);
+    const again = await setSensingConsent(s, USER, "upload", false, undefined, later);
+    assert.equal(again.ok, true, "a repeated withdrawal is a no-op success");
+    const row = s.rows.find((x: Row) => x.user_id === USER && x.scope === "upload");
+    assert.equal(row.withdrawn_at, NOW.toISOString(), "the first stamp survives");
+    assert.equal(row.updated_at, NOW.toISOString());
+    assert.deepEqual(s.writes, ["update:upload"], "the second withdrawal wrote nothing");
+    // And withdrawing what was never granted writes nothing either.
+    const none = store([]);
+    assert.equal((await setSensingConsent(none, USER, "surface", false, undefined, NOW)).ok, true);
+    assert.deepEqual(none.writes, []);
+  });
+
   it("a failed write is db_error; a failed READ-BACK after a landed write is ok without a state, never a default", async () => {
     assert.deepEqual(await setSensingConsent(store([], { fail: "upsert" }), USER, "capture", true, V.capture, NOW), { ok: false, reason: "db_error" });
     assert.deepEqual(await setSensingConsent(store([G("capture")], { fail: "update" }), USER, "capture", false, undefined, NOW), { ok: false, reason: "db_error" });
