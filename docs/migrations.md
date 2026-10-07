@@ -4126,6 +4126,25 @@ recorded (withdrawals always can) and the sensing session issuer issues nothing.
 `src/test/db/sensingConsentGrants.db.test.ts` (live-DB tier; not run locally). **Activation** waits on the
 legal review of the words (`docs/contracts/sensing-consent-split-v1.md`), then 3703 applied, then the flag.
 
+## 2026-10-07 — `3704_compass_live_search_quota.sql`, written and NOT applied anywhere (lane L)
+
+| | `portava-ci` (`hwokxgbmezheskbzskfr`) | production (`ajrurzioarfkagpuxfnb`) |
+|---|---|---|
+| `3704_compass_live_search_quota.sql` | **not applied** | **not applied** |
+
+**What it is.** Lead ruling CPH-08-ADAPT: Compass's `search_places` / `search_events` may also consult
+Foursquare / Ticketmaster at tool time, at most 5 times per person per UTC day. `compass_live_search_usage`
+(one row per person per day, the count) and `compass_live_search_take(p_user_id, p_daily_limit)`, which takes
+one unit atomically (one `INSERT … ON CONFLICT … DO UPDATE … WHERE calls < limit`). RLS on, no policies,
+REVOKE ALL from PUBLIC/anon/authenticated on the table and the function; SECURITY INVOKER, service_role only.
+`user_id` → `auth.users` ON DELETE CASCADE (deletion fate in `lib/deletionDispositions.ts`). Flag
+`compass_live_search_enabled` **seeded FALSE**. **Pre/postconditions** in the file. **Rollback:**
+`db/rollback/2026-10-07-3704-compass-live-search-quota-rollback.sql` (refuses while the flag is TRUE).
+**Activation is the owner's spend decision:** keys supplied AND the flag turned on
+(`docs/ops/compass-live-search-setup.md`). Proof: `src/test/compassLiveSearch.test.ts` (the gates, the quota,
+D-67 and the fallback, against a fake of the function's semantics); the SQL itself is certified by the
+live-DB tier, not locally.
+
 ## Apply-order overrides
 
 **What.** `artifacts/api-server/src/migrations/ORDER_OVERRIDES.json` is the single declared list of

@@ -145,7 +145,7 @@ import {
   MEMORY_COMPASS_PROMPT_RULES,
   executeMemoryCompassTool,
 } from "./MemoryCompassTools.js";
-import { PLAN_ITEM_PRIVACY_COLUMNS, WITHHELD_PLAN_TITLE, planItemAccessFor, readPlanItemPrivacy, withholdPrivatePlanItems } from "./planItemAccess.js";
+import { PLAN_ITEM_PRIVACY_COLUMNS, WITHHELD_PLAN_TITLE, planItemAccessFor, readPlanItemPrivacy, withholdPrivatePlanItems } from "./planItemAccess.js"; import { livePlaces, liveEvents, confirmedLiveConfidence } from "./CompassLiveSearch.js"; // CPH-08-ADAPT (census-compass §52); on this line so no cited line moves
 
 /**
  * The number of tools the file header states, as a number this process can
@@ -1008,6 +1008,21 @@ async function toolSearchPlaces(
   } as CompassItem));
   const ranking = await rankToolCandidates(sc, profile, rankItems);
 
+  // CPH-08-ADAPT (census-compass §52): the live half, behind its flag, keys and
+  // the person's daily quota; refused or failed → catalog only, no error. A
+  // provider record confirms a catalog place only by D-67 (the anchors are read
+  // only after the provider answered, and never returned).
+  const live = await livePlaces(sc, userId, {
+    query: typeof args["query"] === "string" ? (args["query"] as string) : null,
+    city: typeof args["city"] === "string" ? (args["city"] as string) : null,
+    limit,
+    loadCatalog: async () => {
+      if (rows.length === 0) return [];
+      const { data: anchors, error: anchorErr } = await sc.from("discovery_places").select("id, name, lat, lng").in("id", rows.map((p) => String(p.id)));
+      if (anchorErr) return [];
+      return ((anchors ?? []) as any[]).map((a) => ({ id: String(a.id), name: String(a.name ?? ""), lat: a.lat, lng: a.lng }));
+    },
+  });
   const candidates = applyToolRanking(
     rows.map((p) => ({
       ...p,
@@ -1015,7 +1030,7 @@ async function toolSearchPlaces(
       blurb: p.blurb ? wrapUgc(String(p.blurb)) : null,
       // Phase 8 — catalog data is community-maintained; ratings/hours in the
       // catalog may be stale, so search results are labeled per source class.
-      confidence: makeConfidence(p.verified ? "community_reported" : "historical"),
+      confidence: live.confirmedCatalogIds.has(String(p.id)) ? confirmedLiveConfidence() : makeConfidence(p.verified ? "community_reported" : "historical"),
     })),
     ranking,
   );
@@ -1035,9 +1050,12 @@ async function toolSearchPlaces(
   const safetyWire = safetyAttentionOnTheWire(safety, safeHeld.withheld);
   const withheldTotal = held.withheld + safeHeld.withheld;
   const withheldDetail = safeHeld.withheld > 0 ? safeHeld.detail : held.detail;
-  return safeHeld.kept.length > 0
-    ? { candidates: safeHeld.kept, ranked: ranking !== null, attention: wire, safetyAttention: safetyWire }
-    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching places found in the catalog." };
+  // The live listings take the same two attention passes, on their own category.
+  const liveKept = applySafetyAttention(applyAttentionSuppression(live.listings, attention, (l) => [l.category]).kept, safety, (l) => [l.category]).kept;
+  const liveWire = live.status.reason === "flag_off" ? {} : { liveSearch: live.status, ...(liveKept.length > 0 ? { liveListings: liveKept } : {}) };
+  return safeHeld.kept.length > 0 || liveKept.length > 0
+    ? { candidates: safeHeld.kept, ranked: ranking !== null, attention: wire, safetyAttention: safetyWire, ...liveWire }
+    : { candidates: [], attention: wire, safetyAttention: safetyWire, ...liveWire, info: withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching places found in the catalog." };
 }
 
 async function toolSearchEvents(
@@ -1116,9 +1134,15 @@ async function toolSearchEvents(
   const safetyWire = safetyAttentionOnTheWire(safety, safeHeld.withheld);
   const withheldTotal = held.withheld + safeHeld.withheld;
   const withheldDetail = safeHeld.withheld > 0 ? safeHeld.detail : held.detail;
-  return safeHeld.kept.length > 0
-    ? { candidates: safeHeld.kept, ranked: ranking !== null, attention: wire, safetyAttention: safetyWire }
-    : { candidates: [], attention: wire, safetyAttention: safetyWire, info: withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching upcoming public events found." };
+  // CPH-08-ADAPT (census-compass §52): provider events, behind the flag, keys and
+  // quota; never labelled live (no Portava identity to confirm); the same two
+  // attention passes on their category.
+  const live = await liveEvents(sc, userId, { city: typeof args["city"] === "string" ? (args["city"] as string) : null, limit });
+  const liveKept = applySafetyAttention(applyAttentionSuppression(live.listings, attention, (l) => [l.category]).kept, safety, (l) => [l.category]).kept;
+  const liveWire = live.status.reason === "flag_off" ? {} : { liveSearch: live.status, ...(liveKept.length > 0 ? { liveListings: liveKept } : {}) };
+  return safeHeld.kept.length > 0 || liveKept.length > 0
+    ? { candidates: safeHeld.kept, ranked: ranking !== null, attention: wire, safetyAttention: safetyWire, ...liveWire }
+    : { candidates: [], attention: wire, safetyAttention: safetyWire, ...liveWire, info: withheldTotal > 0 ? `No candidates offered: ${withheldDetail}` : "No matching upcoming public events found." };
 }
 
 async function toolGetPlaceDetails(sc: SupabaseClient, args: Record<string, unknown>): Promise<unknown> {

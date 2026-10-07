@@ -232,6 +232,9 @@ export const ERASED_BY_CASCADE: readonly string[] = [
   // auth.users(id) ON DELETE CASCADE, the same mechanism as the three above, so
   // the rows go with AccountDeletionService's final auth.admin.deleteUser.
   "sensing_consent_grants",
+  // CPH-08-ADAPT live-search quota (migration 3704): user_id REFERENCES
+  // auth.users(id) ON DELETE CASCADE — the same mechanism.
+  "compass_live_search_usage",
 ];
 
 /**
@@ -876,6 +879,9 @@ export const POST_BASELINE_TABLES: readonly string[] = [
   // OD-MAP-6 sensing consents, added by migration 3703 (post-baseline).
   // Classified in ERASED_BY_CASCADE above.
   "sensing_consent_grants",
+  // CPH-08-ADAPT live-search quota, added by migration 3704 (post-baseline).
+  // Classified in ERASED_BY_CASCADE above.
+  "compass_live_search_usage",
   "journey_observations",
   "journey_revocation_jobs",
   "journey_segment_revisions",
