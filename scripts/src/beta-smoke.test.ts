@@ -1,7 +1,7 @@
 /**
  * beta-smoke.test.ts — the beta smoke check against a STUBBED fetch.
  *
- * A healthy beta passes all four checks; each way a beta can be wrong fails
+ * A healthy beta passes all six checks; each way a beta can be wrong fails
  * the check that names it; every request is a GET (the smoke never writes);
  * and the smoke refuses to run against production's origin.
  *
@@ -9,26 +9,48 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
-import { NOT_CHECKED, runBetaSmoke, smokeBaseRefusal, type SmokeFetch } from "./beta-smoke.js";
+import {
+  BETA_AUTH_SETTINGS_URL,
+  LIVE_PLACES_REQUIREMENTS,
+  NOT_CHECKED,
+  betaPublishableKey,
+  flagPolicyMismatch,
+  runBetaSmoke,
+  smokeBaseRefusal,
+  type SmokeFetch,
+} from "./beta-smoke.js";
+import { loadFlagPolicy, type FlagPolicy } from "./beta-config-core.js";
+import { REPO_ROOT } from "./beta-db-core.js";
 
 const BASE = "https://portava-beta.replit.app";
+const AUTH = "/auth/v1/settings (portava-beta)";
 
 type Routes = Record<string, { status: number; body: unknown }>;
+
+/** The served flag map of a beta whose database holds the policy: every policy flag at its RAW value. */
+const POLICY = loadFlagPolicy();
+const POLICY_FLAGS = Object.fromEntries(POLICY.flags.map((e) => [e.flag, e.enabled]));
+const KEY = betaPublishableKey();
 
 const HEALTHY: Routes = {
   "/api/healthz": { status: 200, body: { status: "ok" } },
   "/api/auth/signup-status": { status: 200, body: { signupsEnabled: false, inviteOnly: true } },
   "/api/verification/status": { status: 401, body: { error: "unauthenticated" } },
-  "/api/feature-flags": { status: 200, body: { flags: { disable_rent_buddy_booking: true, disable_rab_bookings: true, RENT_BUDDY_ADMIN_ONLY_MODE: true, rent_buddy_enabled: false, invite_only_beta: true } } },
+  "/api/feature-flags": { status: 200, body: { flags: POLICY_FLAGS } },
+  [AUTH]: { status: 200, body: { disable_signup: true, external: { email: true, apple: false, google: false } } },
 };
 
 function stub(routes: Routes) {
-  const calls: Array<{ method: string; url: string }> = [];
+  const calls: Array<{ method: string; url: string; headers: Record<string, string> }> = [];
   const fetch: SmokeFetch = async (url, init) => {
-    calls.push({ method: init.method, url });
-    const path = url.replace(BASE, "");
-    const r = routes[path] ?? { status: 404, body: { error: "not_found" } };
+    calls.push({ method: init.method, url, headers: init.headers });
+    const path = url === BETA_AUTH_SETTINGS_URL ? AUTH : url.replace(BASE, "");
+    let r = routes[path] ?? { status: 404, body: { error: "not_found" } };
+    // GoTrue answers 401 without the project's own publishable key.
+    if (path === AUTH && init.headers.apikey !== KEY) r = { status: 401, body: { message: "Invalid API key" } };
     return { status: r.status, text: async () => JSON.stringify(r.body) };
   };
   return { fetch, calls };
@@ -43,35 +65,97 @@ describe("beta-smoke", () => {
       ["sign-up closed (invite-only)", true],
       ["auth required", true],
       ["Rent-a-Buddy booking stops engaged", true],
-    ]);
+      ["feature flags match the beta policy", true],
+      ["Supabase Auth sign-up closed", true],
+    ], JSON.stringify(results));
     assert.ok(s.calls.every((c) => c.method === "GET"));
-    assert.deepEqual(s.calls.map((c) => c.url), Object.keys(HEALTHY).map((p) => `${BASE}${p}`));
+    // one GET per URL: checks 4 and 5 judge the same /api/feature-flags response
+    assert.deepEqual(s.calls.map((c) => c.url), [
+      `${BASE}/api/healthz`, `${BASE}/api/auth/signup-status`, `${BASE}/api/verification/status`, `${BASE}/api/feature-flags`,
+      "https://emfpckykpzfturllshly.supabase.co/auth/v1/settings",
+    ]);
+    // the only credential ever sent is the beta PUBLISHABLE key, to the beta project only
+    for (const c of s.calls) {
+      assert.ok(!("authorization" in c.headers) && !("Authorization" in c.headers), c.url);
+      if (c.url.includes("supabase.co")) assert.equal(c.headers.apikey, KEY);
+      else assert.ok(!("apikey" in c.headers), c.url);
+    }
   });
 
-  const broken: Array<[string, string, { status: number; body: unknown }]> = [
-    ["health", "/api/healthz", { status: 503, body: { status: "down" } }],
-    ["sign-up closed (invite-only)", "/api/auth/signup-status", { status: 200, body: { signupsEnabled: true, inviteOnly: true } }],
-    ["sign-up closed (invite-only)", "/api/auth/signup-status", { status: 200, body: { signupsEnabled: false, inviteOnly: false } }],
-    ["sign-up closed (invite-only)", "/api/auth/signup-status", { status: 503, body: { signupsEnabled: false, inviteOnly: false } }],
-    ["auth required", "/api/verification/status", { status: 200, body: {} }],
-    ["auth required", "/api/verification/status", { status: 503, body: { error: "server_not_configured" } }],
-    ["Rent-a-Buddy booking stops engaged", "/api/feature-flags", { status: 200, body: { flags: { disable_rent_buddy_booking: true, disable_rab_bookings: true, RENT_BUDDY_ADMIN_ONLY_MODE: false, rent_buddy_enabled: false } } }],
-    ["Rent-a-Buddy booking stops engaged", "/api/feature-flags", { status: 200, body: { flags: { disable_rab_bookings: true, RENT_BUDDY_ADMIN_ONLY_MODE: true, rent_buddy_enabled: false } } }],
-    ["Rent-a-Buddy booking stops engaged", "/api/feature-flags", { status: 200, body: { flags: { disable_rent_buddy_booking: true, disable_rab_bookings: true, RENT_BUDDY_ADMIN_ONLY_MODE: true, rent_buddy_enabled: true } } }],
-    ["Rent-a-Buddy booking stops engaged", "/api/feature-flags", { status: 503, body: { error: "server_not_configured" } }],
+  const STOPS = "Rent-a-Buddy booking stops engaged";
+  const MATCH = "feature flags match the beta policy";
+  const AUTH_CLOSED = "Supabase Auth sign-up closed";
+  const flagsWith = (patch: Record<string, unknown>) => ({ status: 200, body: { flags: { ...POLICY_FLAGS, ...patch } } });
+  const flagsWithout = (flag: string) => {
+    const { [flag]: _gone, ...rest } = POLICY_FLAGS;
+    return { status: 200, body: { flags: rest } };
+  };
+  const broken: Array<[string[], string, { status: number; body: unknown }]> = [
+    [["health"], "/api/healthz", { status: 503, body: { status: "down" } }],
+    [["sign-up closed (invite-only)"], "/api/auth/signup-status", { status: 200, body: { signupsEnabled: true, inviteOnly: true } }],
+    [["sign-up closed (invite-only)"], "/api/auth/signup-status", { status: 200, body: { signupsEnabled: false, inviteOnly: false } }],
+    [["sign-up closed (invite-only)"], "/api/auth/signup-status", { status: 503, body: { signupsEnabled: false, inviteOnly: false } }],
+    [["auth required"], "/api/verification/status", { status: 200, body: {} }],
+    [["auth required"], "/api/verification/status", { status: 503, body: { error: "server_not_configured" } }],
+    // a stop wrong is ALSO a policy mismatch: both checks name it
+    [[STOPS, MATCH], "/api/feature-flags", flagsWith({ RENT_BUDDY_ADMIN_ONLY_MODE: false })],
+    [[STOPS, MATCH], "/api/feature-flags", flagsWithout("disable_rent_buddy_booking")],
+    [[STOPS, MATCH], "/api/feature-flags", flagsWith({ rent_buddy_enabled: true })],
+    [[STOPS, MATCH], "/api/feature-flags", { status: 503, body: { error: "server_not_configured" } }],
+    // check 5 alone: the database does not hold THIS policy (config step not re-dispatched, or another database)
+    [[MATCH], "/api/feature-flags", flagsWith({ push_notifications_enabled: true })],
+    [[MATCH], "/api/feature-flags", flagsWith({ invite_only_beta: false })],
+    [[MATCH], "/api/feature-flags", flagsWithout("invite_only_beta")],
+    [[MATCH], "/api/feature-flags", flagsWith({ some_flag_the_policy_never_heard_of: true })],
+    // check 6 alone: Supabase Auth still accepts new users (the app's own path)
+    [[AUTH_CLOSED], AUTH, { status: 200, body: { disable_signup: false, external: { email: true } } }],
+    [[AUTH_CLOSED], AUTH, { status: 200, body: { external: { email: true } } }],
+    [[AUTH_CLOSED], AUTH, { status: 500, body: { message: "upstream" } }],
   ];
-  for (const [name, path, reply] of broken) {
-    it(`FAILS "${name}" when ${path} answers ${reply.status} ${JSON.stringify(reply.body)}`, async () => {
+  for (const [names, path, reply] of broken) {
+    it(`FAILS ${names.map((n) => `"${n}"`).join(" + ")} when ${path} answers ${reply.status} ${JSON.stringify(reply.body).slice(0, 120)}`, async () => {
       const results = await runBetaSmoke(BASE, stub({ ...HEALTHY, [path]: reply }).fetch);
       const failed = results.filter((r) => !r.ok).map((r) => r.name);
-      assert.deepEqual(failed, [name]);
+      assert.deepEqual(failed, names, JSON.stringify(results.filter((r) => !r.ok)));
     });
   }
+
+  it("an unknown flag served FALSE is acceptable (the config step forces flags it does not know OFF)", async () => {
+    const results = await runBetaSmoke(BASE, stub({ ...HEALTHY, "/api/feature-flags": flagsWith({ retired_somewhere_enabled: false }) }).fetch);
+    assert.ok(results.every((r) => r.ok), JSON.stringify(results));
+  });
+
+  it("FAILS check 6 when eas.json's key is not the beta project's (GoTrue answers 401)", async () => {
+    const results = await runBetaSmoke(BASE, stub(HEALTHY).fetch, { publishableKey: "sb_publishable_not_portava_beta" });
+    const r = results.find((x) => x.name === AUTH_CLOSED);
+    assert.ok(r && !r.ok && /not accepted by portava-beta/.test(r.detail), JSON.stringify(r));
+  });
+
+  it("the live-places derivation: a child the policy turns ON is served false while a parent is OFF", () => {
+    const tiny = (entries: Array<[string, boolean]>): FlagPolicy => ({
+      format: "portava-beta-flag-policy/1",
+      project_ref: "emfpckykpzfturllshly",
+      flags: entries.map(([flag, enabled]) => ({ flag, enabled, kind: "CAPABILITY", reason: "t", evidence: enabled ? ["t"] : [] })),
+    });
+    const p = tiny([["external_places_enabled", false], ["live_places_enabled", true]]);
+    assert.equal(flagPolicyMismatch({ external_places_enabled: false, live_places_enabled: false }, p), null);
+    assert.match(String(flagPolicyMismatch({ external_places_enabled: false, live_places_enabled: true }, p)), /live_places_enabled=true \(policy false\)/);
+  });
+
+  it("the derivation copy equals the API's LIVE_PLACES_REQUIREMENTS (artifacts/api-server/src/lib/featureFlags.ts)", () => {
+    const src = readFileSync(join(REPO_ROOT, "artifacts/api-server/src/lib/featureFlags.ts"), "utf8");
+    const block = /export const LIVE_PLACES_REQUIREMENTS[^=]*=\s*\{([\s\S]*?)\n\};/.exec(src);
+    assert.ok(block, "LIVE_PLACES_REQUIREMENTS not found in featureFlags.ts");
+    const api: Record<string, string[]> = {};
+    for (const m of block[1].matchAll(/([a-z_]+):\s*\[([^\]]*)\]/g)) api[m[1]] = [...m[2].matchAll(/"([a-z_]+)"/g)].map((x) => x[1]);
+    assert.ok(Object.keys(api).length >= 8, "parse found too few entries");
+    assert.deepEqual(Object.fromEntries(Object.entries(LIVE_PLACES_REQUIREMENTS).map(([k, v]) => [k, [...v]])), api);
+  });
 
   it("a request that does not complete is a FAIL, not a skip", async () => {
     const fetch: SmokeFetch = async () => { throw new Error("ECONNREFUSED"); };
     const results = await runBetaSmoke(BASE, fetch);
-    assert.equal(results.length, 4);
+    assert.equal(results.length, 6);
     assert.ok(results.every((r) => !r.ok && /did not complete/.test(r.detail)));
   });
 
