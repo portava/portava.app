@@ -305,3 +305,23 @@ describe("G89 — global_search at zero characters: around you now, and the curr
     assert.deepEqual(rows.filter((s) => s.entityType === "trip"), []);
   });
 });
+
+describe("G86 — the position bounds the READ, not only the page (wave-2 mutant Z2)", () => {
+  it("200 live places a degree away, listed first, do not crowd the near one out of the bounded read", async () => {
+    const db = world();
+    const far = Array.from({ length: 200 }, (_, i) =>
+      place(`f0000000-0000-4000-8000-${String(i).padStart(12, "0")}`, `Far ${i}`, HERE.lat + 1, HERE.lng + 1),
+    );
+    db.discovery_places = [...far, ...db.discovery_places!];
+    const rows = await zeroState("place_picker", db);
+    assert.deepEqual(ids(rows, "Nearby"), [NEAR], "the bounding box is in the query, so the limit cannot be spent on far rows");
+  });
+
+  it("a place in the bounding box's CORNER, ~1.85 km away, is outside the 1.5 km radius and not offered (mutant Z2b)", async () => {
+    const db = world();
+    const CORNER = "c0000000-0000-4000-8000-0000000000c0";
+    db.discovery_places = [...db.discovery_places!, place(CORNER, "Corner Cafe", HERE.lat + 0.012, HERE.lng + 0.012)];
+    const rows = await zeroState("place_picker", db);
+    assert.deepEqual(ids(rows, "Nearby"), [NEAR]);
+  });
+});
