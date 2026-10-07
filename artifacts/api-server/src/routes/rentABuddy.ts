@@ -1409,7 +1409,7 @@ router.get("/rent-a-buddy/buddies/:buddyId", async (req, res) => {
       id: a.id, buddyId: a.buddy_id, title: a.title, description: a.description,
       priceUsd: Number(a.price_usd), isActive: a.is_active,
     })),
-    reviews: reviewsRes.data ?? [],
+    reviews: ((reviewsRes.data ?? []) as any[]).map(toPublicBuddyReview), // the sibling /reviews route's allowlist: never private_admin_note or moderation_status to a profile viewer (D-B-RESNOTE)
     availability: (availRes.data ?? []).map((av: any) => ({
       id: av.id, buddyId: av.buddy_id, date: av.date,
       timeSlots: av.time_slots ?? [], isAvailable: av.is_available, notes: av.notes,
@@ -6720,7 +6720,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/support/report", async (req, res)
     details: details ?? null,
     status: "open",
     template_id: templateRow ? (templateRow as any).id : null,
-  }).select().maybeSingle();
+  }).select("id, booking_id, reporter_id, category, details, status, template_id, resolved_at, created_at, updated_at").maybeSingle(); // never admin_notes (D-B-RESNOTE)
 
   if (error) return sendError(res, "db_error", error.message);
 
@@ -6754,7 +6754,7 @@ router.post("/rent-a-buddy/bookings/:bookingId/support/report", async (req, res)
   }
 
   return res.status(201).json({
-    report,
+    report: report ? toPartySupportReport(report) : report,
     templateResponse: templateRow ? { title: (templateRow as any).title, body: (templateRow as any).body } : null,
     ok: true,
   });
@@ -8261,3 +8261,23 @@ const RENT_BUDDY_CHECKIN_TYPES: readonly string[] = [
 // for the same reason that refusal does: a location policy must not be able to
 // waive it. rentABuddySpec.ts (the fifth creation path) calls the same helper.
 import { requireVerifiedBookingParties } from "../lib/rentBuddyIdentityEligibility.js"; import { requireBuddyPaymentReadyToPublish } from "../services/payments/bookingPayments/recipientReadiness.js"; // OD-PAY-10 publish doors
+
+// ── Lead ruling D-B-RESNOTE (2026-10-07), appended at the foot so every cited line above keeps its number ──
+// A dispute's `resolution_note` is party-facing: it is shown to both people. The
+// moderator's `admin_notes` (support reports, safety events) and a review's
+// `private_admin_note` never reach a party. Party-facing responses are built from
+// an ALLOWLIST, so a column added to the table later cannot start leaking.
+export function toPartySupportReport(r: any) {
+  return {
+    id: r.id,
+    booking_id: r.booking_id,
+    reporter_id: r.reporter_id,
+    category: r.category,
+    details: r.details ?? null,
+    status: r.status,
+    template_id: r.template_id ?? null,
+    resolved_at: r.resolved_at ?? null,
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+  };
+}

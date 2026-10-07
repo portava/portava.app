@@ -5191,3 +5191,81 @@ describe("safety checkin — known types only, and a refused insert is not ok:tr
 // bookings — lib/rentBuddyIdentityEligibility.ts, proven in its own suite).
 // Appended at the foot so every cited line keeps its number.
 import { withVerifiedBookingParties } from "./helpers/verifiedBookingParties.js";
+
+// ── Lead ruling D-B-RESNOTE (2026-10-07): a moderator's note never reaches a party ──
+// `resolution_note` on a dispute is party-facing (shown to both people). The
+// moderator's `admin_notes` and a review's `private_admin_note` are not. Two
+// party-facing responses carried them: the buddy PROFILE handed raw review rows
+// (select("*")) to anyone who could see the profile, and the support-report
+// POST returned the whole inserted row.
+import { toPartySupportReport } from "../routes/rentABuddy.js";
+
+const MODERATOR_ONLY = "MODERATOR ONLY: reporter is credible, watch this buddy";
+
+describe("D-B-RESNOTE: the buddy profile's reviews never carry the moderator's note", () => {
+  it("GET /rent-a-buddy/buddies/:id maps reviews through the public allowlist (no private_admin_note, no moderation_status)", async () => {
+    setupState({
+      reviews: [
+        { id: "rev-n", booking_id: BOOKING_ID, reviewer_id: USER_ID, reviewee_id: BUDDY_USER, role: "traveler",
+          rating: 4, body: "Good", is_public: true, moderation_status: "approved", private_admin_note: MODERATOR_ONLY,
+          punctuality_score: 2, created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+      ],
+    } as any);
+    const r = await req("GET", `/api/rent-a-buddy/buddies/${BUDDY_PROF}`);
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.reviews.length, 1);
+    assert.deepEqual(Object.keys(r.body.reviews[0]).sort(), [
+      "body", "bookingId", "buddyId", "createdAt", "id", "isPublic", "photos", "rating", "reviewerId", "updatedAt",
+    ].sort());
+    assert.doesNotMatch(JSON.stringify(r.body), /MODERATOR ONLY/);
+  });
+});
+
+describe("D-B-RESNOTE: the support-report response never carries admin_notes", () => {
+  it("POST …/support/report answers from an allowlist even when the stored row carries admin_notes", async () => {
+    // The same world as the support-report suite's setupSupportState (scoped to that describe).
+    state = {
+      featureFlags: { rent_buddy_enabled: { flag: "rent_buddy_enabled", enabled: true } },
+      profiles: { [USER_ID]: { id: USER_ID, trust_score: 80 }, [BUDDY_USER]: { id: BUDDY_USER, trust_score: 80 } },
+      bookings: {
+        [BOOKING_ID]: {
+          id: BOOKING_ID, traveler_id: USER_ID, buddy_id: BUDDY_PROF, status: "completed", safety_status: "normal",
+          payment_mode: "full_in_app", total_usd: 50, deposit_usd: 50, cash_balance_usd: 0,
+          booking_date: new Date().toISOString().slice(0, 10), completed_at: null,
+          created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+        },
+      },
+      buddyProfiles: { [BUDDY_PROF]: { id: BUDDY_PROF, user_id: BUDDY_USER } },
+      adminResponseTemplates: [],
+    } as any;
+    // The stored row as the database would return it if anything ever wrote the
+    // note at insert (a trigger, a default, a future column): the response must
+    // still not carry it.
+    const base = withVerifiedBookingParties(makeClient(USER_ID), "everyone");
+    const client = Object.create(base);
+    client.from = (table: string) => {
+      const q = base.from(table);
+      if (table !== "rent_buddy_support_reports") return q;
+      const resolve = q._resolve.bind(q);
+      q._resolve = async () => {
+        const out = await resolve();
+        if (q._insertData !== null && out?.data && !Array.isArray(out.data)) out.data = { ...out.data, admin_notes: MODERATOR_ONLY };
+        return out;
+      };
+      return q;
+    };
+    _setTestClient(client as any, true);
+    _setTestServiceClient(client as any);
+    const r = await req("POST", `/api/rent-a-buddy/bookings/${BOOKING_ID}/support/report`, { category: "harassment", details: "Uncomfortable." });
+    assert.equal(r.status, 201, JSON.stringify(r.body));
+    assert.equal(r.body.report.category, "harassment");
+    assert.equal("admin_notes" in r.body.report, false);
+    assert.doesNotMatch(JSON.stringify(r.body), /MODERATOR ONLY/);
+  });
+
+  it("toPartySupportReport is an allowlist: exactly the party-safe columns", () => {
+    const v = toPartySupportReport({ id: "s1", booking_id: "b", reporter_id: "u", category: "other", details: null, status: "open",
+      admin_notes: MODERATOR_ONLY, template_id: null, resolved_at: null, created_at: "t", updated_at: "t", some_future_column: "x" });
+    assert.deepEqual(Object.keys(v).sort(), ["booking_id", "category", "created_at", "details", "id", "reporter_id", "resolved_at", "status", "template_id", "updated_at"]);
+  });
+});
