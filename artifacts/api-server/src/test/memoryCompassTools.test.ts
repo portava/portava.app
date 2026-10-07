@@ -96,6 +96,14 @@ interface State {
   /** The catalog place's own coordinates (lead ruling D-67's identity anchor); absent = the fixture's none. */
   placeCoords?: { lat: number | null; lng: number | null };
   placeError?: boolean;
+  /** §10: the memory_location_precision_enabled gate. Absent = no feature_flags row = off. */
+  precisionGate?: "on" | "off" | "unreadable";
+  /** §10: each Memory's location_precision, by id (only ever returned by a select that names it). */
+  rungs?: Record<string, string | null>;
+  /** §10: the dedicated `id, location_precision` read fails. */
+  rungReadError?: boolean;
+  /** Per-Memory column overrides on the fixture rows, by id. */
+  patch?: Record<string, Record<string, unknown>>;
 }
 
 function memory(over: Record<string, unknown>): Record<string, unknown> {
@@ -166,22 +174,35 @@ function fixture() {
   } as Record<string, any[]>;
 }
 
-interface Client { client: any; writes: Array<{ table: string; op: string }> }
+interface Client { client: any; writes: Array<{ table: string; op: string }>; precisionSelects: string[] }
 
 function makeClient(state: State = {}): Client {
   const db = fixture();
   if (state.placeCoords) db.discovery_places = db.discovery_places!.map((p) => ({ ...p, ...state.placeCoords }));
   const writes: Array<{ table: string; op: string }> = [];
+  if (state.patch) db.memories = db.memories!.map((m) => (state.patch![m.id] ? { ...m, ...state.patch![m.id] } : m));
+  if (state.precisionGate === "on" || state.precisionGate === "off") {
+    db.feature_flags = [{ flag: "memory_location_precision_enabled", enabled: state.precisionGate === "on" }];
+  }
+  /** Every select list that named location_precision, so a test can say it was (not) read. */
+  const precisionSelects: string[] = [];
 
   function from(table: string) {
     const preds: Array<(r: any) => boolean> = [];
     let _limit: number | null = null;
+    let _cols = "";
 
     const rowsNow = () => {
-      const rows = (db[table] ?? []).filter((r) => preds.every((f) => f(r)));
+      let rows = (db[table] ?? []).filter((r) => preds.every((f) => f(r)));
+      // The rung exists only for a select that NAMES it, as in PostgREST.
+      if (table === "memories" && _cols.includes("location_precision")) {
+        rows = rows.map((r) => ({ ...r, location_precision: state.rungs && r.id in state.rungs ? state.rungs[r.id] : "exact" }));
+      }
       return _limit !== null ? rows.slice(0, _limit) : rows;
     };
     const injected = () => {
+      if (table === "feature_flags" && state.precisionGate === "unreadable") return { message: "feature_flags read blew up" };
+      if (table === "memories" && state.rungReadError && _cols.includes("location_precision")) return { message: "rung read blew up" };
       if (table === "blocks" && state.blocksError) return { message: "blocks read blew up" };
       if (table === "memory_tags" && state.tagsError) return { message: "tags read blew up" };
       if (table === "trip_members" && state.crewError) return { message: "crew read blew up" };
@@ -191,7 +212,11 @@ function makeClient(state: State = {}): Client {
     };
 
     const target: any = {
-      select() { return proxy; },
+      select(cols?: string) {
+        _cols = String(cols ?? "");
+        if (table === "memories" && _cols.includes("location_precision")) precisionSelects.push(_cols);
+        return proxy;
+      },
       eq(col: string, val: any) { preds.push((r) => String(r[col]) === String(val)); return proxy; },
       neq(col: string, val: any) { preds.push((r) => String(r[col]) !== String(val)); return proxy; },
       in(col: string, vals: any[]) { preds.push((r) => vals.map(String).includes(String(r[col]))); return proxy; },
@@ -246,6 +271,7 @@ function makeClient(state: State = {}): Client {
   return {
     client: { from, rpc: async () => ({ data: null, error: { message: "rpc not modelled" } }) } as any,
     writes,
+    precisionSelects,
   };
 }
 
@@ -737,5 +763,112 @@ describe("D-67 — memory_get_place_history anchors the live lookup on the catal
     assert.match(out.current_world.reason, /could not be read/);
     assert.doesNotMatch(out.current_world.reason, /No catalog place was resolved/);
     assert.equal(out.visit_count, 1, "the visits are still the visits");
+  });
+});
+
+/* ───── §10: another person's Memory carries only the place words its owner's rung allows ───── */
+//
+// Lane R (2026-10-07) found these tools served location_city/location_country
+// for OTHER people's Memories straight off the row: an owner's `country` or
+// `hidden` rung was ignored, and so was an unreadable gate. Same rule as
+// protectMemoryRow and R's shareables/wellKnownShare fix.
+describe("§10 — the owner's location-precision rung reaches the Compass Memory tools", () => {
+  // Bob's tagged Memory gets a country so the two words can be told apart.
+  // The fixture's title names the city; a title is the owner's own words, not the location column, so it is neutral here.
+  const BOB_PLACE = { [M_BOB_TAGGED]: { title: "Bob's dinner", location_country: "Vietnam" }, [M_TRIP_CREW]: { location_city: "Hoi An", location_country: "Vietnam" } };
+  const getBob = async (state: State) => {
+    const c = makeClient({ patch: BOB_PLACE, ...state });
+    const out: any = await executeMemoryCompassTool(c.client, ALICE, "memory_get", { memoryId: M_BOB_TAGGED });
+    return { out, c };
+  };
+  const words = (m: any) => JSON.stringify([m.city, m.country, m.historical]);
+
+  it("control: gate OFF — Bob's Memory keeps both words, and no rung is read", async () => {
+    const { out, c } = await getBob({ precisionGate: "off", rungs: { [M_BOB_TAGGED]: "hidden" } });
+    assert.equal(out.memory.city, "Da Nang");
+    assert.equal(out.memory.country, "Vietnam");
+    assert.deepEqual(c.precisionSelects, []);
+  });
+
+  it("gate ON, rung `city`: Bob's city and country are served", async () => {
+    const { out, c } = await getBob({ precisionGate: "on", rungs: { [M_BOB_TAGGED]: "city" } });
+    assert.equal(out.memory.city, "Da Nang");
+    assert.equal(out.memory.country, "Vietnam");
+    assert.equal(c.precisionSelects.length, 1, "the rung is read by its own select");
+  });
+
+  it("gate ON, rung `hidden`: no city, no country, and the claim and subject do not say it", async () => {
+    const { out } = await getBob({ precisionGate: "on", rungs: { [M_BOB_TAGGED]: "hidden" } });
+    assert.equal(out.memory.city, null);
+    assert.equal(out.memory.country, null);
+    assert.doesNotMatch(words(out.memory), /Da Nang|Vietnam/);
+    // Honest about it: the place exists and is not shared — never "no place is recorded".
+    assert.equal(out.memory.place_withheld, true);
+    assert.doesNotMatch(out.memory.historical.claim, /No place is recorded/);
+    assert.match(out.memory.historical.claim, /not shared/);
+  });
+
+  it("gate ON, rung `country`: the country only, and the claim names no city", async () => {
+    const { out } = await getBob({ precisionGate: "on", rungs: { [M_BOB_TAGGED]: "country" } });
+    assert.equal(out.memory.city, null);
+    assert.equal(out.memory.country, "Vietnam");
+    assert.doesNotMatch(words(out.memory), /Da Nang/);
+  });
+
+  it("REFUSAL: an UNREADABLE gate clamps — no city, no country — and the column is never named", async () => {
+    const { out, c } = await getBob({ precisionGate: "unreadable", rungs: { [M_BOB_TAGGED]: "exact" } });
+    assert.equal(out.memory.city, null);
+    assert.equal(out.memory.country, null);
+    assert.doesNotMatch(words(out.memory), /Da Nang/);
+    assert.deepEqual(c.precisionSelects, [], "an unreadable gate must not name a column that may not exist");
+  });
+
+  it("REFUSAL: gate ON but the rung read FAILS — not 'exact': no city, no country", async () => {
+    const { out } = await getBob({ precisionGate: "on", rungs: { [M_BOB_TAGGED]: "exact" }, rungReadError: true });
+    assert.equal(out.memory.city, null);
+    assert.doesNotMatch(words(out.memory), /Da Nang/);
+  });
+
+  it("REFUSAL: gate ON and a null / off-ladder label is 'hidden'", async () => {
+    for (const label of [null, "EXACT"]) {
+      const { out } = await getBob({ precisionGate: "on", rungs: { [M_BOB_TAGGED]: label as any } });
+      assert.equal(out.memory.city, null, String(label));
+    }
+  });
+
+  it("the owner's own Memory is unchanged at their own `hidden` rung, and nothing is read for it", async () => {
+    const c = makeClient({ precisionGate: "on", rungs: { [M_OWN_PUBLIC]: "hidden" } });
+    const out: any = await executeMemoryCompassTool(c.client, ALICE, "memory_get", { memoryId: M_OWN_PUBLIC });
+    assert.equal(out.memory.city, "Da Nang");
+    assert.equal(out.memory.country, "Vietnam");
+    assert.deepEqual(c.precisionSelects, []);
+  });
+
+  it("a city search cannot test which city a hidden Memory is in; the viewer's own still match", async () => {
+    // Alice's OWN Memory is at her own `hidden` rung in the same list: the rung
+    // binds what others see, never what the owner sees.
+    const c = makeClient({ patch: BOB_PLACE, precisionGate: "on", rungs: { [M_BOB_TAGGED]: "hidden", [M_OWN_PUBLIC]: "hidden" } });
+    const out: any = await executeMemoryCompassTool(c.client, ALICE, "memory_search", { query: "dinner Da Nang bridge", city: "da nang" });
+    const ids = out.memories.map((m: any) => m.memory_id);
+    assert.ok(!ids.includes(M_BOB_TAGGED), JSON.stringify(ids));
+    const own = out.memories.find((m: any) => m.memory_id === M_OWN_PUBLIC);
+    assert.ok(own, "the viewer's own Da Nang Memory still matches");
+    assert.equal(own.city, "Da Nang");
+    assert.equal(own.place_withheld, undefined);
+    const control: any = await executeMemoryCompassTool(makeClient({ patch: BOB_PLACE, precisionGate: "on", rungs: { [M_BOB_TAGGED]: "city" } }).client, ALICE, "memory_search", { query: "dinner Da Nang", city: "da nang" });
+    assert.ok(control.memories.map((m: any) => m.memory_id).includes(M_BOB_TAGGED), "control: at `city` it matches");
+  });
+
+  it("place history and trip Memories take the same rule", async () => {
+    const hidden = makeClient({ patch: BOB_PLACE, precisionGate: "on", rungs: { [M_BOB_TAGGED]: "hidden", [M_TRIP_CREW]: "hidden" } });
+    const ph: any = await executeMemoryCompassTool(hidden.client, ALICE, "memory_get_place_history", { city: "Da Nang" });
+    assert.ok(!ph.visits.some((v: any) => v.memory_id === M_BOB_TAGGED), "Bob's hidden Memory is not a Da Nang visit");
+    const trip: any = await executeMemoryCompassTool(hidden.client, ALICE, "memory_get_trip_memories", { tripId: TRIP_ID });
+    const crew = trip.memories.find((m: any) => m.memory_id === M_TRIP_CREW);
+    assert.ok(crew, JSON.stringify(trip));
+    assert.equal(crew.city, null);
+    assert.equal(crew.country, null);
+    const open: any = await executeMemoryCompassTool(makeClient({ patch: BOB_PLACE, precisionGate: "on", rungs: { [M_TRIP_CREW]: "city" } }).client, ALICE, "memory_get_trip_memories", { tripId: TRIP_ID });
+    assert.equal(open.memories.find((m: any) => m.memory_id === M_TRIP_CREW).city, "Hoi An", "control: at `city` the crew Memory names Hoi An");
   });
 });

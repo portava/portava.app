@@ -79,6 +79,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { logger as rootLogger } from "../lib/logger.js";
 import { wrapUgc } from "./CompassStructuredContext.js";
 import { getLiveVenueStatus, liveVenueAnchorOf } from "../lib/liveIntelligence.js";
+import { readMemoryPrecisionGate, precisionColumnSelectable, precisionClampApplies } from "../lib/memoryPrecisionGate.js";
+import { publicationPrecision, resolveMemoryLocationCeiling, coarsenMemoryLocation } from "../lib/memoryLocationPrecision.js";
+import { UNDETERMINED_GEM_CEILING } from "../lib/mediaLocationVisibility.js";
 import {
   canCompassReadMemory,
   acceptedCrewOfTrip,
@@ -123,17 +126,96 @@ export const MEMORY_TOOL_SPEC_NAMES: Readonly<Record<string, string>> = Object.f
  * answer does not, so the safe thing here is not to have them: `location_city`
  * and `location_country` are the whole of the disclosed geography.
  *
- * The §10 rung (`memories.location_precision`) is NOT consulted, for the same
- * reason `routes/memories.ts` only consults it behind a flag: the column is
- * migration 2338 and production does not have it. City-level is at or below
- * every rung on the ladder except `country` and `hidden`, so the two rungs this
- * cannot honour are the two coarsest — recorded here rather than left for a
- * reader to work out.
+ * The §10 rung (`memories.location_precision`) is NOT in this list, because
+ * the column is migration 2338 and production does not have it. It is read
+ * separately, and only when the gate is definitely on, by
+ * `withPlaceLabelsForViewer` below, which every tool runs over its rows before
+ * a city or country is matched, scored or returned. (Until 2026-10-07 the rung
+ * was not consulted at all, so an owner's `country` or `hidden` rung was
+ * ignored here; lane R found it.)
  */
 const MEMORY_FACT_COLUMNS =
   "id, owner_id, title, caption, visibility, allowed_user_ids, hidden_user_ids, state, " +
   "trip_id, event_id, place_id, canonical_location_id, starts_at, ends_at, created_at, updated_at, " +
   "location_city, location_country";
+
+/** The rung read, by id, when the precision gate is definitely on. A literal. */
+const MEMORY_PRECISION_COLUMNS = "id, location_precision";
+
+/**
+ * The city and country a NON-OWNER may be shown for a Memory on a surface that
+ * carries place words and nothing finer. The same rule as `protectMemoryRow`
+ * (routes/memories.ts) and as lane R's `memoryPlaceLabelsForNonOwner`
+ * (lib/memoryLocationPrecision.ts on claude/residual-wave2-20261006, 2c73813c9),
+ * which is not on main yet, so it is written out here from main's own parts.
+ * When R's helper lands, import it and delete this copy; the callers do not change.
+ *
+ * It takes the stricter of the owner's §10 rung and the Hidden-Gem ceiling,
+ * coarsened by `coarsenMemoryLocation`. `precisionClamp` is
+ * `precisionClampApplies(gate)`. With a clamp, a row that does not carry
+ * `location_precision` (the gate was unreadable, or the rung read failed), or
+ * that carries null or a value off the ladder, is 'hidden'. That means no
+ * city and no country. Gate definitely off: 'exact', the pre-2338 behaviour.
+ * The gem ceiling is taken at its strictest (`UNDETERMINED_GEM_CEILING`,
+ * 'city'), which keeps both words, so a gem lookup could not change the answer.
+ */
+export function memoryPlaceLabelsForNonOwner(
+  row: { id?: unknown; location_city?: unknown; location_country?: unknown; location_precision?: unknown },
+  precisionClamp: boolean,
+): { city: string | null; country: string | null } {
+  const ceiling =
+    resolveMemoryLocationCeiling(publicationPrecision(row, precisionClamp), UNDETERMINED_GEM_CEILING) ??
+    UNDETERMINED_GEM_CEILING;
+  const d = coarsenMemoryLocation(
+    { id: row?.id, location_city: row?.location_city, location_country: row?.location_country },
+    ceiling,
+  );
+  return { city: d.city, country: d.country };
+}
+
+/**
+ * §10 on every row a tool is about to match, score or return. Another person's
+ * Memory carries only the place words its owner's rung allows the viewer; the
+ * viewer's own rows are unchanged; nothing is read when every row is the viewer's.
+ *
+ * The gate is the routes' three-state one (lib/memoryPrecisionGate.ts):
+ *   - definitely OFF: rows unchanged (production today: the column does not exist);
+ *   - UNREADABLE: clamp, and do NOT name the column (it may not exist), so every
+ *     other person's row resolves to 'hidden' and loses both words;
+ *   - ON: read `location_precision` by id. A failed read is not "exact". The
+ *     rows keep no rung, so they are 'hidden' too.
+ * A `location_precision` already on a row is dropped first: only the dedicated
+ * read decides.
+ *
+ * Applied BEFORE the city filters and the token scorer, so a city argument
+ * cannot be used to test which city a hidden Memory is in.
+ */
+async function withPlaceLabelsForViewer(sc: SupabaseClient, rows: any[], viewerId: string): Promise<any[]> {
+  const others = rows.filter((r) => r?.owner_id !== viewerId);
+  if (others.length === 0) return rows;
+  const gate = await readMemoryPrecisionGate(sc);
+  const clamp = precisionClampApplies(gate);
+  if (!clamp) return rows;
+  const rungs = new Map<string, unknown>();
+  if (precisionColumnSelectable(gate)) {
+    const ids = [...new Set(others.map((r) => String(r.id)))].slice(0, CANDIDATE_SCAN_LIMIT);
+    const { data, error } = await sc.from("memories").select(MEMORY_PRECISION_COLUMNS).in("id", ids);
+    if (error) {
+      log.warn({ err: error, viewerId }, "memory tools: location_precision read failed — other people's place words withheld");
+    } else {
+      for (const r of ((data as any[]) ?? [])) rungs.set(String(r.id), r.location_precision);
+    }
+  }
+  return rows.map((r) => {
+    if (r?.owner_id === viewerId) return r;
+    const { location_precision: _unread, ...base } = r ?? {};
+    const withRung = rungs.has(String(r.id)) ? { ...base, location_precision: rungs.get(String(r.id)) } : base;
+    const { city, country } = memoryPlaceLabelsForNonOwner(withRung, clamp);
+    const had = (v: unknown) => typeof v === "string" && v.trim().length > 0;
+    const withheld = (had(base.location_city) && !city) || (had(base.location_country) && !country);
+    return { ...base, location_city: city, location_country: country, ...(withheld ? { place_withheld: true } : {}) };
+  });
+}
 
 /** Bound on every list this file returns, so a tool result stays a tool result. */
 const MAX_RESULTS = 10;
@@ -156,6 +238,8 @@ export interface MemoryFactPayload {
   caption: string | null;
   city: string | null;
   country: string | null;
+  /** §10: the owner's location-precision rung withholds some of this Memory's place words from this viewer. */
+  place_withheld?: true;
   place_id: string | null;
   trip_id: string | null;
   event_id: string | null;
@@ -188,8 +272,10 @@ function claimOf(row: any): string {
   const head = subjectOf(row);
   if (where && when) return `Recorded: "${head}" — ${where}, on ${when}.`;
   if (where) return `Recorded: "${head}" — ${where}. No date is recorded.`;
-  if (when) return `Recorded: "${head}" — on ${when}. No place is recorded.`;
-  return `Recorded: "${head}". Neither a place nor a date is recorded.`;
+  // §10: a place the owner's rung withholds from this viewer is not "no place".
+  const unplaced = row?.place_withheld === true ? "Its place is not shared with this user." : null;
+  if (when) return `Recorded: "${head}" — on ${when}. ${unplaced ?? "No place is recorded."}`;
+  return unplaced ? `Recorded: "${head}". No date is recorded. ${unplaced}` : `Recorded: "${head}". Neither a place nor a date is recorded.`;
 }
 
 function toMemoryFact(row: any, viewerId: string, nowMs: number): MemoryFactPayload {
@@ -201,6 +287,7 @@ function toMemoryFact(row: any, viewerId: string, nowMs: number): MemoryFactPayl
     caption: typeof row.caption === "string" ? wrapUgc(row.caption) : null,
     city: (row.location_city as string | null) ?? null,
     country: (row.location_country as string | null) ?? null,
+    ...(row?.place_withheld === true ? { place_withheld: true as const } : {}),
     place_id: (row.place_id as string | null) ?? null,
     trip_id: (row.trip_id as string | null) ?? null,
     event_id: (row.event_id as string | null) ?? null,
@@ -295,7 +382,8 @@ async function loadOwnHistory(
     if (await canCompassReadMemory(sc, r, viewerId)) authorized.push(r);
   }
   authorized.sort((a, b) => String(b.starts_at ?? b.created_at ?? "").localeCompare(String(a.starts_at ?? a.created_at ?? "")));
-  return { ok: true, rows: authorized };
+  // §10 before any tool filters, scores or returns these rows.
+  return { ok: true, rows: await withPlaceLabelsForViewer(sc, authorized, viewerId) };
 }
 
 /** Deterministic token overlap. No model, no embedding — §15's "deterministic first". */
@@ -337,7 +425,8 @@ async function toolMemoryGet(sc: SupabaseClient, viewerId: string, args: Record<
   if (!data) return opaque;
   if (!(await canCompassReadMemory(sc, data, viewerId))) return opaque;
 
-  return { memory: toMemoryFact(data, viewerId, Date.now()) };
+  const [shown] = await withPlaceLabelsForViewer(sc, [data], viewerId); // §10
+  return { memory: toMemoryFact(shown, viewerId, Date.now()) };
 }
 
 /** §16 `searchMemories(query)`, over the viewer's own history. */
@@ -530,11 +619,12 @@ async function toolMemoryGetTripMemories(sc: SupabaseClient, viewerId: string, a
   }
 
   const nowMs = Date.now();
-  const out: MemoryFactPayload[] = [];
+  const readable: any[] = [];
   for (const r of ((data as any[]) ?? [])) {
-    if (out.length >= MAX_RESULTS) break;
-    if (await canCompassReadMemory(sc, r, viewerId)) out.push(toMemoryFact(r, viewerId, nowMs));
+    if (readable.length >= MAX_RESULTS) break;
+    if (await canCompassReadMemory(sc, r, viewerId)) readable.push(r);
   }
+  const out: MemoryFactPayload[] = (await withPlaceLabelsForViewer(sc, readable, viewerId)).map((r) => toMemoryFact(r, viewerId, nowMs)); // §10
   return {
     trip_id: tripId,
     memories: out,
