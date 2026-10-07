@@ -132,7 +132,7 @@ async function projectBooking(deps: PaymentSliceDeps, payment: BookingPaymentRec
   if (!b.ok) return "booking payment_status write failed";
   const again = await deps.store.findPaymentByIntent(deps.provider.id, payment.intentRef ?? "");
   if (!again.ok) return "store unreadable";
-  if (again.value && again.value.updatedAt !== payment.updatedAt) return CAS_MISS; // another delivery wrote the row after we read it: project again from the newer row
+  if (again.value && !sameInstant(again.value.updatedAt, payment.updatedAt)) return CAS_MISS; // another delivery wrote the row after we read it (compared as INSTANTS: PostgREST answers "+00:00", JS writes "Z" — verifier NEW-1)
   return null;
 }
 
@@ -182,7 +182,7 @@ async function applyIntentOnce(deps: PaymentSliceDeps, snap: PaymentIntentSnapsh
   // A `requires_confirmation` snapshot predates any confirmation: it never moves a submitted payment backwards.
   else if (snap.state === "requires_confirmation" && payment.state === "processing") state = "processing";
   const nowIso = deps.now().toISOString();
-  const updatedAt = nowIso > payment.updatedAt ? nowIso : new Date(Date.parse(payment.updatedAt) + 1).toISOString(); // strictly after what was read, so the next compare-and-set sees this write
+  const updatedAt = Date.parse(nowIso) > Date.parse(payment.updatedAt) ? nowIso : new Date(Date.parse(payment.updatedAt) + 1).toISOString(); // strictly after what was read (as instants, NEW-1), so the next compare-and-set sees this write
   const w = await deps.store.updatePaymentIfUnchanged(payment.id, payment, {
     intentState: snap.state,
     state,
@@ -321,4 +321,10 @@ export async function processPaymentWebhook(deps: PaymentSliceDeps, delivery: We
   } catch {
     return RETRY("unexpected error");
   }
+}
+
+/** Two timestamps name the same instant, whatever their text form (PostgREST "…+00:00" vs JS "….000Z"). An unparsable one never matches. */
+function sameInstant(a: string, b: string): boolean {
+  const x = Date.parse(a), y = Date.parse(b);
+  return Number.isFinite(x) && Number.isFinite(y) && x === y;
 }

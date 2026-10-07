@@ -934,3 +934,97 @@ describe("F12a: an intent event whose amount differs from the payment row is ref
     assert.notEqual(w.store.payments.get(id)!.state, "succeeded");
   });
 });
+
+// ── Verifier NEW-1 (2026-10-07): the store answers timestamps the way PostgREST does ──
+// The memory store writes and reads the same JS form ("….000Z"), so it could not
+// show that the post-write re-check compared two TEXT forms of one instant. Here
+// every read answers updated_at as PostgREST does ("…+00:00", trailing zeros of
+// the fraction trimmed) and the compare-and-set compares INSTANTS, as Postgres
+// does. An applied intent event must still answer `applied`.
+describe("NEW-1: with PostgREST-form timestamps an applied intent event is reported as applied", () => {
+  function pgForm(iso: string): string {
+    const d = new Date(iso);
+    const frac = String(d.getUTCMilliseconds()).padStart(3, "0").replace(/0+$/, "");
+    return d.toISOString().replace(/\.\d{3}Z$/, `${frac ? `.${frac}` : ""}+00:00`);
+  }
+  function asPostgrest(store: MemoryStore): void {
+    const realFind = store.findPaymentByIntent;
+    const realList = store.listPaymentsForBooking;
+    const realCas = store.updatePaymentIfUnchanged;
+    store.findPaymentByIntent = async (p, ref) => {
+      const r = await realFind(p, ref);
+      return r.ok && r.value ? { ok: true, value: { ...r.value, updatedAt: pgForm(r.value.updatedAt) } } : r;
+    };
+    store.listPaymentsForBooking = async (id) => {
+      const r = await realList(id);
+      return r.ok ? { ok: true, value: r.value.map((x) => ({ ...x, updatedAt: pgForm(x.updatedAt) })) } : r;
+    };
+    // Postgres compares timestamptz as instants: hand the memory CAS the stored text form of the same instant.
+    store.updatePaymentIfUnchanged = (id, held, patch) => realCas(id, { ...held, updatedAt: new Date(held.updatedAt).toISOString() }, patch);
+  }
+
+  it("premise: the two forms differ as text and agree as instants", () => {
+    assert.equal(pgForm("2026-08-10T12:00:00.000Z"), "2026-08-10T12:00:00+00:00");
+    assert.equal(pgForm("2026-08-10T12:00:00.120Z"), "2026-08-10T12:00:00.12+00:00");
+    assert.equal(Date.parse(pgForm("2026-08-10T12:00:00.120Z")), Date.parse("2026-08-10T12:00:00.120Z"));
+  });
+
+  it("every intent event of a paid booking answers `applied` (not `stale`), the row is succeeded and the booking captured", async () => {
+    seedBooking(w);
+    await onboardBuddy(w);
+    asPostgrest(w.store);
+    const c = await startBookingCheckout(w.deps, { bookingId: BOOKING, actorUserId: TRAVELER });
+    assert.equal(c.httpStatus, 201, JSON.stringify(c.body));
+    await confirmBookingPayment(w.deps, { bookingId: BOOKING, actorUserId: TRAVELER, paymentMethodRef: "fake_pm_card", returnUrl: null });
+    const outcomes: unknown[] = [];
+    for (const d of w.fake.control.webhooks.deliver()) {
+      const r = await processPaymentWebhook(w.deps, d);
+      if (/payment_intent/.test(d.rawBody)) outcomes.push(r.body["outcome"]);
+    }
+    assert.ok(outcomes.length >= 1, "premise: intent events were delivered");
+    assert.ok(outcomes.every((o) => o === "applied"), `every in-order intent event answers applied: ${JSON.stringify(outcomes)}`);
+    const succeeded = w.fake.control.webhooks.pending().length === 0;
+    assert.ok(succeeded);
+    assert.equal(w.store.payments.get(String(c.body["paymentId"]))?.state, "succeeded");
+    assert.equal(w.store.bookings.get(BOOKING)?.paymentStatus, "captured");
+    const marked = [...w.store.events.values()].map((e) => e.processed);
+    assert.ok(!marked.every((m) => m === "stale"), `processed outcomes recorded: ${JSON.stringify(marked)}`);
+  });
+});
+
+// ── Verifier NEW-5 (2026-10-07): F11's two remaining edges, pinned ──
+describe("NEW-5: the refund in-flight rules, edge by edge", () => {
+  function countingRefunds(): () => number {
+    let calls = 0;
+    const real = w.deps.provider;
+    w.deps = { ...w.deps, provider: { ...real, refundPayment: ((r: Parameters<typeof real.refundPayment>[0]) => { calls++; return real.refundPayment(r); }) as typeof real.refundPayment } };
+    return () => calls;
+  }
+  const support = (amountMinor: number, requestKey: string) =>
+    requestBookingRefund(w.deps, { bookingId: BOOKING, actorUserId: ADMIN, actorIsAdmin: true, trigger: "support_decision", amountMinor, requestKey });
+
+  it("m3: a partial refund above what is left (answered refunds counted before their webhook) is 409 amount_exceeds_refundable, never sent", async () => {
+    await paidBooking(w); // 4400 captured
+    assert.equal((await support(1000, "k1")).httpStatus, 202);
+    assert.equal((await support(3000, "k2")).httpStatus, 202); // 400 left, no webhook delivered yet
+    const calls = countingRefunds();
+    const over = await support(500, "k3");
+    assert.equal(over.httpStatus, 409, JSON.stringify(over.body));
+    assert.equal(over.body["error"], "amount_exceeds_refundable");
+    assert.equal(calls(), 0, "the over-the-remainder refund never reached the provider");
+    assert.equal((await support(400, "k4")).httpStatus, 202, "exactly what is left still goes through");
+  });
+
+  for (const state of ["refused", "failed", "canceled"] as const) {
+    it(`m4: a ${state} refund row never blocks a later refund`, async () => {
+      const paymentId = await paidBooking(w);
+      w.store.refunds.set(`old-${state}`, {
+        id: `old-${state}`, bookingPaymentId: paymentId, provider: w.deps.provider.id, idempotencyKey: `rab-refund:${paymentId}:service_unavailable:full`,
+        refundRef: null, state, reason: "service_unavailable", amountMinor: null, currency: "USD", refundPlatformFee: true,
+        requestedByRole: "admin", requestedByPartyId: null, lastSnapshot: null, createdAt: "2026-08-10T12:00:00.000Z",
+      });
+      const r = await requestBookingRefund(w.deps, { bookingId: BOOKING, actorUserId: TRAVELER, actorIsAdmin: false, trigger: "cancelled_before_service" });
+      assert.equal(r.httpStatus, 202, `a ${state} refund moved no money and holds nothing: ${JSON.stringify(r.body)}`);
+    });
+  }
+});

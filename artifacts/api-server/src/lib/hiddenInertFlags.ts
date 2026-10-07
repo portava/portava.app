@@ -46,9 +46,9 @@ export const HIDDEN_INERT_FLAGS: ReadonlySet<string> = new Set([
   // consults it and changes behaviour. None of the ten has one. For the six
   // COMPASS_* that is despite compass/flags.ts loading every `COMPASS_%` row
   // into a Record on each request — being loaded is not being read, and no
-  // caller asks isEnabled() for these six names. For the four notification
-  // flags the only reference is the admin write-map below in
-  // routes/notifications.ts, which sets them and never reads them.
+  // caller asks isEnabled() for these six names. The four notification flags
+  // had one reference, an admin write-map in routes/notifications.ts that set
+  // them and never read them; that map now writes only push_notifications_enabled.
   //
   // They stay in this set after the rows are deleted, for the same reason the
   // freeze_* entries do: a PATCH for a deleted flag would otherwise fall
