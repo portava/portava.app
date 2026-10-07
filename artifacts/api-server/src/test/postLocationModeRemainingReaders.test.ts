@@ -47,6 +47,7 @@ import { buildFeed, buildSection, compassPostPlaceForViewer, type FeedPage } fro
 import { resolveLiveSubjects } from "../compass/CompassLiveConstraints.js";
 import type { CompassItem, CompassProfile, CompassContext } from "../compass/types.js";
 import wallRouter, { wallItemsForViewer, wallLiveStripForViewer } from "../routes/wall.js";
+import { readFileSync } from "node:fs";
 import { _internal as contextThreadInternal } from "../services/wall/ContextThreadService.js";
 import { buildSocialPresenceLiveCandidates } from "../services/wall/LiveForYouService.js";
 import placeLivingRouter, { livingPayloadForViewer } from "../routes/placeLiving.js";
@@ -789,6 +790,31 @@ describe("B. The Wall — the owner's location mode at the response", () => {
     assert.deepEqual((await run([at("1", "wa", "none"), at("3", "wb", UNKNOWN_MODE)])).labels, []);
     assert.match((await run(base)).cols, /\blocation_privacy_mode\b/);
   });
+
+  it("B9. census-media MD79 (lead ruling D-26f): a released 'Publish after I leave' post places its author here for 24 h after release, then no longer — both producers SELECT published_at", async () => {
+    const released = (id: string, author: string, hoursAgo: number | null) =>
+      ({ id, author_id: author, canonical_place_id: "place-open", visibility: "public", status: "active", post_status: "published", created_at: minutesAgo(30), location_privacy_mode: "delayed_until_exit", ...(hoursAgo == null ? {} : { published_at: new Date(Date.now() - hoursAgo * 3_600_000).toISOString() }) });
+    const thread = async (rows: any[]) => {
+      const log = newLog();
+      const c = await contextThreadInternal.readSocialPresenceCandidate(fakeDb({ tables: { posts: rows } }, log), { place: { placeId: "place-open", name: "Open Cafe" } } as any,
+        { viewerId: "wv", followedCreatorIds: new Set(["wa", "wb", "wc", "wd"]) } as any);
+      return { label: c?.thread.label ?? null, cols: log.selects.find((s) => s.table === "posts")?.cols ?? "" };
+    };
+    const strip = async (rows: any[]) => {
+      const log = newLog();
+      const out = await buildSocialPresenceLiveCandidates(fakeDb({ tables: { posts: rows } }, log), "wv", new Set(["wa", "wb", "wc", "wd"]), [{ placeId: "place-open", name: "Open Cafe" }]);
+      return { labels: out.map((x: any) => x.resolved?.label ?? null), cols: log.selects.find((s) => s.table === "posts")?.cols ?? "" };
+    };
+    const open = (id: string, author: string) => ({ ...released(id, author, 1), location_privacy_mode: "none" });
+    const base = [open("1", "wa"), open("2", "wc")];
+    assert.equal((await thread([...base, released("4", "wd", 1)])).label, "3 people you follow were here recently", "inside the window");
+    assert.equal((await thread([...base, released("4", "wd", 25)])).label, "2 people you follow were here recently", "after it");
+    assert.equal((await thread([...base, released("4", "wd", null)])).label, "2 people you follow were here recently", "an unread release time has ended");
+    assert.match((await thread(base)).cols, /\bpublished_at\b/);
+    assert.deepEqual((await strip([...base, released("4", "wd", 1)])).labels, ["3 people you follow were here recently"]);
+    assert.deepEqual((await strip([...base, released("4", "wd", 25)])).labels, ["2 people you follow were here recently"]);
+    assert.match((await strip(base)).cols, /\bpublished_at\b/);
+  });
 });
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -1099,6 +1125,51 @@ describe("C. Place pages — a post whose owner withheld its place is not listed
     assert.match(log.selects.find((s) => s.table === "posts")!.cols, /\blocation_privacy_mode\b/);
   });
 
+  it("C9. census-media MD79: the per-request timeline and Place Day feed show a released 'Publish after I leave' post for 24 h after release, then not; both SELECT published_at", async () => {
+    const rel = (hoursAgo: number | null) => ({ published_at: hoursAgo == null ? null : new Date(Date.now() - hoursAgo * 3_600_000).toISOString() });
+    const timelineIds = async (extra: any) => {
+      use(livingWorld([lpost("n1", "a1", "none", 1), lpost("x", "ax", "delayed_until_exit", 2, extra)]));
+      const r = await h.request("GET", `/api/places/${LPLACE}/living/timeline?slice=today`, null);
+      return { ids: r.json.posts.map((p: any) => p.id), cols: log.selects.find((s) => s.table === "posts")!.cols };
+    };
+    assert.deepEqual((await timelineIds(rel(1))).ids, ["n1", "x"], "timeline, inside the window");
+    assert.deepEqual((await timelineIds(rel(25))).ids, ["n1"], "timeline, after it");
+    assert.deepEqual((await timelineIds(rel(null))).ids, ["n1"], "timeline, release time unreadable");
+    assert.match((await timelineIds(rel(1))).cols, /\bpublished_at\b/);
+    const dayIds = async (extra: any) => {
+      use(dayWorld([dpost("n1", "a1", "none", "15"), { ...dpost("n2", "a2", "delayed_until_exit", "14"), ...extra }]));
+      return walk("tok-v");
+    };
+    assert.deepEqual(await dayIds(rel(1)), ["n1", "n2"], "Place Day feed, inside the window");
+    assert.deepEqual(await dayIds(rel(25)), ["n1"], "Place Day feed, after it");
+    assert.match(log.selects.find((s) => s.table === "posts")!.cols, /\bpublished_at\b/);
+  });
+
+  it("C10. census-media MD79, FAIL CLOSED where the place decision outlives the request: the cached living payload, the persisted public rails and a Place Day recap never read published_at, so a released 'Publish after I leave' post is withheld there even inside its window", async () => {
+    const inWindow = { published_at: new Date(Date.now() - 3_600_000).toISOString() };
+    use(livingWorld([lpost("n1", "a1", "none", 1), lpost("x", "ax", "delayed_until_exit", 2, inWindow), lpost("n2", "a2", "none", 3), lpost("n3", "a3", "none", 5)]));
+    const living = await h.request("GET", `/api/places/${LPLACE}/living`, null);
+    assert.deepEqual(living.json.timeline.posts.map((p: any) => p.id), ["n1", "n2", "n3"], "the living payload is cached for up to 24 h, so it cannot honour a window that ends inside it");
+    assert.deepEqual(living.json.bestOf.experiences.map((e: any) => e.postId), ["n1", "n2", "n3"]);
+    for (const sel of log.selects.filter((x) => x.table === "posts")) assert.doesNotMatch(sel.cols, /\bpublished_at\b/, `living-payload read: ${sel.cols}`);
+    assert.deepEqual(log.writes.find((w) => w.table === "place_ai_summaries")!.row.post_ids_used, ["n1", "n2", "n3"], "the persisted AI summary is never written from it");
+    const world: Tables = {
+      ...dayWorld([{ ...dpost("mine", "rv", "none", "10") }, { ...dpost("n1", "a1", "none", "11") }, { ...dpost("w", "aw", "delayed_until_exit", "12"), ...inWindow }]),
+      place_days: [{ id: "c1000000-0000-4000-a000-000000000002", place_id: LPLACE, local_date: DATE, timezone: "Europe/London", status: "closing" }],
+    };
+    use(world, { rpc: () => ({ data: { recap: { id: "r2" }, version: { id: "v2" } }, error: null }) });
+    const res = await h.request("POST", "/api/place-recaps", "tok-rv", { placeDayId: "c1000000-0000-4000-a000-000000000002" });
+    assert.equal(res.status, 201, JSON.stringify(res.json));
+    assert.deepEqual(log.rpcs.find((r) => r.fn === "create_live_place_recap")!.args.p_sources.map((x: any) => NAME[x.postId] ?? x.postId), ["mine", "n1"], "a recap is a persisted copy: never from a post whose window will end");
+    assert.doesNotMatch(log.selects.find((x) => x.table === "posts")!.cols, /\bpublished_at\b/);
+    // The persisted public rails (place_best_of / place_top_contributors): the collections worker's posts read
+    // carries no published_at, so the shared rule withholds every released 'Publish after I leave' post there.
+    assert.equal(isPublicPlaceRailPost({ id: "p", author_id: "a", trip_id: null, visibility: "public", post_status: "published", location_privacy_mode: "delayed_until_exit" } as any), false);
+    assert.doesNotMatch(readFileSync(new URL("../lib/places/placeCollections.ts", import.meta.url), "utf8"), /published_at/, "the rails worker must not read published_at: its rails are persisted");
+    // Compass caches each viewer's feed (CompassCacheEngine), so its hydrator stays closed too.
+    assert.doesNotMatch(readFileSync(new URL("../compass/CompassItemHydrator.ts", import.meta.url), "utf8"), /published_at/, "Compass's hydrator must not read published_at: its feed is cached past the request");
+  });
+
   it("C7o. [both ways] the recap owner's own withheld post, and a none-mode post, are recapped", async () => {
     const posts = [dpost("mine", "rv", "city_only", "10"), dpost("n1", "a1", "none", "11"), dpost("w", "aw", "hidden", "12")];
     use({ ...dayWorld(posts), place_days: [{ id: "c1000000-0000-4000-a000-000000000001", place_id: LPLACE, local_date: DATE, timezone: "Europe/London", status: "closing" }] },
@@ -1185,6 +1256,18 @@ describe("D. The public postcard wall — a postcard's copied venue follows its 
     const res = await h.request("GET", "/api/users/target/passport/postcards", null);
     assert.equal(res.status, 200);
     assert.ok(Object.values(venues(res)).every((v) => v === null));
+  });
+
+  it("D5. census-media MD79: a released 'Publish after I leave' postcard keeps its venue for 24 h after release, then loses it; the read SELECTs published_at", async () => {
+    const withRelease = (hoursAgo: number) => POSTS().map((p) => p.id === "p-r" ? { ...p, published_at: new Date(Date.now() - hoursAgo * 3_600_000).toISOString() } : p);
+    use(world(withRelease(1)));
+    let res = await h.request("GET", "/api/users/target/passport/postcards", "tok-v");
+    assert.equal(venues(res)["pc-r"], "Hidden Courtyard", "inside the window");
+    assert.match(log.selects.find((s) => s.table === "posts")!.cols, /\bpublished_at\b/);
+    use(world(withRelease(25)));
+    res = await h.request("GET", "/api/users/target/passport/postcards", "tok-v");
+    assert.equal(venues(res)["pc-r"], null, "after it");
+    assert.equal(JSON.stringify(res.json).includes("published_at"), false, "the release time is never served");
   });
 
   it("D4. the two helpers", async () => {

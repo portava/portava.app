@@ -81,7 +81,7 @@ const pulseQuerySchema = z.object({
 // tell a published post from one still waiting for its author to leave.
 const POST_SAFE_COLUMNS =
   "id, author_id, trip_id, content, media_urls, visibility, status, post_status, created_at, updated_at, " +
-  "location_name, location_city, location_country, location_source, canonical_place_id, location_privacy_mode"; // location_privacy_mode: census-media §42 — without it every row reads as `none` to mapPublicPost
+  "location_name, location_city, location_country, location_source, canonical_place_id, location_privacy_mode, published_at"; // published_at: census-media MD79 — a released "Publish after I leave" post shows its place 24 h, then the city (read, never served); location_privacy_mode: census-media §42 — without it every row reads as `none` to mapPublicPost
 
 const GEO_TAG_COLUMNS =
   "location_visibility, city, district, country, country_code, venue_name, hotel_blur_applied";

@@ -266,6 +266,16 @@ describe("A. GET /api/pulse — the owner's location mode", () => {
     assert.deepEqual(byId.get("d2"), pulseShape(time, false));
   });
 
+  it("A2b. census-media MD79: Pulse now SELECTs published_at, so a released 'Publish after I leave' post keeps its venue for 24 h after release, then only the city", async () => {
+    const inside = pulseRow("d3", "delayed_until_exit", { published_at: new Date(Date.now() - 3_600_000).toISOString() });
+    const ended = pulseRow("d4", "delayed_until_exit", { published_at: new Date(Date.now() - 25 * 3_600_000).toISOString() });
+    const { byId, selects } = await servedAs("viewer-token", [inside, ended]);
+    assert.deepEqual(byId.get("d3"), pulseShape(inside, false), "inside the window: served exactly as before");
+    assert.deepEqual(byId.get("d4"), withheldPulseShape(ended), "after it: city and country only");
+    assert.match(selects.find((x: any) => x.table === "posts")!.cols, /\bpublished_at\b/);
+    assert.ok(!JSON.stringify(byId.get("d3")).includes("published_at"), "the release time is never served");
+  });
+
   it("A3. every withholding mode reaches a non-owner as city and country only — no venue, district or place id", async () => {
     const rows = WITHHOLDING_MODES.map((m, i) => pulseRow(`w${i}`, m));
     const { byId } = await servedAs("viewer-token", rows);
@@ -455,6 +465,39 @@ describe("B. eventPostsDiscovery — the owner's location mode, per viewer, afte
     assert.ok(!JSON.stringify(byId.get("a-released")).includes("Hotel Alfama"), "the post's venue appears nowhere");
     assert.deepEqual(byId.get("b-none"), pathBShape(bNone));
     assert.deepEqual(byId.get("b-released"), pathBShape(bReleased));
+  });
+
+  it("B1b. census-media MD79: both paths SELECT published_at, and a released 'Publish after I leave' post lends its venue for 24 h after release, then not", async () => {
+    const inside = discoveryPost("a-inside", "delayed_until_exit", { published_at: new Date(Date.now() - 3_600_000).toISOString() });
+    const ended = discoveryPost("a-ended", "delayed_until_exit", { published_at: new Date(Date.now() - 25 * 3_600_000).toISOString() });
+    const bInside = discoveryPost("b-inside", "delayed_until_exit", { published_at: new Date(Date.now() - 3_600_000).toISOString() });
+    const { db, selects } = discoveryDb({
+      post_event_links: [linkRow(inside, { ...EVENT_WITH_VENUE, id: "ev-in" }), linkRow(ended, { ...EVENT_WITH_VENUE, id: "ev-end" })],
+      posts: [placeRow(bInside)],
+    });
+    const out = await fetchEventPostsForDiscovery(discoveryParams(db, VIEWER));
+    const byId = new Map(out.map((p) => [p.id, p]));
+    assert.deepEqual(byId.get("a-inside"), pathAShape(inside, { ...EVENT_WITH_VENUE, id: "ev-in" }), "inside the window: exactly as before");
+    assert.deepEqual(byId.get("a-ended"), { ...pathAShape(ended, { ...EVENT_WITH_VENUE, id: "ev-end" }), venueName: EVENT_WITH_VENUE.location_name, publicLat: null, publicLng: null }, "after it: the event's venue, no coordinates");
+    assert.deepEqual(byId.get("b-inside"), pathBShape(bInside));
+    for (const sel of selects.filter((x: any) => /location_privacy_mode/.test(x.cols))) assert.match(sel.cols, /\bpublished_at\b/, sel.cols);
+    assert.ok(!JSON.stringify(out).includes("published_at") && !JSON.stringify(out).includes("placeDisclosureEndsAt"), "neither the release time nor the window end is served");
+  });
+
+  it("B1c. census-media MD79: a window that ends while the shared 5-minute cache holds the row is honoured at serve time, not at cache time", async (t) => {
+    const realNow = Date.now();
+    // Released 23 h 59 min ago: inside the window when the cache is filled, outside it two minutes later.
+    const post = discoveryPost("a-edge", "delayed_until_exit", { published_at: new Date(realNow - (24 * 60 - 1) * 60_000).toISOString() });
+    const { db, reads } = discoveryDb({ post_event_links: [linkRow(post, EVENT_WITH_VENUE)] });
+    const clock = t.mock.method(Date, "now", () => realNow);
+    const first = await fetchEventPostsForDiscovery(discoveryParams(db, VIEWER));
+    assert.equal(first.find((p) => p.id === "a-edge")!.venueName, EVENT_WITH_VENUE.location_name);
+    assert.deepEqual(first.find((p) => p.id === "a-edge"), pathAShape(post, EVENT_WITH_VENUE), "inside the window when cached");
+    const readsAfterFill = reads.length;
+    clock.mock.mockImplementation(() => realNow + 2 * 60_000);
+    const second = await fetchEventPostsForDiscovery(discoveryParams(db, VIEWER));
+    assert.equal(reads.length, readsAfterFill, "precondition: served from the cache, nothing re-read");
+    assert.deepEqual(second.find((p) => p.id === "a-edge"), { ...pathAShape(post, EVENT_WITH_VENUE), publicLat: null, publicLng: null }, "two minutes later, from the same cache entry: withheld");
   });
 
   it("B2. event link: a withheld post never lends its venue, and carries no coordinates", async () => {

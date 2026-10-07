@@ -78,3 +78,20 @@ export function postLocationDisclosureEnded(
   if (!Number.isFinite(t)) return true;
   return t <= nowMs;
 }
+
+/**
+ * Has a disclosure end CARRIED SEPARATELY from its row (a cache entry that
+ * stored `postLocationDisclosureExpiresAt(row)` when it read the row) passed at
+ * `nowMs`? null ⇒ no lifetime ⇒ false; anything unparseable (the UNREADABLE
+ * marker included) ⇒ true; an instant at or before `nowMs` ⇒ true.
+ *
+ * For readers that cache a row's place decision and serve it later: the
+ * decision taken at read time cannot know that the 24-hour window ends inside
+ * the cache's lifetime, so the end itself is cached and checked at serve time.
+ */
+export function locationDisclosureEndPassed(endsAt: string | null | undefined, nowMs: number = Date.now()): boolean {
+  if (endsAt == null) return false;
+  const t = Date.parse(endsAt);
+  if (!Number.isFinite(t)) return true;
+  return t <= nowMs;
+}
