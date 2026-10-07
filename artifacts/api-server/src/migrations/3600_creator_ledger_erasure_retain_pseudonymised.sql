@@ -133,7 +133,11 @@
 --      reversal of their own creator records. Every writer of the column in the
 --      tree is the service client (routes/profile.ts deactivate / reactivate,
 --      AccountDeletionService anonymise_profile), so the column-level UPDATE is
---      revoked from both client roles, exactly as 2078 did for `role`.
+--      revoked from both client roles AND a trigger refuses the change for any
+--      caller caller_may_write_profile_role() (2078) does not admit — a role
+--      holding table-level UPDATE keeps the column whatever its column grant
+--      says (Supabase's default privileges give new tables exactly that). The
+--      same two devices 2078 / 2163 use for `role` and the verification columns.
 --  (4c) A retained record's key cannot be re-sent (same review: "3387 has a
 --      NULL-unsafe replay compare"). creator_ledger_append's replay check
 --      (3387) compares `ex.beneficiary_user_id <> (a->>'beneficiary_user_id')::uuid`,
@@ -176,6 +180,9 @@ DO $pre$
 BEGIN
   IF to_regclass('public.creator_ledger_audit_events') IS NULL THEN
     RAISE EXCEPTION '3600: PRECONDITION FAILED: 3387 is not applied.';
+  END IF;
+  IF to_regprocedure('public.caller_may_write_profile_role()') IS NULL THEN
+    RAISE EXCEPTION '3600: PRECONDITION FAILED: 2078 (caller_may_write_profile_role) is not applied.';
   END IF;
   IF to_regprocedure('public.creator_ledger_erase_beneficiary(uuid,text,uuid,text)') IS NOT NULL THEN
     RAISE EXCEPTION '3600: PRECONDITION FAILED: C-11 answer A (3511, delete on erasure) is applied. The two answers are mutually exclusive; roll 3511 back first.';
@@ -424,6 +431,37 @@ CREATE TRIGGER clae_pseudonymised_is_frozen BEFORE INSERT ON public.creator_ledg
 REVOKE UPDATE (account_status) ON public.profiles FROM anon;
 REVOKE UPDATE (account_status) ON public.profiles FROM authenticated;
 
+CREATE OR REPLACE FUNCTION public.enforce_profile_account_status_privileged()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'pg_catalog'
+AS $fn$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    -- A signup inserts the default; only a non-default state needs privilege.
+    IF COALESCE(NEW.account_status, 'active') IS DISTINCT FROM 'active'
+       AND NOT public.caller_may_write_profile_role() THEN
+      RAISE EXCEPTION 'profiles.account_status cannot be set on insert by this caller (attempted %)', NEW.account_status
+        USING ERRCODE = '42501',
+              HINT = 'The account state is written by the server only (3600: it marks the erasure tombstone the creator ledger trusts).';
+    END IF;
+  ELSIF NEW.account_status IS DISTINCT FROM OLD.account_status
+        AND NOT public.caller_may_write_profile_role() THEN
+    RAISE EXCEPTION 'profiles.account_status is not self-writable (attempted % -> %)', OLD.account_status, NEW.account_status
+      USING ERRCODE = '42501',
+            HINT = 'The account state is written by the server only (3600: it marks the erasure tombstone the creator ledger trusts).';
+  END IF;
+  RETURN NEW;
+END;
+$fn$;
+REVOKE ALL ON FUNCTION public.enforce_profile_account_status_privileged() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.enforce_profile_account_status_privileged() FROM anon, authenticated;
+DROP TRIGGER IF EXISTS trg_profiles_account_status_privileged ON public.profiles;
+CREATE TRIGGER trg_profiles_account_status_privileged
+  BEFORE INSERT OR UPDATE ON public.profiles
+  FOR EACH ROW EXECUTE FUNCTION public.enforce_profile_account_status_privileged();
+
 -- ═══════════════════════════════════════════════════════════════════════════
 -- The receipt: that an identity was removed — never whose, never the pseudonym.
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -554,9 +592,19 @@ BEGIN
      OR position('a.idempotency_key = NEW.idempotency_key' IN pg_get_functiondef('public.creator_ledger_pseudonymised_is_frozen()'::regprocedure)) = 0 THEN
     RAISE EXCEPTION '3600: POSTCONDITION FAILED: the frozen guard does not refuse an erased person (4b) or a re-sent retained key (4c)';
   END IF;
-  IF has_column_privilege('anon', 'public.profiles', 'account_status', 'UPDATE')
-     OR has_column_privilege('authenticated', 'public.profiles', 'account_status', 'UPDATE') THEN
-    RAISE EXCEPTION '3600: POSTCONDITION FAILED: a client role can still set profiles.account_status, the erasure tombstone (4b) trusts';
+  -- The tombstone (4b) trusts is server-only: no client COLUMN grant on it, and the
+  -- trigger that refuses a non-privileged change is installed and enabled.
+  IF EXISTS (SELECT 1 FROM pg_attribute a, aclexplode(a.attacl) x
+              WHERE a.attrelid = 'public.profiles'::regclass AND a.attname = 'account_status'
+                AND x.privilege_type = 'UPDATE'
+                AND x.grantee IN ('anon'::regrole::oid, 'authenticated'::regrole::oid)) THEN
+    RAISE EXCEPTION '3600: POSTCONDITION FAILED: a client role still holds UPDATE (account_status) on profiles, the erasure tombstone (4b) trusts';
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger t
+                  WHERE t.tgrelid = 'public.profiles'::regclass AND NOT t.tgisinternal AND t.tgenabled = 'O'
+                    AND t.tgname = 'trg_profiles_account_status_privileged'
+                    AND t.tgfoid = 'public.enforce_profile_account_status_privileged()'::regprocedure) THEN
+    RAISE EXCEPTION '3600: POSTCONDITION FAILED: the trigger that keeps profiles.account_status server-only is not installed';
   END IF;
   SELECT count(*) INTO n FROM information_schema.columns
    WHERE table_schema = 'public' AND table_name = 'creator_ledger_identity_removals'

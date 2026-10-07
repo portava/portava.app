@@ -881,6 +881,21 @@ describe("the creator ledger on synthetic accounts, and C-11 in its three states
       assert.equal(rename.status, 0, `ordinary self-editing is untouched: ${rename.stderr}`);
       assert.equal(attempt(`UPDATE public.profiles SET account_status = 'deactivated' WHERE id = '${self}';`).status, 0,
         "the service role (routes/profile.ts, AccountDeletionService) still writes it");
+      // A signup cannot arrive already erased either; one with the default is untouched.
+      const fresh = synId();
+      exec(`INSERT INTO auth.users (id, email) VALUES ('${fresh}', 'c11syn_b13f_${fresh.slice(9, 13)}@synthetic-c11.invalid');`);
+      const asFresh = (sql: string) => psql([
+        `SELECT set_config('request.jwt.claim.sub', '${fresh}', true);`,
+        `SELECT set_config('request.jwt.claim.role', 'authenticated', true);`,
+        `SET LOCAL ROLE authenticated;`,
+        `\\set VERBOSITY verbose`,
+        sql,
+      ].join("\n"), { single: true });
+      const erasedSignup = asFresh(`INSERT INTO public.profiles (id, handle, name, account_status) VALUES ('${fresh}', 'c11syn_b13f_${fresh.slice(9, 13)}', 'SYNTHETIC C-11 FIXTURE b13f', 'deleted');`);
+      assert.notEqual(erasedSignup.status, 0, "a profile may not be inserted already marked erased by its own user");
+      assert.match(erasedSignup.stderr, /42501/);
+      const signup = asFresh(`INSERT INTO public.profiles (id, handle, name) VALUES ('${fresh}', 'c11syn_b13f_${fresh.slice(9, 13)}', 'SYNTHETIC C-11 FIXTURE b13f');`);
+      assert.equal(signup.status, 0, `an ordinary signup is untouched: ${signup.stderr}`);
     });
 
     test("S1. separation: every ledger row in fixture B belongs to a synthetic account (or to a pseudonym that replaced one)", () => {

@@ -185,9 +185,22 @@ describe("C-11 erasure design, on the files (census-discovery §107)", () => {
     // recompute and reversal of their own records.
     for (const role of ["anon", "authenticated"]) {
       assert.match(code(B), new RegExp(`REVOKE UPDATE \\(account_status\\) ON public\\.profiles FROM ${role};`), role);
-      assert.match(code(B), new RegExp(`has_column_privilege\\('${role}', 'public\\.profiles', 'account_status', 'UPDATE'\\)`), `${role}: asserted by a postcondition`);
     }
+    // The grant alone is not the barrier (a table-level UPDATE keeps the column),
+    // so a trigger refuses a non-privileged change, on insert and on update.
+    const guard = /CREATE OR REPLACE FUNCTION public\.enforce_profile_account_status_privileged\(\)[\s\S]*?\$fn\$;/.exec(code(B));
+    assert.ok(guard, "the account-status guard function is defined");
+    assert.match(guard![0], /SECURITY DEFINER/);
+    assert.match(guard![0], /COALESCE\(NEW\.account_status, 'active'\) IS DISTINCT FROM 'active'\s+AND NOT public\.caller_may_write_profile_role\(\)/, "insert");
+    assert.match(guard![0], /NEW\.account_status IS DISTINCT FROM OLD\.account_status\s+AND NOT public\.caller_may_write_profile_role\(\)/, "update");
+    assert.match(guard![0], /ERRCODE = '42501'/);
+    assert.match(code(B), /CREATE TRIGGER trg_profiles_account_status_privileged\s+BEFORE INSERT OR UPDATE ON public\.profiles\s+FOR EACH ROW EXECUTE FUNCTION public\.enforce_profile_account_status_privileged\(\);/);
+    // Postconditions: no client column grant left, and the trigger installed and enabled.
+    assert.match(code(B), /a\.attname = 'account_status'\s+AND x\.privilege_type = 'UPDATE'/);
+    assert.match(code(B), /t\.tgname = 'trg_profiles_account_status_privileged'/);
+    // The rollback hands neither back.
     assert.doesNotMatch(code(B_RB), /GRANT[^;]*account_status/, "the rollback does not hand the column back to the client roles");
+    assert.doesNotMatch(code(B_RB), /DROP (TRIGGER|FUNCTION)[^;]*account_status_privileged/, "the rollback keeps the guard");
   });
 
   it("E7. (4c) a re-sent key of a retained attribution is refused by the BEFORE INSERT guard, ahead of ON CONFLICT, so 3387's NULL-unsafe replay compare is never reached for it", () => {

@@ -4099,9 +4099,14 @@ ON CONFLICT, so 3387's NULL-unsafe replay compare is never reached for such a ro
 not edited). Postconditions assert both. **One grant changes:** (4b) trusts `profiles.account_status =
 'deleted'`, and the baseline lets `anon` / `authenticated` UPDATE that column on their own row, so a person
 could mark themselves erased and switch off every hold, recompute and reversal of their own creator records;
-3600 revokes the two client roles' column-level `UPDATE (account_status)` (as `2078` did for `role`; every
-writer in the tree is the service client) and asserts it. The rollback deliberately does not re-grant it. No
-new object or table.
+3600 revokes the two client roles' column-level `UPDATE (account_status)` AND installs
+`trg_profiles_account_status_privileged` (`enforce_profile_account_status_privileged()`, SECURITY DEFINER,
+gated on 2078's `caller_may_write_profile_role()`), because a role holding table-level UPDATE keeps the column
+whatever its column grant says — the same two devices `2078` / `2163` use. Every writer in the tree is the
+service client. Postconditions assert both; the rollback deliberately keeps both. The CI local-db replay of the
+first version (grant only, `has_column_privilege` postcondition) FAILED at that postcondition — the harness's
+default privileges give `authenticated` table-level UPDATE — which is what showed the grant was not the barrier.
+No new table.
 
 ## Apply-order overrides
 
