@@ -32,6 +32,7 @@ import { _setTestServiceClient } from "../lib/supabase.js";
 import trailsRouter from "../routes/trails.js";
 import adminTrailsRouter from "../routes/adminTrails.js";
 import { trailIsPublic, trailVisibleTo } from "../services/trails/TrailService.js";
+import { maskUnseenTrailIds } from "../services/trails/trailReview.js";
 import { makeFakeClient, startRouter, call, type FakeClient, type FakeDbOptions, type RouterHarness } from "./telegraphCertificationHarness.js";
 
 const CREATOR = "11111111-0000-4000-8000-000000000001";
@@ -187,6 +188,52 @@ describe("O — another viewer: not visible, not ranked, surfaced, linked or sha
     const r = await get(`/v1/discovery/trails/${PUBLIC}/related`, OTHER);
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.doesNotMatch(JSON.stringify(r.body), new RegExp(PENDING));
+  });
+});
+
+describe("O6 (verifier F3 on dc0107eda5) — the canonicalisation 409 never names another person's Trail under review", () => {
+  // trail_propose (3415/3977) compares a proposal against EVERY Trail, pending and rejected included, so its
+  // refusal can name one. The route masks any id the caller may not see (maskUnseenTrailIds). Modelled here at
+  // the rpc, as the harness answers none: the database's refusal names the conflicting Trail and suggests it as
+  // the parent, which is exactly what it does for a near-duplicate.
+  const refuseAgainst = (c: FakeClient, conflict: string) => {
+    const base = (c as any).rpc;
+    (c as any).rpc = async (name: string, args: any) => name === "trail_propose"
+      ? { data: { outcome: "refused", refusals: [{ check: "duplicate_title_similarity", conflictsWith: conflict, similarity: 0.9 },
+        { check: "destination_overlap", conflictsWith: conflict, similarity: 0.8 }], suggestedParentTrailId: conflict }, error: null }
+      : base(name, args);
+  };
+  const propose = (who: string) => req("POST", "/v1/discovery/trails", who, { title: "Secret Tiles Walk Again", destination: "lisbon" });
+  it("O6a. THE POINT: colliding with someone else's PENDING Trail — 409, every conflictsWith and the suggested parent are null", async () => {
+    refuseAgainst(use(), PENDING);
+    const r = await propose(OTHER);
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(r.body.refusals.length, 2, "vacuity guard: the refusals are served, only the id is withheld");
+    assert.deepEqual(r.body.refusals.map((x: any) => x.conflictsWith), [null, null]);
+    assert.equal(r.body.suggestedParentTrailId, null);
+    assert.doesNotMatch(JSON.stringify(r.body), new RegExp(PENDING));
+  });
+  it("O6b. the same for someone else's REJECTED Trail", async () => {
+    refuseAgainst(use(), REJECTED);
+    const r = await propose(OTHER);
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.doesNotMatch(JSON.stringify(r.body), new RegExp(REJECTED));
+  });
+  it("O6c. CONTROL: colliding with an APPROVED Trail names it, and its creator's own pending Trail is named to its creator", async () => {
+    refuseAgainst(use(), PUBLIC);
+    const pub = await propose(OTHER);
+    assert.deepEqual(pub.body.refusals.map((x: any) => x.conflictsWith), [PUBLIC, PUBLIC]);
+    assert.equal(pub.body.suggestedParentTrailId, PUBLIC);
+    refuseAgainst(use(), PENDING);
+    const own = await propose(CREATOR);
+    assert.equal(own.body.suggestedParentTrailId, PENDING);
+  });
+  it("O6d. the review states unreadable: no id is named (a failed read is not 'public'); CONTROL readable names only what the caller may see", async () => {
+    const down = makeFakeClient(seed(), { errors: { trails: { message: "trails down", code: "57P01", ops: ["select"] } } });
+    assert.deepEqual([...(await maskUnseenTrailIds(down, [PUBLIC, PENDING], OTHER))], [[PUBLIC, null], [PENDING, null]]);
+    const up = makeFakeClient(seed());
+    assert.deepEqual([...(await maskUnseenTrailIds(up, [PUBLIC, PENDING, REJECTED, null], OTHER))], [[PUBLIC, PUBLIC], [PENDING, null], [REJECTED, null]]);
+    assert.deepEqual([...(await maskUnseenTrailIds(up, [PENDING], CREATOR))], [[PENDING, PENDING]]);
   });
 });
 

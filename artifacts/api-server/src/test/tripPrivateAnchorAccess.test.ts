@@ -52,8 +52,13 @@ import anchorSharesRouter from "../routes/tripAnchorShares.js";
 import {
   anchorsVisibleTo,
   ownsShareableAnchor,
+  canSeePlanItemLocation,
+  ownerOnlyAccess,
+  withholdPrivatePlanItems,
   type AnchorGrantRead,
 } from "../domain/trips/policies/privateAnchorAccess.js";
+import * as inputRule from "../lib/inputAssistance/planItemAccess.js";
+import * as safeReturnRule from "../services/safeReturn/safeReturnPlanItemAccess.js";
 import {
   makeFakeClient,
   startRouter,
@@ -158,6 +163,24 @@ describe("A. the rule, pure", () => {
 
   it("A4. a role is not an input: the signature has nowhere for 'organizer' to arrive", () => {
     assert.equal(anchorsVisibleTo.length, 4);
+  });
+
+  it("A6 (verifier F4 on dc0107eda5). A row that does not SAY it is public is private: privacy null or absent is withheld from anyone but its creator — in the Trips rule and in both copies (Input, safe return)", () => {
+    // privateAnchorAccess.ts's header sells this clause as the protection for a reader that forgot to select the
+    // privacy columns; `=== false` is the whole of it (`!== true` would read null as public).
+    for (const [name, rule] of [["trips", { canSeePlanItemLocation, ownerOnlyAccess }], ["input", inputRule], ["safe-return", safeReturnRule]] as const) {
+      const viewer = rule.ownerOnlyAccess(CLEO);
+      for (const privacy of [null, undefined, "false", 0] as unknown[]) {
+        const row: Record<string, unknown> = { id: "i1", creator_id: ANA, removed_at: null, location_is_private: privacy };
+        if (privacy === undefined) delete row.location_is_private;
+        assert.equal(rule.canSeePlanItemLocation(viewer, row), false, `${name}: privacy ${JSON.stringify(privacy)} read as public`);
+        assert.equal(rule.canSeePlanItemLocation(rule.ownerOnlyAccess(ANA), row), true, `${name}: the creator still sees it (CONTROL)`);
+      }
+      assert.equal(rule.canSeePlanItemLocation(viewer, { id: "i1", creator_id: ANA, removed_at: null, location_is_private: false }), true, `${name}: CONTROL — an item that says it is public is seen`);
+    }
+    const [slot] = withholdPrivatePlanItems([{ id: "i1", creator_id: ANA, removed_at: null, location_is_private: null, title: "Casa", lat: 1 }], ownerOnlyAccess(CLEO));
+    assert.equal(slot!.title, "Private plan");
+    assert.equal(slot!.lat, null);
   });
 
   it("A5. only the creator of a live private item of THIS trip may share it", () => {
