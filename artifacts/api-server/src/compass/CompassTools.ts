@@ -906,6 +906,16 @@ function tripSummaryRow(t: { id: string; title: string | null; destinationCity: 
  * passes null, so a projection it cannot build is answered as no trip at all
  * rather than as a trip with an empty plan.
  */
+/**
+ * Said when the plan items' privacy columns could not be read. Every item not
+ * proven public is then withheld — the caller's own too, because without
+ * `creator_id` nobody's ownership can be proven (wave-6 verifier F2) — and the
+ * model is told why, so it does not present the slots as other people's secrets
+ * or the user's plan as empty.
+ */
+const PLAN_PRIVACY_UNREAD_INFO =
+  "Who may see each plan item could not be read right now, so every item not proven public — the user's own included — is shown only as \"Private plan\". Say that plainly and suggest trying again shortly; do not guess what the items are.";
+
 async function projectCurrentTrip(sc: SupabaseClient, tripId: string, fallback: any | null, viewerId: string): Promise<unknown> {
   // §19.1: the plan comes from the projection, accepted or refused by the one
   // consumer rule. A refused projection is SAID to be refused — the old read
@@ -938,7 +948,7 @@ async function projectCurrentTrip(sc: SupabaseClient, tripId: string, fallback: 
   return {
     trip,
     planItems,
-    ...(p.planItems.status !== "ok" ? { info: `Plan items could not be read: ${p.planItems.reason}` } : {}),
+    ...(p.planItems.status !== "ok" ? { info: `Plan items could not be read: ${p.planItems.reason}` } : privacy === null ? { info: PLAN_PRIVACY_UNREAD_INFO } : {}),
     ...(p.planItemsTruncated ? { planItemsTruncated: true } : {}),
     projection: { generatedAt: p.generatedAt, sourceTripVersion: p.sourceTripVersion, freshness: p.freshness },
   };
@@ -1344,6 +1354,7 @@ export async function toolGetRouteChain(sc: SupabaseClient, userId: string, args
       })),
       unplaced: p.unplaced, segments: p.segments, disclosure: p.disclosure, reading: p.reading,
     },
+    ...(privacy === null ? { info: PLAN_PRIVACY_UNREAD_INFO } : {}),
     projection: { generatedAt: p.generatedAt, sourceTripVersion: p.sourceTripVersion, freshness: p.freshness },
   };
 }
@@ -1482,8 +1493,10 @@ export async function toolSimulatePlan(sc: SupabaseClient, userId: string, args:
   // private plan is "Private plan" before any conflict or explanation is
   // written from it (the shared loader does not carry the privacy columns on
   // this tree, so they are read by id; unreadable → every unproven item withheld).
+  let privacyUnread = false;
   {
     const privacy = loaded.state.plans.length > 0 ? await readPlanItemPrivacy(sc, t.id) : new Map();
+    privacyUnread = privacy === null;
     const access = await planItemAccessFor(sc, t.id, userId);
     loaded.state.plans = loaded.state.plans.map((pl) => {
       const [shown] = withholdPrivatePlanItems([{ id: pl.id, title: pl.title, ...(privacy?.get(pl.id) ?? {}) }], access);
@@ -1500,6 +1513,7 @@ export async function toolSimulatePlan(sc: SupabaseClient, userId: string, args:
       bookingSideEffects: { ...v.impact.bookingSideEffects, bookingsAtRisk: v.impact.bookingSideEffects.bookingsAtRisk.map((b) => ({ ...b, title: b.title ? wrapUgc(b.title) : null })) },
       windowAfter: v.windowAfter, explanation: v.explanation.map((x) => wrapUgc(x)),
     },
+    ...(privacyUnread ? { info: PLAN_PRIVACY_UNREAD_INFO } : {}),
   };
 }
 

@@ -30,6 +30,7 @@ import { readTripDecision } from "../domain/trips/services/TripDecisionLedger.js
 import { executeCompassTool } from "../compass/CompassTools.js";
 import type { CompassProfile } from "../compass/types.js";
 import { makeClient, base } from "./tripHealthProjection.test.js";
+import { failPlanPrivacyRead } from "./helpers/failPlanPrivacyRead.js";
 
 const OWNER_ID  = "11111111-1111-1111-1111-111111111111";
 const MEMBER_ID = "22222222-2222-2222-2222-222222222222";
@@ -142,6 +143,21 @@ describe("GET /trips/:tripId/route-chain and the Compass tool", () => {
     assert.equal(theirs.chain.stops.find((s: any) => s.planItemId === B).title, "Private plan");
     assert.equal(theirs.chain.hops[0].boundMinutes, null, "a travel time to a private place says where it is");
     assert.equal(theirs.chain.hops[0].unknownReason, "private_location");
+  });
+  it("privacy read UNREADABLE (wave-6 verifier F2): every stop not proven public is 'Private plan', no hop carries a travel time, and the model is told why", async () => {
+    const profile = { userId: OWNER_ID, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile;
+    const u = tables();
+    for (const i of u.trip_plan_items as any[]) { i.creator_id = OWNER_ID; i.location_is_private = false; i.title = `Public stop ${String(i.id).slice(-1)}`; }
+    const b = (u.trip_plan_items as any[]).find((i) => i.id === B)!; b.creator_id = MEMBER_ID; b.location_is_private = true; b.title = "Rehab clinic";
+    const c = failPlanPrivacyRead(makeClient(u));
+    const r: any = await executeCompassTool(c as any, OWNER_ID, profile, "get_route_chain", { tripId: TRIP_ID });
+    assert.equal(c.privacyReads, 1, "the privacy read was reached and failed");
+    const wire = JSON.stringify(r);
+    assert.doesNotMatch(wire, /Rehab clinic|Public stop/, "a title reached the wire over an unreadable privacy read");
+    assert.ok(r.chain.stops.length >= 2 && r.chain.stops.every((s: any) => s.title === "Private plan"), wire.slice(0, 400));
+    assert.ok(r.chain.hops.length >= 1);
+    for (const h of r.chain.hops) { assert.equal(h.boundMinutes, null); assert.equal(h.unknownReason, "private_location"); }
+    assert.match(String(r.info), /could not be read/);
   });
   it("the sanitizer keeps a camelCase `…At` time: get_route_chain's expectedArrivalAt and get_commitments' requiredArrivalAt reach the conversation (they did not before §62)", async () => {
     const profile = { userId: OWNER_ID, blockedUserIds: [], blockerUserIds: [], mutedUserIds: [] } as unknown as CompassProfile;

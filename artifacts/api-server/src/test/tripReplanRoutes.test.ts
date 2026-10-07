@@ -23,6 +23,7 @@ import { _resetTripMetrics } from "../domain/trips/services/tripMetrics.js";
 import { _resetOpportunityPortfolios } from "../domain/trips/projections/TripOpportunityProjection.js";
 import { _resetTripDecisionLedger } from "../domain/trips/services/TripDecisionLedger.js";
 import { makeClient, base } from "./tripHealthProjection.test.js";
+import { failPlanPrivacyRead } from "./helpers/failPlanPrivacyRead.js";
 
 const OWNER_ID  = "11111111-1111-1111-1111-111111111111";
 const MEMBER_ID = "22222222-2222-2222-2222-222222222222";
@@ -246,6 +247,17 @@ describe("§8.4 on Today, §8.3 readiness grouping, and the Compass tools", () =
     // D-65 the other way (census-compass §42): the caller's OWN private plan is theirs to see.
     const own = await run(true, OWNER_ID);
     assert.match(String(own.impact.summary), /Clinic visit/, "the caller's own private plan was withheld from them");
+  });
+
+  it("Compass simulate_plan, privacy read UNREADABLE (wave-6 verifier F2): even a public plan is 'Private plan' in the impact text, and the model is told why", async () => {
+    const t = fixture(); t.trip_plan_items = [plan("walk", { title: "Clinic visit", creator_id: MEMBER_ID, location_is_private: false })];
+    const c = failPlanPrivacyRead(install(t));
+    const r: any = await toolSimulatePlan(c as any, OWNER_ID, { tripId: TRIP_ID, kind: "cancel_plan", targetId: "walk" });
+    assert.equal(c.privacyReads, 1, "the privacy read was reached and failed");
+    assert.ok(r.simulation, JSON.stringify(r).slice(0, 300));
+    assert.doesNotMatch(JSON.stringify(r), /Clinic visit/, "a plan title reached the wire over an unreadable privacy read");
+    assert.match(String(r.simulation.impact.summary), /Private plan/);
+    assert.match(String(r.info), /could not be read/);
   });
 
   it("Compass: replan_day carries the same diff as the route, never writes, and names create_proposal for the shared mutations; a stranger gets info, not a diff", async () => {

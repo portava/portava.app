@@ -18,6 +18,7 @@
 
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { failPlanPrivacyRead } from "./helpers/failPlanPrivacyRead.js";
 import { createServer, type Server } from "node:http";
 import express, { type Express } from "express";
 import { _setTestClient } from "../lib/http.js";
@@ -323,6 +324,17 @@ describe("E2. OD-TRIP-3 — another member's private plan item reaches the model
     assert.doesNotMatch(wire, /Rehab clinic/, "another member's private title reached the model");
     assert.doesNotMatch(wire, /Unknown flag place/, "an item whose privacy flag is NULL was treated as public");
     assert.equal(result.plannedItems.filter((i: any) => /Private plan/.test(i.title)).length, 2, "the slots are still there");
+  });
+
+  it("get_current_trip, privacy read UNREADABLE (wave-6 verifier F2): every item not proven public is 'Private plan' — the caller's own too — and the model is told why", async () => {
+    const c = failPlanPrivacyRead(makeClient(sharedTripDb()));
+    const result: any = await executeCompassTool(c, ALICE_ID, profileFor(), "get_current_trip", { tripId: TRIP_ID });
+    assert.equal(c.privacyReads, 1, "the privacy read was reached and failed");
+    const wire = JSON.stringify(result);
+    assert.equal(result.planItems.length, 4, wire.slice(0, 300));
+    assert.ok(result.planItems.every((i: any) => /Private plan/.test(String(i.title))), wire.slice(0, 400));
+    for (const name of ["Rehab clinic", "Unknown flag place", "Group dinner", "Alice's dive"]) assert.doesNotMatch(wire, new RegExp(name));
+    assert.match(String(result.info), /could not be read/);
   });
 
   it("get_current_trip: the projection's plan items obey the same rule", async () => {
