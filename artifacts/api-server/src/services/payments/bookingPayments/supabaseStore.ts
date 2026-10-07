@@ -32,6 +32,12 @@ import {
   type Write,
 } from "./model.js";
 
+// The five 3931 tables. Every `.from(...)` below spells its table as a string
+// LITERAL, not through these names: check:write-path-columns and
+// check:schema-references can only check the columns of a call whose table is a
+// literal. A `.from(T_PAYMENTS)` is a "dynamic table name" blind spot to both.
+// These constants remain for the schema suite. rentBuddyPaymentStoreSchema.test.ts
+// holds the literals and these names to the same five tables.
 export const T_RECIPIENTS = "rent_buddy_payment_recipients";
 export const T_PAYMENTS = "rent_buddy_booking_payments";
 export const T_REFUNDS = "rent_buddy_payment_refunds";
@@ -159,29 +165,46 @@ function toPayment(r: Record<string, unknown>): BookingPaymentRecord {
   };
 }
 
+/**
+ * Drop the keys whose value is `undefined`, in place: a PATCH writes only the
+ * columns it names. `null` is a value and is kept.
+ *
+ * WHY THE ROW BUILDERS ARE ONE OBJECT LITERAL EACH. `check:write-path-columns`
+ * (live schema) and `check:schema-references` (baseline + migrations) read the
+ * columns a write names out of the TypeScript AST. They follow a same-file
+ * builder to the object literal its returned variable is initialised with, and
+ * no further. A builder that assembled its row key by key was invisible to
+ * both. So every column each builder can write is spelled once, in one literal,
+ * under a variable name used nowhere else in this file. The extractor resolves
+ * an identifier to the nearest declaration of that NAME before the call site,
+ * so a shared name would be checked against another table's columns.
+ */
+function dropUndefined(row: Record<string, unknown>): void {
+  for (const k of Object.keys(row)) if (row[k] === undefined) delete row[k];
+}
+
 /** The row for a (partial) payment record. Only the keys present are written. */
 export function paymentRow(p: Partial<BookingPaymentRecord>): Record<string, unknown> {
-  const row: Record<string, unknown> = {};
-  const set = (k: string, v: unknown) => { if (v !== undefined) row[k] = v; };
-  set("id", p.id); set("booking_id", p.bookingId); set("attempt_no", p.attemptNo); set("provider", p.provider);
-  set("idempotency_key", p.idempotencyKey); set("intent_ref", p.intentRef); set("recipient_ref", p.recipientRef);
-  set("recipient_party_id", p.recipientPartyId); set("charge_model", p.chargeModel); set("state", p.state); set("intent_state", p.intentState);
-  if (p.amount) { set("currency", p.amount.currency); set("amount_minor", p.amount.amountMinor); }
-  if (p.components) {
-    set("service_minor", p.components.serviceMinor); set("payer_fee_minor", p.components.payerFeeMinor);
-    set("tip_minor", p.components.tipMinor); set("tax_minor", p.components.taxMinor);
-  }
-  if (p.platformFee) {
-    set("commission_minor", p.platformFee.commissionMinor); set("platform_payer_fee_minor", p.platformFee.payerFeeMinor); set("platform_tax_minor", p.platformFee.taxMinor);
-  }
-  set("commission_bps", p.commissionBps); set("commission_rule_version", p.commissionRuleVersion); set("tax_provider", p.taxProvider);
-  if (p.taxCalculationRefs) set("tax_calculation_refs", [...p.taxCalculationRefs]);
-  set("buyer_market", p.buyerMarket); set("seller_market", p.sellerMarket);
-  set("amount_captured_minor", p.amountCapturedMinor); set("amount_refunded_minor", p.amountRefundedMinor);
-  set("platform_fee_collected_minor", p.platformFeeCollectedMinor); set("platform_fee_refunded_minor", p.platformFeeRefundedMinor);
-  if (p.settlement !== undefined) set("settlement", projectSettlement(p.settlement)); if (p.lastSnapshot !== undefined) set("last_snapshot", projectIntentSnapshot(p.lastSnapshot)); set("failure_reason", p.failureReason); set("provider_cancel_owed", p.providerCancelOwed); set("payout_id", p.payoutId);
-  set("created_at", p.createdAt); set("updated_at", p.updatedAt);
-  return row;
+  const paymentColumnsWritten: Record<string, unknown> = {
+    id: p.id, booking_id: p.bookingId, attempt_no: p.attemptNo, provider: p.provider,
+    idempotency_key: p.idempotencyKey, intent_ref: p.intentRef, recipient_ref: p.recipientRef,
+    recipient_party_id: p.recipientPartyId, charge_model: p.chargeModel, state: p.state, intent_state: p.intentState,
+    currency: p.amount?.currency, amount_minor: p.amount?.amountMinor,
+    service_minor: p.components?.serviceMinor, payer_fee_minor: p.components?.payerFeeMinor,
+    tip_minor: p.components?.tipMinor, tax_minor: p.components?.taxMinor,
+    commission_minor: p.platformFee?.commissionMinor, platform_payer_fee_minor: p.platformFee?.payerFeeMinor, platform_tax_minor: p.platformFee?.taxMinor,
+    commission_bps: p.commissionBps, commission_rule_version: p.commissionRuleVersion, tax_provider: p.taxProvider,
+    tax_calculation_refs: p.taxCalculationRefs ? [...p.taxCalculationRefs] : undefined,
+    buyer_market: p.buyerMarket, seller_market: p.sellerMarket,
+    amount_captured_minor: p.amountCapturedMinor, amount_refunded_minor: p.amountRefundedMinor,
+    platform_fee_collected_minor: p.platformFeeCollectedMinor, platform_fee_refunded_minor: p.platformFeeRefundedMinor,
+    settlement: p.settlement === undefined ? undefined : projectSettlement(p.settlement),
+    last_snapshot: p.lastSnapshot === undefined ? undefined : projectIntentSnapshot(p.lastSnapshot),
+    failure_reason: p.failureReason, provider_cancel_owed: p.providerCancelOwed, payout_id: p.payoutId,
+    created_at: p.createdAt, updated_at: p.updatedAt,
+  };
+  dropUndefined(paymentColumnsWritten);
+  return paymentColumnsWritten;
 }
 
 function toRecipient(r: Record<string, unknown>): RecipientRecord {
@@ -218,13 +241,17 @@ function toRefund(r: Record<string, unknown>): RefundRecord {
   };
 }
 
-export function refundRow(p: Partial<RefundRecord>): Record<string, unknown> {
-  const row: Record<string, unknown> = {};
-  const set = (k: string, v: unknown) => { if (v !== undefined) row[k] = v; };
-  set("id", p.id); set("booking_payment_id", p.bookingPaymentId); set("provider", p.provider); set("idempotency_key", p.idempotencyKey);
-  set("refund_ref", p.refundRef); set("state", p.state); set("reason", p.reason); set("amount_minor", p.amountMinor); set("currency", p.currency);
-  set("refund_platform_fee", p.refundPlatformFee); set("requested_by_role", p.requestedByRole); set("requested_by_party_id", p.requestedByPartyId); if (p.lastSnapshot !== undefined) set("last_snapshot", projectRefundSnapshot(p.lastSnapshot)); set("created_at", p.createdAt);
-  return row;
+/** The row for a (partial) refund record. `updatedAt` is the UPDATE's own stamp (RefundRecord carries none). */
+export function refundRow(p: Partial<RefundRecord>, updatedAt?: string): Record<string, unknown> {
+  const refundColumnsWritten: Record<string, unknown> = {
+    id: p.id, booking_payment_id: p.bookingPaymentId, provider: p.provider, idempotency_key: p.idempotencyKey,
+    refund_ref: p.refundRef, state: p.state, reason: p.reason, amount_minor: p.amountMinor, currency: p.currency,
+    refund_platform_fee: p.refundPlatformFee, requested_by_role: p.requestedByRole, requested_by_party_id: p.requestedByPartyId,
+    last_snapshot: p.lastSnapshot === undefined ? undefined : projectRefundSnapshot(p.lastSnapshot),
+    created_at: p.createdAt, updated_at: updatedAt,
+  };
+  dropUndefined(refundColumnsWritten);
+  return refundColumnsWritten;
 }
 
 function toPayout(r: Record<string, unknown>): MonthlyPayoutRecord {
@@ -255,14 +282,17 @@ function toPayout(r: Record<string, unknown>): MonthlyPayoutRecord {
 }
 
 export function payoutRow(p: Partial<MonthlyPayoutRecord>): Record<string, unknown> {
-  const row: Record<string, unknown> = {};
-  const set = (k: string, v: unknown) => { if (v !== undefined) row[k] = v; };
-  set("id", p.id); set("recipient_party_id", p.recipientPartyId); set("provider", p.provider); set("period", p.period); set("currency", p.currency); set("amount_minor", p.amountMinor);
-  set("state", p.state); set("idempotency_key", p.idempotencyKey); set("payout_ref", p.payoutRef); set("recipient_ref", p.recipientRef);
-  if (p.bookingPaymentIds) set("booking_payment_ids", [...p.bookingPaymentIds]);
-  set("hold_reason", p.holdReason); set("held_by", p.heldBy); set("held_at", p.heldAt); set("released_by", p.releasedBy); set("released_at", p.releasedAt); set("release_reason", p.releaseReason); set("carry_reason", p.carryReason); set("failure_code", p.failureCode); if (p.lastSnapshot !== undefined) set("last_snapshot", projectPayoutSnapshot(p.lastSnapshot));
-  set("created_at", p.createdAt); set("updated_at", p.updatedAt);
-  return row;
+  const payoutColumnsWritten: Record<string, unknown> = {
+    id: p.id, recipient_party_id: p.recipientPartyId, provider: p.provider, period: p.period, currency: p.currency, amount_minor: p.amountMinor,
+    state: p.state, idempotency_key: p.idempotencyKey, payout_ref: p.payoutRef, recipient_ref: p.recipientRef,
+    booking_payment_ids: p.bookingPaymentIds ? [...p.bookingPaymentIds] : undefined,
+    hold_reason: p.holdReason, held_by: p.heldBy, held_at: p.heldAt, released_by: p.releasedBy, released_at: p.releasedAt,
+    release_reason: p.releaseReason, carry_reason: p.carryReason, failure_code: p.failureCode,
+    last_snapshot: p.lastSnapshot === undefined ? undefined : projectPayoutSnapshot(p.lastSnapshot),
+    created_at: p.createdAt, updated_at: p.updatedAt,
+  };
+  dropUndefined(payoutColumnsWritten);
+  return payoutColumnsWritten;
 }
 
 const isUnique = (e: { code?: string } | null | undefined): boolean => e?.code === "23505";
@@ -365,52 +395,52 @@ export function supabaseBookingPaymentStore(sc: any): BookingPaymentStore {
         return readFail("payment_account_ensure threw");
       }
     },
-    getRecipient: (partyId) => one(sc.from(T_RECIPIENTS).select(RECIPIENT_COLUMNS).eq("party_id", partyId).maybeSingle(), toRecipient),
-    findRecipientByRef: (provider, ref) => one(sc.from(T_RECIPIENTS).select(RECIPIENT_COLUMNS).eq("provider", provider).eq("recipient_ref", ref).maybeSingle(), toRecipient),
+    getRecipient: (partyId) => one(sc.from("rent_buddy_payment_recipients").select(RECIPIENT_COLUMNS).eq("party_id", partyId).maybeSingle(), toRecipient),
+    findRecipientByRef: (provider, ref) => one(sc.from("rent_buddy_payment_recipients").select(RECIPIENT_COLUMNS).eq("provider", provider).eq("recipient_ref", ref).maybeSingle(), toRecipient),
     upsertRecipient: (rec) =>
-      touched(sc.from(T_RECIPIENTS).upsert({
+      touched(sc.from("rent_buddy_payment_recipients").upsert({
         party_id: rec.partyId, provider: rec.provider, recipient_ref: rec.recipientRef, country: rec.country,
         settlement_currency: rec.settlementCurrency, onboarding: rec.onboarding, charges_enabled: rec.chargesEnabled,
         payouts_enabled: rec.payoutsEnabled, requirements_due: [...rec.requirementsDue], provider_updated_at: rec.providerUpdatedAt,
         updated_at: new Date().toISOString(),
       }, { onConflict: "party_id" }).select("party_id")),
 
-    listPaymentsForBooking: (bookingId) => many(sc.from(T_PAYMENTS).select(PAYMENT_COLUMNS).eq("booking_id", bookingId).order("attempt_no", { ascending: true }), toPayment),
-    findPaymentByIntent: (provider, intentRef) => one(sc.from(T_PAYMENTS).select(PAYMENT_COLUMNS).eq("provider", provider).eq("intent_ref", intentRef).maybeSingle(), toPayment),
-    insertPayment: (rec) => touched(sc.from(T_PAYMENTS).insert(paymentRow(rec)).select("id")),
-    updatePayment: (id, patch) => touched(sc.from(T_PAYMENTS).update(paymentRow({ ...patch, id: undefined })).eq("id", id).select("id")),
+    listPaymentsForBooking: (bookingId) => many(sc.from("rent_buddy_booking_payments").select(PAYMENT_COLUMNS).eq("booking_id", bookingId).order("attempt_no", { ascending: true }), toPayment),
+    findPaymentByIntent: (provider, intentRef) => one(sc.from("rent_buddy_booking_payments").select(PAYMENT_COLUMNS).eq("provider", provider).eq("intent_ref", intentRef).maybeSingle(), toPayment),
+    insertPayment: (rec) => touched(sc.from("rent_buddy_booking_payments").insert(paymentRow(rec)).select("id")),
+    updatePayment: (id, patch) => touched(sc.from("rent_buddy_booking_payments").update(paymentRow({ ...patch, id: undefined })).eq("id", id).select("id")),
     updatePaymentIfUnchanged: (id, held, patch) => {
-      let q = sc.from(T_PAYMENTS).update(paymentRow({ ...patch, id: undefined })).eq("id", id)
+      let q = sc.from("rent_buddy_booking_payments").update(paymentRow({ ...patch, id: undefined })).eq("id", id)
         .eq("updated_at", held.updatedAt).eq("state", held.state)
         .eq("amount_captured_minor", held.amountCapturedMinor).eq("amount_refunded_minor", held.amountRefundedMinor);
       q = held.intentState === null ? q.is("intent_state", null) : q.eq("intent_state", held.intentState);
       return touched(q.select("id"), true); // zero rows = another write landed first (F1)
     },
     listUnpaidSucceededPayments: (partyId) => {
-      let q = sc.from(T_PAYMENTS).select(PAYMENT_COLUMNS).is("payout_id", null).in("state", ["succeeded", "partially_refunded", "disputed"]);
+      let q = sc.from("rent_buddy_booking_payments").select(PAYMENT_COLUMNS).is("payout_id", null).in("state", ["succeeded", "partially_refunded", "disputed"]);
       if (partyId !== null) q = q.eq("recipient_party_id", partyId);
       return many(q, toPayment);
     },
 
-    insertRefund: (rec) => touched(sc.from(T_REFUNDS).insert(refundRow(rec)).select("id")),
-    findRefundByRef: (provider, ref) => one(sc.from(T_REFUNDS).select(REFUND_COLUMNS).eq("provider", provider).eq("refund_ref", ref).maybeSingle(), toRefund),
-    updateRefund: (id, patch) => touched(sc.from(T_REFUNDS).update({ ...refundRow({ ...patch, id: undefined }), updated_at: new Date().toISOString() }).eq("id", id).select("id")),
-    listRefundsForPayment: (paymentId) => many(sc.from(T_REFUNDS).select(REFUND_COLUMNS).eq("booking_payment_id", paymentId), toRefund),
+    insertRefund: (rec) => touched(sc.from("rent_buddy_payment_refunds").insert(refundRow(rec)).select("id")),
+    findRefundByRef: (provider, ref) => one(sc.from("rent_buddy_payment_refunds").select(REFUND_COLUMNS).eq("provider", provider).eq("refund_ref", ref).maybeSingle(), toRefund),
+    updateRefund: (id, patch) => touched(sc.from("rent_buddy_payment_refunds").update(refundRow({ ...patch, id: undefined }, new Date().toISOString())).eq("id", id).select("id")),
+    listRefundsForPayment: (paymentId) => many(sc.from("rent_buddy_payment_refunds").select(REFUND_COLUMNS).eq("booking_payment_id", paymentId), toRefund),
 
-    insertPayout: (rec) => touched(sc.from(T_PAYOUTS).insert(payoutRow(rec)).select("id")),
-    getPayout: (id) => one(sc.from(T_PAYOUTS).select(PAYOUT_COLUMNS).eq("id", id).maybeSingle(), toPayout),
-    findPayoutByRef: (_provider, ref) => one(sc.from(T_PAYOUTS).select(PAYOUT_COLUMNS).eq("payout_ref", ref).maybeSingle(), toPayout),
-    findPayoutByKey: (key) => one(sc.from(T_PAYOUTS).select(PAYOUT_COLUMNS).eq("idempotency_key", key).maybeSingle(), toPayout),
+    insertPayout: (rec) => touched(sc.from("rent_buddy_monthly_payouts").insert(payoutRow(rec)).select("id")),
+    getPayout: (id) => one(sc.from("rent_buddy_monthly_payouts").select(PAYOUT_COLUMNS).eq("id", id).maybeSingle(), toPayout),
+    findPayoutByRef: (_provider, ref) => one(sc.from("rent_buddy_monthly_payouts").select(PAYOUT_COLUMNS).eq("payout_ref", ref).maybeSingle(), toPayout),
+    findPayoutByKey: (key) => one(sc.from("rent_buddy_monthly_payouts").select(PAYOUT_COLUMNS).eq("idempotency_key", key).maybeSingle(), toPayout),
     transitionPayout: (id, from, patch) =>
-      touched(sc.from(T_PAYOUTS).update(payoutRow({ ...patch, id: undefined })).eq("id", id).in("state", [...from]).select("id"), true),
+      touched(sc.from("rent_buddy_monthly_payouts").update(payoutRow({ ...patch, id: undefined })).eq("id", id).in("state", [...from]).select("id"), true),
 
     async recordWebhookEvent(provider, eventId, meta) {
       try {
-        const { error: insErr } = await sc.from(T_EVENTS).insert({
+        const { error: insErr } = await sc.from("payment_webhook_events").insert({
           provider, provider_event_id: eventId, endpoint: meta.endpoint, event_type: meta.type, occurred_at: meta.occurredAt,
         });
         if (insErr && !isUnique(insErr)) return readFail("event insert failed");
-        const { data, error } = await sc.from(T_EVENTS).select("processed_at").eq("provider", provider).eq("provider_event_id", eventId).maybeSingle();
+        const { data, error } = await sc.from("payment_webhook_events").select("processed_at").eq("provider", provider).eq("provider_event_id", eventId).maybeSingle();
         if (error || !data) return readFail("event read failed");
         return readOk({ alreadyProcessed: (data as Record<string, unknown>)["processed_at"] != null });
       } catch {
@@ -418,6 +448,6 @@ export function supabaseBookingPaymentStore(sc: any): BookingPaymentStore {
       }
     },
     markWebhookEventProcessed: (provider, eventId, outcome) =>
-      touched(sc.from(T_EVENTS).update({ processed_at: new Date().toISOString(), outcome }).eq("provider", provider).eq("provider_event_id", eventId).select("provider")),
+      touched(sc.from("payment_webhook_events").update({ processed_at: new Date().toISOString(), outcome }).eq("provider", provider).eq("provider_event_id", eventId).select("provider")),
   };
 }

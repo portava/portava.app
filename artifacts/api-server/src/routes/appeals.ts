@@ -491,21 +491,13 @@ router.patch("/appeals/:id", asyncHandler(async (req, res) => {
 
 const RESTRICTION_TYPES = new Set<string>(["hosting", "private_plan_access", "messaging", "location_plan_join"]);
 
-type ActiveRestrictionRow = { id: string; restriction_type: string; created_at: string | null; expires_at: string | null };
-
-/** The caller's ACTIVE restrictions: not lifted, not expired. A failed read is `null`, never an empty list. */
-async function readOwnActiveRestrictions(sc: SupabaseClient, userId: string): Promise<ActiveRestrictionRow[] | null> {
-  const now = new Date().toISOString();
-  const { data, error } = await sc
-    .from("trust_restrictions")
-    .select("id, restriction_type, created_at, expires_at")
-    .eq("user_id", userId)
-    .is("lifted_at", null)
-    .or(`expires_at.is.null,expires_at.gt.${now}`)
-    .order("created_at", { ascending: false })
-    .limit(50);
-  if (error) return null;
-  return (data ?? []) as ActiveRestrictionRow[];
+/**
+ * The caller's ACTIVE restrictions: not lifted, not expired. A failed read is `null`, never an empty list.
+ * services/trust owns trust_restrictions (check:trust-table-ownership): its subject seam selects no `reason`.
+ */
+async function readOwnActiveRestrictions(sc: SupabaseClient, userId: string): Promise<OwnActiveRestrictionRow[] | null> {
+  const read = await listOwnActiveRestrictions(sc, userId);
+  return read.state === "ok" ? read.rows : null;
 }
 
 /**
@@ -560,7 +552,7 @@ router.get("/appeals/me/restrictions", asyncHandler(async (req, res) => {
 }));
 
 import { restrictionSentence } from "../services/trust/TrustPrivacyGuard.js";
-import type { RestrictionType } from "../services/trust/TrustRestrictionService.js";
+import { listOwnActiveRestrictions, type OwnActiveRestrictionRow, type RestrictionType } from "../services/trust/TrustRestrictionService.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Request, Response } from "express";
 

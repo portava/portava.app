@@ -517,15 +517,10 @@ export async function resolveAppeal(
     // appellant's own and still active, and nothing else.
 
     case "trust_restriction": { if (!appeal.moderator_id) return { ok: false, action: "noop", reason: "trust restriction lift needs the approving moderator (lifted_by)" }; // every lift is attributed
-      const { data, error } = await sc
-        .from("trust_restrictions")
-        .update({ lifted_at: new Date().toISOString(), lifted_by: appeal.moderator_id })
-        .eq("id", target_id)
-        .eq("user_id", appellant_id)
-        .is("lifted_at", null)
-        .select("id");
-      if (error) return { ok: false, action: "noop", reason: `trust restriction lift failed: ${error.message}` };
-      if (affectedRows(data) === 0) return matchedNothing(appeal, "trust restriction lift");
+      // services/trust owns trust_restrictions (check:trust-table-ownership): the lift is ITS write, matched on id + appellant + still active.
+      const lift = await liftOwnRestrictionOnAppeal(sc, { restrictionId: target_id, userId: appellant_id, liftedBy: appeal.moderator_id });
+      if (lift.state === "failed") return { ok: false, action: "noop", reason: `trust restriction lift failed: ${lift.reason}` };
+      if (lift.state === "matched_nothing") return matchedNothing(appeal, "trust restriction lift");
       return { ok: true, action: "trust_restriction_lifted" };
     }
 
@@ -537,3 +532,5 @@ export async function resolveAppeal(
     }
   }
 }
+
+import { liftOwnRestrictionOnAppeal } from "../trust/TrustRestrictionService.js"; // foot: every cited line above keeps its number

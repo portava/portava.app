@@ -3971,7 +3971,7 @@ read or written; migration 3932 is written and applied nowhere. Lead rulings are
 5. **A restricted person sees what is restricted, until when, and appeals THAT restriction** (OD-TRUST-4,
    OD-TRUST-5, D-24; migration 3933 adds `appeal_target_type` 'trust_restriction', written and applied
    nowhere). `GET /api/appeals/me/restrictions`
-   (`artifacts/api-server/src/routes/appeals.ts:536#router.get("/appeals/me/restrictions"`) lists the
+   (`artifacts/api-server/src/routes/appeals.ts:528#router.get("/appeals/me/restrictions"`) lists the
    caller's ACTIVE restrictions. Each carries its D-24 sentence, its end date (or "until it is reviewed")
    and the appeal path. The moderator's free text is never sent. An unreadable table answers 503, never an
    empty list. `POST /api/appeals` accepts the new target only for the caller's own active restriction.
@@ -4032,7 +4032,7 @@ flag writers (F9) are not rows of this census. They are recorded in the lane rep
    and in the N-1 lists for all five doors. `&&` → `||` turns 7 red.
 3. **§36 item 5, "Approval lifts exactly that restriction": exact, but it was unattributed.** The lift now records
    the approving moderator
-   (`artifacts/api-server/src/services/appeals/resolveAppeal.ts:522#.update({ lifted_at: new Date().toISOString(), lifted_by: appeal.moderator_id })`),
+   (`artifacts/api-server/src/services/appeals/resolveAppeal.ts:521#liftedBy: appeal.moderator_id`),
    and a lift with no moderator is refused (F6).
 4. **§36 item 4's door enumeration.** The five route doors refuse before their INSERT. The PostgREST door onto
    `rent_buddy_bookings` (a client inserting directly) is closed by migration 3820's REVOKE, and only where 3820 is

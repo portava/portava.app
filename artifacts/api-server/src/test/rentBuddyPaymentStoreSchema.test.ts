@@ -116,3 +116,67 @@ describe("earliestStartInstant: 'before the service begins' only when true in ev
     assert.equal(earliestStartInstant("20-08-2026", "10:00"), null);
   });
 });
+
+// ── The column checks can SEE this store (check:write-path-columns, 2026-10-07) ──
+// CI's live-DB tier went red on #640 at 79edb99019: every `.from(T_PAYMENTS)`-style
+// call was a "dynamic table name" (29 sites), so neither check:write-path-columns
+// (live schema) nor check:schema-references (baseline + migrations) checked one
+// column of the five 3931 tables. The row builders assembled rows key by key,
+// which the extractor cannot read either. The cases below run THE SAME extractor
+// the two guards run, over this one file.
+import { extractSchemaReferences } from "../scripts/lib/schemaReferenceExtract.js";
+
+const API_ROOT = join(here, "../..");
+const STORE_FILE = join(here, "../services/payments/bookingPayments/supabaseStore.ts");
+
+describe("supabaseStore.ts is not a blind spot to the column checks", () => {
+  const { sites, skipped } = extractSchemaReferences(API_ROOT, [STORE_FILE]);
+
+  it("every .from() is a literal and every payload / select list resolves: zero skipped, zero partial", () => {
+    assert.deepEqual(skipped.map((s) => `${s.line} ${s.method} ${s.reason}`), []);
+    assert.deepEqual(sites.filter((s) => s.unresolved).map((s) => `${s.line} ${s.method}`), []);
+  });
+
+  it("the literals name exactly the five 3931 tables (the T_* names) plus the three the store reads", () => {
+    const tables = new Set(sites.map((s) => s.table));
+    assert.deepEqual([...tables].sort(), [T_EVENTS, T_PAYMENTS, T_PAYOUTS, T_RECIPIENTS, T_REFUNDS, "payment_parties", "rent_buddy_bookings", "rent_buddy_profiles"].sort());
+  });
+
+  it("every column a 3931 write or read names, as the extractor sees it, is a 3931 column", () => {
+    for (const s of sites) {
+      if (![T_EVENTS, T_PAYMENTS, T_PAYOUTS, T_RECIPIENTS, T_REFUNDS].includes(s.table)) continue;
+      const cols = columnsOf(migration, s.table);
+      for (const c of s.columns) assert.ok(cols.has(c), `${s.table}.${c} (${s.method}, supabaseStore.ts:${s.line})`);
+    }
+  });
+
+  // What the extractor reads must be what the builder WRITES. A key added to a
+  // row outside its one literal would be written to the database and never
+  // checked; this is the case that catches it.
+  const FULL = new Proxy({}, { get: (_t, p) => (p === "amount" ? { amountMinor: 1, currency: "USD" } : p === "components" ? { serviceMinor: 1, payerFeeMinor: 0, tipMinor: 0, taxMinor: 0 } : p === "platformFee" ? { commissionMinor: 0, payerFeeMinor: 0, taxMinor: 0 } : p === "taxCalculationRefs" || p === "bookingPaymentIds" ? [] : "x") });
+  for (const [table, built] of [
+    [T_PAYMENTS, Object.keys(paymentRow(FULL))],
+    [T_REFUNDS, Object.keys(refundRow(FULL, "2026-10-07T00:00:00.000Z"))],
+    [T_PAYOUTS, Object.keys(payoutRow(FULL))],
+  ] as const) {
+    it(`${table}: the insert the extractor checks names every key the builder can write`, () => {
+      const insert = sites.find((s) => s.table === table && s.method === "insert");
+      assert.ok(insert, `${table} insert site`);
+      assert.deepEqual([...insert!.columns].sort(), [...built].sort());
+    });
+  }
+});
+
+describe("the row builders write only what a patch names", () => {
+  it("absent keys are not written; null is a value and is written", () => {
+    assert.deepEqual(paymentRow({ state: "succeeded", updatedAt: "2026-10-07T00:00:00.000Z", failureReason: null }), {
+      state: "succeeded", updated_at: "2026-10-07T00:00:00.000Z", failure_reason: null,
+    });
+    assert.deepEqual(payoutRow({ state: "held", holdReason: null }), { state: "held", hold_reason: null });
+    assert.deepEqual(refundRow({ state: "pending" }), { state: "pending" });
+  });
+  it("a refund UPDATE carries its own updated_at stamp; an insert does not invent one", () => {
+    assert.deepEqual(refundRow({ state: "succeeded" }, "2026-10-07T01:02:03.000Z"), { state: "succeeded", updated_at: "2026-10-07T01:02:03.000Z" });
+    assert.equal("updated_at" in refundRow({ id: "r1", state: "requested" }), false);
+  });
+});
