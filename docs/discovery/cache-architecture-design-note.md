@@ -15,7 +15,7 @@
 
 A request consults Cache A first. On a hit it returns from Cache A (serve points 1/2/3) and never reaches Cache B. Cache B is consulted only on a Cache A miss, and only for a signed-in `for_you` request while `COMPASS_V1_RULE_BASED_ENABLED` is on. That flag is TRUE on production (integrator read, 2026-09-27).
 
-The shipping client calls `GET /discovery` with no bearer token (`travel-buddy-standalone/src/services/discovery.ts:753#const res = await fetch(`). So on production today every request is anonymous and Cache B is never reached from that client.
+The shipping client calls `GET /discovery` with no bearer token (`travel-buddy-standalone/src/services/discovery.ts:768#const res = await fetch(`). So on production today every request is anonymous and Cache B is never reached from that client.
 
 ## 1. Candidate cache key (Cache A)
 

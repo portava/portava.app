@@ -617,7 +617,7 @@ export function whyNowValidForMsOf(
  * every non-demoted row, the ungraded tail included) and gives it a why-now of
  * the safety reading alone. But the projection has a second "now" channel the
  * ranker does not own: `reasons`, whose `nearby_now` code renders on the card
- * as lib/discoveryReasonCodes nearbyNowText's sentence ("Open around now.") — which, on
+ * as lib/discoveryReasonCodes nearbyNowText's sentence ("Open now, per its listed hours (estimate).") — which, on
  * a place the same serve just graded dangerous, is precisely a "best move now"
  * label sitting beside the danger. So on a DEMOTED row that one code is
  * withheld. Nothing else is touched: the ranker's own `whyForUser` keys (a
